@@ -55,9 +55,9 @@ import { __resetStockImageCacheForTests, __resetStockOffersForTests } from '@/li
 import { OperationSchema } from '@/lib/siteOps/types';
 import type { CompanyKey, VerifiedKey } from '@/lib/auth-machine';
 import { createMcpHandler, MAX_BODY_BYTES, PROTOCOL_VERSIONS, type McpDeps } from '../handler';
-import { CONFIRMATION_TTL_MS, ConfirmationStore } from '../confirmations';
-import { LISTED_TOOLS, OPERATION_SCHEMAS } from '../tools';
-import { pendingCount } from '../elicitation';
+import { APPROVAL_TTL_MS, APPROVALS_PER_KEY, ApprovalStore } from '../approvals';
+import { DATA_NOTICE, LISTED_TOOLS, OPERATION_SCHEMAS, UNEXPECTED_FAILURE, type ToolLimits } from '../tools';
+import { ELICITATION_PER_KEY, pendingCount } from '../elicitation';
 
 const fakeCredential = (prefix: string) => `${prefix}_${randomBytes(16).toString('hex')}`;
 const fakeKey = () => fakeCredential(['sk', 'live'].join('_'));
@@ -152,7 +152,7 @@ interface Setup {
   mock: ReturnType<typeof fakeRepository>['mock'];
   verifyKey: ReturnType<typeof vi.fn>;
   key: string;
-  confirmations: ConfirmationStore;
+  approvals: ApprovalStore;
 }
 
 function setup(options: { outcome?: CompanyKey; version?: number; deps?: Partial<McpDeps>; now?: () => number } = {}): Setup {
@@ -160,14 +160,25 @@ function setup(options: { outcome?: CompanyKey; version?: number; deps?: Partial
   const key = fakeKey();
   const outcome = options.outcome ?? verifiedKey();
   const verifyKey = vi.fn(async () => outcome);
-  const confirmations = new ConfirmationStore(options.now);
+  const approvals = new ApprovalStore(options.now);
   const handler = createMcpHandler({
     verifyKey,
     siteOps: { repository, publicBaseHost: 'sites.example', editorHost: 'app.example' },
-    confirmations,
+    approvals,
     ...options.deps,
   });
-  return { handler, state, mock, verifyKey, key, confirmations };
+  return { handler, state, mock, verifyKey, key, approvals };
+}
+
+/** Fresh per-key limits, with some replaced. */
+function limitsWith(over: Partial<ToolLimits>): ToolLimits {
+  return {
+    reads: createPageGenRateLimiter({ maxPerWindow: 1000, windowMs: 60_000 }),
+    writes: createPageGenRateLimiter({ maxPerWindow: 1000, windowMs: 60_000 }),
+    images: createPageGenRateLimiter(),
+    approvals: createPageGenRateLimiter({ maxPerWindow: 1000, windowMs: 60_000 }),
+    ...over,
+  };
 }
 
 function post(key: string | null, body: unknown, headers: Record<string, string> = {}): Request {
@@ -312,7 +323,7 @@ describe('protocol', () => {
       expect(tool.inputSchema).not.toHaveProperty('$schema');
       expect(tool.description.length).toBeGreaterThan(40);
     }
-    expect((byName.publish.inputSchema.properties as Record<string, unknown>).confirmationToken).toBeDefined();
+    expect((byName.publish.inputSchema.properties as Record<string, unknown>).approvalId).toBeDefined();
     const ops = (byName.apply_batch.inputSchema.properties as Record<string, { items: { oneOf: unknown[] } }>).ops;
     expect(ops.items.oneOf).toHaveLength(11);
     const unknown = await s.handler.POST(post(s.key, rpc('tools/call', { name: 'delete_everything', arguments: {} })));
@@ -375,7 +386,7 @@ describe('auth: the handler is the gate', () => {
     expect(errorOf(write).code).toBe('forbidden');
     const pub = await call(s, 'publish', { siteId: 'site-1', expectedVersion: 3 });
     expect(errorOf(pub).code).toBe('forbidden');
-    expect(pub.structuredContent.confirmationToken).toBeUndefined();
+    expect(pub.structuredContent.approvalId).toBeUndefined();
     const back = await call(s, 'rollback', { siteId: 'site-1', revision: 6 });
     expect(errorOf(back).code).toBe('forbidden');
     expect(s.state.saved).toHaveLength(0);
@@ -511,7 +522,7 @@ describe('writes', () => {
   });
 
   it('limits writes per key and says when to retry', async () => {
-    const s = setup({ deps: { limits: { writes: createPageGenRateLimiter({ maxPerWindow: 1, windowMs: 60_000 }), images: createPageGenRateLimiter() } } });
+    const s = setup({ deps: { limits: limitsWith({ writes: createPageGenRateLimiter({ maxPerWindow: 1, windowMs: 60_000 }) }) } });
     expect((await call(s, 'apply_batch', { siteId: 'site-1', expectedVersion: 3, ops: [{ op: 'updateText', nodeId: 'title', text: 'a' }] })).isError).toBe(false);
     const second = await call(s, 'apply_batch', { siteId: 'site-1', expectedVersion: 4, ops: [{ op: 'updateText', nodeId: 'title', text: 'b' }] });
     expect(errorOf(second)).toMatchObject({ code: 'rate_limited', retryAfterSec: expect.any(Number) });
@@ -594,122 +605,177 @@ describe('find_images', () => {
 
 // ---------- publish and rollback: the confirmation by token ----------
 
-describe('publish confirmed by a one-time token', () => {
-  it('first call checks everything, publishes nothing and answers a summary and a token; the token then publishes once', async () => {
+describe('publish approved through the approval link', () => {
+  const approve = (s: Setup, id: unknown, decision: 'approve' | 'decline' = 'approve') => s.approvals.decide(String(id), 'user-1', decision);
+
+  it('first call checks everything, publishes nothing and answers a link; the call after the approval publishes once', async () => {
     const s = setup();
     const first = await call(s, 'publish', { siteId: 'site-1', expectedVersion: 3 });
     expect(first.isError).toBe(false);
-    expect(first.structuredContent).toMatchObject({ confirmationRequired: true, expiresInSeconds: CONFIRMATION_TTL_MS / 1000 });
+    expect(first.structuredContent).toMatchObject({ approvalRequired: true, expiresInSeconds: APPROVAL_TTL_MS / 1000 });
+    const id = first.structuredContent.approvalId as string;
+    expect(Buffer.from(id, 'base64url').length).toBeGreaterThanOrEqual(16);
+    expect(first.structuredContent.approvalUrl).toBe(`https://app.example/projects/site-1/confirm/${id}`);
     expect(first.structuredContent.summary).toContain('"Bakery"');
     expect(first.structuredContent.summary).toContain('version 3');
     expect(first.structuredContent.summary).toContain('https://abc123.sites.example');
+    expect(first.content[0].text.startsWith(DATA_NOTICE)).toBe(true);
     expect(s.state.published).toHaveLength(0);
 
-    const token = first.structuredContent.confirmationToken as string;
-    const second = await call(s, 'publish', { siteId: 'site-1', expectedVersion: 3, confirmationToken: token });
+    // Not approved yet: the id alone proves nothing, and is kept for later.
+    const early = await call(s, 'publish', { siteId: 'site-1', expectedVersion: 3, approvalId: id });
+    expect(early.structuredContent).toMatchObject({ approvalPending: true, approvalId: id });
+    expect(s.state.published).toHaveLength(0);
+
+    approve(s, id);
+    const second = await call(s, 'publish', { siteId: 'site-1', expectedVersion: 3, approvalId: id });
     expect(second.isError).toBe(false);
     expect(second.structuredContent).toMatchObject({ siteId: 'site-1', revision: 7, version: 4, liveUrl: 'https://abc123.sites.example' });
     expect(s.state.published).toEqual([expect.objectContaining({ publishedBy: 'key:key_1', expectedVersion: 3 })]);
 
-    // Reuse: the token is spent; a fresh summary and token come back instead.
-    const reuse = await call(s, 'publish', { siteId: 'site-1', expectedVersion: 4, confirmationToken: token });
-    expect(reuse.structuredContent).toMatchObject({ confirmationRequired: true });
+    // Reuse: the approval is spent; a new link comes back instead.
+    const reuse = await call(s, 'publish', { siteId: 'site-1', expectedVersion: 4, approvalId: id });
+    expect(reuse.structuredContent).toMatchObject({ approvalRequired: true });
     expect(reuse.structuredContent.note).toMatch(/unknown, expired, already used/);
     expect(s.state.published).toHaveLength(1);
   });
 
-  it('a token works only for the site, version and key it was issued for', async () => {
+  it('a declined request publishes nothing and is spent', async () => {
     const s = setup();
-    const issue = async () => (await call(s, 'publish', { siteId: 'site-1', expectedVersion: 3 })).structuredContent.confirmationToken as string;
+    const id = (await call(s, 'publish', { siteId: 'site-1', expectedVersion: 3 })).structuredContent.approvalId;
+    approve(s, id, 'decline');
+    const res = await call(s, 'publish', { siteId: 'site-1', expectedVersion: 3, approvalId: id });
+    expect(res.structuredContent).toMatchObject({ declined: true, confirmed: false });
+    expect(s.state.published).toHaveLength(0);
+    expect((await call(s, 'publish', { siteId: 'site-1', expectedVersion: 3, approvalId: id })).structuredContent.approvalRequired).toBe(true);
+  });
+
+  it('an approval works only for the site, version and key it was opened for, and a foreign key cannot spend it', async () => {
+    const s = setup();
+    const open = async (siteId = 'site-1', expectedVersion = 3) => {
+      const id = (await call(s, 'publish', { siteId, expectedVersion })).structuredContent.approvalId as string;
+      approve(s, id);
+      return id;
+    };
 
     // Another site.
-    const other = await call(s, 'publish', { siteId: 'site-2', expectedVersion: 3, confirmationToken: await issue() });
-    expect(other.structuredContent.confirmationRequired).toBe(true);
+    const forSite1 = await open();
+    expect((await call(s, 'publish', { siteId: 'site-2', expectedVersion: 3, approvalId: forSite1 })).structuredContent.approvalRequired).toBe(true);
 
-    // Another version: after a write, a token for version 3 cannot publish version 4.
-    const old = await issue();
-    await call(s, 'apply_batch', { siteId: 'site-1', expectedVersion: 3, ops: [{ op: 'updateText', nodeId: 'title', text: 'changed' }] });
-    const stale = await call(s, 'publish', { siteId: 'site-1', expectedVersion: 4, confirmationToken: old });
-    expect(stale.structuredContent.confirmationRequired).toBe(true);
-
-    // Another key of the same company.
-    const theirs = (await call(s, 'publish', { siteId: 'site-1', expectedVersion: 4 })).structuredContent.confirmationToken as string;
-    const other2 = createMcpHandler({
+    // Another key of the same company: refused, and the approval stays for its own key.
+    const other = createMcpHandler({
       verifyKey: async () => verifiedKey('admin', 'key_2'),
-      siteOps: { repository: (s.mock as unknown) as SiteRepository, publicBaseHost: 'sites.example' },
-      confirmations: s.confirmations,
+      siteOps: { repository: s.mock as unknown as SiteRepository, publicBaseHost: 'sites.example' },
+      approvals: s.approvals,
     });
-    const res = await other2.POST(post(fakeKey(), rpc('tools/call', { name: 'publish', arguments: { siteId: 'site-1', expectedVersion: 4, confirmationToken: theirs } })));
-    expect(((await res.json()) as { result: { structuredContent: Record<string, unknown> } }).result.structuredContent.confirmationRequired).toBe(true);
+    const res = await other.POST(post(fakeKey(), rpc('tools/call', { name: 'publish', arguments: { siteId: 'site-1', expectedVersion: 3, approvalId: forSite1 } })));
+    expect(((await res.json()) as { result: { structuredContent: Record<string, unknown> } }).result.structuredContent.approvalRequired).toBe(true);
     expect(s.state.published).toHaveLength(0);
+    expect((await call(s, 'publish', { siteId: 'site-1', expectedVersion: 3, approvalId: forSite1 })).isError).toBe(false);
+    expect(s.state.published).toHaveLength(1);
   });
 
-  it('a stale expectedVersion is site_changed before any token is issued', async () => {
-    const s = setup({ version: 6 });
-    const res = await call(s, 'publish', { siteId: 'site-1', expectedVersion: 3 });
-    expect(errorOf(res)).toMatchObject({ code: 'site_changed', currentVersion: 6 });
-    expect(res.structuredContent.confirmationToken).toBeUndefined();
-    expect(s.confirmations.size).toBe(0);
-  });
-
-  it('a rate limit on the confirmed call does not spend the person\'s yes', async () => {
-    const writes = createPageGenRateLimiter({ maxPerWindow: 1, windowMs: 60_000 });
-    const s = setup({ deps: { limits: { writes, images: createPageGenRateLimiter() } } });
-    const token = (await call(s, 'publish', { siteId: 'site-1', expectedVersion: 3 })).structuredContent.confirmationToken as string;
-    // Another write of this key takes the only slot of the window.
-    expect(writes.acquire('key:key_1').ok).toBe(true);
-    const limitedCall = await call(s, 'publish', { siteId: 'site-1', expectedVersion: 3, confirmationToken: token });
-    expect(errorOf(limitedCall).code).toBe('rate_limited');
-    expect(s.confirmations.size).toBe(1);
-    expect(s.state.published).toHaveLength(0);
-  });
-
-  it('a token expires', async () => {
-    let now = 1_000_000;
-    const s = setup({ now: () => now });
-    const token = (await call(s, 'publish', { siteId: 'site-1', expectedVersion: 3 })).structuredContent.confirmationToken as string;
-    now += CONFIRMATION_TTL_MS + 1;
-    const late = await call(s, 'publish', { siteId: 'site-1', expectedVersion: 3, confirmationToken: token });
-    expect(late.structuredContent.confirmationRequired).toBe(true);
-    expect(s.state.published).toHaveLength(0);
-  });
-
-  it('a version that moves after the token was spent still refuses the publish with site_changed', async () => {
+  it('a version that moves after the approval refuses the publish with site_changed', async () => {
     const s = setup();
-    const token = (await call(s, 'publish', { siteId: 'site-1', expectedVersion: 3 })).structuredContent.confirmationToken as string;
-    // The editor saves between the confirmed call's checks and its write.
+    const id = (await call(s, 'publish', { siteId: 'site-1', expectedVersion: 3 })).structuredContent.approvalId;
+    approve(s, id);
+    await call(s, 'apply_batch', { siteId: 'site-1', expectedVersion: 3, ops: [{ op: 'updateText', nodeId: 'title', text: 'changed' }] });
+    const stale = await call(s, 'publish', { siteId: 'site-1', expectedVersion: 3, approvalId: id });
+    expect(errorOf(stale)).toMatchObject({ code: 'site_changed', currentVersion: 4 });
+    // Naming the new version with the old approval is not approved either.
+    expect((await call(s, 'publish', { siteId: 'site-1', expectedVersion: 4, approvalId: id })).structuredContent.approvalRequired).toBe(true);
+    expect(s.state.published).toHaveLength(0);
+  });
+
+  it('a version that moves between the confirmed call\'s checks and its write still refuses it', async () => {
+    const s = setup();
+    const id = (await call(s, 'publish', { siteId: 'site-1', expectedVersion: 3 })).structuredContent.approvalId;
+    approve(s, id);
     s.mock.publishProject.mockImplementationOnce(async () => {
       throw new SiteChangedError(4);
     });
-    const res = await call(s, 'publish', { siteId: 'site-1', expectedVersion: 3, confirmationToken: token });
+    const res = await call(s, 'publish', { siteId: 'site-1', expectedVersion: 3, approvalId: id });
     expect(errorOf(res)).toMatchObject({ code: 'site_changed', currentVersion: 4 });
     expect(s.state.published).toHaveLength(0);
-    // And the spent token cannot be used again.
-    const again = await call(s, 'publish', { siteId: 'site-1', expectedVersion: 3, confirmationToken: token });
-    expect(again.structuredContent.confirmationRequired).toBe(true);
+  });
+
+  it('a stale expectedVersion is site_changed before any link is opened', async () => {
+    const s = setup({ version: 6 });
+    const res = await call(s, 'publish', { siteId: 'site-1', expectedVersion: 3 });
+    expect(errorOf(res)).toMatchObject({ code: 'site_changed', currentVersion: 6 });
+    expect(s.approvals.size).toBe(0);
+  });
+
+  it('an approval expires', async () => {
+    let now = 1_000_000;
+    const s = setup({ now: () => now });
+    const id = (await call(s, 'publish', { siteId: 'site-1', expectedVersion: 3 })).structuredContent.approvalId;
+    approve(s, id);
+    now += APPROVAL_TTL_MS + 1;
+    expect((await call(s, 'publish', { siteId: 'site-1', expectedVersion: 3, approvalId: id })).structuredContent.approvalRequired).toBe(true);
+    expect(s.state.published).toHaveLength(0);
+  });
+
+  it('two concurrent calls with one approval publish once', async () => {
+    const s = setup();
+    const id = (await call(s, 'publish', { siteId: 'site-1', expectedVersion: 3 })).structuredContent.approvalId;
+    approve(s, id);
+    const [a, b] = await Promise.all([
+      call(s, 'publish', { siteId: 'site-1', expectedVersion: 3, approvalId: id }),
+      call(s, 'publish', { siteId: 'site-1', expectedVersion: 3, approvalId: id }),
+    ]);
+    expect(s.state.published).toHaveLength(1);
+    const outcomes = [a, b].map((r) => (r.isError ? String(errorOf(r).code) : r.structuredContent.revision ? 'published' : 'other'));
+    expect(outcomes.filter((o) => o === 'published')).toHaveLength(1);
+  });
+
+  it('a rate limit on the approved call does not spend the approval', async () => {
+    const writes = createPageGenRateLimiter({ maxPerWindow: 1, windowMs: 60_000 });
+    const s = setup({ deps: { limits: limitsWith({ writes }) } });
+    const id = (await call(s, 'publish', { siteId: 'site-1', expectedVersion: 3 })).structuredContent.approvalId;
+    approve(s, id);
+    expect(writes.acquire('key:tenant-a:key_1').ok).toBe(true);
+    expect(errorOf(await call(s, 'publish', { siteId: 'site-1', expectedVersion: 3, approvalId: id })).code).toBe('rate_limited');
+    expect(s.approvals.size).toBe(1);
+    expect(s.state.published).toHaveLength(0);
+  });
+
+  it('opening links is rate limited per key, and one key holds at most a few open requests, never pushing out another key\'s', async () => {
+    const s = setup({ deps: { limits: limitsWith({ approvals: createPageGenRateLimiter({ maxPerWindow: 3, windowMs: 60_000 }) }) } });
+    for (let i = 0; i < 3; i++) expect((await call(s, 'publish', { siteId: 'site-1', expectedVersion: 3 })).structuredContent.approvalRequired).toBe(true);
+    expect(errorOf(await call(s, 'publish', { siteId: 'site-1', expectedVersion: 3 })).code).toBe('rate_limited');
+
+    const store = new ApprovalStore();
+    const subject = (keyId: string) => ({ action: 'publish' as const, tenantId: 'tenant-a', keyId, scope: SCOPE, siteId: 'site-1', version: 3 });
+    const theirs = store.open(subject('key_b'), 'theirs');
+    for (let i = 0; i < 50; i++) store.open(subject('key_a'), `mine ${i}`);
+    expect(store.countFor('tenant-a', 'key_a')).toBe(APPROVALS_PER_KEY);
+    expect(store.get(theirs.id)).not.toBeNull();
   });
 });
 
-describe('rollback confirmed by a one-time token', () => {
-  it('summarises, then serves the revision once confirmed', async () => {
+describe('rollback approved through the approval link', () => {
+  it('summarises, then serves the revision once approved', async () => {
     const s = setup();
     const first = await call(s, 'rollback', { siteId: 'site-1', revision: 6 });
-    expect(first.structuredContent).toMatchObject({ confirmationRequired: true });
+    expect(first.structuredContent).toMatchObject({ approvalRequired: true });
     expect(first.structuredContent.summary).toContain('version 6');
     expect(first.structuredContent.summary).toContain('instead of version 7');
     expect(s.state.rolledBack).toHaveLength(0);
-    const done = await call(s, 'rollback', { siteId: 'site-1', revision: 6, confirmationToken: first.structuredContent.confirmationToken });
+    s.approvals.decide(String(first.structuredContent.approvalId), 'user-1', 'approve');
+    const done = await call(s, 'rollback', { siteId: 'site-1', revision: 6, approvalId: first.structuredContent.approvalId });
     expect(done.structuredContent).toEqual({ siteId: 'site-1', live: 6 });
     expect(s.state.rolledBack).toEqual([6]);
     expect(audits.rows.at(-1)).toMatchObject({ operation: 'rollback', revision: 6 });
   });
 
-  it('refuses an unknown revision without a token, and a token for another revision', async () => {
+  it('refuses an unknown revision without a link, and an approval for another revision', async () => {
     const s = setup();
     expect(errorOf(await call(s, 'rollback', { siteId: 'site-1', revision: 99 })).code).toBe('revision_not_found');
-    const token = (await call(s, 'rollback', { siteId: 'site-1', revision: 6 })).structuredContent.confirmationToken;
-    const other = await call(s, 'rollback', { siteId: 'site-1', revision: 7, confirmationToken: token });
-    expect(other.structuredContent.confirmationRequired).toBe(true);
+    const id = (await call(s, 'rollback', { siteId: 'site-1', revision: 6 })).structuredContent.approvalId;
+    s.approvals.decide(String(id), 'user-1', 'approve');
+    const other = await call(s, 'rollback', { siteId: 'site-1', revision: 7, approvalId: id });
+    expect(other.structuredContent.approvalRequired).toBe(true);
     expect(s.state.rolledBack).toHaveLength(0);
   });
 });
@@ -773,12 +839,12 @@ describe('publish confirmed through the client dialog (elicitation)', () => {
       await s.handler.POST(post(s.key, { jsonrpc: '2.0', id: question.id, result }, { 'mcp-session-id': session }));
       const final = (await next()) as { result: { structuredContent: Record<string, unknown> } };
       expect(final.result.structuredContent).toMatchObject({ declined: true, confirmed: false });
-      expect(final.result.structuredContent.confirmationToken).toBeUndefined();
+      expect(final.result.structuredContent.approvalId).toBeUndefined();
       expect(s.state.published).toHaveLength(0);
     }
   });
 
-  it('falls back to a token when the client answers with an error or the dialog gets no answer', async () => {
+  it('falls back to an approval link when the client answers with an error or the dialog gets no answer', async () => {
     const s = setup({ deps: { elicitationTimeoutMs: 30 } });
     const session = await initialize(s, { elicitation: {} });
     const res = await s.handler.POST(post(s.key, rpc('tools/call', { name: 'publish', arguments: { siteId: 'site-1', expectedVersion: 3 } }), { 'mcp-session-id': session }));
@@ -786,14 +852,14 @@ describe('publish confirmed through the client dialog (elicitation)', () => {
     const question = await next();
     await s.handler.POST(post(s.key, { jsonrpc: '2.0', id: question.id, error: { code: -32601, message: 'Method not found' } }, { 'mcp-session-id': session }));
     const fallback = (await next()) as { result: { structuredContent: Record<string, unknown> } };
-    expect(fallback.result.structuredContent).toMatchObject({ confirmationRequired: true });
-    expect(fallback.result.structuredContent.confirmationToken).toEqual(expect.any(String));
+    expect(fallback.result.structuredContent).toMatchObject({ approvalRequired: true });
+    expect(fallback.result.structuredContent.approvalId).toEqual(expect.any(String));
 
     const silent = await s.handler.POST(post(s.key, rpc('tools/call', { name: 'rollback', arguments: { siteId: 'site-1', revision: 6 } }), { 'mcp-session-id': session }));
     const next2 = sseReader(silent);
     await next2();
     const timedOut = (await next2()) as { result: { structuredContent: Record<string, unknown> } };
-    expect(timedOut.result.structuredContent).toMatchObject({ confirmationRequired: true, note: expect.stringContaining('no answer') });
+    expect(timedOut.result.structuredContent).toMatchObject({ approvalRequired: true, note: expect.stringContaining('no answer') });
     expect(s.state.published).toHaveLength(0);
     expect(s.state.rolledBack).toHaveLength(0);
     expect(pendingCount()).toBe(0);
@@ -812,7 +878,7 @@ describe('publish confirmed through the client dialog (elicitation)', () => {
     expect(((await next()) as { result: { structuredContent: Record<string, unknown> } }).result.structuredContent.declined).toBe(true);
   });
 
-  it('no dialog without the capability, on an older protocol, or with a session id of another key: plain JSON with a token', async () => {
+  it('no dialog without the capability, on an older protocol, or with a session id of another key: plain JSON with an approval link', async () => {
     const s = setup();
     const noCapability = await initialize(s, {});
     const older = await initialize(s, { elicitation: {} }, '2025-03-26');
@@ -821,17 +887,17 @@ describe('publish confirmed through the client dialog (elicitation)', () => {
       const res = await s.handler.POST(post(s.key, rpc('tools/call', { name: 'publish', arguments: { siteId: 'site-1', expectedVersion: 3 } }), { 'mcp-session-id': session }));
       expect(res.headers.get('content-type')).toBe('application/json');
       const { result } = (await res.json()) as { result: { structuredContent: Record<string, unknown> } };
-      expect(result.structuredContent.confirmationRequired).toBe(true);
+      expect(result.structuredContent.approvalRequired).toBe(true);
     }
     expect(s.state.published).toHaveLength(0);
   });
 
-  it('a client that does not accept a stream gets plain JSON and a token even with the dialog capability', async () => {
+  it('a client that does not accept a stream gets plain JSON and an approval link even with the dialog capability', async () => {
     const s = setup();
     const session = await initialize(s, { elicitation: {} });
     const res = await s.handler.POST(post(s.key, rpc('tools/call', { name: 'publish', arguments: { siteId: 'site-1', expectedVersion: 3 } }), { 'mcp-session-id': session, accept: 'application/json' }));
     expect(res.headers.get('content-type')).toBe('application/json');
-    expect(((await res.json()) as { result: { structuredContent: Record<string, unknown> } }).result.structuredContent.confirmationRequired).toBe(true);
+    expect(((await res.json()) as { result: { structuredContent: Record<string, unknown> } }).result.structuredContent.approvalRequired).toBe(true);
   });
 
   it('a read tool is plain JSON even with the dialog capability', async () => {
@@ -855,5 +921,120 @@ describe('secrets', () => {
       expect(body).not.toContain(s.key);
       expect(body).not.toMatch(/\n\s+at .+\(.+:\d+:\d+\)/);
     }
+  });
+});
+
+describe('hardening', () => {
+  it('one key fills only its own share of open dialog questions; another key still gets its dialog', async () => {
+    const s = setup({ deps: { elicitationTimeoutMs: 5_000 } });
+    const session = await initialize(s, { elicitation: {} });
+    const questions: Array<{ id: unknown; next: () => Promise<Record<string, unknown>> }> = [];
+    for (let i = 0; i < ELICITATION_PER_KEY; i++) {
+      const res = await s.handler.POST(post(s.key, rpc('tools/call', { name: 'publish', arguments: { siteId: 'site-1', expectedVersion: 3 } }), { 'mcp-session-id': session }));
+      const next = sseReader(res);
+      const question = await next();
+      expect(question.method).toBe('elicitation/create');
+      questions.push({ id: question.id, next });
+    }
+    // Past its cap the same key gets an approval link at once, not another question.
+    const over = await s.handler.POST(post(s.key, rpc('tools/call', { name: 'publish', arguments: { siteId: 'site-1', expectedVersion: 3 } }), { 'mcp-session-id': session }));
+    const overResult = (await sseReader(over)()) as { result?: { structuredContent: Record<string, unknown> } };
+    expect(overResult.result?.structuredContent.approvalRequired).toBe(true);
+
+    // Another key is unaffected.
+    const otherKey = fakeKey();
+    const otherSession = await initialize(s, { elicitation: {} }, '2025-06-18', otherKey);
+    const theirs = await s.handler.POST(post(otherKey, rpc('tools/call', { name: 'publish', arguments: { siteId: 'site-1', expectedVersion: 3 } }), { 'mcp-session-id': otherSession }));
+    const theirNext = sseReader(theirs);
+    const question = await theirNext();
+    expect(question.method).toBe('elicitation/create');
+    await s.handler.POST(post(otherKey, { jsonrpc: '2.0', id: question.id, result: { action: 'decline' } }));
+    expect(((await theirNext()) as { result: { structuredContent: Record<string, unknown> } }).result.structuredContent.declined).toBe(true);
+
+    // Close the first key's questions.
+    for (const q of questions) {
+      await s.handler.POST(post(s.key, { jsonrpc: '2.0', id: q.id, result: { action: 'decline' } }));
+      await q.next();
+    }
+    expect(s.state.published).toHaveLength(0);
+  });
+
+  it('a stream the client cancels mid-question ends the question and publishes nothing', async () => {
+    const s = setup({ deps: { elicitationTimeoutMs: 5_000 } });
+    const session = await initialize(s, { elicitation: {} });
+    const before = pendingCount();
+    const res = await s.handler.POST(post(s.key, rpc('tools/call', { name: 'publish', arguments: { siteId: 'site-1', expectedVersion: 3 } }), { 'mcp-session-id': session }));
+    const reader = res.body!.getReader();
+    const first = await reader.read();
+    const question = JSON.parse(new TextDecoder().decode(first.value).split('data: ')[1]) as { id: string; method: string };
+    expect(question.method).toBe('elicitation/create');
+    expect(pendingCount()).toBe(before + 1);
+    await reader.cancel();
+    await vi.waitFor(() => expect(pendingCount()).toBe(before));
+    // A late accept finds no question, and nothing was published.
+    const late = await s.handler.POST(post(s.key, { jsonrpc: '2.0', id: question.id, result: { action: 'accept', content: { confirm: true } } }));
+    expect(late.status).toBe(400);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(s.state.published).toHaveLength(0);
+  });
+
+  it('an unexpected repository error never reaches the agent: a fixed message, the detail in the server log', async () => {
+    const s = setup();
+    const leak = 'relation "tg_secret.sites" does not exist at db.internal:5432';
+    const prismaLike = Object.assign(new Error(leak), { name: 'PrismaClientKnownRequestError', code: 'P2010', clientVersion: '6.19.3' });
+    s.mock.listSites.mockRejectedValueOnce(prismaLike);
+    const res = await call(s, 'list_sites');
+    expect(errorOf(res).code).toBe('failed');
+    expect(JSON.stringify(res)).not.toContain('tg_secret');
+    s.state.saveError = prismaLike;
+    const write = await call(s, 'apply_batch', { siteId: 'site-1', expectedVersion: 3, ops: [{ op: 'updateText', nodeId: 'title', text: 'x' }] });
+    expect(JSON.stringify(write)).not.toContain('tg_secret');
+    expect(errorOf(write).message).toMatch(/^the operation failed/);
+  });
+
+  it('replaces any failure text the library did not word itself', async () => {
+    const s = setup();
+    s.mock.publishProject.mockImplementationOnce(async () => {
+      throw Object.assign(new Error('connect ECONNREFUSED 10.0.0.7:5432'), { name: 'PrismaClientInitializationError' });
+    });
+    const id = (await call(s, 'publish', { siteId: 'site-1', expectedVersion: 3 })).structuredContent.approvalId;
+    s.approvals.decide(String(id), 'user-1', 'approve');
+    const res = await call(s, 'publish', { siteId: 'site-1', expectedVersion: 3, approvalId: id });
+    expect(JSON.stringify(res)).not.toContain('10.0.0.7');
+    expect(typeof errorOf(res).message).toBe('string');
+    expect(UNEXPECTED_FAILURE).not.toContain('5432');
+  });
+
+  it('refuses an MCP-Protocol-Version it does not speak, and accepts the ones it does', async () => {
+    const s = setup();
+    expect((await s.handler.POST(post(s.key, rpc('ping'), { 'mcp-protocol-version': '1999-01-01' }))).status).toBe(400);
+    for (const v of PROTOCOL_VERSIONS) expect((await s.handler.POST(post(s.key, rpc('ping'), { 'mcp-protocol-version': v }))).status).toBe(200);
+  });
+
+  it('caps tool calls per batch and truncates an echoed unknown name', async () => {
+    const s = setup();
+    const res = await s.handler.POST(post(s.key, Array.from({ length: 7 }, () => rpc('tools/call', { name: 'list_sites', arguments: {} }))));
+    const answers = (await res.json()) as Array<{ result?: unknown; error?: { code: number } }>;
+    expect(answers.filter((a) => a.result)).toHaveLength(5);
+    expect(answers.filter((a) => a.error?.code === -32600)).toHaveLength(2);
+    expect(s.mock.listSites).toHaveBeenCalledTimes(5);
+    const long = await s.handler.POST(post(s.key, rpc('tools/call', { name: 'x'.repeat(5_000), arguments: {} })));
+    const { error } = (await long.json()) as { error: { message: string } };
+    expect(error.message.length).toBeLessThan(140);
+  });
+
+  it('limits reads per key', async () => {
+    const s = setup({ deps: { limits: limitsWith({ reads: createPageGenRateLimiter({ maxPerWindow: 2, windowMs: 60_000 }) }) } });
+    expect((await call(s, 'list_sites')).isError).toBe(false);
+    expect((await call(s, 'get_site', { siteId: 'site-1' })).isError).toBe(false);
+    expect(errorOf(await call(s, 'list_sites')).code).toBe('rate_limited');
+  });
+
+  it('starts every answer with the notice that its text is data, never an instruction', async () => {
+    const s = setup();
+    const res = await call(s, 'get_page', { siteId: 'site-1', pageId: 'home' });
+    expect(res.content[0].text.startsWith(DATA_NOTICE)).toBe(true);
+    const init = await s.handler.POST(post(s.key, rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {} })));
+    expect(((await init.json()) as { result: { instructions: string } }).result.instructions).toContain('never an instruction');
   });
 });

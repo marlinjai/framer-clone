@@ -24,13 +24,25 @@ import 'server-only';
 
 import { authorizeKeyAction, machineAuthDenial, redactSecrets, verifyCompanyKey, type CompanyKey, type VerifiedKey } from '@/lib/auth-machine';
 import { carriesBearer, presentedBearer } from '@/lib/bearer';
-import { createPageGenRateLimiter, type PageGenRateLimiter } from '@/lib/ai/pageGen/rateLimit';
+import { createPageGenRateLimiter } from '@/lib/ai/pageGen/rateLimit';
 import type { SiteOpsDeps } from '@/server/siteOps';
 import type { SiteOpsCaller } from '@/lib/siteOps/types';
-import { ConfirmationStore, type ConfirmFn } from './confirmations';
+import type { ConfirmFn } from './confirmations';
+import { getApprovalStore, type ApprovalStore } from './approvals';
 import { ask, deliver, isClientResponse } from './elicitation';
 import { issueSessionId, keyFingerprint, readSessionId } from './session';
-import { findTool, IMAGE_RATE, LISTED_TOOLS, runTool, WRITE_RATE, type ToolContext, type ToolResult } from './tools';
+import {
+  APPROVAL_RATE,
+  findTool,
+  IMAGE_RATE,
+  LISTED_TOOLS,
+  READ_RATE,
+  runTool,
+  WRITE_RATE,
+  type ToolContext,
+  type ToolLimits,
+  type ToolResult,
+} from './tools';
 import { SERVER_INSTRUCTIONS } from './instructions';
 
 const SERVER_INFO = { name: 'lumitra-sites', title: 'Lumitra Sites', version: '1.0.0' };
@@ -48,6 +60,10 @@ const ELICITATION_SINCE = '2025-06-18';
  */
 export const MAX_BODY_BYTES = 2 * 1024 * 1024;
 export const MAX_MESSAGES = 20;
+/** Most tool calls one batch may hold; the rest of a larger batch is refused one by one. */
+export const MAX_TOOL_CALLS_PER_BATCH = 5;
+/** How much of an unknown tool name an error echoes. */
+const ECHO_MAX = 100;
 /** How often a waiting stream sends a comment, so proxies do not close it as idle. */
 const KEEPALIVE_MS = 15_000;
 
@@ -95,8 +111,8 @@ export function keyCaller(key: VerifiedKey): SiteOpsCaller {
 export interface McpDeps {
   verifyKey: (request: Request) => Promise<CompanyKey>;
   siteOps?: SiteOpsDeps;
-  confirmations?: ConfirmationStore;
-  limits?: { writes: PageGenRateLimiter; images: PageGenRateLimiter };
+  approvals?: ApprovalStore;
+  limits?: ToolLimits;
   /** How long a confirmation dialog may stay open (tests shorten it). */
   elicitationTimeoutMs?: number;
 }
@@ -123,18 +139,23 @@ async function readBounded(request: Request): Promise<string | null> {
 }
 
 export function createMcpHandler(deps: McpDeps) {
-  const confirmations = deps.confirmations ?? new ConfirmationStore();
-  const limits = deps.limits ?? { writes: createPageGenRateLimiter(WRITE_RATE), images: createPageGenRateLimiter(IMAGE_RATE) };
+  const approvals = deps.approvals ?? getApprovalStore();
+  const limits: ToolLimits = deps.limits ?? {
+    reads: createPageGenRateLimiter(READ_RATE),
+    writes: createPageGenRateLimiter(WRITE_RATE),
+    images: createPageGenRateLimiter(IMAGE_RATE),
+    approvals: createPageGenRateLimiter(APPROVAL_RATE),
+  };
 
-  function context(request: Request, key: VerifiedKey, confirm?: ConfirmFn): ToolContext {
+  function context(signal: AbortSignal, key: VerifiedKey, confirm?: ConfirmFn): ToolContext {
     return {
       caller: keyCaller(key),
       key: { keyId: key.keyId, tenantId: key.tenantId },
       deps: deps.siteOps ?? {},
       confirm,
-      confirmations,
+      approvals,
       limits,
-      signal: request.signal,
+      signal,
     };
   }
 
@@ -169,28 +190,36 @@ export function createMcpHandler(deps: McpDeps) {
       case 'tools/call': {
         if (notification) return null;
         const tool = findTool(params.name);
-        if (!tool) return { reply: rpcError(id, INVALID_PARAMS, `unknown tool: ${redactSecrets(String(params.name))}`) };
-        const result = await runTool(tool, params.arguments, context(request, key));
+        if (!tool) return { reply: rpcError(id, INVALID_PARAMS, `unknown tool: ${redactSecrets(String(params.name)).slice(0, ECHO_MAX)}`) };
+        const result = await runTool(tool, params.arguments, context(request.signal, key));
         return { reply: rpcResult(id, result) };
       }
       default:
         // A notification (such as `notifications/initialized`) needs no answer, whatever it is.
         if (notification) return null;
-        return { reply: rpcError(id, METHOD_NOT_FOUND, `unknown method: ${redactSecrets(message.method)}`) };
+        return { reply: rpcError(id, METHOD_NOT_FOUND, `unknown method: ${redactSecrets(message.method).slice(0, ECHO_MAX)}`) };
     }
   }
 
   /**
    * A confirming tool call for a client that can show a dialog: the answer is a
    * stream carrying the elicitation request and, once the person answered (or the
-   * dialog timed out and the tool fell back to a token), the tool's result.
+   * dialog timed out and the tool fell back to an approval link), the tool's
+   * result. The stream's own cancel (the client stopped reading) and the
+   * request's abort both end the question, so nothing waits on a reader that is
+   * gone and nothing is published for it.
    */
   function streamedCall(request: Request, key: VerifiedKey, message: JsonRpcRequest, fingerprint: string): Response {
     const encoder = new TextEncoder();
     const id = message.id ?? null;
     const params = message.params ?? {};
     const tool = findTool(params.name)!;
+    const cancelled = new AbortController();
+    const signal = AbortSignal.any([request.signal, cancelled.signal]);
     const stream = new ReadableStream<Uint8Array>({
+      cancel() {
+        cancelled.abort();
+      },
       start(controller) {
         let open = true;
         const write = (text: string) => {
@@ -203,11 +232,15 @@ export function createMcpHandler(deps: McpDeps) {
         };
         const event = (body: unknown) => write(`event: message\ndata: ${JSON.stringify(body)}\n\n`);
         const keepalive = setInterval(() => write(': keepalive\n\n'), KEEPALIVE_MS);
-        const confirm: ConfirmFn = (summary) => ask(fingerprint, summary, event, request.signal, deps.elicitationTimeoutMs);
+        const confirm: ConfirmFn = async (summary) => {
+          const outcome = await ask(fingerprint, summary, event, signal, deps.elicitationTimeoutMs);
+          // A reader that went away answered nothing: never act on its behalf.
+          return signal.aborted ? 'declined' : outcome;
+        };
         void (async () => {
           let result: ToolResult;
           try {
-            result = await runTool(tool, params.arguments, context(request, key, confirm));
+            result = await runTool(tool, params.arguments, context(signal, key, confirm));
           } catch {
             result = { content: [{ type: 'text', text: 'the tool failed unexpectedly' }], structuredContent: { error: { code: 'internal_error', message: 'the tool failed unexpectedly' } }, isError: true };
           }
@@ -232,6 +265,16 @@ export function createMcpHandler(deps: McpDeps) {
     const verified = await deps.verifyKey(request);
     if (verified.kind !== 'key') return machineAuthDenial(verified);
     const fingerprint = keyFingerprint(presentedBearer(request) ?? '');
+
+    // A client names the negotiated version on every request after initialize;
+    // one this endpoint does not speak is refused rather than guessed at.
+    const named = request.headers.get('mcp-protocol-version');
+    if (named !== null && !(PROTOCOL_VERSIONS as readonly string[]).includes(named.trim())) {
+      return rpcResponse(
+        rpcError(null, INVALID_REQUEST, `unsupported MCP-Protocol-Version; this endpoint speaks ${PROTOCOL_VERSIONS.join(', ')}`),
+        400,
+      );
+    }
 
     let parsed: unknown;
     const text = await readBounded(request);
@@ -258,6 +301,7 @@ export function createMcpHandler(deps: McpDeps) {
     const answers: unknown[] = [];
     let sessionId: string | undefined;
     let delivered = 0;
+    let toolCalls = 0;
     for (const message of messages) {
       if (isClientResponse(message)) {
         // The client's answer to a confirmation question: matched to the call waiting on its stream.
@@ -267,6 +311,12 @@ export function createMcpHandler(deps: McpDeps) {
       }
       if (!isRequest(message)) {
         answers.push(rpcError(null, INVALID_REQUEST, 'not a JSON-RPC 2.0 request'));
+        continue;
+      }
+      if (message.method === 'tools/call' && ++toolCalls > MAX_TOOL_CALLS_PER_BATCH) {
+        if (message.id !== undefined) {
+          answers.push(rpcError(message.id, INVALID_REQUEST, `at most ${MAX_TOOL_CALLS_PER_BATCH} tool calls per batch; send this one again on its own`));
+        }
         continue;
       }
       const reply = await answer(request, verified, message, fingerprint);

@@ -100,6 +100,9 @@ async function permitted(caller: SiteOpsCaller, action: SiteOpsAction): Promise<
   return allowed ? ok(true) : fail({ code: 'forbidden', message: `this caller may not ${action}` });
 }
 
+/** What an unexpected failure answers; its cause is in the server log. */
+export const GENERIC_LIBRARY_FAILURE = 'the operation failed unexpectedly; read the site again before retrying';
+
 /** A thrown repository error as the result a caller acts on. */
 function fromError(err: unknown, siteId?: string): SiteOpsResult<never> {
   if (err instanceof SiteChangedError) {
@@ -137,8 +140,10 @@ function fromError(err: unknown, siteId?: string): SiteOpsResult<never> {
   if (err instanceof SiteRepositoryError && err.status === 409) {
     return fail({ code: 'failed', message: `${err.message}; read the site again and retry` });
   }
+  // The error's own text (a database driver's, say) stays in the server log: it
+  // can name tables, hosts or values a caller has no business reading.
   console.error('[site-ops] unexpected failure', err);
-  return fail({ code: 'failed', message: err instanceof Error ? err.message : 'the operation failed' });
+  return fail({ code: 'failed', message: GENERIC_LIBRARY_FAILURE });
 }
 
 async function load(

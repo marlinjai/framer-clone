@@ -7,13 +7,13 @@
 // the shop provisioning (it needs the owner database role).
 //
 // The chain an agent runs, as MCP calls: create a site, insert a section, read it
-// back, publish (confirmed by the one-time token), publish again, roll back
-// (confirmed), and the audit rows. Also: a cookie without a key gets a 401 and
+// back, publish (approved by a signed-in person through the real approval route), publish again, roll back
+// (approved the same way), and the audit rows. Also: a cookie without a key gets a 401 and
 // writes nothing; another company's key sees none of these sites.
 //
 // Stateful-flow paths (knowledge-base standards, stateful-flow testing): forward
-// (the chain), backtrack (a write after the publish confirmation was issued
-// makes that token useless), resume (every call is a fresh request that reloads
+// (the chain), backtrack (a write after the publish was approved makes that
+// approval useless), resume (every call is a fresh request that reloads
 // the stored version), re-entry (after a refused batch the same version writes).
 //
 // Runs only under `pnpm test:integration` (Docker Postgres).
@@ -56,7 +56,12 @@ vi.mock('@/lib/openfgaRead', async (importOriginal) => {
   return { ...actual, readCompanyStructure: vi.fn(async (tenant: string) => STRUCTURE[tenant] ?? { groupIds: [], workspaceIds: [] }) };
 });
 vi.mock('@/lib/auth-brain', () => ({
-  authBrainClient: { verifySession: vi.fn(async () => null), can: vi.fn(async () => true), verifyApiKey: vi.fn(), getCurrentUser: vi.fn() },
+  authBrainClient: {
+    verifySession: vi.fn(async (cookie: string) => (cookie === 'sess_owner' ? { user: { id: 'owner-a' }, tenants: [], workspaces: [] } : null)),
+    can: vi.fn(async () => true),
+    verifyApiKey: vi.fn(),
+    getCurrentUser: vi.fn(),
+  },
 }));
 vi.mock('next/cache', () => ({ unstable_cache: vi.fn(), revalidateTag: vi.fn() }));
 const commerce = vi.hoisted(() => ({ calls: [] as unknown[][] }));
@@ -70,6 +75,7 @@ vi.mock('@/server/sites/companyCommerce', () => ({
 import { getPrismaClient } from '@/server/db';
 import { clearKeyCache } from '@/lib/auth-machine';
 import { POST } from '@/app/api/mcp/route';
+import { POST as DECIDE } from '@/app/api/projects/[projectId]/confirmations/[approvalId]/route';
 
 let prisma: PrismaClient;
 let nextId = 1;
@@ -87,6 +93,19 @@ async function tool(key: string, name: string, args: Record<string, unknown>) {
   expect(res.status).toBe(200);
   const body = (await res.json()) as { result: { isError: boolean; structuredContent: Record<string, unknown> } };
   return body.result;
+}
+
+/** The person opens the approval link and clicks approve: the real editor route, with a session cookie. */
+async function approve(siteId: string, approvalId: unknown) {
+  const res = await DECIDE(
+    new Request(`https://app.lumitra.co/api/projects/${siteId}/confirmations/${String(approvalId)}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin', cookie: 'lumitra_session=sess_owner' },
+      body: JSON.stringify({ decision: 'approve' }),
+    }),
+    { params: Promise.resolve({ projectId: siteId, approvalId: String(approvalId) }) },
+  );
+  expect(res.status).toBe(200);
 }
 
 async function ok(key: string, name: string, args: Record<string, unknown>) {
@@ -152,18 +171,21 @@ describe('the MCP endpoint against a real database', () => {
 
       // Publish: the first call issues a token and publishes nothing.
       const ask = await ok(KEY_A, 'publish', { siteId, expectedVersion: 2 });
-      expect(ask.confirmationRequired).toBe(true);
+      expect(ask.approvalRequired).toBe(true);
+      expect(String(ask.approvalUrl)).toContain(`/projects/${siteId}/confirm/`);
+      await approve(siteId, ask.approvalId);
       expect(await prisma.siteRevision.count({ where: { siteId } })).toBe(0);
 
       // Backtrack: a write after the token was issued makes the token useless.
       const edited = await ok(KEY_A, 'apply_batch', { siteId, expectedVersion: 2, ops: [{ op: 'updateText', nodeId: created2.headline, text: 'Built and checked' }] });
       expect(edited.version).toBe(3);
-      const stale = await tool(KEY_A, 'publish', { siteId, expectedVersion: 2, confirmationToken: ask.confirmationToken });
+      const stale = await tool(KEY_A, 'publish', { siteId, expectedVersion: 2, approvalId: ask.approvalId });
       expect((stale.structuredContent.error as { code: string; currentVersion: number })).toMatchObject({ code: 'site_changed', currentVersion: 3 });
 
       // Confirm on the current version.
       const ask2 = await ok(KEY_A, 'publish', { siteId, expectedVersion: 3 });
-      const published = await ok(KEY_A, 'publish', { siteId, expectedVersion: 3, confirmationToken: ask2.confirmationToken });
+      await approve(siteId, ask2.approvalId);
+      const published = await ok(KEY_A, 'publish', { siteId, expectedVersion: 3, approvalId: ask2.approvalId });
       expect(published.version).toBe(4);
       const first = published.revision as number;
       expect(published.liveUrl).toMatch(/^https:\/\/.+\.sites\.itest$/);
@@ -173,15 +195,17 @@ describe('the MCP endpoint against a real database', () => {
       // Publish again, on the version the publish answered.
       await ok(KEY_A, 'apply_batch', { siteId, expectedVersion: 4, ops: [{ op: 'updateText', nodeId: created2.headline, text: 'Second edition' }] });
       const ask3 = await ok(KEY_A, 'publish', { siteId, expectedVersion: 5 });
-      const second = await ok(KEY_A, 'publish', { siteId, expectedVersion: 5, confirmationToken: ask3.confirmationToken });
+      await approve(siteId, ask3.approvalId);
+      const second = await ok(KEY_A, 'publish', { siteId, expectedVersion: 5, approvalId: ask3.approvalId });
       expect(second.revision).toBeGreaterThan(first);
 
       // Roll back to the first publish, confirmed.
       const history = await ok(KEY_A, 'list_revisions', { siteId });
       expect(history.live).toBe(second.revision);
       const askBack = await ok(KEY_A, 'rollback', { siteId, revision: first });
-      expect(askBack.confirmationRequired).toBe(true);
-      const back = await ok(KEY_A, 'rollback', { siteId, revision: first, confirmationToken: askBack.confirmationToken });
+      expect(askBack.approvalRequired).toBe(true);
+      await approve(siteId, askBack.approvalId);
+      const back = await ok(KEY_A, 'rollback', { siteId, revision: first, approvalId: askBack.approvalId });
       expect(back).toEqual({ siteId, live: first });
       expect((await ok(KEY_A, 'list_revisions', { siteId })).live).toBe(first);
 

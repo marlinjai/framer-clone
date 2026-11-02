@@ -13,14 +13,16 @@ import 'server-only';
 // Process-local, like the confirmation tokens (./confirmations.ts): framer-clone
 // runs as one container. Without an answer within ELICITATION_TIMEOUT_MS, or when
 // the client answers with an error (it cannot show the dialog after all), the
-// question counts as unanswered and the tool falls back to the one-time token.
+// question counts as unanswered and the tool falls back to the approval link.
 
 import { randomUUID } from 'node:crypto';
 import type { ConfirmOutcome } from './confirmations';
 
-/** How long a confirmation dialog may stay open before the tool falls back to a token. */
+/** How long a confirmation dialog may stay open before the tool falls back to an approval link. */
 export const ELICITATION_TIMEOUT_MS = 120_000;
-/** Most questions open at once; beyond it a new one is not asked (the token path is used). */
+/** Most questions one key may have open; beyond it a new one is not asked (the approval link is used). */
+export const ELICITATION_PER_KEY = 3;
+/** Most questions open at once, a backstop behind the per-key cap. */
 export const ELICITATION_MAX_PENDING = 200;
 
 interface Pending {
@@ -29,6 +31,12 @@ interface Pending {
 }
 
 const pending = new Map<string, Pending>();
+
+function openFor(fingerprint: string): number {
+  let n = 0;
+  for (const entry of pending.values()) if (entry.fingerprint === fingerprint) n += 1;
+  return n;
+}
 
 /** An elicitation answer as the client posts it. */
 export interface ClientResponse {
@@ -63,7 +71,11 @@ export function ask(
   signal?: AbortSignal,
   timeoutMs: number = ELICITATION_TIMEOUT_MS,
 ): Promise<ConfirmOutcome> {
-  if (pending.size >= ELICITATION_MAX_PENDING || signal?.aborted) return Promise.resolve('unavailable');
+  // Past its own cap (or the total backstop) a key's question is not asked: the
+  // tool falls back to the approval link, and other keys keep their room.
+  if (pending.size >= ELICITATION_MAX_PENDING || openFor(fingerprint) >= ELICITATION_PER_KEY || signal?.aborted) {
+    return Promise.resolve('unavailable');
+  }
   const id = `elicit_${randomUUID()}`;
   return new Promise<ConfirmOutcome>((resolve) => {
     let settled = false;

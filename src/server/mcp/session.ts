@@ -14,8 +14,8 @@ import 'server-only';
 // It is never a credential: every request is still authenticated by its own key
 // (verifyCompanyKey), and an id issued to another key, a forged one or one
 // signed before a restart (the signing secret is random per process) simply
-// reads as "no elicitation", so the confirmation falls back to the one-time
-// token. The endpoint never answers 404 for an unknown session, because it keeps
+// reads as "no elicitation", so the confirmation falls back to the approval
+// link. The endpoint never answers 404 for an unknown session, because it keeps
 // none.
 
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';

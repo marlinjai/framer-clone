@@ -1,0 +1,111 @@
+// src/app/projects/[projectId]/confirm/[approvalId]/page.tsx
+//
+// The approval link an agent hands the person when it asks to publish or roll
+// back a site through the Lumitra Sites MCP endpoint and its client has no
+// confirmation dialog (src/server/mcp/approvals.ts). An editor page: the
+// middleware serves it only on the editor host and bounces a visitor without a
+// session to the login. Here the person's verified session is checked against
+// publishSite on the request's workspace (src/server/mcp/approvalCheck.ts), the
+// page shows what would go live, and the button approves (ApproveButton posts to
+// /api/projects/<id>/confirmations/<approvalId>, which checks everything again).
+
+import React from 'react';
+import { cookies, headers } from 'next/headers';
+import { redirect } from 'next/navigation';
+import { AuthUnavailableError, AuthzUnavailableError, verifySessionOrThrowUnavailable } from '@/lib/authBrainAvailability';
+import { checkApprover, approvalView } from '@/server/mcp/approvalCheck';
+import AuthUnavailable from '../../../AuthUnavailable';
+import ApproveButton from './ApproveButton';
+
+export const dynamic = 'force-dynamic';
+
+interface Props {
+  params: Promise<{ projectId: string; approvalId: string }>;
+}
+
+function Notice({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <main className="mx-auto w-full max-w-3xl px-6 py-12">
+      <section role="alert" className="rounded-lg border p-10 text-center">
+        <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
+        <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">{children}</p>
+      </section>
+    </main>
+  );
+}
+
+export default async function ConfirmAgentActionPage({ params }: Props) {
+  const { projectId, approvalId } = await params;
+  const here = `/projects/${encodeURIComponent(projectId)}/confirm/${encodeURIComponent(approvalId)}`;
+
+  const cookie = (await cookies()).get('lumitra_session')?.value;
+  let userId: string | undefined;
+  try {
+    userId = cookie ? (await verifySessionOrThrowUnavailable(cookie))?.user?.id : undefined;
+  } catch (err) {
+    if (err instanceof AuthUnavailableError) return <AuthUnavailable retryHref={here} />;
+    throw err;
+  }
+  if (!userId) {
+    const h = await headers();
+    const proto = h.get('x-forwarded-proto') || 'https';
+    const host = h.get('x-forwarded-host') || h.get('host') || '';
+    const login = new URL('/login', process.env.AUTH_BRAIN_URL ?? 'https://auth.lumitra.co');
+    login.searchParams.set('return_to', `${proto}://${host}${here}`);
+    redirect(login.toString());
+  }
+
+  let checked: Awaited<ReturnType<typeof checkApprover>>;
+  try {
+    checked = await checkApprover(userId, projectId, approvalId);
+  } catch (err) {
+    if (err instanceof AuthzUnavailableError) return <AuthUnavailable retryHref={here} />;
+    throw err;
+  }
+
+  if (checked.status === 'not_found') {
+    return (
+      <Notice title="This approval link is not valid">
+        It is unknown, expired or already used. Nothing was published. Ask the agent for a new link.
+      </Notice>
+    );
+  }
+  if (checked.status === 'forbidden') {
+    return (
+      <Notice title="You cannot approve this">
+        Only someone who may publish this site can approve it. Nothing was published.
+      </Notice>
+    );
+  }
+  if (checked.status === 'changed') {
+    return (
+      <Notice title="The site changed since the agent asked">
+        What you would approve is no longer what the agent would publish. Nothing was approved. Ask the agent to read
+        the site again and send a new link.
+      </Notice>
+    );
+  }
+
+  const view = approvalView(checked.approval);
+  const verb = view.action === 'publish' ? 'Publish' : 'Serve an earlier version';
+  return (
+    <main className="mx-auto w-full max-w-3xl px-6 py-12">
+      <section className="rounded-lg border p-10">
+        <h1 className="text-xl font-semibold tracking-tight">An agent asks to {verb.toLowerCase()}</h1>
+        <p className="mt-2 text-sm text-muted-foreground">
+          An agent using your company&apos;s API key asks for your approval. Check what it would do:
+        </p>
+        <p className="mt-4 whitespace-pre-wrap rounded-md border bg-muted/40 p-4 text-sm" data-testid="approval-summary">
+          {view.summary}
+        </p>
+        <p className="mt-4 text-xs text-muted-foreground">
+          The link works once and expires at {view.expiresAt.slice(11, 16)} UTC. After you approve, the agent carries it
+          out on its next call. If you did not ask for this, close the page: nothing happens.
+        </p>
+        <div className="mt-6">
+          <ApproveButton projectId={projectId} approvalId={approvalId} label={verb} decided={view.decision} />
+        </div>
+      </section>
+    </main>
+  );
+}
