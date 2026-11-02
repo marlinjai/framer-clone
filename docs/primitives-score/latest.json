@@ -1,11 +1,11 @@
 {
-  "generatedAt": "2026-11-02T11:50:53.552Z",
+  "generatedAt": "2026-11-02T12:17:57.357Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 195,
+  "durationSeconds": 333,
   "matrix": {
     "surfaces": {
       "format": {
@@ -15,8 +15,8 @@
         "total": 1833
       },
       "renderer": {
-        "pass": 1758,
-        "fail": 75,
+        "pass": 1763,
+        "fail": 70,
         "notTested": 0,
         "total": 1833
       },
@@ -465,8 +465,8 @@
           "total": 30
         },
         "renderer": {
-          "pass": 21,
-          "fail": 9,
+          "pass": 26,
+          "fail": 4,
           "notTested": 0,
           "total": 30
         },
@@ -5051,7 +5051,7 @@
       "aria-pattern:button": "pass pass canvas-editor-context pass pass",
       "aria-pattern:carousel": "pass pass canvas-editor-context pass pass",
       "aria-pattern:checkbox": "pass pass pass pass ai-attribute-allowlist",
-      "aria-pattern:combobox": "pass behaviour-state behaviour-state pass ai-attribute-allowlist",
+      "aria-pattern:combobox": "pass pass canvas-editor-context pass ai-attribute-allowlist",
       "aria-pattern:dialog-modal": "pass pass canvas-editor-context pass ai-attribute-allowlist",
       "aria-pattern:disclosure": "pass pass pass pass pass",
       "aria-pattern:feed": "pass behaviour-state behaviour-state pass pass",
@@ -5059,12 +5059,12 @@
       "aria-pattern:landmarks": "pass pass canvas-editor-context pass pass",
       "aria-pattern:link": "pass pass canvas-editor-context pass pass",
       "aria-pattern:listbox": "pass pass pass pass ai-attribute-allowlist",
-      "aria-pattern:menubar": "pass behaviour-state behaviour-state pass pass",
-      "aria-pattern:menu-button": "pass behaviour-state behaviour-state pass ai-attribute-allowlist",
+      "aria-pattern:menubar": "pass pass canvas-editor-context pass pass",
+      "aria-pattern:menu-button": "pass pass canvas-editor-context pass ai-attribute-allowlist",
       "aria-pattern:meter": "pass pass pass pass pass",
       "aria-pattern:radio": "pass pass pass pass ai-attribute-allowlist",
       "aria-pattern:slider": "pass pass pass pass ai-attribute-allowlist",
-      "aria-pattern:slider-multithumb": "pass behaviour-state behaviour-state pass ai-attribute-allowlist",
+      "aria-pattern:slider-multithumb": "pass pass canvas-editor-context pass ai-attribute-allowlist",
       "aria-pattern:spinbutton": "pass pass pass pass ai-attribute-allowlist",
       "aria-pattern:switch": "pass pass pass pass ai-attribute-allowlist",
       "aria-pattern:table": "pass pass pass pass pass",
@@ -5073,7 +5073,7 @@
       "aria-pattern:tooltip": "pass pass canvas-editor-context pass pass",
       "aria-pattern:treeview": "pass behaviour-state behaviour-state pass pass",
       "aria-pattern:treegrid": "pass behaviour-state behaviour-state pass pass",
-      "aria-pattern:windowsplitter": "pass behaviour-state behaviour-state pass pass",
+      "aria-pattern:windowsplitter": "pass pass canvas-editor-context pass pass",
       "component:text": "pass pass pass pass reusable-components",
       "component:number": "pass pass pass pass reusable-components",
       "component:toggle": "pass pass pass pass reusable-components",
@@ -7843,8 +7843,8 @@
   },
   "roundTrip": {
     "nodesToJsxToNodes": {
-      "pass": 117,
-      "total": 117
+      "pass": 122,
+      "total": 122
     },
     "jsxToNodesToRender": {
       "pass": 11,
@@ -8242,6 +8242,31 @@
         "pass": true
       },
       {
+        "id": "preset: menu-button",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "preset: menubar",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "preset: combobox",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "preset: slider-multithumb",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "preset: windowsplitter",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
         "id": "synthetic: responsive style map",
         "direction": "nodes-jsx-nodes",
         "pass": true
@@ -8629,7 +8654,7 @@
     {
       "id": "behaviour-state",
       "description": "Behaviour and state: no way to say that one element changes another.",
-      "matrixCells": 18,
+      "matrixCells": 8,
       "corpusChecks": 59,
       "fixtures": [
         "radix-accordion",
@@ -8640,7 +8665,7 @@
         "radix-dialog"
       ],
       "roundTripCases": 0,
-      "cost": 77
+      "cost": 67
     },
     {
       "id": "page-level-css",
@@ -8695,12 +8720,12 @@
     {
       "id": "canvas-editor-context",
       "description": "The contract passes on the published page, but the mounted editor changes the outcome: Space pans, a link does not navigate, and the editor's own main element stops a header inside it being a banner. Closing it takes an interact mode on the canvas.",
-      "matrixCells": 10,
+      "matrixCells": 15,
       "corpusChecks": 0,
       "fixtures": [],
       "onlyGapOf": [],
       "roundTripCases": 0,
-      "cost": 10
+      "cost": 15
     },
     {
       "id": "import-dynamic-logic",
@@ -9322,6 +9347,7 @@
       "alpha",
       "alt",
       "anchor",
+      "aria-autocomplete",
       "aria-controls",
       "aria-current",
       "aria-describedby",
@@ -9336,7 +9362,6 @@
       "aria-setsize",
       "aria-valuemax",
       "aria-valuemin",
-      "aria-valuenow",
       "autoCapitalize",
       "autoComplete",
       "autoCorrect",
@@ -9432,7 +9457,6 @@
       "popover",
       "popoverTarget",
       "popoverTargetAction",
-      "popovertarget",
       "poster",
       "preload",
       "readOnly",
@@ -9586,7 +9610,12 @@
       "tabs",
       "toolbar",
       "tooltip",
-      "carousel"
+      "carousel",
+      "menu-button",
+      "menubar",
+      "combobox",
+      "slider-multithumb",
+      "windowsplitter"
     ],
     "rawFieldRows": [
       "css-at-rule:@container",

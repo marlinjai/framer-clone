@@ -5,6 +5,11 @@
 import { PRESETS, type PresetNode } from '@/lib/behaviour/presets';
 import { addSlide, carousel } from '@/lib/behaviour/presets/carousel';
 import { addTab, tabs } from '@/lib/behaviour/presets/tabs';
+import { combobox as comboboxPreset } from '@/lib/behaviour/presets/combobox';
+import { menuButton as menuButtonPreset } from '@/lib/behaviour/presets/menu';
+import { menubar as menubarPreset } from '@/lib/behaviour/presets/menubar';
+import { multithumbSlider } from '@/lib/behaviour/presets/slider';
+import { splitter as splitterPreset } from '@/lib/behaviour/presets/splitter';
 import { behaviourOf, withProps } from '@/lib/behaviour/presets/nodes';
 
 type Props = Record<string, unknown>;
@@ -563,6 +568,17 @@ const PRESET_PAGES: Readonly<Record<string, () => StoredNode>> = {
   'preset-tooltip': presetPage(PRESETS.tooltip('hint')),
   'preset-carousel': presetPage(addSlide(carousel({ seed: 'show' }), 'Fourth slide')),
   'preset-carousel-rotating': presetPage(carousel({ seed: 'show', rotateMs: 1000 })),
+  'preset-menu-button': presetPage(menuButtonPreset({ seed: 'acts', items: ['Copy', 'Paste', 'Delete'] })),
+  'preset-menubar': presetPage(menubarPreset({
+    seed: 'bar',
+    menus: [
+      { title: 'File', href: '#file', items: [{ title: 'New', href: '#new' }, { title: 'Open', href: '#open' }] },
+      { title: 'Edit', href: '#edit', items: [{ title: 'Undo', href: '#undo' }, { title: 'Redo', href: '#redo' }] },
+    ],
+  })),
+  'preset-combobox': presetPage(comboboxPreset({ seed: 'city', options: ['Bern', 'Zurich', 'Basel', 'Geneva'] })),
+  'preset-range': presetPage(multithumbSlider({ seed: 'price', min: 0, max: 10, low: 2, high: 8 })),
+  'preset-splitter': presetPage(splitterPreset({ seed: 'split', at: 50 })),
 };
 
 export const PAGES: Readonly<Record<string, () => StoredNode>> = {
