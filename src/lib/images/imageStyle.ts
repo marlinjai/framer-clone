@@ -58,8 +58,13 @@ export function splitLayers(value: string): string[] {
 
 /** The URL inside one `url(...)` layer, without its quotes; undefined for any other layer. */
 export function urlOfLayer(layer: string): string | undefined {
-  const m = /^url\(\s*(['"]?)(.*?)\1\s*\)$/i.exec(layer.trim());
-  return m && m[2].trim() ? m[2].trim() : undefined;
+  // By hand: whitespace on both sides of a lazy body makes a pattern cubic on a stored value.
+  const text = layer.trim();
+  if (!/^url\(/i.test(text) || !text.endsWith(')')) return undefined;
+  const inner = text.slice(4, -1).trim();
+  const quoted = inner.length >= 2 && (inner[0] === '"' || inner[0] === "'") && inner.endsWith(inner[0]);
+  const url = (quoted ? inner.slice(1, -1) : inner).trim();
+  return url && !/[\r\n\p{Zl}\p{Zp}]/u.test(url) ? url : undefined;
 }
 
 /** The photo of a background: the URL of its first url() layer. */

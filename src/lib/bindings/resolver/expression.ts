@@ -16,10 +16,14 @@ export interface ParsedExpression {
   path: string[];
 }
 
-// Exactly one mustache pair wrapping a non-empty inner body. The inner body
-// is captured non-greedily and surrounding whitespace is trimmed below. The
-// `[^{}]` class forbids nested/extra braces.
-const MUSTACHE = /^\{\{\s*([^{}]+?)\s*\}\}$/;
+// Exactly one mustache pair wrapping a non-empty inner body, with surrounding
+// whitespace trimmed and no nested or extra braces. By hand, because a pattern
+// with whitespace on both sides of a lazy body is cubic on a stored value.
+function mustacheBody(text: string): string | null {
+  if (!text.startsWith('{{') || !text.endsWith('}}') || text.length < 4) return null;
+  const inner = text.slice(2, -2);
+  return inner.includes('{') || inner.includes('}') ? null : inner.trim();
+}
 
 // A dotted path of field segments and nothing else. A segment is one or more of
 // the characters that appear in a binding key: JS-identifier characters PLUS the
@@ -39,10 +43,8 @@ const PATH = /^[A-Za-z0-9_$-]+(?:\.[A-Za-z0-9_$-]+)*$/;
  */
 export function parseExpression(input: string): ParsedExpression | null {
   if (typeof input !== 'string') return null;
-  const match = MUSTACHE.exec(input.trim());
-  if (!match) return null;
-  const inner = match[1].trim();
-  if (!PATH.test(inner)) return null;
+  const inner = mustacheBody(input.trim());
+  if (!inner || !PATH.test(inner)) return null;
   return { raw: input, path: inner.split('.') };
 }
 

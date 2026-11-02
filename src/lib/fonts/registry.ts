@@ -247,7 +247,8 @@ export function parseFontFamilyList(value: string): string[] {
  * /line-height). Returns '' when no size token is found.
  */
 export function familiesFromFontShorthand(value: string): string {
-  const m = value.match(
+  // Whitespace collapsed first: runs of it and a line break make the pattern retry from every size token.
+  const m = value.replace(/\s+/g, ' ').trim().match(
     /(?:^|\s)(?:[\d.]+(?:px|em|rem|%|pt|vw|vh|ch|ex)|xx-small|x-small|small|medium|large|x-large|xx-large|xxx-large|smaller|larger)(?:\s*\/\s*[^\s]+)?\s+(.+)$/i,
   );
   return m ? m[1] : '';
