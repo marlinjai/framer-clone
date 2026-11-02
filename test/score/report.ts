@@ -151,10 +151,13 @@ export function buildScore(durationSeconds?: number): Score {
   Object.assign(results.ai, patterns.ai);
   Object.assign(results.panel, patternPanelCells(patterns, results.panel, detail));
 
-  // Nothing of the component format is built yet, so every promise fails on every surface.
+  // A promise nothing has measured yet fails, so it can never count as kept.
+  const measured = readOut<Partial<Record<Surface, SurfaceResults>>>('components');
   for (const entry of componentEntries()) {
     const key = rowKey(entry.kind, entry.id);
-    for (const surface of SURFACES) results[surface][key] = { status: 'fail', gap: 'reusable-components' };
+    for (const surface of SURFACES) {
+      results[surface][key] = measured[surface]?.[key] ?? { status: 'fail', gap: 'reusable-components' };
+    }
   }
 
   const entries = scoredEntries();

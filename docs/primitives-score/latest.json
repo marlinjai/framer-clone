@@ -1,22 +1,22 @@
 {
-  "generatedAt": "2026-11-02T00:27:30.687Z",
+  "generatedAt": "2026-11-02T00:31:00.499Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 228,
+  "durationSeconds": 149,
   "matrix": {
     "surfaces": {
       "format": {
-        "pass": 1695,
-        "fail": 151,
+        "pass": 1708,
+        "fail": 138,
         "notTested": 0,
         "total": 1846
       },
       "renderer": {
-        "pass": 1655,
-        "fail": 191,
+        "pass": 1668,
+        "fail": 178,
         "notTested": 0,
         "total": 1846
       },
@@ -490,14 +490,14 @@
       },
       "component": {
         "format": {
-          "pass": 0,
-          "fail": 30,
+          "pass": 13,
+          "fail": 17,
           "notTested": 0,
           "total": 30
         },
         "renderer": {
-          "pass": 0,
-          "fail": 30,
+          "pass": 13,
+          "fail": 17,
           "notTested": 0,
           "total": 30
         },
@@ -5021,13 +5021,13 @@
       "aria-pattern:treeview": "pass behaviour-state behaviour-state pass pass",
       "aria-pattern:treegrid": "pass behaviour-state behaviour-state pass pass",
       "aria-pattern:windowsplitter": "pass behaviour-state behaviour-state pass pass",
-      "component:text": "reusable-components reusable-components reusable-components reusable-components reusable-components",
-      "component:number": "reusable-components reusable-components reusable-components reusable-components reusable-components",
-      "component:toggle": "reusable-components reusable-components reusable-components reusable-components reusable-components",
-      "component:color": "reusable-components reusable-components reusable-components reusable-components reusable-components",
-      "component:image": "reusable-components reusable-components reusable-components reusable-components reusable-components",
-      "component:link": "reusable-components reusable-components reusable-components reusable-components reusable-components",
-      "component:choice": "reusable-components reusable-components reusable-components reusable-components reusable-components",
+      "component:text": "pass pass reusable-components reusable-components reusable-components",
+      "component:number": "pass pass reusable-components reusable-components reusable-components",
+      "component:toggle": "pass pass reusable-components reusable-components reusable-components",
+      "component:color": "pass pass reusable-components reusable-components reusable-components",
+      "component:image": "pass pass reusable-components reusable-components reusable-components",
+      "component:link": "pass pass reusable-components reusable-components reusable-components",
+      "component:choice": "pass pass reusable-components reusable-components reusable-components",
       "component:richtext": "reusable-components reusable-components reusable-components reusable-components reusable-components",
       "component:file": "reusable-components reusable-components reusable-components reusable-components reusable-components",
       "component:date": "reusable-components reusable-components reusable-components reusable-components reusable-components",
@@ -5038,12 +5038,12 @@
       "component:list": "reusable-components reusable-components reusable-components reusable-components reusable-components",
       "component:gallery": "reusable-components reusable-components reusable-components reusable-components reusable-components",
       "component:event": "reusable-components reusable-components reusable-components reusable-components reusable-components",
-      "component:definition": "reusable-components reusable-components reusable-components reusable-components reusable-components",
-      "component:placement": "reusable-components reusable-components reusable-components reusable-components reusable-components",
-      "component:placement-style": "reusable-components reusable-components reusable-components reusable-components reusable-components",
-      "component:nested": "reusable-components reusable-components reusable-components reusable-components reusable-components",
-      "component:cycle-refused": "reusable-components reusable-components reusable-components reusable-components reusable-components",
-      "component:collection-template": "reusable-components reusable-components reusable-components reusable-components reusable-components",
+      "component:definition": "pass pass reusable-components reusable-components reusable-components",
+      "component:placement": "pass pass reusable-components reusable-components reusable-components",
+      "component:placement-style": "pass pass reusable-components reusable-components reusable-components",
+      "component:nested": "pass pass reusable-components reusable-components reusable-components",
+      "component:cycle-refused": "pass pass reusable-components reusable-components reusable-components",
+      "component:collection-template": "pass pass reusable-components reusable-components reusable-components",
       "component:state-hover": "reusable-components reusable-components reusable-components reusable-components reusable-components",
       "component:state-pressed": "reusable-components reusable-components reusable-components reusable-components reusable-components",
       "component:state-focused": "reusable-components reusable-components reusable-components reusable-components reusable-components",
@@ -5197,7 +5197,7 @@
             "state": "half way through the animation",
             "check": "screenshot",
             "gap": "at-rules",
-            "detail": "0.59 percent of pixels differ"
+            "detail": "0.57 percent of pixels differ"
           },
           {
             "fixture": "keyframes",
@@ -6708,12 +6708,12 @@
     {
       "id": "reusable-components",
       "description": "A promise of the reusable component format (an input type, a placement, a state or an interaction) that this surface does not keep yet.",
-      "matrixCells": 150,
+      "matrixCells": 124,
       "corpusChecks": 0,
       "fixtures": [],
       "onlyGapOf": [],
       "roundTripCases": 0,
-      "cost": 150
+      "cost": 124
     },
     {
       "id": "ai-tag-allowlist",

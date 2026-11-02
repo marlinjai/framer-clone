@@ -44,6 +44,9 @@ function warnOnce(what: string): void {
  */
 export function isDroppedProp(name: string, value: unknown): boolean {
   if (name === 'dangerouslySetInnerHTML') return true;
+  // What expansion records on a placement root for hydration. A string stays the
+  // plain attribute it has always been.
+  if (name === 'instance' && typeof value === 'object') return true;
   if (/^on/i.test(name)) return typeof value !== 'function';
   if (isScriptDestination(name, value)) return true;
   return name.toLowerCase() === 'attributename' && typeof value === 'string' && ANIMATION_TARGET_BLOCKED.test(value.trim());

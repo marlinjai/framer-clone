@@ -163,7 +163,7 @@ describe('parity corpus', () => {
 
     for (const fixture of FIXTURES) {
       const original = await originalDocument(fixture);
-      const replica = publishedDocument(renderPublished(fixture.tree()));
+      const replica = publishedDocument(fixture.published ? await fixture.published() : renderPublished(fixture.tree()));
       const failures: CorpusFailure[] = [];
       const checks: CorpusResult['checks'] = {
         screenshot: { pass: 0, total: 0 },

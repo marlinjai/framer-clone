@@ -17,7 +17,7 @@
 import { withDefaultViewports } from '@/lib/canvas/defaultViewports';
 import { isStickyCta } from '@/lib/stickyCta/stickyCta';
 import { inputDefinitionRefusal, type InputDefinition } from './inputs';
-import { COMPONENT_LIMITS } from './placement';
+import { COMPONENT_LIMITS, serializedBytes } from './placement';
 import type { PageSnapshotOut } from '@/models/PageModel';
 
 export type StateKind = 'hover' | 'pressed' | 'focused' | 'custom';
@@ -73,11 +73,6 @@ const STATE_ID = /^(?!fc[-_])[A-Za-z0-9_-]{1,64}$/i;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
-
-/** Serialised size in bytes, which is what the render budget charges. */
-export function serializedBytes(value: unknown): number {
-  return new TextEncoder().encode(JSON.stringify(value) ?? '').length;
-}
 
 function holdsStickyBar(node: Record<string, unknown>): boolean {
   if (isStickyCta(node.props)) return true;

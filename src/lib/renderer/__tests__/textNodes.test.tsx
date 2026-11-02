@@ -163,7 +163,7 @@ describe('text nodes through the publish chain', () => {
   it('survives the page snapshot adaptor field for field', () => {
     const adapted = snapshotToComponentNode({
       appComponentTree: el('p1', 'p', {}, [text('t1', 'Hello '), el('b1', 'strong', { children: 'bold' }), text('t2', '')]),
-    } as any);
+    } as any, {});
     expect(adapted.root!.children).toEqual([
       { type: '#text', id: 't1', props: { children: 'Hello ' } },
       { type: 'strong', id: 'b1', props: { children: 'bold' } },

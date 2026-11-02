@@ -74,13 +74,22 @@ export interface AvailabilityFrame {
   availability: AvailabilityDTO;
 }
 
+/** An input frame holds the values one placement passes to its definition.
+ *  `{{input.title}}` resolves against the innermost one, and it is always
+ *  complete: a value is the placement's own or the input's default. */
+export interface InputFrame {
+  kind: 'input';
+  values: Record<string, unknown>;
+}
+
 export type BindingFrame =
   | RowFrame
   | CollectionFrame
   | PageFrame
   | ProductFrame
   | VariantFrame
-  | AvailabilityFrame;
+  | AvailabilityFrame
+  | InputFrame;
 
 /** A scope is an ordered stack of frames. Later frames are INNERMOST: a
  *  single-segment expression and a `{{row.*}}` lookup resolve against the
@@ -152,6 +161,14 @@ export function pushAvailabilityFrame(
   };
 }
 
+/** Push an input frame, returning a NEW immutable scope. Drives `{{input.*}}`. */
+export function pushInputFrame(
+  scope: BindingScope,
+  values: Record<string, unknown>,
+): BindingScope {
+  return { frames: [...scope.frames, { kind: 'input', values }] };
+}
+
 /** Find the innermost frame of a given kind, or undefined. */
 function findFrame<K extends BindingFrame['kind']>(
   scope: BindingScope,
@@ -192,6 +209,7 @@ function getNested(root: unknown, segments: string[]): unknown {
  *   `price.*` root)
  * - `['availability', ...]` -> innermost availability frame, rest against it
  *   (advisory / display-only)
+ * - `['input', id, ...]`   -> innermost input frame, when there is one
  * - anything else (e.g. `['title']`) -> innermost row frame, whole path
  *   against row.values (single-segment sugar)
  */
@@ -235,6 +253,11 @@ export function lookup(scope: BindingScope, path: string[]): unknown {
   if (head === 'availability') {
     const frame = findFrame(scope, 'availability');
     return frame ? getNested(frame.availability, rest) : undefined;
+  }
+
+  if (head === 'input' && rest.length > 0) {
+    const frame = findFrame(scope, 'input');
+    if (frame) return getNested(frame.values, rest);
   }
 
   // Single-segment / unqualified path: resolve against the innermost row's

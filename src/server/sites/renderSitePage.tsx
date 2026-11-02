@@ -99,6 +99,7 @@ export async function renderSitePage({ site, matched, adapted, jsonLd }: RenderS
   //     fails loudly on a misconfigured COMMERCE_APP_DATABASE_URL.
   const { body } = await renderPublishedPage({
     root: adapted.root,
+    budget: adapted.budget,
     pageParams: matched.params,
     cmsRepo: getPublishedCmsRepository(site.workspaceId),
     commerceRepo: await commerceRepoForSite(site, adapted.root),

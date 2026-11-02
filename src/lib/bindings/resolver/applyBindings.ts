@@ -10,7 +10,8 @@
 import type { BindingsRecord, ReadBinding } from '@/lib/bindings/types';
 import type { BindingScope } from './scope';
 import { evaluateExpression, parseExpression } from './expression';
-import { safeHrefFromData } from '@/lib/links/safeHref';
+import { isSafeSrc, safeHrefFromData } from '@/lib/links/safeHref';
+import { cssValueText, isStyleMap, unsafeDeclaration } from '@/lib/responsive/responsiveCss';
 
 /** A render-time props bag. Mirrors ComponentModel's PropsRecord without
  *  importing the (React-coupled) model. */
@@ -69,6 +70,38 @@ function setDeep(target: Props, path: string[], value: unknown): void {
   cursor[path[path.length - 1]] = value;
 }
 
+const warnedStyles = new Set<string>();
+
+function warnRefusedStyle(slot: string): void {
+  if (warnedStyles.has(slot)) return;
+  warnedStyles.add(slot);
+  console.warn(`[bindings] left out a bound value of ${slot}: it would break out of its declaration`);
+}
+
+/**
+ * A bound style value is checked as the stylesheet checks its own. A node with
+ * only plain styles goes inline through React, which writes a value as it is, so
+ * `red;background:url(https://track.example/x)` from a CMS cell would reach the
+ * page. A responsive map, from a colour input, is checked per value.
+ */
+function isSafeBoundStyle(key: string, value: unknown): boolean {
+  if (key.includes('.')) return true;
+  const values = isStyleMap(value) ? Object.values(value) : [value];
+  return values.every(entry => unsafeDeclaration(key, cssValueText(key, entry)) === null);
+}
+
+/** `{{input.image}}` or `{{input.image.src}}` on a background: an address, which CSS wants inside url(). */
+function backgroundFromInput(value: unknown): unknown {
+  const src = isStyleMap(value) ? value.src : value;
+  if (typeof src !== 'string' || !isSafeSrc(src)) return value;
+  return `url("${src.trim().replace(/"/g, '%22')}")`;
+}
+
+/** True when a binding reads the input frame. */
+export function readsInput(binding: ReadBinding): boolean {
+  return parseExpression(binding.expression)?.path[0] === 'input';
+}
+
 /**
  * Apply a node's READ bindings to its props against a scope.
  *
@@ -81,6 +114,9 @@ function setDeep(target: Props, path: string[], value: unknown): void {
  *   left as the base value.
  * - The `href` slot only takes a safe link target (safeHrefFromData); anything
  *   else leaves the base value.
+ * - A `style.*` slot only takes a value the stylesheet would take; anything else
+ *   leaves the base value, with a warning.
+ * - The `visible` slot is not a prop: the renderer reads it (hydrateBindings).
  *
  * Non-read bindings (`write` / `two-way`) are ignored in Phase 1. The input
  * `baseProps` is never mutated; a shallow-then-deep copy is returned.
@@ -95,9 +131,10 @@ export function applyBindings(
 
   const bindings = node.bindings ?? {};
   for (const [slot, entry] of Object.entries(bindings)) {
-    if (!entry || entry.mode !== 'read') continue;
+    if (!entry || entry.mode !== 'read' || slot === 'visible') continue;
 
-    const value = resolveBinding(scope, entry);
+    const resolved = resolveBinding(scope, entry);
+    const value = slot === 'style.backgroundImage' && readsInput(entry) ? backgroundFromInput(resolved) : resolved;
     if (value === LOADING_SENTINEL) {
       isLoading = true;
       continue;
@@ -109,6 +146,11 @@ export function applyBindings(
     if (slot === 'href') {
       const href = safeHrefFromData(value);
       if (href !== null) resolvedProps.href = href;
+      continue;
+    }
+
+    if (slot.startsWith('style.') && !isSafeBoundStyle(slot.slice('style.'.length), value)) {
+      warnRefusedStyle(slot);
       continue;
     }
 

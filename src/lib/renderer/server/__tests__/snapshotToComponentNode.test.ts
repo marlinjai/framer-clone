@@ -88,6 +88,7 @@ describe('snapshotToComponentNode', () => {
           vp1: comp({ id: 'vp1', type: 'div', canvasNodeType: 'viewport' }),
         },
       }),
+      {},
     );
 
     expect(adapted.slug).toBe('about');
@@ -111,6 +112,7 @@ describe('snapshotToComponentNode', () => {
   it('returns root null when the snapshot has no app component tree', () => {
     const adapted = snapshotToComponentNode(
       page({ appComponentTree: undefined }),
+      {},
     );
     expect(adapted.root).toBeNull();
   });
