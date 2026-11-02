@@ -57,6 +57,9 @@ const RightSidebar = observer(({ variant = 'docked' }: RightSidebarProps) => {
   const category = target ? getComponentCategory(target) : null;
   const sections = category ? SECTION_MAP[category] : [];
 
+  // A definition is text, and the switch holds its editor: no size field means anything for it.
+  const editsDefinition = editorUI.activeRuleIsDefinition;
+
   return (
     <div className={isSheet ? 'bg-background flex flex-col h-full w-full' : `
       bg-background border-l border-border flex flex-col transition-all duration-300 ease-in-out h-[calc(100vh-4rem)]
@@ -74,7 +77,7 @@ const RightSidebar = observer(({ variant = 'docked' }: RightSidebarProps) => {
         // (PropertyRow's minmax(0,1fr) track), sections own their 12px inset.
         <div className="flex-1 overflow-y-auto overflow-x-hidden">
           <div className="min-w-0">
-            {target ? (
+            {editsDefinition ? null : target ? (
               <>
                 {/* Text first for every element that holds its own text: on a
                     phone this field is the dependable way to change text (a

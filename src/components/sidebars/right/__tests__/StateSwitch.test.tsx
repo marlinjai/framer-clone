@@ -129,7 +129,7 @@ describe('the switch', () => {
 
   it('is larger in the phone sheet', () => {
     mountPanel('sheet');
-    expect(screen.getByRole('radiogroup').className).toContain('h-11');
+    expect(radio(/Normal/).parentElement?.className).toContain('h-11');
   });
 });
 

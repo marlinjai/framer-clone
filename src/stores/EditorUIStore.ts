@@ -8,7 +8,7 @@ import ComponentModel, { ComponentInstance } from '../models/ComponentModel';
 import { LEFT_SIDEBAR_DEFAULT_WIDTH, clampLeftSidebarWidth } from '@/lib/layers/sidebarWidth';
 import { isTextNodeType } from '@/lib/renderer/textNode';
 import { isDefinitionRule, storedRulesOf } from '@/lib/rules/rules';
-import { findRuleIndex, namedState, namedStateOf } from '@/lib/rules/states';
+import { findRuleIndex, namedState, ruleLabel } from '@/lib/rules/states';
 // Removed BreakpointModel - breakpoints are now viewport nodes
 
 // Available tools in our design editor (expanded from basic ToolStore)
@@ -449,9 +449,16 @@ const EditorUIStore = types.model('EditorUI', {
     if (!id) return undefined;
     const rules = this.ruleTarget ? storedRulesOf(this.ruleTarget.props) : [];
     const rule = rules[findRuleIndex(rules, id)];
-    const state = namedState(id) ?? (rule && namedStateOf(rule));
-    if (state) return state.label;
-    return rule && !isDefinitionRule(rule) ? rule.selector : 'Rule';
+    return rule ? ruleLabel(rule) : namedState(id)?.label;
+  },
+
+  /** True when the state being edited is a definition, which opens as text. */
+  get activeRuleIsDefinition(): boolean {
+    const id = self.activeRule;
+    if (!id || !this.ruleTarget) return false;
+    const rules = storedRulesOf(this.ruleTarget.props);
+    const rule = rules[findRuleIndex(rules, id)];
+    return !!rule && isDefinitionRule(rule);
   },
 
   /** True when the component is part of the selection (primary or extra). */

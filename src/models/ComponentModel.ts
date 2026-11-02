@@ -94,6 +94,26 @@ function withRules(props: Record<string, any>, rules: StoredRule[]): Record<stri
   return next;
 }
 
+/** The checks of adding rules to a node, and the write when all of them pass. */
+function addStoredRules(node: { type: string; props?: Record<string, any> | null; id: string } & Record<string, any>, added: readonly NewRule[]): RuleWrite {
+  const refusal = refuseRules(node.type);
+  if (refusal) return refusal;
+  const currentProps = node.props || {};
+  const list = [...storedRulesOf(currentProps)];
+  for (const rule of added) {
+    if (list.length >= MAX_RULES_PER_NODE) return { ok: false, reason: `A node holds at most ${MAX_RULES_PER_NODE} rules.` };
+    const stored = { ...rule, id: rule.id ?? uuidv4().slice(0, 8) } as StoredRule;
+    if (list.some((other) => other.id === stored.id)) return { ok: false, reason: 'Another rule on this node has the same id.' };
+    const state = namedStateOf(stored);
+    if (state && list.some((other) => namedStateOf(other) === state)) return { ok: false, reason: `${state.label} already exists on this node.` };
+    const parsed = parseRule(stored);
+    if (!parsed.ok) return parsed;
+    list.push(stored);
+  }
+  node.props = withRules(currentProps, orderRules(list));
+  return { ok: true };
+}
+
 export { CSS_PROP_SET };
 
 /** A breakpoint of the page a component lives on: a viewport frame's id, min width and label. */
@@ -627,18 +647,25 @@ const ComponentModel: any = ComponentBase
     // Add one rule, as the panel or an import has it. It goes through the parser,
     // so nothing refused is stored. A rule without an id is given one.
     addRule(rule: NewRule): RuleWrite {
-      const refusal = refuseRules(self.type);
-      if (refusal) return refusal;
+      return addStoredRules(self, [rule]);
+    },
+
+    // Several rules from one paste: all of them or none, and one undo step.
+    addRules(rules: readonly NewRule[]): RuleWrite {
+      return addStoredRules(self, rules);
+    },
+
+    // Replace a rule with what it was edited into, as text. The id stays, so the
+    // rule keeps its place in the switch. A refused edit leaves the rule as it was.
+    replaceRule(ruleId: string, rule: NewRule): RuleWrite {
       const currentProps = self.props || {};
       const rules = storedRulesOf(currentProps);
-      if (rules.length >= MAX_RULES_PER_NODE) return { ok: false, reason: `A node holds at most ${MAX_RULES_PER_NODE} rules.` };
-      const stored = { ...rule, id: rule.id ?? uuidv4().slice(0, 8) } as StoredRule;
-      if (rules.some((other) => other.id === stored.id)) return { ok: false, reason: 'Another rule on this node has the same id.' };
-      const state = namedStateOf(stored);
-      if (state && rules.some((other) => namedStateOf(other) === state)) return { ok: false, reason: `${state.label} already exists on this node.` };
+      const index = findRuleIndex(rules, ruleId);
+      if (index === -1) return { ok: false, reason: 'That rule no longer exists.' };
+      const stored = { ...rule, id: rules[index].id } as StoredRule;
       const parsed = parseRule(stored);
       if (!parsed.ok) return parsed;
-      self.props = withRules(currentProps, orderRules([...rules, stored]));
+      self.props = withRules(currentProps, orderRules(rules.map((existing, i) => (i === index ? stored : existing))));
       return { ok: true };
     },
 
