@@ -47,7 +47,7 @@ const isSitePath = (value: unknown): boolean =>
   typeof value === 'string' && value.startsWith('/') && !value.startsWith('//');
 
 /** True when every address in this image, gallery or file value is the site's own. */
-function sitePathsOnly(type: string, value: unknown): boolean {
+export function sitePathsOnly(type: string, value: unknown): boolean {
   if (type === 'file') return isSitePath(value);
   const srcOf = (entry: unknown) => (typeof entry === 'string' ? entry : isRecord(entry) ? entry.src : undefined);
   if (type === 'image') return isSitePath(srcOf(value));

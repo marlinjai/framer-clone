@@ -70,6 +70,9 @@ import { TEXT_NODE_TYPE, refusesBareText } from '@/lib/renderer/textNode';
 import { PLACEMENT_TYPE } from '@/lib/components/placement';
 import type { GenerationComponents } from '@/lib/components/summaries';
 import { checkPlacement, isPlacementInput } from './validatePlacement';
+import { checkBindings, checkDefinitionHead, GENERATED_DEFINITIONS_MAX } from './validateDefinition';
+import { holdsInteractive, placedDefinitionIds } from '@/lib/components/definition';
+import type { InputDefinition } from '@/lib/components/inputs';
 import { formPropKeysFor, presetFormKind, sanitizeGeneratedFormProps } from '@/lib/forms/generation';
 import {
   BASE_KEY,
@@ -144,6 +147,18 @@ export interface GeneratedNodeSnapshot {
   props: Record<string, unknown>;
   children: GeneratedNodeSnapshot[];
   parentId?: string;
+  /** Only inside a generated definition: its own inputs read into a slot (validateDefinition.ts). */
+  bindings?: Record<string, { mode: 'read'; expression: string }>;
+}
+
+/** A component the generator wrote for repeated structure (validateDefinition.ts). */
+export interface GeneratedDefinition {
+  id: string;
+  name: string;
+  description?: string;
+  inputs: InputDefinition[];
+  /** Keyed by breakpoint keys, like every generated node. */
+  root: GeneratedNodeSnapshot;
 }
 
 /** Unsplash's orientation filter values. */
@@ -173,6 +188,8 @@ export interface GenerationResult {
   title?: string;
   description?: string;
   nodes: GeneratedNodeSnapshot[];
+  /** Components written for this generation, each placed at least twice in it. */
+  definitions?: GeneratedDefinition[];
   warnings: string[];
   stats: { nodeCount: number; maxDepth: number };
   /** Images to resolve to stock photos, in page order. */
@@ -224,7 +241,7 @@ type StylePlace = 'photo' | 'plain' | 'rule';
 
 /** Keys the model may send that we silently ignore because the editor owns them. */
 const OWNED_KEYS = new Set(['id', 'componentType', 'canvasNodeType', 'parentId']);
-const NODE_KEYS = new Set(['type', 'preset', 'label', 'props', 'children']);
+const NODE_KEYS = new Set(['type', 'preset', 'label', 'props', 'children', 'bindings']);
 
 /**
  * Characters that let one style value escape into more CSS when a renderer or
@@ -494,8 +511,10 @@ class Validator {
   private readonly orderedKeys: string[];
   private readonly newId: () => string;
 
-  /** The site's components, for placements. */
-  private readonly components: GenerationComponents | undefined;
+  /** The site's components, for placements, and those this generation writes. */
+  components: GenerationComponents | undefined;
+  /** The inputs of the definition being read, whose bindings a node may hold. */
+  definitionInputs: InputDefinition[] | null = null;
   /** The tags above the node being read, nearest first. */
   private readonly tagStack: string[] = [];
 
@@ -1350,7 +1369,85 @@ class Validator {
       children,
     };
     if (parentId) snapshot.parentId = parentId;
+    if (raw.bindings !== undefined) {
+      if (!this.definitionInputs) {
+        this.warn(path, 'bindings connect data, which is a person\'s to do: only a component written here reads its own inputs, dropped');
+      } else {
+        const { bindings, problems } = checkBindings(raw.bindings, this.definitionInputs);
+        for (const problem of problems) this.warn(path, problem);
+        if (Object.keys(bindings).length > 0) snapshot.bindings = bindings;
+      }
+    }
     return [snapshot];
+  }
+
+  /**
+   * The components this generation writes, before its nodes: each head checked, its
+   * root read as any node is, with its own inputs in reach of bindings. Each joins the
+   * components a placement may name. A refusal is an error, so the model writes again.
+   */
+  definitions(raw: unknown): GeneratedDefinition[] {
+    if (raw === undefined) return [];
+    if (!Array.isArray(raw)) {
+      this.fail('definitions', 'definitions must be a list');
+      return [];
+    }
+    if (raw.length > GENERATED_DEFINITIONS_MAX) {
+      this.fail('definitions', `at most ${GENERATED_DEFINITIONS_MAX} components in one generation`);
+      return [];
+    }
+    const summaries = [...(this.components?.summaries ?? [])];
+    const taken = new Set(summaries.map((summary) => summary.name.toLowerCase()));
+    const out: GeneratedDefinition[] = [];
+    raw.forEach((entry, index) => {
+      const path = `definitions[${index}]`;
+      const head = checkDefinitionHead(entry, taken);
+      if (!head.ok) {
+        this.fail(path, head.reason);
+        return;
+      }
+      const rawRoot = (entry as Record<string, unknown>).root;
+      if (isTextNodeInput(rawRoot) || isPlacementInput(rawRoot)) {
+        this.fail(path, `${head.name}: its root is an element, not text or another component`);
+        return;
+      }
+      // Its own content: what stands around the generation's target is not around it.
+      const around = this.components;
+      this.components = { summaries };
+      this.definitionInputs = head.inputs;
+      let root: GeneratedNodeSnapshot | undefined;
+      const requested = this.imageRequests.length;
+      try {
+        root = this.node(rawRoot, `${path}.root`, 1)[0];
+        // A stock photo is found for a page's nodes only: in a component, a picture is
+        // what its Image input gives each placement.
+        if (this.imageRequests.length > requested) {
+          this.imageRequests.splice(requested);
+          this.warn(path, `${head.name}: a picture in a component comes from an Image input, so its photo search was dropped`);
+        }
+      } finally {
+        this.definitionInputs = null;
+        this.components = around;
+      }
+      if (!root) {
+        this.fail(path, `${head.name}: its root was dropped`);
+        return;
+      }
+      taken.add(head.name.toLowerCase());
+      const id = `generated-${this.newId()}`;
+      out.push({ id, name: head.name, ...(head.description ? { description: head.description } : {}), inputs: head.inputs, root });
+      summaries.push({
+        id,
+        name: head.name,
+        inputs: head.inputs,
+        states: [],
+        rootTag: root.type,
+        holdsInteractive: holdsInteractive(root, {}),
+        places: [...new Set(placedDefinitionIds(root))],
+      });
+    });
+    this.components = { ...(this.components ?? {}), summaries };
+    return out;
   }
 }
 
@@ -1834,6 +1931,8 @@ export function validateGeneration(raw: unknown, ctx: ValidateContext): Validati
     return { ok: false, errors: [`output of ${size} characters exceeds the limit of ${GENERATION_LIMITS.maxGenerationChars}: produce a smaller page`], warnings: [] };
   }
 
+  // Components written here come first, so a node may place them by name.
+  const definitions = v.definitions(raw.definitions);
   const parsed: GeneratedNodeSnapshot[] = [];
   raw.nodes.forEach((n, i) => parsed.push(...v.node(n, `nodes[${i}]`, 1)));
   // Decided before any svg is dropped: a page past the limit was cut short, and must not pass for being under it.
@@ -1875,6 +1974,32 @@ export function validateGeneration(raw: unknown, ctx: ValidateContext): Validati
     });
   }
 
+  // A component is for structure repeated at least twice, in the nodes or in another of these.
+  if (v.errors.length === 0) {
+    const placements = new Map<string, number>();
+    const count = (node: GeneratedNodeSnapshot): void => {
+      if (node.type === PLACEMENT_TYPE) {
+        const component = String(node.props.component);
+        placements.set(component, (placements.get(component) ?? 0) + 1);
+      }
+      node.children.forEach(count);
+    };
+    nodes.forEach(count);
+    definitions.forEach((definition) => count(definition.root));
+    for (const definition of definitions) {
+      if ((placements.get(definition.id) ?? 0) < 2) {
+        v.errors.push(`component ${definition.name} is placed ${placements.get(definition.id) ?? 0} times: a component is for structure repeated at least twice, so write that content in place`);
+      }
+    }
+    definitions.forEach((definition, i) => {
+      try {
+        ComponentModel.create(definition.root);
+      } catch (err) {
+        v.errors.push(`definitions[${i}].root: rejected by the editor model (${err instanceof Error ? err.message.split('\n')[0] : 'invalid snapshot'})`);
+      }
+    });
+  }
+
   if (v.errors.length > 0) return { ok: false, errors: v.errors, warnings: v.warnings };
 
   const title = typeof raw.title === 'string' && raw.title.trim() ? raw.title.trim().slice(0, 120) : undefined;
@@ -1887,6 +2012,7 @@ export function validateGeneration(raw: unknown, ctx: ValidateContext): Validati
       ...(title ? { title } : {}),
       ...(description ? { description } : {}),
       nodes,
+      ...(definitions.length > 0 ? { definitions } : {}),
       warnings: v.warnings,
       stats: { nodeCount: v.nodeCount, maxDepth: v.maxDepth },
       imageRequests: v.imageRequests,

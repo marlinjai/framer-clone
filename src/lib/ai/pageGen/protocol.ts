@@ -4,7 +4,7 @@
 // editor's Generate page dialog (client). No server-only imports.
 
 import type { GenerationComponents } from '@/lib/components/summaries';
-import type { GeneratedNodeSnapshot } from './validate';
+import type { GeneratedDefinition, GeneratedNodeSnapshot } from './validate';
 import type { BreakpointInput } from './schema';
 import { MODEL_CHOICES, type ModelChoice } from '@/lib/ai/modelChoice';
 import type { SiteContext } from './promptSections/siteContext';
@@ -67,6 +67,8 @@ export interface PageGenResultPayload {
   title?: string;
   description?: string;
   nodes: GeneratedNodeSnapshot[];
+  /** Components the generation wrote, placed at least twice in `nodes` (validateDefinition.ts). */
+  definitions?: GeneratedDefinition[];
   /** Automatic fixes: the validator's repairs plus the design tells fixed (./tells.ts). */
   warnings: string[];
   /**

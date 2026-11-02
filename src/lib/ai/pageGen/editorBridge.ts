@@ -17,6 +17,7 @@ import { DEFAULT_VIEWPORTS } from '@/lib/canvas/defaultViewports';
 import { getHistoryStore } from '@/stores/RootStore';
 import {
   breakpointKeyMap,
+  toEditorDefinitions,
   toEditorSnapshot,
   type ApplyOutcome,
   type GenerationUndoRecord,
@@ -220,17 +221,29 @@ export function applyResult(
 ): ApplyOutcome<AppliedGeneration> {
   const keyMap = breakpointKeyMap(target.breakpoints);
   const snapshots = result.nodes.map(n => toEditorSnapshot(n, keyMap));
+  // The components it wrote go in with the nodes that place them, in the same action.
+  const definitions = toEditorDefinitions(result.definitions, keyMap);
+  const definitionIds = definitions.map(definition => definition.id);
+  const refused = project.generatedDefinitionsRefusal(definitions);
+  if (refused) return { ok: false, reason: refused };
   if (target.kind === 'newPage') {
     const page = project.addGeneratedPage({
       title: fallbackTitle?.trim() || result.title || 'Generated page',
       description: result.description,
       sections: snapshots,
       viewports: target.viewports,
+      definitions,
     });
     return {
       ok: true,
       value: {
-        record: { kind: 'newPage', generationId: result.generationId, pageId: page.id, previousPageId: target.pageId },
+        record: {
+          kind: 'newPage',
+          generationId: result.generationId,
+          pageId: page.id,
+          previousPageId: target.pageId,
+          ...(definitionIds.length > 0 ? { definitionIds } : {}),
+        },
         pageId: page.id,
         selectId: snapshots[0]?.id as string | undefined,
       },
@@ -239,7 +252,15 @@ export function applyResult(
   const page = project.findPageById(target.pageId);
   if (!page) return { ok: false, reason: 'The page this was generated for no longer exists.' };
   if (!target.componentId) return { ok: false, reason: 'No component was selected.' };
-  const outcome = page.applyGeneratedNodes(target.kind, target.componentId, snapshots, result.generationId);
+  const outcome = project.applyGeneration({
+    pageId: page.id,
+    mode: target.kind,
+    targetId: target.componentId,
+    snapshots,
+    generationId: result.generationId,
+    definitions,
+    pageBreakpoints: target.breakpoints,
+  });
   if (!outcome.ok) return outcome;
   return { ok: true, value: { record: outcome.value, pageId: page.id, selectId: snapshots[0]?.id as string | undefined } };
 }
@@ -260,11 +281,15 @@ export function undoGeneration(
       record.previousPageId && project.getPage(record.previousPageId)
         ? record.previousPageId
         : project.pagesArray.find(p => p.id !== record.pageId)?.id;
+    // With the components it wrote, in one action (ProjectModel.revertGeneration).
+    if (record.definitionIds?.length) {
+      const outcome = project.revertGeneration(record);
+      if (outcome.ok) onPageRemoved?.(fallback);
+      return outcome;
+    }
     onPageRemoved?.(fallback);
     project.removePage(record.pageId);
     return { ok: true, value: null };
   }
-  const page = project.findPageById(record.pageId);
-  if (!page) return { ok: false, reason: 'The page was removed.' };
-  return page.revertGeneration(record);
+  return project.revertGeneration(record);
 }

@@ -12,7 +12,7 @@
 import type { ComponentSnapshotIn } from '@/models/ComponentModel';
 import { isRuleList } from '@/lib/rules/rules';
 import { BASE_KEY, deriveBreakpointKeys, type BreakpointInput } from './schema';
-import type { GeneratedNodeSnapshot } from './validate';
+import type { GeneratedDefinition, GeneratedNodeSnapshot } from './validate';
 
 /** A breakpoint as the editor has it: the input the route saw, plus its real id. */
 export interface PageBreakpoint extends BreakpointInput {
@@ -78,8 +78,29 @@ export function toEditorSnapshot(
   } as ComponentSnapshotIn;
 }
 
-/** Everything needed to reverse one applied generation (kept by the dialog). */
-export type GenerationUndoRecord =
+/**
+ * A component written by the generation, with its root keyed by the PAGE's breakpoint
+ * ids, as every generated node is after toEditorSnapshot. The project maps it onto the
+ * definition's own frames by width when it adds it (addGeneratedComponents).
+ */
+export interface GeneratedDefinitionSnapshot {
+  id: string;
+  name: string;
+  description?: string;
+  inputs: GeneratedDefinition['inputs'];
+  root: ComponentSnapshotIn;
+}
+
+/** Each generated definition with its root keyed to real breakpoint ids. */
+export function toEditorDefinitions(definitions: readonly GeneratedDefinition[] | undefined, keyMap: Map<string, string>): GeneratedDefinitionSnapshot[] {
+  return (definitions ?? []).map(({ root, ...rest }) => ({ ...rest, root: toEditorSnapshot(root, keyMap) }));
+}
+
+/**
+ * Everything needed to reverse one applied generation (kept by the dialog). The
+ * components it wrote go with it (`definitionIds`), or a revert would leave them behind.
+ */
+export type GenerationUndoRecord = (
   | { kind: 'newPage'; generationId: string; pageId: string; previousPageId?: string }
   | {
       kind: 'insert';
@@ -104,6 +125,7 @@ export type GenerationUndoRecord =
       rootId: string;
       previousChildren: ComponentSnapshotIn[];
       insertedIds: string[];
-    };
+    }
+) & { definitionIds?: string[] };
 
 export type ApplyOutcome<T> = { ok: true; value: T } | { ok: false; reason: string };

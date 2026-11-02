@@ -50,3 +50,21 @@ export function componentsText(summaries: readonly ComponentSummary[]): string {
     '- Place the same component several times for repeated content, each with its own inputs.',
   ].join('\n');
 }
+
+/**
+ * How the generator writes a component of its own, for structure it repeats. Always
+ * in the request part: a site with no components is where this matters most. The
+ * validator (../validateDefinition.ts) refuses what this does not allow.
+ */
+export function writingComponentsText(max: number): string {
+  return [
+    '## Writing a component',
+    '',
+    `When the page repeats the same structure at least twice (pricing cards, team members, testimonials), you may write it once as a component in "definitions" (at most ${max}) and place it, instead of copying the nodes:`,
+    '- A definition is { "name": "Pricing card", "description": "<one sentence>", "inputs": [ { "id": "title", "name": "Title", "type": "text", "default": "Starter" } ], "root": <one element node> }. Input types: text, richtext, number, toggle, color, image, link, choice (with "options": [{ "label", "value" }]).',
+    '- Inside its root, a node shows an input through "bindings": { "children": "{{input.title}}" } for text, { "visible": "{{input.featured}}" } for a toggle, { "src": "{{input.photo.src}}", "alt": "{{input.photo.alt}}" } for an image, { "href": "{{input.link}}" } for a link, { "style.backgroundColor": "{{input.accent}}" } for a colour. Bindings are allowed nowhere else, and a component gets no imageQuery: its pictures come from an image input.',
+    '- Give each input a "default" so the component reads well on its own.',
+    '- Place it where it goes with { "type": "#component", "name": "Pricing card", "inputs": { "title": "Pro" } }, at least twice. A component placed once is refused: write that content in place.',
+    '- Its name must differ from the components the site already has.',
+  ].join('\n');
+}

@@ -15,7 +15,8 @@ import { BASE_KEY, type BreakpointKey } from './schema';
 import type { PageGenTarget } from './protocol';
 import { siteContextText, type SiteContext } from './promptSections/siteContext';
 import { legalLinksText } from './promptSections/legalLinks';
-import { componentsText } from './promptSections/components';
+import { componentsText, writingComponentsText } from './promptSections/components';
+import { GENERATED_DEFINITIONS_MAX } from './validateDefinition';
 import type { ComponentSummary } from '@/lib/components/summaries';
 
 export const EMIT_TOOL_NAME = 'emit_page';
@@ -176,6 +177,21 @@ export function emitPageTool(): BetaTool {
           },
         },
       },
+        definitions: {
+          type: 'array',
+          description: 'Components written for structure repeated at least twice, each placed by name in nodes. See "Writing a component".',
+          items: {
+            type: 'object',
+            properties: {
+              name: { type: 'string' },
+              description: { type: 'string' },
+              inputs: { type: 'array', items: { type: 'object' } },
+              root: { type: 'object' },
+            },
+            required: ['name', 'root'],
+          },
+        },
+      },
       required: ['nodes'],
     },
     // Stream the (large) tool input as it is generated, so the dialog can show
@@ -231,6 +247,7 @@ export function requestContextText(input: RequestContextInput): string {
   if (input.siteContext?.legalLinks?.length) lines.push('', legalLinksText(input.siteContext.legalLinks));
   const components = componentsText(input.components ?? []);
   if (components) lines.push('', components);
+  lines.push('', writingComponentsText(GENERATED_DEFINITIONS_MAX));
   return lines.join('\n');
 }
 

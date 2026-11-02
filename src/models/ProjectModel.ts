@@ -34,6 +34,7 @@ import { v4 as uuidv4 } from 'uuid';
 import PageModel, { PageModelType, type InsertTarget } from './PageModel';
 import { ComponentDefinitionModel, parseModelComponents, type ComponentDefinitionInstance } from './ComponentDefinitionModel';
 import { takeBackRefusedEdit } from '@/stores/HistoryStore';
+import type { ApplyOutcome, GeneratedDefinitionSnapshot, GenerationUndoRecord } from '@/lib/ai/pageGen/apply';
 import ComponentModel, { createIntrinsicComponent, createViewportNode, type ComponentInstance, type ComponentSnapshotIn } from './ComponentModel';
 import { isDynamicSegment, productPagePath, suggestSlug, validateSlug, type SlugValidation } from '@/lib/pages/slug';
 import {
@@ -582,6 +583,124 @@ export const ProjectModel = types
       return { ok: true, definitionId, placement };
     },
 
+    // ---------- components the page generator wrote ----------
+    //
+    // A generation may write components for structure it repeats
+    // (src/lib/ai/pageGen/validateDefinition.ts). They arrive with the nodes that
+    // place them, and are added with those nodes in ONE action, so one undo removes
+    // both. Each root is keyed by the page's breakpoint ids and is mapped onto the
+    // definition's own frames by width, as Create component does.
+
+    /** Why these definitions cannot be added, or null. Nothing changes either way. */
+    generatedDefinitionsRefusal(definitions: readonly GeneratedDefinitionSnapshot[]): string | null {
+      if (self.components.size + definitions.length > COMPONENT_LIMITS.definitionsPerSite) {
+        return `A site has at most ${COMPONENT_LIMITS.definitionsPerSite} components.`;
+      }
+      const names = new Set<string>();
+      for (const definition of definitions) {
+        if (self.components.has(definition.id)) return `There is already a component with the id ${definition.id}.`;
+        const taken = nameRefusal(definition.name.trim()) ?? (names.has(definition.name.trim()) ? `There is already a component called ${definition.name}.` : undefined);
+        if (taken) return taken;
+        names.add(definition.name.trim());
+        const refusal = definition.inputs.map(inputDefinitionRefusal).find(Boolean);
+        if (refusal) return `${definition.name}: ${refusal}`;
+      }
+      return null;
+    },
+
+    /** Adds generated definitions, their roots mapped from the page's breakpoints to their own frames. */
+    addGeneratedDefinitions(definitions: readonly GeneratedDefinitionSnapshot[], pageBreakpoints: readonly { id: string; minWidth: number }[]) {
+      for (const definition of definitions) {
+        const frames = defaultViewportSnapshots();
+        const to = extractBreakpoints(frames);
+        const toDefinition = (snapshot: StoredNode): StoredNode => ({
+          ...snapshot,
+          props: mapNodeProps(snapshot.props ?? {}, pageBreakpoints, to),
+          children: (snapshot.children ?? []).map(toDefinition),
+        });
+        const { parentId: _parent, ...root } = toDefinition(definition.root as unknown as StoredNode);
+        self.components.set(definition.id, {
+          id: definition.id,
+          name: definition.name.trim(),
+          ...(definition.description ? { description: definition.description } : {}),
+          page: {
+            id: `page-${definition.id}`,
+            metadata: { title: definition.name.trim() },
+            appComponentTree: root as unknown as ComponentSnapshotIn,
+            canvasNodes: frames,
+          },
+          inputs: [...definition.inputs],
+          states: [],
+        });
+      }
+      if (definitions.length > 0) self.metadata.updatedAt = new Date();
+    },
+
+    /**
+     * A generation into a page, with the components it wrote: the definitions, then the
+     * nodes placing them, one history entry. Nothing changes when either is refused.
+     */
+    applyGeneration(input: {
+      pageId: string;
+      mode: 'replace' | 'insert';
+      targetId: string;
+      snapshots: ComponentSnapshotIn[];
+      generationId: string;
+      definitions: readonly GeneratedDefinitionSnapshot[];
+      pageBreakpoints: readonly { id: string; minWidth: number }[];
+    }): ApplyOutcome<GenerationUndoRecord> {
+      const page = pageById(input.pageId);
+      if (!page) return { ok: false, reason: 'The page this was generated for no longer exists.' };
+      const refused = (self as unknown as { generatedDefinitionsRefusal(d: readonly GeneratedDefinitionSnapshot[]): string | null }).generatedDefinitionsRefusal(input.definitions);
+      if (refused) return { ok: false, reason: refused };
+      const target = page.findComponent(input.targetId);
+      if (!target) return { ok: false, reason: 'The selected component no longer exists on this page.' };
+      (self as unknown as { addGeneratedDefinitions(d: readonly GeneratedDefinitionSnapshot[], b: readonly { id: string; minWidth: number }[]): void })
+        .addGeneratedDefinitions(input.definitions, input.pageBreakpoints);
+      const outcome = page.applyGeneratedNodes(input.mode, input.targetId, input.snapshots, input.generationId);
+      if (!outcome.ok) {
+        // The nodes were refused after the definitions went in: take them out again.
+        for (const definition of input.definitions) self.components.delete(definition.id);
+        return outcome;
+      }
+      const definitionIds = input.definitions.map(definition => definition.id);
+      return { ok: true, value: definitionIds.length > 0 ? { ...outcome.value, definitionIds } : outcome.value };
+    },
+
+    /**
+     * Reverse applyGeneration: the nodes, then the components it wrote. Refuses, and
+     * changes nothing, when one of those components is placed somewhere the generation
+     * did not put it, since removing it would take that person's work with it.
+     */
+    revertGeneration(record: GenerationUndoRecord): ApplyOutcome<null> {
+      const page = pageById(record.pageId);
+      const generatedNodes = new Set<string>();
+      if (page && record.kind !== 'newPage') {
+        for (const id of record.insertedIds) {
+          const node = page.findComponent(id);
+          if (node) eachNode(node, inner => generatedNodes.add(inner.id));
+        }
+      }
+      // A component it wrote may place another it wrote: those pages go with it.
+      const generatedPages = new Set((record.definitionIds ?? []).map(id => self.components.get(id)?.page.id));
+      for (const definitionId of record.definitionIds ?? []) {
+        const elsewhere = placementsOf(definitionId).some(({ page: holder, node }) =>
+          !generatedPages.has(holder.id) && (record.kind === 'newPage' ? holder.id !== record.pageId : !generatedNodes.has(node.id)));
+        if (elsewhere) return { ok: false, reason: 'A component this generation wrote is placed somewhere else since; undo by hand or with Cmd+Z.' };
+      }
+      if (record.kind === 'newPage') {
+        if (!self.pages.get(record.pageId)) return { ok: false, reason: 'The generated page was already removed.' };
+        self.pages.delete(record.pageId);
+      } else {
+        if (!page) return { ok: false, reason: 'The page was removed.' };
+        const outcome = page.revertGeneration(record);
+        if (!outcome.ok) return outcome;
+      }
+      for (const definitionId of record.definitionIds ?? []) self.components.delete(definitionId);
+      self.metadata.updatedAt = new Date();
+      return { ok: true, value: null };
+    },
+
     placeComponent(pageId: string, definitionId: string, target: InsertTarget): ComponentActionResult<{ placement: ComponentInstance }> {
       const page = pageById(pageId);
       if (!page) return { ok: false, message: 'This page no longer exists.' };
@@ -1119,6 +1238,8 @@ export const ProjectModel = types
       title: string;
       description?: string;
       sections: ComponentSnapshotIn[];
+      /** Components the generation wrote, added in this same action. Checked first with generatedDefinitionsRefusal. */
+      definitions?: readonly GeneratedDefinitionSnapshot[];
       viewports: Array<{
         breakpointId: string;
         label: string;
@@ -1129,6 +1250,10 @@ export const ProjectModel = types
         height: number;
       }>;
     }): PageModelType {
+      if (input.definitions?.length) {
+        (self as unknown as { addGeneratedDefinitions(d: readonly GeneratedDefinitionSnapshot[], b: readonly { id: string; minWidth: number }[]): void })
+          .addGeneratedDefinitions(input.definitions, input.viewports.map(v => ({ id: v.breakpointId, minWidth: v.minWidth })));
+      }
       const title = input.title.trim() || `Page ${self.pages.size + 1}`;
       const slug = suggestSlug(title, Array.from(self.pages.values(), p => p.slug));
 
