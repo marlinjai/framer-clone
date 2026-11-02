@@ -41,6 +41,7 @@ import {
   type StoredRule,
 } from '@/lib/rules/rules';
 import { findRuleIndex, moveRuleTo, namedState, namedStateOf, orderRules } from '@/lib/rules/states';
+import { compactBehaviour } from '@/lib/behaviour/format';
 
 export type PropsRecord = Record<string, any>;
 
@@ -617,6 +618,22 @@ const ComponentModel: any = ComponentBase
       if (moved.some((rule, i) => rule !== rules[i])) self.props = withRules(currentProps, moved);
     },
 
+    // Behaviour (src/lib/behaviour/format.ts), stored as `props.behaviour`. One
+    // action and one undo step, replacing the frozen props whole, with emptied
+    // keys deleted so a saved page stays unchanged. Only the shape is checked:
+    // `parseBehaviour` decides at read, against the whole tree, and an entry it
+    // refuses stays stored so the panel can show it, editable and deletable.
+    setBehaviour(behaviour: Record<string, unknown> | undefined): RuleWrite {
+      if (isTextNodeType(self.type)) return { ok: false, reason: 'Text has no element of its own, so it holds no behaviour.' };
+      if (behaviour !== undefined && !isObject(behaviour)) return { ok: false, reason: 'Behaviour is an object.' };
+      const next = { ...(self.props || {}) };
+      const compact = behaviour === undefined ? undefined : compactBehaviour(behaviour);
+      if (compact) next.behaviour = compact;
+      else delete next.behaviour;
+      self.props = next;
+      return { ok: true };
+    },
+
     // Remove a stock photo's credit (data-credit-* and the hover title), when
     // the photo it describes was replaced by another picture. An action, so it
     // works on the protected tree and is one undoable step.
@@ -940,8 +957,9 @@ const ComponentModel: any = ComponentBase
         // `effects` is data for the effects runtime, never a DOM attribute:
         // the canvas shows the final state, the preview reads it itself.
         // `rules` is the same, unless it is a string, which stays the legacy
-        // `<table>` attribute of that name.
-        if (key === 'style' || key === 'effects' || (key === 'rules' && !isLegacyRulesAttribute(raw))) continue;
+        // `<table>` attribute of that name. `behaviour` is data for the
+        // behaviour runtime and never an attribute under any value.
+        if (key === 'style' || key === 'effects' || key === 'behaviour' || (key === 'rules' && !isLegacyRulesAttribute(raw))) continue;
         assign(CSS_PROP_SET.has(key) ? style : attributes, key, raw);
       }
 

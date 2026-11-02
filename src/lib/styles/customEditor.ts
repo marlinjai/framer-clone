@@ -109,7 +109,7 @@ export function attributeName(prop: string): string {
 
 /** Props that are the editor's own data, or that React reads as more than an attribute. */
 const RESERVED_PROPS: ReadonlySet<string> = new Set([
-  'children', 'key', 'ref', 'style', 'query', 'bindings', 'effects', 'dangerouslySetInnerHTML',
+  'children', 'key', 'ref', 'style', 'query', 'bindings', 'effects', 'behaviour', 'dangerouslySetInnerHTML',
   'suppressContentEditableWarning', 'suppressHydrationWarning', 'hostType',
 ]);
 

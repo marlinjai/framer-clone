@@ -48,10 +48,11 @@ const INTERACTIVE_COMMERCE_KINDS: ReadonlySet<string> = new Set([
 // DOM (React would render them as stray attributes). `children` is consumed via
 // the children argument; `query` is the structured data-component query object;
 // `bindings` never lives in props but is denied defensively; `effects` is
-// turned into attributes by applyEffects and denied here defensively too.
+// turned into attributes by applyEffects and denied here defensively too, as
+// `behaviour` is, which is data for the behaviour runtime under any value.
 // `rules` is the same unless it is a string, which stays the legacy `<table>`
 // attribute it has always been: anything else would render as `[object Object]`.
-const NON_DOM_PROPS: ReadonlySet<string> = new Set(['children', 'query', 'bindings', 'effects']);
+const NON_DOM_PROPS: ReadonlySet<string> = new Set(['children', 'query', 'bindings', 'effects', 'behaviour']);
 
 /**
  * Resolve a node's HTML tag. A stored `type` IS the tag: every write path stores
