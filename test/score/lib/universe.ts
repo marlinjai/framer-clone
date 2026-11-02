@@ -9,6 +9,7 @@ import type { Entry, RowKind } from './types';
 import exclusions from '../data/exclusions.json';
 import samples from '../data/samples.json';
 import apg from '../data/apg-patterns.json';
+import componentCapabilities from '../data/component-capabilities.json';
 
 const require = createRequire(path.join(process.cwd(), 'package.json'));
 
@@ -264,6 +265,22 @@ export function allEntries(): Entry[] {
     ...cssMediaFeatures(),
     ...ariaPatterns(),
   ];
+}
+
+/**
+ * What the reusable component format promises, hand-listed: no web standard names
+ * it. Not part of allEntries, because the probes over that list ask what a node
+ * can hold, and a row here asks whether the format keeps a promise: its cells come
+ * from report.ts, and only an entry with a measured result passes.
+ */
+export function componentEntries(): Entry[] {
+  const { source, inputTypes, capabilities } = componentCapabilities;
+  return [...inputTypes, ...capabilities].map((id) => entry('component', id, source));
+}
+
+/** Every row of the matrix. */
+export function scoredEntries(): Entry[] {
+  return [...allEntries(), ...componentEntries()];
 }
 
 /** The sample selector text for a mdn-data selector row. */

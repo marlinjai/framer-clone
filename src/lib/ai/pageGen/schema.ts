@@ -31,6 +31,7 @@
 import { COMPONENT_REGISTRY, type ComponentCategory, type DataComponentKind } from '@/lib/componentRegistry';
 import { CSS_PROP_SET, type PropsRecord } from '@/models/ComponentModel';
 import { isVoidTag } from '@/lib/drag/voidTags';
+import { isSafeSrc } from '@/lib/links/safeHref';
 import { BLOCKED_TAGS } from '@/lib/renderer/blockedNodes';
 import { CONTAINER_TYPES, TEXT_TYPES } from '@/components/sidebars/right/sectionConfig';
 import { REVIEWED_ATTRIBUTES, REVIEWED_HTML_TAGS, REVIEWED_MATHML_TAGS, REVIEWED_SVG_TAGS } from './reviewedVocabulary';
@@ -265,29 +266,7 @@ export function isAcceptedAttribute(tag: string, key: string): boolean {
   return GLOBAL_ATTRIBUTES.has(name) || (WEB_ELEMENT_ATTRIBUTES[tag] ?? []).includes(name);
 }
 
-/**
- * A path under /_next/. `/_next/image?url=...` fetches any host for the page, so it
- * would walk past the credit rule and the site-path-only rule while looking like a
- * path of the site. Read as the server reads it: dots resolved, percent-decoded.
- */
-function isNextInternalPath(value: string): boolean {
-  try {
-    const { pathname } = new URL(value, 'https://site.invalid');
-    return /^\/_next(?:\/|$)/i.test(decodeURIComponent(pathname));
-  } catch {
-    return true;
-  }
-}
-
-/** Allowed image sources: http(s) or a site-relative path. No data: or javascript: URLs. */
-export function isSafeSrc(value: string): boolean {
-  const v = value.trim();
-  // A browser reads a backslash as a slash: `/\\host` would leave the site.
-  if (v.includes('\\')) return false;
-  if (isNextInternalPath(v)) return false;
-  if (v.startsWith('/') && !v.startsWith('//')) return true;
-  return /^https?:\/\//i.test(v);
-}
+export { isSafeSrc };
 
 /** The image the Image preset ships with, used when the model omits or breaks `src`. */
 export const PLACEHOLDER_IMAGE_SRC: string =

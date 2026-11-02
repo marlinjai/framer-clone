@@ -4,7 +4,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { allEntries, dataVersions } from './lib/universe';
+import { componentEntries, dataVersions, scoredEntries } from './lib/universe';
 import { REPORT_DIR, readOut } from './lib/io';
 import {
   GAPS,
@@ -53,6 +53,7 @@ const KIND_LABEL: Record<RowKind, string> = {
   'css-at-rule': 'CSS at-rules',
   'css-media-feature': 'CSS media features',
   'aria-pattern': 'WAI-ARIA patterns',
+  component: 'Reusable component promises',
 };
 
 const SURFACE_LABEL: Record<Surface, string> = {
@@ -150,7 +151,13 @@ export function buildScore(durationSeconds?: number): Score {
   Object.assign(results.ai, patterns.ai);
   Object.assign(results.panel, patternPanelCells(patterns, results.panel, detail));
 
-  const entries = allEntries();
+  // Nothing of the component format is built yet, so every promise fails on every surface.
+  for (const entry of componentEntries()) {
+    const key = rowKey(entry.kind, entry.id);
+    for (const surface of SURFACES) results[surface][key] = { status: 'fail', gap: 'reusable-components' };
+  }
+
+  const entries = scoredEntries();
   const included = entries.filter((e) => !e.excluded);
   const surfaces = Object.fromEntries(SURFACES.map((s) => [s, blank()])) as Record<Surface, Counts>;
   const byKind = Object.fromEntries(
@@ -294,6 +301,7 @@ export function renderReport(score: Score): string {
     '- **Editor canvas shows it:** the same entry through the real `ComponentRenderer` with a real store, rendered to markup. An SVG attribute that arrives as a style declaration passes, because SVG maps those to the same property; an HTML one is `attribute-read-as-style`. A WAI-ARIA pattern runs its contract on the mounted editor instead: the real `EditorApp` in Chromium with the tree on a page, its server edge stubbed. A contract that passes when published and fails there is `canvas-editor-context`.',
     '- **Panel can edit it:** the real `RightSidebar` is mounted for a node of each component category and every control is operated. A key counts only if an action changed it in the node, and an attribute only on the tag the action changed it on. An element counts when a palette entry produces it or a panel action sets it. A pattern counts when every tag and prop it uses does. A value row counts only for the kinds the driver types (a length, a color, a number) and when a control kept what was typed.',
     '- **AI generator can produce it:** `validateGeneration` is given a node with the entry, and the entry must still be there afterwards. A tag rewritten to `div` is a fail. A value row needs the exact value back. A sample on a host property outside the allowlist fails as `ai-style-allowlist`, so it says nothing about the value.',
+    '- **A reusable component row** is a promise of the format, not a web standard entry. Format: it survives the snapshot round trip with a reader. Published: it is emitted through `renderPublishedPage`. Canvas: it renders through the real `ComponentRenderer`. Panel: it changes through the real section. AI: it survives `validateGeneration`. A pass here proves less than it reads: the corpus is the test.',
   );
   push(
     `The panel writes ${score.panel.styleKeysWritten.length} style keys and ${score.panel.propKeysWritten.length} other props across every category. Palette tags: ${score.panel.paletteTags.map((t) => `\`${t}\``).join(', ')}.`,
@@ -362,7 +370,7 @@ export function renderReport(score: Score): string {
     '- **Whether a panel control is any good.** A key counts as editable when a control changed it, whatever range or units that control offers. Only the properties panel and the palette are covered: the quick toolbar, context menus and the Layers panel were searched for tag changes and none found, not driven.',
     '- **The whole published page.** The corpus uses `applyResponsiveStyles` and `renderComponentNode`, without `hydrateBindings`, effects, the sticky bar, or the consent and font wrappers, and only in Chromium.',
     '- **WAI-ARIA conformance.** A contract is the primary keyboard path of a pattern, not its whole page in the Guide.',
-    '- **Page-level items and reuse:** head tags, design tokens, page-wide scripts and reusable components (gaps 4 and 5 of the plan) have no rows, and script and style elements are excluded with a reason.',
+    '- **Page-level items:** head tags, design tokens and page-wide scripts (gap 5 of the plan) have no rows, and script and style elements are excluded with a reason.',
     '- **The BusBasis storefront,** the part of the corpus that would say how often a real shop hits each gap. So the corpus is 13 small fixtures chosen to find gaps, and its pass rate is no estimate of real pages.',
     '- **React import beyond static JSX.** Tailwind classes, props as inputs and the AI rebuild step of the plan are not built.',
   );
