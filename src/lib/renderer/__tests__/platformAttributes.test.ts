@@ -58,8 +58,13 @@ describe('attributes the code reads', () => {
 
   it('keeps every one out of a stored rule, but the family rules are meant to read', () => {
     const readable = [...names].filter((name) => parseSelector(`&:is([${name}] *)`).ok);
-    expect(readable.filter((name) => !Object.hasOwn(AUTHORS_OWN, name) && !/^data-u-/.test(name)).sort()).toEqual([]);
+    expect(readable.filter((name) => !Object.hasOwn(AUTHORS_OWN, name) && !/^data-u-[vc]-/.test(name)).sort()).toEqual([]);
     expect(readable.filter((name) => /^data-u-/.test(name)).every((name) => !isPlatformMarker(name))).toBe(true);
+  });
+
+  it('refuses the runtime marks a published page alone carries, and keeps the stored families', () => {
+    for (const name of ['data-u-on', 'data-u-active', 'DATA-U-ON']) expect(isPlatformMarker(name)).toBe(true);
+    for (const name of ['data-u-v-variant', 'data-u-c-1a2b3c4d']) expect(isPlatformMarker(name)).toBe(false);
   });
 
   it('reads any case', () => {

@@ -21,10 +21,12 @@ const PLATFORM_NAMES: ReadonlySet<string> = new Set([
 export const isPlatformAttribute = (name: string): boolean => PLATFORM_FAMILY.test(name) || PLATFORM_NAMES.has(name.toLowerCase());
 
 /**
- * `data-u-*` is the one family a rule is meant to read. The platform writes it from stored data, the same on
- * the canvas and the page: a behaviour's `data-u-on`, a bound `data-u-*`, a variant's `data-u-v-*`.
+ * The two families a rule is meant to read, both written from stored data and so the same on the canvas and the
+ * page: a variant's `data-u-v-*` and the detach marker `data-u-c-*`. The rest of `data-u-*` is runtime state: the
+ * behaviour pass writes `data-u-on` and roving focus `data-u-active` on a published page only, so a rule reading
+ * either would show the editor one thing and a visitor another.
  */
-const AUTHOR_READABLE = /^data-u-/i;
+const AUTHOR_READABLE = /^data-u-[vc]-/i;
 
 /** An attribute a stored rule may not name in a selector, in any case. */
 export const isPlatformMarker = (name: string): boolean => isPlatformAttribute(name) && !AUTHOR_READABLE.test(name);
