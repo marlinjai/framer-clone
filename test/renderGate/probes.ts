@@ -342,6 +342,19 @@ function nameProbes(full: boolean): Probe[] {
  * a form or anywhere else through `form=`, so code walking up from the form never ends.
  * A stored field's name reaches its control the same way, past the attribute gate.
  */
+const nest = (id: string, types: string[], child: ProbeNode): ProbeNode =>
+  types.reduceRight((inner, type, index) => ({ id: `${id}${index}`, type, props: {}, children: [inner] }), child);
+
+/** Where the parser leaves SVG or MathML, so `image` under it is an `img` again. */
+const PARSER_ESCAPES: [string, (child: ProbeNode) => ProbeNode][] = [
+  ['in foreignObject', (child) => nest(`${child.id}e`, ['svg', 'foreignObject'], child)],
+  ['in desc', (child) => nest(`${child.id}e`, ['svg', 'desc'], child)],
+  ['in an svg title', (child) => nest(`${child.id}e`, ['svg', 'title'], child)],
+  ['in a breakout from svg', (child) => nest(`${child.id}e`, ['svg', 'g', 'p'], child)],
+  ['in mi', (child) => nest(`${child.id}e`, ['math', 'mi'], child)],
+  ['in svg', (child) => nest(`${child.id}e`, ['svg', 'g'], child)],
+];
+
 const FORM_CONTROLS = ['button', 'fieldset', 'img', 'input', 'output', 'select', 'textarea'];
 
 function formMemberProbes(full: boolean): Probe[] {
@@ -360,6 +373,16 @@ function formMemberProbes(full: boolean): Probe[] {
       ]),
     ]),
     hostile(`<form> holding <input ID=${name}>`, 'form', [], box, (id) => [control(id, 'input', { ID: name })]),
+    ...['image', 'IMAGE'].flatMap((type) => [
+      hostile(`<form> holding <${type} id=${name}>`, 'form', [], box, (id) => [control(id, type, { id: name })]),
+      hostile(`<form> holding <${type} ID=${name}>`, 'form', [], box, (id) => [control(id, type, { ID: name })]),
+    ]),
+    ...PARSER_ESCAPES.map(([what, path]) =>
+      hostile(`<form> holding <image id=${name}> ${what}`, 'form', [], box, (id) => [path(control(id, 'image', { id: name }))]),
+    ),
+    hostile(`<form> holding <image id=${name}> after a breakout from svg`, 'form', [], box, (id) => [
+      { id: `${id}v`, type: 'svg', props: {}, children: [{ id: `${id}b`, type: 'p', props: {} }, control(id, 'image', { id: name })] },
+    ]),
     hostile(`<form> holding <table> holding <input id=${name}>`, 'form', [], box, (id) => [{ id: `${id}t`, type: 'table', props: {}, children: [control(id, 'input', { id: name })] }]),
     hostile(`a stored form with a field called ${name}`, 'div', [], () => marked('form', {}), (id) => [
       { id: `${id}n`, type: 'div', props: marked('form-field', { fieldType: 'text', name, label: 'x' }) },

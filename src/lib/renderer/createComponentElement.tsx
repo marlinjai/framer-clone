@@ -15,6 +15,7 @@ import { getParent, hasParent, isStateTreeNode } from 'mobx-state-tree';
 import { ComponentInstance } from '@/models/ComponentModel';
 import { isVoidTag } from '@/lib/drag';
 import {
+  continuesSvgContent,
   isBlockedTag,
   withoutBlockedProps,
   withoutClobberingId,
@@ -107,14 +108,15 @@ export interface CreateComponentElementOptions {
 
 /** Whether an ancestor makes this node SVG content. MST nodes only; a tree outside MST has no parent to ask. */
 function isSvgContent(component: ComponentInstance): boolean {
-  if (String(component.type).toLowerCase() !== 'title') return false;
+  const tag = String(component.type).toLowerCase();
+  if (tag !== 'title' && tag !== 'image') return false;
   let current: unknown = component;
   for (let i = 0; i < 128 && isStateTreeNode(current as object) && hasParent(current as object); i++) {
     current = getParent(current as object);
     const type = (current as { type?: unknown }).type;
     if (typeof type !== 'string') continue;
     if (type.toLowerCase() === 'svg') return true;
-    if (type.toLowerCase() === 'foreignobject') return false;
+    if (!continuesSvgContent(type)) return false;
   }
   return false;
 }

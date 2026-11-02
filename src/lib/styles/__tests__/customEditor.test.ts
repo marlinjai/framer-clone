@@ -126,6 +126,7 @@ describe('attributes', () => {
   it('refuses the id a tag would lose at render, and keeps it where it is harmless', () => {
     expect(attributeValueError('id', 'parentElement', 'button')).not.toBeNull();
     expect(attributeValueError('id', 'createElement', 'img')).not.toBeNull();
+    expect(attributeValueError('id', 'parentElement', 'image')).not.toBeNull();
     expect(attributeValueError('id', 'parentElement', 'section')).toBeNull();
     expect(attributeValueError('id', 'name', 'input')).toBeNull();
   });

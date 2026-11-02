@@ -121,6 +121,30 @@ describe('render gate', () => {
     expect(found.filter((tag) => FORM_NAMED_TAGS.has(tag)).sort()).toEqual([...FORM_NAMED_TAGS].sort());
   });
 
+  // The tag the markup names is not always the element the parser makes, and a rule
+  // by tag has to know each one that turns into something else.
+  it.each(BROWSERS)('the parser rewrites no rendered tag but image in %s', async (_name, type) => {
+    const browser = await type.launch();
+    const page = await browser.newPage();
+    const tags = [...RENDERED_TAGS].filter((tag) => !BLOCKED_TAGS.has(tag));
+    const contexts = ['', '<svg><foreignObject>', '<svg><desc>', '<svg><title>', '<svg><g><p>', '<math><mi>', '<select>', '<table>', '<table><tr>', '<template>'];
+    const found = await page.evaluate(({ list, around }) => {
+      const out: string[] = [];
+      for (const context of around) {
+        for (const tag of list) {
+          const parsed = new DOMParser().parseFromString(`<!doctype html><body>${context}<${tag} id="gate"></${tag}>`, 'text/html');
+          const root = parsed.querySelector('template')?.content ?? parsed;
+          const element = root.querySelector('#gate');
+          if (element && element.localName.toLowerCase() !== tag) out.push(`${tag} became ${element.localName} after ${context || 'nothing'}`);
+        }
+      }
+      return out;
+    }, { list: tags, around: contexts });
+    await browser.close();
+    expect(found.filter((line) => !line.startsWith('image became img'))).toEqual([]);
+    expect(found).toContain('image became img after nothing');
+  });
+
   it.each(BROWSERS)('a member id would make a walk up from a form endless in %s', async (_name, type) => {
     const browser = await type.launch();
     const page = await browser.newPage();

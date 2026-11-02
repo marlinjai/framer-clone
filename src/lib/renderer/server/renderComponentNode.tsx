@@ -23,7 +23,7 @@
 
 import React from 'react';
 import { isVoidTag } from '@/lib/drag/voidTags';
-import { isBlockedProp, isBlockedTag, safeInlineStyle, withoutClobberingId } from '@/lib/renderer/blockedNodes';
+import { continuesSvgContent, isBlockedProp, isBlockedTag, safeInlineStyle, withoutClobberingId } from '@/lib/renderer/blockedNodes';
 import { isLegacyRulesAttribute } from '@/lib/rules/rules';
 import { isComponentPlaceholderType } from '@/lib/components/placement';
 import { isTextNodeType, ownTextThenChildren, renderableText } from '@/lib/renderer/textNode';
@@ -124,7 +124,7 @@ function domPropsOf(node: ComponentNode, key: React.Key): Record<string, unknown
 /** Whether a child of this tag is SVG content. */
 function opensSvg(tag: string, insideSvg: boolean): boolean {
   const name = tag.toLowerCase();
-  return name === 'svg' || (insideSvg && name !== 'foreignobject');
+  return name === 'svg' || (insideSvg && continuesSvgContent(name));
 }
 
 /** Resolve a node's wrapper tag for island mounting (defaults to `div`). */

@@ -122,15 +122,33 @@ export function isRefusedTag(tag: string): boolean {
   return BLOCKED_TAGS.has(tag.toLowerCase()) || !isRenderedTag(tag);
 }
 
+/** SVG names in the vocabulary that mean something else outside `svg`, see isBlockedTag. */
+const SVG_ONLY_TAGS: ReadonlySet<string> = new Set(['title', 'image']);
+
+/**
+ * What ends SVG content for the HTML parser: its integration points (`foreignObject`,
+ * `desc`, `title` and MathML's text elements) and the tags it breaks out of `svg` for.
+ * Lower case. `font` only breaks out with an attribute, which is not worth telling apart.
+ */
+const ENDS_SVG_CONTENT: ReadonlySet<string> = new Set(`
+  foreignobject desc title mi mo mn ms mtext annotation-xml
+  b big blockquote body br center code dd div dl dt em embed font h1 h2 h3 h4 h5 h6 head hr i img li
+  listing menu meta nobr ol p pre ruby s small span strong strike sub sup table tt u ul var
+`.trim().split(/\s+/));
+
+/** Whether a child of this tag, already inside `svg`, is still SVG content. */
+export const continuesSvgContent = (tag: string): boolean => !ENDS_SVG_CONTENT.has(tag.toLowerCase());
+
 /**
  * Whether a node with this resolved tag must render nothing. `title` is an SVG name
  * in the vocabulary. Anywhere else it is the document's, and React lifts it to `head`,
- * so a node could rename the tab.
+ * so a node could rename the tab. The parser reads `image` anywhere else as `img`,
+ * which server markup and React then disagree about, so hydration fails.
  */
 export function isBlockedTag(tag: unknown, insideSvg = false): boolean {
   if (typeof tag !== 'string') return false;
-  const documentTitle = tag.toLowerCase() === 'title' && !insideSvg;
-  if (!documentTitle && !isRefusedTag(tag)) return false;
+  const outOfPlace = SVG_ONLY_TAGS.has(tag.toLowerCase()) && !insideSvg;
+  if (!outOfPlace && !isRefusedTag(tag)) return false;
   warnOnce(`<${tag.toLowerCase()}>`);
   return true;
 }
@@ -191,12 +209,13 @@ export const FORM_NAMED_TAGS: ReadonlySet<string> = new Set(['button', 'fieldset
 /**
  * The rule alone, for the panel: whether this tag loses this `id`. An `img` with a
  * `name` also puts its `id` on `document`, and only that element does; it and every
- * form control put it on their form.
+ * form control put it on their form. `image` counts as `img`: a sibling that breaks
+ * out of `svg` ends the SVG content for the parser, wherever the node stands.
  */
 export function isDroppedId(tag: unknown, id: unknown): boolean {
   if (typeof tag !== 'string' || typeof id !== 'string') return false;
   const name = tag.toLowerCase();
-  return name === 'img' ? DOM_MEMBERS.has(id) : FORM_NAMED_TAGS.has(name) && FORM_SHADOWING_NAMES.has(id);
+  return name === 'img' || name === 'image' ? DOM_MEMBERS.has(id) : FORM_NAMED_TAGS.has(name) && FORM_SHADOWING_NAMES.has(id);
 }
 
 /** `props` without an `id` that replaces a member, in any spelling: React writes `ID` as it stands. */

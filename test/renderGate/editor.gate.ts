@@ -10,7 +10,7 @@ import { ComponentTypeEnum } from '@/models/ComponentModel';
 import { buildProbes, type ProbeNode } from './probes';
 
 const EMBEDS = 'script,style,iframe,object,embed,fencedframe,portal';
-const HOSTILE = /^tag .* in (?:html|svg)$|^<(?:x-y|div) \w+=html>$|proto|^an? \w+ ref$|as text|^a style|^<(?:a|form) (?:href|action)=js-array>$|^<form> holding <input id=|^<input id=\w+ form=>|^a stored form with a (?:field|submit button|marked div)/;
+const HOSTILE = /^tag .* in (?:html|svg)$|^<(?:x-y|div) \w+=html>$|proto|^an? \w+ ref$|as text|^a style|^<(?:a|form) (?:href|action)=js-array>$|^<form> holding <(?:input|image) id=|^<input id=\w+ form=>|^a stored form with a (?:field|submit button|marked div)/;
 
 const toSnapshot = (node: ProbeNode): Record<string, unknown> => ({
   id: node.id,

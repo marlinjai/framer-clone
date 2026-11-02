@@ -183,6 +183,27 @@ describe('blocked nodes', () => {
     expect(html).toContain('form="f"');
   });
 
+  it.each(['image', 'IMAGE', 'Image'])('renders no stored <%s> outside svg, where the parser makes it an img', (type) => {
+    expect(published({ type, props: { href: '/x.png' } })).toBe('');
+    expect(editor(type, { href: '/x.png' })).toBe('');
+    const wrap = (...tags: string[]) => tags.reduceRight<Record<string, unknown>>((child, tag, index) => ({ id: `w${index}`, type: tag, children: [child] }), { id: 'i', type, props: { href: '/x.png' } });
+    for (const inner of ['foreignObject', 'desc', 'title', 'p', 'span']) expect(published(wrap('svg', inner)).toLowerCase()).not.toContain('<image');
+    expect(published(wrap('math', 'mi'))).not.toContain('<image');
+    expect(published(wrap('section'))).not.toContain('<image');
+  });
+
+  it('keeps an image in svg, also after an integration point opens svg again', () => {
+    expect(published({ type: 'svg', children: [{ id: 'g', type: 'g', children: [{ id: 'i', type: 'image', props: { href: '/x.png' } }] }] })).toContain('<image');
+    const again = { type: 'svg', children: [{ id: 'f', type: 'foreignObject', children: [{ id: 's', type: 'svg', children: [{ id: 'i', type: 'image', props: {} }] }] }] };
+    expect(published(again)).toContain('<image');
+  });
+
+  it.each(['id', 'ID'])('drops a member %s on an image even inside svg: a sibling can end the svg', (name) => {
+    const image = { id: 'i', type: 'image', props: { [name]: 'parentElement' } };
+    expect(published({ type: 'svg', children: [image] }).toLowerCase()).not.toContain('id=');
+    expect(published({ type: 'svg', children: [{ id: 'i', type: 'image', props: { id: 'hero' } }] })).toContain('id="hero"');
+  });
+
   it.each(['button', 'div'])('refuses a member id on a stored submit button, stored as <%s>', (type) => {
     const props = { 'data-form-kind': 'form-submit', id: 'closest', children: 'x' };
     const html = published({ type: 'div', props: { 'data-form-kind': 'form' }, children: [{ id: 's', type, props }] });

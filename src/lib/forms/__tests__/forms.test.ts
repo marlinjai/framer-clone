@@ -102,6 +102,21 @@ describe('form settings and helpers', () => {
     expect(fields.map((f) => f.key)).toEqual(['closest_field', 'closest_field_2']);
   });
 
+  it.each([
+    [['title', 'title_field'], ['title_field_2', 'title_field']],
+    [['title_field', 'title'], ['title_field', 'title_field_2']],
+    [['title', 'title_field', 'title_field_2'], ['title_field_3', 'title_field', 'title_field_2']],
+  ])('a renamed field never takes the key of a field really called that: %j', (names, keys) => {
+    const fields = collectFormFields(form(names.map((name, index) => field(`f${index}`, { name }))));
+    expect(fields.map((f) => f.key)).toEqual(keys);
+    expect(fields.map((f) => f.nodeId)).toEqual(names.map((_, index) => `f${index}`));
+  });
+
+  it('counts a field named by its label as renamed too', () => {
+    const fields = collectFormFields(form([field('a', { label: 'title' }), field('b', { name: 'title_field' })]));
+    expect(fields.map((f) => f.key)).toEqual(['title_field_2', 'title_field']);
+  });
+
   it('builds a safe link path and refuses dynamic pages', () => {
     expect(linkPathOfSlug('')).toBe('/');
     expect(linkPathOfSlug('danke')).toBe('/danke');
