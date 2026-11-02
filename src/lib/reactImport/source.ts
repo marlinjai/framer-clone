@@ -67,11 +67,19 @@ function reasonFor(error: unknown): DetailKey {
 
 const STYLESHEETS: ReadonlySet<string> = new Set(['css', 'scss', 'sass', 'less']);
 
+/** A Tailwind config is a program, and a theme has to come from CSS. It is never parsed, so it can never be the entry. */
+const TAILWIND_CONFIG = /(?:^|\/)tailwind\.config\.[cm]?[jt]s$/i;
+
 /** Lists each file in the ledger. True when all of them can be converted. */
 function openFiles(files: readonly SourceInput[], ledger: Ledger): { readable: boolean; entry?: ParsedFile } {
   let readable = true;
   let entry: ParsedFile | undefined;
   for (const { name, text } of files) {
+    if (TAILWIND_CONFIG.test(name)) {
+      // It does not decide what renders here, so it blocks nothing: the line says why the theme is not in it.
+      ledger.openWhole(name, text, { kind: 'statement', disposition: 'left', detail: 'tailwindConfig', next: ['add-tokens'] });
+      continue;
+    }
     if (!isScript(name)) {
       const detail = STYLESHEETS.has(extensionOf(name)) ? 'stylesheet' : 'notRead';
       // A sheet can change what the result looks like, so it blocks until slice `import-stylesheet` reads it.

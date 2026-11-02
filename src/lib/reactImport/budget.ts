@@ -22,6 +22,8 @@ export const IMPORT_LIMITS = {
   evaluatedBytes: 4 * 1024 * 1024,
   unrolledItems: 5_000,
   inliningDepth: 16,
+  /** Class names handed to Tailwind. Each is data to it, and each output is parsed. */
+  candidates: 4_000,
   /**
    * Beyond this, lines no node needs are folded into one, so the report stays total. A line that names a
    * node is never folded, since it can block placing: those are bounded by the evaluated budget instead,

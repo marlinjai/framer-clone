@@ -208,4 +208,12 @@ describe('files beside the entry', () => {
     expect(byDetail[DETAILS.stylesheet]).toMatchObject({ file: 'a.css', kind: 'css-rule', disposition: 'left' });
     expect(byDetail[DETAILS.notRead]).toMatchObject({ file: 'a.png', disposition: 'left' });
   });
+
+  it('reports a Tailwind config as a program it never reads, even listed first', () => {
+    for (const name of ['tailwind.config.js', 'app/tailwind.config.ts', 'tailwind.config.mjs', 'TAILWIND.CONFIG.CJS']) {
+      const outcome = importSource([{ name, text: 'export default { theme: { extend: {} } };' }, ...paste('<p>Hi</p>')]);
+      expect(outcome.root?.type).toBe('p');
+      expect(outcome.report.lines.filter((line) => line.detail === DETAILS.tailwindConfig)).toMatchObject([{ file: name, kind: 'statement', disposition: 'left' }]);
+    }
+  });
 });
