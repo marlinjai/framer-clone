@@ -418,6 +418,24 @@ function spellingProbes(): Probe[] {
   for (const name of ['ID', 'Id', 'iD']) {
     list.push(hostile(`<img ${name}=createElement> with a name`, 'img', [], () => ({ [name]: 'createElement', name: 'kept', src: '/x.png', alt: '' })));
   }
+  // Past the platform's submission, from inside a live form and from outside it. Lower
+  // case is the plain spelling of what every other probe here spells.
+  for (const name of ['formaction', 'formAction', 'FORMACTION']) {
+    list.push(hostile(`a stored form with a deep button ${name} elsewhere`, 'div', [], (id) => marked('form', { id: `${id}f` }), (id) => [
+      { id: `${id}w`, type: 'div', props: {}, children: [{ id: `${id}s`, type: 'button', props: { [name]: `${FOREIGN}/${id}`, type: 'submit', children: 'x' } }] },
+    ]));
+    list.push(hostile(`a stored form with an outside button ${name} elsewhere`, 'div', [], () => ({}), (id) => [
+      { id: `${id}l`, type: 'div', props: marked('form', { id: `${id}f` }), children: [] },
+      { id: `${id}s`, type: 'button', props: { [name]: `${FOREIGN}/${id}`, form: `${id}f`, type: 'submit', children: 'x' } },
+    ]));
+  }
+  for (const type of ['p', 'div', 'span', 'img', 'table']) {
+    list.push(hostile(`<${type}> directly in svg before an image`, 'svg', [], () => ({}), (id) => [
+      { id: `${id}h`, type, props: {} },
+      { id: `${id}i`, type: 'image', props: { id: `${id}x` } },
+    ]));
+  }
+
   // The whole vocabulary, by what could run or leave, in both spellings on what acts on an address.
   for (const name of [...RENDERED_ATTRIBUTES].filter((attribute) => upper(attribute) !== attribute)) {
     for (const spelled of [upper(name), mixed(name)]) {

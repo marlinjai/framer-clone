@@ -125,29 +125,39 @@ export function isRefusedTag(tag: string): boolean {
 /** SVG names in the vocabulary that mean something else outside `svg`, see isBlockedTag. */
 const SVG_ONLY_TAGS: ReadonlySet<string> = new Set(['title', 'image']);
 
+/** Where HTML is SVG's own content: integration points, and MathML's text elements. */
+const INTEGRATION_POINTS: ReadonlySet<string> = new Set(['foreignobject', 'desc', 'title', 'mi', 'mo', 'mn', 'ms', 'mtext', 'annotation-xml']);
+
 /**
- * What ends SVG content for the HTML parser: its integration points (`foreignObject`,
- * `desc`, `title` and MathML's text elements) and the tags it breaks out of `svg` for.
- * Lower case. `font` only breaks out with an attribute, which is not worth telling apart.
+ * Tags the HTML parser leaves `svg` for, taking everything after them with it, while
+ * React keeps them inside, so server markup and hydration disagree (error 418). Lower
+ * case. `font` only does it with an attribute, which is not worth telling apart.
  */
-const ENDS_SVG_CONTENT: ReadonlySet<string> = new Set(`
-  foreignobject desc title mi mo mn ms mtext annotation-xml
+const BREAKS_OUT_OF_SVG: ReadonlySet<string> = new Set(`
   b big blockquote body br center code dd div dl dt em embed font h1 h2 h3 h4 h5 h6 head hr i img li
   listing menu meta nobr ol p pre ruby s small span strong strike sub sup table tt u ul var
 `.trim().split(/\s+/));
 
 /** Whether a child of this tag, already inside `svg`, is still SVG content. */
-export const continuesSvgContent = (tag: string): boolean => !ENDS_SVG_CONTENT.has(tag.toLowerCase());
+export const continuesSvgContent = (tag: string): boolean => !INTEGRATION_POINTS.has(tag.toLowerCase());
+
+/** Whether this node's tag decides anything by where it stands in `svg`. */
+export const dependsOnSvgContent = (tag: string): boolean => {
+  const name = tag.toLowerCase();
+  return SVG_ONLY_TAGS.has(name) || BREAKS_OUT_OF_SVG.has(name);
+};
 
 /**
  * Whether a node with this resolved tag must render nothing. `title` is an SVG name
  * in the vocabulary. Anywhere else it is the document's, and React lifts it to `head`,
  * so a node could rename the tab. The parser reads `image` anywhere else as `img`,
- * which server markup and React then disagree about, so hydration fails.
+ * which server markup and React then disagree about, so hydration fails. The same
+ * goes for an HTML tag directly in `svg`: an HTML child belongs in `foreignObject`.
  */
 export function isBlockedTag(tag: unknown, insideSvg = false): boolean {
   if (typeof tag !== 'string') return false;
-  const outOfPlace = SVG_ONLY_TAGS.has(tag.toLowerCase()) && !insideSvg;
+  const name = tag.toLowerCase();
+  const outOfPlace = insideSvg ? BREAKS_OUT_OF_SVG.has(name) : SVG_ONLY_TAGS.has(name);
   if (!outOfPlace && !isRefusedTag(tag)) return false;
   warnOnce(`<${tag.toLowerCase()}>`);
   return true;
@@ -209,8 +219,8 @@ export const FORM_NAMED_TAGS: ReadonlySet<string> = new Set(['button', 'fieldset
 /**
  * The rule alone, for the panel: whether this tag loses this `id`. An `img` with a
  * `name` also puts its `id` on `document`, and only that element does; it and every
- * form control put it on their form. `image` counts as `img`: a sibling that breaks
- * out of `svg` ends the SVG content for the parser, wherever the node stands.
+ * form control put it on their form. `image` counts as `img`, so that this rule does
+ * not rest on a caller's SVG context being right.
  */
 export function isDroppedId(tag: unknown, id: unknown): boolean {
   if (typeof tag !== 'string' || typeof id !== 'string') return false;
@@ -235,6 +245,19 @@ export function withoutBlockedProps(props: Record<string, unknown>): Record<stri
     : props.style;
   if (kept.length === names.length && style === props.style) return props;
   return Object.fromEntries(kept.map((name) => [name, name === 'style' ? style : props[name]]));
+}
+
+const FORM_OVERRIDES: ReadonlySet<string> = new Set(['formaction', 'formmethod', 'formtarget', 'formenctype']);
+
+/**
+ * `props` without what sends a form somewhere else, the same object when nothing goes.
+ * On a live form's controls these would carry a visitor's data past the platform's
+ * submission. An owner's `action` on a plain form is a different matter, see below.
+ */
+export function withoutFormOverrides(props: Record<string, unknown>): Record<string, unknown> {
+  const names = Object.keys(props);
+  if (!names.some((name) => FORM_OVERRIDES.has(name.toLowerCase()))) return props;
+  return Object.fromEntries(names.filter((name) => !FORM_OVERRIDES.has(name.toLowerCase())).map((name) => [name, props[name]]));
 }
 
 // The canvas and the preview run on the signed-in editor's origin, so a stored

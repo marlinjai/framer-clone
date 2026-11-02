@@ -54,7 +54,7 @@ import { localeOf, type FieldValue, type FormLocale } from '@/lib/forms/validati
 import { SUBMIT_PATH, sendForm } from '@/lib/forms/sendForm';
 import { FormFieldView } from './FormFieldView';
 import { renderNodeChildren, nodeDomProps } from '../server/renderComponentNode';
-import { withoutClobberingId } from '../blockedNodes';
+import { withoutClobberingId, withoutFormOverrides } from '../blockedNodes';
 
 interface FormRuntime {
   formId: string;
@@ -112,6 +112,16 @@ function NestedFormShell({ node, scope }: { node: ComponentNode; scope: BindingS
     domProps,
     renderNodeChildren(node, scope),
   );
+}
+
+/** A live form's tree with no control that could send it past the platform's submission. */
+function withoutOverridesBelow(node: ComponentNode): ComponentNode {
+  return {
+    ...node,
+    ...(node.props ? { props: withoutFormOverrides(node.props) } : {}),
+    ...(node.bindings ? { bindings: withoutFormOverrides(node.bindings) as ComponentNode['bindings'] } : {}),
+    children: node.children?.map(withoutOverridesBelow),
+  };
 }
 
 function LiveForm({ node, scope, renderedAt }: FormIslandProps) {
@@ -222,6 +232,7 @@ function LiveForm({ node, scope, renderedAt }: FormIslandProps) {
   };
 
   const runtime: FormRuntime = { formId, fields, fieldsByNode, state, dispatch, hydrated };
+  const contents = useMemo(() => withoutOverridesBelow(node), [node]);
   const domProps = stripFormConfigProps(nodeDomProps(node));
 
   return (
@@ -256,7 +267,7 @@ function LiveForm({ node, scope, renderedAt }: FormIslandProps) {
             </button>
           </div>
         ) : (
-          renderNodeChildren(node, scope)
+          renderNodeChildren(contents, scope)
         )}
         <p
           id={formErrorId}

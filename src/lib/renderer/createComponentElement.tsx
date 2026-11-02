@@ -16,6 +16,7 @@ import { ComponentInstance } from '@/models/ComponentModel';
 import { isVoidTag } from '@/lib/drag';
 import {
   continuesSvgContent,
+  dependsOnSvgContent,
   isBlockedTag,
   withoutBlockedProps,
   withoutClobberingId,
@@ -108,8 +109,7 @@ export interface CreateComponentElementOptions {
 
 /** Whether an ancestor makes this node SVG content. MST nodes only; a tree outside MST has no parent to ask. */
 function isSvgContent(component: ComponentInstance): boolean {
-  const tag = String(component.type).toLowerCase();
-  if (tag !== 'title' && tag !== 'image') return false;
+  if (!dependsOnSvgContent(String(component.type))) return false;
   let current: unknown = component;
   for (let i = 0; i < 128 && isStateTreeNode(current as object) && hasParent(current as object); i++) {
     current = getParent(current as object);

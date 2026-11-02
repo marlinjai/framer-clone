@@ -23,7 +23,7 @@
 
 import React from 'react';
 import { isVoidTag } from '@/lib/drag/voidTags';
-import { continuesSvgContent, isBlockedProp, isBlockedTag, safeInlineStyle, withoutClobberingId } from '@/lib/renderer/blockedNodes';
+import { continuesSvgContent, isBlockedProp, isBlockedTag, safeInlineStyle, withoutClobberingId, withoutFormOverrides } from '@/lib/renderer/blockedNodes';
 import { isLegacyRulesAttribute } from '@/lib/rules/rules';
 import { isComponentPlaceholderType } from '@/lib/components/placement';
 import { isTextNodeType, ownTextThenChildren, renderableText } from '@/lib/renderer/textNode';
@@ -113,7 +113,8 @@ export function nodeDomProps(node: ComponentNode): Record<string, unknown> {
     }
     props[name] = value;
   }
-  return withoutClobberingId(node.type, props);
+  // `form=` reaches a live form from anywhere, and only the form knows what is inside it.
+  return withoutClobberingId(node.type, props.form === undefined ? props : withoutFormOverrides(props));
 }
 
 /** As `nodeDomProps`, with a stable React key stamped for element emission. */

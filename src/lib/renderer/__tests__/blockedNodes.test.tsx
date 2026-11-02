@@ -234,6 +234,34 @@ describe('blocked nodes', () => {
     expect(published(again)).toContain('<image');
   });
 
+  it.each(['p', 'div', 'SPAN', 'img', 'table', 'font'])('renders no <%s> directly in svg, which the parser would leave it for', (type) => {
+    const svg = { type: 'svg', children: [{ id: 'g', type: 'g', children: [{ id: 'h', type, props: { children: 'x' } }] }, { id: 'r', type: 'rect', props: {} }] };
+    expect(published(svg)).toBe('<svg><g></g><rect></rect></svg>');
+  });
+
+  it('keeps HTML in foreignObject, and what is only a name in svg', () => {
+    const inForeign = { type: 'svg', children: [{ id: 'f', type: 'foreignObject', children: [{ id: 'p', type: 'p', props: { children: 'x' } }] }] };
+    expect(published(inForeign)).toContain('<p>x</p>');
+    expect(published({ type: 'svg', children: [{ id: 'a', type: 'a', children: [{ id: 't', type: 'text', props: { children: 'x' } }] }] })).toContain('<text>x</text>');
+  });
+
+  it.each(['formAction', 'formaction', 'formMethod', 'formTarget', 'formEncType', 'formenctype'])('drops %s on a control of a live form, at any depth', (name) => {
+    const control = { id: 'c', type: 'button', props: { [name]: '/elsewhere', children: 'x' } };
+    const box = { id: 'b', type: 'div', children: [control] };
+    const html = published({ id: 'f', type: 'div', props: { 'data-form-kind': 'form' }, children: [box] }).toLowerCase();
+    expect(html).toContain('<button>x</button>');
+  });
+
+  it.each(['formAction', 'formMethod', 'formTarget', 'formEncType'])('drops %s on a control tied to a form from outside', (name) => {
+    expect(published({ type: 'button', props: { form: 'f', [name]: '/elsewhere' } })).toBe('<button form="f"></button>');
+  });
+
+  it('keeps an owner\'s form logic on a plain form', () => {
+    const html = published({ type: 'form', props: { action: 'https://example.com/x' }, children: [{ id: 'b', type: 'button', props: { formAction: 'https://example.com/y' } }] });
+    expect(html).toContain('action="https://example.com/x"');
+    expect(html).toContain('formAction="https://example.com/y"');
+  });
+
   it.each(['id', 'ID'])('drops a member %s on an image even inside svg: a sibling can end the svg', (name) => {
     const image = { id: 'i', type: 'image', props: { [name]: 'parentElement' } };
     expect(published({ type: 'svg', children: [image] }).toLowerCase()).not.toContain('id=');
