@@ -15,20 +15,20 @@ const limitOf = (run: () => void) => {
 };
 
 describe('the conversion budget', () => {
-  it('holds the contract figures', () => {
+  it('holds the contract figures', async () => {
     expect(IMPORT_LIMITS).toMatchObject({
       files: 64, bytesPerFile: 524_288, bytesInAll: 2_097_152, astDepth: 256, evalDepth: 32,
       outputNodes: 5_000, outputDepth: 256, conversionSteps: 100_000, evaluatedBytes: 4_194_304, unrolledItems: 5_000, inliningDepth: 16, deadlineMs: 20_000,
     });
   });
 
-  it('counts across charges, and lets the last one that fits through', () => {
+  it('counts across charges, and lets the last one that fits through', async () => {
     const budget = createImportBudget();
     budget.chargeNodes(IMPORT_LIMITS.outputNodes);
     expect(limitOf(() => budget.chargeNodes(1))).toBe('nodes');
   });
 
-  it('keeps each measure apart', () => {
+  it('keeps each measure apart', async () => {
     const budget = createImportBudget();
     budget.chargeEvaluated(IMPORT_LIMITS.evaluatedBytes);
     budget.chargeUnrolled(IMPORT_LIMITS.unrolledItems);
@@ -37,7 +37,7 @@ describe('the conversion budget', () => {
     expect(limitOf(() => budget.chargeUnrolled(1))).toBe('unrolled');
   });
 
-  it('sees a component on its own stack, and only there', () => {
+  it('sees a component on its own stack, and only there', async () => {
     const budget = createImportBudget();
     budget.enterComponent('A');
     budget.enterComponent('B');
@@ -46,7 +46,7 @@ describe('the conversion budget', () => {
     budget.enterComponent('B');
   });
 
-  it('stops at 16 levels of different components', () => {
+  it('stops at 16 levels of different components', async () => {
     const budget = createImportBudget();
     for (let i = 0; i < IMPORT_LIMITS.inliningDepth; i += 1) budget.enterComponent(`C${i}`);
     expect(limitOf(() => budget.enterComponent('Next'))).toBe('inlining-depth');
@@ -59,9 +59,9 @@ describe('the conversion budget', () => {
 const LIMIT_MS = 15_000;
 vi.setConfig({ testTimeout: 30_000 });
 
-function timed(text: string) {
+async function timed(text: string) {
   const started = performance.now();
-  const outcome = importSource([{ name: 'p.tsx', text }]);
+  const outcome = await importSource([{ name: 'p.tsx', text }]);
   const milliseconds = performance.now() - started;
   expect(milliseconds).toBeLessThan(LIMIT_MS);
   return outcome;
@@ -69,8 +69,8 @@ function timed(text: string) {
 
 const detailsOf = (outcome: ImportOutcome) => outcome.report.lines.map((line) => line.detail);
 
-function expectStopped(text: string, detail: string) {
-  const outcome = timed(text);
+async function expectStopped(text: string, detail: string) {
+  const outcome = await timed(text);
   expect(outcome.root).toBeUndefined();
   expect(outcome.report.verdict).toBe('not-imported');
   expect(detailsOf(outcome)).toContain(detail);
@@ -84,45 +84,45 @@ describe('a value is paid for each time it is written', () => {
     return `${constants.join('')}\n<div ${Array.from({ length: links }, (_, i) => `title={a${i}}`).join(' ')} />`;
   };
 
-  it('a large string in thousands of attributes', () => {
+  it('a large string in thousands of attributes', async () => {
     const text = `const s0="${'x'.repeat(200_000)}";\nconst s1=\`\${s0}\${s0}\`;\nconst s2=\`\${s1}\${s1}\`;\nconst s3=\`\${s2}\${s2}\`;\n<div>${'<i title={s3} />'.repeat(4_900)}</div>`;
     expect(text.length).toBeLessThan(IMPORT_LIMITS.bytesPerFile);
-    expectStopped(text, DETAILS.overEvaluated);
+    await expectStopped(text, DETAILS.overEvaluated);
   });
 
-  it('a string written out plainly', () => {
-    expectStopped(`const s="${'x'.repeat(250_000)}";\n<div>${'<i title={s} />'.repeat(4_900)}</div>`, DETAILS.overEvaluated);
+  it('a string written out plainly', async () => {
+    await expectStopped(`const s="${'x'.repeat(250_000)}";\n<div>${'<i title={s} />'.repeat(4_900)}</div>`, DETAILS.overEvaluated);
   });
 
-  it('text, which always paid', () => {
-    expectStopped(`const s="${'x'.repeat(250_000)}";\n<div>${'<i>{s}</i>'.repeat(4_900)}</div>`, DETAILS.overEvaluated);
+  it('text, which always paid', async () => {
+    await expectStopped(`const s="${'x'.repeat(250_000)}";\n<div>${'<i>{s}</i>'.repeat(4_900)}</div>`, DETAILS.overEvaluated);
   });
 
-  it('an array in an attribute, walked each time', () => {
-    expectStopped(`const a=${NUMBERS};\n<div>${'<i title={a} />'.repeat(4_900)}</div>`, DETAILS.overEvaluated);
+  it('an array in an attribute, walked each time', async () => {
+    await expectStopped(`const a=${NUMBERS};\n<div>${'<i title={a} />'.repeat(4_900)}</div>`, DETAILS.overEvaluated);
   });
 
-  it('a style object', () => {
+  it('a style object', async () => {
     const declarations = Array.from({ length: 2_000 }, (_, i) => `a${i}:"${'x'.repeat(100)}"`).join(',');
-    expectStopped(`const s={${declarations}};\n<div>${'<i style={s} />'.repeat(4_900)}</div>`, DETAILS.overEvaluated);
+    await expectStopped(`const s={${declarations}};\n<div>${'<i style={s} />'.repeat(4_900)}</div>`, DETAILS.overEvaluated);
   });
 
-  it('keeps the output of what fits to the budget, as text a save can write', () => {
-    const { root } = timed(`const s="${'x'.repeat(100_000)}";\n<div>${'<i title={s} />'.repeat(30)}</div>`);
+  it('keeps the output of what fits to the budget, as text a save can write', async () => {
+    const { root } = await timed(`const s="${'x'.repeat(100_000)}";\n<div>${'<i title={s} />'.repeat(30)}</div>`);
     expect(JSON.stringify(root).length).toBeLessThan(IMPORT_LIMITS.evaluatedBytes);
   });
 
-  it('a large declaration read by thousands of attributes is walked once', () => {
-    timed(`const a=[${'0,'.repeat(200_000)}0];\n<div ${'title={a[0]} '.repeat(6_000)} />`);
+  it('a large declaration read by thousands of attributes is walked once', async () => {
+    await timed(`const a=[${'0,'.repeat(200_000)}0];\n<div ${'title={a[0]} '.repeat(6_000)} />`);
   });
 
-  it('a chain of constants, whose read sets grow', () => {
-    expectStopped(chain(4_000), DETAILS.overEvaluated);
-    expectStopped(chain(14_000), DETAILS.overEvaluated);
+  it('a chain of constants, whose read sets grow', async () => {
+    await expectStopped(chain(4_000), DETAILS.overEvaluated);
+    await expectStopped(chain(14_000), DETAILS.overEvaluated);
   });
 
-  it('a short chain costs next to nothing', () => {
-    expect(timed(chain(30)).report.verdict).toBe('imported');
+  it('a short chain costs next to nothing', async () => {
+    expect((await timed(chain(30))).report.verdict).toBe('imported');
   });
 });
 
@@ -132,31 +132,31 @@ describe('work that makes no node', () => {
     return [...lines, `function C${levels}() { return <></>; }`, '<C0 />'].join('\n');
   };
 
-  it.each([[15, 4], [15, 8], [15, 10]])('a tree of fragments, %i levels at width %i', (levels, width) => {
-    expectStopped(fragmentTree(levels, width), DETAILS.overSteps);
+  it.each([[15, 4], [15, 8], [15, 10]])('a tree of fragments, %i levels at width %i', async (levels, width) => {
+    await expectStopped(fragmentTree(levels, width), DETAILS.overSteps);
   });
 
-  it('a long list of empty children, inlined thousands of times', () => {
+  it('a long list of empty children, inlined thousands of times', async () => {
     const text = `function D() { return <>${'{}'.repeat(100_000)}</>; }\n<>${'<D />'.repeat(50_000)}</>`;
     expect(text.length).toBeLessThanOrEqual(IMPORT_LIMITS.bytesPerFile);
-    expectStopped(text, DETAILS.overSteps);
+    await expectStopped(text, DETAILS.overSteps);
   });
 
-  it('a list of null children, the same way', () => {
-    expectStopped(`function D() { return <>${'{null}'.repeat(30_000)}</>; }\n<>${'<D />'.repeat(50_000)}</>`, DETAILS.overSteps);
+  it('a list of null children, the same way', async () => {
+    await expectStopped(`function D() { return <>${'{null}'.repeat(30_000)}</>; }\n<>${'<D />'.repeat(50_000)}</>`, DETAILS.overSteps);
   });
 
-  it('a fragment tree that fits still reads', () => {
-    expect(timed(`${fragmentTree(3, 2)}`).report.lines.map((line) => line.detail)).toContain(DETAILS.nothingToPlace);
+  it('a fragment tree that fits still reads', async () => {
+    expect((await timed(`${fragmentTree(3, 2)}`)).report.lines.map((line) => line.detail)).toContain(DETAILS.nothingToPlace);
   });
 
-  it('a long body, inlined over and over', () => {
+  it('a long body, inlined over and over', async () => {
     const body = 'const a = 1;'.repeat(20_000);
-    expectStopped(`function B() { ${body} return <i />; }\n<div>${'<B />'.repeat(4_000)}</div>`, DETAILS.overSteps);
+    await expectStopped(`function B() { ${body} return <i />; }\n<div>${'<B />'.repeat(4_000)}</div>`, DETAILS.overSteps);
   });
 
-  it('a refused element holding a lot, inlined over and over', () => {
-    timed(`function B() { return <script>{[${'0,'.repeat(100_000)}0]}</script>; }\n<div>${'<B />'.repeat(4_000)}</div>`);
+  it('a refused element holding a lot, inlined over and over', async () => {
+    await timed(`function B() { return <script>{[${'0,'.repeat(100_000)}0]}</script>; }\n<div>${'<B />'.repeat(4_000)}</div>`);
   });
 });
 
@@ -172,8 +172,8 @@ describe('the parser exponential family', () => {
     ['unclosed', (n) => `const x = ${'async(a='.repeat(n)}`],
   ];
 
-  it.each(family)('%s', (_name, make) => {
-    for (const levels of [16, 20, 26, 200]) expectStopped(make(levels), DETAILS.tooDeep);
+  it.each(family)('%s', async (_name, make) => {
+    for (const levels of [16, 20, 26, 200]) (await expectStopped(make(levels), DETAILS.tooDeep));
   });
 
   const levels = (open: string, closer: string, n: number) => `${open.repeat(n)}a${closer.repeat(n)}`;
@@ -189,17 +189,17 @@ describe('the parser exponential family', () => {
     ['another fuzzed class body', (n) => `class K { ${levels('async ! keyof ( ', ' )', n)}`],
   ];
 
-  it.each(blinded)('%s', (_name, make) => {
-    for (const n of [20, 22, 26]) expectStopped(make(n), DETAILS.tooDeep);
+  it.each(blinded)('%s', async (_name, make) => {
+    for (const n of [20, 22, 26]) (await expectStopped(make(n), DETAILS.tooDeep));
   });
 
-  it('leaves real async code alone', () => {
+  it('leaves real async code alone', async () => {
     const text = '<button title="x">Go</button>;\nconst load = async () => { await a(async (b) => { await c(async () => d(async (e) => e)); }); };\nconst more = [async () => 1, async () => 2, async () => 3, async () => 4, async () => 5, async () => 6, async () => 7, async () => 8, async () => 9, async () => 10];\n<p />';
-    expect(detailsOf(timed(text))).not.toContain(DETAILS.tooDeep);
+    expect(detailsOf((await timed(text)))).not.toContain(DETAILS.tooDeep);
   });
 
-  it('is linear itself, on the largest file', () => {
-    timed(`const x = ${'async(1);'.repeat(50_000)}`);
+  it('is linear itself, on the largest file', async () => {
+    await timed(`const x = ${'async(1);'.repeat(50_000)}`);
   });
 });
 
@@ -214,28 +214,28 @@ describe('patterns a line of spaces makes quadratic', () => {
     ['spaces after a less than in a style', `<div style={{ background: "<${' '.repeat(100_000)}" }} />`],
     ['spaces in a fill url', `<svg><rect fill="url(${' '.repeat(100_000)}x" /></svg>`],
     ['a source set of separators', `<img srcSet="${' ,'.repeat(100_000)}" />`],
-  ])('%s', (_name, text) => {
+  ])('%s', async (_name, text) => {
     expect(text.length).toBeLessThanOrEqual(IMPORT_LIMITS.bytesPerFile);
-    timed(text);
+    await timed(text);
   });
 
-  it('reads the text the same after the change', () => {
-    expect(timed(`<p>one   \n  two  </p>`).root?.props?.children).toBe('one two  ');
+  it('reads the text the same after the change', async () => {
+    expect((await timed(`<p>one   \n  two  </p>`)).root?.props?.children).toBe('one two  ');
   });
 });
 
 describe('the report cap', () => {
-  it('folds no line that names a node, and is said to', () => {
-    const { report } = timed(`<div ${'a-b="1" '.repeat(40_000)} />`);
+  it('folds no line that names a node, and is said to', async () => {
+    const { report } = await timed(`<div ${'a-b="1" '.repeat(40_000)} />`);
     expect(report.lines.length).toBeGreaterThan(IMPORT_LIMITS.reportLines);
     expect(report.lines.every((line) => line.nodeKey !== undefined)).toBe(true);
   });
 });
 
 describe('the one catch reaches delivery', () => {
-  it('turns a result too big to clone into a report', () => {
+  it('turns a result too big to clone into a report', async () => {
     const posted: ImportOutcome[] = [];
-    importAndPost([{ name: 'p.tsx', text: '<p>x</p>' }], {}, (outcome) => {
+    await importAndPost([{ name: 'p.tsx', text: '<p>x</p>' }], {}, (outcome) => {
       posted.push(outcome);
       if (posted.length === 1) throw new DOMException('Data cannot be cloned, out of memory.', 'DataCloneError');
     });
@@ -245,14 +245,14 @@ describe('the one catch reaches delivery', () => {
     expect(detailsOf(posted[1])).toEqual([DETAILS.failed]);
   });
 
-  it('posts once when nothing goes wrong', () => {
+  it('posts once when nothing goes wrong', async () => {
     const posted: ImportOutcome[] = [];
-    importAndPost([{ name: 'p.tsx', text: '<p>x</p>' }], {}, (outcome) => posted.push(outcome));
+    await importAndPost([{ name: 'p.tsx', text: '<p>x</p>' }], {}, (outcome) => posted.push(outcome));
     expect(posted).toHaveLength(1);
   });
 
-  it('survives input that is not what the types say', () => {
-    expect(importSource(null as never).report.verdict).toBe('not-imported');
-    expect(importSource([{ name: 'p.tsx', text: null as never }]).report.verdict).toBe('not-imported');
+  it('survives input that is not what the types say', async () => {
+    expect((await importSource(null as never)).report.verdict).toBe('not-imported');
+    expect((await importSource([{ name: 'p.tsx', text: null as never }])).report.verdict).toBe('not-imported');
   });
 });

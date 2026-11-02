@@ -63,13 +63,13 @@ const U_TW_NAME = /--u-tw-[A-Za-z0-9-]+/g;
 const WORD = /[A-Za-z_-][A-Za-z0-9_-]*/g;
 
 /** One attempt at a value in Normal: fine, kept with an accept, or why it is refused. */
-type NormalCheck = { ok: true; external: boolean } | { ok: false; reason: string };
+export type NormalCheck = { ok: true; external: boolean } | { ok: false; reason: string };
 
 const sizeOfStyle = (style: Record<string, unknown>): number =>
   Object.entries(style).reduce((sum, [key, value]) => sum + key.length + (typeof value === 'string' ? value.length : 0), 0);
 
 /** Normal is allowed an external address, and a rule is not. Only that exact refusal differs: anything else is refused the same. */
-function checkNormal(key: string, value: unknown): NormalCheck {
+export function checkNormal(key: string, value: unknown): NormalCheck {
   const parsed = parseRule({ id: 'n', selector: '&', style: { [key]: value } });
   if (safeInlineStyle({ [key]: value })[key] === undefined) return { ok: false, reason: 'the render gate refuses this declaration' };
   if (parsed.ok) return { ok: true, external: false };

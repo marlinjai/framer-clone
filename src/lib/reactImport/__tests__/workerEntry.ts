@@ -12,7 +12,7 @@ export interface WorkerRequest {
 
 self.onmessage = (event: MessageEvent<WorkerRequest>) => {
   const started = performance.now();
-  importAndPost(event.data.files, event.data.options ?? {}, (outcome) => {
+  void importAndPost(event.data.files, event.data.options ?? {}, (outcome) => {
     self.postMessage({ outcome, hasSystem: ts.sys !== undefined, milliseconds: performance.now() - started });
   });
 };

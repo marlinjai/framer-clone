@@ -1,0 +1,132 @@
+/* A theme of its own, for the import score: the shape of a shadcn sheet, with every
+   token different from the editor's (src/app/globals.css). The repo's components
+   share the editor's theme, so a token the importer forgot still looks right there.
+   Here it does not. import.score.ts checks that every token stays different. */
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: Georgia, "Times New Roman", serif;
+  --font-mono: "Courier New", Courier, monospace;
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --radius-sm: calc(var(--radius) - 3px);
+  --radius-md: calc(var(--radius) - 1px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 6px);
+}
+
+:root {
+  --radius: 0.25rem;
+  --card: #fdf6e3;
+  --card-foreground: #3b2f1e;
+  --popover: #fbf1d6;
+  --popover-foreground: #40321f;
+  --primary: #0b6e4f;
+  --primary-foreground: #f2fff8;
+  --secondary: #f0d9b5;
+  --secondary-foreground: #4a2c0a;
+  --muted: #efe3cc;
+  --muted-foreground: #7a5c3a;
+  --accent: #ffd166;
+  --accent-foreground: #3d2400;
+  --destructive: #b5179e;
+  --border: #c08a4a;
+  --input: #a06b2f;
+  --ring: #ef476f;
+  --chart-1: #118ab2;
+  --chart-2: #06d6a0;
+  --chart-3: #073b4c;
+  --chart-4: #ffd23f;
+  --chart-5: #ee4266;
+  --sidebar: #f7ecd8;
+  --sidebar-foreground: #2e2414;
+  --sidebar-primary: #136f63;
+  --sidebar-primary-foreground: #eafff9;
+  --sidebar-accent: #f4d58d;
+  --sidebar-accent-foreground: #2c1a00;
+  --sidebar-border: #b88445;
+  --sidebar-ring: #d1495b;
+  --background: #fff8e7;
+  --foreground: #2b1d0e;
+  --brand: #e76f51;
+  --brand-foreground: #fff4ef;
+}
+
+.dark {
+  --background: #1d140b;
+  --foreground: #fbe9d0;
+  --card: #2a1d10;
+  --card-foreground: #fcefdc;
+  --popover: #2d2012;
+  --popover-foreground: #fdf1e1;
+  --primary: #40c9a2;
+  --primary-foreground: #04291d;
+  --secondary: #4d3519;
+  --secondary-foreground: #fde7c8;
+  --muted: #3e2c16;
+  --muted-foreground: #d9b98f;
+  --accent: #6b4a12;
+  --accent-foreground: #fff0cc;
+  --destructive: #f15bb5;
+  --border: #6e4b25;
+  --input: #7f5730;
+  --ring: #ff7b9c;
+  --chart-1: #4cc9f0;
+  --chart-2: #72efdd;
+  --chart-3: #48bfe3;
+  --chart-4: #f9c74f;
+  --chart-5: #f94144;
+  --sidebar: #24190d;
+  --sidebar-foreground: #fae6ca;
+  --sidebar-primary: #52b69a;
+  --sidebar-primary-foreground: #03241a;
+  --sidebar-accent: #5c4214;
+  --sidebar-accent-foreground: #fff3d6;
+  --sidebar-border: #5f4120;
+  --sidebar-ring: #ff8fab;
+  --brand: #f4a261;
+  --brand-foreground: #2b1306;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}

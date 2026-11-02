@@ -1,5 +1,6 @@
 // The way in: files to a result and a report. Worker and command line tool are thin
 // shells around `importSource`. Nothing here evaluates source, and no flag changes that.
+// It is async because Tailwind's compiler is, and every await sits inside the one catch.
 //
 // A file from a stranger can overflow the parser or any walker, or expand past memory.
 // So the input is measured first, depth is read from the tree, one budget runs across
@@ -13,8 +14,10 @@
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { extensionOf, hasParserTrap, isScript, isTooDeep, parseFile, type ParsedFile } from './atoms';
 import { BudgetExceeded, IMPORT_LIMITS, createImportBudget, type BudgetLimit } from './budget';
+import { applyClasses } from './classLayer';
 import { ROOT_NODE_KEY, convertFile } from './jsx';
-import { Ledger } from './ledger';
+import { Ledger, type AtomRecord } from './ledger';
+import type { BreakpointIds } from './tailwind/breakpoints';
 import { DETAILS, buildReport, type DetailKey, type ImportReport } from './report';
 
 export interface SourceInput {
@@ -25,12 +28,20 @@ export interface SourceInput {
 export interface ImportOptions {
   /** False leaves source out of the report, for one a developer passes on. */
   excerpts?: boolean;
+  /** The project's tablet and mobile frame ids, which a breakpoint map is keyed by. The defaults' ids otherwise. */
+  breakpoints?: BreakpointIds;
+  /** `use-system-dark`, a person's choice: `dark:` as the media query, which works on a published page. */
+  systemDark?: boolean;
+  /** The atom table, for the score's conservation check. It is never part of a bundle. */
+  atomTable?: boolean;
 }
 
 export interface ImportOutcome {
   /** The nodes to place. Absent when there is nothing to place. */
   root?: ComponentNode;
   report: ImportReport;
+  /** Only with `atomTable`. */
+  atoms?: AtomRecord[];
 }
 
 const utf8Length = (text: string): number => new TextEncoder().encode(text).length;
@@ -70,11 +81,21 @@ const STYLESHEETS: ReadonlySet<string> = new Set(['css', 'scss', 'sass', 'less']
 /** A Tailwind config is a program, and a theme has to come from CSS. It is never parsed, so it can never be the entry. */
 const TAILWIND_CONFIG = /(?:^|\/)tailwind\.config\.[cm]?[jt]s$/i;
 
+/** The stylesheet layer 2 reads tokens from: the first plain CSS file. */
+const TOKEN_SHEET = 'css';
+
 /** Lists each file in the ledger. True when all of them can be converted. */
-function openFiles(files: readonly SourceInput[], ledger: Ledger): { readable: boolean; entry?: ParsedFile } {
+function openFiles(files: readonly SourceInput[], ledger: Ledger): { readable: boolean; entry?: ParsedFile; sheet?: SourceInput } {
   let readable = true;
   let entry: ParsedFile | undefined;
+  let sheet: SourceInput | undefined;
   for (const { name, text } of files) {
+    if (!sheet && extensionOf(name) === TOKEN_SHEET) {
+      // Read as data by layer 2, which claims it. A second sheet waits for slice `import-stylesheet`.
+      sheet = { name, text };
+      ledger.openUnclaimed(name, text);
+      continue;
+    }
     if (TAILWIND_CONFIG.test(name)) {
       // It does not decide what renders here, so it blocks nothing: the line says why the theme is not in it.
       ledger.openWhole(name, text, { kind: 'statement', disposition: 'left', detail: 'tailwindConfig', next: ['add-tokens'] });
@@ -104,7 +125,7 @@ function openFiles(files: readonly SourceInput[], ledger: Ledger): { readable: b
       entry ??= parsed;
     }
   }
-  return { readable, entry };
+  return { readable, entry, sheet };
 }
 
 /** The last resort: nothing about the conversion could be told, and this line still can be. */
@@ -115,22 +136,36 @@ const failedReport = (): ImportReport => ({
 });
 
 /** The conversion, unless a host's deadline ends it first. See the head of this file. */
-export function importSource(files: readonly SourceInput[], options: ImportOptions = {}): ImportOutcome {
+export async function importSource(files: readonly SourceInput[], options: ImportOptions = {}): Promise<ImportOutcome> {
   const ledger = new Ledger(options.excerpts ?? true);
+  const atoms = () => (options.atomTable ? { atoms: ledger.atomTable() } : {});
   try {
     let root: ComponentNode | undefined;
     const broken = brokenLimit(files);
     if (broken) ledger.refuse(broken);
     else {
-      const { readable, entry } = openFiles(files, ledger);
+      const { readable, entry, sheet } = openFiles(files, ledger);
       if (!entry && readable) ledger.refuse('nothingToPlace', 'statement');
-      if (entry && readable) root = convertFile(entry, ledger, createImportBudget());
+      if (entry && readable) {
+        const budget = createImportBudget();
+        const converted = convertFile(entry, ledger, budget);
+        if (converted.root && (converted.classes.length > 0 || sheet)) {
+          await applyClasses({
+            root: converted.root, classes: converted.classes, elements: converted.elements, source: converted.source, ledger, budget,
+            ...(sheet ? { sheet } : {}),
+            ...(options.breakpoints ? { breakpoints: options.breakpoints } : {}),
+            ...(options.systemDark ? { systemDark: true } : {}),
+          });
+          if (sheet) ledger.claimWhole(sheet.name, { kind: 'css-rule', disposition: 'converted', detail: 'sheetRead' });
+        }
+        root = converted.root;
+      }
     }
-    return { ...(root ? { root } : {}), report: buildReport(ledger.close(), root !== undefined) };
+    return { ...(root ? { root } : {}), report: buildReport(ledger.close(), root !== undefined), ...atoms() };
   } catch (error) {
     try {
       ledger.refuse(reasonFor(error));
-      return { report: buildReport(ledger.close(), false) };
+      return { report: buildReport(ledger.close(), false), ...atoms() };
     } catch {
       return { report: failedReport() };
     }
@@ -141,9 +176,15 @@ export function importSource(files: readonly SourceInput[], options: ImportOptio
  * The conversion and its delivery, for a host, with the same promise: a result too big to clone
  * (`DataCloneError`) is a failure of this import, so it reaches the dialog as a report, not as an error event.
  */
-export function importAndPost(files: readonly SourceInput[], options: ImportOptions, post: (outcome: ImportOutcome) => void): void {
+export async function importAndPost(files: readonly SourceInput[], options: ImportOptions, post: (outcome: ImportOutcome) => void): Promise<void> {
+  let outcome: ImportOutcome;
   try {
-    post(importSource(files, options));
+    outcome = await importSource(files, options);
+  } catch {
+    outcome = { report: failedReport() };
+  }
+  try {
+    post(outcome);
   } catch {
     post({ report: failedReport() });
   }
