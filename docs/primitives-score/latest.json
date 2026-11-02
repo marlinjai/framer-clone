@@ -1,11 +1,11 @@
 {
-  "generatedAt": "2026-11-02T03:28:59.389Z",
+  "generatedAt": "2026-11-02T03:52:17.568Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 118,
+  "durationSeconds": 310,
   "matrix": {
     "surfaces": {
       "format": {
@@ -6080,6 +6080,2704 @@
       }
     ]
   },
+  "busbasis": {
+    "passed": 0,
+    "total": 14,
+    "pages": [
+      {
+        "fixture": "busbasis-home",
+        "group": "held-out",
+        "source": "https://basiscampberlin.de/de, captured 2026-11-02, answered 200",
+        "pass": false,
+        "checks": {
+          "screenshot": {
+            "pass": 0,
+            "total": 4
+          },
+          "computed-styles": {
+            "pass": 0,
+            "total": 4
+          },
+          "accessibility-tree": {
+            "pass": 0,
+            "total": 4
+          },
+          "interaction": {
+            "pass": 0,
+            "total": 8
+          }
+        },
+        "failures": [
+          {
+            "fixture": "busbasis-home",
+            "viewport": "Desktop",
+            "state": "initial",
+            "check": "screenshot",
+            "gap": "empty-custom-property",
+            "detail": "1.12 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-home",
+            "viewport": "Desktop",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "15 differences on 15 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-home",
+            "viewport": "Desktop",
+            "state": "initial",
+            "check": "accessibility-tree",
+            "gap": "blocked-embedded-content",
+            "detail": "original \"- main:\\n  - navigation:\\n    - link \\\"BusBasis Berlin\\\":\\n      - /url: /de\\n      - img \\\"BusBasis Berlin\\\"\\n    - link \\\"Shop\\\":\", replica \"- main:\\n  - navigation:\\n    - link \\\"BusBasis Berlin\\\":\\n      - /url: /de\\n      - i"
+          },
+          {
+            "fixture": "busbasis-home",
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "check": "screenshot",
+            "gap": "empty-custom-property",
+            "detail": "1.12 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-home",
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "15 differences on 15 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-home",
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "check": "accessibility-tree",
+            "gap": "blocked-embedded-content",
+            "detail": "original \"- main:\\n  - navigation:\\n    - link \\\"BusBasis Berlin\\\":\\n      - /url: /de\\n      - img \\\"BusBasis Berlin\\\"\\n    - link \\\"Shop\\\":\", replica \"- main:\\n  - navigation:\\n    - link \\\"BusBasis Berlin\\\":\\n      - /url: /de\\n      - i"
+          },
+          {
+            "fixture": "busbasis-home",
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "check": "interaction",
+            "gap": "empty-custom-property",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "busbasis-home",
+            "viewport": "Tablet",
+            "state": "initial",
+            "check": "screenshot",
+            "gap": "empty-custom-property",
+            "detail": "1.44 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-home",
+            "viewport": "Tablet",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "15 differences on 15 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-home",
+            "viewport": "Tablet",
+            "state": "initial",
+            "check": "accessibility-tree",
+            "gap": "blocked-embedded-content",
+            "detail": "original \"- main:\\n  - navigation:\\n    - link \\\"BusBasis Berlin\\\":\\n      - /url: /de\\n      - img \\\"BusBasis Berlin\\\"\\n    - link \\\"Konto\\\"\", replica \"- main:\\n  - navigation:\\n    - link \\\"BusBasis Berlin\\\":\\n      - /url: /de\\n      - i"
+          },
+          {
+            "fixture": "busbasis-home",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "screenshot",
+            "gap": "empty-custom-property",
+            "detail": "2.28 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-home",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "15 differences on 15 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-home",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "accessibility-tree",
+            "gap": "blocked-embedded-content",
+            "detail": "original \"- main:\\n  - navigation:\\n    - link \\\"BusBasis Berlin\\\":\\n      - /url: /de\\n      - img \\\"BusBasis Berlin\\\"\\n    - link \\\"Konto\\\"\", replica \"- main:\\n  - navigation:\\n    - link \\\"BusBasis Berlin\\\":\\n      - /url: /de\\n      - i"
+          },
+          {
+            "fixture": "busbasis-home",
+            "viewport": "all",
+            "state": "needs: mobile menu opens",
+            "check": "interaction",
+            "gap": "behaviour-state",
+            "detail": "The chrome of every page: the menu is script on the original, and a frozen page cannot open it, so its parity is unmeasured."
+          },
+          {
+            "fixture": "busbasis-home",
+            "viewport": "all",
+            "state": "needs: cart count and dropdown",
+            "check": "interaction",
+            "gap": "shop-feature-missing",
+            "detail": "The header shows the live cart count and a dropdown. framer-clone has a cart, but not as a header element on a page."
+          },
+          {
+            "fixture": "busbasis-home",
+            "viewport": "all",
+            "state": "needs: legal modals open from the footer",
+            "check": "interaction",
+            "gap": "behaviour-state",
+            "detail": "Impressum and Vereinssatzung exist only as modals opened by script, so their content is not on any frozen page."
+          },
+          {
+            "fixture": "busbasis-home",
+            "viewport": "all",
+            "state": "needs: styles on html",
+            "check": "interaction",
+            "gap": "page-level-css",
+            "detail": "The original sets smooth scrolling and hides sideways overflow on html. No node can hold that, because the route owns html, and the computed styles of html are not compared."
+          },
+          {
+            "fixture": "busbasis-home",
+            "viewport": "all",
+            "state": "needs: contact form sends",
+            "check": "interaction",
+            "gap": "behaviour-state",
+            "detail": "A form posting to the shop backend. framer-clone has forms, but this one was not wired in the rebuild."
+          },
+          {
+            "fixture": "busbasis-home",
+            "viewport": "all",
+            "state": "needs: map embed",
+            "check": "interaction",
+            "gap": "blocked-embedded-content",
+            "detail": "The location map is an iframe, which the renderers block on purpose until custom code exists."
+          },
+          {
+            "fixture": "busbasis-home",
+            "viewport": "all",
+            "state": "needs: hero video",
+            "check": "interaction",
+            "gap": "harness-limit",
+            "detail": "The hero plays a video. The frozen page holds no media, so only its box is compared."
+          }
+        ],
+        "notMeasured": [],
+        "pageType": "home",
+        "differences": [
+          {
+            "viewport": "Desktop",
+            "state": "initial",
+            "ratio": 0.011184740823412698,
+            "elementsCompared": 531,
+            "elementsDiffering": 15,
+            "differences": 15,
+            "byGap": {
+              "empty-custom-property": 14,
+              "blocked-embedded-content": 1
+            },
+            "byProperty": [
+              [
+                "background-image",
+                9
+              ],
+              [
+                "backdrop-filter",
+                3
+              ],
+              [
+                "filter",
+                2
+              ],
+              [
+                "missing",
+                1
+              ]
+            ]
+          },
+          {
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "ratio": 0.011184740823412698,
+            "elementsCompared": 531,
+            "elementsDiffering": 15,
+            "differences": 15,
+            "byGap": {
+              "empty-custom-property": 14,
+              "blocked-embedded-content": 1
+            },
+            "byProperty": [
+              [
+                "background-image",
+                9
+              ],
+              [
+                "backdrop-filter",
+                3
+              ],
+              [
+                "filter",
+                2
+              ],
+              [
+                "missing",
+                1
+              ]
+            ]
+          },
+          {
+            "viewport": "Tablet",
+            "state": "initial",
+            "ratio": 0.014433958625898975,
+            "elementsCompared": 531,
+            "elementsDiffering": 15,
+            "differences": 15,
+            "byGap": {
+              "empty-custom-property": 14,
+              "blocked-embedded-content": 1
+            },
+            "byProperty": [
+              [
+                "background-image",
+                9
+              ],
+              [
+                "backdrop-filter",
+                3
+              ],
+              [
+                "filter",
+                2
+              ],
+              [
+                "missing",
+                1
+              ]
+            ]
+          },
+          {
+            "viewport": "Mobile",
+            "state": "initial",
+            "ratio": 0.02275654370894391,
+            "elementsCompared": 531,
+            "elementsDiffering": 15,
+            "differences": 15,
+            "byGap": {
+              "empty-custom-property": 14,
+              "blocked-embedded-content": 1
+            },
+            "byProperty": [
+              [
+                "background-image",
+                9
+              ],
+              [
+                "backdrop-filter",
+                3
+              ],
+              [
+                "filter",
+                2
+              ],
+              [
+                "missing",
+                1
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "fixture": "busbasis-store",
+        "group": "held-out",
+        "source": "https://basiscampberlin.de/de/store, captured 2026-11-02, answered 200",
+        "pass": false,
+        "checks": {
+          "screenshot": {
+            "pass": 4,
+            "total": 4
+          },
+          "computed-styles": {
+            "pass": 0,
+            "total": 4
+          },
+          "accessibility-tree": {
+            "pass": 4,
+            "total": 4
+          },
+          "interaction": {
+            "pass": 0,
+            "total": 8
+          }
+        },
+        "failures": [
+          {
+            "fixture": "busbasis-store",
+            "viewport": "Desktop",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-store",
+            "viewport": "Desktop",
+            "state": "hover e26",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-store",
+            "viewport": "Desktop",
+            "state": "hover e26",
+            "check": "interaction",
+            "gap": "empty-custom-property",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "busbasis-store",
+            "viewport": "Tablet",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-store",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-store",
+            "viewport": "all",
+            "state": "needs: mobile menu opens",
+            "check": "interaction",
+            "gap": "behaviour-state",
+            "detail": "The chrome of every page: the menu is script on the original, and a frozen page cannot open it, so its parity is unmeasured."
+          },
+          {
+            "fixture": "busbasis-store",
+            "viewport": "all",
+            "state": "needs: cart count and dropdown",
+            "check": "interaction",
+            "gap": "shop-feature-missing",
+            "detail": "The header shows the live cart count and a dropdown. framer-clone has a cart, but not as a header element on a page."
+          },
+          {
+            "fixture": "busbasis-store",
+            "viewport": "all",
+            "state": "needs: legal modals open from the footer",
+            "check": "interaction",
+            "gap": "behaviour-state",
+            "detail": "Impressum and Vereinssatzung exist only as modals opened by script, so their content is not on any frozen page."
+          },
+          {
+            "fixture": "busbasis-store",
+            "viewport": "all",
+            "state": "needs: styles on html",
+            "check": "interaction",
+            "gap": "page-level-css",
+            "detail": "The original sets smooth scrolling and hides sideways overflow on html. No node can hold that, because the route owns html, and the computed styles of html are not compared."
+          },
+          {
+            "fixture": "busbasis-store",
+            "viewport": "all",
+            "state": "needs: faceted search",
+            "check": "interaction",
+            "gap": "shop-feature-missing",
+            "detail": "Meilisearch with facets, sort and pagination. framer-clone has search only in the admin."
+          },
+          {
+            "fixture": "busbasis-store",
+            "viewport": "all",
+            "state": "needs: nested categories",
+            "check": "interaction",
+            "gap": "shop-feature-missing",
+            "detail": "Categories nested four levels. framer-clone has collections and tags only."
+          },
+          {
+            "fixture": "busbasis-store",
+            "viewport": "all",
+            "state": "needs: live product list",
+            "check": "interaction",
+            "gap": "shop-feature-missing",
+            "detail": "The tree is a frozen copy of the rows. A real page binds them to the catalogue through the product list island, which was not rebuilt here."
+          }
+        ],
+        "notMeasured": [],
+        "pageType": "product list",
+        "differences": [
+          {
+            "viewport": "Desktop",
+            "state": "initial",
+            "ratio": 0,
+            "elementsCompared": 753,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          },
+          {
+            "viewport": "Desktop",
+            "state": "hover e26",
+            "ratio": 0,
+            "elementsCompared": 753,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          },
+          {
+            "viewport": "Tablet",
+            "state": "initial",
+            "ratio": 0,
+            "elementsCompared": 753,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          },
+          {
+            "viewport": "Mobile",
+            "state": "initial",
+            "ratio": 0,
+            "elementsCompared": 753,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "fixture": "busbasis-search",
+        "group": "held-out",
+        "source": "https://basiscampberlin.de/de/store?q=bremse, captured 2026-11-02, answered 200",
+        "pass": false,
+        "checks": {
+          "screenshot": {
+            "pass": 4,
+            "total": 4
+          },
+          "computed-styles": {
+            "pass": 0,
+            "total": 4
+          },
+          "accessibility-tree": {
+            "pass": 4,
+            "total": 4
+          },
+          "interaction": {
+            "pass": 0,
+            "total": 7
+          }
+        },
+        "failures": [
+          {
+            "fixture": "busbasis-search",
+            "viewport": "Desktop",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-search",
+            "viewport": "Desktop",
+            "state": "hover e26",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-search",
+            "viewport": "Desktop",
+            "state": "hover e26",
+            "check": "interaction",
+            "gap": "empty-custom-property",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "busbasis-search",
+            "viewport": "Tablet",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-search",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-search",
+            "viewport": "all",
+            "state": "needs: mobile menu opens",
+            "check": "interaction",
+            "gap": "behaviour-state",
+            "detail": "The chrome of every page: the menu is script on the original, and a frozen page cannot open it, so its parity is unmeasured."
+          },
+          {
+            "fixture": "busbasis-search",
+            "viewport": "all",
+            "state": "needs: cart count and dropdown",
+            "check": "interaction",
+            "gap": "shop-feature-missing",
+            "detail": "The header shows the live cart count and a dropdown. framer-clone has a cart, but not as a header element on a page."
+          },
+          {
+            "fixture": "busbasis-search",
+            "viewport": "all",
+            "state": "needs: legal modals open from the footer",
+            "check": "interaction",
+            "gap": "behaviour-state",
+            "detail": "Impressum and Vereinssatzung exist only as modals opened by script, so their content is not on any frozen page."
+          },
+          {
+            "fixture": "busbasis-search",
+            "viewport": "all",
+            "state": "needs: styles on html",
+            "check": "interaction",
+            "gap": "page-level-css",
+            "detail": "The original sets smooth scrolling and hides sideways overflow on html. No node can hold that, because the route owns html, and the computed styles of html are not compared."
+          },
+          {
+            "fixture": "busbasis-search",
+            "viewport": "all",
+            "state": "needs: faceted search",
+            "check": "interaction",
+            "gap": "shop-feature-missing",
+            "detail": "Meilisearch with facets, sort and pagination. framer-clone has search only in the admin."
+          },
+          {
+            "fixture": "busbasis-search",
+            "viewport": "all",
+            "state": "needs: live product list",
+            "check": "interaction",
+            "gap": "shop-feature-missing",
+            "detail": "The tree is a frozen copy of the rows. A real page binds them to the catalogue through the product list island, which was not rebuilt here."
+          }
+        ],
+        "notMeasured": [],
+        "pageType": "search",
+        "differences": [
+          {
+            "viewport": "Desktop",
+            "state": "initial",
+            "ratio": 0,
+            "elementsCompared": 760,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          },
+          {
+            "viewport": "Desktop",
+            "state": "hover e26",
+            "ratio": 0,
+            "elementsCompared": 760,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          },
+          {
+            "viewport": "Tablet",
+            "state": "initial",
+            "ratio": 0,
+            "elementsCompared": 760,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          },
+          {
+            "viewport": "Mobile",
+            "state": "initial",
+            "ratio": 0,
+            "elementsCompared": 760,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "fixture": "busbasis-category",
+        "group": "held-out",
+        "source": "https://basiscampberlin.de/de/categories/mercedes-benz-baumuster-309-310-313-duedos-motor, captured 2026-11-02, answered 200",
+        "pass": false,
+        "checks": {
+          "screenshot": {
+            "pass": 4,
+            "total": 4
+          },
+          "computed-styles": {
+            "pass": 0,
+            "total": 4
+          },
+          "accessibility-tree": {
+            "pass": 4,
+            "total": 4
+          },
+          "interaction": {
+            "pass": 0,
+            "total": 7
+          }
+        },
+        "failures": [
+          {
+            "fixture": "busbasis-category",
+            "viewport": "Desktop",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-category",
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-category",
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "check": "interaction",
+            "gap": "empty-custom-property",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "busbasis-category",
+            "viewport": "Tablet",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-category",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-category",
+            "viewport": "all",
+            "state": "needs: mobile menu opens",
+            "check": "interaction",
+            "gap": "behaviour-state",
+            "detail": "The chrome of every page: the menu is script on the original, and a frozen page cannot open it, so its parity is unmeasured."
+          },
+          {
+            "fixture": "busbasis-category",
+            "viewport": "all",
+            "state": "needs: cart count and dropdown",
+            "check": "interaction",
+            "gap": "shop-feature-missing",
+            "detail": "The header shows the live cart count and a dropdown. framer-clone has a cart, but not as a header element on a page."
+          },
+          {
+            "fixture": "busbasis-category",
+            "viewport": "all",
+            "state": "needs: legal modals open from the footer",
+            "check": "interaction",
+            "gap": "behaviour-state",
+            "detail": "Impressum and Vereinssatzung exist only as modals opened by script, so their content is not on any frozen page."
+          },
+          {
+            "fixture": "busbasis-category",
+            "viewport": "all",
+            "state": "needs: styles on html",
+            "check": "interaction",
+            "gap": "page-level-css",
+            "detail": "The original sets smooth scrolling and hides sideways overflow on html. No node can hold that, because the route owns html, and the computed styles of html are not compared."
+          },
+          {
+            "fixture": "busbasis-category",
+            "viewport": "all",
+            "state": "needs: nested categories",
+            "check": "interaction",
+            "gap": "shop-feature-missing",
+            "detail": "Categories nested four levels. framer-clone has collections and tags only."
+          },
+          {
+            "fixture": "busbasis-category",
+            "viewport": "all",
+            "state": "needs: live product list",
+            "check": "interaction",
+            "gap": "shop-feature-missing",
+            "detail": "The tree is a frozen copy of the rows. A real page binds them to the catalogue through the product list island, which was not rebuilt here."
+          }
+        ],
+        "notMeasured": [],
+        "pageType": "category",
+        "differences": [
+          {
+            "viewport": "Desktop",
+            "state": "initial",
+            "ratio": 0,
+            "elementsCompared": 278,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          },
+          {
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "ratio": 0,
+            "elementsCompared": 278,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          },
+          {
+            "viewport": "Tablet",
+            "state": "initial",
+            "ratio": 0,
+            "elementsCompared": 278,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          },
+          {
+            "viewport": "Mobile",
+            "state": "initial",
+            "ratio": 0,
+            "elementsCompared": 278,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "fixture": "busbasis-collection",
+        "group": "held-out",
+        "source": "https://basiscampberlin.de/de/collections/favoriten, captured 2026-11-02, answered 200",
+        "pass": false,
+        "checks": {
+          "screenshot": {
+            "pass": 4,
+            "total": 4
+          },
+          "computed-styles": {
+            "pass": 0,
+            "total": 4
+          },
+          "accessibility-tree": {
+            "pass": 4,
+            "total": 4
+          },
+          "interaction": {
+            "pass": 0,
+            "total": 6
+          }
+        },
+        "failures": [
+          {
+            "fixture": "busbasis-collection",
+            "viewport": "Desktop",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-collection",
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-collection",
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "check": "interaction",
+            "gap": "empty-custom-property",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "busbasis-collection",
+            "viewport": "Tablet",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-collection",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-collection",
+            "viewport": "all",
+            "state": "needs: mobile menu opens",
+            "check": "interaction",
+            "gap": "behaviour-state",
+            "detail": "The chrome of every page: the menu is script on the original, and a frozen page cannot open it, so its parity is unmeasured."
+          },
+          {
+            "fixture": "busbasis-collection",
+            "viewport": "all",
+            "state": "needs: cart count and dropdown",
+            "check": "interaction",
+            "gap": "shop-feature-missing",
+            "detail": "The header shows the live cart count and a dropdown. framer-clone has a cart, but not as a header element on a page."
+          },
+          {
+            "fixture": "busbasis-collection",
+            "viewport": "all",
+            "state": "needs: legal modals open from the footer",
+            "check": "interaction",
+            "gap": "behaviour-state",
+            "detail": "Impressum and Vereinssatzung exist only as modals opened by script, so their content is not on any frozen page."
+          },
+          {
+            "fixture": "busbasis-collection",
+            "viewport": "all",
+            "state": "needs: styles on html",
+            "check": "interaction",
+            "gap": "page-level-css",
+            "detail": "The original sets smooth scrolling and hides sideways overflow on html. No node can hold that, because the route owns html, and the computed styles of html are not compared."
+          },
+          {
+            "fixture": "busbasis-collection",
+            "viewport": "all",
+            "state": "needs: live product list",
+            "check": "interaction",
+            "gap": "shop-feature-missing",
+            "detail": "The tree is a frozen copy of the rows. A real page binds them to the catalogue through the product list island, which was not rebuilt here."
+          }
+        ],
+        "notMeasured": [],
+        "pageType": "collection",
+        "differences": [
+          {
+            "viewport": "Desktop",
+            "state": "initial",
+            "ratio": 0,
+            "elementsCompared": 480,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          },
+          {
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "ratio": 0,
+            "elementsCompared": 480,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          },
+          {
+            "viewport": "Tablet",
+            "state": "initial",
+            "ratio": 0,
+            "elementsCompared": 480,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          },
+          {
+            "viewport": "Mobile",
+            "state": "initial",
+            "ratio": 0,
+            "elementsCompared": 480,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "fixture": "busbasis-product",
+        "group": "held-out",
+        "source": "https://basiscampberlin.de/de/products/11d3-32, captured 2026-11-02, answered 200",
+        "pass": false,
+        "checks": {
+          "screenshot": {
+            "pass": 4,
+            "total": 4
+          },
+          "computed-styles": {
+            "pass": 0,
+            "total": 4
+          },
+          "accessibility-tree": {
+            "pass": 4,
+            "total": 4
+          },
+          "interaction": {
+            "pass": 0,
+            "total": 7
+          }
+        },
+        "failures": [
+          {
+            "fixture": "busbasis-product",
+            "viewport": "Desktop",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "5 differences on 5 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-product",
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "5 differences on 5 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-product",
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "check": "interaction",
+            "gap": "empty-custom-property",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "busbasis-product",
+            "viewport": "Tablet",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "5 differences on 5 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-product",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "5 differences on 5 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-product",
+            "viewport": "all",
+            "state": "needs: mobile menu opens",
+            "check": "interaction",
+            "gap": "behaviour-state",
+            "detail": "The chrome of every page: the menu is script on the original, and a frozen page cannot open it, so its parity is unmeasured."
+          },
+          {
+            "fixture": "busbasis-product",
+            "viewport": "all",
+            "state": "needs: cart count and dropdown",
+            "check": "interaction",
+            "gap": "shop-feature-missing",
+            "detail": "The header shows the live cart count and a dropdown. framer-clone has a cart, but not as a header element on a page."
+          },
+          {
+            "fixture": "busbasis-product",
+            "viewport": "all",
+            "state": "needs: legal modals open from the footer",
+            "check": "interaction",
+            "gap": "behaviour-state",
+            "detail": "Impressum and Vereinssatzung exist only as modals opened by script, so their content is not on any frozen page."
+          },
+          {
+            "fixture": "busbasis-product",
+            "viewport": "all",
+            "state": "needs: styles on html",
+            "check": "interaction",
+            "gap": "page-level-css",
+            "detail": "The original sets smooth scrolling and hides sideways overflow on html. No node can hold that, because the route owns html, and the computed styles of html are not compared."
+          },
+          {
+            "fixture": "busbasis-product",
+            "viewport": "all",
+            "state": "needs: add to cart",
+            "check": "interaction",
+            "gap": "shop-feature-missing",
+            "detail": "The product island of framer-clone was not rebuilt to this look, and shipping class rules such as bulky goods and on-request products are not built."
+          },
+          {
+            "fixture": "busbasis-product",
+            "viewport": "all",
+            "state": "needs: image gallery",
+            "check": "interaction",
+            "gap": "behaviour-state",
+            "detail": "The gallery is script on the original."
+          }
+        ],
+        "notMeasured": [],
+        "pageType": "product detail",
+        "differences": [
+          {
+            "viewport": "Desktop",
+            "state": "initial",
+            "ratio": 0.00008023648648648648,
+            "elementsCompared": 484,
+            "elementsDiffering": 5,
+            "differences": 5,
+            "byGap": {
+              "empty-custom-property": 5
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                4
+              ],
+              [
+                "box-shadow",
+                1
+              ]
+            ]
+          },
+          {
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "ratio": 0.00008023648648648648,
+            "elementsCompared": 484,
+            "elementsDiffering": 5,
+            "differences": 5,
+            "byGap": {
+              "empty-custom-property": 5
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                4
+              ],
+              [
+                "box-shadow",
+                1
+              ]
+            ]
+          },
+          {
+            "viewport": "Tablet",
+            "state": "initial",
+            "ratio": 0.00011122484478698352,
+            "elementsCompared": 484,
+            "elementsDiffering": 5,
+            "differences": 5,
+            "byGap": {
+              "empty-custom-property": 5
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                4
+              ],
+              [
+                "box-shadow",
+                1
+              ]
+            ]
+          },
+          {
+            "viewport": "Mobile",
+            "state": "initial",
+            "ratio": 0.00023135464231354642,
+            "elementsCompared": 484,
+            "elementsDiffering": 5,
+            "differences": 5,
+            "byGap": {
+              "empty-custom-property": 5
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                4
+              ],
+              [
+                "box-shadow",
+                1
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "fixture": "busbasis-cart-empty",
+        "group": "held-out",
+        "source": "https://basiscampberlin.de/de/cart, captured 2026-11-02, answered 200",
+        "pass": false,
+        "checks": {
+          "screenshot": {
+            "pass": 4,
+            "total": 4
+          },
+          "computed-styles": {
+            "pass": 0,
+            "total": 4
+          },
+          "accessibility-tree": {
+            "pass": 4,
+            "total": 4
+          },
+          "interaction": {
+            "pass": 0,
+            "total": 6
+          }
+        },
+        "failures": [
+          {
+            "fixture": "busbasis-cart-empty",
+            "viewport": "Desktop",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-cart-empty",
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-cart-empty",
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "check": "interaction",
+            "gap": "empty-custom-property",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "busbasis-cart-empty",
+            "viewport": "Tablet",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-cart-empty",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-cart-empty",
+            "viewport": "all",
+            "state": "needs: mobile menu opens",
+            "check": "interaction",
+            "gap": "behaviour-state",
+            "detail": "The chrome of every page: the menu is script on the original, and a frozen page cannot open it, so its parity is unmeasured."
+          },
+          {
+            "fixture": "busbasis-cart-empty",
+            "viewport": "all",
+            "state": "needs: cart count and dropdown",
+            "check": "interaction",
+            "gap": "shop-feature-missing",
+            "detail": "The header shows the live cart count and a dropdown. framer-clone has a cart, but not as a header element on a page."
+          },
+          {
+            "fixture": "busbasis-cart-empty",
+            "viewport": "all",
+            "state": "needs: legal modals open from the footer",
+            "check": "interaction",
+            "gap": "behaviour-state",
+            "detail": "Impressum and Vereinssatzung exist only as modals opened by script, so their content is not on any frozen page."
+          },
+          {
+            "fixture": "busbasis-cart-empty",
+            "viewport": "all",
+            "state": "needs: styles on html",
+            "check": "interaction",
+            "gap": "page-level-css",
+            "detail": "The original sets smooth scrolling and hides sideways overflow on html. No node can hold that, because the route owns html, and the computed styles of html are not compared."
+          },
+          {
+            "fixture": "busbasis-cart-empty",
+            "viewport": "all",
+            "state": "needs: cart with items",
+            "check": "interaction",
+            "gap": "shop-feature-missing",
+            "detail": "Only the empty state is frozen: a filled cart needs a write to the live shop. Free shipping nudge and promo codes are not built."
+          }
+        ],
+        "notMeasured": [],
+        "pageType": "cart",
+        "differences": [
+          {
+            "viewport": "Desktop",
+            "state": "initial",
+            "ratio": 0,
+            "elementsCompared": 198,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          },
+          {
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "ratio": 0,
+            "elementsCompared": 198,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          },
+          {
+            "viewport": "Tablet",
+            "state": "initial",
+            "ratio": 0,
+            "elementsCompared": 198,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          },
+          {
+            "viewport": "Mobile",
+            "state": "initial",
+            "ratio": 0,
+            "elementsCompared": 198,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "fixture": "busbasis-checkout-no-cart",
+        "group": "held-out",
+        "source": "https://basiscampberlin.de/de/checkout, captured 2026-11-02, answered 404",
+        "pass": false,
+        "checks": {
+          "screenshot": {
+            "pass": 4,
+            "total": 4
+          },
+          "computed-styles": {
+            "pass": 0,
+            "total": 4
+          },
+          "accessibility-tree": {
+            "pass": 4,
+            "total": 4
+          },
+          "interaction": {
+            "pass": 0,
+            "total": 6
+          }
+        },
+        "failures": [
+          {
+            "fixture": "busbasis-checkout-no-cart",
+            "viewport": "Desktop",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-checkout-no-cart",
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-checkout-no-cart",
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "check": "interaction",
+            "gap": "empty-custom-property",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "busbasis-checkout-no-cart",
+            "viewport": "Tablet",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-checkout-no-cart",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-checkout-no-cart",
+            "viewport": "all",
+            "state": "needs: mobile menu opens",
+            "check": "interaction",
+            "gap": "behaviour-state",
+            "detail": "The chrome of every page: the menu is script on the original, and a frozen page cannot open it, so its parity is unmeasured."
+          },
+          {
+            "fixture": "busbasis-checkout-no-cart",
+            "viewport": "all",
+            "state": "needs: cart count and dropdown",
+            "check": "interaction",
+            "gap": "shop-feature-missing",
+            "detail": "The header shows the live cart count and a dropdown. framer-clone has a cart, but not as a header element on a page."
+          },
+          {
+            "fixture": "busbasis-checkout-no-cart",
+            "viewport": "all",
+            "state": "needs: legal modals open from the footer",
+            "check": "interaction",
+            "gap": "behaviour-state",
+            "detail": "Impressum and Vereinssatzung exist only as modals opened by script, so their content is not on any frozen page."
+          },
+          {
+            "fixture": "busbasis-checkout-no-cart",
+            "viewport": "all",
+            "state": "needs: styles on html",
+            "check": "interaction",
+            "gap": "page-level-css",
+            "detail": "The original sets smooth scrolling and hides sideways overflow on html. No node can hold that, because the route owns html, and the computed styles of html are not compared."
+          },
+          {
+            "fixture": "busbasis-checkout-no-cart",
+            "viewport": "all",
+            "state": "needs: checkout steps",
+            "check": "interaction",
+            "gap": "shop-feature-missing",
+            "detail": "Without a cart the original answers 404, so this freezes that state. Address, shipping options, pickup with cash and the payment methods are not built."
+          }
+        ],
+        "notMeasured": [],
+        "pageType": "checkout",
+        "differences": [
+          {
+            "viewport": "Desktop",
+            "state": "initial",
+            "ratio": 0,
+            "elementsCompared": 190,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          },
+          {
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "ratio": 0,
+            "elementsCompared": 190,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          },
+          {
+            "viewport": "Tablet",
+            "state": "initial",
+            "ratio": 0,
+            "elementsCompared": 190,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          },
+          {
+            "viewport": "Mobile",
+            "state": "initial",
+            "ratio": 0,
+            "elementsCompared": 190,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "fixture": "busbasis-privacy",
+        "group": "held-out",
+        "source": "https://basiscampberlin.de/de/privacy, captured 2026-11-02, answered 200",
+        "pass": false,
+        "checks": {
+          "screenshot": {
+            "pass": 4,
+            "total": 4
+          },
+          "computed-styles": {
+            "pass": 0,
+            "total": 4
+          },
+          "accessibility-tree": {
+            "pass": 4,
+            "total": 4
+          },
+          "interaction": {
+            "pass": 0,
+            "total": 5
+          }
+        },
+        "failures": [
+          {
+            "fixture": "busbasis-privacy",
+            "viewport": "Desktop",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-privacy",
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-privacy",
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "check": "interaction",
+            "gap": "empty-custom-property",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "busbasis-privacy",
+            "viewport": "Tablet",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-privacy",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-privacy",
+            "viewport": "all",
+            "state": "needs: mobile menu opens",
+            "check": "interaction",
+            "gap": "behaviour-state",
+            "detail": "The chrome of every page: the menu is script on the original, and a frozen page cannot open it, so its parity is unmeasured."
+          },
+          {
+            "fixture": "busbasis-privacy",
+            "viewport": "all",
+            "state": "needs: cart count and dropdown",
+            "check": "interaction",
+            "gap": "shop-feature-missing",
+            "detail": "The header shows the live cart count and a dropdown. framer-clone has a cart, but not as a header element on a page."
+          },
+          {
+            "fixture": "busbasis-privacy",
+            "viewport": "all",
+            "state": "needs: legal modals open from the footer",
+            "check": "interaction",
+            "gap": "behaviour-state",
+            "detail": "Impressum and Vereinssatzung exist only as modals opened by script, so their content is not on any frozen page."
+          },
+          {
+            "fixture": "busbasis-privacy",
+            "viewport": "all",
+            "state": "needs: styles on html",
+            "check": "interaction",
+            "gap": "page-level-css",
+            "detail": "The original sets smooth scrolling and hides sideways overflow on html. No node can hold that, because the route owns html, and the computed styles of html are not compared."
+          }
+        ],
+        "notMeasured": [],
+        "pageType": "content: privacy",
+        "differences": [
+          {
+            "viewport": "Desktop",
+            "state": "initial",
+            "ratio": 0,
+            "elementsCompared": 224,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          },
+          {
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "ratio": 0,
+            "elementsCompared": 224,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          },
+          {
+            "viewport": "Tablet",
+            "state": "initial",
+            "ratio": 0,
+            "elementsCompared": 224,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          },
+          {
+            "viewport": "Mobile",
+            "state": "initial",
+            "ratio": 0,
+            "elementsCompared": 224,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "fixture": "busbasis-terms",
+        "group": "held-out",
+        "source": "https://basiscampberlin.de/de/terms, captured 2026-11-02, answered 200",
+        "pass": false,
+        "checks": {
+          "screenshot": {
+            "pass": 4,
+            "total": 4
+          },
+          "computed-styles": {
+            "pass": 0,
+            "total": 4
+          },
+          "accessibility-tree": {
+            "pass": 4,
+            "total": 4
+          },
+          "interaction": {
+            "pass": 0,
+            "total": 5
+          }
+        },
+        "failures": [
+          {
+            "fixture": "busbasis-terms",
+            "viewport": "Desktop",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-terms",
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-terms",
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "check": "interaction",
+            "gap": "empty-custom-property",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "busbasis-terms",
+            "viewport": "Tablet",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-terms",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-terms",
+            "viewport": "all",
+            "state": "needs: mobile menu opens",
+            "check": "interaction",
+            "gap": "behaviour-state",
+            "detail": "The chrome of every page: the menu is script on the original, and a frozen page cannot open it, so its parity is unmeasured."
+          },
+          {
+            "fixture": "busbasis-terms",
+            "viewport": "all",
+            "state": "needs: cart count and dropdown",
+            "check": "interaction",
+            "gap": "shop-feature-missing",
+            "detail": "The header shows the live cart count and a dropdown. framer-clone has a cart, but not as a header element on a page."
+          },
+          {
+            "fixture": "busbasis-terms",
+            "viewport": "all",
+            "state": "needs: legal modals open from the footer",
+            "check": "interaction",
+            "gap": "behaviour-state",
+            "detail": "Impressum and Vereinssatzung exist only as modals opened by script, so their content is not on any frozen page."
+          },
+          {
+            "fixture": "busbasis-terms",
+            "viewport": "all",
+            "state": "needs: styles on html",
+            "check": "interaction",
+            "gap": "page-level-css",
+            "detail": "The original sets smooth scrolling and hides sideways overflow on html. No node can hold that, because the route owns html, and the computed styles of html are not compared."
+          }
+        ],
+        "notMeasured": [],
+        "pageType": "content: terms",
+        "differences": [
+          {
+            "viewport": "Desktop",
+            "state": "initial",
+            "ratio": 0,
+            "elementsCompared": 240,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          },
+          {
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "ratio": 0,
+            "elementsCompared": 240,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          },
+          {
+            "viewport": "Tablet",
+            "state": "initial",
+            "ratio": 0,
+            "elementsCompared": 240,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          },
+          {
+            "viewport": "Mobile",
+            "state": "initial",
+            "ratio": 0,
+            "elementsCompared": 240,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "fixture": "busbasis-login",
+        "group": "held-out",
+        "source": "https://basiscampberlin.de/de/account, captured 2026-11-02, answered 200",
+        "pass": false,
+        "checks": {
+          "screenshot": {
+            "pass": 4,
+            "total": 4
+          },
+          "computed-styles": {
+            "pass": 0,
+            "total": 4
+          },
+          "accessibility-tree": {
+            "pass": 4,
+            "total": 4
+          },
+          "interaction": {
+            "pass": 0,
+            "total": 6
+          }
+        },
+        "failures": [
+          {
+            "fixture": "busbasis-login",
+            "viewport": "Desktop",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-login",
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-login",
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "check": "interaction",
+            "gap": "empty-custom-property",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "busbasis-login",
+            "viewport": "Tablet",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-login",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-login",
+            "viewport": "all",
+            "state": "needs: mobile menu opens",
+            "check": "interaction",
+            "gap": "behaviour-state",
+            "detail": "The chrome of every page: the menu is script on the original, and a frozen page cannot open it, so its parity is unmeasured."
+          },
+          {
+            "fixture": "busbasis-login",
+            "viewport": "all",
+            "state": "needs: cart count and dropdown",
+            "check": "interaction",
+            "gap": "shop-feature-missing",
+            "detail": "The header shows the live cart count and a dropdown. framer-clone has a cart, but not as a header element on a page."
+          },
+          {
+            "fixture": "busbasis-login",
+            "viewport": "all",
+            "state": "needs: legal modals open from the footer",
+            "check": "interaction",
+            "gap": "behaviour-state",
+            "detail": "Impressum and Vereinssatzung exist only as modals opened by script, so their content is not on any frozen page."
+          },
+          {
+            "fixture": "busbasis-login",
+            "viewport": "all",
+            "state": "needs: styles on html",
+            "check": "interaction",
+            "gap": "page-level-css",
+            "detail": "The original sets smooth scrolling and hides sideways overflow on html. No node can hold that, because the route owns html, and the computed styles of html are not compared."
+          },
+          {
+            "fixture": "busbasis-login",
+            "viewport": "all",
+            "state": "needs: shopper login",
+            "check": "interaction",
+            "gap": "shop-feature-missing",
+            "detail": "framer-clone has no shopper accounts (Medusa analysis, plan rank \"accounts\")."
+          }
+        ],
+        "notMeasured": [],
+        "pageType": "account: login",
+        "differences": [
+          {
+            "viewport": "Desktop",
+            "state": "initial",
+            "ratio": 0,
+            "elementsCompared": 224,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          },
+          {
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "ratio": 0,
+            "elementsCompared": 224,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          },
+          {
+            "viewport": "Tablet",
+            "state": "initial",
+            "ratio": 0,
+            "elementsCompared": 224,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          },
+          {
+            "viewport": "Mobile",
+            "state": "initial",
+            "ratio": 0,
+            "elementsCompared": 224,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "fixture": "busbasis-request-reset",
+        "group": "held-out",
+        "source": "https://basiscampberlin.de/de/request-reset, captured 2026-11-02, answered 200",
+        "pass": false,
+        "checks": {
+          "screenshot": {
+            "pass": 4,
+            "total": 4
+          },
+          "computed-styles": {
+            "pass": 0,
+            "total": 4
+          },
+          "accessibility-tree": {
+            "pass": 4,
+            "total": 4
+          },
+          "interaction": {
+            "pass": 0,
+            "total": 6
+          }
+        },
+        "failures": [
+          {
+            "fixture": "busbasis-request-reset",
+            "viewport": "Desktop",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-request-reset",
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-request-reset",
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "check": "interaction",
+            "gap": "empty-custom-property",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "busbasis-request-reset",
+            "viewport": "Tablet",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-request-reset",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-request-reset",
+            "viewport": "all",
+            "state": "needs: mobile menu opens",
+            "check": "interaction",
+            "gap": "behaviour-state",
+            "detail": "The chrome of every page: the menu is script on the original, and a frozen page cannot open it, so its parity is unmeasured."
+          },
+          {
+            "fixture": "busbasis-request-reset",
+            "viewport": "all",
+            "state": "needs: cart count and dropdown",
+            "check": "interaction",
+            "gap": "shop-feature-missing",
+            "detail": "The header shows the live cart count and a dropdown. framer-clone has a cart, but not as a header element on a page."
+          },
+          {
+            "fixture": "busbasis-request-reset",
+            "viewport": "all",
+            "state": "needs: legal modals open from the footer",
+            "check": "interaction",
+            "gap": "behaviour-state",
+            "detail": "Impressum and Vereinssatzung exist only as modals opened by script, so their content is not on any frozen page."
+          },
+          {
+            "fixture": "busbasis-request-reset",
+            "viewport": "all",
+            "state": "needs: styles on html",
+            "check": "interaction",
+            "gap": "page-level-css",
+            "detail": "The original sets smooth scrolling and hides sideways overflow on html. No node can hold that, because the route owns html, and the computed styles of html are not compared."
+          },
+          {
+            "fixture": "busbasis-request-reset",
+            "viewport": "all",
+            "state": "needs: shopper login",
+            "check": "interaction",
+            "gap": "shop-feature-missing",
+            "detail": "framer-clone has no shopper accounts (Medusa analysis, plan rank \"accounts\")."
+          }
+        ],
+        "notMeasured": [],
+        "pageType": "account: password reset",
+        "differences": [
+          {
+            "viewport": "Desktop",
+            "state": "initial",
+            "ratio": 0,
+            "elementsCompared": 198,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          },
+          {
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "ratio": 0,
+            "elementsCompared": 198,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          },
+          {
+            "viewport": "Tablet",
+            "state": "initial",
+            "ratio": 0,
+            "elementsCompared": 198,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          },
+          {
+            "viewport": "Mobile",
+            "state": "initial",
+            "ratio": 0,
+            "elementsCompared": 198,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "fixture": "busbasis-shop-unavailable",
+        "group": "held-out",
+        "source": "https://basiscampberlin.de/de/shop-unavailable, captured 2026-11-02, answered 200",
+        "pass": false,
+        "checks": {
+          "screenshot": {
+            "pass": 4,
+            "total": 4
+          },
+          "computed-styles": {
+            "pass": 0,
+            "total": 4
+          },
+          "accessibility-tree": {
+            "pass": 4,
+            "total": 4
+          },
+          "interaction": {
+            "pass": 0,
+            "total": 5
+          }
+        },
+        "failures": [
+          {
+            "fixture": "busbasis-shop-unavailable",
+            "viewport": "Desktop",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-shop-unavailable",
+            "viewport": "Desktop",
+            "state": "hover e26",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-shop-unavailable",
+            "viewport": "Desktop",
+            "state": "hover e26",
+            "check": "interaction",
+            "gap": "empty-custom-property",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "busbasis-shop-unavailable",
+            "viewport": "Tablet",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-shop-unavailable",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "empty-custom-property",
+            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+          },
+          {
+            "fixture": "busbasis-shop-unavailable",
+            "viewport": "all",
+            "state": "needs: mobile menu opens",
+            "check": "interaction",
+            "gap": "behaviour-state",
+            "detail": "The chrome of every page: the menu is script on the original, and a frozen page cannot open it, so its parity is unmeasured."
+          },
+          {
+            "fixture": "busbasis-shop-unavailable",
+            "viewport": "all",
+            "state": "needs: cart count and dropdown",
+            "check": "interaction",
+            "gap": "shop-feature-missing",
+            "detail": "The header shows the live cart count and a dropdown. framer-clone has a cart, but not as a header element on a page."
+          },
+          {
+            "fixture": "busbasis-shop-unavailable",
+            "viewport": "all",
+            "state": "needs: legal modals open from the footer",
+            "check": "interaction",
+            "gap": "behaviour-state",
+            "detail": "Impressum and Vereinssatzung exist only as modals opened by script, so their content is not on any frozen page."
+          },
+          {
+            "fixture": "busbasis-shop-unavailable",
+            "viewport": "all",
+            "state": "needs: styles on html",
+            "check": "interaction",
+            "gap": "page-level-css",
+            "detail": "The original sets smooth scrolling and hides sideways overflow on html. No node can hold that, because the route owns html, and the computed styles of html are not compared."
+          }
+        ],
+        "notMeasured": [],
+        "pageType": "shop kill switch",
+        "differences": [
+          {
+            "viewport": "Desktop",
+            "state": "initial",
+            "ratio": 0,
+            "elementsCompared": 173,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          },
+          {
+            "viewport": "Desktop",
+            "state": "hover e26",
+            "ratio": 0,
+            "elementsCompared": 173,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          },
+          {
+            "viewport": "Tablet",
+            "state": "initial",
+            "ratio": 0,
+            "elementsCompared": 173,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          },
+          {
+            "viewport": "Mobile",
+            "state": "initial",
+            "ratio": 0,
+            "elementsCompared": 173,
+            "elementsDiffering": 2,
+            "differences": 2,
+            "byGap": {
+              "empty-custom-property": 2
+            },
+            "byProperty": [
+              [
+                "backdrop-filter",
+                2
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "fixture": "busbasis-not-found",
+        "group": "held-out",
+        "source": "https://basiscampberlin.de/de/search, captured 2026-11-02, answered 404",
+        "pass": false,
+        "checks": {
+          "screenshot": {
+            "pass": 3,
+            "total": 3
+          },
+          "computed-styles": {
+            "pass": 3,
+            "total": 3
+          },
+          "accessibility-tree": {
+            "pass": 3,
+            "total": 3
+          },
+          "interaction": {
+            "pass": 0,
+            "total": 1
+          }
+        },
+        "failures": [
+          {
+            "fixture": "busbasis-not-found",
+            "viewport": "all",
+            "state": "needs: styles on html",
+            "check": "interaction",
+            "gap": "page-level-css",
+            "detail": "The original sets smooth scrolling and hides sideways overflow on html. No node can hold that, because the route owns html, and the computed styles of html are not compared."
+          }
+        ],
+        "notMeasured": [],
+        "pageType": "not found",
+        "differences": [
+          {
+            "viewport": "Desktop",
+            "state": "initial",
+            "ratio": 0,
+            "elementsCompared": 10,
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
+          },
+          {
+            "viewport": "Tablet",
+            "state": "initial",
+            "ratio": 0,
+            "elementsCompared": 10,
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
+          },
+          {
+            "viewport": "Mobile",
+            "state": "initial",
+            "ratio": 0,
+            "elementsCompared": 10,
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
+          }
+        ]
+      }
+    ],
+    "gaps": [
+      {
+        "id": "page-level-css",
+        "pages": [
+          "busbasis-home",
+          "busbasis-store",
+          "busbasis-search",
+          "busbasis-category",
+          "busbasis-collection",
+          "busbasis-product",
+          "busbasis-cart-empty",
+          "busbasis-checkout-no-cart",
+          "busbasis-privacy",
+          "busbasis-terms",
+          "busbasis-login",
+          "busbasis-request-reset",
+          "busbasis-shop-unavailable",
+          "busbasis-not-found"
+        ],
+        "needs": 14,
+        "styleDifferences": 0
+      },
+      {
+        "id": "empty-custom-property",
+        "pages": [
+          "busbasis-home",
+          "busbasis-store",
+          "busbasis-search",
+          "busbasis-category",
+          "busbasis-collection",
+          "busbasis-product",
+          "busbasis-cart-empty",
+          "busbasis-checkout-no-cart",
+          "busbasis-privacy",
+          "busbasis-terms",
+          "busbasis-login",
+          "busbasis-request-reset",
+          "busbasis-shop-unavailable"
+        ],
+        "needs": 0,
+        "styleDifferences": 164
+      },
+      {
+        "id": "behaviour-state",
+        "pages": [
+          "busbasis-home",
+          "busbasis-store",
+          "busbasis-search",
+          "busbasis-category",
+          "busbasis-collection",
+          "busbasis-product",
+          "busbasis-cart-empty",
+          "busbasis-checkout-no-cart",
+          "busbasis-privacy",
+          "busbasis-terms",
+          "busbasis-login",
+          "busbasis-request-reset",
+          "busbasis-shop-unavailable"
+        ],
+        "needs": 28,
+        "styleDifferences": 0
+      },
+      {
+        "id": "shop-feature-missing",
+        "pages": [
+          "busbasis-home",
+          "busbasis-store",
+          "busbasis-search",
+          "busbasis-category",
+          "busbasis-collection",
+          "busbasis-product",
+          "busbasis-cart-empty",
+          "busbasis-checkout-no-cart",
+          "busbasis-privacy",
+          "busbasis-terms",
+          "busbasis-login",
+          "busbasis-request-reset",
+          "busbasis-shop-unavailable"
+        ],
+        "needs": 26,
+        "styleDifferences": 0
+      },
+      {
+        "id": "blocked-embedded-content",
+        "pages": [
+          "busbasis-home"
+        ],
+        "needs": 1,
+        "styleDifferences": 4
+      },
+      {
+        "id": "harness-limit",
+        "pages": [
+          "busbasis-home"
+        ],
+        "needs": 1,
+        "styleDifferences": 0
+      }
+    ],
+    "uncaptured": [
+      {
+        "pageType": "FAQ",
+        "path": "section on /de",
+        "reason": "Not on the live page: the section renders only when the shop settings enable it, and the capture of 2026-11-02 found none. There is no FAQ page."
+      },
+      {
+        "pageType": "filled cart",
+        "path": "/de/cart",
+        "reason": "Needs a cart row written to the live shop, which this slice does not do."
+      },
+      {
+        "pageType": "checkout steps",
+        "path": "/de/checkout",
+        "reason": "Needs a cart row written to the live shop, which this slice does not do."
+      },
+      {
+        "pageType": "account dashboard",
+        "path": "/de/account (signed in)",
+        "reason": "Needs a shopper login. The account, addresses, orders and profile pages show personal data."
+      },
+      {
+        "pageType": "order pages",
+        "path": "/de/order/[id]/confirmed, /de/order/pending",
+        "reason": "Need a real order, and show personal data."
+      },
+      {
+        "pageType": "order transfer",
+        "path": "/de/order/[id]/transfer/[token]",
+        "reason": "Need a real order and a token."
+      },
+      {
+        "pageType": "offer accept",
+        "path": "/de/offers/[id]/accept",
+        "reason": "Needs a real offer link. Offers have no framer-clone counterpart."
+      },
+      {
+        "pageType": "password reset form",
+        "path": "/de/reset-password",
+        "reason": "Needs a token from a reset mail."
+      },
+      {
+        "pageType": "Puck editor",
+        "path": "/editor",
+        "reason": "The team's editing tool, behind a login: not a storefront page."
+      }
+    ]
+  },
   "roundTrip": {
     "nodesToJsxToNodes": {
       "pass": 111,
@@ -6856,11 +9554,37 @@
       "id": "blocked-embedded-content",
       "description": "What the render gate refuses (blockedNodes.ts and renderVocabulary.ts): embedded content (iframe, object, embed, ...), although these are ordinary content elements, and attributes that act by themselves (ping, the shadow root ones).",
       "matrixCells": 78,
-      "corpusChecks": 0,
-      "fixtures": [],
+      "corpusChecks": 4,
+      "fixtures": [
+        "busbasis-home"
+      ],
       "onlyGapOf": [],
       "roundTripCases": 0,
-      "cost": 78
+      "cost": 82
+    },
+    {
+      "id": "empty-custom-property",
+      "description": "A custom property with an empty value, such as `--tw-blur: ;`, is dropped on its way into the page stylesheet, so every var() list that reads it goes invalid. Tailwind writes these for filter, backdrop-filter and gradients.",
+      "matrixCells": 0,
+      "corpusChecks": 69,
+      "fixtures": [
+        "busbasis-home",
+        "busbasis-store",
+        "busbasis-search",
+        "busbasis-category",
+        "busbasis-collection",
+        "busbasis-product",
+        "busbasis-cart-empty",
+        "busbasis-checkout-no-cart",
+        "busbasis-privacy",
+        "busbasis-terms",
+        "busbasis-login",
+        "busbasis-request-reset",
+        "busbasis-shop-unavailable"
+      ],
+      "onlyGapOf": [],
+      "roundTripCases": 0,
+      "cost": 69
     },
     {
       "id": "media-queries",
