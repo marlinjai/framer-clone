@@ -48,8 +48,8 @@ that points at one. A "definition" and a "placement" are the components contract
 9. **The AI reads tokens, uses them, and may add new ones. It never edits or deletes one, and it writes no head item.**
 10. **The importer keeps its output. Only what its root's custom properties hold changes:** each becomes an alias of a site token.
 11. **A head item is data parsed at render.** Three kinds, each emitted from constants plus checked values, in the page's real `<head>`.
-12. **No head item contacts another host in a browser, and none changes how the page behaves.** Refused by default, listed by measurement in
-    three engines.
+12. **No head item contacts another host in a browser, navigates, or changes a security or privacy setting.** Refused by default, listed by
+    measurement in three engines. A crawler is not a browser: it may follow an address an item names.
 
 ## How Framer does it
 
@@ -380,7 +380,8 @@ The refused tags stay refused in nodes: `meta` and `link` remain in `BLOCKED_TAG
 `facebook-domain-verification`, `p:domain_verify`, `ahrefs-site-verification`. A new name is a one-line change plus its reason.
 
 **`property`, a closed list:** `article:*`, `product:*`, `profile:*`, `book:*`, `fb:app_id`, `og:locale:alternate`, `og:video`, `og:audio`, each matching
-`^[a-z]+(:[a-z_]+)+$`. No `name` and `property` on one tag, no other attribute, ever.
+`^[a-z]+(:[a-z_]+)+$`. No `name` and `property` on one tag, no other attribute, ever. `og:video` and `og:audio` hold addresses that sharing crawlers fetch and no
+browser does, so they do not touch the claim about browsers.
 
 **What the kind has no way to say, and why.**
 
