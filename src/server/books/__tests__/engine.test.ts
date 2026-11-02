@@ -24,6 +24,16 @@ import { REGIONS, type Block, type BlockType, type RegionName, type TemplateDocu
 
 const sha = (b: Uint8Array) => createHash('sha256').update(b).digest('hex');
 
+/**
+ * Milliseconds of CPU this process has used. The bounds below read this rather than the clock: a
+ * render is CPU work on this thread, and the clock also counts every moment the scheduler gives the
+ * core to another worker, which is what those bounds used to fail on under load.
+ */
+const cpuMs = () => {
+  const { user, system } = process.cpuUsage();
+  return (user + system) / 1000;
+};
+
 async function render(doc: TemplateDocumentV2, name: ProbeName = 'regular', opts: { draft?: boolean; preview?: boolean } = {}): Promise<EngineResult> {
   return renderTemplate(buildRenderModel(probeInput(probe(name), opts.draft ?? false)), doc, fontFiles('dejavu-sans'), { preview: opts.preview });
 }
@@ -199,11 +209,11 @@ describe('bounds', () => {
   it('stops at two pages when the footer leaves no room, and caps every document at MAX_PAGES', async () => {
     const footer = structuredClone(preset('klassisch'));
     footer.regions.footer.push(...Array.from({ length: 20 }, (_, i) => ({ id: `f${i}`, type: 'spacer' as const, style: {}, heightPt: 32 as const })));
-    const t0 = performance.now();
+    const t0 = cpuMs();
     const { layout } = await render(footer, 'longInvoice');
     expect(layout.pageCount).toBeLessThanOrEqual(2);
     expect(layout.issues).toContainEqual(expect.objectContaining({ code: 'FOOTER_TOO_TALL' }));
-    expect(performance.now() - t0).toBeLessThan(5000);
+    expect(cpuMs() - t0).toBeLessThan(5000);
 
     expect(MAX_PAGES).toBe(200);
     const capped = await renderTemplate(buildRenderModel(probeInput(probe('longInvoice'))), preset('klassisch'), fontFiles('dejavu-sans'), { maxPages: 2 });
@@ -216,7 +226,8 @@ describe('latency (decision 12)', () => {
   // The plan's targets are p95 under 150 ms (one page) and 400 ms (five pages)
   // of server time, measured by `pnpm bench:preview` on the production image
   // (Build notes). This suite runs beside the others on shared cores, so it
-  // only guards against a gross regression, with four times the target.
+  // only guards against a gross regression, with four times the target, in CPU
+  // time: under load the clock measures the queue for a core, not the render.
   it('renders one page and five pages well within four times the targets', async () => {
     const run = async (name: ProbeName, lines?: number) => {
       const p = probe(name);
@@ -227,9 +238,9 @@ describe('latency (decision 12)', () => {
       const times: number[] = [];
       let pages = 0;
       for (let i = 0; i < 20; i += 1) {
-        const t0 = performance.now();
+        const t0 = cpuMs();
         pages = (await renderTemplate(model, doc, fontFiles('dejavu-sans'), { preview: true })).layout.pageCount;
-        times.push(performance.now() - t0);
+        times.push(cpuMs() - t0);
       }
       times.sort((a, b) => a - b);
       return { p95: times[18], pages };
