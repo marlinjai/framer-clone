@@ -29,6 +29,10 @@ import {
   type ComponentDefinitions,
 } from '@/lib/components/definition';
 import { PLACEMENT_TYPE, isPlacementType } from '@/lib/components/placement';
+import type { InputDefinition } from '@/lib/components/inputs';
+import { expandPage, literalPageRoots, type PageExpansion } from '@/lib/components/pageExpansion';
+import { extractBreakpoints, type ComponentSnapshotLike } from '@/lib/renderer/server/componentSnapshot';
+import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { getComponentEntry } from '@/lib/componentRegistry';
 import type { ApplyOutcome, GenerationUndoRecord } from '@/lib/ai/pageGen/apply';
 import { isVoidTag } from '@/lib/drag/voidTags';
@@ -731,6 +735,13 @@ const PageModel = PageWithComponents
 }))
 .views(self => ({
 
+  /** The inputs of the definition this page belongs to, when it is one's. */
+  get definitionInputs(): InputDefinition[] | undefined {
+    if (!hasParent(self)) return undefined;
+    const parent: object = getParent(self);
+    return 'page' in parent && parent.page === self ? (parent as unknown as { inputs: InputDefinition[] }).inputs : undefined;
+  },
+
   // Get page URL based on slug
   get url() {
     return `/${self.slug}`;
@@ -824,7 +835,28 @@ const PageModel = PageWithComponents
       updatedAt: self.updatedAt
     };
   }
-}));
+}))
+.views(self => {
+  const definitions = () => projectOf(self)?.definitions ?? {};
+  const breakpoints = () => extractBreakpoints(getSnapshot(self.canvasNodes));
+  const stored = (node: unknown) => getSnapshot(node as ComponentInstance) as unknown as ComponentSnapshotLike;
+  return {
+    // The page as the published path expands it, for the editor surfaces. Computed
+    // only for those that read it.
+    get expansion(): PageExpansion {
+      return expandPage(stored(self.appComponentTree), self.floatingElements.map(stored), definitions(), breakpoints());
+    },
+    // What the font scan reads on the canvas: the page, floating elements included,
+    // with literal input values in place.
+    get canvasFontRoots(): ComponentNode[] {
+      return literalPageRoots([self.appComponentTree, ...self.floatingElements].map(stored), definitions(), breakpoints());
+    },
+    // The same for the preview, which shows only the page.
+    get pageFontRoots(): ComponentNode[] {
+      return literalPageRoots([stored(self.appComponentTree)], definitions(), breakpoints());
+    },
+  };
+});
 
 // TypeScript types
 export type PageModelType = Instance<typeof PageModel>;

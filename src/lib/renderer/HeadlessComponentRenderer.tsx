@@ -19,7 +19,12 @@ import { observer } from 'mobx-react-lite';
 import { ComponentInstance } from '@/models/ComponentModel';
 import { createComponentElement } from './createComponentElement';
 import { applyBindings } from '@/lib/bindings/resolver/applyBindings';
-import { createScope, type BindingScope } from '@/lib/bindings/resolver/scope';
+import { createScope, pushInputFrame, type BindingScope } from '@/lib/bindings/resolver/scope';
+import { placementInstanceOf } from '@/lib/components/expand';
+import { inputValuesAt } from '@/lib/components/frameInputs';
+import { isPlacementType } from '@/lib/components/placement';
+import type { PageExpansion } from '@/lib/components/pageExpansion';
+import { detachedExpansion } from './detachedExpansion';
 import { effectDomForBreakpoint, hoverPresetClass, resolveEffects, storedEffectsOf } from '@/lib/effects/effects';
 import { isStickyCta } from '@/lib/stickyCta/stickyCta';
 
@@ -28,6 +33,9 @@ import { isStickyCta } from '@/lib/stickyCta/stickyCta';
  * action itself (src/lib/stickyCta): every bar is then skipped where it sits.
  */
 export const StickyCtaPreviewContext = React.createContext(false);
+
+/** The expansion of the page being previewed. A placement reads its own from it. */
+export const PreviewExpansionContext = React.createContext<PageExpansion | null>(null);
 
 export interface HeadlessComponentRendererProps {
   component: ComponentInstance;
@@ -49,6 +57,19 @@ const HeadlessComponentRenderer = observer(({
   hoisted = false,
 }: HeadlessComponentRendererProps) => {
   const pageDrawsStickyCta = React.useContext(StickyCtaPreviewContext);
+  const expansion = React.useContext(PreviewExpansionContext);
+
+  // A placement draws what the published page compiles: its expansion as a detached
+  // tree, so no third way of drawing a component appears. The live tree around it
+  // stays, with its data from the polling provider.
+  if (isPlacementType(component.type)) {
+    const expanded = expansion?.placements.get(component.id);
+    const tree = expanded ? detachedExpansion(expanded) : null;
+    return tree ? (
+      <HeadlessComponentRenderer component={tree} breakpointId={breakpointId} allBreakpoints={allBreakpoints} scope={scope} />
+    ) : null;
+  }
+
   // A sticky bar is drawn once, by the page renderer, after the page root.
   if (isStickyCta(component.props) && !hoisted && pageDrawsStickyCta) return null;
 
@@ -58,7 +79,12 @@ const HeadlessComponentRenderer = observer(({
   // from visitors is the Visible switch in the Styles section (display:
   // none). See src/lib/layers/layerActions.ts.
 
-  const activeScope = scope ?? createScope();
+  // A placement's root opens its input frame, here as in hydrateNode. Expansion keyed
+  // everything on this page's breakpoints, so one cursor reads all of it.
+  const outerScope = scope ?? createScope();
+  const instance = placementInstanceOf(component.props);
+  const cursor = { id: breakpointId, breakpoints: allBreakpoints };
+  const activeScope = instance ? pushInputFrame(outerScope, inputValuesAt(instance, cursor, cursor, outerScope)) : outerScope;
 
   const { attributes, style } = component.getResolvedProps(
     breakpointId,

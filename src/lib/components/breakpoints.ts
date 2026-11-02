@@ -57,7 +57,7 @@ export function mapResponsiveValue(
   return out;
 }
 
-function mapValues(record: unknown, from: readonly BreakpointRef[], to: readonly BreakpointRef[]): unknown {
+export function mapValues(record: unknown, from: readonly BreakpointRef[], to: readonly BreakpointRef[]): unknown {
   if (!record || typeof record !== 'object' || Array.isArray(record)) return record;
   return Object.fromEntries(Object.entries(record).map(([key, value]) => [key, mapResponsiveValue(value, from, to)]));
 }

@@ -10,7 +10,7 @@ import { observer } from 'mobx-react-lite';
 import { getParent, hasParent } from 'mobx-state-tree';
 import type { PageModelType } from '@/models/PageModel';
 import type { ComponentInstance } from '@/models/ComponentModel';
-import HeadlessComponentRenderer, { StickyCtaPreviewContext } from './HeadlessComponentRenderer';
+import HeadlessComponentRenderer, { PreviewExpansionContext, StickyCtaPreviewContext } from './HeadlessComponentRenderer';
 import { isStickyCta, STICKY_CTA_Z_INDEX } from '@/lib/stickyCta/stickyCta';
 
 /** The first sticky call to action in the tree (depth first), or null. */
@@ -23,7 +23,8 @@ function firstStickyCta(node: ComponentInstance): ComponentInstance | null {
   return null;
 }
 import PageFontFaces from '@/lib/fonts/PageFontFaces';
-import { createScope, pushPageFrame } from '@/lib/bindings/resolver/scope';
+import { createScope, pushInputFrame, pushPageFrame } from '@/lib/bindings/resolver/scope';
+import { defaultValuesAt } from '@/lib/components/frameInputs';
 import { useProductPageParams } from '@/lib/commerce/productPreview';
 
 /** The product page path of the project holding `page` (pages map -> project), or null. */
@@ -59,12 +60,17 @@ const HeadlessPageRenderer = observer(({ page, breakpointId }: HeadlessPageRende
   const pinned = stickyBar !== null && smallest?.id === breakpointId;
   // The page frame, as on the published page: `{{product.href}}` links to the
   // product page, and a product page shows the product being previewed.
-  const scope = pushPageFrame(createScope(), pageParams, productPagePathOf(page));
+  const pageScope = pushPageFrame(createScope(), pageParams, productPagePathOf(page));
+  // A definition previewed on its own shows its defaults.
+  const inputs = page.definitionInputs;
+  const scope = inputs
+    ? pushInputFrame(pageScope, defaultValuesAt(inputs, { id: breakpointId, breakpoints: allBreakpoints }, pageScope))
+    : pageScope;
 
   return (
-    <>
+    <PreviewExpansionContext.Provider value={page.expansion}>
       {/* The self-hosted web fonts the page uses (src/lib/fonts/registry.ts). */}
-      <PageFontFaces roots={[appComponentTree]} />
+      <PageFontFaces roots={page.pageFontRoots} />
       <StickyCtaPreviewContext.Provider value={true}>
         <HeadlessComponentRenderer
           component={appComponentTree}
@@ -87,7 +93,7 @@ const HeadlessPageRenderer = observer(({ page, breakpointId }: HeadlessPageRende
           </div>
         ) : null}
       </StickyCtaPreviewContext.Provider>
-    </>
+    </PreviewExpansionContext.Provider>
   );
 });
 

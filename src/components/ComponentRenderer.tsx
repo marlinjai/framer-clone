@@ -3,15 +3,23 @@
 import React from 'react';
 import { haptic } from '@/lib/haptics';
 import { lastPointerIsTouch } from '@/hooks/useEditorGestureGuard';
+import { computed } from 'mobx';
 import { observer } from 'mobx-react-lite';
+import { getSnapshot } from 'mobx-state-tree';
 import { ComponentInstance } from '../models/ComponentModel';
 import { EditorTool } from '../stores/EditorUIStore';
 import { useStore } from '@/hooks/useStore';
 import { getUndoManager } from '@/stores/RootStore';
-import { useDragSource } from '@/lib/drag';
+import { DATA_PLACEMENT_ROOT, useDragSource } from '@/lib/drag';
 import { createComponentElement } from '@/lib/renderer/createComponentElement';
 import { applyBindings } from '@/lib/bindings/resolver/applyBindings';
-import { createScope, type BindingScope } from '@/lib/bindings/resolver/scope';
+import { createScope, pushInputFrame, type BindingScope } from '@/lib/bindings/resolver/scope';
+import { definitionBreakpointFor } from '@/lib/components/breakpoints';
+import { bindingsAllowed, mergeStyle, pathId, placementInstance } from '@/lib/components/expand';
+import { editorInputWarnings, inputValuesAt, placementStyleAt } from '@/lib/components/frameInputs';
+import type { InputDefinition } from '@/lib/components/inputs';
+import { COMPONENT_LIMITS, isPlacementType, type PlacementProps } from '@/lib/components/placement';
+import { extractBreakpoints } from '@/lib/renderer/server/componentSnapshot';
 import { EDITING_TEXT_STYLE, startInlineTextEdit } from '@/lib/canvas/inlineTextEdit';
 import { INLINE_FORMAT_KEYS, applyInlineFormat, beginRunEdit, normaliseEditedText, runAtPoint } from '@/lib/canvas/inlineFormat';
 import { isTextBound } from '@/lib/renderer/textContent';
@@ -29,9 +37,62 @@ interface ComponentRendererProps {
   lockedByAncestor?: boolean;
 }
 
-const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, scope, lockedByAncestor = false }: ComponentRendererProps) => {
+/**
+ * What a definition's tree needs from around it. `breakpointId` inside is the
+ * definition's own, D(P), so the frame the page shows is carried apart: it names the
+ * identity attributes and maps a nested placement straight to the page. A context,
+ * because a data renderer's `renderNode` callback passes only a node and a scope.
+ */
+interface PlacementHost {
+  frameId: string;
+  /** Infinity for a floating placement, which reads as the largest breakpoint. */
+  frameMinWidth: number;
+  /** The breakpoints of the page, which every placement maps to, however deep. */
+  pageBreakpoints: readonly { id: string; minWidth: number }[];
+  /** The definitions on the way down. */
+  stack: readonly string[];
+  /** The expanded id of the placement, as expand.ts builds it. */
+  path: string;
+  inputs: readonly InputDefinition[];
+}
+
+const PlacementHostContext = React.createContext<PlacementHost | null>(null);
+
+type EditorUI = ReturnType<typeof useStore>['editorUI'];
+
+/** A click on the canvas: `node` takes the selection, a locked one lets it bubble to its nearest unlocked ancestor. */
+function selectFromClick(e: React.MouseEvent, editorUI: EditorUI, node: ComponentInstance, frameId: string, isLocked: boolean): void {
+  // A link on the canvas selects, it never navigates the editor away.
+  if ((e.currentTarget as HTMLElement).closest('a[href]')) e.preventDefault();
+  if (isLocked) return;
+  e.stopPropagation();
+  if (editorUI.selectedTool !== EditorTool.SELECT) return;
+  // Shift+click adds the node to the selection or takes it out.
+  if (e.shiftKey) {
+    editorUI.toggleInSelection(node, frameId || undefined);
+    return;
+  }
+  // A finger that selects something new gets a light haptic tick
+  // (src/lib/haptics.ts); this click is inside the user's gesture.
+  const isNew = editorUI.selectedComponent?.id !== node.id;
+  editorUI.selectComponent(node, frameId || undefined);
+  if (isNew && lastPointerIsTouch()) haptic();
+}
+
+interface NodeRendererProps extends ComponentRendererProps {
+  // Set on the root of a definition drawn for a placement. The placement is what the
+  // canvas selects, moves and names; the root only supplies the element.
+  placement?: ComponentInstance;
+  // The placement's own style on this frame, as plain values.
+  placementStyle?: Record<string, unknown>;
+}
+
+const NodeRenderer = observer(({ component, breakpointId, allBreakpoints, scope, lockedByAncestor = false, placement, placementStyle }: NodeRendererProps) => {
   const activeScope = scope ?? createScope();
   const { editorUI } = useStore();
+  const host = React.useContext(PlacementHostContext);
+  const frameId = host?.frameId ?? breakpointId;
+  const owner = placement ?? component;
   const editRef = React.useRef<HTMLElement | null>(null);
 
   // Focus + select-all when entering edit mode, as a fallback only: the
@@ -48,7 +109,7 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, s
   // with more than one frame. A floating element has one copy and no frame.
   const editFrame = editorUI.selectedViewportNode?.breakpointId;
   const isEditingCopy =
-    editorUI.editingComponent?.id === component.id && (!editFrame || !breakpointId || editFrame === breakpointId);
+    editorUI.editingComponent?.id === component.id && (!editFrame || !frameId || editFrame === frameId);
   const editingId = isEditingCopy ? component.id : undefined;
   React.useEffect(() => {
     if (editingId !== component.id) return;
@@ -60,24 +121,24 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, s
   // Only non-root tree components can be moved. The root of the app tree must
   // stay put. Text-editing suppresses drag until the user exits edit mode. A
   // text node has no element to press on: it moves from its Layers row.
-  const canMove = component.hasParent && !isTextNodeType(component.type);
+  const canMove = owner.hasParent && !isTextNodeType(component.type);
   const isEditing = isEditingCopy;
   // Locked in the Layers panel (itself or an ancestor): not selectable or
   // draggable on the canvas. Pointer events pass through to the nearest
   // unlocked ancestor, which takes the click (src/lib/layers/layerActions.ts).
-  const isLocked = lockedByAncestor || !!component.canvasLocked;
+  const isLocked = lockedByAncestor || !!owner.canvasLocked;
 
   // Hook must be called unconditionally. Pass null source when the component
   // is not movable; useDragSource returns a no-op handler in that case.
   const { onPointerDown } = useDragSource(
-    canMove && !isEditing && !isLocked ? { kind: 'moveNode', nodeId: component.id } : null,
-    component,
+    canMove && !isEditing && !isLocked ? { kind: 'moveNode', nodeId: owner.id } : null,
+    owner,
   );
 
   // LayersPanel eye toggle writes to canvasVisible; honour it here so hidden
   // tree children disappear from the viewport. Floating elements and viewport
   // nodes get the same treatment via GroundWrapper's `visible` prop.
-  if (!component.canvasVisible) return null;
+  if (!component.canvasVisible || !owner.canvasVisible) return null;
 
   // What makes an element a text box, for an element and for a text node's span.
   // Commits on blur; Enter commits, ESC cancels.
@@ -155,7 +216,11 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, s
   // Apply read bindings against the active scope. Feed style in alongside the
   // attributes so dot-path slots (e.g. `style.color`) resolve, then split it
   // back out. Unbound nodes pass through unchanged.
-  const { resolvedProps } = applyBindings(component, { ...attributes, style }, activeScope);
+  // A placement's style lands before the bindings, as on the published page. An input
+  // binding the published page refuses for its type is refused here too.
+  const allowed = host ? { bindings: bindingsAllowed(component.bindings, host.inputs, editorInputWarnings) } : component;
+  const merged = placementStyle ? mergeStyle(style, placementStyle) : style;
+  const { resolvedProps } = applyBindings(allowed, { ...attributes, style: merged }, activeScope);
   const { style: boundStyle, ...resolvedAttributes } = resolvedProps as Record<string, any>;
   const effectiveStyle = (boundStyle ?? {}) as Record<string, any>;
 
@@ -173,8 +238,9 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, s
   // Text bound to data is the binding's: it shows as the binding in the
   // properties panel and is not typed over on the canvas.
   const rawChildren = (resolvedAttributes as any).children;
+  // Inside a placement the panel holds the text.
   const isTextEditable =
-    component.children.length === 0 && typeof rawChildren === 'string' && !isTextBound(component);
+    !host && component.children.length === 0 && typeof rawChildren === 'string' && !isTextBound(component);
 
   // `data-component-id` and `data-inner-component-id` are emitted centrally
   // by `createComponentElement` (see the `identity` option below) so the
@@ -184,36 +250,21 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, s
     ...resolvedAttributes,
     style: editorStyle,
     onClick: (e: React.MouseEvent) => {
-      // A link on the canvas selects, it never navigates the editor away.
-      if ((e.currentTarget as HTMLElement).closest('a[href]')) e.preventDefault();
-      // A locked node lets the click bubble to its nearest unlocked ancestor.
-      if (isLocked) return;
-      e.stopPropagation();
-      if (editorUI.selectedTool === EditorTool.SELECT) {
-        // Shift+click adds the node to the selection or takes it out.
-        if (e.shiftKey) editorUI.toggleInSelection(component, breakpointId || undefined);
-        else {
-          // A finger that selects something new gets a light haptic tick
-          // (src/lib/haptics.ts); this click is inside the user's gesture.
-          const isNew = editorUI.selectedComponent?.id !== component.id;
-          editorUI.selectComponent(component, breakpointId || undefined);
-          if (isNew && lastPointerIsTouch()) haptic();
-        }
-      }
-      (resolvedAttributes as any)?.onClick?.(e);
+      selectFromClick(e, editorUI, owner, frameId, isLocked);
+      if (!isLocked) (resolvedAttributes as any)?.onClick?.(e);
     },
     onDoubleClick: (e: React.MouseEvent) => {
-      if (isLocked || editorUI.selectedTool !== EditorTool.SELECT) return;
+      if (isLocked || placement || editorUI.selectedTool !== EditorTool.SELECT) return;
       if (!isTextEditable) {
         // Mixed with elements: the text node under the pointer opens. A press
         // on an element child is that child's.
-        const host = e.currentTarget as HTMLElement;
-        if (e.target !== host) return;
-        const run = runAtPoint(host, component, { x: e.clientX, y: e.clientY });
+        const element = e.currentTarget as HTMLElement;
+        if (e.target !== element) return;
+        const run = runAtPoint(element, component, { x: e.clientX, y: e.clientY });
         if (!run) return;
         e.stopPropagation();
         e.preventDefault();
-        beginRunEdit(editorUI, component, run, host, breakpointId || undefined, 'all');
+        beginRunEdit(editorUI, component, run, element, frameId || undefined, 'all');
         return;
       }
       e.stopPropagation();
@@ -223,7 +274,7 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, s
       // here inside its touchend, which is what lets iOS open the keyboard),
       // and the re-render below renders the same attributes on the same node.
       startInlineTextEdit(e.currentTarget as HTMLElement, 'all');
-      editorUI.selectComponent(component, breakpointId || undefined);
+      editorUI.selectComponent(component, frameId || undefined);
       editorUI.beginTextEdit(component);
     },
   };
@@ -242,13 +293,14 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, s
     finalProps.onPointerDown = onPointerDown;
   }
 
+  // What is inside a placement is its definition's: one unit on the canvas.
   const renderNode = (node: ComponentInstance, childScope: BindingScope) => (
     <ComponentRenderer
       component={node}
       breakpointId={breakpointId}
       allBreakpoints={allBreakpoints}
       scope={childScope}
-      lockedByAncestor={isLocked}
+      lockedByAncestor={isLocked || !!host}
     />
   );
 
@@ -256,13 +308,15 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, s
     <React.Fragment key={ch.id}>{renderNode(ch, activeScope)}</React.Fragment>
   ));
 
+  if (placement) finalProps[DATA_PLACEMENT_ROOT] = `${frameId}-${component.id}`;
+
   const element = createComponentElement(
     component,
     finalProps,
     children,
     (resolvedAttributes as any).children,
     {
-      identity: { breakpointId, componentId: component.id },
+      identity: { breakpointId: frameId, componentId: owner.id },
       scope: activeScope,
       renderNode,
       // Editor surface: data renderers surface an inline error chip with the
@@ -284,5 +338,114 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, s
   }
   return element;
 });
+
+/** A placement that cannot be drawn: it stays selectable and deletable, so restoring the definition restores it. */
+const MissingPlacement = observer(({ component, breakpointId, lockedByAncestor = false }: ComponentRendererProps) => {
+  const { editorUI } = useStore();
+  const frameId = React.useContext(PlacementHostContext)?.frameId ?? breakpointId;
+  const isLocked = lockedByAncestor || !!component.canvasLocked;
+  const { onPointerDown } = useDragSource(component.hasParent && !isLocked ? { kind: 'moveNode', nodeId: component.id } : null, component);
+  if (!component.canvasVisible) return null;
+  return (
+    <div
+      data-component-id={`${frameId}-${component.id}`}
+      data-inner-component-id={component.id}
+      {...{ [DATA_PLACEMENT_ROOT]: `${frameId}-${component.id}` }}
+      style={{ border: '1px dashed orange', padding: 8, fontSize: 12, color: '#92400e', pointerEvents: isLocked ? 'none' : 'auto' }}
+      onClick={e => selectFromClick(e, editorUI, component, frameId, isLocked)}
+      onPointerDown={onPointerDown}
+    >
+      Missing component
+    </div>
+  );
+});
+
+type DefinitionInstance = NonNullable<ReturnType<NonNullable<EditorUI['currentProject']>['components']['get']>>;
+
+/**
+ * A definition drawn for a placement: its live tree, so an edit reaches every
+ * placement at once. Nothing is rewritten here: the tree resolves at D(P) against the
+ * definition's breakpoints, and the frame's id only names the identity attributes.
+ * The placement's own values are keyed on what holds it, which is what `breakpointId`
+ * and `allBreakpoints` are at this point, and they resolve to plain values first.
+ */
+const DefinedPlacement = observer(({
+  component,
+  definition,
+  path,
+  breakpointId,
+  allBreakpoints,
+  scope,
+  lockedByAncestor,
+}: ComponentRendererProps & { definition: DefinitionInstance; path: string }) => {
+  const outer = React.useContext(PlacementHostContext);
+  const canvasNodes = getSnapshot(definition.page.canvasNodes);
+  const breakpoints = React.useMemo(() => extractBreakpoints(canvasNodes), [canvasNodes]);
+  const frameId = outer?.frameId ?? breakpointId;
+  const frameMinWidth = outer?.frameMinWidth ?? allBreakpoints.find(b => b.id === breakpointId)?.minWidth ?? Infinity;
+  const pageBreakpoints = outer?.pageBreakpoints ?? allBreakpoints;
+  const stack = outer?.stack;
+  const inputs = definition.inputs;
+  const host = React.useMemo(
+    () => ({ frameId, frameMinWidth, pageBreakpoints, stack: [...(stack ?? []), definition.id], path, inputs }),
+    [frameId, frameMinWidth, pageBreakpoints, stack, definition.id, path, inputs],
+  );
+
+  const own = definitionBreakpointFor(frameMinWidth, breakpoints)?.id ?? '';
+  const instance = placementInstance(component.props as Partial<PlacementProps>, component.bindings, inputs);
+  const outerScope = scope ?? createScope();
+  const values = inputValuesAt(
+    instance,
+    { id: breakpointId, breakpoints: allBreakpoints },
+    { id: own, breakpoints },
+    outerScope,
+  );
+
+  const root = definition.page.appComponentTree as ComponentInstance;
+  const placementStyle = placementStyleAt(
+    (component.props as Partial<PlacementProps>).style,
+    (root.props as { style?: unknown }).style,
+    { holder: allBreakpoints, definition: breakpoints, page: pageBreakpoints },
+    frameId,
+  );
+
+  return (
+    <PlacementHostContext.Provider value={host}>
+      <NodeRenderer
+        component={root}
+        breakpointId={own}
+        allBreakpoints={breakpoints}
+        scope={pushInputFrame(outerScope, values)}
+        lockedByAncestor={lockedByAncestor}
+        placement={component}
+        placementStyle={placementStyle}
+      />
+    </PlacementHostContext.Provider>
+  );
+});
+
+const PlacementRenderer = observer((props: ComponentRendererProps) => {
+  const { component } = props;
+  const { editorUI } = useStore();
+  const outer = React.useContext(PlacementHostContext);
+  const id = (component.props as Partial<PlacementProps>).component;
+  const definition = typeof id === 'string' ? editorUI.currentProject?.components.get(id) : undefined;
+  const stack = outer?.stack ?? [];
+  const path = outer ? pathId(outer.path, component.id) : component.id;
+  const page = editorUI.currentPage;
+  // The published path's own verdict: a budget or a definition it cannot render. A
+  // computed, so a placement redraws when its verdict changes, not on every page edit.
+  const refused = React.useMemo(() => computed(() => page?.expansion.missing.has(path) ?? false), [page, path]);
+  // The stack holds for a tree this page does not hold, where no verdict reaches: a
+  // stored cycle would otherwise be an endless render.
+  const refusable = !definition || stack.includes(definition.id) || stack.length >= COMPONENT_LIMITS.nestingDepth;
+  if (refusable || refused.get()) return <MissingPlacement {...props} />;
+  return <DefinedPlacement {...props} definition={definition} path={path} />;
+});
+
+/** One node of the canvas. A placement draws its definition. */
+const ComponentRenderer = observer((props: ComponentRendererProps) =>
+  isPlacementType(props.component.type) ? <PlacementRenderer {...props} /> : <NodeRenderer {...props} />,
+);
 
 export default ComponentRenderer;

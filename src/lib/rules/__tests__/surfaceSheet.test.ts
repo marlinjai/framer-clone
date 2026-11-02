@@ -375,3 +375,47 @@ describe('memoising', () => {
     expect(canvas(tree, { memo, frames: [{ ...FRAMES[0], width: 900 }] })).toBe('');
   });
 });
+
+describe('a placement on the canvas sheet', () => {
+  const rule = { id: 'r', selector: '&:hover', style: { color: { base: 'red', mob: 'blue' } } };
+  const inner = (id: string): SurfaceNode => ({ id: `${id}__title`, classKey: 'title', type: 'h3', props: { rules: [rule] } });
+  const placed = (id: string): SurfaceNode => ({
+    id,
+    classKey: 'root',
+    placementRoot: true,
+    type: 'div',
+    props: { rules: [{ ...rule, id: 'root-rule' }] },
+    children: [inner(id)],
+  });
+  const page = node('page', {}, placed('p1'), placed('p2'));
+
+  it('writes one block per definition node per frame, however many placements there are', () => {
+    const css = canvas(page);
+    for (const frame of FRAMES) {
+      expect(css.split(`${copy(frame.breakpointId, 'title')}:not(`)).toHaveLength(2);
+      expect(css.split(`${ROOT} [data-placement-root="${frame.breakpointId}-root"]:not(`)).toHaveLength(2);
+    }
+    expect(css).not.toContain('p1__title');
+    expect(css).not.toContain('"desk-p1"');
+  });
+
+  it('resolves a value for the frame it is on', () => {
+    const css = canvas(page);
+    expect(css).toMatch(/\[data-component-id="desk-title"\][^{]*\{color:red!important\}/);
+    expect(css).toMatch(/\[data-component-id="mob-title"\][^{]*\{color:blue!important\}/);
+  });
+
+  it('writes a block per placement on the preview, whose copies have ids of their own', () => {
+    const css = preview(page);
+    expect(css).toContain('[data-preview-frame] [data-component-id="tab-p1__title"]');
+    expect(css).toContain('[data-preview-frame] [data-component-id="tab-p2__title"]');
+    expect(css).toContain('[data-preview-frame] [data-component-id="tab-p1"]');
+    expect(css).not.toContain('data-placement-root');
+  });
+
+  it('clears an external variable on each placement, even where the rule is written once', () => {
+    const external = (id: string, style: Record<string, unknown>): SurfaceNode => ({ ...placed(id), props: { style, rules: [rule] } });
+    const css = canvas(node('page', {}, external('p1', {}), external('p2', { '--x': 'url(https://track.example/x)' })));
+    expect(css).toContain('--x');
+  });
+});
