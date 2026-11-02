@@ -38,18 +38,27 @@ export const MAX_GENERATED_ANIMATION_RUNS = 10;
 export const MAX_GENERATED_SELECTOR_PARTS = 8;
 
 /**
- * Most sheet text one generation may spend, of the page's MAX_RULE_BYTES_PER_PAGE. Past
- * that cap the sheet drops a rule and all later ones, so a generation early in the page
- * must not be able to reach it: that would remove the owner's rules.
+ * Most bytes of sheet text one generation may spend, an eighth of the page's
+ * MAX_RULE_BYTES_PER_PAGE. Past that cap the sheet drops a rule and all later ones, so a
+ * generation early in the page must not be able to reach it: that would remove the
+ * owner's rules. Eight full generations can, and nothing here sees the page: see the plan.
  */
 export const MAX_GENERATED_RULE_WEIGHT = 32 * 1024;
 
 /** The least a block of the sheet is counted at, so the page's cap on blocks is covered too. */
 const MIN_BLOCK_WEIGHT = 128;
 
-/** What a rule costs the sheet: one block per part, per breakpoint if it holds a map. */
+/** The node's class, written twice into each block, and the media query around it. */
+const BLOCK_OVERHEAD = 120;
+
+/** `<` and `>` reach the sheet as a four-byte escape, where JSON holds one. */
+const ESCAPED_IN_SHEET = /[<>]/g;
+
+/** What a rule costs the sheet in bytes: one block per part, per breakpoint if it holds a map. */
 export function ruleWeight(rule: unknown, parts: number, widths: number): number {
-  return parts * widths * Math.max(JSON.stringify(rule).length, MIN_BLOCK_WEIGHT);
+  const text = JSON.stringify(rule);
+  const bytes = new TextEncoder().encode(text).length + 3 * (text.match(ESCAPED_IN_SHEET)?.length ?? 0);
+  return parts * widths * Math.max(bytes + BLOCK_OVERHEAD, MIN_BLOCK_WEIGHT);
 }
 
 /**
@@ -188,6 +197,9 @@ export function hidesContent(property: string, value: unknown): boolean {
   const text = String(value).trim().toLowerCase();
   if (property === 'opacity') return Number.parseFloat(text) <= 0;
   if (property === 'visibility') return text === 'hidden' || text === 'collapse';
+  if (property === 'transform') return /\bscale[xy]?\(\s*0(?:\.0*)?\s*[,)]/.test(text);
+  if (property === 'scale') return /^0(?:\.0*)?(?:\s|$)/.test(text);
+  if (property === 'clipPath') return /\binset\(\s*(?:50|100)%/.test(text);
   return property === 'display' && text === 'none';
 }
 

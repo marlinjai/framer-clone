@@ -583,9 +583,13 @@ Decided while building slice 9, say so if you disagree:
   authored path shares it.
 - **The gate takes the animation and its start values.** A rule that also holds a colour splits in two, and
   both count towards the cap, so a visitor who asked for reduced motion keeps the rest of the state. What a
-  keyframes of the generation moves goes behind the gate with it, and so does anything that hides the node
-  (`opacity:0`, `visibility:hidden`, `display:none`), from the same rule, another rule on the same selector
-  and, for `&`, from Normal. Otherwise a reveal never shows for the visitor who asked for less motion.
+  keyframes of the generation moves goes behind the gate with it, and so does anything that hides a node
+  (`opacity:0`, `visibility:hidden`, `display:none`, a zero scale, a full clip), from the same rule, another
+  rule with the same parts, and the Normal and plain `&` rules of every node the animation can land on,
+  children under `& > p` included. From Normal it moves to a gated rule on the node that held it, so a visitor
+  with no preference sees what was written. A colour stays in Normal, because it hides nothing. Which child a
+  selector lands on is read wider than a browser would, because a child shown early costs less than one
+  never shown. Otherwise a reveal never shows for the visitor who asked for less motion.
 - **Bounded is not short.** A generated animation can still run ten times for a million seconds, thirty can
   fit one value, and a `transition` under `@starting-style` is an entrance no gate covers. Each ends, and only
   the animations sit behind the gate.
@@ -597,15 +601,19 @@ Decided while building slice 9, say so if you disagree:
   `:is`, `:where` or `:not`, no sibling step at the start of any `:has()` entry, at any depth, and no `@scope`
   with a prelude. The one outward form kept is exactly `:is(.dark *)`.
 - **A generation with a rule keeps no address on another host,** in Normal or an `img`, but the stock library,
-  site paths and what the selected component already held. `&:hover` and a media condition remain, and a
+  site paths and what the selected component already loads: its `style` values and the `src` of an `img`, never
+  its text, which reaches the model too. `&:hover` and a media condition remain, and a
   rule can switch on what Normal holds, so without this a generation can still report a visitor. The address
   goes rather than the rule. What stays open: a rule added beside an address the page already holds can
   still switch it on, and only an enforced Content Security Policy closes that (open question 1), which now
   matters more, because a prompt injection in a brief can write the rule.
 - **A generated selector holds at most 8 parts and `maxStyleValueChars` in total,** and a generation spends at
-  most 32 KiB of the page's rule budget, counting one block per part and per breakpoint. Past a page cap the
-  sheet drops a rule and all later ones, so this is what keeps a generation from taking an owner's rules. Two
-  generations spend it twice, and the owner's rules are at risk only on a page already near its cap.
+  most 32 KiB of the page's 256 KiB rule budget, in sheet bytes, counting one block per part and per
+  breakpoint. Past a page cap the sheet drops a rule and all later ones, so this is what keeps a generation
+  from taking an owner's rules. **Where that stops:** the validator sees one generation, not the page. Seven
+  full generations earlier in the page than an owner's rule leave it in place, and the eighth, or fewer on a
+  page that already spends the budget, can remove it. The sheet reports the drop in its log and nothing refuses
+  it. A page-wide check would have to run where the whole page is known, at apply, which this slice does not do.
 - **Keyframes and `@position-try` go through every style check,** because a keyframe could otherwise animate a
   z-index past the banner. Descriptors are no CSS properties, so only their values are checked.
 - **The single-value tells apply to rules,** because the tells screen reads `props.style` only.

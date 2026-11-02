@@ -114,6 +114,8 @@ import {
   isDefinitionRule,
   isRuleList,
   parseRule,
+  parseSelector,
+  reachesInsideNode,
   storedRulesOf,
   type DefinitionRule,
   type SelectorRule,
@@ -1453,17 +1455,95 @@ function keyframeProperties(nodes: GeneratedNodeSnapshot[]): Map<string, Set<str
 
 const sameList = (a: readonly string[], b: readonly string[]): boolean => a.length === b.length && a.every((entry, index) => entry === b[index]);
 
+/** A selector's parts as the parser reads them, so `"& "` is `&`. */
+function partsOf(rule: SelectorRule): string[] {
+  const parts = parseSelector(rule.selector);
+  return parts.ok ? parts.value : [];
+}
+
+/** A part's text with what stands in brackets emptied, so a space there is no combinator. */
+const withoutArguments = (part: string): string => {
+  let text = part;
+  for (let previous = ''; previous !== text; ) {
+    previous = text;
+    text = text.replace(/\([^()]*\)/g, '');
+  }
+  return text;
+};
+
+/**
+ * The nodes a rule's parts can land on: the node itself, its children under `& >`, any
+ * descendant otherwise, narrowed by a tag where the last step names one. This reads
+ * wider than a browser would, on purpose: the cost of a wrong guess is a visitor who
+ * asked for less motion seeing a child early, and the cost of a miss is one who never
+ * sees it. A pseudo-element's Normal is not the node's, so such a part names nobody.
+ */
+function nodesUnder(node: GeneratedNodeSnapshot, parts: string[]): GeneratedNodeSnapshot[] {
+  const found = new Set<GeneratedNodeSnapshot>();
+  for (const part of parts) {
+    if (part.includes('::')) continue;
+    if (!reachesInsideNode(part)) {
+      found.add(node);
+      continue;
+    }
+    const plain = withoutArguments(part);
+    const tag = /^[a-z][a-z0-9]*/i.exec(plain.split(/[\s>]+/).pop() ?? '')?.[0].toLowerCase();
+    const visit = (child: GeneratedNodeSnapshot, deep: boolean): void => {
+      if (tag === undefined || child.type.toLowerCase() === tag) found.add(child);
+      if (deep) child.children.forEach((inner) => visit(inner, true));
+    };
+    const direct = /^&[^\s>]*\s*>\s*[^\s>]+$/.test(plain);
+    node.children.forEach((child) => visit(child, !direct));
+  }
+  return [...found];
+}
+
+/**
+ * Colours stay in Normal even when a keyframes moves them. They hide nothing, and a
+ * visitor who asked for less motion would lose a background their text depends on.
+ */
+const isPaintKey = (key: string): boolean => /color$/i.test(key);
+
 /**
  * Put an animation's start values behind the reduced-motion gate with it. Otherwise
  * `{opacity:0;animation:u-in 1s forwards}` leaves the content invisible for the very
  * visitor who asked for less motion, because the animation that reveals it never
  * runs. That takes what a keyframes of this generation moves and anything that hides
- * the node, from the rules with the same selector and, for `&`, from Normal: an honest
- * model writes the start value there as often as in the rule. Whatever a hover's
- * colour has to do with neither stays where it is.
+ * a node, from the rules with the same parts, and from the Normal and the plain `&`
+ * rules of every node the animation can land on: an honest model writes the start
+ * value there as often as in the rule, on a child as often as on the node. A visitor
+ * with no preference sees what was written, because the value moves to a gated rule
+ * on the node that held it. At the cap on rules it goes altogether, which errs towards
+ * showing the content.
  */
-function gateStartValues(nodes: GeneratedNodeSnapshot[]): void {
+function gateStartValues(nodes: GeneratedNodeSnapshot[], v: Validator): void {
   const moved = keyframeProperties(nodes);
+  const touched = new Set<GeneratedNodeSnapshot>();
+
+  /** The gated `&` rule of a node, added if it has none. */
+  const holderOf = (node: GeneratedNodeSnapshot): SelectorRule | undefined => {
+    const rules = storedRulesOf(node.props);
+    const held = rules.find((rule): rule is SelectorRule => !isDefinitionRule(rule) && rule.selector === '&' && sameList(rule.at ?? [], [REDUCED_MOTION_GATE]));
+    if (held) return held;
+    if (v.ruleCount >= MAX_GENERATED_RULES) {
+      v.warnings.push(`${node.label}: a start value left Normal so that reduced motion still shows it, and the rule cap left no room to keep it for other visitors`);
+      return undefined;
+    }
+    v.ruleCount += 1;
+    let id = 'hold';
+    for (let n = 2; rules.some((rule) => rule.id === id); n += 1) id = `hold-${n}`;
+    const rule: SelectorRule = { id, selector: '&', at: [REDUCED_MOTION_GATE], style: {} };
+    node.props[RULES_PROP] = [...rules, rule];
+    return rule;
+  };
+
+  const take = (from: Record<string, unknown>, keys: string[], into: SelectorRule | undefined): void => {
+    for (const key of keys) {
+      if (into) into.style[key] ??= from[key];
+      delete from[key];
+    }
+  };
+
   const visit = (node: GeneratedNodeSnapshot): void => {
     node.children.forEach(visit);
     const rules = storedRulesOf(node.props);
@@ -1472,27 +1552,39 @@ function gateStartValues(nodes: GeneratedNodeSnapshot[]): void {
       const motion = Object.keys(gated.style).filter(isMotionKey);
       if (motion.length === 0) continue;
       const moves = new Set(motion.flatMap((key) => storedKeyframesIn(gated.style[key])).flatMap((name) => [...(moved.get(name) ?? [])]));
-      const take = (from: Record<string, unknown>, keys: string[]): void => {
-        for (const key of keys) {
-          gated.style[key] ??= from[key];
-          delete from[key];
-        }
-      };
+      const starts = (style: Record<string, unknown>): string[] =>
+        Object.keys(style).filter((key) => (moves.has(key) && !isPaintKey(key)) || hidesContent(key, style[key]));
+      const parts = partsOf(gated);
       const otherAt = (gated.at ?? []).filter((wrapper) => !isReducedMotionGate(wrapper));
       for (const rule of rules) {
-        if (isDefinitionRule(rule) || rule === gated || rule.selector !== gated.selector || !sameList(rule.at ?? [], otherAt)) continue;
-        take(rule.style, Object.keys(rule.style).filter((key) => moves.has(key) || hidesContent(key, rule.style[key])));
+        if (isDefinitionRule(rule) || rule === gated || !sameList(partsOf(rule), parts) || !sameList(rule.at ?? [], otherAt)) continue;
+        take(rule.style, Object.keys(rule.style).filter((key) => moves.has(key) || hidesContent(key, rule.style[key])), gated);
+        touched.add(node);
       }
-      const normal = node.props.style;
-      if (gated.selector === '&' && isPlainObject(normal)) {
-        take(normal, Object.keys(normal).filter((key) => hidesContent(key, normal[key])));
-        if (Object.keys(normal).length === 0) delete node.props.style;
+      for (const target of nodesUnder(node, parts)) {
+        const normal = target.props.style;
+        const fromNormal = isPlainObject(normal) ? starts(normal) : [];
+        const plainRules = storedRulesOf(target.props).filter(
+          (rule): rule is SelectorRule => !isDefinitionRule(rule) && rule !== gated && !rule.at?.length && sameList(partsOf(rule), ['&']),
+        );
+        if (fromNormal.length === 0 && !plainRules.some((rule) => starts(rule.style).length > 0)) continue;
+        const holder = holderOf(target);
+        if (isPlainObject(normal)) {
+          take(normal, fromNormal, holder);
+          if (Object.keys(normal).length === 0) delete target.props.style;
+        }
+        for (const rule of plainRules) take(rule.style, starts(rule.style), holder);
+        touched.add(target);
       }
     }
-    const left = rules.filter((rule) => isDefinitionRule(rule) || Object.keys(rule.style).length > 0);
-    if (left.length !== rules.length) node.props[RULES_PROP] = left;
   };
   nodes.forEach(visit);
+  for (const node of touched) {
+    const rules = storedRulesOf(node.props);
+    const left = rules.filter((rule) => isDefinitionRule(rule) || Object.keys(rule.style).length > 0);
+    if (left.length === 0) delete node.props[RULES_PROP];
+    else if (left.length !== rules.length) node.props[RULES_PROP] = left;
+  }
 }
 
 /** True for an address that loads from a host that is neither this site nor the stock library. */
@@ -1500,20 +1592,26 @@ function isForeignAddress(url: string, held: ReadonlySet<string>): boolean {
   return !url.startsWith('#') && !isSitePath(url) && !isUnsplashPhotoUrl(url) && !held.has(url);
 }
 
-/** The addresses a selected component holds, to pass as ValidateContext.heldAddresses. */
+/**
+ * The addresses a selected component loads, to pass as ValidateContext.heldAddresses.
+ * Only what loads counts: the values of a node's style and an img's src. Text in the
+ * component reaches the model too, so a paragraph holding `url(https://...)` must not
+ * be able to allow-list a host. `context` is the serialized subtree (SerializedComponent).
+ */
 export function addressesHeldBy(context: unknown): Set<string> {
   const held = new Set<string>();
-  const read = (value: unknown, key?: string): void => {
-    if (typeof value === 'string') {
-      if (key === 'src') held.add(value.trim());
-      for (const url of scanCssValue(value).urls) held.add(url);
-    } else if (Array.isArray(value)) {
-      value.forEach((entry) => read(entry));
-    } else if (isPlainObject(value)) {
-      for (const [name, entry] of Object.entries(value)) read(entry, name);
-    }
+  const readStyle = (value: unknown): void => {
+    if (typeof value === 'string') scanCssValue(value).urls.forEach((url) => held.add(url));
+    else if (isPlainObject(value)) Object.values(value).forEach(readStyle);
   };
-  read(context);
+  const readNode = (node: unknown): void => {
+    if (!isPlainObject(node)) return;
+    const props = isPlainObject(node.props) ? node.props : {};
+    if (isPlainObject(props.style)) readStyle(props.style);
+    if (node.type === 'img' && typeof props.src === 'string') held.add(props.src.trim());
+    if (Array.isArray(node.children)) node.children.forEach(readNode);
+  };
+  readNode(context);
   return held;
 }
 
@@ -1616,7 +1714,7 @@ export function validateGeneration(raw: unknown, ctx: ValidateContext): Validati
   // Decided before any svg is dropped: a page past the limit was cut short, and must not pass for being under it.
   const overLimit = v.nodeCount > GENERATION_LIMITS.maxNodes;
   const nodes = dropExpandingSvgs(scopeIds(placeStickyCta(parsed, v, ctx.allowStickyCta === true), v), v);
-  gateStartValues(nodes);
+  gateStartValues(nodes, v);
   dropForeignAddresses(nodes, v, ctx.heldAddresses ?? new Set());
 
   if (overLimit) {

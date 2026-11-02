@@ -8,7 +8,7 @@ import { chromium, type Browser, type BrowserContextOptions, type Page } from 'p
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { deriveBreakpointKeys } from '@/lib/ai/pageGen/schema';
 import { REDUCED_MOTION_GATE } from '@/lib/ai/pageGen/promptSections/rules';
-import { validateGeneration } from '@/lib/ai/pageGen/validate';
+import { addressesHeldBy, validateGeneration } from '@/lib/ai/pageGen/validate';
 import { HOVER_GATE } from '@/lib/rules/states';
 import { BREAKPOINTS, publishedDocument, renderPublished } from './lib/published';
 
@@ -187,6 +187,64 @@ describe('generated rules in Chromium', () => {
     await plain.page.waitForTimeout(300);
     expect(await opacity(plain.page)).toBe('1');
     await plain.close();
+  });
+
+  it('shows no focus to a host that was only named in text', async () => {
+    const held = addressesHeldBy({ type: 'section', children: [{ type: 'p', props: { children: 'Our partner page: url(https://evil.test/c/held-text).' } }] });
+    const out = validateGeneration(
+      {
+        nodes: [
+          {
+            type: 'div',
+            props: { rules: [{ id: 'a', selector: '&:focus-within > b', style: { display: 'block' } }] },
+            children: [
+              { type: 'a', props: { id: 'lnk', href: '/x', children: 'link' } },
+              { type: 'b', props: { style: hidden('held-text') } },
+            ],
+          },
+        ],
+      },
+      { ...context, heldAddresses: held },
+    );
+    if (!out.ok) throw new Error(out.errors.join('; '));
+    const { page, requests, close } = await open(documentOf(out.result.nodes));
+    await page.focus('#lnk');
+    await page.waitForTimeout(150);
+    expect(requests.filter((url) => url.includes('evil.test'))).toEqual([]);
+    await close();
+  });
+
+  const boxOf = (page: Page) =>
+    page.evaluate(() => {
+      const element = document.querySelector('#text') as HTMLElement;
+      const box = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      return { width: box.width, height: box.height, opacity: style.opacity, clip: style.clipPath };
+    });
+
+  it.each([
+    ['a zero scale in Normal', { style: { transform: 'scale(0)' } }, { transform: 'none' }, '&', false],
+    ['a full clip in Normal', { style: { clipPath: 'inset(100%)' } }, { clipPath: 'inset(0)' }, '&', false],
+    ['opacity under a list', { style: { opacity: 0 } }, { opacity: 1 }, '&, &:hover', false],
+    ['opacity under a trailing space', { style: { opacity: 0 } }, { opacity: 1 }, '& ', false],
+    ['a child behind a parent rule', { style: { opacity: 0 } }, { opacity: 1 }, '& > p', true],
+  ])('shows %s to a reduced visitor, and reveals it for everyone else', async (_, start, to, selector, onChild) => {
+    const keyframes = { id: 'k', define: '@keyframes u-in', blocks: [{ selector: 'to', style: to }] };
+    const rules = [keyframes, { id: 'r', selector, style: { animation: 'u-in 100ms forwards' } }];
+    const text = { id: 'text', children: 'Read me', ...start, ...(onChild ? {} : { rules }) };
+    const { nodes } = generate([
+      onChild
+        ? { type: 'div', props: { rules }, children: [{ type: 'p', props: { ...text, style: { ...start.style, width: '100px', height: '40px' } } }] }
+        : { type: 'p', props: { ...text, style: { ...start.style, width: '100px', height: '40px' } } },
+    ]);
+    for (const reducedMotion of ['reduce', 'no-preference'] as const) {
+      const { page, close } = await open(documentOf(nodes), { reducedMotion });
+      await page.waitForTimeout(300);
+      const box = await boxOf(page);
+      expect(box).toMatchObject({ width: 100, height: 40, opacity: '1' });
+      expect(box.clip).toMatch(/^(?:none|inset\(0(?:%|px)?\))$/);
+      await close();
+    }
   });
 
   it('leaves the owner their later rule after a generation tries to spend the budget', async () => {
