@@ -1,34 +1,34 @@
 {
-  "generatedAt": "2026-11-02T12:02:27.762Z",
+  "generatedAt": "2026-11-02T11:50:53.552Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 207,
+  "durationSeconds": 195,
   "matrix": {
     "surfaces": {
       "format": {
-        "pass": 1801,
-        "fail": 32,
+        "pass": 1794,
+        "fail": 39,
         "notTested": 0,
         "total": 1833
       },
       "renderer": {
-        "pass": 1765,
-        "fail": 68,
+        "pass": 1758,
+        "fail": 75,
         "notTested": 0,
         "total": 1833
       },
       "canvas": {
-        "pass": 1633,
-        "fail": 200,
+        "pass": 1626,
+        "fail": 207,
         "notTested": 0,
         "total": 1833
       },
       "panel": {
-        "pass": 1230,
-        "fail": 603,
+        "pass": 1223,
+        "fail": 610,
         "notTested": 0,
         "total": 1833
       },
@@ -491,26 +491,26 @@
       },
       "component": {
         "format": {
-          "pass": 20,
-          "fail": 10,
+          "pass": 13,
+          "fail": 17,
           "notTested": 0,
           "total": 30
         },
         "renderer": {
-          "pass": 20,
-          "fail": 10,
+          "pass": 13,
+          "fail": 17,
           "notTested": 0,
           "total": 30
         },
         "canvas": {
-          "pass": 20,
-          "fail": 10,
+          "pass": 13,
+          "fail": 17,
           "notTested": 0,
           "total": 30
         },
         "panel": {
-          "pass": 20,
-          "fail": 10,
+          "pass": 13,
+          "fail": 17,
           "notTested": 0,
           "total": 30
         },
@@ -5081,13 +5081,13 @@
       "component:image": "pass pass pass pass reusable-components",
       "component:link": "pass pass pass pass reusable-components",
       "component:choice": "pass pass pass pass reusable-components",
-      "component:richtext": "pass pass pass pass reusable-components",
-      "component:file": "pass pass pass pass reusable-components",
-      "component:date": "pass pass pass pass reusable-components",
-      "component:border": "pass pass pass pass reusable-components",
-      "component:shadow": "pass pass pass pass reusable-components",
-      "component:cursor": "pass pass pass pass reusable-components",
-      "component:transition": "pass pass pass pass reusable-components",
+      "component:richtext": "reusable-components reusable-components reusable-components reusable-components reusable-components",
+      "component:file": "reusable-components reusable-components reusable-components reusable-components reusable-components",
+      "component:date": "reusable-components reusable-components reusable-components reusable-components reusable-components",
+      "component:border": "reusable-components reusable-components reusable-components reusable-components reusable-components",
+      "component:shadow": "reusable-components reusable-components reusable-components reusable-components reusable-components",
+      "component:cursor": "reusable-components reusable-components reusable-components reusable-components reusable-components",
+      "component:transition": "reusable-components reusable-components reusable-components reusable-components reusable-components",
       "component:list": "reusable-components reusable-components reusable-components reusable-components reusable-components",
       "component:gallery": "reusable-components reusable-components reusable-components reusable-components reusable-components",
       "component:event": "reusable-components reusable-components reusable-components reusable-components reusable-components",
@@ -8595,6 +8595,16 @@
       "cost": 116
     },
     {
+      "id": "reusable-components",
+      "description": "A promise of the reusable component format (an input type, a placement, a state or an interaction) that this surface does not keep yet.",
+      "matrixCells": 98,
+      "corpusChecks": 0,
+      "fixtures": [],
+      "onlyGapOf": [],
+      "roundTripCases": 0,
+      "cost": 98
+    },
+    {
       "id": "panel-no-tag-choice",
       "description": "The tag picker of the Custom section does not offer SVG and MathML elements.",
       "matrixCells": 92,
@@ -8631,16 +8641,6 @@
       ],
       "roundTripCases": 0,
       "cost": 77
-    },
-    {
-      "id": "reusable-components",
-      "description": "A promise of the reusable component format (an input type, a placement, a state or an interaction) that this surface does not keep yet.",
-      "matrixCells": 70,
-      "corpusChecks": 0,
-      "fixtures": [],
-      "onlyGapOf": [],
-      "roundTripCases": 0,
-      "cost": 70
     },
     {
       "id": "page-level-css",
