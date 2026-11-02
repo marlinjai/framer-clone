@@ -1,8 +1,18 @@
-@import "tailwindcss";
+/* This sheet ships under every published page, so it holds the utilities of the
+   app's own UI code and nothing else. The automatic scan starts at src/ (not the
+   repository root, where test/, docs/, scripts/ and the BusBasis corpus live), and
+   skips the React import: its Tailwind converter carries Tailwind's own preamble and
+   class tables as strings. Read as classes, they emitted the gradient @property
+   rules with a strict <color> syntax, and an imported page bringing Tailwind 3 style
+   values for those variables painted its gradients transparent.
+   src/app/__tests__/siteSheetSources.test.ts fails when the scan reads anything else. */
+@import "tailwindcss" source("../");
+@source not "../lib/reactImport";
 /* Tests carry hostile and malformed class strings on purpose (the React import's
    Tailwind converter is tested against them); Tailwind's automatic scan must not
    turn those into CSS, or the production build fails on them. */
 @source not "../**/__tests__";
+@source not "../**/__fixtures__";
 @source not "../**/*.test.{ts,tsx}";
 /* The Books template composer's inspector fields carry their own utility classes. */
 @source "../../node_modules/@marlinjai/block-editor-react/dist";
