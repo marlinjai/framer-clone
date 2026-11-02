@@ -54,7 +54,7 @@
     "component:placement-trigger": "- - - - -",
     "component:richtext": "pass pass pass pass -",
     "component:shadow": "pass pass pass pass -",
-    "component:state-custom": "- - - - -",
+    "component:state-custom": "pass pass - - -",
     "component:state-focused": "pass pass - - -",
     "component:state-hover": "pass pass - - -",
     "component:state-pressed": "pass pass - - -",

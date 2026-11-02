@@ -13,7 +13,7 @@ import { snapshotToComponentNode } from '@/lib/renderer/server/snapshotToCompone
 import { componentSnapshotToNode } from '@/lib/renderer/server/componentSnapshot';
 import type { BreakpointRef } from '@/lib/responsive/cascade';
 import { FIXTURES } from '../../../../test/score/corpus/fixtures';
-import { BREAKPOINTS } from '../../../../test/score/lib/published';
+import { BREAKPOINTS, renderThroughPublishedPage } from '../../../../test/score/lib/published';
 import { parseComponents, type ComponentDefinitions } from '../definition';
 import { createRenderBudget, expandPlacements } from '../expand';
 import { COMPONENT_LIMITS, MISSING_TYPE } from '../placement';
@@ -681,6 +681,74 @@ describe('pointer states', () => {
     const { html } = await publish(page([{ id: 'n', type: 'div', props: { 'data-u-c-btn': 'btn', 'data-fc-c': 'btn' } }]), {});
     expect(html).toContain('data-u-c-btn="btn"');
     expect(html).not.toContain('data-fc-c');
+  });
+});
+
+describe('custom states', () => {
+  const stateRule = (state: string, style: Node) => ({ id: `state-${state}`, componentState: state, selector: '&', style });
+  const MENU_STATES = [{ id: 'open', name: 'Open', kind: 'custom' }, { id: 'pinned', name: 'Pinned', kind: 'custom' }];
+  const menu = (extra: Node = {}) => definition('menu', {
+    id: 'm-root', type: 'nav', props: { rules: [stateRule('open', { background: 'black' })] },
+    children: [{ id: 'm-links', type: 'ul', props: { style: { display: 'none' }, rules: [stateRule('open', { display: 'flex' }), stateRule('pinned', { display: 'grid' })] } }],
+  }, { states: MENU_STATES, ...extra });
+  const S = 'cs-menu';
+  const whole = (tree: Node[], definitions: ComponentDefinitions, rows?: Record<string, unknown>[]) =>
+    renderThroughPublishedPage({ tree: { id: 'page', type: 'main', props: {}, children: tree }, definitions, rows }).then(r => r.html);
+
+  it('makes the placement root a scope holding one choice, and each state a when rule', async () => {
+    const expanded = expandPlacements(page([placement('p1', 'menu')]), definitionsOf(menu()), BREAKPOINTS);
+    const root = expanded.children![0];
+    expect((root.props as Node).behaviour).toEqual({ state: [{ id: S, name: 'State', type: 'choice', initial: 'primary', options: ['primary', 'open', 'pinned'] }] });
+    expect((root.children![0].props as Node).rules).toEqual([
+      { id: 'state-0', selector: '&', style: { display: 'flex' }, when: { state: S, eq: 'open' } },
+      { id: 'state-1', selector: '&', style: { display: 'grid' }, when: { state: S, eq: 'pinned' } },
+    ]);
+    expect(JSON.stringify(expanded)).not.toContain('componentState');
+  });
+
+  it('starts each placement in its own state, and a hundred rows share one block', async () => {
+    const html = await whole([placement('p1', 'menu', { state: 'open' }), placement('p2', 'menu')], definitionsOf(menu()));
+    expect(html).toContain(`<nav data-fcs-${S}="open"`);
+    expect(html).toContain(`<nav data-fcs-${S}="primary"`);
+    expect(html).toContain(`.fc_r-m-links.fc_r-m-links:where([data-fcs-${S}="open"] *, [data-fcs-${S}="open"]){display:flex}`);
+    const rows = Array.from({ length: 100 }, (_, i) => ({ tier: i % 2 ? 'pinned' : 'open' }));
+    const listed = await whole([collection(placement('p', 'menu', {}, { state: read('{{row.tier}}') }))], definitionsOf(menu()), rows);
+    expect(listed.match(new RegExp(`<nav data-fcs-${S}="pinned"`, "g"))).toHaveLength(50);
+    expect(listed.match(new RegExp(`<nav data-fcs-${S}="open"`, "g"))).toHaveLength(50);
+    expect(listed.match(/\{display:grid\}/g)).toHaveLength(1);
+  });
+
+  it('starts in primary on a state it does not have, with one warning', async () => {
+    const html = await whole([placement('p1', 'menu', { state: 'gone' }), placement('p2', 'menu', { state: 'hover' })], definitionsOf(menu()));
+    expect(html.match(new RegExp(`<nav data-fcs-${S}="primary"`, "g"))).toHaveLength(2);
+    expect(vi.mocked(console.warn).mock.calls.some(call => String(call[0]).includes('starts in primary: gone'))).toBe(true);
+  });
+
+  it('orders custom and pointer states by the list, whatever the kind', () => {
+    const stored = definition('menu', { id: 'm', type: 'nav', props: { rules: [stateRule('open', { color: 'red' }), stateRule('hover', { color: 'blue' })] } }, {
+      states: [{ id: 'hover', name: 'Hover', kind: 'hover' }, MENU_STATES[0]],
+    });
+    const root = expandPlacements(page([placement('p1', 'menu')]), definitionsOf(stored), BREAKPOINTS).children![0];
+    expect(((root.props as Node).rules as Node[]).map(rule => rule.style)).toEqual([{ color: 'blue' }, { color: 'red' }]);
+    expect((root.props as Node)['data-u-c-menu']).toBe('menu');
+  });
+
+  it('writes the no-script state again behind the gate down, which a page with a trigger keeps', async () => {
+    const definitions = definitionsOf(menu({ noScriptState: 'open' }));
+    const expanded = expandPlacements(page([placement('p1', 'menu')]), definitions, BREAKPOINTS);
+    expect((expanded.children![0].children![0].props as Node).rules).toContainEqual({ id: 'state-0-no-script', selector: '&', style: { display: 'flex' }, gate: 'off' });
+    const trigger = { id: 't', type: 'button', props: { children: 'x', behaviour: { state: [{ id: 'on', name: 'On', type: 'boolean', initial: false }], on: [{ id: 'c', on: 'click', do: [{ toggle: 'on' }] }] } } };
+    const html = await whole([trigger, placement('p1', 'menu')], definitions);
+    expect(html).toContain('.fc_r-m-links.fc_r-m-links:where(html:not([data-fc-b]) *){display:flex}');
+    // Without a trigger nothing can change, so the server's state stands and the copy is not needed.
+    expect(await whole([placement('p1', 'menu')], definitions)).not.toContain('html:not([data-fc-b])');
+  });
+
+  it('a raw reader sees the literal state, and primary for one from data', () => {
+    const definitions = definitionsOf(menu());
+    const literal = expandPlacements(page([placement('p1', 'menu', { state: 'open' }), placement('p2', 'menu', {}, { state: read('{{row.tier}}') })]), definitions, BREAKPOINTS, { literalInputs: true });
+    const initial = (node: ComponentNode) => (((node.props as Node).behaviour as Node).state as Node[])[0].initial;
+    expect(literal.children!.map(initial)).toEqual(['open', 'primary']);
   });
 });
 
