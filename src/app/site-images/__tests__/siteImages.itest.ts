@@ -493,6 +493,55 @@ describe('listing and deleting', () => {
     expect((await remove(site.id, sha(unused))).status).toBe(404);
   });
 
+  it('keeps an image an A/B test variant names', async () => {
+    const site = await makeSite('experiment');
+    sessionMock.mockResolvedValue(memberOf(site));
+    const variant = png(240, 240, [11, 11, 11]);
+    const path = (await (await upload(site.id, variant, 'sharing')).json()).path as string;
+    await prisma.siteExperiment.create({
+      data: {
+        siteId: site.id,
+        workspaceId: site.scope.workspaceId,
+        tenantGroupId: site.scope.tenantGroupId,
+        experimentKey: 'hero',
+        config: { variants: [{ key: 'b', ogImage: path }] },
+      },
+    });
+    expect((await (await list(site.id)).json()).items[0].inUse).toBe(true);
+    const res = await remove(site.id, sha(variant));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error.code).toBe('image_in_use');
+  });
+
+  it("keeps an image a content agent's undo would write back", async () => {
+    const site = await makeSite('undo');
+    sessionMock.mockResolvedValue(memberOf(site));
+    const restored = png(250, 250, [12, 12, 12]);
+    const path = (await (await upload(site.id, restored, 'sharing')).json()).path as string;
+    const run = await prisma.agentRun.create({
+      data: { collectionId: randomUUID(), workspaceId: site.scope.workspaceId, prompt: 'swap the hero image', model: 'test', status: 'done' },
+    });
+    await prisma.agentChange.create({
+      data: {
+        runId: run.id,
+        position: 1,
+        tool: 'update_row',
+        entityType: 'row',
+        inverseTool: 'update_row',
+        inversePayload: { values: { image: path } },
+      },
+    });
+    try {
+      const res = await remove(site.id, sha(restored));
+      expect(res.status).toBe(409);
+      expect((await res.json()).error.code).toBe('image_in_use');
+    } finally {
+      await prisma.agentRun.delete({ where: { id: run.id } });
+    }
+    // Once the undo record is gone, nothing names it and it can go.
+    expect((await remove(site.id, sha(restored))).status).toBe(204);
+  });
+
   it('guards the delete: editSite needed, another site answers 404', async () => {
     const icon = png(210, 210);
     await upload(siteA.id, icon);

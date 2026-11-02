@@ -192,7 +192,7 @@ C. **Uploaded files.** A revision references images and files by URL. The erase 
    and never cuts. For these files the delete exists ("Uploaded images" in Site settings,
    `DELETE /api/projects/<id>/images/<sha256>`): a hard delete of the row, offered and allowed only at zero
    references, where a reference is the path anywhere in the settings, a component, a page of the working copy or
-   any kept revision, checked under the site row lock in a serializable transaction, with an audit line. No original
+   any kept revision, an A/B test setting or a content agent undo record, checked under the site row lock in a serializable transaction, with an audit line. No original
    file name or metadata is stored to scrub. So erasing an uploaded photo of a person takes: remove it from the
    settings and pages, publish until no kept revision names it (or until it is pruned), then delete it. Nothing
    caches these files in front of the app, but browsers that loaded one may keep it until their copy expires. Still

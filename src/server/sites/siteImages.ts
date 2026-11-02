@@ -141,9 +141,13 @@ async function lockSiteImages(tx: Prisma.TransactionClient, siteId: string): Pro
 
 /**
  * Every uploaded image a site still names anywhere it keeps: its settings, its
- * component definitions, every page of the working copy and every kept
- * revision (each one a version a rollback can make live again). A text search
- * for the path, so a field added later is covered without a change here.
+ * component definitions, every page of the working copy, every kept revision
+ * (each one a version a rollback can make live again), its A/B test settings
+ * (a variant may name one), and the undo records of the content agent in the
+ * site's workspace (an undo may write one back; agent runs carry the workspace,
+ * not the site, so every site of the workspace counts them, which can only keep
+ * an image longer). A text search for the path, so a field added later is
+ * covered without a change here.
  */
 async function referencedHashes(tx: Prisma.TransactionClient, siteId: string): Promise<Set<string>> {
   const pattern = 'site-images/([0-9a-f]{64})';
@@ -155,6 +159,15 @@ async function referencedHashes(tx: Prisma.TransactionClient, siteId: string): P
       SELECT regexp_matches(p.snapshot::text, ${pattern}, 'g') FROM public.site_pages p WHERE p.site_id = ${siteId}
       UNION ALL
       SELECT regexp_matches(r.document::text, ${pattern}, 'g') FROM public.site_revisions r WHERE r.site_id = ${siteId}
+      UNION ALL
+      SELECT regexp_matches(e.config::text, ${pattern}, 'g')
+        FROM public.site_experiments e WHERE e.site_id = ${siteId} AND e.config IS NOT NULL
+      UNION ALL
+      SELECT regexp_matches(c.inverse_payload::text, ${pattern}, 'g')
+        FROM public.agent_changes c
+        JOIN public.agent_runs ar ON ar.id = c.run_id
+        JOIN public.sites s ON s.workspace_id = ar.workspace_id
+       WHERE s.id = ${siteId}
     ) found`;
   return new Set(rows.map((r) => r.sha256));
 }
