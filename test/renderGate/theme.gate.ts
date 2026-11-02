@@ -15,8 +15,16 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { chromium, webkit, type Browser, type BrowserType, type Page } from 'playwright';
-import { normalizeTheme, themeCss, type SiteTheme } from '@/lib/site/theme';
-import { ACCEPTED_COLORS, REFUSED_COLORS } from '@/lib/site/__tests__/themeValues';
+import { normalizeTheme, parseColorValue, themeCss, type SiteTheme } from '@/lib/site/theme';
+import { parseColor } from '@/lib/color/cssColor';
+import { NAMED_COLOR_HEX } from '@/lib/color/namedColors';
+import {
+  ACCEPTED_COLORS,
+  REFUSED_COLORS,
+  REVIEW_PROBE_VALUES,
+  REVIEW_REFUSED,
+  colorSweep,
+} from '@/lib/site/__tests__/themeValues';
 
 const ORIGIN = 'https://theme.test';
 const HOSTILE = 'aa000001';
@@ -125,6 +133,41 @@ describe.each(browsers)('the theme sheet in %s', (_name, type) => {
     expect(seen.sentinel).toBe('rgb(18, 52, 86)');
     // A value the browser could not read would make the use inherit rgb(9, 9, 9).
     expect(seen.hostile).not.toBe('rgb(9, 9, 9)');
+  });
+
+  it('every value the grammar accepts, from the review probe, the lists and a generated sweep, is a colour here', async () => {
+    const candidates = [...new Set([...REVIEW_PROBE_VALUES, ...colorSweep(), ...ACCEPTED_COLORS, ...REVIEW_REFUSED])];
+    const accepted = [...new Set(candidates.map((v) => parseColorValue(v)).filter((v): v is string => v !== null))];
+    const tab = await browser.newPage();
+    try {
+      const verdicts = await tab.evaluate((values: string[]) => values.map((v) => [v, CSS.supports('color', v)] as const), accepted);
+      expect(verdicts.filter(([, ok]) => !ok).map(([v]) => v)).toEqual([]);
+      // The sweep is wide enough to mean something: thousands of values, hundreds accepted.
+      expect(candidates.length).toBeGreaterThan(10_000);
+      expect(accepted.length).toBeGreaterThan(500);
+    } finally {
+      await tab.close();
+    }
+  });
+
+  it('every named colour reads as the value the table holds', async () => {
+    const tab = await browser.newPage();
+    try {
+      const computed = await tab.evaluate((names: string[]) => names.map((name) => {
+        const el = document.createElement('i');
+        document.body.append(el);
+        el.style.color = name;
+        const value = getComputedStyle(el).color;
+        el.remove();
+        return [name, value] as const;
+      }), Object.keys(NAMED_COLOR_HEX));
+      for (const [name, value] of computed) {
+        const { r, g, b } = parseColor(NAMED_COLOR_HEX[name as keyof typeof NAMED_COLOR_HEX])!;
+        expect(`${name} ${value}`).toBe(`${name} rgb(${r}, ${g}, ${b})`);
+      }
+    } finally {
+      await tab.close();
+    }
   });
 
   // The canary: the same sheet with the grammar bypassed. If the detectors stayed silent

@@ -34,7 +34,7 @@ import {
   type SiteTheme,
   type ThemeToken,
 } from '../theme';
-import { ACCEPTED_COLORS, REFUSED_COLORS } from './themeValues';
+import { ACCEPTED_COLORS, REFUSED_COLORS, REVIEW_PROBE_VALUES, REVIEW_REFUSED } from './themeValues';
 
 const FRAUNCES = FONT_LIBRARY.find((f) => f.id === 'fraunces')!;
 
@@ -55,10 +55,10 @@ describe('parseColorValue', () => {
   });
 
   it('accepts exactly 64 characters and refuses 65', () => {
-    const at = `rgb(${'1'.repeat(59)})`;
+    const at = `rgb(${'1'.repeat(55)} 0 0)`;
     expect(at).toHaveLength(64);
     expect(parseColorValue(at)).toBe(at);
-    expect(parseColorValue(`rgb(${'1'.repeat(60)})`)).toBeNull();
+    expect(parseColorValue(`rgb(${'1'.repeat(56)} 0 0)`)).toBeNull();
   });
 });
 
@@ -218,7 +218,8 @@ describe('themeCss, published', () => {
       document: { backgroundColor: 'red;}html{display:none', color: 'var(--fc-t-22bb33cc)', fontFamily: 'var(--fc-t-ef56ab12)}' },
     } as unknown as SiteTheme;
     const css = themeCss(forged);
-    expect(css).toBe(`:root{--fc-t-ef56ab12:${SYSTEM_FONT_STACK};--fc-t-22bb33cc:#123456}body{color:var(--fc-t-22bb33cc)}`);
+    // cd34ef56's dark value is broken, so only that value is left out: its light one stays.
+    expect(css).toBe(`:root{--fc-t-cd34ef56:#fff;--fc-t-ef56ab12:${SYSTEM_FONT_STACK};--fc-t-22bb33cc:#123456}body{color:var(--fc-t-22bb33cc)}`);
     expect(themeCss(forged, { scope: 'surface' })).not.toMatch(/evil|script|display:none/);
     expect(themeCss(forged, { scope: 'export' })).not.toMatch(/evil|script|display:none/);
   });
@@ -462,7 +463,7 @@ describe('validateThemeWrite', () => {
 
   it('refuses a duplicate live name, a changed kind, a new broken value and a bad family', () => {
     const tokens: ThemeToken[] = [color('aa000001', '#000', { name: 'A' }), color('aa000002', '#000', { name: 'a' })];
-    expect(ok({ tokens, document: {} })).toContain('Two colours are called a.');
+    expect(ok({ tokens, document: {} })).toContain('Two colours are called A.');
     expect(ok({ tokens: [{ id: 'aa000001', name: 'A', kind: 'font', family: 'fraunces' }], document: {} }, { tokens: [tokens[0]], document: {} })).toEqual([
       'A cannot change from a colour to a font.',
     ]);
@@ -493,3 +494,72 @@ describe('validateThemeWrite', () => {
     expect(ok({ tokens: dead(THEME_LIMITS.tombstones + 1), document: {} }, { tokens: dead(THEME_LIMITS.tombstones), document: {} })).toEqual([TOMBSTONE_CAP_MESSAGE]);
   });
 });
+
+describe('the T1 code review payloads', () => {
+  it.each(REVIEW_REFUSED)('refuses %j, which browsers refuse', (value) => {
+    expect(parseColorValue(value)).toBeNull();
+  });
+
+  it('accepts far fewer of the review probe values than the 257 the old grammar did', () => {
+    // The browser gate proves each one left is a colour in Chromium and WebKit.
+    const accepted = REVIEW_PROBE_VALUES.filter((v) => parseColorValue(v) !== null);
+    expect(accepted.length).toBeLessThan(257 - 190 + 1);
+    expect(accepted).toEqual(expect.arrayContaining(['rgb(.5 .5 .5)', 'oklch(0 0 0 / 50%)', 'color(srgb 1 0 0)', 'color(SRGB 1 0 0)', '#abc', 'RED']));
+  });
+
+  it('a stored duplicate name does not block an edit of another token', () => {
+    const stored = normalizeTheme({ tokens: [
+      color('aaaaaaaa', '#fff', { name: 'Accent' }),
+      color('bbbbbbbb', '#000', { name: 'accent' }),
+      color('cccccccc', '#111', { name: 'Other' }),
+    ], document: {} });
+    const renamed = must(renameToken(stored, 'cccccccc', 'Other 2'));
+    expect(validateThemeWrite(renamed, stored)).toEqual([]);
+    // Taking part in the duplicate still counts: renaming one of them to the other's name, or a third into it.
+    expect(renameToken(stored, 'aaaaaaaa', 'ACCENT')).toEqual({ ok: false, error: 'Another colour is already called ACCENT.' });
+    const both = { ...stored, tokens: stored.tokens.map((t) => (t.id === 'aaaaaaaa' ? { ...t, name: 'ACCENT' } : t)) };
+    expect(validateThemeWrite(both, stored)).toEqual(['Two colours are called ACCENT.']);
+    const third = { ...stored, tokens: stored.tokens.map((t) => (t.id === 'cccccccc' ? { ...t, name: 'Accent' } : t)) };
+    expect(validateThemeWrite(third, stored)).toEqual(['Two colours are called Accent.']);
+  });
+
+  it('reading never cuts a name, so two long names stay two, and the write check enforces the length', () => {
+    const long = normalizeTheme({ tokens: [
+      color('aaaaaaaa', '#fff', { name: `${'A'.repeat(45)}1` }),
+      color('bbbbbbbb', '#000', { name: `${'A'.repeat(45)}2` }),
+    ], document: {} });
+    expect(long.tokens.map((t) => t.name.length)).toEqual([46, 46]);
+    expect(validateThemeWrite(long, long)).toEqual([]);
+    const recoloured = must(setColorValues(long, 'aaaaaaaa', { light: '#123456' }));
+    expect(validateThemeWrite(recoloured, long)).toEqual([]);
+    const renamed = { ...long, tokens: long.tokens.map((t) => (t.id === 'aaaaaaaa' ? { ...t, name: `${'B'.repeat(41)}` } : t)) };
+    expect(validateThemeWrite(renamed, long)).toEqual([`${'B'.repeat(40)}...: keep a name to 40 characters.`]);
+  });
+
+  it('a rename of a token with a stored broken value is not refused for the value', () => {
+    const stored = normalizeTheme({ tokens: [color('aaaaaaaa', 'rgb(1, 2 3)', { name: 'Old' })], document: {} });
+    expect(stored.tokens[0]).toMatchObject({ broken: true });
+    expect(validateThemeWrite(must(renameToken(stored, 'aaaaaaaa', 'New')), stored)).toEqual([]);
+  });
+
+  it('a broken dark value leaves out only that value: the light one shows wherever it would', () => {
+    const theme = normalizeTheme({ tokens: [color('aaaaaaaa', '#112233', { dark: 'rgb(1, 2 3)' })], document: {} });
+    expect(theme.tokens[0]).toMatchObject({ broken: true });
+    expect(themeCss(theme)).toBe(':root{--fc-t-aaaaaaaa:#112233}');
+    expect(themeCss(setThemeMode(theme, 'light'))).toBe(':root{--fc-t-aaaaaaaa:#112233;color-scheme:light}');
+    expect(themeCss(setThemeMode(theme, 'system'))).toBe(':root{--fc-t-aaaaaaaa:#112233;color-scheme:light dark}');
+    expect(themeCss(setThemeMode(theme, 'dark'))).toBe(':root{--fc-t-aaaaaaaa:#112233;color-scheme:dark}');
+    expect(resolveTokenRefs('var(--fc-t-aaaaaaaa)', theme, 'dark')).toBe('#112233');
+  });
+
+  it('a broken light value with a good dark one shows the dark one where dark shows, and nothing in light', () => {
+    const theme = normalizeTheme({ mode: 'system', tokens: [color('aaaaaaaa', 'rgb(1 2)', { dark: '#445566' })], document: {} });
+    expect(themeCss(theme)).toBe(':root{color-scheme:light dark}@media (prefers-color-scheme:dark){:root{--fc-t-aaaaaaaa:#445566}}');
+    expect(resolveTokenRefs('var(--fc-t-aaaaaaaa)', theme, 'light')).toBe('var(--fc-t-aaaaaaaa)');
+  });
+});
+
+function must<T extends { ok: boolean }>(result: T): SiteTheme {
+  if (!result.ok) throw new Error(JSON.stringify(result));
+  return (result as unknown as { theme: SiteTheme }).theme;
+}

@@ -26,6 +26,7 @@
 // predate any later tightening of these rules.
 
 import { FONT_LIBRARY, SYSTEM_FONT_STACK, fontFaceCss, fontStack, getFontFamily } from '@/lib/fonts/registry';
+import { parseCssColor, trimAsciiSpace } from '@/lib/color/cssColor';
 
 // ---------------------------------------------------------------------------
 // The stored shape
@@ -134,82 +135,22 @@ export function tokenVariable(id: string): string {
 // The colour grammar
 // ---------------------------------------------------------------------------
 
-/** CSS named colours (CSS Color 4). `transparent` is accepted besides these. */
-export const CSS_COLOR_NAMES: ReadonlySet<string> = new Set([
-  'aliceblue', 'antiquewhite', 'aqua', 'aquamarine', 'azure', 'beige', 'bisque', 'black',
-  'blanchedalmond', 'blue', 'blueviolet', 'brown', 'burlywood', 'cadetblue', 'chartreuse',
-  'chocolate', 'coral', 'cornflowerblue', 'cornsilk', 'crimson', 'cyan', 'darkblue', 'darkcyan',
-  'darkgoldenrod', 'darkgray', 'darkgreen', 'darkgrey', 'darkkhaki', 'darkmagenta',
-  'darkolivegreen', 'darkorange', 'darkorchid', 'darkred', 'darksalmon', 'darkseagreen',
-  'darkslateblue', 'darkslategray', 'darkslategrey', 'darkturquoise', 'darkviolet', 'deeppink',
-  'deepskyblue', 'dimgray', 'dimgrey', 'dodgerblue', 'firebrick', 'floralwhite', 'forestgreen',
-  'fuchsia', 'gainsboro', 'ghostwhite', 'gold', 'goldenrod', 'gray', 'green', 'greenyellow',
-  'grey', 'honeydew', 'hotpink', 'indianred', 'indigo', 'ivory', 'khaki', 'lavender',
-  'lavenderblush', 'lawngreen', 'lemonchiffon', 'lightblue', 'lightcoral', 'lightcyan',
-  'lightgoldenrodyellow', 'lightgray', 'lightgreen', 'lightgrey', 'lightpink', 'lightsalmon',
-  'lightseagreen', 'lightskyblue', 'lightslategray', 'lightslategrey', 'lightsteelblue',
-  'lightyellow', 'lime', 'limegreen', 'linen', 'magenta', 'maroon', 'mediumaquamarine',
-  'mediumblue', 'mediumorchid', 'mediumpurple', 'mediumseagreen', 'mediumslateblue',
-  'mediumspringgreen', 'mediumturquoise', 'mediumvioletred', 'midnightblue', 'mintcream',
-  'mistyrose', 'moccasin', 'navajowhite', 'navy', 'oldlace', 'olive', 'olivedrab', 'orange',
-  'orangered', 'orchid', 'palegoldenrod', 'palegreen', 'paleturquoise', 'palevioletred',
-  'papayawhip', 'peachpuff', 'peru', 'pink', 'plum', 'powderblue', 'purple', 'rebeccapurple',
-  'red', 'rosybrown', 'royalblue', 'saddlebrown', 'salmon', 'sandybrown', 'seagreen', 'seashell',
-  'sienna', 'silver', 'skyblue', 'slateblue', 'slategray', 'slategrey', 'snow', 'springgreen',
-  'steelblue', 'tan', 'teal', 'thistle', 'tomato', 'turquoise', 'violet', 'wheat', 'white',
-  'whitesmoke', 'yellow', 'yellowgreen',
-]);
-
-/** The colour functions a token may hold, each as one whole call with no nested bracket. */
-export const COLOR_FUNCTIONS: ReadonlySet<string> = new Set([
-  'rgb', 'rgba', 'hsl', 'hsla', 'hwb', 'lab', 'lch', 'oklab', 'oklch', 'color',
-]);
-
-/** The spaces `color()` takes, which is all `parseColor` learns to read in T2. */
-export const COLOR_SPACES: ReadonlySet<string> = new Set(['srgb', 'srgb-linear', 'display-p3']);
-
-const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
-/** `name(body)` with nothing after the closing bracket and no bracket inside the body. */
-const CALL = /^([a-z][a-z0-9-]*)\(([^()]*)\)$/i;
-/** What a call body may hold at all: digits, letters for units and `none`, signs, dots, `%`, `/`, commas, spaces. */
-const BODY_CHARS = /^[0-9a-z.%+\-/,\s]*$/i;
-/** A number with an optional percent or angle unit. */
-const NUMBER = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?(?:%|deg|grad|rad|turn)?$/i;
-
 /**
- * The colour a token may hold, or null. A closed allowlist, not a sanitizer: anything not
- * listed is refused, so no value reaches the raw sheet that this contract did not name.
+ * The colour a token may hold, or null: a value the shared strict parser
+ * (src/lib/color/cssColor.ts) reads as a colour that Chromium and WebKit both accept,
+ * at most 64 characters, with surrounding ASCII white space removed. A closed allowlist,
+ * not a sanitizer: no value reaches the raw sheet that the grammar did not name, and none
+ * that a browser would drop.
  *
- * Allowed: `#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`; one whole `name(...)` from
- * COLOR_FUNCTIONS holding only numbers, percentages, angles, `none`, `/` and commas
- * (`color()` takes a space from COLOR_SPACES first); a CSS colour name; `transparent`.
- * At most 64 characters. Returns the value trimmed of surrounding white space.
- *
- * The grammar only ever widens: a stored value this build accepted must be accepted by
- * every later build, or a frozen published page loses a colour.
+ * The grammar only ever widens from here: a stored value this build accepted must be
+ * accepted by every later build, or a frozen published page loses a colour. It was
+ * narrowed once, before any token could be stored, to what browsers actually read.
  */
 export function parseColorValue(value: unknown): string | null {
   if (typeof value !== 'string') return null;
-  const text = value.trim();
+  const text = trimAsciiSpace(value);
   if (text.length === 0 || text.length > THEME_LIMITS.colorValue) return null;
-  if (HEX.test(text)) return text;
-  const lower = text.toLowerCase();
-  if (lower === 'transparent' || CSS_COLOR_NAMES.has(lower)) return text;
-  const call = CALL.exec(text);
-  if (!call) return null;
-  const name = call[1].toLowerCase();
-  const body = call[2];
-  if (!COLOR_FUNCTIONS.has(name) || !BODY_CHARS.test(body)) return null;
-  const parts = body.split(/[\s,/]+/).filter((p) => p.length > 0);
-  if (name === 'color') {
-    const space = parts.shift();
-    if (!space || !COLOR_SPACES.has(space.toLowerCase())) return null;
-  }
-  if (parts.length === 0) return null;
-  for (const part of parts) {
-    if (part.toLowerCase() !== 'none' && !NUMBER.test(part)) return null;
-  }
-  return text;
+  return parseCssColor(text) ? text : null;
 }
 
 /** True when `family` is a FONT_LIBRARY id or 'system'. */
@@ -231,8 +172,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/**
+ * A stored name, trimmed and never cut: cutting on read could turn two names that differ
+ * past the limit into one, and a duplicate would then block every edit of the site. The
+ * write check enforces the length.
+ */
 function tokenName(value: unknown): string {
-  return typeof value === 'string' ? value.trim().slice(0, THEME_LIMITS.name) : '';
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 /** A colour value as stored: kept when it parses, kept as text up to 256 characters when not. */
@@ -332,8 +278,21 @@ export type ThemeScope = 'published' | 'surface' | 'export';
 /** A token as it reaches a sheet: its variable name and its value per scheme. */
 interface EmittedToken {
   token: ThemeToken;
-  light: string;
-  dark: string;
+  /** null: broken, so left out wherever the light scheme shows. */
+  light: string | null;
+  /** The dark value, else the light one. A broken dark value counts as absent. */
+  dark: string | null;
+}
+
+/**
+ * A colour token's values as a sheet may write them, each checked again. A broken value is
+ * left out on its own: a broken dark value counts as no dark value, so the light one shows
+ * in both schemes, and a broken light value leaves the token out wherever light shows.
+ */
+function colorValues(token: { light?: unknown; dark?: unknown }): { light: string | null; dark: string | null } {
+  const light = parseColorValue(token.light);
+  const dark = token.dark === undefined ? null : parseColorValue(token.dark);
+  return { light, dark: dark ?? light };
 }
 
 /**
@@ -356,9 +315,8 @@ function emittableTokens(theme: SiteTheme): EmittedToken[] {
       live += 1;
     }
     if (token.kind === 'color') {
-      const light = parseColorValue(token.light);
-      const dark = token.dark === undefined ? light : parseColorValue(token.dark);
-      if (light === null || dark === null) continue;
+      const { light, dark } = colorValues(token);
+      if (light === null && dark === null) continue;
       out.push({ token, light, dark });
     } else if (token.kind === 'font') {
       const stack = fontTokenStack(typeof token.family === 'string' ? token.family : '');
@@ -470,9 +428,12 @@ export function themeCss(raw: SiteTheme, options: ThemeCssOptions = {}): string 
   const rename = (id: string) => (emitted.has(id) ? variable(id) : null);
 
   const forcedDark = mode === 'dark';
-  const base = tokens.map(({ token, light, dark }) => `${variable(token.id)}:${forcedDark ? dark : light}`);
+  const base = tokens.flatMap(({ token, light, dark }) => {
+    const shown = forcedDark ? dark : light;
+    return shown === null ? [] : [`${variable(token.id)}:${shown}`];
+  });
   const darkOnly = mode === 'system'
-    ? tokens.filter((t) => t.dark !== t.light).map(({ token, dark }) => `${variable(token.id)}:${dark}`)
+    ? tokens.filter((t) => t.dark !== null && t.dark !== t.light).map(({ token, dark }) => `${variable(token.id)}:${dark}`)
     : [];
   const scheme = colorSchemeValue(mode);
   const docDecls = documentDeclarations(theme, rename);
@@ -522,10 +483,8 @@ export function resolveTokenRefs(value: string, theme: SiteTheme, scheme: ColorS
     const token = findToken(theme, id);
     if (!token) return whole;
     if (token.kind === 'font') return fontTokenStack(token.family);
-    const light = parseColorValue(token.light);
-    const dark = token.dark === undefined ? light : parseColorValue(token.dark);
-    if (light === null || dark === null) return whole;
-    return scheme === 'dark' ? dark : light;
+    const { light, dark } = colorValues(token);
+    return (scheme === 'dark' ? dark : light) ?? whole;
   });
 }
 
@@ -741,7 +700,8 @@ export function setDocumentStyle(theme: SiteTheme, key: DocumentKey, value: stri
 /**
  * Every reason `next` may not replace `current`, in plain language. Empty when it may.
  * Both are normalized themes. A stored oddity that is unchanged (a broken value, an unknown
- * family, a name made long by an older build) never blocks an unrelated edit; a change must
+ * family, a name made long by an older build, a duplicate name) never blocks an unrelated
+ * edit; a change must
  * be valid. Nothing may remove a live token outright: delete makes a tombstone, and only a
  * tombstone may be removed. A count over a cap may shrink but never grow.
  */
@@ -765,7 +725,11 @@ export function validateThemeWrite(next: SiteTheme, current: SiteTheme): string[
     }
   }
 
-  const liveNames = new Map<string, string>();
+  // Each live token's name key, and whether this write gives it that name: a new token, a
+  // rename, or a token coming back from a tombstone. A duplicate counts only when one of its
+  // tokens takes part in this write, so a duplicate already stored never blocks an edit of
+  // something else.
+  const byName = new Map<string, Array<{ token: ThemeToken; named: boolean }>>();
   for (const token of next.tokens) {
     const old = before.get(token.id);
     if (old && old.kind !== token.kind) {
@@ -773,19 +737,29 @@ export function validateThemeWrite(next: SiteTheme, current: SiteTheme): string[
       continue;
     }
     if (token.deleted) continue;
-    const unchanged = old !== undefined && JSON.stringify(old) === JSON.stringify(token);
-    if (!unchanged) {
+    const named = !old || old.deleted === true || old.name !== token.name;
+    if (named) {
       if (token.name.length === 0) errors.push('Give every token a name.');
-      if (token.kind === 'color' && token.broken) errors.push(`${token.name || 'A colour'}: ${COLOR_HINT}`);
-      if (token.kind === 'font' && !isThemeFontFamily(token.family)) {
+      else if (token.name.length > THEME_LIMITS.name) errors.push(`${token.name.slice(0, THEME_LIMITS.name)}...: keep a name to ${THEME_LIMITS.name} characters.`);
+    }
+    if (token.kind === 'color') {
+      const valuesChanged = !old || old.kind !== 'color' || old.light !== token.light || old.dark !== token.dark;
+      if (valuesChanged && token.broken) errors.push(`${token.name || 'A colour'}: ${COLOR_HINT}`);
+    } else {
+      const familyChanged = !old || old.kind !== 'font' || old.family !== token.family;
+      if (familyChanged && !isThemeFontFamily(token.family)) {
         errors.push(`${token.name || 'A font'}: pick a font from the library, or system fonts.`);
       }
     }
+    if (token.name.length === 0) continue;
     const key = `${token.kind}:${token.name.toLowerCase()}`;
-    if (token.name.length > 0 && liveNames.has(key)) {
+    byName.set(key, [...(byName.get(key) ?? []), { token, named }]);
+  }
+  for (const group of byName.values()) {
+    if (group.length > 1 && group.some((entry) => entry.named)) {
+      const token = group.find((entry) => entry.named)!.token;
       errors.push(`Two ${KIND_LABEL[token.kind]}s are called ${token.name}.`);
     }
-    liveNames.set(key, token.id);
   }
 
   for (const key of DOCUMENT_KEYS) {

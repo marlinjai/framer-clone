@@ -152,8 +152,12 @@ export function projectToPersisted(
   const settings = normalizeSiteSettings(rawSettings);
   const siteSettings: PersistedSiteSettings = { ...settings };
   for (const key of KEPT_SITE_SETTINGS_KEYS) {
-    const present = typeof rawSettings === 'object' && rawSettings !== null && key in rawSettings
-      && (rawSettings as Record<string, unknown>)[key] !== undefined;
+    // `null` is the usual way to say nothing, so it counts as absent too; an explicit
+    // clear is the empty value (`{ tokens: [], document: {} }`, `[]`).
+    const value = typeof rawSettings === 'object' && rawSettings !== null
+      ? (rawSettings as Record<string, unknown>)[key]
+      : undefined;
+    const present = value !== undefined && value !== null;
     if (!present) delete siteSettings[key];
   }
 

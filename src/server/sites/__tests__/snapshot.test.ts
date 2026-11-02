@@ -64,6 +64,12 @@ describe('projectToPersisted and the kept site settings keys', () => {
     expect('head' in old).toBe(false);
     expect(old.language).toBe('de');
     expect('theme' in projectToPersisted({ ...base, siteSettings: undefined } as never).siteSettings).toBe(false);
+    // null is the usual way to say nothing: it counts as absent, so it keeps the stored value too.
+    const nulls = projectToPersisted({ ...base, siteSettings: { theme: null, head: null } } as never).siteSettings;
+    expect('theme' in nulls).toBe(false);
+    expect('head' in nulls).toBe(false);
+    const stored = { theme: { mode: 'dark', tokens: [{ id: 'aaaaaaaa', name: 'A', kind: 'color', light: '#123' }], document: {} } };
+    expect(mergeKeptSiteSettings(nulls, stored).theme).toEqual(stored.theme);
   });
 
   it('mergeKeptSiteSettings takes a missing key from the stored row and a present one from the body', () => {
