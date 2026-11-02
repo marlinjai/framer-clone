@@ -36,6 +36,15 @@ import type { CheckName, CorpusFailure, CorpusResult, GapId, PageDifference } fr
 
 const TIMEOUT = 25 * 60 * 1000;
 
+/**
+ * One step of opening a page: loading it, the hover, the wait for its transitions. The
+ * captures have their own budget (CAPTURE_TIMEOUT_MS). Measured on 2026-11-02 over every
+ * page and breakpoint, with 28 busy loops beside the fleet (load average 250 on 14 cores):
+ * loading at most 168 ms, a hover with its transitions at most 76 ms. So 5 seconds is
+ * thirty times the worst seen, and a step that takes longer is stuck, not slow.
+ */
+const STEP_TIMEOUT_MS = 5_000;
+
 /** The Site settings of the site a BusBasis replica sits on, in the page's language. */
 const busbasisSite = (lang: string) => {
   const site = normalizeSiteSettings({ pageBase: 'browser', language: lang });
@@ -90,9 +99,17 @@ async function settle(page: Page): Promise<void> {
   });
 }
 
+/**
+ * The hover's transitions have run to their end. Keyframe animations are paused by
+ * `settle`, so what still runs here is what the hover started. A fixed 350 ms wait could
+ * end before a transition did on a loaded machine, and `settle` then pinned it to its start.
+ */
+const transitionsDone = (page: Page) =>
+  page.waitForFunction(() => !document.getAnimations().some((motion) => motion instanceof CSSTransition && motion.playState === 'running'));
+
 async function open(browser: Browser, html: string, viewport: { width: number; height: number }, hover: string | null): Promise<Page> {
   const page = await browser.newPage({ viewport, reducedMotion: 'no-preference', colorScheme: 'dark' });
-  page.setDefaultTimeout(5000);
+  page.setDefaultTimeout(STEP_TIMEOUT_MS);
   // A frozen page holds no address. If one slips through it must fail, not depend on the network.
   await page.route('**/*', (route) => route.abort());
   await page.setContent(html);
@@ -100,7 +117,7 @@ async function open(browser: Browser, html: string, viewport: { width: number; h
   await settle(page);
   if (hover) {
     await page.locator(`[data-parity-id="${hover}"]`).hover();
-    await page.waitForTimeout(350);
+    await transitionsDone(page);
     await settle(page);
   }
   return page;
