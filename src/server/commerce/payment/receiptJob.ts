@@ -43,6 +43,9 @@ export const RECEIPT_REFUSALS: ReadonlySet<string> = new Set([
   'TAX_CASE_UNSUPPORTED',
   'REVERSE_CHARGE_NOT_ALLOWED',
   'INVALID_INPUT',
+  // No payment row for the job's order: a row is never deleted (BK018), so the job names something else, as the expiry
+  // job's `unknown_payment`.
+  'UnknownPaymentError',
 ]);
 
 interface ReceiptIssuePayload {

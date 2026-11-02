@@ -66,7 +66,7 @@ describe('the production registries', () => {
   });
 
   it('refuse a receipt only for what a retry cannot heal, and retry what a person or time can', () => {
-    for (const code of ['TOTALS_MISMATCH', 'TAX_IDENTITY_MISMATCH', 'TAX_CASE_UNSUPPORTED', 'BUYER_MISSING', 'ORDER_NOT_FOUND']) {
+    for (const code of ['TOTALS_MISMATCH', 'TAX_IDENTITY_MISMATCH', 'TAX_CASE_UNSUPPORTED', 'BUYER_MISSING', 'ORDER_NOT_FOUND', 'UnknownPaymentError']) {
       expect(RECEIPT_REFUSALS.has(code)).toBe(true);
     }
     for (const code of ['SETTINGS_MISSING', 'COUNTER_MISSING', 'SENDER_INCOMPLETE', 'RECIPIENT_UNAVAILABLE', 'CONTACT_ARCHIVED', 'CUSTOMER_ARCHIVED', 'Error']) {

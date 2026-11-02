@@ -1152,6 +1152,6 @@ checked against the code and hold. Findings about Stripe behaviour are adopted a
   so `PaymentDeps` gains `emit` (wired to `emitCommerceEvent` in `deps.ts`), the consumer writes through `jobs/schedule.ts`, and `JobPayments` gains `issueReceipt`, bound to
   the job's company in `run.ts`. `JobRunOptions.paymentDeps` lets tests hand in their wiring. `PaymentOutcome` drops `receiptDocumentId` and `receiptError` for
   `jobIds`; callers read the receipt from the payment. Decided beyond the text: the receipt job refuses (`dead` at once) `TOTALS_MISMATCH`, `TAX_IDENTITY_MISMATCH`,
-  `TAX_CASE_UNSUPPORTED`, `BUYER_MISSING`, `ORDER_NOT_FOUND`, `REVERSE_CHARGE_NOT_ALLOWED` and `INVALID_INPUT`, since a retry can only fail the same way; an archived contact
+  `TAX_CASE_UNSUPPORTED`, `BUYER_MISSING`, `ORDER_NOT_FOUND`, `REVERSE_CHARGE_NOT_ALLOWED`, `INVALID_INPUT` and a payment row that does not exist, since a retry can only fail the same way; an archived contact
   or customer retries, because a person restoring it heals it with no button to press. `TAX_PROFILE_MISMATCH` joins the list in B11. A `NOT_PAID` from the Books ends the
   job `done`. Its deadline is 8 minutes: the signal reaches nothing in `ensureReceipt`, so it only has to sit under the lease.
