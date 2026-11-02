@@ -18,6 +18,11 @@
 //     Its rules go on a second class, `fc_r-<id>`, keyed on the rules alone, so
 //     rows that differ only in a bound value share one rule block. A preset or a
 //     definition is not an authored rule here and moves nothing.
+//   - A definition (`@keyframes`, `@font-face`, ...) is global to the page, whichever
+//     node holds it. Identical ones dedupe, so 500 cloned rows emit one. A different
+//     one with the same identity (definitionIdentity in rules.ts) is a clash: the
+//     first in walk order wins and the rest are reported. Regular and Bold of one
+//     family differ in identity, so both stay.
 //   - On a move a rule caused, a declaration the sheet refuses stays inline,
 //     alone, and is reported, so a rule never costs a value. A map keeps its
 //     largest value there and loses its breakpoints, which the report names. A
@@ -35,7 +40,9 @@
 //
 // A rule makes a request conditional, so on a page with an authored rule a custom
 // property holding an external address is dropped on every node: a rule could
-// reach it through `var()`.
+// reach it through `var()`. So is an inline `field-sizing`, which would beat
+// FIELD_SIZING_GUARD, the line such a page's sheet ends with: a control sized by
+// its text is a width a rule can read.
 //
 // `fc-` and `fc_` names belong to this step, so a stored className cannot hold one:
 // it would take another node's styles, a step sideways out of that node.
@@ -54,18 +61,23 @@ import {
   buildResponsiveCss,
   cssValueText,
   isStyleMap,
+  setsFieldSizing,
   unsafeDeclaration,
   type AuthoredRulesInput,
+  type DefinitionInput,
   type DroppedDeclaration,
   type DroppedRule,
   type ResponsiveRuleInput,
 } from '@/lib/responsive/responsiveCss';
 import { isTextNodeType } from '@/lib/renderer/textNode';
 import {
+  definitionIdentity,
   hasExternalAddress,
+  holdsTooManyBlocks,
   isRuleList,
   reachesInsideNode,
   readRules,
+  type ParsedDefinitionRule,
   type ParsedSelectorRule,
   type ReadRules,
 } from '@/lib/rules/rules';
@@ -92,6 +104,11 @@ function holdsExternalAddress(value: unknown): boolean {
   return isStyleMap(value) ? Object.values(value).some(hasExternalAddress) : hasExternalAddress(value);
 }
 
+/** True when a style entry, or any value of its map, would set `field-sizing` inline. */
+function holdsFieldSizing(key: string, value: unknown): boolean {
+  return isStyleMap(value) ? Object.values(value).some(entry => setsFieldSizing(key, entry)) : setsFieldSizing(key, value);
+}
+
 /** A stored className without any name this step issues. Anything else is left exactly as stored. */
 function withoutIssuedClasses(className: string): string {
   if (!/(?:^|\s)fc[-_]/i.test(className)) return className;
@@ -107,6 +124,7 @@ interface RuleProblem {
 }
 
 const EXTERNAL_VARIABLE = 'a custom property cannot hold an external address on a page with rules';
+const FIELD_SIZING = 'a control cannot size itself to its text on a page with rules';
 
 /**
  * Rewrite the tree and build its stylesheet. `breakpoints` are the page's
@@ -121,6 +139,11 @@ export function applyResponsiveStyles(
   const primaryId = largestFirst(breakpoints)[0]?.id;
   const rules: ResponsiveRuleInput[] = [];
   const authored: AuthoredRulesInput[] = [];
+  const definitions: DefinitionInput[] = [];
+  /** A definition's identity -> the body that claimed it, in walk order. */
+  const claimed = new Map<string, string>();
+  /** Bodies that lost a claim, so a clash on a cloned row is reported once. */
+  const clashing = new Set<string>();
   /** className -> the serialized input it was issued for (dedupe of cloned rows). */
   const issued = new Map<string, string>();
   /** `fc-<stem>` or `fc_r-<stem>` -> the classes issued under it, in order. */
@@ -129,6 +152,8 @@ export function applyResponsiveStyles(
   const problems: RuleProblem[] = [];
   /** Rows repeat one list, so a page parses each distinct list once. */
   const parsed = new Map<string, ReadRules>();
+  /** A list holding an oversized definition is refused by count, so it is never serialized to find its twin. */
+  const oversized = new WeakMap<unknown[], ReadRules>();
   let anonymous = 0;
 
   /** A class for this input: the one already issued for it, or the next free name. */
@@ -160,14 +185,29 @@ export function applyResponsiveStyles(
     return name;
   };
 
+  const claimDefinition = (node: ComponentNode, rule: ParsedDefinitionRule): void => {
+    const identity = definitionIdentity(rule);
+    // The rule's id is left out: two nodes may hold one definition under two ids.
+    const body = JSON.stringify([rule.atRule, rule.name, rule.style, rule.blocks]);
+    const first = claimed.get(identity);
+    if (first === undefined) {
+      claimed.set(identity, body);
+      definitions.push({ node: node.id ?? 'unnamed', rule });
+    } else if (first !== body && !clashing.has(body)) {
+      clashing.add(body);
+      problems.push({ node: node.id ?? 'unnamed', rule: rule.id, reason: 'another definition on this page already has this name' });
+    }
+  };
+
   const readNode = (node: ComponentNode): ReadRules | null => {
     const stored = (node.props as Record<string, unknown> | undefined)?.rules;
     if (!isRuleList(stored) || isTextNodeType(node.type)) return null;
-    const signature = JSON.stringify(stored);
-    let read = parsed.get(signature);
+    const signature = stored.some(holdsTooManyBlocks) ? null : JSON.stringify(stored);
+    let read = signature === null ? oversized.get(stored) : parsed.get(signature);
     if (!read) {
       read = readRules({ rules: stored });
-      parsed.set(signature, read);
+      if (signature === null) oversized.set(stored, read);
+      else parsed.set(signature, read);
       for (const { index, reason, rule } of read.refused) {
         const id = (rule as { id?: unknown } | null)?.id;
         problems.push({ node: node.id ?? 'unnamed', rule: typeof id === 'string' ? id : `#${index}`, reason });
@@ -179,13 +219,18 @@ export function applyResponsiveStyles(
   const pageHasRule = (node: ComponentNode): boolean =>
     (readNode(node)?.rules.length ?? 0) > 0 || (node.children ?? []).some(pageHasRule);
 
-  const withoutExternalVariables = (node: ComponentNode, style: Record<string, unknown>): Record<string, unknown> => {
-    const refused = Object.keys(style).filter(key => key.startsWith('--') && holdsExternalAddress(style[key]));
+  /** Normal without what a rule on this page could use to report on a visitor. */
+  const withoutReportingValues = (node: ComponentNode, style: Record<string, unknown>): Record<string, unknown> => {
+    const refusal = (key: string): string | null => {
+      if (holdsFieldSizing(key, style[key])) return FIELD_SIZING;
+      return key.startsWith('--') && holdsExternalAddress(style[key]) ? EXTERNAL_VARIABLE : null;
+    };
+    const refused = Object.keys(style).filter(key => refusal(key) !== null);
     if (refused.length === 0) return style;
     const clean = { ...style };
     for (const key of refused) {
+      problems.push({ node: node.id ?? 'unnamed', property: key, reason: refusal(key) as string });
       delete clean[key];
-      problems.push({ node: node.id ?? 'unnamed', property: key, reason: EXTERNAL_VARIABLE });
     }
     return clean;
   };
@@ -207,6 +252,7 @@ export function applyResponsiveStyles(
     const next: ComponentNode = { ...node };
     const read = readNode(node);
     const selectorRules = (read?.rules ?? []).filter((rule): rule is ParsedSelectorRule => rule.kind === 'selector');
+    for (const rule of read?.rules ?? []) if (rule.kind === 'definition') claimDefinition(node, rule);
     const reaches = selectorRules.some(rule => rule.parts.some(reachesInsideNode));
     if (node.props) {
       const props: Record<string, unknown> = {};
@@ -237,7 +283,7 @@ export function applyResponsiveStyles(
       const classes: string[] = [];
       const stored = props.style;
       if (isStyleMap(stored)) {
-        const style = hasRules ? withoutExternalVariables(node, stored) : stored;
+        const style = hasRules ? withoutReportingValues(node, stored) : stored;
         const emptied = style !== stored && Object.keys(style).length === 0;
         if (emptied) delete props.style;
         else props.style = style;
@@ -277,7 +323,9 @@ export function applyResponsiveStyles(
   const dropped: DroppedDeclaration[] = [];
   const css = buildResponsiveCss(rules, breakpoints, {
     onDrop: d => dropped.push(d),
+    definitions,
     authored,
+    fieldGuard: hasRules,
     onDropRule: ({ className, ruleId, reason }: DroppedRule) => problems.push({ node: className, rule: ruleId, reason }),
   });
   if (dropped.length + kept.length + problems.length > 0) {

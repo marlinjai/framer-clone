@@ -586,7 +586,7 @@ describe('a rule value', () => {
 
 describe('definitions', () => {
   const keyframes = { blocks: [{ selector: 'from', style: { opacity: 0 } }, { selector: '50%, 75.5%', style: { opacity: 0.5 } }, { selector: 'to', style: { opacity: 1 } }] };
-  const fontFace = { style: { fontFamily: 'u-probe', src: 'url(/a.woff2) format("woff2"), local("Foo")', fontWeight: 700 } };
+  const fontFace = { style: { fontFamily: 'u-probe', src: 'url(/a.woff2) format("woff2"), url(data:font/woff2;base64,AAAA)', fontWeight: 700 } };
 
   it('accepts each kind with a real body', () => {
     expect(definition('@keyframes u-spin', keyframes)).toMatchObject({ ok: true, value: { kind: 'definition', atRule: 'keyframes', name: 'u-spin' } });

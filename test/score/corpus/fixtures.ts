@@ -159,7 +159,8 @@ export const FIXTURES: Fixture[] = [
     source: 'hand-written',
     original: { html: 'keyframes.html' },
     initialGap: 'at-rules',
-    // The animation's longhands are stored; @keyframes pulse has no home.
+    // A global name carries the u- prefix, as an import adds it, so the original is
+    // written with that name: the corpus compares `animation-name` like any property.
     tree: () =>
       n(
         'div',
@@ -167,7 +168,17 @@ export const FIXTURES: Fixture[] = [
         n(
           'div',
           parity('dot', {
-            style: { width: '80px', height: '80px', borderRadius: '50%', background: '#1d4ed8', animation: 'pulse 1s linear infinite' },
+            style: { width: '80px', height: '80px', borderRadius: '50%', background: '#1d4ed8', animation: 'u-pulse 1s linear infinite' },
+            rules: [
+              {
+                id: 'pulse',
+                define: '@keyframes u-pulse',
+                blocks: [
+                  { selector: 'from', style: { opacity: 1, transform: 'scale(1)' } },
+                  { selector: 'to', style: { opacity: 0.2, transform: 'scale(0.6)' } },
+                ],
+              },
+            ],
           }),
         ),
       ),

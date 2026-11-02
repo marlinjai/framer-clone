@@ -109,7 +109,7 @@
     "@font-palette-values": { "style": { "fontFamily": "u-probe", "basePalette": "0" }, "marker": "font-family:u-probe" },
     "@keyframes": { "blocks": [{ "selector": "from", "style": { "opacity": "0" } }], "marker": "from{opacity:0" },
     "@position-try": { "style": { "top": "anchor(bottom)" }, "marker": "top:anchor(bottom)" },
-    "@property": { "style": { "syntax": "\"<color>\"", "inherits": "false", "initialValue": "red" }, "marker": "syntax:\"<color>\"" }
+    "@property": { "style": { "syntax": "\"<color>\"", "inherits": "false", "initialValue": "red" }, "marker": "syntax:\"\\3c color>\"" }
   },
   "pageLevelRows": [":root", "::view-transition", "::view-transition-group()", "::view-transition-image-pair()", "::view-transition-new()", "::view-transition-old()", ":active-view-transition", ":active-view-transition-type()", ":first", ":left", ":right", "@page", "@view-transition", "@layer"],
   "mediaFeatures": {
