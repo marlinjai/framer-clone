@@ -57,6 +57,7 @@ vi.mock('@/server/sites/cachedResolver', () => ({
 
 vi.mock('@/lib/renderer/server/snapshotToComponentNode', () => ({
   snapshotToComponentNode: (snapshot: { id: string }) => ({ root: { type: 'div', id: snapshot.id }, metadata: {} }),
+  literalPageTree: () => ({ root: null }),
 }));
 
 const renderPublishedPage = vi.fn(async () => ({ body: null, headSnippet: null }));

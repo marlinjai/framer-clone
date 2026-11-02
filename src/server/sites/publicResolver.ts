@@ -79,6 +79,12 @@ export interface PublishedSite {
    * cache holds them ready and a request never parses them again.
    */
   components: ComponentDefinitions;
+  /**
+   * The row's `updated_at`, which every save moves: what the expansion memo keys on
+   * (src/lib/components/expandedPages.ts). An ISO string, because this object is
+   * cached as JSON. Absent on a site cached before the field, which is not memoised.
+   */
+  revision?: string;
 }
 
 /**
@@ -225,6 +231,7 @@ export async function resolvePublishedSiteByKey(
       redirects: true,
       siteSettings: true,
       components: true,
+      updatedAt: true,
       pages: { select: { pageId: true, slug: true, snapshot: true } },
     },
   });
@@ -248,6 +255,7 @@ export async function resolvePublishedSiteByKey(
     redirects: parseSiteRedirects(site.redirects),
     siteSettings: normalizeSiteSettings(site.siteSettings),
     components: parseComponents(site.components).definitions,
+    revision: site.updatedAt.toISOString(),
   };
 }
 

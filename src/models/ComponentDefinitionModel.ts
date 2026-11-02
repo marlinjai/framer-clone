@@ -18,15 +18,21 @@ import {
 } from '@/lib/components/definition';
 import type { InputDefinition } from '@/lib/components/inputs';
 
-export const ComponentDefinitionModel = types.model('ComponentDefinition', {
-  id: types.identifier,
-  name: types.string,
-  description: types.maybe(types.string),
-  page: PageModel,
-  inputs: types.optional(types.frozen<InputDefinition[]>(), []),
-  states: types.optional(types.frozen<StateDefinition[]>(), []),
-  noScriptState: types.maybe(types.string),
-});
+export const ComponentDefinitionModel = types
+  .model('ComponentDefinition', {
+    id: types.identifier,
+    name: types.string,
+    description: types.maybe(types.string),
+    page: PageModel,
+    inputs: types.optional(types.frozen<InputDefinition[]>(), []),
+    states: types.optional(types.frozen<StateDefinition[]>(), []),
+    noScriptState: types.maybe(types.string),
+  })
+  .actions(self => ({
+    setInputs(inputs: InputDefinition[]) {
+      self.inputs = inputs;
+    },
+  }));
 
 export type ComponentDefinitionInstance = Instance<typeof ComponentDefinitionModel>;
 export type ComponentDefinitionSnapshotOut = SnapshotOut<typeof ComponentDefinitionModel>;

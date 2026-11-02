@@ -15,7 +15,7 @@ import { getPublishedCmsRepository } from '@/server/cms';
 import { commerceRepoForSite } from '@/server/commerce/storefrontTenant';
 import type { CmsReadRepository } from '@/server/cms';
 import type { CommerceServerRepository, ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
-import { snapshotToComponentNode } from '@/lib/renderer/server/snapshotToComponentNode';
+import { adaptedPage } from '@/lib/components/expandedPages';
 import { SITEMAP_LIMITS, dynamicPagePlan, isListablePage } from '@/lib/site/siteFiles';
 
 /** Page size of each read; the per-page cap bounds the total. */
@@ -66,13 +66,13 @@ export async function loadSitemapExpansions(
   const out = new Map<string, string[]>();
   for (const page of site.pages) {
     if (!isListablePage(page, site.siteSettings)) continue;
-    const plan = dynamicPagePlan(page);
+    const plan = dynamicPagePlan(site, page);
     if (!plan) continue;
     try {
       if (plan.kind === 'cms-rows') {
         out.set(page.pageId, await listRowIds(repos.cmsRepo, plan.collectionId));
       } else {
-        const root = snapshotToComponentNode(page.snapshot, site.components).root;
+        const { root } = adaptedPage(site, page);
         const commerce = root ? await repos.commerceRepo(root) : undefined;
         if (commerce) out.set(page.pageId, await listHandles(commerce));
       }

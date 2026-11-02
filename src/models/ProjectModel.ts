@@ -2,9 +2,12 @@
 // Domain model for projects - contains multiple pages and project-level settings
 import { defaultViewportSnapshots } from '@/lib/canvas/defaultViewports';
 import { types, Instance, SnapshotIn, SnapshotOut, getSnapshot } from 'mobx-state-tree';
+import type { ComponentDefinitions } from '@/lib/components/definition';
+import { COMPONENT_LIMITS, isPlacementType, type PlacementProps } from '@/lib/components/placement';
+import { literalPageTree } from '@/lib/renderer/server/snapshotToComponentNode';
 import { v4 as uuidv4 } from 'uuid';
 import PageModel, { PageModelType } from './PageModel';
-import { ComponentDefinitionModel, parseModelComponents } from './ComponentDefinitionModel';
+import { ComponentDefinitionModel, parseModelComponents, type ComponentDefinitionInstance } from './ComponentDefinitionModel';
 import ComponentModel, { createIntrinsicComponent, createViewportNode, type ComponentInstance, type ComponentSnapshotIn } from './ComponentModel';
 import { isDynamicSegment, productPagePath, suggestSlug, validateSlug, type SlugValidation } from '@/lib/pages/slug';
 import {
@@ -53,6 +56,37 @@ function findByType(root: ComponentInstance, type: string): ComponentInstance[] 
   const out: ComponentInstance[] = [];
   const visit = (node: ComponentInstance) => {
     if (node.type === type) out.push(node);
+    node.children.forEach((c: ComponentInstance) => visit(c));
+  };
+  visit(root);
+  return out;
+}
+
+/** The placed content a walk over a tree can reach, by definition id. */
+type DefinitionLookup = { get(id: string): ComponentDefinitionInstance | undefined };
+
+/**
+ * Every footer a tree renders, in document order: its own, and those inside the
+ * definitions it places, at the placement's position. `reached` collects those
+ * definitions. Stored JSON can hold a cycle, so a walk stops as expansion does.
+ */
+function findFooters(
+  root: ComponentInstance,
+  components: DefinitionLookup,
+  reached: Set<string>,
+  stack: readonly string[] = [],
+): ComponentInstance[] {
+  const out: ComponentInstance[] = [];
+  const visit = (node: ComponentInstance) => {
+    if (isPlacementType(node.type)) {
+      const id = (node.props as Partial<PlacementProps>).component;
+      const definition = typeof id === 'string' ? components.get(id) : undefined;
+      if (!definition || stack.includes(definition.id) || stack.length >= COMPONENT_LIMITS.nestingDepth) return;
+      reached.add(definition.id);
+      out.push(...findFooters(definition.page.appComponentTree as ComponentInstance, components, reached, [...stack, definition.id]));
+      return;
+    }
+    if (node.type === 'footer') out.push(node);
     node.children.forEach((c: ComponentInstance) => visit(c));
   };
   visit(root);
@@ -174,6 +208,11 @@ function planHomeChange(
     moved.push({ pageId: former.id, title: former.metadata.title, slug });
   }
   return moved;
+}
+
+/** The site's definitions as plain data, which is what expansion reads. */
+function definitionsOf(project: { components: unknown }): ComponentDefinitions {
+  return getSnapshot(project.components as Parameters<typeof getSnapshot>[0]) as unknown as ComponentDefinitions;
 }
 
 // Main ProjectModel - Framer-style unified architecture
@@ -347,7 +386,10 @@ export const ProjectModel = types
       const settings = normalizeSiteSettings(self.siteSettings);
       const lang = legalLanguage(settings.language);
       const pages = Array.from(self.pages.values());
-      const trees = pages.map(p => getSnapshot(p.appComponentTree) as Parameters<typeof factsFromTrees>[0] extends Iterable<infer T> ? T : never);
+      // Expanded with literal inputs, or a form inside a component, or an Unsplash
+      // address passed to one, would go unmentioned in the privacy page.
+      const definitions = definitionsOf(self);
+      const trees = pages.map(p => literalPageTree(getSnapshot(p), definitions).root as Parameters<typeof factsFromTrees>[0] extends Iterable<infer T> ? T : never);
       const template = buildLegalTemplate({
         kind,
         language: settings.language,
@@ -384,7 +426,11 @@ export const ProjectModel = types
     // the consent banner reopens from) into the footer of every page that has
     // one: a small nav at the end of the page's last <footer>. Links already
     // in that footer (same href) are not added twice, and a second run adds
-    // to the same nav. Pages without a footer are counted, not changed.
+    // to the same nav. Pages without a footer are counted, not changed. A footer
+    // inside a reusable component is the page's footer too: the links go to the
+    // definition, once, and every page placing it counts as updated. A definition
+    // holding a footer that no page places yet gets them as well, so placing it
+    // later needs nothing more.
     addLegalLinksToFooters(): LegalLinksResult {
       const settings = normalizeSiteSettings(self.siteSettings);
       const lang = legalLanguage(settings.language);
@@ -396,22 +442,15 @@ export const ProjectModel = types
       }
       links.push({ href: COOKIE_SETTINGS_HASH, label: COOKIE_SETTINGS_LABELS[lang] });
 
-      const result: LegalLinksResult = { pagesUpdated: 0, pagesWithoutFooter: 0 };
-      for (const page of pages) {
-        const root = page.appComponentTree as unknown as ComponentInstance;
-        const footers = findByType(root, 'footer');
-        const footer = footers[footers.length - 1];
-        if (!footer) {
-          if (!page.metadata.legalTemplate) result.pagesWithoutFooter++;
-          continue;
-        }
+      // True when the footer gained at least one link.
+      const addLinks = (footer: ComponentInstance): boolean => {
         const hrefs = new Set(
           findByType(footer, 'a')
             .map((a: ComponentInstance) => (a.props as Record<string, unknown>).href)
             .filter((h): h is string => typeof h === 'string'),
         );
         const missing = links.filter(l => !hrefs.has(l.href));
-        if (missing.length === 0) continue;
+        if (missing.length === 0) return false;
         const nav = footer.children.find(
           (c: ComponentInstance) => (c.props as Record<string, unknown>)[LEGAL_LINKS_MARKER] !== undefined,
         ) as ComponentInstance | undefined;
@@ -422,9 +461,38 @@ export const ProjectModel = types
             ComponentModel.create(footerLinksNav(missing, lang === 'de' ? 'Rechtliches' : 'Legal') as unknown as ComponentSnapshotIn),
           );
         }
-        result.pagesUpdated++;
+        return true;
+      };
+      // One footer, however many pages place it.
+      const gained = new Map<ComponentInstance, boolean>();
+      const addOnce = (footer: ComponentInstance): boolean => {
+        const known = gained.get(footer);
+        if (known !== undefined) return known;
+        const added = addLinks(footer);
+        gained.set(footer, added);
+        return added;
+      };
+
+      const result: LegalLinksResult = { pagesUpdated: 0, pagesWithoutFooter: 0 };
+      const reached = new Set<string>();
+      for (const page of pages) {
+        const root = page.appComponentTree as unknown as ComponentInstance;
+        const footers = findFooters(root, self.components, reached);
+        const footer = footers[footers.length - 1];
+        if (!footer) {
+          if (!page.metadata.legalTemplate) result.pagesWithoutFooter++;
+          continue;
+        }
+        if (addOnce(footer)) result.pagesUpdated++;
       }
-      if (result.pagesUpdated > 0) self.metadata.updatedAt = new Date();
+      let changed = result.pagesUpdated > 0;
+      for (const definition of self.components.values()) {
+        if (reached.has(definition.id)) continue;
+        const footers = findFooters(definition.page.appComponentTree as ComponentInstance, self.components, new Set());
+        const footer = footers[footers.length - 1];
+        if (footer && addOnce(footer)) changed = true;
+      }
+      if (changed) self.metadata.updatedAt = new Date();
       return result;
     },
 
@@ -606,7 +674,8 @@ export const ProjectModel = types
     // slug is picked, so the two never trade places by accident. In-site links
     // to that old path (href "/about", also with "#..." or "?...") are pointed
     // at "/" in the same action, so they keep working on an unpublished site
-    // too. On a published site the server additionally records the old path
+    // too, in reusable components as well: a definition's links, its `link` input
+    // defaults, and the `link` values placements pass. On a published site the server additionally records the old path
     // as a redirect to the page (now the root) on the next save, and the root
     // address now serves the new home page (src/lib/pages/redirects.ts).
     //
@@ -637,15 +706,37 @@ export const ProjectModel = types
           if (href.startsWith(`${oldPath}#`) || href.startsWith(`${oldPath}?`)) return `/${href.slice(oldPath.length)}`;
           return undefined;
         };
+        const retargetLinkValue = (type: string, value: unknown): string | undefined =>
+          type === 'link' && typeof value === 'string' ? retarget(value) : undefined;
+        const retargetPlacement = (node: ComponentInstance) => {
+          const { component, inputs } = node.props as Partial<PlacementProps>;
+          const definition = typeof component === 'string' ? self.components.get(component) : undefined;
+          if (!definition || !inputs) return;
+          const retargeted = definition.inputs.flatMap(({ id, type }) => {
+            const next = retargetLinkValue(type, inputs[id]);
+            return next === undefined ? [] : [[id, next] as const];
+          });
+          if (retargeted.length > 0) node.setProps({ inputs: { ...inputs, ...Object.fromEntries(retargeted) } });
+        };
         const visit = (node: ComponentInstance) => {
           const href = (node.props as Record<string, unknown>).href;
           if (typeof href === 'string') {
             const next = retarget(href);
             if (next !== undefined) node.setProps({ href: next });
           }
+          if (isPlacementType(node.type)) retargetPlacement(node);
           node.children.forEach((c: ComponentInstance) => visit(c));
         };
         for (const p of self.pages.values()) visit(p.appComponentTree as unknown as ComponentInstance);
+        for (const definition of self.components.values()) {
+          visit(definition.page.appComponentTree as ComponentInstance);
+          if (definition.inputs.some(({ type, default: stored }) => retargetLinkValue(type, stored) !== undefined)) {
+            definition.setInputs(definition.inputs.map(input => {
+              const next = retargetLinkValue(input.type, input.default);
+              return next === undefined ? input : { ...input, default: next };
+            }));
+          }
+        }
       }
 
       const settings = normalizeSiteSettings(self.siteSettings);
@@ -667,6 +758,11 @@ export const ProjectModel = types
     // The Site settings, normalized: always complete, whatever the snapshot held.
     get site(): SiteSettings {
       return normalizeSiteSettings(self.siteSettings);
+    },
+
+    // The reusable components as plain data, for expansion.
+    get definitions(): ComponentDefinitions {
+      return definitionsOf(self);
     },
 
     // True when the page's slug cannot change: it is the project's only home

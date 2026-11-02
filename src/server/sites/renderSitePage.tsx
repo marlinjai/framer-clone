@@ -114,7 +114,7 @@ export async function renderSitePage({ site, matched, adapted, jsonLd }: RenderS
     // site language, looks like the home page and links the privacy policy.
     consent: {
       language: site.siteSettings.language,
-      look: siteLookFromPages(site.pages),
+      look: siteLookFromPages(site),
       privacyHref: privacyPolicyHref(site),
     },
   });

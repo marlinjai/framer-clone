@@ -20,9 +20,11 @@
 //     on a page whose only dynamic segment is `:handle` (one URL per product
 //     handle). Bounded: at most SITEMAP_LIMITS.perDynamicPage values per page
 //     and SITEMAP_LIMITS.total URLs per sitemap. Anything else is left out:
-//     a URL a search engine cannot reach is worse than none.
+//     a URL a search engine cannot reach is worse than none. A data node inside
+//     a reusable component counts: placements are expanded first.
 
 import type { PublishedPageRow } from '@/server/sites/publicResolver';
+import { literalPage, type ExpandableSite } from '@/lib/components/expandedPages';
 import { absoluteUrl, pagePath } from './publishedHead';
 import { isHttpsUrl, type SiteSettings } from './siteSettings';
 
@@ -112,10 +114,10 @@ export type DynamicPagePlan =
  * in document order. The collection id must be a literal: an expression
  * (`{{...}}`) depends on runtime scope and cannot be listed ahead of time.
  */
-export function dynamicPagePlan(page: PublishedPageRow): DynamicPagePlan | null {
+export function dynamicPagePlan(site: ExpandableSite, page: PublishedPageRow): DynamicPagePlan | null {
   const params = dynamicSegments(page.slug);
   if (params.length !== 1) return null;
-  const root = (page.snapshot as { appComponentTree?: NodeLike }).appComponentTree;
+  const root = literalPage(site, page).root as NodeLike | null;
   if (!root) return null;
   const stack: NodeLike[] = [root];
   let visited = 0;
@@ -124,9 +126,11 @@ export function dynamicPagePlan(page: PublishedPageRow): DynamicPagePlan | null 
     visited++;
     const kind = node.props?.['data-component-kind'];
     if (kind === 'record-view') {
+      // No binding left means expansion wrote a literal input into the slot.
       const binding = node.bindings?.record;
-      const expression = typeof binding?.expression === 'string' ? binding.expression.trim() : '';
-      if (params[0] !== 'id' || binding?.mode !== 'read' || !expression || expression.includes('{{')) return null;
+      const source = binding ? (binding.mode === 'read' ? binding.expression : undefined) : node.props?.record;
+      const expression = typeof source === 'string' ? source.trim() : '';
+      if (params[0] !== 'id' || !expression || expression.includes('{{')) return null;
       return { kind: 'cms-rows', param: 'id', collectionId: expression };
     }
     if (kind === 'product-detail') {

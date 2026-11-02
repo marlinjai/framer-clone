@@ -468,7 +468,8 @@ author's and is left alone. A rule naming `#panel` is not rewritten, so the pane
 definition and suggests an attribute.
 
 **Cost.** Clone cost is low: 5,000 realistic nodes took 6 to 15 milliseconds [proven]. But it adds up on paths that walk
-every page, so the raw expanded tree is memoised on `siteId`, `projectUpdatedAt` and `pageId`, in a bounded map. And
+every page, so the raw expanded tree is memoised on `siteId`, the row's `updated_at` and `pageId`, in a bounded map, because
+node edits leave `projectUpdatedAt` alone, so it stays put across a save. And
 `locateForm` resolves from a precomputed list of a site's form ids: today it walks all pages before the rate limit key
 is computed, so an anonymous POST with a random `formId` would expand them all.
 

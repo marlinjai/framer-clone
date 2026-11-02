@@ -72,8 +72,9 @@ const PublishButton = observer(() => {
           id: p.id,
           slug: p.slug,
           metadata: { title: p.metadata.title, legalTemplate: p.metadata.legalTemplate },
-          tree: getSnapshot(p.appComponentTree) as Parameters<typeof checkBeforePublish>[1][number]['tree'],
+          snapshot: getSnapshot(p),
         })),
+        { definitions: project.definitions, refused: [] },
       );
       if (hasPublishIssues(check)) {
         setState({ kind: 'confirm', check });
@@ -231,7 +232,7 @@ function PublishLegalNotice({ check, onCreateImpressum, onOpenPage, onPublishAny
   React.useEffect(() => {
     ref.current?.focus();
   }, []);
-  const first = check.placeholders[0];
+  const first = check.placeholders[0] ?? check.components.find((issue) => issue.pageId !== undefined);
   return (
     <div
       ref={ref}
@@ -251,7 +252,11 @@ function PublishLegalNotice({ check, onCreateImpressum, onOpenPage, onPublishAny
       className="fixed right-4 top-16 phone:top-12 z-100 mt-2 flex w-[360px] max-w-[calc(100vw-32px)] flex-col gap-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950 shadow-lg outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
     >
       <p id="publish-legal-title" className="text-[13px] font-semibold">
-        {check.missingImpressum ? 'Your site has no Impressum yet' : 'Your legal pages still have placeholders'}
+        {check.missingImpressum
+          ? 'Your site has no Impressum yet'
+          : check.placeholders.length > 0
+            ? 'Your legal pages still have placeholders'
+            : 'Some components will not show'}
       </p>
       <div id="publish-legal-text" className="flex flex-col gap-1.5">
         {check.missingImpressum && (
@@ -269,6 +274,15 @@ function PublishLegalNotice({ check, onCreateImpressum, onOpenPage, onPublishAny
             ))}
           </ul>
         )}
+        {check.components.length > 0 && (
+          <ul className="list-disc pl-4">
+            {check.components.map((issue) => (
+              <li key={`${issue.pageId ?? issue.title}:${issue.message}`}>
+                {issue.title}: {issue.message}
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
       <div className="flex flex-wrap justify-end gap-2">
         <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
@@ -281,8 +295,8 @@ function PublishLegalNotice({ check, onCreateImpressum, onOpenPage, onPublishAny
           <Button type="button" variant="brand" size="sm" onClick={onCreateImpressum}>
             Create Impressum
           </Button>
-        ) : first ? (
-          <Button type="button" variant="brand" size="sm" onClick={() => onOpenPage(first.pageId)}>
+        ) : first?.pageId ? (
+          <Button type="button" variant="brand" size="sm" onClick={() => onOpenPage(first.pageId as string)}>
             Open {first.title}
           </Button>
         ) : null}

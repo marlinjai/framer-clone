@@ -48,36 +48,58 @@ export interface RenderBudget {
   readonly exhausted: boolean;
   /** Every problem of this page, once each. */
   readonly warnings: ReadonlySet<string>;
+  /** The placements that render nothing, once each. `checkBeforePublish` shows these. */
+  readonly failures: readonly ExpansionFailure[];
   /** True when it fits. A refusal stops all later charges too. */
   charge(nodes: number, bytes: number): boolean;
   /** Logs a problem once per page. */
   warn(message: string): void;
+  /** `warn`, and records why a placement renders nothing, once per kind and definition. */
+  fail(failure: ExpansionFailure, message: string): void;
+}
+
+/** Why a placement became a `#missing` node. */
+export type ExpansionFailureKind = 'missing-definition' | 'cycle' | 'too-deep' | 'unrenderable' | 'over-budget';
+
+export interface ExpansionFailure {
+  kind: ExpansionFailureKind;
+  /** The definition the placement names, when it names one. */
+  definitionId?: string;
 }
 
 export function createRenderBudget(
-  limits: { nodes?: number; bytes?: number } = {},
+  limits: { nodes?: number; bytes?: number; spent?: RenderBudget } = {},
 ): RenderBudget {
   const maxNodes = limits.nodes ?? COMPONENT_LIMITS.expandedNodesPerPage;
   const maxBytes = limits.bytes ?? COMPONENT_LIMITS.expandedBytesPerPage;
-  const warnings = new Set<string>();
-  let nodes = 0;
-  let bytes = 0;
-  let exhausted = false;
+  const { spent } = limits;
+  const warnings = new Set<string>(spent?.warnings);
+  const failures: ExpansionFailure[] = [...(spent?.failures ?? [])];
+  let nodes = spent?.nodes ?? 0;
+  let bytes = spent?.bytes ?? 0;
+  let exhausted = spent?.exhausted ?? false;
   const warn = (message: string) => {
     if (warnings.has(message)) return;
     warnings.add(message);
     console.warn(`[components] ${message}`);
+  };
+  const fail = (failure: ExpansionFailure, message: string) => {
+    warn(message);
+    const known = failures.some(({ kind, definitionId }) => kind === failure.kind && definitionId === failure.definitionId);
+    if (!known) failures.push(failure);
   };
   return {
     get nodes() { return nodes; },
     get bytes() { return bytes; },
     get exhausted() { return exhausted; },
     warnings,
+    failures,
     warn,
+    fail,
     charge(moreNodes, moreBytes) {
       if (!exhausted && (nodes + moreNodes > maxNodes || bytes + moreBytes > maxBytes)) {
         exhausted = true;
-        warn(`this page is over its budget of ${maxNodes} expanded nodes or ${maxBytes} bytes: later placements render nothing`);
+        fail({ kind: 'over-budget' }, `this page is over its budget of ${maxNodes} expanded nodes or ${maxBytes} bytes: later placements render nothing`);
       }
       if (exhausted) return false;
       nodes += moreNodes;
@@ -369,8 +391,8 @@ export function expandPlacements(
     return result;
   };
 
-  const missing = (node: ComponentNode, reason: string): ComponentNode => {
-    budget.warn(reason);
+  const missing = (node: ComponentNode, failure: ExpansionFailure, reason: string): ComponentNode => {
+    budget.fail(failure, reason);
     return { type: MISSING_TYPE, ...(node.id ? { id: node.id } : {}) };
   };
 
@@ -424,16 +446,22 @@ export function expandPlacements(
     const props = (node.props ?? {}) as unknown as PlacementProps;
     const id = props.component;
     if (typeof id !== 'string' || !Object.hasOwn(definitions, id)) {
-      return missing(node, `a placement names a definition this site does not have: ${String(id)}`);
+      return missing(
+        node,
+        { kind: 'missing-definition', ...(typeof id === 'string' ? { definitionId: id } : {}) },
+        `a placement names a definition this site does not have: ${String(id)}`,
+      );
     }
     const definition = definitions[id];
-    if (stack.includes(id)) return missing(node, `a definition contains itself: ${[...stack, id].join(' > ')}`);
+    if (stack.includes(id)) return missing(node, { kind: 'cycle', definitionId: id }, `a definition contains itself: ${[...stack, id].join(' > ')}`);
     if (stack.length >= COMPONENT_LIMITS.nestingDepth) {
-      return missing(node, `placements nest more than ${COMPONENT_LIMITS.nestingDepth} deep: ${[...stack, id].join(' > ')}`);
+      return missing(node, { kind: 'too-deep', definitionId: id }, `placements nest more than ${COMPONENT_LIMITS.nestingDepth} deep: ${[...stack, id].join(' > ')}`);
     }
     const ready = prepare(id, definition);
-    if (!ready) return missing(node, `a definition cannot be rendered: ${id}`);
-    if (!budget.charge(ready.nodes, ready.bytes)) return missing(node, `placement of ${id} left out: the page is over its budget`);
+    if (!ready) return missing(node, { kind: 'unrenderable', definitionId: id }, `a definition cannot be rendered: ${id}`);
+    if (!budget.charge(ready.nodes, ready.bytes)) {
+      return missing(node, { kind: 'over-budget' }, `placement of ${id} left out: the page is over its budget`);
+    }
 
     const placementId = node.id ?? `p-${stableHash(`${stack.join('>')}>${id}`)}`;
     const instance: PlacementInstance = {

@@ -280,6 +280,23 @@ describe('helpers', () => {
     expect(locateForm(site(), 'missing')).toBeNull();
   });
 
+  it('locateForm finds a form placed twice by its expanded id, and refuses the stored one', () => {
+    const contact = {
+      id: 'contact',
+      name: 'Contact',
+      inputs: [],
+      states: [],
+      page: { canvasNodes: {}, appComponentTree: formSnapshot() },
+    };
+    const placed = (id: string) => ({ id, type: '#component', props: { component: 'contact' } });
+    const base = site();
+    const stored = { ...base.pages[0], snapshot: { ...base.pages[0].snapshot, appComponentTree: { id: 'root', type: 'div', props: {}, children: [placed('p1'), placed('p2')] } } as never };
+    const withPlacements = { siteId: 'site-placed', revision: 'r1', pages: [stored], components: { contact } as never };
+    expect(locateForm(withPlacements, 'p1')?.form.id).toBe('p1');
+    expect(locateForm(withPlacements, 'p2')?.form.id).toBe('p2');
+    expect(locateForm(withPlacements, 'form-1')).toBeNull();
+  });
+
   it('clientIpOf takes the proxy headers in order', () => {
     expect(clientIpOf(new Headers({ 'cf-connecting-ip': '1.1.1.1', 'x-forwarded-for': '2.2.2.2' }))).toBe('1.1.1.1');
     expect(clientIpOf(new Headers({ 'x-forwarded-for': '2.2.2.2, 10.0.0.1' }))).toBe('2.2.2.2');

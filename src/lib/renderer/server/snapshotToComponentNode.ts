@@ -113,3 +113,29 @@ export function snapshotToComponentNode(snapshot: PageSnapshotOut, definitions: 
     budget,
   };
 }
+
+/** The two parts of a stored page a raw reader needs: a PageModel snapshot, or a published row's. */
+export type LiteralPageSource = Partial<Pick<PageSnapshotOut, 'appComponentTree' | 'canvasNodes'>>;
+
+export interface LiteralTree {
+  root: ComponentNode | null;
+  /** Why any placement of this page renders nothing. */
+  budget: RenderBudget;
+}
+
+/**
+ * A stored page as a reader of raw snapshots sees it: every placement expanded,
+ * with literal input values and defaults written into their bound slots. A value
+ * bound to data stays unknown, and the reader treats it as it treats any binding.
+ * For legal facts, the sitemap's plan, the site's look and the publish check,
+ * never for rendering, since a value from data is not resolved here.
+ */
+export function literalPageTree(page: LiteralPageSource, definitions: ComponentDefinitions): LiteralTree {
+  const tree = page.appComponentTree as ComponentSnapshotLike | undefined;
+  const budget = createRenderBudget();
+  const breakpoints = extractBreakpoints(page.canvasNodes);
+  return {
+    root: tree ? expandPlacements(componentSnapshotToNode(tree), definitions, breakpoints, { budget, literalInputs: true }) : null,
+    budget,
+  };
+}
