@@ -24,7 +24,8 @@ import { requestCreateComponent } from '@/lib/components/editorCommands';
 import { isPlacementType, type PlacementProps } from '@/lib/components/placement';
 import InlineFormatBar from './InlineFormatBar';
 import LegalTemplateNotice from './site/LegalTemplateNotice';
-import { isEditableTarget, resolveAction } from '@/lib/keyBindings';
+import { resolveAction } from '@/lib/keyBindings';
+import { bindSpacePan, isActivatableControl } from '@/lib/canvas/spacePan';
 import { deleteSelection } from '@/lib/canvas/deleteSelection';
 import { duplicateLayer } from '@/lib/layers/layerActions';
 import { DataSourceProviderContext } from '@/lib/bindings/dataSource/context';
@@ -213,7 +214,7 @@ export default function EditorApp({ projectSnapshot }: { projectSnapshot?: Proje
         const selected = ui.selectedComponent;
         // A focused control keeps its own Enter.
         if (e.defaultPrevented || !selected || !isPlacementType(selected.type) || ui.selectedTool !== EditorTool.SELECT) return;
-        if ((e.target as Element | null)?.closest?.('button, a, [role="menuitem"]')) return;
+        if (isActivatableControl(e.target)) return;
         e.preventDefault();
         ui.enterComponent((selected.props as Partial<PlacementProps>).component ?? '', selected.id);
         return;
@@ -255,39 +256,12 @@ export default function EditorApp({ projectSnapshot }: { projectSnapshot?: Proje
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [rootStore.editorUI]);
 
-  // Hold Space to pan with the left button, whatever the active tool; the
-  // tool comes back on release. Typing a space in an input or in inline text
-  // editing is left alone. Losing focus (Cmd+Tab with Space down) never
-  // delivers the keyup, so blur releases it too.
-  React.useEffect(() => {
-    const ui = rootStore.editorUI;
-    const isSpace = (e: KeyboardEvent) => e.code === 'Space' || e.key === ' ';
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (!isSpace(e) || isEditableTarget(e.target)) return;
-      // Space scrolls the preview over the editor; it is not a pan there.
-      if (ui.previewOpen) return;
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-      // Stops the page from scrolling and a focused button from activating.
-      e.preventDefault();
-      if (e.repeat || getDragManager()?.isActive) return;
-      ui.beginTemporaryGrab();
-    };
-    const onKeyUp = (e: KeyboardEvent) => {
-      if (!isSpace(e) || ui.toolBeforeTemporaryGrab === undefined) return;
-      e.preventDefault();
-      ui.endTemporaryGrab();
-    };
-    const release = () => ui.endTemporaryGrab();
-    window.addEventListener('keydown', onKeyDown);
-    window.addEventListener('keyup', onKeyUp);
-    window.addEventListener('blur', release);
-    return () => {
-      window.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('keyup', onKeyUp);
-      window.removeEventListener('blur', release);
-      release();
-    };
-  }, [rootStore.editorUI]);
+  // Hold Space to pan; a focused control, a field, a dialog or a menu keeps
+  // its own Space (src/lib/canvas/spacePan.ts).
+  React.useEffect(
+    () => bindSpacePan(rootStore.editorUI, window, () => !!getDragManager()?.isActive),
+    [rootStore.editorUI],
+  );
 
   return (
     <DataSourceProviderContext.Provider value={getSharedPrismaDataSourceProvider()}>

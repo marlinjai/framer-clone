@@ -40,7 +40,13 @@ const Toolbar = observer(({ editorUI }: ToolbarProps) => {
 
   return (
     <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-50">
-      <div className="bg-background backdrop-blur-sm rounded-xl shadow-lg border border-border p-2">
+      {/* A pointer click on a tool does not keep focus on it: Space presses
+          a focused button, so a clicked Undo would otherwise take the next
+          hold-Space pan as a second undo. Tab still reaches every button. */}
+      <div
+        className="bg-background backdrop-blur-sm rounded-xl shadow-lg border border-border p-2"
+        onMouseDown={(e) => { if ((e.target as Element).closest('button')) e.preventDefault(); }}
+      >
         <div className="flex items-center space-x-1">
           {/* Undo / Redo. Disabled mirrors canUndo/canRedo on the scoped
               UndoManager so history reflects only projectStore mutations. */}
