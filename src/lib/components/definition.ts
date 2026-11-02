@@ -262,7 +262,7 @@ export function cycleReason(definitions: ComponentDefinitions, path: readonly st
 /** How many definitions deep the longest chain below this one runs, itself included. */
 function depthBelow(definitions: ComponentDefinitions, id: string, stack: readonly string[] = []): number {
   if (stack.includes(id) || !Object.hasOwn(definitions, id)) return 0;
-  const below = placedDefinitionIds(treeOf(definitions[id])).map(next => depthBelow(definitions, next, [...stack, id]));
+  const below = [...new Set(placedDefinitionIds(treeOf(definitions[id])))].map(next => depthBelow(definitions, next, [...stack, id]));
   return 1 + Math.max(0, ...below);
 }
 

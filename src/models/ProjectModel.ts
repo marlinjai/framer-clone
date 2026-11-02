@@ -13,6 +13,8 @@ import {
   SnapshotOut,
 } from 'mobx-state-tree';
 import {
+  contentModelRefusal,
+  placementRefusal,
   stateRefusal,
   type ComponentDefinitions,
   type RefusedDefinition,
@@ -333,14 +335,24 @@ export const ProjectModel = types
   }))
   .actions(self => ({
     noteRefusedComponents(refused: readonly RefusedDefinition[]) {
-      const known = (entry: RefusedDefinition) =>
-        self.refusedComponents.some(({ id, reason }) => id === entry.id && reason === entry.reason);
-      const fresh = refused.filter(entry => !known(entry));
-      if (fresh.length > 0) self.refusedComponents = [...self.refusedComponents, ...fresh];
+      const same = (a: RefusedDefinition, b: RefusedDefinition) => a.id === b.id && a.reason === b.reason;
+      // An edit refused again replaces its earlier entry with a new object, so a
+      // publish that acknowledged the earlier one does not clear this one too.
+      const kept = self.refusedComponents.filter(old => !refused.some(entry => entry.edit && same(old, entry)));
+      const fresh = refused.filter(entry => entry.edit || !kept.some(old => same(old, entry)));
+      if (fresh.length > 0 || kept.length !== self.refusedComponents.length) {
+        self.refusedComponents = [...kept, ...fresh.map(entry => ({ ...entry }))];
+      }
     },
-    // Once a publish went out past the warning. What the load skipped stays listed.
-    clearRefusedEdits() {
-      self.refusedComponents = self.refusedComponents.filter(({ edit }) => !edit);
+    // What the load skipped, as the stored value now says. A project loaded over
+    // itself keeps its volatile state, so the earlier load's entries must go.
+    replaceLoadRefusals(refused: readonly RefusedDefinition[]) {
+      self.refusedComponents = [...self.refusedComponents.filter(({ edit }) => edit), ...refused.map(entry => ({ ...entry }))];
+    },
+    // Once a publish went out past the warning: only the edits it listed. One
+    // refused while the request was out is not in what went out, and stays.
+    clearRefusedEdits(acknowledged: readonly RefusedDefinition[]) {
+      self.refusedComponents = self.refusedComponents.filter(entry => !entry.edit || !acknowledged.includes(entry));
     },
   }))
   .actions(self => ({
@@ -450,13 +462,15 @@ export const ProjectModel = types
     const parent = parentOf(page, node);
     if (!parent) {
       // Floating beside the page: the copy keeps the spot.
+      // Read before the removal: MST destroys a node taken out of its map.
+      const { canvasNodeType, canvasX, canvasY } = node;
       page.removeCanvasNode(node.id);
       if (!tree) return { ok: true };
       const floating = ComponentModel.create({
         ...(tree as unknown as ComponentSnapshotIn),
-        canvasNodeType: node.canvasNodeType,
-        canvasX: node.canvasX,
-        canvasY: node.canvasY,
+        canvasNodeType,
+        canvasX,
+        canvasY,
       });
       page.addCanvasNode(floating);
       return { ok: true, root: page.getCanvasNode(floating.id) };
@@ -517,6 +531,20 @@ export const ProjectModel = types
         : { ...stored[0], parentId: undefined };
 
       const definitionId = uuidv4();
+      // The same checks a placement meets, run on the site as it would be after this,
+      // before anything changes: the new root may not suit the parent it lands in, and
+      // on a definition page the new level may push a chain past the nesting limit.
+      const next = {
+        ...definitionsOf(self),
+        [definitionId]: { id: definitionId, name, page: { appComponentTree: tree }, inputs: [], states: [] },
+      } as unknown as ComponentDefinitions;
+      const holder = Array.from(self.components.values()).find(definition => definition.page === page)?.id;
+      const ancestorTags: string[] = [];
+      for (let up: ComponentInstance | undefined = parent; up; up = up.parentId ? page.findComponent(up.parentId) : undefined) {
+        ancestorTags.push(up.type);
+      }
+      const placementRefused = placementRefusal(next, holder, definitionId) ?? contentModelRefusal(next, definitionId, ancestorTags);
+      if (placementRefused) return { ok: false, message: placementRefused };
       const index = parent.children.findIndex((child: ComponentInstance) => child.id === inOrder[0].id);
       for (const node of inOrder) parent.removeChild(node.id);
       self.components.set(definitionId, {

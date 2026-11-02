@@ -237,6 +237,31 @@ describe('placing', () => {
     expect(project.placeComponent(page.id, 'wrapped', { kind: 'parent', parentId: 'para' }).ok).toBe(true);
   });
 
+  it('refuses to make a component whose root a browser would split from its paragraph', () => {
+    const { project, page, history } = setup({ card: CARD });
+    fill(page, host('para', 'p', {}, [host('a', 'span'), host('b', 'span')]));
+    history.clear();
+    const before = state(project);
+    expect(project.createComponentFromSelection(page.id, ['a', 'b'], 'Pair')).toMatchObject({ ok: false, message: expect.stringMatching(/paragraph/) });
+    expect(state(project)).toBe(before);
+    expect(history.history.length).toBe(0);
+  });
+
+  it('refuses a new component that would push a chain past the nesting limit', () => {
+    const depth = COMPONENT_LIMITS.nestingDepth;
+    const chain = Object.fromEntries(
+      Array.from({ length: depth }, (_, i) => [
+        `d${i}`,
+        definition(`d${i}`, host(`r${i}`, 'div', {}, i + 1 < depth ? [placement(`p${i}`, `d${i + 1}`)] : [host(`leaf${i}`, 'span')])),
+      ]),
+    );
+    const { project, history } = setup(chain);
+    history.clear();
+    const before = state(project);
+    expect(project.createComponentFromSelection(`d${depth - 2}-page`, [`p${depth - 2}`], 'Deeper')).toMatchObject({ ok: false, message: expect.stringMatching(/nest at most/) });
+    expect(state(project)).toBe(before);
+  });
+
   it('refuses a move that would close a cycle from the floating canvas', () => {
     const { project } = setup({ card: CARD });
     const page = project.components.get('card')!.page as PageModelType;
@@ -573,8 +598,42 @@ describe('what the publish check learns', () => {
     const { project } = setup({ card: CARD, 'fc-reserved': { ...CARD, id: 'fc-reserved' } });
     project.components.get('card')!.page.findComponent('c-title')!.setTextContent('x'.repeat(COMPONENT_LIMITS.definitionBytes));
     expect(project.refusedComponents).toHaveLength(2);
-    project.clearRefusedEdits();
+    project.clearRefusedEdits([...project.refusedComponents]);
     expect(project.refusedComponents.map(entry => entry.id)).toEqual(['fc-reserved']);
+  });
+
+  it('keeps an edit refused while a publish was out, the same edit again included', () => {
+    const { project } = setup({ card: CARD });
+    const title = () => project.components.get('card')!.page.findComponent('c-title')!;
+    title().setTextContent('x'.repeat(COMPONENT_LIMITS.definitionBytes));
+    const acknowledged = [...project.refusedComponents];
+    title().setTextContent('y'.repeat(COMPONENT_LIMITS.definitionBytes));
+    expect(project.refusedComponents).toHaveLength(1);
+    project.clearRefusedEdits(acknowledged);
+    expect(project.refusedComponents).toMatchObject([{ id: 'card', edit: true }]);
+  });
+
+  it('replaces what a load skipped when the project is loaded again', () => {
+    const store = ProjectStore.create({});
+    const snapshot = { id: 'site', metadata: { title: 'Site' }, pages: {} };
+    store.ingestProjectSnapshot({ ...snapshot, components: { 'fc-reserved': { ...CARD, id: 'fc-reserved' } } as never });
+    expect(store.getProject('site')!.refusedComponents).toHaveLength(1);
+    store.ingestProjectSnapshot({ ...snapshot, components: { card: CARD } as never });
+    expect(store.getProject('site')!.refusedComponents).toEqual([]);
+  });
+
+  it('keeps the redo steps when an edit is refused', () => {
+    const { project, history } = setup({ card: CARD });
+    const title = project.components.get('card')!.page.findComponent('c-title')!;
+    title.setTextContent('one');
+    title.setTextContent('two');
+    history.undo();
+    expect(history.canRedo).toBe(true);
+    title.setTextContent('x'.repeat(COMPONENT_LIMITS.definitionBytes));
+    expect(history.history.length).toBe(2);
+    expect(history.canRedo).toBe(true);
+    history.redo();
+    expect(title.props.children).toBe('two');
   });
 
   it('leaves no history and nothing in the snapshot', () => {

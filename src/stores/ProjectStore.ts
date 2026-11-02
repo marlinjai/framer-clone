@@ -245,7 +245,7 @@ const ProjectStore = types.model('ProjectStore', {
     self.projects.set(snapshot.id, snapshot);
     // The model drops a definition it cannot read, so the reasons are taken here,
     // while the stored value is still in hand, for the publish check to show.
-    self.projects.get(snapshot.id)?.noteRefusedComponents(parseModelComponents(snapshot.components).refused);
+    self.projects.get(snapshot.id)?.replaceLoadRefusals(parseModelComponents(snapshot.components).refused);
     return snapshot.id;
   },
 
