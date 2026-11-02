@@ -364,6 +364,15 @@ not know stay pending by design, so the lateness 500 fires until the newer build
 back. To reach Marlin, add an Uptime Kuma monitor on the same route (a POST with the
 header); the timer alone only reaches the journal.
 
+**Installed 2026-11-02.** The timer runs on `coolify-shared-host` (first pass: 4 groups, 0 failed, 0 dead). Two Uptime Kuma
+monitors watch the route, both every 5 minutes, alerting by Telegram: id 39 "Lumitra Shop: job watchdog
+(app.lumitra.co)" is red on any non-2xx, and id 40 "Lumitra Shop: dead jobs unacknowledged = 0" is red when
+`deadUnacknowledged` is above 0, so a receipt job that died alerts. Each monitor call runs one pass, which is
+cheap and safe beside the timer. **Rotation:** the monitors read a copy of `CUSTOM_DOMAIN_SYNC_TOKEN`, stored in
+the infra Infisical project at prod `/monitoring` as `FRAMER_CLONE_COMMERCE_WATCHDOG_TOKEN`. After rotating
+`CUSTOM_DOMAIN_SYNC_TOKEN`, copy it again with `copy_secret` (overwrite), update the header file on the host and
+edit monitors 39 and 40, or both turn red with 401.
+
 ## Rolling back past the published copy
 
 Migration `20261102200000_site_revisions` needs no reversing: older code ignores the table and the column. **That is
