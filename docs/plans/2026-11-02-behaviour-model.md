@@ -133,7 +133,7 @@ type StateValue = { id: string; name: string } & (
 interface Trigger {
   id: string;
   on: string;                 // a DOM event name, or a pseudo event below
-  scope?: 'document';         // hears the whole page, for Escape on a hover-only tooltip
+  scope?: 'document';         // hears keys on the whole page, for Escape on a hover-only tooltip
   keys?: string[];            // 'ArrowRight', 'InlineEnd', 'Ctrl+End', 'Printable'
   if?: Condition | Expression;
   prevent?: boolean;          // preventDefault
@@ -276,7 +276,14 @@ or under `delay`.
 
 **Family refusal.** A native verb is refused inside a trigger on the events it causes: `popover`, `details` and
 `dialog` in `toggle`, `beforetoggle`, `close` or `cancel`; `media` in media events; `fullscreen` in `fullscreenchange`;
-`scroll` in `scroll` or `scrollend`.
+`scroll` in `scroll` or `scrollend`. `popover`, `details` and `dialog` are refused in the `transition*` and `animation*` events too, which come back later than any rate can see.
+
+**Page-wide triggers.** `scope: 'document'` takes only `keydown` or `keyup` with non-printable keys, and only `set`, `toggle`, `step` and `cancel`. Anything else
+there reaches every press on the page, the consent banner and checkout included: `capturePointer` swallowed them, `navigate` turned "Decline" into a redirect.
+
+**What a person has to ask for, right then.** `fullscreen` and `pictureInPicture` with `enter`, and `media` with `play`, run only from `click`, `keydown` or `keyup`,
+and not under `delay`. `showModal` is refused from a trigger whose keys hold Escape, which would reopen what Escape closed. A `showModal` no press asked for runs once per
+page load, and the runtime sets `closedby="closerequest"` first, so Escape always closes it.
 
 **`prevent`** is refused on `cancel`, on `Tab`, on any `keydown` without `keys`, and on any trigger with `scope: 'document'`,
 which would stop links, scrolling and the consent banner's buttons across the page.
@@ -405,6 +412,12 @@ canvas pass their frame as `container`.
 - **A run-time budget,** because the caps below do not bound work on their own: at most 256 actions per task and 2,000
   per second per trigger, after which that trigger is disabled with a warning. Depth carries across `delay`. Proven:
   the prototype stopped a `toggle` loop and a 16-way `delay` fan-out in all three engines, and the page stayed responsive.
+  On top of that, **100,000 units of work per second across the page,** an action costing 1 and a full scan its items.
+  Past it nothing runs for the rest of the second, and timers stop for the visit, since many small triggers can each stay
+  under their own limit. And **256 firings of one trigger on what the page caused itself** (`transition*`, `animation*`,
+  `toggle`, `close`, `cancel`, `view-*`) between two things a person did, which is how a loop slower than any rate ends.
+- **Every read of a stored element goes through `dom.ts`,** which holds the prototypes' own getters and methods, because a
+  `form` answers `form.parentElement` with a field of that `name` or `id`.
 - **It never throws.** An unresolved target or unknown verb warns once with the node id and continues.
 - **Size:** a test bundles each chunk with esbuild: core 5 kilobytes gzipped, `rove` 3, broker 2. The prototype, with no
   parser and not minified, is 3.9 kilobytes for 229 lines. The review's estimate was 900 to 1,300 lines for the whole.
@@ -1100,13 +1113,27 @@ still reach "A late start", which is safe by design.
   for state verbs only, as a replay does.
 - **`attr: 'value'` also sets the property on a control a person changed.** The attribute alone would stop following state at the first keystroke.
 - **The `showModal` guard is one per page load, not one per dialog,** kept per document so a restart does not reset it.
-- `dialog` runs here in B3, since finding 8 could not be proven without it. Every other native verb is B4.
+- `dialog` runs in B3, since finding 8 could not be proven without it, in the `verbs` chunk beside the core. Every other native verb is B4.
 - Bindings run once at the end of a task, not per write, so 256 writes cost one pass over the page.
 - `EffectsIsland` sets `READY_GLOBAL` only once its chunk has arrived, so a chunk that fails leaves the boot script's timeout to show everything.
 - The key helpers and the attribute names moved to `keys.ts` and `names.ts`, leaves the runtime can import, and `format.ts` and `behaviourDom.ts` re-export
   them. Importing them from where they were put the whole parser in the chunk.
-- **`pnpm test:behaviour` is not in continuous integration,** like `pnpm score:primitives`. It needs Docker, a full build and WebKit. The rules it proves are
-  also in `runtime.test.ts`, which `pnpm test` runs.
+- **`pnpm test:behaviour` runs in continuous integration,** in a job of its own beside `verify`, as the render gate does, so it adds to the bill and not to the wait.
+  On a shared runner the throttled timing is recorded and not asserted. The rules it proves are also in `runtime.test.ts`, which `pnpm test` runs, except the hang
+  and real events, which need a browser.
+
+## Fixed after the review of B3 and B4
+
+The review (`2026-11-02-behaviour-model-review.md`, "Slice B3 and B4", probes beside it) found four things blocking and two to fix before real pages. All are fixed, on top of the render gate of #234.
+
+1. **One stored field hung the tab.** Every walk and read now goes through `src/lib/behaviour/dom.ts`. **The render gate does not cover this.** It refuses a `name` that is a member of `Document` or `HTMLFormElement`, `parentElement` and `querySelector` among them, so `<img name="querySelector">` is gone from the page, and that check of the review is closed. But it leaves such an `id` open on purpose, and a form answers `form.parentElement` with a field by its `id` too. So the gate alone left the same hang, and `test/behaviour/guards.spec.ts` proves both routes with raw input.
+2. **`scope: 'document'`,** see "Page-wide triggers". It takes key events and state verbs only.
+3. **A modal holding the page,** see "What a person has to ask for". The two routes are closed: Escape reopening, and `closedby="none"` on an open nobody asked for. A press can still open a dialog that stores `closedby="none"`, with no button in it: a visitor asked for that one, and a reload leaves.
+4. **Fullscreen and sound from a timer,** the same paragraph.
+5. **The budget counted actions, not cost,** see "A run-time budget". `filter`, a rove's look at its items and a flush of bindings are charged by items. The no-op rule stays: it was reviewed and found sound. A real press changing more than 256 things still turns its trigger off, which needs 256 changes from one press and is not a limit any preset meets.
+6. **Loops across families** have two bounds, the wider family and the unprompted count. The count resets on `pointerdown`, `keydown`, `wheel` and `touchmove`, and those listeners exist only on a page with such a trigger.
+
+**The key rules moved to the `verbs` chunk.** The fixes put the core past 5 kilobytes, and a program with no key trigger needs none of `keys.ts`. So a key trigger now asks for that chunk, which the island fetches with the core, and a runtime without the rules fires no key, which is the direction to fail in.
 
 ## Review findings not adopted
 

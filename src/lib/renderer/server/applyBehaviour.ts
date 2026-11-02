@@ -60,7 +60,7 @@ import {
   readsRow,
   stateAttributes,
 } from '@/lib/behaviour/behaviourDom';
-import { compileEntry, type BehaviourProgram, type ProgramEntry } from '@/lib/behaviour/program';
+import { compileEntry, compileProgram, type BehaviourProgram, type ProgramEntry } from '@/lib/behaviour/program';
 import { isIdReference, suffixCloneIds } from '@/lib/renderer/idRefs';
 import { TEXT_NODE_TYPE, isTextNodeType } from '@/lib/renderer/textNode';
 import { isRuleList, readRules, type ParsedRule, type ParsedSelectorRule, type ReadRules } from '@/lib/rules/rules';
@@ -329,5 +329,5 @@ export function applyBehaviour(root: ComponentNode): BehaviourResult {
   const nodes = Object.fromEntries(
     [...entries].filter(([, list]) => list.some(({ entry }) => Object.keys(entry).length > 0)).map(([key, list]) => [key, list.map(({ entry }) => entry)]),
   );
-  return { root: suffixCloneIds(rewritten), program: hasGate ? { nodes } : null, hasGate };
+  return { root: suffixCloneIds(rewritten), program: hasGate ? compileProgram(nodes) : null, hasGate };
 }

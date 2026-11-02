@@ -141,6 +141,71 @@ const ordinary = (): StoredNode =>
     ...Array.from({ length: 60 }, (_, index) => node(`p${index}`, 'p', { children: `Paragraph ${index} of a page with real text on it, as a person would write it. `.repeat(4) })),
     accordion());
 
+// ---- the security review of B3 and B4 ---------------------------------------------------
+
+/** What the runtime reads off an element, each a name a form's field could shadow. */
+export const SHADOWED = ['parentElement', 'closest', 'getAttribute', 'hasAttribute', 'matches'];
+
+/** A real form, a field in it, and a page-wide reason for the runtime to walk. */
+const shadowing = (attribute: string, member: string) => (): StoredNode =>
+  node('shadowed', 'div', { behaviour: { state: [flag('s')] } },
+    node('outside', 'button', { type: 'button', children: 'outside', behaviour: { noScript: 'show', on: [{ id: 'c', on: 'click', do: [{ toggle: 's' }] }] } }),
+    node('sheet', 'form', { behaviour: { on: [{ id: 'f', on: 'click', do: [{ toggle: 's' }] }] } },
+      node('in-sheet', 'input', { [attribute]: member, 'aria-label': 'Field' }),
+      node('press-sheet', 'button', { type: 'button', children: 'go', behaviour: { noScript: 'show', on: [{ id: 'g', on: 'click', do: [{ toggle: 's' }] }] } })));
+
+const pay = (): StoredNode => node('pay', 'button', { type: 'button', children: 'Pay' });
+
+const reachingPresses = (): StoredNode =>
+  node('reach', 'div', {
+    behaviour: {
+      on: [
+        { id: 'n', on: 'click', scope: 'document', do: [{ navigate: 'https://example.invalid/phish' }] },
+        { id: 'm', on: 'click', scope: 'document', do: [{ dialog: 'held', op: 'showModal' }] },
+      ],
+    },
+  },
+    node('catcher', 'div', { children: 'catches', style: { width: '200px', height: '40px' }, behaviour: { on: [{ id: 'p', on: 'pointerdown', scope: 'document', do: [{ capturePointer: true }] }] } }),
+    node('held', 'dialog', {}, node('in-held', 'p', { children: 'modal' })),
+    pay());
+
+const escapeBack = (on: string, holder: 'node' | 'page') => (): StoredNode => {
+  const trigger = { id: 'k', on, ...(holder === 'page' ? { scope: 'document' } : {}), keys: ['Escape'], do: [{ dialog: 'held', op: 'showModal' }] };
+  return node('back', 'div', {},
+    node('opener', 'button', { type: 'button', children: 'open', behaviour: { noScript: 'show', on: [{ id: 'c', on: 'click', do: [{ dialog: 'held', op: 'showModal' }] }, ...(holder === 'node' ? [trigger] : [])] } }),
+    node('held', 'dialog', {}, node('in-held', 'p', { children: 'modal' })),
+    ...(holder === 'page' ? [node('wider', 'div', { behaviour: { on: [trigger] } })] : []));
+};
+
+const wall = (): StoredNode =>
+  node('walled', 'div', { behaviour: { on: [{ id: 'r', on: 'page-ready', do: [{ dialog: 'held', op: 'showModal' }] }] } },
+    node('held', 'dialog', { closedby: 'none' }, node('in-held', 'p', { children: 'wall' })),
+    pay());
+
+const timers = (): StoredNode =>
+  node('timed', 'div', {
+    behaviour: {
+      on: [
+        { id: 'f', on: 'every', ms: 1000, do: [{ fullscreen: 'timed', op: 'enter' }] },
+        { id: 'd', on: 'click', do: [{ delay: 16, do: [{ fullscreen: 'timed', op: 'enter' }] }] },
+      ],
+    },
+  }, pay());
+
+/** The state and a real transition chasing each other, slower than any rate can see. */
+const slowLoop = (): StoredNode =>
+  node('slow', 'div', { behaviour: { state: [flag('a')] } },
+    node('fader', 'div', {
+      children: 'Fades',
+      style: { opacity: '1', transition: 'opacity 16ms linear' },
+      rules: [{ id: 'r', selector: '&', when: { state: 'a', eq: true }, style: { opacity: '0.5' } }],
+      behaviour: { on: [{ id: 'l', on: 'transitionend', do: [{ toggle: 'a' }] }] },
+    }),
+    node('start', 'button', { type: 'button', children: 'Start', behaviour: { noScript: 'show', on: [{ id: 'c', on: 'click', do: [{ toggle: 'a' }] }] } }));
+
+const consent = (): StoredNode =>
+  node('with-banner', 'div', { behaviour: { state: [flag('s')], on: [{ id: 'k', on: 'keydown', scope: 'document', keys: ['Escape'], do: [{ set: 's', value: false }] }] } }, pay());
+
 export const PAGES: Readonly<Record<string, () => StoredNode>> = {
   plain: () => node('plain-page', 'p', { children: 'No behaviour here' }),
   still,
@@ -151,5 +216,14 @@ export const PAGES: Readonly<Record<string, () => StoredNode>> = {
   'modal-cycle': modalCycle,
   loop,
   hostile,
+  ...Object.fromEntries(SHADOWED.flatMap((member) => ['id', 'name'].map((attribute) => [`shadow-${attribute}-${member.toLowerCase()}`, shadowing(attribute, member)]))),
+  'img-query-selector': () => node('holder', 'div', {}, accordion(), node('image', 'img', { name: 'querySelector', alt: 'x', src: 'data:image/gif;base64,R0lGODlhAQABAAAAACw=' })),
+  'reaching-presses': reachingPresses,
+  'escape-keyup-node': escapeBack('keyup', 'node'),
+  'escape-keyup-page': escapeBack('keyup', 'page'),
+  wall,
+  timers,
+  'slow-loop': slowLoop,
+  consent,
   ordinary,
 };

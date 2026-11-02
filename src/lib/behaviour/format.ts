@@ -287,11 +287,17 @@ const CUSTOM_EVENT = /^custom:([a-z0-9][a-z0-9_-]{0,63})$/;
 
 const isDomEvent = (on: string): boolean => DOM_EVENTS.has(on);
 
+/** Opening or closing something runs its transitions and animations too, which come back later than any rate can see. */
+const OPENING_CAUSES: ReadonlySet<string> = new Set([
+  ...OPEN_CLOSE_EVENTS,
+  ...names('animationstart animationend animationiteration animationcancel transitionrun transitionstart transitionend transitioncancel'),
+]);
+
 /** Each native verb, and the events it causes: a trigger on one of those may not run it. */
 const FAMILIES: Readonly<Record<string, ReadonlySet<string>>> = {
-  popover: OPEN_CLOSE_EVENTS,
-  details: OPEN_CLOSE_EVENTS,
-  dialog: OPEN_CLOSE_EVENTS,
+  popover: OPENING_CAUSES,
+  details: OPENING_CAUSES,
+  dialog: OPENING_CAUSES,
   media: MEDIA_EVENTS,
   fullscreen: FULLSCREEN_EVENTS,
   pictureInPicture: PICTURE_EVENTS,
@@ -726,6 +732,18 @@ function refusedFamily(verb: Verb, on: string): string | null {
   return family?.has(on) ? `${verb} in a ${on} trigger would cause its own event` : null;
 }
 
+/** What a trigger hearing the whole page may do: change state, and nothing a page-wide press could turn into a click. */
+const PAGE_WIDE_VERBS: ReadonlySet<string> = new Set(['set', 'toggle', 'step', 'cancel']);
+
+/** True for a trigger whose keys hold Escape, which a modal opened from it would answer by reopening. */
+const answersEscape = (scope: ActionScope): boolean => scope.keys?.some((chord) => keyOfChord(chord) === 'Escape') === true;
+
+/** Why a verb that takes over the screen or starts sound may not run here, or null. Only a press, right then. */
+function refusedTakeover(verb: string, scope: ActionScope): string | null {
+  if (scope.underDelay) return `${verb} cannot wait: by then it is no longer a press`;
+  return INPUT_EVENTS.has(scope.on) ? null : `${verb} runs only from a press, not from ${scope.on}`;
+}
+
 /** True for a key trigger that fires on Tab, by name or by having no keys. */
 function firesOnTab(scope: ActionScope): boolean {
   if (!KEY_EVENTS.has(scope.on)) return false;
@@ -855,6 +873,11 @@ function parseOpen(verb: 'dialog' | 'popover' | 'details' | 'fullscreen' | 'pict
   if ((verb === 'dialog' && action.op !== 'close') || (verb === 'popover' && action.op !== 'hide')) {
     const reason = refusedFocusMove(`${verb} ${action.op}`, scope, action.op === 'showModal' ? ['page-ready', 'view-enter'] : []);
     if (reason) return refuse(reason);
+    if (action.op === 'showModal' && answersEscape(scope)) return refuse('showModal from Escape would reopen what Escape just closed');
+  }
+  if ((verb === 'fullscreen' || verb === 'pictureInPicture') && action.op === 'enter') {
+    const reason = refusedTakeover(`${verb} enter`, scope);
+    if (reason) return refuse(reason);
   }
   return accept({ [verb]: target.value.key, op: action.op } as Action);
 }
@@ -865,6 +888,8 @@ function parseMedia(action: Record<string, unknown>, scope: ActionScope): Parsed
   const target = targetOf('media', action.media, scope);
   if (!target.ok) return target;
   const op = action.op as 'play' | 'pause' | 'load' | 'seek' | 'rate' | 'volume';
+  const takeover = op === 'play' ? refusedTakeover('media play', scope) : null;
+  if (takeover) return refuse(takeover);
   if (!MEDIA_VALUE_OPS.includes(op)) {
     return action.value === undefined ? accept({ media: target.value.key, op }) : refuse(`${op} takes no value`);
   }
@@ -948,6 +973,7 @@ function parseAction(action: unknown, scope: ActionScope): Parsed<Action> {
   if (!verb) return refuse(`${Object.keys(action)[0] ?? 'this'} is not an action`);
   scope.used.count += 1;
   if (scope.used.count > MAX_ACTIONS_PER_TRIGGER) return refuse(`a trigger runs at most ${MAX_ACTIONS_PER_TRIGGER} actions`);
+  if (scope.hearsPage && !PAGE_WIDE_VERBS.has(verb)) return refuse(`${verb} cannot hear the whole page: only state and cancel can`);
   const family = refusedFamily(verb, scope.on);
   if (family) return refuse(family);
   const parsed = parseVerb(verb, action, scope);
@@ -1074,7 +1100,7 @@ function parseTrigger(entry: unknown, base: ExpressionScope): Parsed<Trigger> {
   if (refusedName) return refuse(refusedName);
   const on = entry.on as string;
   if (entry.scope !== undefined && entry.scope !== 'document') return refuse('scope is document');
-  if (entry.scope === 'document' && !isDomEvent(on)) return refuse(`${on} is not a document event`);
+  if (entry.scope === 'document' && !KEY_EVENTS.has(on)) return refuse('a document trigger hears keydown or keyup, for Escape on what has no focus');
   if (entry.preset !== undefined && entry.preset !== true) return refuse('preset marks an entry with true');
 
   const reason = refusedKeys(entry, on, base.self) ?? refusedPrevent(entry, on) ?? refusedPlacement(on, base.self);

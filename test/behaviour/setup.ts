@@ -4,6 +4,7 @@
 // `(site)/[...slug]` route answer. No page, route or flag exists for this test.
 
 import { execSync, spawn, type ChildProcess } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -36,7 +37,16 @@ export async function setup(): Promise<void> {
   server = spawn('pnpm', ['exec', 'next', 'start', '-p', String(PORT)], {
     stdio: ['ignore', log, log],
     detached: true,
-    env: { ...process.env, NODE_ENV: 'production', TZ: 'UTC', EDITOR_HOST: 'editor.invalid', NEXT_TELEMETRY_DISABLED: '1' },
+    env: {
+      ...process.env,
+      NODE_ENV: 'production',
+      TZ: 'UTC',
+      EDITOR_HOST: 'editor.invalid',
+      NEXT_TELEMETRY_DISABLED: '1',
+      // Public by design, and only a site with analytics turned on reads them: the consent banner needs both.
+      ANALYTICS_PUBLIC_INGESTION_KEY: `ap_live_${randomBytes(16).toString('hex')}`,
+      ANALYTICS_INGESTION_ENDPOINT: 'https://analytics.invalid/ingest',
+    },
   });
   await waitForServer();
   process.env.BEHAVIOUR_PORT = String(PORT);

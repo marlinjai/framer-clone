@@ -3,6 +3,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { DEFAULT_VIEWPORTS } from '@/lib/canvas/defaultViewports';
+import { getPrismaClient } from '@/server/db';
 import { getSiteRepository, type TenantScope } from '@/server/sites';
 import { PAGES, type StoredNode } from './pages';
 
@@ -26,13 +27,14 @@ const stored = (slug: string, tree: StoredNode) => ({
   canvasNodes: frames,
 });
 
-/** The origin of a published site holding every page, one page per slug. */
-export async function publishPages(port: string): Promise<string> {
+/** The origin of a published site holding every page, one page per slug. With `analytics`, the real consent banner shows. */
+export async function publishPages(port: string, { analytics = false } = {}): Promise<string> {
   const repo = getSiteRepository();
   const siteId = randomUUID();
   const pages = { home: stored('', PAGES.plain()), ...Object.fromEntries(Object.entries(PAGES).map(([slug, tree]) => [slug, stored(slug, tree())])) };
   const project = { id: siteId, metadata: { title: 'Behaviour', description: '', createdAt: 1, updatedAt: 2 }, pages };
   await repo.saveProject(SCOPE, project as never);
+  if (analytics) await getPrismaClient().site.update({ where: { id: siteId }, data: { lumitraEnabled: true } });
   await repo.publishProject(SCOPE, siteId);
   const { subdomain } = await repo.ensureSiteDomain(SCOPE, siteId);
   return `http://${subdomain}.sites.localhost:${port}`;

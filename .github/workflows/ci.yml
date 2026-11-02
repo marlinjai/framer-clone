@@ -144,3 +144,33 @@ jobs:
       # Whether anything stored can act on a page, through both renderers.
       - name: Render gate fuzz
         run: pnpm test:render-gate
+
+  # The runtime on a real production build, through the real published route on a real
+  # Postgres, in real Chromium and WebKit. A job of its own for the same reason as the
+  # render gate. It is the only place a page that hangs a tab can show.
+  behaviour:
+    name: behaviour
+    runs-on: ubuntu-latest
+    env:
+      NEXT_TELEMETRY_DISABLED: 1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install browsers
+        run: pnpm exec playwright install --with-deps chromium webkit
+
+      - name: Behaviour proofs
+        run: pnpm test:behaviour

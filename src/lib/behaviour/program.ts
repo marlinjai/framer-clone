@@ -7,7 +7,7 @@
 //
 // PURE and client-safe: no React, no MST. The runtime imports only the types here.
 
-import type { Binding, FocusGroup, StateValue, StoredBehaviour, Trigger } from './format';
+import type { Action, Binding, Expression, FocusGroup, StateValue, StoredBehaviour, Trigger } from './format';
 
 type Sent<T> = T extends unknown ? Omit<T, 'name' | 'preset'> : never;
 
@@ -27,6 +27,65 @@ export interface ProgramEntry {
 export interface BehaviourProgram {
   /** Key to entries. An element runs the entry `data-fc-v` names, the first without it. */
   nodes: Record<string, ProgramEntry[]>;
+  /** Some action touches the page beyond state, or a trigger reads keys: the page needs the `verbs` chunk. */
+  verbs?: true;
+}
+
+/** One trigger firing: where it stands and what fired it. */
+export interface Run {
+  el: Element;
+  event: Event | null;
+  trigger: ProgramTrigger;
+  /** How many `emit`s led here. Carried across `delay`. */
+  depth: number;
+  /** A press held from before the runtime started: state verbs only. */
+  replay?: boolean;
+}
+
+/** What the core lends a chunk that loads beside it. */
+export interface Kit {
+  container: ParentNode & Node;
+  doc: Document;
+  surface: 'published' | 'preview' | 'canvas';
+  /** The nearest node holding a key, scope by scope. */
+  find(key: string, from: Element): Element | null;
+  entryOf(el: Element): ProgramEntry | undefined;
+  evaluate(expression: Expression, run: Pick<Run, 'el' | 'event'>): unknown;
+  warn(message: string, id: string): void;
+  /** Brings bindings up to date, for a verb that reads what they show. */
+  settle(): void;
+  /** Charges the page for a full scan. False when it may not run now. */
+  charge(cost: number): boolean;
+}
+
+/** What decides whether a key press fires anything, from keys.ts. */
+export interface KeyRules {
+  keysAnswer(keys: readonly string[] | undefined, event: KeyboardEvent, element: Element): boolean;
+  isTextEntry(element: Element): boolean;
+}
+
+export type RunVerb = (action: Action, run: Run) => void;
+export type CreateVerbs = (kit: Kit) => RunVerb;
+
+const STATE_AND_FLOW: readonly string[] = ['set', 'toggle', 'step', 'delay', 'cancel', 'emit', 'rove'];
+
+/** True when an action, or one under a `delay`, needs the `verbs` chunk. */
+function needsVerbs(action: Action): boolean {
+  if ('delay' in action) return action.do.some(needsVerbs);
+  return !STATE_AND_FLOW.some((verb) => verb in action);
+}
+
+/** The chunk also holds the key rules, so a key trigger needs it too. */
+const needsChunk = (trigger: ProgramTrigger): boolean =>
+  trigger.on === 'keydown' || trigger.on === 'keyup' || trigger.do.some(needsVerbs);
+
+/** The whole program from its entries, saying which chunks it needs beside the core. */
+export function compileProgram(nodes: Record<string, ProgramEntry[]>): BehaviourProgram {
+  const entries = Object.values(nodes).flat();
+  return {
+    nodes,
+    ...(entries.some((entry) => entry.on?.some(needsChunk)) ? { verbs: true as const } : {}),
+  };
 }
 
 const withoutMarks = <T extends object>(entry: T): Omit<T, 'preset' | 'name'> =>

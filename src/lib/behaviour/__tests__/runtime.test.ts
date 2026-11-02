@@ -1,10 +1,16 @@
 // The runtime's own rules, in the order the contract lists them. What only a browser can
 // say (hydration, real input, chunks) is in test/behaviour/runtime.spec.ts.
 
+import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
-import { MAX_ACTIONS_PER_SECOND, MAX_ACTIONS_PER_TASK, startBehaviour } from '../runtime';
+import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
+import { applyBehaviour } from '@/lib/renderer/server/applyBehaviour';
+import { renderComponentNode } from '@/lib/renderer/server/renderComponentNode';
+import { MAX_ACTIONS_PER_SECOND, MAX_ACTIONS_PER_TASK, MAX_PAGE_COST_PER_SECOND, MAX_UNPROMPTED_FIRINGS, startBehaviour } from '../runtime';
+import { isTextEntry, keysAnswer } from '../keys';
 import { GATE_GLOBAL } from '../names';
-import type { BehaviourProgram, ProgramEntry } from '../program';
+import { createVerbs } from '../verbs';
+import type { BehaviourProgram, Kit, ProgramEntry } from '../program';
 
 const settle = () => Promise.resolve().then(() => Promise.resolve());
 
@@ -19,6 +25,13 @@ const program = (nodes: Nodes): BehaviourProgram => ({
   nodes: Object.fromEntries(Object.entries(nodes).map(([key, entry]) => [key, (Array.isArray(entry) ? entry : [entry]) as ProgramEntry[]])),
 });
 
+/** A tree stored as an author could, through the real parser, with what it let through started. */
+function fromStored(root: object): void {
+  const compiled = applyBehaviour(root as ComponentNode);
+  document.body.innerHTML = renderToStaticMarkup(renderComponentNode(compiled.root));
+  if (compiled.program) stops.push(startBehaviour({ container: document, program: compiled.program, surface: 'preview', verbs: createVerbs, keys: { keysAnswer, isTextEntry } }));
+}
+
 const $ = (selector: string): HTMLElement => document.querySelector(selector) as HTMLElement;
 const press = (el: Element, key: string, init: KeyboardEventInit = {}) =>
   el.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init }));
@@ -30,7 +43,7 @@ let stops: (() => void)[];
 /** Starts the runtime on `html` as the published page would. */
 function start(html: string, nodes: Nodes, surface: 'published' | 'preview' | 'canvas' = 'preview'): void {
   document.body.innerHTML = html;
-  stops.push(startBehaviour({ container: document, program: program(nodes), surface }));
+  stops.push(startBehaviour({ container: document, program: program(nodes), surface, verbs: createVerbs, keys: { keysAnswer, isTextEntry } }));
 }
 
 function setGate(ready = true) {
@@ -496,7 +509,7 @@ describe('a modal no press asked for', () => {
     const inner = frame.contentDocument as Document;
     (frame.contentWindow as unknown as { HTMLDialogElement: typeof HTMLDialogElement }).HTMLDialogElement.prototype.showModal = HTMLDialogElement.prototype.showModal;
     inner.body.innerHTML = html;
-    stops.push(startBehaviour({ container: inner, program: program(nodes), surface }));
+    stops.push(startBehaviour({ container: inner, program: program(nodes), surface, verbs: createVerbs, keys: { keysAnswer, isTextEntry } }));
     return inner;
   };
   const once = {
@@ -577,7 +590,7 @@ describe('the boot script', () => {
     document.body.innerHTML = page;
     gate.queue.push(Object.defineProperty(new MouseEvent('click', { bubbles: true }), 'target', { value: $('[data-fc-n="b"]') }));
     HTMLDialogElement.prototype.showModal = vi.fn();
-    stops.push(startBehaviour({ container: document, program: program(nodes), surface: 'published' }));
+    stops.push(startBehaviour({ container: document, program: program(nodes), surface: 'published', verbs: createVerbs, keys: { keysAnswer, isTextEntry } }));
     expect(gate.ready).toHaveBeenCalledOnce();
     expect($('[data-fc-scope]').getAttribute('data-fcs-a')).toBe('true');
     expect($('[data-fc-scope]').getAttribute('data-fcs-n')).toBe('1');
@@ -589,7 +602,7 @@ describe('the boot script', () => {
     const gate = setGate();
     document.body.innerHTML = page;
     gate.queue.push(Object.defineProperty(new MouseEvent('click', { bubbles: true }), 'target', { value: $('#none') }));
-    stops.push(startBehaviour({ container: document, program: program(nodes), surface: 'published' }));
+    stops.push(startBehaviour({ container: document, program: program(nodes), surface: 'published', verbs: createVerbs, keys: { keysAnswer, isTextEntry } }));
     expect($('[data-fc-scope]').getAttribute('data-fcs-a')).toBe('false');
   });
 
@@ -611,7 +624,7 @@ describe('the boot script', () => {
     const gone = $('[data-fc-n="b"]');
     gate.queue.push(Object.defineProperty(new MouseEvent('click', { bubbles: true }), 'target', { value: gone }));
     gone.remove();
-    stops.push(startBehaviour({ container: document, program: program(nodes), surface: 'published' }));
+    stops.push(startBehaviour({ container: document, program: program(nodes), surface: 'published', verbs: createVerbs, keys: { keysAnswer, isTextEntry } }));
     expect($('[data-fc-scope]').getAttribute('data-fcs-a')).toBe('false');
   });
 
@@ -650,8 +663,7 @@ describe('it never throws at the page', () => {
       s: { state: [flag('a')] },
       b: { on: [clickDoing({ toggle: 'a' })] },
     }, 'published');
-    const scope = $('[data-fc-scope]');
-    scope.setAttribute = () => { throw new Error('broken'); };
+    vi.spyOn(window.performance, 'now').mockImplementation(() => { throw new Error('broken'); });
     expect(() => $('button').click()).not.toThrow();
     expect(gate.fail).toHaveBeenCalledOnce();
     expect(error).toHaveBeenCalledOnce();
@@ -854,7 +866,7 @@ describe('in a frame of its own', () => {
 
   beforeEach(() => {
     document.body.innerHTML = frames;
-    for (const id of ['one', 'two']) stops.push(startBehaviour({ container: $(`#${id}`), program: program(nodes), surface: 'canvas' }));
+    for (const id of ['one', 'two']) stops.push(startBehaviour({ container: $(`#${id}`), program: program(nodes), surface: 'canvas', keys: { keysAnswer, isTextEntry } }));
   });
 
   it('keeps each frame to its own state', () => {
@@ -867,6 +879,217 @@ describe('in a frame of its own', () => {
     press($('#two button'), 'Escape');
     expect(scope('one').getAttribute('data-fcs-n')).toBeNull();
     expect(scope('two').getAttribute('data-fcs-n')).toBe('1');
+  });
+});
+
+describe('a form holding a field named after what the runtime reads', () => {
+  const MEMBERS = ['parentElement', 'closest', 'getAttribute', 'hasAttribute', 'matches', 'setAttribute', 'children', 'nodeType', 'isConnected', 'querySelector'];
+  const inForm = (member: string, attribute: string) => `<div data-fc-n="s" data-fc-scope data-fcs-n="0"><form data-fc-n="f" data-fc-scope data-fcs-m="0"><input ${attribute}="${member}"><button type="button" data-fc-n="b"></button></form></div>`;
+  const nodes = {
+    s: { state: [count('n')] },
+    f: { state: [count('m')], on: [{ id: 'f', on: 'click', do: [{ step: 'm' }, { delay: 16, key: 'k', do: [] }] }] },
+    b: { on: [clickDoing({ step: 'n' }, { emit: 'x' }), { id: 'x', on: 'custom:x', do: [{ cancel: 'k' }] }] },
+  };
+
+  it.each(MEMBERS.flatMap((member) => [[member, 'id'], [member, 'name']]))('walks past a form field called %s, by its %s', (member, attribute) => {
+    document.body.innerHTML = inForm(member, attribute);
+    const form = document.querySelector('form') as HTMLFormElement;
+    // A browser answers `form[member]` with the field. jsdom does not, so it is given, and
+    // with the plain read of `parentElement` this test never ends, as the tab did not.
+    Object.defineProperty(form, member, { value: form.querySelector('input') });
+    stops.push(startBehaviour({ container: document, program: program(nodes), surface: 'preview', verbs: createVerbs, keys: { keysAnswer, isTextEntry } }));
+    $('button').click();
+    $('input').click();
+    expect(Element.prototype.getAttribute.call($('[data-fc-n="s"]'), 'data-fcs-n')).toBe('1');
+    expect(Element.prototype.getAttribute.call(form, 'data-fcs-m')).toBe('2');
+    expect(error).not.toHaveBeenCalled();
+  });
+});
+
+describe('what the parser refuses never runs', () => {
+  const root = (props: object, ...children: object[]) => ({ id: 'root', type: 'div', props, children });
+  const ran = () => warn.mock.calls.filter(([message]) => String(message).includes('left out')).length;
+
+  beforeEach(() => {
+    HTMLDialogElement.prototype.showModal = vi.fn();
+    HTMLElement.prototype.requestFullscreen = vi.fn(() => Promise.resolve());
+    HTMLMediaElement.prototype.play = vi.fn(() => Promise.resolve());
+  });
+
+  it.each([
+    ['capturePointer', { id: 'p', on: 'pointerdown', scope: 'document', do: [{ capturePointer: true }] }],
+    ['navigate', { id: 'n', on: 'click', scope: 'document', do: [{ navigate: 'https://example.com/' }] }],
+    ['a modal from any press', { id: 'm', on: 'click', scope: 'document', do: [{ dialog: 'd', op: 'showModal' }] }],
+    ['a modal from a page-wide Escape', { id: 'm', on: 'keyup', scope: 'document', keys: ['Escape'], do: [{ dialog: 'd', op: 'showModal' }] }],
+    ['focus', { id: 'f', on: 'keydown', scope: 'document', keys: ['Enter'], do: [{ focus: 'd' }] }],
+    ['emit', { id: 'e', on: 'keydown', scope: 'document', keys: ['Enter'], do: [{ emit: 'x' }] }],
+    ['delay', { id: 'e', on: 'keydown', scope: 'document', keys: ['Enter'], do: [{ delay: 16, do: [{ cancel: 'x' }] }] }],
+  ])('keeps a page-wide trigger off %s', (_, trigger) => {
+    fromStored(root({ behaviour: { on: [trigger] } }, { id: 'd', type: 'dialog', props: {} }));
+    document.body.click();
+    press(document.body, 'Escape');
+    press(document.body, 'Enter');
+    expect(HTMLDialogElement.prototype.showModal).not.toHaveBeenCalled();
+    expect(ran()).toBe(1);
+  });
+
+  it.each([['keydown'], ['keyup']])('never reopens a modal from Escape on %s, on the node either', (on) => {
+    fromStored(root({ behaviour: { on: [{ id: 'm', on, keys: ['Escape'], do: [{ dialog: 'd', op: 'showModal' }] }] } }, { id: 'd', type: 'dialog', props: {} }));
+    press($('[data-fc-n]') ?? document.body, 'Escape');
+    expect(HTMLDialogElement.prototype.showModal).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['fullscreen from a timer', 'div', { fullscreen: 'x', op: 'enter' }, 'every'],
+    ['fullscreen under a delay', 'div', { delay: 16, do: [{ fullscreen: 'x', op: 'enter' }] }, 'click'],
+    ['picture in picture from a timer', 'video', { pictureInPicture: 'x', op: 'enter' }, 'every'],
+    ['play from a timer', 'video', { media: 'x', op: 'play' }, 'every'],
+    ['play under a delay', 'video', { delay: 16, do: [{ media: 'x', op: 'play' }] }, 'click'],
+  ])('refuses %s', (_, type, action, on) => {
+    fromStored({ id: 'x', type, props: { behaviour: { on: [{ id: 't', on, ...(on === 'every' ? { ms: 1000 } : {}), do: [action] }] } } });
+    expect(ran()).toBe(1);
+  });
+
+  it('still lets a press take the screen', () => {
+    fromStored({ id: 'x', type: 'video', props: { behaviour: { on: [{ id: 't', on: 'click', do: [{ media: 'x', op: 'play' }] }] } } });
+    expect(ran()).toBe(0);
+  });
+
+  it.each(['transitionend', 'animationiteration'])('keeps a native toggle out of %s, which comes back below any rate', (on) => {
+    fromStored({ id: 'x', type: 'details', props: { behaviour: { on: [{ id: 't', on, do: [{ details: 'x', op: 'toggle' }] }] } } });
+    expect(ran()).toBe(1);
+  });
+});
+
+describe('a modal no press asked for, closed by Escape whatever was stored', () => {
+  it('overrides closedby="none"', () => {
+    const frame = document.createElement('iframe');
+    document.body.append(frame);
+    const inner = frame.contentDocument as Document;
+    const opened = vi.fn();
+    (frame.contentWindow as unknown as { HTMLDialogElement: typeof HTMLDialogElement }).HTMLDialogElement.prototype.showModal = opened;
+    inner.body.innerHTML = '<dialog data-fc-n="d" closedby="none"></dialog><p data-fc-n="p"></p>';
+    stops.push(startBehaviour({
+      container: inner,
+      program: program({ d: {}, p: { on: [{ id: 'r', on: 'page-ready', do: [{ dialog: 'd', op: 'showModal' }] }] } }),
+      surface: 'published',
+      verbs: createVerbs,
+    }));
+    expect(opened).toHaveBeenCalledOnce();
+    expect((inner.querySelector('dialog') as HTMLDialogElement).getAttribute('closedby')).toBe('closerequest');
+  });
+});
+
+describe('the page-wide cap', () => {
+  const bigStep = Array.from({ length: 16 }, () => ({ step: 'n' }));
+
+  it('stops timers for the visit once many small triggers add up, each under its own limit', () => {
+    vi.useFakeTimers();
+    vi.spyOn(window.performance, 'now').mockReturnValue(5000);
+    const scans = vi.fn();
+    document.body.innerHTML = '<div data-fc-n="s"></div>';
+    const triggers = Array.from({ length: 16 }, (_, index) => ({ id: `t${index}`, on: 'every', ms: 1000, do: [{ dialog: 'x', op: 'close' }] }));
+    stops.push(startBehaviour({
+      container: document,
+      program: program({ s: { on: triggers } }),
+      surface: 'preview',
+      verbs: (kit) => () => {
+        if (kit.charge(MAX_PAGE_COST_PER_SECOND / 4)) scans();
+      },
+    }));
+    vi.advanceTimersByTime(10_000);
+    expect(scans).toHaveBeenCalledTimes(3);
+    expect(warn.mock.calls.some(([message]) => String(message).includes('timers off'))).toBe(true);
+  });
+
+  it('drops what would run past it, and a press comes back in the next second', () => {
+    const now = vi.spyOn(window.performance, 'now');
+    let clock = 5000;
+    now.mockImplementation(() => clock);
+    let kit: Kit | undefined;
+    document.body.innerHTML = '<div data-fc-n="s" data-fc-scope><button data-fc-n="b"></button></div>';
+    stops.push(startBehaviour({
+      container: document,
+      program: program({ s: { state: [flag('a')] }, b: { on: [clickDoing({ toggle: 'a' })] } }),
+      surface: 'preview',
+      verbs: (given) => {
+        kit = given;
+        return () => {};
+      },
+    }));
+    expect(kit?.charge(MAX_PAGE_COST_PER_SECOND)).toBe(true);
+    expect(kit?.charge(1)).toBe(false);
+    $('button').click();
+    expect($('[data-fc-scope]').getAttribute('data-fcs-a')).toBeNull();
+    clock += 1001;
+    $('button').click();
+    expect($('[data-fc-scope]').getAttribute('data-fcs-a')).toBe('true');
+  });
+
+  it('starts no timer once it has tripped', () => {
+    vi.useFakeTimers();
+    const now = vi.spyOn(window.performance, 'now').mockReturnValue(5000);
+    let kit: Kit | undefined;
+    document.body.innerHTML = '<div data-fc-n="s" data-fc-scope><button data-fc-n="b"></button></div>';
+    stops.push(startBehaviour({
+      container: document,
+      program: program({ s: { state: [count('n')], on: [{ id: 'e', on: 'every', ms: 1000, do: [{ step: 'n' }] }] }, b: { on: [clickDoing({ delay: 16, do: [{ step: 'n' }] })] } }),
+      surface: 'preview',
+      verbs: (given) => {
+        kit = given;
+        return () => {};
+      },
+    }));
+    kit?.charge(MAX_PAGE_COST_PER_SECOND + 1);
+    now.mockReturnValue(9000);
+    $('button').click();
+    vi.advanceTimersByTime(5000);
+    expect($('[data-fc-scope]').getAttribute('data-fcs-n')).toBeNull();
+  });
+});
+
+describe('a loop through what the page itself causes', () => {
+  const loop = {
+    s: { state: [flag('a')], on: [{ id: 'l', on: 'transitionend', do: [{ toggle: 'a' }] }] },
+  };
+  const round = (el: Element) => el.dispatchEvent(new Event('transitionend', { bubbles: true }));
+  const flips = () => warn.mock.calls.filter(([message]) => String(message).includes('unprompted')).length;
+
+  it('turns off after 256 firings with nobody there, below any rate', () => {
+    const now = vi.spyOn(window.performance, 'now');
+    let clock = 5000;
+    now.mockImplementation(() => clock);
+    start('<div data-fc-n="s" data-fc-scope></div>', loop);
+    for (let i = 0; i < MAX_UNPROMPTED_FIRINGS + 5; i += 1) {
+      clock += 200;
+      round($('[data-fc-scope]'));
+    }
+    expect(flips()).toBe(1);
+    const held = $('[data-fc-scope]').getAttribute('data-fcs-a');
+    round($('[data-fc-scope]'));
+    expect($('[data-fc-scope]').getAttribute('data-fcs-a')).toBe(held);
+  });
+
+  it('starts counting again whenever a person does something', () => {
+    const now = vi.spyOn(window.performance, 'now');
+    let clock = 5000;
+    now.mockImplementation(() => clock);
+    start('<div data-fc-n="s" data-fc-scope></div>', loop);
+    for (let i = 0; i < MAX_UNPROMPTED_FIRINGS * 3; i += 1) {
+      clock += 200;
+      if (i % 100 === 0) document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+      round($('[data-fc-scope]'));
+    }
+    expect(flips()).toBe(0);
+  });
+});
+
+describe('without the key rules', () => {
+  it('fires no key at all, rather than every key', () => {
+    document.body.innerHTML = '<div data-fc-n="s" data-fc-scope><input></div>';
+    stops.push(startBehaviour({ container: document, program: program({ s: { state: [count('n')], on: [{ id: 'k', on: 'keydown', do: [{ step: 'n' }] }] } }), surface: 'preview' }));
+    press($('input'), 'h');
+    expect($('[data-fc-scope]').getAttribute('data-fcs-n')).toBeNull();
   });
 });
 

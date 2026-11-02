@@ -21,16 +21,19 @@
 //
 // It never throws at a page. An unresolved target or a verb it does not know warns once
 // and the sequence goes on. An error it did not expect stops the runtime and lowers the
-// gate, so nothing stays hidden behind a dead runtime. Native verbs fail alone: a dialog
-// that is already open is a stored mistake, not a broken page.
+// gate, so nothing stays hidden behind a dead runtime.
 //
-// PURE and client-safe: no React, no MST. It imports leaves only (names.ts, keys.ts),
+// What touches the page beyond state is in a chunk that loads beside this one, only when
+// the program needs it: `verbs.ts`, which also holds the key rules. A verb with no chunk
+// here warns, as for any verb it does not know, and with no rules no key fires.
+//
+// PURE and client-safe: no React, no MST. It imports leaves only (names.ts, dom.ts),
 // because the parser would not fit the size limit test beside it.
 
 import type { Action, Expression } from './format';
-import { keysAnswer, isTextEntry } from './keys';
+import { attrOf, childrenOf, closestTo, every, hasAttr, holds, isConnected, isElement, isMatch, one, parentOf, setAttr, toggleAttr, upFrom } from './dom';
 import { GATE_GLOBAL, NODE_ATTR, ROW_ATTR, SCOPE_ATTR, VARIANT_ATTR, isBooleanAttribute, stateAttribute } from './names';
-import type { BehaviourProgram, ProgramBinding, ProgramEntry, ProgramState, ProgramTrigger } from './program';
+import type { BehaviourProgram, CreateVerbs, Kit, KeyRules, ProgramBinding, ProgramEntry, ProgramState, ProgramTrigger, Run } from './program';
 
 export interface StartBehaviourOptions {
   /** What the page is in: the document, or a preview or canvas frame. */
@@ -39,6 +42,10 @@ export interface StartBehaviourOptions {
   /** The attribute holding a node's key. The canvas has its own. */
   nodeAttr?: string;
   surface: 'published' | 'preview' | 'canvas';
+  /** `createVerbs` of verbs.ts, when the program has a native or value action. */
+  verbs?: CreateVerbs;
+  /** The key rules of keys.ts, in the same chunk, when the program has a key trigger. Without them no key fires. */
+  keys?: KeyRules;
 }
 
 /** What the boot script leaves on a published page (src/lib/behaviour/gate.ts). */
@@ -53,25 +60,22 @@ interface Cell {
   value: unknown;
 }
 
-/** One trigger firing: where it stands and what fired it. */
-interface Run {
-  el: Element;
-  event: Event | null;
-  trigger: ProgramTrigger;
-  /** How many `emit`s led here. Carried across `delay`. */
-  depth: number;
-  /** A press held from before the runtime started: state verbs only. */
-  replay?: boolean;
-}
-
 interface Usage {
   start: number;
   count: number;
   off: boolean;
+  /** Firings on what the page caused itself, since a person last did anything. */
+  unprompted: number;
+  /** Which `prompts` that count belongs to. */
+  prompt: number;
 }
 
 export const MAX_ACTIONS_PER_TASK = 256;
 export const MAX_ACTIONS_PER_SECOND = 2000;
+/** All the page's work in a second: an action costs 1, and a full scan its items. */
+export const MAX_PAGE_COST_PER_SECOND = 100_000;
+/** Firings of one trigger on what the page caused, between two things a person did. */
+export const MAX_UNPROMPTED_FIRINGS = 256;
 const MAX_EMIT_DEPTH = 4;
 /** The parser's limit on text state. */
 const MAX_TEXT = 4096;
@@ -80,23 +84,27 @@ const NUMBER_PRECISION = 1e10;
 
 /** Fire too often to run per event: they run once per frame, with the last event. */
 const HIGH_FREQUENCY: ReadonlySet<string> = new Set(['pointermove', 'mousemove', 'scroll', 'wheel', 'drag', 'dragover', 'selectionchange', 'timeupdate']);
-const PRESSES: ReadonlySet<string> = new Set(['click', 'keydown', 'keyup']);
 const PSEUDO: ReadonlySet<string> = new Set(['every', 'page-ready', 'view-enter', 'view-leave']);
+/**
+ * Events a program can cause by itself, at the speed of a transition or a frame, too
+ * slow for any rate to catch and able to go round for ever.
+ */
+const SELF_CAUSED = /^(?:transition|animation|view-|toggle$|beforetoggle$|close$|cancel$)/;
+const PERSON: readonly string[] = ['pointerdown', 'keydown', 'wheel', 'touchmove'];
 const REPLAYED: readonly string[] = ['set', 'toggle', 'step'];
 const NO_ENTRIES: readonly ProgramEntry[] = [];
-
-/** Documents where a `showModal` that no press asked for has run. Outlives a restart. */
-const modalShown = new WeakSet<Document>();
 
 /** A sum over a missing value is no value, and reaches no page as the word NaN. */
 const hasValue = (value: unknown): boolean => value !== undefined && !Number.isNaN(value);
 const hasVerb = (action: Action, verbs: readonly string[]): boolean => verbs.some((verb) => verb in action);
 
-export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surface }: StartBehaviourOptions): () => void {
+export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surface, verbs, keys }: StartBehaviourOptions): () => void {
   const doc = (container.ownerDocument ?? container) as Document;
   const view = doc.defaultView as Window & typeof globalThis;
   const entries = new Map(Object.entries(program.nodes));
   const selector = `[${nodeAttr}],[${SCOPE_ATTR}]`;
+  /** What queries start from. Stored content lives under it, so a document's own methods are never called. */
+  const top = isElement(container) ? container : doc.documentElement;
 
   const scopes = new WeakMap<Element, Map<string, Cell>>();
   const kept = new Map<string, Map<string, Cell>>();
@@ -115,6 +123,10 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
   let dirty = false;
   let frame = 0;
   let taskActions = 0;
+  let pageStart = 0;
+  let pageCost = 0;
+  let timersOff = false;
+  let prompts = 0;
   let intersection: IntersectionObserver | null = null;
 
   const warn = (message: string, id: string): void => {
@@ -123,14 +135,19 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
     console.warn(`Page behaviour: ${message}`, id);
   };
 
-  const stop = (): void => {
-    if (stopped) return;
-    stopped = true;
-    stops.forEach((run) => run());
+  const stopTimers = (): void => {
     timers.forEach((id) => {
       view.clearTimeout(id);
       view.clearInterval(id);
     });
+    timers.clear();
+  };
+
+  const stop = (): void => {
+    if (stopped) return;
+    stopped = true;
+    stops.forEach((run) => run());
+    stopTimers();
     if (frame) view.cancelAnimationFrame(frame);
   };
 
@@ -143,7 +160,7 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
     try {
       work(...args);
     } catch (error) {
-      console.error('Page behaviour stopped: showing everything.', error);
+      console.error('Page behaviour stopped', error);
       stop();
       gate()?.fail();
     }
@@ -151,26 +168,27 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
 
   // ---- nodes -------------------------------------------------------------
 
-  const entriesOf = (el: Element): readonly ProgramEntry[] => entries.get(el.getAttribute(nodeAttr) ?? '') ?? NO_ENTRIES;
-  const entryOf = (el: Element): ProgramEntry | undefined => entriesOf(el)[Number(el.getAttribute(VARIANT_ATTR) ?? 0)];
+  const entriesOf = (el: Element): readonly ProgramEntry[] => entries.get(attrOf(el, nodeAttr) ?? '') ?? NO_ENTRIES;
+  const entryOf = (el: Element): ProgramEntry | undefined => entriesOf(el)[Number(attrOf(el, VARIANT_ATTR) ?? 0)];
 
   /** The nearest node holding `key`, scope by scope, so a row finds its own. The page is the last scope. */
   const find = (key: string, from: Element): Element | null => {
     const match = `[${nodeAttr}="${key}"]`;
-    for (let scope: Element | null = from.closest(`[${SCOPE_ATTR}]`); scope; scope = scope.parentElement?.closest(`[${SCOPE_ATTR}]`) ?? null) {
-      const hit = scope.matches(match) ? scope : scope.querySelector(match);
+    for (const scope of upFrom(from)) {
+      if (!hasAttr(scope, SCOPE_ATTR)) continue;
+      const hit = isMatch(scope, match) ? scope : one(scope, match);
       if (hit) return hit;
     }
-    return container.querySelector(match);
+    return one(top, match);
   };
 
   /** A scope's place on the page, which survives an island remounting it. */
   const pathOf = (el: Element): string => {
     const path: string[] = [];
-    for (let at: Element | null = el; at; at = at.parentElement) {
-      if (!at.hasAttribute(SCOPE_ATTR)) continue;
-      const row = at.getAttribute(ROW_ATTR);
-      path.push(`${at.getAttribute(nodeAttr)}:${row ?? (at.parentElement ? [...at.parentElement.children].indexOf(at) : 0)}`);
+    for (const at of upFrom(el)) {
+      if (!hasAttr(at, SCOPE_ATTR)) continue;
+      const parent = parentOf(at);
+      path.push(`${attrOf(at, nodeAttr)}:${attrOf(at, ROW_ATTR) ?? (parent ? [...childrenOf(parent)].indexOf(at) : 0)}`);
     }
     return path.join('/');
   };
@@ -178,7 +196,7 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
   // ---- state -------------------------------------------------------------
 
   const cellOf = (id: string, from: Element): { scope: Element; cell: Cell } | null => {
-    for (let at: Element | null = from; at; at = at.parentElement) {
+    for (const at of upFrom(from)) {
       const cell = scopes.get(at)?.get(id);
       if (cell) return { scope: at, cell };
     }
@@ -186,7 +204,7 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
   };
 
   const reflect = (scope: Element, { state, value }: Cell): void => {
-    if (state.type !== 'text') scope.setAttribute(stateAttribute(state.id), String(value));
+    if (state.type !== 'text') setAttr(scope, stateAttribute(state.id), String(value));
   };
 
   /** The value a state may hold, or undefined when `value` is not one. */
@@ -209,7 +227,7 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
   const write = (id: string, value: unknown, from: Element): boolean => {
     const found = cellOf(id, from);
     if (!found) {
-      warn('no state in reach', id);
+      warn('no state', id);
       return false;
     }
     const next = fit(found.cell.state, value);
@@ -225,8 +243,8 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
   // ---- expressions -------------------------------------------------------
 
   const rowOf = (el: Element): number | undefined => {
-    const row = el.closest(`[${ROW_ATTR}]`)?.getAttribute(ROW_ATTR);
-    return row === undefined || row === null ? undefined : Number(row);
+    const clone = closestTo(el, `[${ROW_ATTR}]`);
+    return clone ? Number(attrOf(clone, ROW_ATTR)) : undefined;
   };
 
   const pointerAt = (x: Extract<Expression, { pointer: string }>, run: Pick<Run, 'el' | 'event'>): number | undefined => {
@@ -298,11 +316,11 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
 
   const applyAttribute = (el: Element, attr: string, value: unknown): void => {
     if (isBooleanAttribute(attr)) {
-      el.toggleAttribute(attr, Boolean(value));
+      toggleAttr(el, attr, Boolean(value));
       return;
     }
     const text = String(value);
-    if (el.getAttribute(attr) !== text) el.setAttribute(attr, text);
+    if (attrOf(el, attr) !== text) setAttr(el, attr, text);
     // The attribute is only the first value of a field a person has touched.
     if (attr === 'value' && 'value' in el && (el as HTMLInputElement).value !== text) (el as HTMLInputElement).value = text;
   };
@@ -327,8 +345,9 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
 
   const flush = guarded((): void => {
     dirty = false;
+    charge(bound.size);
     for (const el of bound) {
-      if (!el.isConnected) bound.delete(el);
+      if (!isConnected(el)) bound.delete(el);
       else for (const binding of entryOf(el)?.bind ?? []) applyBinding(el, binding);
     }
   });
@@ -338,16 +357,37 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
   const usageOf = (trigger: ProgramTrigger): Usage => {
     let use = usage.get(trigger);
     if (!use) {
-      use = { start: 0, count: 0, off: false };
+      use = { start: 0, count: 0, off: false, unprompted: 0, prompt: 0 };
       usage.set(trigger, use);
     }
     return use;
   };
 
+  /**
+   * Charges the page for work. Many small triggers can each stay under their own limit,
+   * so past the page's limit nothing runs until the second is over, and timers stop for
+   * the visit: what a person does comes back, and what nobody asked for does not.
+   */
+  const charge = (cost: number): boolean => {
+    const now = view.performance.now();
+    if (now - pageStart > 1000) {
+      pageStart = now;
+      pageCost = 0;
+    }
+    pageCost += cost;
+    if (pageCost <= MAX_PAGE_COST_PER_SECOND) return true;
+    if (!timersOff) {
+      timersOff = true;
+      stopTimers();
+      warn('too much at once, timers off', 'page');
+    }
+    return false;
+  };
+
   /** Charges one action. False once the trigger went over, which turns it off for good. */
   const spend = (trigger: ProgramTrigger): boolean => {
     const use = usageOf(trigger);
-    if (use.off) return false;
+    if (use.off || !charge(1)) return false;
     const now = view.performance.now();
     if (now - use.start > 1000) {
       use.start = now;
@@ -358,23 +398,54 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
     taskActions += 1;
     if (use.count <= MAX_ACTIONS_PER_SECOND && taskActions <= MAX_ACTIONS_PER_TASK) return true;
     use.off = true;
-    warn('this trigger ran too often and is off for this visit', trigger.id);
+    warn('ran too often', trigger.id);
     return false;
   };
 
   const refund = (trigger: ProgramTrigger): void => {
     usageOf(trigger).count -= 1;
     taskActions -= 1;
+    pageCost -= 1;
   };
+
+  /** False when a trigger on what the page caused has gone round too long with nobody there. */
+  const prompted = (trigger: ProgramTrigger): boolean => {
+    if (!SELF_CAUSED.test(trigger.on)) return true;
+    const use = usageOf(trigger);
+    if (use.prompt !== prompts) {
+      use.prompt = prompts;
+      use.unprompted = 0;
+    }
+    use.unprompted += 1;
+    if (use.unprompted <= MAX_UNPROMPTED_FIRINGS) return true;
+    use.off = true;
+    warn('ran unprompted too long', trigger.id);
+    return false;
+  };
+
+  const kit: Kit = {
+    container,
+    doc,
+    surface,
+    find,
+    entryOf,
+    evaluate,
+    warn,
+    charge,
+    settle: () => {
+      if (dirty) flush();
+    },
+  };
+  const runVerb = verbs?.(kit);
 
   // ---- actions -----------------------------------------------------------
 
   /** Where a `delay` key lives: the nearest scope that already holds it, or the nearest scope. */
   const holderOf = (key: string, from: Element): Element => {
-    for (let at: Element | null = from; at; at = at.parentElement) {
+    for (const at of upFrom(from)) {
       if (pending.get(at)?.has(key)) return at;
     }
-    return from.closest(`[${SCOPE_ATTR}]`) ?? from;
+    return closestTo(from, `[${SCOPE_ATTR}]`) ?? from;
   };
 
   const cancel = (key: string, from: Element): boolean => {
@@ -388,6 +459,7 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
   };
 
   const schedule = (action: Extract<Action, { delay: number }>, run: Run): void => {
+    if (timersOff) return;
     const holder = action.key ? holderOf(action.key, run.el) : null;
     const { key } = action;
     if (key) cancel(key, run.el);
@@ -421,51 +493,15 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
   /** Fires `custom:<name>` on the node and up the nodes around it. */
   const emit = (name: string, run: Run): void => {
     if (run.depth >= MAX_EMIT_DEPTH) {
-      warn('emit went too deep', name);
+      warn('emit too deep', name);
       return;
     }
     const type = `custom:${name}`;
-    for (let at: Element | null = run.el; at; at = at.parentElement) {
+    for (const at of upFrom(run.el)) {
       for (const trigger of entryOf(at)?.on ?? []) {
         if (trigger.on === type) fire(trigger, at, null, run.depth + 1);
       }
     }
-  };
-
-  /** A native verb a stored mistake can make the browser refuse: that costs this verb alone. */
-  const native = (run: Run, work: () => void): void => {
-    try {
-      work();
-    } catch (error) {
-      warn(`the browser refused this: ${(error as Error).name}`, run.trigger.id);
-    }
-  };
-
-  const openDialog = (dialog: HTMLDialogElement, run: Run): void => {
-    if (dialog.open) return;
-    // A press can open a modal any number of times. Nothing else opens one twice, so
-    // no cycle through `close` can hold the page, and the consent banner, inert.
-    if (!PRESSES.has(run.trigger.on)) {
-      if (surface === 'canvas' || modalShown.has(doc)) return;
-      modalShown.add(doc);
-    }
-    dialog.showModal();
-  };
-
-  const dialogVerb = (action: Extract<Action, { dialog: string }>, run: Run): void => {
-    const dialog = find(action.dialog, run.el) as HTMLDialogElement | null;
-    if (!dialog) {
-      warn('no such node', action.dialog);
-      return;
-    }
-    native(run, () => {
-      const { op } = action;
-      if (op === 'showModal') openDialog(dialog, run);
-      else if (op === 'show') dialog.show();
-      else if (op === 'close') dialog.close();
-      else if (dialog.open) dialog.close();
-      else dialog.show();
-    });
   };
 
   /** Runs one action. False when it left everything as it was, so it costs nothing. */
@@ -476,8 +512,8 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
     if ('cancel' in action) return cancel(action.cancel, run.el);
     if ('delay' in action) schedule(action, run);
     else if ('emit' in action) emit(action.emit, run);
-    else if ('dialog' in action) dialogVerb(action, run);
-    else warn('this action does not run here', run.trigger.id);
+    else if (runVerb) runVerb(action, run);
+    else warn('no such action', run.trigger.id);
     return true;
   };
 
@@ -495,8 +531,8 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
   // ---- triggers ----------------------------------------------------------
 
   const fire = (trigger: ProgramTrigger, el: Element, event: Event | null, depth: number, replay = false): void => {
-    if (usageOf(trigger).off) return;
-    if ((trigger.on === 'keydown' || trigger.on === 'keyup') && !keysAnswer(trigger.keys, event as KeyboardEvent, el)) return;
+    if (usageOf(trigger).off || !prompted(trigger)) return;
+    if ((trigger.on === 'keydown' || trigger.on === 'keyup') && !keys?.keysAnswer(trigger.keys, event as KeyboardEvent, el)) return;
     if (trigger.if !== undefined && !evaluate(trigger.if, { el, event })) return;
     if (trigger.prevent && !replay) event?.preventDefault();
     perform(trigger.do, { el, event, trigger, depth, replay });
@@ -510,28 +546,28 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
 
   /** The element an event starts from. `selectionchange` targets the document. */
   const originOf = (event: Event): Element | null => {
-    const target = event.target as Node | null;
-    if (target?.nodeType === 1) return target as Element;
+    if (isElement(event.target)) return event.target;
     if (event.type !== 'selectionchange') return null;
     const anchor = doc.getSelection()?.anchorNode ?? null;
-    return anchor?.nodeType === 1 ? (anchor as Element) : (anchor?.parentElement ?? null);
+    if (!anchor) return null;
+    return isElement(anchor) ? anchor : parentOf(anchor as Element);
   };
 
   const deliver = (event: Event, replay = false): void => {
     const origin = originOf(event);
-    if (!origin || !container.contains(origin)) return;
+    if (!origin || !holds(container, origin)) return;
     if (!event.bubbles && event.type !== 'selectionchange') {
       fireOn(origin, event.type, event, replay);
       return;
     }
-    for (let at: Element | null = origin; at; at = at.parentElement) fireOn(at, event.type, event, replay);
+    for (const at of upFrom(origin)) fireOn(at, event.type, event, replay);
   };
 
   /** A frame's document hears other frames too, so on one the event has to be its own. */
   const isOurs = (event: Event): boolean => {
     if (container === doc) return true;
     const anchor = doc.getSelection()?.anchorNode ?? null;
-    return container.contains(event.target as Node) || (anchor !== null && container.contains(anchor));
+    return holds(container, event.target as Node) || (anchor !== null && holds(container, anchor));
   };
 
   const pageWide = new Map<string, [string, ProgramTrigger][]>();
@@ -539,9 +575,9 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
   const deliverPageWide = (event: Event): void => {
     if (!isOurs(event)) return;
     for (const [key, trigger] of pageWide.get(event.type) ?? []) {
-      container.querySelectorAll(`[${nodeAttr}="${key}"]`).forEach((el) => {
+      for (const el of every(top, `[${nodeAttr}="${key}"]`)) {
         if (entryOf(el)?.on?.includes(trigger)) fire(trigger, el, event, 0);
-      });
+      }
     }
   };
 
@@ -579,9 +615,10 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
   };
 
   const startEvery = (el: Element, trigger: ProgramTrigger): void => {
+    if (timersOff) return;
     const motion = view.matchMedia?.('(prefers-reduced-motion: reduce)');
     const id = view.setInterval(guarded(() => {
-      if (!el.isConnected) {
+      if (!isConnected(el)) {
         view.clearInterval(id);
         timers.delete(id);
       } else if (!doc.hidden && !motion?.matches) {
@@ -630,15 +667,15 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
     }
   };
 
-  const scan = (root: Element | ParentNode): void => {
-    if (root.nodeType === 1 && (root as Element).matches(selector)) adopt(root as Element);
-    root.querySelectorAll(selector).forEach(adopt);
+  const scan = (root: Element): void => {
+    if (isMatch(root, selector)) adopt(root);
+    every(root, selector).forEach(adopt);
   };
 
   /** What was opened before the runtime started, which fired a `toggle` nobody heard. */
   const catchUp = (): void => {
     for (const [el, trigger] of opening.splice(0)) {
-      if (el.hasAttribute('open') || ((el as HTMLElement).popover && el.matches(':popover-open'))) {
+      if (hasAttr(el, 'open') || (attrOf(el, 'popover') !== null && isMatch(el, ':popover-open'))) {
         fire(trigger, el, { newState: 'open' } as unknown as Event, 0, true);
       }
     }
@@ -648,7 +685,7 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
   const replay = (queue: Event[]): void => {
     for (const event of queue.splice(0)) {
       const target = event.target as Element | null;
-      if (!target?.isConnected || (event.type === 'keydown' && isTextEntry(target))) continue;
+      if (!target || !isConnected(target) || (event.type === 'keydown' && keys?.isTextEntry(target))) continue;
       deliver(event, true);
     }
   };
@@ -662,17 +699,26 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
       }
     }
     const triggers = [...entries.values()].flatMap((list) => list.flatMap((entry) => entry.on ?? []));
+    if (triggers.some(({ on }) => SELF_CAUSED.test(on))) {
+      const person = () => {
+        prompts += 1;
+      };
+      for (const type of PERSON) {
+        doc.addEventListener(type, person, { capture: true, passive: true });
+        stops.push(() => doc.removeEventListener(type, person, { capture: true }));
+      }
+    }
     for (const type of new Set(triggers.map((trigger) => trigger.on))) {
       if (PSEUDO.has(type) || type.startsWith('custom:')) continue;
       const prevents = triggers.some((trigger) => trigger.on === type && trigger.prevent === true);
       listen(type, HIGH_FREQUENCY.has(type) && !prevents, prevents);
     }
 
-    scan(container);
+    scan(top);
     const mutations = new MutationObserver(guarded((records: MutationRecord[]) => {
       for (const record of records) {
         record.addedNodes.forEach((node) => {
-          if (node.nodeType === 1) scan(node as Element);
+          if (isElement(node)) scan(node);
         });
       }
       touch();
@@ -688,7 +734,7 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
     flush();
     if (page) replay(page.queue);
     catchUp();
-    for (const el of container.querySelectorAll(`[${nodeAttr}]`)) fireOn(el, 'page-ready', null);
+    for (const el of every(top, `[${nodeAttr}]`)) fireOn(el, 'page-ready', null);
   };
 
   guarded(begin)();
