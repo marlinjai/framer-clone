@@ -32,6 +32,8 @@ export {
   InvalidPageSlugError,
   SiteRevisionNotFoundError,
   SiteErasedSinceLoadError,
+  SiteChangedError,
+  SiteVersionRequiredError,
   ErasePreviewStaleError,
   NothingToEraseError,
   siteRepositoryErrorResponse,
