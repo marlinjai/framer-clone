@@ -8,14 +8,22 @@
 //   200 redirect                -> ok with the hosted checkout page (Stripe) to send the buyer to
 //   402 payment_declined        -> declined (the order is closed: the checkout starts a new one)
 //   409 payment_closed          -> closed (paid or closed elsewhere, or expired: check out again)
+//   422 buyer_not_invoiceable   -> refused, with the shop's own message (no money moved, the order keeps waiting)
+//   400 on the country or email -> refused, naming each bad field (Germany typed out instead of the two letters)
 //   422 buyer_required / 400    -> invalid (the buyer's details are missing or malformed)
 //   anything else, or no answer -> gateway_error (retryable)
 
-import type { PaymentGateway, PaymentRequest, PaymentResult } from './types';
+import type { PaymentGateway, PaymentRequest, PaymentResult, RefusedBuyerField } from './types';
 
 interface ErrorBody {
-  error?: { code?: string; message?: string };
+  error?: { code?: string; message?: string; field?: RefusedBuyerField; issues?: Array<{ path?: unknown[] }> };
 }
+
+/** What to do about a field the server could not read, one sentence each, so two bad fields show together. */
+const FIELD_HINTS: Array<[RefusedBuyerField, string]> = [
+  ['email', 'Enter a complete email address.'],
+  ['country', 'Enter the country as two letters, such as DE for Germany.'],
+];
 
 async function errorOf(res: Response): Promise<ErrorBody['error']> {
   try {
@@ -63,6 +71,23 @@ export class StorefrontPaymentGateway implements PaymentGateway {
     }
     if (res.status === 409) {
       return { ok: false, code: 'closed', message: error?.message ?? 'the order no longer takes a payment' };
+    }
+    if (res.status === 422 && error?.code === 'buyer_not_invoiceable') {
+      return {
+        ok: false,
+        code: 'refused',
+        message: error.message ?? 'this shop cannot invoice these details. Nothing has been charged.',
+        fields: error.field ? [error.field] : [],
+      };
+    }
+    const badFields = FIELD_HINTS.filter(([field]) => error?.issues?.some((issue) => issue.path?.at(-1) === field));
+    if (res.status === 400 && badFields.length > 0) {
+      return {
+        ok: false,
+        code: 'refused',
+        message: `${badFields.map(([, hint]) => hint).join(' ')} Nothing has been charged.`,
+        fields: badFields.map(([field]) => field),
+      };
     }
     if (res.status === 422 || res.status === 400) {
       return { ok: false, code: 'invalid', message: 'check the name, email and address: the receipt is made out to them' };

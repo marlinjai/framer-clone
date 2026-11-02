@@ -64,6 +64,9 @@ export interface PaymentSuccess {
   redirectUrl?: string;
 }
 
+/** A buyer field a refusal can name. */
+export type RefusedBuyerField = 'country' | 'email' | 'vatId';
+
 /** A failed authorization. `code` lets the UI distinguish a decline from a fault. */
 export interface PaymentFailure {
   ok: false;
@@ -74,10 +77,14 @@ export interface PaymentFailure {
    *   programming error surfaced loudly, never a silent success.
    * `gateway_error`: the gateway/network failed. Retryable.
    * `closed`: the order no longer takes a payment (declined before, expired): check out again.
+   * `refused`: the shop cannot invoice this buyer, so no money moved. The order keeps waiting: the visitor
+   *   corrects `field` and pays it, or leaves.
    */
-  code: 'declined' | 'invalid' | 'gateway_error' | 'closed';
+  code: 'declined' | 'invalid' | 'gateway_error' | 'closed' | 'refused';
   /** A human-readable message surfaced to the visitor (never swallowed). */
   message: string;
+  /** With `refused`: the buyer's fields the refusal is about. */
+  fields?: RefusedBuyerField[];
 }
 
 export type PaymentResult = PaymentSuccess | PaymentFailure;

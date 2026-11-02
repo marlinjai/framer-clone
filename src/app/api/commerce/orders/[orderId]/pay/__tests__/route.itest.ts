@@ -7,7 +7,8 @@
 //   - a declined card: 402, the order is closed and its stock released;
 //   - paying twice, a closed order or one whose window ran out: 409 payment_closed; another shop's order: 404;
 //   - no buyer: 422 buyer_required, nothing paid;
-//   - an expired order that cannot be closed stops only itself, never another buyer of the shop.
+//   - an expired order that cannot be closed stops only itself, never another buyer of the shop;
+//   - paying closes only its own expired order: every other one waits for its job, which the order route wrote.
 // All data is synthetic.
 
 import { randomUUID } from 'node:crypto';
@@ -149,6 +150,28 @@ describe('POST /api/commerce/orders/<id>/pay (demo provider)', () => {
     expect(res.status).toBe(409);
     expect((await res.json()) as unknown).toMatchObject({ error: { code: 'payment_closed', status: 'expired' } });
     expect(await reserved(placed.inventoryItemId)).toBe(0);
+  });
+
+  it('paying sweeps only its own order: another expired hold waits for the job the order wrote', async () => {
+    const abandoned = await order(1, BUYER);
+    const buying = await order(5, BUYER);
+    await letWindowRunOut(abandoned.orderId);
+
+    expect((await payOrder(buying.orderId, {})).status).toBe(200);
+
+    const row = await tenant.db
+      .selectFrom('order_payment')
+      .select('status')
+      .where('order_id', '=', abandoned.orderId)
+      .executeTakeFirstOrThrow();
+    expect(row.status).toBe('pending');
+    expect(await reserved(abandoned.inventoryItemId)).toBe(1);
+    const jobs = await tenant.db
+      .selectFrom('commerce_job')
+      .select(['kind', 'status'])
+      .where('dedupe_key', '=', `expiry:${abandoned.orderId}`)
+      .execute();
+    expect(jobs).toEqual([{ kind: 'payment_expiry', status: 'pending' }]);
   });
 
   it('an expired order that cannot be closed stops only itself: another buyer pays, it takes no money', async () => {

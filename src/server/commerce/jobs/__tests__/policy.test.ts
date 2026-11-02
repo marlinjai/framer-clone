@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
 import { COMMERCE_CONSUMERS, JOB_KINDS } from '../consumers';
+import { paymentExpiryConsumer } from '../../payment/expiryJob';
 import { backoffMs } from '../run';
 import { defineJobKind, JOB_LEASE_MS, type JobPolicy } from '../types';
 
@@ -48,8 +49,17 @@ describe('defineJobKind', () => {
 });
 
 describe('the production registries', () => {
-  it('run nothing yet: no kind and no consumer', () => {
-    expect(JOB_KINDS).toEqual({});
-    expect(Object.values(COMMERCE_CONSUMERS).flat()).toEqual([]);
+  it('hold the expiry job and nothing else yet', () => {
+    expect(Object.keys(JOB_KINDS)).toEqual(['payment_expiry']);
+    expect(COMMERCE_CONSUMERS['order.placed']).toEqual([paymentExpiryConsumer]);
+    expect(Object.values(COMMERCE_CONSUMERS).flat()).toEqual([paymentExpiryConsumer]);
+  });
+
+  it('give the expiry job the policy of section 1.8: 1, 5, 15, 60 minutes, then 6 hours, for 3 days', () => {
+    expect(JOB_KINDS.payment_expiry.policy).toMatchObject({
+      backoffMinutes: [1, 5, 15, 60],
+      laterMinutes: 360,
+      giveUpAfterMs: 3 * 24 * 60 * 60 * 1000,
+    });
   });
 });

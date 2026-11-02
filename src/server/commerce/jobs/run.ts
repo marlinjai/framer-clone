@@ -9,7 +9,8 @@ import 'server-only';
 import type { Kysely } from 'kysely';
 
 import type { CommerceDB } from '../db-types';
-import { receiptFailure } from '../payment/payments';
+import { paymentDeps } from '../payment/deps';
+import { handlePaymentEvent, receiptFailure } from '../payment/payments';
 import { claimJob, finishDead, finishDone, finishRerun, finishRetry, type ClaimOptions } from './claim';
 import { JOB_KINDS } from './consumers';
 import {
@@ -20,7 +21,9 @@ import {
   type CompanyContext,
   type JobKind,
   type JobKindRegistry,
+  type JobPayments,
   type JobPolicy,
+  type JobTenantGroup,
 } from './types';
 
 const MINUTE_MS = 60 * 1000;
@@ -46,6 +49,20 @@ export interface JobRunResult {
   tenantId: string;
   kind: string;
   outcome: JobRunOutcome;
+}
+
+/**
+ * The payment state machine for one job: bound to its company, and the row lock's wait to its deadline, so a job
+ * blocked on a payment ends as an ordinary retry instead of running out its lease as an open claim.
+ */
+function jobPayments(group: JobTenantGroup, tenantId: string, kind: JobKind, now: () => Date): JobPayments {
+  return {
+    handleEvent: (event) =>
+      handlePaymentEvent(
+        { ...paymentDeps(group.db, group.id, tenantId), now, lockWaitMs: kind.policy.deadlineMs },
+        { ...event, tenantId },
+      ),
+  };
 }
 
 /** The handler's end, before it is written. */
@@ -77,19 +94,21 @@ export function companyContext(db: Kysely<CommerceDB>, tenantId: string): Compan
 
 /** The handler's run as an Ending. Never rejects, so a handler that answers after being abandoned harms nothing. */
 async function invoke(
-  db: Kysely<CommerceDB>,
+  group: JobTenantGroup,
   job: CommerceJob,
   kind: JobKind,
   payload: unknown,
   signal: AbortSignal,
+  now: () => Date,
 ): Promise<Ending> {
   const where = `${job.kind} ${job.id} of company ${job.tenant_id}`;
   try {
     const answer = await kind.run({
       job: { id: job.id, kind: job.kind, attempts: job.attempts },
-      company: companyContext(db, job.tenant_id),
+      company: companyContext(group.db, job.tenant_id),
       payload,
       signal,
+      payments: jobPayments(group, job.tenant_id, kind, now),
     });
     if (!answer) return { type: 'done' };
     if (answer.payload === undefined) return { type: 'rerun', rerunAt: answer.rerunAt };
@@ -110,11 +129,12 @@ async function invoke(
 
 /** Run the handler under its deadline. A handler that ignores the signal is given up on when its lease ends. */
 async function attempt(
-  db: Kysely<CommerceDB>,
+  group: JobTenantGroup,
   job: CommerceJob,
   kind: JobKind,
   payload: unknown,
   leaseMs: number,
+  now: () => Date,
 ): Promise<Ending> {
   const deadline = new AbortController();
   const deadlineTimer = setTimeout(() => deadline.abort(new JobRetryLater(DEADLINE_EXCEEDED)), kind.policy.deadlineMs);
@@ -123,7 +143,7 @@ async function attempt(
     leaseTimer = setTimeout(() => resolve({ type: 'abandoned' }), leaseMs);
   });
   try {
-    return await Promise.race([invoke(db, job, kind, payload, deadline.signal), leaseOver]);
+    return await Promise.race([invoke(group, job, kind, payload, deadline.signal, now), leaseOver]);
   } finally {
     clearTimeout(deadlineTimer);
     clearTimeout(leaseTimer);
@@ -167,11 +187,12 @@ async function settle(
 
 /** Claim one job and run it. */
 async function claimAndRun(
-  db: Kysely<CommerceDB>,
+  group: JobTenantGroup,
   options: JobRunOptions,
   only?: ClaimOptions['only'],
 ): Promise<JobRunResult | null> {
   const { kinds = JOB_KINDS, now = () => new Date(), leaseMs = JOB_LEASE_MS } = options;
+  const { db } = group;
   const job = await claimJob(db, { kinds: Object.keys(kinds), now: now(), leaseMs, only });
   if (!job) return null;
   const result = { id: job.id, tenantId: job.tenant_id, kind: job.kind };
@@ -183,14 +204,14 @@ async function claimAndRun(
   const kind = kinds[job.kind];
   const payload = kind.payload.safeParse(job.payload);
   const ending = payload.success
-    ? await attempt(db, job, kind, payload.data, leaseMs)
+    ? await attempt(group, job, kind, payload.data, leaseMs, now)
     : ({ type: 'refused', reason: PAYLOAD_INVALID } as const);
   return { ...result, outcome: await settle(db, job, kind.policy, ending, now()) };
 }
 
 /** Claim the oldest due job of the tenant group and run it. Null when nothing is due. */
-export function runNextJob(db: Kysely<CommerceDB>, options: JobRunOptions = {}): Promise<JobRunResult | null> {
-  return claimAndRun(db, options);
+export function runNextJob(group: JobTenantGroup, options: JobRunOptions = {}): Promise<JobRunResult | null> {
+  return claimAndRun(group, options);
 }
 
 /**
@@ -198,10 +219,10 @@ export function runNextJob(db: Kysely<CommerceDB>, options: JobRunOptions = {}):
  * Null when the job is not due, or another worker holds it.
  */
 export function runJobNow(
-  db: Kysely<CommerceDB>,
+  group: JobTenantGroup,
   tenantId: string,
   jobId: string,
   options: JobRunOptions = {},
 ): Promise<JobRunResult | null> {
-  return claimAndRun(db, options, { tenantId, id: jobId });
+  return claimAndRun(group, options, { tenantId, id: jobId });
 }

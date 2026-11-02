@@ -29,7 +29,9 @@
 //     never a false confirmation.
 //   - a declined payment: the server closed the order (its stock went back), so
 //     the checkout forgets it and the visitor checks out again (a new order);
-//     a fault in the payment step keeps the order and retries ONLY the payment.
+//     a fault in the payment step keeps the order and retries ONLY the payment;
+//   - a buyer the shop cannot invoice (a 422 from the pay route): no money moved, the order keeps waiting and
+//     everything typed stays, so the visitor corrects the named field and pays, or goes back to the cart.
 'use client';
 
 import React from 'react';
@@ -37,7 +39,7 @@ import React from 'react';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import type { BindingScope } from '@/lib/bindings/resolver/scope';
 import { useCart, useCheckoutUnavailableReason, type CartLine } from '@/lib/commerce/cart';
-import { getPaymentGateway, type CheckoutBuyer, type PaymentGateway } from '@/lib/commerce/payment';
+import { getPaymentGateway, type CheckoutBuyer, type PaymentGateway, type RefusedBuyerField } from '@/lib/commerce/payment';
 
 /** A single per-line shortage, in the client's variant vocabulary. */
 export interface CheckoutShortage {
@@ -97,6 +99,8 @@ type CheckoutState =
       paying: boolean;
       /** Last decline/fault message for the payment step, or null. */
       paymentError: string | null;
+      /** Why the shop cannot invoice this buyer (the server's words), or null. Not a failed payment. */
+      refusal: { message: string; fields: RefusedBuyerField[] } | null;
       /** The buyer the receipt is made out to, as typed so far. */
       buyer: CheckoutBuyer;
     }
@@ -199,6 +203,8 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
   const cart = useCart();
   const unavailableReason = useCheckoutUnavailableReason();
   const [state, setState] = React.useState<CheckoutState>({ status: 'idle' });
+  // A page can carry several checkout buttons; each refusal is named by its own field.
+  const refusalId = React.useId();
 
   // The payment gateway is resolved once (the seam). Tests inject a fake.
   const gatewayRef = React.useRef<PaymentGateway | null>(gateway ?? null);
@@ -251,6 +257,7 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
       simulateDecline: false,
       paying: false,
       paymentError: null,
+      refusal: null,
       // Keep what was typed when coming back to the same order.
       buyer: prev.status === 'payment' ? prev.buyer : buyerRef.current,
     }));
@@ -346,7 +353,7 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
       setState({ ...state, paymentError: 'fill in your name, email and address: the receipt is made out to them' });
       return;
     }
-    setState({ ...state, paying: true, paymentError: null });
+    setState({ ...state, paying: true, paymentError: null, refusal: null });
 
     try {
       const result = await activeGateway.authorize({
@@ -394,6 +401,15 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
           status: 'order_error',
           message: `${result.message}. Your cart is kept: check out again to try once more.`,
         });
+        return;
+      }
+
+      if (result.code === 'refused') {
+        setState((prev) =>
+          prev.status === 'payment'
+            ? { ...prev, paying: false, refusal: { message: result.message, fields: result.fields ?? [] } }
+            : prev,
+        );
         return;
       }
 
@@ -460,6 +476,7 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
     ) : null,
     renderOutcome(state, {
       payLabel,
+      refusalId,
       isDemo: activeGateway.isDemo && !(state.status === 'payment' && state.order.provider === 'stripe'),
       onPay: pay,
       onToggleDecline: (next) =>
@@ -469,7 +486,10 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
           if (prev.status !== 'payment') return prev;
           const buyer = { ...prev.buyer, [key]: value };
           buyerRef.current = buyer;
-          return { ...prev, buyer };
+          // A refused field stands only until the visitor changes it; the refusal until none is left.
+          const fields = prev.refusal?.fields.filter((field) => field !== key) ?? [];
+          const answered = prev.refusal !== null && prev.refusal.fields.length > 0 && fields.length === 0;
+          return { ...prev, buyer, refusal: prev.refusal && !answered ? { ...prev.refusal, fields } : null };
         }),
       onBackToCart: () => setState({ status: 'idle' }),
     }),
@@ -478,6 +498,7 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
 
 interface OutcomeHandlers {
   payLabel: string;
+  refusalId: string;
   isDemo: boolean;
   onPay: () => void;
   onToggleDecline: (next: boolean) => void;
@@ -485,10 +506,15 @@ interface OutcomeHandlers {
   onBackToCart: () => void;
 }
 
+/** Whether the refusal names this buyer field. */
+function refused(refusal: { fields: RefusedBuyerField[] } | null, key: keyof CheckoutBuyer): boolean {
+  return refusal?.fields.some((field) => field === key) ?? false;
+}
+
 /** Render the step/outcome panel (payment / confirmation / shortage / error). */
 function renderOutcome(state: CheckoutState, handlers: OutcomeHandlers): React.ReactNode {
   if (state.status === 'payment') {
-    const { order, simulateDecline, paying, paymentError, buyer } = state;
+    const { order, simulateDecline, paying, paymentError, refusal, buyer } = state;
     const total = formatCents(order.totalCents, order.currency);
     return (
       <div data-checkout-payment style={PANEL_STYLE}>
@@ -513,6 +539,8 @@ function renderOutcome(state: CheckoutState, handlers: OutcomeHandlers): React.R
                 data-checkout-buyer-field={field.key}
                 value={String(buyer[field.key] ?? '')}
                 disabled={paying}
+                aria-invalid={refused(refusal, field.key) ? true : undefined}
+                aria-describedby={refused(refusal, field.key) ? handlers.refusalId : undefined}
                 onChange={(event) => handlers.onBuyerChange(field.key, event.target.value)}
                 style={{
                   padding: '6px 8px',
@@ -538,6 +566,11 @@ function renderOutcome(state: CheckoutState, handlers: OutcomeHandlers): React.R
             />
             Simulate a declined payment
           </label>
+        ) : null}
+        {refusal ? (
+          <div id={handlers.refusalId} role="alert" data-checkout-refused style={{ marginTop: '8px', color: '#b91c1c' }}>
+            {refusal.message}
+          </div>
         ) : null}
         {paymentError ? (
           <div

@@ -25,14 +25,15 @@ import { BooksError } from '@/server/books/errors';
 import type { ContactBook, NewContactInput } from '@/server/books/contactBook';
 import { issue } from '@/server/books/issue';
 import { storeBeforeCommit } from '@/server/books/render/store';
-import { createCustomer, customersByContactIds } from '@/server/books/repository/customers';
+import { createCustomer, customersByContactIds, type Customer } from '@/server/books/repository/customers';
 import { createDraft, deleteDraft } from '@/server/books/repository/documents';
 import { addLine } from '@/server/books/repository/lines';
 import { getDocument } from '@/server/books/repository/read';
 import type { BooksScope } from '@/server/books/scope';
-import { requireSettings } from '@/server/books/settings';
+import { requireSettings, type CompanySettings } from '@/server/books/settings';
 import { lineTitle } from '@/lib/commerce/lineTitle';
 import type { RecipientContact } from '@/server/books/snapshots';
+import { resolveTaxProfile } from '@/server/tax/germanVat';
 import { readBuyer, type Buyer } from './buyer';
 
 /** The actor recorded on the receipt's events: the shop, not a person. */
@@ -99,14 +100,43 @@ function normalizedVatId(vatId: string | null | undefined): string | null {
   return normalized === '' ? null : normalized;
 }
 
+/** Whether the invoice is taxed alike under the customer row's country and the buyer's. */
+function sameTaxOutcome(settings: CompanySettings, customer: Customer, buyerCountry: string): boolean {
+  const profile = (countryCode: string) =>
+    resolveTaxProfile({
+      companyTaxStatus: settings.taxStatus,
+      exemptionNote: settings.exemptionNote,
+      customerType: customer.customerType,
+      vatId: customer.vatId,
+      countryCode,
+    });
+  const onRow = profile(customer.countryCode);
+  const forBuyer = profile(buyerCountry);
+  return (
+    onRow.supported === forBuyer.supported &&
+    onRow.reverseCharge === forBuyer.reverseCharge &&
+    onRow.kleinunternehmer === forBuyer.kleinunternehmer
+  );
+}
+
 /**
  * The Books customer for the buyer (the existing one of the contact, or a new one), and its contact. The
  * receipt freezes the customer's tax identity (type and VAT id) next to the buyer's address, so an existing
  * customer is reused only when that identity is the buyer's own; another buyer of the same name with another VAT
  * id is refused instead of getting a receipt that shows the first buyer's tax identity. An archived contact is
  * refused as well: the recipient override carries no archived flag of its own.
+ *
+ * The row's country is compared the same way and never written: contacts match by name alone, so the row may be
+ * another person's, with drafts of their own on it. The invoice's tax profile reads the country from the row while
+ * the recipient is the buyer, so a country that would change the tax outcome is refused rather than invoiced wrongly.
+ * That buyer has paid and has no invoice; the complete fix is a tax country stored on the receipt draft.
  */
-async function customerFor(scope: BooksScope, contactBook: ContactBook, buyer: Buyer): Promise<{ customerId: string; contactId: string }> {
+async function customerFor(
+  scope: BooksScope,
+  contactBook: ContactBook,
+  buyer: Buyer,
+  settings: CompanySettings,
+): Promise<{ customerId: string; contactId: string }> {
   const input = contactFor(buyer);
   const contact =
     (await contactBook.findSame(scope.tenantId, { kind: input.kind, name: input.name, companyOrRole: input.companyOrRole })) ??
@@ -118,6 +148,7 @@ async function customerFor(scope: BooksScope, contactBook: ContactBook, buyer: B
     if (existing.customerType !== (buyer.vatId ? 'b2b' : 'b2c') || normalizedVatId(existing.vatId) !== normalizedVatId(buyer.vatId)) {
       throw new ReceiptError('TAX_IDENTITY_MISMATCH');
     }
+    if (!sameTaxOutcome(settings, existing, buyer.country)) throw new ReceiptError('TAX_IDENTITY_MISMATCH');
     return { customerId: existing.id, contactId: contact.id };
   }
   const created = await createCustomer(scope, {
@@ -169,8 +200,8 @@ export async function ensureReceipt(
   const buyer = readBuyer(payment.buyer as Record<string, unknown>);
   if (!buyer) throw new ReceiptError('BUYER_MISSING');
   // The Books must be set up for the company before anything is written (SETTINGS_MISSING otherwise).
-  await requireSettings(db, scope);
-  const { customerId, contactId } = await customerFor(scope, contactBook, buyer);
+  const settings = await requireSettings(db, scope);
+  const { customerId, contactId } = await customerFor(scope, contactBook, buyer, settings);
 
   const draft = await createDraft(scope, {
     docType: 'invoice',
