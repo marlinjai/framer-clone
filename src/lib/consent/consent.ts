@@ -169,8 +169,9 @@ export function consentRuntimeScript(input: ConsentRuntimeConfig): string {
     'function open(){var a=d.activeElement;opener=a&&a!==d.body&&!(el&&el.contains(a))?a:null;show(true);}' +
     'w.__lumitraConsent={open:open,accept:function(){choose(true);},decline:function(){choose(false);},get:function(){return current();},version:C.v};' +
     "d.addEventListener('click',function(ev){var t=ev.target;while(t&&t.nodeType===1){" +
-    "if(t.hasAttribute('data-fc-consent-accept')){ev.preventDefault();choose(true);return;}" +
-    "if(t.hasAttribute('data-fc-consent-decline')){ev.preventDefault();choose(false);return;}" +
+    // Only the banner's own buttons answer: a choice nobody made is not consent.
+    "if(el&&el.contains(t)&&t.hasAttribute('data-fc-consent-accept')){ev.preventDefault();choose(true);return;}" +
+    "if(el&&el.contains(t)&&t.hasAttribute('data-fc-consent-decline')){ev.preventDefault();choose(false);return;}" +
     "var h=t.tagName==='A'?(t.getAttribute('href')||''):'';" +
     'if(h&&h.slice(-C.hash.length)===C.hash){ev.preventDefault();opener=t;show(true);return;}' +
     't=t.parentNode;}});' +

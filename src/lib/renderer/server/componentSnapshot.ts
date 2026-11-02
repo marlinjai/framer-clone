@@ -69,7 +69,7 @@ export function componentSnapshotToNode(snapshot: ComponentSnapshotLike): Compon
   }
   const children = snapshot.children;
   if (Array.isArray(children) && children.length > 0) {
-    node.children = children.map(componentSnapshotToNode);
+    node.children = children.filter((child) => typeof child === 'object' && child !== null).map(componentSnapshotToNode);
   }
 
   return node;

@@ -87,7 +87,7 @@ export function htmlElements(): Entry[] {
 export function htmlGlobalAttributes(): Entry[] {
   const source = '@mdn/browser-compat-data html.global_attributes';
   const listed = Object.entries(bcd.html.global_attributes).map(([id, feature]) =>
-    entry('html-global-attribute', id, source, isDeprecated(feature) ? ruleReason('bcd-deprecated') : undefined),
+    entry('html-global-attribute', id, source, itemReason('html-global-attribute', id) ?? (isDeprecated(feature) ? ruleReason('bcd-deprecated') : undefined)),
   );
   const extra = samples.extraAttributes.map((id) => entry('html-global-attribute', id, 'HTML and WAI-ARIA standards (samples.json)'));
   return [...listed, ...extra];

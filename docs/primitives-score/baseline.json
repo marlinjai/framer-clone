@@ -1,11 +1,11 @@
 {
   "_doc": "The ratchet floor, not a cache: pnpm score:primitives fails when any number drops below this. Raising it is a deliberate commit: pnpm score:primitives --update-baseline.",
   "matrix": {
-    "format": 1715,
-    "renderer": 1675,
-    "canvas": 1510,
-    "panel": 1083,
-    "ai": 1336
+    "format": 1702,
+    "renderer": 1662,
+    "canvas": 1497,
+    "panel": 1071,
+    "ai": 1337
   },
   "corpusFixtures": [
     "mixed-text",

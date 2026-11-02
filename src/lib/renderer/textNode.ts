@@ -63,10 +63,10 @@ export function renderableText(value: unknown): string | number | null {
 
 /**
  * What an element contains: its own text, then its children. Without children
- * the text goes through as it is; with them, a legacy string stays in front.
+ * the text is all there is; with them, a legacy string stays in front.
  */
 export function ownTextThenChildren<T>(text: unknown, children: readonly T[]): unknown {
-  if (children.length === 0) return text;
+  if (children.length === 0) return renderableText(text);
   const own = renderableText(text);
   return own === null || own === '' ? children : [own, ...children];
 }

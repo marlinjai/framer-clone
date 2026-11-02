@@ -64,7 +64,7 @@ export const GAPS = {
   'page-level-css': 'CSS that applies to the document rather than a node (`:root`, view transitions, `@page`, `@layer`): the route owns `html`, so these close with the page-level items of the plan.',
   'mixed-text': 'Text mixed with elements: text beside an element is lost or lands out of order.',
   'behaviour-state': 'Behaviour and state: no way to say that one element changes another.',
-  'blocked-embedded-content': 'Embedded content dropped by blockedNodes.ts (iframe, object, embed, ...), although these are ordinary content elements.',
+  'blocked-embedded-content': 'What the render gate refuses (blockedNodes.ts and renderVocabulary.ts): embedded content (iframe, object, embed, ...), although these are ordinary content elements, and attributes that act by themselves (ping, the shadow root ones).',
   'panel-no-general-editor': 'What the Custom section of the properties panel, the general style and attribute editor, cannot write: SVG and MathML attributes.',
   'panel-no-tag-choice': 'The tag picker of the Custom section does not offer SVG and MathML elements.',
   'ai-style-allowlist': 'The AI generator validator drops a CSS property it does not know.',

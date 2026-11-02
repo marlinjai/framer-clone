@@ -11,7 +11,8 @@
 
 import { isVoidTag } from '@/lib/drag/voidTags';
 import { isSafeHref } from '@/lib/links/safeHref';
-import { BLOCKED_TAGS, isDroppedProp } from '@/lib/renderer/blockedNodes';
+import { isDroppedProp, isRefusedTag } from '@/lib/renderer/blockedNodes';
+import { isRenderedAttribute } from '@/lib/renderer/renderVocabulary';
 import { bareTextRefusal, isTextNodeType } from '@/lib/renderer/textNode';
 import { cssPropertyName, cssStyleKey, unsafeDeclaration } from '@/lib/responsive/responsiveCss';
 import {
@@ -136,10 +137,12 @@ export function attributeNameError(typed: string, tag: string): string | null {
   if (name === '') return 'Type an attribute name.';
   if (!ATTRIBUTE_NAME.test(name)) return `${name} is not an attribute name.`;
   const prop = attributeProp(name, tag);
-  if (/^on/i.test(name) || isDroppedProp(prop, '')) return 'A page runs no stored code, so event handlers and raw HTML are not available.';
   const lower = name.toLowerCase();
-  if (lower === 'srcdoc') return 'A page runs no stored code, so event handlers and raw HTML are not available.';
+  if (/^on/i.test(name) || lower === 'srcdoc' || prop === 'dangerouslySetInnerHTML') {
+    return 'A page runs no stored code, so event handlers and raw HTML are not available.';
+  }
   if (lower === 'style') return 'Add styles as CSS properties above.';
+  if (!isRenderedAttribute(prop.toLowerCase())) return `${name} is not available on a page: nothing would render it.`;
   if (!isAttributeProp(prop)) return `${name} belongs to the editor and cannot be set here.`;
   return null;
 }
@@ -150,7 +153,8 @@ export function attributeValueError(attribute: string, value: string): string | 
   if (URL_ATTRIBUTES.has(name) && value.trim() !== '' && !isSafeHref(value)) {
     return 'Not saved: use a page path (/contact), #section, https://, mailto: or tel:';
   }
-  return SCRIPT_ADDRESS.test(value) ? 'Not saved: this value could run code.' : null;
+  if (SCRIPT_ADDRESS.test(value)) return 'Not saved: this value could run code.';
+  return isDroppedProp(attributeProp(attribute, ''), value) ? 'Not saved: this value is reserved by the page itself.' : null;
 }
 
 /** Present or absent is the whole value: React reads the string "false" as true. */
@@ -199,8 +203,8 @@ const holdsText = (text: unknown) => (typeof text === 'string' && text !== '') |
 /** Why a node with this content cannot become this tag, or null. */
 export function tagRefusal(tag: string, content: NodeContent): string | null {
   if (!TAG_NAME.test(tag)) return `${tag} is not a tag.`;
-  if (BLOCKED_TAGS.has(tag)) return `<${tag}> is not allowed on a page: it could run or embed outside code.`;
   if (SHELL_TAGS.has(tag)) return `<${tag}> belongs to the page itself, not to an element on it.`;
+  if (isRefusedTag(tag)) return `<${tag}> is not allowed on a page: it could run or embed outside code.`;
   const hasContent = content.childCount > 0 || holdsText(content.text);
   if (isVoidTag(tag) && hasContent) return `<${tag}> cannot hold content. Remove its text and children first.`;
   if (tag === 'textarea' && content.childCount > 0) return '<textarea> holds only text. Remove its children first.';
@@ -231,7 +235,7 @@ const TAG_GROUPS: readonly { label: string; tags: readonly string[] }[] = [
 
 /** The tags on offer, in groups: every element of the data that a page can show. */
 export function tagGroups(): { label: string; tags: string[] }[] {
-  const allowed = elements.filter((tag) => !BLOCKED_TAGS.has(tag));
+  const allowed = elements.filter((tag) => !isRefusedTag(tag));
   const named = new Set(TAG_GROUPS.flatMap((group) => group.tags));
   return [
     ...TAG_GROUPS.map(({ label, tags }) => ({ label, tags: tags.filter((tag) => allowed.includes(tag)) })),
