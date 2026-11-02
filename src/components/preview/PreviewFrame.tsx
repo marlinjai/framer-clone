@@ -12,6 +12,13 @@
 // A link to a path of the site (`/contact`) never navigates the app: it is
 // handed to `onSitePath`, which switches the preview to that page when one
 // matches. Anchors and outside links behave as in a browser.
+//
+// Stored behaviour runs here as on the published page: the behaviour pass over the
+// page's expansion (src/lib/behaviour/surfaceBehaviour.ts) writes the first values and
+// the marks, the sheet reads its conditions, and the runtime, fetched only when the page
+// has a trigger, runs on this frame with real pointer and focus. There is no gate: the
+// frame is drawn by script, so it never has a no-JavaScript form to show. An edit gives
+// a new program, and the runtime starts again from the first values.
 'use client';
 import React, { useEffect, useLayoutEffect, useRef } from 'react';
 import { observer } from 'mobx-react-lite';
@@ -27,6 +34,9 @@ import { startSmoothScroll } from '@/lib/effects/smoothScroll';
 import { pickBreakpointForWidth } from '@/lib/renderer/pickBreakpoint';
 import type { SurfaceNode } from '@/lib/rules/surfaceSheet';
 import type { PageModelType } from '@/models/PageModel';
+import { surfaceBehaviour } from '@/lib/behaviour/surfaceBehaviour';
+import { SurfaceDomContext, useStableSurfaceDom } from '@/lib/behaviour/surfaceDom';
+import type { BehaviourProgram } from '@/lib/behaviour/program';
 
 export interface PreviewFrameProps {
   page: PageModelType;
@@ -57,6 +67,34 @@ const useBeforePaint = typeof window === 'undefined' ? useEffect : useLayoutEffe
 
 const PREVIEW_ROOTS = [PREVIEW_ROOT];
 
+/**
+ * Runs the program on the frame, with the chunks it needs fetched together, as
+ * BehaviourIsland does on the published page. A chunk that does not arrive leaves the
+ * page at its first values, which is what the frame already shows, and says so.
+ */
+function usePreviewRuntime(frame: React.RefObject<HTMLDivElement | null>, program: BehaviourProgram | null): void {
+  useEffect(() => {
+    const container = frame.current;
+    if (!container || !program) return;
+    let stop: (() => void) | undefined;
+    let left = false;
+    Promise.all([
+      import('@/lib/behaviour/runtime'),
+      program.verbs ? import('@/lib/behaviour/verbs') : undefined,
+      program.rove ? import('@/lib/behaviour/rove') : undefined,
+    ]).then(
+      ([{ startBehaviour }, verbs, rove]) => {
+        if (!left) stop = startBehaviour({ container, program, surface: 'preview', verbs: verbs?.createVerbs, extras: verbs, rove: rove?.createRover });
+      },
+      (error: unknown) => console.error('Page behaviour did not load in the preview: it shows the first values.', error),
+    );
+    return () => {
+      left = true;
+      stop?.();
+    };
+  }, [frame, program]);
+}
+
 const PreviewFrame = observer(({ page, width, height, fill = false, smoothScroll = false, pageBase = DEFAULT_PAGE_BASE, onSitePath }: PreviewFrameProps) => {
   const frameRef = useRef<HTMLDivElement>(null);
 
@@ -70,6 +108,9 @@ const PreviewFrame = observer(({ page, width, height, fill = false, smoothScroll
   );
 
   const hasFrame = Boolean(breakpointId);
+  const behaviour = surfaceBehaviour(page.expansion.root);
+  const dom = useStableSurfaceDom([behaviour.dom]);
+  usePreviewRuntime(frameRef, hasFrame ? behaviour.program : null);
 
   // Before the first paint: turn the start-state rules on, so an appear
   // element in view never flashes visible, then hidden, then revealed.
@@ -133,12 +174,15 @@ const PreviewFrame = observer(({ page, width, height, fill = false, smoothScroll
       <EffectsStyles startScope={`[${FX_ATTR.scope}] `} smoothScroll={smoothScroll} />
       <PageBaseStyles base={pageBase} roots={PREVIEW_ROOTS} />
       <PreviewRuleStyles
-        tree={page.expansion.root as SurfaceNode}
+        tree={behaviour.root as SurfaceNode}
         definitionTree={page.isDefinitionPage}
         frame={{ breakpointId, width, height }}
         breakpoints={viewportNodes.map(v => ({ id: v.breakpointId!, minWidth: v.breakpointMinWidth! }))}
+        problems={behaviour.problems}
       />
-      <HeadlessPageRenderer page={page} breakpointId={breakpointId} />
+      <SurfaceDomContext.Provider value={dom}>
+        <HeadlessPageRenderer page={page} breakpointId={breakpointId} />
+      </SurfaceDomContext.Provider>
     </div>
   );
 });

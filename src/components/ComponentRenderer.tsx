@@ -25,6 +25,7 @@ import { INLINE_FORMAT_KEYS, applyInlineFormat, beginRunEdit, normaliseEditedTex
 import { isTextBound } from '@/lib/renderer/textContent';
 import { isTextNodeType } from '@/lib/renderer/textNode';
 import { childrenWithRepeats } from '@/lib/renderer/repeatChildren';
+import { SurfaceDomContext, withSurfaceDom } from '@/lib/behaviour/surfaceDom';
 
 interface ComponentRendererProps {
   component: ComponentInstance;
@@ -94,6 +95,7 @@ const NodeRenderer = observer(({ component, breakpointId, allBreakpoints, scope,
   const host = React.useContext(PlacementHostContext);
   // Inside a link or a button, formatted text holds no links (createComponentElement).
   const runLinksAllowed = React.useContext(RunLinksContext);
+  const surfaceDom = React.useContext(SurfaceDomContext);
   const frameId = host?.frameId ?? breakpointId;
   const owner = placement ?? component;
   const editRef = React.useRef<HTMLElement | null>(null);
@@ -224,8 +226,13 @@ const NodeRenderer = observer(({ component, breakpointId, allBreakpoints, scope,
   const allowed = host ? { bindings: bindingsAllowed(component.bindings, host.inputs, editorInputWarnings) } : component;
   const merged = placementStyle ? mergeStyle(style, placementStyle) : style;
   const { resolvedProps } = applyBindings(allowed, { ...attributes, style: merged }, activeScope);
-  const { style: boundStyle, ...resolvedAttributes } = resolvedProps as Record<string, any>;
-  const effectiveStyle = (boundStyle ?? {}) as Record<string, any>;
+  const { style: boundStyle, ...boundAttributes } = resolvedProps as Record<string, any>;
+  // Page state as Select shows it: the behaviour pass's attributes on this node, under
+  // the id the expansion gives it, which inside a placement is its path.
+  const expandedId = placement ? host?.path : host ? pathId(host.path, component.id) : component.id;
+  const shown = withSurfaceDom(boundAttributes, (boundStyle ?? {}) as Record<string, any>, expandedId ? surfaceDom?.get(expandedId) : undefined, 'canvas');
+  const resolvedAttributes = shown.attributes as Record<string, any>;
+  const effectiveStyle = shown.style as Record<string, any>;
 
   // In the editor, always allow pointer events so components can be selected,
   // except locked ones, which the pointer must pass through.

@@ -23,6 +23,15 @@
 // are closer. Scrolling has no meaning on a frame and is left out. A `rem` still reads
 // the editor's own document here: a surface cannot change that.
 //
+// A rule reading page state arrives already read: the surfaces hand this the tree
+// applyBehaviour returned (src/lib/behaviour/surfaceBehaviour.ts), whose `compiledRules`
+// hold `when`, `showWhen` and `noScript` against the state on the node's path. Neither
+// surface has the gate. Both show the page with its script, the preview because it runs
+// one, the canvas because Select previews the state the script would set. So a `when`
+// stands with no gate in front, and `gate: 'off'` rules, the no-JavaScript look, are left
+// out. The canvas also leaves out `gate: 'on'`, a `showWhen` reading the row through
+// `data-u-on`: nothing writes that attribute where nothing runs, and visible is the safe side.
+//
 // PURE: no React and no MobX. Reading MobX-State-Tree nodes through this inside an
 // observer is what subscribes the caller to them.
 
@@ -46,6 +55,7 @@ import {
   showsOnSurface,
   storedRulesOf,
   type ParsedRootRule,
+  type ParsedRule,
   type ParsedSelectorRule,
   type ReadRules,
 } from './rules';
@@ -63,6 +73,8 @@ export interface SurfaceNode {
   classKey?: string;
   /** From expansion: the element a placement stands on. */
   placementRoot?: boolean;
+  /** From the behaviour pass: the node's rules, conditions read. Takes the place of `props.rules`. */
+  compiledRules?: readonly ParsedRule[];
 }
 
 /** One frame a tree renders into. */
@@ -99,6 +111,7 @@ const parsed = new WeakMap<object, ReadRules>();
 const parsedOnRoot = new WeakMap<object, ReadRules>();
 
 function parsedRulesOf(node: SurfaceNode, pageRoot: boolean): ReadRules | null {
+  if (node.compiledRules) return { rules: [...node.compiledRules], refused: [] };
   const stored = (node.props as { rules?: unknown } | undefined)?.rules;
   if (!isRuleList(stored) || isTextNodeType(node.type)) return null;
   const cache = pageRoot ? parsedOnRoot : parsed;
@@ -129,6 +142,10 @@ function externalVariables(node: SurfaceNode): string[] {
 }
 
 const presetOf = (node: SurfaceNode): HoverKind => (isTextNodeType(node.type) ? 'none' : normalizeHover(storedEffectsOf(node.props)?.hover));
+
+/** True for a rule's gate this surface shows. See the head of this file. */
+const showsGate = (gate: ParsedSelectorRule['gate'], kind: EditorSurfaceKind): boolean =>
+  gate === undefined || (gate === 'on' && kind === 'preview');
 
 /** The largest frame: a floating element has no frame of its own, and it reads as the largest breakpoint already. */
 function largestFrame(frames: readonly SurfaceFrameInput[], breakpoints: readonly BreakpointRef[]): SurfaceFrameInput {
@@ -189,7 +206,7 @@ export function surfaceSheet(input: SurfaceSheetInput): string {
       }
     }
     const rules = (read?.rules ?? []).flatMap((rule) => {
-      if (rule.kind === 'selector') return [rule];
+      if (rule.kind === 'selector') return showsGate(rule.gate, kind) ? [rule] : [];
       const shown = rule.kind === 'root' ? onRootCopy(rule, node) : null;
       return shown ? [shown] : [];
     });
