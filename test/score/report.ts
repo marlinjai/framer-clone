@@ -247,9 +247,10 @@ export function buildScore(durationSeconds?: number): Score {
   const gapIds = Object.keys(GAPS) as GapId[];
   const gaps = gapIds
     .map((id) => {
-      const everyFixture = [...fixtures, ...pages];
-      const inFixtures = everyFixture.filter((f) => f.failures.some((x) => x.gap === id));
-      const corpusFailures = everyFixture.flatMap((f) => f.failures.filter((x) => x.gap === id)).length;
+      // A page's needs are declared, not measured, so they rank in the BusBasis table only.
+      const measured = (x: CorpusResult['failures'][number]) => x.gap === id && !x.state.startsWith('needs: ');
+      const inFixtures = [...fixtures, ...pages].filter((f) => f.failures.some(measured));
+      const corpusFailures = [...fixtures, ...pages].flatMap((f) => f.failures.filter(measured)).length;
       const onlyGapOf = inFixtures.filter((f) => f.failures.every((x) => x.gap === id)).map((f) => f.fixture);
       const roundTripCases = cases.filter((c) => !c.pass && c.gap === id).length;
       const matrixCells = gapCells.get(id) ?? 0;
