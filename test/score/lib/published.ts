@@ -13,6 +13,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import type { BreakpointRef } from '@/lib/responsive/cascade';
+import type { BehaviourProgram } from '@/lib/behaviour/program';
 import { applyResponsiveStyles } from '@/lib/renderer/server/applyResponsiveStyles';
 import { renderComponentNode } from '@/lib/renderer/server/renderComponentNode';
 import { DEFAULT_VIEWPORTS } from '@/lib/canvas/defaultViewports';
@@ -37,6 +38,8 @@ export const BREAKPOINTS: readonly (BreakpointRef & { label: string; width: numb
 export interface PublishedOutput {
   html: string;
   css: string;
+  /** The program the page runs, where the whole published path made one. */
+  behaviour?: BehaviourProgram | null;
 }
 
 export function renderPublished(root: ComponentNode, breakpoints: readonly BreakpointRef[] = BREAKPOINTS): PublishedOutput {
@@ -78,14 +81,14 @@ export async function renderThroughPublishedPage({ tree, definitions, rows }: Pu
   );
   const adapted = snapshotToComponentNode({ slug: '', appComponentTree: tree, canvasNodes } as unknown as PageSnapshotOut, definitions);
   if (!adapted.root) throw new Error('renderThroughPublishedPage: the tree has no root');
-  const { body } = await renderPublishedPage({
+  const { body, behaviour } = await renderPublishedPage({
     root: adapted.root,
     budget: adapted.budget,
     pageParams: {},
     cmsRepo: fakeCmsRepo(rows),
     breakpoints: adapted.breakpoints,
   });
-  return { html: renderToStaticMarkup(React.createElement(React.Fragment, null, body)), css: '' };
+  return { html: renderToStaticMarkup(React.createElement(React.Fragment, null, body)), css: '', behaviour };
 }
 
 const pageBase = (() => {

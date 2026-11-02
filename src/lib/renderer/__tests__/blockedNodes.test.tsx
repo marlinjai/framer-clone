@@ -33,6 +33,11 @@ describe('blocked nodes', () => {
     expect(editor('div', props)).toBe('<div id="keep"></div>');
   });
 
+  it.each(['onclick', 'onClick', 'onload', 'onError', 'onanimationend', 'onToggle', 'ontimeupdate', 'onwaiting'])('never lets a stored %s string reach a page, now that events run', (name) => {
+    expect(published({ type: 'div', props: { [name]: 'probe()', id: 'keep' } })).toBe('<div id="keep"></div>');
+    expect(editor('div', { [name]: 'probe()', id: 'keep' })).toBe('<div id="keep"></div>');
+  });
+
   it.each(['onclick', 'ONCLICK', 'onClick', 'OnMouseOver'])('drops a stored %s on a custom element', (name) => {
     expect(published({ type: 'x-y', props: { [name]: 'x', id: 'keep' } })).toBe('<x-y id="keep"></x-y>');
     expect(editor('x-y', { [name]: 'x', id: 'keep' })).toBe('<x-y id="keep"></x-y>');

@@ -76,7 +76,7 @@ export const GAPS = {
   'ai-attribute-allowlist': 'The AI generator validator refuses this attribute on purpose, or a tree lost a raw form control (see the tag gap).',
   'ai-value-refused': 'The AI generator validator keeps the property but refuses this value.',
   'attribute-read-as-style': 'An HTML attribute whose name is also a CSS property (width, height) is read as a style, so the editor loses the attribute: a canvas bitmap size or an image size hint is not the same as a declaration.',
-  'blocked-event-handlers': 'A stored event handler attribute is a string of code, so both renderers drop it on purpose (blockedNodes.ts). What closes this is a stored behaviour for the event: the behaviour model or custom code, neither of which exists yet.',
+  'blocked-event-handlers': 'A stored event handler attribute is a string of code, so both renderers drop it on purpose (blockedNodes.ts). A cell here means no stored action ran from a real cause: the note says why, and the published page and the format already run most of them (events.score.ts). The canvas, the panel and the AI columns still wait for slices B10 to B12.',
   'canvas-editor-context': 'The contract passes on the published page, but the mounted editor changes the outcome: Space pans, a link does not navigate, and the editor\'s own main element stops a header inside it being a banner. Closing it takes an interact mode on the canvas.',
   'registry-tag-collision': 'A tag that is also a component registry id renders as that entry instead: type "form" comes out as a div.',
   'renderer-drops-value': 'A stored value a renderer refuses, overwrites or loses.',
