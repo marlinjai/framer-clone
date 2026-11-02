@@ -11,7 +11,7 @@
 
 import { isVoidTag } from '@/lib/drag/voidTags';
 import { isSafeHref } from '@/lib/links/safeHref';
-import { isDroppedProp, isRefusedTag } from '@/lib/renderer/blockedNodes';
+import { isDroppedId, isDroppedProp, isRefusedTag } from '@/lib/renderer/blockedNodes';
 import { isRenderedAttribute } from '@/lib/renderer/renderVocabulary';
 import { bareTextRefusal, isTextNodeType } from '@/lib/renderer/textNode';
 import { cssPropertyName, cssStyleKey, unsafeDeclaration } from '@/lib/responsive/responsiveCss';
@@ -147,14 +147,15 @@ export function attributeNameError(typed: string, tag: string): string | null {
   return null;
 }
 
-/** Why this value is not stored, or null. */
-export function attributeValueError(attribute: string, value: string): string | null {
+/** Why this value is not stored on this tag, or null. */
+export function attributeValueError(attribute: string, value: string, tag?: string): string | null {
   const name = attribute.trim().toLowerCase();
   if (URL_ATTRIBUTES.has(name) && value.trim() !== '' && !isSafeHref(value)) {
     return 'Not saved: use a page path (/contact), #section, https://, mailto: or tel:';
   }
   if (SCRIPT_ADDRESS.test(value)) return 'Not saved: this value could run code.';
-  return isDroppedProp(attributeProp(attribute, ''), value) ? 'Not saved: this value is reserved by the page itself.' : null;
+  const reserved = isDroppedProp(attributeProp(attribute, ''), value) || (name === 'id' && isDroppedId(tag, value));
+  return reserved ? 'Not saved: this value is reserved by the page itself.' : null;
 }
 
 /** Present or absent is the whole value: React reads the string "false" as true. */
