@@ -419,7 +419,7 @@ const AttributeEditor = observer(({ component, category }: { component: Componen
             removeLabel={`Remove ${name}`}
             onRemove={() => component.setProps({ [prop]: undefined })}
             onCommit={(text) => {
-              const problem = attributeValueError(name, text);
+              const problem = attributeValueError(name, text, tag);
               if (!problem) write(name, text);
               return problem;
             }}
@@ -432,7 +432,7 @@ const AttributeEditor = observer(({ component, category }: { component: Componen
         valuePlaceholder="Value"
         suggestions={suggestions}
         nameError={nameError}
-        valueError={attributeValueError}
+        valueError={(name, value) => attributeValueError(name, value, tag)}
         allowsEmptyValue
         needsNoValue={isBooleanAttribute}
         onAdd={write}

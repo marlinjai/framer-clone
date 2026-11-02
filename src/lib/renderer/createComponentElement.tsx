@@ -17,7 +17,7 @@ import { isVoidTag } from '@/lib/drag';
 import {
   isBlockedTag,
   withoutBlockedProps,
-  withoutDocumentId,
+  withoutClobberingId,
   refuseSubmit,
   withoutEditorSurfaceProps,
 } from '@/lib/renderer/blockedNodes';
@@ -142,7 +142,7 @@ export function createComponentElement(
 
   const content = ownTextThenChildren(rawTextChildren, children) as React.ReactNode;
   const identity = options?.identity;
-  const surfaceProps = withoutEditorSurfaceProps(withoutDocumentId(component.type, withoutBlockedProps(finalProps)));
+  const surfaceProps = withoutEditorSurfaceProps(withoutClobberingId(component.type, withoutBlockedProps(finalProps)));
   const safeProps =
     String(component.type).toLowerCase() === 'form' ? { ...surfaceProps, onSubmit: refuseSubmit } : surfaceProps;
   const propsWithIdentity: Record<string, unknown> = identity

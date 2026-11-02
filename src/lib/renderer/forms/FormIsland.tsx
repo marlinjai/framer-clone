@@ -54,6 +54,7 @@ import { localeOf, type FieldValue, type FormLocale } from '@/lib/forms/validati
 import { SUBMIT_PATH, sendForm } from '@/lib/forms/sendForm';
 import { FormFieldView } from './FormFieldView';
 import { renderNodeChildren, nodeDomProps } from '../server/renderComponentNode';
+import { withoutClobberingId } from '../blockedNodes';
 
 interface FormRuntime {
   formId: string;
@@ -300,7 +301,8 @@ export function FormFieldIsland({ node }: { node: ComponentNode }) {
 /** The submit button: disabled with the loading label and a spinner while sending. */
 export function FormSubmitIsland({ node }: { node: ComponentNode }) {
   const runtime = useContext(FormRuntimeContext);
-  const domProps = stripFormConfigProps(nodeDomProps(node));
+  // Always a button, whatever the node's type.
+  const domProps = withoutClobberingId('button', stripFormConfigProps(nodeDomProps(node)));
   const label = typeof (node.props as any)?.children === 'string' ? ((node.props as any).children as string) : 'Send';
   const loadingLabel =
     typeof (node.props as any)?.loadingLabel === 'string' && (node.props as any).loadingLabel.trim()

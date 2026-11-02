@@ -7,8 +7,8 @@
 //
 // A crash (a stored value that stops the render) is a finding too, and so is what
 // only the finished page can show: a refused CSS value that survived, a renderer's
-// own attribute on a stored node, a stored name that replaced a member of `document`,
-// a changed tab title.
+// own attribute on a stored node, a stored name that replaced a member of `document`
+// or of a form, a changed tab title.
 //
 // Every batch ends with one canary per detector, written straight into the page past
 // the renderers. If one stays silent the batch saw nothing, and that fails the run:
@@ -42,7 +42,8 @@ export interface Finding {
 const ORIGIN = 'https://harness.test';
 const ALLOWED_LOADS: ReadonlySet<string> = new Set(['image', 'media', 'texttrack']);
 // React adds its own image preload next to an img, which loads only what the img would.
-const EMBEDS = '[data-fc-consent-accept],[data-fc-consent-decline],[data-fc-sticky-cta-link],script,style,iframe,frame,frameset,object,embed,fencedframe,portal,link:not([rel=preload][as=image]),meta,base,webview';
+// A live form opens with its own spinner sheet (FormIsland).
+const EMBEDS = '[data-fc-consent-accept],[data-fc-consent-decline],[data-fc-sticky-cta-link],script,style:not(form[data-form-id] > style:first-child),iframe,frame,frameset,object,embed,fencedframe,portal,link:not([rel=preload][as=image]),meta,base,webview';
 
 const CANARY = 'https://canary.invalid';
 
@@ -52,6 +53,7 @@ const CANARIES = (id: string) => `<div data-canary hidden>
 </div><img data-canary src="x:" onerror="__hit('${id}-handler')">
 <img data-canary src="${CANARY}/fetch-${id}" alt="">
 <div data-probe="canary-${id}"><iframe title="x"></iframe><i style="background-image:url(${STYLE_HOST}/canary-${id})"></i></div>
+<form data-canary-form hidden><input id="parentElement"></form>
 <i data-canary-end></i>`;
 
 interface Rendered {
@@ -98,7 +100,8 @@ async function act(page: Page, from: number): Promise<number> {
     const elements = Array.from(document.querySelectorAll('[data-probe] *, [data-canary-link]')) as HTMLElement[];
     for (let index = start; index < elements.length; index++) {
       const el = elements[index];
-      at(index, el.closest<HTMLElement>('[data-probe]')?.dataset.probe ?? '');
+      // Through the prototype: a form's own `closest` is what a stored id may have replaced.
+      at(index, Element.prototype.closest.call(el, '[data-probe]')?.getAttribute('data-probe') ?? '');
       try {
         el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
         el.focus?.();
@@ -110,8 +113,8 @@ async function act(page: Page, from: number): Promise<number> {
       } catch {
         // An element that refuses an action has nothing to say about the gate.
       }
-      if (el.matches('[data-canary-link]')) await new Promise((resolve) => setTimeout(resolve, 40));
-      else if (el.matches('a, area, button, input, form, [href]')) await pause();
+      if (Element.prototype.matches.call(el, '[data-canary-link]')) await new Promise((resolve) => setTimeout(resolve, 40));
+      else if (Element.prototype.matches.call(el, 'a, area, button, input, form, [href]')) await pause();
     }
     return elements.length;
   }, from);
@@ -195,16 +198,19 @@ export async function runBatch(browser: Browser, browserName: string, surface: S
       if (request.isNavigationRequest()) add(probeOfRequest(request.url()) ?? 'unknown', 'leave', `by itself: ${request.url()}`);
     }
 
-    const embedded = await page.evaluate(({ selector, styleHost }) => {
+    const embedded = await page.evaluate(({ selector, styleHost, canaryForm }) => {
       const found: string[] = [];
+      // Through the prototype: a form's own members are what a stored id may have replaced.
+      const shadowOf = Object.getOwnPropertyDescriptor(Element.prototype, 'shadowRoot')?.get as (this: Element) => ShadowRoot | null;
       const visit = (root: ParentNode, probe: string) => {
         for (const el of Array.from(root.querySelectorAll(selector))) found.push(`${probe} ${el.tagName.toLowerCase()}`);
         for (const el of Array.from(root.querySelectorAll('*'))) {
-          if (el.shadowRoot) {
+          const shadow = shadowOf.call(el);
+          if (shadow) {
             found.push(`${probe} shadow-root`);
-            visit(el.shadowRoot, probe);
+            visit(shadow, probe);
           }
-          if (el.getAttribute('style')?.includes(styleHost) || getComputedStyle(el).backgroundImage.includes(styleHost)) found.push(`${probe} style`);
+          if (Element.prototype.getAttribute.call(el, 'style')?.includes(styleHost) || getComputedStyle(el).backgroundImage.includes(styleHost)) found.push(`${probe} style`);
         }
       };
       document.querySelectorAll('[data-probe]').forEach((box) => visit(box, (box as HTMLElement).dataset.probe ?? '?'));
@@ -213,12 +219,21 @@ export async function runBatch(browser: Browser, browserName: string, surface: S
         const value = (document as unknown as Record<string, unknown>)[name];
         if (name in Document.prototype && (value instanceof Element || value instanceof HTMLCollection)) found.push(`document clobbered:${name}`);
       }
+      // A form lists no named member as its own, and answers for one when asked. `name` stays open: see FORM_SHADOWING_NAMES.
+      const members: string[] = [];
+      for (let proto: object | null = HTMLFormElement.prototype; proto; proto = Object.getPrototypeOf(proto)) members.push(...Object.getOwnPropertyNames(proto));
+      for (const form of Array.from(document.querySelectorAll('form'))) {
+        const box = Element.prototype.closest.call(form, '[data-probe]')?.getAttribute('data-probe');
+        for (const name of members) {
+          if (name !== 'name' && Object.getOwnPropertyDescriptor(form, name)) found.push(`${box ?? canaryForm} form-clobbered:${name}`);
+        }
+      }
       for (const name of ['__next_f', 'webpackChunk_N_E', '__fcImportTracker']) {
         if (name in window) found.push(`window clobbered:${name}`);
       }
       if (document.title !== '') found.push('document title');
       return found;
-    }, { selector: EMBEDS, styleHost: STYLE_HOST });
+    }, { selector: EMBEDS, styleHost: STYLE_HOST, canaryForm: `canary-${batch}` });
     for (const line of embedded) {
       const [probe, tag] = line.split(' ');
       if (probe === `canary-${batch}`) canariesSeen.add(tag);
@@ -260,7 +275,7 @@ export async function runBatch(browser: Browser, browserName: string, surface: S
     const canaryUrls = watch.requests.filter((request) => request.url().startsWith(CANARY));
     if (!canaryUrls.some((request) => request.url().endsWith(`/fetch-${batch}`))) add(batch, 'blind', 'the fetch canary was not seen');
     if (!canaryUrls.some((request) => request.isNavigationRequest() && request.url().endsWith(`/leave-${batch}`))) add(batch, 'blind', 'the leave canary was not seen');
-    for (const seen of ['iframe', 'style']) {
+    for (const seen of ['iframe', 'style', 'form-clobbered:parentElement']) {
       if (!canariesSeen.has(seen)) add(batch, 'blind', `the page scan did not see the ${seen} canary`);
     }
 

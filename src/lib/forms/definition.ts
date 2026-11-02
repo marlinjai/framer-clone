@@ -25,6 +25,8 @@
 //
 // Client-safe: no server imports.
 
+import { FORM_MEMBER_NAMES } from '@/lib/renderer/domMemberNames.generated';
+
 export const FORM_KIND_ATTR = 'data-form-kind';
 
 export const FORM_KINDS = ['form', 'form-field', 'form-submit'] as const;
@@ -68,6 +70,14 @@ export const TYPE_LENGTH: Record<FieldType, { default: number; ceiling: number }
   checkbox: { default: 0, ceiling: 0 },
   consent: { default: 0, ceiling: 0 },
 };
+
+/**
+ * What a control may not be called, by `id` or `name`: a form exposes its controls as
+ * properties, ahead of its own members, so `parentElement` here makes the form its
+ * control's parent and any walk up from it never ends. Not `name`, the one member left
+ * open: the Form's default field is called that, and no code walks `form.name`.
+ */
+export const FORM_SHADOWING_NAMES: ReadonlySet<string> = new Set(FORM_MEMBER_NAMES.filter((name) => name !== 'name'));
 
 /** Names reserved for the transport (hidden inputs); a field may never use them. */
 export const RESERVED_KEY_PREFIX = '_';
@@ -198,7 +208,10 @@ export function readFormSettings(props: Record<string, unknown> | null | undefin
   };
 }
 
-/** Normalize a field name to a safe key (letters, digits, `_` and `-`), or '' when nothing is left. */
+/**
+ * Normalize a field name to a safe key (letters, digits, `_` and `-`), or '' when
+ * nothing is left. The key is the control's `name`, so a form's member gets a suffix.
+ */
 export function normalizeFieldKey(raw: unknown): string {
   if (typeof raw !== 'string') return '';
   let key = raw
@@ -210,7 +223,7 @@ export function normalizeFieldKey(raw: unknown): string {
     .slice(0, FORM_LIMITS.maxKeyChars);
   // `_form`, `_website` and the like belong to the transport.
   while (key.startsWith(RESERVED_KEY_PREFIX)) key = key.slice(1);
-  return key;
+  return FORM_SHADOWING_NAMES.has(key) ? `${key}_field` : key;
 }
 
 /** Options of a select: an array of strings, or one option per line. Trimmed, de-duplicated, bounded. */

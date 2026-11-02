@@ -164,6 +164,46 @@ describe('blocked nodes', () => {
     expect(published({ type: 'section', props: { id: 'links' } })).toContain('id="links"');
   });
 
+  it.each([
+    ['button', 'parentElement'], ['input', 'closest'], ['fieldset', 'elements'], ['select', 'submit'],
+    ['textarea', 'matches'], ['output', 'parentNode'], ['INPUT', 'getAttribute'], ['img', 'closest'],
+  ])('refuses <%s id=%s>, which replaces a member of its form', (type, id) => {
+    expect(published({ type, props: { id, alt: 'x' } })).not.toContain('id=');
+    expect(editor(type, { id, alt: 'x' })).not.toContain('id=');
+  });
+
+  it.each(['ID', 'Id', 'iD'])('refuses the member id in the spelling %s', (name) => {
+    expect(published({ type: 'input', props: { [name]: 'parentElement' } }).toLowerCase()).not.toContain('id=');
+    expect(editor('input', { [name]: 'parentElement' }).toLowerCase()).not.toContain('id=');
+  });
+
+  it('refuses a member id tied to a form from outside it', () => {
+    const html = published({ type: 'button', props: { id: 'closest', form: 'f' } });
+    expect(html).not.toContain('id=');
+    expect(html).toContain('form="f"');
+  });
+
+  it.each(['button', 'div'])('refuses a member id on a stored submit button, stored as <%s>', (type) => {
+    const props = { 'data-form-kind': 'form-submit', id: 'closest', children: 'x' };
+    const html = published({ type: 'div', props: { 'data-form-kind': 'form' }, children: [{ id: 's', type, props }] });
+    expect(html).not.toContain('id="closest"');
+    const canvas = createComponentElement({ type, props, isHostElement: true } as never, props, [], 'x');
+    expect(renderToStaticMarkup(canvas as never)).toBe('<button type="button">x</button>');
+  });
+
+  it('gives a stored field called after a form member a name of its own', () => {
+    const field = { id: 'f', type: 'div', props: { 'data-form-kind': 'form-field', fieldType: 'text', name: 'parentElement', label: 'x' } };
+    const html = published({ type: 'div', props: { 'data-form-kind': 'form' }, children: [field] });
+    expect(html).toContain('name="parentElement_field"');
+    expect(html).not.toContain('name="parentElement"');
+  });
+
+  it('keeps what no form exposes: another tag, or a name that is no member of a form', () => {
+    expect(published({ type: 'form', children: [{ id: 'l', type: 'label', props: { id: 'parentElement' } }] })).toContain('id="parentElement"');
+    expect(published({ type: 'div', props: { id: 'closest' } })).toContain('id="closest"');
+    for (const id of ['email', 'links', 'close', 'name']) expect(published({ type: 'input', props: { id } })).toContain(`id="${id}"`);
+  });
+
   it('keeps an ordinary id and name', () => {
     const html = published({ type: 'img', props: { id: 'hero', name: 'email', alt: 'x' } });
     expect(html).toContain('id="hero"');

@@ -93,6 +93,15 @@ describe('form settings and helpers', () => {
     expect(normalizeFieldKey('__x')).toBe('x');
   });
 
+  it('never names a control after a member of its form, except the default field', () => {
+    expect(normalizeFieldKey('parentElement')).toBe('parentElement_field');
+    expect(normalizeFieldKey('submit')).toBe('submit_field');
+    expect(normalizeFieldKey('name')).toBe('name');
+    expect(normalizeFieldKey('email')).toBe('email');
+    const fields = collectFormFields(form([field('a', { name: 'closest' }), field('b', { name: 'closest' })]));
+    expect(fields.map((f) => f.key)).toEqual(['closest_field', 'closest_field_2']);
+  });
+
   it('builds a safe link path and refuses dynamic pages', () => {
     expect(linkPathOfSlug('')).toBe('/');
     expect(linkPathOfSlug('danke')).toBe('/danke');

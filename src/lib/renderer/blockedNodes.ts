@@ -10,7 +10,7 @@
 // a handler. test/renderGate tries all of it in real browsers.
 
 import { REVIEWED_ANIMATED_ATTRIBUTES } from '@/lib/ai/pageGen/reviewedVocabulary';
-import { FORM_CONFIG_PROPS } from '@/lib/forms/definition';
+import { FORM_CONFIG_PROPS, FORM_SHADOWING_NAMES } from '@/lib/forms/definition';
 import { DOM_MEMBER_NAMES } from '@/lib/renderer/domMemberNames.generated';
 import { isRenderedAttribute, isRenderedTag } from '@/lib/renderer/renderVocabulary';
 import { TEXT_NODE_TYPE } from '@/lib/renderer/textNode';
@@ -55,7 +55,8 @@ function isSafeAddress(address: string): boolean {
  * `name` becomes a property of `document`: `name="createElement"` stopped every
  * island on a page. Any `id` becomes a global, which is how `__next_f` and
  * `webpackChunk_N_E` stopped hydration. A member's name stays open as an ordinary
- * `id` (`title`, `links`), except on an `img`, see withoutDocumentId.
+ * `id` (`title`, `links`), except on what a form or `document` exposes by id, see
+ * withoutClobberingId.
  */
 const DOM_MEMBERS: ReadonlySet<string> = new Set(DOM_MEMBER_NAMES);
 const RESERVED_ID = /^__|^webpackChunk|^fc-|^ground-wrapper-/;
@@ -180,12 +181,31 @@ export function safeInlineStyle(style: Record<string, unknown>): Record<string, 
   return Object.fromEntries(keys.filter((key) => !isUnsafeInline(key, style[key])).map((key) => [key, style[key]]));
 }
 
-/** An `img` with a `name` also puts its `id` on `document`, and only that element does. */
-export function withoutDocumentId(tag: unknown, props: Record<string, unknown>): Record<string, unknown> {
-  if (typeof tag !== 'string' || tag.toLowerCase() !== 'img' || typeof props.id !== 'string' || !DOM_MEMBERS.has(props.id)) return props;
-  const { id, ...rest } = props;
-  warnOnce(`the id ${id}`);
-  return rest;
+/**
+ * What a form exposes by `id`, read from Chromium and WebKit by test/renderGate. By tag
+ * and not by place: `form=` ties a control to a form from anywhere on the page, and an
+ * island renders its children without knowing what stands around it.
+ */
+export const FORM_NAMED_TAGS: ReadonlySet<string> = new Set(['button', 'fieldset', 'input', 'output', 'select', 'textarea']);
+
+/**
+ * The rule alone, for the panel: whether this tag loses this `id`. An `img` with a
+ * `name` also puts its `id` on `document`, and only that element does; it and every
+ * form control put it on their form.
+ */
+export function isDroppedId(tag: unknown, id: unknown): boolean {
+  if (typeof tag !== 'string' || typeof id !== 'string') return false;
+  const name = tag.toLowerCase();
+  return name === 'img' ? DOM_MEMBERS.has(id) : FORM_NAMED_TAGS.has(name) && FORM_SHADOWING_NAMES.has(id);
+}
+
+/** `props` without an `id` that replaces a member, in any spelling: React writes `ID` as it stands. */
+export function withoutClobberingId(tag: unknown, props: Record<string, unknown>): Record<string, unknown> {
+  const names = Object.keys(props);
+  const dropped = names.filter((name) => name.toLowerCase() === 'id' && isDroppedId(tag, props[name]));
+  if (dropped.length === 0) return props;
+  for (const name of dropped) warnOnce(`the id ${String(props[name])}`);
+  return Object.fromEntries(names.filter((name) => !dropped.includes(name)).map((name) => [name, props[name]]));
 }
 
 /** `props` without its blocked keys and unsafe style; the same object when there are none. */

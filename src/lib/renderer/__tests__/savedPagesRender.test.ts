@@ -7,7 +7,7 @@ import { COMPONENT_REGISTRY, FORM_COMPONENTS } from '@/lib/componentRegistry';
 import { buildLegalTemplate } from '@/lib/legal/templates';
 import { legalPageRoot } from '@/lib/legal/legalPageTree';
 import { FORM_CONFIG_PROPS } from '@/lib/forms/definition';
-import { isDroppedProp, isRefusedTag, safeInlineStyle } from '@/lib/renderer/blockedNodes';
+import { isDroppedId, isDroppedProp, isRefusedTag, safeInlineStyle } from '@/lib/renderer/blockedNodes';
 import { buildHomeSnapshot } from '@/lib/renderer/server/seedDemoSite';
 import { EMPTY_BUSINESS } from '@/lib/site/siteSettings';
 import { stripStickyCtaProps } from '@/lib/stickyCta/stickyCta';
@@ -30,6 +30,7 @@ function losses(tree: Tree, where: string, out: string[] = []): string[] {
   for (const [name, value] of Object.entries(attributes)) {
     if (!NOT_ATTRIBUTES.has(name) && isDroppedProp(name, value)) out.push(`${where}: ${name} on <${String(tree.type)}>`);
   }
+  if (isDroppedId(tree.type, props.id)) out.push(`${where}: the id ${String(props.id)} on <${String(tree.type)}>`);
   const { style } = props;
   if (style && typeof style === 'object') {
     const flat = Object.fromEntries(Object.entries(style).map(([key, value]) => [key, value && typeof value === 'object' ? Object.values(value)[0] : value]));

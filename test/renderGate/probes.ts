@@ -18,7 +18,7 @@ import {
   svgElements,
 } from '../score/lib/universe';
 import type { Entry } from '../score/lib/types';
-import { DOM_MEMBER_NAMES } from '@/lib/renderer/domMemberNames.generated';
+import { DOM_MEMBER_NAMES, FORM_MEMBER_NAMES } from '@/lib/renderer/domMemberNames.generated';
 import { RENDERED_ATTRIBUTES } from '@/lib/renderer/renderVocabulary';
 
 export interface ProbeNode {
@@ -337,6 +337,42 @@ function nameProbes(full: boolean): Probe[] {
   ];
 }
 
+/**
+ * What a form exposes by name. A control with a member's `id` replaces that member, in
+ * a form or anywhere else through `form=`, so code walking up from the form never ends.
+ * A stored field's name reaches its control the same way, past the attribute gate.
+ */
+const FORM_CONTROLS = ['button', 'fieldset', 'img', 'input', 'output', 'select', 'textarea'];
+
+function formMemberProbes(full: boolean): Probe[] {
+  const members = full ? FORM_MEMBER_NAMES.filter((name) => name !== 'name') : ['parentElement', 'parentNode', 'closest', 'matches', 'elements', 'submit', 'getAttribute', 'tagName'];
+  const box = (id: string): ProbeNode['props'] => ({ id: `${id}f` });
+  const control = (id: string, type: string, props: ProbeNode['props'], children: ProbeNode[] = []): ProbeNode => ({
+    id: `${id}c`, type, props: type === 'img' ? { ...props, src: '/x.png', alt: '' } : props, children,
+  });
+  const marked = (kind: string, props: ProbeNode['props']) => ({ 'data-form-kind': kind, ...props });
+  return members.flatMap((name) => [
+    ...FORM_CONTROLS.flatMap((type) => [
+      hostile(`<form> holding <${type} id=${name}>`, 'form', [], box, (id) => [control(id, type, { id: name })]),
+      hostile(`<${type} id=${name} form=> beside its <form>`, 'div', [], () => ({}), (id) => [
+        { id: `${id}o`, type: 'form', props: box(id) },
+        control(id, type, { id: name, form: `${id}f` }),
+      ]),
+    ]),
+    hostile(`<form> holding <input ID=${name}>`, 'form', [], box, (id) => [control(id, 'input', { ID: name })]),
+    hostile(`<form> holding <table> holding <input id=${name}>`, 'form', [], box, (id) => [{ id: `${id}t`, type: 'table', props: {}, children: [control(id, 'input', { id: name })] }]),
+    hostile(`a stored form with a field called ${name}`, 'div', [], () => marked('form', {}), (id) => [
+      { id: `${id}n`, type: 'div', props: marked('form-field', { fieldType: 'text', name, label: 'x' }) },
+    ]),
+    hostile(`a stored form with a submit button id=${name}`, 'div', [], () => marked('form', {}), (id) => [
+      { id: `${id}s`, type: 'button', props: marked('form-submit', { id: name, children: 'x' }) },
+    ]),
+    hostile(`a stored form with a marked div id=${name} as its button`, 'div', [], () => marked('form', {}), (id) => [
+      { id: `${id}s`, type: 'div', props: marked('form-submit', { id: name, children: 'x' }) },
+    ]),
+  ]);
+}
+
 /** A paint or filter attribute reaching a file. A reference inside the page is how SVG works. */
 function cssReferenceProbes(): Probe[] {
   // Not `filter`: the model reads that as a style on the canvas, where an image may load.
@@ -415,6 +451,7 @@ export function buildProbes(full: boolean): Probe[] {
     ...shapeProbes(),
     ...rendererAttributeProbes(),
     ...nameProbes(full),
+    ...formMemberProbes(full),
     ...cssReferenceProbes(),
     ...renderedNameProbes(),
     ...componentTypeProbes(),
