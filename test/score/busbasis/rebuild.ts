@@ -12,8 +12,8 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { chromium, type Page } from 'playwright';
 import { readRules } from '@/lib/rules/rules';
-import { BREAKPOINTS } from '../lib/published';
-import { LIFT_INPUT, liftDocument, type LiftedNode, type LiftResult } from './lift';
+import { BREAKPOINTS } from '../lib/breakpoints';
+import { LIFT_INPUT, liftDocument, settleRootRules, type LiftedNode, type LiftResult } from './lift';
 import { BUSBASIS_PAGES } from './pages';
 import { CORPUS_DIR, SHARED_SHEET, SHEET_MARKER } from './freeze';
 
@@ -33,9 +33,10 @@ interface Inventory {
 
 function inventoryOf(root: LiftedNode): Inventory {
   const inventory: Inventory = { nodes: 0, rules: 0, nodesWithRules: 0, refused: {} };
+  // The page root reads its list as the published path does: a rule on `:root` is its own.
   const visit = (node: LiftedNode) => {
     inventory.nodes += 1;
-    const { rules, refused } = readRules(node.props);
+    const { rules, refused } = readRules(node.props, { pageRoot: node === root });
     inventory.rules += rules.length;
     if (rules.length + refused.length > 0) inventory.nodesWithRules += 1;
     for (const entry of refused) {
@@ -133,7 +134,7 @@ async function main(): Promise<void> {
   for (const listed of BUSBASIS_PAGES) {
     await page.setContent(frozenDocument(listed.slug));
     await page.evaluate('globalThis.__name = (f) => f');
-    const { root, report } = (await page.evaluate(liftDocument, LIFT_INPUT)) as LiftResult;
+    const { root, report } = settleRootRules((await page.evaluate(liftDocument, LIFT_INPUT)) as LiftResult);
     const inventory = inventoryOf(root);
     const treeFile = path.join(CORPUS_DIR, 'pages', `${listed.slug}.tree.json.gz`);
     fs.writeFileSync(treeFile, zlib.gzipSync(JSON.stringify(root), { level: 9 }));
@@ -147,7 +148,10 @@ async function main(): Promise<void> {
       unread: report.unreadSelectors.length,
       rootTook: report.rootTook.filter((name) => !name.startsWith('--')),
       rootVariables: report.rootTook.filter((name) => name.startsWith('--')).length,
+      rootRules: report.rootRules.filter((name) => !name.startsWith('--')),
+      rootRuleVariables: report.rootRules.filter((name) => name.startsWith('--')).length,
       rootLeft: report.rootLeft,
+      lang: report.lang,
       fidelity,
     });
   }

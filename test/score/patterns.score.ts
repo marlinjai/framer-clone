@@ -116,7 +116,7 @@ describe('coverage matrix: WAI-ARIA Authoring Practices patterns', () => {
       page.setDefaultTimeout(1500);
       // Stored behaviour needs the whole published path, and the runtime on the page.
       const published = pattern.built === 'behaviour' ? await renderThroughPublishedPage({ tree, definitions: {} }) : renderPublished(tree);
-      await page.setContent(publishedDocument(published, undefined, runtime));
+      await page.setContent(publishedDocument(published, undefined, undefined, runtime));
       try {
         await pattern.contract(page, page);
         renderer[key] = { status: 'pass', note: pattern.built === 'native' ? 'plain HTML brings the behaviour' : undefined };
