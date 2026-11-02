@@ -68,7 +68,15 @@ function syncPageParam(pageId: string | undefined) {
   window.history.replaceState(window.history.state, '', url.toString());
 }
 
-export default function EditorApp({ projectSnapshot }: { projectSnapshot?: ProjectSnapshotOut } = {}) {
+/**
+ * A server-loaded project comes with the site version read alongside it (the
+ * version lock, see openProject); the demo editor at `/` passes neither.
+ */
+type EditorAppProps =
+  | { projectSnapshot: ProjectSnapshotOut; projectVersion: number }
+  | { projectSnapshot?: undefined; projectVersion?: undefined };
+
+export default function EditorApp({ projectSnapshot, projectVersion }: EditorAppProps = {}) {
   const rootStore = useStore();
   // Browser page zoom off inside the editor; the canvas has its own.
   useEditorGestureGuard();
@@ -93,7 +101,7 @@ export default function EditorApp({ projectSnapshot }: { projectSnapshot?: Proje
       // server snapshot, or this tab's working copy when the server has
       // nothing newer (unsaved work, such as a page just generated, survives
       // a trip to Preview). openProject also owns the undo-history rules.
-      const opened = openProject(rootStore, projectSnapshot, requestedPageId);
+      const opened = openProject(rootStore, projectSnapshot, requestedPageId, projectVersion);
       missingPageId = opened.missingPageId;
       if (opened.changedElsewhere) {
         editorUI.setEditorNotice({

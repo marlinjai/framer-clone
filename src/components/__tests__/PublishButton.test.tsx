@@ -57,6 +57,7 @@ describe('PublishButton', () => {
       json: async () => ({
         siteId: 'site_1',
         status: 'published',
+        version: 2,
         publishedPages: ['', 'about'],
       }),
     });
@@ -83,6 +84,7 @@ describe('PublishButton', () => {
       json: async () => ({
         siteId: 'site_1',
         status: 'published',
+        version: 2,
         publishedPages: [''],
         subdomain: 'demo',
         liveUrl: 'https://demo.sites.lumitra.co',
@@ -106,6 +108,7 @@ describe('PublishButton', () => {
       json: async () => ({
         siteId: 'site_1',
         status: 'published',
+        version: 2,
         publishedPages: [''],
         subdomain: 'demo',
         liveUrl: null,
@@ -151,7 +154,7 @@ describe('PublishButton', () => {
     fetchMock.mockResolvedValue({
       ok: true,
       status: 200,
-      json: async () => ({ publishedPages: [''], liveUrl: 'https://abc123.sites.lumitra.co', subdomain: 'abc123' }),
+      json: async () => ({ publishedPages: [''], liveUrl: 'https://abc123.sites.lumitra.co', subdomain: 'abc123', version: 2 }),
     });
     const Address = () => {
       const { address } = useSiteAddress();
@@ -172,7 +175,7 @@ describe('PublishButton', () => {
 });
 
 describe('PublishButton legal check', () => {
-  const ok = { ok: true, status: 200, json: async () => ({ publishedPages: [''] }) };
+  const ok = { ok: true, status: 200, json: async () => ({ publishedPages: [''], version: 2 }) };
 
   function businessProject() {
     const p = makeProject();

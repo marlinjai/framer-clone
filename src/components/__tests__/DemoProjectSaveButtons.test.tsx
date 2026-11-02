@@ -37,7 +37,7 @@ function visitDemo() {
 function openServerProject(id = 'site_real') {
   const p = ProjectModel.create({ id, metadata: { title: 'Untitled Project', description: '' }, pages: {} });
   p.createPage('test page');
-  return openProject(store, getSnapshot(p) as ProjectSnapshotOut).project!;
+  return openProject(store, getSnapshot(p) as ProjectSnapshotOut, null, 1).project!;
 }
 
 beforeEach(() => {

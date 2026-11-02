@@ -7,6 +7,9 @@
 // Outcomes surface LOUDLY and never silently no-op:
 //   - in-flight: the button shows "Publishing..." and is disabled,
 //   - success: a brief confirmation (how many pages went live),
+//   - conflict: the project was saved somewhere else since this tab loaded it
+//     (409 `site_changed`, the version lock): SiteChangedDialog asks whether to
+//     load the newer version, publish this one over it, or keep both,
 //   - failure: the structured server error message (or a network-error
 //     message), shown until the next attempt.
 //
@@ -24,7 +27,10 @@ import { getSnapshot } from 'mobx-state-tree';
 import { UploadCloud } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useStore } from '@/hooks/useStore';
-import { markServerVersion, type ProjectContent } from '@/stores/openProject';
+import { knownServerVersion, markServerVersion, type ProjectContent } from '@/stores/openProject';
+import { postProjectWrite } from '@/lib/projects/projectWrite';
+import SiteChangedDialog from './SiteChangedDialog';
+import SaveAsNewProjectDialog from './SaveAsNewProjectDialog';
 import { useSiteAddress } from '@/contexts/SiteAddressContext';
 import { TopBarStatus } from './TopBarStatus';
 import { checkBeforePublish, hasPublishIssues, type PublishCheck } from '@/lib/legal/publishCheck';
@@ -45,7 +51,9 @@ type PublishState =
       liveLabel: string | null;
     }
   | { kind: 'error'; message: string }
-  | { kind: 'confirm'; check: PublishCheck };
+  | { kind: 'confirm'; check: PublishCheck }
+  // Refused by the version lock: the server is at `currentVersion`.
+  | { kind: 'conflict'; currentVersion: number; retrying: boolean };
 
 const PublishButton = observer(() => {
   const rootStore = useStore();
@@ -53,8 +61,12 @@ const PublishButton = observer(() => {
   const { address, setAddress } = useSiteAddress();
   const isUnsavedDemo = rootStore.editorUI.isUnsavedDemo === true;
   const [state, setState] = React.useState<PublishState>({ kind: 'idle' });
+  const [saveAsOpen, setSaveAsOpen] = React.useState(false);
 
-  const publish = React.useCallback(async (skipChecks = false) => {
+  // `overVersion`: publish over the server's copy on purpose ("Publish mine
+  // anyway"), naming the version the refusal reported. The legal checks already
+  // ran for this attempt then.
+  const publish = React.useCallback(async (skipChecks = false, overVersion?: number) => {
     if (!project) {
       setState({ kind: 'error', message: 'No project to publish.' });
       return;
@@ -84,30 +96,31 @@ const PublishButton = observer(() => {
         return;
       }
     }
-    setState({ kind: 'publishing' });
+    setState((prev) =>
+      overVersion !== undefined && prev.kind === 'conflict' ? { ...prev, retrying: true } : { kind: 'publishing' },
+    );
     try {
       const snapshot = getSnapshot(project);
       // The edits refused up to this snapshot are the ones this publish leaves out.
       const acknowledged = [...project.refusedComponents];
-      const res = await fetch('/api/projects/publish', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ project: snapshot }),
-      });
-      const payload: unknown = await res.json().catch(() => null);
-      if (!res.ok) {
-        const message =
-          (payload as { error?: { message?: string } } | null)?.error?.message ??
-          `Publish failed (${res.status}).`;
-        setState({ kind: 'error', message });
+      const result = await postProjectWrite(
+        '/api/projects/publish',
+        snapshot,
+        overVersion ?? knownServerVersion(project.id),
+        'Publish failed',
+      );
+      if (result.kind === 'conflict') {
+        setState({ kind: 'conflict', currentVersion: result.currentVersion, retrying: false });
         return;
       }
-      // The server now holds exactly this project (see openProject).
-      markServerVersion(project.id, snapshot as ProjectContent);
+      if (result.kind === 'error') {
+        setState({ kind: 'error', message: result.message });
+        return;
+      }
+      // The server now holds exactly this project, at this version (see openProject).
+      markServerVersion(project.id, snapshot as ProjectContent, result.version);
       project.clearRefusedEdits(acknowledged);
-      const ok = payload as
-        | { publishedPages?: unknown; liveUrl?: unknown; subdomain?: unknown }
-        | null;
+      const ok = result.payload as { publishedPages?: unknown; liveUrl?: unknown; subdomain?: unknown };
       const published = ok?.publishedPages;
       const count = Array.isArray(published) ? published.length : 0;
       // Prefer the absolute liveUrl; in local dev (no base host) the server
@@ -141,7 +154,7 @@ const PublishButton = observer(() => {
     }
   }, [project, address.host, setAddress, isUnsavedDemo]);
 
-  const publishing = state.kind === 'publishing';
+  const publishing = state.kind === 'publishing' || (state.kind === 'conflict' && state.retrying);
 
   const createLegal = (kind: LegalKind) => {
     if (!project) return;
@@ -204,6 +217,31 @@ const PublishButton = observer(() => {
           onCancel={() => setState({ kind: 'idle' })}
         />
       )}
+      <SiteChangedDialog
+        open={state.kind === 'conflict'}
+        action="publish"
+        busy={state.kind === 'conflict' && state.retrying}
+        onKeepEditing={() => setState({ kind: 'idle' })}
+        onLoadNewer={() => window.location.reload()}
+        onKeepMine={() => {
+          if (state.kind === 'conflict') void publish(true, state.currentVersion);
+        }}
+        onSaveAsNew={() => {
+          setState({ kind: 'idle' });
+          setSaveAsOpen(true);
+        }}
+      />
+      {/* Mounted only while asked for: it is the conflict's "keep both" choice. */}
+      {project && !isUnsavedDemo && saveAsOpen ? (
+        <SaveAsNewProjectDialog
+          open={saveAsOpen}
+          onOpenChange={setSaveAsOpen}
+          defaultName={`${project.metadata.title || 'Untitled Project'} (copy)`}
+          getSnapshot={() => getSnapshot(project) as unknown as { pages: Record<string, unknown>; components: Record<string, unknown> }}
+          currentPageId={rootStore.editorUI.currentPage?.id}
+          description="Keeps both versions: this tab's pages and components become a new project in your company, and it opens in the editor. Nothing is published; the project changed elsewhere stays as it is."
+        />
+      ) : null}
       <Button
         type="button"
         variant="brand"

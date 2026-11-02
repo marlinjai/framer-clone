@@ -55,7 +55,13 @@ export type ProjectLoadResult =
   | { status: 'auth_unavailable' }
   | { status: 'choose_company'; chooserUrl: string }
   | { status: 'not_found' }
-  | { status: 'ok'; snapshot: ProjectSnapshotOut; site: SiteAddress };
+  | {
+      status: 'ok';
+      snapshot: ProjectSnapshotOut;
+      /** The site version read with the snapshot: the editor's `expectedVersion` (version lock). */
+      version: number;
+      site: SiteAddress;
+    };
 
 /**
  * Build the auth-brain login URL whose `return_to` brings the user back to this
@@ -144,12 +150,12 @@ export async function loadProjectSnapshot(
     // SiteNotFoundError here, indistinguishable from a missing site, so a
     // foreign tenant's existence never leaks and its project is never rendered.
     const repo = getSiteRepository();
-    const project = await repo.loadProject(scopeResult.scope, projectId);
+    const { project, version } = await repo.loadProjectWithVersion(scopeResult.scope, projectId);
     const snapshot = getSnapshot(project) as ProjectSnapshotOut;
     // Where the site lives, for the page settings URL preview and its
     // "old links will redirect" note. Same scope, so it cannot leak either.
     const { host, everPublished } = await repo.getSiteAddress(scopeResult.scope, projectId);
-    return { status: 'ok', snapshot, site: { host, everPublished } };
+    return { status: 'ok', snapshot, version, site: { host, everPublished } };
   } catch (err) {
     if (err instanceof SiteNotFoundError) {
       // The link may point at a project of ANOTHER of the caller's companies
