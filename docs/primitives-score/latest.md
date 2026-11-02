@@ -128,7 +128,7 @@ A BusBasis page brings its own base: the storefront's Tailwind reset is in its s
 
 | Page type | Source | Result | Screenshots | Computed styles | Accessibility tree | Hover | Worst pixels differing | Worst elements differing | Default base | Blocked by |
 |---|---|---|---|---|---|---|---|---|---|---|
-| home | https://basiscampberlin.de/de, captured 2026-11-02, answered 200 | fail | 0/4 | 0/4 | 0/4 | 0/1 | 0.9 percent | 10 of 532 | 0/3 | mobile menu opens; cart count and dropdown; legal modals open from the footer; contact form sends; map embed; hero video |
+| home | https://basiscampberlin.de/de, captured 2026-11-02, answered 200 | fail | 4/4 | 0/4 | 0/4 | 0/1 | 0.0 percent | 1 of 532 | 0/3 | mobile menu opens; cart count and dropdown; legal modals open from the footer; contact form sends; map embed; hero video |
 | product list | https://basiscampberlin.de/de/store, captured 2026-11-02, answered 200 | fail | 4/4 | 4/4 | 4/4 | 1/1 | 0.0 percent | 0 of 754 | 0/3 | mobile menu opens; cart count and dropdown; legal modals open from the footer; faceted search; nested categories; live product list |
 | search | https://basiscampberlin.de/de/store?q=bremse, captured 2026-11-02, answered 200 | fail | 4/4 | 4/4 | 4/4 | 1/1 | 0.0 percent | 0 of 761 | 0/3 | mobile menu opens; cart count and dropdown; legal modals open from the footer; faceted search; live product list |
 | category | https://basiscampberlin.de/de/categories/mercedes-benz-baumuster-309-310-313-duedos-motor, captured 2026-11-02, answered 200 | fail | 4/4 | 4/4 | 4/4 | 1/1 | 0.0 percent | 0 of 279 | 0/3 | mobile menu opens; cart count and dropdown; legal modals open from the footer; nested categories; live product list |
@@ -149,7 +149,6 @@ Gaps on these pages, most pages first. "Needs" counts pages a missing feature st
 |---|---|---|---|---|
 | `behaviour-state` | 13 | 28 | 0 | Behaviour and state: no way to say that one element changes another. |
 | `shop-feature-missing` | 13 | 26 | 0 | A real BusBasis page depends on a shop feature that is not built: the page stays failed however close its pixels are. |
-| `published-base` | 1 | 0 | 36 | The published route ships the root layout's sheet to every visitor (Tailwind's reset, the theme, the base layer), and the page base of a site takes that out again. A check here fails with that sheet in place and passes on a page without it, so the page base left something behind. Measured, not guessed: the same replica matches its original on a page without the base. |
 | `blocked-embedded-content` | 1 | 1 | 4 | What the render gate refuses (blockedNodes.ts and renderVocabulary.ts): embedded content (iframe, object, embed, ...), although these are ordinary content elements, and attributes that act by themselves (ping, the shadow root ones). |
 | `harness-limit` | 1 | 1 | 0 | Not a product gap: the harness cannot yet decide this cell, so it is not counted as a pass. |
 
@@ -192,7 +191,7 @@ Cost is matrix cells, failed corpus checks and failed round-trip cases added up,
 | `ai-tag-allowlist` | 116 | 116 | 0 | 0 | 0 | none | The AI generator validator refuses this tag on purpose: blocked in every renderer, or a raw form control, which only works through the form presets. |
 | `reusable-components` | 98 | 98 | 0 | 0 | 0 | none | A promise of the reusable component format (an input type, a placement, a state or an interaction) that this surface does not keep yet. |
 | `panel-no-tag-choice` | 92 | 92 | 0 | 0 | 0 | none | The tag picker of the Custom section does not offer SVG and MathML elements. |
-| `blocked-embedded-content` | 82 | 78 | 4 | 0 | 1 | none | What the render gate refuses (blockedNodes.ts and renderVocabulary.ts): embedded content (iframe, object, embed, ...), although these are ordinary content elements, and attributes that act by themselves (ping, the shadow root ones). |
+| `blocked-embedded-content` | 87 | 78 | 9 | 0 | 1 | none | What the render gate refuses (blockedNodes.ts and renderVocabulary.ts): embedded content (iframe, object, embed, ...), although these are ordinary content elements, and attributes that act by themselves (ping, the shadow root ones). |
 | `behaviour-state` | 77 | 18 | 59 | 0 | 3 | radix-dialog | Behaviour and state: no way to say that one element changes another. |
 | `page-level-css` | 66 | 66 | 0 | 0 | 0 | none | CSS that applies to the document rather than a node (view transitions, `@page`, `@layer`): the route owns `html`. A rule on `:root` on the page root is the one form held today. |
 | `attribute-read-as-style` | 52 | 52 | 0 | 0 | 0 | none | An HTML attribute whose name is also a CSS property (width, height) is read as a style, so the editor loses the attribute: a canvas bitmap size or an image size hint is not the same as a declaration. |
@@ -200,7 +199,6 @@ Cost is matrix cells, failed corpus checks and failed round-trip cases added up,
 | `ai-rule-refused` | 44 | 44 | 0 | 0 | 0 | none | A rule that reads what a visitor does or looks beyond its node: stored and rendered, but refused to the generator on purpose, because a generation must not be able to report a visitor. See "AI output" in the selector styling plan. |
 | `react-attribute-handling` | 22 | 22 | 0 | 0 | 0 | none | React drops or rewrites an attribute that is valid HTML. |
 | `canvas-editor-context` | 10 | 10 | 0 | 0 | 0 | none | The contract passes on the published page, but the mounted editor changes the outcome: Space pans, a link does not navigate, and the editor's own main element stops a header inside it being a banner. Closing it takes an interact mode on the canvas. |
-| `published-base` | 9 | 0 | 9 | 0 | 1 | none | The published route ships the root layout's sheet to every visitor (Tailwind's reset, the theme, the base layer), and the page base of a site takes that out again. A check here fails with that sheet in place and passes on a page without it, so the page base left something behind. Measured, not guessed: the same replica matches its original on a page without the base. |
 | `import-dynamic-logic` | 7 | 0 | 0 | 7 | 0 | none | JSX that is a program, not markup: reported as left over by the static import, as the plan requires. |
 | `selector-styles` | 6 | 0 | 6 | 0 | 1 | none | CSS that needs a selector (states, pseudo-elements, structural selectors): a node only holds inline declarations, so no rule can be written. |
 | `top-layer-refused` | 5 | 5 | 0 | 0 | 0 | none | A pseudo-element drawn in the top layer, above every z-index and so above the consent banner (src/lib/styles/stacking.ts): a styled `::picker(select)` covers the screen, and in WebKit no tap closes it. Every path refuses it on purpose. |
