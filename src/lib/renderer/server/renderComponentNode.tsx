@@ -23,7 +23,7 @@
 
 import React from 'react';
 import { isVoidTag } from '@/lib/drag/voidTags';
-import { isBlockedProp, isBlockedTag, safeInlineStyle } from '@/lib/renderer/blockedNodes';
+import { isBlockedProp, isBlockedTag, safeInlineStyle, withoutDocumentId } from '@/lib/renderer/blockedNodes';
 import { isLegacyRulesAttribute } from '@/lib/rules/rules';
 import { isComponentPlaceholderType } from '@/lib/components/placement';
 import { isTextNodeType, ownTextThenChildren, renderableText } from '@/lib/renderer/textNode';
@@ -118,7 +118,7 @@ export function nodeDomProps(node: ComponentNode): Record<string, unknown> {
 
 /** As `nodeDomProps`, with a stable React key stamped for element emission. */
 function domPropsOf(node: ComponentNode, key: React.Key): Record<string, unknown> {
-  return { key, ...nodeDomProps(node) };
+  return { key, ...withoutDocumentId(node.type, nodeDomProps(node)) };
 }
 
 /** Whether a child of this tag is SVG content. */

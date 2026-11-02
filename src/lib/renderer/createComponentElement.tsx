@@ -14,7 +14,7 @@ import React from 'react';
 import { getParent, hasParent, isStateTreeNode } from 'mobx-state-tree';
 import { ComponentInstance } from '@/models/ComponentModel';
 import { isVoidTag } from '@/lib/drag';
-import { isBlockedTag, withoutBlockedProps } from '@/lib/renderer/blockedNodes';
+import { isBlockedTag, withoutBlockedProps, withoutDocumentId } from '@/lib/renderer/blockedNodes';
 import { isTextNodeType, ownTextThenChildren, renderableText } from '@/lib/renderer/textNode';
 import { isComponentPlaceholderType } from '@/lib/components/placement';
 import type { BindingScope } from '@/lib/bindings/resolver/scope';
@@ -131,7 +131,7 @@ export function createComponentElement(
 
   const content = ownTextThenChildren(rawTextChildren, children) as React.ReactNode;
   const identity = options?.identity;
-  const safeProps = withoutBlockedProps(finalProps);
+  const safeProps = withoutDocumentId(component.type, withoutBlockedProps(finalProps));
   const propsWithIdentity: Record<string, unknown> = identity
     ? {
         ...safeProps,

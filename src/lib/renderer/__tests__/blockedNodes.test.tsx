@@ -134,7 +134,7 @@ describe('blocked nodes', () => {
     expect(editor(type, { children: 'x' })).toBe('');
   });
 
-  it.each(['data-fc-consent-accept', 'data-fc-consent-decline', 'DATA-FC-CONSENT-ACCEPT', 'data-fc-n'])('refuses the renderer attribute %s', (name) => {
+  it.each(['data-fc-consent-accept', 'data-fc-consent-decline', 'DATA-FC-CONSENT-ACCEPT', 'data-fc-sticky-cta-link'])('refuses the renderer attribute %s', (name) => {
     expect(published({ type: 'div', props: { [name]: '', id: 'keep' } })).toBe('<div id="keep"></div>');
     expect(editor('div', { [name]: '', id: 'keep' })).toBe('<div id="keep"></div>');
   });
@@ -152,6 +152,11 @@ describe('blocked nodes', () => {
   it.each([['img', 'createElement'], ['form', 'querySelector'], ['img', 'addEventListener'], ['input', 'submit'], ['form', 'action'], ['img', 'cookie']])('refuses <%s name=%s>', (type, name) => {
     expect(published({ type, props: { name, alt: 'x' } })).not.toContain('name=');
     expect(editor(type, { name, alt: 'x' })).not.toContain('name=');
+  });
+
+  it('keeps a member name as an ordinary id off an img', () => {
+    expect(published({ type: 'label', props: { id: 'name' } })).toContain('id="name"');
+    expect(published({ type: 'section', props: { id: 'links' } })).toContain('id="links"');
   });
 
   it('keeps an ordinary id and name', () => {

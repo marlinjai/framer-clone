@@ -52,9 +52,10 @@ function isSafeAddress(address: string): boolean {
 
 /**
  * Names that replace what a page's own code calls. An `img` or a `form` with a
- * `name`, and an `img` with an `id` beside any `name`, become a property of
- * `document`: `name="createElement"` stopped every island on a page. Any `id` becomes
- * a global, which is how `__next_f` and `webpackChunk_N_E` stopped hydration.
+ * `name` becomes a property of `document`: `name="createElement"` stopped every
+ * island on a page. Any `id` becomes a global, which is how `__next_f` and
+ * `webpackChunk_N_E` stopped hydration. A member's name stays open as an ordinary
+ * `id` (`title`, `links`), except on an `img`, see withoutDocumentId.
  */
 const DOM_MEMBERS: ReadonlySet<string> = new Set(DOM_MEMBER_NAMES);
 const RESERVED_ID = /^__|^webpackChunk|^fc-|^ground-wrapper-/;
@@ -94,7 +95,7 @@ function isUnsafeValue(name: string, value: unknown): boolean {
   if (name === 'ref') return value !== undefined && value !== null;
   if (typeof value !== 'string') return false;
   if (name === 'attributename') return !REVIEWED_ANIMATED_ATTRIBUTES.has(value);
-  if (name === 'id') return RESERVED_ID.test(value) || DOM_MEMBERS.has(value);
+  if (name === 'id') return RESERVED_ID.test(value);
   if (name === 'name') return DOM_MEMBERS.has(value);
   if (CSS_REFERENCE_ATTRIBUTES.has(name)) return isForeignReference(value);
   if (name === 'srcset') return !isSafeSrcset(value);
@@ -133,7 +134,7 @@ export function isBlockedTag(tag: unknown, insideSvg = false): boolean {
   return true;
 }
 
-const NODE_SETTINGS: ReadonlySet<string> = new Set(['query', 'bindings', 'effects', 'rules', 'behaviour', 'instance']);
+const NODE_SETTINGS: ReadonlySet<string> = new Set(['query', 'bindings', 'effects', 'rules', 'behaviour', 'instance', 'fieldName']);
 
 /** Settings the renderers read from the node. Off the element, as they should be, so nothing to report. */
 const isSettingsProp = (name: string): boolean =>
@@ -177,6 +178,14 @@ export function safeInlineStyle(style: Record<string, unknown>): Record<string, 
   if (!keys.some((key) => isUnsafeInline(key, style[key]))) return style;
   warnOnce('an unsafe style declaration');
   return Object.fromEntries(keys.filter((key) => !isUnsafeInline(key, style[key])).map((key) => [key, style[key]]));
+}
+
+/** An `img` with a `name` also puts its `id` on `document`, and only that element does. */
+export function withoutDocumentId(tag: unknown, props: Record<string, unknown>): Record<string, unknown> {
+  if (typeof tag !== 'string' || tag.toLowerCase() !== 'img' || typeof props.id !== 'string' || !DOM_MEMBERS.has(props.id)) return props;
+  const { id, ...rest } = props;
+  warnOnce(`the id ${id}`);
+  return rest;
 }
 
 /** `props` without its blocked keys and unsafe style; the same object when there are none. */

@@ -318,7 +318,7 @@ function styleProbes(): Probe[] {
 
 /** What the renderers' own attributes are called: a runtime acts on these. */
 function rendererAttributeProbes(): Probe[] {
-  const names = ['data-fc-consent-accept', 'data-fc-consent-decline', 'data-fc-n', 'data-fc-site-base', 'data-fc-sticky-cta-link'];
+  const names = ['data-fc-consent-accept', 'data-fc-consent-decline', 'data-fc-site-base', 'data-fc-sticky-cta-link'];
   const spelled = names.flatMap((name) => [name, upper(name), mixed(name)]);
   return spelled.flatMap((name) => ['div', 'a', 'x-y'].map((type) => hostile(`renderer attribute ${name} on <${type}>`, type, [], () => ({ [name]: '' }))));
 }

@@ -1,7 +1,10 @@
 // The render gate refuses by default, so a new name in the web's data stays off
 // every page until someone has judged it, and this file says so.
 // @vitest-environment node
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { isIssuedAttribute } from '@/lib/behaviour/behaviourDom';
 import {
   htmlElementAttributes,
   htmlElements,
@@ -46,6 +49,15 @@ describe('renderVocabulary', () => {
   it('refuses by default: a name nobody has judged stays off the page', () => {
     for (const name of ['brandnew', 'innerhtml', 'outerhtml', 'textcontent', '__proto__', 'constructor']) expect(isRenderedAttribute(name)).toBe(false);
     for (const tag of ['brandnew', 'permission', 'svg:script', 'x-y:script', 'x:a', 'script ']) expect(isRenderedTag(tag)).toBe(false);
+  });
+
+  it('refuses every data-fc name the code uses, unless applyBehaviour issues it and drops stored ones', () => {
+    const files = fs.readdirSync('src', { recursive: true, encoding: 'utf8' })
+      .filter((file) => /\.tsx?$/.test(file) && !file.includes('__tests__'));
+    const used = new Set(files.flatMap((file) => fs.readFileSync(path.join('src', file), 'utf8').match(/data-fc-[a-z][a-z-]*[a-z]/g) ?? []));
+    expect(used.size).toBeGreaterThan(10);
+    const issued = (name: string) => isIssuedAttribute(name) || name === 'data-fc-sticky-cta';
+    expect([...used].filter((name) => isRenderedAttribute(name) && !issued(name))).toEqual([]);
   });
 
   it('keeps what no script reads: data, aria, an author\'s own hyphenated name and custom elements', () => {

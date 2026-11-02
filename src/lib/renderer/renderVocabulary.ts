@@ -88,8 +88,15 @@ export const REFUSED_RENDER_ATTRIBUTES: ReadonlySet<string> = new Set(words(`
   selection stagemode subscriptshift superscriptshift svgview switch text truespeed version watch zoomandpan
 `));
 
-/** What the renderers' own attributes start with: the consent runtime acts on these, so none comes from a node. */
-const RENDERER_ATTRIBUTE = /^data-fc-/;
+/**
+ * The renderers' own attributes: the consent runtime acts on these, so none comes
+ * from a node. A name, not `data-fc-*`, for two reasons. applyBehaviour writes its
+ * marks through this gate and drops stored ones itself (isIssuedAttribute), and an
+ * author's own name that merely starts alike is kept. renderVocabulary.test.ts fails
+ * when the code starts using a `data-fc-` name that is neither here nor issued. The
+ * bare `data-fc-sticky-cta` passes: hoistStickyCta writes it, and it only pins a bar.
+ */
+const RENDERER_ATTRIBUTE = /^data-fc-(?:consent|sticky-cta-|site-base|fonts|effects|responsive|behaviour|b$)/;
 
 /** A custom element's shape. A colon would let createElementNS read `x-y:script` as `script`. */
 const CUSTOM_ELEMENT = /^[a-z][a-z0-9._]*-[a-z0-9._-]*$/;

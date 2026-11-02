@@ -320,10 +320,12 @@ Rules, in both renderers:
 - **An attribute** must be listed, or be `data-*`, `aria-*` or an author's hyphenated name. Those are
   safe to keep because no script reads them and React never treats them as properties. The hyphen rule
   is the one deliberate exception to refusing by default, and a test asks for a decision when the data
-  lists a new hyphenated name. `data-fc-*` is refused: the renderers' own runtime acts on it.
-- **An `id` or `name`** cannot replace what the page's code calls: `__*`, `webpackChunk*`, `fc-*`,
-  `ground-wrapper-*`, and any member of `Document` or `HTMLFormElement`, from a list generated in real
-  browsers (`pnpm generate:dom-members`).
+  lists a new hyphenated name. The `data-fc-*` names the renderers' own runtime acts on are refused, by name: applyBehaviour issues
+  its marks through the gate and drops stored ones itself, and a test fails on a new name in the code.
+- **An `id` or `name`** cannot replace what the page's code calls. Ids `__*`, `webpackChunk*`, `fc-*`
+  and `ground-wrapper-*` are refused. A `name` cannot be a member of `Document` or `HTMLFormElement`, from
+  a list generated in real browsers (`pnpm generate:dom-members`), and neither can an `id` on an `img`,
+  the one element that puts its `id` on `document`.
 - **An SVG paint or filter attribute** may only `url(#...)` inside the page.
 - **An address** may only be `http`, `https`, `mailto`, `tel`, `sms`, a path, a fragment, or a `data:`
   image, audio, video or font. It is judged the way a browser reads it.

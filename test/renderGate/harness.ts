@@ -21,6 +21,7 @@ import type { Browser, Page, Request } from 'playwright';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { BREAKPOINTS } from '../score/lib/published';
 import { hydrateBindings } from '@/lib/renderer/publish/hydrateBindings';
+import { applyBehaviour } from '@/lib/renderer/server/applyBehaviour';
 import { applyEffects } from '@/lib/renderer/server/applyEffects';
 import { applyImageLoading } from '@/lib/renderer/server/imageLoading';
 import { applyResponsiveStyles } from '@/lib/renderer/server/applyResponsiveStyles';
@@ -41,7 +42,7 @@ export interface Finding {
 const ORIGIN = 'https://harness.test';
 const ALLOWED_LOADS: ReadonlySet<string> = new Set(['image', 'media', 'texttrack']);
 // React adds its own image preload next to an img, which loads only what the img would.
-const EMBEDS = '[data-fc-consent-accept],[data-fc-consent-decline],[data-fc-n],script,style,iframe,frame,frameset,object,embed,fencedframe,portal,link:not([rel=preload][as=image]),meta,base,webview';
+const EMBEDS = '[data-fc-consent-accept],[data-fc-consent-decline],[data-fc-sticky-cta-link],script,style,iframe,frame,frameset,object,embed,fencedframe,portal,link:not([rel=preload][as=image]),meta,base,webview';
 
 const CANARY = 'https://canary.invalid';
 
@@ -67,9 +68,10 @@ async function renderBatch(browser: string, probes: readonly Probe[]): Promise<R
     try {
       // The steps of renderPublishedPage. Stored nodes meet no repository here: a probe has no bindings.
       const hydrated = await hydrateBindings(probe.node as unknown as ComponentNode, {}, { cmsRepo: {} as never });
-      const images = applyImageLoading(hydrated);
+      const behaviour = applyBehaviour(hydrated);
+      const images = applyImageLoading(behaviour.root);
       const effects = applyEffects(images.root, BREAKPOINTS);
-      const { root, css: sheet } = applyResponsiveStyles(effects.root, BREAKPOINTS);
+      const { root, css: sheet } = applyResponsiveStyles(effects.root, BREAKPOINTS, { gated: behaviour.hasGate });
       const markup = renderToStaticMarkup(React.createElement(React.Fragment, null, renderComponentNode(root)));
       html += `<div data-probe="${probe.id}">${markup}</div>`;
       css += sheet;
