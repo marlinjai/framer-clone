@@ -14,6 +14,7 @@ import { feed as feedPreset } from '@/lib/behaviour/presets/feed';
 import { grid as gridPreset } from '@/lib/behaviour/presets/grid';
 import { treegrid as treegridPreset, treeview as treeviewPreset } from '@/lib/behaviour/presets/tree';
 import { behaviourOf, withProps } from '@/lib/behaviour/presets/nodes';
+import { GENERATED_PAGES } from './generatedPages';
 
 type Props = Record<string, unknown>;
 
@@ -590,6 +591,7 @@ const PRESET_PAGES: Readonly<Record<string, () => StoredNode>> = {
 
 export const PAGES: Readonly<Record<string, () => StoredNode>> = {
   ...PRESET_PAGES,
+  ...GENERATED_PAGES,
   plain: () => node('plain-page', 'p', { children: 'No behaviour here' }),
   still,
   effects,
