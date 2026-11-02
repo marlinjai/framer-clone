@@ -40,7 +40,6 @@ import { PROJECT_BODY_MAX_BYTES } from '@/lib/api/respond';
 import { BASE_KEY, isAcceptedStyleKey, styleKeyFrom, type BreakpointKey } from '@/lib/ai/pageGen/schema';
 import { validateGeneration, type GeneratedNodeSnapshot, type ImageRequest } from '@/lib/ai/pageGen/validate';
 import { breakpointKeyMap, toEditorSnapshot } from '@/lib/ai/pageGen/apply';
-import { applyStockPhotos, type PlacedPhoto } from '@/lib/ai/pageGen/stockImages';
 import { STOCK_CREDIT_ATTRS, isSameUnsplashPhoto } from '@/lib/ai/pageGen/stockCredit';
 import { siteAddressOf, siteContextFromSettings } from '@/lib/ai/pageGen/promptSections/siteContext';
 import { indexReviewTree, validateReviewOps } from '@/lib/ai/review/ops';
@@ -61,8 +60,15 @@ const PROPS_NOT_SET_HERE: ReadonlySet<string> = new Set([
 ]);
 
 export interface ApplyDeps {
-  /** Resolves `imageQuery` requests of inserted nodes to stock photos; without it they are refused. */
-  resolveImages?: (requests: ImageRequest[]) => Promise<PlacedPhoto[]>;
+  /**
+   * Places stock photos for the `imageQuery` requests of inserted nodes (the
+   * server's Unsplash search): the nodes with the photos written in, and how many
+   * requests found none. Without it an imageQuery is refused.
+   */
+  placeImages?: (
+    nodes: GeneratedNodeSnapshot[],
+    requests: ImageRequest[],
+  ) => Promise<{ nodes: GeneratedNodeSnapshot[]; missing: number }>;
   /** Node id factory for inserted nodes (tests). */
   newId?: () => string;
 }
@@ -72,8 +78,6 @@ export type ApplyOutcome =
       ok: true;
       created: Record<string, string>;
       summary: string[];
-      /** Stock photos the batch placed through imageQuery, for the provider's download tracking. */
-      photos: PlacedPhoto[];
     }
   | { ok: false; rejected: RejectedOperation[] };
 
@@ -258,7 +262,6 @@ export async function applyOperations(
   // 2. Apply in order, each against the state the earlier ones left.
   const created: Record<string, string> = {};
   const summary: string[] = [];
-  const photos: PlacedPhoto[] = [];
   const touched: Array<{ page: PageModelType; nodeId: string }> = [];
   const recorder = recordPatches(project);
   const refusedEdits = () => project.refusedComponents.filter((entry) => entry.edit).length;
@@ -348,7 +351,7 @@ export async function applyOperations(
     recorder.undo();
     return { ok: false, rejected: [{ index: -1, op: 'batch', reason: problem }] };
   }
-  return { ok: true, created, summary, photos };
+  return { ok: true, created, summary };
 
   // ---------- one operation ----------
 
@@ -415,15 +418,12 @@ export async function applyOperations(
 
         let nodes = outcome.result.nodes;
         if (outcome.result.imageRequests.length > 0) {
-          if (!deps.resolveImages) throw new OpRefused('imageQuery cannot be resolved here; use findImages and set src with its credit');
-          const placed = await deps.resolveImages(outcome.result.imageRequests);
-          if (placed.length < outcome.result.imageRequests.length) {
-            throw new OpRefused(
-              `${outcome.result.imageRequests.length - placed.length} imageQuery photo(s) could not be found; use findImages and set src with its credit`,
-            );
+          if (!deps.placeImages) throw new OpRefused('imageQuery cannot be resolved here; use findImages and set src with its credit');
+          const placed = await deps.placeImages(nodes, outcome.result.imageRequests);
+          if (placed.missing > 0) {
+            throw new OpRefused(`${placed.missing} imageQuery photo(s) could not be found; use findImages and set src with its credit`);
           }
-          nodes = applyStockPhotos(nodes, placed);
-          photos.push(...placed);
+          nodes = placed.nodes;
         }
 
         for (const site of refs) {
@@ -568,8 +568,8 @@ export async function applyOperations(
         const rules = toEditorSnapshot(cleaned, keyMap).props?.rules;
         if (!Array.isArray(rules) || rules.length === 0) throw new OpRefused('the rule was not kept by the rule checks');
         for (const rule of rules as NewRule[]) {
-          const { id: _generated, ...rest } = rule as NewRule & { id?: string };
-          const result = node.addRule(rest as NewRule);
+          // The draft's id goes: addRule mints the stored one.
+          const result = node.addRule({ ...rule, id: undefined } as NewRule);
           if (!result.ok) throw new OpRefused(result.reason);
         }
         touched.push({ page, nodeId: node.id });
