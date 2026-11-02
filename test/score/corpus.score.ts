@@ -78,9 +78,9 @@ describe('parity corpus', () => {
     for (const fixture of FIXTURES) {
       const original = await originalDocument(fixture);
       const output = fixture.published ? await fixture.published() : renderPublished(fixture.tree());
-      const replica = publishedDocument(output, CORPUS_SITE.pageBase, runtime);
-      const onDefaultBase = publishedDocument(output, undefined, runtime);
-      const bare = bareDocument(output, runtime);
+      const replica = publishedDocument(output, CORPUS_SITE.pageBase, undefined, runtime);
+      const onDefaultBase = publishedDocument(output, undefined, undefined, runtime);
+      const bare = bareDocument(output, undefined, runtime);
       const defaultBase = { pass: 0, total: 0 };
       const failures: CorpusFailure[] = [];
       const checks: CorpusResult['checks'] = {

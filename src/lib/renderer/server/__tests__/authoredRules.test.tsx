@@ -73,8 +73,8 @@ describe('a rule in the sheet', () => {
   });
 
   it('writes one rule per part of a list, so one unknown part cannot lose the rest', () => {
-    const { css } = applyResponsiveStyles(node('a', { rules: [{ id: 'r', selector: '&::picker(select), &:hover', style: { color: 'red' } }] }), BPS);
-    expect(css).toBe(withGuard('.fc_r-a.fc_r-a::picker(select){color:red}\n.fc_r-a.fc_r-a:hover{color:red}'));
+    const { css } = applyResponsiveStyles(node('a', { rules: [{ id: 'r', selector: '&::scroll-marker, &:hover', style: { color: 'red' } }] }), BPS);
+    expect(css).toBe(withGuard('.fc_r-a.fc_r-a::scroll-marker{color:red}\n.fc_r-a.fc_r-a:hover{color:red}'));
   });
 
   it('merges adjacent blocks with identical wrappers and nests wrappers in stored order', () => {

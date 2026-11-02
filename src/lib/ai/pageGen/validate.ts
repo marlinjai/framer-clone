@@ -63,7 +63,7 @@ import { STOCK_CREDIT_ATTRS, stockCreditAttrs, stockCreditProps } from './stockC
 import { parseAspectRatio, photoUrlOf, withPhotoUrl } from '@/lib/images/imageStyle';
 import { normalizeFontFamily } from '@/lib/fonts/registry';
 import ComponentModel, { ComponentTypeEnum } from '@/models/ComponentModel';
-import { UNSAFE_VALUE, isContainedValue, scanCssValue } from '@/lib/responsive/responsiveCss';
+import { UNSAFE_VALUE, holdsTopLayerValue, isContainedValue, scanCssValue } from '@/lib/responsive/responsiveCss';
 import { isVoidTag } from '@/lib/drag/voidTags';
 import { TEXT_NODE_TYPE, refusesBareText } from '@/lib/renderer/textNode';
 import { formPropKeysFor, presetFormKind, sanitizeGeneratedFormProps } from '@/lib/forms/generation';
@@ -232,7 +232,9 @@ const Z_INDEX_KEYWORD = /^(?:auto|inherit|initial|unset|revert|revert-layer)$/i;
 /**
  * A z-index no higher than GENERATION_LIMITS.maxZIndex, or undefined for one that
  * cannot be read: a var() or calc() could hide any number. The banner sits above
- * that limit, so nothing generated can cover it.
+ * that limit, so nothing generated can cover it. The generator's own, lower limit:
+ * the renderers hold every stored z-index below the platform's layers anyway
+ * (src/lib/styles/stacking.ts).
  */
 export function clampedZIndex(value: string | number): string | number | undefined {
   const limit = GENERATION_LIMITS.maxZIndex;
@@ -251,6 +253,7 @@ export function clampedZIndex(value: string | number): string | number | undefin
  */
 export function styleValueProblem(property: string, value: string, inRule = false): string | undefined {
   if (UNSAFE_VALUE.test(value) || STRING_URL_FUNCTION.test(value)) return 'unsafe value';
+  if (holdsTopLayerValue(value)) return 'base-select puts the list in the top layer, above the consent banner';
   const motion = motionValueProblem(property, value);
   if (motion) return motion;
   if (!inRule && namesGeneratedKeyframes(property, value)) return 'a stored animation outside a rule';

@@ -14,8 +14,14 @@
 //     site is dark only, so its `dark:` variants are simply the page.
 //
 // What the format has no place for is reported, never faked. `html` and `body` belong
-// to the route, so their declarations move to the root node, the closest thing an
-// author has, and whatever that cannot do shows up as a difference in the score.
+// to the route. `body` moves to the root node, the closest thing an author has. What
+// matches `html` becomes a rule on `:root` on the page root, one per set of wrappers,
+// holding what a rule on the document may set (src/lib/rules/rootProperties.ts, read
+// by settleRootRules outside the page); the root node also keeps what children
+// inherit from `html`, as before. Whatever neither can do shows up as a difference in
+// the score.
+
+import { isRootStyleKey } from '@/lib/rules/rootProperties';
 
 export type StyleMap = Record<string, string>;
 
@@ -42,8 +48,12 @@ export interface LiftReport {
   unliftable: { selector: string; reason: string; elements: number }[];
   /** Declarations of `html` the root node took over, because children inherit them. */
   rootTook: string[];
-  /** Declarations of `html` that act on the document itself, so no node can hold them. */
+  /** Declarations of `html` the page root holds as rules on `:root`, with their wrappers. */
+  rootRules: string[];
+  /** Declarations of `html` a rule on the document may not set, so nothing holds them. Filled by settleRootRules. */
   rootLeft: string[];
+  /** The page's language, from `<html lang>`: a site setting, so the document carries it. */
+  lang: string;
 }
 
 export interface LiftResult {
@@ -93,7 +103,7 @@ export function liftDocument(input: { attributeNames: Record<string, string> }):
     declarations: Declaration[];
   }
 
-  const report: LiftReport = { unreadSelectors: [], unliftable: [], rootTook: [], rootLeft: [] };
+  const report: LiftReport = { unreadSelectors: [], unliftable: [], rootTook: [], rootRules: [], rootLeft: [], lang: document.documentElement.lang };
 
   const camel = (name: string): string => {
     if (name.startsWith('--')) return name;
@@ -403,21 +413,39 @@ export function liftDocument(input: { attributeNames: Record<string, string> }):
 
   const root = liftElement(document.body, true);
 
-  // The route owns html and body: the root node is the nearest thing an author has.
-  const htmlMatched = [...(matchedBy.get(document.documentElement) ?? [])].sort(byCascade).filter((p) => p.at.length === 0 && !p.pseudoElement && p.states.length === 0);
+  // The route owns html and body. What html sets becomes a rule on `:root`, one per
+  // set of wrappers in the order the sheet first uses them, and what children inherit
+  // from it also stays on the root node, the nearest thing an author has.
+  const htmlAll = [...(matchedBy.get(document.documentElement) ?? [])].sort(byCascade).filter((p) => !p.pseudoElement && p.states.length === 0 && !p.context);
+  const htmlMatched = htmlAll.filter((p) => p.at.length === 0);
   const fromHtml: StyleMap = {};
   applyDeclarations(fromHtml, htmlMatched, false);
+  applyDeclarations(fromHtml, htmlMatched, true);
   const htmlStyle: StyleMap = {};
   for (const [key, value] of Object.entries(fromHtml)) {
     if (key.startsWith('--') || INHERITED.has(key)) {
       htmlStyle[key] = value;
       report.rootTook.push(key);
-    } else report.rootLeft.push(key);
+    }
+  }
+  // Which of these a document rule may hold is settled outside the page: settleRootRules.
+  const wrapperSets: string[][] = [];
+  for (const part of [...htmlAll].sort((a, b) => a.order - b.order)) {
+    if (!wrapperSets.some((at) => JSON.stringify(at) === JSON.stringify(part.at))) wrapperSets.push(part.at);
+  }
+  const rootRules: LiftedRule[] = [];
+  for (const at of wrapperSets) {
+    const list = htmlAll.filter((p) => JSON.stringify(p.at) === JSON.stringify(at));
+    const body: StyleMap = {};
+    applyDeclarations(body, list, false);
+    applyDeclarations(body, list, true);
+    if (Object.keys(body).length > 0) rootRules.push({ id: `root${rootRules.length}`, selector: ':root', ...(at.length > 0 ? { at } : {}), style: body });
   }
   // `body { line-height: inherit }` reads html, and the root node has no html to read.
   const bodyStyle = Object.fromEntries(Object.entries((root.props.style ?? {}) as StyleMap).filter(([, value]) => value !== 'inherit'));
   // A div isolates its text direction and a body does not: the stand-in restates body.
   root.props.style = { unicodeBidi: 'normal', ...htmlStyle, ...bodyStyle };
+  if (rootRules.length > 0) root.props.rules = [...rootRules, ...((root.props.rules ?? []) as LiftedRule[])];
   if (document.documentElement.lang) root.props.lang = document.documentElement.lang;
 
   // A class no rule reads is dead weight on a node, but `.group` in `:is(.group:hover *)` is read.
@@ -439,3 +467,34 @@ export function liftDocument(input: { attributeNames: Record<string, string> }):
 }
 
 export const LIFT_INPUT = { attributeNames: ATTRIBUTE_NAMES };
+
+/**
+ * Outside the page, where the product's own list can be read: a declaration of `html`
+ * that a rule on the document may not set leaves its `:root` rule and is reported,
+ * and a rule left empty goes. The list is the product's, never restated here.
+ */
+export function settleRootRules(result: LiftResult): LiftResult {
+  const rules = (result.root.props.rules ?? []) as LiftedRule[];
+  const settled: LiftedRule[] = [];
+  const rootRules: string[] = [];
+  const rootLeft: string[] = [];
+  for (const rule of rules) {
+    if (rule.selector !== ':root') {
+      settled.push(rule);
+      continue;
+    }
+    const style: StyleMap = {};
+    for (const [key, value] of Object.entries(rule.style ?? {})) {
+      const where = `${key}${rule.at ? ` ${rule.at.join(' ')}` : ''}`;
+      if (isRootStyleKey(key)) {
+        style[key] = value;
+        rootRules.push(where);
+      } else rootLeft.push(where);
+    }
+    if (Object.keys(style).length > 0) settled.push({ ...rule, style });
+  }
+  const props = { ...result.root.props };
+  if (settled.length > 0) props.rules = settled;
+  else delete props.rules;
+  return { root: { ...result.root, props }, report: { ...result.report, rootRules, rootLeft } };
+}

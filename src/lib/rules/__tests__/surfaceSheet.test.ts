@@ -70,8 +70,8 @@ describe('the canvas sheet', () => {
   });
 
   it('keeps a list as one block per part, as on the published page', () => {
-    const css = canvas(node('a', { rules: [{ id: 'r', selector: '&::picker(select), &:first-child', style: { color: 'red' } }] }), { frames: [FRAMES[0]] });
-    expect(css).toContain(`${copy('desk', 'a')}::picker(select){color:red!important}\n${copy('desk', 'a')}:first-child{color:red!important}`);
+    const css = canvas(node('a', { rules: [{ id: 'r', selector: '&::scroll-marker, &:first-child', style: { color: 'red' } }] }), { frames: [FRAMES[0]] });
+    expect(css).toContain(`${copy('desk', 'a')}::scroll-marker{color:red!important}\n${copy('desk', 'a')}:first-child{color:red!important}`);
   });
 
   it('never carries the field guard, whose selector would fix the editor\'s own fields', () => {

@@ -123,6 +123,14 @@ export interface ConsentRuntimeConfig {
  * removes what the tracker stored and reloads the page so nothing keeps
  * running. Storage that throws (sandboxed frames, some private modes) keeps
  * the choice for this page view only.
+ *
+ * While the banner is open, nothing of the page sits in the top layer, which is
+ * above every z-index (the z-index cap is src/lib/styles/stacking.ts): opening
+ * it closes any open popover and modal dialog and leaves fullscreen, and while
+ * it stays open a popover or modal dialog the page opens is cancelled or
+ * closed, and fullscreen is left again. A modal dialog makes all else inert, so
+ * the banner cannot sit above one and still be pressed. Once the visitor
+ * chooses, the page has the top layer back.
  */
 export function consentRuntimeScript(input: ConsentRuntimeConfig): string {
   const config = {
@@ -162,7 +170,22 @@ export function consentRuntimeScript(input: ConsentRuntimeConfig): string {
     // Remove what the tracker stored (revoking an earlier yes).
     'function forget(){try{var ss=w.sessionStorage;for(var i=ss.length-1;i>=0;i--){var n=ss.key(i);if(n&&n.indexOf(C.prefix)===0)ss.removeItem(n);}}catch(e){}' +
     "try{d.cookie=C.cookie+'=; path=/; max-age=0';}catch(e){}}" +
-    'function show(focus){if(!el)return;el.hidden=false;if(focus){try{el.focus();}catch(e){}}}' +
+    // The top layer guard. `up` is the banner waiting on screen. Each step is
+    // guarded: an engine without one of these features throws on its name.
+    'function up(){return !!el&&!el.hidden;}' +
+    "var told=false;function tell(){if(!told){told=true;console.warn('[consent] closed a popover, dialog or fullscreen that would cover the consent banner');}}" +
+    "function shut(t){try{if(t.tagName==='DIALOG'&&t.open&&t.matches(':modal')){t.close();tell();}if(t.matches(':popover-open')){t.hidePopover();tell();}}catch(e){}}" +
+    'function unfull(){var f=d.fullscreenElement||d.webkitFullscreenElement;if(!f)return;tell();' +
+    'try{var p=d.exitFullscreen?d.exitFullscreen():d.webkitExitFullscreen();if(p&&p.catch)p.catch(function(){});}catch(e){}}' +
+    "function clear(){var all=[];try{all=d.querySelectorAll('dialog[open]');}catch(e){}for(var i=0;i<all.length;i++)shut(all[i]);" +
+    "try{all=d.querySelectorAll(':popover-open');}catch(e){all=[];}for(var j=0;j<all.length;j++)shut(all[j]);unfull();}" +
+    "d.addEventListener('beforetoggle',function(ev){if(up()&&ev.newState==='open'&&ev.cancelable&&ev.target!==el){ev.preventDefault();tell();}},true);" +
+    "d.addEventListener('toggle',function(ev){if(up()&&ev.newState==='open'&&ev.target&&ev.target.nodeType===1)shut(ev.target);},true);" +
+    "d.addEventListener('fullscreenchange',function(){if(up())unfull();});d.addEventListener('webkitfullscreenchange',function(){if(up())unfull();});" +
+    // showModal sets `open`: an engine that fires no toggle for a dialog still says that.
+    "try{new MutationObserver(function(rs){if(!up())return;for(var i=0;i<rs.length;i++)shut(rs[i].target);})" +
+    ".observe(d.documentElement,{subtree:true,attributes:true,attributeFilter:['open']});}catch(e){}" +
+    'function show(focus){if(!el)return;el.hidden=false;clear();if(focus){try{el.focus();}catch(e){}}}' +
     'function hide(){if(!el)return;el.hidden=true;var o=opener;opener=null;if(o&&o.focus&&d.contains(o)){try{o.focus();}catch(e){}}}' +
     'function choose(yes){var before=current();write(yes);hide();if(yes){load();return;}' +
     "forget();if(before==='granted'||loaded){try{w.location.reload();}catch(e){}}}" +
