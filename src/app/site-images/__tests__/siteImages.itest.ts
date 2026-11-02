@@ -534,11 +534,12 @@ describe('who may reach the routes', () => {
   });
 
   it('refuses an upload from a published site origin before any handler runs (cross_origin_refused)', async () => {
-    for (const headers of [
+    const attempts: Record<string, string>[] = [
       { 'sec-fetch-site': 'same-site', origin: 'https://shop.sites.lumitra.co', 'content-type': 'text/plain' },
       { 'sec-fetch-site': 'cross-site', origin: 'https://www.kunde.de', 'content-type': 'image/png' },
       { origin: 'https://shop.sites.lumitra.co', 'content-type': 'text/plain' },
-    ]) {
+    ];
+    for (const headers of attempts) {
       const res = await middleware(
         new NextRequest(`https://${EDITOR}/api/projects/${siteA.id}/images?kind=favicon`, {
           method: 'POST',
