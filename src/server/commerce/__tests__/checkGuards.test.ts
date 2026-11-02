@@ -181,6 +181,22 @@ describe('bypasses the scanner closes (reviewer findings)', () => {
     expect(rules('async function f(conn: postgres.Sql) { await conn`SELECT * FROM price`; }')).toEqual(['G3']);
     expect(rules('let probe: Sql | undefined;\nawait probe!`SELECT * FROM product`;')).toEqual(['G3']);
     expect(rules('await db.begin(async (t) => { await t`SELECT id FROM "order"`; });')).toEqual(['G3']);
+    // Optional and definite parameters and fields, with or without a space before the mark.
+    expect(rules('async function f(conn?: postgres.Sql) { await conn!`SELECT * FROM price`; }')).toEqual(['G3']);
+    expect(rules('class C { conn!: Sql; run() { return conn`SELECT * FROM price`; } }')).toEqual(['G3']);
+    expect(rules('async function f(conn ? : TransactionSql) { await conn!`SELECT * FROM price`; }')).toEqual(['G3']);
+    expect(rules('async function f(conn\n  ?\n  : Sql) { await conn!`SELECT * FROM price`; }')).toEqual(['G3']);
+  });
+
+  it('reads a long comment in linear time', () => {
+    // Comments are blanked to spaces before the patterns run. A `\s*[?!]?\s*:` in the typed-tag
+    // pattern tried every split of such a run after each word, which made it 60 % of the repository
+    // scan. Measured on that one pattern: 0.6 s for 20 000 blanks and 4.6 s for 60 000, against under
+    // a millisecond for the unambiguous one, so this sample would take about a minute (extrapolated).
+    const comment = `/*${' '.repeat(200_000)}*/`;
+    const started = performance.now();
+    expect(rules(`const a = 1; const word ${comment} = 2;`)).toEqual([]);
+    expect(performance.now() - started).toBeLessThan(2_000);
   });
 
   it('G3 accepts only an INTERPOLATED schema qualifier in front of a tenant table', () => {
@@ -235,5 +251,7 @@ describe('the repository scan (what `pnpm lint:guards` runs)', () => {
       expect(files.some((f) => f.endsWith(expected)), expected).toBe(true);
     }
     expect(scanFiles(files, { knownTables })).toEqual([]);
-  });
+    // Reads and scans all 1178 source files: 1.5 s of wall time at load 35 on 14 cores, and it grows
+    // with the repository, so the 5 s default is no bound on the scanner, only on the machine's load.
+  }, 30_000);
 });
