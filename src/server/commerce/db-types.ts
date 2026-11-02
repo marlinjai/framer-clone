@@ -810,6 +810,7 @@ export interface OrderPaymentTable {
   version: Generated<number>;
   created_at: Generated<Timestamp>;
   updated_at: Timestamp;
+  checkout_request: JsonColumn<Record<string, unknown>> | null;
 }
 
 /** 021_order_payment: a provider event, recorded once (append-only, BK019). */

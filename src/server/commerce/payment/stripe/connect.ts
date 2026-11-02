@@ -26,6 +26,15 @@ import type { StripeApi, StripeConfig } from './client';
 /** Stripe's shortest Checkout Session lifetime (30 minutes), plus a minute for the clocks. */
 const MIN_SESSION_MS = 31 * 60 * 1000;
 
+/**
+ * When an order's Checkout Session ends: a fixed time after its payment window, so every start of one order sends the
+ * same `expires_at` under the same idempotency key (Stripe refuses a key reused with other parameters). A start is
+ * only made while the window is open, so the session always lives at least Stripe's minimum.
+ */
+export function checkoutSessionEnd(paymentWindowEnd: Date): Date {
+  return new Date(paymentWindowEnd.getTime() + MIN_SESSION_MS);
+}
+
 export type AccountStatus = 'not_connected' | 'pending' | 'ready' | 'restricted';
 
 export interface CompanyPaymentAccount {
@@ -169,6 +178,12 @@ export function stripeProvider(
       const accountId = args.connectedAccountId ?? (await chargeableAccount(ctx.db, api, ctx.tenantId));
       if (!accountId) throw new Error(`company ${ctx.tenantId} has no Stripe account that can take payments`);
       if (!args.returnUrl) throw new Error('a hosted checkout needs a return address');
+      if (!args.expiresAt) throw new Error('a hosted checkout needs the end of its payment window');
+      const sessionEnd = checkoutSessionEnd(args.expiresAt);
+      // Past the window the pay route closes the order first; this only stops a request Stripe would refuse.
+      if (sessionEnd.getTime() - Date.now() < 30 * 60 * 1000) {
+        throw new Error(`the payment window of order ${args.orderId} is over: no hosted checkout opens for it`);
+      }
       const session = await api.createCheckoutSession({
         accountId,
         orderId: args.orderId,
@@ -183,8 +198,9 @@ export function stripeProvider(
         cancelUrl: `${args.returnUrl}${args.returnUrl.includes('?') ? '&' : '?'}checkout=cancelled&order=${encodeURIComponent(args.orderNumber)}`,
         // Stripe keeps a session open at least 30 minutes; one that outlives the payment window and is paid
         // late goes through the late-success path (the stock reserved again, or a full refund).
-        expiresAt: Math.floor(Math.max(args.expiresAt?.getTime() ?? 0, Date.now() + MIN_SESSION_MS) / 1000),
-        // One session per order: a retried start answers the same session.
+        expiresAt: Math.floor(sessionEnd.getTime() / 1000),
+        // One session per order: a retried start sends the same request (the pay route keeps the first one's email
+        // and return address, 028), so Stripe answers the same session.
         idempotencyKey: `checkout:${args.orderId}`,
       });
       return { providerPaymentId: session.id, redirectUrl: session.url };
