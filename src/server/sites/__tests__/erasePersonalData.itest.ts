@@ -230,8 +230,9 @@ describe('forward: search, erase, proof', () => {
     const query = { value: 'Mustermann', caseSensitive: false };
     const preview = await repo.searchPersonalData(scope, siteId, query);
     const slugs = preview.matches.filter((m) => m.blocked === 'address');
-    expect(slugs.map((m) => m.location.kind).sort()).toEqual(['revision', 'working']);
-    expect(slugs.every((m) => /^\/pages\/\d+\/slug$/.test(m.path))).toBe(true);
+    expect(slugs.map((m) => m.location.kind).sort()).toEqual(['revision', 'revision', 'working', 'working']);
+    // The page's mirror slug and its snapshot's own slug, in each copy.
+    expect(slugs.every((m) => /^\/pages\/\d+\/(snapshot\/)?slug$/.test(m.path))).toBe(true);
     // Leave the managing director in the working copy (listed first) alone.
     const keep = preview.matches.find((m) => m.blocked === null && m.area === 'settings')!;
     expect(keep.location).toEqual({ kind: 'working' });
@@ -243,7 +244,7 @@ describe('forward: search, erase, proof', () => {
       chosen: allShown(preview).filter((id) => id !== keep.id),
       erasedBy: OWNER,
     });
-    expect(result.remaining).toBe(3); // the slug in both documents, and the director left out
+    expect(result.remaining).toBe(5); // the slug and its snapshot slug in both documents, and the director left out
     const site = await visit();
     expect(site?.pages.find((p) => p.pageId === 'about')?.slug).toBe('team-mustermann');
     expect(site?.siteSettings.business.managingDirectors).toHaveLength(1);
