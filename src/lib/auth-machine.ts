@@ -497,20 +497,25 @@ function verifyFreshWithDeadline(presented: string): Promise<FreshResult> {
  * with a company names `tenantId`. Throws when the database cannot answer.
  */
 async function siteRowsAgree(scope: TenantScope, tenantId: string): Promise<boolean> {
-  const rows = await getPrismaClient().$transaction(
+  const mismatch = await getPrismaClient().$transaction(
     async (tx) => {
       // A constant, never interpolated: SET takes no bind parameters.
       await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = ${SITE_ROW_STATEMENT_TIMEOUT_MS}`);
-      return tx.site.findMany({
-        where: { workspaceId: scope.workspaceId },
-        distinct: ['tenantGroupId', 'companyId'],
-        select: { tenantGroupId: true, companyId: true },
-        take: 50,
+      // Ask for one disagreeing row instead of sampling: a sample could miss it.
+      return tx.site.findFirst({
+        where: {
+          workspaceId: scope.workspaceId,
+          OR: [
+            { tenantGroupId: { not: scope.tenantGroupId } },
+            { AND: [{ companyId: { not: null } }, { companyId: { not: tenantId } }] },
+          ],
+        },
+        select: { id: true },
       });
     },
     { timeout: SITE_ROW_STATEMENT_TIMEOUT_MS + 1_000 },
   );
-  return rows.every((r) => r.tenantGroupId === scope.tenantGroupId && (r.companyId === null || r.companyId === tenantId));
+  return mismatch === null;
 }
 
 type FreshResult = { result: CompanyKey; keyExpiresAt: number | null };

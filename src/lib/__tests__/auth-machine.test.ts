@@ -25,12 +25,12 @@ vi.mock('@/lib/openfgaRead', async (importOriginal) => {
   return { ...actual, readCompanyStructure: (...args: unknown[]) => mockReadCompanyStructure(...args) };
 });
 
-const mockFindMany = vi.fn();
+const mockFindFirst = vi.fn();
 const mockExecuteRaw = vi.fn();
 vi.mock('@/server/db', () => {
   const tx = {
     $executeRawUnsafe: (...args: unknown[]) => mockExecuteRaw(...args),
-    site: { findMany: (...args: unknown[]) => mockFindMany(...args) },
+    site: { findFirst: (...args: unknown[]) => mockFindFirst(...args) },
   };
   return { getPrismaClient: () => ({ $transaction: (fn: (t: typeof tx) => unknown) => fn(tx) }) };
 });
@@ -111,8 +111,8 @@ beforeEach(() => {
   mockVerifyApiKey.mockReset();
   mockReadCompanyStructure.mockReset();
   mockReadCompanyStructure.mockResolvedValue({ groupIds: [GROUP], workspaceIds: [WORKSPACE] });
-  mockFindMany.mockReset();
-  mockFindMany.mockResolvedValue([]);
+  mockFindFirst.mockReset();
+  mockFindFirst.mockResolvedValue(null);
   mockExecuteRaw.mockReset();
   mockExecuteRaw.mockResolvedValue(0);
   infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
@@ -494,7 +494,7 @@ describe('verifyCompanyKey: hardening', () => {
       await vi.advanceTimersByTimeAsync(KEY_VERIFY_TIMEOUT_MS);
       expect(await pending).toEqual({ kind: 'unavailable' });
       // The site-row query hangs.
-      mockFindMany.mockReturnValueOnce(new Promise(() => {}));
+      mockFindFirst.mockReturnValueOnce(new Promise(() => {}));
       pending = verifyCompanyKey(bearerRequest(fakeKey()));
       await vi.advanceTimersByTimeAsync(KEY_VERIFY_TIMEOUT_MS);
       expect(await pending).toEqual({ kind: 'unavailable' });
@@ -529,12 +529,9 @@ describe('verifyCompanyKey: hardening', () => {
   });
 
   it('forbids a workspace whose site rows carry another tenant group or another company', async () => {
-    for (const rows of [
-      [{ tenantGroupId: 'group-b', companyId: null }],
-      [{ tenantGroupId: GROUP, companyId: OTHER_TENANT }],
-    ]) {
+    for (const row of [{ id: 'site-1' }, { id: 'site-2' }]) {
       mockVerifyApiKey.mockResolvedValueOnce(verifyResponse());
-      mockFindMany.mockResolvedValueOnce(rows);
+      mockFindFirst.mockResolvedValueOnce(row);
       expect(await verifyCompanyKey(bearerRequest(fakeKey()))).toMatchObject({ kind: 'forbidden', reason: 'workspace_mismatch' });
     }
     expect(keyCacheSize()).toBe(0);
@@ -546,17 +543,22 @@ describe('verifyCompanyKey: hardening', () => {
 
   it('accepts a workspace whose site rows agree, and checks the rows of that workspace', async () => {
     mockVerifyApiKey.mockResolvedValue(verifyResponse());
-    mockFindMany.mockResolvedValue([
-      { tenantGroupId: GROUP, companyId: TENANT },
-      { tenantGroupId: GROUP, companyId: null },
-    ]);
+    mockFindFirst.mockResolvedValue(null);
     expect((await verifyCompanyKey(bearerRequest(fakeKey()))).kind).toBe('key');
-    expect(mockFindMany.mock.calls[0][0]).toMatchObject({ where: { workspaceId: WORKSPACE } });
+    expect(mockFindFirst.mock.calls[0][0]).toMatchObject({
+      where: {
+        workspaceId: WORKSPACE,
+        OR: [
+          { tenantGroupId: { not: GROUP } },
+          { AND: [{ companyId: { not: null } }, { companyId: { not: TENANT } }] },
+        ],
+      },
+    });
   });
 
   it('is unavailable when the database cannot answer the site-row check', async () => {
     mockVerifyApiKey.mockResolvedValue(verifyResponse());
-    mockFindMany.mockRejectedValue(new Error('connection refused'));
+    mockFindFirst.mockRejectedValue(new Error('connection refused'));
     expect(await verifyCompanyKey(bearerRequest(fakeKey()))).toEqual({ kind: 'unavailable' });
   });
 
