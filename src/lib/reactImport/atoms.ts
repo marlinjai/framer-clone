@@ -101,39 +101,72 @@ export const extensionOf = (name: string): string => /\.([a-z0-9]+)$/i.exec(name
 /** Whether a file of this name is source. */
 export const isScript = (name: string): boolean => Object.hasOwn(SCRIPT_KINDS, extensionOf(name));
 
-/** How many `async(` may stand open inside each other. No real file comes near it. */
+/** How many `async` may stand inside each other's brackets. No real file comes near it. */
 const ASYNC_NESTING_LIMIT = 8;
 
 const OPENERS: ReadonlySet<ts.SyntaxKind> = new Set([ts.SyntaxKind.OpenParenToken, ts.SyntaxKind.OpenBracketToken, ts.SyntaxKind.OpenBraceToken]);
 const CLOSERS: ReadonlySet<ts.SyntaxKind> = new Set([ts.SyntaxKind.CloseParenToken, ts.SyntaxKind.CloseBracketToken, ts.SyntaxKind.CloseBraceToken]);
 
 /**
- * Whether a text holds the parser's exponential case. On `async(a=async(a=...` TypeScript tries the arrow
- * function and the call at every level, so 246 bytes outlast the worker's deadline, inside
- * `createSourceFile`, before any limit here can act. So this runs first, on tokens, which is linear.
- *
- * It catches the family, not everything. Tokens read JSX text as code, so a quote in text can hide a run
- * from it, and other shapes may exist. Those are what the host's deadline is for.
+ * Counts `async` by bracket depth. Only a deeper one counts: ten handlers in one array sit side by side,
+ * and it is `async` inside `async`'s brackets that the parser tries both ways at each level.
  */
-export function hasParserTrap(text: string): boolean {
-  const scanner = ts.createScanner(ts.ScriptTarget.Latest, true, ts.LanguageVariant.JSX, text);
+function asyncNesting() {
   const open: number[] = [];
   let depth = 0;
-  let afterAsync = false;
-  for (let token = scanner.scan(); token !== ts.SyntaxKind.EndOfFileToken; token = scanner.scan()) {
-    if (afterAsync && (token === ts.SyntaxKind.OpenParenToken || token === ts.SyntaxKind.LessThanToken)) {
-      open.push(depth);
-      if (open.length > ASYNC_NESTING_LIMIT) return true;
-    }
-    if (OPENERS.has(token)) depth += 1;
-    else if (CLOSERS.has(token)) {
+  return {
+    opened() {
+      depth += 1;
+    },
+    closed() {
       depth = Math.max(0, depth - 1);
       while (open.length > 0 && open[open.length - 1] >= depth) open.pop();
-    }
-    afterAsync = token === ts.SyntaxKind.AsyncKeyword;
+    },
+    /** True when this `async` passes the limit. */
+    sawAsync(): boolean {
+      if (open.length === 0 || open[open.length - 1] < depth) open.push(depth);
+      return open.length > ASYNC_NESTING_LIMIT;
+    },
+  };
+}
+
+function trapInTokens(text: string): boolean {
+  const scanner = ts.createScanner(ts.ScriptTarget.Latest, true, ts.LanguageVariant.JSX, text);
+  const nesting = asyncNesting();
+  for (let token = scanner.scan(); token !== ts.SyntaxKind.EndOfFileToken; token = scanner.scan()) {
+    if (token === ts.SyntaxKind.AsyncKeyword && nesting.sawAsync()) return true;
+    if (OPENERS.has(token)) nesting.opened();
+    else if (CLOSERS.has(token)) nesting.closed();
   }
   return false;
 }
+
+const isWordCode = (code: number): boolean =>
+  (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || code === 95 || code === 36;
+
+/** The same count over raw characters, with no idea of quotes, comments or text, which is what a token pass can be blinded by. */
+function trapInRawText(text: string): boolean {
+  const nesting = asyncNesting();
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (ch === '(' || ch === '[' || ch === '{') nesting.opened();
+    else if (ch === ')' || ch === ']' || ch === '}') nesting.closed();
+    else if (ch === 'a' && text.startsWith('async', i) && !isWordCode(text.charCodeAt(i - 1)) && !isWordCode(text.charCodeAt(i + 5)) && nesting.sawAsync()) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether a text holds the parser's exponential case. On `async(a=async(a=...` TypeScript tries the arrow
+ * function and the call at every level, so 246 bytes outlast the worker's deadline, inside
+ * `createSourceFile`, before any limit here can act. So this runs first, and it is linear.
+ *
+ * Two passes, because each can be blinded and they fail differently. Tokens read JSX text as code, so a
+ * quote or a `//` in prose hides what follows from them. Raw characters see all of it, but a closer in a
+ * comment fools the count. A file built to blind both, and any other exponential shape, passes this.
+ * That is what the host's deadline is for, and no host may run `importSource` without one.
+ */
+export const hasParserTrap = (text: string): boolean => trapInTokens(text) || trapInRawText(text);
 
 /**
  * The tree of one file, with no parent pointers: nothing here reads them, and so no

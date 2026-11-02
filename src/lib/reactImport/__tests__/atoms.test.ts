@@ -1,5 +1,7 @@
 // @vitest-environment node
 
+import { readFileSync, readdirSync } from 'node:fs';
+import path from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { collectAtoms, exemptReason, hasParserTrap, isTooDeep, parseFile } from '../atoms';
@@ -75,9 +77,23 @@ describe('the parser trap', () => {
     expect(hasParserTrap('async(a=1);'.repeat(1_000))).toBe(false);
   });
 
-  it('reads tokens, so a string or comment is not code', () => {
-    expect(hasParserTrap(`const a = "${nested(20)}";`)).toBe(false);
-    expect(hasParserTrap(`// ${nested(20)}`)).toBe(false);
+  it('sees through strings and comments, which a stranger can open in prose', () => {
+    expect(hasParserTrap(`const a = "${nested(20)}";`)).toBe(true);
+    expect(hasParserTrap(`// ${nested(20)}`)).toBe(true);
+  });
+
+  it('counts async inside brackets, not async side by side', () => {
+    expect(hasParserTrap(`[${'async (a) => a, '.repeat(50)}]`)).toBe(false);
+    expect(hasParserTrap(`[${'async a => a, '.repeat(50)}]`)).toBe(false);
+    expect(hasParserTrap(`class K { ${'async m() {} '.repeat(50)}}`)).toBe(false);
+    expect(hasParserTrap('asynchronous(async_(xasync(notasync('.repeat(10))).toBe(false);
+  });
+
+  it('refuses no real file: the whole of this repository reads clean', () => {
+    const root = path.resolve(__dirname, '../../..');
+    const files = readdirSync(root, { recursive: true, encoding: 'utf8' }).filter((name) => /\.tsx?$/.test(name) && !name.includes('__tests__'));
+    expect(files.length).toBeGreaterThan(500);
+    expect(files.filter((name) => hasParserTrap(readFileSync(path.join(root, name), 'utf8')))).toEqual([]);
   });
 
   it('survives a stray closer', () => {

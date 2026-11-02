@@ -22,8 +22,12 @@ const DATASET = /\bdataset\.([a-zA-Z]+)/g;
 
 const kebab = (name: string) => `data-${name.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}`;
 
+/** Where the drop resolver names what it reads as constants, which no read above shows. */
+const MARKERS = path.join(SOURCE, 'lib/drag/markers.ts');
+
 function namesRead(): Set<string> {
   const names = new Set<string>();
+  for (const [, name] of readFileSync(MARKERS, 'utf8').matchAll(/['"`](data-[a-z][a-z0-9-]*)['"`]/g)) names.add(name);
   for (const entry of readdirSync(SOURCE, { recursive: true, encoding: 'utf8' })) {
     if (!/\.tsx?$/.test(entry) || entry.includes('__tests__') || entry.startsWith('lib/reactImport')) continue;
     const text = readFileSync(path.join(SOURCE, entry), 'utf8');
@@ -39,6 +43,8 @@ describe('attributes the code reads', () => {
   it('finds them', () => {
     expect(names.size).toBeGreaterThan(30);
     expect(names).toContain('data-editor-ui');
+    expect(names).toContain('data-text-node-row');
+    expect(names).toContain('data-placement-root');
   });
 
   it('has a decision for every name', () => {

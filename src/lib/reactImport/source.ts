@@ -65,13 +65,15 @@ function reasonFor(error: unknown): DetailKey {
   return error instanceof RangeError ? 'tooDeep' : 'failed';
 }
 
+const STYLESHEETS: ReadonlySet<string> = new Set(['css', 'scss', 'sass', 'less']);
+
 /** Lists each file in the ledger. True when all of them can be converted. */
 function openFiles(files: readonly SourceInput[], ledger: Ledger): { readable: boolean; entry?: ParsedFile } {
   let readable = true;
   let entry: ParsedFile | undefined;
   for (const { name, text } of files) {
     if (!isScript(name)) {
-      const detail = extensionOf(name) === 'css' ? 'stylesheet' : 'notRead';
+      const detail = STYLESHEETS.has(extensionOf(name)) ? 'stylesheet' : 'notRead';
       // A sheet can change what the result looks like, so it blocks until slice `import-stylesheet` reads it.
       const stylesheet = detail === 'stylesheet' ? { kind: 'css-rule' as const, nodeKey: ROOT_NODE_KEY } : { kind: 'statement' as const };
       ledger.openWhole(name, text, { ...stylesheet, disposition: 'left', detail, next: ['rewrite'] });

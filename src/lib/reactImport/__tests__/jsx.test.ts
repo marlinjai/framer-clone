@@ -482,3 +482,90 @@ describe('the output depth', () => {
   });
 
 });
+
+describe('an address a browser reads differently from its text', () => {
+  const external = (text: string) => run(text).report.lines.find((line) => line.kind === 'external-address');
+
+  it.each([
+    ['a tab between the slashes', '<img src="/&#9;/evil.test/a.png" />'],
+    ['a tab in the scheme', '<img src="ht&#9;tp://evil.test/b.png" />'],
+    ['a line break in the scheme', '<img src={"ht\\ntp://evil.test/c.png"} />'],
+    ['a return between the slashes', '<img src={"/\\r/evil.test/c.png"} />'],
+    ['a poster', '<video poster="/&#9;/evil.test/e.png" />'],
+    ['an svg image', '<svg><image href="/&#9;/evil.test/f.png" /></svg>'],
+    ['a css escape in a string', String.raw`<div style={{ background: 'url("/\\9 /evil.test/g.png")' }} />`],
+    ['a raw tab in a string', '<div style={{ background: \'url("/\t/evil.test/h.png")\' }} />'],
+    ['escapes in the scheme too', String.raw`<div style={{ background: 'url("ht\\9 tp:/\\9 /evil.test/i.png")' }} />`],
+    ['an escape in an image-set', String.raw`<div style={{ backgroundImage: 'image-set("/\\9 /evil.test/j.png" 1x)' }} />`],
+    ['feImage, a plain address', '<svg><filter id="f"><feImage href="http://evil.test/k.png" /></filter><rect filter="url(#f)" /></svg>'],
+    ['feImage through xlinkHref', '<svg><filter id="f"><feImage xlinkHref="http://evil.test/k.png" /></filter></svg>'],
+    ['an href on an element nobody listed', '<svg><pattern href="http://evil.test/p.svg#a" /></svg>'],
+  ])('%s', (_name, text) => {
+    expect(external(text)).toMatchObject({ disposition: 'adapted', next: ['accept'] });
+  });
+
+  it.each([
+    ['a link', '<a href="https://example.test/">x</a>'],
+    ['an image map area', '<map name="m"><area href="https://example.test/" /></map>'],
+    ['an svg link', '<svg><a href="https://example.test/"><text>x</text></a></svg>'],
+    ['a local use', '<svg><use href="#a" /></svg>'],
+    ['a tab in a relative path', '<img src="a&#9;b.png" />'],
+  ])('%s stays clean', (_name, text) => {
+    expect(verdict(text)).toBe('imported');
+  });
+});
+
+describe('recheck, statements', () => {
+  it('reads a display name write on anything but a component as a write', () => {
+    const { report, root } = run('const o = { displayName: "before" };\nconst p = cond ? o : o;\np.displayName = "after";\nexport default function A() { return <div title={o.displayName} />; }');
+    expect(report.verdict).toBe('not-imported');
+    expect(report.lines.some((line) => line.detail === DETAILS.leftInTree)).toBe(true);
+    expect(root?.props).toBeDefined();
+  });
+
+  it('keeps a display name on a component in either form', () => {
+    expect(verdict('const B = () => <i />;\nB.displayName = "B";\nexport default B;')).toBe('imported');
+    expect(verdict('function B() { return <i />; }\nB.displayName = "B";\nexport default B;')).toBe('imported');
+  });
+
+  it.each([
+    ['an enum with an effect', 'enum E { A = (document.title = "x").length }\n<div />'],
+    ['an enum with a call', 'enum E { A = f() }\n<div />'],
+    ['a class decorator', '@evil class K {}\n<div />'],
+    ['a decorator with a call', '@evil() class K {}\n<div />'],
+    ['a method decorator', 'class K { @evil m() {} }\n<div />'],
+    ['a static block', 'class K { static { document.title = "x"; } }\n<div />'],
+    ['a static field', 'class K { static a = f(); }\n<div />'],
+  ])('%s blocks placing', (_name, text) => {
+    expect(verdict(text)).toBe('not-imported');
+  });
+
+  it.each([
+    ['a plain enum', 'enum E { A, B = 2 }\n<div />'],
+    ['a re-export, which is a named import', 'export * from "evil-package";\n<div />'],
+    ['an import through require', 'import x = require("evil-package");\n<div />'],
+    ['a plain class', 'class K { m() { fetch("/x"); } }\n<div />'],
+  ])('%s does not block', (_name, text) => {
+    expect(verdict(text)).toBe('imported');
+  });
+});
+
+describe('sheets of any spelling', () => {
+  it.each(['a.css', 'a.CSS', 'a.scss', 'a.sass', 'a.less'])('%s blocks', (name) => {
+    const { report } = importSource([{ name: 'a.tsx', text: '<div />' }, { name, text: 'div{display:none}' }]);
+    expect(report.verdict).toBe('not-imported');
+  });
+});
+
+describe('prose with the marks that blind a token scan', () => {
+  it.each([
+    ['a quote', `<p>don't</p>`],
+    ['a double quote', '<p>say "hi</p>'],
+    ['a link in text', '<p>http://example.com</p>'],
+    ['a comment opener in text', '<p>see /* here</p>'],
+    ['a backtick', '<p>`</p>'],
+    ['a button with a quote', 'export default function B() { return <button>Don\'t save</button>; }\nB.displayName = "B";'],
+  ])('%s still imports', (_name, text) => {
+    expect(verdict(text)).toBe('imported');
+  });
+});

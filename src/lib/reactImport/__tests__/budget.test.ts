@@ -136,6 +136,16 @@ describe('work that makes no node', () => {
     expectStopped(fragmentTree(levels, width), DETAILS.overSteps);
   });
 
+  it('a long list of empty children, inlined thousands of times', () => {
+    const text = `function D() { return <>${'{}'.repeat(100_000)}</>; }\n<>${'<D />'.repeat(50_000)}</>`;
+    expect(text.length).toBeLessThanOrEqual(IMPORT_LIMITS.bytesPerFile);
+    expectStopped(text, DETAILS.overSteps);
+  });
+
+  it('a list of null children, the same way', () => {
+    expectStopped(`function D() { return <>${'{null}'.repeat(30_000)}</>; }\n<>${'<D />'.repeat(50_000)}</>`, DETAILS.overSteps);
+  });
+
   it('a fragment tree that fits still reads', () => {
     expect(timed(`${fragmentTree(3, 2)}`).report.lines.map((line) => line.detail)).toContain(DETAILS.nothingToPlace);
   });
@@ -166,6 +176,23 @@ describe('the parser exponential family', () => {
     for (const levels of [16, 20, 26, 200]) expectStopped(make(levels), DETAILS.tooDeep);
   });
 
+  const levels = (open: string, closer: string, n: number) => `${open.repeat(n)}a${closer.repeat(n)}`;
+  const blinded: Array<[string, (n: number) => string]> = [
+    ['a quote in text', (n) => `<p>don't {${levels('async(a=', ')', n)}}</p>`],
+    ['a double quote in text', (n) => `<p>say "hi {${levels('async(a=', ')', n)}}</p>`],
+    ['a link in text', (n) => `<p>http://example.com {${levels('async(a=', ')', n)}}</p>`],
+    ['a backtick on the line before', (n) => `<p>\`</p>;\nconst x = ${levels('async(a=', ')', n)};`],
+    ['a comment opener on the line before', (n) => `<p>see /* here</p>;\nconst x = ${levels('async(a=', ')', n)};`],
+    ['a quote in a regular expression', (n) => `const r = /'/; const x = ${levels('async(a=', ')', n)};`],
+    ['a token between', (n) => `const x = ${levels('async ! ( ', ' )', n)};`],
+    ['a fuzzed class body', (n) => `class K { ${levels('async > in ( ', ' )', n)}`],
+    ['another fuzzed class body', (n) => `class K { ${levels('async ! keyof ( ', ' )', n)}`],
+  ];
+
+  it.each(blinded)('%s', (_name, make) => {
+    for (const n of [20, 22, 26]) expectStopped(make(n), DETAILS.tooDeep);
+  });
+
   it('leaves real async code alone', () => {
     const text = '<button title="x">Go</button>;\nconst load = async () => { await a(async (b) => { await c(async () => d(async (e) => e)); }); };\nconst more = [async () => 1, async () => 2, async () => 3, async () => 4, async () => 5, async () => 6, async () => 7, async () => 8, async () => 9, async () => 10];\n<p />';
     expect(detailsOf(timed(text))).not.toContain(DETAILS.tooDeep);
@@ -181,6 +208,7 @@ describe('patterns a line of spaces makes quadratic', () => {
     ['trailing spaces in text', `<p>${' '.repeat(500_000)}x\n</p>`],
     ['trailing spaces on many lines', `<p>${`${' '.repeat(50_000)}x\n`.repeat(9)}</p>`],
     ['spaces after an opening url', `<div style={{ background: "url(${' '.repeat(500_000)}x" }} />`],
+    ['spaces after a less than in a quoted style value', `<div style={{ content: '"<${' '.repeat(100_000)}x"' }} />`],
     ['spaces in a closed url', `<div style={{ background: "url(${' '.repeat(100_000)}x)" }} />`],
     ['many opening urls', `<div style={{ background: "${'url( '.repeat(90_000)}" }} />`],
     ['spaces after a less than in a style', `<div style={{ background: "<${' '.repeat(100_000)}" }} />`],

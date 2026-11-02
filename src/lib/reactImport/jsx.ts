@@ -29,8 +29,8 @@ const PLATFORM_FAMILY = /^data-(?:fc|fcs|fx|u|island|component|inner-component|f
 const PLATFORM_NAMES: ReadonlySet<string> = new Set([
   'data-add-line', 'data-discard-row', 'data-drag-handle', 'data-escape-local', 'data-focus-key', 'data-haptics', 'data-import-all',
   'data-import-row', 'data-layer-breakpoint', 'data-layer-row', 'data-logo-choose', 'data-menu-item', 'data-notice-action',
-  'data-outline-select', 'data-page-overlay', 'data-page-settings-button', 'data-pan-cursor', 'data-placement', 'data-pointer',
-  'data-radius-corner', 'data-resize-direction', 'data-resume-offer', 'data-shown', 'data-spacing-band', 'data-spacing-handle',
+  'data-outline-select', 'data-page-overlay', 'data-page-settings-button', 'data-pan-cursor', 'data-placement', 'data-placement-root', 'data-pointer',
+  'data-radius-corner', 'data-resize-direction', 'data-resume-offer', 'data-shown', 'data-spacing-band', 'data-spacing-handle', 'data-text-node-row',
 ]);
 
 export const isPlatformAttribute = (name: string): boolean => PLATFORM_FAMILY.test(name) || PLATFORM_NAMES.has(name.toLowerCase());
@@ -99,14 +99,20 @@ function withoutLeadingControls(address: string): string {
   return address.slice(start);
 }
 
-/** Whether an address reaches another host: a scheme, or two slashes of either kind. A data address is here already. */
-const hasHost = (address: string): boolean => /^(?:[/\\]{2}|(?!data:)[a-z][a-z0-9+.-]*:)/i.test(withoutLeadingControls(address));
+/** An address as a browser reads it: it removes tabs and line breaks anywhere inside one, so `/<tab>/evil.test` has a host. */
+const asBrowserReads = (address: string): string => withoutLeadingControls(address.replace(/[\t\n\r]/g, ''));
 
-/** Attributes whose address the browser fetches with no click. `href` on an `a` only goes anywhere on one. */
+/** Whether an address reaches another host: a scheme, or two slashes of either kind. A data address is here already. */
+const hasHost = (address: string): boolean => /^(?:[/\\]{2}|(?!data:)[a-z][a-z0-9+.-]*:)/i.test(asBrowserReads(address));
+
+/**
+ * Attributes whose address the browser fetches with no click. `href` on `a` and `area` only goes anywhere on
+ * one. Every other `href` counts, so the next SVG element that loads one, as `feImage` does, is covered unlisted.
+ */
 function fetchesElsewhere(name: string, tag: string, value: string): boolean {
   if (name === 'srcset') return value.split(/[\s,]+/).some(hasHost);
   if (name === 'src' || name === 'poster' || name === 'data') return hasHost(value);
-  return (name === 'href' || name === 'xlinkhref') && (tag === 'use' || tag === 'image') && hasHost(value);
+  return (name === 'href' || name === 'xlinkhref') && tag !== 'a' && tag !== 'area' && hasHost(value);
 }
 
 /**
@@ -130,7 +136,11 @@ function hidesFromScan(text: string): boolean {
 /** A value that loads a file from elsewhere. Allowed by the format, and a visitor's address reaches a third party. */
 function loadsElsewhere(text: string): boolean {
   const { indirect, urls, strings } = scanCssValue(text);
-  return indirect || urls.some(hasHost) || text.includes('://') || strings.some((each) => each.includes('://') || each.startsWith('//'));
+  const namesAHost = (each: string) => {
+    const read = asBrowserReads(each);
+    return read.includes('://') || read.startsWith('//');
+  };
+  return indirect || urls.some(hasHost) || namesAHost(text) || strings.some(namesAHost);
 }
 
 type Markup = ts.JsxElement | ts.JsxSelfClosingElement | ts.JsxFragment;
@@ -319,8 +329,10 @@ function convertExpressionChild(context: LayerContext, child: ts.JsxExpression, 
 }
 
 function convertChildren(context: LayerContext, children: readonly ts.JsxChild[], place: Place, out: Content[]): void {
-  const { file, ledger } = context;
+  const { file, ledger, budget } = context;
   const { key } = place;
+  // Paid for the list, not per child: a child can be an empty `{}`, which pays nothing, inlined thousands of times.
+  budget.chargeSteps(children.length);
   for (const child of children) {
     if (ts.isJsxText(child)) {
       if (child.containsOnlyTriviaWhiteSpaces) continue;
@@ -438,27 +450,32 @@ function convertRootExpression(context: LayerContext, expression: ts.Expression,
   convertMarkup(context, inner, place, out);
 }
 
-/** `X.displayName = "..."`, which real components have and which changes nothing a visitor sees. */
-function isDisplayName(expression: ts.Expression): boolean {
+/** `X.displayName = "..."` on a component this file declares, which changes nothing a visitor sees. On anything else it is a write. */
+function isDisplayName(expression: ts.Expression, scope: Scope): boolean {
   return ts.isBinaryExpression(expression) && expression.operatorToken.kind === ts.SyntaxKind.EqualsToken
     && ts.isPropertyAccessExpression(expression.left) && ts.isIdentifier(expression.left.expression)
-    && expression.left.name.text === 'displayName' && ts.isStringLiteralLike(expression.right);
+    && expression.left.name.text === 'displayName' && ts.isStringLiteralLike(expression.right)
+    && localFunction(expression.left.expression.text, scope) !== undefined;
 }
 
-/** Whether a statement does anything when it runs, rather than only naming something. */
-function isDecider(statement: ts.Statement): boolean {
+/**
+ * Whether a statement does anything when it runs, rather than only naming something. A re-export
+ * (`export * from`, `import x = require()`) counts the same as a named import: it loads a module, and nothing
+ * here can tell what that does, so it is a `left` line that blocks only if something reads it.
+ */
+function isDecider(statement: ts.Statement, scope: Scope): boolean {
   if (ts.isImportDeclaration(statement)) return !statement.importClause;
-  if (ts.isVariableStatement(statement) || ts.isClassDeclaration(statement) || ts.isExportAssignment(statement)) return holdsEffect(statement);
-  if (ts.isExpressionStatement(statement)) return !ts.isStringLiteral(statement.expression) && !isDisplayName(statement.expression);
+  if (ts.isVariableStatement(statement) || ts.isClassDeclaration(statement) || ts.isExportAssignment(statement) || ts.isEnumDeclaration(statement)) return holdsEffect(statement);
+  if (ts.isExpressionStatement(statement)) return !ts.isStringLiteral(statement.expression) && !isDisplayName(statement.expression, scope);
   return !(ts.isFunctionDeclaration(statement) || ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement)
-    || ts.isEnumDeclaration(statement) || ts.isExportDeclaration(statement) || ts.isImportEqualsDeclaration(statement) || ts.isEmptyStatement(statement));
+    || ts.isExportDeclaration(statement) || ts.isImportEqualsDeclaration(statement) || ts.isEmptyStatement(statement));
 }
 
 /** Statements on the way to the markup. What only names something matters if read, anything else can change what renders. */
-function leaveDeciders({ file, ledger, budget }: LayerContext, statements: readonly ts.Statement[], key: string): void {
+function leaveDeciders({ file, ledger, budget }: LayerContext, statements: readonly ts.Statement[], key: string, scope: Scope): void {
   budget.chargeSteps(statements.length);
   for (const statement of statements) {
-    if (isDecider(statement)) ledger.claimSubtree(file.source, statement, left('statement', 'leftInTree', key));
+    if (isDecider(statement, scope)) ledger.claimSubtree(file.source, statement, left('statement', 'leftInTree', key));
   }
 }
 
@@ -484,7 +501,7 @@ function convertFunctionBody(context: LayerContext, fn: ComponentFunction, place
   }
   const scope = functionScope(fn, body.statements, outer);
   const result = body.statements.find(ts.isReturnStatement);
-  leaveDeciders(context, body.statements.slice(0, result ? body.statements.indexOf(result) : undefined), key);
+  leaveDeciders(context, body.statements.slice(0, result ? body.statements.indexOf(result) : undefined), key, scope);
   if (!result?.expression) {
     ledger.claim(file.source, [fn], left('statement', 'nothingToPlace', key));
     return;
@@ -555,7 +572,7 @@ export function convertFile(file: ParsedFile, ledger: Ledger, budget: ImportBudg
   // A pasted fragment is a file whose last statement is markup.
   const last = source.statements[source.statements.length - 1];
   const fragment = last && ts.isExpressionStatement(last) && isMarkup(unwrap(last.expression).inner) ? last : undefined;
-  leaveDeciders(context, fragment ? source.statements.slice(0, -1) : source.statements, key);
+  leaveDeciders(context, fragment ? source.statements.slice(0, -1) : source.statements, key, scope);
   if (fragment) {
     ledger.claim(source, [fragment], converted('statement', 'fragment', key));
     convertRootExpression(context, fragment.expression, place, contents);

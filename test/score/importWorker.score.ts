@@ -30,7 +30,7 @@ let bundle: WorkerBundle;
 const requests: string[] = [];
 
 /** One `importSource` in a worker of its own, as the dialog will run it, ended at the deadline. */
-const inWorker = (files: SourceInput[]) =>
+const inWorker = (files: SourceInput[], deadlineMs: number = IMPORT_LIMITS.deadlineMs) =>
   page.evaluate(({ files: input, deadline }) => new Promise<WorkerReply | 'terminated' | string>((resolve) => {
     const worker = new Worker('/worker.js');
     const timer = setTimeout(() => {
@@ -47,7 +47,7 @@ const inWorker = (files: SourceInput[]) =>
       resolve(`error: ${event.message}`);
     };
     worker.postMessage({ files: input });
-  }), { files, deadline: IMPORT_LIMITS.deadlineMs });
+  }), { files, deadline: deadlineMs });
 
 const reply = async (files: SourceInput[]): Promise<WorkerReply> => {
   const result = await inWorker(files);
@@ -121,16 +121,15 @@ describe('the importer in a browser worker', () => {
     expect(milliseconds).toBeLessThan(IMPORT_LIMITS.deadlineMs);
   });
 
-  it('ends a worker that passes the deadline, and the page lives', async () => {
-    await page.route(`${ORIGIN}/hang.js`, (route) => route.fulfill({ contentType: 'text/javascript', body: 'for (;;) {}' }));
-    const ended = await page.evaluate(() => new Promise<string>((resolve) => {
-      const worker = new Worker('/hang.js');
-      setTimeout(() => {
-        worker.terminate();
-        resolve('terminated');
-      }, 200);
-    }));
-    expect(ended).toBe('terminated');
-    expect(await page.evaluate(() => 1 + 1)).toBe(2);
+  it('refuses `async ! (`, which needs no trick', async () => {
+    const { outcome } = await reply([{ name: 'paste.tsx', text: `const x = ${'async ! ( '.repeat(26)}a${' )'.repeat(26)};` }]);
+    expect(outcome.report.lines.map((line) => line.detail)).toContain(DETAILS.tooDeep);
+  });
+
+  it('ends a real hang in the parser, one built to blind both scans, and the next import runs', async () => {
+    // A quote in text blinds the tokens to this line, and a closer in a comment blinds the raw count.
+    const blind = `<p>'</p>; const x = ${'async(/*)*/a='.repeat(30)}1${')'.repeat(30)};`;
+    expect(await inWorker([{ name: 'paste.tsx', text: blind }], 3_000)).toBe('terminated');
+    expect((await reply([{ name: 'paste.tsx', text: '<p>ok</p>' }])).outcome.report.verdict).toBe('imported');
   });
 });

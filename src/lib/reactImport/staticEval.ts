@@ -96,6 +96,11 @@ const isAssignment = (node: ts.BinaryExpression): boolean =>
 export function holdsEffect(root: ts.Node): boolean {
   let found = false;
   walk(root, undefined, (node) => {
+    // A decorator is a call, and it runs when the class is declared, even on a method that never does.
+    if (ts.canHaveDecorators(node) && (ts.getDecorators(node)?.length ?? 0) > 0) {
+      found = true;
+      return { stop: true, next: undefined };
+    }
     if (ts.isFunctionLike(node)) return { skip: true, next: undefined };
     found = ts.isCallExpression(node) || ts.isNewExpression(node) || ts.isTaggedTemplateExpression(node) || ts.isAwaitExpression(node)
       || ts.isYieldExpression(node) || ts.isDeleteExpression(node) || (ts.isBinaryExpression(node) && isAssignment(node))
