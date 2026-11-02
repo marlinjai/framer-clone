@@ -11,7 +11,12 @@ import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// Every run is one bash plus dozens of short processes, and the drop tests run the script up to six
+// times, so a test costs what process creation costs at that moment: 4.9 s for the slowest in a full
+// run at load 40 on 14 cores, with the script already trimmed, against the 5 s default.
+vi.setConfig({ testTimeout: 30_000 });
 
 const SCRIPT = resolve(__dirname, '../../../../deploy/custom-domains/sync-traefik.sh');
 let dir: string;
@@ -95,6 +100,14 @@ describe('sync-traefik.sh: writing routes', () => {
     expect(yml.match(/priority: 1\n/g)).toHaveLength(4);
     expect(yml).toContain('# hostname: shop.example.com');
     expect(yml).toContain('fc-cd-redirect-https');
+  });
+
+  it('names each router after the first 16 hex characters of its hostname hash', () => {
+    // Traefik certificates and routes follow these names, so they must stay stable across runs.
+    const id = `fc-cd-${createHash('sha256').update('shop.example.com').digest('hex').slice(0, 16)}`;
+    expect(run({ body: lines('shop.example.com') }).status).toBe(0);
+    expect(out()).toContain(`    ${id}-http:\n`);
+    expect(out()).toContain(`    ${id}-https:\n`);
   });
 
   it('logs when the app reports its cap was reached', () => {

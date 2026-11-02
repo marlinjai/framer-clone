@@ -92,6 +92,15 @@ function deps(turns: Turn[], book: ContactBook, over: Partial<ExtractDeps> = {})
   };
 }
 
+/** Wait until a reading has reached the model: it holds its claim and is inside the call. */
+async function reachedModel(fake: ReturnType<typeof fakeAnthropic>) {
+  for (const deadline = Date.now() + 30_000; Date.now() < deadline; ) {
+    if (fake.calls.length > 0) return;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  throw new Error('the reading never reached the model');
+}
+
 async function staged(scope: Parameters<typeof stageUpload>[0], label: string) {
   const r = await stageUpload(scope, { fileName: `${label}.pdf`, bytes: pdfBytes(label) });
   if (r.status !== 'staged') throw new Error('expected a staged row');
@@ -312,8 +321,9 @@ describe('resume', () => {
 
     // The caller leaves mid-way: aborted in the ledger, the row free again.
     const controller = new AbortController();
-    const pending = extractItem(scope, a.id, deps([{ ...toolTurn(toolInput()), wait: new Promise(() => {}) }], book, { signal: controller.signal }).deps);
-    await new Promise((r) => setTimeout(r, 50));
+    const running = deps([{ ...toolTurn(toolInput()), wait: new Promise(() => {}) }], book, { signal: controller.signal });
+    const pending = extractItem(scope, a.id, running.deps);
+    await reachedModel(running.fake);
     expect((await getItem(scope.db, scope, a.id)).status).toBe('extracting');
     // Meanwhile a second reader of the same file is refused.
     await expect(extractItem(scope, a.id, deps([toolTurn(toolInput())], book).deps)).rejects.toMatchObject({ code: 'EXTRACTION_RUNNING' });
@@ -472,13 +482,15 @@ describe('unhappy paths of reading and importing', () => {
         slowEnds === 'with a reading'
           ? { ...toolTurn(toolInput({ number: '30' })), wait: new Promise<void>((r) => (finishSlow = r)) }
           : { content: [], stop_reason: 'refusal', wait: new Promise<void>((r) => (finishSlow = r)) };
-      const slow = extractItem(scope, item.id, deps([slowTurn], book).deps);
-      await new Promise((r) => setTimeout(r, 50));
+      const slowCall = deps([slowTurn], book);
+      const slow = extractItem(scope, item.id, slowCall.deps);
+      await reachedModel(slowCall.fake);
       // The slow call looks crashed: its claim is old, and a newer call takes it over.
       await env.ownerDb.updateTable('historical_import_item').set({ claimed_at: new Date(Date.now() - 20 * 60 * 1000) }).where('id', '=', item.id).execute();
       let finishNewer!: () => void;
-      const newer = extractItem(scope, item.id, deps([{ ...toolTurn(toolInput({ number: '31' })), wait: new Promise<void>((r) => (finishNewer = r)) }], book).deps);
-      await new Promise((r) => setTimeout(r, 50));
+      const newerCall = deps([{ ...toolTurn(toolInput({ number: '31' })), wait: new Promise<void>((r) => (finishNewer = r)) }], book);
+      const newer = extractItem(scope, item.id, newerCall.deps);
+      await reachedModel(newerCall.fake);
       const newerClaim = (await env.ownerDb.selectFrom('historical_import_item').select('claim_id').where('id', '=', item.id).executeTakeFirstOrThrow()).claim_id;
       // The slow call ends while the newer one still runs: it must write nothing.
       finishSlow();
@@ -501,8 +513,9 @@ describe('unhappy paths of reading and importing', () => {
     const fixed = await correctItem(scope, book, item.id, { printed: typed, extractionId: r.extractionId!, expectedVersion: r.version });
     expect(fixed.status).toBe('ready');
     const controller = new AbortController();
-    const pending = extractItem(scope, item.id, deps([{ ...toolTurn(toolInput()), wait: new Promise(() => {}) }], book, { signal: controller.signal }).deps, { replace: true });
-    await new Promise((res) => setTimeout(res, 50));
+    const running = deps([{ ...toolTurn(toolInput()), wait: new Promise(() => {}) }], book, { signal: controller.signal });
+    const pending = extractItem(scope, item.id, running.deps, { replace: true });
+    await reachedModel(running.fake);
     controller.abort();
     const back = await pending;
     expect(back.status).toBe('ready');
@@ -691,7 +704,9 @@ describe('unhappy paths of reading and importing', () => {
     // Exactly this company's ceiling lock in this database (the test Postgres may be shared by other files).
     const key = `books-import-extract:${tenantId}`;
     const waiting = async (granted: boolean) => {
-      for (let i = 0; i < 200; i += 1) {
+      // A deadline, not a number of polls: on oversubscribed cores each poll and the reading itself
+      // can take seconds, and the question here is whether the lock appears, not how fast.
+      for (const deadline = Date.now() + 30_000; Date.now() < deadline; ) {
         const n = await sql<{ n: number }>`
           SELECT count(*)::int AS n FROM pg_locks
            WHERE locktype = 'advisory' AND objsubid = 1 AND granted = ${granted}
@@ -716,7 +731,7 @@ describe('unhappy paths of reading and importing', () => {
     // Not called, and not counted against the day.
     expect(d.fake.calls).toHaveLength(0);
     expect(await env.ownerDb.selectFrom('historical_import_extraction').select('outcome').where('item_id', '=', item.id).execute()).toEqual([]);
-  }, 20_000);
+  });
 
   it('010 keeps the claim id and time together outside a reading too', async () => {
     const { tenantId, scope } = await company();

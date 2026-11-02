@@ -204,7 +204,7 @@ export function scanText(file) {
   // G3-raw: SQL the scanner cannot read.
   const rawPatterns = [
     ...kyselyTags.map((t) => ({ re: new RegExp(`\\b${escapeRe(t)}\\s*\\.\\s*(raw|table)\\s*\\(`, 'g'), what: `${t}.raw( / ${t}.table(` })),
-    { re: /\.\s*unsafe\s*(?:<[^>()]*(?:<[^>()]*>[^>()]*)*>)?\s*\(/g, what: '.unsafe(' },
+    { re: /\.\s*unsafe\s*(?:<[^>()]*(?:<[^>()]*>[^>()]*)*>\s*)?\(/g, what: '.unsafe(' },
   ];
   for (const { re, what } of rawPatterns) {
     let m;
@@ -348,7 +348,9 @@ function sqlTagNames(code) {
   const names = new Set([...kyselySqlAliases(code), 'tx', 'owner']);
   const patterns = [
     /\b([A-Za-z_$][\w$]*)\s*(?::[^=;\n]*)?=\s*postgres\s*\(/g,
-    /\b([A-Za-z_$][\w$]*)\s*[?!]?\s*:\s*(?:postgres\s*\.\s*)?(?:Sql|TransactionSql)\b/g,
+    // `\s*(?:[?!]\s*)?:` and never `\s*[?!]?\s*:`: comments are blanked to runs of spaces, and two
+    // adjacent `\s*` split such a run every possible way after each word, quadratic in the comment.
+    /\b([A-Za-z_$][\w$]*)\s*(?:[?!]\s*)?:\s*(?:postgres\s*\.\s*)?(?:Sql|TransactionSql)\b/g,
     /\.begin\s*\(\s*(?:async\s*)?\(?\s*([A-Za-z_$][\w$]*)/g,
   ];
   for (const re of patterns) {

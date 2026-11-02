@@ -100,7 +100,10 @@ import { loadDashboard } from '../loader';
 import { loadProjectSnapshot } from '../[projectId]/loader';
 import { selectActiveCompany } from '@/server/auth/activeCompany';
 import { POST as createProject } from '@/app/api/projects/route';
+import { WHILE_BUSY_TIMEOUT_MS, whileBusy } from '@/app/api/projects/__tests__/whileBusy';
 import { GET as migrateCompany } from '../migrate-company/route';
+
+vi.setConfig({ testTimeout: WHILE_BUSY_TIMEOUT_MS });
 
 let prisma: PrismaClient;
 const savedOwnerUrl = process.env.COMMERCE_OWNER_DATABASE_URL;
@@ -171,7 +174,7 @@ describe('editor active company (integration)', () => {
 
     // ---- choose Beta, create there --------------------------------------
     expect(await selectActiveCompany('tenant-flow-b')).toMatchObject({ ok: true });
-    const created = await createProject(createReq('Flow B site'));
+    const created = await whileBusy(() => createProject(createReq('Flow B site')));
     expect(created.status).toBe(200);
     const { siteId } = await created.json();
     const row = await prisma.site.findUnique({
