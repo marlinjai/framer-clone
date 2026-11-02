@@ -1136,3 +1136,14 @@ checked against the code and hold. Findings about Stripe behaviour are adopted a
   other shop without a Stripe account that can take payments refuses checkout with 503 `payments_unavailable` before anything is reserved, as it does while its Books
   cannot issue receipts, and a demo order such a shop placed before is refused at pay. The payments page tells that owner the shop takes no orders until Stripe is
   ready.
+- 2026-11-02: the second Pay click on a Stripe order, from the money review (finding 5), ahead of B7. `order_payment.checkout_request` (migration 028) keeps the
+  first start's email and return address, set once, and fixes the buyer with it (a separate trigger, BK018); the session's end is now the payment window plus 31
+  minutes, never the clock. Every later click sends the same request under `checkout:<orderId>`, so Stripe answers the same session, and another buyer is refused
+  with 409 `buyer_fixed` before Stripe is asked. B7 builds on this: `session_return_url` and `session_expires_at` become columns of their own then, and this column
+  goes or stays in that slice. Cutover: a payment pending at deploy whose session was opened under the old, clock-based end fails its next click until its hold ends
+  (at most about an hour), as section 2.1 accepts for B7.
+- 2026-11-02: the second Pay click after the second money round (R2-3). `checkout_request` gains `confirmed`: a request is written before Stripe is asked and
+  confirmed only once Stripe answered with a session. Until then a click with another buyer replaces it, so a first click that failed at Stripe locks no typo in;
+  once confirmed, the request is set once and the buyer fixed (BK018), and another buyer gets 409 `buyer_fixed`. The demo refusal stays the pay route's first
+  check. Left open on purpose: Stripe made the session but its answer was lost, then the buyer changed details; Stripe refuses the new request and the route
+  answers 500, with nothing charged twice.

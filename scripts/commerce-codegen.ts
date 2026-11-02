@@ -114,6 +114,8 @@ const JSON_COLUMNS: Record<string, string> = {
   'collection.description_format': 'RichText',
   // 021_order_payment: the buyer given at checkout, parsed with zod on read (src/server/commerce/payment/buyer.ts).
   'order_payment.buyer': 'Record<string, unknown>',
+  // 028_checkout_request: a hosted checkout's first request, parsed with zod on read (src/server/commerce/payment/checkoutRequest.ts).
+  'order_payment.checkout_request': 'Record<string, unknown>',
   // 023_shop_mail: the template ids of the company's workspace, by name.
   'shop_mail_connection.template_ids': 'Record<string, string>',
   // 025_commerce_job: ids and cursors, parsed by a per-kind schema at claim (src/server/commerce/jobs).

@@ -74,6 +74,13 @@ describe('StorefrontPaymentGateway', () => {
     expect(result).toMatchObject({ ok: false, code: 'gateway_error' });
   });
 
+  it('keeps the order when a hosted checkout is already made out to other details', async () => {
+    const message = 'This order is already waiting for its payment with other details. Nothing has been charged.';
+    const body = { error: { code: 'buyer_fixed', message } };
+    const result = await new StorefrontPaymentGateway(answer(409, body) as unknown as typeof fetch).authorize(request);
+    expect(result).toEqual({ ok: false, code: 'refused', message, fields: [] });
+  });
+
   it.each([
     [402, { error: { code: 'payment_declined', message: 'the card was declined' } }, 'declined'],
     [409, { error: { code: 'payment_closed', message: 'the order is expired' } }, 'closed'],

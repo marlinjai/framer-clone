@@ -47,7 +47,10 @@ export interface StartPaymentArgs {
   buyerEmail: string;
   /** Where a hosted checkout returns the buyer (success and cancel). */
   returnUrl?: string;
-  /** When the payment window closes (a hosted checkout expires no earlier than its provider allows). */
+  /**
+   * When the payment window closes. A hosted checkout ends a fixed time after it, never computed from the clock, so
+   * a repeated start of one order sends the same request (stripe/connect.ts).
+   */
   expiresAt?: Date;
   /** The company's connected account (Stripe Connect); absent for the demo provider. */
   connectedAccountId?: string;
