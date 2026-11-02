@@ -59,6 +59,23 @@
 // because nothing may follow a pseudo-element. On a page with no gate nothing can
 // change, the prefix goes, and the condition reads what the server wrote.
 //
+// A rule on the document (`kind: 'root'` in rules.ts, only the page root holds one)
+// is the one selector in the sheet that is not a class: a constant `:root`. It opens
+// the authored section, shares its caps, and needs no specificity trick, because
+// nothing else here selects the document:
+//
+//   :root{scroll-behavior:smooth;overflow-x:hidden}
+//   @media (prefers-reduced-motion:reduce){
+//   :root{scroll-behavior:auto}
+//   }
+//
+// A real page's `body` sets its own colours and font (the base layer of globals.css
+// and the site layout), and they would paint over what the document set. So a rule
+// setting one of those hands it back, under the same conditions, in constant text:
+//
+//   :root{color:#1d4ed8}
+//   body{color:inherit}
+//
 // Rules arrive here parsed, which the type says, and applyResponsiveStyles is what
 // reads stored rules for the page. A type is erased at run time and selectors are
 // written raw, so isWritableRule and isWritableDefinition check them again here,
@@ -72,7 +89,7 @@
 // above applies to them unchanged.
 
 import { HOVER_KINDS, hoverPresetRules, type HoverKind } from '@/lib/effects/effects';
-import type { ParsedDefinitionRule, ParsedSelectorRule } from '@/lib/rules/rules';
+import type { ParsedDefinitionRule, ParsedRootRule, ParsedSelectorRule } from '@/lib/rules/rules';
 import {
   animationsAtRest,
   asImportant,
@@ -84,6 +101,7 @@ import {
   type EditorSurfaceKind,
   type SurfaceFrame,
 } from '@/lib/rules/surfaces';
+import { isRootStyleKey } from '@/lib/rules/rootProperties';
 import { largestFirst, resolveCascade, type BreakpointRef } from './cascade';
 
 /** At most this many emitted rules on one page, counted after rows share a rule class. */
@@ -337,6 +355,11 @@ export function cssStyleKey(property: string): string {
  * non-zero numbers get `px` unless the property is unitless (or a custom
  * property), strings are trimmed. Returns undefined for a value React would
  * drop (null, boolean, empty, non-finite number) or that is not a scalar.
+ *
+ * Whitespace on a custom property is not nothing: `--tw-blur: ;` is CSS's empty
+ * value, which is what keeps `filter:var(--tw-blur) var(--tw-sepia)` valid, and
+ * React keeps it in both of its renderers while it drops `''`. So it comes back as
+ * one space, the form Tailwind writes, and no other text can follow that path.
  */
 export function cssValueText(key: string, value: unknown): string | undefined {
   if (typeof value === 'number') {
@@ -346,7 +369,8 @@ export function cssValueText(key: string, value: unknown): string | undefined {
   }
   if (typeof value === 'string') {
     const text = value.trim();
-    return text.length > 0 ? text : undefined;
+    if (text.length > 0) return text;
+    return key.startsWith('--') && value.length > 0 ? ' ' : undefined;
   }
   return undefined;
 }
@@ -469,6 +493,8 @@ export interface BuildResponsiveCssOptions {
   hoverPresets?: readonly HoverKind[];
   /** Authored rules, in walk order. They follow every Normal block. */
   authored?: readonly AuthoredRulesInput[];
+  /** The page root's rules on the document, in stored order. They open the authored section. */
+  rootRules?: readonly ParsedRootRule[];
   /** Adds FIELD_SIZING_GUARD: true on a page holding a stored rule or definition. */
   fieldGuard?: boolean;
   /** Called for every definition or authored rule left out of the sheet. */
@@ -559,6 +585,9 @@ function isWritableRule(rule: ParsedSelectorRule): boolean {
   );
 }
 
+/** A constant, and the only way the document is selected: no stored text reaches it. */
+const ROOT_SUBJECT = ':root';
+
 const GATE_UP = ':where(html[data-fc-b]) ';
 const GATE_DOWN = ':where(html:not([data-fc-b]) *)';
 
@@ -579,9 +608,9 @@ function blocksOfRule(
   rule: ParsedSelectorRule,
   ordered: readonly BreakpointRef[],
   gated: boolean,
+  node: string = ruleSubject(className, rule, gated),
 ): { blocks: RuleBlock[] } | { refused: string } {
   const blocks: RuleBlock[] = [];
-  const node = ruleSubject(className, rule, gated);
   let refused: string | undefined;
   const widths = Math.max(ordered.length, 1);
   for (let index = 0; index < widths; index++) {
@@ -1095,6 +1124,45 @@ function presetOnCopy(selector: string, kind: HoverKind): string[] {
     .map(({ text }) => text.replace(':hover', LIVE_STATE));
 }
 
+/** What `body` gives back when the document sets it. Constants: no stored text reaches this selector. */
+const BODY_HANDS_BACK: Readonly<Record<string, string>> = { color: 'inherit', backgroundColor: 'transparent', fontFamily: 'inherit' };
+
+/** The constant `body` values for a document rule's style, with the same breakpoints. */
+function bodyStyleFor(style: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, constant] of Object.entries(BODY_HANDS_BACK)) {
+    const stored = style[key];
+    if (isStyleMap(stored)) {
+      const set = Object.entries(stored).filter(([, value]) => cssValueText(key, value) !== undefined);
+      if (set.length > 0) out[key] = Object.fromEntries(set.map(([breakpoint]) => [breakpoint, constant]));
+    } else if (cssValueText(key, stored) !== undefined) {
+      out[key] = constant;
+    }
+  }
+  return out;
+}
+
+/**
+ * The jobs of the document's rules. Each is a node's rule with `:root` standing for
+ * `&`, so the guards, the breakpoint cascade and the caps are the ones every rule has.
+ * The list of keys is checked again here, as selectors are for any rule.
+ */
+function rootJobs(rules: readonly ParsedRootRule[], ordered: readonly BreakpointRef[]): RuleJob[] {
+  return rules.map((root) => {
+    const rule: ParsedSelectorRule = { kind: 'selector', id: root.id, parts: ['&'], at: root.at, style: root.style };
+    const build = (): BuiltRule => {
+      const outside = Object.keys(root.style).find((key) => !isRootStyleKey(key));
+      if (outside !== undefined) return { refused: `${outside} cannot be set on the document` };
+      const onRoot = blocksOfRule(ROOT_SUBJECT, rule, ordered, false, ROOT_SUBJECT);
+      if ('refused' in onRoot) return onRoot;
+      const body: ParsedSelectorRule = { ...rule, style: bodyStyleFor(root.style) };
+      const onBody = blocksOfRule(ROOT_SUBJECT, body, ordered, false, 'body');
+      return 'refused' in onBody ? onBody : { blocks: [...onRoot.blocks, ...onBody.blocks] };
+    };
+    return { className: ROOT_SUBJECT, rule, build };
+  });
+}
+
 /** The sheet of an editor surface. Same order as the published page, with no Normal. */
 function editorSheet(surface: EditorSurface, ordered: readonly BreakpointRef[], options: BuildResponsiveCssOptions): string {
   const onDropRule = options.onDropRule ?? (() => {});
@@ -1165,7 +1233,8 @@ export function buildResponsiveCss(
   const used = options.hoverPresets ?? [];
   const presets = serializeBlocks(HOVER_KINDS.filter(kind => used.includes(kind)).flatMap(kind => hoverPresetRules(kind)));
   if (presets) parts.push(presets);
-  const authored = serializeBlocks(authoredBlocks(publishedJobs(options.authored ?? [], ordered, options.gated === true), onDropRule, spent));
+  const jobs = [...rootJobs(options.rootRules ?? [], ordered), ...publishedJobs(options.authored ?? [], ordered, options.gated === true)];
+  const authored = serializeBlocks(authoredBlocks(jobs, onDropRule, spent));
   if (authored) parts.push(authored);
   if (options.fieldGuard) parts.push(FIELD_SIZING_GUARD);
   return withoutMarkup(parts.join('\n'), onDropRule);
