@@ -493,6 +493,28 @@ const sound = (): StoredNode =>
     node('clip', 'audio', { src: silence(), preload: 'auto' }),
     pay());
 
+/** Each timer tries to undo what a visitor set. The parser leaves none of them standing. */
+const autoplayTimers = (): StoredNode =>
+  node('playing', 'div', {
+    behaviour: {
+      on: [
+        { id: 'l', on: 'every', ms: 1000, do: [{ media: 'clip', op: 'load' }] },
+        { id: 'v', on: 'every', ms: 1000, do: [{ media: 'clip', op: 'volume', value: 1 }] },
+        { id: 's', on: 'every', ms: 1000, do: [{ media: 'clip', op: 'seek', value: 0 }] },
+        { id: 'r', on: 'every', ms: 1000, do: [{ media: 'clip', op: 'rate', value: 2 }] },
+      ],
+    },
+  },
+    node('clip', 'audio', { src: silence(), autoPlay: true, loop: true, preload: 'auto' }),
+    pay());
+
+const captures = { behaviour: { on: [{ id: 'p', on: 'pointerdown', do: [{ capturePointer: true }] }] } };
+
+/** Its id tells site.ts to store this as the page's root, not inside one. */
+const captureOnRoot = (): StoredNode => node('page-root', 'div', captures, pay());
+
+const captureAround = (): StoredNode => node('around-pay', 'div', captures, pay());
+
 const consent = (): StoredNode =>
   node('with-banner', 'div', { behaviour: { state: [flag('s')], on: [{ id: 'k', on: 'keydown', scope: 'document', keys: ['Escape'], do: [{ set: 's', value: false }] }] } }, pay());
 
@@ -512,6 +534,9 @@ export const PAGES: Readonly<Record<string, () => StoredNode>> = {
   'escape-keyup-node': escapeBack('keyup', 'node'),
   'escape-keyup-page': escapeBack('keyup', 'page'),
   wall,
+  'autoplay-timers': autoplayTimers,
+  'capture-on-root': captureOnRoot,
+  'capture-around': captureAround,
   'shared-by-many': sharedByMany,
   timers,
   'slow-loop': slowLoop,

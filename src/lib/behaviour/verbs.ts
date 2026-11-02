@@ -17,7 +17,7 @@
 // PURE and client-safe: no React, no MST. The effects runtime is fetched when `effect` runs.
 
 import type { Action } from './format';
-import { every, isMatch, setAttr } from './dom';
+import { closestTo, every, holds, isElement, isMatch, setAttr } from './dom';
 import { leavesSite } from './keys';
 import type { CreateVerbs, Kit, Run } from './program';
 
@@ -25,6 +25,7 @@ export { isTextEntry, keysAnswer } from './keys';
 
 const PRESSES: ReadonlySet<string> = new Set(['click', 'keydown', 'keyup']);
 const TARGETED = ['focus', 'dialog', 'popover', 'details', 'media', 'fullscreen', 'pictureInPicture', 'scroll', 'form', 'setProp', 'filter', 'effect'] as const;
+const CONTROLS = 'a[href],button,input,select,textarea,summary,label,[role="button"],[role="link"],[contenteditable]';
 const BOOLEAN_PROPS: readonly string[] = ['checked', 'disabled'];
 const MAX_RATE = 16;
 const MIN_RATE = 0.0625;
@@ -113,6 +114,13 @@ export const createVerbs: CreateVerbs = (kit: Kit) => {
     kit.doc.location.assign(href);
   };
 
+  /** Captured, the press would never reach a control inside the node, so a press on one stays its own. */
+  const capture = (run: Run): void => {
+    const event = run.event as PointerEvent;
+    const control = isElement(event.target) ? closestTo(event.target, CONTROLS) : null;
+    if (!control || control === run.el || !holds(run.el, control)) run.el.setPointerCapture(event.pointerId);
+  };
+
   const onTarget = (action: Action, target: Element, run: Run): void => {
     const el = target as HTMLElement;
     if ('focus' in action) el.focus();
@@ -141,7 +149,7 @@ export const createVerbs: CreateVerbs = (kit: Kit) => {
     kit.settle();
     try {
       if ('navigate' in action) navigate(action.navigate, run);
-      else if ('capturePointer' in action) run.el.setPointerCapture((run.event as PointerEvent).pointerId);
+      else if ('capturePointer' in action) capture(run);
       else {
         const verb = TARGETED.find((name) => name in action);
         if (!verb) {

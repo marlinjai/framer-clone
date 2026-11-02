@@ -160,6 +160,37 @@ describe('the native verbs', () => {
   });
 });
 
+describe('capturePointer', () => {
+  const capturing = vi.fn();
+  const down = (el: Element) => el.dispatchEvent(Object.assign(new MouseEvent('pointerdown', { bubbles: true }), { pointerId: 7 }));
+
+  beforeEach(() => {
+    capturing.mockReset();
+    Element.prototype.setPointerCapture = capturing;
+    start('<div data-fc-n="w"><button id="pay">Pay</button><span id="in-button-free">Text</span><a href="/x"><b id="deep">Link</b></a></div>', {
+      w: { on: [{ id: 'p', on: 'pointerdown', do: [{ capturePointer: true }] }] },
+    });
+  });
+
+  it('takes a press on the node or on plain content in it', () => {
+    down($('[data-fc-n="w"]'));
+    down($('#in-button-free'));
+    expect(capturing).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['#pay', '#deep'])('leaves a press on a control inside it alone: %s', (selector) => {
+    down($(selector));
+    expect(capturing).not.toHaveBeenCalled();
+  });
+
+  it('still takes a press when the node is itself a control', () => {
+    stops.splice(0).forEach((stop) => stop());
+    start('<button data-fc-n="w">Grip</button>', { w: { on: [{ id: 'p', on: 'pointerdown', do: [{ capturePointer: true }] }] } });
+    down($('button'));
+    expect(capturing).toHaveBeenCalledOnce();
+  });
+});
+
 describe('what a full scan costs', () => {
   const list = Array.from({ length: 2000 }, (_, index) => `<li role="option">Item ${index}</li>`).join('');
 
