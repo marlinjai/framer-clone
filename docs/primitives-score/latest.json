@@ -1,34 +1,34 @@
 {
-  "generatedAt": "2026-11-02T12:17:57.357Z",
+  "generatedAt": "2026-11-02T12:43:47.820Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 333,
+  "durationSeconds": 325,
   "matrix": {
     "surfaces": {
       "format": {
-        "pass": 1794,
-        "fail": 39,
+        "pass": 1801,
+        "fail": 32,
         "notTested": 0,
         "total": 1833
       },
       "renderer": {
-        "pass": 1763,
-        "fail": 70,
+        "pass": 1774,
+        "fail": 59,
         "notTested": 0,
         "total": 1833
       },
       "canvas": {
-        "pass": 1626,
-        "fail": 207,
+        "pass": 1633,
+        "fail": 200,
         "notTested": 0,
         "total": 1833
       },
       "panel": {
-        "pass": 1223,
-        "fail": 610,
+        "pass": 1230,
+        "fail": 603,
         "notTested": 0,
         "total": 1833
       },
@@ -465,8 +465,8 @@
           "total": 30
         },
         "renderer": {
-          "pass": 26,
-          "fail": 4,
+          "pass": 30,
+          "fail": 0,
           "notTested": 0,
           "total": 30
         },
@@ -491,26 +491,26 @@
       },
       "component": {
         "format": {
-          "pass": 13,
-          "fail": 17,
+          "pass": 20,
+          "fail": 10,
           "notTested": 0,
           "total": 30
         },
         "renderer": {
-          "pass": 13,
-          "fail": 17,
+          "pass": 20,
+          "fail": 10,
           "notTested": 0,
           "total": 30
         },
         "canvas": {
-          "pass": 13,
-          "fail": 17,
+          "pass": 20,
+          "fail": 10,
           "notTested": 0,
           "total": 30
         },
         "panel": {
-          "pass": 13,
-          "fail": 17,
+          "pass": 20,
+          "fail": 10,
           "notTested": 0,
           "total": 30
         },
@@ -5054,8 +5054,8 @@
       "aria-pattern:combobox": "pass pass canvas-editor-context pass ai-attribute-allowlist",
       "aria-pattern:dialog-modal": "pass pass canvas-editor-context pass ai-attribute-allowlist",
       "aria-pattern:disclosure": "pass pass pass pass pass",
-      "aria-pattern:feed": "pass behaviour-state behaviour-state pass pass",
-      "aria-pattern:grid": "pass behaviour-state behaviour-state pass pass",
+      "aria-pattern:feed": "pass pass canvas-editor-context pass pass",
+      "aria-pattern:grid": "pass pass canvas-editor-context pass pass",
       "aria-pattern:landmarks": "pass pass canvas-editor-context pass pass",
       "aria-pattern:link": "pass pass canvas-editor-context pass pass",
       "aria-pattern:listbox": "pass pass pass pass ai-attribute-allowlist",
@@ -5071,8 +5071,8 @@
       "aria-pattern:tabs": "pass pass canvas-editor-context pass pass",
       "aria-pattern:toolbar": "pass pass canvas-editor-context pass pass",
       "aria-pattern:tooltip": "pass pass canvas-editor-context pass pass",
-      "aria-pattern:treeview": "pass behaviour-state behaviour-state pass pass",
-      "aria-pattern:treegrid": "pass behaviour-state behaviour-state pass pass",
+      "aria-pattern:treeview": "pass pass canvas-editor-context pass pass",
+      "aria-pattern:treegrid": "pass pass canvas-editor-context pass pass",
       "aria-pattern:windowsplitter": "pass pass canvas-editor-context pass pass",
       "component:text": "pass pass pass pass reusable-components",
       "component:number": "pass pass pass pass reusable-components",
@@ -5081,13 +5081,13 @@
       "component:image": "pass pass pass pass reusable-components",
       "component:link": "pass pass pass pass reusable-components",
       "component:choice": "pass pass pass pass reusable-components",
-      "component:richtext": "reusable-components reusable-components reusable-components reusable-components reusable-components",
-      "component:file": "reusable-components reusable-components reusable-components reusable-components reusable-components",
-      "component:date": "reusable-components reusable-components reusable-components reusable-components reusable-components",
-      "component:border": "reusable-components reusable-components reusable-components reusable-components reusable-components",
-      "component:shadow": "reusable-components reusable-components reusable-components reusable-components reusable-components",
-      "component:cursor": "reusable-components reusable-components reusable-components reusable-components reusable-components",
-      "component:transition": "reusable-components reusable-components reusable-components reusable-components reusable-components",
+      "component:richtext": "pass pass pass pass reusable-components",
+      "component:file": "pass pass pass pass reusable-components",
+      "component:date": "pass pass pass pass reusable-components",
+      "component:border": "pass pass pass pass reusable-components",
+      "component:shadow": "pass pass pass pass reusable-components",
+      "component:cursor": "pass pass pass pass reusable-components",
+      "component:transition": "pass pass pass pass reusable-components",
       "component:list": "reusable-components reusable-components reusable-components reusable-components reusable-components",
       "component:gallery": "reusable-components reusable-components reusable-components reusable-components reusable-components",
       "component:event": "reusable-components reusable-components reusable-components reusable-components reusable-components",
@@ -7843,8 +7843,8 @@
   },
   "roundTrip": {
     "nodesToJsxToNodes": {
-      "pass": 122,
-      "total": 122
+      "pass": 126,
+      "total": 126
     },
     "jsxToNodesToRender": {
       "pass": 11,
@@ -8267,6 +8267,26 @@
         "pass": true
       },
       {
+        "id": "preset: feed",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "preset: dataGrid",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "preset: treeview",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "preset: treegrid",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
         "id": "synthetic: responsive style map",
         "direction": "nodes-jsx-nodes",
         "pass": true
@@ -8620,16 +8640,6 @@
       "cost": 116
     },
     {
-      "id": "reusable-components",
-      "description": "A promise of the reusable component format (an input type, a placement, a state or an interaction) that this surface does not keep yet.",
-      "matrixCells": 98,
-      "corpusChecks": 0,
-      "fixtures": [],
-      "onlyGapOf": [],
-      "roundTripCases": 0,
-      "cost": 98
-    },
-    {
       "id": "panel-no-tag-choice",
       "description": "The tag picker of the Custom section does not offer SVG and MathML elements.",
       "matrixCells": 92,
@@ -8652,20 +8662,14 @@
       "cost": 87
     },
     {
-      "id": "behaviour-state",
-      "description": "Behaviour and state: no way to say that one element changes another.",
-      "matrixCells": 8,
-      "corpusChecks": 59,
-      "fixtures": [
-        "radix-accordion",
-        "radix-tabs",
-        "radix-dialog"
-      ],
-      "onlyGapOf": [
-        "radix-dialog"
-      ],
+      "id": "reusable-components",
+      "description": "A promise of the reusable component format (an input type, a placement, a state or an interaction) that this surface does not keep yet.",
+      "matrixCells": 70,
+      "corpusChecks": 0,
+      "fixtures": [],
+      "onlyGapOf": [],
       "roundTripCases": 0,
-      "cost": 67
+      "cost": 70
     },
     {
       "id": "page-level-css",
@@ -8676,6 +8680,22 @@
       "onlyGapOf": [],
       "roundTripCases": 0,
       "cost": 66
+    },
+    {
+      "id": "behaviour-state",
+      "description": "Behaviour and state: no way to say that one element changes another.",
+      "matrixCells": 0,
+      "corpusChecks": 59,
+      "fixtures": [
+        "radix-accordion",
+        "radix-tabs",
+        "radix-dialog"
+      ],
+      "onlyGapOf": [
+        "radix-dialog"
+      ],
+      "roundTripCases": 0,
+      "cost": 59
     },
     {
       "id": "attribute-read-as-style",
@@ -8720,12 +8740,12 @@
     {
       "id": "canvas-editor-context",
       "description": "The contract passes on the published page, but the mounted editor changes the outcome: Space pans, a link does not navigate, and the editor's own main element stops a header inside it being a banner. Closing it takes an interact mode on the canvas.",
-      "matrixCells": 15,
+      "matrixCells": 19,
       "corpusChecks": 0,
       "fixtures": [],
       "onlyGapOf": [],
       "roundTripCases": 0,
-      "cost": 15
+      "cost": 19
     },
     {
       "id": "import-dynamic-logic",
@@ -9348,10 +9368,10 @@
       "alt",
       "anchor",
       "aria-autocomplete",
+      "aria-busy",
       "aria-controls",
       "aria-current",
       "aria-describedby",
-      "aria-expanded",
       "aria-haspopup",
       "aria-label",
       "aria-labelledby",
@@ -9615,7 +9635,11 @@
       "menubar",
       "combobox",
       "slider-multithumb",
-      "windowsplitter"
+      "windowsplitter",
+      "feed",
+      "grid",
+      "treeview",
+      "treegrid"
     ],
     "rawFieldRows": [
       "css-at-rule:@container",

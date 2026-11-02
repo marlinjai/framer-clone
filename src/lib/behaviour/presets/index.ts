@@ -7,6 +7,8 @@
 
 import { carousel } from './carousel';
 import { combobox } from './combobox';
+import { feed } from './feed';
+import { grid } from './grid';
 import { menuButton } from './menu';
 import { menubar } from './menubar';
 import type { PresetNode } from './nodes';
@@ -15,6 +17,7 @@ import { splitter } from './splitter';
 import { tabs } from './tabs';
 import { toolbar } from './toolbar';
 import { tooltip } from './tooltip';
+import { treegrid, treeview } from './tree';
 
 export type { PresetNode } from './nodes';
 
@@ -28,6 +31,10 @@ export const PRESETS = {
   combobox: (seed: string) => combobox({ seed }),
   'slider-multithumb': (seed: string) => multithumbSlider({ seed }),
   windowsplitter: (seed: string) => splitter({ seed }),
+  feed: (seed: string) => feed({ seed }),
+  grid: (seed: string) => grid({ seed }),
+  treeview: (seed: string) => treeview({ seed }),
+  treegrid: (seed: string) => treegrid({ seed }),
 } as const satisfies Record<string, (seed: string) => PresetNode>;
 
 export type PresetKind = keyof typeof PRESETS;

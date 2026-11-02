@@ -11,7 +11,7 @@ import ProjectStore from '@/stores/ProjectStore';
 import ComponentModel, { type ComponentInstance } from '@/models/ComponentModel';
 import type { ProjectModelType } from '@/models/ProjectModel';
 
-const INTERACTIVE = ['tabs', 'toolbar', 'tooltip', 'carousel', 'menu-button', 'menubar', 'combobox', 'slider-multithumb', 'windowsplitter'];
+const INTERACTIVE = ['tabs', 'toolbar', 'tooltip', 'carousel', 'menu-button', 'menubar', 'combobox', 'slider-multithumb', 'windowsplitter', 'feed', 'dataGrid', 'treeview', 'treegrid'];
 
 type Stored = { id: string; type: string; props: Record<string, unknown>; parentId?: string; label?: string; children: Stored[] };
 
@@ -41,7 +41,7 @@ describe('a preset from the palette', () => {
     const placed = page.insertRegistryComponent(id, { kind: 'appTree' }) as ComponentInstance;
     const node = stored(placed);
     expect(placed.label).toBe(getComponentEntry(id)?.label);
-    expect((node.props.behaviour as { preset: { kind: string } }).preset.kind).toBe(id);
+    expect((node.props.behaviour as { preset: { kind: string } }).preset.kind).toBe(getComponentEntry(id)?.preset);
     expect(refused(node)).toEqual([]);
     const check = (parent: Stored) => parent.children.forEach((child) => {
       expect(child.parentId).toBe(parent.id);
@@ -120,6 +120,10 @@ describe('a preset from the palette', () => {
     expect(getRegistryIdForNode(button)).toBe('button');
     const tabs = page.insertRegistryComponent('tabs', { kind: 'appTree' }) as ComponentInstance;
     expect(getRegistryIdForNode(tabs.children[0].children[0] as ComponentInstance)).toBe('button');
+    // The data grid's seed is its entry's, not the layout grid's.
+    const grid = page.insertRegistryComponent('dataGrid', { kind: 'appTree' }) as ComponentInstance;
+    expect(grid.id.startsWith('datagrid-')).toBe(true);
+    expect(getRegistryIdForNode(grid)).not.toBe('grid');
   });
 
   it('a duplicate of something with no preset keeps an id nothing points at', () => {

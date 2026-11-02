@@ -10,6 +10,9 @@ import { menuButton as menuButtonPreset } from '@/lib/behaviour/presets/menu';
 import { menubar as menubarPreset } from '@/lib/behaviour/presets/menubar';
 import { multithumbSlider } from '@/lib/behaviour/presets/slider';
 import { splitter as splitterPreset } from '@/lib/behaviour/presets/splitter';
+import { feed as feedPreset } from '@/lib/behaviour/presets/feed';
+import { grid as gridPreset } from '@/lib/behaviour/presets/grid';
+import { treegrid as treegridPreset, treeview as treeviewPreset } from '@/lib/behaviour/presets/tree';
 import { behaviourOf, withProps } from '@/lib/behaviour/presets/nodes';
 
 type Props = Record<string, unknown>;
@@ -579,6 +582,10 @@ const PRESET_PAGES: Readonly<Record<string, () => StoredNode>> = {
   'preset-combobox': presetPage(comboboxPreset({ seed: 'city', options: ['Bern', 'Zurich', 'Basel', 'Geneva'] })),
   'preset-range': presetPage(multithumbSlider({ seed: 'price', min: 0, max: 10, low: 2, high: 8 })),
   'preset-splitter': presetPage(splitterPreset({ seed: 'split', at: 50 })),
+  'preset-feed': presetPage(feedPreset({ seed: 'news' })),
+  'preset-grid': presetPage(gridPreset({ seed: 'prices', columns: ['A', 'B', 'C'], rows: [['a1', 'b1', 'c1'], ['a2', 'b2', 'c2'], ['a3', 'b3', 'c3']] })),
+  'preset-tree': presetPage(treeviewPreset({ seed: 'files' })),
+  'preset-treegrid': presetPage(treegridPreset({ seed: 'mail' })),
 };
 
 export const PAGES: Readonly<Record<string, () => StoredNode>> = {
