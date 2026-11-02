@@ -91,8 +91,8 @@ describe.each(ENGINES)('in %s', (_name, engine) => {
     const repo = getSiteRepository();
     const siteId = randomUUID();
     const snapshot = JSON.parse(JSON.stringify(getSnapshot(buildSite(siteId))));
-    await repo.saveProject(SCOPE, snapshot);
-    await repo.publishProject(SCOPE, snapshot);
+    const saved = await repo.saveProject(SCOPE, snapshot);
+    await repo.publishProject(SCOPE, snapshot, { expectedVersion: saved.version });
     const site = await origin(siteId);
     expect(await titles(`${site}/`)).toEqual(['Home title']);
     // No value of its own: the default Make input took from the heading.

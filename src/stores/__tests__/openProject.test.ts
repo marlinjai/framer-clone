@@ -23,7 +23,7 @@ beforeEach(() => {
 describe('openProject', () => {
   it('a fresh load ingests the server snapshot and opens the home page', () => {
     const snap = serverSnapshot();
-    const out = openProject(store, snap);
+    const out = openProject(store, snap, null, 1);
     expect(out.keptWorkingCopy).toBe(false);
     expect(store.editorUI.currentProject?.id).toBe('site_1');
     expect(store.editorUI.currentPage?.slug).toBe(pickPage(out.project, null).page?.slug);
@@ -32,50 +32,50 @@ describe('openProject', () => {
   it('opens the page from ?page= when it exists', () => {
     const snap = serverSnapshot();
     const aboutId = Object.values(snap.pages).find((p) => p.metadata.title === 'About')!.id;
-    const out = openProject(store, snap, aboutId);
+    const out = openProject(store, snap, aboutId, 1);
     expect(out.page?.id).toBe(aboutId);
     expect(out.missingPageId).toBeUndefined();
   });
 
   it('an unknown ?page= falls back to home and reports it', () => {
-    const out = openProject(store, serverSnapshot(), 'page-never-saved');
+    const out = openProject(store, serverSnapshot(), 'page-never-saved', 1);
     expect(out.page).toBeDefined();
     expect(out.missingPageId).toBe('page-never-saved');
   });
 
   it('back from Preview: keeps the working copy (an unsaved generated page survives)', () => {
-    openProject(store, serverSnapshot());
+    openProject(store, serverSnapshot(), null, 1);
     const project = store.editorUI.currentProject!;
     const generated = project.createPage('Crumb & Hearth Bakery'); // not saved
-    const out = openProject(store, serverSnapshot(), generated.id);
+    const out = openProject(store, serverSnapshot(), generated.id, 1);
     expect(out.keptWorkingCopy).toBe(true);
     expect(out.page?.id).toBe(generated.id);
     expect(store.editorUI.currentProject?.getPage(generated.id)).toBeDefined();
   });
 
   it('keeping the working copy still takes the name from the server, outside undo history', () => {
-    openProject(store, serverSnapshot('Old name'));
-    openProject(store, serverSnapshot('Renamed on the dashboard'));
+    openProject(store, serverSnapshot('Old name'), null, 1);
+    openProject(store, serverSnapshot('Renamed on the dashboard'), null, 1);
     expect(store.editorUI.currentProject?.metadata.title).toBe('Renamed on the dashboard');
     expect(getHistoryStore()!.canUndo).toBe(false);
   });
 
   it('a fresh load is not an undo step (Preview first, then Editor, then Cmd+Z used to delete the project)', () => {
-    openProject(store, serverSnapshot()); // the preview's load
-    openProject(store, serverSnapshot()); // "Editor": keeps the working copy
+    openProject(store, serverSnapshot(), null, 1); // the preview's load
+    openProject(store, serverSnapshot(), null, 1); // "Editor": keeps the working copy
     expect(getHistoryStore()!.canUndo).toBe(false);
     getHistoryStore()!.undo();
     expect(store.projectStore.getProject('site_1')).toBeDefined();
   });
 
   it('undo history belongs to one project: switching project starts it afresh', () => {
-    openProject(store, serverSnapshot());
+    openProject(store, serverSnapshot(), null, 1);
     const other = ProjectModel.create({ id: 'site_2', metadata: { title: 'B', description: '' }, pages: {} });
     other.createPage('B home');
-    openProject(store, getSnapshot(other) as ProjectSnapshotOut);
+    openProject(store, getSnapshot(other) as ProjectSnapshotOut, null, 1);
     store.editorUI.currentProject!.updateMetadata({ description: 'edited B' });
     expect(getHistoryStore()!.canUndo).toBe(true);
-    openProject(store, serverSnapshot()); // back to A
+    openProject(store, serverSnapshot(), null, 1); // back to A
     expect(getHistoryStore()!.canUndo).toBe(false);
   });
 });
@@ -108,8 +108,8 @@ describe('openProject compares reusable components too', () => {
 
   it('no unsaved work here: takes a definition changed elsewhere, with identical pages', () => {
     const base = withDefinition('Navbar');
-    openProject(store, base);
-    const out = openProject(store, samePages(base, 'Navbar edited elsewhere'));
+    openProject(store, base, null, 1);
+    const out = openProject(store, samePages(base, 'Navbar edited elsewhere'), null, 1);
     expect(out.keptWorkingCopy).toBe(false);
     expect(out.changedElsewhere).toBe(false);
     expect(store.editorUI.currentProject!.components.get('nav')!.name).toBe('Navbar edited elsewhere');
@@ -117,9 +117,9 @@ describe('openProject compares reusable components too', () => {
 
   it('a definition changed on both sides is a conflict that names it, with identical pages', () => {
     const base = withDefinition('Navbar');
-    openProject(store, base);
+    openProject(store, base, null, 1);
     store.editorUI.currentProject!.components.get('nav')!.page.setSlug('edited-here');
-    const out = openProject(store, samePages(base, 'Navbar edited elsewhere'));
+    const out = openProject(store, samePages(base, 'Navbar edited elsewhere'), null, 1);
     expect(out.keptWorkingCopy).toBe(true);
     expect(out.changedElsewhere).toBe(true);
     expect(out.changedDefinitions).toEqual(['Navbar edited elsewhere']);
@@ -128,48 +128,48 @@ describe('openProject compares reusable components too', () => {
 
   it('unsaved page work against a definition changed elsewhere is a conflict too', () => {
     const base = withDefinition('Navbar');
-    openProject(store, base);
+    openProject(store, base, null, 1);
     store.editorUI.currentProject!.createPage('Generated here, not saved');
-    const out = openProject(store, samePages(base, 'Navbar edited elsewhere'));
+    const out = openProject(store, samePages(base, 'Navbar edited elsewhere'), null, 1);
     expect(out.changedElsewhere).toBe(true);
     expect(out.changedDefinitions).toEqual(['Navbar edited elsewhere']);
   });
 
   it('names a definition deleted elsewhere from the copy in this tab', () => {
     const base = withDefinition('Navbar');
-    openProject(store, base);
+    openProject(store, base, null, 1);
     store.editorUI.currentProject!.components.get('nav')!.page.setSlug('edited-here');
-    expect(openProject(store, samePages(base, null)).changedDefinitions).toEqual(['Navbar']);
+    expect(openProject(store, samePages(base, null), null, 1).changedDefinitions).toEqual(['Navbar']);
   });
 
   it('a conflict in pages alone names no component', () => {
     const base = withDefinition('Navbar');
-    openProject(store, base);
+    openProject(store, base, null, 1);
     store.editorUI.currentProject!.createPage('Generated here, not saved');
     const p = ProjectModel.create(JSON.parse(JSON.stringify(base)));
     p.createPage('Added elsewhere');
-    const out = openProject(store, JSON.parse(JSON.stringify(getSnapshot(p))));
+    const out = openProject(store, JSON.parse(JSON.stringify(getSnapshot(p))), null, 1);
     expect(out.changedElsewhere).toBe(true);
     expect(out.changedDefinitions).toEqual([]);
   });
 
   it('this tab saving a definition is not a change elsewhere', () => {
-    openProject(store, withDefinition('Navbar'));
+    openProject(store, withDefinition('Navbar'), null, 1);
     const project = store.editorUI.currentProject!;
     project.components.get('nav')!.page.setSlug('saved-here');
     const saved = getSnapshot(project) as unknown as ProjectSnapshotOut;
-    markServerVersion(project.id, saved);
-    const out = openProject(store, JSON.parse(JSON.stringify(saved)) as ProjectSnapshotOut);
+    markServerVersion(project.id, saved, 1);
+    const out = openProject(store, JSON.parse(JSON.stringify(saved)) as ProjectSnapshotOut, null, 1);
     expect(out.keptWorkingCopy).toBe(true);
     expect(out.changedElsewhere).toBe(false);
   });
 
   it('a snapshot with no components key compares equal to none', () => {
     const base = withDefinition(null);
-    openProject(store, base);
+    openProject(store, base, null, 1);
     const oldShape: Partial<ProjectSnapshotOut> = { ...base };
     delete oldShape.components;
-    const out = openProject(store, oldShape as ProjectSnapshotOut);
+    const out = openProject(store, oldShape as ProjectSnapshotOut, null, 1);
     expect(out.keptWorkingCopy).toBe(true);
     expect(out.changedElsewhere).toBe(false);
   });
@@ -191,9 +191,9 @@ describe('openProject compares the site theme and head items too', () => {
   }
 
   it('a second tab with unsaved work of its own, reloading after a token edit, is warned and told the theme moved', () => {
-    openProject(store, withTheme('#ff0000'));
+    openProject(store, withTheme('#ff0000'), null, 1);
     store.editorUI.currentProject!.createPage('Unsaved here');
-    const out = openProject(store, withTheme('#00ff00'));
+    const out = openProject(store, withTheme('#00ff00'), null, 1);
     expect(out.keptWorkingCopy).toBe(true);
     expect(out.changedElsewhere).toBe(true);
     expect(out.changedSiteParts).toEqual(['theme']);
@@ -201,56 +201,56 @@ describe('openProject compares the site theme and head items too', () => {
   });
 
   it('with no unsaved work here, takes the theme saved elsewhere', () => {
-    openProject(store, withTheme('#ff0000'));
-    const out = openProject(store, withTheme('#00ff00'));
+    openProject(store, withTheme('#ff0000'), null, 1);
+    const out = openProject(store, withTheme('#00ff00'), null, 1);
     expect(out.keptWorkingCopy).toBe(false);
     expect(store.editorUI.currentProject!.site.theme.tokens[0]).toMatchObject({ light: '#00ff00' });
   });
 
   it('an unsaved token edit here, with the server unchanged, keeps the working copy', () => {
     const base = withTheme('#ff0000');
-    openProject(store, base);
+    openProject(store, base, null, 1);
     const project = store.editorUI.currentProject!;
     expect(project.updateTheme({ ...project.site.theme, mode: 'dark' })).toEqual({ ok: true });
-    const out = openProject(store, base);
+    const out = openProject(store, base, null, 1);
     expect(out.keptWorkingCopy).toBe(true);
     expect(out.changedElsewhere).toBe(false);
     expect(store.editorUI.currentProject!.site.theme.mode).toBe('dark');
   });
 
   it('a token edit here against a theme changed elsewhere is a conflict too', () => {
-    openProject(store, withTheme('#ff0000'));
+    openProject(store, withTheme('#ff0000'), null, 1);
     const project = store.editorUI.currentProject!;
     project.updateTheme({ ...project.site.theme, mode: 'dark' });
-    const out = openProject(store, withTheme('#00ff00'));
+    const out = openProject(store, withTheme('#00ff00'), null, 1);
     expect(out.changedElsewhere).toBe(true);
     expect(out.changedSiteParts).toEqual(['theme']);
   });
 
   it('site head items changed elsewhere are named too', () => {
-    openProject(store, withTheme(null));
+    openProject(store, withTheme(null), null, 1);
     store.editorUI.currentProject!.createPage('Unsaved here');
-    const out = openProject(store, withTheme(null, [{ kind: 'meta', name: 'author', content: 'x' }]));
+    const out = openProject(store, withTheme(null, [{ kind: 'meta', name: 'author', content: 'x' }]), null, 1);
     expect(out.changedSiteParts).toEqual(['head']);
     expect(changedElsewhereMessage([], out.changedSiteParts)).toContain("the site's head items");
   });
 
   it('a server copy from before the keys existed compares equal to an empty theme', () => {
     const base = withTheme(null);
-    openProject(store, base);
+    openProject(store, base, null, 1);
     const old = JSON.parse(JSON.stringify(base)) as ProjectSnapshotOut;
     delete (old.siteSettings as { theme?: unknown }).theme;
     delete (old.siteSettings as { head?: unknown }).head;
     store.editorUI.currentProject!.createPage('Unsaved here');
-    expect(openProject(store, old).changedElsewhere).toBe(false);
+    expect(openProject(store, old, null, 1).changedElsewhere).toBe(false);
   });
 
   it('other site settings are not compared, as before', () => {
     const base = withTheme(null);
-    openProject(store, base);
+    openProject(store, base, null, 1);
     store.editorUI.currentProject!.createPage('Unsaved here');
     const renamed = { ...base, siteSettings: { ...base.siteSettings, siteName: 'Elsewhere' } } as ProjectSnapshotOut;
-    expect(openProject(store, renamed).changedElsewhere).toBe(false);
+    expect(openProject(store, renamed, null, 1).changedElsewhere).toBe(false);
   });
 });
 
@@ -264,32 +264,32 @@ describe('openProject when the server copy changed meanwhile', () => {
   }
 
   it('no unsaved work here: takes the newer server copy', () => {
-    openProject(store, serverSnapshot());
+    openProject(store, serverSnapshot(), null, 1);
     const newer = savedElsewhere();
-    const out = openProject(store, newer);
+    const out = openProject(store, newer, null, 1);
     expect(out.keptWorkingCopy).toBe(false);
     expect(out.changedElsewhere).toBe(false);
     expect(store.editorUI.currentProject!.pagesArray.map((p) => p.metadata.title)).toContain('Added elsewhere');
   });
 
   it('unsaved work here too: keeps it and reports the conflict', () => {
-    openProject(store, serverSnapshot());
+    openProject(store, serverSnapshot(), null, 1);
     store.editorUI.currentProject!.createPage('Generated here, not saved');
-    const out = openProject(store, savedElsewhere());
+    const out = openProject(store, savedElsewhere(), null, 1);
     expect(out.keptWorkingCopy).toBe(true);
     expect(out.changedElsewhere).toBe(true);
     expect(store.editorUI.currentProject!.pagesArray.map((p) => p.metadata.title)).toContain('Generated here, not saved');
   });
 
   it('after this tab saved, its own save is not mistaken for a change elsewhere', () => {
-    openProject(store, serverSnapshot());
+    openProject(store, serverSnapshot(), null, 1);
     const project = store.editorUI.currentProject!;
     project.createPage('Saved from here');
     const saved = getSnapshot(project) as unknown as ProjectSnapshotOut;
-    markServerVersion(project.id, saved);
+    markServerVersion(project.id, saved, 1);
     // The server now returns what this tab saved (key order may differ).
     const fromServer = JSON.parse(JSON.stringify(saved)) as ProjectSnapshotOut;
-    const out = openProject(store, fromServer);
+    const out = openProject(store, fromServer, null, 1);
     expect(out.keptWorkingCopy).toBe(true);
     expect(out.changedElsewhere).toBe(false);
   });
@@ -299,9 +299,9 @@ describe('openProject when the server copy changed meanwhile', () => {
     const firstPage = Object.keys(snap.pages)[0];
     (snap.pages[firstPage] as { canvasNodes: unknown }).canvasNodes = {};
     const repaired = { ...snap, pages: { ...snap.pages, [firstPage]: withDefaultViewports(snap.pages[firstPage]) } };
-    openProject(store, repaired as ProjectSnapshotOut);
+    openProject(store, repaired as ProjectSnapshotOut, null, 1);
     const again = { ...snap, pages: { ...snap.pages, [firstPage]: withDefaultViewports(snap.pages[firstPage]) } };
-    const out = openProject(store, again as ProjectSnapshotOut);
+    const out = openProject(store, again as ProjectSnapshotOut, null, 1);
     expect(out.keptWorkingCopy).toBe(true);
     expect(out.changedElsewhere).toBe(false);
   });
@@ -321,9 +321,9 @@ describe('openProject after personal data was erased (plan 2026-11-01-immutable-
 
   it('no unsaved work here: takes the server copy, epoch included', () => {
     const base = serverSnapshot();
-    openProject(store, base);
+    openProject(store, base, null, 1);
     // Pages, components, theme and head are the same: only the epoch tells the copies apart.
-    const out = openProject(store, erased(base));
+    const out = openProject(store, erased(base), null, 1);
     expect(out.keptWorkingCopy).toBe(false);
     expect(store.editorUI.currentProject!.metadata.erasureEpoch).toBe(1);
     expect(store.editorUI.currentProject!.siteSettings.business.managingDirectors).toEqual(['[entfernt]']);
@@ -331,9 +331,9 @@ describe('openProject after personal data was erased (plan 2026-11-01-immutable-
 
   it('unsaved work here: keeps it at the old epoch and warns, so its Save is refused by the server', () => {
     const base = serverSnapshot();
-    openProject(store, base);
+    openProject(store, base, null, 1);
     store.editorUI.currentProject!.createPage('Unsaved here');
-    const out = openProject(store, erased(base));
+    const out = openProject(store, erased(base), null, 1);
     expect(out.keptWorkingCopy).toBe(true);
     expect(out.changedElsewhere).toBe(true);
     expect(store.editorUI.currentProject!.metadata.erasureEpoch).toBe(0);
@@ -344,15 +344,15 @@ describe('openProject after personal data was erased (plan 2026-11-01-immutable-
     const base = serverSnapshot();
     const unknown = { ...base, id: 'site_no_baseline' } as ProjectSnapshotOut;
     store.projectStore.ingestProjectSnapshot(unknown);
-    const out = openProject(store, erased(unknown));
+    const out = openProject(store, erased(unknown), null, 1);
     expect(out.changedElsewhere).toBe(true);
     expect(out.changedDefinitions).toEqual([]);
   });
 
   it('the same epoch on both sides changes nothing', () => {
     const snap = erased();
-    openProject(store, snap);
-    expect(openProject(store, JSON.parse(JSON.stringify(snap)) as ProjectSnapshotOut).keptWorkingCopy).toBe(true);
+    openProject(store, snap, null, 1);
+    expect(openProject(store, JSON.parse(JSON.stringify(snap)) as ProjectSnapshotOut, null, 1).keptWorkingCopy).toBe(true);
   });
 });
 

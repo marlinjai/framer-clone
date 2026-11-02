@@ -18,6 +18,14 @@
 // conflict, so the editor can warn before a Save overwrites the other work.
 // The name always follows the server (the rename action owns it).
 //
+// The version lock rides along: the server numbers every write of the working
+// copy, and this tab remembers the number of the copy it last loaded or saved.
+// Save and Publish send it as `expectedVersion`, and a server that moved on
+// refuses them with 409 `site_changed` (SiteChangedDialog asks what to do). A
+// moved number counts as a change on the server here too, so an untouched tab
+// takes the newer copy, and a tab that keeps its own unsaved work keeps its OLD
+// number: its next Save must be refused, never silently win.
+//
 // Undo history belongs to one project: it is cleared whenever the project
 // shown changes or is (re)loaded, and loading itself is never an undo step.
 //
@@ -137,10 +145,25 @@ function definitionName(components: unknown, id: string): string | undefined {
 
 // project id -> content of the last server version this tab knows.
 const baselines = new Map<string, VersionContent>();
+// project id -> the site version (sites.version) of that same server copy.
+const knownVersions = new Map<string, number>();
 
-/** Record that the server now holds exactly this project (after a load or a save). */
-export function markServerVersion(projectId: string, project: ProjectContent): void {
+/**
+ * Record that the server now holds exactly this project, at this site version
+ * (after a load, a save or a publish).
+ */
+export function markServerVersion(projectId: string, project: ProjectContent, version: number): void {
   baselines.set(projectId, versionContent(project));
+  knownVersions.set(projectId, version);
+}
+
+/**
+ * The site version this tab's copy is based on: what Save and Publish send as
+ * `expectedVersion`. Undefined when this tab never loaded the project from the
+ * server (the server then refuses the write with `version_required`).
+ */
+export function knownServerVersion(projectId: string): number | undefined {
+  return knownVersions.get(projectId);
 }
 
 /** The warning for `changedElsewhere`, naming the components and site parts a Save would overwrite. */
@@ -177,7 +200,9 @@ function untracked(fn: () => void) {
 export function openProject(
   rootStore: RootStoreType,
   snapshot: ProjectSnapshotOut,
-  requestedPageId?: string | null,
+  requestedPageId: string | null | undefined,
+  /** The site version the loader read together with `snapshot`. */
+  serverVersion: number,
 ): OpenedProject {
   const previousProjectId = rootStore.editorUI.currentProject?.id;
   const existing = rootStore.projectStore.getProject(snapshot.id) as ProjectModelType | undefined;
@@ -196,7 +221,12 @@ export function openProject(
     // counts as a change on the server: an untouched tab takes the server copy,
     // and one with unsaved work is warned (its Save is refused with an older epoch).
     const erasedSince = (snapshot.metadata?.erasureEpoch ?? 0) > (working.metadata?.erasureEpoch ?? 0);
-    const serverChanged = erasedSince || (baseline !== undefined && !sameVersion(serverContent, baseline));
+    // Any write the server numbered since this tab's copy (also one that left the
+    // compared parts as they were, such as the site's description) is a change.
+    const known = knownVersions.get(snapshot.id);
+    const versionMoved = known !== undefined && known !== serverVersion;
+    const serverChanged =
+      erasedSince || versionMoved || (baseline !== undefined && !sameVersion(serverContent, baseline));
     const workingChanged = baseline === undefined || !sameVersion(workingContent, baseline);
     if (!serverChanged) keep = true; // nothing new on the server: keep this tab's work
     else if (workingChanged) {
@@ -221,13 +251,16 @@ export function openProject(
     if (typeof serverName === 'string' && serverName !== existing.metadata.title) {
       untracked(() => existing.updateMetadata({ title: serverName }));
     }
+    // Nothing new on the server: this copy is based on the server's version. When
+    // the server DID change, the old number stays, so a Save gets the 409.
+    if (!changedElsewhere) knownVersions.set(snapshot.id, serverVersion);
   } else {
     let id = snapshot.id;
     untracked(() => {
       id = rootStore.projectStore.ingestProjectSnapshot(snapshot);
     });
     project = rootStore.projectStore.getProject(id) as ProjectModelType | undefined;
-    markServerVersion(snapshot.id, snapshot);
+    markServerVersion(snapshot.id, snapshot, serverVersion);
   }
 
   rootStore.editorUI.setCurrentProject(project);

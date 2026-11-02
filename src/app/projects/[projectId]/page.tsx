@@ -50,5 +50,5 @@ export default async function ProjectEditorPage({
     notFound();
   }
 
-  return <EditorMount projectSnapshot={result.snapshot} site={result.site} />;
+  return <EditorMount projectSnapshot={result.snapshot} projectVersion={result.version} site={result.site} />;
 }

@@ -17,6 +17,9 @@ import {
   SiteNotFoundError,
   SiteNameConflictError,
   SiteGoneError,
+  SiteChangedError,
+  SiteVersionRequiredError,
+  SiteErasedSinceLoadError,
   SiteDeleteConfirmationError,
   InvalidTenantScopeError,
   InvalidPageSlugError,
@@ -178,7 +181,7 @@ describe('SiteRepository.saveProject', () => {
     prisma.sitePage.upsert.mockResolvedValue({});
     prisma.sitePage.deleteMany.mockResolvedValue({ count: 0 });
 
-    await repo.saveProject(SCOPE, makeProject());
+    await repo.saveProject(SCOPE, makeProject(), { expectedVersion: 1 });
 
     const upsertArg = prisma.site.upsert.mock.calls[0][0];
     expect(upsertArg.create.workspaceId).toBe('ws_marlin');
@@ -191,7 +194,7 @@ describe('SiteRepository.saveProject', () => {
     prisma.sitePage.upsert.mockResolvedValue({});
     prisma.sitePage.deleteMany.mockResolvedValue({ count: 0 });
 
-    await repo.saveProject(SCOPE, makeProject());
+    await repo.saveProject(SCOPE, makeProject(), { expectedVersion: 1 });
 
     expect(prisma.sitePage.upsert).toHaveBeenCalled();
     const pageArg = prisma.sitePage.upsert.mock.calls[0][0];
@@ -201,11 +204,11 @@ describe('SiteRepository.saveProject', () => {
 
   it('refuses to overwrite a site owned by another workspace', async () => {
     // The id exists but in a different workspace: refuse, do not overwrite.
-    prisma.site.findUnique.mockResolvedValue({ erasureEpoch: 0,
+    prisma.site.findUnique.mockResolvedValue({ erasureEpoch: 0, version: 1,
       id: 'site_save',
       workspaceId: 'ws_someone_else',
     });
-    await expect(repo.saveProject(SCOPE, makeProject())).rejects.toBeInstanceOf(
+    await expect(repo.saveProject(SCOPE, makeProject(), { expectedVersion: 1 })).rejects.toBeInstanceOf(
       SiteNotFoundError,
     );
     expect(prisma.site.upsert).not.toHaveBeenCalled();
@@ -215,7 +218,7 @@ describe('SiteRepository.saveProject', () => {
     // The id already exists IN the caller's workspace: the save proceeds and
     // upserts by id, so a second publish updates the one row rather than
     // creating a duplicate.
-    prisma.site.findUnique.mockResolvedValue({ erasureEpoch: 0,
+    prisma.site.findUnique.mockResolvedValue({ erasureEpoch: 0, version: 1,
       id: 'site_save',
       workspaceId: 'ws_marlin',
     });
@@ -223,7 +226,7 @@ describe('SiteRepository.saveProject', () => {
     prisma.sitePage.upsert.mockResolvedValue({});
     prisma.sitePage.deleteMany.mockResolvedValue({ count: 0 });
 
-    await repo.saveProject(SCOPE, makeProject());
+    await repo.saveProject(SCOPE, makeProject(), { expectedVersion: 1 });
 
     const upsertArg = prisma.site.upsert.mock.calls[0][0];
     expect(upsertArg.where).toEqual({ id: 'site_save' });
@@ -241,7 +244,7 @@ describe('SiteRepository.saveProject keeps the theme and the head items a body l
   }
 
   beforeEach(() => {
-    prisma.site.findUnique.mockResolvedValue({ erasureEpoch: 0,
+    prisma.site.findUnique.mockResolvedValue({ erasureEpoch: 0, version: 1,
       id: 'site_keep',
       workspaceId: 'ws_marlin',
       redirects: [],
@@ -255,18 +258,18 @@ describe('SiteRepository.saveProject keeps the theme and the head items a body l
   const written = () => prisma.site.updateMany.mock.calls[0][0].data.siteSettings;
 
   it('a body from a tab built before the keys existed keeps the stored theme and head', async () => {
-    await repo.saveProject(SCOPE, body({ language: 'en', siteName: 'New name' }), { mustExist: true });
+    await repo.saveProject(SCOPE, body({ language: 'en', siteName: 'New name' }), { mustExist: true, expectedVersion: 1 });
     expect(written()).toMatchObject({ language: 'en', siteName: 'New name', theme: STORED_THEME, head: STORED_HEAD });
   });
 
   it('a body carrying the keys writes them, and an explicit empty theme clears the stored one', async () => {
-    await repo.saveProject(SCOPE, body({ theme: { tokens: [], document: {} }, head: [] }), { mustExist: true });
+    await repo.saveProject(SCOPE, body({ theme: { tokens: [], document: {} }, head: [] }), { mustExist: true, expectedVersion: 1 });
     expect(written().theme).toEqual({ tokens: [], document: {} });
     expect(written().head).toEqual([]);
   });
 
   it('reads the stored settings in the same transaction it writes them', async () => {
-    await repo.saveProject(SCOPE, body({}), { mustExist: true });
+    await repo.saveProject(SCOPE, body({}), { mustExist: true, expectedVersion: 1 });
     expect(prisma.site.findUnique.mock.calls[0][0].select).toMatchObject({ siteSettings: true });
   });
 });
@@ -292,7 +295,7 @@ describe('SiteRepository.saveProject slug rules and redirects', () => {
     published: boolean;
     redirects?: unknown;
   }) {
-    prisma.site.findUnique.mockResolvedValue({ erasureEpoch: 0,
+    prisma.site.findUnique.mockResolvedValue({ erasureEpoch: 0, version: 1,
       id: 'site_1',
       workspaceId: 'ws_marlin',
       redirects: opts.redirects ?? [],
@@ -308,7 +311,7 @@ describe('SiteRepository.saveProject slug rules and redirects', () => {
 
   it('rejects an invalid changed slug with InvalidPageSlugError and writes nothing', async () => {
     existingSite({ stored: { about: 'about' }, published: true });
-    const err = await repo.saveProject(SCOPE, snapshot({ about: 'About Us' })).catch((e) => e);
+    const err = await repo.saveProject(SCOPE, snapshot({ about: 'About Us' }), { expectedVersion: 1 }).catch((e) => e);
     expect(err).toBeInstanceOf(InvalidPageSlugError);
     expect(err.status).toBe(400);
     expect(err.code).toBe('invalid_page_slug');
@@ -318,23 +321,23 @@ describe('SiteRepository.saveProject slug rules and redirects', () => {
 
   it('rejects a reserved path, a duplicate and a moved home page', async () => {
     existingSite({ stored: { about: 'about' }, published: false });
-    await expect(repo.saveProject(SCOPE, snapshot({ about: 'about', x: 'api' }))).rejects.toBeInstanceOf(InvalidPageSlugError);
-    await expect(repo.saveProject(SCOPE, snapshot({ about: 'about', x: 'about' }))).rejects.toBeInstanceOf(InvalidPageSlugError);
+    await expect(repo.saveProject(SCOPE, snapshot({ about: 'about', x: 'api' }), { expectedVersion: 1 })).rejects.toBeInstanceOf(InvalidPageSlugError);
+    await expect(repo.saveProject(SCOPE, snapshot({ about: 'about', x: 'about' }), { expectedVersion: 1 })).rejects.toBeInstanceOf(InvalidPageSlugError);
     const movedHome = snapshot({ about: 'about' }) as unknown as { pages: Record<string, { slug: string }> };
     movedHome.pages.home.slug = 'start';
-    await expect(repo.saveProject(SCOPE, movedHome as never)).rejects.toMatchObject({ reason: 'home_locked' });
+    await expect(repo.saveProject(SCOPE, movedHome as never, { expectedVersion: 1 })).rejects.toMatchObject({ reason: 'home_locked' });
     expect(prisma.site.upsert).not.toHaveBeenCalled();
   });
 
   it('accepts an unchanged legacy slug that predates the rules', async () => {
     existingSite({ stored: { legacy: 'Old_Slug' }, published: true });
-    await repo.saveProject(SCOPE, snapshot({ legacy: 'Old_Slug' }));
+    await repo.saveProject(SCOPE, snapshot({ legacy: 'Old_Slug' }), { expectedVersion: 1 });
     expect(prisma.site.upsert).toHaveBeenCalledTimes(1);
   });
 
   it('keeps the old slug as a redirect when a page of a published site moves', async () => {
     existingSite({ stored: { about: 'about' }, published: true });
-    await repo.saveProject(SCOPE, snapshot({ about: 'about-us' }));
+    await repo.saveProject(SCOPE, snapshot({ about: 'about-us' }), { expectedVersion: 1 });
     const arg = prisma.site.upsert.mock.calls[0][0];
     expect(arg.update.redirects).toEqual([
       { from: 'about', pageId: 'about', createdAt: expect.any(String) },
@@ -347,7 +350,7 @@ describe('SiteRepository.saveProject slug rules and redirects', () => {
 
   it('records no redirect for a site that was never published', async () => {
     existingSite({ stored: { about: 'about' }, published: false });
-    await repo.saveProject(SCOPE, snapshot({ about: 'about-us' }));
+    await repo.saveProject(SCOPE, snapshot({ about: 'about-us' }), { expectedVersion: 1 });
     expect(prisma.site.upsert.mock.calls[0][0].update.redirects).toEqual([]);
   });
 
@@ -357,7 +360,7 @@ describe('SiteRepository.saveProject slug rules and redirects', () => {
       published: true,
       redirects: [{ from: 'about', pageId: 'about', createdAt: 't' }],
     });
-    await repo.saveProject(SCOPE, snapshot({ about: 'about-us', team: 'about' }));
+    await repo.saveProject(SCOPE, snapshot({ about: 'about-us', team: 'about' }), { expectedVersion: 1 });
     expect(prisma.site.upsert.mock.calls[0][0].update.redirects).toEqual([]);
   });
 
@@ -366,7 +369,7 @@ describe('SiteRepository.saveProject slug rules and redirects', () => {
     prisma.site.upsert.mockResolvedValue({});
     prisma.sitePage.upsert.mockResolvedValue({});
     prisma.sitePage.deleteMany.mockResolvedValue({ count: 0 });
-    await repo.saveProject(SCOPE, snapshot({ about: 'about' }));
+    await repo.saveProject(SCOPE, snapshot({ about: 'about' }), { expectedVersion: 1 });
     expect(prisma.sitePage.findMany).not.toHaveBeenCalled();
     expect(prisma.site.upsert.mock.calls[0][0].create.redirects).toEqual([]);
   });
@@ -395,7 +398,7 @@ describe('SiteRepository.saveProject concurrency', () => {
     }) as never;
 
   it('runs the save SERIALIZABLE, so overlapping saves cannot lose a redirect', async () => {
-    await repo.saveProject(SCOPE, project());
+    await repo.saveProject(SCOPE, project(), { expectedVersion: 1 });
     expect(prisma.$transaction.mock.calls[0][1]).toEqual({
       isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
       // Room for a body at the 10 MB limit; Prisma's default is 5 seconds.
@@ -410,7 +413,7 @@ describe('SiteRepository.saveProject concurrency', () => {
       throw conflict();
     });
     prisma.$transaction.mockImplementation(real);
-    await repo.saveProject(SCOPE, project());
+    await repo.saveProject(SCOPE, project(), { expectedVersion: 1 });
     expect(prisma.$transaction).toHaveBeenCalledTimes(2);
     expect(prisma.site.upsert).toHaveBeenCalledTimes(1);
   });
@@ -419,14 +422,14 @@ describe('SiteRepository.saveProject concurrency', () => {
     prisma.$transaction.mockImplementation(async () => {
       throw conflict();
     });
-    await expect(repo.saveProject(SCOPE, project())).rejects.toMatchObject({ code: 'P2034' });
+    await expect(repo.saveProject(SCOPE, project(), { expectedVersion: 1 })).rejects.toMatchObject({ code: 'P2034' });
     expect(prisma.$transaction).toHaveBeenCalledTimes(4);
 
     prisma.$transaction.mockReset();
     prisma.$transaction.mockImplementation(async () => {
       throw new Error('db down');
     });
-    await expect(repo.saveProject(SCOPE, project())).rejects.toThrow('db down');
+    await expect(repo.saveProject(SCOPE, project(), { expectedVersion: 1 })).rejects.toThrow('db down');
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
   });
 });
@@ -479,7 +482,7 @@ describe('SiteRepository.getSiteAddress', () => {
 
 describe('SiteRepository.saveProject leaves the name to the rename action', () => {
   it('writes the name on create but never on update', async () => {
-    prisma.site.findUnique.mockResolvedValue({ erasureEpoch: 0, id: 'site_save', workspaceId: 'ws_marlin' });
+    prisma.site.findUnique.mockResolvedValue({ erasureEpoch: 0, version: 1, id: 'site_save', workspaceId: 'ws_marlin' });
     prisma.site.upsert.mockResolvedValue({});
     prisma.sitePage.upsert.mockResolvedValue({});
     prisma.sitePage.deleteMany.mockResolvedValue({ count: 0 });
@@ -489,7 +492,7 @@ describe('SiteRepository.saveProject leaves the name to the rename action', () =
       pages: {},
     });
 
-    await repo.saveProject(SCOPE, p);
+    await repo.saveProject(SCOPE, p, { expectedVersion: 1 });
 
     const upsertArg = prisma.site.upsert.mock.calls[0][0];
     expect(upsertArg.create.name).toBe('Stale title from an old editor tab');
@@ -565,7 +568,7 @@ describe('SiteRepository.publishProject', () => {
 
   /** A stored site in the caller's workspace, as the transaction reads it. */
   function storedSite(over: Record<string, unknown> = {}) {
-    prisma.site.findUnique.mockResolvedValue({ erasureEpoch: 0,
+    prisma.site.findUnique.mockResolvedValue({ erasureEpoch: 0, version: 1,
       id: 'site_1', workspaceId: 'ws_marlin', redirects: [], status: 'draft', publishedRevisionId: null, ...over,
     });
     prisma.site.findFirst.mockResolvedValue({
@@ -577,7 +580,7 @@ describe('SiteRepository.publishProject', () => {
 
   it('flips status to published and points at the new revision, scoped by id AND workspace_id', async () => {
     storedSite();
-    await expect(repo.publishProject(SCOPE, PROJECT)).resolves.toEqual({ revision: 1 });
+    await expect(repo.publishProject(SCOPE, PROJECT, { expectedVersion: 1 })).resolves.toEqual({ revision: 1, version: 2 });
     expect(prisma.site.updateMany).toHaveBeenCalledWith({
       where: { id: 'site_1', workspaceId: 'ws_marlin' },
       data: { status: 'published', publishedRevisionId: 'rev_new' },
@@ -587,7 +590,7 @@ describe('SiteRepository.publishProject', () => {
   it('stamps the tenant scope and the publisher on the revision, and numbers it after the newest', async () => {
     storedSite();
     prisma.siteRevision.findFirst.mockResolvedValue({ number: 41 });
-    await expect(repo.publishProject(SCOPE, PROJECT, { publishedBy: 'user-1' })).resolves.toEqual({ revision: 42 });
+    await expect(repo.publishProject(SCOPE, PROJECT, { publishedBy: 'user-1', expectedVersion: 1 })).resolves.toEqual({ revision: 42, version: 2 });
     expect(prisma.siteRevision.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         siteId: 'site_1', workspaceId: 'ws_marlin', tenantGroupId: 'tg_lumitra', number: 42, kind: 'publish', publishedBy: 'user-1',
@@ -597,7 +600,7 @@ describe('SiteRepository.publishProject', () => {
 
   it('runs in one transaction that locks the site row first, with room for a body at the limit', async () => {
     storedSite();
-    await repo.publishProject(SCOPE, PROJECT);
+    await repo.publishProject(SCOPE, PROJECT, { expectedVersion: 1 });
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
     // Not SERIALIZABLE: that made publishes of unrelated sites abort each other.
     expect(prisma.$transaction.mock.calls[0][1]).toEqual({ maxWait: 5_000, timeout: 30_000 });
@@ -610,7 +613,7 @@ describe('SiteRepository.publishProject', () => {
   it('keeps the newest revisions and prunes the rest', async () => {
     storedSite();
     prisma.siteRevision.findFirst.mockResolvedValue({ number: 40 });
-    await repo.publishProject(SCOPE, PROJECT);
+    await repo.publishProject(SCOPE, PROJECT, { expectedVersion: 1 });
     expect(prisma.siteRevision.deleteMany).toHaveBeenCalledWith({
       where: { siteId: 'site_1', number: { lte: 41 - REVISIONS_KEPT } },
     });
@@ -619,14 +622,14 @@ describe('SiteRepository.publishProject', () => {
   it('throws SiteNotFoundError for a site in another workspace, flipping nothing', async () => {
     // A site id owned by another workspace: refuse, do not flip a foreign tenant's status.
     storedSite({ workspaceId: 'ws_other' });
-    await expect(repo.publishProject(SCOPE, PROJECT)).rejects.toBeInstanceOf(SiteNotFoundError);
+    await expect(repo.publishProject(SCOPE, PROJECT, { expectedVersion: 1 })).rejects.toBeInstanceOf(SiteNotFoundError);
     expect(prisma.site.updateMany).not.toHaveBeenCalled();
     expect(prisma.siteRevision.create).not.toHaveBeenCalled();
   });
 
   it('throws SiteGoneError for a deleted site: publish only ever updates', async () => {
     prisma.site.findUnique.mockResolvedValue(null);
-    await expect(repo.publishProject(SCOPE, PROJECT)).rejects.toBeInstanceOf(SiteGoneError);
+    await expect(repo.publishProject(SCOPE, PROJECT, { expectedVersion: 1 })).rejects.toBeInstanceOf(SiteGoneError);
     expect(prisma.siteRevision.create).not.toHaveBeenCalled();
   });
 
@@ -922,7 +925,7 @@ describe('SiteRepository.saveProject with mustExist (editor Save and Publish)', 
   it('refuses a site that no longer exists instead of re-creating it', async () => {
     prisma.site.findUnique.mockResolvedValue(null);
     prisma.site.updateMany.mockResolvedValue({ count: 0 });
-    const err = await repo.saveProject(SCOPE, project(), { mustExist: true }).catch((e) => e);
+    const err = await repo.saveProject(SCOPE, project(), { mustExist: true, expectedVersion: 1 }).catch((e) => e);
     expect(err).toBeInstanceOf(SiteGoneError);
     expect(err.message).toBe('This project does not exist (any more): it may have been deleted. Your changes were not saved.');
     expect(prisma.site.upsert).not.toHaveBeenCalled();
@@ -930,19 +933,56 @@ describe('SiteRepository.saveProject with mustExist (editor Save and Publish)', 
   });
 
   it('still updates a site that exists, with an UPDATE (row lock), never an upsert', async () => {
-    prisma.site.findUnique.mockResolvedValue({ erasureEpoch: 0, id: 'site_gone', workspaceId: 'ws_marlin' });
+    prisma.site.findUnique.mockResolvedValue({ erasureEpoch: 0, version: 1, id: 'site_gone', workspaceId: 'ws_marlin' });
     prisma.site.updateMany.mockResolvedValue({ count: 1 });
     prisma.sitePage.deleteMany.mockResolvedValue({ count: 0 });
-    await expect(repo.saveProject(SCOPE, project(), { mustExist: true })).resolves.toBeUndefined();
-    expect(prisma.site.updateMany.mock.calls[0][0].where).toEqual({ id: 'site_gone', workspaceId: 'ws_marlin' });
+    await expect(repo.saveProject(SCOPE, project(), { mustExist: true, expectedVersion: 1 })).resolves.toEqual({ version: 2 });
+    // The version lock rides in the same UPDATE: compared in its WHERE, raised in its data.
+    expect(prisma.site.updateMany.mock.calls[0][0].where).toEqual({ id: 'site_gone', workspaceId: 'ws_marlin', version: 1 });
+    expect(prisma.site.updateMany.mock.calls[0][0].data).toMatchObject({ version: 2 });
     expect(prisma.site.updateMany.mock.calls[0][0].data).not.toHaveProperty('name');
     expect(prisma.site.upsert).not.toHaveBeenCalled();
   });
 
-  it('a delete committed between the existence check and the write: still refused, no re-create', async () => {
-    prisma.site.findUnique.mockResolvedValue({ erasureEpoch: 0, id: 'site_gone', workspaceId: 'ws_marlin' });
+  it('a stale expectedVersion is refused with the stored version, before anything is written', async () => {
+    prisma.site.findUnique.mockResolvedValue({ erasureEpoch: 0, version: 4, id: 'site_gone', workspaceId: 'ws_marlin' });
+    const err = await repo.saveProject(SCOPE, project(), { mustExist: true, expectedVersion: 3 }).catch((e) => e);
+    expect(err).toBeInstanceOf(SiteChangedError);
+    expect(err).toMatchObject({ code: 'site_changed', status: 409, currentVersion: 4 });
+    expect(prisma.site.updateMany).not.toHaveBeenCalled();
+    expect(prisma.sitePage.upsert).not.toHaveBeenCalled();
+    expect(prisma.sitePage.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('no expectedVersion for an existing site is refused (no newest-wins path), before anything is written', async () => {
+    prisma.site.findUnique.mockResolvedValue({ erasureEpoch: 0, version: 4, id: 'site_gone', workspaceId: 'ws_marlin' });
+    await expect(repo.saveProject(SCOPE, project(), { mustExist: true })).rejects.toBeInstanceOf(SiteVersionRequiredError);
+    await expect(repo.saveProject(SCOPE, project())).rejects.toMatchObject({ code: 'version_required', status: 400 });
+    expect(prisma.site.updateMany).not.toHaveBeenCalled();
+    expect(prisma.site.upsert).not.toHaveBeenCalled();
+  });
+
+  it('an erased-since-load tab is told to reload, not offered to save over (the erasure check comes first)', async () => {
+    prisma.site.findUnique.mockResolvedValue({ erasureEpoch: 1, version: 5, id: 'site_gone', workspaceId: 'ws_marlin' });
+    await expect(repo.saveProject(SCOPE, project(), { mustExist: true, expectedVersion: 1 })).rejects.toBeInstanceOf(
+      SiteErasedSinceLoadError,
+    );
+  });
+
+  it('a write landing between the read and the UPDATE: the UPDATE matches nothing, refused with the new version', async () => {
+    prisma.site.findUnique.mockResolvedValue({ erasureEpoch: 0, version: 1, id: 'site_gone', workspaceId: 'ws_marlin' });
     prisma.site.updateMany.mockResolvedValue({ count: 0 });
-    await expect(repo.saveProject(SCOPE, project(), { mustExist: true })).rejects.toBeInstanceOf(SiteGoneError);
+    prisma.site.findFirst.mockResolvedValue({ version: 2 });
+    const err = await repo.saveProject(SCOPE, project(), { mustExist: true, expectedVersion: 1 }).catch((e) => e);
+    expect(err).toBeInstanceOf(SiteChangedError);
+    expect(err.currentVersion).toBe(2);
+    expect(prisma.sitePage.upsert).not.toHaveBeenCalled();
+  });
+
+  it('a delete committed between the existence check and the write: still refused, no re-create', async () => {
+    prisma.site.findUnique.mockResolvedValue({ erasureEpoch: 0, version: 1, id: 'site_gone', workspaceId: 'ws_marlin' });
+    prisma.site.updateMany.mockResolvedValue({ count: 0 });
+    await expect(repo.saveProject(SCOPE, project(), { mustExist: true, expectedVersion: 1 })).rejects.toBeInstanceOf(SiteGoneError);
     expect(prisma.site.upsert).not.toHaveBeenCalled();
     expect(prisma.sitePage.upsert).not.toHaveBeenCalled();
   });

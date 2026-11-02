@@ -26,9 +26,12 @@ const PreviewShell = dynamic(
 
 export default function PreviewMount({
   projectSnapshot,
+  projectVersion,
   pageId = null,
 }: {
   projectSnapshot: ProjectSnapshotOut;
+  /** The site version read with the snapshot (the version lock). */
+  projectVersion: number;
   /** `?page=<pageId>` from the address: the page to show. */
   pageId?: string | null;
 }) {
@@ -39,7 +42,7 @@ export default function PreviewMount({
     // The server-loaded project, unless this browser already holds it (came
     // from the editor): then its working copy, unsaved work included, is what
     // gets previewed. The page from `?page=`, else home. See openProject.
-    const { missingPageId } = openProject(rootStore, projectSnapshot, pageId);
+    const { missingPageId } = openProject(rootStore, projectSnapshot, pageId, projectVersion);
     opened.current = { missingPageId };
   }
 

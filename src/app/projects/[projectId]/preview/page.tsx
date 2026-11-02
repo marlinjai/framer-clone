@@ -58,5 +58,5 @@ export default async function ProjectPreviewPage({
     notFound();
   }
 
-  return <PreviewMount projectSnapshot={result.snapshot} pageId={pageId} />;
+  return <PreviewMount projectSnapshot={result.snapshot} projectVersion={result.version} pageId={pageId} />;
 }

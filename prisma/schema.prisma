@@ -298,6 +298,12 @@ model Site {
   // opened before an erase cannot write the erased value back.
   erasureEpoch Int @default(0) @map("erasure_epoch")
 
+  // The version lock: raised by one on every write of the working copy (save, publish, an erase of personal
+  // data). A save or publish names the version it was based on (`expectedVersion`), and a different stored
+  // number refuses it with 409 `site_changed`, so an editor tab and an agent never overwrite each other
+  // unseen. Rename, rollback and unpublish leave it alone: none of them writes what a save writes.
+  version Int @default(1)
+
   // Persistence-layer timestamps (when the ROW was written), set by the DB.
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
