@@ -4,7 +4,8 @@
 //
 // The company's payments: whether its shop takes real payments through its own Stripe account, and the two
 // ways to get there: Stripe's hosted onboarding for a new account, or connecting an account the business
-// already has. Until then the shop's checkout uses the demo payment (no real money). While the platform runs on
+// already has. Until then the shop's checkout uses the demo payment (no real money). A connected shop refuses
+// payments until its Books can issue the receipt, and the page says what is missing and where it is set. While the platform runs on
 // Stripe's test keys a connected account takes test payments only, and the page says so. The 1% platform fee
 // is stated before anyone connects. Glass look as the Books (globals.css glass utilities).
 
@@ -16,6 +17,37 @@ import { Button } from '@/components/ui/button';
 import ReceiptEmailCard from './ReceiptEmailCard';
 
 type AccountStatus = 'not_connected' | 'pending' | 'ready' | 'restricted';
+
+/** Whether the Books can issue a paid order's receipt (receiptReadiness.ts): Stripe payments wait for it. */
+type BooksReadiness =
+  | { ready: true }
+  | { ready: false; blocker: 'books_not_set_up' | 'invoice_numbers_missing' | 'sender_incomplete'; missing: string[] };
+
+/** The sender fields an invoice needs, as the owner reads them. */
+const SENDER_FIELD_TEXT: Record<string, string> = {
+  legalName: 'the legal name',
+  addressLine1: 'the street address',
+  postalCode: 'the postal code',
+  city: 'the city',
+  countryCode: 'the country',
+  'taxNumber|vatId': 'a tax number or VAT id',
+  'taxNumber|vatId|smallBusinessId': 'a tax number, VAT id or small-business number',
+};
+
+/** Why the shop refuses Stripe payments, and the next step. */
+function booksBlockerText(books: Extract<BooksReadiness, { ready: false }>): string {
+  const operator = 'An operator sets this up once (pnpm books:init-company).';
+  switch (books.blocker) {
+    case 'books_not_set_up':
+      return `Your Books are not set up yet: the sender details, the tax status and the invoice number series. ${operator}`;
+    case 'invoice_numbers_missing':
+      return `Your Books have no invoice number series yet. ${operator}`;
+    case 'sender_incomplete': {
+      const fields = books.missing.map((field) => SENDER_FIELD_TEXT[field] ?? field).join(', ');
+      return `The sender details your invoices are issued under lack ${fields || 'required fields'}. ${operator}`;
+    }
+  }
+}
 
 const STATUS_TEXT: Record<AccountStatus, { title: string; body: string }> = {
   not_connected: {
@@ -60,6 +92,7 @@ const RETURN_TEXT: Record<string, string> = {
 export default function PaymentsHome({ returned }: { returned: string | null }) {
   const [status, setStatus] = useState<AccountStatus | null>(null);
   const [testMode, setTestMode] = useState(false);
+  const [books, setBooks] = useState<BooksReadiness | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -70,6 +103,7 @@ export default function PaymentsHome({ returned }: { returned: string | null }) 
       const body = (await res.json().catch(() => ({}))) as {
         status?: AccountStatus;
         testMode?: boolean;
+        books?: BooksReadiness;
         error?: { message?: string };
       };
       if (!res.ok || !body.status) {
@@ -78,6 +112,7 @@ export default function PaymentsHome({ returned }: { returned: string | null }) 
       }
       setStatus(body.status);
       setTestMode(body.testMode === true);
+      setBooks(body.books ?? null);
     } catch {
       setError('the payment status could not be read; check your connection and reload');
     }
@@ -105,7 +140,16 @@ export default function PaymentsHome({ returned }: { returned: string | null }) 
     }
   }
 
-  const text = status ? ((testMode ? TEST_MODE_TEXT[status] : undefined) ?? STATUS_TEXT[status]) : null;
+  const booksBlocked = books && !books.ready ? books : null;
+  const text =
+    status === 'ready' && booksBlocked
+      ? {
+          title: 'Connected, payments paused',
+          body: `Your Stripe account is ready, but your shop refuses payments until your Books can issue the receipt every paid order gets. Buyers are told the shop cannot take payments yet, and nothing is charged.`,
+        }
+      : status
+        ? ((testMode ? TEST_MODE_TEXT[status] : undefined) ?? STATUS_TEXT[status])
+        : null;
   const notice = returned && RETURN_TEXT[returned];
 
   return (
@@ -163,6 +207,18 @@ export default function PaymentsHome({ returned }: { returned: string | null }) 
                   I already have a Stripe account
                 </Button>
               ) : null}
+            </div>
+          ) : null}
+
+          {booksBlocked ? (
+            <div role="status" data-payments-books-blocked className="mt-4 rounded-xl border px-4 py-3 text-sm">
+              <p>{booksBlockerText(booksBlocked)}</p>
+              <p className="mt-2">
+                Stripe payments start by themselves once the Books are ready.{' '}
+                <Link href="/projects/books" className="font-medium underline underline-offset-4">
+                  Open the Books
+                </Link>
+              </p>
             </div>
           ) : null}
 

@@ -90,6 +90,19 @@ describe('the importer in a browser worker', () => {
     expect(outcome.root).toMatchObject({ type: 'section', props: { style: { padding: 16 } }, children: [{ type: 'h1', props: { children: 'Hi' } }] });
   });
 
+  it('compiles classes and reads a sheet in the worker, with Tailwind and postcss in the chunk', async () => {
+    const sheet = ':root { --primary: #123456; }\n@theme inline { --color-primary: var(--primary); }';
+    const { outcome, milliseconds } = await reply([
+      { name: 'paste.tsx', text: '<p className="bg-primary px-4 hover:underline md:px-6">Hi</p>' },
+      { name: 'theme.css', text: sheet },
+    ]);
+    console.log(`classes and a sheet in the worker: ${milliseconds.toFixed(1)} milliseconds`);
+    expect(outcome.root?.props).toMatchObject({
+      style: { '--primary': '#123456', backgroundColor: 'var(--primary)', paddingInline: { base: 'calc(var(--spacing) * 6)', mobile: 'calc(var(--spacing) * 4)' } },
+    });
+    expect(outcome.report.lines.filter((line) => line.disposition === 'left')).toEqual([]);
+  });
+
   it('touches nothing beyond the page and its own chunk', () => {
     expect(new Set(requests)).toEqual(new Set([`${ORIGIN}/`, `${ORIGIN}/worker.js`]));
   });

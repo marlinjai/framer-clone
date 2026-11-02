@@ -79,8 +79,10 @@ export interface PaymentFailure {
    * `closed`: the order no longer takes a payment (declined before, expired): check out again.
    * `refused`: the shop cannot invoice this buyer, so no money moved. The order keeps waiting: the visitor
    *   corrects `field` and pays it, or leaves.
+   * `unavailable`: the shop cannot take payments yet (its Books cannot issue the receipt), so no money moved. Nothing
+   *   the visitor changes helps, and an immediate retry does not either.
    */
-  code: 'declined' | 'invalid' | 'gateway_error' | 'closed' | 'refused';
+  code: 'declined' | 'invalid' | 'gateway_error' | 'closed' | 'refused' | 'unavailable';
   /** A human-readable message surfaced to the visitor (never swallowed). */
   message: string;
   /** With `refused`: the buyer's fields the refusal is about. */

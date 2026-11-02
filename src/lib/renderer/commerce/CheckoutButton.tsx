@@ -32,6 +32,9 @@
 //     a fault in the payment step keeps the order and retries ONLY the payment;
 //   - a buyer the shop cannot invoice (a 422 from the pay route): no money moved, the order keeps waiting and
 //     everything typed stays, so the visitor corrects the named field and pays, or goes back to the cart.
+//   - a shop that cannot take payments yet (a 503 payments_unavailable, at PLACE or from the pay route: its
+//     Books cannot issue the receipt): the shop's message, that nothing was charged, and no retry offered as
+//     the fix. At PLACE nothing was ordered; at pay the order keeps waiting.
 'use client';
 
 import React from 'react';
@@ -319,6 +322,18 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
         return;
       }
 
+      if (res.status === 503) {
+        // The shop cannot take payments yet (payments_unavailable: its Books cannot issue the receipt). Nothing was
+        // ordered or reserved; the shop's own message says so. Any other 503 is a fault like the rest below.
+        const error = ((await res.json().catch(() => null)) as { error?: { code?: string; message?: string } } | null)?.error;
+        if (error?.code === 'payments_unavailable') {
+          setState({ status: 'order_error', message: error.message ?? 'this shop cannot take payments yet. Nothing has been charged.' });
+          return;
+        }
+        setState({ status: 'order_error', message: `order failed (${res.status})` });
+        return;
+      }
+
       if (res.status === 422) {
         // An item the storefront no longer sells (unknown_variant): NOT a stock
         // shortage and NOT a server fault. Keep the cart and tell the visitor
@@ -404,7 +419,9 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
         return;
       }
 
-      if (result.code === 'refused') {
+      // Refused (a buyer the shop cannot invoice) or unavailable (a shop that cannot take payments yet): no money
+      // moved and the order keeps waiting. The shop's own message, without the "Payment failed" prefix.
+      if (result.code === 'refused' || result.code === 'unavailable') {
         setState((prev) =>
           prev.status === 'payment'
             ? { ...prev, paying: false, refusal: { message: result.message, fields: result.fields ?? [] } }

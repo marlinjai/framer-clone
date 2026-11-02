@@ -500,6 +500,68 @@ describe('CheckoutButton place shortage (409)', () => {
   });
 });
 
+describe('CheckoutButton a shop that cannot take payments yet', () => {
+  const UNAVAILABLE = 'This shop cannot take payments yet. Nothing has been charged. Please come back later or contact the shop.';
+
+  it('at place: says so in the words of the shop, starts no payment step and keeps the cart', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      fakeResponse(503, { error: { code: 'payments_unavailable', message: UNAVAILABLE } }),
+    );
+    const authorize = vi.fn<PaymentGateway['authorize']>();
+    const { container, getByTestId } = renderCheckout(makeNode(), { id: 'demo', isDemo: true, authorize });
+    await waitForHydratedCart(getByTestId);
+    clickCheckout(container);
+
+    await waitFor(() => expect(container.querySelector('[data-checkout-error]')?.textContent).toContain(UNAVAILABLE));
+    expect(container.querySelector('[data-checkout-error]')?.textContent).not.toContain('order failed');
+    expect(container.querySelector('[data-checkout-payment]')).toBeNull();
+    expect(authorize).not.toHaveBeenCalled();
+    expect(getByTestId('lines').textContent).toBe(JSON.stringify(SEEDED_LINES));
+  });
+
+  it('another 503 stays a fault, without echoing the body', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(fakeResponse(503, 'upstream down'));
+    const { container, getByTestId } = renderCheckout();
+    await waitForHydratedCart(getByTestId);
+    clickCheckout(container);
+    await waitFor(() => expect(container.querySelector('[data-checkout-error]')?.textContent).toContain('order failed (503)'));
+    expect(container.querySelector('[data-checkout-error]')?.textContent).not.toContain('upstream down');
+  });
+
+  it('at pay: no failed payment is claimed, the order and the input are kept, and it pays once the shop can', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(fakeResponse(201, { orderId: 'order_9', orderNumber: 'ORD-9', totalCents: 4760, currency: 'EUR' }));
+    const authorize = vi
+      .fn<PaymentGateway['authorize']>()
+      .mockResolvedValueOnce({ ok: false, code: 'unavailable', message: UNAVAILABLE })
+      .mockResolvedValueOnce({ ok: true, provider: 'demo', transactionId: 'order_9', receiptNumber: '1000' });
+    const { container, getByTestId } = renderCheckout(makeNode(), { id: 'demo', isDemo: true, authorize });
+    await waitForHydratedCart(getByTestId);
+    clickCheckout(container);
+    await waitFor(() => expect(container.querySelector('[data-checkout-pay]')).not.toBeNull());
+    fillBuyer(container);
+    await act(async () => {
+      fireEvent.click(container.querySelector('button[data-checkout-pay]')!);
+    });
+
+    const notice = container.querySelector('[data-checkout-refused]');
+    expect(notice?.textContent).toBe(UNAVAILABLE);
+    expect(notice?.getAttribute('role')).toBe('alert');
+    expect(container.querySelector('[data-checkout-payment-declined]')).toBeNull();
+    expect(container.querySelector('input[aria-invalid="true"]')).toBeNull();
+    expect((container.querySelector('input[data-checkout-buyer-field="name"]') as HTMLInputElement).value).toBe('Alex Example');
+    expect(getByTestId('lines').textContent).toBe(JSON.stringify(SEEDED_LINES));
+
+    await act(async () => {
+      fireEvent.click(container.querySelector('button[data-checkout-pay]')!);
+    });
+    await waitFor(() => expect(container.querySelector('[data-checkout-confirmation]')).not.toBeNull());
+    expect(authorize.mock.calls.map(([request]) => request.orderId)).toEqual(['order_9', 'order_9']);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('CheckoutButton place fault', () => {
   it('surfaces an error (never a false confirmation) on a non-201/409 status', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(

@@ -548,6 +548,7 @@ export interface SalesDocumentTable {
   intro_format: JsonColumn<RichText> | null;
   outro_format: JsonColumn<RichText> | null;
   paid_on: DateString | null;
+  tax_country: string | null;
 }
 
 /**

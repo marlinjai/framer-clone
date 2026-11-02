@@ -83,6 +83,43 @@ Each fixture is a page written against the browser's own defaults, so its replic
 | radix-tabs | @radix-ui/react-tabs | fail | 9/9 | 0/9 | 9/9 | 0/6 | 0/3 | mixed-text, behaviour-state |
 | radix-dialog | @radix-ui/react-dialog | fail | 3/9 | 3/9 | 3/9 | 0/6 | 0/3 | behaviour-state |
 
+## React import
+
+Real components through the importer (`src/lib/reactImport`) and the one door a person uses, `readBundle`, rendered as a visitor gets them, next to the real component running in a real Tailwind page, in Chromium, at the three default breakpoints and in each scripted state. Every fixture runs twice: under the repo's theme, read from `src/app/globals.css`, and under `test/score/import/foreign-theme.css`, where every token differs, so a token the importer forgot cannot hide behind the editor's own value. The importer is given the component's own file and the theme, never the usage: entries are a later slice. **Conservation:** an independent walker lists every construct with its range, and each must be on exactly one line that holds it. **Honesty:** a run whose verdict claims an import must differ in nothing no line of its report names, by the excuse table below. **Coverage:** atoms converted or adapted, without AI. **Parity:** every check passes. A component that reads "not imported" is honest by definition, and its parity says how far it is.
+
+| Measure | Result |
+|---|---|
+| Honesty: runs that claim an import with a difference no line names | 0 of 14 |
+| Conservation: runs with a construct not on exactly one line | 0 of 14 |
+| Parity: runs passing every check | 4 of 14 |
+| Forged bundles read as what they are | 48 of 48 |
+| Mutation run: inserted constructs named at their own line, and conserved | 61 and 61 of 61 |
+| The foreign theme differs from the repo's in every token | yes |
+| Honesty sees tokens removed from a real import | yes |
+
+| Fixture | Theme | Verdict | Coverage | Atoms left | Conservation | Honesty | Parity | Screenshots | Computed styles | Accessibility tree | Interactions | Waits on |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| button | repo | not-imported | 3.4 percent | 144 of 149 | pass | pass | fail | 0/9 | 0/9 | 0/9 | 0/6 | cva tables and props (import-props), Slot and asChild, and children through the entry (import-entries) |
+| button | foreign | not-imported | 3.4 percent | 144 of 149 | pass | pass | fail | 0/9 | 0/9 | 0/9 | 0/6 | cva tables and props (import-props), Slot and asChild, and children through the entry (import-entries) |
+| input | repo | not-imported | 30.9 percent | 38 of 55 | pass | pass | fail | 6/6 | 6/6 | 0/6 | 0/3 | props and the rest spread (import-props), and the placeholder through the entry (import-entries) |
+| input | foreign | not-imported | 30.9 percent | 38 of 55 | pass | pass | fail | 6/6 | 0/6 | 0/6 | 0/3 | props and the rest spread (import-props), and the placeholder through the entry (import-entries) |
+| label | repo | not-imported | 8.6 percent | 53 of 58 | pass | pass | fail | 3/3 | 0/3 | 0/3 | 0/0 | the Radix label (import-radix) and props (import-props) |
+| label | foreign | not-imported | 8.6 percent | 53 of 58 | pass | pass | fail | 3/3 | 0/3 | 0/3 | 0/0 | the Radix label (import-radix) and props (import-props) |
+| separator | repo | not-imported | 6.9 percent | 67 of 72 | pass | pass | fail | 1/3 | 0/3 | 3/3 | 0/0 | the Radix separator (import-radix) and props with defaults (import-props) |
+| separator | foreign | not-imported | 6.9 percent | 67 of 72 | pass | pass | fail | 1/3 | 0/3 | 3/3 | 0/0 | the Radix separator (import-radix) and props with defaults (import-props) |
+| static-badge | repo | not-imported | 100.0 percent | 0 of 34 | pass | pass | pass | 3/3 | 3/3 | 3/3 | 0/0 |  |
+| static-badge | foreign | not-imported | 100.0 percent | 0 of 34 | pass | pass | pass | 3/3 | 3/3 | 3/3 | 0/0 |  |
+| static-card | repo | not-imported | 100.0 percent | 0 of 43 | pass | pass | pass | 9/9 | 9/9 | 9/9 | 6/6 |  |
+| static-card | foreign | not-imported | 100.0 percent | 0 of 43 | pass | pass | pass | 9/9 | 9/9 | 9/9 | 6/6 |  |
+| refusals | repo | not-imported | 23.4 percent | 36 of 47 | pass | pass | fail | 3/3 | 0/3 | 3/3 | 0/0 | nothing: it exists to be refused, with a line for each refusal |
+| refusals | foreign | not-imported | 23.4 percent | 36 of 47 | pass | pass | fail | 0/3 | 0/3 | 3/3 | 0/0 | nothing: it exists to be refused, with a line for each refusal |
+
+What a line of the report excuses, for Honesty. Anything else that differs is a Honesty failure.
+
+| Line | Why it names these differences |
+|---|---|
+| Base styles stay with the page, such as the text colour. | The source's base gives `body` its text colour and font, which stay with the page: what the import inherits from the page without writing it itself. |
+
 ## BusBasis pages (held out)
 
 The stop condition of the primitive stream is that every BusBasis page passes, so these are real pages of basiscampberlin.de frozen from the live site, not small fixtures, and 9 more page types are listed below as not captured. Each tree is lifted mechanically by `test/score/busbasis/lift.ts`, one rule set for all pages, with no page-specific code. The checks are the corpus checks, except that custom properties are not compared (their effect shows in what reads them) and images and video are same-size placeholders, so image content is not compared. A page also fails on everything under "needs": a page that matches pixel for pixel is not that page while what it exists for does not work. The files are held out: nothing in `test/score/corpus/busbasis` changes without a new capture, and the run stops when a hash does not match.
@@ -182,7 +219,7 @@ Cost is matrix cells, failed corpus checks and failed round-trip cases added up,
 - **WAI-ARIA conformance.** A contract is the primary keyboard path of a pattern, not its whole page in the Guide.
 - **Page-level items:** head tags, design tokens and page-wide scripts (gap 5 of the plan) have no rows, and script and style elements are excluded with a reason.
 - **Script on the BusBasis pages.** A frozen page holds no script, so menus, modals, filters and the gallery cannot run on the original. They stand under "needs" as failures rather than as compared states. A page is frozen in one state: logged out, no cart, the first visit.
-- **React import beyond static JSX.** Tailwind classes, props as inputs and the AI rebuild step of the plan are not built.
+- **React import beyond static JSX and Tailwind.** Props as inputs, `cva` tables, entries, hooks, Radix and the AI rebuild step of the plan are not built, so the real components read "not imported", honestly. The import score runs in Chromium only, on the default frames, and with no dark mode state.
 
 ## Excluded entries
 

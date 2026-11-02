@@ -141,6 +141,8 @@ export async function startCorrection(
         intro_format: invoice.intro_format === null ? null : toJsonb(invoice.intro_format),
         outro_format: invoice.outro_format === null ? null : toJsonb(invoice.outro_format),
         currency_code: invoice.currency_code,
+        // A shop receipt is taxed under its buyer's country (027), and so is the invoice that replaces it.
+        tax_country: invoice.tax_country,
         updated_at: now,
       })
       .execute();

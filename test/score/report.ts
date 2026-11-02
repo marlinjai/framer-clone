@@ -7,6 +7,7 @@ import path from 'node:path';
 import { componentEntries, dataVersions, scoredEntries } from './lib/universe';
 import { REPORT_DIR, readOut } from './lib/io';
 import { UNCAPTURED_PAGES, type UncapturedPage } from './busbasis/pages';
+import type { ImportRun, ImportScoreOut } from './import/types';
 import {
   ACCEPTED_NOT_TAUGHT,
   GAPS,
@@ -180,6 +181,43 @@ export interface Score {
     cost: number;
   }>;
   panel: PanelDetail;
+  /** The React import: each fixture under each theme, and the checks of the measure itself. */
+  import: ImportSummary;
+}
+
+interface ImportSummary {
+  /** Runs that claim an import and differ in something no line names. Must stay 0. */
+  honestyFailures: number;
+  /** Runs where a construct is not on exactly one line that holds it. Must stay 0. */
+  conservationFailures: number;
+  /** `fixture/theme` of the runs passing every check. */
+  parityPassing: string[];
+  /** Atoms converted or adapted over all atoms, by `fixture/theme`. */
+  coverage: Record<string, number>;
+  forged: { pass: number; total: number };
+  mutation: { named: number; conserved: number; total: number };
+  foreignThemeDistinct: boolean;
+  honestySees: boolean;
+  runs: ImportRun[];
+  /** What a line of the report excuses, for Honesty. */
+  excuses: ImportScoreOut['excuses'];
+}
+
+const runKey = (run: Pick<ImportRun, 'fixture' | 'theme'>) => `${run.fixture}/${run.theme}`;
+
+function importSummary(out: ImportScoreOut): ImportSummary {
+  return {
+    honestyFailures: out.runs.filter((run) => !run.honesty.pass).length,
+    conservationFailures: out.runs.filter((run) => !run.conservation.pass).length,
+    parityPassing: out.runs.filter((run) => run.parity.pass).map(runKey),
+    coverage: Object.fromEntries(out.runs.map((run) => [runKey(run), Number(run.coverage.toFixed(4))])),
+    forged: { pass: out.forged.filter((each) => each.pass).length, total: out.forged.length },
+    mutation: { named: out.mutation.filter((each) => each.named).length, conserved: out.mutation.filter((each) => each.conserved).length, total: out.mutation.length },
+    foreignThemeDistinct: out.foreignThemeDistinct.pass,
+    honestySees: out.honestySees.pass,
+    runs: out.runs,
+    excuses: out.excuses,
+  };
 }
 
 export function buildScore(durationSeconds?: number): Score {
@@ -310,6 +348,7 @@ export function buildScore(durationSeconds?: number): Score {
     roundTrip: { nodesToJsxToNodes: direction('nodes-jsx-nodes'), jsxToNodesToRender: direction('jsx-nodes-render'), cases },
     gaps,
     panel: detail,
+    import: importSummary(readOut<ImportScoreOut>('import')),
   };
 }
 
@@ -408,6 +447,48 @@ export function renderReport(score: Score): string {
     ),
   );
 
+  const imp = score.import;
+  push('## React import');
+  push(
+    'Real components through the importer (`src/lib/reactImport`) and the one door a person uses, `readBundle`, rendered as a visitor gets them, next to the real component running in a real Tailwind page, in Chromium, at the three default breakpoints and in each scripted state. Every fixture runs twice: under the repo\'s theme, read from `src/app/globals.css`, and under `test/score/import/foreign-theme.css`, where every token differs, so a token the importer forgot cannot hide behind the editor\'s own value. The importer is given the component\'s own file and the theme, never the usage: entries are a later slice. **Conservation:** an independent walker lists every construct with its range, and each must be on exactly one line that holds it. **Honesty:** a run whose verdict claims an import must differ in nothing no line of its report names, by the excuse table below. **Coverage:** atoms converted or adapted, without AI. **Parity:** every check passes. A component that reads "not imported" is honest by definition, and its parity says how far it is.',
+  );
+  push(
+    table(
+      ['Measure', 'Result'],
+      [
+        ['Honesty: runs that claim an import with a difference no line names', `${imp.honestyFailures} of ${imp.runs.length}`],
+        ['Conservation: runs with a construct not on exactly one line', `${imp.conservationFailures} of ${imp.runs.length}`],
+        ['Parity: runs passing every check', `${imp.parityPassing.length} of ${imp.runs.length}`],
+        ['Forged bundles read as what they are', `${imp.forged.pass} of ${imp.forged.total}`],
+        ['Mutation run: inserted constructs named at their own line, and conserved', `${imp.mutation.named} and ${imp.mutation.conserved} of ${imp.mutation.total}`],
+        ['The foreign theme differs from the repo\'s in every token', imp.foreignThemeDistinct ? 'yes' : 'no'],
+        ['Honesty sees tokens removed from a real import', imp.honestySees ? 'yes' : 'no'],
+      ],
+    ),
+  );
+  push(
+    table(
+      ['Fixture', 'Theme', 'Verdict', 'Coverage', 'Atoms left', 'Conservation', 'Honesty', 'Parity', 'Screenshots', 'Computed styles', 'Accessibility tree', 'Interactions', 'Waits on'],
+      imp.runs.map((run) => [
+        run.fixture,
+        run.theme,
+        run.readVerdict,
+        `${(run.coverage * 100).toFixed(1)} percent`,
+        `${run.atoms.left} of ${run.atoms.total}`,
+        run.conservation.pass ? 'pass' : `fail: ${escapeCell(run.conservation.problems[0] ?? '')}`,
+        run.honesty.pass ? 'pass' : `fail: ${escapeCell(run.honesty.unnamed.slice(0, 2).join('; '))}`,
+        run.parity.pass ? 'pass' : 'fail',
+        `${run.parity.checks.screenshot.pass}/${run.parity.checks.screenshot.total}`,
+        `${run.parity.checks['computed-styles'].pass}/${run.parity.checks['computed-styles'].total}`,
+        `${run.parity.checks['accessibility-tree'].pass}/${run.parity.checks['accessibility-tree'].total}`,
+        `${run.parity.checks.interaction.pass}/${run.parity.checks.interaction.total}`,
+        escapeCell(run.waitsOn ?? ''),
+      ]),
+    ),
+  );
+  push('What a line of the report excuses, for Honesty. Anything else that differs is a Honesty failure.');
+  push(table(['Line', 'Why it names these differences'], imp.excuses.map((each) => [escapeCell(each.detail), escapeCell(each.reason)])));
+
   push('## BusBasis pages (held out)');
   push(
     `The stop condition of the primitive stream is that every BusBasis page passes, so these are real pages of basiscampberlin.de frozen from the live site, not small fixtures, and ${UNCAPTURED_PAGES.length} more page types are listed below as not captured. Each tree is lifted mechanically by \`test/score/busbasis/lift.ts\`, one rule set for all pages, with no page-specific code. The checks are the corpus checks, except that custom properties are not compared (their effect shows in what reads them) and images and video are same-size placeholders, so image content is not compared. A page also fails on everything under "needs": a page that matches pixel for pixel is not that page while what it exists for does not work. The files are held out: nothing in \`test/score/corpus/busbasis\` changes without a new capture, and the run stops when a hash does not match.`,
@@ -494,7 +575,7 @@ export function renderReport(score: Score): string {
     '- **WAI-ARIA conformance.** A contract is the primary keyboard path of a pattern, not its whole page in the Guide.',
     '- **Page-level items:** head tags, design tokens and page-wide scripts (gap 5 of the plan) have no rows, and script and style elements are excluded with a reason.',
     '- **Script on the BusBasis pages.** A frozen page holds no script, so menus, modals, filters and the gallery cannot run on the original. They stand under "needs" as failures rather than as compared states. A page is frozen in one state: logged out, no cart, the first visit.',
-    '- **React import beyond static JSX.** Tailwind classes, props as inputs and the AI rebuild step of the plan are not built.',
+    '- **React import beyond static JSX and Tailwind.** Props as inputs, `cva` tables, entries, hooks, Radix and the AI rebuild step of the plan are not built, so the real components read "not imported", honestly. The import score runs in Chromium only, on the default frames, and with no dark mode state.',
   );
 
   push('## Excluded entries');
@@ -525,6 +606,16 @@ interface Baseline {
   corpusFixtures: string[];
   corpusChecks: number;
   roundTrip: number;
+  import: {
+    /** Fixed at 0: a run that claims an import differs in nothing no line names. */
+    honestyFailures: number;
+    /** Fixed at 0. */
+    conservationFailures: number;
+    parityPassing: string[];
+    coverage: Record<string, number>;
+    forged: number;
+    mutationNamed: number;
+  };
 }
 
 const BASELINE_FILE = () => path.join(REPORT_DIR, 'baseline.json');
@@ -536,6 +627,14 @@ function baselineOf(score: Score): Baseline {
     corpusFixtures: [...score.corpus.fixtures, ...score.busbasis.pages].filter((f) => f.pass).map((f) => f.fixture),
     corpusChecks: Object.values(score.corpus.checks).reduce((sum, c) => sum + c.pass, 0),
     roundTrip: score.roundTrip.nodesToJsxToNodes.pass + score.roundTrip.jsxToNodesToRender.pass,
+    import: {
+      honestyFailures: 0,
+      conservationFailures: 0,
+      parityPassing: score.import.parityPassing,
+      coverage: score.import.coverage,
+      forged: score.import.forged.pass,
+      mutationNamed: score.import.mutation.named,
+    },
   };
 }
 
@@ -556,9 +655,29 @@ export function checkRatchet(score: Score): string[] {
   }
   if (now.corpusChecks < floor.corpusChecks) drops.push(`corpus checks: ${floor.corpusChecks} became ${now.corpusChecks}`);
   if (now.roundTrip < floor.roundTrip) drops.push(`round trip: ${floor.roundTrip} became ${now.roundTrip}`);
+  drops.push(...importDrops(score.import, floor.import));
   return drops;
 }
 
 export function writeBaseline(score: Score): void {
   fs.writeFileSync(BASELINE_FILE(), `${JSON.stringify(baselineOf(score), null, 2)}\n`);
+}
+
+/** The import's floor. Honesty and conservation are not ratcheted: any failure is a drop, whatever the baseline says. */
+function importDrops(now: ImportSummary, floor: Baseline['import'] | undefined): string[] {
+  const drops: string[] = [];
+  if (now.honestyFailures > 0) drops.push(`import honesty: ${now.honestyFailures} runs claim an import and differ in something no line names`);
+  if (now.conservationFailures > 0) drops.push(`import conservation: ${now.conservationFailures} runs leave a construct off its line`);
+  if (!now.foreignThemeDistinct) drops.push('import: the foreign theme shares a token value with the repo theme');
+  if (!now.honestySees) drops.push('import: Honesty did not see tokens removed from a real import, so it is blind');
+  if (now.mutation.conserved < now.mutation.total) drops.push(`import mutation run: ${now.mutation.total - now.mutation.conserved} inserted constructs are not conserved`);
+  if (now.forged.pass < now.forged.total) drops.push(`import forged bundles: ${now.forged.total - now.forged.pass} read as more than they are`);
+  if (!floor) return drops;
+  for (const key of floor.parityPassing) if (!now.parityPassing.includes(key)) drops.push(`import parity: ${key} no longer passes`);
+  for (const [key, value] of Object.entries(floor.coverage)) {
+    if ((now.coverage[key] ?? 0) < value) drops.push(`import coverage, ${key}: ${value} became ${now.coverage[key] ?? 0}`);
+  }
+  if (now.forged.pass < floor.forged) drops.push(`import forged bundles: ${floor.forged} became ${now.forged.pass}`);
+  if (now.mutation.named < floor.mutationNamed) drops.push(`import mutation run: ${floor.mutationNamed} named became ${now.mutation.named}`);
+  return drops;
 }

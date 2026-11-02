@@ -11,6 +11,18 @@ import { DETAILS, type DetailKey, type Disposition, type ImportLine, type LineKi
 
 const EXCERPT_LENGTH = 120;
 
+/** Where a line stands that claims no atom of its own: on a node of a parsed file, or on a line of any file. */
+export type Position = { source: ts.SourceFile; node: ts.Node } | { file: string; line: number };
+
+/** One atom with its exact range, for the score's conservation check. It holds no source text. */
+export interface AtomRecord {
+  file: string;
+  id: string;
+  syntaxKind?: ts.SyntaxKind;
+  start: number;
+  end: number;
+}
+
 export interface Claim {
   kind: LineKind;
   disposition: Disposition;
@@ -29,9 +41,25 @@ interface OpenFile {
   claimed: Set<number>;
 }
 
+/** Text as an excerpt holds it: whitespace collapsed, at most `EXCERPT_LENGTH` characters. */
+const clipped = (text: string): string => text.slice(0, EXCERPT_LENGTH * 8).replace(/\s+/g, ' ').trim().slice(0, EXCERPT_LENGTH);
+
 /** Enough source to fill an excerpt after collapsing whitespace, without copying a whole file. */
-const excerptOf = (text: string, start: number, end: number): string =>
-  text.slice(start, Math.min(end, start + EXCERPT_LENGTH * 8)).replace(/\s+/g, ' ').trim().slice(0, EXCERPT_LENGTH);
+const excerptOf = (text: string, start: number, end: number): string => clipped(text.slice(start, Math.min(end, start + EXCERPT_LENGTH * 8)));
+
+/** A zero-based line and column in a file that was not parsed, such as a stylesheet, in one pass. */
+function positionIn(text: string, offset: number): { line: number; character: number } {
+  let line = 0;
+  let lineStart = 0;
+  const end = Math.min(offset, text.length);
+  for (let i = 0; i < end; i += 1) {
+    if (text.charCodeAt(i) === 10) {
+      line += 1;
+      lineStart = i + 1;
+    }
+  }
+  return { line, character: end - lineStart };
+}
 
 /** What an unclaimed construct is called in the report. */
 function kindOfSyntax(kind: ts.SyntaxKind | undefined): LineKind {
@@ -63,10 +91,61 @@ export class Ledger {
 
   /** Opens a file that is not converted: one atom over all of it, and the line that says why. */
   openWhole(name: string, text: string, claim: Claim, source?: ts.SourceFile, at = 0): void {
+    const file = this.openWholeFile(name, text, source, at);
+    this.claimAtoms(file, file.atoms, claim);
+  }
+
+  /** Opens a file as one atom that a later layer claims with `claimWhole`. Unclaimed, it is `left`. */
+  openUnclaimed(name: string, text: string): void {
+    this.openWholeFile(name, text, undefined, 0);
+  }
+
+  /** The claim on a file opened by `openUnclaimed`. */
+  claimWhole(name: string, claim: Claim): void {
+    const file = this.files.find((each) => each.name === name && each.source === undefined);
+    if (!file) throw new Error('a claim on a file the ledger never opened');
+    this.claimAtoms(file, file.atoms, claim);
+  }
+
+  /**
+   * A line that claims no atom, because what it says about is already claimed: a class that compiled to
+   * nothing, inside a `className` claimed as a whole. `excerpt` is source, so it is kept only where excerpts are.
+   */
+  note(at: Position, claim: Claim, excerpt?: string): void {
+    let position = { file: '', line: 1, column: 1, endLine: 1 };
+    if ('node' in at) {
+      const file = this.fileOf(at.source);
+      const from = at.source.getLineAndCharacterOfPosition(at.node.getStart(at.source));
+      const to = at.source.getLineAndCharacterOfPosition(at.node.end);
+      position = { file: file.name, line: from.line + 1, column: from.character + 1, endLine: to.line + 1 };
+    } else {
+      position = { file: at.file, line: at.line, column: 1, endLine: at.line };
+    }
+    this.lines.push({
+      ...position,
+      ...(this.excerpts && excerpt ? { excerpt: clipped(excerpt) } : {}),
+      atoms: [],
+      kind: claim.kind,
+      disposition: claim.disposition,
+      detail: DETAILS[claim.detail],
+      next: claim.next ?? [],
+      ...(claim.nodeKey === undefined ? {} : { nodeKey: claim.nodeKey }),
+      ...(claim.invisible ? { invisible: true as const } : {}),
+    });
+  }
+
+  /** Every atom with its range, for the score. It never travels in a bundle. */
+  atomTable(): AtomRecord[] {
+    return this.files.flatMap((file) => file.atoms.map((atom) => ({
+      file: file.name, id: atom.id, start: atom.start, end: atom.end, ...(atom.syntaxKind === undefined ? {} : { syntaxKind: atom.syntaxKind }),
+    })));
+  }
+
+  private openWholeFile(name: string, text: string, source: ts.SourceFile | undefined, at: number): OpenFile {
     const atom: Atom = { id: `${this.files.length}:0`, index: 0, start: at, end: text.length };
     const file: OpenFile = { name, source, text, atoms: [atom], byNode: new Map(), claimed: new Set() };
     this.files.push(file);
-    this.claimAtoms(file, [atom], claim);
+    return file;
   }
 
   /** A claim over exactly these nodes. What sits inside them stays open: one broad line may not cover it. */
@@ -151,8 +230,8 @@ export class Ledger {
       start = Math.min(start, atom.start);
       end = Math.max(end, atom.end);
     }
-    const from = file.source?.getLineAndCharacterOfPosition(start) ?? { line: 0, character: 0 };
-    const to = file.source?.getLineAndCharacterOfPosition(end) ?? from;
+    const from = file.source?.getLineAndCharacterOfPosition(start) ?? positionIn(file.text, start);
+    const to = file.source?.getLineAndCharacterOfPosition(end) ?? positionIn(file.text, end);
     this.lines.push({
       file: file.name,
       line: from.line + 1,

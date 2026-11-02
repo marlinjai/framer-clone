@@ -21,6 +21,8 @@
 //   422 buyer_required       neither the order nor this request carries the buyer's name and address
 //   422 buyer_not_invoiceable  this order cannot get a correct invoice for this buyer (invoiceable.ts): no money
 //                            moves, the order keeps waiting, and { field } names what the buyer can correct
+//   503 payments_unavailable Stripe: the company's Books cannot issue the receipt yet (receiptReadiness.ts): no
+//                            money moves, no checkout page opens, the order keeps waiting and pays once they can
 //
 // The tenant, the company and the site come from the request host only, as for every storefront route.
 
@@ -36,6 +38,7 @@ import {
   type PaymentOutcome,
 } from '@/server/commerce/payment/payments';
 import { buyerRefusal } from '@/server/commerce/payment/invoiceable';
+import { PAYMENTS_UNAVAILABLE_MESSAGE, receiptReadiness } from '@/server/commerce/payment/receiptReadiness';
 import { demoProvider, type ProviderId } from '@/server/commerce/payment/provider';
 import { shopTaxProfile } from '@/server/commerce/payment/shopTax';
 import { resolveStorefrontCommerce } from '@/server/commerce/storefrontTenant';
@@ -101,6 +104,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ orderId
       return jsonError('payment_closed', `the order is ${payment.status} and takes no payment`, 409, {
         status: payment.status,
       });
+    }
+    // Real money only once the Books can issue its receipt. The order route checks this too, but the Books may have
+    // changed since the order was placed (a sender block replaced by an incomplete one). First, so the buyer is not
+    // asked to correct anything that would not help, and nothing is kept or asked of a provider: the order keeps
+    // waiting, and pays once they can.
+    if (payment.provider === 'stripe') {
+      const readiness = await receiptReadiness(db, tenantGroupId, companyId);
+      if (!readiness.ready) {
+        console.warn(`[payments] order ${orderId}: the payment was refused, the Books cannot issue receipts (${readiness.blocker})`);
+        return jsonError('payments_unavailable', PAYMENTS_UNAVAILABLE_MESSAGE, 503);
+      }
     }
     const tax = await shopTaxProfile(db, companyId);
     // A net price has VAT added on top, so the total depends on the tax status it was placed under; the receipt

@@ -8,7 +8,7 @@
 //     stock stays held, no document exists, and the same order pays once the buyer corrects the input;
 //   - a blank VAT id is none;
 //   - a customer row with another country is another person's until shown otherwise: checkout never writes it, and
-//     when its country would change the tax outcome the receipt is refused rather than issued wrongly;
+//     the receipt is taxed under the buyer's own country, stored on its draft (027), so the row cannot change it;
 //   - the tax status changed since a net-priced order was placed: 409, the order closed, the buyer checks out again;
 //   - the four paths of a stateful flow: forward, backtrack and revise, resume from the buyer stored with the
 //     order, and re-entry after the order was paid.
@@ -400,6 +400,15 @@ describe('a customer row of the same name with another country', () => {
       shop.tenant.db.selectFrom('sales_document_line').selectAll().where('document_id', '=', id).execute(),
     ]);
 
+  const taxCountryOf = async (shop: Shop, orderId: string) =>
+    (
+      await shop.tenant.db
+        .selectFrom('sales_document')
+        .select('tax_country')
+        .where('source_order_id', '=', orderId)
+        .executeTakeFirstOrThrow()
+    ).tax_country;
+
   /** A draft a person keeps on their own customer row. */
   async function draftOn(shop: Shop, customerId: string) {
     const scope = scopeOf(shop);
@@ -408,20 +417,24 @@ describe('a customer row of the same name with another country', () => {
     return draft.document.id;
   }
 
-  it('reverse charge on the row: the receipt is refused, never issued with no VAT', async () => {
+  it('reverse charge on the row: the receipt is taxed for the German buyer, never issued with no VAT', async () => {
     const details = buyer({ vatId: 'DE123456789' });
     const customer = await staleCustomer(regular, details.name, { countryCode: 'AT', vatId: 'DE123456789' });
     const before = await rowOf(regular, customer.id);
     const placed = await order(regular, { basis: 'gross' });
     expect(await payOrder(regular, placed.orderId, { buyer: details })).toMatchObject({
       status: 200,
-      body: { status: 'paid', receipt: null, receiptError: 'TAX_IDENTITY_MISMATCH' },
+      body: { status: 'paid', receiptError: null },
     });
-    expect(await documentsOf(regular, placed.orderId)).toEqual([]);
+    // 10.00 gross with German VAT in it, not reverse charge: what the buyer paid, invoiced as it was charged.
+    expect(await documentsOf(regular, placed.orderId)).toEqual([
+      { status: 'issued', total: 1000, tax_amount: 160, reverse_charge: false, kleinunternehmer: false, tax_note: null },
+    ]);
+    expect(await taxCountryOf(regular, placed.orderId)).toBe('DE');
     expect(await rowOf(regular, customer.id)).toEqual(before);
   });
 
-  it("a German namesake leaves a Swiss customer's row and that customer's draft as they are", async () => {
+  it("a German namesake of a Swiss customer gets a German invoice, and that customer's row and draft stay as they are", async () => {
     const details = buyer();
     const customer = await staleCustomer(regular, details.name, { countryCode: 'CH' });
     const draftId = await draftOn(regular, customer.id);
@@ -431,13 +444,17 @@ describe('a customer row of the same name with another country', () => {
     const placed = await order(regular);
     expect(await payOrder(regular, placed.orderId, { buyer: details })).toMatchObject({
       status: 200,
-      body: { status: 'paid', receipt: null, receiptError: 'TAX_IDENTITY_MISMATCH' },
+      body: { status: 'paid', receiptError: null },
     });
-    expect(await documentsOf(regular, placed.orderId)).toEqual([]);
+    expect(await documentsOf(regular, placed.orderId)).toEqual([
+      { status: 'issued', total: 1190, tax_amount: 190, reverse_charge: false, kleinunternehmer: false, tax_note: null },
+    ]);
+    expect(await taxCountryOf(regular, placed.orderId)).toBe('DE');
     expect(await rowOf(regular, customer.id)).toEqual(row);
     expect(await documentRows(regular, draftId)).toEqual(document);
-    // The row keeps its country, so the draft is still the case the Books refuse, not a German invoice.
+    // The row keeps its country, so the person's own draft is still the case the Books refuse, not a German invoice.
     expect(row.country_code).toBe('CH');
+    expect(document[0].tax_country).toBeNull();
   });
 
   it('a country that changes nothing on the invoice is reused, and the row is still not written', async () => {

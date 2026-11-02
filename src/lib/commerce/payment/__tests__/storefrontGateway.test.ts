@@ -61,6 +61,19 @@ describe('StorefrontPaymentGateway', () => {
     expect((result as { message: string }).message).toMatch(/email address.*two letters/);
   });
 
+  it('passes on that the shop cannot take payments yet, in its own words, as nothing a retry or a correction fixes', async () => {
+    const message = 'This shop cannot take payments yet. Nothing has been charged.';
+    const body = { error: { code: 'payments_unavailable', message } };
+    const result = await new StorefrontPaymentGateway(answer(503, body) as unknown as typeof fetch).authorize(request);
+    expect(result).toEqual({ ok: false, code: 'unavailable', message });
+  });
+
+  it('another 503 is a retryable gateway error', async () => {
+    const body = { error: { code: 'stripe_not_configured', message: 'x' } };
+    const result = await new StorefrontPaymentGateway(answer(503, body) as unknown as typeof fetch).authorize(request);
+    expect(result).toMatchObject({ ok: false, code: 'gateway_error' });
+  });
+
   it.each([
     [402, { error: { code: 'payment_declined', message: 'the card was declined' } }, 'declined'],
     [409, { error: { code: 'payment_closed', message: 'the order is expired' } }, 'closed'],

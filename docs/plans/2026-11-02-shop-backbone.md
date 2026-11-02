@@ -1125,3 +1125,9 @@ checked against the code and hold. Findings about Stripe behaviour are adopted a
   lives in `jobs/schedule.ts`, re-exported by `emit.ts`: a consumer importing `emit.ts` loads the registry before the consumer exists, which left `order.placed` with an
   undefined consumer. B4 must keep that in mind when `payments.ts` starts importing `emit.ts`. Until B7 no payment has a stored session, so the job closes without asking
   Stripe, as the sweep does today, and the order route's per-company sweep still takes every expired payment.
+- 2026-11-02: Marlin decided that Stripe payments wait for the Books, so no paid order lacks an invoice (outside the slice list). `payment/receiptReadiness.ts`
+  asks what the Issue button would refuse of the company itself (settings, the invoice number series, a sender complete for a domestic invoice); the order route
+  refuses a Stripe order with 503 `payments_unavailable` before anything is reserved, the pay route refuses the same way for an order whose Books broke after it was
+  placed, and the payments page names what is missing. The demo provider is unchanged. Also built: `sales_document.tax_country` (migration 027), the buyer's country
+  stored on a receipt's draft and read in place of the reused customer row's, which closes the namesake case #211 left open (a paid order refused with
+  `TAX_IDENTITY_MISMATCH` over the row's country). B11's profile comparison and B14's frozen profile should read the draft's `tax_country`, not the row.
