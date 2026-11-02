@@ -19,7 +19,8 @@ import { deriveTabs } from '@/lib/behaviour/presets/tabs';
 import type { PresetNode } from '@/lib/behaviour/presets';
 import { n, run, t } from '../patterns';
 import type { GapId } from '../lib/types';
-import { renderThroughPublishedPage, type PublishedOutput } from '../lib/published';
+import { renderThroughPublishedPage, viewportCanvasNodes, type PublishedOutput } from '../lib/published';
+import type { ComponentDefinitions } from '@/lib/components/definition';
 
 const FIXTURE_DIR = path.resolve(process.cwd(), 'test/score/corpus/fixtures');
 
@@ -118,6 +119,371 @@ const rule = (id: string, selector: string, style: Record<string, unknown>) => (
 const wrapped = (id: string, at: string, style: Record<string, unknown>, selector = '&') => ({ id, selector, at: [at], style });
 
 const WIDE_CARD = '@container (min-width: 600px)';
+
+// Reusable components, written as docs/plans/2026-11-02-reusable-components.md stores
+// them: a definition is a small page with frames of its own, so every responsive map
+// inside one is keyed on its own breakpoint ids (`<prefix>-tablet`), never the page's.
+// A placement holds only its definition id, its input values, its initial state and
+// how it sits on the page. The trees are written from the contract alone, and the
+// replica goes through the whole published path, where placements expand.
+
+/** One read binding per slot, as the panel's binding control stores it. */
+const bound = (node: ComponentNode, slots: Record<string, string>): ComponentNode =>
+  ({ ...node, bindings: Object.fromEntries(Object.entries(slots).map(([slot, expression]) => [slot, { mode: 'read', expression }])) }) as ComponentNode;
+
+/** A breakpoint id of a definition's own frames (viewportCanvasNodes). */
+const own = (prefix: string, breakpoint: 'tablet' | 'mobile') => `${prefix}-${breakpoint}`;
+
+interface StoredDefinition {
+  id: string;
+  name: string;
+  prefix: string;
+  tree: ComponentNode;
+  inputs: Record<string, unknown>[];
+  states?: Record<string, unknown>[];
+  noScriptState?: string;
+}
+
+function definitions(...stored: StoredDefinition[]): ComponentDefinitions {
+  return Object.fromEntries(
+    stored.map(({ id, name, prefix, tree, inputs, states = [], noScriptState }) => [
+      id,
+      {
+        id,
+        name,
+        page: { id: `${prefix}-page`, slug: prefix, appComponentTree: tree, canvasNodes: viewportCanvasNodes(prefix) },
+        inputs,
+        states,
+        ...(noScriptState ? { noScriptState } : {}),
+      },
+    ]),
+  ) as unknown as ComponentDefinitions;
+}
+
+/** A `#component` node: the definition it places and what this use sets. */
+const placement = (id: string, component: string, props: Record<string, unknown> = {}): ComponentNode =>
+  ({ id, type: '#component', componentType: 'host', props: { component, ...props } }) as unknown as ComponentNode;
+
+/** A component state's difference, stored fail-closed until expansion compiles it. */
+const stateRule = (state: string, style: Record<string, unknown>) => ({ id: `state-${state}`, componentState: state, selector: '&', style });
+
+/** The `choice` state a definition's custom states live in: `cs-` and the first 8 of its id. */
+const choiceStateOf = (definitionId: string) => `cs-${definitionId.slice(0, 8)}`;
+
+/** Removes the behaviour gate, and the original's own `js` class: what a page is left with when its script failed. */
+const scriptFailed = (page: Page) =>
+  page.evaluate(() => {
+    document.documentElement.removeAttribute('data-fc-b');
+    document.documentElement.classList.remove('js');
+  });
+
+const CARD = 'a3c1e2d4-5b6f-4a7e-8c9d-0e1f2a3b4c5d';
+const EVENT_CARD = 'b4d2f3e5-6c7a-4b8f-9dae-1f2a3b4c5d6e';
+const NAVBAR = '2f6c1a9e-7d3b-4c5a-9e8f-1a2b3c4d5e6f';
+const TILE = 'c5e3a4f6-7d8b-4c9a-8ebf-2a3b4c5d6e7f';
+
+/** The card of the contract's canonical example: a link with an image, an optional badge, a title and a line of copy. */
+function roomCard(): StoredDefinition {
+  const prefix = 'card';
+  return {
+    id: CARD,
+    name: 'Room card',
+    prefix,
+    inputs: [
+      { id: 'title', name: 'Title', type: 'text', default: 'Card title' },
+      { id: 'copy', name: 'Copy', type: 'text', default: 'Ask us about this room.' },
+      { id: 'image', name: 'Image', type: 'image', default: { src: '/images/placeholder.jpg', alt: '' } },
+      { id: 'href', name: 'Link', type: 'link', default: '/' },
+      { id: 'badge', name: 'Show badge', type: 'toggle', default: false },
+    ],
+    tree: bound(
+      n(
+        'a',
+        parity('card', {
+          style: { display: 'block', overflow: 'hidden', border: '1px solid #e5e7eb', borderRadius: '12px', background: '#fff', color: 'inherit', textDecoration: 'none' },
+        }),
+        bound(
+          n('img', parity('card-image', { style: { display: 'block', width: '100%', height: '120px', objectFit: 'cover', background: '#e5e7eb' } })),
+          { src: '{{input.image.src}}', alt: '{{input.image.alt}}' },
+        ),
+        bound(
+          t('span', 'New', parity('card-badge', {
+            style: {
+              display: 'inline-block', margin: '12px 16px 0', padding: '2px 8px', borderRadius: '999px', background: '#fef3c7', color: '#92400e',
+              fontSize: '12px', fontWeight: 700,
+            },
+          })),
+          { visible: '{{input.badge}}' },
+        ),
+        bound(
+          t('h3', 'Card title', parity('card-title', { style: { margin: '12px 16px 4px', fontSize: { base: '20px', [own(prefix, 'mobile')]: '18px' }, lineHeight: 1.3 } })),
+          { children: '{{input.title}}' },
+        ),
+        bound(t('p', 'Ask us about this room.', parity('card-copy', { style: { margin: '0 16px 16px', color: '#4b5563' } })), { children: '{{input.copy}}' }),
+      ),
+      { href: '{{input.href}}' },
+    ),
+  };
+}
+
+function cardsPage(): ComponentNode {
+  const cell = (index: number, inputs: Record<string, unknown>) =>
+    n('li', parity(`cell-${index}`), placement(`room-${index}`, CARD, { inputs }));
+  return n(
+    'main',
+    parity('page', { style: { font: `16px/1.5 ${FONT}`, color: '#111827', padding: responsive('32px', undefined, '16px') } }),
+    t('h1', 'Rooms', parity('title', { style: { fontSize: '28px', lineHeight: 1.2, margin: '0 0 24px' } })),
+    n(
+      'ul',
+      parity('grid', {
+        style: {
+          listStyle: 'none', margin: 0, padding: 0, display: 'grid',
+          gridTemplateColumns: responsive('repeat(3, 1fr)', 'repeat(2, 1fr)', '1fr'),
+          gap: responsive('24px', undefined, '16px'),
+        },
+      }),
+      cell(1, {
+        title: 'Garden room', copy: 'Opens onto the courtyard.', image: { src: '/images/garden.jpg', alt: 'Courtyard garden' }, href: '/rooms/garden', badge: true,
+      }),
+      cell(2, { title: 'Attic', copy: 'Under the roof, with a skylight.', image: { src: '/images/attic.jpg', alt: 'Attic skylight' }, href: '/rooms/attic' }),
+      // No copy of its own: the default shows.
+      cell(3, { title: 'Cellar', image: { src: '/images/cellar.jpg', alt: 'Vaulted cellar' }, href: '/rooms/cellar' }),
+    ),
+  );
+}
+
+/** An event card, placed once as a Collection's row template and fed from each row. */
+function eventCard(): StoredDefinition {
+  const prefix = 'event';
+  return {
+    id: EVENT_CARD,
+    name: 'Event card',
+    prefix,
+    inputs: [
+      { id: 'title', name: 'Title', type: 'text', default: 'Event' },
+      { id: 'copy', name: 'Copy', type: 'text' },
+      { id: 'featured', name: 'Featured', type: 'toggle', default: false },
+    ],
+    tree: n(
+      'article',
+      parity('card', {
+        style: { border: '1px solid #e5e7eb', borderRadius: '12px', padding: { base: '20px', [own(prefix, 'mobile')]: '16px' }, background: '#fff' },
+      }),
+      bound(
+        t('span', 'Featured', parity('card-badge', {
+          style: {
+            display: 'inline-block', margin: '0 0 8px', padding: '2px 8px', borderRadius: '999px', background: '#dcfce7', color: '#166534',
+            fontSize: '12px', fontWeight: 700,
+          },
+        })),
+        { visible: '{{input.featured}}' },
+      ),
+      bound(t('h3', 'Event', parity('card-title', { style: { margin: '0 0 4px', fontSize: '20px', lineHeight: 1.3 } })), { children: '{{input.title}}' }),
+      bound(t('p', '', parity('card-copy', { style: { margin: 0, color: '#4b5563' } })), { children: '{{input.copy}}' }),
+    ),
+  };
+}
+
+const EVENT_ROWS = [
+  { title: 'Spring market', copy: 'Local growers in the courtyard.', featured: false },
+  { title: 'Night of open studios', copy: 'Every door on the street open until midnight.', featured: true },
+  { title: 'Repair cafe', copy: 'Bring what is broken, leave with it fixed.', featured: false },
+];
+
+function collectionPage(): ComponentNode {
+  const template = bound(placement('event-row', EVENT_CARD), {
+    'input.title': '{{row.title}}',
+    'input.copy': '{{row.copy}}',
+    'input.featured': '{{row.featured}}',
+  });
+  return n(
+    'main',
+    parity('page', { style: { font: `16px/1.5 ${FONT}`, color: '#111827', padding: responsive('32px', undefined, '16px') } }),
+    t('h1', 'Upcoming events', parity('title', { style: { fontSize: '28px', lineHeight: 1.2, margin: '0 0 24px' } })),
+    bound(
+      n(
+        'div',
+        parity('list', {
+          'data-component-kind': 'collection',
+          style: { display: 'grid', gridTemplateColumns: responsive('repeat(3, 1fr)', 'repeat(2, 1fr)', '1fr'), gap: responsive('24px', undefined, '16px') },
+        }),
+        template,
+      ),
+      { collection: 'events' },
+    ),
+  );
+}
+
+/**
+ * The contract's worked navbar: a tone input on the root's `data-tone`, a Closed and an
+ * Open state, a menu button that cycles them and closes on Escape, and Open kept
+ * without a script. Unlike the worked example the menu collapses at every width, so
+ * each breakpoint has something to open.
+ */
+function navbar(): StoredDefinition {
+  const prefix = 'nav';
+  const S = choiceStateOf(NAVBAR);
+  const link = (id: string, label: string, href: string) => t('a', label, parity(`link-${id}`, { href, style: { color: 'inherit', textDecoration: 'none' } }));
+  return {
+    id: NAVBAR,
+    name: 'Navbar',
+    prefix,
+    inputs: [{ id: 'tone', name: 'Tone', type: 'choice', default: 'light', options: [{ label: 'Light', value: 'light' }, { label: 'Dark', value: 'dark' }] }],
+    states: [{ id: 's1', name: 'Open', kind: 'custom' }],
+    noScriptState: 's1',
+    tree: bound(
+      n(
+        'header',
+        parity('navbar', {
+          style: {
+            display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between',
+            padding: { base: '16px 24px', [own(prefix, 'mobile')]: '12px 16px' },
+            background: '#fff', color: '#111827', borderBottom: '1px solid #e5e7eb',
+          },
+          rules: [rule('dark', '&[data-tone="dark"]', { background: '#111827', color: '#f9fafb', borderBottomColor: '#374151' })],
+          behaviour: { state: [{ id: S, name: 'State', type: 'choice', initial: 'primary', options: ['primary', 's1'] }] },
+        }),
+        t('a', 'Lumen', parity('logo', { href: '/', style: { fontWeight: 700, fontSize: '20px', color: 'inherit', textDecoration: 'none' } })),
+        t(
+          'button',
+          'Menu',
+          parity('menu-button', {
+            type: 'button',
+            'aria-controls': 'site-menu',
+            style: { border: '1px solid currentColor', borderRadius: '6px', background: 'none', color: 'inherit', padding: '6px 12px', font: 'inherit', cursor: 'pointer' },
+            rules: [focusedRule({ outline: '3px solid #f59e0b', outlineOffset: '2px' })],
+            behaviour: {
+              on: [
+                { id: 't1', on: 'click', do: [{ step: S, wrap: true }] },
+                { id: 't2', on: 'keydown', keys: ['Escape'], if: { state: S, eq: 's1' }, do: [{ set: S, value: 'primary' }] },
+              ],
+              bind: [{ attr: 'aria-expanded', from: { eq: [{ get: S }, 's1'] } }],
+            },
+          }),
+        ),
+        n(
+          'nav',
+          parity('menu', {
+            id: 'site-menu',
+            'aria-label': 'Main',
+            style: {
+              display: 'none', flexBasis: '100%',
+              flexDirection: { base: 'row', [own(prefix, 'mobile')]: 'column' },
+              gap: { base: '24px', [own(prefix, 'mobile')]: '8px' },
+              paddingTop: '12px',
+            },
+            rules: [stateRule('s1', { display: 'flex' })],
+          }),
+          link('rooms', 'Rooms', '/rooms'),
+          link('events', 'Events', '/events'),
+          link('contact', 'Contact', '/contact'),
+        ),
+      ),
+      { 'data-tone': '{{input.tone}}' },
+    ),
+  };
+}
+
+function navbarPage(): ComponentNode {
+  return n(
+    'div',
+    parity('page', { style: { font: `16px/1.5 ${FONT}`, color: '#111827', margin: 0 } }),
+    placement('site-navbar', NAVBAR, { inputs: { tone: 'dark' } }),
+    n(
+      'main',
+      parity('content', { style: { padding: responsive('32px 24px', undefined, '24px 16px') } }),
+      t('h1', 'Welcome', parity('heading', { style: { margin: '0 0 8px', fontSize: responsive('32px', undefined, '24px'), lineHeight: 1.2 } })),
+      t('p', 'A guest house in the old town.', parity('copy', { style: { margin: 0 } })),
+    ),
+  );
+}
+
+/** A plan tile: Hover, Pressed and Focused as pointer states, and Selected as a custom state a click cycles. */
+function planTile(): StoredDefinition {
+  const prefix = 'tile';
+  const S = choiceStateOf(TILE);
+  const mobile = own(prefix, 'mobile');
+  return {
+    id: TILE,
+    name: 'Plan tile',
+    prefix,
+    inputs: [
+      { id: 'label', name: 'Label', type: 'text', default: 'Plan' },
+      { id: 'price', name: 'Price', type: 'text', default: '' },
+    ],
+    states: [
+      { id: 'hover', name: 'Hover', kind: 'hover' },
+      { id: 'pressed', name: 'Pressed', kind: 'pressed', implies: ['hover'] },
+      { id: 'focused', name: 'Focused', kind: 'focused' },
+      { id: 's1', name: 'Selected', kind: 'custom' },
+    ],
+    tree: n(
+      'button',
+      parity('tile', {
+        type: 'button',
+        style: {
+          display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '4px',
+          minWidth: { base: '180px', [mobile]: '0' }, width: { base: 'auto', [mobile]: '100%' },
+          padding: { base: '16px 20px', [mobile]: '12px 16px' },
+          border: '2px solid #d1d5db', borderRadius: '10px', background: '#fff', color: '#111827', font: 'inherit', textAlign: 'left', cursor: 'pointer',
+        },
+        rules: [
+          stateRule('hover', { background: '#eff6ff', borderColor: '#93c5fd' }),
+          stateRule('pressed', { background: '#dbeafe', borderColor: '#3b82f6' }),
+          stateRule('focused', { outline: '3px solid #f59e0b', outlineOffset: '2px' }),
+          stateRule('s1', {
+            background: { base: '#1d4ed8', [mobile]: '#1e40af' },
+            borderColor: { base: '#1d4ed8', [mobile]: '#1e40af' },
+            color: '#fff',
+          }),
+        ],
+        behaviour: {
+          state: [{ id: S, name: 'State', type: 'choice', initial: 'primary', options: ['primary', 's1'] }],
+          on: [{ id: 't1', on: 'click', do: [{ step: S, wrap: true }] }],
+          bind: [{ attr: 'aria-pressed', from: { eq: [{ get: S }, 's1'] } }],
+        },
+      }),
+      bound(
+        t('span', 'Plan', parity('tile-label', {
+          style: { fontWeight: 700, color: '#111827' },
+          rules: [stateRule('hover', { color: '#1d4ed8' }), stateRule('s1', { color: '#fff' })],
+        })),
+        { children: '{{input.label}}' },
+      ),
+      bound(
+        t('span', '', parity('tile-price', { style: { fontSize: '14px', color: '#4b5563' }, rules: [stateRule('s1', { color: '#dbeafe' })] })),
+        { children: '{{input.price}}' },
+      ),
+    ),
+  };
+}
+
+function statesPage(): ComponentNode {
+  const cell = (index: number, inputs: Record<string, unknown>) => n('li', parity(`cell-${index}`), placement(`plan-${index}`, TILE, { inputs }));
+  return n(
+    'div',
+    parity('page', { style: { font: `16px/1.5 ${FONT}`, color: '#111827', padding: responsive('32px', undefined, '16px') } }),
+    n(
+      'ul',
+      parity('options', {
+        style: {
+          listStyle: 'none', margin: 0, padding: 0, display: 'flex',
+          flexDirection: responsive('row', undefined, 'column'), gap: responsive('16px', undefined, '12px'),
+        },
+      }),
+      cell(1, { label: 'Monthly', price: '12 francs a month' }),
+      cell(2, { label: 'Yearly', price: '120 francs a year' }),
+    ),
+  );
+}
+
+/** The first tile, by its own cell: inner parity ids repeat across placements, as they do in the original. */
+const firstTile = (page: Page) => page.locator('[data-parity-id="cell-1"] button');
+
+const PRESSED = async (page: Page) => {
+  await firstTile(page).hover();
+  await page.mouse.down();
+};
 
 export const FIXTURES: Fixture[] = [
   {
@@ -647,6 +1013,109 @@ export const FIXTURES: Fixture[] = [
           await page.keyboard.press('Enter');
         },
       },
+    ],
+  },
+  {
+    id: 'component-cards',
+    group: 'component',
+    source: 'hand-written: three placements of one card definition with different inputs, against three handwritten cards',
+    original: { html: 'component-cards.html' },
+    initialGap: 'reusable-components',
+    tree: cardsPage,
+    published: () => renderThroughPublishedPage({ tree: cardsPage(), definitions: definitions(roomCard()) }),
+    states: [],
+    notMeasured: [
+      'That each node with a class has one CSS block, not one per placement: the corpus compares pixels, computed styles and the accessibility tree, never the sheet',
+      'Inner parity ids repeat across placements, as they do in the original, so their styles are compared on the last card; each cell is compared on its own, text included',
+    ],
+  },
+  {
+    id: 'component-navbar',
+    group: 'component',
+    source: 'hand-written: the contract\'s navbar (a tone input, Closed and Open, Escape, Open kept without a script), collapsing at every width',
+    original: { html: 'component-navbar.html' },
+    initialGap: 'reusable-components',
+    tree: navbarPage,
+    published: () => renderThroughPublishedPage({ tree: navbarPage(), definitions: definitions(navbar()) }),
+    states: [
+      { id: 'click opens the menu', gap: 'reusable-components', apply: (page) => el(page, 'menu-button').click() },
+      {
+        id: 'Enter opens the menu and Escape closes it',
+        gap: 'reusable-components',
+        apply: async (page) => {
+          await page.keyboard.press('Tab');
+          await page.keyboard.press('Tab');
+          await page.keyboard.press('Enter');
+          await page.keyboard.press('Escape');
+        },
+      },
+      { id: 'the script failed', gap: 'reusable-components', apply: scriptFailed },
+    ],
+    notMeasured: [
+      'One definition on two pages: the corpus compares one document per fixture, so only this page is measured',
+      'Scripts turned off entirely: every page runs with scripts on, so the no-script state is the one a failed script leaves, the behaviour gate removed',
+    ],
+  },
+  {
+    id: 'component-collection',
+    group: 'component',
+    source: 'hand-written: one card definition placed as a Collection\'s row template, its inputs bound to each row',
+    original: { html: 'component-collection.html' },
+    initialGap: 'reusable-components',
+    tree: collectionPage,
+    published: () => renderThroughPublishedPage({ tree: collectionPage(), definitions: definitions(eventCard()), rows: EVENT_ROWS }),
+    states: [],
+    notMeasured: ['Inner parity ids repeat across rows, as they do in the original, so their styles are compared on the last row; the list is compared whole, text included'],
+  },
+  {
+    id: 'component-states',
+    group: 'component',
+    source: 'hand-written: a plan tile with Hover, Pressed and Focused (on the tile and on a descendant) and a custom Selected state a click cycles',
+    original: { html: 'component-states.html' },
+    initialGap: 'reusable-components',
+    tree: statesPage,
+    published: () => renderThroughPublishedPage({ tree: statesPage(), definitions: definitions(planTile()) }),
+    states: [
+      { id: 'hover', gap: 'reusable-components', apply: (page) => firstTile(page).hover() },
+      {
+        id: 'hover, the script failed',
+        gap: 'reusable-components',
+        apply: async (page) => {
+          await scriptFailed(page);
+          await firstTile(page).hover();
+        },
+      },
+      { id: 'pressed', gap: 'reusable-components', apply: PRESSED },
+      {
+        id: 'pressed, the script failed',
+        gap: 'reusable-components',
+        apply: async (page) => {
+          await scriptFailed(page);
+          await PRESSED(page);
+        },
+      },
+      { id: 'keyboard focus', gap: 'reusable-components', apply: (page) => page.keyboard.press('Tab') },
+      {
+        id: 'keyboard focus, the script failed',
+        gap: 'reusable-components',
+        apply: async (page) => {
+          await scriptFailed(page);
+          await page.keyboard.press('Tab');
+        },
+      },
+      { id: 'click selects the tile', gap: 'reusable-components', apply: (page) => firstTile(page).click() },
+      {
+        id: 'Space selects the tile',
+        gap: 'reusable-components',
+        apply: async (page) => {
+          await page.keyboard.press('Tab');
+          await page.keyboard.press('Space');
+        },
+      },
+    ],
+    notMeasured: [
+      'Scripts turned off entirely: every page runs with scripts on, so the first three states are also run with the behaviour gate removed, which is what a failed script leaves',
+      'Inner parity ids repeat across placements, as they do in the original, so their styles are compared on the second tile; each cell is compared on its own, text included',
     ],
   },
 ];

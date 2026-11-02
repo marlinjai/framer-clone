@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Component states</title>
+<script>document.documentElement.classList.add('js');</script>
+<style>
+  .page { font: 16px/1.5 Arial, sans-serif; color: #111827; padding: 32px; }
+  .options { list-style: none; margin: 0; padding: 0; display: flex; gap: 16px; }
+  .tile { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 180px; padding: 16px 20px; border: 2px solid #d1d5db; border-radius: 10px; background: #fff; color: #111827; font: inherit; text-align: left; cursor: pointer; }
+  .tile-label { font-weight: 700; color: #111827; }
+  .tile-price { font-size: 14px; color: #4b5563; }
+  @media (hover: hover) and (pointer: fine) {
+    .tile:hover { background: #eff6ff; border-color: #93c5fd; }
+    .tile:hover .tile-label { color: #1d4ed8; }
+  }
+  .tile:active { background: #dbeafe; border-color: #3b82f6; }
+  .tile:focus-visible { outline: 3px solid #f59e0b; outline-offset: 2px; }
+  .tile[aria-pressed="true"] { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }
+  .tile[aria-pressed="true"] .tile-label { color: #fff; }
+  .tile[aria-pressed="true"] .tile-price { color: #dbeafe; }
+  @media (max-width: 767.98px) {
+    .page { padding: 16px; }
+    .options { flex-direction: column; gap: 12px; }
+    .tile { min-width: 0; width: 100%; padding: 12px 16px; }
+    .tile[aria-pressed="true"] { background: #1e40af; border-color: #1e40af; }
+  }
+</style>
+</head>
+<body style="margin:0">
+<div class="page" data-parity-id="page">
+  <ul class="options" data-parity-id="options">
+    <li data-parity-id="cell-1">
+      <button class="tile" type="button" aria-pressed="false" data-parity-id="tile">
+        <span class="tile-label" data-parity-id="tile-label">Monthly</span>
+        <span class="tile-price" data-parity-id="tile-price">12 francs a month</span>
+      </button>
+    </li>
+    <li data-parity-id="cell-2">
+      <button class="tile" type="button" aria-pressed="false" data-parity-id="tile">
+        <span class="tile-label" data-parity-id="tile-label">Yearly</span>
+        <span class="tile-price" data-parity-id="tile-price">120 francs a year</span>
+      </button>
+    </li>
+  </ul>
+</div>
+<script>
+  document.querySelectorAll('.tile').forEach((tile) => {
+    tile.addEventListener('click', () => {
+      tile.setAttribute('aria-pressed', String(tile.getAttribute('aria-pressed') !== 'true'));
+    });
+  });
+</script>
+</body>
+</html>
