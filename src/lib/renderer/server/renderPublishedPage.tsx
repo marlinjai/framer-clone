@@ -18,7 +18,8 @@ import type { CmsReadRepository } from '@/server/cms';
 import { createScope, pushPageFrame } from '@/lib/bindings/resolver/scope';
 import { buildTrackerPayload, type TrackerPayload } from '@/lib/renderer/publish/trackerSnippet';
 import { ConsentBanner } from '@/lib/consent/ConsentBanner';
-import { HIDE_COOKIE_LINKS_CSS } from '@/lib/consent/consent';
+import { HIDE_COOKIE_LINKS_CSS, type ConsentCategory } from '@/lib/consent/consent';
+import { withMapLanguage } from '@/lib/mapEmbed/mapEmbed';
 import { DEFAULT_LOOK, type SiteLook } from '@/lib/site/notFoundDefault';
 import { renderComponentNode } from './renderComponentNode';
 import { applyResponsiveStyles } from './applyResponsiveStyles';
@@ -101,13 +102,20 @@ export interface RenderPublishedPageInput {
   /** The site's page base (src/lib/site/pageBase.ts): `reset` unless the site chose otherwise. */
   pageBase?: PageBase;
   /**
-   * How the consent banner speaks and looks: the site language, the site's
-   * look and its privacy policy path. Only used when analytics needs consent.
+   * How the consent banner and the map placeholders speak and look: the site
+   * language, the site's look and its privacy policy path. The banner is only
+   * rendered when something on the page needs consent (analytics, a map).
    */
   consent?: {
     language: string;
     look?: SiteLook;
     privacyHref?: string | null;
+    /**
+     * Whether any page of the site embeds a Google Map. Then every page carries the
+     * consent runtime and a working "Cookie settings", so a maps "yes" given on the
+     * map page can be withdrawn from any page.
+     */
+    siteHasMap?: boolean;
   };
 }
 
@@ -123,6 +131,10 @@ export interface RenderedPage {
    * never part of the HTML.
    */
   analyticsGated: boolean;
+  /** What this page uses and so asks about by itself; empty when nothing on it needs consent. */
+  consentCategories: ConsentCategory[];
+  /** What the site uses: the banner a visitor reopens shows these. Empty when nothing on the site needs consent. */
+  siteConsentCategories: ConsentCategory[];
   /** The program BehaviourIsland in `body` runs. Null when nothing on the page can change. */
   behaviour: BehaviourProgram | null;
 }
@@ -175,7 +187,18 @@ export async function renderPublishedPage(
   if (sticky.removed > 0) {
     console.warn(`renderPublishedPage: ${sticky.removed} extra sticky call to action bar(s) not rendered (at most one per page)`);
   }
-  const hydrated = sticky.root;
+  // Map embeds (src/lib/mapEmbed/mapEmbed.ts) speak the site language and make the
+  // page ask for `maps` consent: nothing of Google loads before the visitor says yes.
+  const maps = withMapLanguage(sticky.root, consent?.language ?? 'en');
+  const hydrated = maps.root;
+  const consentCategories: ConsentCategory[] = [
+    ...(tracker ? (['analytics'] as const) : []),
+    ...(maps.hasMap ? (['maps'] as const) : []),
+  ];
+  const siteConsentCategories: ConsentCategory[] = [
+    ...(tracker ? (['analytics'] as const) : []),
+    ...(maps.hasMap || consent?.siteHasMap ? (['maps'] as const) : []),
+  ];
 
   // Stored behaviour becomes attributes, rules and a program, after the rows and
   // the bar are in their final place and before anything reads the rules it adds.
@@ -204,11 +227,13 @@ export async function renderPublishedPage(
   return {
     body: (
       <>
-        {tracker ? (
-          // Consent first in the reading order; the tracker loads only after
-          // the visitor accepts (decision 6). Nothing of it is in the HTML.
+        {siteConsentCategories.length > 0 ? (
+          // Consent first in the reading order; the tracker and the maps load only
+          // after the visitor accepts (decision 6). Nothing of them is in the HTML.
           <ConsentBanner
             tracker={tracker}
+            categories={consentCategories}
+            siteCategories={siteConsentCategories}
             language={consent?.language ?? 'en'}
             look={consent?.look ?? DEFAULT_LOOK}
             privacyHref={consent?.privacyHref ?? null}
@@ -259,6 +284,8 @@ export async function renderPublishedPage(
       </>
     ),
     analyticsGated: tracker !== null,
+    consentCategories,
+    siteConsentCategories,
     behaviour: behaviour.program,
   };
 }

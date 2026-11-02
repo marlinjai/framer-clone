@@ -20,8 +20,8 @@ const full: BusinessInfo = {
   managingDirectors: ['Anna Müller'],
 };
 
-const none: TemplateFacts = { analytics: false, unsplash: false, forms: false };
-const all: TemplateFacts = { analytics: true, unsplash: true, forms: true };
+const none: TemplateFacts = { analytics: false, unsplash: false, forms: false, maps: false };
+const all: TemplateFacts = { analytics: true, unsplash: true, forms: true, maps: true };
 const date = new Date('2026-10-24T12:00:00Z');
 
 const text = (blocks: LegalBlock[]) =>
@@ -150,7 +150,7 @@ describe('facts and slugs', () => {
       { props: {}, children: [{ props: { src: 'https://images.unsplash.com/photo-1?w=800' } }] },
       { props: { style: { backgroundImage: 'url("https://images.unsplash.com/photo-2")' } }, children: [{ props: { 'data-form-kind': 'form' } }] },
     ];
-    expect(factsFromTrees(trees, true)).toEqual({ analytics: true, unsplash: true, forms: true });
+    expect(factsFromTrees(trees, true)).toEqual({ analytics: true, unsplash: true, forms: true, maps: false });
     expect(factsFromTrees([{ props: { src: 'https://example.com/a.jpg' } }], false)).toEqual(none);
   });
 

@@ -212,6 +212,9 @@ library default of its kind; a plain system stack (system-ui, Georgia, ...) is k
 ### preset "link" (Link, category basic)
 - type: a
 - defaults: {"children":"Link","href":"/","style":{"color":"#111827","display":"inline-block","fontFamily":"inherit","fontSize":"16px","padding":"4px","textDecoration":"underline"}}
+### preset "mapEmbed" (Google Map, category basic)
+- type: div
+- defaults: {"data-map-embed":"google","style":{"borderRadius":"8px","height":"360px","overflow":"hidden","width":"100%"}}
 ### preset "productDetail" (Product detail, category commerce)
 - type: div
 - data component "product-detail": renders a placeholder until the user binds it in the properties panel (bindable: product). Use it only when the brief clearly asks for this kind of content; never add children to it.

@@ -129,6 +129,7 @@ import {
   isStickyCta,
   type StickyCtaPropKey,
 } from '@/lib/stickyCta/stickyCta';
+import { cleanMapEmbedProp, cleanMapText, isMapEmbed } from '@/lib/mapEmbed/mapEmbed';
 
 
 /** One validated node, ready for ComponentModel.create (responsive keys are still breakpoint KEYS). */
@@ -198,6 +199,13 @@ export interface ValidateContext {
    * regeneration must not take them.
    */
   heldAddresses?: ReadonlySet<string>;
+  /**
+   * The only address a generated Google map may show: the business address of the
+   * Site settings (siteAddressOf). A map preset gets this address whatever the model
+   * wrote, and is dropped when there is none, so the generator never invents a
+   * location or writes a map address of its own. Defaults to none.
+   */
+  mapAddress?: string | null;
 }
 
 /**
@@ -1033,6 +1041,11 @@ class Validator {
     // The sticky call to action's link props (src/lib/stickyCta/stickyCta.ts).
     const stickyKeys = new Set<string>(isStickyCta(preset?.defaultProps) ? STICKY_CTA_PROP_KEYS : []);
     const stickyProps: Record<string, unknown> = {};
+    // The Google map's props (src/lib/mapEmbed/mapEmbed.ts): only its title is the
+    // model's. The address comes from the Site settings (placeMapEmbeds), and an
+    // embed address is the owner's to paste in the panel.
+    const isMapPreset = isMapEmbed(preset?.defaultProps);
+    const mapProps: Record<string, unknown> = {};
     let decorative = false;
     const props: Record<string, unknown> = {};
     let text: string | undefined;
@@ -1075,6 +1088,15 @@ class Validator {
         const cleaned = cleanStickyCtaProp(key as StickyCtaPropKey, value);
         if (cleaned === undefined) this.warn(path, `${key} of the sticky call to action is not usable, dropped`);
         else stickyProps[key] = cleaned;
+        continue;
+      }
+      if (isMapPreset && (key === 'mapUrl' || key === 'mapAddress' || key === 'mapTitle')) {
+        if (key === 'mapUrl') this.warn(path, 'mapUrl is not generated (the owner pastes a Google embed in the panel), dropped');
+        else if (key === 'mapTitle') {
+          const cleaned = cleanMapEmbedProp('mapTitle', value);
+          if (cleaned === undefined) this.warn(path, 'mapTitle of the Google map is not usable, dropped');
+          else mapProps.mapTitle = cleaned;
+        }
         continue;
       }
       if (type === 'img' && key === DECORATIVE_ATTR) {
@@ -1138,7 +1160,10 @@ class Validator {
       ...props,
       ...sanitizeGeneratedFormProps(presetDefaults, formProps, (m) => this.warn(path, m)),
       ...stickyProps,
+      ...mapProps,
     };
+    // The preset's sample address is never published: placeMapEmbeds sets the real one.
+    if (isMapPreset) delete merged.mapAddress;
     if (isStickyCta(presetDefaults)) {
       // The label and the link must come from the model: the preset's
       // placeholders ("Book now" to "#contact") would publish a dead button.
@@ -1231,6 +1256,8 @@ class Validator {
       text = undefined;
     } else if (rawChildren.length > 0 && isStickyCta(presetDefaults)) {
       this.warn(path, 'the sticky call to action renders its own link (ctaLabel, ctaHref), children dropped');
+    } else if (rawChildren.length > 0 && isMapPreset) {
+      this.warn(path, 'the Google map renders its own content, children dropped');
     } else if (rawChildren.length > 0 && ['form-field', 'form-submit'].includes(presetFormKind(presetDefaults) ?? '')) {
       this.warn(path, `form component "${preset?.id}" renders its own content, children dropped`);
     } else if (preset?.dataComponentKind && rawChildren.length > 0) {
@@ -1258,6 +1285,10 @@ class Validator {
         const label = cleanStickyCtaProp('ctaLabel', text);
         if (label !== undefined) merged.ctaLabel = label;
       }
+      text = undefined;
+    }
+    if (isMapPreset && text !== undefined) {
+      this.warn(path, 'the Google map renders its own content, text dropped');
       text = undefined;
     }
     if (text !== undefined) merged.children = text;
@@ -1702,6 +1733,40 @@ function placeStickyCta(nodes: GeneratedNodeSnapshot[], v: Validator, allowed: b
 }
 
 /**
+ * The Google map's rules: it shows the Site settings address and nothing else, so a
+ * page without one gets no map, at most one per generation, and never inside an svg.
+ * Dropped with a warning.
+ */
+function placeMapEmbeds(nodes: GeneratedNodeSnapshot[], v: Validator, address: string | undefined): GeneratedNodeSnapshot[] {
+  let kept = false;
+  const walk = (list: GeneratedNodeSnapshot[], inSvg: boolean): GeneratedNodeSnapshot[] => {
+    const out: GeneratedNodeSnapshot[] = [];
+    for (const node of list) {
+      if (!isMapEmbed(node.props)) {
+        out.push(node.children.length > 0 ? { ...node, children: walk(node.children, inSvg || node.type === 'svg') } : node);
+        continue;
+      }
+      const reason = inSvg
+        ? 'a Google map has no place inside an svg: dropped'
+        : !address
+          ? 'a Google map needs the business address from the Site settings, and there is none: dropped'
+          : kept
+            ? 'at most one Google map per generation: this one was dropped'
+            : null;
+      if (reason) {
+        v.warnings.push(`${node.label}: ${reason}`);
+        v.nodeCount -= countNodes(node);
+        continue;
+      }
+      kept = true;
+      out.push({ ...node, props: { ...node.props, mapAddress: address } });
+    }
+    return out;
+  };
+  return walk(nodes, false);
+}
+
+/**
  * Validate (and repair) one generation. `raw` is the model's tool input:
  * `{ title?, description?, nodes: Node[] }`.
  */
@@ -1726,7 +1791,8 @@ export function validateGeneration(raw: unknown, ctx: ValidateContext): Validati
   raw.nodes.forEach((n, i) => parsed.push(...v.node(n, `nodes[${i}]`, 1)));
   // Decided before any svg is dropped: a page past the limit was cut short, and must not pass for being under it.
   const overLimit = v.nodeCount > GENERATION_LIMITS.maxNodes;
-  const nodes = dropExpandingSvgs(scopeIds(placeStickyCta(parsed, v, ctx.allowStickyCta === true), v), v);
+  const placed = placeMapEmbeds(placeStickyCta(parsed, v, ctx.allowStickyCta === true), v, cleanMapText(ctx.mapAddress ?? undefined));
+  const nodes = dropExpandingSvgs(scopeIds(placed, v), v);
   gateStartValues(nodes, v);
   dropForeignAddresses(nodes, v, ctx.heldAddresses ?? new Set());
 

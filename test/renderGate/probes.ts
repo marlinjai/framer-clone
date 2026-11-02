@@ -322,9 +322,44 @@ function styleProbes(): Probe[] {
 
 /** What the renderers' own attributes are called: a runtime acts on these. */
 function rendererAttributeProbes(): Probe[] {
-  const names = ['data-fc-consent-accept', 'data-fc-consent-decline', 'data-fc-site-base', 'data-fc-sticky-cta-link'];
+  const names = [
+    'data-fc-consent-accept', 'data-fc-consent-decline', 'data-fc-site-base', 'data-fc-sticky-cta-link',
+    'data-fc-map-load', 'data-fc-map-frame', 'data-fc-map-placeholder', 'data-fc-map',
+  ];
   const spelled = names.flatMap((name) => [name, upper(name), mixed(name)]);
   return spelled.flatMap((name) => ['div', 'a', 'x-y'].map((type) => hostile(`renderer attribute ${name} on <${type}>`, type, [], () => ({ [name]: '' }))));
+}
+
+/** A Google Maps address as the Share dialog gives it: the one host a map may load, after consent. */
+const GOOGLE_EMBED = 'https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d2419.6!2d13.2834!3d52.6871!5e0';
+
+/**
+ * The Google Maps embed (src/lib/mapEmbed): a stored iframe stays refused, a Google
+ * one and one carrying the map's marker too, and a map box draws nothing from its
+ * settings but a rebuilt address, its own placeholder and a plain search link. The
+ * link leaves the page by design, so these may navigate; what runs is still found.
+ */
+function mapProbes(): Probe[] {
+  const marker = { 'data-map-embed': 'google' };
+  const list: Probe[] = [
+    hostile('a stored Google Maps iframe', 'iframe', [], () => ({ src: GOOGLE_EMBED, title: 'Map' })),
+    hostile('a stored Google Maps iframe with the map marker', 'iframe', [], () => ({ ...marker, src: GOOGLE_EMBED })),
+    hostile('a Google Maps srcdoc on an iframe', 'iframe', [], (id) => ({ srcDoc: `<script>parent.${run(id)}</script>` })),
+    hostile('a map box with an iframe child', 'div', [], () => ({ ...marker, mapAddress: 'Berlin' }), (id) => [
+      { id: `${id}c`, type: 'iframe', props: { src: GOOGLE_EMBED } },
+    ]),
+  ];
+  for (const [name, value] of Object.entries(VALUES)) {
+    list.push(
+      probe(`a map box with mapUrl ${name}`, 'div', [], (id) => ({ props: { ...marker, mapUrl: value(id), mapAddress: `Berlin ${id}` } }), true),
+      probe(`a map box with mapAddress ${name}`, 'div', [], (id) => ({ props: { ...marker, mapAddress: value(id), mapTitle: value(id) } }), true),
+    );
+  }
+  list.push(
+    probe('a map box with the embed code of another host', 'div', [], (id) => ({ props: { ...marker, mapUrl: `<iframe src="${FOREIGN}/${id}"></iframe>` } }), true),
+    probe('a map box with a Google address on a look-alike host', 'div', [], (id) => ({ props: { ...marker, mapUrl: `https://www.google.com.probe.invalid/maps/embed?pb=${id}` } }), true),
+  );
+  return list;
 }
 
 /** What a page's own code reaches by name: a global through `id`, a method of `document` through `name`. */
@@ -537,6 +572,7 @@ export function buildProbes(full: boolean): Probe[] {
     ...reactProbes(),
     ...shapeProbes(),
     ...rendererAttributeProbes(),
+    ...mapProbes(),
     ...nameProbes(full),
     ...formMemberProbes(full),
     ...spellingProbes(),

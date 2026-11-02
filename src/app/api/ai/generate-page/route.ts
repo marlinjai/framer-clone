@@ -121,7 +121,7 @@ import {
 } from '@/lib/ai/pageGen/stockImages';
 import { FOCAL_MODEL, detectFocalPoints } from '@/lib/ai/pageGen/focalPoints';
 import { detectEssentials, fillMissingAlt, type EssentialsOptions } from '@/lib/ai/pageGen/essentials';
-import { SiteContextSchema } from '@/lib/ai/pageGen/promptSections/siteContext';
+import { SiteContextSchema, siteAddressOf } from '@/lib/ai/pageGen/promptSections/siteContext';
 import type { AiEffort, AiModelKey } from '@/lib/ai/anthropicClient';
 
 export const dynamic = 'force-dynamic';
@@ -521,6 +521,8 @@ async function runGeneration(args: RunArgs): Promise<void> {
           breakpoints,
           allowStickyCta: body.target.kind === 'newPage',
           heldAddresses: addressesHeldBy(body.target.kind === 'newPage' ? null : body.target.context),
+          // A Google map shows the business address of the Site settings, or is dropped.
+          mapAddress: body.siteContext ? siteAddressOf(body.siteContext) : null,
         });
         if (outcome.ok) {
           const screened = screenTells(outcome.result, breakpoints, essentials);

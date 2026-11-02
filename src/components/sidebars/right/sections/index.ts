@@ -8,6 +8,7 @@ export { DataSourceSection } from './DataSourceSection';
 export { EffectsSection } from './EffectsSection';
 export { FormSection } from './FormSection';
 export { StickyCtaSection } from './StickyCtaSection';
+export { MapEmbedSection } from './MapEmbedSection';
 export { TextContentSection } from './TextContentSection';
 export { LinkSection } from './LinkSection';
 export { CustomSection } from './CustomSection';

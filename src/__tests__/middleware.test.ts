@@ -23,7 +23,15 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { middleware, config } from '../middleware';
 import { HOME_REWRITE_SENTINEL } from '@/server/sites/homeSentinel';
-import { CSP_REPORT_ONLY_HEADER, PUBLISHED_REPORT_ONLY_POLICY } from '@/lib/site/cspReportOnly';
+import {
+  ALLOWED_FRAME_ORIGIN,
+  CSP_REPORT_ONLY_HEADER,
+  MAPS_CONSENT_COOKIE,
+  PUBLISHED_REPORT_ONLY_POLICY,
+  PUBLISHED_REPORT_ONLY_POLICY_MAPS,
+} from '@/lib/site/cspReportOnly';
+import { CONSENT_MAPS_COOKIE } from '@/lib/consent/consent';
+import { GOOGLE_MAPS_ORIGIN } from '@/lib/mapEmbed/mapEmbed';
 
 const EDITOR = 'app.lumitra.co';
 const PUBLISHED = 'acme.sites.lumitra.co';
@@ -302,10 +310,28 @@ describe('middleware: the report-only policy of published pages', () => {
     expect(home.headers.get('content-security-policy')).toBeNull();
   });
 
-  it('measures images, fonts and media, allows the site and Unsplash, and reports to the site itself', () => {
+  it('measures images, fonts, media and frames, allows the site and Unsplash, and reports to the site itself', () => {
     expect(PUBLISHED_REPORT_ONLY_POLICY).toBe(
-      "img-src 'self' data: blob: https://images.unsplash.com; font-src 'self' data:; media-src 'self' data: blob:; report-uri /api/csp-report",
+      "img-src 'self' data: blob: https://images.unsplash.com; font-src 'self' data:; media-src 'self' data: blob:; frame-src 'self'; report-uri /api/csp-report",
     );
+    expect(PUBLISHED_REPORT_ONLY_POLICY_MAPS).toBe(
+      "img-src 'self' data: blob: https://images.unsplash.com; font-src 'self' data:; media-src 'self' data: blob:; frame-src 'self' https://www.google.com; report-uri /api/csp-report",
+    );
+  });
+
+  it('allows Google Maps frames only for a visitor whose maps consent the cookie records', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    for (const path of ['/', '/about']) {
+      const without = await middleware(req(`https://${PUBLISHED}${path}`, { host: PUBLISHED }));
+      const declined = await middleware(req(`https://${PUBLISHED}${path}`, { host: PUBLISHED, cookie: `${MAPS_CONSENT_COOKIE}=0` }));
+      const consented = await middleware(req(`https://${PUBLISHED}${path}`, { host: PUBLISHED, cookie: `${MAPS_CONSENT_COOKIE}=1` }));
+      expect(policy(without)).toBe(PUBLISHED_REPORT_ONLY_POLICY);
+      expect(policy(declined)).toBe(PUBLISHED_REPORT_ONLY_POLICY);
+      expect(policy(consented)).toBe(PUBLISHED_REPORT_ONLY_POLICY_MAPS);
+    }
+    // The consent runtime writes the same cookie name the middleware reads.
+    expect(CONSENT_MAPS_COOKIE).toBe(MAPS_CONSENT_COOKIE);
+    expect(ALLOWED_FRAME_ORIGIN).toBe(GOOGLE_MAPS_ORIGIN);
   });
 
   it('never marks the editor host, on any path, signed in or not', async () => {
