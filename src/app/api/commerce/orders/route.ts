@@ -5,7 +5,8 @@
 //                              connected to Lumitra Mail; the thank-you says so only then)
 //                           -> 409 { ok: false, shortages: { variantId, needed, available }[] }
 //                           -> 503 payments_unavailable: the company takes real payments (Stripe) but its Books
-//                              cannot issue the receipt yet; nothing is ordered or reserved
+//                              cannot issue the receipt yet, or it has no Stripe account that can take payments
+//                              and is not the demo company (demoCheckout.ts); nothing is ordered or reserved
 //
 // The ONE storefront-side WRITE seam into the server-authoritative commerce
 // engine. The client posts INTENTIONS ONLY: a list of { variantId, quantity }
@@ -68,6 +69,7 @@ import { buyerSchema } from '@/server/commerce/payment/buyer';
 import { shopTaxProfile } from '@/server/commerce/payment/shopTax';
 import { configuredStripeApi, paymentDeps } from '@/server/commerce/payment/deps';
 import { sweepExpiredPayments } from '@/server/commerce/payment/payments';
+import { demoCheckoutAllowed } from '@/server/commerce/payment/demoCheckout';
 import { PAYMENTS_UNAVAILABLE_MESSAGE, receiptReadiness } from '@/server/commerce/payment/receiptReadiness';
 import { readAccount } from '@/server/commerce/payment/stripe/connect';
 import { UnknownVariantError } from '@/server/commerce/repository/errors';
@@ -184,6 +186,12 @@ export async function POST(req: Request): Promise<Response> {
     // Real money only once the Books can issue its receipt (receiptReadiness.ts): refused here, before anything is
     // reserved, and never answered with the demo provider instead, which would take orders the owner cannot see are
     // unpaid. Not a 409 (the checkout reads that as a shortage) and not a 422 (an unknown item).
+    // The demo provider only for the demo company (demoCheckout.ts): anywhere else it would issue real invoices for
+    // sales that never happened. Refused the same way, before anything is reserved.
+    if (provider === 'demo' && !demoCheckoutAllowed(companyId)) {
+      console.warn(`[payments] company ${companyId}: an order was refused, the shop has no Stripe account that can take payments`);
+      return jsonError('payments_unavailable', PAYMENTS_UNAVAILABLE_MESSAGE, 503);
+    }
     if (provider === 'stripe') {
       const readiness = await receiptReadiness(db, tenantGroupId, companyId);
       if (!readiness.ready) {

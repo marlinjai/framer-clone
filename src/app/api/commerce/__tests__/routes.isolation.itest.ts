@@ -34,8 +34,21 @@
 // The `.itest.ts` suffix keeps this file OUT of the headless `pnpm test` gate; it
 // runs only under `pnpm test:integration` against Docker.
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { randomUUID } from 'node:crypto';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { randomBytes, randomUUID } from 'node:crypto';
+
+const state = vi.hoisted(() => ({ stripe: null as unknown }));
+
+// Only the two-company case below opens Stripe: every other test runs with no Stripe keys, as the demo company.
+vi.mock('@/server/commerce/payment/stripe/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/server/commerce/payment/stripe/client')>()),
+  httpStripeApi: () => state.stripe,
+}));
+
+import { initCompany } from '@/server/books/__tests__/booksFixtures';
+import { booksScope } from '@/server/books/scope';
+import type { StripeApi } from '@/server/commerce/payment/stripe/client';
+import { refreshAccount, startOnboarding } from '@/server/commerce/payment/stripe/connect';
 
 import {
   countInSchema,
@@ -277,41 +290,61 @@ describe('route-level isolation between two companies of one tenant group', () =
     const { host: siteOfA } = await createPublishedSite(fx, group.tgId, 'b0-a', companyA);
     const { host: siteOfB } = await createPublishedSite(fx, group.tgId, 'b0-b', companyB);
     const key = `b0-shared-${randomUUID()}`;
+    // A company other than the demo company takes orders only with a Stripe account that can take payments and Books
+    // that can issue the receipt (demoCheckout.ts, receiptReadiness.ts): both get them, through a fake Stripe.
+    const fake = (prefix: string) => `${prefix}_${randomBytes(12).toString('hex')}`;
+    for (const envKey of ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'STRIPE_CONNECT_CLIENT_ID']) vi.stubEnv(envKey, fake('test'));
+    const stripe = {
+      createAccount: async () => ({ id: `acct_${randomBytes(6).toString('hex')}`, charges_enabled: false, details_submitted: false }),
+      retrieveAccount: async (id: string) => ({ id, charges_enabled: true, details_submitted: true }),
+      createAccountLink: async () => ({ url: 'https://connect.stripe.test/setup' }),
+    } as unknown as StripeApi;
+    state.stripe = stripe;
+    try {
+      for (const company of [companyA, companyB]) {
+        await startOnboarding(group.db, stripe, { tenantId: company, country: 'DE', refreshUrl: 'r', returnUrl: 'r' });
+        await refreshAccount(group.db, stripe, company);
+        await initCompany(booksScope(group.db, group.tgId, company), { taxStatus: 'regular' });
+      }
 
-    const priceyA = await seedBuyableProduct(group.db, {
-      title: 'PRICEY_A',
-      handle: `pricey-a-${randomUUID().slice(0, 8)}`,
-      amountCents: 123400,
-      stocked: 5,
-      tenantId: companyA,
-    });
-    const placedA = await post({ lines: [{ variantId: priceyA.variantId, quantity: 1 }], idempotencyKey: key }, siteOfA);
-    expect(placedA.status).toBe(201);
-    const orderA = (await placedA.json()) as { orderId: string; orderNumber: string; totalCents: number };
+      const priceyA = await seedBuyableProduct(group.db, {
+        title: 'PRICEY_A',
+        handle: `pricey-a-${randomUUID().slice(0, 8)}`,
+        amountCents: 123400,
+        stocked: 5,
+        tenantId: companyA,
+      });
+      const placedA = await post({ lines: [{ variantId: priceyA.variantId, quantity: 1 }], idempotencyKey: key }, siteOfA);
+      expect(placedA.status).toBe(201);
+      const orderA = (await placedA.json()) as { orderId: string; orderNumber: string; totalCents: number };
 
-    // Seeded after A's order: a seed repoints the group's one default fulfillment location.
-    const cheapB = await seedBuyableProduct(group.db, {
-      title: 'CHEAP_B',
-      handle: `cheap-b-${randomUUID().slice(0, 8)}`,
-      amountCents: 100,
-      stocked: 5,
-      tenantId: companyB,
-    });
-    const placedB = await post({ lines: [{ variantId: cheapB.variantId, quantity: 1 }], idempotencyKey: key }, siteOfB);
-    expect(placedB.status).toBe(201);
-    const orderB = (await placedB.json()) as { orderId: string; orderNumber: string; totalCents: number };
+      // Seeded after A's order: a seed repoints the group's one default fulfillment location.
+      const cheapB = await seedBuyableProduct(group.db, {
+        title: 'CHEAP_B',
+        handle: `cheap-b-${randomUUID().slice(0, 8)}`,
+        amountCents: 100,
+        stocked: 5,
+        tenantId: companyB,
+      });
+      const placedB = await post({ lines: [{ variantId: cheapB.variantId, quantity: 1 }], idempotencyKey: key }, siteOfB);
+      expect(placedB.status).toBe(201);
+      const orderB = (await placedB.json()) as { orderId: string; orderNumber: string; totalCents: number };
 
-    // B's answer is B's own: 1.00 plus 19% VAT, not A's 1234.00 plus VAT under A's id and number.
-    expect(orderB.totalCents).toBe(119);
-    expect(orderB.orderNumber).not.toBe(orderA.orderNumber);
-    expect(orderB.orderId).not.toBe(orderA.orderId);
+      // B's answer is B's own: 1.00 plus 19% VAT, not A's 1234.00 plus VAT under A's id and number.
+      expect(orderB.totalCents).toBe(119);
+      expect(orderB.orderNumber).not.toBe(orderA.orderNumber);
+      expect(orderB.orderId).not.toBe(orderA.orderId);
 
-    const levelB = await group.db
-      .selectFrom('inventory_level')
-      .select('reserved_quantity')
-      .where('inventory_item_id', '=', cheapB.inventoryItemId)
-      .executeTakeFirstOrThrow();
-    expect(levelB.reserved_quantity).toBe(1);
+      const levelB = await group.db
+        .selectFrom('inventory_level')
+        .select('reserved_quantity')
+        .where('inventory_item_id', '=', cheapB.inventoryItemId)
+        .executeTakeFirstOrThrow();
+      expect(levelB.reserved_quantity).toBe(1);
+    } finally {
+      vi.unstubAllEnvs();
+      state.stripe = null;
+    }
   });
 });
 
