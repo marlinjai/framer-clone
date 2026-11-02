@@ -114,6 +114,8 @@ export const DETAILS = {
   overUnrolled: 'Over 5,000 repeated items: conversion stopped.',
   overInlining: 'Components nested more than 16 deep: conversion stopped.',
   overCandidates: 'Over 4,000 distinct classes: conversion stopped.',
+  overVariants: 'This class stacks more than 8 variants, so it is not compiled.',
+  overNegations: 'This class stacks more than two not- or has- variants, which can exhaust memory, so it is not compiled.',
   overRules: 'More rules than a node can hold, so none were stored.',
   recursive: 'A component that renders itself never ends: conversion stopped.',
   overLines: 'The rest of this source, which the report has no room to list line by line.',

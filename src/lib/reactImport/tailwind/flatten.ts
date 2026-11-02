@@ -80,18 +80,40 @@ export function flattenRule(rule: Rule, candidate: string, nextIndex: () => numb
   return entries;
 }
 
-/** What a property can overlap with: `paddingLeft` and `paddingInline` are one family, and a custom property only itself. */
+/**
+ * Shorthands whose longhands start with another word. The leading word groups the rest: `paddingLeft` with
+ * `paddingInline`, `borderTopColor` with `border`.
+ */
+const SHORTHAND_FAMILIES: Readonly<Record<string, string>> = {
+  top: 'inset', right: 'inset', bottom: 'inset', left: 'inset',
+  rowGap: 'gap', columnGap: 'gap', gridGap: 'gap', gridRowGap: 'gap', gridColumnGap: 'gap',
+  // `place-items` sets `align-items` and `justify-items`, and so on for content and self.
+  place: 'align', align: 'align', justify: 'align',
+  // `columns` sets `column-count` and `column-width`.
+  columns: 'column', column: 'column',
+  // `font` sets `line-height`.
+  lineHeight: 'font',
+  // `white-space` sets `text-wrap-mode`.
+  white: 'text',
+};
+
+/** What a property can overlap with, so that order between the two matters. A custom property only overlaps itself. */
 export function familyOf(key: string): string {
   if (key.startsWith('--')) return key;
-  if (key === 'top' || key === 'right' || key === 'bottom' || key === 'left') return 'inset';
-  if (key === 'rowGap' || key === 'columnGap') return 'gap';
-  return /^[A-Z]?[a-z]+/.exec(key)?.[0] ?? key;
+  if (Object.hasOwn(SHORTHAND_FAMILIES, key)) return SHORTHAND_FAMILIES[key];
+  const word = /^[A-Z]?[a-z]+/.exec(key)?.[0] ?? key;
+  return Object.hasOwn(SHORTHAND_FAMILIES, word) ? SHORTHAND_FAMILIES[word] : word;
 }
 
-const setsFamily = (style: Record<string, unknown>, keys: readonly string[]): boolean => {
-  const families = new Set(keys.map(familyOf));
-  return Object.keys(style).some((key) => families.has(familyOf(key)));
-};
+/** True when two sets of keys can set one property. `all` resets every property but custom ones. */
+export function overlaps(a: readonly string[], b: readonly string[]): boolean {
+  const resetsAll = (keys: readonly string[]) => keys.includes('all');
+  if ((resetsAll(a) && b.some((key) => !key.startsWith('--'))) || (resetsAll(b) && a.some((key) => !key.startsWith('--')))) return true;
+  const families = new Set(a.map(familyOf));
+  return b.some((key) => families.has(familyOf(key)));
+}
+
+const setsFamily = (style: Record<string, unknown>, keys: readonly string[]): boolean => overlaps(Object.keys(style), keys);
 
 export interface MergeableRule {
   selector: string;

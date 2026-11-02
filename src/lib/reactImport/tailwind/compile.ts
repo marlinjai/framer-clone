@@ -23,6 +23,45 @@ export interface CompiledSheet {
   properties: Map<string, AtRule>;
 }
 
+/** More variants than any real class stacks. Each one can multiply what the compiler writes. */
+export const MAX_VARIANTS = 8;
+/**
+ * `not-` over an at-rule or a compound doubles Tailwind's output per level, inside `build`, before the budget can
+ * see it: 20 `not-hover:` in 203 characters exhausted a 2 gigabyte heap. Two is more than real classes use.
+ */
+export const MAX_NEGATIONS = 2;
+
+/** A class split on `:` outside brackets, parentheses and strings: its variants, then the utility. */
+function variantsOf(candidate: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let quote = '';
+  let start = 0;
+  for (let i = 0; i < candidate.length; i += 1) {
+    const ch = candidate[i];
+    if (quote) {
+      if (ch === quote) quote = '';
+    } else if (ch === '"' || ch === "'") quote = ch;
+    else if (ch === '[' || ch === '(') depth += 1;
+    else if (ch === ']' || ch === ')') depth -= 1;
+    else if (ch === ':' && depth === 0) {
+      parts.push(candidate.slice(start, i));
+      start = i + 1;
+    }
+  }
+  return parts;
+}
+
+/** Why a class may not reach the compiler, or null. Checked on the text alone, so nothing costly runs first. */
+export function refusedBeforeCompile(candidate: string): 'variants' | 'negations' | null {
+  const variants = variantsOf(candidate);
+  if (variants.length > MAX_VARIANTS) return 'variants';
+  const negations = variants
+    .flatMap((variant) => variant.replace(/\[[^\]]*\]|\([^)]*\)/g, '').split('-'))
+    .filter((piece) => piece === 'not' || piece === 'has').length;
+  return negations > MAX_NEGATIONS ? 'negations' : null;
+}
+
 /** CSS unescaped: `\:` and the hex form Tailwind uses for a leading digit, as in `.\32 xl\:p-8`. */
 export function unescapeClass(selector: string): string {
   return selector.replace(/^\./, '').replace(/\\([0-9a-fA-F]{1,6})[ \t\n]?|\\([\s\S])/g, (_, hex: string | undefined, plain: string | undefined) =>

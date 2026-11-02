@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { parseSelector } from '@/lib/rules/rules';
 import { HOVER_GATE } from '@/lib/rules/states';
 import type { FlatEntry } from '../flatten';
-import { keptSourceClass, keyframesName, readSelector, readsClass, renameAnimations, renameCustomProperties, rewriteEntry, steppedOut, styleKey } from '../rewrites';
+import { encodeClass, keptSourceClass, keyframesName, readSelector, readsClass, renameAnimations, renameCustomProperties, rewriteEntry, steppedOut, styleKey } from '../rewrites';
 
 const entry = (selector: string, at: string[] = []): FlatEntry => ({ candidate: 'c', index: 1, selector, at, declarations: [{ property: 'padding', value: '1px', important: false }] });
 
@@ -33,7 +33,7 @@ describe('steppedOut', () => {
 describe('readSelector', () => {
   it('prefixes named groups, unescaped, so the parser takes them', () => {
     const read = readSelector('&:is(:where(.group\\/item):hover *)');
-    expect(read).toMatchObject({ selector: '&:is(:where(.u-c-group-item):hover *)', names: ['group/item'] });
+    expect(read).toMatchObject({ selector: '&:is(:where(.u-c-group_sitem):hover *)', names: ['group/item'] });
     expect(parseSelector('&:is(:where(.group\\/item):hover *)').ok).toBe(false);
     expect(parseSelector(read.selector).ok).toBe(true);
   });
@@ -43,7 +43,7 @@ describe('readSelector', () => {
   });
 
   it('lists substring readers and prefixes operands that need it', () => {
-    expect(readSelector("& svg:not([class*='size-'])")).toMatchObject({ selector: "& svg:not([class*='size-'])", readers: [{ operator: '*=', operand: 'size-' }] });
+    expect(readSelector("& svg:not([class*='size-'])")).toMatchObject({ selector: '& svg:not([class*="size-"])', readers: [{ operator: '*=', operand: 'size-' }] });
     expect(readSelector("& [class~='x' i]").selector).toBe('& [class~="u-c-x" i]');
     expect(readSelector('& [class|=btn]').selector).toBe('& [class|="u-c-btn"]');
   });
@@ -68,7 +68,18 @@ describe('readsClass', () => {
 
   it('keeps a class whole under the prefix, with nothing a class should not hold', () => {
     expect(keptSourceClass('size-6')).toBe('u-c-size-6');
-    expect(keptSourceClass("[&_svg]:size-4\"<x>")).toBe('u-c-___svg_:size-4__x_');
+    expect(keptSourceClass("[&_svg]:size-4\"<x>")).toBe('u-c-_x5b__x26___svg_x5d_:size-4_x22__x3c_x_x3e_');
+  });
+});
+
+describe('encodeClass', () => {
+  it('is one to one, so two source classes never become one', () => {
+    const tokens = ['group/item', 'group-item', 'group_item', 'group__item', 'group_sitem', 'a/_b', 'a_/b', 'a"b', 'a_x22_b'];
+    expect(new Set(tokens.map(encodeClass)).size).toBe(tokens.length);
+  });
+
+  it('keeps a substring a substring', () => {
+    expect(encodeClass('xa_b/c').includes(encodeClass('a_b/'))).toBe(true);
   });
 });
 

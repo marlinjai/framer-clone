@@ -12,7 +12,7 @@
 // The contract is docs/plans/2026-11-02-react-import.md, "Order has two modes".
 
 import { twMerge } from 'tailwind-merge';
-import { familyOf } from './flatten';
+import { overlaps } from './flatten';
 import { styleKey, type RewrittenEntry } from './rewrites';
 
 /** A `cva` table as data. Reading one from source is slice `import-props`. */
@@ -129,8 +129,7 @@ const sameTarget = (a: RewrittenEntry, b: RewrittenEntry): boolean =>
 
 /** Whether a later layer's entry beats this one by order alone: the same target, on a property it sets. */
 function beatenByOrder(displaced: RewrittenEntry, winners: readonly RewrittenEntry[]): boolean {
-  const families = new Set(entryKeys(displaced).map(familyOf));
-  return winners.some((winner) => sameTarget(winner, displaced) && entryKeys(winner).some((key) => families.has(familyOf(key))));
+  return winners.some((winner) => sameTarget(winner, displaced) && overlaps(entryKeys(winner), entryKeys(displaced)));
 }
 
 /**

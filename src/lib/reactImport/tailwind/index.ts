@@ -14,7 +14,7 @@ import { MAX_RULES_PER_NODE, parseRule, reachesInsideNode, readRules, type Defin
 import { IMPORT_LIMITS, type ImportBudget } from '../budget';
 import type { DetailKey } from '../report';
 import { DEFAULT_BREAKPOINT_IDS, isWidthWrapper, mapBreakpoints, type BreakpointIds, type NormalDeclaration } from './breakpoints';
-import { compileCandidates, type CompiledSheet } from './compile';
+import { compileCandidates, refusedBeforeCompile, type CompiledSheet } from './compile';
 import { familyOf, mergeRules, type Declaration } from './flatten';
 import { orderEntries, placeClasses, type ClassSource, type PlacedClasses } from './order';
 import { DARK_SELECTOR, SYSTEM_DARK, keptClassName, keptSourceClass, keyframesName, readsClass, renameCustomProperties, rewriteEntry, storedValue, styleKey, styleOf, type ClassReader, type RewrittenEntry } from './rewrites';
@@ -87,11 +87,13 @@ interface Candidates {
   names: Set<string>;
   readers: ClassReader[];
   produced: Set<string>;
+  /** Classes refused before the compile, which never reached it. */
+  capped: Map<string, 'variants' | 'negations'>;
 }
 
 function rewriteCandidates(compiled: CompiledSheet, systemDark: boolean): Candidates {
   const produced = new Set(compiled.keyframes.keys());
-  const candidates: Candidates = { compiled, rewritten: new Map(), refused: new Map(), names: new Set(), readers: [], produced };
+  const candidates: Candidates = { compiled, rewritten: new Map(), refused: new Map(), names: new Set(), readers: [], produced, capped: new Map() };
   const refuse = (candidate: string, reason: string) => {
     const own = candidates.refused.get(candidate);
     if (own) own.push(reason);
@@ -334,6 +336,11 @@ function classLines(element: ElementClasses, classes: PlacedClasses, sheet: Sour
   const { key } = element;
   const hasTokens = sheet.root.size > 0 || sheet.theme.size > 0;
   for (const token of new Set(classes.placed.map((each) => each.token))) {
+    const capped = candidates.capped.get(token);
+    if (capped) {
+      lines.push({ kind: 'cap', disposition: 'left', detail: capped === 'variants' ? 'overVariants' : 'overNegations', next: ['accept', 'rewrite'], nodeKey: key, source: token });
+      continue;
+    }
     const refused = candidates.refused.get(token);
     for (const reason of new Set(refused)) lines.push({ kind: 'refused-rule', disposition: 'left', detail: 'refusedRule', next: ['accept', 'rewrite'], nodeKey: key, reason, source: token });
     if (refused || (candidates.rewritten.get(token)?.length ?? 0) > 0) continue;
@@ -386,6 +393,13 @@ export async function convertClasses(input: TailwindInput): Promise<TailwindResu
     placements.set(element.key, placed);
     if (placed === null) lines.push({ kind: 'class', disposition: 'left', detail: 'classTable', next: ['accept', 'rewrite'], nodeKey: element.key });
   }
+  // Checked on the text before anything compiles: a stacked negation runs out of memory inside the compiler.
+  const capped = new Map<string, 'variants' | 'negations'>();
+  for (const token of wanted) {
+    const reason = refusedBeforeCompile(token);
+    if (reason) capped.set(token, reason);
+  }
+  for (const token of capped.keys()) wanted.delete(token);
   if (wanted.size > IMPORT_LIMITS.candidates) {
     lines.push({ kind: 'cap', disposition: 'left', detail: 'overCandidates', next: ['rewrite'], nodeKey: rootKey });
     return { nodes, lines };
@@ -400,6 +414,7 @@ export async function convertClasses(input: TailwindInput): Promise<TailwindResu
     return { nodes, lines };
   }
   const candidates = rewriteCandidates(compiled, systemDark);
+  for (const [token, reason] of capped) candidates.capped.set(token, reason);
 
   let anyMapped = false;
   let anyLiteralWidth = false;

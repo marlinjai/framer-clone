@@ -56,6 +56,10 @@ describe('familyOf', () => {
     expect(familyOf('top')).toBe('inset');
     expect(familyOf('columnGap')).toBe('gap');
     expect(familyOf('--u-tw-shadow')).toBe('--u-tw-shadow');
+    expect(familyOf('placeItems')).toBe(familyOf('alignItems'));
+    expect(familyOf('justifySelf')).toBe(familyOf('placeSelf'));
+    expect(familyOf('columnCount')).toBe(familyOf('columns'));
+    expect(familyOf('lineHeight')).toBe(familyOf('fontSize'));
   });
 });
 
@@ -77,6 +81,23 @@ describe('mergeRules', () => {
       { selector: '&:hover', style: { paddingLeft: '1px' } },
       { selector: '&:focus', style: { padding: '2px' } },
       { selector: '&:hover', style: { paddingInline: '3px' } },
+    ];
+    expect(mergeRules(rules)).toHaveLength(3);
+  });
+
+  it.each([
+    ['placeItems over alignItems', 'alignItems', 'placeItems'],
+    ['placeItems over justifyItems', 'justifyItems', 'placeItems'],
+    ['placeContent over alignContent', 'alignContent', 'placeContent'],
+    ['columns over columnCount', 'columnCount', 'columns'],
+    ['font over lineHeight', 'lineHeight', 'font'],
+    ['whiteSpace over textWrapMode', 'textWrapMode', 'whiteSpace'],
+    ['all over anything', 'color', 'all'],
+  ])('does not move a rule past a shorthand that sets it: %s', (_, longhand, shorthand) => {
+    const rules = [
+      { selector: '&:hover', style: { [longhand]: 'a' } },
+      { selector: '&:focus', style: { [shorthand]: 'b' } },
+      { selector: '&:hover', style: { [longhand]: 'c' } },
     ];
     expect(mergeRules(rules)).toHaveLength(3);
   });

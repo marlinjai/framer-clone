@@ -127,10 +127,25 @@ export function steppedOut(selector: string): SteppedSelector {
   return { selector: `${head}${combinator}${tail}${rest}`, raisesWeight: false };
 }
 
-/** A class name as an element can carry it, or null when it is not one a stored class may be built from. */
+/**
+ * A source class as text a kept class may hold, one to one: `_` becomes `__`, `/` becomes `_s`, and any other
+ * character outside letters, digits, `-`, `:`, `.` and `%` becomes `_x<hex>_`. So `group/item` and `group-item`
+ * stay two classes, and since each character is written alone, a substring of a class stays a substring.
+ */
+export function encodeClass(text: string): string {
+  let out = '';
+  for (const ch of text) {
+    if (/[A-Za-z0-9:.%-]/.test(ch)) out += ch;
+    else if (ch === '_') out += '__';
+    else if (ch === '/') out += '_s';
+    else out += `_x${(ch.codePointAt(0) as number).toString(16)}_`;
+  }
+  return out;
+}
+
+/** A class a selector names, as an element carries it, or null when the name is not one a selector may use. */
 export function keptClassName(name: string): string | null {
-  const plain = name.replace(/\//g, '-');
-  return /^[A-Za-z0-9_-]+$/.test(plain) ? `${KEPT_CLASS_PREFIX}${plain}` : null;
+  return /^[A-Za-z0-9_/-]+$/.test(name) ? `${KEPT_CLASS_PREFIX}${encodeClass(name)}` : null;
 }
 
 /** One attribute selector on `class`, as a rule reads it. */
@@ -140,8 +155,8 @@ export interface ClassReader {
   caseInsensitive: boolean;
 }
 
-/** A kept class in full, so a substring selector reads it unchanged. Characters a class should not hold become `_`. */
-export const keptSourceClass = (token: string): string => `${KEPT_CLASS_PREFIX}${token.replace(/[^\w:./%-]/g, '_')}`;
+/** A kept class in full, under the same encoding, so a reader's encoded operand still finds it. */
+export const keptSourceClass = (token: string): string => `${KEPT_CLASS_PREFIX}${encodeClass(token)}`;
 
 /** Whether a reader could match this source class, on the name as it stood in the source. */
 export function readsClass({ operator, operand, caseInsensitive }: ClassReader, token: string): boolean {
@@ -203,7 +218,7 @@ const readsPlatformClass = (operand: string): boolean =>
 /**
  * What a selector reads from `class`, each kind handled once. A class it names, `group` and any other, takes the
  * prefix in the selector and on the element, which also turns `.group\/item`, refused for its backslash, into
- * `.u-c-group-item`. An attribute selector is listed so that the classes it could read are kept, and `^=`, `~=` and
+ * `.u-c-group_sitem`. An attribute selector is listed so that the classes it could read are kept, and `^=`, `~=` and
  * `|=` take the prefix in their operand. `=` and `$=` read the whole attribute, which holds the renderer's classes
  * too, and a reader that could match those would mean something else: both are refused.
  */
@@ -223,9 +238,10 @@ export function readSelector(selector: string): ReadSelector {
       return whole;
     }
     readers.push({ operator, operand, caseInsensitive: flag === 'i' || flag === 'I' });
-    if (operator === '*=') return whole;
+    // The class is stored encoded, so the operand is too. A prefix match also takes the prefix.
     const flagText = flag ? ` ${flag}` : '';
-    return `[class${operator}"${KEPT_CLASS_PREFIX}${operand.replace(/"/g, '_')}"${flagText}]`;
+    const encoded = encodeClass(operand);
+    return `[class${operator}"${operator === '*=' ? encoded : `${KEPT_CLASS_PREFIX}${encoded}`}"${flagText}]`;
   });
   if (refused) return { selector, names, readers, refused };
   const pieces = withOperands.split(DARK_SELECTOR).map((piece) => prefixClasses(piece, names));

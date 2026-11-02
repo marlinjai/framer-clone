@@ -199,10 +199,10 @@ describe('classes that selectors read', () => {
       { key: 'c', parent: 'g', classes: ['group-hover/item:p-1', 'peer-checked/label:p-2'] },
       { key: 'l', parent: 'g', classes: ['peer/label'] },
     ]);
-    expect(result.nodes.get('g')?.className).toBe('u-c-group-item');
-    expect(result.nodes.get('l')?.className).toBe('u-c-peer-label');
+    expect(result.nodes.get('g')?.className).toBe('u-c-group_sitem');
+    expect(result.nodes.get('l')?.className).toBe('u-c-peer_slabel');
     const rules = selectorRules(result.nodes.get('c')?.rules);
-    expect(rules.map((rule) => rule.selector)).toEqual(['&:is(:where(.u-c-group-item):hover *)', '&:is(:where(.u-c-peer-label):checked ~ *)']);
+    expect(rules.map((rule) => rule.selector)).toEqual(['&:is(:where(.u-c-group_sitem):hover *)', '&:is(:where(.u-c-peer_slabel):checked ~ *)']);
     expect(rules.every((rule) => parseRule(rule).ok)).toBe(true);
   });
 
@@ -213,7 +213,7 @@ describe('classes that selectors read', () => {
     ]);
     expect(result.nodes.get('i')?.className).toBe('u-c-size-6');
     expect(result.nodes.get('i')?.style).toMatchObject({ width: 'calc(var(--spacing) * 6)' });
-    expect(selectorRules(result.nodes.get('b')?.rules)[0].selector).toBe("& svg:not([class*='size-'])");
+    expect(selectorRules(result.nodes.get('b')?.rules)[0].selector).toBe('& svg:not([class*="size-"])');
   });
 
   it('prefixes the operand of a ^= reader', async () => {
@@ -234,6 +234,23 @@ describe('classes that selectors read', () => {
     const result = await convert([{ key: 'p', classes: ['[&_.fixed]:p-1'] }, { key: 'c', parent: 'p', classes: ['fixed'] }]);
     expect(selectorRules(result.nodes.get('p')?.rules)[0].selector).toBe('& .u-c-fixed');
     expect(result.nodes.get('c')?.className).toBe('u-c-fixed');
+  });
+
+  it('keeps a named group and a class of the same spelling apart', async () => {
+    const result = await convert([
+      { key: 'g', classes: ['group/item'] },
+      { key: 'h', classes: ['group-item'] },
+      { key: 'c', parent: 'g', classes: ['group-hover/item:p-1', '[.group-item_&]:p-2', '[&_.group-item]:m-1'] },
+    ]);
+    expect(result.nodes.get('g')?.className).toBe('u-c-group_sitem');
+    expect(result.nodes.get('h')?.className).toBe('u-c-group-item');
+    expect(selectorRules(result.nodes.get('c')?.rules).map((rule) => rule.selector).sort()).toEqual(['& .u-c-group-item', '&:is(:where(.u-c-group_sitem):hover *)']);
+  });
+
+  it('encodes a reader operand as the class it reads is encoded', async () => {
+    const result = await convert([{ key: 'b', classes: ["[&_[class*='a/b']]:p-1"] }, { key: 'i', parent: 'b', classes: ['xa/b'] }]);
+    expect(selectorRules(result.nodes.get('b')?.rules)[0].selector).toBe('& [class*="a_sb"]');
+    expect(result.nodes.get('i')?.className).toBe('u-c-xa_sb');
   });
 
   it('drops a marker nothing reads, with no line', async () => {
@@ -364,6 +381,38 @@ describe('what the class string costs and holds', () => {
   it('gives hostile candidates no output or a refused rule', async () => {
     const { node } = await one('[color:red;}@import"https://evil.test/x.css"] [--x:1}body{display:none] [@import_"https://evil.test/x.css"]:p-1');
     expect(JSON.stringify(node)).not.toMatch(/@import|body\{/);
+  });
+
+  it('refuses stacked negations before the compile, where they exhaust memory', async () => {
+    // The first three are the review's: each passes the negation count on its own, and the variant count too.
+    const payloads = ['not-hover:'.repeat(24) + 'p-1', 'not-has-hover:'.repeat(20) + 'p-1', 'not-group-hover:'.repeat(16) + 'p-1', 'not-hover:not-hover:not-hover:p-1', `${'hover:'.repeat(9)}p-1`];
+    const started = Date.now();
+    const result = await convert([{ key: 'n', classes: [...payloads, 'p-2'] }]);
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(result.nodes.get('n')?.style).toEqual({ '--spacing': '0.25rem', padding: 'calc(var(--spacing) * 2)' });
+    expect(result.lines.filter((line) => line.kind === 'cap').map((line) => [line.detail, line.source])).toEqual([
+      ['overVariants', payloads[0]], ['overVariants', payloads[1]], ['overVariants', payloads[2]], ['overNegations', payloads[3]], ['overVariants', payloads[4]],
+    ]);
+  });
+
+  it('refuses three negations in few variants, and compiles two', async () => {
+    expect(linesFor((await one('not-hover:has-[a]:not-focus:p-1')).result, 'overNegations')).toHaveLength(1);
+    const two = await one('not-has-hover:p-1');
+    expect(linesFor(two.result, 'overNegations')).toEqual([]);
+    expect(two.node.rules?.length).toBeGreaterThan(0);
+  });
+
+  it('still compiles what real classes stack', async () => {
+    const { node, result } = await one('not-hover:not-focus:p-1 dark:md:hover:focus-visible:aria-invalid:p-2 group-has-[>svg]:p-3');
+    expect(result.lines.filter((line) => line.kind === 'cap')).toEqual([]);
+    // `not-hover:` writes two: the selector, and the query for a device with no hover.
+    expect(selectorRules(node.rules)).toHaveLength(4);
+  });
+
+  it('refuses behavior and -moz-binding, which the sheet refuses by name', async () => {
+    const { node, result } = await one('[behavior:url(x.htc)] [-moz-binding:url(x.xml#b)] p-1');
+    expect(node.style).toEqual({ '--spacing': '0.25rem', padding: 'calc(var(--spacing) * 1)' });
+    expect(linesFor(result, 'refusedRule')).toHaveLength(2);
   });
 
   it('stores no rules on a node over the cap, and says so', async () => {
