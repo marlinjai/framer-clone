@@ -46,6 +46,10 @@
 // FIELD_SIZING_GUARD, the line such a page's sheet ends with: a control sized by
 // its text is a width a rule can read.
 //
+// A rule on `:root` applies to the document, so the page root is the only node that
+// may hold one, and it asks for no class and moves no style: the root node is not
+// its subject. Such a node still makes this a page with a rule, for everything above.
+//
 // `fc-` and `fc_` names belong to this step, so a stored className cannot hold one:
 // it would take another node's styles, a step sideways out of that node.
 //
@@ -85,6 +89,7 @@ import {
   reachesInsideNode,
   readRules,
   type ParsedDefinitionRule,
+  type ParsedRootRule,
   type ParsedSelectorRule,
   type ReadRules,
 } from '@/lib/rules/rules';
@@ -148,6 +153,7 @@ export function applyResponsiveStyles(
   const primaryId = largestFirst(breakpoints)[0]?.id;
   const rules: ResponsiveRuleInput[] = [];
   const authored: AuthoredRulesInput[] = [];
+  const rootRules: ParsedRootRule[] = [];
   const definitions: DefinitionInput[] = [];
   const hoverPresets = new Set<HoverKind>();
   const claim = definitionClaims();
@@ -163,6 +169,8 @@ export function applyResponsiveStyles(
   const parsed = new Map<string, ReadRules>();
   /** A list holding an oversized definition is refused by count, so it is never serialized to find its twin. */
   const oversized = new WeakMap<unknown[], ReadRules>();
+  /** What the page root's list reads as there, and only there: `:root` is refused anywhere else. */
+  let pageRootRead: ReadRules | undefined;
   let anonymous = 0;
 
   /** A class for this input: the one already issued for it, or the next free name. */
@@ -204,20 +212,28 @@ export function applyResponsiveStyles(
     }
   };
 
+  const reportRefused = (node: ComponentNode, read: ReadRules): ReadRules => {
+    for (const { index, reason, rule } of read.refused) {
+      const id = (rule as { id?: unknown } | null)?.id;
+      problems.push({ node: node.id ?? 'unnamed', rule: typeof id === 'string' ? id : `#${index}`, reason });
+    }
+    return read;
+  };
+
   const readNode = (node: ComponentNode): ReadRules | null => {
     if (node.compiledRules) return { rules: node.compiledRules, refused: [] };
     const stored = (node.props as Record<string, unknown> | undefined)?.rules;
     if (!isRuleList(stored) || isTextNodeType(node.type)) return null;
+    if (node === root && !node.placementRoot) {
+      pageRootRead ??= reportRefused(node, readRules({ rules: stored }, { pageRoot: true }));
+      return pageRootRead;
+    }
     const signature = stored.some(holdsTooManyBlocks) ? null : JSON.stringify(stored);
     let read = signature === null ? oversized.get(stored) : parsed.get(signature);
     if (!read) {
-      read = readRules({ rules: stored });
+      read = reportRefused(node, readRules({ rules: stored }));
       if (signature === null) oversized.set(stored, read);
       else parsed.set(signature, read);
-      for (const { index, reason, rule } of read.refused) {
-        const id = (rule as { id?: unknown } | null)?.id;
-        problems.push({ node: node.id ?? 'unnamed', rule: typeof id === 'string' ? id : `#${index}`, reason });
-      }
     }
     return read;
   };
@@ -262,7 +278,12 @@ export function applyResponsiveStyles(
     delete next.placementRoot;
     const read = readNode(node);
     const selectorRules = (read?.rules ?? []).filter((rule): rule is ParsedSelectorRule => rule.kind === 'selector');
-    for (const rule of read?.rules ?? []) if (rule.kind === 'definition') claimDefinition(node, rule);
+    for (const rule of read?.rules ?? []) {
+      if (rule.kind === 'definition') claimDefinition(node, rule);
+      else if (rule.kind !== 'root') continue;
+      else if (node === root && !node.placementRoot) rootRules.push(rule);
+      else problems.push({ node: node.id ?? 'unnamed', rule: rule.id, reason: 'only the root of a page can hold a rule on :root' });
+    }
     const reaches = selectorRules.some(rule => rule.parts.some(reachesInsideNode));
     if (node.props) {
       const props: Record<string, unknown> = {};
@@ -285,10 +306,11 @@ export function applyResponsiveStyles(
         }
         props[name] = value;
       }
-      if (typeof props.className === 'string') {
-        const className = withoutIssuedClasses(props.className);
-        if (className) props.className = className;
-        else delete props.className;
+      for (const name of ['className', 'class']) {
+        if (typeof props[name] !== 'string') continue;
+        const className = withoutIssuedClasses(props[name]);
+        if (className) props[name] = className;
+        else delete props[name];
       }
       const classes: string[] = [];
       const stored = props.style;
@@ -340,6 +362,7 @@ export function applyResponsiveStyles(
     definitions,
     hoverPresets: [...hoverPresets],
     authored,
+    rootRules,
     fieldGuard: hasRules,
     gated: options.gated,
     onDropRule: ({ className, ruleId, reason }: DroppedRule) => problems.push({ node: className, rule: ruleId, reason }),

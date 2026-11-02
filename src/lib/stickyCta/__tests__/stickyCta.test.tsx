@@ -67,9 +67,11 @@ describe('stickyCtaCss', () => {
     expect(css).toContain('position:fixed!important');
     expect(css).toContain('bottom:0!important');
     expect(css).toContain('env(safe-area-inset-bottom,0px)');
-    expect(css).toContain('body{padding-bottom:var(--fc-sticky-cta-h,72px)!important}');
+    expect(css).toContain('body{padding-bottom:min(var(--fc-sticky-cta-h,72px),30vh)!important}');
     // The consent banner sits above the bar, so both stay usable.
-    expect(css).toContain(`#${CONSENT_BANNER_ID}{bottom:calc(var(--fc-sticky-cta-h,72px) + 12px)!important}`);
+    expect(css).toContain(`#${CONSENT_BANNER_ID}{bottom:calc(min(var(--fc-sticky-cta-h,72px),30vh) + 12px)!important}`);
+    // A rule's two classes and a min-height cannot undo the cap.
+    expect(css).toContain('[data-fc-sticky-cta][data-fc-sticky-cta][data-fc-sticky-cta]{min-height:0!important;max-height:30vh!important;overflow:hidden!important}');
     expect(css).toMatch(/z-index:2147482000/);
   });
 

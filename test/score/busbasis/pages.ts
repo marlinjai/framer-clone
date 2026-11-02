@@ -38,7 +38,7 @@ const CATEGORIES = need('nested categories', 'shop-feature-missing', 'Categories
 const FACETED_SEARCH = need('faceted search', 'shop-feature-missing', 'Meilisearch with facets, sort and pagination. framer-clone has search only in the admin.');
 const LIVE_LIST = need('live product list', 'shop-feature-missing', 'The tree is a frozen copy of the rows. A real page binds them to the catalogue through the product list island, which was not rebuilt here.');
 
-const DOCUMENT_STYLES = need('styles on html', 'page-level-css', 'The original sets smooth scrolling and hides sideways overflow on html. No node can hold that, because the route owns html, and the computed styles of html are not compared.');
+const DOCUMENT_STYLES = need('styles on html', 'page-level-css', 'The original sets smooth scrolling and hides sideways overflow on html. The page root can hold that now, as a rule on :root, but the frozen trees were lifted before it could, so they do not, and the computed styles of html are not compared. This closes with a new lift and an html comparison.');
 const CHROME = [MOBILE_MENU, CART_BADGE, LEGAL_MODALS, DOCUMENT_STYLES];
 
 export const BUSBASIS_PAGES: BusbasisPage[] = [

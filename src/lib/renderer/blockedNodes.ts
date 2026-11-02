@@ -10,9 +10,9 @@
 // a handler. test/renderGate tries all of it in real browsers.
 
 import { REVIEWED_ANIMATED_ATTRIBUTES } from '@/lib/ai/pageGen/reviewedVocabulary';
-import { FORM_CONFIG_PROPS } from '@/lib/forms/definition';
+import { FORM_CONFIG_PROPS, FORM_SHADOWING_NAMES } from '@/lib/forms/definition';
 import { DOM_MEMBER_NAMES } from '@/lib/renderer/domMemberNames.generated';
-import { isRenderedAttribute, isRenderedTag } from '@/lib/renderer/renderVocabulary';
+import { isOtherSpelling, isRenderedAttribute, isRenderedTag } from '@/lib/renderer/renderVocabulary';
 import { TEXT_NODE_TYPE } from '@/lib/renderer/textNode';
 import { STICKY_CTA_PROP_KEYS } from '@/lib/stickyCta/stickyCta';
 import { SAFE_PROPERTY, UNSAFE_VALUE, cssValueText, isContainedValue } from '@/lib/responsive/responsiveCss';
@@ -55,7 +55,8 @@ function isSafeAddress(address: string): boolean {
  * `name` becomes a property of `document`: `name="createElement"` stopped every
  * island on a page. Any `id` becomes a global, which is how `__next_f` and
  * `webpackChunk_N_E` stopped hydration. A member's name stays open as an ordinary
- * `id` (`title`, `links`), except on an `img`, see withoutDocumentId.
+ * `id` (`title`, `links`), except on what a form or `document` exposes by id, see
+ * withoutClobberingId.
  */
 const DOM_MEMBERS: ReadonlySet<string> = new Set(DOM_MEMBER_NAMES);
 const RESERVED_ID = /^__|^webpackChunk|^fc-|^ground-wrapper-/;
@@ -111,7 +112,7 @@ export function isDroppedProp(name: string, value: unknown): boolean {
   if (name === 'dangerouslySetInnerHTML') return true;
   if (typeof value === 'function') return false;
   const lower = name.toLowerCase();
-  return !isRenderedAttribute(lower) || isUnsafeValue(lower, value);
+  return isOtherSpelling(name) || !isRenderedAttribute(lower) || isUnsafeValue(lower, value);
 }
 
 /** The rule alone, for the panel: whether a node with this tag renders nothing. */
@@ -121,15 +122,55 @@ export function isRefusedTag(tag: string): boolean {
   return BLOCKED_TAGS.has(tag.toLowerCase()) || !isRenderedTag(tag);
 }
 
+/** SVG names in the vocabulary that mean something else outside `svg`, see isBlockedTag. */
+const SVG_ONLY_TAGS: ReadonlySet<string> = new Set(['title', 'image']);
+
+/** Where HTML is SVG's own content: integration points, and MathML's text elements. */
+const INTEGRATION_POINTS: ReadonlySet<string> = new Set(['foreignobject', 'desc', 'title', 'mi', 'mo', 'mn', 'ms', 'mtext', 'annotation-xml']);
+
+/**
+ * Tags the HTML parser leaves `svg` and `math` for, taking everything after them with it, while
+ * React keeps them inside, so server markup and hydration disagree (error 418). Lower
+ * case. `font` only does it with an attribute, which is not worth telling apart.
+ */
+const BREAKS_OUT_OF_SVG: ReadonlySet<string> = new Set(`
+  b big blockquote body br center code dd div dl dt em embed font h1 h2 h3 h4 h5 h6 head hr i img li
+  listing menu meta nobr ol p pre ruby s small span strong strike sub sup table tt u ul var
+`.trim().split(/\s+/));
+
+/**
+ * Where a node stands for the HTML parser: in SVG, in MathML, or in HTML (false).
+ * Both foreign kinds lift an HTML tag out of themselves; only SVG holds `title`.
+ */
+export type ForeignContent = 'svg' | 'math' | false;
+
+/** What the children of this tag stand in, given what the tag stands in. */
+export function contentBelow(tag: string, current: ForeignContent): ForeignContent {
+  const name = tag.toLowerCase();
+  if (name === 'svg') return 'svg';
+  if (name === 'math') return 'math';
+  return current !== false && !INTEGRATION_POINTS.has(name) ? current : false;
+}
+
+/** Whether this node's tag decides anything by where it stands in `svg`. */
+export const dependsOnSvgContent = (tag: string): boolean => {
+  const name = tag.toLowerCase();
+  return SVG_ONLY_TAGS.has(name) || BREAKS_OUT_OF_SVG.has(name);
+};
+
 /**
  * Whether a node with this resolved tag must render nothing. `title` is an SVG name
  * in the vocabulary. Anywhere else it is the document's, and React lifts it to `head`,
- * so a node could rename the tab.
+ * so a node could rename the tab. The parser reads `image` anywhere else as `img`,
+ * which server markup and React then disagree about, so hydration fails. The same
+ * goes for an HTML tag directly in `svg` or `math`: an HTML child belongs in
+ * `foreignObject`, or in one of MathML's text elements.
  */
-export function isBlockedTag(tag: unknown, insideSvg = false): boolean {
+export function isBlockedTag(tag: unknown, foreign: ForeignContent = false): boolean {
   if (typeof tag !== 'string') return false;
-  const documentTitle = tag.toLowerCase() === 'title' && !insideSvg;
-  if (!documentTitle && !isRefusedTag(tag)) return false;
+  const name = tag.toLowerCase();
+  const outOfPlace = (foreign !== false && BREAKS_OUT_OF_SVG.has(name)) || (foreign !== 'svg' && SVG_ONLY_TAGS.has(name));
+  if (!outOfPlace && !isRefusedTag(tag)) return false;
   warnOnce(`<${tag.toLowerCase()}>`);
   return true;
 }
@@ -180,11 +221,30 @@ export function safeInlineStyle(style: Record<string, unknown>): Record<string, 
   return Object.fromEntries(keys.filter((key) => !isUnsafeInline(key, style[key])).map((key) => [key, style[key]]));
 }
 
-/** An `img` with a `name` also puts its `id` on `document`, and only that element does. */
-export function withoutDocumentId(tag: unknown, props: Record<string, unknown>): Record<string, unknown> {
-  if (typeof tag !== 'string' || tag.toLowerCase() !== 'img' || typeof props.id !== 'string' || !DOM_MEMBERS.has(props.id)) return props;
+/**
+ * What a form exposes by `id`, read from Chromium and WebKit by test/renderGate. By tag
+ * and not by place: `form=` ties a control to a form from anywhere on the page, and an
+ * island renders its children without knowing what stands around it.
+ */
+export const FORM_NAMED_TAGS: ReadonlySet<string> = new Set(['button', 'fieldset', 'input', 'output', 'select', 'textarea']);
+
+/**
+ * The rule alone, for the panel: whether this tag loses this `id`. An `img` with a
+ * `name` also puts its `id` on `document`, and only that element does; it and every
+ * form control put it on their form. `image` counts as `img`, so that this rule does
+ * not rest on a caller's SVG context being right.
+ */
+export function isDroppedId(tag: unknown, id: unknown): boolean {
+  if (typeof tag !== 'string' || typeof id !== 'string') return false;
+  const name = tag.toLowerCase();
+  return name === 'img' || name === 'image' ? DOM_MEMBERS.has(id) : FORM_NAMED_TAGS.has(name) && FORM_SHADOWING_NAMES.has(id);
+}
+
+/** `props` without an `id` that replaces a member. Another spelling of `id` is refused before this. */
+export function withoutClobberingId(tag: unknown, props: Record<string, unknown>): Record<string, unknown> {
+  if (!isDroppedId(tag, props.id)) return props;
   const { id, ...rest } = props;
-  warnOnce(`the id ${id}`);
+  warnOnce(`the id ${String(id)}`);
   return rest;
 }
 
@@ -199,6 +259,19 @@ export function withoutBlockedProps(props: Record<string, unknown>): Record<stri
   return Object.fromEntries(kept.map((name) => [name, name === 'style' ? style : props[name]]));
 }
 
+const FORM_OVERRIDES: ReadonlySet<string> = new Set(['formaction', 'formmethod', 'formtarget', 'formenctype']);
+
+/**
+ * `props` without what sends a form somewhere else, the same object when nothing goes.
+ * On a live form's controls these would carry a visitor's data past the platform's
+ * submission. An owner's `action` on a plain form is a different matter, see below.
+ */
+export function withoutFormOverrides(props: Record<string, unknown>): Record<string, unknown> {
+  const names = Object.keys(props);
+  if (!names.some((name) => FORM_OVERRIDES.has(name.toLowerCase()))) return props;
+  return Object.fromEntries(names.filter((name) => !FORM_OVERRIDES.has(name.toLowerCase())).map((name) => [name, props[name]]));
+}
+
 // The canvas and the preview run on the signed-in editor's origin, so a stored
 // page must not be able to draw over the editor or send anything from it: a
 // popover sits in the top layer above every panel, and a form inside it is a
@@ -206,16 +279,19 @@ export function withoutBlockedProps(props: Record<string, unknown>): Record<stri
 // site's own origin.
 const EDITOR_SURFACE_DROPPED: ReadonlySet<string> = new Set([
   'popover', 'popovertarget', 'popovertargetaction', 'command', 'commandfor',
-  'action', 'formaction', 'formtarget', 'ping',
+  'action', 'form', 'formaction', 'formenctype', 'formmethod', 'formtarget', 'ping',
 ]);
 
-/** `props` as the editor surfaces render them; the same object when nothing is dropped. */
-export function withoutEditorSurfaceProps(props: Record<string, unknown>): Record<string, unknown> {
+/**
+ * `props` as this tag renders them on the editor surfaces; the same object when
+ * nothing is dropped. On MathML's `mo`, `form` is only how an operator is laid out.
+ */
+export function withoutEditorSurfaceProps(tag: unknown, props: Record<string, unknown>): Record<string, unknown> {
+  const isOperator = typeof tag === 'string' && tag.toLowerCase() === 'mo';
+  const dropped = (name: string) => EDITOR_SURFACE_DROPPED.has(name.toLowerCase()) && !(isOperator && name === 'form');
   const names = Object.keys(props);
-  if (!names.some((name) => EDITOR_SURFACE_DROPPED.has(name.toLowerCase()))) return props;
-  return Object.fromEntries(
-    names.filter((name) => !EDITOR_SURFACE_DROPPED.has(name.toLowerCase())).map((name) => [name, props[name]]),
-  );
+  if (!names.some(dropped)) return props;
+  return Object.fromEntries(names.filter((name) => !dropped(name)).map((name) => [name, props[name]]));
 }
 
 /** A form on an editor surface never submits: with no action it would reload the editor. */

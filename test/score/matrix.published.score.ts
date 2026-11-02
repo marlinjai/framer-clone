@@ -18,6 +18,7 @@ import { BREAKPOINTS, renderPublished } from './lib/published';
 import {
   atRuleProbe,
   isPageLevelRow,
+  rootProbe,
   ruleNode,
   selectorProbe,
   styleNode,
@@ -287,6 +288,7 @@ function probeWidthMediaFeature(key: string): void {
 
 function probe(entry: Entry): void {
   const key = rowKey(entry.kind, entry.id);
+  if (entry.id === ':root') return probeRule(rootProbe(), key, 'page-level-css');
   if (isPageLevelRow(entry.id)) return probePageLevel(key);
   switch (entry.kind) {
     case 'html-element':

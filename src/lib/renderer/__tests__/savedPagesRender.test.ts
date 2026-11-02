@@ -7,7 +7,7 @@ import { COMPONENT_REGISTRY, FORM_COMPONENTS } from '@/lib/componentRegistry';
 import { buildLegalTemplate } from '@/lib/legal/templates';
 import { legalPageRoot } from '@/lib/legal/legalPageTree';
 import { FORM_CONFIG_PROPS } from '@/lib/forms/definition';
-import { isDroppedProp, isRefusedTag, safeInlineStyle } from '@/lib/renderer/blockedNodes';
+import { contentBelow, type ForeignContent, isBlockedTag, isDroppedId, isDroppedProp, isRefusedTag, safeInlineStyle } from '@/lib/renderer/blockedNodes';
 import { buildHomeSnapshot } from '@/lib/renderer/server/seedDemoSite';
 import { EMPTY_BUSINESS } from '@/lib/site/siteSettings';
 import { stripStickyCtaProps } from '@/lib/stickyCta/stickyCta';
@@ -23,19 +23,21 @@ interface Tree {
 /** Read by a renderer and removed before an element exists, so the gate never decides them. */
 const NOT_ATTRIBUTES = new Set([...FORM_CONFIG_PROPS, 'query', 'bindings', 'effects', 'rules']);
 
-function losses(tree: Tree, where: string, out: string[] = []): string[] {
-  if (typeof tree.type === 'string' && isRefusedTag(tree.type)) out.push(`${where}: <${tree.type}>`);
+function losses(tree: Tree, where: string, out: string[] = [], foreign: ForeignContent = false): string[] {
+  if (typeof tree.type === 'string' && (isRefusedTag(tree.type) || isBlockedTag(tree.type, foreign))) out.push(`${where}: <${tree.type}>`);
   const props = tree.props ?? {};
   const attributes = stripStickyCtaProps(props);
   for (const [name, value] of Object.entries(attributes)) {
     if (!NOT_ATTRIBUTES.has(name) && isDroppedProp(name, value)) out.push(`${where}: ${name} on <${String(tree.type)}>`);
   }
+  if (isDroppedId(tree.type, props.id)) out.push(`${where}: the id ${String(props.id)} on <${String(tree.type)}>`);
   const { style } = props;
   if (style && typeof style === 'object') {
     const flat = Object.fromEntries(Object.entries(style).map(([key, value]) => [key, value && typeof value === 'object' ? Object.values(value)[0] : value]));
     if (safeInlineStyle(flat) !== flat) out.push(`${where}: a style on <${String(tree.type)}>`);
   }
-  for (const child of Array.isArray(tree.children) ? tree.children : []) losses(child as Tree, where, out);
+  const name = typeof tree.type === 'string' ? tree.type : '';
+  for (const child of Array.isArray(tree.children) ? tree.children : []) losses(child as Tree, where, out, contentBelow(name, foreign));
   return out;
 }
 

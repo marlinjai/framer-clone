@@ -9,8 +9,10 @@ import {
   parseWrapper,
   readRules,
   storedRulesOf,
+  type ParsedSelectorRule,
   type StoredRule,
 } from '@/lib/rules/rules';
+import { buildResponsiveCss } from '@/lib/responsive/responsiveCss';
 import samples from '../../../../test/score/data/samples.json';
 import { atRuleProbe, selectorProbe, wrapperProbe } from '../../../../test/score/lib/encodings';
 
@@ -884,5 +886,18 @@ describe('a condition on a rule', () => {
   it('refuses a component state that was never compiled, which would be the permanent look', () => {
     expect(parseRule(rule({ componentState: 'open' }), { states }).ok).toBe(false);
     expect(parseRule(rule({ componentState: 'open' })).ok).toBe(false);
+  });
+});
+
+describe('an empty custom property', () => {
+  it('is a value a rule can hold, and a real property cannot make use of', () => {
+    expect(parseRule({ id: 'r', selector: '&:hover', style: { '--tw-blur': ' ', color: 'red' } }).ok).toBe(true);
+    const { rules } = readRules({ rules: [{ id: 'r', selector: '&', style: { '--tw-blur': ' ', color: ' ' } }] });
+    const sheet = buildResponsiveCss([], [], { authored: [{ className: 'fc_r-a', rules: rules as ParsedSelectorRule[] }] });
+    expect(sheet).toBe('.fc_r-a.fc_r-a{--tw-blur: }');
+  });
+
+  it.each([' ;color:red', ' ;}', ' {', ' \\'])('refuses %j behind the space', (value) => {
+    expect(parseRule({ id: 'r', selector: '&', style: { '--x': value } }).ok).toBe(false);
   });
 });

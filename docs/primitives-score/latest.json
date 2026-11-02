@@ -1,28 +1,28 @@
 {
-  "generatedAt": "2026-11-02T06:43:42.627Z",
+  "generatedAt": "2026-11-02T08:06:36.208Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 275,
+  "durationSeconds": 259,
   "matrix": {
     "surfaces": {
       "format": {
-        "pass": 1702,
-        "fail": 131,
+        "pass": 1795,
+        "fail": 38,
         "notTested": 0,
         "total": 1833
       },
       "renderer": {
-        "pass": 1662,
-        "fail": 171,
+        "pass": 1755,
+        "fail": 78,
         "notTested": 0,
         "total": 1833
       },
       "canvas": {
-        "pass": 1636,
-        "fail": 197,
+        "pass": 1637,
+        "fail": 196,
         "notTested": 0,
         "total": 1833
       },
@@ -139,14 +139,14 @@
       },
       "html-event-handler": {
         "format": {
-          "pass": 0,
-          "fail": 100,
+          "pass": 92,
+          "fail": 8,
           "notTested": 0,
           "total": 100
         },
         "renderer": {
-          "pass": 0,
-          "fail": 100,
+          "pass": 92,
+          "fail": 8,
           "notTested": 0,
           "total": 100
         },
@@ -363,20 +363,20 @@
       },
       "css-selector": {
         "format": {
-          "pass": 95,
-          "fail": 11,
+          "pass": 96,
+          "fail": 10,
           "notTested": 0,
           "total": 106
         },
         "renderer": {
-          "pass": 95,
-          "fail": 11,
+          "pass": 96,
+          "fail": 10,
           "notTested": 0,
           "total": 106
         },
         "canvas": {
-          "pass": 95,
-          "fail": 11,
+          "pass": 96,
+          "fail": 10,
           "notTested": 0,
           "total": 106
         },
@@ -3650,106 +3650,106 @@
       "html-element-attribute:video.preload": "pass pass pass pass pass",
       "html-element-attribute:video.src": "pass pass pass pass pass",
       "html-element-attribute:video.width": "pass pass attribute-read-as-style pass attribute-read-as-style",
-      "html-event-handler:onanimationcancel": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onanimationend": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onanimationiteration": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onanimationstart": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onauxclick": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onbeforeinput": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onanimationcancel": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onanimationend": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onanimationiteration": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onanimationstart": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onauxclick": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onbeforeinput": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
       "html-event-handler:onbeforematch": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
       "html-event-handler:onbeforexrselect": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onblur": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onclick": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:oncontentvisibilityautostatechange": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:oncontextmenu": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:oncopy": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:oncut": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:ondblclick": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onfocus": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onfullscreenchange": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onfullscreenerror": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:ongotpointercapture": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:oninput": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onkeydown": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onkeyup": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onlostpointercapture": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onmousedown": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onmouseenter": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onmouseleave": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onmousemove": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onmouseout": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onmouseover": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onmouseup": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onpaste": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onpointercancel": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onpointerdown": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onpointerenter": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onpointerleave": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onpointermove": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onpointerout": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onpointerover": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onpointerup": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onscroll": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onscrollend": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onscrollsnapchange": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onscrollsnapchanging": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onblur": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onclick": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:oncontentvisibilityautostatechange": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:oncontextmenu": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:oncopy": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:oncut": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:ondblclick": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onfocus": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onfullscreenchange": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onfullscreenerror": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:ongotpointercapture": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:oninput": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onkeydown": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onkeyup": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onlostpointercapture": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onmousedown": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onmouseenter": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onmouseleave": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onmousemove": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onmouseout": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onmouseover": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onmouseup": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onpaste": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onpointercancel": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onpointerdown": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onpointerenter": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onpointerleave": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onpointermove": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onpointerout": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onpointerover": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onpointerup": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onscroll": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onscrollend": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onscrollsnapchange": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onscrollsnapchanging": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
       "html-event-handler:onsecuritypolicyviolation": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:ontransitioncancel": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:ontransitionend": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:ontransitionrun": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:ontransitionstart": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onwheel": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:ontransitioncancel": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:ontransitionend": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:ontransitionrun": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:ontransitionstart": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onwheel": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
       "html-event-handler:oncontextlost": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
       "html-event-handler:oncontextrestored": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:oncancel": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onclose": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onbeforetoggle": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onchange": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:oncommand": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:ondrag": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:ondragend": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:ondragenter": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:ondragleave": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:ondragover": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:ondragstart": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:ondrop": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onload": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:ontoggle": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onformdata": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onreset": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onsubmit": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:oninvalid": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onselect": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onselectionchange": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onabort": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:oncanplay": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:oncanplaythrough": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:ondurationchange": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onemptied": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:oncancel": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onclose": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onbeforetoggle": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onchange": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:oncommand": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:ondrag": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:ondragend": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:ondragenter": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:ondragleave": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:ondragover": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:ondragstart": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:ondrop": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onload": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:ontoggle": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onformdata": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onreset": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onsubmit": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:oninvalid": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onselect": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onselectionchange": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onabort": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:oncanplay": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:oncanplaythrough": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:ondurationchange": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onemptied": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
       "html-event-handler:onencrypted": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onended": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onerror": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onloadeddata": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onloadedmetadata": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onloadstart": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onpause": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onplay": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onplaying": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onprogress": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onratechange": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onseeked": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onseeking": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onstalled": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onsuspend": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:ontimeupdate": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onvolumechange": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onwaiting": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onended": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onerror": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onloadeddata": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onloadedmetadata": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onloadstart": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onpause": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onplay": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onplaying": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onprogress": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onratechange": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onseeked": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onseeking": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onstalled": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onsuspend": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:ontimeupdate": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onvolumechange": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onwaiting": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
       "html-event-handler:onwaitingforkey": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
       "html-event-handler:onslotchange": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:oncuechange": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onenterpictureinpicture": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onleavepictureinpicture": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onresize": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:oncuechange": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onenterpictureinpicture": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onleavepictureinpicture": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onresize": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
       "svg-element:a": "pass pass pass panel-no-tag-choice pass",
       "svg-element:animate": "pass pass pass panel-no-tag-choice pass",
       "svg-element:animateMotion": "pass pass pass panel-no-tag-choice pass",
@@ -4955,7 +4955,7 @@
       "css-selector::read-write": "pass pass pass pass ai-rule-refused",
       "css-selector::required": "pass pass pass pass ai-rule-refused",
       "css-selector::right": "page-level-css page-level-css page-level-css page-level-css page-level-css",
-      "css-selector::root": "page-level-css page-level-css page-level-css page-level-css page-level-css",
+      "css-selector::root": "pass pass pass page-level-css ai-rule-refused",
       "css-selector::scope": "pass pass pass pass ai-rule-refused",
       "css-selector::seeking": "pass pass pass pass ai-rule-refused",
       "css-selector::stalled": "pass pass pass pass ai-rule-refused",
@@ -5107,20 +5107,20 @@
     }
   },
   "corpus": {
-    "passed": 11,
-    "total": 14,
+    "passed": 13,
+    "total": 16,
     "checks": {
       "screenshot": {
-        "pass": 77,
-        "total": 90
+        "pass": 83,
+        "total": 96
       },
       "computed-styles": {
-        "pass": 69,
-        "total": 90
+        "pass": 75,
+        "total": 96
       },
       "accessibility-tree": {
-        "pass": 72,
-        "total": 90
+        "pass": 78,
+        "total": 96
       },
       "interaction": {
         "pass": 27,
@@ -5342,6 +5342,66 @@
         "fixture": "stylesheet-values",
         "group": "edge",
         "source": "hand-written: ordinary CSS values on a node whose other styles are responsive",
+        "pass": true,
+        "checks": {
+          "screenshot": {
+            "pass": 3,
+            "total": 3
+          },
+          "computed-styles": {
+            "pass": 3,
+            "total": 3
+          },
+          "accessibility-tree": {
+            "pass": 3,
+            "total": 3
+          },
+          "interaction": {
+            "pass": 0,
+            "total": 0
+          }
+        },
+        "failures": [],
+        "notMeasured": [],
+        "defaultBase": {
+          "pass": 0,
+          "total": 3
+        }
+      },
+      {
+        "fixture": "empty-variables",
+        "group": "edge",
+        "source": "hand-written: the var() chain Tailwind builds, with empty custom properties, in the sheet and inline",
+        "pass": true,
+        "checks": {
+          "screenshot": {
+            "pass": 3,
+            "total": 3
+          },
+          "computed-styles": {
+            "pass": 3,
+            "total": 3
+          },
+          "accessibility-tree": {
+            "pass": 3,
+            "total": 3
+          },
+          "interaction": {
+            "pass": 0,
+            "total": 0
+          }
+        },
+        "failures": [],
+        "notMeasured": [],
+        "defaultBase": {
+          "pass": 0,
+          "total": 3
+        }
+      },
+      {
+        "fixture": "document-styles",
+        "group": "edge",
+        "source": "hand-written: what a page sets on html and :root, read by the nodes under it",
         "pass": true,
         "checks": {
           "screenshot": {
@@ -6171,7 +6231,7 @@
             "state": "initial",
             "check": "screenshot",
             "gap": "unclassified",
-            "detail": "1.65 percent of pixels differ"
+            "detail": "0.56 percent of pixels differ"
           },
           {
             "fixture": "busbasis-home",
@@ -6179,7 +6239,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "545 differences on 531 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "531 differences on 531 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-home",
@@ -6195,7 +6255,7 @@
             "state": "hover e41",
             "check": "screenshot",
             "gap": "unclassified",
-            "detail": "1.65 percent of pixels differ"
+            "detail": "0.56 percent of pixels differ"
           },
           {
             "fixture": "busbasis-home",
@@ -6203,7 +6263,7 @@
             "state": "hover e41",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "545 differences on 531 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "531 differences on 531 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-home",
@@ -6227,7 +6287,7 @@
             "state": "initial",
             "check": "screenshot",
             "gap": "unclassified",
-            "detail": "2.09 percent of pixels differ"
+            "detail": "0.68 percent of pixels differ"
           },
           {
             "fixture": "busbasis-home",
@@ -6235,7 +6295,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "545 differences on 531 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "531 differences on 531 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-home",
@@ -6251,7 +6311,7 @@
             "state": "initial",
             "check": "screenshot",
             "gap": "unclassified",
-            "detail": "3.22 percent of pixels differ"
+            "detail": "0.99 percent of pixels differ"
           },
           {
             "fixture": "busbasis-home",
@@ -6259,7 +6319,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "545 differences on 531 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "531 differences on 531 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-home",
@@ -6299,7 +6359,7 @@
             "state": "needs: styles on html",
             "check": "interaction",
             "gap": "page-level-css",
-            "detail": "The original sets smooth scrolling and hides sideways overflow on html. No node can hold that, because the route owns html, and the computed styles of html are not compared."
+            "detail": "The original sets smooth scrolling and hides sideways overflow on html. The page root can hold that now, as a rule on :root, but the frozen trees were lifted before it could, so they do not, and the computed styles of html are not compared."
           },
           {
             "fixture": "busbasis-home",
@@ -6332,31 +6392,18 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.01648104228670635,
+            "ratio": 0.00563913173776455,
             "elementsCompared": 531,
             "elementsDiffering": 531,
-            "differences": 545,
+            "differences": 531,
             "byGap": {
               "unclassified": 530,
-              "empty-custom-property": 14,
               "blocked-embedded-content": 1
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 530
-              ],
-              [
-                "background-image",
-                9
-              ],
-              [
-                "backdrop-filter",
-                3
-              ],
-              [
-                "filter",
-                2
               ],
               [
                 "missing",
@@ -6367,31 +6414,18 @@
           {
             "viewport": "Desktop",
             "state": "hover e41",
-            "ratio": 0.01648104228670635,
+            "ratio": 0.005639002562830688,
             "elementsCompared": 531,
             "elementsDiffering": 531,
-            "differences": 545,
+            "differences": 531,
             "byGap": {
               "unclassified": 530,
-              "empty-custom-property": 14,
               "blocked-embedded-content": 1
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 530
-              ],
-              [
-                "background-image",
-                9
-              ],
-              [
-                "backdrop-filter",
-                3
-              ],
-              [
-                "filter",
-                2
               ],
               [
                 "missing",
@@ -6402,31 +6436,18 @@
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0.020886527086258988,
+            "ratio": 0.006847199614877229,
             "elementsCompared": 531,
             "elementsDiffering": 531,
-            "differences": 545,
+            "differences": 531,
             "byGap": {
               "unclassified": 530,
-              "empty-custom-property": 14,
               "blocked-embedded-content": 1
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 530
-              ],
-              [
-                "background-image",
-                9
-              ],
-              [
-                "backdrop-filter",
-                3
-              ],
-              [
-                "filter",
-                2
               ],
               [
                 "missing",
@@ -6437,31 +6458,18 @@
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0.03216196732356409,
+            "ratio": 0.009867340407613273,
             "elementsCompared": 531,
             "elementsDiffering": 531,
-            "differences": 545,
+            "differences": 531,
             "byGap": {
               "unclassified": 530,
-              "empty-custom-property": 14,
               "blocked-embedded-content": 1
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 530
-              ],
-              [
-                "background-image",
-                9
-              ],
-              [
-                "backdrop-filter",
-                3
-              ],
-              [
-                "filter",
-                2
               ],
               [
                 "missing",
@@ -6509,7 +6517,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "815 differences on 753 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "813 differences on 753 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-store",
@@ -6525,7 +6533,7 @@
             "state": "hover e26",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "815 differences on 753 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "813 differences on 753 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-store",
@@ -6549,7 +6557,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "815 differences on 753 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "813 differences on 753 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-store",
@@ -6565,7 +6573,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "815 differences on 753 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "813 differences on 753 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-store",
@@ -6597,7 +6605,7 @@
             "state": "needs: styles on html",
             "check": "interaction",
             "gap": "page-level-css",
-            "detail": "The original sets smooth scrolling and hides sideways overflow on html. No node can hold that, because the route owns html, and the computed styles of html are not compared."
+            "detail": "The original sets smooth scrolling and hides sideways overflow on html. The page root can hold that now, as a rule on :root, but the frozen trees were lifted before it could, so they do not, and the computed styles of html are not compared."
           },
           {
             "fixture": "busbasis-store",
@@ -6630,13 +6638,12 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.006506822459222083,
+            "ratio": 0.006511070158929318,
             "elementsCompared": 753,
             "elementsDiffering": 753,
-            "differences": 815,
+            "differences": 813,
             "byGap": {
-              "unclassified": 813,
-              "empty-custom-property": 2
+              "unclassified": 813
             },
             "byProperty": [
               [
@@ -6666,23 +6673,18 @@
               [
                 "padding-right",
                 10
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           },
           {
             "viewport": "Desktop",
             "state": "hover e26",
-            "ratio": 0.006506822459222083,
+            "ratio": 0.006511070158929318,
             "elementsCompared": 753,
             "elementsDiffering": 753,
-            "differences": 815,
+            "differences": 813,
             "byGap": {
-              "unclassified": 813,
-              "empty-custom-property": 2
+              "unclassified": 813
             },
             "byProperty": [
               [
@@ -6712,23 +6714,18 @@
               [
                 "padding-right",
                 10
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           },
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0.00811230420949584,
+            "ratio": 0.008114598629466471,
             "elementsCompared": 753,
             "elementsDiffering": 753,
-            "differences": 815,
+            "differences": 813,
             "byGap": {
-              "unclassified": 813,
-              "empty-custom-property": 2
+              "unclassified": 813
             },
             "byProperty": [
               [
@@ -6758,23 +6755,18 @@
               [
                 "padding-right",
                 10
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           },
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0.010311373320222878,
+            "ratio": 0.010332350049164208,
             "elementsCompared": 753,
             "elementsDiffering": 753,
-            "differences": 815,
+            "differences": 813,
             "byGap": {
-              "unclassified": 813,
-              "empty-custom-property": 2
+              "unclassified": 813
             },
             "byProperty": [
               [
@@ -6804,10 +6796,6 @@
               [
                 "padding-right",
                 10
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           }
@@ -6851,7 +6839,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "822 differences on 760 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "820 differences on 760 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-search",
@@ -6867,7 +6855,7 @@
             "state": "hover e26",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "822 differences on 760 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "820 differences on 760 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-search",
@@ -6891,7 +6879,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "822 differences on 760 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "820 differences on 760 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-search",
@@ -6899,7 +6887,7 @@
             "state": "initial",
             "check": "screenshot",
             "gap": "unclassified",
-            "detail": "1.03 percent of pixels differ"
+            "detail": "1.04 percent of pixels differ"
           },
           {
             "fixture": "busbasis-search",
@@ -6907,7 +6895,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "822 differences on 760 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "820 differences on 760 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-search",
@@ -6939,7 +6927,7 @@
             "state": "needs: styles on html",
             "check": "interaction",
             "gap": "page-level-css",
-            "detail": "The original sets smooth scrolling and hides sideways overflow on html. No node can hold that, because the route owns html, and the computed styles of html are not compared."
+            "detail": "The original sets smooth scrolling and hides sideways overflow on html. The page root can hold that now, as a rule on :root, but the frozen trees were lifted before it could, so they do not, and the computed styles of html are not compared."
           },
           {
             "fixture": "busbasis-search",
@@ -6964,13 +6952,12 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.006353973526988051,
+            "ratio": 0.006358158220024722,
             "elementsCompared": 760,
             "elementsDiffering": 760,
-            "differences": 822,
+            "differences": 820,
             "byGap": {
-              "unclassified": 820,
-              "empty-custom-property": 2
+              "unclassified": 820
             },
             "byProperty": [
               [
@@ -7000,23 +6987,18 @@
               [
                 "padding-right",
                 10
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           },
           {
             "viewport": "Desktop",
             "state": "hover e26",
-            "ratio": 0.006353973526988051,
+            "ratio": 0.006358158220024722,
             "elementsCompared": 760,
             "elementsDiffering": 760,
-            "differences": 822,
+            "differences": 820,
             "byGap": {
-              "unclassified": 820,
-              "empty-custom-property": 2
+              "unclassified": 820
             },
             "byProperty": [
               [
@@ -7046,23 +7028,18 @@
               [
                 "padding-right",
                 10
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           },
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0.0077849669603524225,
+            "ratio": 0.0077872613803230545,
             "elementsCompared": 760,
             "elementsDiffering": 760,
-            "differences": 822,
+            "differences": 820,
             "byGap": {
-              "unclassified": 820,
-              "empty-custom-property": 2
+              "unclassified": 820
             },
             "byProperty": [
               [
@@ -7092,23 +7069,18 @@
               [
                 "padding-right",
                 10
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           },
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0.010340871845296624,
+            "ratio": 0.010361848574237954,
             "elementsCompared": 760,
             "elementsDiffering": 760,
-            "differences": 822,
+            "differences": 820,
             "byGap": {
-              "unclassified": 820,
-              "empty-custom-property": 2
+              "unclassified": 820
             },
             "byProperty": [
               [
@@ -7138,10 +7110,6 @@
               [
                 "padding-right",
                 10
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           }
@@ -7185,7 +7153,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "280 differences on 278 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "278 differences on 278 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-category",
@@ -7201,7 +7169,7 @@
             "state": "hover e41",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "280 differences on 278 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "278 differences on 278 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-category",
@@ -7225,7 +7193,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "280 differences on 278 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "278 differences on 278 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-category",
@@ -7241,7 +7209,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "280 differences on 278 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "278 differences on 278 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-category",
@@ -7273,7 +7241,7 @@
             "state": "needs: styles on html",
             "check": "interaction",
             "gap": "page-level-css",
-            "detail": "The original sets smooth scrolling and hides sideways overflow on html. No node can hold that, because the route owns html, and the computed styles of html are not compared."
+            "detail": "The original sets smooth scrolling and hides sideways overflow on html. The page root can hold that now, as a rule on :root, but the frozen trees were lifted before it could, so they do not, and the computed styles of html are not compared."
           },
           {
             "fixture": "busbasis-category",
@@ -7298,88 +7266,68 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.0050187317251461985,
+            "ratio": 0.005022158260233918,
             "elementsCompared": 278,
             "elementsDiffering": 278,
-            "differences": 280,
+            "differences": 278,
             "byGap": {
-              "unclassified": 278,
-              "empty-custom-property": 2
+              "unclassified": 278
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 278
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           },
           {
             "viewport": "Desktop",
             "state": "hover e41",
-            "ratio": 0.0050187317251461985,
+            "ratio": 0.005022158260233918,
             "elementsCompared": 278,
             "elementsDiffering": 278,
-            "differences": 280,
+            "differences": 278,
             "byGap": {
-              "unclassified": 278,
-              "empty-custom-property": 2
+              "unclassified": 278
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 278
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           },
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0.006591550715870135,
+            "ratio": 0.006595489261947973,
             "elementsCompared": 278,
             "elementsDiffering": 278,
-            "differences": 280,
+            "differences": 278,
             "byGap": {
-              "unclassified": 278,
-              "empty-custom-property": 2
+              "unclassified": 278
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 278
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           },
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0.009053466603204822,
+            "ratio": 0.009087735998730763,
             "elementsCompared": 278,
             "elementsDiffering": 278,
-            "differences": 280,
+            "differences": 278,
             "byGap": {
-              "unclassified": 278,
-              "empty-custom-property": 2
+              "unclassified": 278
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 278
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           }
@@ -7423,7 +7371,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "482 differences on 480 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "480 differences on 480 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-collection",
@@ -7439,7 +7387,7 @@
             "state": "hover e41",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "482 differences on 480 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "480 differences on 480 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-collection",
@@ -7463,7 +7411,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "482 differences on 480 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "480 differences on 480 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-collection",
@@ -7479,7 +7427,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "482 differences on 480 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "480 differences on 480 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-collection",
@@ -7511,7 +7459,7 @@
             "state": "needs: styles on html",
             "check": "interaction",
             "gap": "page-level-css",
-            "detail": "The original sets smooth scrolling and hides sideways overflow on html. No node can hold that, because the route owns html, and the computed styles of html are not compared."
+            "detail": "The original sets smooth scrolling and hides sideways overflow on html. The page root can hold that now, as a rule on :root, but the frozen trees were lifted before it could, so they do not, and the computed styles of html are not compared."
           },
           {
             "fixture": "busbasis-collection",
@@ -7528,88 +7476,68 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.004958102455454151,
+            "ratio": 0.004960139613211647,
             "elementsCompared": 480,
             "elementsDiffering": 480,
-            "differences": 482,
+            "differences": 480,
             "byGap": {
-              "unclassified": 480,
-              "empty-custom-property": 2
+              "unclassified": 480
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 480
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           },
           {
             "viewport": "Desktop",
             "state": "hover e41",
-            "ratio": 0.004958102455454151,
+            "ratio": 0.004960139613211647,
             "elementsCompared": 480,
             "elementsDiffering": 480,
-            "differences": 482,
+            "differences": 480,
             "byGap": {
-              "unclassified": 480,
-              "empty-custom-property": 2
+              "unclassified": 480
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 480
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           },
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0.004613450816407806,
+            "ratio": 0.004615006471525289,
             "elementsCompared": 480,
             "elementsDiffering": 480,
-            "differences": 482,
+            "differences": 480,
             "byGap": {
-              "unclassified": 480,
-              "empty-custom-property": 2
+              "unclassified": 480
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 480
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           },
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0.008568611033584519,
+            "ratio": 0.008588705926132664,
             "elementsCompared": 480,
             "elementsDiffering": 480,
-            "differences": 482,
+            "differences": 480,
             "byGap": {
-              "unclassified": 480,
-              "empty-custom-property": 2
+              "unclassified": 480
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 480
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           }
@@ -7645,7 +7573,7 @@
             "state": "initial",
             "check": "screenshot",
             "gap": "unclassified",
-            "detail": "0.34 percent of pixels differ"
+            "detail": "0.33 percent of pixels differ"
           },
           {
             "fixture": "busbasis-product",
@@ -7653,7 +7581,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "555 differences on 484 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "550 differences on 484 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-product",
@@ -7661,7 +7589,7 @@
             "state": "hover e41",
             "check": "screenshot",
             "gap": "unclassified",
-            "detail": "0.34 percent of pixels differ"
+            "detail": "0.33 percent of pixels differ"
           },
           {
             "fixture": "busbasis-product",
@@ -7669,7 +7597,7 @@
             "state": "hover e41",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "555 differences on 484 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "550 differences on 484 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-product",
@@ -7685,7 +7613,7 @@
             "state": "initial",
             "check": "screenshot",
             "gap": "unclassified",
-            "detail": "0.39 percent of pixels differ"
+            "detail": "0.38 percent of pixels differ"
           },
           {
             "fixture": "busbasis-product",
@@ -7693,7 +7621,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "555 differences on 484 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "550 differences on 484 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-product",
@@ -7701,7 +7629,7 @@
             "state": "initial",
             "check": "screenshot",
             "gap": "unclassified",
-            "detail": "0.65 percent of pixels differ"
+            "detail": "0.63 percent of pixels differ"
           },
           {
             "fixture": "busbasis-product",
@@ -7709,7 +7637,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "555 differences on 484 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "550 differences on 484 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-product",
@@ -7741,7 +7669,7 @@
             "state": "needs: styles on html",
             "check": "interaction",
             "gap": "page-level-css",
-            "detail": "The original sets smooth scrolling and hides sideways overflow on html. No node can hold that, because the route owns html, and the computed styles of html are not compared."
+            "detail": "The original sets smooth scrolling and hides sideways overflow on html. The page root can hold that now, as a rule on :root, but the frozen trees were lifted before it could, so they do not, and the computed styles of html are not compared."
           },
           {
             "fixture": "busbasis-product",
@@ -7766,13 +7694,12 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.0033850144787644786,
+            "ratio": 0.0033074927606177606,
             "elementsCompared": 484,
             "elementsDiffering": 484,
-            "differences": 555,
+            "differences": 550,
             "byGap": {
-              "unclassified": 550,
-              "empty-custom-property": 5
+              "unclassified": 550
             },
             "byProperty": [
               [
@@ -7802,27 +7729,18 @@
               [
                 "padding-right",
                 11
-              ],
-              [
-                "backdrop-filter",
-                4
-              ],
-              [
-                "box-shadow",
-                1
               ]
             ]
           },
           {
             "viewport": "Desktop",
             "state": "hover e41",
-            "ratio": 0.0033850144787644786,
+            "ratio": 0.0033074927606177606,
             "elementsCompared": 484,
             "elementsDiffering": 484,
-            "differences": 555,
+            "differences": 550,
             "byGap": {
-              "unclassified": 550,
-              "empty-custom-property": 5
+              "unclassified": 550
             },
             "byProperty": [
               [
@@ -7852,27 +7770,18 @@
               [
                 "padding-right",
                 11
-              ],
-              [
-                "backdrop-filter",
-                4
-              ],
-              [
-                "box-shadow",
-                1
               ]
             ]
           },
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0.003906668138514237,
+            "ratio": 0.003797952124812674,
             "elementsCompared": 484,
             "elementsDiffering": 484,
-            "differences": 555,
+            "differences": 550,
             "byGap": {
-              "unclassified": 550,
-              "empty-custom-property": 5
+              "unclassified": 550
             },
             "byProperty": [
               [
@@ -7902,27 +7811,18 @@
               [
                 "padding-right",
                 11
-              ],
-              [
-                "backdrop-filter",
-                4
-              ],
-              [
-                "box-shadow",
-                1
               ]
             ]
           },
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0.006481409001956947,
+            "ratio": 0.0062778864970645795,
             "elementsCompared": 484,
             "elementsDiffering": 484,
-            "differences": 555,
+            "differences": 550,
             "byGap": {
-              "unclassified": 550,
-              "empty-custom-property": 5
+              "unclassified": 550
             },
             "byProperty": [
               [
@@ -7952,14 +7852,6 @@
               [
                 "padding-right",
                 11
-              ],
-              [
-                "backdrop-filter",
-                4
-              ],
-              [
-                "box-shadow",
-                1
               ]
             ]
           }
@@ -8003,7 +7895,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "200 differences on 198 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "198 differences on 198 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-cart-empty",
@@ -8019,7 +7911,7 @@
             "state": "hover e41",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "200 differences on 198 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "198 differences on 198 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-cart-empty",
@@ -8043,7 +7935,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "200 differences on 198 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "198 differences on 198 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-cart-empty",
@@ -8059,7 +7951,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "200 differences on 198 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "198 differences on 198 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-cart-empty",
@@ -8091,7 +7983,7 @@
             "state": "needs: styles on html",
             "check": "interaction",
             "gap": "page-level-css",
-            "detail": "The original sets smooth scrolling and hides sideways overflow on html. No node can hold that, because the route owns html, and the computed styles of html are not compared."
+            "detail": "The original sets smooth scrolling and hides sideways overflow on html. The page root can hold that now, as a rule on :root, but the frozen trees were lifted before it could, so they do not, and the computed styles of html are not compared."
           },
           {
             "fixture": "busbasis-cart-empty",
@@ -8108,88 +8000,68 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.004084986162361624,
+            "ratio": 0.004088445571955719,
             "elementsCompared": 198,
             "elementsDiffering": 198,
-            "differences": 200,
+            "differences": 198,
             "byGap": {
-              "unclassified": 198,
-              "empty-custom-property": 2
+              "unclassified": 198
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 198
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           },
           {
             "viewport": "Desktop",
             "state": "hover e41",
-            "ratio": 0.004084986162361624,
+            "ratio": 0.004088445571955719,
             "elementsCompared": 198,
             "elementsDiffering": 198,
-            "differences": 200,
+            "differences": 198,
             "byGap": {
-              "unclassified": 198,
-              "empty-custom-property": 2
+              "unclassified": 198
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 198
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           },
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0.005478885488595941,
+            "ratio": 0.00548297237915882,
             "elementsCompared": 198,
             "elementsDiffering": 198,
-            "differences": 200,
+            "differences": 198,
             "byGap": {
-              "unclassified": 198,
-              "empty-custom-property": 2
+              "unclassified": 198
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 198
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           },
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0.00895718090555214,
+            "ratio": 0.009001434132349929,
             "elementsCompared": 198,
             "elementsDiffering": 198,
-            "differences": 200,
+            "differences": 198,
             "byGap": {
-              "unclassified": 198,
-              "empty-custom-property": 2
+              "unclassified": 198
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 198
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           }
@@ -8233,7 +8105,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "192 differences on 190 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "190 differences on 190 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-checkout-no-cart",
@@ -8249,7 +8121,7 @@
             "state": "hover e41",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "192 differences on 190 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "190 differences on 190 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-checkout-no-cart",
@@ -8273,7 +8145,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "192 differences on 190 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "190 differences on 190 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-checkout-no-cart",
@@ -8281,7 +8153,7 @@
             "state": "initial",
             "check": "screenshot",
             "gap": "unclassified",
-            "detail": "0.89 percent of pixels differ"
+            "detail": "0.90 percent of pixels differ"
           },
           {
             "fixture": "busbasis-checkout-no-cart",
@@ -8289,7 +8161,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "192 differences on 190 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "190 differences on 190 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-checkout-no-cart",
@@ -8321,7 +8193,7 @@
             "state": "needs: styles on html",
             "check": "interaction",
             "gap": "page-level-css",
-            "detail": "The original sets smooth scrolling and hides sideways overflow on html. No node can hold that, because the route owns html, and the computed styles of html are not compared."
+            "detail": "The original sets smooth scrolling and hides sideways overflow on html. The page root can hold that now, as a rule on :root, but the frozen trees were lifted before it could, so they do not, and the computed styles of html are not compared."
           },
           {
             "fixture": "busbasis-checkout-no-cart",
@@ -8338,88 +8210,68 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.0035883315640481248,
+            "ratio": 0.003591648973814579,
             "elementsCompared": 190,
             "elementsDiffering": 190,
-            "differences": 192,
+            "differences": 190,
             "byGap": {
-              "unclassified": 190,
-              "empty-custom-property": 2
+              "unclassified": 190
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 190
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           },
           {
             "viewport": "Desktop",
             "state": "hover e41",
-            "ratio": 0.0035883315640481248,
+            "ratio": 0.003591648973814579,
             "elementsCompared": 190,
             "elementsDiffering": 190,
-            "differences": 192,
+            "differences": 190,
             "byGap": {
-              "unclassified": 190,
-              "empty-custom-property": 2
+              "unclassified": 190
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 190
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           },
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0.004552447052089296,
+            "ratio": 0.004556173678687273,
             "elementsCompared": 190,
             "elementsDiffering": 190,
-            "differences": 192,
+            "differences": 190,
             "byGap": {
-              "unclassified": 190,
-              "empty-custom-property": 2
+              "unclassified": 190
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 190
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           },
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0.008927374301675978,
+            "ratio": 0.008977653631284915,
             "elementsCompared": 190,
             "elementsDiffering": 190,
-            "differences": 192,
+            "differences": 190,
             "byGap": {
-              "unclassified": 190,
-              "empty-custom-property": 2
+              "unclassified": 190
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 190
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           }
@@ -8463,7 +8315,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "226 differences on 224 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "224 differences on 224 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-privacy",
@@ -8479,7 +8331,7 @@
             "state": "hover e41",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "226 differences on 224 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "224 differences on 224 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-privacy",
@@ -8503,7 +8355,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "226 differences on 224 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "224 differences on 224 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-privacy",
@@ -8519,7 +8371,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "226 differences on 224 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "224 differences on 224 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-privacy",
@@ -8551,7 +8403,7 @@
             "state": "needs: styles on html",
             "check": "interaction",
             "gap": "page-level-css",
-            "detail": "The original sets smooth scrolling and hides sideways overflow on html. No node can hold that, because the route owns html, and the computed styles of html are not compared."
+            "detail": "The original sets smooth scrolling and hides sideways overflow on html. The page root can hold that now, as a rule on :root, but the frozen trees were lifted before it could, so they do not, and the computed styles of html are not compared."
           }
         ],
         "notMeasured": [],
@@ -8560,88 +8412,68 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.0067592872036874455,
+            "ratio": 0.00676134492976295,
             "elementsCompared": 224,
             "elementsDiffering": 224,
-            "differences": 226,
+            "differences": 224,
             "byGap": {
-              "unclassified": 224,
-              "empty-custom-property": 2
+              "unclassified": 224
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 224
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           },
           {
             "viewport": "Desktop",
             "state": "hover e41",
-            "ratio": 0.0067592872036874455,
+            "ratio": 0.00676134492976295,
             "elementsCompared": 224,
             "elementsDiffering": 224,
-            "differences": 226,
+            "differences": 224,
             "byGap": {
-              "unclassified": 224,
-              "empty-custom-property": 2
+              "unclassified": 224
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 224
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           },
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0.01046703844287299,
+            "ratio": 0.010469746602884081,
             "elementsCompared": 224,
             "elementsDiffering": 224,
-            "differences": 226,
+            "differences": 224,
             "byGap": {
-              "unclassified": 224,
-              "empty-custom-property": 2
+              "unclassified": 224
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 224
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           },
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0.017395543175487464,
+            "ratio": 0.017420612813370474,
             "elementsCompared": 224,
             "elementsDiffering": 224,
-            "differences": 226,
+            "differences": 224,
             "byGap": {
-              "unclassified": 224,
-              "empty-custom-property": 2
+              "unclassified": 224
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 224
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           }
@@ -8685,7 +8517,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "242 differences on 240 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "240 differences on 240 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-terms",
@@ -8701,7 +8533,7 @@
             "state": "hover e41",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "242 differences on 240 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "240 differences on 240 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-terms",
@@ -8725,7 +8557,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "242 differences on 240 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "240 differences on 240 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-terms",
@@ -8741,7 +8573,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "242 differences on 240 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "240 differences on 240 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-terms",
@@ -8773,7 +8605,7 @@
             "state": "needs: styles on html",
             "check": "interaction",
             "gap": "page-level-css",
-            "detail": "The original sets smooth scrolling and hides sideways overflow on html. No node can hold that, because the route owns html, and the computed styles of html are not compared."
+            "detail": "The original sets smooth scrolling and hides sideways overflow on html. The page root can hold that now, as a rule on :root, but the frozen trees were lifted before it could, so they do not, and the computed styles of html are not compared."
           }
         ],
         "notMeasured": [],
@@ -8782,88 +8614,68 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.007669121480709072,
+            "ratio": 0.0076707507820646505,
             "elementsCompared": 240,
             "elementsDiffering": 240,
-            "differences": 242,
+            "differences": 240,
             "byGap": {
-              "unclassified": 240,
-              "empty-custom-property": 2
+              "unclassified": 240
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 240
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           },
           {
             "viewport": "Desktop",
             "state": "hover e41",
-            "ratio": 0.007669121480709072,
+            "ratio": 0.0076707507820646505,
             "elementsCompared": 240,
             "elementsDiffering": 240,
-            "differences": 242,
+            "differences": 240,
             "byGap": {
-              "unclassified": 240,
-              "empty-custom-property": 2
+              "unclassified": 240
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 240
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           },
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0.011740726090014064,
+            "ratio": 0.01174283917559234,
             "elementsCompared": 240,
             "elementsDiffering": 240,
-            "differences": 242,
+            "differences": 240,
             "byGap": {
-              "unclassified": 240,
-              "empty-custom-property": 2
+              "unclassified": 240
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 240
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           },
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0.018726506749204713,
+            "ratio": 0.018745077809302724,
             "elementsCompared": 240,
             "elementsDiffering": 240,
-            "differences": 242,
+            "differences": 240,
             "byGap": {
-              "unclassified": 240,
-              "empty-custom-property": 2
+              "unclassified": 240
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 240
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           }
@@ -8907,7 +8719,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "226 differences on 224 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "224 differences on 224 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-login",
@@ -8923,7 +8735,7 @@
             "state": "hover e41",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "226 differences on 224 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "224 differences on 224 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-login",
@@ -8947,7 +8759,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "226 differences on 224 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "224 differences on 224 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-login",
@@ -8955,7 +8767,7 @@
             "state": "initial",
             "check": "screenshot",
             "gap": "unclassified",
-            "detail": "1.09 percent of pixels differ"
+            "detail": "1.10 percent of pixels differ"
           },
           {
             "fixture": "busbasis-login",
@@ -8963,7 +8775,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "226 differences on 224 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "224 differences on 224 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-login",
@@ -8995,7 +8807,7 @@
             "state": "needs: styles on html",
             "check": "interaction",
             "gap": "page-level-css",
-            "detail": "The original sets smooth scrolling and hides sideways overflow on html. No node can hold that, because the route owns html, and the computed styles of html are not compared."
+            "detail": "The original sets smooth scrolling and hides sideways overflow on html. The page root can hold that now, as a rule on :root, but the frozen trees were lifted before it could, so they do not, and the computed styles of html are not compared."
           },
           {
             "fixture": "busbasis-login",
@@ -9012,88 +8824,68 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.004574356979030144,
+            "ratio": 0.0045774287352555705,
             "elementsCompared": 224,
             "elementsDiffering": 224,
-            "differences": 226,
+            "differences": 224,
             "byGap": {
-              "unclassified": 224,
-              "empty-custom-property": 2
+              "unclassified": 224
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 224
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           },
           {
             "viewport": "Desktop",
             "state": "hover e41",
-            "ratio": 0.004574356979030144,
+            "ratio": 0.0045774287352555705,
             "elementsCompared": 224,
             "elementsDiffering": 224,
-            "differences": 226,
+            "differences": 224,
             "byGap": {
-              "unclassified": 224,
-              "empty-custom-property": 2
+              "unclassified": 224
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 224
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           },
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0.00650354752833138,
+            "ratio": 0.006507363716295428,
             "elementsCompared": 224,
             "elementsDiffering": 224,
-            "differences": 226,
+            "differences": 224,
             "byGap": {
-              "unclassified": 224,
-              "empty-custom-property": 2
+              "unclassified": 224
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 224
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           },
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0.010936042136945072,
+            "ratio": 0.010976674191121144,
             "elementsCompared": 224,
             "elementsDiffering": 224,
-            "differences": 226,
+            "differences": 224,
             "byGap": {
-              "unclassified": 224,
-              "empty-custom-property": 2
+              "unclassified": 224
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 224
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           }
@@ -9137,7 +8929,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "200 differences on 198 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "198 differences on 198 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-request-reset",
@@ -9153,7 +8945,7 @@
             "state": "hover e41",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "200 differences on 198 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "198 differences on 198 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-request-reset",
@@ -9177,7 +8969,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "200 differences on 198 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "198 differences on 198 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-request-reset",
@@ -9193,7 +8985,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "200 differences on 198 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "198 differences on 198 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-request-reset",
@@ -9225,7 +9017,7 @@
             "state": "needs: styles on html",
             "check": "interaction",
             "gap": "page-level-css",
-            "detail": "The original sets smooth scrolling and hides sideways overflow on html. No node can hold that, because the route owns html, and the computed styles of html are not compared."
+            "detail": "The original sets smooth scrolling and hides sideways overflow on html. The page root can hold that now, as a rule on :root, but the frozen trees were lifted before it could, so they do not, and the computed styles of html are not compared."
           },
           {
             "fixture": "busbasis-request-reset",
@@ -9242,88 +9034,68 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.004705022235112142,
+            "ratio": 0.004708647525135344,
             "elementsCompared": 198,
             "elementsDiffering": 198,
-            "differences": 200,
+            "differences": 198,
             "byGap": {
-              "unclassified": 198,
-              "empty-custom-property": 2
+              "unclassified": 198
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 198
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           },
           {
             "viewport": "Desktop",
             "state": "hover e41",
-            "ratio": 0.004705022235112142,
+            "ratio": 0.004708647525135344,
             "elementsCompared": 198,
             "elementsDiffering": 198,
-            "differences": 200,
+            "differences": 198,
             "byGap": {
-              "unclassified": 198,
-              "empty-custom-property": 2
+              "unclassified": 198
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 198
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           },
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0.006160975772097977,
+            "ratio": 0.006165135782747604,
             "elementsCompared": 198,
             "elementsDiffering": 198,
-            "differences": 200,
+            "differences": 198,
             "byGap": {
-              "unclassified": 198,
-              "empty-custom-property": 2
+              "unclassified": 198
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 198
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           },
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0.011469812630117973,
+            "ratio": 0.011519777931991673,
             "elementsCompared": 198,
             "elementsDiffering": 198,
-            "differences": 200,
+            "differences": 198,
             "byGap": {
-              "unclassified": 198,
-              "empty-custom-property": 2
+              "unclassified": 198
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 198
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           }
@@ -9359,7 +9131,7 @@
             "state": "initial",
             "check": "screenshot",
             "gap": "unclassified",
-            "detail": "0.52 percent of pixels differ"
+            "detail": "0.53 percent of pixels differ"
           },
           {
             "fixture": "busbasis-shop-unavailable",
@@ -9367,7 +9139,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "175 differences on 173 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "173 differences on 173 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-shop-unavailable",
@@ -9375,7 +9147,7 @@
             "state": "hover e26",
             "check": "screenshot",
             "gap": "unclassified",
-            "detail": "0.52 percent of pixels differ"
+            "detail": "0.53 percent of pixels differ"
           },
           {
             "fixture": "busbasis-shop-unavailable",
@@ -9383,7 +9155,7 @@
             "state": "hover e26",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "175 differences on 173 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "173 differences on 173 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-shop-unavailable",
@@ -9407,7 +9179,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "175 differences on 173 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "173 differences on 173 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-shop-unavailable",
@@ -9415,7 +9187,7 @@
             "state": "initial",
             "check": "screenshot",
             "gap": "unclassified",
-            "detail": "1.08 percent of pixels differ"
+            "detail": "1.09 percent of pixels differ"
           },
           {
             "fixture": "busbasis-shop-unavailable",
@@ -9423,7 +9195,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "unclassified",
-            "detail": "175 differences on 173 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "detail": "173 differences on 173 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-shop-unavailable",
@@ -9455,7 +9227,7 @@
             "state": "needs: styles on html",
             "check": "interaction",
             "gap": "page-level-css",
-            "detail": "The original sets smooth scrolling and hides sideways overflow on html. No node can hold that, because the route owns html, and the computed styles of html are not compared."
+            "detail": "The original sets smooth scrolling and hides sideways overflow on html. The page root can hold that now, as a rule on :root, but the frozen trees were lifted before it could, so they do not, and the computed styles of html are not compared."
           }
         ],
         "notMeasured": [],
@@ -9464,88 +9236,68 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.005248274539877301,
+            "ratio": 0.00525443689745837,
             "elementsCompared": 173,
             "elementsDiffering": 173,
-            "differences": 175,
+            "differences": 173,
             "byGap": {
-              "unclassified": 173,
-              "empty-custom-property": 2
+              "unclassified": 173
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 173
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           },
           {
             "viewport": "Desktop",
             "state": "hover e26",
-            "ratio": 0.005248274539877301,
+            "ratio": 0.00525443689745837,
             "elementsCompared": 173,
             "elementsDiffering": 173,
-            "differences": 175,
+            "differences": 173,
             "byGap": {
-              "unclassified": 173,
-              "empty-custom-property": 2
+              "unclassified": 173
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 173
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           },
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0.007525774467245462,
+            "ratio": 0.007530912917653249,
             "elementsCompared": 173,
             "elementsDiffering": 173,
-            "differences": 175,
+            "differences": 173,
             "byGap": {
-              "unclassified": 173,
-              "empty-custom-property": 2
+              "unclassified": 173
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 173
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           },
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0.010842853865565497,
+            "ratio": 0.010892406515255793,
             "elementsCompared": 173,
             "elementsDiffering": 173,
-            "differences": 175,
+            "differences": 173,
             "byGap": {
-              "unclassified": 173,
-              "empty-custom-property": 2
+              "unclassified": 173
             },
             "byProperty": [
               [
                 "-webkit-font-smoothing",
                 173
-              ],
-              [
-                "backdrop-filter",
-                2
               ]
             ]
           }
@@ -9629,7 +9381,7 @@
             "state": "needs: styles on html",
             "check": "interaction",
             "gap": "page-level-css",
-            "detail": "The original sets smooth scrolling and hides sideways overflow on html. No node can hold that, because the route owns html, and the computed styles of html are not compared."
+            "detail": "The original sets smooth scrolling and hides sideways overflow on html. The page root can hold that now, as a rule on :root, but the frozen trees were lifted before it could, so they do not, and the computed styles of html are not compared."
           }
         ],
         "notMeasured": [],
@@ -9731,26 +9483,6 @@
         ],
         "needs": 14,
         "styleDifferences": 0
-      },
-      {
-        "id": "empty-custom-property",
-        "pages": [
-          "busbasis-home",
-          "busbasis-store",
-          "busbasis-search",
-          "busbasis-category",
-          "busbasis-collection",
-          "busbasis-product",
-          "busbasis-cart-empty",
-          "busbasis-checkout-no-cart",
-          "busbasis-privacy",
-          "busbasis-terms",
-          "busbasis-login",
-          "busbasis-request-reset",
-          "busbasis-shop-unavailable"
-        ],
-        "needs": 0,
-        "styleDifferences": 164
       },
       {
         "id": "behaviour-state",
@@ -9859,8 +9591,8 @@
   },
   "roundTrip": {
     "nodesToJsxToNodes": {
-      "pass": 111,
-      "total": 111
+      "pass": 113,
+      "total": 113
     },
     "jsxToNodesToRender": {
       "pass": 11,
@@ -9904,6 +9636,16 @@
       },
       {
         "id": "corpus: stylesheet-values",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "corpus: empty-variables",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "corpus: document-styles",
         "direction": "nodes-jsx-nodes",
         "pass": true
       },
@@ -10551,16 +10293,6 @@
   },
   "gaps": [
     {
-      "id": "blocked-event-handlers",
-      "description": "A stored event handler attribute is a string of code, so both renderers drop it on purpose (blockedNodes.ts). What closes this is a stored behaviour for the event: the behaviour model or custom code, neither of which exists yet.",
-      "matrixCells": 500,
-      "corpusChecks": 0,
-      "fixtures": [],
-      "onlyGapOf": [],
-      "roundTripCases": 0,
-      "cost": 500
-    },
-    {
       "id": "panel-no-general-editor",
       "description": "What the Custom section of the properties panel, the general style and attribute editor, cannot write: SVG and MathML attributes.",
       "matrixCells": 360,
@@ -10569,6 +10301,16 @@
       "onlyGapOf": [],
       "roundTripCases": 0,
       "cost": 360
+    },
+    {
+      "id": "blocked-event-handlers",
+      "description": "A stored event handler attribute is a string of code, so both renderers drop it on purpose (blockedNodes.ts). A cell here means no stored action ran from a real cause: the note says why, and the published page and the format already run most of them (events.score.ts). The canvas, the panel and the AI columns still wait for slices B10 to B12.",
+      "matrixCells": 316,
+      "corpusChecks": 0,
+      "fixtures": [],
+      "onlyGapOf": [],
+      "roundTripCases": 0,
+      "cost": 316
     },
     {
       "id": "unclassified",
@@ -10656,13 +10398,13 @@
     },
     {
       "id": "page-level-css",
-      "description": "CSS that applies to the document rather than a node (`:root`, view transitions, `@page`, `@layer`): the route owns `html`, so these close with the page-level items of the plan.",
-      "matrixCells": 70,
+      "description": "CSS that applies to the document rather than a node (view transitions, `@page`, `@layer`): the route owns `html`. A rule on `:root` on the page root is the one form held today.",
+      "matrixCells": 66,
       "corpusChecks": 0,
       "fixtures": [],
       "onlyGapOf": [],
       "roundTripCases": 0,
-      "cost": 70
+      "cost": 66
     },
     {
       "id": "attribute-read-as-style",
@@ -10687,12 +10429,12 @@
     {
       "id": "ai-rule-refused",
       "description": "A rule that reads what a visitor does or looks beyond its node: stored and rendered, but refused to the generator on purpose, because a generation must not be able to report a visitor. See \"AI output\" in the selector styling plan.",
-      "matrixCells": 43,
+      "matrixCells": 44,
       "corpusChecks": 0,
       "fixtures": [],
       "onlyGapOf": [],
       "roundTripCases": 0,
-      "cost": 43
+      "cost": 44
     },
     {
       "id": "react-attribute-handling",

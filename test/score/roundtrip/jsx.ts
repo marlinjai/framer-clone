@@ -230,7 +230,7 @@ function settleTreeRules(root: ComponentNode, leftOver: string[]): void {
     const state = behaviours.get(copy)?.state;
     const states = state ? new Map([...outer, ...state.map((value): [string, StateValue] => [value.id, value])]) : outer;
     // A page with no behaviour never reaches that pass, so no state is in reach at all.
-    settleRules(node, behaviours.size > 0 ? { states } : {}, leftOver);
+    settleRules(node, { ...(behaviours.size > 0 ? { states } : {}), pageRoot: node === root }, leftOver);
     node.children?.forEach((child, index) => walk(child, (copy.children as ComponentNode[])[index], states));
   };
   walk(root, keyed, new Map());

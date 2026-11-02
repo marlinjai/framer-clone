@@ -774,8 +774,8 @@ engine parsed it, not that any real page needs it. The corpus is the test that c
 
 ## What this does not cover
 
-- **Page-level rules:** selectors on `html` and `body`, theme tokens, `@layer` ordering, `@page`,
-  `@view-transition`. Gap 5 of the primitives plan, where the 14 red rows close.
+- **Page-level rules:** `@layer` ordering, `@page`, `@view-transition` and selectors on `body`. Gap 5 of
+  the primitives plan, where the remaining red rows close. `:root` closed first, see decision 13.
 - **Component states and page state.** Layers 2 and 3. They should reuse `SelectorRule`.
 - **A keyframes timeline editor,** and proper controls for container queries. Text works; good controls
   are a product question once this format exists.
@@ -807,6 +807,24 @@ happened. These do not wait for Marlin.
 11. Generated rules are capped at 24, while everything parseable is accepted but what reads a visitor.
 12. A range comparison's `<` is rewritten by the parser rather than refused, so `<` still never reaches the
     sheet.
+13. The document gets one rule shape, added 2026-11-02 for BusBasis: a stored rule with the exact selector
+    `:root`, in `props.rules` of the page root and nowhere else, so it travels, snapshots and undoes like any
+    rule and the panel can list it later. It is not the `&` boundary loosened, because `:root *` and any other
+    selector stay refused, it holds no `when`, only `@media` and `@supports` wrap it, and only `ROOT_PROPERTIES`
+    and custom properties may be set: `display`, `visibility`, `pointerEvents` and the like would reach the
+    consent banner, which is not part of the tree. A definition root is refused, because a component does not
+    own the document. On the canvas and the preview, which share a document with the editor, it never reaches
+    `:root`: custom properties and inherited text land on the page root of each copy, under that node's own
+    values, and scrolling shows nothing. A `rem` there still reads the editor's document.
+    Changed by the review of #261: `--fc-` custom properties are refused, because the sticky bar's height
+    positions the consent banner. What the list opens by inheritance is pinned on the banner's root, and a test
+    walks the list. On a real page `body` sets its own colours and font, so a rule setting `color`,
+    `backgroundColor` or `fontFamily` adds a constant `body` declaration under the same conditions. The emitter
+    checks the keys again, and `:root` typed in the panel is the real rule on the page root and a reason
+    anywhere else. The recheck added: the banner's look fails closed, so a pair it cannot read goes neutral and
+    a font from outside the registry goes neutral, and the sticky bar is capped and the lift clamped to 30vh.
+    Still apart: Tailwind tokens such as `--background` recolour `body` on the published page,
+    and the editor frames do not read them.
 
 ## Review findings not adopted
 

@@ -37,11 +37,13 @@ import {
   isLegacyRulesAttribute,
   parseRule,
   refusedRuleValue,
+  ROOT_SELECTOR,
   storedRulesOf,
   type DefinitionRule,
   type SelectorRule,
   type StoredRule,
 } from '@/lib/rules/rules';
+import { isRootStyleKey } from '@/lib/rules/rootProperties';
 import { findRuleIndex, moveRuleTo, namedState, namedStateOf, orderRules } from '@/lib/rules/states';
 import { compactBehaviour } from '@/lib/behaviour/format';
 
@@ -92,6 +94,17 @@ function definitionNameOf(node: object, id: unknown): string | undefined {
   return undefined;
 }
 
+/**
+ * True for the root of a page's tree, the one node that may hold a rule on the
+ * document. A definition keeps its tree on a page too, which owns no document.
+ */
+export function isPageRoot(node: object): boolean {
+  if (!hasMstParent(node)) return false;
+  const page: object = getParent(node);
+  if ((page as { appComponentTree?: unknown }).appComponentTree !== node) return false;
+  return !hasMstParent(page) || (getParent(page) as { page?: unknown }).page !== page;
+}
+
 /** All a placement binds: its input values and its initial state. */
 const isPlacementSlot = (slot: string) => slot === 'state' || slot.startsWith('input.');
 
@@ -115,7 +128,7 @@ function addStoredRules(node: { type: string; props?: Record<string, any> | null
     if (list.some((other) => other.id === stored.id)) return { ok: false, reason: 'Another rule on this node has the same id.' };
     const state = namedStateOf(stored);
     if (state && list.some((other) => namedStateOf(other) === state)) return { ok: false, reason: `${state.label} already exists on this node.` };
-    const parsed = parseRule(stored);
+    const parsed = parseRule(stored, { pageRoot: isPageRoot(node) });
     if (!parsed.ok) return parsed;
     list.push(stored);
   }
@@ -615,6 +628,9 @@ const ComponentModel: any = ComponentBase
       // silently take every other value of the state off the page.
       const valueRefusal = value === undefined || value === '' ? null : refusedRuleValue(property, value);
       if (valueRefusal) return { ok: false, reason: valueRefusal };
+      if (existing && (existing as SelectorRule).selector === ROOT_SELECTOR && value !== undefined && value !== '' && !isRootStyleKey(property)) {
+        return { ok: false, reason: `${property} cannot be set on the document` };
+      }
 
       const style: Record<string, unknown> = { ...(existing?.style ?? {}) };
       const next = writeCascade(style[property], value, breakpointId, self.cascadeBreakpoints(breakpointId));
@@ -672,7 +688,7 @@ const ComponentModel: any = ComponentBase
       const index = findRuleIndex(rules, ruleId);
       if (index === -1) return { ok: false, reason: 'That rule no longer exists.' };
       const stored = { ...rule, id: rules[index].id } as StoredRule;
-      const parsed = parseRule(stored);
+      const parsed = parseRule(stored, { pageRoot: isPageRoot(self) });
       if (!parsed.ok) return parsed;
       self.props = withRules(currentProps, orderRules(rules.map((existing, i) => (i === index ? stored : existing))));
       return { ok: true };

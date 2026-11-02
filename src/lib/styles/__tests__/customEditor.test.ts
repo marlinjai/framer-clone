@@ -123,6 +123,14 @@ describe('attributes', () => {
     expect(attributeValueError('title', 'Hello')).toBeNull();
   });
 
+  it('refuses the id a tag would lose at render, and keeps it where it is harmless', () => {
+    expect(attributeValueError('id', 'parentElement', 'button')).not.toBeNull();
+    expect(attributeValueError('id', 'createElement', 'img')).not.toBeNull();
+    expect(attributeValueError('id', 'parentElement', 'image')).not.toBeNull();
+    expect(attributeValueError('id', 'parentElement', 'section')).toBeNull();
+    expect(attributeValueError('id', 'name', 'input')).toBeNull();
+  });
+
   it('stores a boolean as present or absent: React reads the string "false" as true', () => {
     expect(attributeStoredValue('hidden', '')).toBe(true);
     expect(attributeStoredValue('hidden', 'true')).toBe(true);

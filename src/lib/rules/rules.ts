@@ -41,6 +41,15 @@
 //   - The editor. Global names must carry the `u-` prefix, because on the canvas
 //     the document is the editor itself.
 //
+// One selector is not a node's: `:root`, the document, which the route owns and no
+// node can stand for. Smooth scrolling, sideways overflow and a site's custom
+// properties live there. Only the page root may hold it, the selector is exactly
+// that text, and only ROOT_PROPERTIES and custom properties that are not the
+// platform's may be set, because the document also holds what is not the tree:
+// `:root *`, `display:none` or `--fc-sticky-cta-h` would reach the consent banner,
+// which is a legal record. Without `pageRoot` in the context it is refused, so a
+// node in the tree, a definition's root or a floating element cannot hold one.
+//
 // A rule's `when` reads page state (docs/plans/2026-11-02-behaviour-model.md). Which
 // state exists depends on where the node stands, so `when` and `gate` are read only
 // with the state in reach, which the behaviour pass supplies. Without it they are
@@ -49,6 +58,7 @@
 //
 // PURE and client-safe: no React, no MST, no new dependency.
 
+import { isRootStyleKey } from './rootProperties';
 import { conditionSelector } from '@/lib/behaviour/behaviourDom';
 import { parseCondition, type Condition, type StateValue } from '@/lib/behaviour/format';
 import { isPlatformMarker } from '@/lib/renderer/platformAttributes';
@@ -67,6 +77,7 @@ import {
 } from '@/lib/responsive/responsiveCss';
 
 export { MAX_DEFINITION_BLOCKS, PROPERTY_SYNTAXES, hasExternalAddress };
+export { ROOT_PROPERTIES, showsOnSurface } from './rootProperties';
 
 /** One rule that applies to the node or to something inside it. */
 export interface SelectorRule {
@@ -122,6 +133,16 @@ export interface ParsedSelectorRule {
 export interface RuleContext {
   /** The state on the node's path. */
   states?: ReadonlyMap<string, StateValue>;
+  /** This list sits on the page root, so a rule on `:root` may stand in it. */
+  pageRoot?: boolean;
+}
+
+/** A rule on the document, which only the page root holds. */
+export interface ParsedRootRule {
+  kind: 'root';
+  id: string;
+  at: string[];
+  style: Record<string, unknown>;
 }
 
 /** A definition the parser accepted. */
@@ -136,7 +157,7 @@ export interface ParsedDefinitionRule {
   blocks?: { selector: string; style: Record<string, unknown> }[];
 }
 
-export type ParsedRule = ParsedSelectorRule | ParsedDefinitionRule;
+export type ParsedRule = ParsedSelectorRule | ParsedDefinitionRule | ParsedRootRule;
 
 /** At most this many rules on one node. A later rule is refused with a reason. */
 export const MAX_RULES_PER_NODE = 64;
@@ -333,6 +354,7 @@ function refusedPart(part: string): string | null {
   // `&div` would be substituted into `.fc-a.fc-adiv`, a different class.
   if (!/^&(?:$|[:[.# >+~]|\|\|)/.test(part)) return '& must be followed by a pseudo-class, an attribute, a class, an id or a combinator';
   if (part.includes('&', 1)) return 'a selector holds & once, at its start';
+  if (/^&\s*:root(?![\w-])/i.test(part)) return 'a rule on the document is written :root, alone';
   const next = part.slice(endOfFirstCompound(part)).trimStart();
   if (next[0] === '+' || next[0] === '~' || next.startsWith('||')) {
     return 'a sibling of the node is outside the node, so a selector cannot step to one from it';
@@ -672,6 +694,35 @@ export function refusedRuleValue(property: string, value: unknown): string | nul
   return refusedBody({ [property]: value }, { maps: true });
 }
 
+// --- the document ---------------------------------------------------------
+
+/** The one selector that does not start with `&`. */
+export const ROOT_SELECTOR = ':root';
+
+/** Wrappers that can hold on a document: there is no container or scope around it. */
+const ROOT_WRAPPERS = /^@(?:media|supports)\b/i;
+
+function parseRootRule(rule: Record<string, unknown>, id: string): Parsed<ParsedRootRule> {
+  if (rule.when !== undefined || rule.gate !== undefined || rule.componentState !== undefined) {
+    return refuse('the document holds no state, so a rule on it holds no condition');
+  }
+  if (rule.at !== undefined && !Array.isArray(rule.at)) return refuse('at is a list of wrappers');
+  const wrappers: unknown[] = rule.at ?? [];
+  if (wrappers.length > MAX_WRAPPERS) return refuse(`a rule has at most ${MAX_WRAPPERS} wrappers`);
+  const at: string[] = [];
+  for (const entry of wrappers) {
+    const wrapper = parseWrapper(entry);
+    if (!wrapper.ok) return wrapper;
+    if (!ROOT_WRAPPERS.test(wrapper.value)) return refuse('only @media and @supports can wrap a rule on the document');
+    at.push(wrapper.value);
+  }
+  const reason = refusedBody(rule.style, { maps: true });
+  if (reason) return refuse(reason);
+  const style = rule.style as Record<string, unknown>;
+  const outside = Object.keys(style).find((key) => !isRootStyleKey(key));
+  return outside ? refuse(`${outside} cannot be set on the document`) : accept({ kind: 'root', id, at, style });
+}
+
 // --- whole rules ----------------------------------------------------------
 
 /** A rule's stored id. */
@@ -717,6 +768,7 @@ export function parseRule(rule: unknown, context: RuleContext = {}): Parsed<Pars
   const isSelector = rule.selector !== undefined;
   const isDefinition = rule.define !== undefined;
   if (isSelector === isDefinition) return refuse('a rule is either a selector or a definition');
+  if (rule.selector === ROOT_SELECTOR) return context.pageRoot ? parseRootRule(rule, id) : refuse('only the root of a page can hold a rule on :root');
   if (isSelector) return parseSelectorRule(rule, id, context);
   return rule.when !== undefined || rule.gate !== undefined ? refuse('a definition is global, so it holds no condition') : parseDefinition(rule, id);
 }
@@ -819,14 +871,19 @@ function readDeclarations(body: string): Parsed<Record<string, unknown>> {
     const colon = prelude.indexOf(':');
     if (colon <= 0) return refuse(`"${prelude}" is not a declaration`);
     const name = prelude.slice(0, colon).trim();
-    const value = prelude.slice(colon + 1).trim();
-    if (!value) return refuse(`${name} has no value`);
+    const typed = prelude.slice(colon + 1).trim();
+    if (!typed && !name.startsWith('--')) return refuse(`${name} has no value`);
+    // `--tw-blur: ;` is CSS's empty value, which cssValueText keeps as one space.
+    const value = typed || ' ';
     const key = cssStyleKey(name.startsWith('--') ? name : name.toLowerCase());
     if (!SAFE_PROPERTY.test(key)) return refuse(`${name} is not a property name`);
     style[key] = value;
   }
   return accept(style);
 }
+
+/** `:root` in any case, as the start of a selector. */
+const STARTS_AT_ROOT = /^:root(?![\w-])/i;
 
 /**
  * `:hover` as `&:hover` and `h2` as `& h2`: what a person types into a field that
@@ -837,7 +894,9 @@ function nodeSelector(text: string): string {
   return splitSelectorList(text)
     .map((part) => {
       const trimmed = part.trim();
-      if (trimmed.includes('&')) return trimmed;
+      // Not a node's selector: `&:root` would be stored and never match, so any
+      // spelling of it stays as typed, for the parser to take or give the reason.
+      if (STARTS_AT_ROOT.test(trimmed) || trimmed.includes('&')) return trimmed;
       return trimmed.startsWith(':') ? `&${trimmed}` : `& ${trimmed}`;
     })
     .join(', ');
@@ -915,10 +974,12 @@ function readBlock({ prelude, body }: CssBlock, at: string[], out: ReadCssText):
   }
 
   const selector = nodeSelector(prelude);
-  const parsed = parseSelector(selector);
-  if (!parsed.ok) return void refused(parsed.reason);
+  // The one selector parseRule decides, because whether it stands depends on the node.
+  const parsed = selector === ROOT_SELECTOR ? null : parseSelector(selector);
+  if (parsed && !parsed.ok) return void refused(parsed.reason);
   const style = readDeclarations(body ?? '');
   if (!style.ok) return void refused(style.reason);
+  if (selector === ROOT_SELECTOR && Object.keys(style.value).length === 0) return void refused('a rule on :root needs a declaration');
   out.rules.push({ selector, ...(at.length > 0 ? { at } : {}), style: style.value });
 }
 
@@ -929,13 +990,13 @@ function readBlock({ prelude, body }: CssBlock, at: string[], out: ReadCssText):
  * rule still goes through `parseRule`, so a reason given for typed text is the reason
  * a stored rule would have got. Empty text is no rules.
  */
-export function parseCssText(text: string): ReadCssText {
+export function parseCssText(text: string, context: RuleContext = {}): ReadCssText {
   const out: ReadCssText = { rules: [], refused: [] };
   const { blocks, error } = cssBlocks(withoutComments(text));
   if (error) return { rules: [], refused: [{ text: text.trim(), reason: error }] };
   for (const block of blocks) readBlock(block, [], out);
   out.rules = out.rules.filter((rule) => {
-    const parsed = parseRule({ id: 'draft', ...rule });
+    const parsed = parseRule({ id: 'draft', ...rule }, context);
     if (!parsed.ok) out.refused.push({ text: 'selector' in rule ? rule.selector : rule.define, reason: parsed.reason });
     return parsed.ok;
   });

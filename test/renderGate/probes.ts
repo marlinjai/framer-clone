@@ -18,7 +18,7 @@ import {
   svgElements,
 } from '../score/lib/universe';
 import type { Entry } from '../score/lib/types';
-import { DOM_MEMBER_NAMES } from '@/lib/renderer/domMemberNames.generated';
+import { DOM_MEMBER_NAMES, FORM_MEMBER_NAMES } from '@/lib/renderer/domMemberNames.generated';
 import { RENDERED_ATTRIBUTES } from '@/lib/renderer/renderVocabulary';
 
 export interface ProbeNode {
@@ -309,6 +309,10 @@ function styleProbes(): Probe[] {
     hostile('a STYLE prop', 'div', [], (id) => ({ STYLE: `background:url(${STYLE_HOST}/${id})` })),
     hostile('a rule closing its style element', 'div', [], (id) => ({ rules: [{ id: 'r', selector: `&:hover</style><script>${run(id)}</script>`, style: { color: 'red' } }] })),
     hostile('a rule value closing its style element', 'div', [], (id) => ({ rules: [{ id: 'r', selector: '&:hover', style: { color: `red</style><script>${run(id)}</script>` } }] })),
+    hostile('an empty value hiding a breakout', 'div', [], (id) => ({ style: { '--x': ` ;}</style><script>${run(id)}</script>` } })),
+    hostile('a document rule closing its style element', 'div', [], (id) => ({ rules: [{ id: 'r', selector: ':root', style: { '--x': `red</style><script>${run(id)}</script>` } }] })),
+    hostile('a document rule loading an address', 'div', [], (id) => ({ rules: [{ id: 'r', selector: ':root', style: { backgroundColor: `url(${STYLE_HOST}/${id})`, '--x': `url(${STYLE_HOST}/${id})` } }] })),
+    hostile('a document selector with a breakout', 'div', [], (id) => ({ rules: [{ id: 'r', selector: `:root</style><script>${run(id)}</script>`, style: { color: 'red' } }] })),
     hostile('a rule importing a sheet', 'div', [], (id) => ({ rules: [{ id: 'r', define: `@import url(${STYLE_HOST}/${id})` }] })),
     hostile('a rule loading an address', 'div', [], (id) => ({ rules: [{ id: 'r', selector: '&', style: { background: `url(${STYLE_HOST}/${id})` } }] })),
     hostile('a style string on a custom element', 'x-y', [], (id) => ({ style: `background:url(${STYLE_HOST}/${id})` })),
@@ -335,6 +339,125 @@ function nameProbes(full: boolean): Probe[] {
       hostile(`id ${name} and a name on <img>`, 'img', [], () => ({ id: name, name: 'kept', src: '/x.png', alt: '' })),
     ]),
   ];
+}
+
+/**
+ * What a form exposes by name. A control with a member's `id` replaces that member, in
+ * a form or anywhere else through `form=`, so code walking up from the form never ends.
+ * A stored field's name reaches its control the same way, past the attribute gate.
+ */
+const nest = (id: string, types: string[], child: ProbeNode): ProbeNode =>
+  types.reduceRight((inner, type, index) => ({ id: `${id}${index}`, type, props: {}, children: [inner] }), child);
+
+/** Where the parser leaves SVG or MathML, so `image` under it is an `img` again. */
+const PARSER_ESCAPES: [string, (child: ProbeNode) => ProbeNode][] = [
+  ['in foreignObject', (child) => nest(`${child.id}e`, ['svg', 'foreignObject'], child)],
+  ['in desc', (child) => nest(`${child.id}e`, ['svg', 'desc'], child)],
+  ['in an svg title', (child) => nest(`${child.id}e`, ['svg', 'title'], child)],
+  ['in a breakout from svg', (child) => nest(`${child.id}e`, ['svg', 'g', 'p'], child)],
+  ['in mi', (child) => nest(`${child.id}e`, ['math', 'mi'], child)],
+  ['in svg', (child) => nest(`${child.id}e`, ['svg', 'g'], child)],
+];
+
+const FORM_CONTROLS = ['button', 'fieldset', 'img', 'input', 'output', 'select', 'textarea'];
+
+function formMemberProbes(full: boolean): Probe[] {
+  const members = full ? FORM_MEMBER_NAMES.filter((name) => name !== 'name') : ['parentElement', 'parentNode', 'closest', 'matches', 'elements', 'submit', 'getAttribute', 'tagName'];
+  const box = (id: string): ProbeNode['props'] => ({ id: `${id}f` });
+  const control = (id: string, type: string, props: ProbeNode['props'], children: ProbeNode[] = []): ProbeNode => ({
+    id: `${id}c`, type, props: type === 'img' ? { ...props, src: '/x.png', alt: '' } : props, children,
+  });
+  const marked = (kind: string, props: ProbeNode['props']) => ({ 'data-form-kind': kind, ...props });
+  return members.flatMap((name) => [
+    ...FORM_CONTROLS.flatMap((type) => [
+      hostile(`<form> holding <${type} id=${name}>`, 'form', [], box, (id) => [control(id, type, { id: name })]),
+      hostile(`<${type} id=${name} form=> beside its <form>`, 'div', [], () => ({}), (id) => [
+        { id: `${id}o`, type: 'form', props: box(id) },
+        control(id, type, { id: name, form: `${id}f` }),
+      ]),
+    ]),
+    hostile(`<form> holding <input ID=${name}>`, 'form', [], box, (id) => [control(id, 'input', { ID: name })]),
+    ...['image', 'IMAGE'].flatMap((type) => [
+      hostile(`<form> holding <${type} id=${name}>`, 'form', [], box, (id) => [control(id, type, { id: name })]),
+      hostile(`<form> holding <${type} ID=${name}>`, 'form', [], box, (id) => [control(id, type, { ID: name })]),
+    ]),
+    ...PARSER_ESCAPES.map(([what, path]) =>
+      hostile(`<form> holding <image id=${name}> ${what}`, 'form', [], box, (id) => [path(control(id, 'image', { id: name }))]),
+    ),
+    hostile(`<form> holding <image id=${name}> after a breakout from svg`, 'form', [], box, (id) => [
+      { id: `${id}v`, type: 'svg', props: {}, children: [{ id: `${id}b`, type: 'p', props: {} }, control(id, 'image', { id: name })] },
+    ]),
+    hostile(`<form> holding <table> holding <input id=${name}>`, 'form', [], box, (id) => [{ id: `${id}t`, type: 'table', props: {}, children: [control(id, 'input', { id: name })] }]),
+    hostile(`a stored form with a field called ${name}`, 'div', [], () => marked('form', {}), (id) => [
+      { id: `${id}n`, type: 'div', props: marked('form-field', { fieldType: 'text', name, label: 'x' }) },
+    ]),
+    hostile(`a stored form with a submit button id=${name}`, 'div', [], () => marked('form', {}), (id) => [
+      { id: `${id}s`, type: 'button', props: marked('form-submit', { id: name, children: 'x' }) },
+    ]),
+    hostile(`a stored form with a marked div id=${name} as its button`, 'div', [], () => marked('form', {}), (id) => [
+      { id: `${id}s`, type: 'div', props: marked('form-submit', { id: name, children: 'x' }) },
+    ]),
+  ]);
+}
+
+/**
+ * A name in another case. Markup does not care, so `ACTION` is `action`, and the first
+ * of the two wins where a renderer writes its own value after a stored one.
+ */
+function spellingProbes(): Probe[] {
+  const list: Probe[] = [];
+  const marked = (kind: string, props: ProbeNode['props']) => ({ 'data-form-kind': kind, ...props });
+  const submit = (id: string): ProbeNode => ({ id: `${id}s`, type: 'button', props: marked('form-submit', { children: 'x' }) });
+  for (const name of ['ACTION', 'Action', 'aCTION']) {
+    list.push(hostile(`a stored form with ${name} elsewhere`, 'div', [], (id) => marked('form', { [name]: `${FOREIGN}/${id}` }), (id) => [submit(id)]));
+  }
+  for (const name of ['METHOD', 'ENCTYPE', 'TARGET']) {
+    list.push(hostile(`a stored form with ${name}`, 'div', [], () => marked('form', { [name]: name === 'TARGET' ? '_blank' : 'get' }), (id) => [submit(id)]));
+  }
+  for (const name of ['FORMACTION', 'FormAction', 'fORMaCTION']) {
+    list.push(hostile(`a stored form with a button ${name} elsewhere`, 'div', [], () => marked('form', {}), (id) => [
+      { id: `${id}s`, type: 'button', props: { [name]: `${FOREIGN}/${id}`, type: 'submit', children: 'x' } },
+    ]));
+  }
+  for (const name of ['ID', 'Id', 'iD']) {
+    list.push(hostile(`<img ${name}=createElement> with a name`, 'img', [], () => ({ [name]: 'createElement', name: 'kept', src: '/x.png', alt: '' })));
+  }
+  // Past the platform's submission, from inside a live form and from outside it. Lower
+  // case is the plain spelling of what every other probe here spells.
+  for (const name of ['formaction', 'formAction', 'FORMACTION']) {
+    list.push(hostile(`a stored form with a deep button ${name} elsewhere`, 'div', [], (id) => marked('form', { id: `${id}f` }), (id) => [
+      { id: `${id}w`, type: 'div', props: {}, children: [{ id: `${id}s`, type: 'button', props: { [name]: `${FOREIGN}/${id}`, type: 'submit', children: 'x' } }] },
+    ]));
+    list.push(hostile(`a stored form with an outside button ${name} elsewhere`, 'div', [], () => ({}), (id) => [
+      { id: `${id}l`, type: 'div', props: marked('form', { id: `${id}f` }), children: [] },
+      { id: `${id}s`, type: 'button', props: { [name]: `${FOREIGN}/${id}`, form: `${id}f`, type: 'submit', children: 'x' } },
+    ]));
+  }
+  list.push(hostile('a stored plain form with an outside action in a live form', 'div', [], () => marked('form', {}), (id) => [
+    { id: `${id}p`, type: 'form', props: { action: `${FOREIGN}/${id}`, method: 'get' }, children: [
+      { id: `${id}n`, type: 'div', props: marked('form-field', { fieldType: 'text', name: 'phone', label: 'Phone' }) },
+      { id: `${id}s`, type: 'button', props: { type: 'submit', children: 'x' } },
+    ] },
+  ]));
+  for (const type of ['p', 'img', 'div']) {
+    list.push(hostile(`<${type}> directly in math in a form`, 'form', [], () => ({}), (id) => [
+      { id: `${id}m`, type: 'math', props: {}, children: [{ id: `${id}h`, type, props: { id: 'parentElement' } }, { id: `${id}i`, type: 'image', props: { id: 'closest' } }] },
+    ]));
+  }
+  for (const type of ['p', 'div', 'span', 'img', 'table']) {
+    list.push(hostile(`<${type}> directly in svg before an image`, 'svg', [], () => ({}), (id) => [
+      { id: `${id}h`, type, props: {} },
+      { id: `${id}i`, type: 'image', props: { id: `${id}x` } },
+    ]));
+  }
+
+  // The whole vocabulary, by what could run or leave, in both spellings on what acts on an address.
+  for (const name of [...RENDERED_ATTRIBUTES].filter((attribute) => upper(attribute) !== attribute)) {
+    for (const spelled of [upper(name), mixed(name)]) {
+      for (const type of ['a', 'form']) list.push(hostile(`spelled ${spelled} on <${type}>`, type, [], (id) => ({ [spelled]: VALUES.js(id) })));
+    }
+  }
+  return list;
 }
 
 /** A paint or filter attribute reaching a file. A reference inside the page is how SVG works. */
@@ -415,6 +538,8 @@ export function buildProbes(full: boolean): Probe[] {
     ...shapeProbes(),
     ...rendererAttributeProbes(),
     ...nameProbes(full),
+    ...formMemberProbes(full),
+    ...spellingProbes(),
     ...cssReferenceProbes(),
     ...renderedNameProbes(),
     ...componentTypeProbes(),

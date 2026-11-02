@@ -424,6 +424,11 @@ describe('F5: one reading of an address', () => {
     expect(styleOf({ '--brand': '#123456', '--label': '"Hello"' })).toEqual({ '--brand': '#123456', '--label': '"Hello"' });
   });
 
+  it('keeps the empty value of a custom property, and nothing behind it', () => {
+    expect(styleOf({ '--tw-blur': ' ', '--gone': '' })).toEqual({ '--tw-blur': ' ' });
+    expect(styleOf({ '--a': ' ;color:red', color: ' ' })).toEqual({});
+  });
+
   it('refuses a CSS escape in a presentation attribute', () => {
     expect(inSvg('rect', { fill: 'u\\72 l(https://evil.example/a.svg#g)', mask: 'U\\52L(https://evil.example/m.svg#m)' })).toEqual({});
     expect(propsOf('div', { title: 'a\\b' })).toEqual({});
