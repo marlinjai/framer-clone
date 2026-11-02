@@ -274,6 +274,18 @@ describe('protected: ids and what points at them (review finding 1)', () => {
     ]);
   });
 
+  it('blocks the page snapshot slug and a component definition page slug as addresses', () => {
+    const doc = {
+      pages: [{ pageId: 'p', slug: 'team-mustermann', snapshot: { slug: 'team-mustermann' } }],
+      components: [{ id: 'c', page: { slug: 'team-mustermann' } }],
+    };
+    expect(blockedOf(doc, 'Mustermann')).toEqual([
+      ['/pages/0/slug', 'address'],
+      ['/pages/0/snapshot/slug', 'address'],
+      ['/components/0/page/slug', 'address'],
+    ]);
+  });
+
   it('never offers the structural vocabulary for erasing', () => {
     const found = findMatches(documentWith('host'), REV, match('host'));
     const vocabulary = found.filter((m) => m.path.endsWith('/componentType'));

@@ -262,8 +262,13 @@ function nearestKey(path: readonly Segment[]): { key: string | null; parent: str
 }
 
 function isAddressPath(path: readonly Segment[]): boolean {
-  // `pages/<i>/slug` of a document, and every string of a redirect entry.
-  return (path[0] === 'pages' && path[2] === 'slug' && path.length === 3) || path[0] === 'redirects';
+  // Every string of a redirect entry, `pages/<i>/slug` (the mirror column), the page
+  // snapshot's own `slug` (what the editor and the next Save read) and a component
+  // definition's page slug.
+  if (path[0] === 'redirects') return true;
+  if (path[0] === 'pages' && path[2] === 'slug' && path.length === 3) return true;
+  if (path[0] === 'pages' && path[2] === 'snapshot' && path[3] === 'slug' && path.length === 4) return true;
+  return path[0] === 'components' && path[2] === 'page' && path[3] === 'slug' && path.length === 4;
 }
 
 /** An absolute address (`https:`, `//cdn`, `data:`), except a mail or phone link, which is the personal data itself. */

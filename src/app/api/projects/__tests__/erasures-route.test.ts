@@ -238,12 +238,12 @@ describe('POST .../erasures', () => {
     expect(purgeCachedSiteFiles).toHaveBeenCalledWith(['site-host:www.bakery.example']);
   });
 
-  it('answers a stale preview with 409 and refreshes nothing', async () => {
+  it('answers a stale preview with 409 and still refreshes the published site', async () => {
     installRepo({ erasePersonalData: vi.fn().mockRejectedValue(new ErasePreviewStaleError()) });
     const res = await POST(req('erasures', { value: VALUE, token: TOKEN, chosen: [PICK] }), ctx);
     expect(res.status).toBe(409);
     expect((await res.json()).error.code).toBe('erase_preview_stale');
-    expect(revalidateCustomHostsForSiteId).not.toHaveBeenCalled();
+    expect(revalidateCustomHostsForSiteId).toHaveBeenCalledWith('site_1');
   });
 
   it('refreshes the published site on nothing_to_erase, so a repeat recovers a failed refresh', async () => {

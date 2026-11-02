@@ -16,12 +16,13 @@
 // failed erase changed nothing and is simply repeated.
 //
 // The published site is refreshed after every attempt that got past the guard,
-// also one answered `nothing_to_erase`: when a refresh failed after a committed
-// erase, repeating the erase finds nothing and refreshes again.
+// also one answered `nothing_to_erase` or `erase_preview_stale`: when a refresh
+// failed after a committed erase, repeating the erase finds nothing (or a token
+// the commit made stale) and refreshes again.
 
 import { withAuthAvailability } from '@/lib/authBrainAvailability';
 import { jsonError, parseBody } from '@/lib/api/respond';
-import { getSiteRepository, NothingToEraseError, type PersonalDataErasure } from '@/server/sites';
+import { ErasePreviewStaleError, getSiteRepository, NothingToEraseError, type PersonalDataErasure } from '@/server/sites';
 import { authorizeEraser, eraseBodySchema, eraseErrorResponse, queryOf, revalidateErasedSite } from './_shared';
 
 export const runtime = 'nodejs';
@@ -68,7 +69,7 @@ async function handlePOST(req: Request, { params }: Ctx): Promise<Response> {
     });
   } catch (err) {
     failure = eraseErrorResponse(err, 'erase_failed', 'The erase failed. Nothing was changed; try again.');
-    if (!(err instanceof NothingToEraseError)) return failure;
+    if (!(err instanceof NothingToEraseError || err instanceof ErasePreviewStaleError)) return failure;
   }
 
   try {
