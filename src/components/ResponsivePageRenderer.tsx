@@ -40,6 +40,9 @@ import {
 } from '@/lib/bindings/resolver/scope';
 import { defaultValuesAt } from '@/lib/components/frameInputs';
 import { useProductPageParams } from '@/lib/commerce/productPreview';
+import { surfaceBehaviour } from '@/lib/behaviour/surfaceBehaviour';
+import { SurfaceDomContext, useStableSurfaceDom } from '@/lib/behaviour/surfaceDom';
+import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 
 // Parse a CSS length into pixels for GroundWrapper sizing. Accepts a raw
 // number or a `<n>px` string. Anything else (e.g. '100%', 'auto',
@@ -73,10 +76,34 @@ const CANVAS_ROOTS = [VIEWPORT_ROOT, FLOATING_ROOT];
 // both read the page's expansion, which changes with any node.
 const PageFonts = observer(({ page }: { page: PageModelType }) => <PageFontFaces roots={page.canvasFontRoots} />);
 
-// The expanded page, so a rule inside a definition shows on each placement of it.
-const PageRuleStyles = observer(({ page, ...sheet }: { page: PageModelType } & Pick<CanvasRuleStylesProps, 'frames' | 'breakpoints'>) => {
+/** The page's behaviour as Select shows it: the pass over the expansion, a preview standing for first values. */
+function useCanvasBehaviour(page: PageModelType) {
+  const { editorUI } = useStore();
   const { root, floating } = page.expansion;
-  return <CanvasRuleStyles {...sheet} tree={root as SurfaceNode} definitionTree={page.isDefinitionPage} floating={floating as SurfaceNode[]} />;
+  const preview = editorUI.previewState;
+  return { root: surfaceBehaviour(root, preview), floating: floating.map((element: ComponentNode) => surfaceBehaviour(element, preview)) };
+}
+
+// The expanded page, so a rule inside a definition shows on each placement of it, after
+// the behaviour pass, so a rule reading page state shows at the state previewed.
+const PageRuleStyles = observer(({ page, ...sheet }: { page: PageModelType } & Pick<CanvasRuleStylesProps, 'frames' | 'breakpoints'>) => {
+  const { root, floating } = useCanvasBehaviour(page);
+  return (
+    <CanvasRuleStyles
+      {...sheet}
+      tree={root.root as SurfaceNode}
+      definitionTree={page.isDefinitionPage}
+      floating={floating.map(applied => applied.root) as SurfaceNode[]}
+      problems={[...root.problems, ...floating.flatMap(applied => applied.problems)]}
+    />
+  );
+});
+
+// Apart from ResponsivePageRenderer, so a change of state redraws the nodes it reaches.
+const CanvasBehaviour = observer(({ page, children }: { page: PageModelType; children: React.ReactNode }) => {
+  const { root, floating } = useCanvasBehaviour(page);
+  const dom = useStableSurfaceDom([root.dom, ...floating.map(applied => applied.dom)]);
+  return <SurfaceDomContext.Provider value={dom}>{children}</SurfaceDomContext.Provider>;
 });
 
 const ResponsivePageRenderer = observer(() => {
@@ -124,6 +151,7 @@ const ResponsivePageRenderer = observer(() => {
         }))}
         breakpoints={breakpoints}
       />
+      <CanvasBehaviour page={page}>
       {/* 1. Viewport frames */}
       {viewportNodes.map(viewport => (
         <ViewportFrame
@@ -144,6 +172,7 @@ const ResponsivePageRenderer = observer(() => {
           scope={scopeOf('')}
         />
       ))}
+      </CanvasBehaviour>
     </>
   );
 });

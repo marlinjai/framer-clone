@@ -6,6 +6,10 @@
 // work (a Save here would overwrite it), or the page asked for in the address
 // does not exist. The live region is always present, so the message is
 // announced when it appears.
+//
+// It is also the badge of a state preview (editorUI.previewState): the canvas shows a
+// state at another value than its first, so a layer hidden by it can be edited. Closing
+// that notice ends the preview, so nothing on the canvas differs from the page unnamed.
 
 import React from 'react';
 import { observer } from 'mobx-react-lite';
@@ -34,9 +38,18 @@ const EditorNotice = observer(() => {
               Load the newer version
             </button>
           ) : null}
+          {notice.kind === 'previewState' ? (
+            <button
+              type="button"
+              onClick={() => editorUI.clearPreviewState()}
+              className="shrink-0 rounded border border-amber-400 px-2 py-0.5 font-medium hover:bg-amber-100"
+            >
+              Show first values
+            </button>
+          ) : null}
           <button
             type="button"
-            onClick={() => editorUI.setEditorNotice(undefined)}
+            onClick={() => (notice.kind === 'previewState' ? editorUI.clearPreviewState() : editorUI.setEditorNotice(undefined))}
             aria-label="Dismiss notice"
             className="shrink-0 rounded px-1 hover:bg-amber-100"
           >

@@ -12,6 +12,7 @@ import { applySnapshot, getSnapshot } from 'mobx-state-tree';
 import EditorApp from '@/components/EditorApp';
 // Named for what it is here: the singleton getter behind the hook, called outside React.
 import { useStore as editorStore } from '@/hooks/useStore';
+import { getUndoManager } from '@/stores/RootStore';
 import ComponentModel, { type ComponentInstance } from '@/models/ComponentModel';
 import type { PageBase } from '@/lib/site/pageBase';
 
@@ -35,6 +36,10 @@ interface ProbeWindow {
     selectedId: () => string | undefined;
     editingId: () => string | undefined;
     propsOf: (componentId: string) => Record<string, unknown> | undefined;
+    setBehaviour: (componentId: string, behaviour: Record<string, unknown> | undefined) => void;
+    undo: () => void;
+    previewState: () => Record<string, unknown>;
+    undoLevels: () => number;
   };
 }
 
@@ -106,4 +111,13 @@ const nodeById = (id: string): ComponentInstance | undefined => {
   selectedId: () => editorStore().editorUI.selectedComponent?.id,
   editingId: () => editorStore().editorUI.editingComponent?.id,
   propsOf: (componentId) => nodeById(componentId)?.props as Record<string, unknown> | undefined,
+  setBehaviour: (componentId, behaviour) => {
+    const node = nodeById(componentId);
+    if (!node) throw new Error(`no node ${componentId}`);
+    const written = node.setBehaviour(behaviour);
+    if (!written.ok) throw new Error(`the behaviour was refused: ${written.reason}`);
+  },
+  undo: () => getUndoManager()?.undo(),
+  previewState: () => ({ ...editorStore().editorUI.previewState }),
+  undoLevels: () => getUndoManager()?.undoIdx ?? 0,
 };
