@@ -222,6 +222,9 @@ describe('publish freezes what visitors read', () => {
         hostname,
         customHostname: hostname,
         verificationStatus: 'active',
+        // Never due for the scheduled re-check, which scans every live domain in the
+        // shared database: service.itest.ts counts what it finds and runs in parallel.
+        lastCheckedAt: new Date('2100-01-01T00:00:00.000Z'),
       },
     });
     await repo.saveProject(scope, project('saved, not published'), { mustExist: true });
