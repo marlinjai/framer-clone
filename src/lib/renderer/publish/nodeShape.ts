@@ -30,7 +30,8 @@ export function wellFormedTree(value: unknown): ComponentNode | null {
   let node = value;
   const without = (key: string) => {
     warnOnce();
-    const { [key]: _dropped, ...rest } = node;
+    const rest = { ...node };
+    delete rest[key];
     node = rest;
   };
   if (node.props !== undefined && node.props !== null && !isRecord(node.props)) without('props');

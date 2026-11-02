@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { chromium, webkit, type BrowserType } from 'playwright';
 import { bundleEditor } from '../score/lib/canvasBundle';
+import { DOM_MEMBER_NAMES } from '@/lib/renderer/domMemberNames.generated';
 import { buildProbes, type Probe } from './probes';
 import { readBundle, runBatch, type Finding, type Surface } from './harness';
 
@@ -54,6 +55,21 @@ describe('render gate', () => {
     bundle = readBundle(await bundleEditor('test/renderGate/browserEntry.tsx', 'render-gate-bundle'));
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  it.each(BROWSERS)('the checked-in member names cover %s', async (_name, type) => {
+    const browser = await type.launch();
+    const page = await browser.newPage();
+    const names = await page.evaluate(() =>
+      [Document.prototype, HTMLFormElement.prototype].flatMap((start) => {
+        const out: string[] = [];
+        for (let proto: object | null = start; proto; proto = Object.getPrototypeOf(proto)) out.push(...Object.getOwnPropertyNames(proto));
+        return out;
+      }),
+    );
+    await browser.close();
+    const known = new Set(DOM_MEMBER_NAMES);
+    expect(names.filter((name) => !known.has(name))).toEqual([]);
   });
 
   it.each(BROWSERS)('nothing stored acts on a page in %s', async (name, type) => {

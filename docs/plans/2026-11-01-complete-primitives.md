@@ -315,8 +315,16 @@ owners set in the panel.
 Rules, in both renderers:
 
 - **A tag** must be listed or have a custom element's shape, with no colon.
+- **A `#` tag** is never a tag: the text path returns before the gate, and `#TEXT` is refused.
+- **A title** outside an `svg` is refused, because React lifts it to the document.
 - **An attribute** must be listed, or be `data-*`, `aria-*` or an author's hyphenated name. Those are
-  safe to keep because no script reads them and React never treats them as properties.
+  safe to keep because no script reads them and React never treats them as properties. The hyphen rule
+  is the one deliberate exception to refusing by default, and a test asks for a decision when the data
+  lists a new hyphenated name. `data-fc-*` is refused: the renderers' own runtime acts on it.
+- **An `id` or `name`** cannot replace what the page's code calls: `__*`, `webpackChunk*`, `fc-*`,
+  `ground-wrapper-*`, and any member of `Document` or `HTMLFormElement`, from a list generated in real
+  browsers (`pnpm generate:dom-members`).
+- **An SVG paint or filter attribute** may only `url(#...)` inside the page.
 - **An address** may only be `http`, `https`, `mailto`, `tel`, `sms`, a path, a fragment, or a `data:`
   image, audio, video or font. It is judged the way a browser reads it.
 - **Only `children`, `style` and `ref` hold objects.** An array would otherwise read as its string.
@@ -324,8 +332,12 @@ Rules, in both renderers:
   hides one, no script address. An external image in a style stays allowed, as it does in the
   stylesheet: a style may show a picture.
 
+A tree is checked for shape before hydration (`src/lib/renderer/publish/nodeShape.ts`), so a bad child
+costs that child, not the page. Consent is answered only from inside the banner.
+
 `pnpm test:render-gate` (test/renderGate) tries every element and attribute of the data in real
-Chromium and WebKit, through published markup and client rendering, and fails on what it finds.
+Chromium and WebKit, through the published steps and client rendering, and fails on what it finds.
+Each detector has a canary in every batch, so a blind run fails too.
 
 These props and nodes get dropped by both renderers in a separate change, so existing rows and every
 write path are covered. The custom code
