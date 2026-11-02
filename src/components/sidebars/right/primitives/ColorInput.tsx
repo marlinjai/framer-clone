@@ -1,5 +1,5 @@
 'use client';
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { observer } from 'mobx-react-lite';
 import { cn } from '@/lib/utils';
 import { useStore } from '@/hooks/useStore';
@@ -47,12 +47,27 @@ export function toPickerHex(value: string): string | null {
 
 /**
  * A drag on the native picker is one undo step: every change while the picker has focus
- * joins one history batch, written when focus leaves it.
+ * joins one history batch, written when focus leaves it or the field goes away. Only a
+ * batch this field started is written: when another gesture already holds one (a drag,
+ * a resize), the field joins nothing and closes nothing.
  */
-const gesture = {
-  start: () => getHistoryStore()?.startBatch('Colour'),
-  end: () => getHistoryStore()?.commitBatch(),
-};
+function useColourGesture(): { start: () => void; end: () => void } {
+  const owned = useRef(false);
+  const end = useCallback(() => {
+    if (!owned.current) return;
+    owned.current = false;
+    getHistoryStore()?.commitBatch();
+  }, []);
+  const start = useCallback(() => {
+    const history = getHistoryStore();
+    if (!history || history.batch || owned.current) return;
+    history.startBatch('Colour');
+    owned.current = true;
+  }, []);
+  // Unmounted while focused (the panel closed, the selection moved): the step still ends here.
+  useEffect(() => end, [end]);
+  return { start, end };
+}
 
 /**
  * Color field: one bordered field with the swatch inside on the left (a
@@ -67,6 +82,7 @@ export const ColorInput = observer(function ColorInput({ label, value, onChange,
   const theme: SiteTheme = editorUI.currentProject?.site?.theme ?? EMPTY_THEME;
   const scheme = editorUI.frameColorScheme;
   const [localValue, setLocalValue] = useState(value || '#ffffff');
+  const gesture = useColourGesture();
 
   useEffect(() => {
     setLocalValue(value || '#ffffff');

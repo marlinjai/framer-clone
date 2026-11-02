@@ -121,6 +121,36 @@ describe('forward', () => {
   });
 });
 
+describe('a colour gesture and other batches', () => {
+  it('ends its step when the field unmounts while focused', () => {
+    project.updateTheme({ tokens: [{ id: 'ac000001', name: 'Accent', kind: 'color', light: '#000000' }], document: {} });
+    const view = render(<ThemeForm project={project} />);
+    const row = document.querySelector('[data-token-id="ac000001"]') as HTMLElement;
+    const picker = within(row).getAllByLabelText(/color picker/)[0];
+    const steps = history().history.length;
+    fireEvent.focus(picker);
+    fireEvent.change(picker, { target: { value: '#111111' } });
+    view.unmount();
+    expect(history().batch).toBeUndefined();
+    expect(history().history.length).toBe(steps + 1);
+    // A later edit is its own step, not part of the colour's.
+    node.updateResponsiveStyle('color', '#222222');
+    expect(history().history.length).toBe(steps + 2);
+  });
+
+  it('never closes a batch another gesture started', () => {
+    project.updateTheme({ tokens: [{ id: 'ac000001', name: 'Accent', kind: 'color', light: '#000000' }], document: {} });
+    render(<ThemeForm project={project} />);
+    const row = document.querySelector('[data-token-id="ac000001"]') as HTMLElement;
+    const picker = within(row).getAllByLabelText(/color picker/)[0];
+    history().startBatch('Drag');
+    fireEvent.focus(picker);
+    fireEvent.blur(picker);
+    expect(history().batch?.name).toBe('Drag');
+    history().commitBatch();
+  });
+});
+
 describe('backtrack', () => {
   it('Replace points every use at another token in one step, and undo puts each back', () => {
     project.updateTheme({
