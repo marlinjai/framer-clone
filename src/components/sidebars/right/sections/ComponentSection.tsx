@@ -26,7 +26,8 @@ import type { ComponentInstance } from '@/models/ComponentModel';
 import type { BindableSlotMeta } from '@/lib/bindings/types';
 import { useStore } from '@/hooks/useStore';
 import { isResponsiveMap, resolveCascade, type BreakpointRef } from '@/lib/responsive/cascade';
-import { parseInputValue, type ImageValue, type InputDefinition } from '@/lib/components/inputs';
+import { CURSOR_KEYWORDS, parseInputValue, type ImageValue, type InputDefinition } from '@/lib/components/inputs';
+import { formatRuns, parseRuns } from '@/lib/components/richText';
 import type { PlacementProps } from '@/lib/components/placement';
 import { requestDetach } from '@/lib/components/editorCommands';
 import { extractBreakpoints } from '@/lib/renderer/server/componentSnapshot';
@@ -46,8 +47,19 @@ const ERROR = 'text-[11px] leading-snug text-destructive';
 const ACTION =
   'flex h-7 min-w-0 flex-1 items-center justify-center gap-1.5 rounded border border-border px-2 text-[11px] text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand phone:h-9';
 
-/** The types whose value has a control of its own here. The others are set from data for now. */
-const EDITABLE = new Set(['text', 'number', 'toggle', 'color', 'image', 'link', 'choice', 'file', 'date', 'border', 'shadow', 'cursor', 'transition']);
+/** The types whose value has a control of its own here. A list and a gallery are set from data. */
+const EDITABLE = new Set([
+  'text', 'number', 'toggle', 'color', 'image', 'link', 'choice', 'richtext', 'file', 'date', 'border', 'shadow', 'cursor', 'transition',
+]);
+
+/** What a CSS value looks like, for a field with no default to show. */
+const STYLE_EXAMPLES: Partial<Record<string, string>> = {
+  border: '1px solid #e5e5e5',
+  shadow: '0 4px 12px rgba(0, 0, 0, 0.12)',
+  transition: 'opacity 200ms ease',
+  file: '/files/brochure.pdf',
+  link: '/contact',
+};
 
 /** A stored value on this frame: a value per breakpoint resolves to the one that applies. */
 function valueOn(value: unknown, breakpointId: string | undefined, breakpoints: readonly BreakpointRef[]): unknown {
@@ -60,7 +72,7 @@ const asText = (value: unknown): string => (typeof value === 'string' || typeof 
  * A field that keeps what is typed and stores it on Enter or blur, once it parses:
  * one edit, one undo step. A refused value stays with the reason under it.
  */
-const CommitField = ({
+export const CommitField = ({
   label,
   shown,
   placeholder,
@@ -69,15 +81,22 @@ const CommitField = ({
   multiline,
   inputMode,
   mono,
+  type,
+  hint,
 }: {
   label: string;
   shown: string;
   placeholder?: string;
   parse: (text: string) => { ok: true; value: unknown } | { ok: false; reason: string };
-  onCommit: (value: unknown) => void;
+  /** Stores the value. A string back is a refusal, shown under the field like a parse error. */
+  onCommit: (value: unknown) => void | string;
   multiline?: boolean;
   inputMode?: 'decimal' | 'url';
   mono?: boolean;
+  /** The field's own type, `date` for one. Plain text otherwise. */
+  type?: 'text' | 'date';
+  /** A line under the field on how to write the value. */
+  hint?: string;
 }) => {
   const [draft, setDraft] = useState(shown);
   const [error, setError] = useState<string | null>(null);
@@ -92,8 +111,8 @@ const CommitField = ({
       setError(parsed.reason);
       return;
     }
-    setError(null);
-    onCommit(parsed.value);
+    const refusal = onCommit(parsed.value);
+    setError(typeof refusal === 'string' ? refusal : null);
   };
   const keys = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !(multiline && e.shiftKey)) {
@@ -121,6 +140,7 @@ const CommitField = ({
         />
       ) : (
         <TextInput
+          type={type ?? 'text'}
           aria-label={label}
           value={draft}
           placeholder={placeholder}
@@ -132,6 +152,7 @@ const CommitField = ({
           onKeyDown={keys}
         />
       )}
+      {hint && !error && <p className={HINT}>{hint}</p>}
       {error && <p role="alert" className={ERROR}>{error}</p>}
     </div>
   );
@@ -225,15 +246,57 @@ const InputControl = ({ input, value, onCommit }: { input: InputDefinition; valu
         </div>
       );
     }
+    case 'richtext':
+      // Stored as the runs it reads to, never as the notation: the page renders runs.
+      return (
+        <CommitField
+          label={input.name}
+          shown={formatRuns(value)}
+          placeholder={formatRuns(input.default) || undefined}
+          multiline
+          hint="**bold**, *italic*, __underline__, [label](/address). Shift+Enter for a new line."
+          parse={(text) => check(parseRuns(text))}
+          onCommit={onCommit}
+        />
+      );
+    case 'cursor':
+      return (
+        <PropertySelect
+          label=""
+          aria-label={input.name}
+          value={typeof value === 'string' ? value : ''}
+          options={CURSOR_KEYWORDS.map((keyword) => ({ value: keyword, label: keyword }))}
+          onChange={(next) => {
+            const parsed = check(next);
+            if (parsed.ok) onCommit(parsed.value);
+          }}
+        />
+      );
+    case 'date': {
+      // A date alone has the browser's date field; a date with a time stays typed.
+      const shown = asText(value);
+      const timed = shown.includes('T');
+      return (
+        <CommitField
+          label={input.name}
+          shown={shown}
+          placeholder={timed ? '2026-11-02T09:30:00Z' : undefined}
+          type={timed ? 'text' : 'date'}
+          mono={timed}
+          parse={(text) => (text.trim() === '' ? { ok: false, reason: 'Pick a date, or reset to use the default.' } : check(text.trim()))}
+          onCommit={onCommit}
+        />
+      );
+    }
     default:
       return (
         <CommitField
           label={input.name}
           shown={asText(value)}
-          placeholder={placeholder}
+          placeholder={placeholder ?? STYLE_EXAMPLES[input.type]}
           multiline={input.type === 'text' && input.multiline}
           inputMode={input.type === 'link' || input.type === 'file' ? 'url' : undefined}
-          mono={input.type === 'link' || input.type === 'file'}
+          mono={input.type !== 'text'}
           parse={(text) => check(input.type === 'text' ? text : text.trim())}
           onCommit={onCommit}
         />

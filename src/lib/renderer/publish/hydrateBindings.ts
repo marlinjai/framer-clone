@@ -56,7 +56,7 @@
 
 import { wellFormedTree } from '@/lib/renderer/publish/nodeShape';
 import { applyBindings, type Props } from '@/lib/bindings/resolver/applyBindings';
-import { isTextNodeType, renderableText } from '@/lib/renderer/textNode';
+import { formattedPlainText, isFormattedText, isTextNodeType, renderableText } from '@/lib/renderer/textNode';
 import { MISSING_TYPE, serializedBytes } from '@/lib/components/placement';
 import {
   bakeInputBindings,
@@ -783,6 +783,7 @@ function commercePlaceholderNode(node: ComponentNode, dataKind: string): Compone
  * a number as text. Used by the parity test.
  */
 export function nodeTextContent(node: ComponentNode): string {
-  const own = renderableText(node.props?.children);
+  const text = node.props?.children;
+  const own = isFormattedText(text) ? formattedPlainText(text) : renderableText(text);
   return `${own ?? ''}${(node.children ?? []).map(nodeTextContent).join('')}`;
 }

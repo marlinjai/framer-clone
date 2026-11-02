@@ -11,6 +11,8 @@
 //   - rename: a definition's name, unique within the site.
 //   - delete: names how many placements become plain copies, which look the same.
 //   - detach: only opened when the copy takes a form to a new id.
+//   - editInput: a new type or new options for an input, opened only when the
+//     change takes placement values, connections or the default with it.
 //
 // Each confirm runs one ProjectModel action, one undo step, and shows its refusal
 // in the dialog rather than closing on it. A node or definition that went away
@@ -33,6 +35,7 @@ import { Button } from '@/components/ui/button';
 import { useStore } from '@/hooks/useStore';
 import { detachLosesFormHistory } from '@/lib/components/detach';
 import { holdsForm, runDetach } from '@/lib/components/editorCommands';
+import { INPUT_TYPE_LABELS } from '@/lib/components/inputs';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import type { ComponentRequest } from '@/stores/EditorUIStore';
 import { FIELD_CONTROL } from './sidebars/right/primitives';
@@ -215,11 +218,72 @@ const DetachForm = observer(({ request, onClose }: { request: Extract<ComponentR
 });
 DetachForm.displayName = 'DetachForm';
 
+const plural = (count: number, one: string, many: string) => (count === 1 ? `1 ${one}` : `${count} ${many}`);
+
+const EditInputForm = observer(({ request, onClose }: { request: Extract<ComponentRequest, { kind: 'editInput' }>; onClose: () => void }) => {
+  const { editorUI } = useStore();
+  const project = editorUI.currentProject;
+  const definition = project?.components.get(request.definitionId);
+  const current = definition?.inputs.find((input) => input.id === request.next.id);
+  // Counted live, so a value set or a field connected while this is open is counted too.
+  const values = project && current ? project.inputTypeChangeLoss(request.definitionId, request.next) : 0;
+  const connections = project && current ? project.inputTypeChangeBindingLoss(request.definitionId, request.next) : 0;
+  const [error, setError] = React.useState('');
+  const retyped = current !== undefined && current.type !== request.next.type;
+
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!project || !current) return;
+    const result = project.changeInputType(request.definitionId, request.next);
+    if (!result.ok) {
+      setError(result.message);
+      return;
+    }
+    onClose();
+  };
+
+  return (
+    <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col gap-4">
+      <DialogBody className="flex flex-col gap-3">
+        {current ? (
+          <>
+            <p className={NOTE}>
+              {retyped
+                ? `${current.name} becomes ${INPUT_TYPE_LABELS[request.next.type]}.`
+                : `${current.name} gets the new options.`}
+            </p>
+            {values > 0 && (
+              <p className={NOTE}>
+                {plural(values, 'placement loses its value', 'placements lose their value')}, which the new input
+                would not take. They show the default instead.
+              </p>
+            )}
+            {connections > 0 && (
+              <p className={NOTE}>
+                {plural(connections, 'field in the component stops', 'fields in the component stop')} reading it: an
+                address can only come from a Link, File or Image input.
+              </p>
+            )}
+            {request.defaultDropped && <p className={NOTE}>Its default does not fit the new type, so it goes.</p>}
+            <p className="text-[12px] text-muted-foreground">Undo brings all of it back.</p>
+          </>
+        ) : (
+          <p className={NOTE}>That input no longer exists.</p>
+        )}
+        <ErrorLine message={error} />
+      </DialogBody>
+      <Footer onClose={onClose} confirm={retyped ? 'Change type' : 'Change options'} destructive disabled={!current} />
+    </form>
+  );
+});
+EditInputForm.displayName = 'EditInputForm';
+
 const TITLES: Record<ComponentRequest['kind'], string> = {
   create: 'Create component',
   rename: 'Rename component',
   delete: 'Delete component',
   detach: 'Detach from component',
+  editInput: 'Change input',
 };
 
 const ComponentDialogs = observer(() => {
@@ -248,6 +312,7 @@ const ComponentDialogs = observer(() => {
           {request.kind === 'rename' && <RenameForm key={request.definitionId} request={request} onClose={onClose} />}
           {request.kind === 'delete' && <DeleteForm key={request.definitionId} request={request} onClose={onClose} />}
           {request.kind === 'detach' && <DetachForm key={request.placementId} request={request} onClose={onClose} />}
+          {request.kind === 'editInput' && <EditInputForm key={request.next.id} request={request} onClose={onClose} />}
         </DialogContent>
       )}
     </Dialog>

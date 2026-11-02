@@ -7,6 +7,7 @@ import PageModel, { PageModelType } from '../models/PageModel';
 import ComponentModel, { ComponentInstance } from '../models/ComponentModel';
 import { LEFT_SIDEBAR_DEFAULT_WIDTH, clampLeftSidebarWidth } from '@/lib/layers/sidebarWidth';
 import { isTextNodeType } from '@/lib/renderer/textNode';
+import type { InputDefinition } from '@/lib/components/inputs';
 import { isDefinitionRule, storedRulesOf } from '@/lib/rules/rules';
 import { findRuleIndex, namedState, ruleLabel } from '@/lib/rules/states';
 // Removed BreakpointModel - breakpoints are now viewport nodes
@@ -72,7 +73,9 @@ export type ComponentRequest =
   | { kind: 'create'; pageId: string; nodeIds: readonly string[] }
   | { kind: 'rename'; definitionId: string }
   | { kind: 'delete'; definitionId: string }
-  | { kind: 'detach'; pageId: string; placementId: string };
+  | { kind: 'detach'; pageId: string; placementId: string }
+  // A change to an input's type or options that takes values or connections with it.
+  | { kind: 'editInput'; definitionId: string; next: InputDefinition; defaultDropped: boolean };
 
 /** Where to go back to from a definition. Ids, so a reloaded project still resolves it. */
 export interface ComponentReturn {

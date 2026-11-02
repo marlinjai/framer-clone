@@ -4,7 +4,10 @@ import {
   inputDefinitionRefusal,
   MAX_LIST_ITEMS,
   mayBindToSlot,
+  optionsFromText,
+  optionsToText,
   parseInputValue,
+  retypedInput,
   type InputDefinition,
   type InputType,
 } from '../inputs';
@@ -189,5 +192,61 @@ describe('mayBindToSlot', () => {
     expect(mayBindToSlot('link', 'href')).toBe(true);
     expect(mayBindToSlot('image', 'src')).toBe(true);
     expect(mayBindToSlot('file', 'href')).toBe(true);
+  });
+});
+
+describe('retypedInput', () => {
+  it('keeps the id, name, group and description, and drops what only the old type read', () => {
+    const { next, defaultDropped } = retypedInput(input('number', { group: 'Look', description: 'How wide', min: 0, max: 9, unit: 'px', default: 4 }), 'text');
+    // A text input reads a number as its digits, so the default stays.
+    expect(next).toEqual({ id: 'x', name: 'X', type: 'text', group: 'Look', description: 'How wide', default: 4 });
+    expect(defaultDropped).toBe(false);
+    expect(inputDefinitionRefusal(next)).toBeNull();
+  });
+
+  it('drops a default the new type refuses, and says so', () => {
+    const { next, defaultDropped } = retypedInput(input('toggle', { default: true }), 'number');
+    expect(next).toEqual({ id: 'x', name: 'X', type: 'number' });
+    expect(defaultDropped).toBe(true);
+  });
+
+  it('keeps a default the new type takes', () => {
+    const { next, defaultDropped } = retypedInput(input('text', { default: '/contact' }), 'link');
+    expect(next.default).toBe('/contact');
+    expect(defaultDropped).toBe(false);
+  });
+
+  it('starts an option input with the old default as its one choice', () => {
+    const { next, defaultDropped } = retypedInput(input('text', { default: 'Dark' }), 'choice');
+    expect(next.options).toEqual([{ label: 'Dark', value: 'Dark' }]);
+    expect(next.default).toBe('Dark');
+    expect(defaultDropped).toBe(false);
+    expect(inputDefinitionRefusal(next)).toBeNull();
+  });
+
+  it('gives back the same input for the same type', () => {
+    const same = input('text', { default: 'a' });
+    expect(retypedInput(same, 'text').next).toBe(same);
+  });
+
+  it('gives every type a definition the reader accepts', () => {
+    for (const type of INPUT_TYPES) {
+      expect(inputDefinitionRefusal(retypedInput(input('text', { default: 'Hello' }), type).next), type).toBeNull();
+      expect(inputDefinitionRefusal(retypedInput(input('toggle'), type).next), type).toBeNull();
+    }
+  });
+});
+
+describe('optionsToText and optionsFromText', () => {
+  it('round-trips options, with a value of its own only where it differs', () => {
+    const options = [{ label: 'Light', value: 'Light' }, { label: 'Dark', value: 'dark' }];
+    expect(optionsToText(options)).toBe('Light, Dark = dark');
+    expect(optionsFromText(optionsToText(options))).toEqual({ ok: true, value: options });
+  });
+
+  it('refuses no options, an empty side, and two equal values', () => {
+    expect(optionsFromText(' , ').ok).toBe(false);
+    expect(optionsFromText('Dark = ').ok).toBe(false);
+    expect(optionsFromText('a, b = a').ok).toBe(false);
   });
 });

@@ -8,6 +8,13 @@
 //
 // Older rows may hold a string AND child nodes on one node. They are not
 // migrated: every renderer shows the string first, then the children.
+//
+// Formatted text from a component's `richtext` input is the one other shape a
+// node's text may take: `{ runs: [{ text, marks?, href? }] }`, a validated array
+// and never markup. `renderRuns` turns it into elements through the factory each
+// renderer passes in (React's createElement), so this module stays free of React.
+
+import { safeHrefFromData } from '@/lib/links/safeHref';
 
 export const TEXT_NODE_TYPE = '#text';
 
@@ -61,12 +68,113 @@ export function renderableText(value: unknown): string | number | null {
   return null;
 }
 
+/** The marks a run of formatted text may carry, and the element each one is. */
+const RUN_MARKS = ['strong', 'em', 'u'] as const;
+
+/** One run of formatted text, checked. */
+interface Run {
+  text: string;
+  marks: readonly (typeof RUN_MARKS)[number][];
+  href: string | null;
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  !!value && typeof value === 'object' && !Array.isArray(value);
+
+/**
+ * The runs of a formatted text value, each checked again here: a node's text is
+ * stored JSON, so a value that skipped the input check must not reach a page as
+ * an element. Null for anything that is not `{ runs }` with every run valid, so
+ * one bad run shows nothing rather than half a sentence.
+ */
+function runsOf(value: unknown): Run[] | null {
+  if (!isRecord(value) || !Array.isArray(value.runs)) return null;
+  const runs: Run[] = [];
+  for (const run of value.runs) {
+    if (!isRecord(run) || typeof run.text !== 'string') return null;
+    const marks = run.marks ?? [];
+    if (!Array.isArray(marks) || !marks.every(mark => (RUN_MARKS as readonly unknown[]).includes(mark))) return null;
+    let href: string | null = null;
+    if (run.href !== undefined) {
+      href = safeHrefFromData(run.href);
+      if (href === null) return null;
+    }
+    runs.push({ text: run.text, marks: marks as Run['marks'], href });
+  }
+  return runs;
+}
+
+/** True when a node's text is formatted text, `{ runs }`, that renders. */
+export function isFormattedText(value: unknown): boolean {
+  return runsOf(value) !== null;
+}
+
+/** The plain text of formatted text, or '' for anything else. */
+export function formattedPlainText(value: unknown): string {
+  return (runsOf(value) ?? []).map(run => run.text).join('');
+}
+
+/** How an element is made: React's createElement in every renderer. */
+export type ElementFactory<N> = (type: string, props: Record<string, unknown> | null, ...children: unknown[]) => N;
+
+/**
+ * Formatted text as elements: each run its text, wrapped in its marks in a fixed
+ * order (strong outermost, then em, then u), and in a link outside those when it
+ * has an address. Where the
+ * text sits inside a link or a button already, `linksAllowed` is false and a run's
+ * address is left out: a link inside a link is invalid, and the HTML parser would
+ * close the outer one there, so the published page would not match the tree.
+ */
+export function renderRuns<N>(value: unknown, h: ElementFactory<N>, linksAllowed = true): (N | string)[] | null {
+  const runs = runsOf(value);
+  if (!runs) return null;
+  return runs.map((run, index) => {
+    // Innermost first. A plain run stays a bare string, so `Plain <strong>bold</strong>`
+    // is exactly that; the outermost wrapper of a run carries its key, as React wants
+    // for a list of siblings.
+    const wrappers: { type: string; props: Record<string, unknown> | null }[] = [...RUN_MARKS]
+      .reverse()
+      .filter(mark => run.marks.includes(mark))
+      .map(mark => ({ type: mark, props: null }));
+    if (run.href !== null && linksAllowed) wrappers.push({ type: 'a', props: { href: run.href } });
+    let content: N | string = run.text;
+    wrappers.forEach((wrapper, at) => {
+      const props = at === wrappers.length - 1 ? { ...wrapper.props, key: index } : wrapper.props;
+      content = h(wrapper.type, props, content);
+    });
+    return content;
+  });
+}
+
+/** Tags whose content is interactive already, so a link inside would be invalid. */
+const INTERACTIVE_HOSTS: ReadonlySet<string> = new Set(['a', 'button']);
+
+/** Whether formatted text inside this tag may hold links. */
+export function runLinksAllowedIn(tag: unknown): boolean {
+  return !(typeof tag === 'string' && INTERACTIVE_HOSTS.has(tag.toLowerCase()));
+}
+
+/**
+ * A node's own text as it renders: formatted text as elements through `h`, and
+ * anything else as `renderableText` has it.
+ */
+export function renderOwnText<N>(value: unknown, h: ElementFactory<N>, linksAllowed = true): (N | string)[] | string | number | null {
+  return renderRuns(value, h, linksAllowed) ?? renderableText(value);
+}
+
 /**
  * What an element contains: its own text, then its children. Without children
- * the text is all there is; with them, a legacy string stays in front.
+ * the text is all there is; with them, a legacy string stays in front. With `h`,
+ * formatted text renders as elements (see renderRuns); without it, only text does.
  */
-export function ownTextThenChildren<T>(text: unknown, children: readonly T[]): unknown {
-  if (children.length === 0) return renderableText(text);
-  const own = renderableText(text);
+export function ownTextThenChildren<T, N = unknown>(
+  text: unknown,
+  children: readonly T[],
+  h?: ElementFactory<N>,
+  linksAllowed = true,
+): unknown {
+  const own = h ? renderOwnText(text, h, linksAllowed) : renderableText(text);
+  if (children.length === 0) return own;
+  if (Array.isArray(own)) return [...own, ...children];
   return own === null || own === '' ? children : [own, ...children];
 }

@@ -11,7 +11,7 @@ import { EditorTool } from '../stores/EditorUIStore';
 import { useStore } from '@/hooks/useStore';
 import { getUndoManager } from '@/stores/RootStore';
 import { DATA_PLACEMENT_ROOT, useDragSource } from '@/lib/drag';
-import { createComponentElement } from '@/lib/renderer/createComponentElement';
+import { createComponentElement, RunLinksContext } from '@/lib/renderer/createComponentElement';
 import { applyBindings } from '@/lib/bindings/resolver/applyBindings';
 import { createScope, pushInputFrame, type BindingScope } from '@/lib/bindings/resolver/scope';
 import { definitionBreakpointFor } from '@/lib/components/breakpoints';
@@ -91,6 +91,8 @@ const NodeRenderer = observer(({ component, breakpointId, allBreakpoints, scope,
   const activeScope = scope ?? createScope();
   const { editorUI } = useStore();
   const host = React.useContext(PlacementHostContext);
+  // Inside a link or a button, formatted text holds no links (createComponentElement).
+  const runLinksAllowed = React.useContext(RunLinksContext);
   const frameId = host?.frameId ?? breakpointId;
   const owner = placement ?? component;
   const editRef = React.useRef<HTMLElement | null>(null);
@@ -328,6 +330,7 @@ const NodeRenderer = observer(({ component, breakpointId, allBreakpoints, scope,
       // Editor surface: data renderers surface an inline error chip with the
       // real message (errors must be visible to the designer).
       mode: 'editor',
+      runLinksAllowed,
     },
   );
 

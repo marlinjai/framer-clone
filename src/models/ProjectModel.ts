@@ -650,6 +650,43 @@ export const ProjectModel = types
       return { ok: true };
     },
 
+    // A new label. Values and bindings are keyed on the id, which stays, so nothing
+    // else changes: the panel's label is the whole of it.
+    renameInput(definitionId: string, inputId: string, rawName: string): ComponentActionResult {
+      const name = rawName.trim();
+      const definition = self.components.get(definitionId);
+      if (!definition) return { ok: false, message: 'That component no longer exists.' };
+      const input = definition.inputs.find(candidate => candidate.id === inputId);
+      if (!input) return { ok: false, message: 'That input no longer exists.' };
+      if (name === '') return { ok: false, message: 'An input needs a name.' };
+      if (name.length > 80) return { ok: false, message: 'An input name is at most 80 characters.' };
+      if (definition.inputs.some(other => other.id !== inputId && other.name.toLowerCase() === name.toLowerCase())) {
+        return { ok: false, message: `This component already has an input called ${name}.` };
+      }
+      if (name === input.name) return { ok: true };
+      definition.setInputs(definition.inputs.map(candidate => (candidate.id === inputId ? { ...candidate, name } : candidate)));
+      self.metadata.updatedAt = new Date();
+      return { ok: true };
+    },
+
+    // The panel's order. Nothing stored on a placement depends on it.
+    moveInput(definitionId: string, inputId: string, toIndex: number): ComponentActionResult {
+      const definition = self.components.get(definitionId);
+      if (!definition) return { ok: false, message: 'That component no longer exists.' };
+      const from = definition.inputs.findIndex(candidate => candidate.id === inputId);
+      if (from === -1) return { ok: false, message: 'That input no longer exists.' };
+      if (!Number.isInteger(toIndex) || toIndex < 0 || toIndex >= definition.inputs.length) {
+        return { ok: false, message: 'An input cannot move there.' };
+      }
+      if (toIndex === from) return { ok: true };
+      const inputs = [...definition.inputs];
+      const [moved] = inputs.splice(from, 1);
+      inputs.splice(toIndex, 0, moved);
+      definition.setInputs(inputs);
+      self.metadata.updatedAt = new Date();
+      return { ok: true };
+    },
+
     addState(definitionId: string, state: StateDefinition): ComponentActionResult {
       const definition = self.components.get(definitionId);
       if (!definition) return { ok: false, message: 'That component no longer exists.' };
@@ -1329,6 +1366,34 @@ export const ProjectModel = types
       let count = 0;
       for (const page of [...self.pages.values(), ...Array.from(self.components.values(), d => d.page as PageModelType)]) {
         count += nodesOfPage(page).filter(node => isPlacementType(node.type) && (node.props as Partial<PlacementProps>).component === definitionId).length;
+      }
+      return count;
+    },
+
+    // How many fields inside the definition read this input, and so show its value.
+    inputConnectionCount(definitionId: string, inputId: string): number {
+      const definition = self.components.get(definitionId);
+      if (!definition) return 0;
+      let count = 0;
+      for (const node of nodesOfPage(definition.page as PageModelType)) {
+        for (const entry of Object.values(node.bindings)) {
+          if (boundInputId(entry as { mode?: string; expression?: string }) === inputId) count++;
+        }
+      }
+      return count;
+    },
+
+    // How many connections inside the definition changeInputType would take away:
+    // a field the new type may not set (an address, for most types).
+    inputTypeChangeBindingLoss(definitionId: string, next: InputDefinition): number {
+      const definition = self.components.get(definitionId);
+      if (!definition) return 0;
+      let count = 0;
+      for (const node of nodesOfPage(definition.page as PageModelType)) {
+        for (const [slot, entry] of Object.entries(node.bindings)) {
+          const reads = boundInputId(entry as { mode?: string; expression?: string }) === next.id;
+          if (reads && !mayBindToSlot(next.type, slot)) count++;
+        }
       }
       return count;
     },

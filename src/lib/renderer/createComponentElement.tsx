@@ -24,7 +24,8 @@ import {
   refuseSubmit,
   withoutEditorSurfaceProps,
 } from '@/lib/renderer/blockedNodes';
-import { isTextNodeType, ownTextThenChildren, renderableText } from '@/lib/renderer/textNode';
+import { isFormattedText, isTextNodeType, ownTextThenChildren, renderOwnText, runLinksAllowedIn } from '@/lib/renderer/textNode';
+import { createRunElement } from '@/lib/renderer/runElements';
 import { isComponentPlaceholderType } from '@/lib/components/placement';
 import { boundValue } from '@/lib/components/expand';
 import type { BindingScope } from '@/lib/bindings/resolver/scope';
@@ -107,7 +108,19 @@ export interface CreateComponentElementOptions {
   // static emit) renders nothing for an errored slot. Defaults to 'preview'
   // (the safe SSR/published-site behavior).
   mode?: 'editor' | 'preview';
+
+  // False when the node is drawn inside a link or a button, read by the renderer
+  // from RunLinksContext. It reaches across a placement, where the MST ancestors of
+  // the definition's nodes end at its root.
+  runLinksAllowed?: boolean;
 }
+
+/**
+ * False below a link or a button: formatted text there leaves its addresses out
+ * (see renderRuns). Set by createComponentElement around such an element's content,
+ * read by the canvas and preview renderers and passed back as `runLinksAllowed`.
+ */
+export const RunLinksContext = React.createContext(true);
 
 /** The host ancestors of a node, nearest first. MST nodes only; a tree outside MST has no parent to ask. */
 function ancestorsOf(component: ComponentInstance): { type?: unknown; props?: unknown }[] {
@@ -125,6 +138,19 @@ function foreignContentOf(component: ComponentInstance): ForeignContent {
   if (!dependsOnSvgContent(String(component.type))) return false;
   const types = ancestorsOf(component).map((node) => node.type).filter((type): type is string => typeof type === 'string');
   return types.reduceRight<ForeignContent>((content, type) => contentBelow(type, content), false);
+}
+
+/**
+ * Whether formatted text in this node may hold links: not inside a link or a button,
+ * its own tag included for an element. `fromRenderer` is what the renderer read
+ * from RunLinksContext; without one, the MST ancestors are walked, only for
+ * formatted text, so no other node pays for it.
+ */
+function runLinksAllowedFor(component: ComponentInstance, text: unknown, ownTag: boolean, fromRenderer: boolean | undefined): boolean {
+  if (!isFormattedText(text)) return true;
+  if (ownTag && !runLinksAllowedIn(component.type)) return false;
+  if (fromRenderer !== undefined) return fromRenderer;
+  return ancestorsOf(component).every((node) => runLinksAllowedIn(node.type));
 }
 
 /** A stored plain form under a live form: the parser drops it, and React would make it, see FormIsland. */
@@ -146,7 +172,13 @@ export function createComponentElement(
 
   // A text node emits no element, so it carries no identity attributes either:
   // the canvas selects its parent element (EditorUIStore.selectComponent).
-  if (isTextNodeType(component.type)) return renderableText(rawTextChildren);
+  if (isTextNodeType(component.type)) {
+    return renderOwnText(
+      rawTextChildren,
+      createRunElement,
+      runLinksAllowedFor(component, rawTextChildren, false, options?.runLinksAllowed),
+    ) as React.ReactNode;
+  }
 
   // A `#` type cannot be a tag, and createElement would throw on it.
   if (isComponentPlaceholderType(component.type)) return null;
@@ -154,7 +186,17 @@ export function createComponentElement(
   // Only a host's type is a tag: otherwise it names an entry of the registry below.
   if (component.isHostElement && isBlockedTag(component.type, foreignContentOf(component))) return null;
 
-  const content = ownTextThenChildren(rawTextChildren, children) as React.ReactNode;
+  // Formatted text from a `richtext` input renders as its runs (src/lib/renderer/textNode.ts).
+  const own = ownTextThenChildren(
+    rawTextChildren,
+    children,
+    createRunElement,
+    runLinksAllowedFor(component, rawTextChildren, true, options?.runLinksAllowed),
+  ) as React.ReactNode;
+  // Below a link or a button, every descendant drawn by a renderer learns it.
+  const content = children.length > 0 && !runLinksAllowedIn(component.type) && options?.runLinksAllowed !== false
+    ? <RunLinksContext.Provider value={false}>{own}</RunLinksContext.Provider>
+    : own;
   const identity = options?.identity;
   const surfaceProps = withoutEditorSurfaceProps(component.type, withoutClobberingId(component.type, withoutBlockedProps(finalProps)));
   const safeProps =

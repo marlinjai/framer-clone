@@ -361,6 +361,41 @@ describe('inputs', () => {
     project.changeInputType('link', { id: 'to', name: 'To', type: 'text', default: 'x' });
     expect(project.components.get('link')!.page.appComponentTree.bindings).toEqual({});
   });
+
+  it('counts the connections a new type takes, and the fields an input sets', () => {
+    const link = definition('link', host('l', 'a', {}, [], { href: read('{{input.to}}'), title: read('{{input.to}}') }), {
+      inputs: [{ id: 'to', name: 'To', type: 'link', default: '/' }],
+    });
+    const { project } = setup({ link });
+    expect(project.inputConnectionCount('link', 'to')).toBe(2);
+    expect(project.inputTypeChangeBindingLoss('link', { id: 'to', name: 'To', type: 'text' })).toBe(1);
+    expect(project.inputTypeChangeBindingLoss('link', { id: 'to', name: 'To', type: 'file' })).toBe(0);
+    expect(project.inputConnectionCount('gone', 'to')).toBe(0);
+  });
+
+  it('renames in one step, keeping the id and every value, and refuses an empty or a taken name', () => {
+    const { project, page, history } = withPlacements();
+    expectOneStep(project, history, () => expect(project.renameInput('card', 'title', '  Heading ').ok).toBe(true));
+    expect(project.components.get('card')!.inputs[0]).toMatchObject({ id: 'title', name: 'Heading' });
+    expect(placementsOn(page)[0].props.inputs).toEqual({ title: 'Mine', badge: false });
+    expect(project.renameInput('card', 'title', ' ')).toMatchObject({ ok: false });
+    expect(project.renameInput('card', 'title', 'IMAGE')).toMatchObject({ ok: false });
+    expect(project.renameInput('card', 'nope', 'X')).toMatchObject({ ok: false });
+    expect(project.renameInput('gone', 'title', 'X')).toMatchObject({ ok: false });
+    history.clear();
+    expect(project.renameInput('card', 'title', 'Heading').ok).toBe(true);
+    expect(history.history.length).toBe(0);
+  });
+
+  it('moves in one step, and refuses a place outside the list', () => {
+    const { project, history } = withPlacements();
+    expectOneStep(project, history, () => expect(project.moveInput('card', 'badge', 0).ok).toBe(true));
+    expect(project.components.get('card')!.inputs.map(input => input.id)).toEqual(['badge', 'title', 'image']);
+    expect(project.moveInput('card', 'badge', 3)).toMatchObject({ ok: false });
+    expect(project.moveInput('card', 'badge', -1)).toMatchObject({ ok: false });
+    expect(project.moveInput('card', 'badge', 0.5)).toMatchObject({ ok: false });
+    expect(project.moveInput('card', 'nope', 0)).toMatchObject({ ok: false });
+  });
 });
 
 describe('states', () => {

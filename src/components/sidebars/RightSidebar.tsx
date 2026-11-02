@@ -9,6 +9,7 @@ import StateSwitch from './right/StateSwitch';
 import { getComponentCategory, SECTION_MAP, type SectionId } from './right/sectionConfig';
 import { SizeSection, PositionSection, StylesSection, LayoutSection, TypographySection, ImageSection, DataSourceSection, EffectsSection, FormSection, StickyCtaSection, TextContentSection, LinkSection, CustomSection, ComponentSection } from './right/sections';
 import { ComponentInstance } from '@/models/ComponentModel';
+import { InputsSection } from './right/sections/InputsSection';
 
 const SECTION_COMPONENTS: Record<SectionId, React.ComponentType<{ component: ComponentInstance; breakpointId?: string }>> = {
   component: ComponentSection,
@@ -61,6 +62,12 @@ const RightSidebar = observer(({ variant = 'docked' }: RightSidebarProps) => {
   // A definition is text, and the switch holds its editor: no size field means anything for it.
   const editsDefinition = editorUI.activeRuleIsDefinition;
 
+  // The root of a component open on the canvas holds the component's Inputs list.
+  const page = editorUI.currentPage;
+  const openDefinition = page && target && target === page.appComponentTree
+    ? Array.from(editorUI.currentProject?.components.values() ?? []).find((definition) => definition.page === page)
+    : undefined;
+
   return (
     <div className={isSheet ? 'bg-background flex flex-col h-full w-full' : `
       bg-background border-l border-border flex flex-col transition-all duration-300 ease-in-out h-[calc(100vh-4rem)]
@@ -80,6 +87,7 @@ const RightSidebar = observer(({ variant = 'docked' }: RightSidebarProps) => {
           <div className="min-w-0">
             {editsDefinition ? null : target ? (
               <>
+                {openDefinition && <InputsSection definition={openDefinition} />}
                 {/* Text first for every element that holds its own text: on a
                     phone this field is the dependable way to change text (a
                     form field always opens the keyboard). Null otherwise. */}
