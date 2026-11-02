@@ -33,6 +33,7 @@ for (const [surface, c] of Object.entries(surfaces)) {
   console.log(`  ${surface.padEnd(9)} ${c.pass} of ${c.total}${c.notTested ? `, ${c.notTested} not tested` : ''}`);
 }
 console.log(`  corpus    ${score.corpus.passed} of ${score.corpus.total} fixtures pass`);
+console.log(`  busbasis  ${score.busbasis.passed} of ${score.busbasis.total} real page types pass (uncaptured types count as not passing)`);
 const { nodesToJsxToNodes: a, jsxToNodesToRender: b } = score.roundTrip;
 console.log(`  roundtrip ${a.pass} of ${a.total} nodes to nodes, ${b.pass} of ${b.total} JSX to render`);
 console.log(`  took ${score.durationSeconds} seconds`);

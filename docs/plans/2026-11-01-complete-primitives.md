@@ -206,6 +206,30 @@ works through the form presets), `template`, `noscript`, event handlers, `class`
 from a site path only, until the storage host is named. An attribute named like a CSS property
 (`width`, `transform`) stays out too: the format reads it as a style, past the style checks.
 
+### The first BusBasis score (2026-11-02)
+
+Fourteen page types of basiscampberlin.de are now held-out fixtures (`test/score/corpus/busbasis`),
+and none passes. The surprise is where they fail. Each tree is lifted mechanically from the frozen
+page's DOM and authored CSS, and the format held all of it: no rule was refused. Twelve of the 14 pages
+match the original on screenshots and accessibility tree at all three widths, and differ on 2 to 5
+elements out of 173 to 760. What separates them from passing:
+
+1. **One renderer gap.** An empty custom property (`--tw-blur: ;`) is dropped from the stylesheet, so
+   every `filter`, `backdrop-filter`, gradient and ring built from a `var()` list goes invalid. Writing
+   those variables back by hand removed every style difference on `product` and all but the map on
+   `home`, the two pages tried. All 13 pages with style differences differ on the same properties, so
+   this one fix should close that column, which is not yet proven on the other 11.
+2. **Page-level styles:** smooth scrolling and sideways overflow sit on `html`, which no node can hold.
+3. **The map:** an iframe, blocked on purpose until custom code exists.
+4. **What the page does, not how it looks:** menu, modals and gallery are unmeasured, because a frozen
+   page holds no script, and shop features are missing. These stand under "needs" and fail the page.
+
+Read this carefully: it says the format can store these pages, not that anyone can build them. A lift
+writes about 240 to 1,140 rules per page, and the storefront's own 132 KB sheet becomes up to 312 KB for one
+page, because repeated cards share nothing without reusable components. The page cap is 2,000 rules, so
+a list with twice the rows would reach it. And nine page types are not captured at all (signed in,
+order, filled cart and checkout), and they count against the stop condition.
+
 ## Visual state management
 
 Marlin (2026-11-01): how do we give people a visual way to manage state, such as a hover state or

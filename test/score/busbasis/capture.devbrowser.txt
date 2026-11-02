@@ -1,0 +1,148 @@
+// Step 1 of three: the live BusBasis storefront to a raw capture. Runs in the dev-browser
+// sandbox (no Node.js), so it is plain text here and capture.sh puts the page on line 1.
+//
+// Only GET requests, logged out, against https://basiscampberlin.de. It writes nothing to
+// the shop: no cart, no form, no login. It renders each page at the corpus widths after
+// scrolling through it, so reveal animations have fired. The DOM is cloned without script;
+// images, video and iframes keep their box and lose their source, so a frozen page cannot
+// make a request. Mail addresses and names are scrubbed in freeze.ts.
+const WIDTHS = [
+  { id: 'desktop', width: 1280, height: 800 },
+  { id: 'tablet', width: 768, height: 1024 },
+  { id: 'mobile', width: 375, height: 667 },
+];
+const page = await browser.getPage('bb-fixtures');
+await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'no-preference' });
+await page.setViewportSize({ width: 1280, height: 800 });
+const res = await page.goto('https://basiscampberlin.de' + URL_PATH, { waitUntil: 'load', timeout: 40000 });
+const status = res.status();
+await page.waitForTimeout(2500);
+
+const out = { slug: SLUG, path: URL_PATH, status, finalUrl: page.url(), capturedAt: new Date().toISOString(), widths: {} };
+
+const sheets = await page.evaluate(async () => {
+  const list = [];
+  for (const node of document.querySelectorAll('link[rel="stylesheet"], style')) {
+    if (node.tagName === 'LINK') {
+      const r = await fetch(node.href);
+      list.push({ kind: 'link', href: node.href.replace(/^https?:\/\/[^/]+/, ''), text: await r.text() });
+    } else list.push({ kind: 'style', text: node.textContent, media: node.media || '' });
+  }
+  return list;
+});
+out.sheets = sheets;
+out.head = await page.evaluate(() => ({
+  title: document.title,
+  htmlClass: document.documentElement.className,
+  htmlLang: document.documentElement.lang,
+  htmlStyle: document.documentElement.getAttribute('style') || '',
+  bodyClass: document.body.className,
+  bodyStyle: document.body.getAttribute('style') || '',
+  htmlOther: [...document.documentElement.attributes].map((a) => a.name),
+}));
+
+for (const w of WIDTHS) {
+  await page.setViewportSize({ width: w.width, height: w.height });
+  await page.waitForTimeout(600);
+  // Let IntersectionObserver reveals fire, then come back to the top.
+  await page.evaluate(async () => {
+    const step = Math.max(300, innerHeight * 0.7);
+    for (let y = 0; y < document.documentElement.scrollHeight; y += step) {
+      scrollTo(0, y);
+      await new Promise((r) => setTimeout(r, 90));
+    }
+    scrollTo(0, document.documentElement.scrollHeight);
+    await new Promise((r) => setTimeout(r, 400));
+    scrollTo(0, 0);
+    await new Promise((r) => setTimeout(r, 900));
+  });
+  const shot = await page.evaluate(() => {
+    const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'LINK', 'META', 'NEXT-ROUTE-ANNOUNCER', 'TITLE', 'BASE']);
+    const dump = (el, pseudo) => {
+      const style = getComputedStyle(el, pseudo);
+      const o = {};
+      for (let i = 0; i < style.length; i++) {
+        const name = style[i];
+        if (!name.startsWith('--')) o[name] = style.getPropertyValue(name);
+      }
+      return o;
+    };
+    const list = [document.body, ...document.body.querySelectorAll('*')].filter(
+      (el) => !SKIP.has(el.tagName) && !el.closest('script,style,noscript,template,next-route-announcer'),
+    );
+    const firsts = {};
+    const rows = {};
+    list.forEach((el, i) => {
+      const id = 'e' + i;
+      el.setAttribute('data-parity-id', id);
+      const tag = el.tagName.toLowerCase();
+      const full = dump(el);
+      if (!firsts[tag]) firsts[tag] = full;
+      const delta = {};
+      for (const k in full) if (firsts[tag][k] !== full[k]) delta[k] = full[k];
+      const row = { t: tag, d: delta };
+      const before = getComputedStyle(el, '::before').content;
+      const after = getComputedStyle(el, '::after').content;
+      if (before && before !== 'none') row.b = before;
+      if (after && after !== 'none') row.a = after;
+      rows[id] = row;
+    });
+
+    // The frozen document: scripts out, no request can leave it.
+    const clone = document.body.cloneNode(true);
+    const liveById = new Map(list.map((el, i) => ['e' + i, el]));
+    clone.querySelectorAll('script,style,noscript,template,link,meta,next-route-announcer').forEach((n) => n.remove());
+    const walker = document.createTreeWalker(clone, NodeFilter.SHOW_COMMENT);
+    const comments = [];
+    while (walker.nextNode()) comments.push(walker.currentNode);
+    comments.forEach((c) => c.remove());
+    clone.querySelectorAll('input[type="hidden"]').forEach((n) => n.remove());
+    const hue = (text) => {
+      let h = 0;
+      for (const c of text) h = (h * 31 + c.charCodeAt(0)) % 360;
+      return h;
+    };
+    const placeholder = (w, h, seed) =>
+      'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="100%" height="100%" fill="hsl(${hue(seed)} 25% 30%)"/></svg>`).replace(/%20/g, ' ').replace(/%3D/g, '=').replace(/%3A/g, ':').replace(/%2F/g, '/').replace(/%22/g, "'");
+    clone.querySelectorAll('source').forEach((n) => n.remove());
+    clone.querySelectorAll('[data-parity-id]').forEach((n) => {
+      const live = liveById.get(n.getAttribute('data-parity-id'));
+      for (const name of ['nonce', 'srcset', 'imagesrcset', 'sizes', 'data-nimg', 'data-dpl', 'fetchpriority', 'decoding', 'loading', 'action', 'method', 'enctype', 'data-precedence']) n.removeAttribute(name);
+      if (n.tagName === 'IFRAME') {
+        n.removeAttribute('src');
+        n.setAttribute('srcdoc', '');
+      }
+      if (n.tagName === 'VIDEO') {
+        n.removeAttribute('src');
+        n.removeAttribute('autoplay');
+        n.setAttribute('poster', placeholder(1280, 720, 'video'));
+      }
+      if (n.tagName === 'IMG') {
+        const w = (live && live.naturalWidth) || 1;
+        const h = (live && live.naturalHeight) || 1;
+        n.setAttribute('src', placeholder(w, h, (n.getAttribute('src') || '').replace(/&dpl=.*$/, '').replace(/^.*\//, '')));
+      }
+      if (n.tagName === 'INPUT' && live && live.value && !['password', 'email'].includes(live.type)) n.setAttribute('value', live.value);
+      if (n.tagName === 'INPUT' && live && live.checked) n.setAttribute('checked', '');
+      if (n.tagName === 'A') {
+        const href = n.getAttribute('href');
+        if (href) n.setAttribute('href', href.replace(/^https?:\/\/(www\.)?basiscampberlin\.de/, ''));
+      }
+      const inline = n.getAttribute('style');
+      if (inline && /url\(/.test(inline)) n.setAttribute('style', inline.replace(/url\([^)]*\)/g, () => `url("${placeholder(16, 16, 'bg')}")`));
+    });
+    return {
+      width: innerWidth,
+      height: innerHeight,
+      scrollHeight: document.documentElement.scrollHeight,
+      elements: list.length,
+      html: clone.outerHTML,
+      firsts,
+      rows,
+      running: document.getAnimations().map((a) => (a.animationName || a.transitionProperty || 'anim') + ':' + a.playState),
+    };
+  });
+  out.widths[w.id] = shot;
+}
+await writeFile('bb-' + SLUG + '.json', JSON.stringify(out));
+console.log(JSON.stringify({ slug: SLUG, status, final: out.finalUrl, title: out.head.title, widths: Object.fromEntries(Object.entries(out.widths).map(([k, v]) => [k, { els: v.elements, h: v.scrollHeight, html: v.html.length, run: v.running.length }])) }));
