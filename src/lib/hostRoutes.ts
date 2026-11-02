@@ -38,6 +38,11 @@ export const HOST_ROUTES: readonly HostRoute[] = [
   { route: '/robots.txt', published: ['GET'], why: 'the site robots file, per host' },
   { route: '/sitemap.xml', published: ['GET'], why: 'the site sitemap, per host' },
   { route: '/site.webmanifest', published: ['GET'], why: 'the site manifest, per host' },
+  {
+    route: '/site-images/[file]',
+    published: ['GET'],
+    why: 'uploaded favicon and sharing images, per host (src/app/site-images/[file]/route.ts); outside the matcher like the files above',
+  },
 
   // What a published page calls.
   { route: '/api/forms/submit', published: ['POST'], why: 'a published form posts here (src/lib/forms/sendForm.ts)' },
@@ -92,6 +97,8 @@ export const HOST_ROUTES: readonly HostRoute[] = [
   { route: '/api/projects/[projectId]/forms/submissions', why: 'authoring' },
   { route: '/api/projects/[projectId]/forms/submissions/[submissionId]', why: 'authoring' },
   { route: '/api/projects/[projectId]/forms/submissions/export', why: 'authoring' },
+  { route: '/api/projects/[projectId]/images', why: 'authoring' },
+  { route: '/api/projects/[projectId]/images/[sha256]', why: 'authoring' },
   { route: '/api/projects/[projectId]/commerce/products', why: 'the editor commerce reads' },
   { route: '/api/projects/[projectId]/commerce/products/[handle]', why: 'the editor commerce reads' },
   { route: '/api/projects/[projectId]/commerce/inventory', why: 'the editor commerce reads' },

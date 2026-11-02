@@ -31,6 +31,7 @@
 
 import { DEFAULT_PAGE_BASE, PAGE_BASES, type PageBase } from './pageBase';
 import { EMPTY_THEME, normalizeTheme, type SiteTheme } from './theme';
+import { isSiteImagePath } from './siteImages';
 
 /** Days in schema.org order, used by the opening-hours rows. */
 export const WEEKDAYS = [
@@ -83,9 +84,13 @@ export interface SiteSettings {
   siteName: string;
   /** BCP 47 language tag: `<html lang>` and the generator's copy language. */
   language: string;
-  /** https URL of the favicon (PNG, SVG or ICO). Blank: no site icon. */
+  /**
+   * The favicon: an https URL (PNG, SVG or ICO hosted anywhere) or the path of
+   * an uploaded image (`/site-images/<sha256>.png|ico`, src/lib/site/siteImages.ts).
+   * Blank: no site icon.
+   */
   faviconUrl: string;
-  /** https URL of the default Open Graph image (a page's own image wins). */
+  /** The default Open Graph image, an https URL or an uploaded image's path (a page's own image wins). */
   ogImageUrl: string;
   twitterCard: TwitterCard;
   /**
@@ -238,7 +243,7 @@ function normalizeBusiness(value: unknown): BusinessInfo {
  * back to the defaults, unknown keys are dropped, strings are trimmed and
  * capped. It never throws. Values are NOT validated here (an invalid URL stays
  * a string): validation is validateSiteSettings, and every renderer re-checks
- * what it emits (isHttpsUrl) so a bad value is left out, never printed.
+ * what it emits (isImageReference) so a bad value is left out, never printed.
  */
 export function normalizeSiteSettings(raw: unknown): SiteSettings {
   const s = isRecord(raw) ? raw : {};
@@ -284,6 +289,17 @@ export function isHttpsUrl(value: string): boolean {
   }
 }
 
+/**
+ * True for what a favicon or sharing image may be: an absolute https URL, or
+ * the path of an image uploaded to the site (`/site-images/<sha256>.<ext>`).
+ */
+export function isImageReference(value: string): boolean {
+  return isHttpsUrl(value) || isSiteImagePath(value);
+}
+
+/** The message for an image field that holds neither. */
+export const IMAGE_REFERENCE_ERROR = 'Upload an image or enter a full https:// address of one.';
+
 /** True when `tag` is a usable BCP 47 language tag ("de", "en-GB", "zh-Hant-TW"). */
 export function isLanguageTag(tag: string): boolean {
   return BCP47.test(tag);
@@ -298,11 +314,11 @@ export function validateSiteSettings(settings: SiteSettings): SiteSettingsErrors
   if (!isLanguageTag(settings.language)) {
     errors.language = 'Use a language code like de, en or en-GB.';
   }
-  if (settings.faviconUrl && !isHttpsUrl(settings.faviconUrl)) {
-    errors.faviconUrl = 'Enter a full https:// address of an image.';
+  if (settings.faviconUrl && !isImageReference(settings.faviconUrl)) {
+    errors.faviconUrl = IMAGE_REFERENCE_ERROR;
   }
-  if (settings.ogImageUrl && !isHttpsUrl(settings.ogImageUrl)) {
-    errors.ogImageUrl = 'Enter a full https:// address of an image.';
+  if (settings.ogImageUrl && !isImageReference(settings.ogImageUrl)) {
+    errors.ogImageUrl = IMAGE_REFERENCE_ERROR;
   }
   if (settings.titleTemplate) {
     const count = settings.titleTemplate.split(DEFAULT_TITLE_TEMPLATE_TOKEN).length - 1;

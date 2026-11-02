@@ -1,28 +1,28 @@
 {
-  "generatedAt": "2026-11-02T14:23:01.207Z",
+  "generatedAt": "2026-11-02T22:40:04.748Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 314,
+  "durationSeconds": 444,
   "matrix": {
     "surfaces": {
       "format": {
-        "pass": 1815,
-        "fail": 27,
+        "pass": 1820,
+        "fail": 22,
         "notTested": 0,
         "total": 1842
       },
       "renderer": {
-        "pass": 1788,
-        "fail": 54,
+        "pass": 1793,
+        "fail": 49,
         "notTested": 0,
         "total": 1842
       },
       "canvas": {
-        "pass": 1635,
-        "fail": 207,
+        "pass": 1644,
+        "fail": 198,
         "notTested": 0,
         "total": 1842
       },
@@ -491,14 +491,14 @@
       },
       "component": {
         "format": {
-          "pass": 25,
-          "fail": 5,
+          "pass": 30,
+          "fail": 0,
           "notTested": 0,
           "total": 30
         },
         "renderer": {
-          "pass": 25,
-          "fail": 5,
+          "pass": 30,
+          "fail": 0,
           "notTested": 0,
           "total": 30
         },
@@ -535,8 +535,8 @@
           "total": 9
         },
         "canvas": {
-          "pass": 0,
-          "fail": 9,
+          "pass": 9,
+          "fail": 0,
           "notTested": 0,
           "total": 9
         },
@@ -5122,7 +5122,7 @@
       "component:transition": "pass pass pass pass reusable-components",
       "component:list": "pass pass pass pass reusable-components",
       "component:gallery": "pass pass pass pass reusable-components",
-      "component:event": "reusable-components reusable-components reusable-components reusable-components reusable-components",
+      "component:event": "pass pass reusable-components reusable-components reusable-components",
       "component:definition": "pass pass pass pass reusable-components",
       "component:placement": "pass pass pass pass reusable-components",
       "component:placement-style": "pass pass pass pass reusable-components",
@@ -5132,40 +5132,40 @@
       "component:state-hover": "pass pass reusable-components reusable-components reusable-components",
       "component:state-pressed": "pass pass reusable-components reusable-components reusable-components",
       "component:state-focused": "pass pass reusable-components reusable-components reusable-components",
-      "component:state-custom": "reusable-components reusable-components reusable-components reusable-components reusable-components",
-      "component:interaction-click": "reusable-components reusable-components reusable-components reusable-components reusable-components",
-      "component:interaction-appear": "reusable-components reusable-components reusable-components reusable-components reusable-components",
-      "component:placement-trigger": "reusable-components reusable-components reusable-components reusable-components reusable-components",
-      "page-item:theme:color-token": "pass pass theme theme theme",
-      "page-item:theme:font-token": "pass pass theme theme theme",
-      "page-item:theme:dark-value": "pass pass theme theme theme",
-      "page-item:theme:mode-system": "pass pass theme theme theme",
-      "page-item:theme:mode-light": "pass pass theme theme theme",
-      "page-item:theme:mode-dark": "pass pass theme theme theme",
-      "page-item:theme:document-background": "pass pass theme theme theme",
-      "page-item:theme:document-color": "pass pass theme theme theme",
-      "page-item:theme:document-font": "pass pass theme theme theme"
+      "component:state-custom": "pass pass reusable-components reusable-components reusable-components",
+      "component:interaction-click": "pass pass reusable-components reusable-components reusable-components",
+      "component:interaction-appear": "pass pass reusable-components reusable-components reusable-components",
+      "component:placement-trigger": "pass pass reusable-components reusable-components reusable-components",
+      "page-item:theme:color-token": "pass pass pass theme theme",
+      "page-item:theme:font-token": "pass pass pass theme theme",
+      "page-item:theme:dark-value": "pass pass pass theme theme",
+      "page-item:theme:mode-system": "pass pass pass theme theme",
+      "page-item:theme:mode-light": "pass pass pass theme theme",
+      "page-item:theme:mode-dark": "pass pass pass theme theme",
+      "page-item:theme:document-background": "pass pass pass theme theme",
+      "page-item:theme:document-color": "pass pass pass theme theme",
+      "page-item:theme:document-font": "pass pass pass theme theme"
     }
   },
   "corpus": {
-    "passed": 19,
+    "passed": 20,
     "total": 24,
     "checks": {
       "screenshot": {
-        "pass": 136,
-        "total": 159
+        "pass": 150,
+        "total": 162
       },
       "computed-styles": {
-        "pass": 129,
-        "total": 159
+        "pass": 138,
+        "total": 162
       },
       "accessibility-tree": {
-        "pass": 135,
-        "total": 159
+        "pass": 144,
+        "total": 162
       },
       "interaction": {
-        "pass": 54,
-        "total": 87
+        "pass": 63,
+        "total": 90
       }
     },
     "fixtures": [
@@ -5566,7 +5566,7 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 7,
+            "pass": 6,
             "total": 12
           },
           "computed-styles": {
@@ -5587,9 +5587,17 @@
             "fixture": "radix-accordion",
             "viewport": "Desktop",
             "state": "click opens the first item",
+            "check": "screenshot",
+            "gap": "behaviour-state",
+            "detail": "0.11 percent of pixels differ"
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Desktop",
+            "state": "click opens the first item",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "26 differences, first: page: text \"Isitaccessible?Yes.Itfollowsthepattern.I\" became \"Isitaccessible?Isitstyled?\""
+            "detail": "30 differences, first: page: text \"Isitaccessible?Yes.Itfollowsthepattern.I\" became \"Isitaccessible?Isitstyled?\""
           },
           {
             "fixture": "radix-accordion",
@@ -5621,7 +5629,7 @@
             "state": "arrow key moves to the next trigger",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "29 differences, first: page: text \"Isitaccessible?Isitstyled?Yes.WithplainC\" became \"Isitaccessible?Isitstyled?\""
+            "detail": "33 differences, first: page: text \"Isitaccessible?Isitstyled?Yes.WithplainC\" became \"Isitaccessible?Isitstyled?\""
           },
           {
             "fixture": "radix-accordion",
@@ -5661,7 +5669,7 @@
             "state": "click opens the first item",
             "check": "screenshot",
             "gap": "behaviour-state",
-            "detail": "0.12 percent of pixels differ"
+            "detail": "0.14 percent of pixels differ"
           },
           {
             "fixture": "radix-accordion",
@@ -5669,7 +5677,7 @@
             "state": "click opens the first item",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "26 differences, first: page: text \"Isitaccessible?Yes.Itfollowsthepattern.I\" became \"Isitaccessible?Isitstyled?\""
+            "detail": "30 differences, first: page: text \"Isitaccessible?Yes.Itfollowsthepattern.I\" became \"Isitaccessible?Isitstyled?\""
           },
           {
             "fixture": "radix-accordion",
@@ -5701,7 +5709,7 @@
             "state": "arrow key moves to the next trigger",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "29 differences, first: page: text \"Isitaccessible?Isitstyled?Yes.WithplainC\" became \"Isitaccessible?Isitstyled?\""
+            "detail": "33 differences, first: page: text \"Isitaccessible?Isitstyled?Yes.WithplainC\" became \"Isitaccessible?Isitstyled?\""
           },
           {
             "fixture": "radix-accordion",
@@ -5741,7 +5749,7 @@
             "state": "click opens the first item",
             "check": "screenshot",
             "gap": "behaviour-state",
-            "detail": "0.39 percent of pixels differ"
+            "detail": "0.45 percent of pixels differ"
           },
           {
             "fixture": "radix-accordion",
@@ -5749,7 +5757,7 @@
             "state": "click opens the first item",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "26 differences, first: page: text \"Isitaccessible?Yes.Itfollowsthepattern.I\" became \"Isitaccessible?Isitstyled?\""
+            "detail": "30 differences, first: page: text \"Isitaccessible?Yes.Itfollowsthepattern.I\" became \"Isitaccessible?Isitstyled?\""
           },
           {
             "fixture": "radix-accordion",
@@ -5773,7 +5781,7 @@
             "state": "arrow key moves to the next trigger",
             "check": "screenshot",
             "gap": "behaviour-state",
-            "detail": "1.11 percent of pixels differ"
+            "detail": "1.12 percent of pixels differ"
           },
           {
             "fixture": "radix-accordion",
@@ -5781,7 +5789,7 @@
             "state": "arrow key moves to the next trigger",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "29 differences, first: page: text \"Isitaccessible?Isitstyled?Yes.WithplainC\" became \"Isitaccessible?Isitstyled?\""
+            "detail": "33 differences, first: page: text \"Isitaccessible?Isitstyled?Yes.WithplainC\" became \"Isitaccessible?Isitstyled?\""
           },
           {
             "fixture": "radix-accordion",
@@ -5852,7 +5860,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "mixed-text",
-            "detail": "1 differences, first: content-password: text \"\" became \"Changeyourpassword.\""
+            "detail": "4 differences, first: page: text \"AccountPasswordChangeyourname.\" became \"AccountPasswordChangeyourname.Changeyour\""
           },
           {
             "fixture": "radix-tabs",
@@ -5860,7 +5868,7 @@
             "state": "arrow key changes the tab",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "1 differences, first: content-account: text \"\" became \"Changeyourname.\""
+            "detail": "4 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.Changeyour\""
           },
           {
             "fixture": "radix-tabs",
@@ -5876,7 +5884,7 @@
             "state": "click changes the tab",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "1 differences, first: content-account: text \"\" became \"Changeyourname.\""
+            "detail": "4 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.Changeyour\""
           },
           {
             "fixture": "radix-tabs",
@@ -5892,7 +5900,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "mixed-text",
-            "detail": "1 differences, first: content-password: text \"\" became \"Changeyourpassword.\""
+            "detail": "4 differences, first: page: text \"AccountPasswordChangeyourname.\" became \"AccountPasswordChangeyourname.Changeyour\""
           },
           {
             "fixture": "radix-tabs",
@@ -5900,7 +5908,7 @@
             "state": "arrow key changes the tab",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "1 differences, first: content-account: text \"\" became \"Changeyourname.\""
+            "detail": "4 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.Changeyour\""
           },
           {
             "fixture": "radix-tabs",
@@ -5916,7 +5924,7 @@
             "state": "click changes the tab",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "1 differences, first: content-account: text \"\" became \"Changeyourname.\""
+            "detail": "4 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.Changeyour\""
           },
           {
             "fixture": "radix-tabs",
@@ -5932,7 +5940,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "mixed-text",
-            "detail": "1 differences, first: content-password: text \"\" became \"Changeyourpassword.\""
+            "detail": "4 differences, first: page: text \"AccountPasswordChangeyourname.\" became \"AccountPasswordChangeyourname.Changeyour\""
           },
           {
             "fixture": "radix-tabs",
@@ -5940,7 +5948,7 @@
             "state": "arrow key changes the tab",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "1 differences, first: content-account: text \"\" became \"Changeyourname.\""
+            "detail": "4 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.Changeyour\""
           },
           {
             "fixture": "radix-tabs",
@@ -5956,7 +5964,7 @@
             "state": "click changes the tab",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "1 differences, first: content-account: text \"\" became \"Changeyourname.\""
+            "detail": "4 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.Changeyour\""
           },
           {
             "fixture": "radix-tabs",
@@ -6003,7 +6011,7 @@
             "state": "click opens the dialog",
             "check": "screenshot",
             "gap": "behaviour-state",
-            "detail": "94.68 percent of pixels differ"
+            "detail": "94.71 percent of pixels differ"
           },
           {
             "fixture": "radix-dialog",
@@ -6035,7 +6043,7 @@
             "state": "Enter opens the dialog",
             "check": "screenshot",
             "gap": "behaviour-state",
-            "detail": "94.69 percent of pixels differ"
+            "detail": "94.72 percent of pixels differ"
           },
           {
             "fixture": "radix-dialog",
@@ -6067,7 +6075,7 @@
             "state": "click opens the dialog",
             "check": "screenshot",
             "gap": "behaviour-state",
-            "detail": "93.08 percent of pixels differ"
+            "detail": "93.12 percent of pixels differ"
           },
           {
             "fixture": "radix-dialog",
@@ -6099,7 +6107,7 @@
             "state": "Enter opens the dialog",
             "check": "screenshot",
             "gap": "behaviour-state",
-            "detail": "93.09 percent of pixels differ"
+            "detail": "93.12 percent of pixels differ"
           },
           {
             "fixture": "radix-dialog",
@@ -6131,7 +6139,7 @@
             "state": "click opens the dialog",
             "check": "screenshot",
             "gap": "behaviour-state",
-            "detail": "78.24 percent of pixels differ"
+            "detail": "78.37 percent of pixels differ"
           },
           {
             "fixture": "radix-dialog",
@@ -6163,7 +6171,7 @@
             "state": "Enter opens the dialog",
             "check": "screenshot",
             "gap": "behaviour-state",
-            "detail": "78.29 percent of pixels differ"
+            "detail": "78.38 percent of pixels differ"
           },
           {
             "fixture": "radix-dialog",
@@ -6233,219 +6241,26 @@
         "fixture": "component-navbar",
         "group": "component",
         "source": "hand-written: the contract's navbar (a tone input, Closed and Open, Escape, Open kept without a script), collapsing at every width",
-        "pass": false,
+        "pass": true,
         "checks": {
           "screenshot": {
-            "pass": 6,
-            "total": 12
+            "pass": 15,
+            "total": 15
           },
           "computed-styles": {
-            "pass": 6,
-            "total": 12
+            "pass": 15,
+            "total": 15
           },
           "accessibility-tree": {
-            "pass": 6,
-            "total": 12
+            "pass": 15,
+            "total": 15
           },
           "interaction": {
-            "pass": 3,
-            "total": 9
+            "pass": 12,
+            "total": 12
           }
         },
-        "failures": [
-          {
-            "fixture": "component-navbar",
-            "viewport": "Desktop",
-            "state": "click opens the menu",
-            "check": "screenshot",
-            "gap": "reusable-components",
-            "detail": "4.58 percent of pixels differ"
-          },
-          {
-            "fixture": "component-navbar",
-            "viewport": "Desktop",
-            "state": "click opens the menu",
-            "check": "computed-styles",
-            "gap": "reusable-components",
-            "detail": "54 differences, first: page: text \"LumenMenuRoomsEventsContactWelcomeAguest\" became \"LumenMenuWelcomeAguesthouseintheoldtown.\""
-          },
-          {
-            "fixture": "component-navbar",
-            "viewport": "Desktop",
-            "state": "click opens the menu",
-            "check": "accessibility-tree",
-            "gap": "reusable-components",
-            "detail": "original \"- banner:\\n  - link \\\"Lumen\\\":\\n    - /url: /\\n  - button \\\"Menu\\\" [expanded]\\n  - navigation \\\"Main\\\":\\n    - link \\\"Rooms\\\":\\n      \", replica \"- banner:\\n  - link \\\"Lumen\\\":\\n    - /url: /\\n  - button \\\"Menu\\\" [expanded]\\n- mai"
-          },
-          {
-            "fixture": "component-navbar",
-            "viewport": "Desktop",
-            "state": "click opens the menu",
-            "check": "interaction",
-            "gap": "reusable-components",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "component-navbar",
-            "viewport": "Desktop",
-            "state": "the script failed",
-            "check": "screenshot",
-            "gap": "reusable-components",
-            "detail": "4.58 percent of pixels differ"
-          },
-          {
-            "fixture": "component-navbar",
-            "viewport": "Desktop",
-            "state": "the script failed",
-            "check": "computed-styles",
-            "gap": "reusable-components",
-            "detail": "54 differences, first: page: text \"LumenRoomsEventsContactWelcomeAguesthous\" became \"LumenWelcomeAguesthouseintheoldtown.\""
-          },
-          {
-            "fixture": "component-navbar",
-            "viewport": "Desktop",
-            "state": "the script failed",
-            "check": "accessibility-tree",
-            "gap": "reusable-components",
-            "detail": "original \"- banner:\\n  - link \\\"Lumen\\\":\\n    - /url: /\\n  - navigation \\\"Main\\\":\\n    - link \\\"Rooms\\\":\\n      - /url: /rooms\\n    - link \\\"Ev\", replica \"- banner:\\n  - link \\\"Lumen\\\":\\n    - /url: /\\n- main:\\n  - heading \\\"Welcome\\\" [leve"
-          },
-          {
-            "fixture": "component-navbar",
-            "viewport": "Desktop",
-            "state": "the script failed",
-            "check": "interaction",
-            "gap": "reusable-components",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "component-navbar",
-            "viewport": "Tablet",
-            "state": "click opens the menu",
-            "check": "screenshot",
-            "gap": "reusable-components",
-            "detail": "3.69 percent of pixels differ"
-          },
-          {
-            "fixture": "component-navbar",
-            "viewport": "Tablet",
-            "state": "click opens the menu",
-            "check": "computed-styles",
-            "gap": "reusable-components",
-            "detail": "54 differences, first: page: text \"LumenMenuRoomsEventsContactWelcomeAguest\" became \"LumenMenuWelcomeAguesthouseintheoldtown.\""
-          },
-          {
-            "fixture": "component-navbar",
-            "viewport": "Tablet",
-            "state": "click opens the menu",
-            "check": "accessibility-tree",
-            "gap": "reusable-components",
-            "detail": "original \"- banner:\\n  - link \\\"Lumen\\\":\\n    - /url: /\\n  - button \\\"Menu\\\" [expanded]\\n  - navigation \\\"Main\\\":\\n    - link \\\"Rooms\\\":\\n      \", replica \"- banner:\\n  - link \\\"Lumen\\\":\\n    - /url: /\\n  - button \\\"Menu\\\" [expanded]\\n- mai"
-          },
-          {
-            "fixture": "component-navbar",
-            "viewport": "Tablet",
-            "state": "click opens the menu",
-            "check": "interaction",
-            "gap": "reusable-components",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "component-navbar",
-            "viewport": "Tablet",
-            "state": "the script failed",
-            "check": "screenshot",
-            "gap": "reusable-components",
-            "detail": "3.69 percent of pixels differ"
-          },
-          {
-            "fixture": "component-navbar",
-            "viewport": "Tablet",
-            "state": "the script failed",
-            "check": "computed-styles",
-            "gap": "reusable-components",
-            "detail": "54 differences, first: page: text \"LumenRoomsEventsContactWelcomeAguesthous\" became \"LumenWelcomeAguesthouseintheoldtown.\""
-          },
-          {
-            "fixture": "component-navbar",
-            "viewport": "Tablet",
-            "state": "the script failed",
-            "check": "accessibility-tree",
-            "gap": "reusable-components",
-            "detail": "original \"- banner:\\n  - link \\\"Lumen\\\":\\n    - /url: /\\n  - navigation \\\"Main\\\":\\n    - link \\\"Rooms\\\":\\n      - /url: /rooms\\n    - link \\\"Ev\", replica \"- banner:\\n  - link \\\"Lumen\\\":\\n    - /url: /\\n- main:\\n  - heading \\\"Welcome\\\" [leve"
-          },
-          {
-            "fixture": "component-navbar",
-            "viewport": "Tablet",
-            "state": "the script failed",
-            "check": "interaction",
-            "gap": "reusable-components",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "component-navbar",
-            "viewport": "Mobile",
-            "state": "click opens the menu",
-            "check": "screenshot",
-            "gap": "reusable-components",
-            "detail": "14.32 percent of pixels differ"
-          },
-          {
-            "fixture": "component-navbar",
-            "viewport": "Mobile",
-            "state": "click opens the menu",
-            "check": "computed-styles",
-            "gap": "reusable-components",
-            "detail": "54 differences, first: page: text \"LumenMenuRoomsEventsContactWelcomeAguest\" became \"LumenMenuWelcomeAguesthouseintheoldtown.\""
-          },
-          {
-            "fixture": "component-navbar",
-            "viewport": "Mobile",
-            "state": "click opens the menu",
-            "check": "accessibility-tree",
-            "gap": "reusable-components",
-            "detail": "original \"- banner:\\n  - link \\\"Lumen\\\":\\n    - /url: /\\n  - button \\\"Menu\\\" [expanded]\\n  - navigation \\\"Main\\\":\\n    - link \\\"Rooms\\\":\\n      \", replica \"- banner:\\n  - link \\\"Lumen\\\":\\n    - /url: /\\n  - button \\\"Menu\\\" [expanded]\\n- mai"
-          },
-          {
-            "fixture": "component-navbar",
-            "viewport": "Mobile",
-            "state": "click opens the menu",
-            "check": "interaction",
-            "gap": "reusable-components",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "component-navbar",
-            "viewport": "Mobile",
-            "state": "the script failed",
-            "check": "screenshot",
-            "gap": "reusable-components",
-            "detail": "14.32 percent of pixels differ"
-          },
-          {
-            "fixture": "component-navbar",
-            "viewport": "Mobile",
-            "state": "the script failed",
-            "check": "computed-styles",
-            "gap": "reusable-components",
-            "detail": "54 differences, first: page: text \"LumenRoomsEventsContactWelcomeAguesthous\" became \"LumenWelcomeAguesthouseintheoldtown.\""
-          },
-          {
-            "fixture": "component-navbar",
-            "viewport": "Mobile",
-            "state": "the script failed",
-            "check": "accessibility-tree",
-            "gap": "reusable-components",
-            "detail": "original \"- banner:\\n  - link \\\"Lumen\\\":\\n    - /url: /\\n  - navigation \\\"Main\\\":\\n    - link \\\"Rooms\\\":\\n      - /url: /rooms\\n    - link \\\"Ev\", replica \"- banner:\\n  - link \\\"Lumen\\\":\\n    - /url: /\\n- main:\\n  - heading \\\"Welcome\\\" [leve"
-          },
-          {
-            "fixture": "component-navbar",
-            "viewport": "Mobile",
-            "state": "the script failed",
-            "check": "interaction",
-            "gap": "reusable-components",
-            "detail": "the replica did not end up where the original did"
-          }
-        ],
+        "failures": [],
         "notMeasured": [
           "One definition on two pages: the corpus compares one document per fixture, so only this page is measured",
           "Scripts turned off entirely: every page runs with scripts on, so the no-script state is the one a failed script leaves, the behaviour gate removed"
@@ -6494,7 +6309,7 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 21,
+            "pass": 27,
             "total": 27
           },
           "computed-styles": {
@@ -6515,14 +6330,6 @@
             "fixture": "component-states",
             "viewport": "Desktop",
             "state": "click selects the tile",
-            "check": "screenshot",
-            "gap": "reusable-components",
-            "detail": "1.42 percent of pixels differ"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Desktop",
-            "state": "click selects the tile",
             "check": "accessibility-tree",
             "gap": "reusable-components",
             "detail": "original \"- list:\\n  - listitem:\\n    - button \\\"Monthly 12 francs a month\\\" [pressed]\\n  - listitem:\\n    - button \\\"Yearly 120 francs a\", replica \"- list:\\n  - listitem:\\n    - button \\\"Monthly 12 francs a month\\\" [pressed]\\n  - listitem:"
@@ -6534,14 +6341,6 @@
             "check": "interaction",
             "gap": "reusable-components",
             "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Desktop",
-            "state": "Space selects the tile",
-            "check": "screenshot",
-            "gap": "reusable-components",
-            "detail": "1.42 percent of pixels differ"
           },
           {
             "fixture": "component-states",
@@ -6563,14 +6362,6 @@
             "fixture": "component-states",
             "viewport": "Tablet",
             "state": "click selects the tile",
-            "check": "screenshot",
-            "gap": "reusable-components",
-            "detail": "1.84 percent of pixels differ"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Tablet",
-            "state": "click selects the tile",
             "check": "accessibility-tree",
             "gap": "reusable-components",
             "detail": "original \"- list:\\n  - listitem:\\n    - button \\\"Monthly 12 francs a month\\\" [pressed]\\n  - listitem:\\n    - button \\\"Yearly 120 francs a\", replica \"- list:\\n  - listitem:\\n    - button \\\"Monthly 12 francs a month\\\" [pressed]\\n  - listitem:"
@@ -6582,14 +6373,6 @@
             "check": "interaction",
             "gap": "reusable-components",
             "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Tablet",
-            "state": "Space selects the tile",
-            "check": "screenshot",
-            "gap": "reusable-components",
-            "detail": "1.85 percent of pixels differ"
           },
           {
             "fixture": "component-states",
@@ -6611,14 +6394,6 @@
             "fixture": "component-states",
             "viewport": "Mobile",
             "state": "click selects the tile",
-            "check": "screenshot",
-            "gap": "reusable-components",
-            "detail": "10.23 percent of pixels differ"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Mobile",
-            "state": "click selects the tile",
             "check": "accessibility-tree",
             "gap": "reusable-components",
             "detail": "original \"- list:\\n  - listitem:\\n    - button \\\"Monthly 12 francs a month\\\" [pressed]\\n  - listitem:\\n    - button \\\"Yearly 120 francs a\", replica \"- list:\\n  - listitem:\\n    - button \\\"Monthly 12 francs a month\\\" [pressed]\\n  - listitem:"
@@ -6630,14 +6405,6 @@
             "check": "interaction",
             "gap": "reusable-components",
             "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Mobile",
-            "state": "Space selects the tile",
-            "check": "screenshot",
-            "gap": "reusable-components",
-            "detail": "10.25 percent of pixels differ"
           },
           {
             "fixture": "component-states",
@@ -6798,7 +6565,7 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 4,
+            "pass": 0,
             "total": 4
           },
           "computed-styles": {
@@ -6819,32 +6586,48 @@
             "fixture": "busbasis-home",
             "viewport": "Desktop",
             "state": "initial",
+            "check": "screenshot",
+            "gap": "mixed-text",
+            "detail": "2.18 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-home",
+            "viewport": "Desktop",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "blocked-embedded-content",
-            "detail": "1 differences on 1 elements, first: e405: not in the replica"
+            "gap": "mixed-text",
+            "detail": "34 differences on 14 elements, first: e0: text \"ShopÜberunsKontaktVerein0Wirhabennochnic\" became \"ShopÜberunsKontaktVerein0Wirhabennochnic\""
           },
           {
             "fixture": "busbasis-home",
             "viewport": "Desktop",
             "state": "initial",
             "check": "accessibility-tree",
-            "gap": "blocked-embedded-content",
+            "gap": "mixed-text",
             "detail": "original \"- main:\\n  - navigation:\\n    - link \\\"BusBasis Berlin\\\":\\n      - /url: /de\\n      - img \\\"BusBasis Berlin\\\"\\n    - link \\\"Shop\\\":\", replica \"- main:\\n  - navigation:\\n    - link \\\"BusBasis Berlin\\\":\\n      - /url: /de\\n      - i"
           },
           {
             "fixture": "busbasis-home",
             "viewport": "Desktop",
             "state": "hover e41",
+            "check": "screenshot",
+            "gap": "mixed-text",
+            "detail": "2.18 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-home",
+            "viewport": "Desktop",
+            "state": "hover e41",
             "check": "computed-styles",
-            "gap": "blocked-embedded-content",
-            "detail": "1 differences on 1 elements, first: e405: not in the replica"
+            "gap": "mixed-text",
+            "detail": "34 differences on 14 elements, first: e0: text \"ShopÜberunsKontaktVerein0Wirhabennochnic\" became \"ShopÜberunsKontaktVerein0Wirhabennochnic\""
           },
           {
             "fixture": "busbasis-home",
             "viewport": "Desktop",
             "state": "hover e41",
             "check": "accessibility-tree",
-            "gap": "blocked-embedded-content",
+            "gap": "mixed-text",
             "detail": "original \"- main:\\n  - navigation:\\n    - link \\\"BusBasis Berlin\\\":\\n      - /url: /de\\n      - img \\\"BusBasis Berlin\\\"\\n    - link \\\"Shop\\\":\", replica \"- main:\\n  - navigation:\\n    - link \\\"BusBasis Berlin\\\":\\n      - /url: /de\\n      - i"
           },
           {
@@ -6852,39 +6635,55 @@
             "viewport": "Desktop",
             "state": "hover e41",
             "check": "interaction",
-            "gap": "blocked-embedded-content",
+            "gap": "mixed-text",
             "detail": "the replica did not end up where the original did"
           },
           {
             "fixture": "busbasis-home",
             "viewport": "Tablet",
             "state": "initial",
+            "check": "screenshot",
+            "gap": "mixed-text",
+            "detail": "3.74 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-home",
+            "viewport": "Tablet",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "blocked-embedded-content",
-            "detail": "1 differences on 1 elements, first: e405: not in the replica"
+            "gap": "mixed-text",
+            "detail": "34 differences on 14 elements, first: e0: text \"ShopÜberunsKontaktVerein0Wirhabennochnic\" became \"ShopÜberunsKontaktVerein0Wirhabennochnic\""
           },
           {
             "fixture": "busbasis-home",
             "viewport": "Tablet",
             "state": "initial",
             "check": "accessibility-tree",
-            "gap": "blocked-embedded-content",
+            "gap": "mixed-text",
             "detail": "original \"- main:\\n  - navigation:\\n    - link \\\"BusBasis Berlin\\\":\\n      - /url: /de\\n      - img \\\"BusBasis Berlin\\\"\\n    - link \\\"Konto\\\"\", replica \"- main:\\n  - navigation:\\n    - link \\\"BusBasis Berlin\\\":\\n      - /url: /de\\n      - i"
           },
           {
             "fixture": "busbasis-home",
             "viewport": "Mobile",
             "state": "initial",
+            "check": "screenshot",
+            "gap": "mixed-text",
+            "detail": "1.97 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-home",
+            "viewport": "Mobile",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "blocked-embedded-content",
-            "detail": "1 differences on 1 elements, first: e405: not in the replica"
+            "gap": "mixed-text",
+            "detail": "34 differences on 14 elements, first: e0: text \"ShopÜberunsKontaktVerein0Wirhabennochnic\" became \"ShopÜberunsKontaktVerein0Wirhabennochnic\""
           },
           {
             "fixture": "busbasis-home",
             "viewport": "Mobile",
             "state": "initial",
             "check": "accessibility-tree",
-            "gap": "blocked-embedded-content",
+            "gap": "mixed-text",
             "detail": "original \"- main:\\n  - navigation:\\n    - link \\\"BusBasis Berlin\\\":\\n      - /url: /de\\n      - img \\\"BusBasis Berlin\\\"\\n    - link \\\"Konto\\\"\", replica \"- main:\\n  - navigation:\\n    - link \\\"BusBasis Berlin\\\":\\n      - /url: /de\\n      - i"
           },
           {
@@ -6946,16 +6745,44 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.021778635499338624,
             "elementsCompared": 532,
-            "elementsDiffering": 1,
-            "differences": 1,
+            "elementsDiffering": 14,
+            "differences": 34,
             "byGap": {
-              "blocked-embedded-content": 1
+              "unclassified": 34
             },
             "byProperty": [
               [
-                "missing",
+                "text",
+                14
+              ],
+              [
+                "rendered text",
+                14
+              ],
+              [
+                "overflow-block",
+                1
+              ],
+              [
+                "overflow-clip-margin",
+                1
+              ],
+              [
+                "overflow-inline",
+                1
+              ],
+              [
+                "overflow-x",
+                1
+              ],
+              [
+                "overflow-y",
+                1
+              ],
+              [
+                "unicode-bidi",
                 1
               ]
             ]
@@ -6963,16 +6790,44 @@
           {
             "viewport": "Desktop",
             "state": "hover e41",
-            "ratio": 0,
+            "ratio": 0.021778635499338624,
             "elementsCompared": 532,
-            "elementsDiffering": 1,
-            "differences": 1,
+            "elementsDiffering": 14,
+            "differences": 34,
             "byGap": {
-              "blocked-embedded-content": 1
+              "unclassified": 34
             },
             "byProperty": [
               [
-                "missing",
+                "text",
+                14
+              ],
+              [
+                "rendered text",
+                14
+              ],
+              [
+                "overflow-block",
+                1
+              ],
+              [
+                "overflow-clip-margin",
+                1
+              ],
+              [
+                "overflow-inline",
+                1
+              ],
+              [
+                "overflow-x",
+                1
+              ],
+              [
+                "overflow-y",
+                1
+              ],
+              [
+                "unicode-bidi",
                 1
               ]
             ]
@@ -6980,16 +6835,44 @@
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.037387536755305546,
             "elementsCompared": 532,
-            "elementsDiffering": 1,
-            "differences": 1,
+            "elementsDiffering": 14,
+            "differences": 34,
             "byGap": {
-              "blocked-embedded-content": 1
+              "unclassified": 34
             },
             "byProperty": [
               [
-                "missing",
+                "text",
+                14
+              ],
+              [
+                "rendered text",
+                14
+              ],
+              [
+                "overflow-block",
+                1
+              ],
+              [
+                "overflow-clip-margin",
+                1
+              ],
+              [
+                "overflow-inline",
+                1
+              ],
+              [
+                "overflow-x",
+                1
+              ],
+              [
+                "overflow-y",
+                1
+              ],
+              [
+                "unicode-bidi",
                 1
               ]
             ]
@@ -6997,16 +6880,44 @@
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.019743916843845973,
             "elementsCompared": 532,
-            "elementsDiffering": 1,
-            "differences": 1,
+            "elementsDiffering": 14,
+            "differences": 34,
             "byGap": {
-              "blocked-embedded-content": 1
+              "unclassified": 34
             },
             "byProperty": [
               [
-                "missing",
+                "text",
+                14
+              ],
+              [
+                "rendered text",
+                14
+              ],
+              [
+                "overflow-block",
+                1
+              ],
+              [
+                "overflow-clip-margin",
+                1
+              ],
+              [
+                "overflow-inline",
+                1
+              ],
+              [
+                "overflow-x",
+                1
+              ],
+              [
+                "overflow-y",
+                1
+              ],
+              [
+                "unicode-bidi",
                 1
               ]
             ]
@@ -8407,12 +8318,28 @@
         "styleDifferences": 0
       },
       {
+        "id": "unclassified",
+        "pages": [
+          "busbasis-home"
+        ],
+        "needs": 0,
+        "styleDifferences": 136
+      },
+      {
+        "id": "mixed-text",
+        "pages": [
+          "busbasis-home"
+        ],
+        "needs": 0,
+        "styleDifferences": 0
+      },
+      {
         "id": "blocked-embedded-content",
         "pages": [
           "busbasis-home"
         ],
         "needs": 1,
-        "styleDifferences": 4
+        "styleDifferences": 0
       },
       {
         "id": "harness-limit",
@@ -8473,12 +8400,12 @@
   },
   "roundTrip": {
     "nodesToJsxToNodes": {
-      "pass": 130,
-      "total": 134
+      "pass": 146,
+      "total": 150
     },
     "jsxToNodesToRender": {
-      "pass": 11,
-      "total": 18
+      "pass": 19,
+      "total": 26
     },
     "cases": [
       {
@@ -8776,6 +8703,11 @@
       },
       {
         "id": "preset: stickyCta",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "preset: mapEmbed",
         "direction": "nodes-jsx-nodes",
         "pass": true
       },
@@ -9140,6 +9072,71 @@
         "pass": true
       },
       {
+        "id": "behaviour: a state",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "behaviour: a trigger naming another node",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "behaviour: an id that is also a place",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "refused behaviour: a trigger naming no node",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "refused behaviour: a trigger on state not in reach",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "refused behaviour: a binding inside behaviour",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "refused behaviour: an event that is not one",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "refused behaviour: navigation to a script address",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "refused behaviour: navigation on no press",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "refused behaviour: a repeated trigger id",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "refused behaviour: a state declared twice",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "refused behaviour: a field the format does not have",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "refused behaviour: noScript that is neither",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
         "id": "refused: unknown island",
         "direction": "nodes-jsx-nodes",
         "pass": true
@@ -9156,6 +9153,16 @@
       },
       {
         "id": "refused: a rule on a text node",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "refused: behaviour on a text node",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "refused: a stored prop named nodeId",
         "direction": "nodes-jsx-nodes",
         "pass": true
       },
@@ -9283,6 +9290,46 @@
         "id": "reported: rules on a text run",
         "direction": "jsx-nodes-render",
         "pass": true
+      },
+      {
+        "id": "reported: behaviour that is no object",
+        "direction": "jsx-nodes-render",
+        "pass": true
+      },
+      {
+        "id": "reported: triggers that are not a list",
+        "direction": "jsx-nodes-render",
+        "pass": true
+      },
+      {
+        "id": "reported: behaviour on a text run",
+        "direction": "jsx-nodes-render",
+        "pass": true
+      },
+      {
+        "id": "reported: a node named but not carried",
+        "direction": "jsx-nodes-render",
+        "pass": true
+      },
+      {
+        "id": "reported: an id that keys no node",
+        "direction": "jsx-nodes-render",
+        "pass": true
+      },
+      {
+        "id": "reported: an id on two nodes",
+        "direction": "jsx-nodes-render",
+        "pass": true
+      },
+      {
+        "id": "reported: an id on a text run",
+        "direction": "jsx-nodes-render",
+        "pass": true
+      },
+      {
+        "id": "reported: an id that is no text",
+        "direction": "jsx-nodes-render",
+        "pass": true
       }
     ]
   },
@@ -9318,22 +9365,6 @@
       "cost": 116
     },
     {
-      "id": "reusable-components",
-      "description": "A promise of the reusable component format (an input type, a placement, a state or an interaction) that this surface does not keep yet.",
-      "matrixCells": 56,
-      "corpusChecks": 42,
-      "fixtures": [
-        "component-navbar",
-        "component-states"
-      ],
-      "onlyGapOf": [
-        "component-navbar",
-        "component-states"
-      ],
-      "roundTripCases": 0,
-      "cost": 98
-    },
-    {
       "id": "panel-no-tag-choice",
       "description": "The tag picker of the Custom section does not offer SVG and MathML elements.",
       "matrixCells": 92,
@@ -9347,13 +9378,11 @@
       "id": "blocked-embedded-content",
       "description": "What the render gate refuses (blockedNodes.ts and renderVocabulary.ts): embedded content (iframe, object, embed, ...), although these are ordinary content elements, and attributes that act by themselves (ping, the shadow root ones).",
       "matrixCells": 78,
-      "corpusChecks": 9,
-      "fixtures": [
-        "busbasis-home"
-      ],
+      "corpusChecks": 0,
+      "fixtures": [],
       "onlyGapOf": [],
       "roundTripCases": 0,
-      "cost": 87
+      "cost": 78
     },
     {
       "id": "page-level-css",
@@ -9369,7 +9398,7 @@
       "id": "behaviour-state",
       "description": "Behaviour and state: no way to say that one element changes another.",
       "matrixCells": 0,
-      "corpusChecks": 59,
+      "corpusChecks": 60,
       "fixtures": [
         "radix-accordion",
         "radix-tabs",
@@ -9379,7 +9408,21 @@
         "radix-dialog"
       ],
       "roundTripCases": 0,
-      "cost": 59
+      "cost": 60
+    },
+    {
+      "id": "reusable-components",
+      "description": "A promise of the reusable component format (an input type, a placement, a state or an interaction) that this surface does not keep yet.",
+      "matrixCells": 46,
+      "corpusChecks": 12,
+      "fixtures": [
+        "component-states"
+      ],
+      "onlyGapOf": [
+        "component-states"
+      ],
+      "roundTripCases": 0,
+      "cost": 58
     },
     {
       "id": "attribute-read-as-style",
@@ -9412,16 +9455,6 @@
       "cost": 44
     },
     {
-      "id": "theme",
-      "description": "A site's shared colour and font tokens, its colour mode and its document defaults (docs/plans/2026-11-02-theme-and-head.md). Stored (T1) and published (T2); the editor canvas waits for slice T3, the panel for T4 and the generator for T5.",
-      "matrixCells": 27,
-      "corpusChecks": 0,
-      "fixtures": [],
-      "onlyGapOf": [],
-      "roundTripCases": 0,
-      "cost": 27
-    },
-    {
       "id": "react-attribute-handling",
       "description": "React drops or rewrites an attribute that is valid HTML.",
       "matrixCells": 22,
@@ -9440,6 +9473,29 @@
       "onlyGapOf": [],
       "roundTripCases": 0,
       "cost": 19
+    },
+    {
+      "id": "theme",
+      "description": "A site's shared colour and font tokens, its colour mode and its document defaults (docs/plans/2026-11-02-theme-and-head.md). Stored (T1) and published (T2); the editor canvas waits for slice T3, the panel for T4 and the generator for T5.",
+      "matrixCells": 18,
+      "corpusChecks": 0,
+      "fixtures": [],
+      "onlyGapOf": [],
+      "roundTripCases": 0,
+      "cost": 18
+    },
+    {
+      "id": "mixed-text",
+      "description": "Text mixed with elements: text beside an element is lost or lands out of order.",
+      "matrixCells": 0,
+      "corpusChecks": 16,
+      "fixtures": [
+        "radix-tabs",
+        "busbasis-home"
+      ],
+      "onlyGapOf": [],
+      "roundTripCases": 0,
+      "cost": 16
     },
     {
       "id": "import-dynamic-logic",
@@ -9482,18 +9538,6 @@
       "onlyGapOf": [],
       "roundTripCases": 4,
       "cost": 4
-    },
-    {
-      "id": "mixed-text",
-      "description": "Text mixed with elements: text beside an element is lost or lands out of order.",
-      "matrixCells": 0,
-      "corpusChecks": 3,
-      "fixtures": [
-        "radix-tabs"
-      ],
-      "onlyGapOf": [],
-      "roundTripCases": 0,
-      "cost": 3
     },
     {
       "id": "renderer-drops-value",
@@ -10575,7 +10619,7 @@
               "viewport": "Desktop",
               "state": "initial",
               "check": "screenshot",
-              "detail": "0.34 percent of pixels differ"
+              "detail": "0.36 percent of pixels differ"
             },
             {
               "viewport": "Desktop",
@@ -10592,35 +10636,35 @@
             {
               "viewport": "Desktop",
               "state": "hover",
-              "check": "screenshot",
-              "detail": "0.34 percent of pixels differ"
-            },
-            {
-              "viewport": "Desktop",
-              "state": "hover",
-              "check": "computed-styles",
-              "detail": "3 differences, first: r missing, r.0 missing, r.0.0 missing"
-            },
-            {
-              "viewport": "Desktop",
-              "state": "hover",
-              "check": "accessibility-tree",
-              "detail": "original \"- button \\\"Continue\\\"\", replica \"\""
-            },
-            {
-              "viewport": "Desktop",
-              "state": "hover",
-              "check": "interaction",
-              "detail": "locator.hover: Timeout 3000ms exceeded."
-            },
-            {
-              "viewport": "Desktop",
-              "state": "keyboard focus",
               "check": "screenshot",
               "detail": "0.36 percent of pixels differ"
             },
             {
               "viewport": "Desktop",
+              "state": "hover",
+              "check": "computed-styles",
+              "detail": "3 differences, first: r missing, r.0 missing, r.0.0 missing"
+            },
+            {
+              "viewport": "Desktop",
+              "state": "hover",
+              "check": "accessibility-tree",
+              "detail": "original \"- button \\\"Continue\\\"\", replica \"\""
+            },
+            {
+              "viewport": "Desktop",
+              "state": "hover",
+              "check": "interaction",
+              "detail": "locator.hover: Timeout 3000ms exceeded."
+            },
+            {
+              "viewport": "Desktop",
+              "state": "keyboard focus",
+              "check": "screenshot",
+              "detail": "0.38 percent of pixels differ"
+            },
+            {
+              "viewport": "Desktop",
               "state": "keyboard focus",
               "check": "computed-styles",
               "detail": "3 differences, first: r missing, r.0 missing, r.0.0 missing"
@@ -10641,7 +10685,7 @@
               "viewport": "Tablet",
               "state": "initial",
               "check": "screenshot",
-              "detail": "0.45 percent of pixels differ"
+              "detail": "0.46 percent of pixels differ"
             },
             {
               "viewport": "Tablet",
@@ -10659,7 +10703,7 @@
               "viewport": "Tablet",
               "state": "hover",
               "check": "screenshot",
-              "detail": "0.45 percent of pixels differ"
+              "detail": "0.46 percent of pixels differ"
             },
             {
               "viewport": "Tablet",
@@ -10683,7 +10727,7 @@
               "viewport": "Tablet",
               "state": "keyboard focus",
               "check": "screenshot",
-              "detail": "0.47 percent of pixels differ"
+              "detail": "0.49 percent of pixels differ"
             },
             {
               "viewport": "Tablet",
@@ -10707,7 +10751,7 @@
               "viewport": "Mobile",
               "state": "initial",
               "check": "screenshot",
-              "detail": "1.41 percent of pixels differ"
+              "detail": "1.46 percent of pixels differ"
             },
             {
               "viewport": "Mobile",
@@ -10725,7 +10769,7 @@
               "viewport": "Mobile",
               "state": "hover",
               "check": "screenshot",
-              "detail": "1.41 percent of pixels differ"
+              "detail": "1.46 percent of pixels differ"
             },
             {
               "viewport": "Mobile",
@@ -10749,7 +10793,7 @@
               "viewport": "Mobile",
               "state": "keyboard focus",
               "check": "screenshot",
-              "detail": "1.49 percent of pixels differ"
+              "detail": "1.54 percent of pixels differ"
             },
             {
               "viewport": "Mobile",
@@ -10832,7 +10876,7 @@
               "viewport": "Desktop",
               "state": "initial",
               "check": "screenshot",
-              "detail": "0.35 percent of pixels differ"
+              "detail": "0.36 percent of pixels differ"
             },
             {
               "viewport": "Desktop",
@@ -10850,7 +10894,7 @@
               "viewport": "Desktop",
               "state": "hover",
               "check": "screenshot",
-              "detail": "0.35 percent of pixels differ"
+              "detail": "0.36 percent of pixels differ"
             },
             {
               "viewport": "Desktop",
@@ -10874,7 +10918,7 @@
               "viewport": "Desktop",
               "state": "keyboard focus",
               "check": "screenshot",
-              "detail": "0.37 percent of pixels differ"
+              "detail": "0.38 percent of pixels differ"
             },
             {
               "viewport": "Desktop",
@@ -10898,7 +10942,7 @@
               "viewport": "Tablet",
               "state": "initial",
               "check": "screenshot",
-              "detail": "0.46 percent of pixels differ"
+              "detail": "0.47 percent of pixels differ"
             },
             {
               "viewport": "Tablet",
@@ -10916,7 +10960,7 @@
               "viewport": "Tablet",
               "state": "hover",
               "check": "screenshot",
-              "detail": "0.46 percent of pixels differ"
+              "detail": "0.47 percent of pixels differ"
             },
             {
               "viewport": "Tablet",
@@ -10940,7 +10984,7 @@
               "viewport": "Tablet",
               "state": "keyboard focus",
               "check": "screenshot",
-              "detail": "0.48 percent of pixels differ"
+              "detail": "0.49 percent of pixels differ"
             },
             {
               "viewport": "Tablet",
@@ -10964,7 +11008,7 @@
               "viewport": "Mobile",
               "state": "initial",
               "check": "screenshot",
-              "detail": "1.43 percent of pixels differ"
+              "detail": "1.48 percent of pixels differ"
             },
             {
               "viewport": "Mobile",
@@ -10982,7 +11026,7 @@
               "viewport": "Mobile",
               "state": "hover",
               "check": "screenshot",
-              "detail": "1.43 percent of pixels differ"
+              "detail": "1.48 percent of pixels differ"
             },
             {
               "viewport": "Mobile",
@@ -11006,7 +11050,7 @@
               "viewport": "Mobile",
               "state": "keyboard focus",
               "check": "screenshot",
-              "detail": "1.51 percent of pixels differ"
+              "detail": "1.55 percent of pixels differ"
             },
             {
               "viewport": "Mobile",
@@ -11932,7 +11976,7 @@
           "pass": false,
           "checks": {
             "screenshot": {
-              "pass": 3,
+              "pass": 2,
               "total": 3
             },
             "computed-styles": {
@@ -11953,19 +11997,25 @@
               "viewport": "Desktop",
               "state": "initial",
               "check": "computed-styles",
-              "detail": "27 differences, first: r background-color, r block-size, r border-bottom-left-radius, r border-bottom-right-radius"
+              "detail": "26 differences, first: r block-size, r border-bottom-left-radius, r border-bottom-right-radius, r border-end-end-radius"
             },
             {
               "viewport": "Tablet",
               "state": "initial",
               "check": "computed-styles",
-              "detail": "27 differences, first: r background-color, r block-size, r border-bottom-left-radius, r border-bottom-right-radius"
+              "detail": "26 differences, first: r block-size, r border-bottom-left-radius, r border-bottom-right-radius, r border-end-end-radius"
+            },
+            {
+              "viewport": "Mobile",
+              "state": "initial",
+              "check": "screenshot",
+              "detail": "0.10 percent of pixels differ"
             },
             {
               "viewport": "Mobile",
               "state": "initial",
               "check": "computed-styles",
-              "detail": "27 differences, first: r background-color, r block-size, r border-bottom-left-radius, r border-bottom-right-radius"
+              "detail": "26 differences, first: r block-size, r border-bottom-left-radius, r border-bottom-right-radius, r border-end-end-radius"
             }
           ]
         },
@@ -12013,7 +12063,7 @@
           "pass": false,
           "checks": {
             "screenshot": {
-              "pass": 0,
+              "pass": 2,
               "total": 3
             },
             "computed-styles": {
@@ -12033,38 +12083,26 @@
             {
               "viewport": "Desktop",
               "state": "initial",
-              "check": "screenshot",
-              "detail": "8.47 percent of pixels differ"
-            },
-            {
-              "viewport": "Desktop",
-              "state": "initial",
               "check": "computed-styles",
-              "detail": "43 differences, first: r background-color, r block-size, r border-bottom-left-radius, r border-bottom-right-radius"
-            },
-            {
-              "viewport": "Tablet",
-              "state": "initial",
-              "check": "screenshot",
-              "detail": "6.60 percent of pixels differ"
+              "detail": "42 differences, first: r block-size, r border-bottom-left-radius, r border-bottom-right-radius, r border-end-end-radius"
             },
             {
               "viewport": "Tablet",
               "state": "initial",
               "check": "computed-styles",
-              "detail": "43 differences, first: r background-color, r block-size, r border-bottom-left-radius, r border-bottom-right-radius"
+              "detail": "42 differences, first: r block-size, r border-bottom-left-radius, r border-bottom-right-radius, r border-end-end-radius"
             },
             {
               "viewport": "Mobile",
               "state": "initial",
               "check": "screenshot",
-              "detail": "10.06 percent of pixels differ"
+              "detail": "0.10 percent of pixels differ"
             },
             {
               "viewport": "Mobile",
               "state": "initial",
               "check": "computed-styles",
-              "detail": "43 differences, first: r background-color, r block-size, r border-bottom-left-radius, r border-bottom-right-radius"
+              "detail": "42 differences, first: r block-size, r border-bottom-left-radius, r border-bottom-right-radius, r border-end-end-radius"
             }
           ]
         },

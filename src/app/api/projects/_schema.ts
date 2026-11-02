@@ -44,6 +44,16 @@ export const projectSnapshotSchema = z
   })
   .passthrough();
 
-// The request body wrapper: `{ project: <snapshot> }`. Shared by both the
-// publish and the save routes.
-export const projectBodySchema = z.object({ project: projectSnapshotSchema });
+// The request body wrapper: `{ project: <snapshot>, expectedVersion }`. Shared
+// by both the publish and the save routes.
+//
+// `expectedVersion` is the version lock: the site version the snapshot was
+// based on (the editor gets it from the loader and from every successful save
+// or publish). A stale one is refused with 409 `site_changed` and the stored
+// `currentVersion`. It is REQUIRED: a body without it (an editor tab built
+// before the lock existed) is refused with 400 `version_required` and writes
+// nothing, so no client of these routes ever gets a silent "newest wins" save.
+export const projectBodySchema = z.object({
+  project: projectSnapshotSchema,
+  expectedVersion: z.number().int().positive().optional(),
+});

@@ -1,0 +1,12 @@
+/* The published site's sheet: what every published page, the consent banner, the
+   default 404 and the commerce islands sit on, and nothing else. Tailwind's reset
+   (which the two page bases in src/lib/site/pageBase.ts are defined against), the
+   theme tokens and the base layer (src/app/theme-tokens.css), and the one utility the
+   root layout puts on <body>. No automatic scan: the platform components under this
+   route style themselves inline, and a stored page brings its own sheet, so no class
+   in the app's code may add a rule (or an @property registration) here. The editor's
+   sheet, globals.css, is never linked on these routes.
+   src/app/__tests__/publishedSheet.test.ts holds both of those. */
+@import "tailwindcss" source(none);
+@import "../theme-tokens.css";
+@source inline("antialiased");

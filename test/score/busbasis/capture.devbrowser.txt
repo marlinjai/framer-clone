@@ -5,7 +5,8 @@
 // the shop: no cart, no form, no login. It renders each page at the corpus widths after
 // scrolling through it, so reveal animations have fired. The DOM is cloned without script;
 // images, video and iframes keep their box and lose their source, so a frozen page cannot
-// make a request. Mail addresses and names are scrubbed in freeze.ts.
+// make a request; the frames' addresses go to `frames` beside it. Mail addresses, names
+// and the map's place are scrubbed in freeze.ts.
 const WIDTHS = [
   { id: 'desktop', width: 1280, height: 800 },
   { id: 'tablet', width: 768, height: 1024 },
@@ -40,6 +41,9 @@ out.head = await page.evaluate(() => ({
   bodyStyle: document.body.getAttribute('style') || '',
   htmlOther: [...document.documentElement.attributes].map((a) => a.name),
 }));
+// The frozen page keeps no address, so each frame's address is kept here, in document
+// order, for freeze.ts: a Google map becomes the map component in the lift.
+out.frames = await page.evaluate(() => [...document.querySelectorAll('iframe')].map((f) => f.getAttribute('src') || ''));
 
 for (const w of WIDTHS) {
   await page.setViewportSize({ width: w.width, height: w.height });

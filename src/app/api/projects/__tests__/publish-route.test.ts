@@ -128,7 +128,7 @@ describe('POST /api/projects/publish guard', () => {
     const publish = vi.fn();
     installRepo({ publishProject: publish });
 
-    const res = await POST(publishReq({ project: PROJECT }, { cookie: null }));
+    const res = await POST(publishReq({ project: PROJECT, expectedVersion: 1 }, { cookie: null }));
 
     expect(res.status).toBe(401);
     expect((await res.json()).error.code).toBe('unauthorized');
@@ -141,7 +141,7 @@ describe('POST /api/projects/publish guard', () => {
     const publish = vi.fn();
     installRepo({ publishProject: publish });
 
-    const res = await POST(publishReq({ project: PROJECT }));
+    const res = await POST(publishReq({ project: PROJECT, expectedVersion: 1 }));
 
     expect(res.status).toBe(403);
     expect((await res.json()).error.code).toBe('forbidden');
@@ -162,7 +162,7 @@ describe('POST /api/projects/publish guard', () => {
     const publish = vi.fn();
     installRepo({ publishProject: publish });
 
-    const res = await POST(publishReq({ project: PROJECT }));
+    const res = await POST(publishReq({ project: PROJECT, expectedVersion: 1 }));
 
     expect(res.status).toBe(503);
     expect((await res.json()).error.code).toBe('authz_unavailable');
@@ -179,14 +179,14 @@ describe('POST /api/projects/publish (authorized)', () => {
   });
 
   it('round-trips the snapshot through publishProject then ensureSiteDomain under the session scope', async () => {
-    const publish = vi.fn().mockResolvedValue({ revision: 7 });
+    const publish = vi.fn().mockResolvedValue({ revision: 7, version: 2 });
     const ensure = vi.fn().mockResolvedValue({ subdomain: 'demo-abc123' });
     installRepo({
       publishProject: publish,
       ensureSiteDomain: ensure,
     });
 
-    const res = await POST(publishReq({ project: PROJECT }));
+    const res = await POST(publishReq({ project: PROJECT, expectedVersion: 1 }));
 
     expect(res.status).toBe(200);
     // PUBLIC_SITE_BASE_HOST is unset here -> liveUrl is null but the subdomain
@@ -195,6 +195,8 @@ describe('POST /api/projects/publish (authorized)', () => {
       siteId: 'site_1',
       status: 'published',
       revision: 7,
+      // The version lock: the new version, for the editor's next write.
+      version: 2,
       publishedPages: ['', 'about'],
       subdomain: 'demo-abc123',
       liveUrl: null,
@@ -206,7 +208,7 @@ describe('POST /api/projects/publish (authorized)', () => {
       SCOPE,
       expect.objectContaining({ id: 'site_1' }),
       // The company and the publisher come from the session too.
-      { companyId: 'tenant-1', publishedBy: 'user-1' },
+      { companyId: 'tenant-1', publishedBy: 'user-1', expectedVersion: 1 },
     );
     expect(ensure).toHaveBeenCalledWith(SCOPE, 'site_1');
     // The pipeline runs in order: publish -> ensureSiteDomain.
@@ -218,11 +220,11 @@ describe('POST /api/projects/publish (authorized)', () => {
   it('invalidates the origin render cache for the published subdomain (MT-17)', async () => {
     const ensure = vi.fn().mockResolvedValue({ subdomain: 'demo-abc123' });
     installRepo({
-      publishProject: vi.fn().mockResolvedValue({ revision: 1 }),
+      publishProject: vi.fn().mockResolvedValue({ revision: 1, version: 2 }),
       ensureSiteDomain: ensure,
     });
 
-    const res = await POST(publishReq({ project: PROJECT }));
+    const res = await POST(publishReq({ project: PROJECT, expectedVersion: 1 }));
 
     expect(res.status).toBe(200);
     // The tag the resolver caches under is keyed by the subdomain.
@@ -233,13 +235,13 @@ describe('POST /api/projects/publish (authorized)', () => {
 
   it('a failing custom-domain revalidation does not turn a committed publish into a failure', async () => {
     installRepo({
-      publishProject: vi.fn().mockResolvedValue({ revision: 1 }),
+      publishProject: vi.fn().mockResolvedValue({ revision: 1, version: 2 }),
       ensureSiteDomain: vi.fn().mockResolvedValue({ subdomain: 'demo-abc123' }),
     });
     vi.mocked(revalidateCustomHostsForSiteId).mockRejectedValueOnce(new Error('db hiccup'));
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    const res = await POST(publishReq({ project: PROJECT }));
+    const res = await POST(publishReq({ project: PROJECT, expectedVersion: 1 }));
 
     expect(res.status).toBe(200);
     expect(spy).toHaveBeenCalled();
@@ -250,11 +252,11 @@ describe('POST /api/projects/publish (authorized)', () => {
     process.env.PUBLIC_SITE_BASE_HOST = 'sites.lumitra.co';
     const ensure = vi.fn().mockResolvedValue({ subdomain: 'demo-abc123' });
     installRepo({
-      publishProject: vi.fn().mockResolvedValue({ revision: 1 }),
+      publishProject: vi.fn().mockResolvedValue({ revision: 1, version: 2 }),
       ensureSiteDomain: ensure,
     });
 
-    const res = await POST(publishReq({ project: PROJECT }));
+    const res = await POST(publishReq({ project: PROJECT, expectedVersion: 1 }));
     const json = await res.json();
 
     expect(res.status).toBe(200);
@@ -266,11 +268,11 @@ describe('POST /api/projects/publish (authorized)', () => {
     delete process.env.PUBLIC_SITE_BASE_HOST;
     const ensure = vi.fn().mockResolvedValue({ subdomain: 'demo-abc123' });
     installRepo({
-      publishProject: vi.fn().mockResolvedValue({ revision: 1 }),
+      publishProject: vi.fn().mockResolvedValue({ revision: 1, version: 2 }),
       ensureSiteDomain: ensure,
     });
 
-    const res = await POST(publishReq({ project: PROJECT }));
+    const res = await POST(publishReq({ project: PROJECT, expectedVersion: 1 }));
     const json = await res.json();
 
     expect(res.status).toBe(200);
@@ -284,12 +286,12 @@ describe('POST /api/projects/publish (authorized)', () => {
     // already-allocated slug for this site.
     const ensure = vi.fn().mockResolvedValue({ subdomain: 'demo-abc123' });
     installRepo({
-      publishProject: vi.fn().mockResolvedValue({ revision: 1 }),
+      publishProject: vi.fn().mockResolvedValue({ revision: 1, version: 2 }),
       ensureSiteDomain: ensure,
     });
 
-    const first = await (await POST(publishReq({ project: PROJECT }))).json();
-    const second = await (await POST(publishReq({ project: PROJECT }))).json();
+    const first = await (await POST(publishReq({ project: PROJECT, expectedVersion: 1 }))).json();
+    const second = await (await POST(publishReq({ project: PROJECT, expectedVersion: 1 }))).json();
 
     expect(first.subdomain).toBe('demo-abc123');
     expect(first.liveUrl).toBe('https://demo-abc123.sites.lumitra.co');
@@ -302,21 +304,24 @@ describe('POST /api/projects/publish (authorized)', () => {
       .fn()
       .mockRejectedValue(new SubdomainAllocationError('site_1', 5));
     installRepo({
-      publishProject: vi.fn().mockResolvedValue({ revision: 1 }),
+      publishProject: vi.fn().mockResolvedValue({ revision: 1, version: 2 }),
       ensureSiteDomain: ensure,
     });
 
-    const res = await POST(publishReq({ project: PROJECT }));
+    const res = await POST(publishReq({ project: PROJECT, expectedVersion: 1 }));
 
     expect(res.status).toBe(500);
-    expect((await res.json()).error.code).toBe('subdomain_allocation_failed');
+    const body = await res.json();
+    expect(body.error.code).toBe('subdomain_allocation_failed');
+    // The publish itself committed: the editor learns the version it moved to.
+    expect(body.error.writtenVersion).toBe(2);
   });
 
   it('preserves the full opaque page snapshot when saving (no field stripping)', async () => {
-    const publish = vi.fn().mockResolvedValue({ revision: 1 });
+    const publish = vi.fn().mockResolvedValue({ revision: 1, version: 2 });
     installRepo({ publishProject: publish });
 
-    await POST(publishReq({ project: PROJECT }));
+    await POST(publishReq({ project: PROJECT, expectedVersion: 1 }));
 
     const savedProject = publish.mock.calls[0][1];
     expect(savedProject.pages.page_home.appComponentTree).toEqual({ kind: 'frame' });
@@ -338,7 +343,7 @@ describe('POST /api/projects/publish (authorized)', () => {
     const ensure = vi.fn();
     installRepo({ publishProject: publish, ensureSiteDomain: ensure });
 
-    const res = await POST(publishReq({ project: PROJECT }));
+    const res = await POST(publishReq({ project: PROJECT, expectedVersion: 1 }));
 
     expect(res.status).toBe(404);
     expect((await res.json()).error.code).toBe('site_not_found');
@@ -355,7 +360,7 @@ describe('publish of a deleted project', () => {
     const ensure = vi.fn();
     installRepo({ publishProject: publish, ensureSiteDomain: ensure });
 
-    const res = await POST(publishReq({ project: PROJECT }));
+    const res = await POST(publishReq({ project: PROJECT, expectedVersion: 1 }));
 
     expect(res.status).toBe(404);
     const body = await res.json();
@@ -364,5 +369,59 @@ describe('publish of a deleted project', () => {
       'This project does not exist (any more): it may have been deleted. Your changes were not saved.',
     );
     expect(ensure).not.toHaveBeenCalled();
+  });
+});
+
+// The version lock (src/app/api/projects/_schema.ts): a publish names the
+// version its snapshot was based on, and nothing goes live without it.
+describe('publish version lock', () => {
+  beforeEach(() => {
+    mockVerifySession.mockResolvedValue(makeSession());
+    mockCan.mockResolvedValue(true);
+  });
+
+  it('a body without expectedVersion is refused with 400 version_required, and nothing is published', async () => {
+    const publish = vi.fn();
+    const ensure = vi.fn();
+    installRepo({ publishProject: publish, ensureSiteDomain: ensure });
+
+    const res = await POST(publishReq({ project: PROJECT }));
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error.code).toBe('version_required');
+    expect(body.error.message).toMatch(/Reload the page/);
+    expect(publish).not.toHaveBeenCalled();
+    expect(ensure).not.toHaveBeenCalled();
+  });
+
+  it('a stale version answers 409 site_changed with the current version; no address is allocated', async () => {
+    const { SiteChangedError } = await import('@/server/sites');
+    const publish = vi.fn().mockRejectedValue(new SiteChangedError(5));
+    const ensure = vi.fn();
+    installRepo({ publishProject: publish, ensureSiteDomain: ensure });
+
+    const res = await POST(publishReq({ project: PROJECT, expectedVersion: 3 }));
+
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error).toMatchObject({ code: 'site_changed', currentVersion: 5 });
+    expect(publish.mock.calls[0][2]).toMatchObject({ expectedVersion: 3 });
+    expect(ensure).not.toHaveBeenCalled();
+  });
+
+  it('a publish refused before anything committed carries no writtenVersion', async () => {
+    installRepo({ publishProject: vi.fn().mockRejectedValue(new Error('db down')) });
+    const res = await POST(publishReq({ project: PROJECT, expectedVersion: 1 }));
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).not.toHaveProperty('writtenVersion');
+  });
+
+  it.each([[0], [-1], [1.5], ['2']])('an expectedVersion of %j is a malformed body (400)', async (value) => {
+    const publish = vi.fn();
+    installRepo({ publishProject: publish });
+    const res = await POST(publishReq({ project: PROJECT, expectedVersion: value }));
+    expect(res.status).toBe(400);
+    expect(publish).not.toHaveBeenCalled();
   });
 });

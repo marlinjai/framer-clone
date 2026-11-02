@@ -16,12 +16,13 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { getSnapshot } from 'mobx-state-tree';
 import { getPrismaClient } from '@/server/db';
-import { getSiteRepository, InvalidPageSlugError, type TenantScope } from '@/server/sites';
+import { InvalidPageSlugError, type TenantScope } from '@/server/sites';
 import { matchPageBySlug, resolvePublishedSiteByKey } from '@/server/sites/publicResolver';
 import { snapshotToComponentNode } from '@/lib/renderer/server/snapshotToComponentNode';
 import { renderPublishedPage } from '@/lib/renderer/server/renderPublishedPage';
 import { projectBodySchema } from '@/app/api/projects/_schema';
 import { DEFAULT_VIEWPORTS } from '@/lib/canvas/defaultViewports';
+import { latestVersionRepository } from './latestVersionRepository';
 
 const SCOPE: TenantScope = {
   workspaceId: `ws_components_${randomUUID().slice(0, 8)}`,
@@ -113,13 +114,13 @@ afterAll(async () => {
 describe('sites.components on a real database', () => {
   it('a site created without the key starts with no definitions', async () => {
     const siteId = newSiteId();
-    await getSiteRepository().saveProject(SCOPE, project(siteId));
+    await latestVersionRepository().saveProject(SCOPE, project(siteId));
     expect(await storedComponents(siteId)).toEqual({});
-    expect((await getSiteRepository().loadProject(SCOPE, siteId)).components.size).toBe(0);
+    expect((await latestVersionRepository().loadProject(SCOPE, siteId)).components.size).toBe(0);
   });
 
   it('a definition survives save, load, publish and render', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     const siteId = newSiteId();
     const children = [placement('p1', { title: 'First card' }), placement('p2')];
     await repo.saveProject(SCOPE, project(siteId, { children, components: { card: CARD } }));
@@ -160,7 +161,7 @@ describe('sites.components on a real database', () => {
   });
 
   it('a body from a tab older than the column leaves it alone, and a present key replaces it', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     const siteId = newSiteId();
     await repo.saveProject(SCOPE, project(siteId, { components: { card: CARD } }));
     const before = await storedComponents(siteId);
@@ -184,7 +185,7 @@ describe('sites.components on a real database', () => {
   });
 
   it('commits with the pages: a save that fails writes neither', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     const siteId = newSiteId();
     await repo.saveProject(SCOPE, project(siteId, { components: { card: CARD } }));
     const before = await storedComponents(siteId);
@@ -197,7 +198,7 @@ describe('sites.components on a real database', () => {
   });
 
   it('a site in another workspace is not reached', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     const siteId = newSiteId();
     await repo.saveProject(SCOPE, project(siteId, { components: { card: CARD } }));
     const foreign = { ...SCOPE, workspaceId: `${SCOPE.workspaceId}_other` };
@@ -207,7 +208,7 @@ describe('sites.components on a real database', () => {
 
   it('a stored definition that cannot be read costs that definition, never the site', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     const siteId = newSiteId();
     await repo.saveProject(SCOPE, project(siteId, { children: [placement('p1'), placement('p2', {})] }));
     await prisma.site.update({

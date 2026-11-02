@@ -19,6 +19,7 @@ import {
   resolveActiveCompany,
   resolveActiveScope,
   resolveScopeForCompanyWorkspace,
+  resolveScopeForKey,
   sitesGrantedCompanyIds,
 } from '../scope';
 
@@ -312,5 +313,40 @@ describe('activeScopeDenial', () => {
     expect(activeScopeDenial('no_active_company').code).toBe('no_active_company');
     expect(activeScopeDenial('workspace_not_in_session').code).toBe('no_active_company');
     expect(activeScopeDenial('tenant_not_in_session').code).toBe('no_active_company');
+  });
+});
+
+describe('resolveScopeForKey (a company API key)', () => {
+  it('maps a company with one group and one workspace to that scope', () => {
+    expect(resolveScopeForKey({ groupIds: ['g1'], workspaceIds: ['w1'] })).toEqual({
+      ok: true,
+      scope: { workspaceId: 'w1', tenantGroupId: 'g1' },
+    });
+  });
+
+  it('refuses a company without a workspace', () => {
+    expect(resolveScopeForKey({ groupIds: ['g1'], workspaceIds: [] })).toEqual({ ok: false, error: 'no_sites_workspace' });
+  });
+
+  it('refuses to guess among several workspaces', () => {
+    expect(resolveScopeForKey({ groupIds: ['g1'], workspaceIds: ['w1', 'w2'] })).toEqual({
+      ok: false,
+      error: 'ambiguous_workspace',
+    });
+  });
+
+  it('refuses a company hanging off no group or several', () => {
+    expect(resolveScopeForKey({ groupIds: [], workspaceIds: ['w1'] })).toEqual({ ok: false, error: 'company_structure_invalid' });
+    expect(resolveScopeForKey({ groupIds: ['g1', 'g2'], workspaceIds: ['w1'] })).toEqual({
+      ok: false,
+      error: 'company_structure_invalid',
+    });
+  });
+
+  it('ignores empty ids', () => {
+    expect(resolveScopeForKey({ groupIds: ['', 'g1'], workspaceIds: ['', 'w1'] })).toEqual({
+      ok: true,
+      scope: { workspaceId: 'w1', tenantGroupId: 'g1' },
+    });
   });
 });

@@ -2,9 +2,10 @@
 //
 // In the Next App Router only the ROOT layout (`src/app/layout.tsx`) may render
 // `<html>`/`<body>`, and it wraps every route, so the storefront used to
-// inherit the editor's "Create Next App" metadata and the data-table CMS-grid
-// CSS. Those are gone from the root layout; this layout owns the storefront's
-// own metadata and carries NO editor chrome and NO data-table CSS. The
+// inherit the editor's "Create Next App" metadata, the data-table CMS-grid CSS
+// and the editor's globals.css. Those are gone from the root layout; this layout
+// owns the storefront's own metadata and its own small sheet (`site.css`), and
+// carries NO editor chrome, NO editor sheet and NO data-table CSS. The
 // published `<html lang>` is set by the root layout from the same site
 // (src/server/sites/requestSite.ts, getRequestLanguage).
 //
@@ -26,6 +27,9 @@
 
 import React from 'react';
 import type { Metadata, Viewport } from 'next';
+// The published site's own sheet (reset, theme tokens, base layer). The editor's
+// globals.css is linked only by the editor routes, never here (see site.css).
+import './site.css';
 import { unstable_rethrow } from 'next/navigation';
 import { getPrimaryHostForRequest, resolveSiteForRequest } from '@/server/sites/requestSite';
 import { effectiveSiteName } from '@/lib/site/siteSettings';

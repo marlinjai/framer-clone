@@ -37,7 +37,7 @@ export function SiteSheets({ theme }: { theme?: SiteTheme }) {
   const css = theme ? themeCss(theme) : '';
   return (
     <>
-      {/* The root layout puts the editor's Geist on <html> (Tailwind preflight).
+      {/* The site sheet's reset puts Geist on <html> (Tailwind preflight).
           A published page that sets no font family of its own falls back to the
           system stack instead, never to a face the editor chrome happens to use.
           Constant text from the font registry, never site data. */}

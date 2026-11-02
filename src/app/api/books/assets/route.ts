@@ -16,6 +16,8 @@
 //   413 asset_too_large         more than 1 MB
 //   415 unsupported_asset_type  not image/png or image/jpeg, or the bytes are not what the type says
 //   422 asset_invalid           undecodable, not embeddable, or too many pixels (the message says which)
+//   429 rate_limited            more than 30 upload attempts by the user in 10 minutes
+//                               (src/server/uploads/rateLimit.ts, Retry-After)
 // The log line carries the hash and the size only.
 //
 // GET /api/books/assets
@@ -32,6 +34,7 @@ import { boundedBytes } from '@/server/books/http/boundedBody';
 import { booksRoute } from '@/server/books/http/route';
 import { LOGO_CONTENT_TYPES, MAX_LOGO_BYTES } from '@/server/books/render/logoImage';
 import { listAssets, storeLogo } from '@/server/books/repository/assets';
+import { getUploadRateLimiter, uploadRateLimitedResponse } from '@/server/uploads/rateLimit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -40,6 +43,8 @@ export const dynamic = 'force-dynamic';
 const JPEG_ALIASES = new Set(['image/jpg', 'image/pjpeg']);
 
 export const POST = booksRoute('write', async (ctx, req) => {
+  const limited = getUploadRateLimiter().hit('books-logos', ctx.userId, Date.now());
+  if (!limited.ok) return uploadRateLimitedResponse(limited.retryAfterSec);
   const sent = (req.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase();
   const type = JPEG_ALIASES.has(sent) ? 'image/jpeg' : sent;
   // The type is checked before the body is read: nothing else is worth receiving.

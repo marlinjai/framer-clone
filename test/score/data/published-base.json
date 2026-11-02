@@ -4,12 +4,13 @@
   "bodyClass": "__variable_8eaea4 __variable_8c25df antialiased",
   "sheets": [
     "static/css/15730e9f7c5c55ef.css",
-    "static/css/8a16c07ef5349915.css"
+    "static/css/fef01260f7f39f3e.css"
   ],
   "inputs": {
-    "src/app/globals.css": "441b6f9269836eb0971824eba4e0abe272ea2538e4a181d130d56a499f9edf1e",
-    "src/app/layout.tsx": "b50712ec9a3b1dad2a424d71c12d0c75ca23467261d9f91641362447d9c9cee0",
-    "src/app/(site)/layout.tsx": "c328c472580ccbfdc8a720e3dde097f63673b97d38aef9171bff481999c69569",
+    "src/app/(site)/site.css": "07fdcfee38b9748cf06d7e0e5753f0f07b13a87872e4bb00a55d5c1d3944de40",
+    "src/app/theme-tokens.css": "bad155acd31738aafce559f8575afd3c1d6f2af2353c85000bb9d65f90c12584",
+    "src/app/layout.tsx": "997357737d0a75402263dc35668e3f56335d40e9bcc7c0c342df2e61d6200e0e",
+    "src/app/(site)/layout.tsx": "8862364fd345a989c5bf92c194ebf9ff4f45fd6ae6b1a234bbfcf80e92bc74ed",
     "next": "15.5.28",
     "tailwindcss": "4.2.1",
     "@tailwindcss/postcss": "4.2.1",

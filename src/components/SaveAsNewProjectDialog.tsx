@@ -1,7 +1,9 @@
 'use client';
 // src/components/SaveAsNewProjectDialog.tsx
 //
-// "Save as a new project" for the browser-only demo editor (`/`): the demo
+// "Save as a new project" for the browser-only demo editor (`/`), and for an
+// editor tab whose Save met a newer version on the server (SiteChangedDialog:
+// keep both by making this tab's copy a project of its own). The demo
 // project belongs to no company, so Save offers to create a dashboard project
 // in the active company from its pages (name prefilled from the project
 // title), then opens it at /projects/<newId> on the same page. When that is
@@ -34,6 +36,8 @@ export interface SaveAsNewProjectDialogProps {
   currentPageId?: string;
   /** Called once the project exists: the demo must not be offered again. */
   onSaved?: () => void;
+  /** Overrides the demo wording, for a copy of a project that already exists. */
+  description?: string;
 }
 
 export default function SaveAsNewProjectDialog({
@@ -43,6 +47,7 @@ export default function SaveAsNewProjectDialog({
   getSnapshot,
   currentPageId,
   onSaved,
+  description,
 }: SaveAsNewProjectDialogProps) {
   const router = useRouter();
   const [name, setName] = useState(defaultName);
@@ -104,8 +109,8 @@ export default function SaveAsNewProjectDialog({
         <DialogHeader>
           <DialogTitle>Save as a new project</DialogTitle>
           <DialogDescription>
-            This demo project exists only in this browser tab. Saving creates a project in your
-            company with all of its pages, and opens it in the editor.
+            {description ??
+              'This demo project exists only in this browser tab. Saving creates a project in your company with all of its pages, and opens it in the editor.'}
           </DialogDescription>
         </DialogHeader>
         <form

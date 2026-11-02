@@ -37,6 +37,13 @@
 //
 // The key (UNSPLASH_ACCESS_KEY) is read here, server-side, and never sent to
 // the browser or written to a log. Unset means the feature is off.
+//
+// The site operations' findImages (src/server/siteOps) searches through the same
+// cache, budget and circuit breaker (searchStockPhotos) and hands back photos with
+// their credit, ready to place. Unsplash counts a download when a photo is used,
+// not when it is shown in a list: so the offered photos are remembered for a
+// while, and a write that places one triggers its download then
+// (triggerDownloadsForUsedPhotos).
 
 import 'server-only';
 import { GENERATION_LIMITS } from './schema';
@@ -73,6 +80,8 @@ interface UnsplashPhoto {
   photographerName: string;
   photographerProfile: string;
   downloadLocation: string;
+  /** Unsplash's own short description, when it has one (a starting point for alt text). */
+  description?: string;
 }
 
 /** A photo chosen for one img node or one container's background. */
@@ -151,6 +160,7 @@ function parsePhoto(raw: unknown): UnsplashPhoto | undefined {
     urls?: { raw?: unknown; regular?: unknown };
     user?: { name?: unknown; links?: { html?: unknown } };
     links?: { download_location?: unknown };
+    alt_description?: unknown;
   };
   const id = str(r.id);
   const regularUrl = r.urls?.regular;
@@ -162,8 +172,10 @@ function parsePhoto(raw: unknown): UnsplashPhoto | undefined {
   if (!isHttpsOn(regularUrl, 'images.unsplash.com')) return undefined;
   if (!isHttpsOn(photographerProfile, 'unsplash.com')) return undefined;
   if (!isHttpsOn(downloadLocation, 'api.unsplash.com')) return undefined;
+  const description = str(r.alt_description);
   return {
     id,
+    ...(description ? { description: description.slice(0, 200) } : {}),
     regularUrl,
     ...(isHttpsOn(rawUrl, 'images.unsplash.com') ? { rawUrl } : {}),
     photographerName: photographerName.slice(0, 120),
@@ -515,13 +527,20 @@ export function applyStockPhotos(nodes: GeneratedNodeSnapshot[], placed: PlacedP
  * failure is logged, never surfaced as an error.
  */
 export function triggerStockDownloads(placed: PlacedPhoto[], deps: StockImageDeps = {}): void {
+  triggerDownloads(
+    placed.map((p) => ({ photoId: p.credit.photoId, downloadLocation: p.downloadLocation })),
+    deps,
+  );
+}
+
+function triggerDownloads(photos: Array<{ photoId: string; downloadLocation: string }>, deps: StockImageDeps): void {
   const accessKey = (deps.accessKey ?? process.env.UNSPLASH_ACCESS_KEY ?? '').trim();
   if (!accessKey) return;
   const doFetch = deps.fetch ?? fetch;
   const done = new Set<string>();
-  for (const p of placed) {
-    if (done.has(p.credit.photoId) || !isHttpsOn(p.downloadLocation, 'api.unsplash.com')) continue;
-    done.add(p.credit.photoId);
+  for (const p of photos) {
+    if (done.has(p.photoId) || !isHttpsOn(p.downloadLocation, 'api.unsplash.com')) continue;
+    done.add(p.photoId);
     void Promise.resolve()
       .then(() =>
         doFetch(p.downloadLocation, {
@@ -530,13 +549,141 @@ export function triggerStockDownloads(placed: PlacedPhoto[], deps: StockImageDep
         }),
       )
       .then((res) => {
-        if (!res.ok) logWarn('download trigger refused', { status: res.status, photoId: p.credit.photoId });
+        if (!res.ok) logWarn('download trigger refused', { status: res.status, photoId: p.photoId });
       })
       .catch((err: unknown) => {
         logWarn('download trigger failed', {
-          photoId: p.credit.photoId,
+          photoId: p.photoId,
           error: err instanceof Error ? err.name : String(err),
         });
       });
   }
+}
+
+// ---------- searching for a caller (findImages) ----------
+
+/** Most photos one search hands back. */
+export const MAX_FOUND_PHOTOS = 10;
+/** How long an offered photo waits to be used before its download can no longer be counted. */
+export const OFFER_TTL_MS = 2 * 60 * 60 * 1000;
+const OFFERS_MAX_ENTRIES = 2000;
+
+/** One photo found for a caller, with what placing it takes. */
+export interface FoundPhoto {
+  photoId: string;
+  /** Unsplash's short description, a starting point for the alt text (never final copy). */
+  description?: string;
+  /** The hotlinked photo, sized to `widthPx` when given. */
+  src: string;
+  /** A small copy, for looking at the photo. */
+  thumbSrc: string;
+  credit: StockPhotoCredit;
+  /** Set on an img: src plus the credit and the hover title. */
+  imgProps: Record<string, string>;
+  /** Set on a container whose style.backgroundImage holds url(src): the credit attributes. */
+  backgroundProps: Record<string, string>;
+}
+
+export type StockSearchOutcome =
+  | { ok: true; photos: FoundPhoto[] }
+  | { ok: false; reason: StockImageFallbackReason };
+
+/** Offered photos by their address path (sizing parameters aside), for the download count on use. */
+const offers = new Map<string, { photoId: string; downloadLocation: string; expiresAt: number }>();
+
+function photoPath(src: string): string | undefined {
+  try {
+    const u = new URL(src);
+    return u.hostname === 'images.unsplash.com' ? u.pathname : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Test-only: forget the offered photos. */
+export function __resetStockOffersForTests(): void {
+  offers.clear();
+}
+
+/**
+ * Search Unsplash for a caller who places the photo itself (the site operations'
+ * findImages). The same cache, budget and circuit breaker as a generation, the
+ * same broader retries when a specific query finds nothing. Never throws.
+ */
+export async function searchStockPhotos(
+  query: string,
+  options: { orientation?: ImageOrientation; count?: number; widthPx?: number } = {},
+  deps: StockImageDeps = {},
+): Promise<StockSearchOutcome> {
+  const accessKey = (deps.accessKey ?? process.env.UNSPLASH_ACCESS_KEY ?? '').trim();
+  if (!accessKey) return { ok: false, reason: 'disabled' };
+  const clean = query.replace(/\s+/g, ' ').trim().slice(0, GENERATION_LIMITS.maxImageQueryChars);
+  if (!clean) return { ok: false, reason: 'invalid_query' };
+  let outcome: SearchOutcome;
+  try {
+    outcome = await search(clean, options.orientation, accessKey, deps);
+    if (outcome.ok && outcome.photos.length === 0) {
+      for (const wider of broaderSearches(clean, options.orientation)) {
+        const retry = await search(wider.query, wider.orientation, accessKey, deps);
+        if (!retry.ok || retry.photos.length > 0) {
+          outcome = retry;
+          break;
+        }
+      }
+    }
+  } catch (err) {
+    logWarn('search threw', { error: err instanceof Error ? err.name : 'error' });
+    return { ok: false, reason: 'unavailable' };
+  }
+  if (!outcome.ok) return outcome;
+  const appName = appNameFrom(deps);
+  const unsplashUrl = withReferral('https://unsplash.com/', appName);
+  const now = (deps.now ?? Date.now)();
+  const count = Math.min(Math.max(options.count ?? 5, 1), MAX_FOUND_PHOTOS);
+  const photos = outcome.photos.slice(0, count).map((photo): FoundPhoto => {
+    const credit: StockPhotoCredit = {
+      photoId: photo.id,
+      photographerName: photo.photographerName,
+      photographerUrl: withReferral(photo.photographerProfile, appName),
+      unsplashUrl,
+    };
+    const src = photoSrc(photo, options.widthPx);
+    const path = photoPath(src);
+    if (path) {
+      if (offers.size >= OFFERS_MAX_ENTRIES) {
+        const oldest = offers.keys().next().value;
+        if (oldest !== undefined) offers.delete(oldest);
+      }
+      offers.set(path, { photoId: photo.id, downloadLocation: photo.downloadLocation, expiresAt: now + OFFER_TTL_MS });
+    }
+    return {
+      photoId: photo.id,
+      ...(photo.description ? { description: photo.description } : {}),
+      src,
+      thumbSrc: photoThumbSrc(photo),
+      credit,
+      imgProps: { src, ...stockCreditProps(credit) },
+      backgroundProps: stockCreditAttrs(credit),
+    };
+  });
+  return { ok: true, photos };
+}
+
+/**
+ * Count the download of every offered photo that `content` (a saved document, as
+ * JSON text) now uses, once: the moment a findImages result is placed. Photos
+ * never offered here are left alone (a generation counts its own).
+ */
+export function triggerDownloadsForUsedPhotos(content: string, deps: StockImageDeps = {}): void {
+  if (offers.size === 0) return;
+  const now = (deps.now ?? Date.now)();
+  const used: Array<{ photoId: string; downloadLocation: string }> = [];
+  for (const match of content.matchAll(/https:\/\/images\.unsplash\.com\/[^"'\s)\\?]+/g)) {
+    const path = photoPath(match[0]);
+    const offer = path ? offers.get(path) : undefined;
+    if (!path || !offer) continue;
+    offers.delete(path);
+    if (offer.expiresAt > now) used.push({ photoId: offer.photoId, downloadLocation: offer.downloadLocation });
+  }
+  if (used.length > 0) triggerDownloads(used, deps);
 }

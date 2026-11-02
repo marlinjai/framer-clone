@@ -105,9 +105,9 @@ describe.each(ENGINES)('in %s', (_name, engine) => {
   it('a save after a publish reaches the editor and not the visitor', async () => {
     const repo = getSiteRepository();
     const siteId = randomUUID();
-    await repo.saveProject(SCOPE, project(siteId, 'published', 'published banner'));
-    await repo.publishProject(SCOPE, project(siteId, 'published', 'published banner'));
-    await repo.saveProject(SCOPE, project(siteId, 'draft', 'draft banner'), { mustExist: true });
+    const saved = await repo.saveProject(SCOPE, project(siteId, 'published', 'published banner'));
+    const published = await repo.publishProject(SCOPE, project(siteId, 'published', 'published banner'), { expectedVersion: saved.version });
+    await repo.saveProject(SCOPE, project(siteId, 'draft', 'draft banner'), { mustExist: true, expectedVersion: published.version });
 
     expect(await read(await origin(siteId))).toEqual({ text: 'published', banner: 'published banner' });
     // The editor's working copy holds the save.
@@ -117,10 +117,10 @@ describe.each(ENGINES)('in %s', (_name, engine) => {
   it('the next publish brings the saved work live', async () => {
     const repo = getSiteRepository();
     const siteId = randomUUID();
-    await repo.saveProject(SCOPE, project(siteId, 'v1', 'banner v1'));
-    await repo.publishProject(SCOPE, project(siteId, 'v1', 'banner v1'));
-    await repo.saveProject(SCOPE, project(siteId, 'v2', 'banner v2'), { mustExist: true });
-    await repo.publishProject(SCOPE, project(siteId, 'v2', 'banner v2'));
+    const saved = await repo.saveProject(SCOPE, project(siteId, 'v1', 'banner v1'));
+    const first = await repo.publishProject(SCOPE, project(siteId, 'v1', 'banner v1'), { expectedVersion: saved.version });
+    const second = await repo.saveProject(SCOPE, project(siteId, 'v2', 'banner v2'), { mustExist: true, expectedVersion: first.version });
+    await repo.publishProject(SCOPE, project(siteId, 'v2', 'banner v2'), { expectedVersion: second.version });
 
     expect(await read(await origin(siteId))).toEqual({ text: 'v2', banner: 'banner v2' });
   });
@@ -128,9 +128,9 @@ describe.each(ENGINES)('in %s', (_name, engine) => {
   it('a rollback serves the earlier version, pages and components together', async () => {
     const repo = getSiteRepository();
     const siteId = randomUUID();
-    await repo.saveProject(SCOPE, project(siteId, 'v1', 'banner v1'));
-    await repo.publishProject(SCOPE, project(siteId, 'v1', 'banner v1'));
-    await repo.publishProject(SCOPE, project(siteId, 'v2', 'banner v2'));
+    const saved = await repo.saveProject(SCOPE, project(siteId, 'v1', 'banner v1'));
+    const first = await repo.publishProject(SCOPE, project(siteId, 'v1', 'banner v1'), { expectedVersion: saved.version });
+    await repo.publishProject(SCOPE, project(siteId, 'v2', 'banner v2'), { expectedVersion: first.version });
     await repo.rollbackToRevision(SCOPE, siteId, 1);
 
     expect(await read(await origin(siteId))).toEqual({ text: 'v1', banner: 'banner v1' });
@@ -141,9 +141,9 @@ describe.each(ENGINES)('in %s', (_name, engine) => {
     const prisma = getPrismaClient();
     const siteId = randomUUID();
     // As production holds such a site: published rows and column, no revision.
-    await repo.saveProject(SCOPE, project(siteId, 'legacy', 'legacy banner'));
+    const saved = await repo.saveProject(SCOPE, project(siteId, 'legacy', 'legacy banner'));
     await prisma.site.update({ where: { id: siteId }, data: { status: 'published' } });
-    await repo.saveProject(SCOPE, project(siteId, 'first edit', 'edited banner'), { mustExist: true });
+    await repo.saveProject(SCOPE, project(siteId, 'first edit', 'edited banner'), { mustExist: true, expectedVersion: saved.version });
 
     expect(await read(await origin(siteId))).toEqual({ text: 'legacy', banner: 'legacy banner' });
     expect(await prisma.siteRevision.count({ where: { siteId, kind: 'baseline' } })).toBe(1);

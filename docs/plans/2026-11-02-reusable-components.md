@@ -261,7 +261,10 @@ renderer, placed where `ownTextThenChildren` reads the text. The panel's control
 `*italic*` and `[label](address)`. A plain string, from a CMS for instance, renders as text.
 
 **`event`,** Framer's event variable, cheap because the behaviour model has `emit`: a trigger in the definition does
-`{ emit: 'input-<id>' }`, and a placement stores `behaviour.on: [{ on: 'custom:input-<id>', do: [...] }]`.
+`{ emit: 'input-<id>' }`, and a placement stores `behaviour.on: [{ on: 'custom:input-<id>', do: [...] }]`. **Changed in
+slice 14:** expansion renames both to one `ev-<hash of definition id and input id>` per definition, because the runtime
+runs an emitted event up every node around it, and an outer placement listening for an input of the same id would
+otherwise answer an inner component's event [proven, slice 14].
 
 ```ts
 interface InputDefinition {

@@ -42,9 +42,13 @@ import {
   SiteRevisionNotFoundError,
   SubdomainAllocationError,
   SiteErasedSinceLoadError,
+  SiteChangedError,
+  SiteVersionRequiredError,
   ErasePreviewStaleError,
   NothingToEraseError,
+  SiteImageMissingError,
 } from './errors';
+import { namedSiteImages } from '@/lib/site/siteImages';
 import { findProjectSlugProblem } from '@/lib/pages/slug';
 import { pickPrimaryHost } from './primaryHost';
 import { nextSiteRedirects, parseSiteRedirects } from '@/lib/pages/redirects';
@@ -284,6 +288,19 @@ function assertScope(scope: TenantScope): void {
   }
 }
 
+/** What a write of the working copy (save, publish) takes besides the project. */
+export interface WorkingCopyWriteOptions {
+  /** Update an existing site only, never create one (the editor's Save and Publish). */
+  mustExist?: boolean;
+  /** The verified session's company, stamped on the site while it has none. */
+  companyId?: string;
+  /**
+   * The site version the written copy was based on. Required whenever the site
+   * already exists; only creating a new site goes without.
+   */
+  expectedVersion?: number;
+}
+
 export class SiteRepository {
   constructor(private readonly prisma: PrismaClient) {}
 
@@ -347,6 +364,17 @@ export class SiteRepository {
    * indistinguishable so existence never leaks across the boundary.
    */
   async loadProject(scope: TenantScope, siteId: string): Promise<ProjectModelType> {
+    return (await this.loadProjectWithVersion(scope, siteId)).project;
+  }
+
+  /**
+   * {@link loadProject}, plus the site's `version` read in the same query: the
+   * number a later save or publish of this copy names as its `expectedVersion`.
+   */
+  async loadProjectWithVersion(
+    scope: TenantScope,
+    siteId: string,
+  ): Promise<{ project: ProjectModelType; version: number }> {
     assertScope(scope);
     // workspace_id IS in the where-clause, so a cross-workspace site simply
     // returns null here — never another tenant's data.
@@ -365,6 +393,7 @@ export class SiteRepository {
         projectCreatedAt: true,
         projectUpdatedAt: true,
         erasureEpoch: true,
+        version: true,
         pages: {
           select: { pageId: true, snapshot: true },
         },
@@ -388,7 +417,7 @@ export class SiteRepository {
       pages: row.pages.map((p) => ({ pageId: p.pageId, snapshot: p.snapshot })),
     };
 
-    return ProjectModel.create(persistedToProjectSnapshot(rowData));
+    return { project: ProjectModel.create(persistedToProjectSnapshot(rowData)), version: row.version };
   }
 
   /**
@@ -406,12 +435,19 @@ export class SiteRepository {
    * A save NEVER changes what visitors see: they read a frozen revision
    * (publishProject). This is the editor's working copy, which the draft preview
    * and the next publish read.
+   *
+   * The version lock: saving a site that already exists needs `expectedVersion`,
+   * the version the caller loaded (loadProjectWithVersion) or last saved. A
+   * different stored version refuses the save (SiteChangedError, carrying the
+   * stored one) and none at all is refused too (SiteVersionRequiredError): there
+   * is no "newest wins" path. Only creating a new site goes without one. Returns
+   * the version the save wrote.
    */
   async saveProject(
     scope: TenantScope,
     project: ProjectModelType | Parameters<typeof projectToPersisted>[0],
-    options: { mustExist?: boolean; companyId?: string } = {},
-  ): Promise<void> {
+    options: WorkingCopyWriteOptions = {},
+  ): Promise<{ version: number }> {
     assertScope(scope);
     const persisted: PersistedSite = projectToPersisted(project);
 
@@ -419,22 +455,24 @@ export class SiteRepository {
     // two overlapping saves of one site must not each write a list missing
     // the other's entry. Postgres aborts one of them (P2034) instead; it is
     // retried a few times, then surfaces loudly as a failed save.
-    await withSerializationRetry(() => this.prisma.$transaction(async (tx) => {
-      await this.writeWorkingCopy(tx, scope, persisted, options);
+    return withSerializationRetry(() => this.prisma.$transaction(async (tx) => {
+      const version = await this.writeWorkingCopy(tx, scope, persisted, options);
+      return { version };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, ...PROJECT_WRITE_TRANSACTION }));
   }
 
   /**
    * The working-copy write shared by save and publish: the `sites` row and the
    * reconciled `site_pages` rows, inside the caller's transaction. Writes
-   * nothing a visitor reads, apart from the one baseline freeze below.
+   * nothing a visitor reads, apart from the one baseline freeze below. Returns
+   * the site's new version.
    */
   private async writeWorkingCopy(
     tx: Prisma.TransactionClient,
     scope: TenantScope,
     persisted: PersistedSite,
-    options: { mustExist?: boolean; companyId?: string },
-  ): Promise<void> {
+    options: WorkingCopyWriteOptions,
+  ): Promise<number> {
     // Guard: if this site id already exists, it MUST be in the caller's
     // workspace. A row in another workspace means a cross-tenant collision:
     // refuse rather than overwrite or leak.
@@ -448,6 +486,7 @@ export class SiteRepository {
         status: true,
         publishedRevisionId: true,
         erasureEpoch: true,
+        version: true,
       },
     });
     if (existing && existing.workspaceId !== scope.workspaceId) {
@@ -466,6 +505,16 @@ export class SiteRepository {
     if (options.mustExist && !existing) {
       throw new SiteGoneError();
     }
+    // The version lock, after the erasure check (a tab that may hold erased data
+    // must reload, never "save over"): an existing site is only written by a
+    // caller that names the version it was based on, and only while that is
+    // still the stored one. Below, the UPDATE repeats the comparison in its
+    // WHERE, so the check holds even without the isolation level around it.
+    if (existing) {
+      if (options.expectedVersion === undefined) throw new SiteVersionRequiredError();
+      if (options.expectedVersion !== existing.version) throw new SiteChangedError(existing.version);
+    }
+    const nextVersion = existing ? existing.version + 1 : 1;
 
     // Slug rules (src/lib/pages/slug.ts), checked against the slugs stored
     // today: an unchanged slug is grandfathered, a new or changed one must be
@@ -487,6 +536,25 @@ export class SiteRepository {
       storedSlugs,
     );
     if (problem) throw new InvalidPageSlugError(problem.pageId, problem.code, problem.message);
+
+    // Uploaded images (src/lib/site/siteImages.ts): each one the settings or a
+    // page names must be stored for THIS site, or a visitor would get a broken
+    // icon or sharing image. Read in this transaction, so an image deleted by a
+    // concurrent delete (which takes this site row first, src/server/sites/
+    // siteImages.ts) cannot slip through.
+    const named = namedSiteImages(
+      persisted.siteSettings,
+      persisted.pages.map((p) => (p.snapshot as { metadata?: { ogImage?: unknown } }).metadata?.ogImage),
+    );
+    if (named.size > 0) {
+      const stored = await tx.siteImage.findMany({
+        where: { siteId: persisted.siteId, sha256: { in: [...named.keys()] } },
+        select: { sha256: true },
+      });
+      const have = new Set(stored.map((s) => s.sha256));
+      const missing = [...named].find(([sha256]) => !have.has(sha256));
+      if (missing) throw new SiteImageMissingError(missing[1]);
+    }
 
     // A site published before revisions existed is served from these very rows
     // (publicResolver.ts). Freeze them before they change: the save goes on
@@ -543,6 +611,7 @@ export class SiteRepository {
       // application "last edited" time advances on update.
       projectUpdatedAt: new Date(persisted.projectUpdatedAt),
       redirects: redirects as unknown as Prisma.InputJsonValue,
+      version: nextVersion,
       ...componentsColumn,
     };
 
@@ -552,10 +621,18 @@ export class SiteRepository {
       // transaction is SERIALIZABLE besides: a save and a delete that
       // overlap cannot both commit; the retried one then sees the outcome.)
       const updated = await tx.site.updateMany({
-        where: { id: persisted.siteId, workspaceId: scope.workspaceId },
+        where: { id: persisted.siteId, workspaceId: scope.workspaceId, version: existing?.version },
         data: updateData,
       });
-      if (updated.count === 0) throw new SiteGoneError();
+      if (updated.count === 0) {
+        // Gone, or written by someone else since the read above.
+        const current = await tx.site.findFirst({
+          where: { id: persisted.siteId, workspaceId: scope.workspaceId },
+          select: { version: true },
+        });
+        if (!current) throw new SiteGoneError();
+        throw new SiteChangedError(current.version);
+      }
     } else {
       // Upsert the site row. On create, status defaults to `draft` (the DB
       // default); on update, status is left untouched (publish/archive own it).
@@ -576,6 +653,7 @@ export class SiteRepository {
           projectUpdatedAt: new Date(persisted.projectUpdatedAt),
           redirects: redirects as unknown as Prisma.InputJsonValue,
           companyId: options.companyId ?? null,
+          version: nextVersion,
           ...componentsColumn,
         },
         // `name` is written on create only. After that the rename action
@@ -631,6 +709,7 @@ export class SiteRepository {
           ? { siteId: persisted.siteId, pageId: { notIn: keepPageIds } }
           : { siteId: persisted.siteId },
     });
+    return nextVersion;
   }
 
   /**
@@ -704,11 +783,14 @@ export class SiteRepository {
    * `Site.name` after creation (saveProject leaves it alone on update), apart
    * from erasePersonalData, which rewrites a matched value inside it.
    *
-   * Concurrency: there is no version column, so the name itself is the
-   * precondition. With `expectedName` the update matches only while the stored
-   * name still equals it, in the same UPDATE statement (no read-then-write
-   * window); a lost race writes nothing and throws SiteNameConflictError with
-   * the current name. Without it, last write wins.
+   * Concurrency: the name itself is the precondition, not the site's version.
+   * With `expectedName` the update matches only while the stored name still
+   * equals it, in the same UPDATE statement (no read-then-write window); a lost
+   * race writes nothing and throws SiteNameConflictError with the current name.
+   * Without it, last write wins. A rename leaves `version` alone on purpose: a
+   * save never writes the name, so the two cannot overwrite each other, and
+   * moving the version would make every open editor tab report a conflict that
+   * could lose nothing.
    *
    * The published address never changes here: a site's subdomain is a random
    * label allocated on first publish (ensureSiteDomain) and custom domains are
@@ -764,19 +846,27 @@ export class SiteRepository {
    * aborted and retried) and cannot land in the revision, and two publishes of a
    * site run one after the other. SERIALIZABLE here made publishes of UNRELATED
    * sites abort each other: 8 at once already lost 3 to P2034.
+   *
+   * The version lock applies as for a save (`expectedVersion` required, a stale
+   * one refused with SiteChangedError before anything is written or frozen).
+   * Returns the revision number and the site's new version.
    */
   async publishProject(
     scope: TenantScope,
     project: ProjectModelType | Parameters<typeof projectToPersisted>[0],
-    options: { companyId?: string; publishedBy?: string } = {},
-  ): Promise<{ revision: number }> {
+    options: { companyId?: string; publishedBy?: string; expectedVersion?: number } = {},
+  ): Promise<{ revision: number; version: number }> {
     assertScope(scope);
     const persisted: PersistedSite = projectToPersisted(project);
     const siteId = persisted.siteId;
 
     return withSerializationRetry(() => this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${siteId} FOR UPDATE`;
-      await this.writeWorkingCopy(tx, scope, persisted, { mustExist: true, companyId: options.companyId });
+      const version = await this.writeWorkingCopy(tx, scope, persisted, {
+        mustExist: true,
+        companyId: options.companyId,
+        expectedVersion: options.expectedVersion,
+      });
       const revision = await this.freezeRevision(tx, scope, siteId, {
         kind: 'publish',
         publishedBy: options.publishedBy ?? null,
@@ -789,7 +879,7 @@ export class SiteRepository {
       await tx.siteRevision.deleteMany({
         where: { siteId, number: { lte: revision.number - REVISIONS_KEPT } },
       });
-      return { revision: revision.number };
+      return { revision: revision.number, version };
     }, PROJECT_WRITE_TRANSACTION));
   }
 
@@ -798,7 +888,8 @@ export class SiteRepository {
    * `published`. The revision is not copied and the working copy is not touched,
    * so a rollback destroys nothing and is itself undone by another rollback,
    * except that it brings an offline site back: the dialog asks first.
-   * The caller revalidates the cache, exactly as after a publish.
+   * The caller revalidates the cache, exactly as after a publish. Since the
+   * working copy stays as it was, the site's version stays too.
    *
    * Scoped like everything here: a site in another workspace reads as missing,
    * and a number this site never had (or that was pruned) changes nothing.
@@ -1041,7 +1132,9 @@ export class SiteRepository {
 
       // Every erase moves the epoch, also one that found the value only in old
       // revisions: a tab loaded long ago may hold it even if the working copy does not.
-      await tx.site.updateMany({ where, data: { erasureEpoch: { increment: 1 } } });
+      // The version moves too: the working copy may have been rewritten, and an
+      // agent holding the old version must load again before it writes.
+      await tx.site.updateMany({ where, data: { erasureEpoch: { increment: 1 }, version: { increment: 1 } } });
 
       const holdsValue = redactionMatcher(query);
       const places = erased.map((match) => placeOf(match, holdsValue));

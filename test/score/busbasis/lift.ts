@@ -20,8 +20,13 @@
 // by settleRootRules outside the page); the root node also keeps what children
 // inherit from `html`, as before. Whatever neither can do shows up as a difference in
 // the score.
+//
+// A frame of the frozen page has lost its address. Where the capture recorded a Google
+// map there, settleEmbeds (outside the page, with the product's parser) turns the frame
+// into the map component, which is how an author places one.
 
 import { isRootStyleKey } from '@/lib/rules/rootProperties';
+import { MAP_EMBED_ATTR, MAP_EMBED_MARKER, parseMapEmbed } from '@/lib/mapEmbed/mapEmbed';
 
 export type StyleMap = Record<string, string>;
 
@@ -497,4 +502,47 @@ export function settleRootRules(result: LiftResult): LiftResult {
   if (settled.length > 0) props.rules = settled;
   else delete props.rules;
   return { root: { ...result.root, props }, report: { ...result.report, rootRules, rootLeft } };
+}
+
+/** What an iframe carries that the map component owns: the frame is the product's to draw. */
+const FRAME_ONLY = new Set(['src', 'srcDoc', 'title', 'width', 'height', 'allow', 'allowFullScreen', 'referrerPolicy', 'loading', 'sandbox', 'name']);
+
+/**
+ * Outside the page, with the product's own parser: an iframe whose recorded address
+ * (`pages/<page>.frames.json`, written by freeze.ts, in document order) is a Google map
+ * becomes the map component, as an author would place it. The box keeps the frame's
+ * styles, rules and parity id; its `width` and `height` attributes become the same
+ * declarations, which is what they mean on a frame, unless the frame's own styles set
+ * them. Its title is the map's title. Nothing else is added: no address, no size the
+ * frame did not have. A frame with no usable map stays an iframe, which the render gate
+ * refuses, so the score shows it. The count must match, or the list is another page's.
+ */
+export function settleEmbeds(result: LiftResult, frames: (string | null)[] | undefined): LiftResult {
+  let index = 0;
+  const visit = (node: LiftedNode): LiftedNode => {
+    if (node.type === 'iframe') {
+      const src = frames?.[index];
+      index += 1;
+      const parsed = typeof src === 'string' ? parseMapEmbed(src) : null;
+      if (!parsed?.ok) return node;
+      const props: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(node.props)) if (!FRAME_ONLY.has(key)) props[key] = value;
+      const style = { ...((node.props.style ?? {}) as StyleMap) };
+      for (const side of ['width', 'height'] as const) {
+        const value = node.props[side];
+        if (typeof value === 'string' && value !== '' && !(side in style)) style[side] = /^\d+$/.test(value) ? `${value}px` : value;
+      }
+      props.style = style;
+      props[MAP_EMBED_ATTR] = MAP_EMBED_MARKER;
+      props.mapUrl = parsed.map.src;
+      if (typeof node.props.title === 'string' && node.props.title !== '') props.mapTitle = node.props.title;
+      return { id: node.id, type: 'div', props };
+    }
+    return node.children ? { ...node, children: node.children.map(visit) } : node;
+  };
+  const root = visit(result.root);
+  if (frames === undefined ? index > 0 : frames.length !== index) {
+    throw new Error(`${frames?.length ?? 'no'} frame addresses for ${index} iframes: freeze.ts writes them`);
+  }
+  return { ...result, root };
 }

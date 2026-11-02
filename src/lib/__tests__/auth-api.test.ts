@@ -18,7 +18,7 @@ vi.mock('@/lib/auth-brain', () => ({
   },
 }));
 
-import { authenticateRequest, authenticateAccountRequest } from '@/lib/auth-api';
+import { authenticateRequest, authenticateAccountRequest, getVerifiedSession } from '@/lib/auth-api';
 import { AuthzUnavailableError } from '@/lib/authBrainAvailability';
 
 function reqWithCookie(cookie?: string): Request {
@@ -104,5 +104,38 @@ describe('authenticateAccountRequest()', () => {
     const res = await authenticateAccountRequest(reqWithCookie('lumitra_session=good'));
     expect(res).toEqual({ authenticated: true, userId: 'user-9' });
     expect(mockCan).not.toHaveBeenCalled();
+  });
+});
+
+describe('a request carrying a bearer is never authenticated by its cookie', () => {
+  function bearerAndCookie(): Request {
+    return new Request('https://framer.lumitra.co/api/cms/rows', {
+      headers: { cookie: 'lumitra_session=good', authorization: 'Bearer not-a-real-key' },
+    });
+  }
+
+  it('authenticateRequest, authenticateAccountRequest and getVerifiedSession see no session', async () => {
+    mockVerifySession.mockResolvedValue({ user: { id: 'user-1' } });
+    mockCan.mockResolvedValue(true);
+    expect(await authenticateRequest(bearerAndCookie(), 'ws-1')).toEqual({
+      authenticated: false,
+      error: 'Unauthorized',
+      status: 401,
+    });
+    expect(await authenticateAccountRequest(bearerAndCookie())).toEqual({
+      authenticated: false,
+      error: 'Unauthorized',
+      status: 401,
+    });
+    expect(await getVerifiedSession(bearerAndCookie())).toBeNull();
+    expect(mockVerifySession).not.toHaveBeenCalled();
+  });
+
+  it('still reads the cookie when the Authorization header uses another scheme', async () => {
+    mockVerifySession.mockResolvedValue({ user: { id: 'user-1' } });
+    const req = new Request('https://framer.lumitra.co/x', {
+      headers: { cookie: 'lumitra_session=good', authorization: 'Basic dXNlcjpwdw==' },
+    });
+    expect(await authenticateAccountRequest(req)).toEqual({ authenticated: true, userId: 'user-1' });
   });
 });

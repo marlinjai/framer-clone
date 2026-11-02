@@ -99,7 +99,8 @@ Decided while building, each reversible:
   brief is written in the site language.
 - **Site name** is an optional public override; blank uses the project title, which the dashboard
   rename flow keeps owning.
-- **Favicon and Open Graph image by https URL.** The only upload path today is the Books logo store
+- **Favicon and Open Graph image by https URL** (uploads added on 2026-11-02, section "Uploaded favicon and
+  sharing image" below). The only upload path then was the Books logo store
   (behind `editBooks`, not publicly servable), so no upload was reused. Every renderer re-checks
   `isHttpsUrl` and leaves a bad value out. `src/app/favicon.ico` became a per-host route (site icon,
   404 for a site without one, platform icon on the editor host); the platform icon moved to
@@ -256,3 +257,49 @@ while building, each reversible:
     used for a generated bar).
 
 Not built here: form notification emails (decision 4) stay open on their own roadmap line.
+
+## Uploaded favicon and sharing image (2026-11-02)
+
+Marlin's request: the favicon and the sharing image must be uploadable from the settings, not only typed as an https
+address. Built beside the address field, which stays. Revised the same day after a security review of #313.
+
+| Question | Answer |
+|---|---|
+| Where | Site settings (favicon, default sharing image) and Page settings (a page's own sharing image), one control (`src/components/site/SiteImageField.tsx`): Upload or an address, a preview with the file name, type, pixel size and size, warnings, Remove. Every failure names the next step (wrong type, over 2 MB, network, signed out, no permission, the per-site limit, too many uploads) |
+| Accepted | Read from the bytes, never from the name or the request (`src/lib/images/imageHeader.ts`, extracted from the catalogue's header reader, which now uses it too). Favicon: PNG or ICO, 16 to 1024 px a side. Sharing image: PNG, JPEG or WebP, up to 8000 px a side. Both at most 2 MB. An ICO's size is the one each entry's own data declares (a PNG header or a bitmap header), and an entry whose data disagrees with its directory entry is refused. The browser runs the same check before sending, the server decides |
+| Warnings, never refusals | A non-square favicon, a favicon under 180 px, a sharing image more than 3 percent off 1.91 to 1 (1200 by 630), a sharing image under 600 by 315 |
+| Storage | Table `site_images` in the public schema (migration `20261103000000_site_images`, additive): one row per site and SHA-256, the bytes as `bytea`, CHECKs as the backstop. Not the catalogue's `catalog_image`: that lives in a company's commerce schema, which exists only once the catalogue is provisioned, and is keyed by company, while every site needs an icon and a site's hosts serve only that site's images |
+| Limits | At most 100 images and 50 MB in all per site, checked with the insert in one transaction under `pg_advisory_xact_lock` on the site, so concurrent uploads cannot pass them; 409 `image_limit` names the way forward (delete unused images under "Uploaded images"). At most 30 upload attempts per user in 10 minutes (`src/server/uploads/rateLimit.ts`, process-local like the form limiter), 429 with Retry-After |
+| What the settings hold | The site-relative path `/site-images/<sha256>.<ext>`, never an absolute address: it keeps working when a custom domain is connected later and on every host of the site |
+| A path the site does not store | Refused on save and publish with 422 `site_image_missing` (`SiteImageMissingError`, checked inside the save transaction): a typed path, one copied from another site, or one deleted since it was chosen |
+| Published revisions | The path freezes with the settings into each revision. Rows are never updated, and an image is deleted only once nothing names it, so a revision shows the image it was published with for as long as it is kept |
+| Deleting | "Uploaded images" in Site settings lists every upload with its size, the totals against the limits, and whether it is in use. An image is in use while the settings, a component, a page of the working copy, any kept revision, an A/B test setting or a content agent undo record of the workspace names its path (a text search of the stored JSON, so a field added later is covered), or while this editor holds it unsaved. Only an unused one offers Delete, after a confirmation. `DELETE /api/projects/<id>/images/<sha256>` (`editSite`) takes the site row as publish does, runs serializable like save, checks again and writes an audit line (user, hash, site). 409 `image_in_use`, 409 `image_busy` (a concurrent save or publish; try again), 404 otherwise. Deleting the site deletes its images (cascade) |
+| Routes | `POST /api/projects/<id>/images?kind=favicon\|sharing` (upload, `editSite`) and `GET` (the list, `viewSite`); `GET` and `DELETE /api/projects/<id>/images/<sha256>` (preview with `viewSite`, delete with `editSite`). All behind the per-project guard (`src/server/domains/guard.ts`: editor host, verified session, the site's company with `sites`, OpenFGA; outages as 503), and the middleware refuses a write from another origin (a published site included) with 403 `cross_origin_refused` |
+| Serving | Visitors: `GET /site-images/<sha256>.<ext>` on the hosts of a published site, the site taken from the host, only its own images, 404 for anything else (a draft site, another site's hash, a wrong extension, the editor host). The editor's preview: `GET /api/projects/<id>/images/<sha256>` behind `viewSite`. Both immutable for a year with the hash as ETag (304), nosniff, `content-security-policy: default-src 'none'; sandbox` |
+| Caches | Nothing caches these responses in front of the app: every framer-clone DNS record (`app`, the `*.sites` wildcard, `demo.sites`, the custom-domain target) is DNS only in the infra repository's `deployments/framer-clone/main.tf`, and a custom domain must point at the origin's address. So no purge is needed; a browser that loaded an image before it was deleted may keep showing it from its own cache until that copy expires (a year), which matters little because only an image no page names can be deleted |
+| Head | The icon link and the manifest icon keep the path relative (a visitor on any host loads it from that host) with its type; an ICO is not offered as the Apple touch icon. `og:image`, `twitter:image` and the JSON-LD `image` and `logo` are absolute on the primary host. `/favicon.ico` redirects to an uploaded icon on the same host |
+| Routing | `site-images` is a reserved slug, and the middleware's published-page matcher leaves `/site-images/*` out (an image carries its own policy). Open PR #305 (published hosts serve only an allowlist of routes) needs `/site-images/[file]` with `published: ['GET']` and the two editor routes as editor only, whichever of the two lands second |
+
+### Decided here, say so if you disagree
+
+1. **SVG is refused for uploads.** An SVG is a document that can carry script and outside references; served from the
+   site's own origin it would be a place to run code there, and the editor serves the same bytes on its own origin,
+   where the session cookie lives. A restrictive policy helps in current browsers, but no header check can prove an
+   SVG harmless and sanitising one is its own attack surface. A PNG of 512 by 512 covers every browser and home screen;
+   an SVG hosted elsewhere can still be entered by its address.
+2. **ICO is accepted**, because its directory gives the entries and every entry is checked: inside the file, a PNG or a
+   bitmap, and declaring the same size as its directory entry. The check reads headers; it does not decode pixels.
+3. **An uploaded image not yet published is reachable** by its address on a published site's hosts: the address
+   carries the SHA-256 of the bytes, so only someone who already has it can load it. Restricting serving to the images
+   the live revision names would cost a reference lookup per request for no gain in what a visitor can learn.
+4. **Delete only what nothing names, kept revisions included.** An image an older kept revision shows stays until that
+   revision is pruned (the newest 30 are kept), so a rollback never brings back a broken image. The list says so.
+5. **A typed or foreign `/site-images/` path is refused on save**, not merely ignored and not limited to upload
+   answers: the editor cannot prove where a value came from, and the save transaction is the one place that also
+   catches an image deleted between choosing it and saving. The renderers still leave out anything that is not a
+   path or an https address.
+6. **Limits: 100 images, 50 MB, 1024 px favicons, 30 uploads per user in 10 minutes.** Generous for a real site (a
+   favicon and a few sharing images), small enough that one site cannot fill the database. The upload limiter is
+   process-local, like the form limiter: framer-clone runs as one container.
+7. **The catalogue and Books logo uploads get the same per-user limit** (separate commit), since they read the same
+   kind of body behind the same kind of session.

@@ -1,0 +1,7 @@
+{
+  "_doc": "Held out: see README.md. The address of each iframe of the frozen page, in document order: a Google map rebuilt by parseMapEmbed with its place masked, or null for a frame the product cannot draw.",
+  "capturedAt": "2026-11-02T15:12:08.771Z",
+  "frames": [
+    "https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d0000.0000000000000!2d00.000000000000000!3d00.000000000000000!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x00x00x0x0x0x0x0x%3A0x0x0x0x0x0x0x0x0x!2sxxxxxxxxxxxx%2000%2C%2000000%20xxxxxxxxxxxx%2C%20xxxxxxx!5e0!3m2!1sxx!2sxx!4v1730312000000!5m2!1sxx!2sxx"
+  ]
+}

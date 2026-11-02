@@ -19,8 +19,8 @@ vi.mock('@/server/sites/requestSite', () => ({
   getPrimaryHostForRequest: async () => null,
 }));
 vi.mock('next/font/google', () => ({ Geist: () => ({ variable: 'geist' }), Geist_Mono: () => ({ variable: 'geist-mono' }) }));
-// The editor's sheet, which a build compiles; nothing here reads it.
-vi.mock('../globals.css', () => ({}));
+// The site sheet, which a build compiles; nothing here reads it.
+vi.mock('../(site)/site.css', () => ({}));
 
 const theme = (mode?: SiteTheme['mode']): SiteTheme => ({
   ...(mode ? { mode } : {}),

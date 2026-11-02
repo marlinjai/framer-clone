@@ -15,7 +15,7 @@ import type { BreakpointRef } from '@/lib/responsive/cascade';
 import { FIXTURES } from '../../../../test/score/corpus/fixtures';
 import { BREAKPOINTS, renderThroughPublishedPage } from '../../../../test/score/lib/published';
 import { parseComponents, type ComponentDefinitions } from '../definition';
-import { createRenderBudget, expandPlacements } from '../expand';
+import { compiledEventName, createRenderBudget, expandPlacements } from '../expand';
 import { COMPONENT_LIMITS, MISSING_TYPE } from '../placement';
 import { surfaceSheet, type SurfaceNode } from '@/lib/rules/surfaceSheet';
 import { detachedExpansion } from '@/lib/renderer/detachedExpansion';
@@ -749,6 +749,99 @@ describe('custom states', () => {
     const literal = expandPlacements(page([placement('p1', 'menu', { state: 'open' }), placement('p2', 'menu', {}, { state: read('{{row.tier}}') })]), definitions, BREAKPOINTS, { literalInputs: true });
     const initial = (node: ComponentNode) => (((node.props as Node).behaviour as Node).state as Node[])[0].initial;
     expect(literal.children!.map(initial)).toEqual(['open', 'primary']);
+  });
+});
+
+describe('interactions', () => {
+  const stateRule = (state: string, style: Node) => ({ id: `state-${state}`, componentState: state, selector: '&', style });
+  const S = 'cs-menu';
+  const menu = definition('menu', {
+    id: 'm-root', type: 'nav', props: {},
+    children: [
+      { id: 'm-toggle', type: 'button', props: { type: 'button', children: 'Menu', behaviour: {
+        on: [{ id: 'open', on: 'click', do: [{ set: S, value: 'open' }] }, { id: 'go', on: 'click', do: [{ emit: 'input-chosen' }] }],
+      } } },
+      { id: 'm-links', type: 'ul', props: { style: { display: 'none' }, rules: [stateRule('open', { display: 'flex' })] } },
+    ],
+  }, {
+    states: [{ id: 'open', name: 'Open', kind: 'custom' }],
+    inputs: [{ id: 'chosen', name: 'Chosen', type: 'event' }],
+  });
+  const whole = (tree: Node[], definitions: ComponentDefinitions) =>
+    renderThroughPublishedPage({ tree: { id: 'page', type: 'main', props: {}, children: tree }, definitions });
+
+  it('renames an Event input per definition, on the emit and on the placement listening for it', () => {
+    const expanded = expandPlacements(page([
+      placement('p1', 'menu', { behaviour: { on: [{ id: 'l', on: 'custom:input-chosen', do: [{ navigate: '/one' }] }] } }),
+    ]), definitionsOf(menu), BREAKPOINTS);
+    const root = expanded.children![0];
+    const name = compiledEventName('menu', 'chosen');
+    expect(name).toMatch(/^ev-[a-z0-9]+$/);
+    const toggle = root.children![0].props as Node;
+    expect(JSON.stringify(toggle.behaviour)).toContain(`{"emit":"${name}"}`);
+    expect(((root.props as Node).behaviour as Node).on).toEqual([{ id: 'l', on: `custom:${name}`, do: [{ navigate: '/one' }] }]);
+  });
+
+  it('keeps an inner component\'s event from an outer placement listening for an input of the same id', () => {
+    const outer = definition('outer', { id: 'o', type: 'div', props: { behaviour: { on: [{ id: 'e', on: 'click', do: [{ emit: 'input-chosen' }] }] } }, children: [
+      placement('in', 'menu', { behaviour: { on: [{ id: 'l', on: 'custom:input-chosen', do: [{ navigate: '/inner' }] }] } }),
+    ] }, { inputs: [{ id: 'chosen', name: 'Chosen', type: 'event' }] });
+    const expanded = expandPlacements(page([
+      placement('p1', 'outer', { behaviour: { on: [{ id: 'l', on: 'custom:input-chosen', do: [{ navigate: '/outer' }] }] } }),
+    ]), definitionsOf(outer, menu), BREAKPOINTS);
+    const outerName = compiledEventName('outer', 'chosen');
+    const innerName = compiledEventName('menu', 'chosen');
+    expect(outerName).not.toBe(innerName);
+    const text = JSON.stringify(expanded);
+    expect(text).toContain(`"on":"custom:${outerName}","do":[{"navigate":"/outer"}]`);
+    expect(text).toContain(`"on":"custom:${innerName}","do":[{"navigate":"/inner"}]`);
+    expect(text).not.toContain('input-chosen');
+  });
+
+  it('passes only on and showWhen of a placement, and leaves a listener for no event input as stored', () => {
+    const expanded = expandPlacements(page([placement('p1', 'menu', { behaviour: {
+      on: [{ id: 'x', on: 'custom:input-other', do: [{ navigate: '/x' }] }],
+      showWhen: { state: S, eq: 'open' },
+      state: [{ id: 'sneaky', name: 'S', type: 'boolean', initial: true }],
+    } })]), definitionsOf(menu), BREAKPOINTS);
+    const behaviour = (expanded.children![0].props as Node).behaviour as Node;
+    expect(behaviour.on).toEqual([{ id: 'x', on: 'custom:input-other', do: [{ navigate: '/x' }] }]);
+    expect(behaviour.showWhen).toEqual({ state: S, eq: 'open' });
+    expect((behaviour.state as Node[]).map(state => state.id)).toEqual([S]);
+  });
+
+  it('exposes the state through aria, and hides the script-only button with the no-script state', async () => {
+    const navbar = definition('menu', {
+      id: 'm-root', type: 'nav', props: {},
+      children: [
+        { id: 'm-toggle', type: 'button', props: { type: 'button', children: 'Menu', behaviour: {
+          on: [{ id: 'open', on: 'click', do: [{ step: S, wrap: true }] }],
+          bind: [{ attr: 'aria-expanded', from: { eq: [{ get: S }, 'open'] } }],
+        } } },
+        { id: 'm-links', type: 'ul', props: { style: { display: 'none' }, rules: [stateRule('open', { display: 'flex' })] } },
+      ],
+    }, { states: [{ id: 'open', name: 'Open', kind: 'custom' }], noScriptState: 'open' });
+    const { html } = await whole([placement('p1', 'menu'), placement('p2', 'menu', { state: 'open' })], definitionsOf(navbar));
+    expect(vi.mocked(console.warn).mock.calls.filter(call => String(call[0]).startsWith('applyBehaviour'))).toEqual([]);
+    expect(html).toMatch(/<button[^>]*aria-expanded="false"/);
+    expect(html).toMatch(/<button[^>]*aria-expanded="true"/);
+    expect(html).toContain('.fc_r-m-toggle.fc_r-m-toggle:where(html:not([data-fc-b]) *){display:none !important}');
+    expect(html).toContain('.fc_r-m-links.fc_r-m-links:where(html:not([data-fc-b]) *){display:flex}');
+  });
+
+  it('reaches the published program: the click sets the state, and each placement has its own trigger', async () => {
+    const { html, behaviour } = await whole([
+      placement('p1', 'menu', { behaviour: { on: [{ id: 'l', on: 'custom:input-chosen', do: [{ set: S, value: 'primary' }] }] } }),
+      placement('p2', 'menu', { behaviour: { on: [{ id: 'c', on: 'click', do: [{ navigate: '/two' }] }] } }),
+    ], definitionsOf(menu));
+    expect(vi.mocked(console.warn).mock.calls.filter(call => String(call[0]).startsWith('applyBehaviour'))).toEqual([]);
+    const program = JSON.stringify(behaviour);
+    expect(program).toContain(`{"set":"${S}","value":"open"}`);
+    expect(program).toContain(`"on":"custom:${compiledEventName('menu', 'chosen')}","do":[{"set":"${S}","value":"primary"}]`);
+    expect(program).toContain('{"navigate":"/two"}');
+    expect(html).toContain('data-fc-v="1"');
+    expect(html).toContain(`data-fcs-${S}="primary"`);
+    expect(html).toContain('data-fc-n="m-toggle"');
   });
 });
 

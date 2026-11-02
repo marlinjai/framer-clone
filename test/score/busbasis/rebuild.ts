@@ -13,9 +13,9 @@ import zlib from 'node:zlib';
 import { chromium, type Page } from 'playwright';
 import { readRules } from '@/lib/rules/rules';
 import { BREAKPOINTS } from '../lib/breakpoints';
-import { LIFT_INPUT, liftDocument, settleRootRules, type LiftedNode, type LiftResult } from './lift';
+import { LIFT_INPUT, liftDocument, settleEmbeds, settleRootRules, type LiftedNode, type LiftResult } from './lift';
 import { BUSBASIS_PAGES } from './pages';
-import { CORPUS_DIR, SHARED_SHEET, SHEET_MARKER } from './freeze';
+import { CORPUS_DIR, SHARED_SHEET, SHEET_MARKER, framesFile } from './freeze';
 
 export const MANIFEST = path.join(CORPUS_DIR, 'manifest.json');
 
@@ -118,6 +118,10 @@ async function findHoverTarget(page: Page, slug: string, tree: LiftedNode): Prom
   return null;
 }
 
+/** The frame addresses freeze.ts recorded for a page, or undefined for a page without one. */
+const framesOf = (slug: string): (string | null)[] | undefined =>
+  fs.existsSync(framesFile(slug)) ? (JSON.parse(fs.readFileSync(framesFile(slug), 'utf8')) as { frames: (string | null)[] }).frames : undefined;
+
 const sha256 = (file: string) => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 
 async function main(): Promise<void> {
@@ -134,7 +138,7 @@ async function main(): Promise<void> {
   for (const listed of BUSBASIS_PAGES) {
     await page.setContent(frozenDocument(listed.slug));
     await page.evaluate('globalThis.__name = (f) => f');
-    const { root, report } = settleRootRules((await page.evaluate(liftDocument, LIFT_INPUT)) as LiftResult);
+    const { root, report } = settleEmbeds(settleRootRules((await page.evaluate(liftDocument, LIFT_INPUT)) as LiftResult), framesOf(listed.slug));
     const inventory = inventoryOf(root);
     const treeFile = path.join(CORPUS_DIR, 'pages', `${listed.slug}.tree.json.gz`);
     fs.writeFileSync(treeFile, zlib.gzipSync(JSON.stringify(root), { level: 9 }));

@@ -1,17 +1,16 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import "./globals.css";
 import { unstable_rethrow } from "next/navigation";
 import { getRequestLanguage, resolveSiteForRequest } from "@/server/sites/requestSite";
 import { themeColorMode } from "@/lib/site/theme";
-// NOTE (MT-15): the data-table-react CMS-grid stylesheets + cms-grid-theme.css
-// used to be imported HERE, in the root layout, which ships them to EVERY route
-// — including the published storefront under `(site)`, which has no data-table.
-// In the App Router only the root layout owns `<html>`/`<body>`, so it wraps the
-// storefront too; the root layout is therefore kept NEUTRAL. The grid CSS now
-// lives on the editor surfaces (`src/app/page.tsx` for `/` and
-// `src/app/projects/layout.tsx` for `/projects/*`), so it only loads on editor
-// routes, never the published storefront.
+// The root layout imports NO stylesheet. In the App Router only the root layout
+// owns `<html>`/`<body>`, so it wraps the published storefront under `(site)` too,
+// and anything imported here ships to every visitor's page. Each surface links
+// its own sheet instead: the editor's globals.css (plus the data-table CMS-grid
+// sheets, MT-15) from `src/app/page.tsx`, `src/app/projects/layout.tsx` and
+// `src/app/preview/layout.tsx`; the published site's `(site)/site.css` from
+// `src/app/(site)/layout.tsx`. src/app/__tests__/publishedSheet.test.ts holds this.
+// The Geist font classes stay here: the body carries them on every route.
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
