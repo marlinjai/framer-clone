@@ -23,6 +23,7 @@ import { useIsPhone } from '@/hooks/use-mobile';
 import { hapticsEnabled, hapticsSupported, onHapticsPreferenceChange, setHapticsEnabled } from '@/lib/haptics';
 import { observer } from 'mobx-react-lite';
 import {
+  Undo,
   Undo2,
   Redo2,
   History as HistoryIcon,
@@ -44,6 +45,7 @@ import PublishButton from '@/components/PublishButton';
 import DomainsButton from '@/components/domains/DomainsButton';
 import SiteSettingsButton from '@/components/site/SiteSettingsDialog';
 import FormSubmissionsButton from '@/components/forms/FormSubmissionsButton';
+import PublishedVersionsButton from '@/components/PublishedVersionsButton';
 import SaveButton from '@/components/SaveButton';
 import GeneratePageButton from '@/components/ai/GeneratePageDialog';
 import { PolishPageButton } from '@/components/ai/VisualReview';
@@ -199,7 +201,7 @@ const HistoryMenu = observer(() => {
 HistoryMenu.displayName = 'HistoryMenu';
 
 /** Which top-bar dialog is open (one at a time). */
-export type TopBarDialog = 'generate' | 'polish' | 'domains' | 'siteSettings' | 'forms' | 'history' | null;
+export type TopBarDialog = 'generate' | 'polish' | 'versions' | 'domains' | 'siteSettings' | 'forms' | 'history' | null;
 
 // --- Haptics preference ----------------------------------------------------
 // The phone editor's haptic ticks (src/lib/haptics.ts) can be turned off here;
@@ -250,6 +252,9 @@ const MoreMenu = observer(({ onOpen, className = '' }: { onOpen: (dialog: Exclud
         {hasProject && (
           <>
             <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => onOpen('versions')}>
+              <Undo /> Published versions
+            </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => onOpen('domains')}>
               <Globe /> Domains
             </DropdownMenuItem>
@@ -365,6 +370,9 @@ const TopBar = observer(() => {
       {/* Publish: the primary rightward action. Serializes the live project
           and pushes it live via the admin-guarded publish endpoint. */}
       <PublishButton />
+
+      {/* Published versions: what visitors have been served, and going back to one. */}
+      <PublishedVersionsButton {...control('versions')} triggerClassName={wideOnly} />
 
       {/* Domains: connect a custom domain to this project (its own dialog). */}
       <DomainsButton {...control('domains')} triggerClassName={wideOnly} />

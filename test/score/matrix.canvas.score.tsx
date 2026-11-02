@@ -22,6 +22,7 @@ import {
   atRuleProbe,
   inlineStylesheets,
   isPageLevelRow,
+  isTopLayerRow,
   rootProbe,
   normalize,
   selectorProbe,
@@ -175,6 +176,10 @@ function probeAtRule(id: string, gap: GapId): Cell {
 function probeEntry(kind: RowKind, id: string): Cell {
   if (id === ':root') return holds(canvasSheet(rootProbe().rule, false), `${COPY}${DECLARED}`) ? pass('on the page root of each frame') : fail('page-level-css');
   if (isPageLevelRow(id)) return fail('page-level-css', 'applies to the document, which the route owns');
+  if (kind === 'css-selector' && isTopLayerRow(id)) {
+    const probe = selectorProbe(id, selectorSample(id));
+    return normalize(canvasSheet(probe.rule, false)).includes(DECLARED) ? fail('unclassified', 'a top layer rule reached the canvas') : fail('top-layer-refused', 'refused on purpose');
+  }
   switch (kind) {
     case 'html-element-attribute':
     case 'svg-attribute':

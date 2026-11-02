@@ -12,7 +12,7 @@
       "hoverTarget": "e41",
       "inventory": {
         "nodes": 542,
-        "rules": 741,
+        "rules": 743,
         "nodesWithRules": 531,
         "refused": {}
       },
@@ -27,14 +27,25 @@
         "lineHeight"
       ],
       "rootVariables": 132,
-      "rootLeft": [
+      "rootRules": [
         "boxSizing",
         "border",
         "borderColor",
+        "textSizeAdjust",
+        "tabSize",
+        "fontFeatureSettings",
+        "fontVariationSettings",
+        "WebkitTapHighlightColor",
+        "fontFamily",
+        "lineHeight",
         "maxWidth",
         "scrollBehavior",
-        "overflowX"
+        "overflowX",
+        "scrollBehavior @media (prefers-reduced-motion: no-preference)"
       ],
+      "rootRuleVariables": 132,
+      "rootLeft": [],
+      "lang": "de",
       "fidelity": {
         "desktop": {
           "values": 255307,
@@ -144,7 +155,7 @@
       "hoverTarget": "e26",
       "inventory": {
         "nodes": 775,
-        "rules": 1125,
+        "rules": 1127,
         "nodesWithRules": 753,
         "refused": {}
       },
@@ -159,14 +170,25 @@
         "lineHeight"
       ],
       "rootVariables": 132,
-      "rootLeft": [
+      "rootRules": [
         "boxSizing",
         "border",
         "borderColor",
+        "textSizeAdjust",
+        "tabSize",
+        "fontFeatureSettings",
+        "fontVariationSettings",
+        "WebkitTapHighlightColor",
+        "fontFamily",
+        "lineHeight",
         "maxWidth",
         "scrollBehavior",
-        "overflowX"
+        "overflowX",
+        "scrollBehavior @media (prefers-reduced-motion: no-preference)"
       ],
+      "rootRuleVariables": 132,
+      "rootLeft": [],
+      "lang": "de",
       "fidelity": {
         "desktop": {
           "values": 360687,
@@ -276,7 +298,7 @@
       "hoverTarget": "e26",
       "inventory": {
         "nodes": 796,
-        "rules": 1139,
+        "rules": 1141,
         "nodesWithRules": 760,
         "refused": {}
       },
@@ -291,14 +313,25 @@
         "lineHeight"
       ],
       "rootVariables": 132,
-      "rootLeft": [
+      "rootRules": [
         "boxSizing",
         "border",
         "borderColor",
+        "textSizeAdjust",
+        "tabSize",
+        "fontFeatureSettings",
+        "fontVariationSettings",
+        "WebkitTapHighlightColor",
+        "fontFamily",
+        "lineHeight",
         "maxWidth",
         "scrollBehavior",
-        "overflowX"
+        "overflowX",
+        "scrollBehavior @media (prefers-reduced-motion: no-preference)"
       ],
+      "rootRuleVariables": 132,
+      "rootLeft": [],
+      "lang": "de",
       "fidelity": {
         "desktop": {
           "values": 364040,
@@ -408,7 +441,7 @@
       "hoverTarget": "e41",
       "inventory": {
         "nodes": 284,
-        "rules": 389,
+        "rules": 391,
         "nodesWithRules": 278,
         "refused": {}
       },
@@ -423,14 +456,25 @@
         "lineHeight"
       ],
       "rootVariables": 132,
-      "rootLeft": [
+      "rootRules": [
         "boxSizing",
         "border",
         "borderColor",
+        "textSizeAdjust",
+        "tabSize",
+        "fontFeatureSettings",
+        "fontVariationSettings",
+        "WebkitTapHighlightColor",
+        "fontFamily",
+        "lineHeight",
         "maxWidth",
         "scrollBehavior",
-        "overflowX"
+        "overflowX",
+        "scrollBehavior @media (prefers-reduced-motion: no-preference)"
       ],
+      "rootRuleVariables": 132,
+      "rootLeft": [],
+      "lang": "de",
       "fidelity": {
         "desktop": {
           "values": 133162,
@@ -540,7 +584,7 @@
       "hoverTarget": "e41",
       "inventory": {
         "nodes": 485,
-        "rules": 637,
+        "rules": 639,
         "nodesWithRules": 480,
         "refused": {}
       },
@@ -555,14 +599,25 @@
         "lineHeight"
       ],
       "rootVariables": 132,
-      "rootLeft": [
+      "rootRules": [
         "boxSizing",
         "border",
         "borderColor",
+        "textSizeAdjust",
+        "tabSize",
+        "fontFeatureSettings",
+        "fontVariationSettings",
+        "WebkitTapHighlightColor",
+        "fontFamily",
+        "lineHeight",
         "maxWidth",
         "scrollBehavior",
-        "overflowX"
+        "overflowX",
+        "scrollBehavior @media (prefers-reduced-motion: no-preference)"
       ],
+      "rootRuleVariables": 132,
+      "rootLeft": [],
+      "lang": "de",
       "fidelity": {
         "desktop": {
           "values": 229920,
@@ -672,7 +727,7 @@
       "hoverTarget": "e41",
       "inventory": {
         "nodes": 489,
-        "rules": 654,
+        "rules": 656,
         "nodesWithRules": 484,
         "refused": {}
       },
@@ -687,14 +742,25 @@
         "lineHeight"
       ],
       "rootVariables": 132,
-      "rootLeft": [
+      "rootRules": [
         "boxSizing",
         "border",
         "borderColor",
+        "textSizeAdjust",
+        "tabSize",
+        "fontFeatureSettings",
+        "fontVariationSettings",
+        "WebkitTapHighlightColor",
+        "fontFamily",
+        "lineHeight",
         "maxWidth",
         "scrollBehavior",
-        "overflowX"
+        "overflowX",
+        "scrollBehavior @media (prefers-reduced-motion: no-preference)"
       ],
+      "rootRuleVariables": 132,
+      "rootLeft": [],
+      "lang": "de",
       "fidelity": {
         "desktop": {
           "values": 231836,
@@ -804,7 +870,7 @@
       "hoverTarget": "e41",
       "inventory": {
         "nodes": 203,
-        "rules": 283,
+        "rules": 285,
         "nodesWithRules": 198,
         "refused": {}
       },
@@ -819,14 +885,25 @@
         "lineHeight"
       ],
       "rootVariables": 132,
-      "rootLeft": [
+      "rootRules": [
         "boxSizing",
         "border",
         "borderColor",
+        "textSizeAdjust",
+        "tabSize",
+        "fontFeatureSettings",
+        "fontVariationSettings",
+        "WebkitTapHighlightColor",
+        "fontFamily",
+        "lineHeight",
         "maxWidth",
         "scrollBehavior",
-        "overflowX"
+        "overflowX",
+        "scrollBehavior @media (prefers-reduced-motion: no-preference)"
       ],
+      "rootRuleVariables": 132,
+      "rootLeft": [],
+      "lang": "de",
       "fidelity": {
         "desktop": {
           "values": 94842,
@@ -936,7 +1013,7 @@
       "hoverTarget": "e41",
       "inventory": {
         "nodes": 195,
-        "rules": 273,
+        "rules": 275,
         "nodesWithRules": 190,
         "refused": {}
       },
@@ -951,14 +1028,25 @@
         "lineHeight"
       ],
       "rootVariables": 132,
-      "rootLeft": [
+      "rootRules": [
         "boxSizing",
         "border",
         "borderColor",
+        "textSizeAdjust",
+        "tabSize",
+        "fontFeatureSettings",
+        "fontVariationSettings",
+        "WebkitTapHighlightColor",
+        "fontFamily",
+        "lineHeight",
         "maxWidth",
         "scrollBehavior",
-        "overflowX"
+        "overflowX",
+        "scrollBehavior @media (prefers-reduced-motion: no-preference)"
       ],
+      "rootRuleVariables": 132,
+      "rootLeft": [],
+      "lang": "de",
       "fidelity": {
         "desktop": {
           "values": 91010,
@@ -1068,7 +1156,7 @@
       "hoverTarget": "e41",
       "inventory": {
         "nodes": 240,
-        "rules": 314,
+        "rules": 316,
         "nodesWithRules": 224,
         "refused": {}
       },
@@ -1083,14 +1171,25 @@
         "lineHeight"
       ],
       "rootVariables": 132,
-      "rootLeft": [
+      "rootRules": [
         "boxSizing",
         "border",
         "borderColor",
+        "textSizeAdjust",
+        "tabSize",
+        "fontFeatureSettings",
+        "fontVariationSettings",
+        "WebkitTapHighlightColor",
+        "fontFamily",
+        "lineHeight",
         "maxWidth",
         "scrollBehavior",
-        "overflowX"
+        "overflowX",
+        "scrollBehavior @media (prefers-reduced-motion: no-preference)"
       ],
+      "rootRuleVariables": 132,
+      "rootLeft": [],
+      "lang": "de",
       "fidelity": {
         "desktop": {
           "values": 107296,
@@ -1200,7 +1299,7 @@
       "hoverTarget": "e41",
       "inventory": {
         "nodes": 264,
-        "rules": 331,
+        "rules": 333,
         "nodesWithRules": 240,
         "refused": {}
       },
@@ -1215,14 +1314,25 @@
         "lineHeight"
       ],
       "rootVariables": 132,
-      "rootLeft": [
+      "rootRules": [
         "boxSizing",
         "border",
         "borderColor",
+        "textSizeAdjust",
+        "tabSize",
+        "fontFeatureSettings",
+        "fontVariationSettings",
+        "WebkitTapHighlightColor",
+        "fontFamily",
+        "lineHeight",
         "maxWidth",
         "scrollBehavior",
-        "overflowX"
+        "overflowX",
+        "scrollBehavior @media (prefers-reduced-motion: no-preference)"
       ],
+      "rootRuleVariables": 132,
+      "rootLeft": [],
+      "lang": "de",
       "fidelity": {
         "desktop": {
           "values": 114960,
@@ -1332,7 +1442,7 @@
       "hoverTarget": "e41",
       "inventory": {
         "nodes": 233,
-        "rules": 333,
+        "rules": 335,
         "nodesWithRules": 224,
         "refused": {}
       },
@@ -1347,14 +1457,25 @@
         "lineHeight"
       ],
       "rootVariables": 132,
-      "rootLeft": [
+      "rootRules": [
         "boxSizing",
         "border",
         "borderColor",
+        "textSizeAdjust",
+        "tabSize",
+        "fontFeatureSettings",
+        "fontVariationSettings",
+        "WebkitTapHighlightColor",
+        "fontFamily",
+        "lineHeight",
         "maxWidth",
         "scrollBehavior",
-        "overflowX"
+        "overflowX",
+        "scrollBehavior @media (prefers-reduced-motion: no-preference)"
       ],
+      "rootRuleVariables": 132,
+      "rootLeft": [],
+      "lang": "de",
       "fidelity": {
         "desktop": {
           "values": 109212,
@@ -1464,7 +1585,7 @@
       "hoverTarget": "e41",
       "inventory": {
         "nodes": 204,
-        "rules": 302,
+        "rules": 304,
         "nodesWithRules": 198,
         "refused": {}
       },
@@ -1479,14 +1600,25 @@
         "lineHeight"
       ],
       "rootVariables": 132,
-      "rootLeft": [
+      "rootRules": [
         "boxSizing",
         "border",
         "borderColor",
+        "textSizeAdjust",
+        "tabSize",
+        "fontFeatureSettings",
+        "fontVariationSettings",
+        "WebkitTapHighlightColor",
+        "fontFamily",
+        "lineHeight",
         "maxWidth",
         "scrollBehavior",
-        "overflowX"
+        "overflowX",
+        "scrollBehavior @media (prefers-reduced-motion: no-preference)"
       ],
+      "rootRuleVariables": 132,
+      "rootLeft": [],
+      "lang": "de",
       "fidelity": {
         "desktop": {
           "values": 94842,
@@ -1596,7 +1728,7 @@
       "hoverTarget": "e26",
       "inventory": {
         "nodes": 178,
-        "rules": 238,
+        "rules": 240,
         "nodesWithRules": 173,
         "refused": {}
       },
@@ -1611,14 +1743,25 @@
         "lineHeight"
       ],
       "rootVariables": 132,
-      "rootLeft": [
+      "rootRules": [
         "boxSizing",
         "border",
         "borderColor",
+        "textSizeAdjust",
+        "tabSize",
+        "fontFeatureSettings",
+        "fontVariationSettings",
+        "WebkitTapHighlightColor",
+        "fontFamily",
+        "lineHeight",
         "maxWidth",
         "scrollBehavior",
-        "overflowX"
+        "overflowX",
+        "scrollBehavior @media (prefers-reduced-motion: no-preference)"
       ],
+      "rootRuleVariables": 132,
+      "rootLeft": [],
+      "lang": "de",
       "fidelity": {
         "desktop": {
           "values": 82867,
@@ -1728,7 +1871,7 @@
       "hoverTarget": null,
       "inventory": {
         "nodes": 11,
-        "rules": 11,
+        "rules": 13,
         "nodesWithRules": 10,
         "refused": {}
       },
@@ -1743,14 +1886,25 @@
         "lineHeight"
       ],
       "rootVariables": 132,
-      "rootLeft": [
+      "rootRules": [
         "boxSizing",
         "border",
         "borderColor",
+        "textSizeAdjust",
+        "tabSize",
+        "fontFeatureSettings",
+        "fontVariationSettings",
+        "WebkitTapHighlightColor",
+        "fontFamily",
+        "lineHeight",
         "maxWidth",
         "scrollBehavior",
-        "overflowX"
+        "overflowX",
+        "scrollBehavior @media (prefers-reduced-motion: no-preference)"
       ],
+      "rootRuleVariables": 132,
+      "rootLeft": [],
+      "lang": "de",
       "fidelity": {
         "desktop": {
           "values": 4790,
@@ -1780,45 +1934,45 @@
     "busbasis.css": "8fb3cfb16e51b6b779a10d35b2535bb85c6be355589ba1c5e4301c39a92df9f5",
     "pages/cart-empty.computed.json.gz": "590820d8a89540b6070e2d841b6c4561a9c1d27e7a4426dec339747d80e06f0e",
     "pages/cart-empty.html": "aba8e3471422ddd0f34e8c9da8adc706b4fad973d32abb1705e897192894263c",
-    "pages/cart-empty.tree.json.gz": "066ea3597d6a22103e4b40b4a365d93823412fe94396c2dede19e1afaa3f8077",
+    "pages/cart-empty.tree.json.gz": "9bd2bec6022915f5153e7cc17663fb217858ff43374f46b6baf1eb3eba6b70cd",
     "pages/category.computed.json.gz": "5450ca94ecd975836f7d95ec5e14389d04236c747ca47618f15312a133936bdc",
     "pages/category.html": "e2cbd4f07b8b566a32a7af4cc6042eb603922bf26cd218d999f5d9c4874c2beb",
-    "pages/category.tree.json.gz": "d17cf9cb909a51b27e55924b1abcc03dae7a5ddd996fbf66f64bc598c31fdd78",
+    "pages/category.tree.json.gz": "a7597df2fcd1d04320cdbc7eecff81a0c3c066be7d1490f4b2a3168efa86ef72",
     "pages/checkout-no-cart.computed.json.gz": "e55b0ec9004bc9e6066bcdd03695d496fd4ad7af747614e94782a9cdb43d01a6",
     "pages/checkout-no-cart.html": "cc71916525d48c376b40db20109025ac407d06dcd39af20f8e78555b437c2a0b",
-    "pages/checkout-no-cart.tree.json.gz": "13b5cb123e7787fddcd9286f18ab9df60f539cb8e471b64e68ef2ae5f756421b",
+    "pages/checkout-no-cart.tree.json.gz": "9da6886289fdfeec9aefe10625bd30d619c31f6c6b6d7b03817149b6ee67bd98",
     "pages/collection.computed.json.gz": "9a02509931f6e43d2f02966469fd5684841bff0b0421f22eee450bac779ac428",
     "pages/collection.html": "8cc95538a495b2484423cd70e554e39d8721005d2786150ea6fedcc5ce926d89",
-    "pages/collection.tree.json.gz": "e171fea567212e41c5c80b3159f956cf546ba756db99908b522f62cf78561271",
+    "pages/collection.tree.json.gz": "fb3774dcccfff1a0efd55855ee6dacd7debdd4c9fe1f706942f55597583d94c1",
     "pages/home.computed.json.gz": "f465ad82ecb4a46632b04c47322790dec9207bbdc2bf25c4c79dcf3c03e64117",
     "pages/home.html": "55d61f7b7ce943570c265220e45e92a4bb42b97ab86c6aeb4abcafbc666f8923",
-    "pages/home.tree.json.gz": "39c3a7d84a9a81801d46a4a3c78bb45af440b34278f7b118391b8f9d9fb2d15c",
+    "pages/home.tree.json.gz": "1301c02d54ce69c4b1c015510614430cbdaedcbb9b80814889c7573562f3a439",
     "pages/login.computed.json.gz": "62beeecb3155986a09368cc474bf535781b56c71204d403db310bee1a5b7bb85",
     "pages/login.html": "dbc8038c2ee96697897beeed3b258811648dc73e6402fe6bb348a2f87823039d",
-    "pages/login.tree.json.gz": "d5a024b7219a89128ba152f9726040b395811a08c0c5504c7b025612535f9a85",
+    "pages/login.tree.json.gz": "ef4b5735116f8b080fcb5aff0c10f993da91552dd22d348ec1ed25e069fa95e9",
     "pages/not-found.computed.json.gz": "463f4ee6b01927e477d5d51e6274cf74fd5685b9df8da80be46f931817e99308",
     "pages/not-found.html": "9329cd119fd1e1b10f1159917f2e4d142b596a629e837e1d1a144d1b98259383",
-    "pages/not-found.tree.json.gz": "991fa98857880b5d2ae084fe52cfd2764dcee8878be2d3ed35cd0f34bab56822",
+    "pages/not-found.tree.json.gz": "53363947ed7207491a4180fa6255b67cdd661a2599591fb619794ae32b3982ea",
     "pages/privacy.computed.json.gz": "df30c6be4b1766827198de659cab914a2a8aa0096356f81ada606aa8783bf6e1",
     "pages/privacy.html": "870419dc3a142393d3421a28bcedbc12fce1e5b3825527d564ac8ab364410b9c",
-    "pages/privacy.tree.json.gz": "f4eaa63e4b88f3214c2ceac895a99f9c4c9d8e74e629fd2983c73eb20eeb1c95",
+    "pages/privacy.tree.json.gz": "6fae16a68074c34461f7da982eeae757b0af151efac3c26e08cd6cfa0f92d417",
     "pages/product.computed.json.gz": "ac9660e1b4d8b3242bfd350f1ac57357daed171759c08b7c0ca98d8daf73570c",
     "pages/product.html": "1018558658144174044bdfdb0957c3d0054283087cd0efbeb9c0cdaed14d14ef",
-    "pages/product.tree.json.gz": "260c3bca90ce8389bd86f12d6f699f208905615b4072fae3be30c98390b9c02b",
+    "pages/product.tree.json.gz": "11f6adbfdf08c132e0f0b608eefd033963d0aac83b504fcf8d9e9cd6a2462f18",
     "pages/request-reset.computed.json.gz": "f345b44794248cc74c859bfa82c136ba76544eabe7db106f0d3e4f278015a16a",
     "pages/request-reset.html": "73de387d450ec571bb007d519bd6cbbc4e000bb5e0c912ac5c2687e21a89bd3f",
-    "pages/request-reset.tree.json.gz": "8a8a6d31e26de01b756c975df2ab4bcbbec77b0cac73122f09f1583947700db9",
+    "pages/request-reset.tree.json.gz": "bdafc5225d89f262c2bf5ee2bcdf875b3d1567cc1cd30b12c6a14e25a53c4304",
     "pages/search.computed.json.gz": "96368c4293a12468874fcef570b13361254968f33da5a7dc4b9dafd821464c4e",
     "pages/search.html": "54855567a27748b06dd5f19e960d2ad511b19a92b8b67e89fbfae57ec7331e6d",
-    "pages/search.tree.json.gz": "a20b335f5644533833753debaff930ab7f535d354157b92cf11b459052ff96cc",
+    "pages/search.tree.json.gz": "01033b525f3d62c7cacf1cb6ee97869e350887c41cf07b8c261c3e52b588e633",
     "pages/shop-unavailable.computed.json.gz": "9140af4ad8d94c3a9b85012c864553735f9ca11ba553582c68e76139ac76131f",
     "pages/shop-unavailable.html": "ecc143747885df08a6580ea63e2c743ecb6df61ab545fe0d21e7147c8df7ce39",
-    "pages/shop-unavailable.tree.json.gz": "67c751df2709baabc37d1aa749cc7dbe87333b6c396dced6f83d3740bd881188",
+    "pages/shop-unavailable.tree.json.gz": "c78c888c4789bb76142d4d48cf6f7e7424201580d28f0ed66adc4fc7ab55b623",
     "pages/store.computed.json.gz": "d48b6c5ad541fdc4377be37676270ac1a8699b11b1e832b1a0e126440564ef3d",
     "pages/store.html": "9766c27e4eacc01e0c3042125db704438bbece12c34315a762dab61036666cd5",
-    "pages/store.tree.json.gz": "1665118aa40b0213b570a6faef977acd53c9294ca1fbc94b7c476515398ab042",
+    "pages/store.tree.json.gz": "877c83cca84d484450d4e6e48c66750819858e7464b64385cf0a9dcde9e17118",
     "pages/terms.computed.json.gz": "fdcc156ddc6d54632941b627c3648a97070de34bf070e4efb6f0a379f361172a",
     "pages/terms.html": "591adc0b2a3b4d661c47d547bdf49a66440adccd718b400df4e210d506766b60",
-    "pages/terms.tree.json.gz": "ce1e68c58e21ed512ba9ea830788c422ce06062fd04eca254de2057db9a8734a"
+    "pages/terms.tree.json.gz": "80c01a3f32d0ec4941aa3eb248b39338564399f9a7ea94b1cbb93d45f31c47e3"
   }
 }

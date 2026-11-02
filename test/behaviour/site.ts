@@ -3,7 +3,6 @@
 
 import { randomUUID } from 'node:crypto';
 import { DEFAULT_VIEWPORTS } from '@/lib/canvas/defaultViewports';
-import { getPrismaClient } from '@/server/db';
 import { getSiteRepository, type TenantScope } from '@/server/sites';
 import { COMPONENTS, PAGES, type StoredNode } from './pages';
 
@@ -32,10 +31,16 @@ export async function publishPages(port: string, { analytics = false } = {}): Pr
   const repo = getSiteRepository();
   const siteId = randomUUID();
   const pages = { home: stored('', PAGES.plain()), ...Object.fromEntries(Object.entries(PAGES).map(([slug, tree]) => [slug, stored(slug, tree())])) };
-  const project = { id: siteId, metadata: { title: 'Behaviour', description: '', createdAt: 1, updatedAt: 2 }, pages, components: COMPONENTS };
+  const project = {
+    id: siteId,
+    metadata: { title: 'Behaviour', description: '', createdAt: 1, updatedAt: 2 },
+    pages,
+    components: COMPONENTS,
+    // Publish freezes the binding with the pages, so it travels in the project.
+    ...(analytics ? { lumitra: { enabled: true } } : {}),
+  };
   await repo.saveProject(SCOPE, project as never);
-  if (analytics) await getPrismaClient().site.update({ where: { id: siteId }, data: { lumitraEnabled: true } });
-  await repo.publishProject(SCOPE, siteId);
+  await repo.publishProject(SCOPE, project as never);
   const { subdomain } = await repo.ensureSiteDomain(SCOPE, siteId);
   return `http://${subdomain}.sites.localhost:${port}`;
 }

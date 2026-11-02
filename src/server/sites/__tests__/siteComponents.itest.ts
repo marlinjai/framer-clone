@@ -135,9 +135,8 @@ describe('sites.components on a real database', () => {
     await repo.saveProject(SCOPE, snapshot, { mustExist: true });
     expect(JSON.parse(JSON.stringify(getSnapshot(await repo.loadProject(SCOPE, siteId))))).toEqual(snapshot);
 
-    // Publish, in the two steps of the publish route.
-    await repo.saveProject(SCOPE, snapshot, { mustExist: true });
-    await repo.publishProject(SCOPE, siteId);
+    // Publish, as the publish route does: the working copy and its frozen revision in one step.
+    await repo.publishProject(SCOPE, snapshot);
     const { subdomain } = await repo.ensureSiteDomain(SCOPE, siteId);
 
     const site = await resolvePublishedSiteByKey({ kind: 'subdomain', value: subdomain }, prisma);
@@ -222,7 +221,8 @@ describe('sites.components on a real database', () => {
     });
 
     expect((await repo.loadProject(SCOPE, siteId)).components.size).toBe(0);
-    await repo.publishProject(SCOPE, siteId);
+    // A publish from a tab older than the column sends no key: the column freezes as stored.
+    await repo.publishProject(SCOPE, project(siteId, { children: [placement('p1'), placement('p2', {})] }));
     const { subdomain } = await repo.ensureSiteDomain(SCOPE, siteId);
     const site = await resolvePublishedSiteByKey({ kind: 'subdomain', value: subdomain }, prisma);
     expect(site).not.toBeNull();

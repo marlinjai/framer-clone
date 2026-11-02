@@ -117,6 +117,8 @@ vi.mock('@/server/db', () => ({
   getPrismaClient: () => ({
     siteDomain: { findUnique, findFirst, findMany },
     site: { findFirst },
+    // The resolver reads in one snapshot; the fake hands the callback the same client.
+    $transaction: (run: (tx: unknown) => Promise<unknown>) => run({ site: { findFirst } }),
   }),
 }));
 

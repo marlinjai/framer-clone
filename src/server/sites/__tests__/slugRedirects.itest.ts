@@ -69,7 +69,7 @@ describe('slug changes on a real database', () => {
 
   it('keeps the old path once the site has been published, and serves it to the router', async () => {
     const repo = getSiteRepository();
-    await repo.publishProject(SCOPE, SITE_ID);
+    await repo.publishProject(SCOPE, project({ home: '', about: 'about' }));
     const { subdomain } = await repo.ensureSiteDomain(SCOPE, SITE_ID);
 
     await repo.saveProject(SCOPE, project({ home: '', about: 'about-us' }));
@@ -77,6 +77,8 @@ describe('slug changes on a real database', () => {
       { from: 'about', pageId: 'about', createdAt: expect.any(String) },
     ]);
 
+    // Visitors get the new slug and its redirect at the next publish, together.
+    await repo.publishProject(SCOPE, project({ home: '', about: 'about-us' }));
     const site = await resolvePublishedSiteByKey({ kind: 'subdomain', value: subdomain }, prisma);
     expect(site).not.toBeNull();
     expect(findRedirectTarget(site!.redirects, site!.pages, ['about'])).toBe('/about-us');
@@ -106,6 +108,7 @@ describe('slug changes on a real database', () => {
     // moves to a slug from its name.
     await repo.saveProject(SCOPE, project({ home: 'home-page', about: 'about-us', team: '' }));
     expect(await storedRedirects()).toEqual([{ from: 'about', pageId: 'team', createdAt: expect.any(String) }]);
+    await repo.publishProject(SCOPE, project({ home: 'home-page', about: 'about-us', team: '' }));
     const { subdomain } = await repo.ensureSiteDomain(SCOPE, SITE_ID);
     const site = await resolvePublishedSiteByKey({ kind: 'subdomain', value: subdomain }, prisma);
     expect(findRedirectTarget(site!.redirects, site!.pages, ['about'])).toBe('/');

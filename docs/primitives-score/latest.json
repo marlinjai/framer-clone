@@ -1,45 +1,45 @@
 {
-  "generatedAt": "2026-11-02T10:26:40.106Z",
+  "generatedAt": "2026-11-02T10:54:04.266Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 192,
+  "durationSeconds": 253,
   "matrix": {
     "surfaces": {
       "format": {
-        "pass": 1795,
-        "fail": 38,
+        "pass": 1794,
+        "fail": 39,
         "notTested": 0,
         "total": 1833
       },
       "renderer": {
-        "pass": 1764,
-        "fail": 69,
+        "pass": 1763,
+        "fail": 70,
         "notTested": 0,
         "total": 1833
       },
       "canvas": {
-        "pass": 1627,
-        "fail": 206,
+        "pass": 1626,
+        "fail": 207,
         "notTested": 0,
         "total": 1833
       },
       "panel": {
-        "pass": 1211,
-        "fail": 622,
+        "pass": 1210,
+        "fail": 623,
         "notTested": 0,
         "total": 1833
       },
       "ai": {
-        "pass": 1434,
-        "fail": 399,
+        "pass": 1433,
+        "fail": 400,
         "notTested": 0,
         "total": 1833
       }
     },
-    "acceptedNotTaught": 90,
+    "acceptedNotTaught": 89,
     "byKind": {
       "html-element": {
         "format": {
@@ -363,32 +363,32 @@
       },
       "css-selector": {
         "format": {
-          "pass": 96,
-          "fail": 10,
-          "notTested": 0,
-          "total": 106
-        },
-        "renderer": {
-          "pass": 96,
-          "fail": 10,
-          "notTested": 0,
-          "total": 106
-        },
-        "canvas": {
-          "pass": 96,
-          "fail": 10,
-          "notTested": 0,
-          "total": 106
-        },
-        "panel": {
           "pass": 95,
           "fail": 11,
           "notTested": 0,
           "total": 106
         },
+        "renderer": {
+          "pass": 95,
+          "fail": 11,
+          "notTested": 0,
+          "total": 106
+        },
+        "canvas": {
+          "pass": 95,
+          "fail": 11,
+          "notTested": 0,
+          "total": 106
+        },
+        "panel": {
+          "pass": 94,
+          "fail": 12,
+          "notTested": 0,
+          "total": 106
+        },
         "ai": {
-          "pass": 53,
-          "fail": 53,
+          "pass": 52,
+          "fail": 54,
           "notTested": 0,
           "total": 106
         }
@@ -4983,7 +4983,7 @@
       "css-selector:::marker": "pass pass pass pass pass",
       "css-selector:::part()": "pass pass pass pass pass",
       "css-selector:::picker-icon": "pass pass pass pass pass",
-      "css-selector:::picker()": "pass pass pass pass pass",
+      "css-selector:::picker()": "top-layer-refused top-layer-refused top-layer-refused top-layer-refused top-layer-refused",
       "css-selector:::placeholder": "pass pass pass pass pass",
       "css-selector:::scroll-marker": "pass pass pass pass pass",
       "css-selector:::scroll-marker-group": "pass pass pass pass pass",
@@ -6158,7 +6158,7 @@
     ]
   },
   "busbasis": {
-    "passed": 0,
+    "passed": 1,
     "total": 23,
     "pages": [
       {
@@ -6181,7 +6181,7 @@
           },
           "interaction": {
             "pass": 0,
-            "total": 8
+            "total": 7
           }
         },
         "failures": [
@@ -6316,14 +6316,6 @@
           {
             "fixture": "busbasis-home",
             "viewport": "all",
-            "state": "needs: styles on html",
-            "check": "interaction",
-            "gap": "page-level-css",
-            "detail": "The original sets smooth scrolling and hides sideways overflow on html. The page root can hold that now, as a rule on :root, but the frozen trees were lifted before it could, so they do not, and the computed styles of html are not compared."
-          },
-          {
-            "fixture": "busbasis-home",
-            "viewport": "all",
             "state": "needs: contact form sends",
             "check": "interaction",
             "gap": "behaviour-state",
@@ -6357,7 +6349,7 @@
             "viewport": "Desktop",
             "state": "initial",
             "ratio": 0.004407319568452381,
-            "elementsCompared": 531,
+            "elementsCompared": 532,
             "elementsDiffering": 10,
             "differences": 10,
             "byGap": {
@@ -6379,7 +6371,7 @@
             "viewport": "Desktop",
             "state": "hover e41",
             "ratio": 0.004407319568452381,
-            "elementsCompared": 531,
+            "elementsCompared": 532,
             "elementsDiffering": 10,
             "differences": 10,
             "byGap": {
@@ -6401,7 +6393,7 @@
             "viewport": "Tablet",
             "state": "initial",
             "ratio": 0.005712011681348142,
-            "elementsCompared": 531,
+            "elementsCompared": 532,
             "elementsDiffering": 10,
             "differences": 10,
             "byGap": {
@@ -6423,7 +6415,7 @@
             "viewport": "Mobile",
             "state": "initial",
             "ratio": 0.008511234630284656,
-            "elementsCompared": 531,
+            "elementsCompared": 532,
             "elementsDiffering": 10,
             "differences": 10,
             "byGap": {
@@ -6463,7 +6455,7 @@
           },
           "interaction": {
             "pass": 1,
-            "total": 8
+            "total": 7
           }
         },
         "failures": [
@@ -6490,14 +6482,6 @@
             "check": "interaction",
             "gap": "behaviour-state",
             "detail": "Impressum and Vereinssatzung exist only as modals opened by script, so their content is not on any frozen page."
-          },
-          {
-            "fixture": "busbasis-store",
-            "viewport": "all",
-            "state": "needs: styles on html",
-            "check": "interaction",
-            "gap": "page-level-css",
-            "detail": "The original sets smooth scrolling and hides sideways overflow on html. The page root can hold that now, as a rule on :root, but the frozen trees were lifted before it could, so they do not, and the computed styles of html are not compared."
           },
           {
             "fixture": "busbasis-store",
@@ -6535,7 +6519,7 @@
             "viewport": "Desktop",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 753,
+            "elementsCompared": 754,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -6545,7 +6529,7 @@
             "viewport": "Desktop",
             "state": "hover e26",
             "ratio": 0,
-            "elementsCompared": 753,
+            "elementsCompared": 754,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -6555,7 +6539,7 @@
             "viewport": "Tablet",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 753,
+            "elementsCompared": 754,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -6565,7 +6549,7 @@
             "viewport": "Mobile",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 753,
+            "elementsCompared": 754,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -6593,7 +6577,7 @@
           },
           "interaction": {
             "pass": 1,
-            "total": 7
+            "total": 6
           }
         },
         "failures": [
@@ -6620,14 +6604,6 @@
             "check": "interaction",
             "gap": "behaviour-state",
             "detail": "Impressum and Vereinssatzung exist only as modals opened by script, so their content is not on any frozen page."
-          },
-          {
-            "fixture": "busbasis-search",
-            "viewport": "all",
-            "state": "needs: styles on html",
-            "check": "interaction",
-            "gap": "page-level-css",
-            "detail": "The original sets smooth scrolling and hides sideways overflow on html. The page root can hold that now, as a rule on :root, but the frozen trees were lifted before it could, so they do not, and the computed styles of html are not compared."
           },
           {
             "fixture": "busbasis-search",
@@ -6657,7 +6633,7 @@
             "viewport": "Desktop",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 760,
+            "elementsCompared": 761,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -6667,7 +6643,7 @@
             "viewport": "Desktop",
             "state": "hover e26",
             "ratio": 0,
-            "elementsCompared": 760,
+            "elementsCompared": 761,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -6677,7 +6653,7 @@
             "viewport": "Tablet",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 760,
+            "elementsCompared": 761,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -6687,7 +6663,7 @@
             "viewport": "Mobile",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 760,
+            "elementsCompared": 761,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -6715,7 +6691,7 @@
           },
           "interaction": {
             "pass": 1,
-            "total": 7
+            "total": 6
           }
         },
         "failures": [
@@ -6742,14 +6718,6 @@
             "check": "interaction",
             "gap": "behaviour-state",
             "detail": "Impressum and Vereinssatzung exist only as modals opened by script, so their content is not on any frozen page."
-          },
-          {
-            "fixture": "busbasis-category",
-            "viewport": "all",
-            "state": "needs: styles on html",
-            "check": "interaction",
-            "gap": "page-level-css",
-            "detail": "The original sets smooth scrolling and hides sideways overflow on html. The page root can hold that now, as a rule on :root, but the frozen trees were lifted before it could, so they do not, and the computed styles of html are not compared."
           },
           {
             "fixture": "busbasis-category",
@@ -6779,7 +6747,7 @@
             "viewport": "Desktop",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 278,
+            "elementsCompared": 279,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -6789,7 +6757,7 @@
             "viewport": "Desktop",
             "state": "hover e41",
             "ratio": 0,
-            "elementsCompared": 278,
+            "elementsCompared": 279,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -6799,7 +6767,7 @@
             "viewport": "Tablet",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 278,
+            "elementsCompared": 279,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -6809,7 +6777,7 @@
             "viewport": "Mobile",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 278,
+            "elementsCompared": 279,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -6837,7 +6805,7 @@
           },
           "interaction": {
             "pass": 1,
-            "total": 6
+            "total": 5
           }
         },
         "failures": [
@@ -6868,14 +6836,6 @@
           {
             "fixture": "busbasis-collection",
             "viewport": "all",
-            "state": "needs: styles on html",
-            "check": "interaction",
-            "gap": "page-level-css",
-            "detail": "The original sets smooth scrolling and hides sideways overflow on html. The page root can hold that now, as a rule on :root, but the frozen trees were lifted before it could, so they do not, and the computed styles of html are not compared."
-          },
-          {
-            "fixture": "busbasis-collection",
-            "viewport": "all",
             "state": "needs: live product list",
             "check": "interaction",
             "gap": "shop-feature-missing",
@@ -6893,7 +6853,7 @@
             "viewport": "Desktop",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 480,
+            "elementsCompared": 481,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -6903,7 +6863,7 @@
             "viewport": "Desktop",
             "state": "hover e41",
             "ratio": 0,
-            "elementsCompared": 480,
+            "elementsCompared": 481,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -6913,7 +6873,7 @@
             "viewport": "Tablet",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 480,
+            "elementsCompared": 481,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -6923,7 +6883,7 @@
             "viewport": "Mobile",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 480,
+            "elementsCompared": 481,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -6951,7 +6911,7 @@
           },
           "interaction": {
             "pass": 1,
-            "total": 7
+            "total": 6
           }
         },
         "failures": [
@@ -6978,14 +6938,6 @@
             "check": "interaction",
             "gap": "behaviour-state",
             "detail": "Impressum and Vereinssatzung exist only as modals opened by script, so their content is not on any frozen page."
-          },
-          {
-            "fixture": "busbasis-product",
-            "viewport": "all",
-            "state": "needs: styles on html",
-            "check": "interaction",
-            "gap": "page-level-css",
-            "detail": "The original sets smooth scrolling and hides sideways overflow on html. The page root can hold that now, as a rule on :root, but the frozen trees were lifted before it could, so they do not, and the computed styles of html are not compared."
           },
           {
             "fixture": "busbasis-product",
@@ -7015,7 +6967,7 @@
             "viewport": "Desktop",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 484,
+            "elementsCompared": 485,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -7025,7 +6977,7 @@
             "viewport": "Desktop",
             "state": "hover e41",
             "ratio": 0,
-            "elementsCompared": 484,
+            "elementsCompared": 485,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -7035,7 +6987,7 @@
             "viewport": "Tablet",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 484,
+            "elementsCompared": 485,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -7045,7 +6997,7 @@
             "viewport": "Mobile",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 484,
+            "elementsCompared": 485,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -7073,7 +7025,7 @@
           },
           "interaction": {
             "pass": 1,
-            "total": 6
+            "total": 5
           }
         },
         "failures": [
@@ -7104,14 +7056,6 @@
           {
             "fixture": "busbasis-cart-empty",
             "viewport": "all",
-            "state": "needs: styles on html",
-            "check": "interaction",
-            "gap": "page-level-css",
-            "detail": "The original sets smooth scrolling and hides sideways overflow on html. The page root can hold that now, as a rule on :root, but the frozen trees were lifted before it could, so they do not, and the computed styles of html are not compared."
-          },
-          {
-            "fixture": "busbasis-cart-empty",
-            "viewport": "all",
             "state": "needs: cart with items",
             "check": "interaction",
             "gap": "shop-feature-missing",
@@ -7129,7 +7073,7 @@
             "viewport": "Desktop",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 198,
+            "elementsCompared": 199,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -7139,7 +7083,7 @@
             "viewport": "Desktop",
             "state": "hover e41",
             "ratio": 0,
-            "elementsCompared": 198,
+            "elementsCompared": 199,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -7149,7 +7093,7 @@
             "viewport": "Tablet",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 198,
+            "elementsCompared": 199,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -7159,7 +7103,7 @@
             "viewport": "Mobile",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 198,
+            "elementsCompared": 199,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -7187,7 +7131,7 @@
           },
           "interaction": {
             "pass": 1,
-            "total": 6
+            "total": 5
           }
         },
         "failures": [
@@ -7218,14 +7162,6 @@
           {
             "fixture": "busbasis-checkout-no-cart",
             "viewport": "all",
-            "state": "needs: styles on html",
-            "check": "interaction",
-            "gap": "page-level-css",
-            "detail": "The original sets smooth scrolling and hides sideways overflow on html. The page root can hold that now, as a rule on :root, but the frozen trees were lifted before it could, so they do not, and the computed styles of html are not compared."
-          },
-          {
-            "fixture": "busbasis-checkout-no-cart",
-            "viewport": "all",
             "state": "needs: checkout steps",
             "check": "interaction",
             "gap": "shop-feature-missing",
@@ -7243,7 +7179,7 @@
             "viewport": "Desktop",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 190,
+            "elementsCompared": 191,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -7253,7 +7189,7 @@
             "viewport": "Desktop",
             "state": "hover e41",
             "ratio": 0,
-            "elementsCompared": 190,
+            "elementsCompared": 191,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -7263,7 +7199,7 @@
             "viewport": "Tablet",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 190,
+            "elementsCompared": 191,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -7273,7 +7209,7 @@
             "viewport": "Mobile",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 190,
+            "elementsCompared": 191,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -7301,7 +7237,7 @@
           },
           "interaction": {
             "pass": 1,
-            "total": 5
+            "total": 4
           }
         },
         "failures": [
@@ -7328,14 +7264,6 @@
             "check": "interaction",
             "gap": "behaviour-state",
             "detail": "Impressum and Vereinssatzung exist only as modals opened by script, so their content is not on any frozen page."
-          },
-          {
-            "fixture": "busbasis-privacy",
-            "viewport": "all",
-            "state": "needs: styles on html",
-            "check": "interaction",
-            "gap": "page-level-css",
-            "detail": "The original sets smooth scrolling and hides sideways overflow on html. The page root can hold that now, as a rule on :root, but the frozen trees were lifted before it could, so they do not, and the computed styles of html are not compared."
           }
         ],
         "notMeasured": [],
@@ -7349,7 +7277,7 @@
             "viewport": "Desktop",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 224,
+            "elementsCompared": 225,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -7359,7 +7287,7 @@
             "viewport": "Desktop",
             "state": "hover e41",
             "ratio": 0,
-            "elementsCompared": 224,
+            "elementsCompared": 225,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -7369,7 +7297,7 @@
             "viewport": "Tablet",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 224,
+            "elementsCompared": 225,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -7379,7 +7307,7 @@
             "viewport": "Mobile",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 224,
+            "elementsCompared": 225,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -7407,7 +7335,7 @@
           },
           "interaction": {
             "pass": 1,
-            "total": 5
+            "total": 4
           }
         },
         "failures": [
@@ -7434,14 +7362,6 @@
             "check": "interaction",
             "gap": "behaviour-state",
             "detail": "Impressum and Vereinssatzung exist only as modals opened by script, so their content is not on any frozen page."
-          },
-          {
-            "fixture": "busbasis-terms",
-            "viewport": "all",
-            "state": "needs: styles on html",
-            "check": "interaction",
-            "gap": "page-level-css",
-            "detail": "The original sets smooth scrolling and hides sideways overflow on html. The page root can hold that now, as a rule on :root, but the frozen trees were lifted before it could, so they do not, and the computed styles of html are not compared."
           }
         ],
         "notMeasured": [],
@@ -7455,7 +7375,7 @@
             "viewport": "Desktop",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 240,
+            "elementsCompared": 241,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -7465,7 +7385,7 @@
             "viewport": "Desktop",
             "state": "hover e41",
             "ratio": 0,
-            "elementsCompared": 240,
+            "elementsCompared": 241,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -7475,7 +7395,7 @@
             "viewport": "Tablet",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 240,
+            "elementsCompared": 241,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -7485,7 +7405,7 @@
             "viewport": "Mobile",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 240,
+            "elementsCompared": 241,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -7513,7 +7433,7 @@
           },
           "interaction": {
             "pass": 1,
-            "total": 6
+            "total": 5
           }
         },
         "failures": [
@@ -7544,14 +7464,6 @@
           {
             "fixture": "busbasis-login",
             "viewport": "all",
-            "state": "needs: styles on html",
-            "check": "interaction",
-            "gap": "page-level-css",
-            "detail": "The original sets smooth scrolling and hides sideways overflow on html. The page root can hold that now, as a rule on :root, but the frozen trees were lifted before it could, so they do not, and the computed styles of html are not compared."
-          },
-          {
-            "fixture": "busbasis-login",
-            "viewport": "all",
             "state": "needs: shopper login",
             "check": "interaction",
             "gap": "shop-feature-missing",
@@ -7569,7 +7481,7 @@
             "viewport": "Desktop",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 224,
+            "elementsCompared": 225,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -7579,7 +7491,7 @@
             "viewport": "Desktop",
             "state": "hover e41",
             "ratio": 0,
-            "elementsCompared": 224,
+            "elementsCompared": 225,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -7589,7 +7501,7 @@
             "viewport": "Tablet",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 224,
+            "elementsCompared": 225,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -7599,7 +7511,7 @@
             "viewport": "Mobile",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 224,
+            "elementsCompared": 225,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -7627,7 +7539,7 @@
           },
           "interaction": {
             "pass": 1,
-            "total": 6
+            "total": 5
           }
         },
         "failures": [
@@ -7658,14 +7570,6 @@
           {
             "fixture": "busbasis-request-reset",
             "viewport": "all",
-            "state": "needs: styles on html",
-            "check": "interaction",
-            "gap": "page-level-css",
-            "detail": "The original sets smooth scrolling and hides sideways overflow on html. The page root can hold that now, as a rule on :root, but the frozen trees were lifted before it could, so they do not, and the computed styles of html are not compared."
-          },
-          {
-            "fixture": "busbasis-request-reset",
-            "viewport": "all",
             "state": "needs: shopper login",
             "check": "interaction",
             "gap": "shop-feature-missing",
@@ -7683,7 +7587,7 @@
             "viewport": "Desktop",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 198,
+            "elementsCompared": 199,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -7693,7 +7597,7 @@
             "viewport": "Desktop",
             "state": "hover e41",
             "ratio": 0,
-            "elementsCompared": 198,
+            "elementsCompared": 199,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -7703,7 +7607,7 @@
             "viewport": "Tablet",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 198,
+            "elementsCompared": 199,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -7713,7 +7617,7 @@
             "viewport": "Mobile",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 198,
+            "elementsCompared": 199,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -7741,7 +7645,7 @@
           },
           "interaction": {
             "pass": 1,
-            "total": 5
+            "total": 4
           }
         },
         "failures": [
@@ -7768,14 +7672,6 @@
             "check": "interaction",
             "gap": "behaviour-state",
             "detail": "Impressum and Vereinssatzung exist only as modals opened by script, so their content is not on any frozen page."
-          },
-          {
-            "fixture": "busbasis-shop-unavailable",
-            "viewport": "all",
-            "state": "needs: styles on html",
-            "check": "interaction",
-            "gap": "page-level-css",
-            "detail": "The original sets smooth scrolling and hides sideways overflow on html. The page root can hold that now, as a rule on :root, but the frozen trees were lifted before it could, so they do not, and the computed styles of html are not compared."
           }
         ],
         "notMeasured": [],
@@ -7789,7 +7685,7 @@
             "viewport": "Desktop",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 173,
+            "elementsCompared": 174,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -7799,7 +7695,7 @@
             "viewport": "Desktop",
             "state": "hover e26",
             "ratio": 0,
-            "elementsCompared": 173,
+            "elementsCompared": 174,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -7809,7 +7705,7 @@
             "viewport": "Tablet",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 173,
+            "elementsCompared": 174,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -7819,7 +7715,7 @@
             "viewport": "Mobile",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 173,
+            "elementsCompared": 174,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -7831,7 +7727,7 @@
         "fixture": "busbasis-not-found",
         "group": "held-out",
         "source": "https://basiscampberlin.de/de/search, captured 2026-11-02, answered 404",
-        "pass": false,
+        "pass": true,
         "checks": {
           "screenshot": {
             "pass": 3,
@@ -7847,19 +7743,10 @@
           },
           "interaction": {
             "pass": 0,
-            "total": 1
+            "total": 0
           }
         },
-        "failures": [
-          {
-            "fixture": "busbasis-not-found",
-            "viewport": "all",
-            "state": "needs: styles on html",
-            "check": "interaction",
-            "gap": "page-level-css",
-            "detail": "The original sets smooth scrolling and hides sideways overflow on html. The page root can hold that now, as a rule on :root, but the frozen trees were lifted before it could, so they do not, and the computed styles of html are not compared."
-          }
-        ],
+        "failures": [],
         "notMeasured": [],
         "defaultBase": {
           "pass": 0,
@@ -7871,7 +7758,7 @@
             "viewport": "Desktop",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 10,
+            "elementsCompared": 11,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -7881,7 +7768,7 @@
             "viewport": "Tablet",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 10,
+            "elementsCompared": 11,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -7891,7 +7778,7 @@
             "viewport": "Mobile",
             "state": "initial",
             "ratio": 0,
-            "elementsCompared": 10,
+            "elementsCompared": 11,
             "elementsDiffering": 0,
             "differences": 0,
             "byGap": {},
@@ -7901,27 +7788,6 @@
       }
     ],
     "gaps": [
-      {
-        "id": "page-level-css",
-        "pages": [
-          "busbasis-home",
-          "busbasis-store",
-          "busbasis-search",
-          "busbasis-category",
-          "busbasis-collection",
-          "busbasis-product",
-          "busbasis-cart-empty",
-          "busbasis-checkout-no-cart",
-          "busbasis-privacy",
-          "busbasis-terms",
-          "busbasis-login",
-          "busbasis-request-reset",
-          "busbasis-shop-unavailable",
-          "busbasis-not-found"
-        ],
-        "needs": 14,
-        "styleDifferences": 0
-      },
       {
         "id": "behaviour-state",
         "pages": [
@@ -8956,6 +8822,16 @@
       "cost": 6
     },
     {
+      "id": "top-layer-refused",
+      "description": "A pseudo-element drawn in the top layer, above every z-index and so above the consent banner (src/lib/styles/stacking.ts): a styled `::picker(select)` covers the screen, and in WebKit no tap closes it. Every path refuses it on purpose.",
+      "matrixCells": 5,
+      "corpusChecks": 0,
+      "fixtures": [],
+      "onlyGapOf": [],
+      "roundTripCases": 0,
+      "cost": 5
+    },
+    {
       "id": "mixed-text",
       "description": "Text mixed with elements: text beside an element is lost or lands out of order.",
       "matrixCells": 0,
@@ -9873,7 +9749,6 @@
       "css-selector:::highlight()",
       "css-selector:::marker",
       "css-selector:::part()",
-      "css-selector:::picker()",
       "css-selector:::picker-icon",
       "css-selector:::placeholder",
       "css-selector:::scroll-marker",

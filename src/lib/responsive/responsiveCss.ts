@@ -102,6 +102,7 @@ import {
   type SurfaceFrame,
 } from '@/lib/rules/surfaces';
 import { isRootStyleKey } from '@/lib/rules/rootProperties';
+import { cappedZIndex } from '@/lib/styles/stacking';
 import { largestFirst, resolveCascade, type BreakpointRef } from './cascade';
 
 /** At most this many emitted rules on one page, counted after rows share a rule class. */
@@ -286,6 +287,19 @@ export function cssUrlsIn(text: string): string[] {
   return scanCssValue(text).urls;
 }
 
+const TOP_LAYER_VALUE = /base-select/i;
+
+/**
+ * Whether a value would put stored content in the top layer, which is above every
+ * z-index and so above the consent banner (src/lib/styles/stacking.ts):
+ * `appearance: base-select` turns a select's list into a picker there, which a
+ * tap does not close in WebKit. Any property, so a custom property cannot carry
+ * it to `appearance` through var(), and read past escapes.
+ */
+export function holdsTopLayerValue(text: string): boolean {
+  return TOP_LAYER_VALUE.test(text) || TOP_LAYER_VALUE.test(withoutEscapes(text));
+}
+
 /** Script-capable or import-capable CSS, and comments, which hide a `;` from isContainedValue. */
 export const UNSAFE_VALUE = /javascript:|vbscript:|expression\s*\(|<[\s/]*script|@import|behavior\s*:|-moz-binding|\/\*/i;
 
@@ -319,7 +333,7 @@ function sheetStringBody(body: string): string | null {
  * with no tab, newline or `<` comes back unchanged.
  */
 function sheetValueText(text: string): string | null {
-  if (BREAKOUT_CHARS.test(text) || UNSAFE_VALUE.test(text) || UNSAFE_VALUE.test(withoutEscapes(text))) return null;
+  if (BREAKOUT_CHARS.test(text) || UNSAFE_VALUE.test(text) || UNSAFE_VALUE.test(withoutEscapes(text)) || holdsTopLayerValue(text)) return null;
   let out = '';
   let i = 0;
   while (i < text.length) {
@@ -400,7 +414,9 @@ export interface DroppedDeclaration {
 
 /**
  * One `prop:value` declaration, or null when the property or value is unsafe
- * (reported through `onDrop`) or React would not render the value at all.
+ * (reported through `onDrop`) or React would not render the value at all. A
+ * z-index is held below the platform's layers (src/lib/styles/stacking.ts),
+ * after the check, so the check judges what was stored.
  */
 function declaration(
   className: string,
@@ -414,7 +430,9 @@ function declaration(
     onDrop({ className, property: key, reason });
     return null;
   }
-  return text === undefined ? null : `${cssPropertyName(key)}:${sheetValueText(text)}`;
+  if (text === undefined) return null;
+  const emitted = key === 'zIndex' ? String(cappedZIndex(text)) : text;
+  return `${cssPropertyName(key)}:${sheetValueText(emitted)}`;
 }
 
 /** One node's styles, keyed by its (already safe) class name. */

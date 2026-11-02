@@ -39,12 +39,15 @@ import {
   SiteGoneError,
   SiteNameConflictError,
   SiteNotFoundError,
+  SiteRevisionNotFoundError,
   SubdomainAllocationError,
 } from './errors';
 import { findProjectSlugProblem } from '@/lib/pages/slug';
 import { pickPrimaryHost } from './primaryHost';
 import { nextSiteRedirects, parseSiteRedirects } from '@/lib/pages/redirects';
 import { generateSubdomain } from './subdomain';
+import { parseRevisionDocument, REVISION_SCHEMA_VERSION, revisionPublishCheck } from './revision';
+import type { PublishCheck } from '@/lib/legal/publishCheck';
 
 /**
  * Bounded retries for the DB-enforced subdomain allocation. Each attempt
@@ -60,9 +63,24 @@ const SUBDOMAIN_ALLOCATION_ATTEMPTS = 5;
 const SERIALIZATION_ATTEMPTS = 4;
 
 /**
- * Run a SERIALIZABLE transaction, retrying when Postgres aborted it because a
- * concurrent transaction touched the same rows (Prisma code P2034). Any other
- * error, or the last conflict, is rethrown unchanged.
+ * How many revisions of a site are kept. A project body may be up to 10 MB, so
+ * unbounded history would be unbounded growth. Pruned at publish, when the live
+ * revision is the newest, so the live one is never at risk.
+ */
+export const REVISIONS_KEPT = 30;
+
+/**
+ * Limits of a transaction that writes a whole project. Prisma's default of 5
+ * seconds is within reach of a body at the 10 MB limit, and more so of a site's
+ * first publish, which also writes two full revision documents.
+ */
+const PROJECT_WRITE_TRANSACTION = { maxWait: 5_000, timeout: 30_000 } as const;
+
+/**
+ * Run a transaction, retrying when Postgres aborted it because a concurrent
+ * transaction touched the same rows (Prisma code P2034), or when two writers took
+ * the same revision number (P2002 on `site_id, number`). Any other error, or the
+ * last conflict, is rethrown unchanged.
  */
 async function withSerializationRetry<T>(run: () => Promise<T>): Promise<T> {
   for (let attempt = 1; ; attempt++) {
@@ -70,7 +88,8 @@ async function withSerializationRetry<T>(run: () => Promise<T>): Promise<T> {
       return await run();
     } catch (err) {
       const conflict =
-        err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2034';
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        (err.code === 'P2034' || err.code === 'P2002');
       if (!conflict || attempt >= SERIALIZATION_ATTEMPTS) throw err;
     }
   }
@@ -100,6 +119,24 @@ export interface SiteSummary {
   subdomain: string | null;
   /** Connected custom domains (requested hostnames), oldest first. */
   customDomains: string[];
+}
+
+/** One published revision for a listing (no document loaded). */
+export interface SiteRevisionSummary {
+  number: number;
+  kind: 'publish' | 'baseline';
+  /** The auth-brain user who published; null for a baseline. */
+  publishedBy: string | null;
+  createdAt: Date;
+}
+
+/** A site's published history, newest first. */
+export interface SiteRevisionList {
+  /** The number visitors are served, or null: not published, or no revision yet. */
+  live: number | null;
+  /** The site's status (a pointer survives an unpublish, so `live` needs both). */
+  status: string;
+  revisions: SiteRevisionSummary[];
 }
 
 function assertScope(scope: TenantScope): void {
@@ -230,6 +267,10 @@ export class SiteRepository {
    * A save of a site id that already exists in ANOTHER workspace is rejected
    * (SiteNotFoundError): the id is "taken" by a foreign tenant and must not be
    * silently overwritten or duplicated across the boundary.
+   *
+   * A save NEVER changes what visitors see: they read a frozen revision
+   * (publishProject). This is the editor's working copy, which the draft preview
+   * and the next publish read.
    */
   async saveProject(
     scope: TenantScope,
@@ -244,172 +285,274 @@ export class SiteRepository {
     // the other's entry. Postgres aborts one of them (P2034) instead; it is
     // retried a few times, then surfaces loudly as a failed save.
     await withSerializationRetry(() => this.prisma.$transaction(async (tx) => {
-      // Guard: if this site id already exists, it MUST be in the caller's
-      // workspace. A row in another workspace means a cross-tenant collision —
-      // refuse rather than overwrite or leak.
-      const existing = await tx.site.findUnique({
+      await this.writeWorkingCopy(tx, scope, persisted, options);
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, ...PROJECT_WRITE_TRANSACTION }));
+  }
+
+  /**
+   * The working-copy write shared by save and publish: the `sites` row and the
+   * reconciled `site_pages` rows, inside the caller's transaction. Writes
+   * nothing a visitor reads, apart from the one baseline freeze below.
+   */
+  private async writeWorkingCopy(
+    tx: Prisma.TransactionClient,
+    scope: TenantScope,
+    persisted: PersistedSite,
+    options: { mustExist?: boolean; companyId?: string },
+  ): Promise<void> {
+    // Guard: if this site id already exists, it MUST be in the caller's
+    // workspace. A row in another workspace means a cross-tenant collision:
+    // refuse rather than overwrite or leak.
+    const existing = await tx.site.findUnique({
+      where: { id: persisted.siteId },
+      select: {
+        id: true,
+        workspaceId: true,
+        redirects: true,
+        siteSettings: true,
+        status: true,
+        publishedRevisionId: true,
+      },
+    });
+    if (existing && existing.workspaceId !== scope.workspaceId) {
+      throw new SiteNotFoundError(persisted.siteId);
+    }
+    // The editor's Save and Publish pass `mustExist`: they update a site, never
+    // create one. Without this, an editor tab still open on a DELETED project
+    // would bring it back on its next save (the upsert below creates).
+    if (options.mustExist && !existing) {
+      throw new SiteGoneError();
+    }
+
+    // Slug rules (src/lib/pages/slug.ts), checked against the slugs stored
+    // today: an unchanged slug is grandfathered, a new or changed one must be
+    // valid and unique, the home page's empty slug never changes. A request
+    // that breaks them writes nothing (400).
+    const storedRows = existing
+      ? await tx.sitePage.findMany({
+          where: { siteId: persisted.siteId },
+          select: { pageId: true, slug: true },
+        })
+      : [];
+    const storedSlugs = new Map(storedRows.map((r) => [r.pageId, r.slug]));
+    const problem = findProjectSlugProblem(
+      persisted.pages.map((p) => ({
+        pageId: p.pageId,
+        slug: p.slug,
+        title: (p.snapshot as { metadata?: { title?: unknown } }).metadata?.title as string | undefined,
+      })),
+      storedSlugs,
+    );
+    if (problem) throw new InvalidPageSlugError(problem.pageId, problem.code, problem.message);
+
+    // A site published before revisions existed is served from these very rows
+    // (publicResolver.ts). Freeze them before they change: the save goes on
+    // writing the working copy, and visitors keep what they had.
+    if (existing?.status === 'published' && existing.publishedRevisionId === null) {
+      const baseline = await this.freezeRevision(tx, scope, persisted.siteId, {
+        kind: 'baseline',
+        publishedBy: null,
+      });
+      await tx.site.updateMany({
+        where: { id: persisted.siteId, workspaceId: scope.workspaceId },
+        data: { publishedRevisionId: baseline.id },
+      });
+    }
+
+    // Old-slug redirects (src/lib/pages/redirects.ts): once a site has been
+    // published (it holds a platform subdomain), a changed slug keeps its old
+    // path as a redirect to the page. Cleaned on every save: entries for
+    // deleted pages, or whose path a page now claims, are dropped.
+    const everPublished = existing
+      ? (await tx.siteDomain.findFirst({
+          where: { siteId: persisted.siteId, subdomain: { not: null } },
+          select: { id: true },
+        })) !== null
+      : false;
+    const redirects = nextSiteRedirects({
+      previous: parseSiteRedirects(existing?.redirects),
+      storedSlugs,
+      pages: persisted.pages,
+      everPublished,
+      now: new Date(),
+    });
+
+    // Only a present key writes: a tab loaded before the column existed sends
+    // none, and that must not empty it. In this transaction, so a definition
+    // and the pages placing it are never saved apart, and before any freeze
+    // below reads the column back.
+    const componentsColumn = persisted.components
+      ? { components: persisted.components as unknown as Prisma.InputJsonValue }
+      : {};
+
+    // `theme` and `head` the body lacked (a tab built before they existed) keep
+    // what the row stores: the column is one blob, replaced whole below.
+    const siteSettings = mergeKeptSiteSettings(persisted.siteSettings, existing?.siteSettings);
+
+    const updateData = {
+      description: persisted.description,
+      analyticsProjectId: persisted.analyticsProjectId,
+      ingestionEndpoint: persisted.ingestionEndpoint,
+      apiKeyRef: persisted.apiKeyRef,
+      lumitraEnabled: persisted.lumitraEnabled,
+      siteSettings: siteSettings as unknown as Prisma.InputJsonValue,
+      // projectCreatedAt is immutable (set on create); only the
+      // application "last edited" time advances on update.
+      projectUpdatedAt: new Date(persisted.projectUpdatedAt),
+      redirects: redirects as unknown as Prisma.InputJsonValue,
+      ...componentsColumn,
+    };
+
+    if (options.mustExist) {
+      // UPDATE, never INSERT: a delete that committed after the read above
+      // leaves zero rows here, so the site is NOT re-created. (The
+      // transaction is SERIALIZABLE besides: a save and a delete that
+      // overlap cannot both commit; the retried one then sees the outcome.)
+      const updated = await tx.site.updateMany({
+        where: { id: persisted.siteId, workspaceId: scope.workspaceId },
+        data: updateData,
+      });
+      if (updated.count === 0) throw new SiteGoneError();
+    } else {
+      // Upsert the site row. On create, status defaults to `draft` (the DB
+      // default); on update, status is left untouched (publish/archive own it).
+      await tx.site.upsert({
         where: { id: persisted.siteId },
-        select: { id: true, workspaceId: true, redirects: true, siteSettings: true },
+        create: {
+          id: persisted.siteId,
+          workspaceId: scope.workspaceId,
+          tenantGroupId: scope.tenantGroupId,
+          name: persisted.name,
+          description: persisted.description,
+          analyticsProjectId: persisted.analyticsProjectId,
+          ingestionEndpoint: persisted.ingestionEndpoint,
+          apiKeyRef: persisted.apiKeyRef,
+          lumitraEnabled: persisted.lumitraEnabled,
+          siteSettings: siteSettings as unknown as Prisma.InputJsonValue,
+          projectCreatedAt: new Date(persisted.projectCreatedAt),
+          projectUpdatedAt: new Date(persisted.projectUpdatedAt),
+          redirects: redirects as unknown as Prisma.InputJsonValue,
+          companyId: options.companyId ?? null,
+          ...componentsColumn,
+        },
+        // `name` is written on create only. After that the rename action
+        // (renameSite, PATCH /api/projects/<id>) is its only writer: an editor
+        // tab opened before a rename still carries the old title in its
+        // snapshot, and a later Save or Publish from it must not silently undo
+        // the rename.
+        update: updateData,
       });
-      if (existing && existing.workspaceId !== scope.workspaceId) {
-        throw new SiteNotFoundError(persisted.siteId);
-      }
-      // The editor's Save and Publish pass `mustExist`: they update a site, never
-      // create one. Without this, an editor tab still open on a DELETED project
-      // would bring it back on its next save (the upsert below creates).
-      if (options.mustExist && !existing) {
-        throw new SiteGoneError();
-      }
+    }
 
-      // Slug rules (src/lib/pages/slug.ts), checked against the slugs stored
-      // today: an unchanged slug is grandfathered, a new or changed one must be
-      // valid and unique, the home page's empty slug never changes. A request
-      // that breaks them writes nothing (400).
-      const storedRows = existing
-        ? await tx.sitePage.findMany({
-            where: { siteId: persisted.siteId },
-            select: { pageId: true, slug: true },
-          })
-        : [];
-      const storedSlugs = new Map(storedRows.map((r) => [r.pageId, r.slug]));
-      const problem = findProjectSlugProblem(
-        persisted.pages.map((p) => ({
-          pageId: p.pageId,
-          slug: p.slug,
-          title: (p.snapshot as { metadata?: { title?: unknown } }).metadata?.title as string | undefined,
-        })),
-        storedSlugs,
-      );
-      if (problem) throw new InvalidPageSlugError(problem.pageId, problem.code, problem.message);
-
-      // Old-slug redirects (src/lib/pages/redirects.ts): once a site has been
-      // published (it holds a platform subdomain), a changed slug keeps its old
-      // path as a redirect to the page. Cleaned on every save: entries for
-      // deleted pages, or whose path a page now claims, are dropped.
-      const everPublished = existing
-        ? (await tx.siteDomain.findFirst({
-            where: { siteId: persisted.siteId, subdomain: { not: null } },
-            select: { id: true },
-          })) !== null
-        : false;
-      const redirects = nextSiteRedirects({
-        previous: parseSiteRedirects(existing?.redirects),
-        storedSlugs,
-        pages: persisted.pages,
-        everPublished,
-        now: new Date(),
+    // The site's company (sites.company_id, read by the storefront's catalogue): filled from the
+    // server-verified session when still empty, never overwritten (a company keeps its workspace).
+    if (options.companyId) {
+      await tx.site.updateMany({
+        where: { id: persisted.siteId, workspaceId: scope.workspaceId, companyId: null },
+        data: { companyId: options.companyId },
       });
+    }
 
-      // Only a present key writes: a tab loaded before the column existed sends
-      // none, and that must not empty it. In this transaction, so a definition
-      // and the pages placing it are never saved apart.
-      const componentsColumn = persisted.components
-        ? { components: persisted.components as unknown as Prisma.InputJsonValue }
-        : {};
+    // Reconcile pages: upsert every current page, then delete any page row
+    // whose pageId is no longer present in the snapshot. tenant_group_id and
+    // workspace_id are stamped on every child row.
+    const keepPageIds = persisted.pages.map((p) => p.pageId);
 
-      // `theme` and `head` the body lacked (a tab built before they existed) keep
-      // what the row stores: the column is one blob, replaced whole below.
-      const siteSettings = mergeKeptSiteSettings(persisted.siteSettings, existing?.siteSettings);
-
-      const updateData = {
-        description: persisted.description,
-        analyticsProjectId: persisted.analyticsProjectId,
-        ingestionEndpoint: persisted.ingestionEndpoint,
-        apiKeyRef: persisted.apiKeyRef,
-        lumitraEnabled: persisted.lumitraEnabled,
-        siteSettings: siteSettings as unknown as Prisma.InputJsonValue,
-        // projectCreatedAt is immutable (set on create); only the
-        // application "last edited" time advances on update.
-        projectUpdatedAt: new Date(persisted.projectUpdatedAt),
-        redirects: redirects as unknown as Prisma.InputJsonValue,
-        ...componentsColumn,
-      };
-
-      if (options.mustExist) {
-        // UPDATE, never INSERT: a delete that committed after the read above
-        // leaves zero rows here, so the site is NOT re-created. (The
-        // transaction is SERIALIZABLE besides: a save and a delete that
-        // overlap cannot both commit; the retried one then sees the outcome.)
-        const updated = await tx.site.updateMany({
-          where: { id: persisted.siteId, workspaceId: scope.workspaceId },
-          data: updateData,
-        });
-        if (updated.count === 0) throw new SiteGoneError();
-      } else {
-        // Upsert the site row. On create, status defaults to `draft` (the DB
-        // default); on update, status is left untouched (publish/archive own it).
-        await tx.site.upsert({
-          where: { id: persisted.siteId },
-          create: {
-            id: persisted.siteId,
-            workspaceId: scope.workspaceId,
-            tenantGroupId: scope.tenantGroupId,
-            name: persisted.name,
-            description: persisted.description,
-            analyticsProjectId: persisted.analyticsProjectId,
-            ingestionEndpoint: persisted.ingestionEndpoint,
-            apiKeyRef: persisted.apiKeyRef,
-            lumitraEnabled: persisted.lumitraEnabled,
-            siteSettings: siteSettings as unknown as Prisma.InputJsonValue,
-            projectCreatedAt: new Date(persisted.projectCreatedAt),
-            projectUpdatedAt: new Date(persisted.projectUpdatedAt),
-            redirects: redirects as unknown as Prisma.InputJsonValue,
-            companyId: options.companyId ?? null,
-            ...componentsColumn,
-          },
-          // `name` is written on create only. After that the rename action
-          // (renameSite, PATCH /api/projects/<id>) is its only writer: an editor
-          // tab opened before a rename still carries the old title in its
-          // snapshot, and a later Save or Publish from it must not silently undo
-          // the rename.
-          update: updateData,
-        });
-      }
-
-      // The site's company (sites.company_id, read by the storefront's catalogue): filled from the
-      // server-verified session when still empty, never overwritten (a company keeps its workspace).
-      if (options.companyId) {
-        await tx.site.updateMany({
-          where: { id: persisted.siteId, workspaceId: scope.workspaceId, companyId: null },
-          data: { companyId: options.companyId },
-        });
-      }
-
-      // Reconcile pages: upsert every current page, then delete any page row
-      // whose pageId is no longer present in the snapshot. tenant_group_id and
-      // workspace_id are stamped on every child row.
-      const keepPageIds = persisted.pages.map((p) => p.pageId);
-
-      for (const page of persisted.pages) {
-        await tx.sitePage.upsert({
-          where: {
-            siteId_pageId: { siteId: persisted.siteId, pageId: page.pageId },
-          },
-          create: {
-            siteId: persisted.siteId,
-            workspaceId: scope.workspaceId,
-            tenantGroupId: scope.tenantGroupId,
-            pageId: page.pageId,
-            slug: page.slug,
-            snapshot: page.snapshot as Prisma.InputJsonValue,
-          },
-          update: {
-            slug: page.slug,
-            snapshot: page.snapshot as Prisma.InputJsonValue,
-          },
-        });
-      }
-
-      // Delete page rows no longer in the snapshot. When the snapshot has zero
-      // pages, `notIn: []` in Prisma matches NOTHING, so the empty case is
-      // handled explicitly: delete every page for the site.
-      await tx.sitePage.deleteMany({
-        where:
-          keepPageIds.length > 0
-            ? { siteId: persisted.siteId, pageId: { notIn: keepPageIds } }
-            : { siteId: persisted.siteId },
+    for (const page of persisted.pages) {
+      await tx.sitePage.upsert({
+        where: {
+          siteId_pageId: { siteId: persisted.siteId, pageId: page.pageId },
+        },
+        create: {
+          siteId: persisted.siteId,
+          workspaceId: scope.workspaceId,
+          tenantGroupId: scope.tenantGroupId,
+          pageId: page.pageId,
+          slug: page.slug,
+          snapshot: page.snapshot as Prisma.InputJsonValue,
+        },
+        update: {
+          slug: page.slug,
+          snapshot: page.snapshot as Prisma.InputJsonValue,
+        },
       });
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }));
+    }
+
+    // Delete page rows no longer in the snapshot. When the snapshot has zero
+    // pages, `notIn: []` in Prisma matches NOTHING, so the empty case is
+    // handled explicitly: delete every page for the site.
+    await tx.sitePage.deleteMany({
+      where:
+        keepPageIds.length > 0
+          ? { siteId: persisted.siteId, pageId: { notIn: keepPageIds } }
+          : { siteId: persisted.siteId },
+    });
+  }
+
+  /**
+   * Copy what is stored for a site right now into a new revision, inside the
+   * caller's transaction, and return it. Read back rather than taken from the
+   * request: the name has its own writer, the redirects are computed by the save,
+   * and a tab older than the components column sends no definitions, so the
+   * column (written just before, or kept) is what freezes. The caller holds the
+   * site row (a lock or SERIALIZABLE), so nothing interleaves with that write.
+   */
+  private async freezeRevision(
+    tx: Prisma.TransactionClient,
+    scope: TenantScope,
+    siteId: string,
+    revision: {
+      kind: 'publish' | 'baseline';
+      publishedBy: string | null;
+    },
+  ): Promise<{ id: string; number: number }> {
+    const site = await tx.site.findFirst({
+      where: { id: siteId, workspaceId: scope.workspaceId },
+      select: {
+        name: true,
+        analyticsProjectId: true,
+        ingestionEndpoint: true,
+        apiKeyRef: true,
+        lumitraEnabled: true,
+        redirects: true,
+        siteSettings: true,
+        components: true,
+        pages: { select: { pageId: true, slug: true, snapshot: true } },
+      },
+    });
+    if (!site) throw new SiteNotFoundError(siteId);
+
+    const newest = await tx.siteRevision.findFirst({
+      where: { siteId },
+      orderBy: { number: 'desc' },
+      select: { number: true },
+    });
+    const number = (newest?.number ?? 0) + 1;
+
+    const created = await tx.siteRevision.create({
+      data: {
+        siteId,
+        workspaceId: scope.workspaceId,
+        tenantGroupId: scope.tenantGroupId,
+        number,
+        kind: revision.kind,
+        publishedBy: revision.publishedBy,
+        document: {
+          schemaVersion: REVISION_SCHEMA_VERSION,
+          name: site.name,
+          analyticsProjectId: site.analyticsProjectId,
+          ingestionEndpoint: site.ingestionEndpoint,
+          apiKeyRef: site.apiKeyRef,
+          lumitraEnabled: site.lumitraEnabled,
+          redirects: site.redirects,
+          siteSettings: site.siteSettings,
+          pages: site.pages,
+          components: site.components,
+        } as unknown as Prisma.InputJsonValue,
+      },
+      select: { id: true },
+    });
+    return { id: created.id, number };
   }
 
   /**
@@ -465,29 +608,127 @@ export class SiteRepository {
   }
 
   /**
-   * Transition a site to the `published` status, scoped to the caller's
-   * workspace. saveProject deliberately PRESERVES `Site.status` on update
-   * ("publish/archive own it"), so the publish path flips the status here as a
-   * separate, scoped step after the snapshot has been persisted.
+   * Publish: write the project as the working copy, freeze a revision of it,
+   * point the site at that revision and set it `published`, as ONE transaction
+   * (plan 2026-11-01-immutable-published-copy). A failure leaves nothing half
+   * done. Like Save, it only ever updates an existing site in the caller's
+   * workspace.
    *
-   * The update is scoped by BOTH id AND workspace_id (via updateMany, since a
-   * by-unique-id update cannot carry an extra where clause), so a publish of a
-   * site id owned by another workspace matches zero rows and throws
-   * SiteNotFoundError rather than silently flipping a foreign tenant's row.
+   * The lock on the site row comes first and replaces SERIALIZABLE: saves and
+   * renames update that row, so they queue behind it (or a SERIALIZABLE save is
+   * aborted and retried) and cannot land in the revision, and two publishes of a
+   * site run one after the other. SERIALIZABLE here made publishes of UNRELATED
+   * sites abort each other: 8 at once already lost 3 to P2034.
    */
-  async publishProject(scope: TenantScope, siteId: string): Promise<void> {
+  async publishProject(
+    scope: TenantScope,
+    project: ProjectModelType | Parameters<typeof projectToPersisted>[0],
+    options: { companyId?: string; publishedBy?: string } = {},
+  ): Promise<{ revision: number }> {
     assertScope(scope);
-    const result = await this.prisma.site.updateMany({
+    const persisted: PersistedSite = projectToPersisted(project);
+    const siteId = persisted.siteId;
+
+    return withSerializationRetry(() => this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${siteId} FOR UPDATE`;
+      await this.writeWorkingCopy(tx, scope, persisted, { mustExist: true, companyId: options.companyId });
+      const revision = await this.freezeRevision(tx, scope, siteId, {
+        kind: 'publish',
+        publishedBy: options.publishedBy ?? null,
+      });
+      const updated = await tx.site.updateMany({
+        where: { id: siteId, workspaceId: scope.workspaceId },
+        data: { status: 'published', publishedRevisionId: revision.id },
+      });
+      if (updated.count === 0) throw new SiteNotFoundError(siteId);
+      await tx.siteRevision.deleteMany({
+        where: { siteId, number: { lte: revision.number - REVISIONS_KEPT } },
+      });
+      return { revision: revision.number };
+    }, PROJECT_WRITE_TRANSACTION));
+  }
+
+  /**
+   * Make an earlier revision live again: moves the site's pointer and sets it
+   * `published`. The revision is not copied and the working copy is not touched,
+   * so a rollback destroys nothing and is itself undone by another rollback,
+   * except that it brings an offline site back: the dialog asks first.
+   * The caller revalidates the cache, exactly as after a publish.
+   *
+   * Scoped like everything here: a site in another workspace reads as missing,
+   * and a number this site never had (or that was pruned) changes nothing.
+   */
+  async rollbackToRevision(scope: TenantScope, siteId: string, number: number): Promise<void> {
+    assertScope(scope);
+    await withSerializationRetry(() => this.prisma.$transaction(async (tx) => {
+      const where = { id: siteId, workspaceId: scope.workspaceId };
+      const site = await tx.site.findFirst({ where, select: { id: true } });
+      if (!site) throw new SiteNotFoundError(siteId);
+      const revision = await tx.siteRevision.findFirst({
+        where: { siteId, workspaceId: scope.workspaceId, number },
+        select: { id: true },
+      });
+      if (!revision) throw new SiteRevisionNotFoundError(siteId, number);
+      await tx.site.updateMany({
+        where,
+        data: { status: 'published', publishedRevisionId: revision.id },
+      });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }));
+  }
+
+  /**
+   * The publish warnings for one revision (missing Impressum, placeholders), for
+   * the confirmation before making it live. Scoped like rollback.
+   */
+  async checkRevision(scope: TenantScope, siteId: string, number: number): Promise<PublishCheck> {
+    assertScope(scope);
+    const site = await this.prisma.site.findFirst({
       where: { id: siteId, workspaceId: scope.workspaceId },
-      data: { status: 'published' },
+      select: {
+        revisions: { where: { number }, select: { document: true } },
+      },
     });
-    if (result.count === 0) throw new SiteNotFoundError(siteId);
+    if (!site) throw new SiteNotFoundError(siteId);
+    const [revision] = site.revisions;
+    if (!revision) throw new SiteRevisionNotFoundError(siteId, number);
+    return revisionPublishCheck(parseRevisionDocument(revision.document));
+  }
+
+  /**
+   * A site's published history, newest first, without the documents. A site
+   * published before revisions existed lists nothing until its first save or
+   * publish freezes what it serves.
+   */
+  async listRevisions(scope: TenantScope, siteId: string): Promise<SiteRevisionList> {
+    assertScope(scope);
+    const site = await this.prisma.site.findFirst({
+      where: { id: siteId, workspaceId: scope.workspaceId },
+      select: {
+        status: true,
+        publishedRevisionId: true,
+        revisions: {
+          orderBy: { number: 'desc' },
+          select: { id: true, number: true, kind: true, publishedBy: true, createdAt: true },
+        },
+      },
+    });
+    if (!site) throw new SiteNotFoundError(siteId);
+    return {
+      status: site.status,
+      live: site.revisions.find((r) => r.id === site.publishedRevisionId)?.number ?? null,
+      revisions: site.revisions.map(({ number, kind, publishedBy, createdAt }) => ({
+        number,
+        kind,
+        publishedBy,
+        createdAt,
+      })),
+    };
   }
 
   /**
    * Allocate (or return the already-allocated) `*.sites.lumitra.co` subdomain
    * for a site, scoped to the caller's workspace. This is the first-publish
-   * door MT-07's publish route calls AFTER `publishProject`.
+   * door the publish route calls AFTER `publishProject`.
    *
    * IDEMPOTENT: if the site already has a `SiteDomain` row carrying a non-null
    * `subdomain`, that label is returned UNCHANGED — re-publishing a site never
@@ -605,11 +846,11 @@ export class SiteRepository {
   }
 
   /**
-   * Transition a site back to `draft`, scoped to the caller's workspace — the
-   * inverse of {@link publishProject}. Like publish, the status flip is scoped
-   * by BOTH id AND workspace_id (via updateMany), so an unpublish of a site
-   * owned by another workspace matches zero rows and throws SiteNotFoundError
-   * rather than silently un-publishing a foreign tenant's row.
+   * Transition a site back to `draft`, scoped to the caller's workspace, which
+   * takes it offline. The status flip is scoped by BOTH id AND workspace_id (via
+   * updateMany), so an unpublish of a site owned by another workspace matches
+   * zero rows and throws SiteNotFoundError rather than silently un-publishing a
+   * foreign tenant's row. The pointer to its revision stays: a draft is not served.
    *
    * The `SiteDomain` row is deliberately PRESERVED (decision D3): re-publishing
    * the site reuses its existing slug so the URL is stable across a

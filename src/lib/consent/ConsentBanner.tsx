@@ -27,6 +27,7 @@ import React from 'react';
 import { legibleLook, type SiteLook } from '@/lib/site/notFoundDefault';
 import { DEFAULT_PAGE_BASE, type PageBase } from '@/lib/site/pageBase';
 import type { TrackerPayload } from '@/lib/renderer/publish/trackerSnippet';
+import { CONSENT_BANNER_Z_INDEX } from '@/lib/styles/stacking';
 import { CONSENT_BANNER_ID, consentCopy, consentCss, consentRuntimeScript } from './consent';
 
 /**
@@ -111,7 +112,8 @@ export function ConsentBanner({ tracker, language, look: siteLook, privacyHref, 
           left: 16,
           right: 16,
           bottom: 16,
-          zIndex: 2147483000,
+          // Above everything a stored page can write (src/lib/styles/stacking.ts).
+          zIndex: CONSENT_BANNER_Z_INDEX,
           boxSizing: 'border-box',
           maxWidth: 560,
           display: 'flex',

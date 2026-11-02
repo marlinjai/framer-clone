@@ -4,7 +4,9 @@
 //
 // The publish write path. It serializes the editor's live ProjectModel (sent as
 // a snapshot in the body) into the canonical Site + SitePage rows via the P1
-// site repository, then transitions the Site to the `published` status.
+// site repository, freezes that as a new revision, makes it the one visitors are
+// served and transitions the Site to the `published` status, all in one
+// transaction (plan 2026-11-01-immutable-published-copy).
 //
 // HARD ISOLATION (the whole point of P1): the TenantScope this writes under is
 // resolved from the SERVER-VERIFIED auth-brain session (the session's active
@@ -80,18 +82,18 @@ async function handlePOST(req: Request): Promise<Response> {
   const body = await parseBody(req, publishBodySchema, { maxBytes: PROJECT_BODY_MAX_BYTES });
   if (!body.ok) return body.response;
 
-  // 5. Persist the snapshot, transition the site to published, then allocate
-  //    (or return the already-allocated) subdomain. A cross-workspace site id is
+  // 5. Persist and freeze the snapshot, transition the site to published, then
+  //    allocate (or return the already-allocated) subdomain. A cross-workspace site id is
   //    rejected (SiteNotFoundError -> 404) inside the repository; an exhausted
   //    subdomain allocation surfaces the typed SubdomainAllocationError (-> 500
   //    via siteRepositoryErrorResponse); any other failure is a loud 500. A
   //    publish is NEVER swallowed into a silent success-with-no-URL.
   const project = body.data.project as unknown as ProjectSnapshotOut;
   let subdomain: string;
+  let revision: number;
   try {
     const repo = getSiteRepository();
-    await repo.saveProject(scope, project, { mustExist: true, companyId });
-    await repo.publishProject(scope, project.id);
+    ({ revision } = await repo.publishProject(scope, project, { companyId, publishedBy: session.user.id }));
     // ensureSiteDomain is idempotent: a re-publish returns the SAME slug, so the
     // live URL is stable across publish/unpublish/re-publish cycles.
     ({ subdomain } = await repo.ensureSiteDomain(scope, project.id));
@@ -109,9 +111,9 @@ async function handlePOST(req: Request): Promise<Response> {
       console.error('[sites] custom-domain cache revalidation failed for ' + project.id, err);
     });
   } catch (err) {
-    // A project deleted while this publish was running (between the save and
-    // the status flip or the address allocation) surfaces as a plain not-found
-    // from the later steps: answer with the same message a Save gets.
+    // A project deleted while this publish was running (before the address
+    // allocation) surfaces as a plain not-found from the later steps: answer
+    // with the same message a Save gets.
     if (err instanceof SiteNotFoundError) return siteRepositoryErrorResponse(new SiteGoneError());
     if (err instanceof SiteRepositoryError) return siteRepositoryErrorResponse(err);
     return jsonError(
@@ -133,6 +135,7 @@ async function handlePOST(req: Request): Promise<Response> {
   return Response.json({
     siteId: project.id,
     status: 'published',
+    revision,
     publishedPages,
     subdomain,
     liveUrl,

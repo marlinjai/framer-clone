@@ -30,6 +30,7 @@
 import { isSafeHref } from '@/lib/links/safeHref';
 import { maxWidthBelow } from '@/lib/responsive/responsiveCss';
 import { CONSENT_BANNER_ID } from '@/lib/consent/consent';
+import { STICKY_CTA_Z_INDEX } from '@/lib/styles/stacking';
 
 /** The marker prop (and DOM attribute) of the sticky call to action bar. */
 export const STICKY_CTA_ATTR = 'data-sticky-cta';
@@ -70,8 +71,8 @@ export const STICKY_CTA_FALLBACK_HEIGHT_PX = 72;
  */
 export const STICKY_CTA_MAX_HEIGHT = '30vh';
 
-/** Stacking: above page content, below the consent banner (z-index 2147483000). */
-export const STICKY_CTA_Z_INDEX = 2147482000;
+/** Stacking: above page content, below the consent banner (src/lib/styles/stacking.ts). */
+export { STICKY_CTA_Z_INDEX };
 
 /** The attribute the published page's pinned bar carries (the CSS target). */
 export const STICKY_CTA_PINNED_ATTR = 'data-fc-sticky-cta';

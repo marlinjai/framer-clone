@@ -198,7 +198,7 @@ describe.each(ENGINES)('in %s', (name, engine) => {
       const tree = collectionTabs({ seed: 'data', collection: 'c1', titleField: 'title', bodyField: 'body' });
       const rows = [{ title: 'Spring', body: 'Spring text' }, { title: 'Summer', body: 'Summer text' }, { title: 'Autumn', body: 'Autumn text' }];
       const output = await renderThroughPublishedPage({ tree: { ...tree, componentType: 'host' }, definitions: {}, rows });
-      await page.setContent(publishedDocument(output, undefined, runtime));
+      await page.setContent(publishedDocument(output, undefined, undefined, runtime));
       const tab = (title: string) => page.getByRole('tab', { name: title });
       await expect.poll(() => page.getByText('Spring text').isVisible()).toBe(true);
       expect(await page.getByText('Summer text').isVisible()).toBe(false);

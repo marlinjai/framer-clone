@@ -80,7 +80,7 @@ const LEGACY_DEMO_TENANT_GROUP_ID = 'demo-tenant-group';
  * family, prisma/schema.prisma `@@map` names). The restamp updates the legacy
  * sentinel on ALL of them.
  */
-const RESTAMP_TABLES = ['sites', 'site_pages', 'site_domains', 'site_experiments'] as const;
+const RESTAMP_TABLES = ['sites', 'site_pages', 'site_revisions', 'site_domains', 'site_experiments'] as const;
 
 /**
  * The commerce tables in FK-SAFE copy order (plan §9): a child table NEVER

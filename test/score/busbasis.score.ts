@@ -13,6 +13,10 @@
 // element differs in font smoothing and `<option>` loses its padding, and both are gone
 // on this base. The default base is still compared, untouched, so that number stays in
 // the report.
+//
+// The site's language is the page's own `<html lang>`, which the lift records, and the
+// document element is compared like any other element: what the original sets on html
+// the replica holds as rules on `:root` on its page root.
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -32,8 +36,12 @@ import type { CheckName, CorpusFailure, CorpusResult, GapId, PageDifference } fr
 
 const TIMEOUT = 25 * 60 * 1000;
 
-/** The Site settings of the site every BusBasis replica sits on. */
-const BUSBASIS_SITE = normalizeSiteSettings({ pageBase: 'browser' });
+/** The Site settings of the site a BusBasis replica sits on, in the page's language. */
+const busbasisSite = (lang: string) => {
+  const site = normalizeSiteSettings({ pageBase: 'browser', language: lang });
+  if (site.language !== lang) throw new Error(`the page's language ${JSON.stringify(lang)} is not one a site can hold`);
+  return site;
+};
 
 interface ManifestPage {
   slug: string;
@@ -42,6 +50,8 @@ interface ManifestPage {
   capturedAt: string;
   status: number;
   hoverTarget: string | null;
+  /** `<html lang>` of the frozen page. */
+  lang: string;
 }
 
 interface Manifest {
@@ -117,9 +127,10 @@ describe('held-out BusBasis pages', () => {
       if (!meta) throw new Error(`${listed.slug} is listed but has no capture`);
       const original = originalDocument(listed.slug);
       const output: PublishedOutput = renderPublished(readTree(listed.slug));
-      const replica = publishedDocument(output, BUSBASIS_SITE.pageBase);
-      const onDefaultBase = publishedDocument(output);
-      const bare = bareDocument(output);
+      const site = busbasisSite(meta.lang);
+      const replica = publishedDocument(output, site.pageBase, site.language);
+      const onDefaultBase = publishedDocument(output, undefined, site.language);
+      const bare = bareDocument(output, site.language);
 
       const fixture = `busbasis-${listed.slug}`;
       const failures: CorpusFailure[] = [];
@@ -154,8 +165,8 @@ describe('held-out BusBasis pages', () => {
             interactionError = (error instanceof Error ? error.message : String(error)).split('\n')[0];
             right = await open(browser, replica, viewport, null);
           }
-          const a = await takeSnapshot(left, { withoutVariables: true });
-          const b = await takeSnapshot(right, { withoutVariables: true });
+          const a = await takeSnapshot(left, { withoutVariables: true, withDocument: true });
+          const b = await takeSnapshot(right, { withoutVariables: true, withDocument: true });
           await left.close();
           await right.close();
 
@@ -178,7 +189,7 @@ describe('held-out BusBasis pages', () => {
           if (!pixelsOk || !stylesOk || !treeOk) {
             const page = await open(browser, bare, viewport, hover).catch(() => undefined);
             if (page) {
-              const snapshot = await takeSnapshot(page, { withoutVariables: true });
+              const snapshot = await takeSnapshot(page, { withoutVariables: true, withDocument: true });
               await page.close();
               const bareComputed = diffComputed(a.computed, snapshot.computed);
               withoutBase = {
@@ -207,7 +218,7 @@ describe('held-out BusBasis pages', () => {
           } else {
             // The same replica on the default base, untouched: all three checks at once.
             const page = await open(browser, onDefaultBase, viewport, null);
-            const snapshot = await takeSnapshot(page, { withoutVariables: true });
+            const snapshot = await takeSnapshot(page, { withoutVariables: true, withDocument: true });
             await page.close();
             const same =
               diffRatio(a.png, snapshot.png, path.join(OUT_DIR, 'scratch.png')) <= MAX_DIFF_RATIO &&
