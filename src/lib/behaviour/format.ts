@@ -754,6 +754,33 @@ function stateOf(key: unknown, scope: ExpressionScope): Parsed<StateValue> {
   return state ? accept(state) : refuse(`no state ${key} is in reach`);
 }
 
+/**
+ * Why a value may not be written into a choice state, or null. Every leaf the parser
+ * can see is checked against the options: a literal must be one, a read of another
+ * choice must hold only options of this one, and a map is checked through its cases
+ * and default. What only exists at run time (an event value, the active item) cannot
+ * be known here, so the runtime must keep a choice inside its options.
+ */
+function choiceRefusal(expr: Expression, id: string, options: readonly string[], states: ReadonlyMap<string, StateValue>): string | null {
+  if (typeof expr === 'string') return options.includes(expr) ? null : `${expr} is not an option of ${id}`;
+  if (typeof expr !== 'object') return `${id} does not hold a ${typeof expr}`;
+  if ('get' in expr) {
+    const source = states.get(expr.get);
+    if (source?.type !== 'choice') return null;
+    const stray = source.options.find((option) => !options.includes(option));
+    return stray === undefined ? null : `${stray} of ${source.id} is not an option of ${id}`;
+  }
+  if ('map' in expr) {
+    const branches = [...Object.values(expr.cases), ...(expr.default !== undefined ? [expr.default] : [])];
+    for (const branch of branches) {
+      const reason = choiceRefusal(branch, id, options, states);
+      if (reason) return reason;
+    }
+    return null;
+  }
+  return 'event' in expr || 'active' in expr ? null : `${id} does not hold a number or a boolean`;
+}
+
 function parseSet(action: Record<string, unknown>, scope: ActionScope): Parsed<Action> {
   if (!hasShape(action, ['set', 'value'])) return refuse('set holds set and value');
   const state = stateOf(action.set, scope);
@@ -763,8 +790,9 @@ function parseSet(action: Record<string, unknown>, scope: ActionScope): Parsed<A
   if (read.value.tainted && state.value.type !== 'text') return refuse(TAINT_REASON);
   const expected = kindOfState(state.value);
   if (read.value.kind !== 'any' && read.value.kind !== expected) return refuse(`${state.value.id} does not hold a ${read.value.kind}`);
-  if (state.value.type === 'choice' && typeof read.value.value === 'string' && !state.value.options.includes(read.value.value)) {
-    return refuse(`${read.value.value} is not an option of ${state.value.id}`);
+  if (state.value.type === 'choice') {
+    const reason = choiceRefusal(read.value.value, state.value.id, state.value.options, scope.states);
+    if (reason) return refuse(reason);
   }
   return accept({ set: state.value.id, value: read.value.value });
 }

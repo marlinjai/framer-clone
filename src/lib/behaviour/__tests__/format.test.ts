@@ -318,6 +318,22 @@ describe('expressions', () => {
     refused(setNum({ clamp: [{ get: 'c' }, 0, 1] }), /numbers/);
   });
 
+  it('checks every value a set can write into a choice against its options', () => {
+    const states = new Map([...STATES, ['sub', choice('sub', ['a'])], ['wide', choice('wide', ['a', 'z'])]]);
+    const reasons = (value: unknown) =>
+      parseBehaviour(
+        { id: 'self', type: 'button', props: { behaviour: { on: [click({ set: 'c', value })] } } },
+        { states, nodes: NODES },
+      ).refused.map((r) => r.reason);
+    expect(reasons({ map: 'b', cases: { true: 'a', false: 'b' }, default: 'a' })).toEqual([]);
+    expect(reasons({ get: 'sub' })).toEqual([]);
+    expect(reasons({ map: 'b', cases: { true: 'zzz' } }).join()).toMatch(/not an option/);
+    expect(reasons({ map: 'b', cases: { true: 'a' }, default: 'zzz' }).join()).toMatch(/not an option/);
+    expect(reasons({ map: 'b', cases: { true: { map: 'b', cases: { true: 'zzz' } } } }).join()).toMatch(/not an option/);
+    expect(reasons({ get: 'wide' }).join()).toMatch(/not an option/);
+    expect(reasons({ map: 'b', cases: { true: 1 } }).join()).toMatch(/does not hold/);
+  });
+
   it('checks a set against the state it writes', () => {
     refused(click({ set: 'b', value: 1 }), /does not hold a number/);
     refused(click({ set: 'n', value: 'x' }), /does not hold a string/);
