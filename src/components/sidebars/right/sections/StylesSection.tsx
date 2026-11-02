@@ -84,6 +84,7 @@ export const StylesSection = observer(({ component, breakpointId }: StylesSectio
       <PropertyRow label="Fill" source={src('backgroundColor')}>
         <ColorInput
           label=""
+          tokens
           value={getStyleValue('backgroundColor') || '#ffffff'}
           onChange={(v) => setStyleValue('backgroundColor', v)}
         />
@@ -94,6 +95,7 @@ export const StylesSection = observer(({ component, breakpointId }: StylesSectio
         <PropertyRow label="Text" source={src('color')}>
           <ColorInput
             label=""
+            tokens
             value={getStyleValue('color') || '#000000'}
             onChange={(v) => setStyleValue('color', v)}
           />
@@ -173,6 +175,7 @@ export const StylesSection = observer(({ component, breakpointId }: StylesSectio
           <PropertyRow label="Color" source={src('borderColor')} hint="Border color">
             <ColorInput
               label=""
+              tokens
               value={getStyleValue('borderColor') || '#000000'}
               onChange={(v) => setStyleValue('borderColor', v)}
             />

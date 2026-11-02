@@ -42,6 +42,7 @@ export const TypographySection = observer(({ component, breakpointId }: Typograp
       <PropertyRow label="Font" source={src('fontFamily')}>
         {/* The self-hosted font library (src/lib/fonts/registry.ts), grouped by category. */}
         <FontFamilySelect
+          tokens
           value={getStyleValue('fontFamily')}
           onChange={(v) => setStyleValue('fontFamily', v)}
         />

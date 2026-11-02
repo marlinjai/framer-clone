@@ -38,6 +38,7 @@ import {
   Settings,
   Inbox,
   Moon,
+  Palette,
 } from 'lucide-react';
 import Link from 'next/link';
 import { useStore } from '@/hooks/useStore';
@@ -45,6 +46,7 @@ import { getHistoryStore } from '@/stores/RootStore';
 import PublishButton from '@/components/PublishButton';
 import DomainsButton from '@/components/domains/DomainsButton';
 import SiteSettingsButton from '@/components/site/SiteSettingsDialog';
+import ThemeButton from '@/components/site/ThemePanel';
 import FormSubmissionsButton from '@/components/forms/FormSubmissionsButton';
 import PublishedVersionsButton from '@/components/PublishedVersionsButton';
 import SaveButton from '@/components/SaveButton';
@@ -203,7 +205,7 @@ const HistoryMenu = observer(() => {
 HistoryMenu.displayName = 'HistoryMenu';
 
 /** Which top-bar dialog is open (one at a time). */
-export type TopBarDialog = 'generate' | 'polish' | 'versions' | 'domains' | 'siteSettings' | 'forms' | 'history' | null;
+export type TopBarDialog = 'generate' | 'polish' | 'versions' | 'domains' | 'siteSettings' | 'theme' | 'forms' | 'history' | null;
 
 // --- Haptics preference ----------------------------------------------------
 // The phone editor's haptic ticks (src/lib/haptics.ts) can be turned off here;
@@ -265,6 +267,9 @@ const MoreMenu = observer(({ onOpen, className = '' }: { onOpen: (dialog: Exclud
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => onOpen('siteSettings')}>
               <Settings /> Site settings
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => onOpen('theme')}>
+              <Palette /> Theme
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => onOpen('forms')}>
               <Inbox /> Form submissions
@@ -405,6 +410,8 @@ const TopBar = observer(() => {
 
       {/* Site settings: name, language, favicon, sharing image, business data. */}
       <SiteSettingsButton {...control('siteSettings')} triggerClassName={wideOnly} />
+      {/* Theme: the site's shared colours and fonts, colour mode and page defaults. */}
+      <ThemeButton {...control('theme')} triggerClassName={wideOnly} />
       {/* Form submissions: what visitors sent through this site's forms. */}
       <FormSubmissionsButton {...control('forms')} triggerClassName={wideOnly} />
 

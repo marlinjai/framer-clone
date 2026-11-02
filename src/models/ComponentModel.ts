@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { replaceTokenReferences } from '@/lib/site/theme';
 import { isPlacementType } from '@/lib/components/placement';
 import { types, Instance, SnapshotIn, SnapshotOut, getParent, hasParent as hasMstParent } from 'mobx-state-tree';
 import { v4 as uuidv4 } from 'uuid';
@@ -773,6 +774,15 @@ const ComponentModel: any = ComponentBase
     setTextContent(value: string) {
       if (isPlacementType(self.type)) return;
       self.props = { ...self.props, children: value };
+    },
+
+    // Every reference to the theme token `fromId` points at `toId` instead, in any
+    // prop at any depth: Normal, rules, keyframe blocks and placement overrides alike
+    // (the Theme panel's Replace, docs/plans/2026-11-02-theme-and-head.md slice T4).
+    // Changes nothing when the props hold no such reference.
+    replaceTokenReference(fromId: string, toId: string) {
+      const next = replaceTokenReferences(self.props, fromId, toId);
+      if (next !== self.props) self.props = next;
     },
 
     // Merge non-style props (a form field's label, name, required flag...).
