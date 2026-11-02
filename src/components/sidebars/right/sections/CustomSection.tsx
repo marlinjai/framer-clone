@@ -212,6 +212,8 @@ interface AddFormProps {
   needsNoValue?: (name: string) => boolean;
   /** Stores it. A reason comes back when it was refused after all, and the form keeps what was typed. */
   onAdd: (name: string, value: string) => string | null | void;
+  /** A change empties the form: a half-typed value in Hover is not one for Pressed. */
+  scope?: string;
 }
 
 function AddForm({
@@ -224,6 +226,7 @@ function AddForm({
   allowsEmptyValue = false,
   needsNoValue,
   onAdd,
+  scope,
 }: AddFormProps) {
   const listId = useId();
   const [name, setName] = useState('');
@@ -232,6 +235,12 @@ function AddForm({
   const nameField = useRef<HTMLDivElement>(null);
   const valueField = useRef<HTMLDivElement>(null);
   const focusField = (shell: HTMLDivElement | null) => shell?.querySelector('input')?.focus();
+
+  useEffect(() => {
+    setName('');
+    setValue('');
+    setError(null);
+  }, [scope]);
 
   const add = () => {
     const problem =
@@ -365,6 +374,7 @@ const CssEditor = observer(({ component, breakpointId, category }: CustomSection
         suggestions={suggestions}
         nameError={nameError}
         valueError={valueError}
+        scope={stateLabel}
         onAdd={(typed, value) => target.setStyleValue(cssStyleKey(cssPropertySpelling(typed)), value.trim())}
       />
     </div>
@@ -435,7 +445,7 @@ AttributeEditor.displayName = 'AttributeEditor';
 
 export const CustomSection = observer(({ component, breakpointId }: CustomSectionProps) => {
   const category = getComponentCategory(component);
-  const { badge, stateLabel } = useStyleTarget(component, breakpointId);
+  const { badge } = useStyleTarget(component, breakpointId);
   return (
     <CollapsibleSection title="Custom" icon={<Braces size={14} />} badge={badge}>
       {/* Keyed by node, so a draft or a refusal never carries over to another element. */}
@@ -447,8 +457,7 @@ export const CustomSection = observer(({ component, breakpointId }: CustomSectio
             </PropertyRow>
           </NormalOnly>
         ) : null}
-        {/* And by state: a half-typed value in Hover is not one for Pressed. */}
-        <CssEditor key={stateLabel ?? 'Normal'} component={component} breakpointId={breakpointId} category={category} />
+        <CssEditor component={component} breakpointId={breakpointId} category={category} />
         <NormalOnly>
           <AttributeEditor component={component} category={category} />
         </NormalOnly>
