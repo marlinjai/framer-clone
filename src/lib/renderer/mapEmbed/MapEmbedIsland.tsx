@@ -27,7 +27,7 @@
 
 'use client';
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { isRebuiltMapSrc, readMapEmbed } from '@/lib/mapEmbed/mapEmbed';
 import { MAP_FRAME_SANDBOX, MAP_FRAME_STYLE, MAP_SHADOW_ROOT_STYLE, mapPlaceholder } from './mapEmbedElement';
@@ -91,9 +91,13 @@ export default function MapEmbedIsland({ domProps, config }: MapEmbedIslandProps
   // button inside it. Attached after hydration, so server and client agree; from then
   // on the light copy below (the server's, for a page without JavaScript) is no longer
   // drawn, because a shadow host shows its shadow tree instead of its children.
+  // A layout effect: the root is attached and filled in one synchronous commit, so no
+  // moment exists where the box shows an empty shadow tree (nothing at all). With a
+  // passive effect that moment was visible to anything that looked between the two
+  // renders (the render gate on a slower runner caught it).
   const host = useRef<HTMLDivElement>(null);
   const [shadow, setShadow] = useState<ShadowRoot | null>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = host.current;
     if (!el) return;
     try {

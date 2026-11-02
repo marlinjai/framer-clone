@@ -6,6 +6,8 @@ import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, within } from '@testing-library/react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { flushSync } from 'react-dom';
+import { createRoot } from 'react-dom/client';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import type { CmsReadRepository } from '@/server/cms';
 import { renderPublishedPage } from '@/lib/renderer/server/renderPublishedPage';
@@ -188,6 +190,21 @@ describe('the island', () => {
     // The light copy is what the server sent: no working button, the plain link.
     expect(box.querySelector(':scope > [data-fc-map-placeholder] button')).toBeNull();
     expect(box.querySelector(':scope > [data-fc-map-placeholder] a[data-fc-map-open]')).not.toBeNull();
+  });
+
+  it('never shows an empty shadow tree: the root is attached and filled in one commit', () => {
+    win.__lumitraConsent = { get: () => null, open: vi.fn() };
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    // No act(): look right after the synchronous commit, as a page scan on a slow machine would.
+    flushSync(() => root.render(<MapEmbedIsland domProps={{ 'data-map-embed': 'google' }} config={config} />));
+    const box = container.firstElementChild as HTMLElement;
+    expect(box.shadowRoot).not.toBeNull();
+    expect(box.shadowRoot!.childElementCount).toBe(1);
+    expect(box.shadowRoot!.firstElementChild!.hasAttribute('data-fc-map-root')).toBe(true);
+    flushSync(() => root.unmount());
+    container.remove();
   });
 
   it('opens Google Maps through a plain link that needs no consent', () => {
