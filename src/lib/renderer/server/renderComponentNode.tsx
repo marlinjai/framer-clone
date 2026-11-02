@@ -23,7 +23,7 @@
 
 import React from 'react';
 import { isVoidTag } from '@/lib/drag/voidTags';
-import { isBlockedProp, isBlockedTag } from '@/lib/renderer/blockedNodes';
+import { isBlockedProp, isBlockedTag, safeInlineStyle, withoutDocumentId } from '@/lib/renderer/blockedNodes';
 import { isLegacyRulesAttribute } from '@/lib/rules/rules';
 import { isComponentPlaceholderType } from '@/lib/components/placement';
 import { isTextNodeType, ownTextThenChildren, renderableText } from '@/lib/renderer/textNode';
@@ -106,7 +106,8 @@ export function nodeDomProps(node: ComponentNode): Record<string, unknown> {
     if (NON_DOM_PROPS.has(name) || isBlockedProp(name, value)) continue;
     if (name === 'rules' && !isLegacyRulesAttribute(value)) continue;
     if (name === 'style') {
-      const style = flattenStyle(value);
+      const flat = flattenStyle(value);
+      const style = flat && safeInlineStyle(flat);
       if (style && Object.keys(style).length > 0) props.style = style;
       continue;
     }
@@ -117,7 +118,13 @@ export function nodeDomProps(node: ComponentNode): Record<string, unknown> {
 
 /** As `nodeDomProps`, with a stable React key stamped for element emission. */
 function domPropsOf(node: ComponentNode, key: React.Key): Record<string, unknown> {
-  return { key, ...nodeDomProps(node) };
+  return { key, ...withoutDocumentId(node.type, nodeDomProps(node)) };
+}
+
+/** Whether a child of this tag is SVG content. */
+function opensSvg(tag: string, insideSvg: boolean): boolean {
+  const name = tag.toLowerCase();
+  return name === 'svg' || (insideSvg && name !== 'foreignobject');
 }
 
 /** Resolve a node's wrapper tag for island mounting (defaults to `div`). */
@@ -134,9 +141,9 @@ function rawTextChild(node: ComponentNode): React.ReactNode {
  * What goes inside a node's element: its own text, then its child nodes in
  * order. Exported for the form island, which renders its own wrapper.
  */
-export function renderNodeChildren(node: ComponentNode, scope: BindingScope): React.ReactNode {
+export function renderNodeChildren(node: ComponentNode, scope: BindingScope, insideSvg = false): React.ReactNode {
   const rendered = (node.children ?? []).map((child, index) =>
-    renderComponentNode(child, scope, child.id ?? index),
+    renderComponentNode(child, scope, child.id ?? index, insideSvg),
   );
   return ownTextThenChildren(rawTextChild(node), rendered) as React.ReactNode;
 }
@@ -150,6 +157,7 @@ export function renderComponentNode(
   node: ComponentNode,
   scope: BindingScope = createScope(),
   key: React.Key = node.id ?? 0,
+  insideSvg = false,
 ): React.ReactNode {
   // No element at all, so nothing below (a tag, an island, a marker) applies.
   if (isTextNodeType(node.type)) return rawTextChild(node);
@@ -158,7 +166,7 @@ export function renderComponentNode(
   if (isComponentPlaceholderType(node.type)) return null;
 
   // Checked first: an island below would otherwise mount with this host tag.
-  if (isBlockedTag(resolveHtmlTag(node.type))) return null;
+  if (isBlockedTag(resolveHtmlTag(node.type), insideSvg)) return null;
 
   // Forms (published site essentials, decision 4): the form container is a
   // client island that owns its fields' state; fields and the submit button
@@ -174,7 +182,7 @@ export function renderComponentNode(
   // The sticky call to action bar draws its own link; renderPublishedPage
   // moved it to the end of the page and its stylesheet pins it on phones.
   if (isStickyCta(node.props)) {
-    return createStickyCtaElement(nodeDomProps(node), 'published', key);
+    return createStickyCtaElement(nodeDomProps(node), 'published', key, node.props as Record<string, unknown>);
   }
 
   const dataKind = (node.props as any)?.['data-component-kind'];
@@ -205,7 +213,7 @@ export function renderComponentNode(
     return React.createElement(tag, props);
   }
 
-  return React.createElement(tag, props, renderNodeChildren(node, scope));
+  return React.createElement(tag, props, renderNodeChildren(node, scope, opensSvg(tag, insideSvg)));
 }
 
 export default renderComponentNode;

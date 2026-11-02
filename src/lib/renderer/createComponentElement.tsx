@@ -11,9 +11,10 @@
 // HTML emitter) ships the same DOM identifiers. Lumitra Studio cross-domain
 // matching, drag resolution, and selection overlays all key off these.
 import React from 'react';
+import { getParent, hasParent, isStateTreeNode } from 'mobx-state-tree';
 import { ComponentInstance } from '@/models/ComponentModel';
 import { isVoidTag } from '@/lib/drag';
-import { isBlockedTag, withoutBlockedProps } from '@/lib/renderer/blockedNodes';
+import { isBlockedTag, withoutBlockedProps, withoutDocumentId } from '@/lib/renderer/blockedNodes';
 import { isTextNodeType, ownTextThenChildren, renderableText } from '@/lib/renderer/textNode';
 import { isComponentPlaceholderType } from '@/lib/components/placement';
 import type { BindingScope } from '@/lib/bindings/resolver/scope';
@@ -97,6 +98,20 @@ export interface CreateComponentElementOptions {
   mode?: 'editor' | 'preview';
 }
 
+/** Whether an ancestor makes this node SVG content. MST nodes only; a tree outside MST has no parent to ask. */
+function isSvgContent(component: ComponentInstance): boolean {
+  if (String(component.type).toLowerCase() !== 'title') return false;
+  let current: unknown = component;
+  for (let i = 0; i < 128 && isStateTreeNode(current as object) && hasParent(current as object); i++) {
+    current = getParent(current as object);
+    const type = (current as { type?: unknown }).type;
+    if (typeof type !== 'string') continue;
+    if (type.toLowerCase() === 'svg') return true;
+    if (type.toLowerCase() === 'foreignobject') return false;
+  }
+  return false;
+}
+
 export function createComponentElement(
   component: ComponentInstance,
   finalProps: Record<string, unknown>,
@@ -111,11 +126,12 @@ export function createComponentElement(
   // A `#` type cannot be a tag, and createElement would throw on it.
   if (isComponentPlaceholderType(component.type)) return null;
 
-  if (isBlockedTag(component.type)) return null;
+  // Only a host's type is a tag: otherwise it names an entry of the registry below.
+  if (component.isHostElement && isBlockedTag(component.type, isSvgContent(component))) return null;
 
   const content = ownTextThenChildren(rawTextChildren, children) as React.ReactNode;
   const identity = options?.identity;
-  const safeProps = withoutBlockedProps(finalProps);
+  const safeProps = withoutDocumentId(component.type, withoutBlockedProps(finalProps));
   const propsWithIdentity: Record<string, unknown> = identity
     ? {
         ...safeProps,
@@ -129,7 +145,7 @@ export function createComponentElement(
     // On the canvas it is a labelled normal block; the preview pins it
     // (HeadlessPageRenderer), the published page through its stylesheet.
     if (isStickyCta(component.props)) {
-      return createStickyCtaElement(propsWithIdentity, options?.mode === 'editor' ? 'editor' : 'preview');
+      return createStickyCtaElement(propsWithIdentity, options?.mode === 'editor' ? 'editor' : 'preview', undefined, finalProps);
     }
 
     // Form components (data-form-kind): static on the canvas and in the preview,

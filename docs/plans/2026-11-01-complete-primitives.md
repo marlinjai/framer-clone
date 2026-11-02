@@ -303,6 +303,44 @@ admin) can put script on that workspace's published sites through the API, altho
 produces such nodes, and no Content-Security-Policy is set app-wide. It was not tried end to end on
 production.
 
+### The render gate, redesigned 2026-11-02
+
+Three reviews in one day each found a gap in the deny list (lower-case handlers, SVG animation of
+links, upper-case `HREF`), so the gate no longer lists what is bad. `src/lib/renderer/renderVocabulary.ts`
+lists what a page may hold and refuses the rest, including names no browser has shipped yet; a test
+fails when the data the score reads gains a name without a decision. It is wider than the generator's
+list (`reviewedVocabulary.ts`), which it includes, because it also carries form controls and what
+owners set in the panel.
+
+Rules, in both renderers:
+
+- **A tag** must be listed or have a custom element's shape, with no colon.
+- **A `#` tag** is never a tag: the text path returns before the gate, and `#TEXT` is refused.
+- **A title** outside an `svg` is refused, because React lifts it to the document.
+- **An attribute** must be listed, or be `data-*`, `aria-*` or an author's hyphenated name. Those are
+  safe to keep because no script reads them and React never treats them as properties. The hyphen rule
+  is the one deliberate exception to refusing by default, and a test asks for a decision when the data
+  lists a new hyphenated name. The `data-fc-*` names the renderers' own runtime acts on are refused, by name: applyBehaviour issues
+  its marks through the gate and drops stored ones itself, and a test fails on a new name in the code.
+- **An `id` or `name`** cannot replace what the page's code calls. Ids `__*`, `webpackChunk*`, `fc-*`
+  and `ground-wrapper-*` are refused. A `name` cannot be a member of `Document` or `HTMLFormElement`, from
+  a list generated in real browsers (`pnpm generate:dom-members`), and neither can an `id` on an `img`,
+  the one element that puts its `id` on `document`.
+- **An SVG paint or filter attribute** may only `url(#...)` inside the page.
+- **An address** may only be `http`, `https`, `mailto`, `tel`, `sms`, a path, a fragment, or a `data:`
+  image, audio, video or font. It is judged the way a browser reads it.
+- **Only `children`, `style` and `ref` hold objects.** An array would otherwise read as its string.
+- **An inline style** holds one declaration per key: no `;` outside a string or url(), no comment that
+  hides one, no script address. An external image in a style stays allowed, as it does in the
+  stylesheet: a style may show a picture.
+
+A tree is checked for shape before hydration (`src/lib/renderer/publish/nodeShape.ts`), so a bad child
+costs that child, not the page. Consent is answered only from inside the banner.
+
+`pnpm test:render-gate` (test/renderGate) tries every element and attribute of the data in real
+Chromium and WebKit, through the published steps and client rendering, and fails on what it finds.
+Each detector has a canary in every batch, so a blind run fails too.
+
 These props and nodes get dropped by both renderers in a separate change, so existing rows and every
 write path are covered. The custom code
 primitive below is the designed replacement, so nothing intended is taken away.

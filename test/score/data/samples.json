@@ -212,6 +212,7 @@
       "selected"
     ],
     "values": {
+      "attributeName": "opacity",
       "action": "/probe",
       "alpha": "",
       "capture": "user",

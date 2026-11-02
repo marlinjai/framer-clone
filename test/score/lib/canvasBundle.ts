@@ -46,11 +46,11 @@ const serverEdge: Plugin = {
   },
 };
 
-export async function bundleEditor(): Promise<string> {
-  const outfile = path.join(OUT_DIR, 'canvas-bundle.js');
+export async function bundleEditor(entry = 'test/score/canvas/entry.tsx', name = 'canvas-bundle'): Promise<string> {
+  const outfile = path.join(OUT_DIR, `${name}.js`);
   await build({
     absWorkingDir: ROOT,
-    entryPoints: ['test/score/canvas/entry.tsx'],
+    entryPoints: [entry],
     outfile,
     bundle: true,
     format: 'iife',

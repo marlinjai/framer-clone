@@ -105,6 +105,19 @@ describe('consent banner', () => {
     expect(screen.getByRole('link', { name: 'Datenschutzerklärung' }).getAttribute('href')).toBe('/datenschutz');
   });
 
+  it('takes no choice from anything outside the banner', async () => {
+    load();
+    const forged = document.createElement('div');
+    forged.setAttribute('data-fc-consent-accept', '');
+    document.body.append(forged);
+    fireEvent.click(forged);
+    await settle();
+    expect(stored()).toBeNull();
+    expect(trackerLoads()).toHaveLength(0);
+    expect(banner().hidden).toBe(false);
+    forged.remove();
+  });
+
   it('accepting stores a versioned choice and imports the tracker module', () => {
     load();
     fireEvent.click(screen.getByRole('button', { name: 'Akzeptieren' }));

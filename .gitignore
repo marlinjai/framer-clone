@@ -59,3 +59,4 @@ dist-bench/
 
 # primitive score: per-run probe results and screenshot diffs (test/score/run.ts wipes it)
 test/score/.out/
+test/renderGate/.out/

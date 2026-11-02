@@ -116,3 +116,31 @@ jobs:
         with:
           context: .
           push: false
+
+  # Real Chromium and WebKit, so it has a job of its own beside verify rather than
+  # adding to the wait on it (a pull request reports back in the longer of the two).
+  render-gate:
+    name: render-gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install browsers
+        run: pnpm exec playwright install --with-deps chromium webkit
+
+      # Whether anything stored can act on a page, through both renderers.
+      - name: Render gate fuzz
+        run: pnpm test:render-gate
