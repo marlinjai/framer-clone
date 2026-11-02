@@ -221,11 +221,14 @@ describe('F: forward', () => {
     expect(await runNextJob(db, TG_A, { kinds: testKinds(succeed), now: clock(MINUTE) })).toBeNull();
   });
 
-  it('with the production registries an event writes nothing and a pass runs nothing', async () => {
+  it('the production registries write what they know, and a pass leaves a kind they do not know alone', async () => {
     await schedule();
-    expect(await db.transaction().execute((trx) => emitCommerceEvent(trx, PLACED))).toEqual([]);
+    const expiresAt = at(60 * MINUTE);
+    const placed = { ...PLACED, payload: { orderId: 'order-1', expiresAt } };
+    const [id] = await db.transaction().execute((trx) => emitCommerceEvent(trx, placed));
+    expect(await read(id)).toMatchObject({ kind: 'payment_expiry', dedupe_key: 'expiry:order-1', run_at: expiresAt });
     expect(await runNextJob(db, TG_A, { now: clock(MINUTE) })).toBeNull();
-    expect(await countJobs()).toBe(1);
+    expect(await countJobs()).toBe(2);
   });
 
   it('a consumer may decide to write nothing', async () => {
