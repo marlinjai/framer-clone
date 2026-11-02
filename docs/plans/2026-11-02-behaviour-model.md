@@ -1204,6 +1204,26 @@ The review (`2026-11-02-behaviour-model-review.md`, "Slice B3 and B4", probes be
 - **`radix-tabs` is built from `deriveTabs`.** It still fails on the text of the hidden panel, which Radix does not render and a page without a script has to show.
 - **The score bundles the runtime once,** in `test/score/lib/runtime.ts`, shared by the event proofs, the patterns and the corpus.
 
+## Decided in slice B7
+
+**Menu button, menubar, combobox, the two thumb slider and the window splitter are presets,** in the palette beside B6's, and the score's five patterns take their trees from them. Each passes its full contract on the published page. No verb, field or byte of the runtime was added.
+
+**The score's run:** `renderer` 1,759 to 1,764 of 1,833, the five pattern rows, and `roundTrip` 128 to 133, the five preset trees round tripping. Format, canvas, panel, AI and the corpus unchanged.
+
+**Two things about the runtime decided how these are built,** worth knowing for any preset after them:
+
+- **Every ancestor holding a trigger for an event hears it,** in order from the target up. So a menubar's own keys sit on each top item, not on the bar, or Right pressed inside a menu would move along the bar twice and a printable key would leave the menu.
+- **Triggers on one event run in order, and a later one reads what an earlier one wrote.** Two triggers with opposite `if`s cannot toggle: the second always undoes the first. So a toggle is one value: the menubar flips its open menu with `{ map: open, cases: { '<i>': -1 }, default: <i> }`, and the splitter keeps a collapse as a flag beside the position rather than as a second Enter trigger.
+
+**Also decided while building it, say so if you disagree:**
+
+- **A menubar's open menu is one number on the bar, -1 for none,** so opening a menu closes any other, by key or by pointer. With a script, a press on a top item opens its menu rather than following its link; the menu holds the links. Without one, the top items are links and every menu is a list of links in the flow.
+- **Choosing a menu item closes the menu and gives the focus back to its button.** A press outside closes it natively, and `aria-expanded` follows from the popover's own `toggle`, which comes a task after it closed.
+- **A press on a combobox option copies that option's text,** a literal derive writes per option, since no expression reads which option a pointer chose.
+- **The splitter's collapse is a flag beside the position,** and moving it, by key or by pointer, opens it again where it moved to.
+- **`radix-dialog` is not built from a preset,** deviating from the slice table. Built as a native modal with its opener's `aria-expanded` kept by the dialog's `toggle`, it opened on both states and gained no check: Radix renders its content in a portal at the end of the page, so the page's text and styles differ while it is open, and a native modal leaves the page behind it inert rather than hidden, which the accessibility tree still shows. Measured both ways on the same run, 268 corpus checks each. So the fixture stays as it was, and no dialog preset was added, since no slice owns one.
+- **A preset's node ids start with its kind** (`tabs-1a2b3c4d-tab-0`), which `getRegistryIdForNode` read as that registry entry, so a text in a preset found no bindable slots. It now skips a preset's entry and falls back to what the node is. This was a B6 bug.
+
 ## Review findings not adopted
 
 Everything in findings 1 to 22 is applied except the following, each decided by code or a test. M1 to M10 are recorded above with the review's defaults.

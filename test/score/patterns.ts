@@ -16,6 +16,11 @@ import type { Locator, Page } from 'playwright';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { TEXT_NODE_TYPE } from '@/lib/renderer/textNode';
 import { carousel } from '@/lib/behaviour/presets/carousel';
+import { combobox } from '@/lib/behaviour/presets/combobox';
+import { menuButton } from '@/lib/behaviour/presets/menu';
+import { menubar } from '@/lib/behaviour/presets/menubar';
+import { multithumbSlider } from '@/lib/behaviour/presets/slider';
+import { splitter } from '@/lib/behaviour/presets/splitter';
 import { tabs } from '@/lib/behaviour/presets/tabs';
 import { toolbar } from '@/lib/behaviour/presets/toolbar';
 import { tooltip } from '@/lib/behaviour/presets/tooltip';
@@ -111,13 +116,6 @@ const modalTree = (role: 'dialog' | 'alertdialog') => () =>
       t('h2', 'Title', { id: 'modal-title' }),
       t('button', 'Close', { commandfor: 'modal', command: 'close' }),
     ),
-  );
-
-const roving = (role: string, items: string[], itemRole: string, label: string) =>
-  n(
-    'div',
-    { role, 'aria-label': label },
-    ...items.map((item, i) => t('div', item, { role: itemRole, tabIndex: i === 0 ? 0 : -1 })),
   );
 
 export const PATTERNS: Pattern[] = [
@@ -238,18 +236,28 @@ export const PATTERNS: Pattern[] = [
   },
   {
     id: 'combobox',
-    built: 'aria-only',
-    tree: () =>
-      n(
-        'div',
-        {},
-        n('input', { role: 'combobox', 'aria-label': 'City', 'aria-expanded': 'false', 'aria-controls': 'cities' }),
-        n('ul', { id: 'cities', role: 'listbox', hidden: true }, t('li', 'Bern', { role: 'option' })),
-      ),
+    built: 'behaviour',
+    preset: 'combobox',
+    tree: () => combobox({ seed: 'pattern-combobox', label: 'City', options: ['Bern', 'Zurich', 'Basel'] }) as ComponentNode,
     contract: async (page, root) => {
-      await root.getByRole('combobox', { name: 'City' }).focus();
+      const box = root.getByRole('combobox', { name: 'City' });
+      await box.focus();
       await pressed(page, 'ArrowDown');
       assert(await root.getByRole('option', { name: 'Bern' }).isVisible(), 'ArrowDown did not open the list');
+      assert((await box.getAttribute('aria-expanded')) === 'true', 'aria-expanded did not follow');
+      await pressed(page, 'Escape');
+      assert(!(await root.getByRole('listbox').isVisible()), 'Escape did not close the list');
+      await page.keyboard.type('b');
+      await page.waitForTimeout(20);
+      assert(!(await root.getByRole('option', { name: 'Zurich' }).isVisible()), 'typing did not filter the options');
+      await pressed(page, 'ArrowDown');
+      await pressed(page, 'ArrowDown');
+      const active = await box.getAttribute('aria-activedescendant');
+      const text = active ? await page.evaluate((id) => document.getElementById(id)?.textContent, active) : null;
+      assert(text === 'Basel', `the active option is ${text}: it has to skip what the filter hid`);
+      await pressed(page, 'Enter');
+      assert((await box.inputValue()) === 'Basel', 'Enter did not copy the active option');
+      assert(!(await root.getByRole('listbox').isVisible()), 'Enter did not close the list');
     },
   },
   {
@@ -351,36 +359,56 @@ export const PATTERNS: Pattern[] = [
   },
   {
     id: 'menubar',
-    built: 'aria-only',
-    tree: () => roving('menubar', ['File', 'Edit'], 'menuitem', 'Main'),
+    built: 'behaviour',
+    preset: 'menubar',
+    tree: () =>
+      menubar({
+        seed: 'pattern-menubar',
+        label: 'Main',
+        menus: [
+          { title: 'File', href: '#file', items: [{ title: 'New', href: '#new' }, { title: 'Open', href: '#open' }] },
+          { title: 'Edit', href: '#edit', items: [{ title: 'Undo', href: '#undo' }, { title: 'Redo', href: '#redo' }] },
+        ],
+      }) as ComponentNode,
     contract: async (page, root) => {
       await root.getByRole('menuitem', { name: 'File' }).focus();
+      await walkKeys(page, [['ArrowRight', 'Edit'], ['ArrowRight', 'File'], ['End', 'Edit'], ['Home', 'File']]);
+      await pressed(page, 'ArrowDown');
+      await page.waitForTimeout(40);
+      assert((await focusedText(page)) === 'New', 'ArrowDown did not open the menu on its first item');
+      await walkKeys(page, [['ArrowDown', 'Open'], ['ArrowDown', 'New'], ['End', 'Open']]);
+      await pressed(page, 'Escape');
+      assert((await focusedText(page)) === 'File', 'Escape did not give the focus back to the top item');
+      assert(!(await root.getByRole('menuitem', { name: 'New' }).isVisible()), 'Escape did not close the menu');
+      await pressed(page, 'ArrowUp');
+      await page.waitForTimeout(40);
+      assert((await focusedText(page)) === 'Open', 'ArrowUp did not open the menu on its last item');
       await pressed(page, 'ArrowRight');
-      assert((await page.evaluate(() => document.activeElement?.textContent)) === 'Edit', 'ArrowRight did not move');
+      assert((await focusedText(page)) === 'Edit', 'ArrowRight in a menu did not move along the bar');
+      assert(!(await root.getByRole('menuitem', { name: 'Open' }).isVisible()), 'the menu left behind stayed open');
     },
   },
   {
     id: 'menu-button',
-    built: 'native',
-    tree: () =>
-      n(
-        'div',
-        {},
-        t('button', 'Actions', { popovertarget: 'menu', 'aria-haspopup': 'menu' }),
-        n(
-          'div',
-          { id: 'menu', popover: 'auto', role: 'menu' },
-          t('button', 'Copy', { role: 'menuitem', autoFocus: true }),
-          t('button', 'Paste', { role: 'menuitem' }),
-        ),
-      ),
+    built: 'behaviour',
+    preset: 'menu-button',
+    tree: () => menuButton({ seed: 'pattern-menu', label: 'Actions', items: ['Copy', 'Paste', 'Delete'] }) as ComponentNode,
     contract: async (page, root) => {
-      await root.getByRole('button', { name: 'Actions' }).focus();
+      const button = root.getByRole('button', { name: 'Actions' });
+      await button.focus();
       await pressed(page, 'Enter');
+      await page.waitForTimeout(40);
       assert(await root.getByRole('menu').isVisible(), 'Enter did not open the menu');
-      assert((await page.evaluate(() => document.activeElement?.textContent)) === 'Copy', 'focus is not on the first item');
-      await pressed(page, 'ArrowDown');
-      assert((await page.evaluate(() => document.activeElement?.textContent)) === 'Paste', 'ArrowDown did not move');
+      assert((await focusedText(page)) === 'Copy', 'focus is not on the first item');
+      assert((await button.getAttribute('aria-expanded')) === 'true', 'aria-expanded did not follow');
+      await walkKeys(page, [['ArrowDown', 'Paste'], ['End', 'Delete'], ['ArrowDown', 'Copy'], ['ArrowUp', 'Delete'], ['Home', 'Copy'], ['p', 'Paste']]);
+      await pressed(page, 'Escape');
+      assert(!(await root.getByRole('menu').isVisible()), 'Escape did not close the menu');
+      assert((await focusedText(page)) === 'Actions', 'Escape did not give the focus back');
+      assert((await button.getAttribute('aria-expanded')) === 'false', 'aria-expanded went stale on Escape');
+      await pressed(page, 'ArrowUp');
+      await page.waitForTimeout(40);
+      assert((await focusedText(page)) === 'Delete', 'ArrowUp did not open the menu on its last item');
     },
   },
   {
@@ -420,20 +448,21 @@ export const PATTERNS: Pattern[] = [
   },
   {
     id: 'slider-multithumb',
-    built: 'native',
-    tree: () =>
-      n(
-        'div',
-        {},
-        n('input', { type: 'range', min: 0, max: 10, defaultValue: 2, 'aria-label': 'Low' }),
-        n('input', { type: 'range', min: 0, max: 10, defaultValue: 8, 'aria-label': 'High' }),
-      ),
+    built: 'behaviour',
+    preset: 'slider-multithumb',
+    tree: () => multithumbSlider({ seed: 'pattern-range', label: 'Price', min: 0, max: 10, low: 2, high: 8 }) as ComponentNode,
     contract: async (page, root) => {
-      const low = root.getByRole('slider', { name: 'Low' });
+      const low = root.getByRole('slider', { name: 'Price, lowest' });
+      const high = root.getByRole('slider', { name: 'Price, highest' });
       await low.focus();
+      await pressed(page, 'ArrowRight');
+      assert((await low.inputValue()) === '3', 'ArrowRight did not raise the low thumb');
       await pressed(page, 'End');
-      const high = await root.getByRole('slider', { name: 'High' }).inputValue();
-      assert(Number(await low.inputValue()) <= Number(high), 'the low thumb passed the high thumb');
+      assert((await low.inputValue()) === '8', `End took the low thumb to ${await low.inputValue()}, past the high one`);
+      await high.focus();
+      await pressed(page, 'Home');
+      assert((await high.inputValue()) === '8', `Home took the high thumb to ${await high.inputValue()}, below the low one`);
+      assert((await high.getAttribute('max')) === '10', 'the track was remapped');
     },
   },
   {
@@ -570,22 +599,23 @@ export const PATTERNS: Pattern[] = [
   },
   {
     id: 'windowsplitter',
-    built: 'aria-only',
-    tree: () =>
-      n('div', {
-        role: 'separator',
-        tabIndex: 0,
-        'aria-orientation': 'vertical',
-        'aria-label': 'Resize',
-        'aria-valuenow': 50,
-        'aria-valuemin': 0,
-        'aria-valuemax': 100,
-      }),
+    built: 'behaviour',
+    preset: 'windowsplitter',
+    tree: () => splitter({ seed: 'pattern-split', label: 'Resize', at: 50 }) as ComponentNode,
     contract: async (page, root) => {
-      await root.getByRole('separator').focus();
+      const separator = root.getByRole('separator');
+      const value = () => separator.getAttribute('aria-valuenow');
+      await separator.focus();
       await pressed(page, 'ArrowLeft');
-      const value = await attr(root, '[role="separator"]', 'aria-valuenow');
-      assert(value !== '50', 'ArrowLeft did not change the value');
+      assert((await value()) === '45', `ArrowLeft gave ${await value()}`);
+      await pressed(page, 'Enter');
+      assert((await value()) === '0', 'Enter did not collapse it');
+      await pressed(page, 'Enter');
+      assert((await value()) === '45', 'Enter did not restore it');
+      await pressed(page, 'End');
+      assert((await value()) === '100', 'End did not move it to the end');
+      await pressed(page, 'Home');
+      assert((await value()) === '0', 'Home did not move it to the start');
     },
   },
 ];

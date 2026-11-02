@@ -45,6 +45,10 @@ import {
   Wrench as ToolbarIcon,
   MessageSquare as TooltipIcon,
   GalleryHorizontal as CarouselIcon,
+  Menu as MenuIcon,
+  PanelsTopLeft as MenubarIcon,
+  TextSearch as ComboboxIcon,
+  Columns2 as SplitterIcon,
 } from 'lucide-react';
 import type { IntrinsicElementType, PropsRecord } from '@/models/ComponentModel';
 import type { PresetKind } from '@/lib/behaviour/presets';
@@ -131,6 +135,11 @@ const INTERACTIVE_COMPONENTS: Record<string, ComponentRegistryEntry> = {
   toolbar: presetEntry('toolbar', 'Toolbar', ToolbarIcon),
   tooltip: presetEntry('tooltip', 'Tooltip', TooltipIcon),
   carousel: presetEntry('carousel', 'Carousel', CarouselIcon),
+  'menu-button': presetEntry('menu-button', 'Menu button', MenuIcon),
+  menubar: presetEntry('menubar', 'Menu bar', MenubarIcon),
+  combobox: presetEntry('combobox', 'Combobox', ComboboxIcon),
+  'slider-multithumb': presetEntry('slider-multithumb', 'Range slider', SlidersIcon),
+  windowsplitter: presetEntry('windowsplitter', 'Split view', SplitterIcon),
 };
 
 // ---------- form components (published site essentials, decision 4) ----------

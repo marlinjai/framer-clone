@@ -5,6 +5,11 @@ import { addSlide, carousel } from '@/lib/behaviour/presets/carousel';
 import { addTab, collectionTabs, deriveTabs, removeTab, tabs } from '@/lib/behaviour/presets/tabs';
 import { deriveToolbar } from '@/lib/behaviour/presets/toolbar';
 import { deriveTooltip } from '@/lib/behaviour/presets/tooltip';
+import { deriveCombobox } from '@/lib/behaviour/presets/combobox';
+import { deriveMenuButton } from '@/lib/behaviour/presets/menu';
+import { deriveMenubar, menubar } from '@/lib/behaviour/presets/menubar';
+import { deriveMultithumb } from '@/lib/behaviour/presets/slider';
+import { deriveSplitter } from '@/lib/behaviour/presets/splitter';
 import { withProps, propsOf, behaviourOf } from '@/lib/behaviour/presets/nodes';
 
 const kinds = Object.keys(PRESETS) as PresetKind[];
@@ -51,6 +56,11 @@ describe('presets', () => {
     ['tabs', deriveTabs],
     ['toolbar', deriveToolbar],
     ['tooltip', deriveTooltip],
+    ['menu-button', deriveMenuButton],
+    ['menubar', deriveMenubar],
+    ['combobox', deriveCombobox],
+    ['slider-multithumb', deriveMultithumb],
+    ['windowsplitter', deriveSplitter],
   ] as const)('%s derives to the same thing twice', (kind, derive) => {
     const root = PRESETS[kind]('a1');
     expect(derive(root)).toEqual(root);
@@ -193,5 +203,27 @@ describe('carousel', () => {
     const copiedTitle = copy.children?.[0] as PresetNode;
     expect(propsOf(copiedTitle).id).not.toBe('slide-title');
     expect(propsOf(copy)['aria-labelledby']).toBe(propsOf(copiedTitle).id);
+  });
+});
+
+describe('menubar', () => {
+  it('opens one menu at a time, as one number on the bar', () => {
+    const root = menubar({ seed: 'a1' });
+    expect(behaviourOf(root).state).toEqual([expect.objectContaining({ id: 'a1-open', type: 'number', initial: -1, min: -1, max: 1 })]);
+    const menus = byRole(root, 'menu');
+    expect(menus.map((menu) => behaviourOf(menu).showWhen)).toEqual([{ state: 'a1-open', eq: 0 }, { state: 'a1-open', eq: 1 }]);
+  });
+
+  it('keeps the bar\'s keys off the bar, so a key in a menu never reaches them', () => {
+    const root = menubar({ seed: 'a1' });
+    expect(behaviourOf(root).on).toBeUndefined();
+    const [top] = byRole(root, 'menuitem');
+    expect(behaviourOf(top).on?.map((trigger) => trigger.id)).toContain('next');
+  });
+
+  it('without a script leaves each menu a list of links in the flow', () => {
+    for (const menu of byRole(menubar({ seed: 'a1' }), 'menu')) {
+      expect(propsOf(menu).rules).toEqual([expect.objectContaining({ gate: 'off', style: expect.objectContaining({ position: 'static' }) })]);
+    }
   });
 });

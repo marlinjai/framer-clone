@@ -1,11 +1,11 @@
 {
-  "generatedAt": "2026-11-02T10:00:34.735Z",
+  "generatedAt": "2026-11-02T10:26:40.106Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 297,
+  "durationSeconds": 192,
   "matrix": {
     "surfaces": {
       "format": {
@@ -15,8 +15,8 @@
         "total": 1833
       },
       "renderer": {
-        "pass": 1759,
-        "fail": 74,
+        "pass": 1764,
+        "fail": 69,
         "notTested": 0,
         "total": 1833
       },
@@ -465,8 +465,8 @@
           "total": 30
         },
         "renderer": {
-          "pass": 21,
-          "fail": 9,
+          "pass": 26,
+          "fail": 4,
           "notTested": 0,
           "total": 30
         },
@@ -5051,7 +5051,7 @@
       "aria-pattern:button": "pass pass canvas-editor-context pass pass",
       "aria-pattern:carousel": "pass pass canvas-editor-context pass pass",
       "aria-pattern:checkbox": "pass pass pass pass ai-attribute-allowlist",
-      "aria-pattern:combobox": "pass behaviour-state behaviour-state pass ai-attribute-allowlist",
+      "aria-pattern:combobox": "pass pass canvas-editor-context pass ai-attribute-allowlist",
       "aria-pattern:dialog-modal": "pass pass canvas-editor-context pass ai-attribute-allowlist",
       "aria-pattern:disclosure": "pass pass pass pass pass",
       "aria-pattern:feed": "pass behaviour-state behaviour-state pass pass",
@@ -5059,12 +5059,12 @@
       "aria-pattern:landmarks": "pass pass canvas-editor-context pass pass",
       "aria-pattern:link": "pass pass canvas-editor-context pass pass",
       "aria-pattern:listbox": "pass pass pass pass ai-attribute-allowlist",
-      "aria-pattern:menubar": "pass behaviour-state behaviour-state pass pass",
-      "aria-pattern:menu-button": "pass behaviour-state behaviour-state pass ai-attribute-allowlist",
+      "aria-pattern:menubar": "pass pass canvas-editor-context pass pass",
+      "aria-pattern:menu-button": "pass pass canvas-editor-context pass ai-attribute-allowlist",
       "aria-pattern:meter": "pass pass pass pass pass",
       "aria-pattern:radio": "pass pass pass pass ai-attribute-allowlist",
       "aria-pattern:slider": "pass pass pass pass ai-attribute-allowlist",
-      "aria-pattern:slider-multithumb": "pass behaviour-state behaviour-state pass ai-attribute-allowlist",
+      "aria-pattern:slider-multithumb": "pass pass canvas-editor-context pass ai-attribute-allowlist",
       "aria-pattern:spinbutton": "pass pass pass pass ai-attribute-allowlist",
       "aria-pattern:switch": "pass pass pass pass ai-attribute-allowlist",
       "aria-pattern:table": "pass pass pass pass pass",
@@ -5073,7 +5073,7 @@
       "aria-pattern:tooltip": "pass pass canvas-editor-context pass pass",
       "aria-pattern:treeview": "pass behaviour-state behaviour-state pass pass",
       "aria-pattern:treegrid": "pass behaviour-state behaviour-state pass pass",
-      "aria-pattern:windowsplitter": "pass behaviour-state behaviour-state pass pass",
+      "aria-pattern:windowsplitter": "pass pass canvas-editor-context pass pass",
       "component:text": "pass pass pass reusable-components reusable-components",
       "component:number": "pass pass pass reusable-components reusable-components",
       "component:toggle": "pass pass pass reusable-components reusable-components",
@@ -6168,7 +6168,7 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 4,
+            "pass": 0,
             "total": 4
           },
           "computed-styles": {
@@ -6189,9 +6189,17 @@
             "fixture": "busbasis-home",
             "viewport": "Desktop",
             "state": "initial",
+            "check": "screenshot",
+            "gap": "published-base",
+            "detail": "0.44 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-home",
+            "viewport": "Desktop",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "blocked-embedded-content",
-            "detail": "1 differences on 1 elements, first: e405: not in the replica"
+            "gap": "published-base",
+            "detail": "10 differences on 10 elements, first: e168: background-image linear-gradient(to right, rgb(255, 255, 255), rgb(163, 163, 163)) became linear-gradient(to right, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0))"
           },
           {
             "fixture": "busbasis-home",
@@ -6205,9 +6213,17 @@
             "fixture": "busbasis-home",
             "viewport": "Desktop",
             "state": "hover e41",
+            "check": "screenshot",
+            "gap": "published-base",
+            "detail": "0.44 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-home",
+            "viewport": "Desktop",
+            "state": "hover e41",
             "check": "computed-styles",
-            "gap": "blocked-embedded-content",
-            "detail": "1 differences on 1 elements, first: e405: not in the replica"
+            "gap": "published-base",
+            "detail": "10 differences on 10 elements, first: e168: background-image linear-gradient(to right, rgb(255, 255, 255), rgb(163, 163, 163)) became linear-gradient(to right, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0))"
           },
           {
             "fixture": "busbasis-home",
@@ -6222,16 +6238,24 @@
             "viewport": "Desktop",
             "state": "hover e41",
             "check": "interaction",
-            "gap": "blocked-embedded-content",
+            "gap": "published-base",
             "detail": "the replica did not end up where the original did"
           },
           {
             "fixture": "busbasis-home",
             "viewport": "Tablet",
             "state": "initial",
+            "check": "screenshot",
+            "gap": "published-base",
+            "detail": "0.57 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-home",
+            "viewport": "Tablet",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "blocked-embedded-content",
-            "detail": "1 differences on 1 elements, first: e405: not in the replica"
+            "gap": "published-base",
+            "detail": "10 differences on 10 elements, first: e168: background-image linear-gradient(to right, rgb(255, 255, 255), rgb(163, 163, 163)) became linear-gradient(to right, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0))"
           },
           {
             "fixture": "busbasis-home",
@@ -6245,9 +6269,17 @@
             "fixture": "busbasis-home",
             "viewport": "Mobile",
             "state": "initial",
+            "check": "screenshot",
+            "gap": "published-base",
+            "detail": "0.85 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-home",
+            "viewport": "Mobile",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "blocked-embedded-content",
-            "detail": "1 differences on 1 elements, first: e405: not in the replica"
+            "gap": "published-base",
+            "detail": "10 differences on 10 elements, first: e168: background-image linear-gradient(to right, rgb(255, 255, 255), rgb(163, 163, 163)) became linear-gradient(to right, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0))"
           },
           {
             "fixture": "busbasis-home",
@@ -6324,14 +6356,19 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.004407319568452381,
             "elementsCompared": 531,
-            "elementsDiffering": 1,
-            "differences": 1,
+            "elementsDiffering": 10,
+            "differences": 10,
             "byGap": {
+              "published-base": 9,
               "blocked-embedded-content": 1
             },
             "byProperty": [
+              [
+                "background-image",
+                9
+              ],
               [
                 "missing",
                 1
@@ -6341,14 +6378,19 @@
           {
             "viewport": "Desktop",
             "state": "hover e41",
-            "ratio": 0,
+            "ratio": 0.004407319568452381,
             "elementsCompared": 531,
-            "elementsDiffering": 1,
-            "differences": 1,
+            "elementsDiffering": 10,
+            "differences": 10,
             "byGap": {
+              "published-base": 9,
               "blocked-embedded-content": 1
             },
             "byProperty": [
+              [
+                "background-image",
+                9
+              ],
               [
                 "missing",
                 1
@@ -6358,14 +6400,19 @@
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.005712011681348142,
             "elementsCompared": 531,
-            "elementsDiffering": 1,
-            "differences": 1,
+            "elementsDiffering": 10,
+            "differences": 10,
             "byGap": {
+              "published-base": 9,
               "blocked-embedded-content": 1
             },
             "byProperty": [
+              [
+                "background-image",
+                9
+              ],
               [
                 "missing",
                 1
@@ -6375,14 +6422,19 @@
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.008511234630284656,
             "elementsCompared": 531,
-            "elementsDiffering": 1,
-            "differences": 1,
+            "elementsDiffering": 10,
+            "differences": 10,
             "byGap": {
+              "published-base": 9,
               "blocked-embedded-content": 1
             },
             "byProperty": [
+              [
+                "background-image",
+                9
+              ],
               [
                 "missing",
                 1
@@ -7911,6 +7963,14 @@
         "styleDifferences": 0
       },
       {
+        "id": "published-base",
+        "pages": [
+          "busbasis-home"
+        ],
+        "needs": 0,
+        "styleDifferences": 36
+      },
+      {
         "id": "blocked-embedded-content",
         "pages": [
           "busbasis-home"
@@ -7977,8 +8037,8 @@
   },
   "roundTrip": {
     "nodesToJsxToNodes": {
-      "pass": 117,
-      "total": 117
+      "pass": 122,
+      "total": 122
     },
     "jsxToNodesToRender": {
       "pass": 11,
@@ -8376,6 +8436,31 @@
         "pass": true
       },
       {
+        "id": "preset: menu-button",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "preset: menubar",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "preset: combobox",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "preset: slider-multithumb",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "preset: windowsplitter",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
         "id": "synthetic: responsive style map",
         "direction": "nodes-jsx-nodes",
         "pass": true
@@ -8752,18 +8837,18 @@
       "id": "blocked-embedded-content",
       "description": "What the render gate refuses (blockedNodes.ts and renderVocabulary.ts): embedded content (iframe, object, embed, ...), although these are ordinary content elements, and attributes that act by themselves (ping, the shadow root ones).",
       "matrixCells": 78,
-      "corpusChecks": 9,
+      "corpusChecks": 4,
       "fixtures": [
         "busbasis-home"
       ],
       "onlyGapOf": [],
       "roundTripCases": 0,
-      "cost": 87
+      "cost": 82
     },
     {
       "id": "behaviour-state",
       "description": "Behaviour and state: no way to say that one element changes another.",
-      "matrixCells": 18,
+      "matrixCells": 8,
       "corpusChecks": 59,
       "fixtures": [
         "radix-accordion",
@@ -8774,7 +8859,7 @@
         "radix-dialog"
       ],
       "roundTripCases": 0,
-      "cost": 77
+      "cost": 67
     },
     {
       "id": "page-level-css",
@@ -8829,12 +8914,24 @@
     {
       "id": "canvas-editor-context",
       "description": "The contract passes on the published page, but the mounted editor changes the outcome: Space pans, a link does not navigate, and the editor's own main element stops a header inside it being a banner. Closing it takes an interact mode on the canvas.",
-      "matrixCells": 10,
+      "matrixCells": 15,
       "corpusChecks": 0,
       "fixtures": [],
       "onlyGapOf": [],
       "roundTripCases": 0,
-      "cost": 10
+      "cost": 15
+    },
+    {
+      "id": "published-base",
+      "description": "The published route ships the root layout's sheet to every visitor (Tailwind's reset, the theme, the base layer), and the page base of a site takes that out again. A check here fails with that sheet in place and passes on a page without it, so the page base left something behind. Measured, not guessed: the same replica matches its original on a page without the base.",
+      "matrixCells": 0,
+      "corpusChecks": 9,
+      "fixtures": [
+        "busbasis-home"
+      ],
+      "onlyGapOf": [],
+      "roundTripCases": 0,
+      "cost": 9
     },
     {
       "id": "import-dynamic-logic",
@@ -9446,6 +9543,7 @@
       "alpha",
       "alt",
       "anchor",
+      "aria-autocomplete",
       "aria-controls",
       "aria-current",
       "aria-describedby",
@@ -9460,7 +9558,6 @@
       "aria-setsize",
       "aria-valuemax",
       "aria-valuemin",
-      "aria-valuenow",
       "autoCapitalize",
       "autoComplete",
       "autoCorrect",
@@ -9556,7 +9653,6 @@
       "popover",
       "popoverTarget",
       "popoverTargetAction",
-      "popovertarget",
       "poster",
       "preload",
       "readOnly",
@@ -9710,7 +9806,12 @@
       "tabs",
       "toolbar",
       "tooltip",
-      "carousel"
+      "carousel",
+      "menu-button",
+      "menubar",
+      "combobox",
+      "slider-multithumb",
+      "windowsplitter"
     ],
     "rawFieldRows": [
       "css-at-rule:@container",

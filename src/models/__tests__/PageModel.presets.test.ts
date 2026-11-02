@@ -11,6 +11,8 @@ import ProjectStore from '@/stores/ProjectStore';
 import ComponentModel, { type ComponentInstance } from '@/models/ComponentModel';
 import type { ProjectModelType } from '@/models/ProjectModel';
 
+const INTERACTIVE = ['tabs', 'toolbar', 'tooltip', 'carousel', 'menu-button', 'menubar', 'combobox', 'slider-multithumb', 'windowsplitter'];
+
 type Stored = { id: string; type: string; props: Record<string, unknown>; parentId?: string; label?: string; children: Stored[] };
 
 function setup() {
@@ -31,10 +33,10 @@ const refused = (node: Stored) => readBehaviourTree(node as never).refused;
 
 describe('a preset from the palette', () => {
   it('is on offer under its own heading', () => {
-    expect(listComponentsByCategory('interactive').map((entry) => entry.id)).toEqual(['tabs', 'toolbar', 'tooltip', 'carousel']);
+    expect(listComponentsByCategory('interactive').map((entry) => entry.id)).toEqual(INTERACTIVE);
   });
 
-  it.each(['tabs', 'toolbar', 'tooltip', 'carousel'])('%s lands whole, with every child knowing its parent', (id) => {
+  it.each(INTERACTIVE)('%s lands whole, with every child knowing its parent', (id) => {
     const { page } = setup();
     const placed = page.insertRegistryComponent(id, { kind: 'appTree' }) as ComponentInstance;
     const node = stored(placed);
@@ -107,6 +109,17 @@ describe('a preset from the palette', () => {
     const keys = (list.props.behaviour as { on: { do: { rove: string }[] }[] }).on;
     expect(keys[0].do[0].rove).toBe(list.id);
     expect(refused(copy)).toEqual([]);
+  });
+
+  it('a preset\'s nodes still find their own registry entry, so a text in one stays bindable', async () => {
+    const { getRegistryIdForNode } = await import('@/components/sidebars/right/registryId');
+    const { page } = setup();
+    const placed = page.insertRegistryComponent('menu-button', { kind: 'appTree' }) as ComponentInstance;
+    const button = placed.children[0] as ComponentInstance;
+    expect(button.id.startsWith('menu-')).toBe(true);
+    expect(getRegistryIdForNode(button)).toBe('button');
+    const tabs = page.insertRegistryComponent('tabs', { kind: 'appTree' }) as ComponentInstance;
+    expect(getRegistryIdForNode(tabs.children[0].children[0] as ComponentInstance)).toBe('button');
   });
 
   it('a duplicate of something with no preset keeps an id nothing points at', () => {

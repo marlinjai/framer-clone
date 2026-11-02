@@ -12,7 +12,9 @@ import { TEXT_NODE_TYPE } from '@/lib/renderer/textNode';
  */
 export function getRegistryIdForNode(node: ComponentInstance): string | undefined {
   const idPrefix = node.id.split('-')[0];
-  if (getComponentEntry(idPrefix)) return idPrefix;
+  // A behaviour preset's seed starts every id in it, so its prefix names the preset, not what the node is.
+  const entry = getComponentEntry(idPrefix);
+  if (entry && !entry.preset) return idPrefix;
 
   const kind = (node.props as Record<string, unknown> | undefined)?.['data-component-kind'];
   if (kind === 'collection') return 'collection';
