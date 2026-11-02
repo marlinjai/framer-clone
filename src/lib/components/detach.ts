@@ -23,7 +23,7 @@
 import { remapBehaviourRefs } from '@/lib/behaviour/format';
 import type { BindingEntry, BindingsRecord } from '@/lib/bindings/types';
 import { parseExpression } from '@/lib/bindings/resolver/expression';
-import { createScope, pushInputFrame } from '@/lib/bindings/resolver/scope';
+import { createScope, lookup, pushInputFrame, pushItemFrame, type BindingScope } from '@/lib/bindings/resolver/scope';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { extractBreakpoints } from '@/lib/renderer/server/componentSnapshot';
 import type { BreakpointRef } from '@/lib/responsive/cascade';
@@ -42,6 +42,8 @@ import {
   type PlacementInstance,
 } from './expand';
 import { isPlacementType, type PlacementProps } from './placement';
+import { repeatInputId, withoutRepeat } from './repeat';
+import { MAX_LIST_ITEMS } from './inputs';
 
 /** A stored node, as `getSnapshot` gives it: everything else on it is copied as it is. */
 export interface StoredNode {
@@ -113,7 +115,7 @@ export function detachedTree(placement: StoredNode, options: DetachOptions): Sto
     inputDefinitions,
   };
   const budget = createRenderBudget();
-  const scope = pushInputFrame(createScope(), resolveInputValues(instance, createScope(), budget, true));
+  const placementScope = pushInputFrame(createScope(), resolveInputValues(instance, createScope(), budget, true));
 
   const marker = `data-u-c-${definition.id.slice(0, 8).toLowerCase()}`;
   const ids = new Map<string, string>();
@@ -129,8 +131,11 @@ export function detachedTree(placement: StoredNode, options: DetachOptions): Sto
     const outerPath = outer?.mode === 'read' ? parseExpression(outer.expression)?.path : undefined;
     return outerPath ? `{{${[...outerPath, ...path.slice(2)].join('.')}}}` : undefined;
   };
-  const readsInputFrame = (entry: BindingEntry) =>
-    entry.mode === 'read' && parseExpression(entry.expression)?.path[0] === 'input';
+  // An item of a list is the placement's too: it is written in with the copy that shows it.
+  const readsInputFrame = (entry: BindingEntry) => {
+    const head = entry.mode === 'read' ? parseExpression(entry.expression)?.path[0] : undefined;
+    return head === 'input' || head === 'item';
+  };
 
   /** Bindings split by what happens to them: rewritten to data, written as literals, or left alone. */
   const splitBindings = (bindings: BindingsRecord) => {
@@ -177,7 +182,7 @@ export function detachedTree(placement: StoredNode, options: DetachOptions): Sto
     return { ...props, id: unique };
   };
 
-  const copyPlacement = (node: StoredNode, props: Record<string, unknown>, id: string): StoredNode => {
+  const copyPlacement = (node: StoredNode, props: Record<string, unknown>, id: string, scope: BindingScope): StoredNode => {
     const { kept, literal } = splitBindings(node.bindings ?? {});
     const baked = bakeInputBindings({ id, type: node.type, props: {}, bindings: literal } as ComponentNode, scope);
     const written = Object.entries(baked.props as Record<string, unknown>)
@@ -191,7 +196,7 @@ export function detachedTree(placement: StoredNode, options: DetachOptions): Sto
     };
   };
 
-  const copy = (node: StoredNode, parentId: string | undefined, isRoot: boolean): StoredNode | null => {
+  const copy = (node: StoredNode, parentId: string | undefined, isRoot: boolean, scope: BindingScope = placementScope): StoredNode | null => {
     const allowed = bindingsAllowed(node.bindings ?? {}, inputDefinitions, budget);
     const { kept, literal } = splitBindings(allowed);
     const { visible, ...written } = literal;
@@ -199,7 +204,7 @@ export function detachedTree(placement: StoredNode, options: DetachOptions): Sto
     const id = newId();
     ids.set(node.id, id);
     const mapped = copyRules(mapNodeProps(node.props ?? {}, own, holderBreakpoints), isRoot);
-    if (isPlacementType(node.type)) return { ...copyPlacement({ ...node, bindings: allowed }, mapped, id), parentId };
+    if (isPlacementType(node.type)) return { ...copyPlacement({ ...node, bindings: allowed }, mapped, id, scope), parentId };
     const baked = bakeInputBindings(
       { id, type: node.type, props: mapped as ComponentNode['props'], bindings: written } as ComponentNode,
       scope,
@@ -211,8 +216,26 @@ export function detachedTree(placement: StoredNode, options: DetachOptions): Sto
       parentId,
       props,
       bindings: kept,
-      children: (node.children ?? []).flatMap(child => copy(child, id, false) ?? []),
+      children: (node.children ?? []).flatMap(child => copyChild(child, id, scope)),
     };
+  };
+
+  /**
+   * A child, or one copy per item where it repeats for a list whose items are known
+   * here, each with its item written in. A list bound to data has no items in the
+   * editor, so its node stays once, without the marker, showing its stored values.
+   */
+  const copyChild = (child: StoredNode, parentId: string, scope: BindingScope): StoredNode[] => {
+    const repeatId = repeatInputId(child.props);
+    const one = (node: StoredNode, at: BindingScope): StoredNode[] => {
+      const copied = copy(node, parentId, false, at);
+      return copied ? [copied] : [];
+    };
+    if (!repeatId) return one(child, scope);
+    const items = lookup(scope, ['input', repeatId]);
+    const plain = { ...child, props: withoutRepeat(child as unknown as ComponentNode).props } as StoredNode;
+    if (!Array.isArray(items)) return instance.bindings[`input.${repeatId}`] ? one(plain, scope) : [];
+    return items.slice(0, MAX_LIST_ITEMS).flatMap(item => one(plain, pushItemFrame(scope, item)));
   };
 
   const tree = copy(treeOf(definition), undefined, true);

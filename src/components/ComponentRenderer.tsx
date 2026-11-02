@@ -24,6 +24,7 @@ import { EDITING_TEXT_STYLE, startInlineTextEdit } from '@/lib/canvas/inlineText
 import { INLINE_FORMAT_KEYS, applyInlineFormat, beginRunEdit, normaliseEditedText, runAtPoint } from '@/lib/canvas/inlineFormat';
 import { isTextBound } from '@/lib/renderer/textContent';
 import { isTextNodeType } from '@/lib/renderer/textNode';
+import { childrenWithRepeats } from '@/lib/renderer/repeatChildren';
 
 interface ComponentRendererProps {
   component: ComponentInstance;
@@ -312,9 +313,8 @@ const NodeRenderer = observer(({ component, breakpointId, allBreakpoints, scope,
     />
   );
 
-  const children = component.children.map((ch: ComponentInstance) => (
-    <React.Fragment key={ch.id}>{renderNode(ch, activeScope)}</React.Fragment>
-  ));
+  // A child repeated for a list is drawn once per item (src/lib/components/repeat.ts), and once, empty, on the component's own canvas when there is none.
+  const children = childrenWithRepeats(component.children, activeScope, renderNode, !host);
 
   if (placement) finalProps[DATA_PLACEMENT_ROOT] = `${frameId}-${component.id}`;
 

@@ -21,12 +21,12 @@
 
 import React, { useEffect, useState } from 'react';
 import { observer } from 'mobx-react-lite';
-import { Component, Pencil, RotateCcw, Unlink } from 'lucide-react';
+import { ArrowDown, ArrowUp, Component, Pencil, Plus, RotateCcw, Trash2, Unlink } from 'lucide-react';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import type { BindableSlotMeta } from '@/lib/bindings/types';
 import { useStore } from '@/hooks/useStore';
 import { isResponsiveMap, resolveCascade, type BreakpointRef } from '@/lib/responsive/cascade';
-import { CURSOR_KEYWORDS, parseInputValue, type ImageValue, type InputDefinition } from '@/lib/components/inputs';
+import { CURSOR_KEYWORDS, MAX_LIST_ITEMS, parseInputValue, type ImageValue, type InputDefinition } from '@/lib/components/inputs';
 import { formatRuns, parseRuns } from '@/lib/components/richText';
 import type { PlacementProps } from '@/lib/components/placement';
 import { requestDetach } from '@/lib/components/editorCommands';
@@ -47,9 +47,10 @@ const ERROR = 'text-[11px] leading-snug text-destructive';
 const ACTION =
   'flex h-7 min-w-0 flex-1 items-center justify-center gap-1.5 rounded border border-border px-2 text-[11px] text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand phone:h-9';
 
-/** The types whose value has a control of its own here. A list and a gallery are set from data. */
+/** The types whose value has a control of its own here: all but an event, which is wired on the placement. */
 const EDITABLE = new Set([
   'text', 'number', 'toggle', 'color', 'image', 'link', 'choice', 'richtext', 'file', 'date', 'border', 'shadow', 'cursor', 'transition',
+  'list', 'gallery',
 ]);
 
 /** What a CSS value looks like, for a field with no default to show. */
@@ -188,6 +189,99 @@ const ColorControl = ({
   );
 };
 
+const ITEM_BUTTON =
+  'flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:pointer-events-none disabled:opacity-40 phone:h-9 phone:w-9';
+
+/**
+ * The items of a `list` or `gallery`: one box per item with a control per field (a
+ * gallery's item is an image), moved and removed by buttons, and Add at the end. The
+ * whole list is checked and stored on each change, one undo step each, and a list
+ * the input refuses stays out with the reason.
+ */
+const ItemsControl = ({ input, value, onCommit }: { input: InputDefinition; value: unknown; onCommit: (value: unknown) => void }) => {
+  const [error, setError] = useState<string | null>(null);
+  const items: unknown[] = Array.isArray(value) ? value : [];
+  const isGallery = input.type === 'gallery';
+  const fields: InputDefinition[] = isGallery ? [{ id: 'image', name: 'Image', type: 'image' }] : input.fields ?? [];
+  const store = (next: unknown[]) => {
+    const parsed = parseInputValue(input, next);
+    if (!parsed.ok) {
+      setError(`Not stored: ${parsed.reason}.`);
+      return;
+    }
+    setError(null);
+    onCommit(next);
+  };
+  const itemValue = (item: unknown, field: InputDefinition): unknown =>
+    isGallery ? item : item && typeof item === 'object' ? (item as Record<string, unknown>)[field.id] : undefined;
+  const withField = (item: unknown, field: InputDefinition, next: unknown): unknown =>
+    isGallery ? next : { ...(item && typeof item === 'object' ? item : {}), [field.id]: next };
+  const move = (from: number, to: number) => {
+    const next = [...items];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    store(next);
+  };
+  return (
+    <div className="flex min-w-0 flex-col gap-1.5">
+      {items.length === 0 && <p className={HINT}>No items: nothing of it shows on the page.</p>}
+      <ol className="flex min-w-0 flex-col gap-1.5" aria-label={`Items of ${input.name}`}>
+        {items.map((item, index) => {
+          const label = `${input.name} item ${index + 1}`;
+          return (
+            <li key={index} className="flex min-w-0 flex-col gap-1.5 rounded border border-border p-1.5">
+              <div className="flex min-w-0 items-center gap-1">
+                <span className={cn(FIELD_LABEL, 'min-w-0 flex-1 truncate')}>Item {index + 1}</span>
+                <button type="button" className={ITEM_BUTTON} aria-label={`Move ${label} up`} disabled={index === 0} onClick={() => move(index, index - 1)}>
+                  <ArrowUp size={12} aria-hidden />
+                </button>
+                <button type="button" className={ITEM_BUTTON} aria-label={`Move ${label} down`} disabled={index === items.length - 1} onClick={() => move(index, index + 1)}>
+                  <ArrowDown size={12} aria-hidden />
+                </button>
+                <button type="button" className={ITEM_BUTTON} aria-label={`Remove ${label}`} onClick={() => store(items.filter((_, at) => at !== index))}>
+                  <Trash2 size={12} aria-hidden />
+                </button>
+              </div>
+              {fields.map((field) => (
+                <div key={field.id} className="flex min-w-0 flex-col gap-1">
+                  {!isGallery && <span className={HINT}>{field.name}</span>}
+                  <InputControl
+                    input={{ ...field, name: `${field.name} of ${label}` }}
+                    value={itemValue(item, field)}
+                    onCommit={(next) => store(items.map((entry, at) => (at === index ? withField(entry, field, next) : entry)))}
+                  />
+                </div>
+              ))}
+            </li>
+          );
+        })}
+      </ol>
+      {isGallery ? (
+        <CommitField
+          key={items.length}
+          label={`New image for ${input.name}`}
+          shown=""
+          placeholder="Add an image: /photo.jpg"
+          inputMode="url"
+          mono
+          parse={(text) => ({ ok: true, value: text.trim() })}
+          onCommit={(src) => store([...items, { src, alt: '' }])}
+        />
+      ) : (
+        <button
+          type="button"
+          className={cn(ACTION, 'flex-none')}
+          disabled={items.length >= MAX_LIST_ITEMS}
+          onClick={() => store([...items, {}])}
+        >
+          <Plus size={12} aria-hidden /> Add item to {input.name}
+        </button>
+      )}
+      {error && <p role="alert" className={ERROR}>{error}</p>}
+    </div>
+  );
+};
+
 /** The control for one input, by its type. `value` is what the placement shows on this frame. */
 const InputControl = ({ input, value, onCommit }: { input: InputDefinition; value: unknown; onCommit: (value: unknown) => void }) => {
   // The value is stored as given once it parses: the renderer parses it again, and
@@ -246,6 +340,9 @@ const InputControl = ({ input, value, onCommit }: { input: InputDefinition; valu
         </div>
       );
     }
+    case 'list':
+    case 'gallery':
+      return <ItemsControl input={input} value={value} onCommit={onCommit} />;
     case 'richtext':
       // Stored as the runs it reads to, never as the notation: the page renders runs.
       return (

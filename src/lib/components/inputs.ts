@@ -344,6 +344,49 @@ export function optionsFromText(text: string): Parsed<{ label: string; value: st
   return { ok: true, value: options };
 }
 
+/** The field types the panel's notation writes for a list item: the scalars a field takes without options. */
+export const LIST_FIELD_NOTATION_TYPES: readonly InputType[] = ['text', 'number', 'toggle', 'color', 'link', 'image'];
+
+/**
+ * The fields of a `list` input as the panel writes them: `Label, To: link`, one
+ * per comma, a field plain text unless `: type` says otherwise.
+ */
+export function fieldsToText(fields: readonly InputDefinition[] | undefined): string {
+  return (fields ?? []).map(field => (field.type === 'text' ? field.name : `${field.name}: ${field.type}`)).join(', ');
+}
+
+/**
+ * The fields from text `fieldsToText` writes. A field keeps the id of the field it
+ * had under the same name, so its stored values stay; a new one gets an id from its
+ * name. A reason when it cannot be read.
+ */
+export function fieldsFromText(text: string, existing: readonly InputDefinition[] = []): Parsed<InputDefinition[]> {
+  const entries = text.split(',').map(entry => entry.trim()).filter(entry => entry !== '');
+  if (entries.length === 0) return { ok: false, reason: 'a list needs at least one field' };
+  const fields: InputDefinition[] = [];
+  const ids = new Set<string>();
+  for (const entry of entries) {
+    const at = entry.lastIndexOf(':');
+    const name = (at === -1 ? entry : entry.slice(0, at)).trim();
+    const type = (at === -1 ? 'text' : entry.slice(at + 1).trim().toLowerCase()) as InputType;
+    if (name === '') return { ok: false, reason: 'each field needs a name' };
+    if (!LIST_FIELD_NOTATION_TYPES.includes(type)) {
+      return { ok: false, reason: `a field is ${LIST_FIELD_NOTATION_TYPES.join(', ')}, not ${type}` };
+    }
+    const kept = existing.find(field => field.name.toLowerCase() === name.toLowerCase());
+    const base = kept?.id ?? (name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'field');
+    let id = base;
+    for (let n = 2; ids.has(id); n++) id = `${base}-${n}`;
+    if (!INPUT_ID.test(id)) return { ok: false, reason: `${name} cannot be a field name` };
+    ids.add(id);
+    fields.push({ id, name, type });
+  }
+  if (new Set(fields.map(field => field.name.toLowerCase())).size !== fields.length) {
+    return { ok: false, reason: 'two fields have the same name' };
+  }
+  return { ok: true, value: fields };
+}
+
 /**
  * The same input with another type, ready for `changeInputType`: its id, name,
  * group and description stay, the fields only the old type read go, and a type

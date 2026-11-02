@@ -137,6 +137,33 @@ async function operate(type: InputType, node: ComponentInstance): Promise<Cell> 
     await act(async () => fireEvent.change(screen.getByLabelText(name), { target: { value: sample.value } }));
     return cell(stored() === sample.value, 'the select stored nothing');
   }
+  if (type === 'list') {
+    // Two items added by the button, each field typed; an unsafe address is refused in its field.
+    const items = sample.value as Record<string, string>[];
+    const fields = Object.keys(items[0]);
+    for (let added = 0; added < items.length; added++) {
+      await act(async () => fireEvent.click(screen.getByRole('button', { name: `Add item to ${name}` })));
+    }
+    await typeInto(screen.getByLabelText(`To of ${name} item 1`), (sample.refused as Record<string, string>[])[0].to);
+    const refusedKept = JSON.stringify(stored()) === JSON.stringify([{}, {}]);
+    for (const [index, item] of items.entries()) {
+      for (const field of fields) {
+        const label = field === 'label' ? 'Label' : 'To';
+        await typeInto(screen.getByLabelText(`${label} of ${name} item ${index + 1}`), item[field]);
+      }
+    }
+    return cell(refusedKept && JSON.stringify(stored()) === JSON.stringify(sample.value), `refused kept out: ${refusedKept}, stored ${JSON.stringify(stored())}`);
+  }
+  if (type === 'gallery') {
+    const images = sample.value as { src: string; alt: string }[];
+    await typeInto(screen.getByLabelText(`New image for ${name}`), (sample.refused as { src: string }[])[0].src);
+    const refusedKept = stored() === undefined;
+    for (const [index, image] of images.entries()) {
+      await typeInto(screen.getByLabelText(`New image for ${name}`), image.src);
+      await typeInto(screen.getByLabelText(`Image of ${name} item ${index + 1} description`), image.alt);
+    }
+    return cell(refusedKept && JSON.stringify(stored()) === JSON.stringify(sample.value), `refused kept out: ${refusedKept}, stored ${JSON.stringify(stored())}`);
+  }
   if (type === 'richtext') {
     // Typed in the field's notation, which must store the runs, not the text.
     const field = screen.getByLabelText(name);
