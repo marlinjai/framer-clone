@@ -269,8 +269,12 @@ describe.each(ENGINES)('in %s', (name, engine) => {
       await onPhone('preset-combobox', async (target) => {
         await el('city-field', target).tap();
         await target.keyboard.type('z');
+        // The filter hides the options that do not match and moves the one left up: tap only after that,
+        // or WebKit's touch lands where the option was a frame earlier.
+        await expect.poll(() => shown('city-option-0', target)).toBe(false);
+        await expect.poll(() => shown('city-option-1', target)).toBe(true);
         await el('city-option-1', target).tap();
-        await expect.poll(() => el('city-field', target).inputValue()).toBe('Zurich');
+        await expect.poll(() => el('city-field', target).inputValue(), { timeout: 5000 }).toBe('Zurich');
         expect(await wider(target)).toBe(false);
       });
     });
