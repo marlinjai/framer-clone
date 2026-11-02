@@ -23,7 +23,7 @@
 
 import React from 'react';
 import { isVoidTag } from '@/lib/drag/voidTags';
-import { contentBelow, type ForeignContent, isBlockedProp, isBlockedTag, safeInlineStyle, withoutClobberingId, withoutFormOverrides } from '@/lib/renderer/blockedNodes';
+import { contentBelow, type ForeignContent, isBlockedProp, isBlockedTag, renderedInlineStyle, withoutClobberingId, withoutFormOverrides } from '@/lib/renderer/blockedNodes';
 import { isLegacyRulesAttribute } from '@/lib/rules/rules';
 import { isComponentPlaceholderType } from '@/lib/components/placement';
 import { isTextNodeType, ownTextThenChildren, renderableText } from '@/lib/renderer/textNode';
@@ -107,7 +107,7 @@ export function nodeDomProps(node: ComponentNode): Record<string, unknown> {
     if (name === 'rules' && !isLegacyRulesAttribute(value)) continue;
     if (name === 'style') {
       const flat = flattenStyle(value);
-      const style = flat && safeInlineStyle(flat);
+      const style = flat && renderedInlineStyle(flat);
       if (style && Object.keys(style).length > 0) props.style = style;
       continue;
     }

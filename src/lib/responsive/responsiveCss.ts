@@ -102,6 +102,7 @@ import {
   type SurfaceFrame,
 } from '@/lib/rules/surfaces';
 import { isRootStyleKey } from '@/lib/rules/rootProperties';
+import { cappedZIndex } from '@/lib/styles/stacking';
 import { largestFirst, resolveCascade, type BreakpointRef } from './cascade';
 
 /** At most this many emitted rules on one page, counted after rows share a rule class. */
@@ -397,7 +398,9 @@ export interface DroppedDeclaration {
 
 /**
  * One `prop:value` declaration, or null when the property or value is unsafe
- * (reported through `onDrop`) or React would not render the value at all.
+ * (reported through `onDrop`) or React would not render the value at all. A
+ * z-index is held below the platform's layers (src/lib/styles/stacking.ts),
+ * after the check, so the check judges what was stored.
  */
 function declaration(
   className: string,
@@ -411,7 +414,9 @@ function declaration(
     onDrop({ className, property: key, reason });
     return null;
   }
-  return text === undefined ? null : `${cssPropertyName(key)}:${sheetValueText(text)}`;
+  if (text === undefined) return null;
+  const emitted = key === 'zIndex' ? String(cappedZIndex(text)) : text;
+  return `${cssPropertyName(key)}:${sheetValueText(emitted)}`;
 }
 
 /** One node's styles, keyed by its (already safe) class name. */

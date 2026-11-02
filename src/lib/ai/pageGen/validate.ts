@@ -232,7 +232,9 @@ const Z_INDEX_KEYWORD = /^(?:auto|inherit|initial|unset|revert|revert-layer)$/i;
 /**
  * A z-index no higher than GENERATION_LIMITS.maxZIndex, or undefined for one that
  * cannot be read: a var() or calc() could hide any number. The banner sits above
- * that limit, so nothing generated can cover it.
+ * that limit, so nothing generated can cover it. The generator's own, lower limit:
+ * the renderers hold every stored z-index below the platform's layers anyway
+ * (src/lib/styles/stacking.ts).
  */
 export function clampedZIndex(value: string | number): string | number | undefined {
   const limit = GENERATION_LIMITS.maxZIndex;

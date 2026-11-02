@@ -16,6 +16,7 @@ import { isOtherSpelling, isRenderedAttribute, isRenderedTag } from '@/lib/rende
 import { TEXT_NODE_TYPE } from '@/lib/renderer/textNode';
 import { STICKY_CTA_PROP_KEYS } from '@/lib/stickyCta/stickyCta';
 import { SAFE_PROPERTY, UNSAFE_VALUE, cssValueText, isContainedValue } from '@/lib/responsive/responsiveCss';
+import { withCappedZIndex } from '@/lib/styles/stacking';
 
 /**
  * Refused by name, whatever the vocabulary says: both renderers and the score's
@@ -248,12 +249,22 @@ export function withoutClobberingId(tag: unknown, props: Record<string, unknown>
   return rest;
 }
 
+/**
+ * The inline style a stored node renders with: safeInlineStyle, then its z-index
+ * held below the platform's layers (src/lib/styles/stacking.ts). The same object
+ * when nothing changes. Not part of safeInlineStyle, which also says whether a
+ * style is refused, and a high z-index is capped, never refused.
+ */
+export function renderedInlineStyle(style: Record<string, unknown>): Record<string, unknown> {
+  return withCappedZIndex(safeInlineStyle(style));
+}
+
 /** `props` without its blocked keys and unsafe style; the same object when there are none. */
 export function withoutBlockedProps(props: Record<string, unknown>): Record<string, unknown> {
   const names = Object.keys(props);
   const kept = names.filter((name) => !isBlockedProp(name, props[name]));
   const style = props.style && typeof props.style === 'object' && kept.includes('style')
-    ? safeInlineStyle(props.style as Record<string, unknown>)
+    ? renderedInlineStyle(props.style as Record<string, unknown>)
     : props.style;
   if (kept.length === names.length && style === props.style) return props;
   return Object.fromEntries(kept.map((name) => [name, name === 'style' ? style : props[name]]));
