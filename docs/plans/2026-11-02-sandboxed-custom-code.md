@@ -536,6 +536,8 @@ the renderer files. C1 and O1 are the only ones touching infrastructure.
 
 ## For Marlin
 
+**M2 done on 2026-11-02:** `lumitrausercontent.com` is registered at Cloudflare Registrar (through Lumitra Mail's buy-a-domain flow, in the Lumitra Mail workspace "Lumitra Infrastructure"), held by Marlin for Lumitra, expiring 2027-11-02 with auto-renew, privacy and transfer lock on. Its DNS zone is in Lumitra's Cloudflare account (zone id `2d1f61f852327bc23ef420fda0651121`, nameservers blair and lochlan at Cloudflare) with no records yet and no mail setup. Slice O1 can now bring the zone under Terraform and add the box's records. The Lumitra Mail order is deliberately left in "needs attention": never retry it, because a retry would try to make it a sending domain.
+
 **Answered by Marlin on 2026-11-02:** M2 yes, `lumitrausercontent.com`, bought through Lumitra Mail's own buy-a-domain flow (a separate session in the email-editor repo is doing the purchase and reports back); M10 the default below; M11, M12 (three.js first), M14 and M15 yes; M13 yes if C8's probe holds. M9, the lawyer's reading before C7, still stands. C8 is therefore in scope, not a proposal.
 
 One line each, with the default that holds if he says nothing different.
