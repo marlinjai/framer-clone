@@ -3,7 +3,7 @@ type: plan
 status: draft
 date: 2026-11-02
 title: "The behaviour model: page state, events and actions as data, and sandboxed custom code"
-summary: "How a node stores behaviour without ever storing code: typed state values, triggers for real browser events, a closed action list frozen after prototyping the hardest presets in three engines, compiled to a runtime a page without behaviour never loads. Thirteen failing interaction patterns become presets. Of the 100 event handler rows, 92 are expected to close on a real cause and one more on published pages, 2 are labelled as reachable only by custom code, and 5 stay red with a reason. Custom code runs in a separate small service on a separate registrable domain, off by default, never in the editor. Revised after an independent review that found seven stated guarantees false. The sandbox slices stay blocked until Marlin decides M1 to M10."
+summary: "How a node stores behaviour without ever storing code: typed state values, triggers for real browser events, a closed action list frozen after prototyping the hardest presets in three engines, compiled to a runtime a page without behaviour never loads. Thirteen failing interaction patterns become presets. Of the 100 event handler rows, 92 are expected to close on a real cause and one more on published pages, 2 are labelled as reachable only by custom code, and 5 stay red with a reason. Custom code runs in a separate small service on a separate registrable domain, off by default, never in the editor. Revised after an independent review that found seven stated guarantees false. Marlin accepted the defaults for M1 to M10 on 2026-11-02; the domain name and terms are still his."
 tags: [framer-clone, primitives, behaviour, state, wai-aria, custom-code, sandbox, security, fleet]
 projects: [framer-clone]
 ---
@@ -57,7 +57,7 @@ cells the mounted editor loses, the 100 event handler rows that fail in all five
 10. **Custom code runs in a frame with an opaque origin, from a separate small service on a separate
     registrable domain, never in the editor document.** It has no storage and no fetch. It is not free of
     network: see the preconnect residual. Code and what it may touch enter only through one guarded route.
-    Slices C1 to C5 stay blocked until Marlin decides M1 to M10.
+    Marlin accepted the defaults for M1 to M10 on 2026-11-02; see that section for what is still his.
 
 ## What the browsers do, measured
 
@@ -871,6 +871,8 @@ A block's children are ordinary nodes, in the wrapper, shown until the broker's 
 off, refused hash, watchdog and old browser all land on the same fallback, and an author is told to fill it.
 
 ## For Marlin to decide: M1 to M10
+
+**Decided by Marlin on 2026-11-02: the defaults below are accepted.** Still his to give: the domain name (M2), and the terms, takedown and abuse contact (M10). The lawyer's reading of the consent wording (M9) comes before slice C4. Slices C1 to C3 can start; nothing is served on the separate domain until M2 names it.
 
 The fleet plan stops for "the sandbox's security design, and any change to auth or tenant isolation". This is the review's list, which replaces this contract's own, each with its
 default. **Slices C1 to C5 stay blocked until these are answered.** Nothing in B1 to B13 waits for them.
