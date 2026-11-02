@@ -182,6 +182,9 @@ export function renderFramerReport(score: FramerScore): string {
     ),
   );
   push(
+    'A native or partial verdict says a typed path exists on at least one node kind. Most visual traits (backgrounds, border, corner radius, layout) exist on frames only, and text traits (font, text style, truncation) on text nodes only, per the traits compatibility matrix linked under Sources; our columns test the entry on whatever node holds it.',
+  );
+  push(
     `Rows marked documented-not-measured (${totals.documentedNotMeasured}) rest on Framer's documentation of an editor feature (interactions, variants, overlays, events, the Appear effect, form inputs), each with the page it cites, or, for "Click start", on our own test of Framer's editor (no public page was found). None of them was measured.`,
   );
 
