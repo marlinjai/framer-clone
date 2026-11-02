@@ -104,7 +104,7 @@ function formatCells(): SurfaceResults {
   return {
     [key('color-token')]: cell(kept(theme(undefined), (t) => token(t, ID.ink), theme(undefined).tokens[0]), 'a colour token did not survive'),
     [key('font-token')]: cell(kept(theme(undefined), (t) => token(t, ID.font), theme(undefined).tokens[2]), 'a font token did not survive'),
-    [key('dark-value')]: cell(kept(theme(undefined), (t) => (token(t, ID.ink) as { dark?: string }).dark, '#f9fafb'), 'a dark value did not survive'),
+    [key('dark-value')]: cell(kept(theme(undefined), (t) => (token(t, ID.ink) as { dark?: string } | undefined)?.dark, '#f9fafb'), 'a dark value did not survive'),
     [key('mode-system')]: cell(kept(theme('system'), (t) => t.mode, 'system'), 'the system mode did not survive'),
     [key('mode-light')]: cell(kept(theme('light'), (t) => t.mode, 'light'), 'the light mode did not survive'),
     [key('mode-dark')]: cell(kept(theme('dark'), (t) => t.mode, 'dark'), 'the dark mode did not survive'),

@@ -15,13 +15,17 @@
 import React from 'react';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { collectPageFonts, fontFaceCss, getFontFamily, libraryFamiliesIn, preloadFaceUrl } from '@/lib/fonts/registry';
-import { resolveTokenRefs, type SiteTheme } from '@/lib/site/theme';
+import { emittedTheme, parseTokenReference, resolveTokenRefs, type SiteTheme } from '@/lib/site/theme';
 
 export function publishedFontAssets(root: ComponentNode, theme?: SiteTheme): React.ReactNode {
   // A font has one value in every scheme.
-  const resolve = theme ? (value: string) => resolveTokenRefs(value, theme, 'light') : undefined;
-  const documentFont = theme?.document.fontFamily;
-  const inherited = resolve && documentFont ? libraryFamiliesIn(resolve(documentFont))[0]?.id : undefined;
+  const held = theme ? emittedTheme(theme) : undefined;
+  const resolve = held ? (value: string) => resolveTokenRefs(value, held, 'light') : undefined;
+  const documentFont = held?.document.fontFamily;
+  const inherited =
+    resolve && documentFont && parseTokenReference(documentFont) !== null
+      ? libraryFamiliesIn(resolve(documentFont))[0]?.id
+      : undefined;
   const { ids, displayId } = collectPageFonts([root], { resolve, inherited });
   const css = fontFaceCss(ids);
   const display = displayId ? getFontFamily(displayId) : undefined;

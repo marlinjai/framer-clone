@@ -528,7 +528,7 @@ export function documentBackgroundColors(theme: SiteTheme | undefined): { scheme
   if (!isRecord(theme) || !isRecord(theme.document)) return [];
   const reference = theme.document.backgroundColor;
   if (parseTokenReference(reference) === null) return [];
-  const normalized = normalizeTheme(theme);
+  const normalized = emittedTheme(theme);
   return schemesInForce(normalized.mode).flatMap((scheme) => {
     const color = parseColorValue(resolveTokenRefs(reference as string, normalized, scheme));
     return color === null ? [] : [{ scheme, color }];
