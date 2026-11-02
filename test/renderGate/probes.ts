@@ -429,6 +429,17 @@ function spellingProbes(): Probe[] {
       { id: `${id}s`, type: 'button', props: { [name]: `${FOREIGN}/${id}`, form: `${id}f`, type: 'submit', children: 'x' } },
     ]));
   }
+  list.push(hostile('a stored plain form with an outside action in a live form', 'div', [], () => marked('form', {}), (id) => [
+    { id: `${id}p`, type: 'form', props: { action: `${FOREIGN}/${id}`, method: 'get' }, children: [
+      { id: `${id}n`, type: 'div', props: marked('form-field', { fieldType: 'text', name: 'phone', label: 'Phone' }) },
+      { id: `${id}s`, type: 'button', props: { type: 'submit', children: 'x' } },
+    ] },
+  ]));
+  for (const type of ['p', 'img', 'div']) {
+    list.push(hostile(`<${type}> directly in math in a form`, 'form', [], () => ({}), (id) => [
+      { id: `${id}m`, type: 'math', props: {}, children: [{ id: `${id}h`, type, props: { id: 'parentElement' } }, { id: `${id}i`, type: 'image', props: { id: 'closest' } }] },
+    ]));
+  }
   for (const type of ['p', 'div', 'span', 'img', 'table']) {
     list.push(hostile(`<${type}> directly in svg before an image`, 'svg', [], () => ({}), (id) => [
       { id: `${id}h`, type, props: {} },

@@ -23,7 +23,7 @@
 
 import React from 'react';
 import { isVoidTag } from '@/lib/drag/voidTags';
-import { continuesSvgContent, isBlockedProp, isBlockedTag, safeInlineStyle, withoutClobberingId, withoutFormOverrides } from '@/lib/renderer/blockedNodes';
+import { contentBelow, type ForeignContent, isBlockedProp, isBlockedTag, safeInlineStyle, withoutClobberingId, withoutFormOverrides } from '@/lib/renderer/blockedNodes';
 import { isLegacyRulesAttribute } from '@/lib/rules/rules';
 import { isComponentPlaceholderType } from '@/lib/components/placement';
 import { isTextNodeType, ownTextThenChildren, renderableText } from '@/lib/renderer/textNode';
@@ -122,11 +122,6 @@ function domPropsOf(node: ComponentNode, key: React.Key): Record<string, unknown
   return { key, ...nodeDomProps(node) };
 }
 
-/** Whether a child of this tag is SVG content. */
-function opensSvg(tag: string, insideSvg: boolean): boolean {
-  const name = tag.toLowerCase();
-  return name === 'svg' || (insideSvg && continuesSvgContent(name));
-}
 
 /** Resolve a node's wrapper tag for island mounting (defaults to `div`). */
 export function nodeHostTag(node: ComponentNode): string {
@@ -142,9 +137,9 @@ function rawTextChild(node: ComponentNode): React.ReactNode {
  * What goes inside a node's element: its own text, then its child nodes in
  * order. Exported for the form island, which renders its own wrapper.
  */
-export function renderNodeChildren(node: ComponentNode, scope: BindingScope, insideSvg = false): React.ReactNode {
+export function renderNodeChildren(node: ComponentNode, scope: BindingScope, foreign: ForeignContent = false): React.ReactNode {
   const rendered = (node.children ?? []).map((child, index) =>
-    renderComponentNode(child, scope, child.id ?? index, insideSvg),
+    renderComponentNode(child, scope, child.id ?? index, foreign),
   );
   return ownTextThenChildren(rawTextChild(node), rendered) as React.ReactNode;
 }
@@ -158,7 +153,7 @@ export function renderComponentNode(
   node: ComponentNode,
   scope: BindingScope = createScope(),
   key: React.Key = node.id ?? 0,
-  insideSvg = false,
+  foreign: ForeignContent = false,
 ): React.ReactNode {
   // No element at all, so nothing below (a tag, an island, a marker) applies.
   if (isTextNodeType(node.type)) return rawTextChild(node);
@@ -167,7 +162,7 @@ export function renderComponentNode(
   if (isComponentPlaceholderType(node.type)) return null;
 
   // Checked first: an island below would otherwise mount with this host tag.
-  if (isBlockedTag(resolveHtmlTag(node.type), insideSvg)) return null;
+  if (isBlockedTag(resolveHtmlTag(node.type), foreign)) return null;
 
   // Forms (published site essentials, decision 4): the form container is a
   // client island that owns its fields' state; fields and the submit button
@@ -214,7 +209,7 @@ export function renderComponentNode(
     return React.createElement(tag, props);
   }
 
-  return React.createElement(tag, props, renderNodeChildren(node, scope, opensSvg(tag, insideSvg)));
+  return React.createElement(tag, props, renderNodeChildren(node, scope, contentBelow(tag, foreign)));
 }
 
 export default renderComponentNode;

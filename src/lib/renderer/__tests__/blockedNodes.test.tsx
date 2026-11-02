@@ -243,6 +243,24 @@ describe('blocked nodes', () => {
     expect(published(svg)).toBe('<svg><g></g><rect></rect></svg>');
   });
 
+  it.each(['p', 'img', 'div', 'span'])('renders no <%s> directly in math, which the parser would lift out', (type) => {
+    expect(published({ type: 'math', children: [{ id: 'h', type, props: { children: 'x' } }, { id: 'n', type: 'mn', props: { children: '1' } }] })).toBe('<math><mn>1</mn></math>');
+    const inText = published({ type: 'math', children: [{ id: 't', type: 'mtext', children: [{ id: 'h', type, props: {} }] }] });
+    expect(inText).toContain(`<${type}`);
+  });
+
+  it('keeps a title out of math, which only svg holds', () => {
+    expect(published({ type: 'math', children: [{ id: 't', type: 'title', props: { children: 'x' } }] })).toBe('<math></math>');
+  });
+
+  it.each(['form', 'FORM'])('renders a stored plain <%s> below a live form as a div', (type) => {
+    const plain = { id: 'p', type, props: { action: 'https://example.com/nested', method: 'get' }, children: [{ id: 'b', type: 'button', props: { type: 'submit', children: 'x' } }] };
+    const html = published({ id: 'f', type: 'div', props: { 'data-form-kind': 'form' }, children: [{ id: 'w', type: 'div', children: [plain] }] });
+    expect(html.match(/<form/gi)).toHaveLength(1);
+    expect(html).toContain('action="/api/forms/submit"');
+    expect(published(plain).toLowerCase()).toContain('<form');
+  });
+
   it('keeps HTML in foreignObject, and what is only a name in svg', () => {
     const inForeign = { type: 'svg', children: [{ id: 'f', type: 'foreignObject', children: [{ id: 'p', type: 'p', props: { children: 'x' } }] }] };
     expect(published(inForeign)).toContain('<p>x</p>');

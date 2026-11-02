@@ -129,7 +129,7 @@ const SVG_ONLY_TAGS: ReadonlySet<string> = new Set(['title', 'image']);
 const INTEGRATION_POINTS: ReadonlySet<string> = new Set(['foreignobject', 'desc', 'title', 'mi', 'mo', 'mn', 'ms', 'mtext', 'annotation-xml']);
 
 /**
- * Tags the HTML parser leaves `svg` for, taking everything after them with it, while
+ * Tags the HTML parser leaves `svg` and `math` for, taking everything after them with it, while
  * React keeps them inside, so server markup and hydration disagree (error 418). Lower
  * case. `font` only does it with an attribute, which is not worth telling apart.
  */
@@ -138,8 +138,19 @@ const BREAKS_OUT_OF_SVG: ReadonlySet<string> = new Set(`
   listing menu meta nobr ol p pre ruby s small span strong strike sub sup table tt u ul var
 `.trim().split(/\s+/));
 
-/** Whether a child of this tag, already inside `svg`, is still SVG content. */
-export const continuesSvgContent = (tag: string): boolean => !INTEGRATION_POINTS.has(tag.toLowerCase());
+/**
+ * Where a node stands for the HTML parser: in SVG, in MathML, or in HTML (false).
+ * Both foreign kinds lift an HTML tag out of themselves; only SVG holds `title`.
+ */
+export type ForeignContent = 'svg' | 'math' | false;
+
+/** What the children of this tag stand in, given what the tag stands in. */
+export function contentBelow(tag: string, current: ForeignContent): ForeignContent {
+  const name = tag.toLowerCase();
+  if (name === 'svg') return 'svg';
+  if (name === 'math') return 'math';
+  return current !== false && !INTEGRATION_POINTS.has(name) ? current : false;
+}
 
 /** Whether this node's tag decides anything by where it stands in `svg`. */
 export const dependsOnSvgContent = (tag: string): boolean => {
@@ -152,12 +163,13 @@ export const dependsOnSvgContent = (tag: string): boolean => {
  * in the vocabulary. Anywhere else it is the document's, and React lifts it to `head`,
  * so a node could rename the tab. The parser reads `image` anywhere else as `img`,
  * which server markup and React then disagree about, so hydration fails. The same
- * goes for an HTML tag directly in `svg`: an HTML child belongs in `foreignObject`.
+ * goes for an HTML tag directly in `svg` or `math`: an HTML child belongs in
+ * `foreignObject`, or in one of MathML's text elements.
  */
-export function isBlockedTag(tag: unknown, insideSvg = false): boolean {
+export function isBlockedTag(tag: unknown, foreign: ForeignContent = false): boolean {
   if (typeof tag !== 'string') return false;
   const name = tag.toLowerCase();
-  const outOfPlace = insideSvg ? BREAKS_OUT_OF_SVG.has(name) : SVG_ONLY_TAGS.has(name);
+  const outOfPlace = (foreign !== false && BREAKS_OUT_OF_SVG.has(name)) || (foreign !== 'svg' && SVG_ONLY_TAGS.has(name));
   if (!outOfPlace && !isRefusedTag(tag)) return false;
   warnOnce(`<${tag.toLowerCase()}>`);
   return true;

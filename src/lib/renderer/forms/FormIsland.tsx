@@ -114,10 +114,15 @@ function NestedFormShell({ node, scope }: { node: ComponentNode; scope: BindingS
   );
 }
 
-/** A live form's tree with no control that could send it past the platform's submission. */
+/**
+ * A live form's tree with nothing that could send it past the platform's submission:
+ * no control override, and no stored plain form, which the parser drops from server
+ * markup and a client render then makes, taking the live form's fields with it.
+ */
 function withoutOverridesBelow(node: ComponentNode): ComponentNode {
   return {
     ...node,
+    ...(typeof node.type === 'string' && node.type.toLowerCase() === 'form' ? { type: 'div' } : {}),
     ...(node.props ? { props: withoutFormOverrides(node.props) } : {}),
     ...(node.bindings ? { bindings: withoutFormOverrides(node.bindings) as ComponentNode['bindings'] } : {}),
     children: node.children?.map(withoutOverridesBelow),

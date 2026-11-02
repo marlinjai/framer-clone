@@ -9,7 +9,7 @@
 
 import ts from 'typescript';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
-import { continuesSvgContent, isDroppedId, isDroppedProp, isBlockedTag, safeInlineStyle } from '@/lib/renderer/blockedNodes';
+import { contentBelow, type ForeignContent, isDroppedId, isDroppedProp, isBlockedTag, safeInlineStyle } from '@/lib/renderer/blockedNodes';
 import { isRenderedAttribute } from '@/lib/renderer/renderVocabulary';
 import { TEXT_NODE_TYPE, refusesBareText } from '@/lib/renderer/textNode';
 import { isVoidTag } from '@/lib/drag/voidTags';
@@ -175,7 +175,7 @@ interface LayerContext {
 interface Place {
   key: string;
   scope: Scope;
-  insideSvg: boolean;
+  foreign: ForeignContent;
   parentTag: string;
   /** Elements above this one, in the output: inlining multiplies what the source's own depth allows. */
   depth: number;
@@ -362,11 +362,11 @@ function settleContents(context: LayerContext, node: ComponentNode, contents: Co
 
 function convertElement(context: LayerContext, element: ts.JsxElement | ts.JsxSelfClosingElement, tag: string, place: Place, out: Content[]): void {
   const { file, ledger, budget } = context;
-  const { key, scope, insideSvg, depth } = place;
+  const { key, scope, foreign, depth } = place;
   budget.checkOutputDepth(depth);
   budget.chargeNodes(1);
   const open = ts.isJsxElement(element) ? element.openingElement : element;
-  if (!PLAIN_TAG.test(tag) || isBlockedTag(tag, insideSvg)) {
+  if (!PLAIN_TAG.test(tag) || isBlockedTag(tag, foreign)) {
     ledger.claimSubtree(file.source, element, left('refused-tag', 'refusedTag', key));
     return;
   }
@@ -384,7 +384,7 @@ function convertElement(context: LayerContext, element: ts.JsxElement | ts.JsxSe
       for (const child of element.children) ledger.claimSubtree(file.source, child, left('expression', 'voidChildren', key));
     } else {
       const lower = tag.toLowerCase();
-      const inner = { key, scope, insideSvg: lower === 'svg' || (insideSvg && continuesSvgContent(lower)), parentTag: tag, depth: depth + 1 };
+      const inner = { key, scope, foreign: contentBelow(lower, foreign), parentTag: tag, depth: depth + 1 };
       convertChildren(context, element.children, inner, contents);
     }
   }
@@ -567,7 +567,7 @@ export function convertFile(file: ParsedFile, ledger: Ledger, budget: ImportBudg
   const scope = fileScope(source);
   const contents: Content[] = [];
   const key = ROOT_NODE_KEY;
-  const place: Place = { key, scope, insideSvg: false, parentTag: '', depth: 0 };
+  const place: Place = { key, scope, foreign: false, parentTag: '', depth: 0 };
 
   // A pasted fragment is a file whose last statement is markup.
   const last = source.statements[source.statements.length - 1];
