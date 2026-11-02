@@ -28,6 +28,7 @@ import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { MAX_DIFF_RATIO, diffComputed, diffRatio, takeSnapshot, type ComputedDiff, type Snapshot } from './lib/compare';
 import { BREAKPOINTS, bareDocument, publishedDocument, renderPublished, type PublishedOutput } from './lib/published';
 import { normalizeSiteSettings } from '@/lib/site/siteSettings';
+import { withMapLanguage } from '@/lib/mapEmbed/mapEmbed';
 import { OUT_DIR, writeOut } from './lib/io';
 import { BUSBASIS_PAGES } from './busbasis/pages';
 import { CORPUS_DIR, SHARED_SHEET, SHEET_MARKER } from './busbasis/freeze';
@@ -143,7 +144,8 @@ describe('held-out BusBasis pages', () => {
       const meta = manifest.pages.find((page) => page.slug === listed.slug);
       if (!meta) throw new Error(`${listed.slug} is listed but has no capture`);
       const original = originalDocument(listed.slug);
-      const output: PublishedOutput = renderPublished(readTree(listed.slug));
+      // A map speaks the site's language, which the published route writes on it before rendering.
+      const output: PublishedOutput = renderPublished(withMapLanguage(readTree(listed.slug), meta.lang).root);
       const site = busbasisSite(meta.lang);
       const replica = publishedDocument(output, site.pageBase, site.language);
       const onDefaultBase = publishedDocument(output, undefined, site.language);
