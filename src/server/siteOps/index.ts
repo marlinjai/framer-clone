@@ -109,12 +109,31 @@ function fromError(err: unknown, siteId?: string): SiteOpsResult<never> {
       currentVersion: err.currentVersion,
     });
   }
+  // The repository's own messages speak to an editor tab ("reload the page", "this
+  // tab"); a caller of this library is an agent or a CLI as often, so the codes that
+  // can come back here get wording that names what to do through these operations.
   if (err instanceof SiteNotFoundError || err instanceof SiteGoneError) {
-    return fail({ code: 'site_not_found', message: siteId ? `no site "${siteId}" for this caller` : err.message });
+    return fail({
+      code: 'site_not_found',
+      message: siteId ? `no site "${siteId}" for this caller` : 'the site does not exist (any more); nothing was written',
+    });
   }
   if (err instanceof SiteRevisionNotFoundError) return fail({ code: 'revision_not_found', message: err.message });
+  if (err instanceof SiteRepositoryError && err.code === 'version_required') {
+    return fail({
+      code: 'invalid_request',
+      message: 'this write names no expectedVersion; read the site (its version) and send that number with the write',
+    });
+  }
   if (err instanceof SiteRepositoryError && err.status === 400) return fail({ code: 'invalid_request', message: err.message });
-  // Another conflict (personal data erased since the load): nothing was written, and only a fresh read helps.
+  if (err instanceof SiteRepositoryError && err.code === 'erased_since_load') {
+    return fail({
+      code: 'failed',
+      message:
+        'personal data was erased from this site after it was read, so this write could carry it back; nothing was written. Read the site again and redo the change on its current version',
+    });
+  }
+  // Another conflict: nothing was written, and only a fresh read helps.
   if (err instanceof SiteRepositoryError && err.status === 409) {
     return fail({ code: 'failed', message: `${err.message}; read the site again and retry` });
   }
