@@ -1,10 +1,15 @@
 // Google Maps embeds on a real build (src/lib/mapEmbed), in real Chromium and WebKit:
 // every request the browser makes is watched, Google is answered by a stub so the run
 // is hermetic, and the log is the evidence that nothing reaches Google before consent.
-// Covered: the placeholder before any choice, Decline keeps it, "Load map" and the
-// banner's Accept show the map, revoking from "Cookie settings" takes it out, phone
-// width, the report-only policy per consent, and BusBasis home's map case (a 300px box
-// with rounded corners, the German title of the original frame).
+//
+// Covered: the placeholder before any choice; Decline keeps it; "Load map" only opens
+// the platform's banner on the maps question and the banner's Accept shows the map;
+// one choice per purpose where a page uses analytics and a map; withdrawal from
+// "Cookie settings" on a page without a map, on a maps-only site and on a site with
+// both; the review's payloads (a transparent map box over a decoy, the note hidden by
+// a stored rule); phone width; the report-only policy per consent; the frame's
+// sandbox; and BusBasis home's map case (a 300px box with rounded corners, the German
+// title of the original frame).
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -16,18 +21,30 @@ import { node, type StoredNode } from './pages';
 import { publishPages } from './site';
 
 const SHARE = 'https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d2419.6!2d13.2834!3d52.6871!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!5e0!3m2!1sde!2sde!4v1730000000000';
+const ADDRESS = 'Hauptstraße 1, 16547 Birkenwerder';
 const BUSBASIS_TITLE = 'Karte: Werkstatt in der xxxxxxxxxxx 00, Birkenwerder';
 const BUSBASIS_ADDRESS = 'Werkstatt in der xxxxxxxxxxx 00, Birkenwerder';
+const SANDBOX = 'allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox';
 
 const map = (id: string, props: Record<string, unknown>) => node(id, 'div', { 'data-map-embed': 'google', ...props });
 const footer = () => node('footer', 'footer', {}, node('cookie-link', 'a', { href: '#cookie-settings', children: 'Cookie settings' }));
 const page = (...children: StoredNode[]) => () => node('page-root', 'main', { style: { padding: '16px' } }, ...children, footer());
+const fill = { position: 'fixed', top: '0', left: '0', right: '0', bottom: '0' };
 
 const PAGES = {
   map: page(
     node('title', 'h1', { children: 'Find us' }),
-    map('the-map', { mapUrl: SHARE, mapAddress: 'Hauptstraße 1, 16547 Birkenwerder', style: { width: '100%', height: '360px' } }),
+    map('the-map', { mapUrl: SHARE, mapAddress: ADDRESS, style: { width: '100%', height: '360px' } }),
   ),
+  other: page(node('other-title', 'h1', { children: 'Another page' })),
+  // The review's payload: a map box over the whole screen, everything in it made
+  // transparent by a stored rule, above a decoy that asks for a tap.
+  jack: page(
+    node('decoy', 'div', { style: { ...fill, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '28px' } }, node('decoy-text', 'p', { children: 'Tap here to continue' })),
+    map('jack-map', { mapUrl: SHARE, style: { ...fill, zIndex: 5 }, rules: [{ id: 'j', selector: '& *', style: { opacity: '0' } }] }),
+  ),
+  // The review's quieter payload: the note that Google receives data hidden, the button kept.
+  quiet: page(map('quiet-map', { mapUrl: SHARE, mapAddress: ADDRESS, rules: [{ id: 'q', selector: '& p', style: { display: 'none' } }] })),
   // BusBasis home (test/score/corpus/busbasis/pages/home.html, e404 and e405): a 300px box
   // with 0.5rem corners and overflow hidden around a full-size frame with this title. The
   // capture dropped the frame's address, so the box searches for the address instead.
@@ -41,6 +58,7 @@ const ENGINES: [string, BrowserType][] = [['chromium', chromium], ['webkit', web
 const SETTLE_MS = 1500;
 const LOG = path.join(os.tmpdir(), 'maps-requests.json');
 const evidence: Record<string, string[]> = {};
+const MAPS_ROW_ACCEPT = 'Maps from Google Maps: Accept';
 
 let mapsOnly: string;
 let withAnalytics: string;
@@ -78,11 +96,21 @@ describe.each(ENGINES)('in %s', (engineName, engine) => {
   const frame = () => tab.locator('iframe[data-fc-map-frame]');
   const placeholder = () => tab.locator('[data-fc-map-placeholder]');
   const banner = () => tab.locator('#fc-consent');
+  const stored = () => tab.evaluate(() => JSON.parse(window.localStorage.getItem('lumitra-consent') ?? 'null') as Record<string, unknown> | null);
+  const mapsCookie = async () => (await context.cookies()).find((c) => c.name === 'lumitra-consent-maps')?.value ?? null;
   const open = async (url: string): Promise<Response | null> => {
     const response = await tab.goto(url);
     await tab.waitForTimeout(SETTLE_MS);
     return response;
   };
+  /** The topmost element at the centre of a locator's box, as a real click would hit it. */
+  const topAt = (selector: string) =>
+    tab.evaluate((s) => {
+      const target = document.querySelector(s);
+      if (!target) return 'missing';
+      const r = target.getBoundingClientRect();
+      return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) === target ? 'top' : 'covered';
+    }, selector);
 
   beforeAll(async () => {
     browser = await engine.launch();
@@ -116,20 +144,19 @@ describe.each(ENGINES)('in %s', (engineName, engine) => {
   });
 
   it('contacts nothing but the site before consent, and shows the placeholder and the banner', async () => {
-    // Nothing for the policy to report either: no frame exists before consent.
     const response = await open(`${mapsOnly}/map`);
     record('first visit, no choice');
     expect(google()).toEqual([]);
     expect(foreign(mapsOnly)).toEqual([]);
     expect(await frame().count()).toBe(0);
     await expect.poll(() => banner().isVisible()).toBe(true);
-    expect(await banner().textContent()).toContain('Google Maps');
-    expect(await placeholder().textContent()).toContain('Hauptstraße 1, 16547 Birkenwerder');
-    expect(await tab.getByRole('button', { name: 'Load map' }).isVisible()).toBe(true);
+    expect(await banner().textContent()).toContain('Google Ireland Limited');
+    expect(await placeholder().textContent()).toContain(ADDRESS);
     const link = tab.getByRole('link', { name: 'Open in Google Maps' });
-    expect(await link.getAttribute('href')).toBe(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent('Hauptstraße 1, 16547 Birkenwerder')}`);
+    expect(await link.getAttribute('href')).toBe(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(ADDRESS)}`);
     expect(await link.getAttribute('rel')).toBe('noopener noreferrer');
-    // The report-only policy: any frame reports for a visitor without maps consent.
+    // The report-only policy: any frame reports for a visitor without maps consent,
+    // and there is no frame to report.
     expect(response?.headers()['content-security-policy-report-only']).toContain("frame-src 'self';");
     expect(cspReports).toEqual([]);
     expect(errors).toEqual([]);
@@ -141,7 +168,6 @@ describe.each(ENGINES)('in %s', (engineName, engine) => {
     await tab.waitForTimeout(500);
     expect(await banner().isVisible()).toBe(false);
     expect(await frame().count()).toBe(0);
-    expect(await placeholder().count()).toBe(1);
     await open(`${mapsOnly}/map`);
     record('declined, reloaded');
     expect(await banner().isVisible()).toBe(false);
@@ -150,22 +176,30 @@ describe.each(ENGINES)('in %s', (engineName, engine) => {
     expect(errors).toEqual([]);
   });
 
-  it('shows the map after "Load map", then takes it out again when consent is revoked', async () => {
+  it('"Load map" asks in the banner and records nothing; the banner\'s Accept shows the map; revoking takes it out', async () => {
     await open(`${mapsOnly}/map`);
     await banner().getByRole('button', { name: 'Decline' }).click();
-    expect(google()).toEqual([]);
     await tab.getByRole('button', { name: 'Load map' }).click();
+    await expect.poll(() => banner().isVisible()).toBe(true);
+    // Asking is not answering.
+    expect((await stored())?.maps).toBe(false);
+    expect(await frame().count()).toBe(0);
+    expect(google()).toEqual([]);
+    expect(await topAt('#fc-consent [data-fc-consent-accept]')).toBe('top');
+    await banner().getByRole('button', { name: 'Accept' }).click();
     await expect.poll(() => frame().count()).toBe(1);
     expect(await frame().getAttribute('src')).toBe(SHARE);
-    expect(await frame().getAttribute('title')).toBe('Map: Hauptstraße 1, 16547 Birkenwerder');
+    expect(await frame().getAttribute('title')).toBe(`Map: ${ADDRESS}`);
+    expect(await frame().getAttribute('sandbox')).toBe(SANDBOX);
+    expect(await frame().getAttribute('allow')).toBe('fullscreen');
+    expect(await frame().getAttribute('referrerpolicy')).toBe('strict-origin-when-cross-origin');
     await expect.poll(() => google()).toEqual([SHARE]);
-    record('after Load map');
-    expect((await context.cookies()).find((c) => c.name === 'lumitra-consent-maps')?.value).toBe('1');
-
+    record('after Load map and the banner\'s Accept');
+    expect(await mapsCookie()).toBe('1');
     // The page view on which the visitor said yes was served before the choice, so its
     // policy reports the Google frame once (src/lib/site/cspReportOnly.ts says so).
     expect(cspReports.every((line) => line.includes('https://www.google.com'))).toBe(true);
-    // A reload with consent recorded: the map comes back, and the policy expects Google now.
+
     requests = [];
     cspReports = [];
     const response = await open(`${mapsOnly}/map`);
@@ -174,55 +208,116 @@ describe.each(ENGINES)('in %s', (engineName, engine) => {
     expect(await banner().isVisible()).toBe(false);
     expect(cspReports).toEqual([]);
 
-    // Revoke from the footer's "Cookie settings".
     await tab.getByRole('link', { name: 'Cookie settings' }).click();
     await expect.poll(() => banner().isVisible()).toBe(true);
     await banner().getByRole('button', { name: 'Decline' }).click();
     await expect.poll(() => frame().count()).toBe(0);
     expect(await placeholder().count()).toBe(1);
-    expect((await context.cookies()).find((c) => c.name === 'lumitra-consent-maps')).toBeUndefined();
+    expect(await mapsCookie()).toBeNull();
     requests = [];
     await open(`${mapsOnly}/map`);
-    record('revoked, reloaded');
+    record('revoked on the map page, reloaded');
     expect(google()).toEqual([]);
-    expect(await frame().count()).toBe(0);
     expect(errors).toEqual([]);
   });
 
-  it('shows the map after the banner\'s Accept', async () => {
-    await open(`${mapsOnly}/map`);
-    expect(google()).toEqual([]);
-    await banner().getByRole('button', { name: 'Accept' }).click();
-    await expect.poll(() => frame().count()).toBe(1);
-    await expect.poll(() => google()).toEqual([SHARE]);
-    record('after Accept');
-    expect(errors).toEqual([]);
-  });
-
-  it('asks about analytics and the map together, and loads nothing from Google before', async () => {
+  it('asks analytics and maps separately, so analytics alone can be allowed with no Google contact', async () => {
     await open(`${withAnalytics}/map`);
     record('analytics and map, no choice');
     expect(google()).toEqual([]);
-    const text = await banner().textContent();
-    expect(text).toContain('Lumitra Analytics');
-    expect(text).toContain('Google Maps');
-    // "Load map" answers maps alone: the analytics question stays open.
+    expect(await banner().locator('[data-fc-consent-row="analytics"]').isVisible()).toBe(true);
+    expect(await banner().locator('[data-fc-consent-row="maps"]').isVisible()).toBe(true);
+    await tab.getByRole('button', { name: 'Audience measurement (Lumitra Analytics): Accept' }).click();
+    await tab.getByRole('button', { name: 'Maps from Google Maps: Decline' }).click();
+    await tab.waitForTimeout(500);
+    expect(await stored()).toMatchObject({ analytics: true, maps: false });
+    expect(await banner().isVisible()).toBe(false);
+    expect(await frame().count()).toBe(0);
+    record('analytics allowed, maps declined');
+    expect(google()).toEqual([]);
+    // "Load map" then asks again, focused on the maps row, and only that row's Accept loads it.
     await tab.getByRole('button', { name: 'Load map' }).click();
+    await expect.poll(() => banner().isVisible()).toBe(true);
+    expect(await tab.evaluate(() => document.activeElement?.getAttribute('data-fc-consent-row'))).toBe('maps');
+    await tab.getByRole('button', { name: MAPS_ROW_ACCEPT }).click();
     await expect.poll(() => frame().count()).toBe(1);
-    expect(await banner().isVisible()).toBe(true);
-    const stored = await tab.evaluate(() => JSON.parse(window.localStorage.getItem('lumitra-consent') ?? 'null'));
-    expect(stored).toMatchObject({ maps: true });
-    expect(stored).not.toHaveProperty('analytics');
+    expect(await stored()).toMatchObject({ analytics: true, maps: true });
     expect(errors).toEqual([]);
   });
 
-  it('works at phone width: no sideways scrolling, the button and the link in reach', async () => {
+  for (const [label, site] of [['a maps-only site', () => mapsOnly], ['a site with analytics and a map', () => withAnalytics]] as const) {
+    it(`withdraws maps from a page without a map, on ${label}`, async () => {
+      const origin = site();
+      await open(`${origin}/map`);
+      await tab.getByRole('button', { name: 'Load map' }).click();
+      await expect.poll(() => banner().isVisible()).toBe(true);
+      const accept = origin === mapsOnly ? banner().getByRole('button', { name: 'Accept' }) : tab.getByRole('button', { name: MAPS_ROW_ACCEPT });
+      await accept.click();
+      await expect.poll(() => frame().count()).toBe(1);
+      await open(`${origin}/other`);
+      const link = tab.getByRole('link', { name: 'Cookie settings' });
+      expect(await link.isVisible()).toBe(true);
+      await link.click();
+      await expect.poll(() => banner().isVisible()).toBe(true);
+      expect(await banner().textContent()).toContain('Google Maps');
+      // Decline answers every category the banner shows: a single "Decline", or "Decline all".
+      await banner().getByRole('button', { name: origin === mapsOnly ? 'Decline' : 'Decline all' }).click();
+      await tab.waitForTimeout(500);
+      expect((await stored())?.maps).toBe(false);
+      expect(await mapsCookie()).toBeNull();
+      requests = [];
+      await open(`${origin}/map`);
+      record(`withdrawn from another page, back on the map page (${label})`);
+      expect(google()).toEqual([]);
+      expect(await frame().count()).toBe(0);
+      expect(await placeholder().count()).toBe(1);
+      expect(errors).toEqual([]);
+    });
+  }
+
+  it('a transparent map box over a decoy: a tap only opens the banner, nothing is consented', async () => {
+    await open(`${mapsOnly}/jack`);
+    await banner().getByRole('button', { name: 'Decline' }).click();
+    await tab.waitForTimeout(300);
+    expect(await banner().isVisible()).toBe(false);
+    // The tap on "Tap here to continue" lands on the invisible "Load map".
+    expect(await tab.evaluate(() => document.elementFromPoint(640, 400)?.hasAttribute('data-fc-map-load'))).toBe(true);
+    await tab.mouse.click(640, 400);
+    await tab.waitForTimeout(800);
+    expect((await stored())?.maps).toBe(false);
+    expect(await mapsCookie()).toBeNull();
+    expect(await frame().count()).toBe(0);
+    record('clickjack tap');
+    expect(google()).toEqual([]);
+    // What the tap did: open the platform's banner, on top, saying what Google receives.
+    expect(await banner().isVisible()).toBe(true);
+    expect(await banner().textContent()).toContain('Google Ireland Limited');
+    expect(await topAt('#fc-consent [data-fc-consent-accept]')).toBe('top');
+    expect(errors).toEqual([]);
+  });
+
+  it('the note hidden by a stored rule: the banner still says what Google receives before anyone can consent', async () => {
+    await open(`${mapsOnly}/quiet`);
+    await banner().getByRole('button', { name: 'Decline' }).click();
+    expect(await placeholder().locator('p').first().isVisible()).toBe(false);
+    await tab.getByRole('button', { name: 'Load map' }).click();
+    await expect.poll(() => banner().isVisible()).toBe(true);
+    const text = banner().locator('#fc-consent-text');
+    expect(await text.isVisible()).toBe(true);
+    expect(await text.textContent()).toContain('Google Ireland Limited');
+    expect(await frame().count()).toBe(0);
+    expect(google()).toEqual([]);
+    expect(errors).toEqual([]);
+  });
+
+  it('works at phone width: no sideways scrolling, the button, the link and the banner in reach', async () => {
     await context.close();
     await start(375, 812);
-    await open(`${mapsOnly}/map`);
-    await banner().getByRole('button', { name: 'Decline' }).click();
-    const fits = await tab.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
-    expect(fits).toBe(true);
+    await open(`${withAnalytics}/map`);
+    const bannerBox = await banner().boundingBox();
+    expect(bannerBox && bannerBox.y >= 0 && bannerBox.y + bannerBox.height <= 812 && bannerBox.x + bannerBox.width <= 375).toBe(true);
+    await banner().getByRole('button', { name: 'Decline all' }).click();
+    expect(await tab.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     const button = tab.getByRole('button', { name: 'Load map' });
     const box = await button.boundingBox();
     expect(box && box.x >= 0 && box.x + box.width <= 375 && box.height >= 44).toBe(true);
@@ -230,12 +325,13 @@ describe.each(ENGINES)('in %s', (engineName, engine) => {
     expect(link && link.x >= 0 && link.x + link.width <= 375).toBe(true);
     expect(google()).toEqual([]);
     await button.click();
+    await tab.getByRole('button', { name: MAPS_ROW_ACCEPT }).click();
     await expect.poll(() => frame().count()).toBe(1);
     const frameBox = await frame().boundingBox();
     expect(frameBox && frameBox.width <= 375 && frameBox.height >= 240).toBe(true);
     expect(await tab.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await expect.poll(() => google()).toEqual([SHARE]);
-    record('phone width, after Load map');
+    record('phone width, after the maps Accept');
     expect(errors).toEqual([]);
   });
 
@@ -249,14 +345,16 @@ describe.each(ENGINES)('in %s', (engineName, engine) => {
     expect(await placeholder().textContent()).toContain(BUSBASIS_ADDRESS);
     expect(await banner().textContent()).toContain('Google Maps');
     await tab.getByRole('button', { name: 'Karte laden' }).click();
+    expect(await frame().count()).toBe(0);
+    await banner().getByRole('button', { name: 'Akzeptieren' }).click();
     await expect.poll(() => frame().count()).toBe(1);
     expect(await frame().getAttribute('title')).toBe(BUSBASIS_TITLE);
-    expect(await frame().getAttribute('src')).toBe(`https://www.google.com/maps?q=${encodeURIComponent(BUSBASIS_ADDRESS)}&output=embed`);
+    const src = `https://www.google.com/maps?q=${encodeURIComponent(BUSBASIS_ADDRESS)}&output=embed`;
+    expect(await frame().getAttribute('src')).toBe(src);
     expect((await box.boundingBox())?.height).toBe(300);
-    const inner = await frame().boundingBox();
-    expect(inner?.height).toBe(300);
-    await expect.poll(() => google()).toEqual([`https://www.google.com/maps?q=${encodeURIComponent(BUSBASIS_ADDRESS)}&output=embed`]);
-    record('BusBasis home map, after Karte laden');
+    expect((await frame().boundingBox())?.height).toBe(300);
+    await expect.poll(() => google()).toEqual([src]);
+    record('BusBasis home map, after Karte laden and Akzeptieren');
     expect(errors).toEqual([]);
   });
 });

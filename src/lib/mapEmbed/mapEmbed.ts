@@ -339,7 +339,7 @@ const COPY: Record<LegalLanguage, MapEmbedCopy> = {
   de: {
     load: 'Karte laden',
     open: 'In Google Maps öffnen',
-    note: 'Beim Laden der Karte erhält Google (Google Ireland Limited) Daten wie Ihre IP-Adresse. Mit „Karte laden“ willigen Sie darin ein; widerrufen können Sie unter „Cookie-Einstellungen“ im Seitenfuß.',
+    note: 'Beim Laden der Karte erhält Google (Google Ireland Limited) Daten wie Ihre IP-Adresse. „Karte laden“ fragt Sie zuerst nach Ihrer Einwilligung; widerrufen können Sie unter „Cookie-Einstellungen“ im Seitenfuß.',
     title: (address) => (address ? `Karte: ${address}` : 'Karte'),
     region: 'Karte von Google Maps',
     empty: 'Hier ist noch keine Karte hinterlegt.',
@@ -348,7 +348,7 @@ const COPY: Record<LegalLanguage, MapEmbedCopy> = {
   en: {
     load: 'Load map',
     open: 'Open in Google Maps',
-    note: 'Loading the map sends data such as your IP address to Google (Google Ireland Limited). By choosing "Load map" you consent to this; you can withdraw it under "Cookie settings" in the footer.',
+    note: 'Loading the map sends data such as your IP address to Google (Google Ireland Limited). "Load map" asks for your consent first; you can withdraw it under "Cookie settings" in the footer.',
     title: (address) => (address ? `Map: ${address}` : 'Map'),
     region: 'Map from Google Maps',
     empty: 'No map has been set here yet.',

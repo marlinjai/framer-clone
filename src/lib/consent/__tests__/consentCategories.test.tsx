@@ -1,6 +1,7 @@
-// The consent runtime's categories (src/lib/consent/consent.ts): a page asks only
-// for what it uses, Accept and Decline answer all of it, `grant` answers one, and an
-// answer to one category never changes another's.
+// The consent runtime's categories (src/lib/consent/consent.ts): one choice per
+// purpose, only the banner's own buttons answer, a map's "Load map" only opens the
+// banner on the maps question, and a "yes" given on one page can be withdrawn on any
+// page of the site, where Decline all answers every category.
 
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -26,12 +27,12 @@ const tracker: TrackerPayload = {
 };
 
 interface Api {
-  open(): void;
+  open(category?: string): void;
   accept(): void;
   decline(): void;
-  grant(category: string): void;
   get(category?: string): string | null;
   categories: string[];
+  grant?: unknown;
 }
 type Win = Window & { __lumitraConsent?: Api; __fcImportTracker?: (url: string) => Promise<unknown>; __AP_CONFIG?: unknown };
 const win = window as Win;
@@ -65,42 +66,47 @@ afterEach(() => {
   delete win.__AP_CONFIG;
 });
 
-function load(categories: ConsentCategory[], language = 'en') {
-  const withTracker = categories.includes('analytics') ? tracker : null;
+/** A page using `page`, on a site using `site` (the page's own when not given). */
+function load(page: ConsentCategory[], site: ConsentCategory[] = page, language = 'en') {
+  const withTracker = site.includes('analytics') ? tracker : null;
   render(
     <>
-      <ConsentBanner tracker={withTracker} categories={categories} language={language} look={DEFAULT_LOOK} />
+      <ConsentBanner tracker={withTracker} categories={page} siteCategories={site} language={language} look={DEFAULT_LOOK} />
+      <main><button type="button">Load map</button></main>
       <footer><a href="#cookie-settings">Cookie settings</a></footer>
     </>,
   );
-  new Function(consentRuntimeScript({ tracker: withTracker, categories }))();
+  new Function(consentRuntimeScript({ tracker: withTracker, categories: page, siteCategories: site }))();
   return win.__lumitraConsent as Api;
 }
 
 const banner = () => document.getElementById(CONSENT_BANNER_ID) as HTMLElement;
+const row = (c: string) => banner().querySelector(`[data-fc-consent-row="${c}"]`) as HTMLElement;
 const stored = () => JSON.parse(window.localStorage.getItem(CONSENT_STORAGE_KEY) ?? 'null');
 const mapsCookie = () => document.cookie.split('; ').find((c) => c.startsWith(`${CONSENT_MAPS_COOKIE}=`)) ?? null;
+const store = (value: Record<string, unknown>) => window.localStorage.setItem(CONSENT_STORAGE_KEY, JSON.stringify({ v: CONSENT_VERSION, at: 'x', ...value }));
+const click = (name: string | RegExp) => fireEvent.click(screen.getByRole('button', { name }));
+const cookieSettings = () => fireEvent.click(screen.getByRole('link', { name: 'Cookie settings' }));
 
-describe('consent categories', () => {
-  it('asks a page with only a map about Google Maps, and loads no tracker', () => {
+describe('a site with one purpose', () => {
+  it('asks a page with a map about Google Maps alone, and loads no tracker', () => {
     const api = load(['maps']);
     expect(banner().hidden).toBe(false);
     expect(banner().textContent).toContain('Google Maps');
     expect(banner().textContent).not.toContain('Lumitra Analytics');
+    expect(banner().querySelector('[data-fc-consent-row]')).toBeNull();
     expect(api.categories).toEqual(['maps']);
     expect(api.get('maps')).toBeNull();
     expect(events).toEqual([]);
-    expect(mapsCookie()).toBeNull();
   });
 
   it('accepting answers maps, sets the cookie the middleware reads and announces it', () => {
     const api = load(['maps']);
-    fireEvent.click(screen.getByRole('button', { name: 'Accept' }));
+    click('Accept');
     expect(banner().hidden).toBe(true);
     expect(stored()).toMatchObject({ v: CONSENT_VERSION, maps: true });
     expect(stored()).not.toHaveProperty('analytics');
     expect(api.get('maps')).toBe('granted');
-    expect(api.get()).toBeNull();
     expect(mapsCookie()).toBe(`${CONSENT_MAPS_COOKIE}=1`);
     expect(events).toEqual([{ maps: true }]);
     expect(importTracker).not.toHaveBeenCalled();
@@ -109,62 +115,128 @@ describe('consent categories', () => {
   it('declining answers no, clears the cookie and announces it, without a reload', () => {
     const reload = vi.fn();
     vi.spyOn(window, 'location', 'get').mockReturnValue({ ...window.location, reload, hash: '' } as Location);
+    store({ maps: true });
     const api = load(['maps']);
-    api.grant('maps');
-    expect(mapsCookie()).toBe(`${CONSENT_MAPS_COOKIE}=1`);
-    api.open();
-    fireEvent.click(screen.getByRole('button', { name: 'Decline' }));
+    cookieSettings();
+    click('Decline');
     expect(api.get('maps')).toBe('denied');
     expect(mapsCookie()).toBeNull();
-    expect(events).toEqual([{ maps: true }, { maps: false }]);
+    expect(events).toEqual([{ maps: false }]);
     expect(reload).not.toHaveBeenCalled();
   });
 
-  it('grant answers one category, keeps the others, and leaves the banner up while one is open', () => {
-    const api = load(['analytics', 'maps']);
-    expect(banner().textContent).toContain('Lumitra Analytics');
-    expect(banner().textContent).toContain('Google Maps');
-    api.grant('maps');
-    expect(api.get('maps')).toBe('granted');
-    expect(api.get('analytics')).toBeNull();
-    expect(stored()).not.toHaveProperty('analytics');
+  it('withdraws maps from a page of a maps-only site that has no map', () => {
+    store({ maps: true });
+    document.cookie = `${CONSENT_MAPS_COOKIE}=1; path=/`;
+    const api = load([], ['maps']);
+    // Nothing on this page asks, so the banner waits for the footer link.
+    expect(banner().hidden).toBe(true);
+    cookieSettings();
     expect(banner().hidden).toBe(false);
-    expect(importTracker).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'Decline' }));
-    // Decline answers what the page asks, maps included: the visitor said no to all of it.
-    expect(api.get('analytics')).toBe('denied');
+    expect(banner().textContent).toContain('Google Maps');
+    click('Decline');
     expect(api.get('maps')).toBe('denied');
+    expect(mapsCookie()).toBeNull();
+  });
+});
+
+describe('a site with two purposes: one choice each', () => {
+  it('asks each purpose in its own row, so analytics alone can be allowed', () => {
+    const api = load(['analytics', 'maps']);
+    expect(row('analytics').hidden).toBe(false);
+    expect(row('maps').hidden).toBe(false);
+    expect(row('maps').textContent).toContain('Google Ireland Limited');
+    click('Audience measurement (Lumitra Analytics): Accept');
+    expect(api.get('analytics')).toBe('granted');
+    expect(api.get('maps')).toBeNull();
+    expect(importTracker).toHaveBeenCalledTimes(1);
+    expect(stored()).not.toHaveProperty('maps');
+    // Maps is still open, so the banner stays.
+    expect(banner().hidden).toBe(false);
+    click('Maps from Google Maps: Decline');
+    expect(api.get('maps')).toBe('denied');
+    expect(banner().hidden).toBe(true);
+    expect(events).toContainEqual({ maps: false });
   });
 
-  it('closes the banner when a grant answers the last open question', () => {
-    const api = load(['maps']);
-    expect(banner().hidden).toBe(false);
-    api.grant('maps');
+  it('marks each row with its answer', () => {
+    store({ analytics: true });
+    load(['analytics', 'maps']);
+    expect(screen.getByRole('button', { name: 'Audience measurement (Lumitra Analytics): Accept' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Maps from Google Maps: Accept' }).getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('Decline all answers every row with no', () => {
+    const api = load(['analytics', 'maps']);
+    click('Decline all');
+    expect(api.get('analytics')).toBe('denied');
+    expect(api.get('maps')).toBe('denied');
     expect(banner().hidden).toBe(true);
   });
 
-  it('asks again only for the new category: an analytics answer stays and still loads the tracker', () => {
-    window.localStorage.setItem(CONSENT_STORAGE_KEY, JSON.stringify({ v: CONSENT_VERSION, analytics: true, at: 'x' }));
+  it('keeps an earlier analytics answer without a new version, and asks only about maps', () => {
+    store({ analytics: true });
     const api = load(['analytics', 'maps']);
     expect(importTracker).toHaveBeenCalledTimes(1);
     expect(banner().hidden).toBe(false);
-    api.grant('maps');
-    expect(stored()).toMatchObject({ analytics: true, maps: true });
+    click('Maps from Google Maps: Accept');
+    expect(stored()).toMatchObject({ v: CONSENT_VERSION, analytics: true, maps: true });
+    expect(api.get('analytics')).toBe('granted');
     expect(banner().hidden).toBe(true);
   });
 
-  it('keeps the banner hidden on a page whose questions are all answered', () => {
-    window.localStorage.setItem(CONSENT_STORAGE_KEY, JSON.stringify({ v: CONSENT_VERSION, maps: false, at: 'x' }));
-    const api = load(['maps']);
+  it('on a page without a map, auto-asks analytics only, yet withdraws maps from the footer link', () => {
+    store({ maps: true });
+    document.cookie = `${CONSENT_MAPS_COOKIE}=1; path=/`;
+    const api = load(['analytics'], ['analytics', 'maps']);
+    expect(banner().hidden).toBe(false);
+    expect(row('analytics').hidden).toBe(false);
+    expect(row('maps').hidden).toBe(true);
+    click('Audience measurement (Lumitra Analytics): Accept');
     expect(banner().hidden).toBe(true);
+    // Reopened, the banner shows every category of the site, the maps "yes" included.
+    cookieSettings();
+    expect(row('maps').hidden).toBe(false);
+    expect(screen.getByRole('button', { name: 'Maps from Google Maps: Accept' }).getAttribute('aria-pressed')).toBe('true');
+    const reload = vi.fn();
+    vi.spyOn(window, 'location', 'get').mockReturnValue({ ...window.location, reload, hash: '' } as Location);
+    click('Decline all');
     expect(api.get('maps')).toBe('denied');
+    expect(api.get('analytics')).toBe('denied');
+    expect(mapsCookie()).toBeNull();
+    // The tracker ran, so the page reloads to stop it.
+    expect(reload).toHaveBeenCalled();
+    // A reopened banner stays until the visitor closes it.
+    expect(banner().hidden).toBe(false);
+    click('Close');
+    expect(banner().hidden).toBe(true);
+  });
+});
+
+describe('a map asks through the banner', () => {
+  it('open("maps") shows the banner on the maps question, focused, and records nothing by itself', () => {
+    store({ analytics: false });
+    const api = load(['analytics', 'maps']);
+    expect(banner().hidden).toBe(false);
+    api.open('maps');
+    expect(document.activeElement).toBe(row('maps'));
+    expect(stored()).not.toHaveProperty('maps');
+    expect(events).toEqual([]);
+    click('Maps from Google Maps: Accept');
+    expect(api.get('maps')).toBe('granted');
+    expect(banner().hidden).toBe(true);
   });
 
-  it('ignores a category it does not know', () => {
+  it('has no way to answer except the banner: no grant, and forged buttons do nothing', () => {
     const api = load(['maps']);
-    api.grant('everything');
+    expect(api.grant).toBeUndefined();
+    const forged = document.createElement('button');
+    forged.setAttribute('data-fc-consent-accept', 'maps');
+    document.body.append(forged);
+    fireEvent.click(forged);
     expect(stored()).toBeNull();
     expect(events).toEqual([]);
+    forged.remove();
   });
 
   it('keeps the choice for the page view when storage throws', () => {
@@ -172,11 +244,13 @@ describe('consent categories', () => {
       throw new Error('denied');
     });
     const api = load(['maps']);
-    api.grant('maps');
+    click('Accept');
     expect(api.get('maps')).toBe('granted');
     expect(events).toEqual([{ maps: true }]);
   });
+});
 
+describe('stored value and copy', () => {
   it('reads one category from the stored value', () => {
     const raw = JSON.stringify({ v: CONSENT_VERSION, analytics: false, maps: true, at: 'x' });
     expect(parseStoredConsent(raw, CONSENT_VERSION, 'maps')).toBe('granted');
@@ -184,14 +258,15 @@ describe('consent categories', () => {
     expect(parseStoredConsent(JSON.stringify({ v: CONSENT_VERSION, at: 'x' }), CONSENT_VERSION, 'maps')).toBeNull();
   });
 
-  it('names what the page asks about in both languages', () => {
+  it('names each purpose in both languages, without long dashes', () => {
     expect(consentCopy('de', ['maps']).body).toContain('Google Maps');
     expect(consentCopy('de', ['maps']).body).not.toContain('Lumitra');
-    expect(consentCopy('en', ['analytics', 'maps']).body).toMatch(/Lumitra Analytics.*Google Maps/);
+    expect(consentCopy('de', ['analytics', 'maps']).rows.maps.text).toContain('Google Ireland Limited');
     expect(consentCopy('en').body).toBe(consentCopy('en', ['analytics']).body);
     for (const lang of ['de', 'en']) {
       for (const cats of [['analytics'], ['maps'], ['analytics', 'maps']] as ConsentCategory[][]) {
-        expect(consentCopy(lang, cats).body).not.toMatch(/[\u2013\u2014]/);
+        const copy = consentCopy(lang, cats);
+        expect(`${copy.body} ${copy.rows.analytics.text} ${copy.rows.maps.text}`).not.toMatch(/[–—]/);
       }
     }
   });

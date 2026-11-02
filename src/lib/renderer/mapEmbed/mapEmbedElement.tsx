@@ -63,6 +63,9 @@ const LINK_STYLE: React.CSSProperties = {
   fontWeight: 600,
 };
 
+/** What Google's embed needs to draw and to open its own links in a new tab, and nothing more. */
+export const MAP_FRAME_SANDBOX = 'allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox';
+
 /** The frame's style: the box's size, no border, a usable height when the box sets none. */
 export const MAP_FRAME_STYLE: React.CSSProperties = {
   ...MAP_FILL_STYLE,

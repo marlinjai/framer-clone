@@ -32,7 +32,7 @@ import { DEFAULT_PAGE_BASE, type PageBase } from '@/lib/site/pageBase';
 import type { SiteTheme } from '@/lib/site/theme';
 import type { TrackerPayload } from '@/lib/renderer/publish/trackerSnippet';
 import { CONSENT_BANNER_Z_INDEX } from '@/lib/styles/stacking';
-import { CONSENT_BANNER_ID, consentCopy, consentCss, consentRuntimeScript, type ConsentCategory } from './consent';
+import { CONSENT_BANNER_ID, CONSENT_CATEGORIES, consentCopy, consentCss, consentRuntimeScript, type ConsentCategory } from './consent';
 
 /**
  * What the banner would otherwise inherit from the document, at the values a page
@@ -70,8 +70,14 @@ export const BANNER_PINNED: React.CSSProperties = {
 export interface ConsentBannerProps {
   /** The tracker to load after analytics consent (validated by buildTrackerPayload), null when the page has none. */
   tracker: TrackerPayload | null;
-  /** What the page asks about; `analytics` alone when not given. */
+  /** What the page uses, and so asks about by itself; `analytics` alone when not given. */
   categories?: readonly ConsentCategory[];
+  /**
+   * What the whole site uses (the page's categories when not given). With more than
+   * one, the banner has a row per purpose, so each is its own choice, and a banner
+   * reopened from "Cookie settings" shows every one of them on any page.
+   */
+  siteCategories?: readonly ConsentCategory[];
   /** The site language (Site settings), BCP 47. */
   language: string;
   look: SiteLook;
@@ -83,9 +89,11 @@ export interface ConsentBannerProps {
   theme?: SiteTheme;
 }
 
-export function ConsentBanner({ tracker, categories = ['analytics'], language, look: siteLook, privacyHref, pageBase = DEFAULT_PAGE_BASE, theme }: ConsentBannerProps) {
+export function ConsentBanner({ tracker, categories = ['analytics'], siteCategories, language, look: siteLook, privacyHref, pageBase = DEFAULT_PAGE_BASE, theme }: ConsentBannerProps) {
   const look = legibleLook(siteLook, theme);
-  const copy = consentCopy(language, categories);
+  const site = CONSENT_CATEGORIES.filter((c) => categories.includes(c) || (siteCategories ?? []).includes(c));
+  const copy = consentCopy(language, site);
+  const perPurpose = site.length > 1;
   const titleId = `${CONSENT_BANNER_ID}-title`;
   const textId = `${CONSENT_BANNER_ID}-text`;
   const button: React.CSSProperties = {
@@ -124,6 +132,9 @@ export function ConsentBanner({ tracker, categories = ['analytics'], language, l
           zIndex: CONSENT_BANNER_Z_INDEX,
           boxSizing: 'border-box',
           maxWidth: 560,
+          // A banner with a row per purpose stays on a small phone's screen and scrolls.
+          maxHeight: 'calc(100vh - 32px)',
+          overflowY: 'auto',
           display: 'flex',
           flexDirection: 'column',
           gap: 12,
@@ -154,16 +165,62 @@ export function ConsentBanner({ tracker, categories = ['analytics'], language, l
             </>
           ) : null}
         </p>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-          <button type="button" data-fc-consent-decline="" style={button}>
-            {copy.decline}
-          </button>
-          <button type="button" data-fc-consent-accept="" style={button}>
-            {copy.accept}
-          </button>
-        </div>
+        {perPurpose ? (
+          <>
+            {site.map((category) => {
+              const row = copy.rows[category];
+              const rowTitle = `${CONSENT_BANNER_ID}-${category}-title`;
+              const rowText = `${CONSENT_BANNER_ID}-${category}-text`;
+              return (
+                <div
+                  key={category}
+                  data-fc-consent-row={category}
+                  role="group"
+                  aria-labelledby={rowTitle}
+                  aria-describedby={rowText}
+                  tabIndex={-1}
+                  // The runtime shows the rows each opening asks about, before hydration.
+                  suppressHydrationWarning
+                  style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 12, borderTop: '1px solid rgba(127, 127, 127, 0.35)', outline: 'none' }}
+                >
+                  <h3 id={rowTitle} style={{ margin: 0, fontSize: 15, fontWeight: 700, lineHeight: 1.3, color: 'inherit', fontFamily: 'inherit' }}>
+                    {row.title}
+                  </h3>
+                  <p id={rowText} style={{ margin: 0, color: 'inherit', fontFamily: 'inherit' }}>
+                    {row.text}
+                  </p>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                    <button type="button" data-fc-consent-decline={category} aria-label={`${row.title}: ${copy.decline}`} aria-pressed="false" suppressHydrationWarning style={button}>
+                      {copy.decline}
+                    </button>
+                    <button type="button" data-fc-consent-accept={category} aria-label={`${row.title}: ${copy.accept}`} aria-pressed="false" suppressHydrationWarning style={button}>
+                      {copy.accept}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, paddingTop: 12, borderTop: '1px solid rgba(127, 127, 127, 0.35)' }}>
+              <button type="button" data-fc-consent-decline="" style={button}>
+                {copy.declineAll}
+              </button>
+              <button type="button" data-fc-consent-close="" hidden suppressHydrationWarning style={button}>
+                {copy.close}
+              </button>
+            </div>
+          </>
+        ) : (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+            <button type="button" data-fc-consent-decline="" style={button}>
+              {copy.decline}
+            </button>
+            <button type="button" data-fc-consent-accept="" style={button}>
+              {copy.accept}
+            </button>
+          </div>
+        )}
       </div>
-      <script data-fc-consent-runtime="" dangerouslySetInnerHTML={{ __html: consentRuntimeScript({ tracker, categories }) }} />
+      <script data-fc-consent-runtime="" dangerouslySetInnerHTML={{ __html: consentRuntimeScript({ tracker, categories, siteCategories: site }) }} />
     </>
   );
 }

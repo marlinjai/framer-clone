@@ -6,9 +6,13 @@
 // nothing of Google is in the HTML. The frame exists only in React state:
 //
 //   - on hydration, a stored "yes" to the `maps` consent category shows the map;
-//   - "Load map" records that yes through the page's consent runtime
-//     (`window.__lumitraConsent.grant('maps')`, src/lib/consent/consent.ts), which
-//     announces it to every map on the page;
+//   - "Load map" records nothing: it opens the platform's consent banner on the
+//     maps question (`window.__lumitraConsent.open('maps')`, src/lib/consent/consent.ts),
+//     and only the banner's own buttons answer. The placeholder is page markup that
+//     stored rules can restyle (hide its note, make it invisible over a decoy), so
+//     a click on it must never be the consent; the banner is pinned above every
+//     stored layer and says itself what Google receives. A "yes" there is announced
+//     to every map on the page;
 //   - a later "no" (the banner's Decline, reopened from "Cookie settings") is
 //     announced the same way and takes the frame out again.
 //
@@ -21,11 +25,11 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { isRebuiltMapSrc, readMapEmbed } from '@/lib/mapEmbed/mapEmbed';
-import { MAP_FRAME_STYLE, mapPlaceholder } from './mapEmbedElement';
+import { MAP_FRAME_SANDBOX, MAP_FRAME_STYLE, mapPlaceholder } from './mapEmbedElement';
 
 interface ConsentApi {
   get?: (category?: string) => string | null;
-  grant?: (category: string) => void;
+  open?: (category?: string) => void;
 }
 
 function consentApi(): ConsentApi | undefined {
@@ -42,8 +46,17 @@ export interface MapEmbedIslandProps {
 export default function MapEmbedIsland({ domProps, config }: MapEmbedIslandProps) {
   const view = readMapEmbed(config);
   const [granted, setGranted] = useState(false);
-  const focusFrame = useRef(false);
   const frame = useRef<HTMLIFrameElement>(null);
+  // Set when this map's "Load map" asked: once the banner's "yes" shows the map, focus
+  // goes to it instead of being lost with the button.
+  const asked = useRef(false);
+
+  useEffect(() => {
+    if (!granted || !asked.current) return;
+    asked.current = false;
+    const active = document.activeElement;
+    if (!active || active === document.body) frame.current?.focus();
+  }, [granted]);
 
   useEffect(() => {
     if (consentApi()?.get?.('maps') === 'granted') setGranted(true);
@@ -55,26 +68,16 @@ export default function MapEmbedIsland({ domProps, config }: MapEmbedIslandProps
     return () => window.removeEventListener('lumitra:consent', onConsent);
   }, []);
 
-  useEffect(() => {
-    if (granted && focusFrame.current) {
-      focusFrame.current = false;
-      frame.current?.focus();
-    }
-  }, [granted]);
-
   const load = useCallback(() => {
-    focusFrame.current = true;
     const api = consentApi();
-    if (api && typeof api.grant === 'function') {
-      api.grant('maps');
-      // The runtime announces it; a page view whose storage throws still answers here.
-      if (api.get?.('maps') === 'granted') setGranted(true);
+    if (api && typeof api.open === 'function') {
+      asked.current = true;
+      api.open('maps');
       return;
     }
-    // Every page with a map carries the runtime (renderPublishedPage). Without it no
-    // answer can be recorded or withdrawn, so nothing loads: a renderer bug, said loudly.
+    // Every page of a site with a map carries the runtime (renderPublishedPage). Without
+    // it nobody can be asked, so nothing loads: a renderer bug, said loudly.
     // "Open in Google Maps" still takes the visitor to the map.
-    focusFrame.current = false;
     console.error('[map] no consent runtime on this page: the map cannot ask for consent, so it does not load');
   }, []);
 
@@ -90,7 +93,13 @@ export default function MapEmbedIsland({ domProps, config }: MapEmbedIslandProps
         src={src}
         title={view.title}
         loading="lazy"
+        // The origin only: what a restricted Maps Embed API key checks.
         referrerPolicy="strict-origin-when-cross-origin"
+        // Tested against Google's real embed in Chromium and WebKit on 2026-11-02: the map
+        // draws and its links open with exactly these. No top navigation, no forms,
+        // no downloads, and of the powerful features only fullscreen.
+        sandbox={MAP_FRAME_SANDBOX}
+        allow="fullscreen"
         allowFullScreen
         style={MAP_FRAME_STYLE}
       />

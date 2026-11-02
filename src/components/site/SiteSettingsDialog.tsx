@@ -602,12 +602,12 @@ const SiteSettingsForm = observer(({ project, onClose }: { project: ProjectModel
               {analyticsOn
                 ? 'Shown to visitors, because analytics is on (once the deploy has an analytics key configured). The analytics script loads only after a visitor accepts; declining loads nothing. Visitors can change their choice from the cookie settings link in the footer.'
                 : mapsCheck
-                  ? 'Shown on pages with a Google Map: the map loads only after a visitor accepts, on the banner or with the map\'s own "Load map" button. Declining loads nothing. Visitors can change their choice from the cookie settings link in the footer.'
+                  ? 'Asks about Google Maps on pages with a map, and the map\'s "Load map" button opens it too: the map loads only after a visitor accepts there. Declining loads nothing. Visitors can change their choice from the cookie settings link in the footer of every page.'
                   : 'Not shown: nothing on your site stores data on visitors\' devices that needs consent (analytics is off).'}
             </p>
             {analyticsOn && mapsCheck && (
               <p className="text-[12px] text-foreground">
-                On pages with a Google Map the banner also asks about the map, which loads only after a visitor accepts.
+                The banner asks about analytics and Google Maps separately, so a visitor can allow one and not the other.
               </p>
             )}
           </div>

@@ -17,7 +17,7 @@ import { MAP_EMBED_ATTR, MAP_EMBED_MARKER } from '@/lib/mapEmbed/mapEmbed';
 const SHARE = 'https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d2419.6!2d13.2834!3d52.6871!5e0';
 const cmsRepo = { listRows: async () => ({ rows: [], total: 0 }), getRow: async () => null } as unknown as CmsReadRepository;
 
-type Win = Window & { __lumitraConsent?: { get: (c?: string) => string | null; grant: (c: string) => void } };
+type Win = Window & { __lumitraConsent?: { get: (c?: string) => string | null; open: (c?: string) => void } };
 const win = window as Win;
 
 afterEach(() => {
@@ -66,7 +66,29 @@ describe('the published page', () => {
   it('asks about both on a page with analytics and a map', async () => {
     const { consentCategories, markup } = await publish({ type: 'div', id: 'root', children: [mapNode()] }, 'en', true);
     expect(consentCategories).toEqual(['analytics', 'maps']);
-    expect(markup).toMatch(/Lumitra Analytics.*Google Maps/);
+    expect(markup).toMatch(/Lumitra Analytics[\s\S]*Google Maps/);
+  });
+
+  it('carries the runtime and the cookie settings link on every page of a site with a map', async () => {
+    const page = await renderPublishedPage({
+      root: { type: 'div', id: 'root', children: [{ type: 'p', id: 'p', props: { children: 'x' } }] },
+      pageParams: {},
+      cmsRepo,
+      consent: { language: 'en', siteHasMap: true },
+    });
+    const markup = renderToStaticMarkup(<>{page.body}</>);
+    expect(page.consentCategories).toEqual([]);
+    expect(page.siteConsentCategories).toEqual(['maps']);
+    expect(markup).toContain('data-fc-consent-runtime');
+    expect(markup).not.toContain('data-fc-consent-none');
+    expect(markup).not.toContain('<iframe');
+  });
+
+  it('asks each purpose in its own row on a site with analytics and a map', async () => {
+    const { markup } = await publish({ type: 'div', id: 'root', children: [mapNode()] }, 'en', true);
+    expect(markup).toContain('data-fc-consent-row="analytics"');
+    expect(markup).toContain('data-fc-consent-row="maps"');
+    expect(markup).toContain('data-fc-consent-accept="maps"');
   });
 
   it('has no banner and no maps question on a page without a map', async () => {
@@ -95,21 +117,25 @@ describe('the island', () => {
   const config = { mapUrl: SHARE, mapAddress: 'Werkstatt, Birkenwerder', mapLanguage: 'en' };
   const frame = () => document.querySelector('iframe');
 
-  it('shows the placeholder until consent, then the frame, and the placeholder again on a no', () => {
-    let state: string | null = null;
-    const grant = vi.fn(() => {
-      state = 'granted';
-      window.dispatchEvent(new CustomEvent('lumitra:consent', { detail: { maps: true } }));
-    });
-    win.__lumitraConsent = { get: (c) => (c === 'maps' ? state : null), grant };
+  it('"Load map" only opens the banner; the frame comes with the banner\'s yes and goes with a no', () => {
+    const open = vi.fn();
+    win.__lumitraConsent = { get: () => null, open };
     render(<MapEmbedIsland domProps={{ 'data-map-embed': 'google', style: { height: 300 } }} config={config} />);
     expect(frame()).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Load map' }));
-    expect(grant).toHaveBeenCalledWith('maps');
+    expect(open).toHaveBeenCalledWith('maps');
+    // Asking is not answering.
+    expect(frame()).toBeNull();
+    (document.activeElement as HTMLElement | null)?.blur();
+    act(() => {
+      window.dispatchEvent(new CustomEvent('lumitra:consent', { detail: { maps: true } }));
+    });
     const loaded = frame() as HTMLIFrameElement;
     expect(loaded.getAttribute('src')).toBe(SHARE);
     expect(loaded.getAttribute('title')).toBe('Map: Werkstatt, Birkenwerder');
     expect(loaded.getAttribute('referrerpolicy')).toBe('strict-origin-when-cross-origin');
+    expect(loaded.getAttribute('sandbox')).toBe('allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox');
+    expect(loaded.getAttribute('allow')).toBe('fullscreen');
     expect(document.activeElement).toBe(loaded);
     act(() => {
       window.dispatchEvent(new CustomEvent('lumitra:consent', { detail: { maps: false } }));
@@ -119,7 +145,7 @@ describe('the island', () => {
   });
 
   it('shows the map at once for a visitor who already consented, and ignores other categories', () => {
-    win.__lumitraConsent = { get: (c) => (c === 'maps' ? 'granted' : null), grant: vi.fn() };
+    win.__lumitraConsent = { get: (c) => (c === 'maps' ? 'granted' : null), open: vi.fn() };
     render(<MapEmbedIsland domProps={{}} config={config} />);
     expect(frame()).not.toBeNull();
     act(() => {
@@ -129,7 +155,7 @@ describe('the island', () => {
   });
 
   it('never draws a frame for an address it did not rebuild', () => {
-    win.__lumitraConsent = { get: () => 'granted', grant: vi.fn() };
+    win.__lumitraConsent = { get: () => 'granted', open: vi.fn() };
     render(<MapEmbedIsland domProps={{}} config={{ mapUrl: 'https://evil.test/maps/embed?pb=x' }} />);
     expect(frame()).toBeNull();
   });
