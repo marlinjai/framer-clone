@@ -95,6 +95,44 @@ function passInit(request: NextRequest, bearer: boolean): { request: { headers: 
 }
 
 /**
+ * The cookies a published host forwards to its handlers and pages. A published
+ * host is a customer's origin, yet the browser still sends it the apex
+ * `.lumitra.co` cookies (`lumitra_session`, the `framer_company` selector and
+ * whatever else the suite sets), so the published plane forwards ONLY what it
+ * reads itself and drops the rest. Then no allowlisted handler can ever be
+ * authorized by the apex session, whatever it does. The keep list:
+ *   - MAPS_CONSENT_COOKIE (`lumitra-consent-maps`): the visitor's maps consent,
+ *     the one cookie the published plane reads (this middleware reads it from
+ *     the incoming request for the report-only policy; it is forwarded so a
+ *     server render may rely on it too).
+ * Nothing else on the published plane reads a cookie on the server: the
+ * storefront tenant, orders, pay, form submit and the published CMS reads all
+ * resolve the site from the Host (src/server/commerce/storefrontTenant.ts,
+ * src/server/forms/submit.ts, src/server/cms/readScope.ts), and the tracker's
+ * `lumitra_variants_pub` cookie and the consent choice are read in the browser
+ * only, where this filter does not reach.
+ */
+const PUBLISHED_HOST_COOKIES: ReadonlySet<string> = new Set([MAPS_CONSENT_COOKIE]);
+
+/**
+ * How a published host passes a request on: a bearer request without any
+ * cookie (as `passInit`), any other request with only PUBLISHED_HOST_COOKIES.
+ * Undefined when nothing has to go.
+ */
+function publishedPassInit(request: NextRequest, bearer: boolean): { request: { headers: Headers } } | undefined {
+  if (bearer) return passInit(request, true);
+  const raw = request.headers.get('cookie');
+  if (raw === null) return undefined;
+  const pairs = raw.split(';').map((pair) => pair.trim()).filter(Boolean);
+  const kept = pairs.filter((pair) => PUBLISHED_HOST_COOKIES.has(pair.split('=')[0].trim()));
+  if (kept.length === pairs.length) return undefined;
+  const headers = new Headers(request.headers);
+  if (kept.length === 0) headers.delete('cookie');
+  else headers.set('cookie', kept.join('; '));
+  return { request: { headers } };
+}
+
+/**
  * True for a state-changing request that a page on another origin caused. The
  * `.lumitra.co` session cookie is sent from every published site (same site, so
  * SameSite=Lax does not stop it), and a stored form can post plain text that
@@ -109,7 +147,11 @@ function isCrossOriginWrite(request: NextRequest): boolean {
   if (fetchSite) return fetchSite !== 'same-origin' && fetchSite !== 'none';
   const origin = request.headers.get('origin');
   if (!origin) return false;
-  const host = request.headers.get('x-forwarded-host') ?? request.headers.get('host');
+  // The Host header, like every other host decision in this file: Traefik
+  // passes it through unchanged (passHostHeader is on by default, and Coolify's
+  // routers do not turn it off), while X-Forwarded-Host is a header a client
+  // may set itself.
+  const host = request.headers.get('host');
   try {
     return new URL(origin).host.toLowerCase() !== (host ?? '').toLowerCase();
   } catch {
@@ -196,11 +238,14 @@ export async function middleware(request: NextRequest) {
       // auth-brain login). A rewrite (NOT redirect): the visitor's URL stays `/`,
       // the required catch-all `(site)/[...slug]` route receives the sentinel
       // segment and resolves it as the home request. Only a read: a post or a
-      // server action to the home page is refused like any other path. A
-      // bearer request is rewritten without its cookies (`pass`).
+      // server action to the home page is refused like any other path. The
+      // home is rewritten with only the published cookies (publishedPassInit).
       const refused = refuseOnPublishedHost(request, `/${HOME_REWRITE_SENTINEL}`);
       if (refused) return refused;
-      return withReportOnlyPolicy(request, NextResponse.rewrite(new URL(`/${HOME_REWRITE_SENTINEL}`, request.url), pass));
+      return withReportOnlyPolicy(
+        request,
+        NextResponse.rewrite(new URL(`/${HOME_REWRITE_SENTINEL}`, request.url), publishedPassInit(request, bearer)),
+      );
     }
     // Editor host root: preserve EXACTLY today's behavior. The editor `/` is NOT
     // auth-bounced here; it loads client-only and owns its own auth. Do NOT start
@@ -238,12 +283,14 @@ export async function middleware(request: NextRequest) {
     const { pathname } = request.nextUrl;
     const refused = refuseOnPublishedHost(request, pathname);
     if (refused) return refused;
-    // What the allowlist lets through still travels on without its cookies when
-    // it carries a bearer (`pass`). The matcher also brings every API route here
-    // (for the cross-origin check, which only runs on the editor host): those
-    // are not pages, so they pass unmarked.
-    if (pathname === '/api' || pathname.startsWith('/api/')) return NextResponse.next(pass);
-    return withReportOnlyPolicy(request, NextResponse.next(pass));
+    // What the allowlist lets through travels on with only the published
+    // cookies, and with none when it carries a bearer (publishedPassInit). The
+    // matcher also brings every API route here (for the cross-origin check,
+    // which only runs on the editor host): those are not pages, so they pass
+    // unmarked.
+    const published = publishedPassInit(request, bearer);
+    if (pathname === '/api' || pathname.startsWith('/api/')) return NextResponse.next(published);
+    return withReportOnlyPolicy(request, NextResponse.next(published));
   }
 
   // The matcher runs this for every API route so the cross-origin check above
@@ -324,7 +371,7 @@ export const config = {
   //     either prefix to a login page here would break storefront reads and
   //     checkout. Defense in depth lives in the handlers, not here.
   //   - _next static assets, favicon, robots and the uploaded site images
-  //     (/site-images/*, served per host) are never gated
+  //     (/site-images/<file>, served per host) never reach the middleware
   //
   // The removed `/editor`, `/api/sites`, `/api/admin` patterns matched NO route
   // on disk (dead-matcher drift); the live authoring surfaces are `/projects`,
@@ -340,21 +387,29 @@ export const config = {
     // (`/api/projects`, `/api/ai`, `/api/books`) also get the session gate,
     // and `/api/mcp` the bearer-only gate of the machine door.
     '/api/:path*',
-    // Published pages, for the report-only policy: any path except API routes,
-    // build output, what is inside /images and /fonts, the per-host files and
-    // the uploaded site images (an image response carries its own policy).
-    // Other public files carry the header, where it does nothing. /preview is
-    // matched too: the host decides, so the editor's preview stays unmarked on
-    // the editor host, and a published host answers it with a 404.
+    // Every other path, for the published-host allowlist and the report-only
+    // policy: anything except API routes (matched above), build output, the
+    // per-host files and one uploaded site image. Everything that can fall to
+    // the site catch-all `(site)/[...slug]` MUST be matched, or a published
+    // host would serve it with no allowlist, no server-action refusal, no
+    // cookie filter and no policy: so /images/* and /fonts/* are matched (a
+    // missing file there is a catch-all page path; the public files carry the
+    // header, where it does nothing, and a GET passes), and only the exact
+    // shape of a site image is left out. /preview is matched too: the host
+    // decides, so the editor's preview stays unmarked on the editor host, and a
+    // published host answers it with a 404. src/__tests__/middlewareMatcher.test.ts
+    // compiles this list as Next does and checks both directions.
     //
-    // /site-images/* (like the per-host files) never reaches this middleware,
-    // on purpose: its handler (src/app/site-images/[file]/route.ts) answers
-    // GET only, reads no session or cookie, resolves the site from the Host
-    // alone and serves only that published site's images (404 on the editor
-    // host and on any host naming no published site), so neither the
-    // allowlist, the cross-origin check nor the bearer cookie strip has
-    // anything to guard there. Its entry in src/lib/hostRoutes.ts
-    // (published: GET) records that classification.
-    '/((?!(?:api|_next)(?:/|$)|(?:images|fonts|site-images)/.|(?:favicon\\.ico|robots\\.txt|sitemap\\.xml|site\\.webmanifest)$).+)',
+    // /site-images/<file> (one segment, like the per-host files) never reaches
+    // this middleware, on purpose: its handler
+    // (src/app/site-images/[file]/route.ts) answers GET only, reads no session
+    // or cookie, resolves the site from the Host alone and serves only that
+    // published site's images (404 on the editor host and on any host naming
+    // no published site), so neither the allowlist, the cross-origin check nor
+    // the cookie filters have anything to guard there. Its entry in
+    // src/lib/hostRoutes.ts (published: GET) records that classification. A
+    // deeper path (/site-images/a/b) is no site image but a catch-all page
+    // path, so it is matched.
+    '/((?!(?:api|_next)(?:/|$)|site-images/[^/]+$|(?:favicon\\.ico|robots\\.txt|sitemap\\.xml|site\\.webmanifest)$).+)',
   ],
 };

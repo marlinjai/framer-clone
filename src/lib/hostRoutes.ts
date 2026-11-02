@@ -9,8 +9,11 @@
 // preview, its APIs, the operator and webhook endpoints) answers 404 there.
 //
 // Every route under src/app has exactly one entry; src/lib/__tests__/
-// hostRoutes.test.ts walks the directory and fails on a route without one, so
-// a new route must be classified before it ships.
+// hostRoutes.test.ts walks the directory (pages, route handlers and the
+// metadata files such as `opengraph-image` or `robots`, in every extension) and
+// fails on a route without one, so a new route must be classified before it
+// ships. It also fails on an optional catch-all, a parallel slot or an
+// intercepting route, which `parse` below does not match as Next does yet.
 //
 // Dependency-free on purpose: the edge middleware imports it.
 

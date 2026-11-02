@@ -19,31 +19,65 @@ const EDITOR = 'app.lumitra.co';
 const PUBLISHED = 'acme.sites.lumitra.co';
 const CUSTOM_DOMAIN = 'www.acme-shop.de';
 
-/** The files that make a route: pages and route handlers, the harness build's included. */
-const ROUTE_FILE = /^(page|route)(\.harness)?\.(tsx|ts)$/;
+/** The files that make a route: pages and route handlers, the harness build's included, in every extension Next reads. */
+const ROUTE_FILE = /^(page|route)(\.harness)?\.(js|jsx|ts|tsx)$/;
+
+/**
+ * The metadata files, which Next also turns into routes: generated (js/jsx/ts/tsx)
+ * or static. Icons and sharing images may be numbered (`icon1.png`).
+ */
+const METADATA_FILE =
+  /^(?:(opengraph-image|twitter-image|icon|apple-icon)\d*\.(?:js|jsx|ts|tsx|ico|jpe?g|png|gif|svg)|(sitemap)\.(?:js|jsx|ts|tsx|xml)|(robots)\.(?:js|jsx|ts|tsx|txt)|(manifest)\.(?:js|jsx|ts|tsx|json|webmanifest)|(favicon)\.ico)$/;
+
+/** The path a metadata file is served at, under its directory. */
+function metadataRoute(name: string): string {
+  const match = METADATA_FILE.exec(name)!;
+  if (match[1]) return match[1];
+  if (match[2]) return 'sitemap.xml';
+  if (match[3]) return 'robots.txt';
+  if (match[4]) return name.endsWith('.json') ? 'manifest.json' : 'manifest.webmanifest';
+  return 'favicon.ico';
+}
+
+/**
+ * Segments the route table cannot classify yet: an optional catch-all
+ * (`[[...x]]`), a parallel route slot (`@x`) and an intercepting route
+ * (`(.)x`, `(..)x`, `(..)(..)x`, `(...)x`). `parse` in src/lib/hostRoutes.ts
+ * matches none of them as Next does, so one appearing fails the walk.
+ */
+const UNSUPPORTED_SEGMENT = /^(?:\[\[\.\.\..+\]\]|@.+|\((?:\.{1,3})\).*|\(\.\.\)\(\.\.\).*)$/;
 
 interface RouteFile {
   route: string;
   file: string;
-  kind: 'page' | 'route';
+  kind: 'page' | 'route' | 'metadata';
 }
+
+const UNSUPPORTED: string[] = [];
 
 function walk(dir: string, out: RouteFile[] = []): RouteFile[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (entry.name === '__tests__') continue;
+    // A private folder (`_x`, `__tests__` among them) is never a route.
+    if (entry.isDirectory() && entry.name.startsWith('_')) continue;
     const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) walk(full, out);
-    else if (ROUTE_FILE.test(entry.name)) {
-      const segments = path
-        .relative(APP_DIR, dir)
-        .split(path.sep)
-        .filter((segment) => segment && !(segment.startsWith('(') && segment.endsWith(')')));
-      out.push({
-        route: `/${segments.join('/')}`,
-        file: path.relative(process.cwd(), full),
-        kind: entry.name.startsWith('page') ? 'page' : 'route',
-      });
+    if (entry.isDirectory()) {
+      if (UNSUPPORTED_SEGMENT.test(entry.name)) UNSUPPORTED.push(path.relative(process.cwd(), full));
+      walk(full, out);
+      continue;
     }
+    const isRoute = ROUTE_FILE.test(entry.name);
+    const isMetadata = !isRoute && METADATA_FILE.test(entry.name);
+    if (!isRoute && !isMetadata) continue;
+    const segments = path
+      .relative(APP_DIR, dir)
+      .split(path.sep)
+      .filter((segment) => segment && !(segment.startsWith('(') && segment.endsWith(')') && !UNSUPPORTED_SEGMENT.test(segment)));
+    if (isMetadata) segments.push(metadataRoute(entry.name));
+    out.push({
+      route: `/${segments.join('/')}`,
+      file: path.relative(process.cwd(), full),
+      kind: isMetadata ? 'metadata' : entry.name.startsWith('page') ? 'page' : 'route',
+    });
   }
   return out;
 }
@@ -53,7 +87,7 @@ const METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'] as const;
 
 /** The methods a route file answers: a page answers GET (and HEAD). */
 function exportedMethods(routeFile: RouteFile): string[] {
-  if (routeFile.kind === 'page') return ['GET'];
+  if (routeFile.kind !== 'route') return ['GET'];
   const source = readFileSync(routeFile.file, 'utf8');
   return [...source.matchAll(/export\s+(?:const|async\s+function|function)\s+(GET|POST|PUT|PATCH|DELETE)\b/g)].map((m) => m[1]);
 }
@@ -84,6 +118,58 @@ describe('host routes: every route under src/app is classified', () => {
     expect(routes).toContain('/preview');
     expect(routes).toContain('/api/forms/submit');
     expect(ROUTE_FILES.length).toBeGreaterThan(100);
+  });
+
+  it('meets no optional catch-all, parallel slot or intercepting route (the table cannot classify them yet)', () => {
+    expect(UNSUPPORTED, 'extend parse in src/lib/hostRoutes.ts (and this walk) before adding one').toEqual([]);
+  });
+
+  it('reads every route and metadata file name Next turns into a route', () => {
+    for (const name of ['page.js', 'page.jsx', 'route.js', 'route.jsx', 'page.harness.tsx', 'route.ts']) {
+      expect(ROUTE_FILE.test(name), name).toBe(true);
+    }
+    expect(
+      [
+        'opengraph-image.tsx',
+        'opengraph-image.png',
+        'twitter-image.jpg',
+        'icon.svg',
+        'icon1.png',
+        'apple-icon.png',
+        'sitemap.ts',
+        'sitemap.xml',
+        'robots.js',
+        'robots.txt',
+        'manifest.ts',
+        'manifest.json',
+        'manifest.webmanifest',
+        'favicon.ico',
+      ].map(metadataRoute),
+    ).toEqual([
+      'opengraph-image',
+      'opengraph-image',
+      'twitter-image',
+      'icon',
+      'icon',
+      'apple-icon',
+      'sitemap.xml',
+      'sitemap.xml',
+      'robots.txt',
+      'robots.txt',
+      'manifest.webmanifest',
+      'manifest.json',
+      'manifest.webmanifest',
+      'favicon.ico',
+    ]);
+    for (const name of ['layout.tsx', 'loader.ts', 'icons.ts', 'page.module.css']) {
+      expect(ROUTE_FILE.test(name) || METADATA_FILE.test(name), name).toBe(false);
+    }
+    for (const segment of ['[[...slug]]', '@modal', '(.)photo', '(..)photo', '(..)(..)photo', '(...)photo']) {
+      expect(UNSUPPORTED_SEGMENT.test(segment), segment).toBe(true);
+    }
+    for (const segment of ['(site)', '[...slug]', '[id]', 'favicon.ico']) {
+      expect(UNSUPPORTED_SEGMENT.test(segment), segment).toBe(false);
+    }
   });
 
   it.each(ROUTE_FILES.map((r) => [r.file, r] as const))('%s has an entry', (_file, routeFile) => {

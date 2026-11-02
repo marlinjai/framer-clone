@@ -8,8 +8,14 @@
 // The editor is served on the fixed EDITOR_HOST; every other host is a
 // published storefront (the published-site plane, which derives tenancy from
 // the host and must never be authorized by the apex `.lumitra.co` session, D2).
-// Dev / unconfigured safety: with no EDITOR_HOST, or on localhost / 127.0.0.1,
-// EVERY host counts as the editor host, so local development is unchanged.
+// Dev / unconfigured safety: with no EDITOR_HOST, every host counts as the
+// editor host, so local development is unchanged (a production start without
+// it is refused, assertEditorHostConfigured). localhost and 127.0.0.1 count as
+// the editor host too, but ONLY outside production: in production a Host header
+// is whatever the client sends, and `Host: localhost` must never turn a
+// published origin into the editor. (The container probe hits 127.0.0.1, which
+// then counts as a published host; it asks only for /api/health, which every
+// host serves.)
 
 /** Normalize a Host header value: drop the port, lowercase. */
 function hostnameOf(host: string | null | undefined): string {
@@ -18,19 +24,17 @@ function hostnameOf(host: string | null | undefined): string {
 
 /**
  * True when `host` is the editor host (see the file header for the dev rules).
- * `editorHost` defaults to `process.env.EDITOR_HOST`.
+ * `editorHost` defaults to `process.env.EDITOR_HOST`, `nodeEnv` to
+ * `process.env.NODE_ENV`.
  */
 export function isEditorHost(
   host: string | null | undefined,
   editorHost: string | null | undefined = process.env.EDITOR_HOST,
+  nodeEnv: string | undefined = process.env.NODE_ENV,
 ): boolean {
   const hostname = hostnameOf(host);
-  return (
-    !editorHost ||
-    hostname === editorHost.toLowerCase() ||
-    hostname === 'localhost' ||
-    hostname === '127.0.0.1'
-  );
+  if (!editorHost || hostname === editorHost.toLowerCase()) return true;
+  return nodeEnv !== 'production' && (hostname === 'localhost' || hostname === '127.0.0.1');
 }
 
 /** Why a production start is refused: the message names the fix. */
