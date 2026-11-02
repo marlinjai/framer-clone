@@ -27,7 +27,7 @@ interface PatternsOut {
   renderer: SurfaceResults;
   canvas: SurfaceResults;
   ai: SurfaceResults;
-  vocabulary: Record<string, { tags: string[]; props: string[] }>;
+  vocabulary: Record<string, { tags: string[]; props: string[]; preset?: string }>;
 }
 
 interface PanelDetail {
@@ -36,6 +36,8 @@ interface PanelDetail {
   typesWritten: string[];
   referencedNotDriven: string[];
   paletteTags: string[];
+  /** The presets a palette entry really placed on a page. */
+  presetsPlaced: string[];
   /** The rows whose panel cell passes only through the text field for rules. */
   rawFieldRows: string[];
 }
@@ -86,9 +88,13 @@ const rawFieldCells = (score: Score): number => score.panel.rawFieldRows.length;
 /** A pattern is editable only when every tag and prop it uses is. */
 function patternPanelCells(patterns: PatternsOut, panel: SurfaceResults, detail: PanelDetail): SurfaceResults {
   const out: SurfaceResults = {};
-  for (const [key, { tags, props }] of Object.entries(patterns.vocabulary)) {
+  for (const [key, { tags, props, preset }] of Object.entries(patterns.vocabulary)) {
     const missingTags = tags.filter((tag) => panel[rowKey('html-element', tag)]?.status !== 'pass');
-    const missingProps = props.filter((prop) => prop !== 'style' && !detail.propKeysWritten.includes(prop));
+    // Stored behaviour counts only when the palette places that preset, so swapping a tree cannot hide a gap.
+    // A plain rule counts when the raw field wrote rules, which is the one place the panel takes any.
+    const placed = (prop: string) => (prop === 'behaviour' && preset !== undefined && detail.presetsPlaced.includes(preset))
+      || (prop === 'rules' && detail.rawFieldRows.length > 0);
+    const missingProps = props.filter((prop) => prop !== 'style' && !placed(prop) && !detail.propKeysWritten.includes(prop));
     const missing = [...missingTags, ...missingProps];
     out[key] = missing.length === 0
       ? { status: 'pass' }
@@ -370,7 +376,7 @@ export function renderReport(score: Score): string {
     '- **Format stores it:** the entry is written into a node, survives `ComponentModel.create`, a snapshot, JSON and a second create, and is read back unchanged through `getResolvedProps`. For a selector, at-rule, media feature or event handler the bytes alone prove nothing (props are opaque JSON and hold anything), so it also needs a reader that gives it a meaning: it has to reach the page. An attribute named like a CSS property comes back as a style, which counts as stored.',
     '- **Published renderer emits it:** the node goes through `applyResponsiveStyles` and `renderComponentNode`. An element or attribute must be in the markup, an attribute on the opening tag of its own element, and when that element is missing the attribute takes the element\'s gap. An SVG or MathML entry sits inside its root element and Chromium must parse the tag into that namespace. A CSS property must be there both ways a declaration reaches a page: inline, and in the page stylesheet as a responsive value, with `initial` as the value. A value row does the same with its sample on a host property. A WAI-ARIA pattern must pass its keyboard contract in real Chromium.',
     '- **Editor canvas shows it:** the same entry through the real `ComponentRenderer` with a real store, rendered to markup. An SVG attribute that arrives as a style declaration passes, because SVG maps those to the same property; an HTML one is `attribute-read-as-style`. A WAI-ARIA pattern runs its contract on the mounted editor instead: the real `EditorApp` in Chromium with the tree on a page, its server edge stubbed. A contract that passes when published and fails there is `canvas-editor-context`. A rule row renders the canvas sheet beside it and reads the text that sheet holds: pointer states and conditions on the editor must be dead until previewed, and the frame must answer a width.',
-    '- **Panel can edit it:** the real `RightSidebar` is mounted for a node of each component category and every control is operated. A key counts only if an action changed it in the node, and an attribute only on the tag the action changed it on. An element counts when a palette entry produces it or a panel action sets it. A pattern counts when every tag and prop it uses does. A value row counts only for the kinds the driver types (a length, a color, a number) and when a control kept what was typed.',
+    '- **Panel can edit it:** the real `RightSidebar` is mounted for a node of each component category and every control is operated. A key counts only if an action changed it in the node, and an attribute only on the tag the action changed it on. An element counts when a palette entry produces it or a panel action sets it. A pattern counts when every tag and prop it uses does: its stored behaviour, with the rules on a state or the gate, when the palette places that preset, and a plain rule through the raw field. A value row counts only for the kinds the driver types (a length, a color, a number) and when a control kept what was typed.',
     '- **AI generator can produce it:** `validateGeneration` is given a node with the entry, and the entry must still be there afterwards. A tag rewritten to `div` is a fail. A value row needs the exact value back. A sample on a host property outside the allowlist fails as `ai-style-allowlist`, so it says nothing about the value. A rule row needs its stored rule back unchanged, and carries the note `accepted, not taught` unless the prompt teaches that form. A rule that reads a visitor or looks past its node is `ai-rule-refused`: that is a safety decision, not a missing feature.',
     '- **A reusable component row** is a promise of the format, not a web standard entry. Format: it survives the snapshot round trip with a reader. Published: it is emitted through `renderPublishedPage`. Canvas: it renders through the real `ComponentRenderer`. Panel: it changes through the real section. AI: it survives `validateGeneration`. A pass here proves less than it reads: the corpus is the test.',
   );

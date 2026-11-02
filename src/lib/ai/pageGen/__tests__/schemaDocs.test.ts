@@ -35,10 +35,16 @@ describe('buildSchemaDocs', () => {
   });
 
   it('documents every registry entry with its type and defaults', () => {
-    for (const entry of Object.values(COMPONENT_REGISTRY)) {
+    for (const entry of Object.values(COMPONENT_REGISTRY).filter((at) => !at.preset)) {
       expect(docs).toContain(`### preset "${entry.id}" (${entry.label}, category ${entry.category})`);
       expect(docs).toContain(`- type: ${entry.htmlType}`);
       expect(docs).toContain(`- defaults: ${stableStringify(entry.defaultProps)}`);
+    }
+  });
+
+  it('teaches no behaviour preset as an element, which is all its entry names', () => {
+    for (const entry of Object.values(COMPONENT_REGISTRY).filter((at) => at.preset)) {
+      expect(docs).not.toContain(`### preset "${entry.id}"`);
     }
   });
 

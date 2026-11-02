@@ -12,7 +12,8 @@ import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { deriveBreakpointKeys } from '@/lib/ai/pageGen/schema';
 import { validateGeneration } from '@/lib/ai/pageGen/validate';
 import { PATTERNS, treeVocabulary } from './patterns';
-import { BREAKPOINTS, publishedDocument, renderPublished } from './lib/published';
+import { BREAKPOINTS, publishedDocument, renderPublished, renderThroughPublishedPage } from './lib/published';
+import { bundleRuntime } from './lib/runtime';
 import { bundleEditor, mountOnCanvas, toSnapshot } from './lib/canvasBundle';
 import { ariaPatterns } from './lib/universe';
 import { writeOut } from './lib/io';
@@ -28,6 +29,42 @@ function storesAll(root: ComponentNode): boolean {
     (a.children ?? []).length === b.children.length &&
     (a.children ?? []).every((c, i) => same(c, b.children[i] as typeof b));
   return same(root, created);
+}
+
+/**
+ * The tree without what only stored behaviour gives it. The validator learns `behaviour`
+ * in slice B12, so a pattern built from a preset is asked what an aria-only tree was asked,
+ * and B12 takes this out. A rule on the gate or on a state means nothing without it.
+ */
+function withoutBehaviour(node: ComponentNode): ComponentNode {
+  const props = Object.fromEntries(Object.entries(node.props ?? {}).filter(([name]) => name !== 'behaviour' && name !== 'rules'));
+  const { rules } = (node.props ?? {}) as { rules?: unknown };
+  const kept = Array.isArray(rules) ? rules.filter((rule) => !('gate' in rule) && !('when' in rule)) : [];
+  return {
+    ...node,
+    props: { ...props, ...(kept.length > 0 ? { rules: kept } : {}) } as ComponentNode['props'],
+    ...(node.children ? { children: node.children.map(withoutBehaviour) } : {}),
+  };
+}
+
+/**
+ * The props the panel has to be able to write. A rule on a state or on the gate is the CSS
+ * of stored behaviour and goes with `behaviour`; `rules` stays only for a plain rule, which
+ * the panel writes through its raw field.
+ */
+function panelProps(root: ComponentNode, props: Set<string>): string[] {
+  const rules: Record<string, unknown>[] = [];
+  const walk = (node: ComponentNode) => {
+    const stored = (node.props as { rules?: unknown } | undefined)?.rules;
+    if (Array.isArray(stored)) rules.push(...(stored as Record<string, unknown>[]));
+    node.children?.forEach(walk);
+  };
+  walk(root);
+  const ofBehaviour = (rule: Record<string, unknown>) => 'when' in rule || 'gate' in rule;
+  const out = new Set([...props].filter((prop) => prop !== 'rules'));
+  if (rules.some(ofBehaviour)) out.add('behaviour');
+  if (rules.some((rule) => !ofBehaviour(rule))) out.add('rules');
+  return [...out];
 }
 
 /** Whether the validator keeps every tag and every prop of the tree. */
@@ -66,8 +103,9 @@ describe('coverage matrix: WAI-ARIA Authoring Practices patterns', () => {
     const renderer: Record<string, Cell> = {};
     const canvas: Record<string, Cell> = {};
     const ai: Record<string, Cell> = {};
-    const vocabulary: Record<string, { tags: string[]; props: string[] }> = {};
+    const vocabulary: Record<string, { tags: string[]; props: string[]; preset?: string }> = {};
     const bundle = await bundleEditor();
+    const runtime = await bundleRuntime();
 
     for (const pattern of PATTERNS) {
       const key = rowKey('aria-pattern', pattern.id);
@@ -76,7 +114,9 @@ describe('coverage matrix: WAI-ARIA Authoring Practices patterns', () => {
 
       const page = await browser.newPage();
       page.setDefaultTimeout(1500);
-      await page.setContent(publishedDocument(renderPublished(tree)));
+      // Stored behaviour needs the whole published path, and the runtime on the page.
+      const published = pattern.built === 'behaviour' ? await renderThroughPublishedPage({ tree, definitions: {} }) : renderPublished(tree);
+      await page.setContent(publishedDocument(published, undefined, undefined, runtime));
       try {
         await pattern.contract(page, page);
         renderer[key] = { status: 'pass', note: pattern.built === 'native' ? 'plain HTML brings the behaviour' : undefined };
@@ -102,11 +142,11 @@ describe('coverage matrix: WAI-ARIA Authoring Practices patterns', () => {
       }
       await mounted.close();
 
-      const generated = generatorKeeps(tree);
+      const generated = generatorKeeps(withoutBehaviour(tree));
       ai[key] = generated.kept ? { status: 'pass' } : { status: 'fail', gap: 'ai-attribute-allowlist', note: `lost: ${generated.lost}` };
 
       const { tags, props } = treeVocabulary(tree);
-      vocabulary[key] = { tags: [...tags], props: [...props] };
+      vocabulary[key] = { tags: [...tags], props: panelProps(tree, props), ...(pattern.preset ? { preset: pattern.preset } : {}) };
     }
 
     writeOut('patterns', { format, renderer, canvas, ai, vocabulary });
