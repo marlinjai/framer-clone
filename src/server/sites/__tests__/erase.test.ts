@@ -121,6 +121,7 @@ describe('findMatches', () => {
           snapshot: {
             id: 'n-max-power',
             props: { className: 'max-power-card', name: 'max-power', 'data-owner': 'max-power', 'aria-controls': 'max-power-panel' },
+            behaviour: { if: { state: 'max-power-open', eq: true } },
             bindings: { children: { mode: 'read', expression: 'Hi {{row.max-power}} and max-power' } },
             canvasNodes: { 'max-power-node': { id: 'x' } },
           },
@@ -137,6 +138,7 @@ describe('findMatches', () => {
       ['/pages/0/snapshot/props/name', 'structural'],
       ['/pages/0/snapshot/props/data-owner', 'structural'],
       ['/pages/0/snapshot/props/aria-controls', 'structural'],
+      ['/pages/0/snapshot/behaviour/if/state', 'structural'],
       ['/pages/0/snapshot/bindings/children/expression', 'binding-reference'],
       ['/pages/0/snapshot/bindings/children/expression', null],
       ['/pages/0/snapshot/canvasNodes/max-power-node', 'key'],

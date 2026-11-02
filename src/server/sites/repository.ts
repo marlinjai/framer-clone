@@ -554,7 +554,8 @@ export class SiteRepository {
           ...componentsColumn,
         },
         // `name` is written on create only. After that the rename action
-        // (renameSite, PATCH /api/projects/<id>) is its only writer: an editor
+        // (renameSite, PATCH /api/projects/<id>) and an erase of personal data
+        // (erasePersonalData) are its only writers: an editor
         // tab opened before a rename still carries the old title in its
         // snapshot, and a later Save or Publish from it must not silently undo
         // the rename.
@@ -674,8 +675,9 @@ export class SiteRepository {
   }
 
   /**
-   * Rename a site, scoped to the caller's workspace. The ONLY writer of
-   * `Site.name` after creation (saveProject leaves it alone on update).
+   * Rename a site, scoped to the caller's workspace. The only writer of
+   * `Site.name` after creation (saveProject leaves it alone on update), apart
+   * from erasePersonalData, which rewrites a matched value inside it.
    *
    * Concurrency: there is no version column, so the name itself is the
    * precondition. With `expectedName` the update matches only while the stored

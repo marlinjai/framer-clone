@@ -137,8 +137,16 @@ export function replacementContainsValue(replacement: string, query: EraseQuery)
 // ---------------------------------------------------------------------------
 // What may be rewritten
 
-/** Keys whose string value is an identifier, a type or a reference, never content. */
+/**
+ * Keys whose string value is an identifier, a type or a reference, never content.
+ * Checked against the stored formats on 2026-11-02: theme tokens are referenced by
+ * id (`theme.ts`), so a token's `name` is a label; behaviour rules name a state by
+ * id under `state` and an event under `on` (`behaviour/format.ts`); a component
+ * definition's `name` and an input's `name` are labels shown in the editor.
+ */
 const STRUCTURAL_KEYS = new Set([
+  'state',
+  'on',
   'id',
   'type',
   'componentType',
