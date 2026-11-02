@@ -134,12 +134,13 @@ describe('the island', () => {
     expect(frame()).toBeNull();
   });
 
-  it('without a consent runtime, the click loads the map for this page view and says so', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  it('without a consent runtime, loads nothing, says so, and keeps the open link', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     render(<MapEmbedIsland domProps={{}} config={config} />);
     fireEvent.click(screen.getByRole('button', { name: 'Load map' }));
-    expect(frame()).not.toBeNull();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('no consent runtime'));
+    expect(frame()).toBeNull();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('no consent runtime'));
+    expect(screen.getByRole('link', { name: 'Open in Google Maps' })).toBeTruthy();
   });
 
   it('opens Google Maps through a plain link that needs no consent', () => {

@@ -71,10 +71,11 @@ export default function MapEmbedIsland({ domProps, config }: MapEmbedIslandProps
       if (api.get?.('maps') === 'granted') setGranted(true);
       return;
     }
-    // Every page with a map carries the runtime (renderPublishedPage). Without it the
-    // visitor's click is still the consent, for this page view only.
-    console.warn('[map] no consent runtime on this page: the map loads for this page view only');
-    setGranted(true);
+    // Every page with a map carries the runtime (renderPublishedPage). Without it no
+    // answer can be recorded or withdrawn, so nothing loads: a renderer bug, said loudly.
+    // "Open in Google Maps" still takes the visitor to the map.
+    focusFrame.current = false;
+    console.error('[map] no consent runtime on this page: the map cannot ask for consent, so it does not load');
   }, []);
 
   const src = view.src;

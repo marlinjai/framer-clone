@@ -16,7 +16,7 @@ import { observer } from 'mobx-react-lite';
 import { MapPin } from 'lucide-react';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import { CollapsibleSection, PropertyRow, TextInput } from '../primitives';
-import { cleanMapText, parseMapEmbed, readMapEmbed } from '@/lib/mapEmbed/mapEmbed';
+import { parseMapEmbed, readMapEmbed } from '@/lib/mapEmbed/mapEmbed';
 
 interface MapEmbedSectionProps {
   component: ComponentInstance;
@@ -55,7 +55,8 @@ export const MapEmbedSection = observer(({ component }: MapEmbedSectionProps) =>
           placeholder="Hauptstraße 1, 10115 Berlin"
           onChange={(e) => {
             const next = e.target.value;
-            component.setProps({ mapAddress: next.trim() === '' ? undefined : (cleanMapText(next) ?? next.slice(0, 200)) });
+            // Kept as typed (a space mid-word must survive); readMapEmbed cleans it on every render.
+            component.setProps({ mapAddress: next.trim() === '' ? undefined : next.slice(0, 200) });
           }}
         />
       </PropertyRow>
@@ -96,7 +97,7 @@ export const MapEmbedSection = observer(({ component }: MapEmbedSectionProps) =>
           placeholder={view.copy.title(view.address)}
           onChange={(e) => {
             const next = e.target.value;
-            component.setProps({ mapTitle: next.trim() === '' ? undefined : (cleanMapText(next) ?? next.slice(0, 200)) });
+            component.setProps({ mapTitle: next.trim() === '' ? undefined : next.slice(0, 200) });
           }}
         />
       </PropertyRow>
