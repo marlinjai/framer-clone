@@ -7,113 +7,15 @@
 // Non-vacuous by construction: a scripted state that leaves the ORIGINAL unchanged
 // is a harness error, so a fixture cannot "pass" a state that tests nothing.
 
-import fs from 'node:fs';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type Page } from 'playwright';
 import { build } from 'esbuild';
-import pixelmatch from 'pixelmatch';
-import { PNG } from 'pngjs';
 import { FIXTURES, fixtureFile, readFixtureFile, type Fixture, type FixtureState } from './corpus/fixtures';
 import { BREAKPOINTS, publishedDocument, renderPublished } from './lib/published';
+import { MAX_DIFF_RATIO, diffComputed, diffRatio, takeSnapshot, type Snapshot } from './lib/compare';
 import { OUT_DIR, writeOut } from './lib/io';
 import type { CheckName, CorpusFailure, CorpusResult, GapId } from './lib/types';
-
-/** Per-pixel colour tolerance of pixelmatch, and the share of pixels allowed to differ. */
-const PIXEL_THRESHOLD = 0.1;
-const MAX_DIFF_RATIO = 0.001;
-
-interface Snapshot {
-  png: Buffer;
-  computed: Record<string, ElementFacts>;
-  aria: string;
-}
-
-interface ElementFacts {
-  text: string;
-  styles: Record<string, string>;
-  before: Record<string, string>;
-  after: Record<string, string>;
-}
-
-async function takeSnapshot(page: Page): Promise<Snapshot> {
-  const computed = await page.evaluate(() => {
-    const dump = (style: CSSStyleDeclaration) => {
-      const out: Record<string, string> = {};
-      for (let i = 0; i < style.length; i++) {
-        // Radix measures its panels in script and writes the sizes here: runtime
-        // state, not a style the replica could or should author.
-        if (!style[i].startsWith('--radix-')) out[style[i]] = style.getPropertyValue(style[i]);
-      }
-      return out;
-    };
-    const facts: Record<string, ElementFacts> = {};
-    document.querySelectorAll('[data-parity-id]').forEach((el) => {
-      facts[el.getAttribute('data-parity-id') as string] = {
-        // Words only: the source indentation of a hand-written page is not content.
-        text: (el.textContent ?? '').replace(/\s+/g, ''),
-        styles: dump(getComputedStyle(el)),
-        before: dump(getComputedStyle(el, '::before')),
-        after: dump(getComputedStyle(el, '::after')),
-      };
-    });
-    return facts;
-  });
-  return {
-    png: await page.screenshot({ fullPage: true }),
-    computed,
-    aria: await page.locator('body').ariaSnapshot(),
-  };
-}
-
-function diffRatio(a: Buffer, b: Buffer, file: string): number {
-  const left = PNG.sync.read(a);
-  const right = PNG.sync.read(b);
-  if (left.width !== right.width || left.height !== right.height) return 1;
-  const diff = new PNG({ width: left.width, height: left.height });
-  const count = pixelmatch(left.data, right.data, diff.data, left.width, left.height, { threshold: PIXEL_THRESHOLD });
-  if (count > 0) {
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, PNG.sync.write(diff));
-  }
-  return count / (left.width * left.height);
-}
-
-interface ComputedDiff {
-  count: number;
-  firstDetail: string;
-  textLost: boolean;
-  pseudo: boolean;
-}
-
-function diffComputed(original: Snapshot['computed'], replica: Snapshot['computed']): ComputedDiff {
-  const result: ComputedDiff = { count: 0, firstDetail: '', textLost: false, pseudo: false };
-  const note = (detail: string) => {
-    result.count += 1;
-    if (!result.firstDetail) result.firstDetail = detail;
-  };
-  for (const [id, facts] of Object.entries(original)) {
-    const other = replica[id];
-    if (!other) {
-      note(`${id}: not in the replica`);
-      continue;
-    }
-    if (facts.text !== other.text) {
-      result.textLost = true;
-      note(`${id}: text ${JSON.stringify(facts.text.slice(0, 40))} became ${JSON.stringify(other.text.slice(0, 40))}`);
-    }
-    for (const [name, value] of Object.entries(facts.styles)) {
-      if (other.styles[name] !== value) note(`${id}: ${name} ${value} became ${other.styles[name]}`);
-    }
-    for (const pseudo of ['before', 'after'] as const) {
-      if (facts[pseudo].content !== other[pseudo].content) {
-        result.pseudo = true;
-        note(`${id}::${pseudo}: content ${facts[pseudo].content} became ${other[pseudo].content}`);
-      }
-    }
-  }
-  return result;
-}
 
 async function originalDocument(fixture: Fixture): Promise<string> {
   if ('html' in fixture.original) return readFixtureFile(fixture.original.html);

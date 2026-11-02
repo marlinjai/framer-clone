@@ -76,10 +76,12 @@ export const GAPS = {
   'canvas-editor-context': 'The contract passes on the published page, but the mounted editor changes the outcome: Space pans, a link does not navigate, and the editor\'s own main element stops a header inside it being a banner. Closing it takes an interact mode on the canvas.',
   'registry-tag-collision': 'A tag that is also a component registry id renders as that entry instead: type "form" comes out as a div.',
   'renderer-drops-value': 'A stored value a renderer refuses, overwrites or loses.',
+  'empty-custom-property': 'A custom property with an empty value, such as `--tw-blur: ;`, is dropped on its way into the page stylesheet, so every var() list that reads it goes invalid. Tailwind writes these for filter, backdrop-filter and gradients.',
   'react-attribute-handling': 'React drops or rewrites an attribute that is valid HTML.',
   'roundtrip-not-representable': 'A construct that cannot survive nodes to JSX and back, because the format has nowhere to put it.',
   'import-dynamic-logic': 'JSX that is a program, not markup: reported as left over by the static import, as the plan requires.',
   'reusable-components': 'A promise of the reusable component format (an input type, a placement, a state or an interaction) that this surface does not keep yet.',
+  'shop-feature-missing': 'A real BusBasis page depends on a shop feature that is not built: the page stays failed however close its pixels are.',
   'layout-difference': 'Same declarations, different geometry or pixels, for a reason other than the gaps above.',
   'harness-limit': 'Not a product gap: the harness cannot yet decide this cell, so it is not counted as a pass.',
   unclassified: 'A difference no rule explains yet. Investigate before trusting the score.',
@@ -98,15 +100,30 @@ export interface CorpusFailure {
   detail: string;
 }
 
+/** How far one real page is from its original in one state, for the ranked gap list. */
+export interface PageDifference {
+  viewport: string;
+  state: string;
+  ratio: number;
+  elementsCompared: number;
+  elementsDiffering: number;
+  differences: number;
+  byGap: Partial<Record<GapId, number>>;
+  byProperty: [string, number][];
+}
+
 export interface CorpusResult {
   fixture: string;
-  group: 'edge' | 'component';
+  group: 'edge' | 'component' | 'held-out';
   source: string;
   pass: boolean;
   /** Check counts over every viewport and state. */
   checks: Record<CheckName, { pass: number; total: number }>;
   failures: CorpusFailure[];
   notMeasured: string[];
+  /** A held-out page: what kind of page it is, and its differences per viewport. */
+  pageType?: string;
+  differences?: PageDifference[];
 }
 
 export interface RoundTripCase {

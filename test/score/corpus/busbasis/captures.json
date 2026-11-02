@@ -1,0 +1,117 @@
+{
+  "sheetSha256OfCapture": "2f4e0922b995cd1b39f0306c9863a12ad4841d83bb76705a958fc2a24d3aec12",
+  "pages": [
+    {
+      "slug": "home",
+      "pageType": "home",
+      "source": "https://basiscampberlin.de/de",
+      "status": 200,
+      "capturedAt": "2026-11-02T02:56:39.831Z",
+      "elements": 533
+    },
+    {
+      "slug": "store",
+      "pageType": "product list",
+      "source": "https://basiscampberlin.de/de/store",
+      "status": 200,
+      "capturedAt": "2026-11-02T02:51:13.249Z",
+      "elements": 753
+    },
+    {
+      "slug": "search",
+      "pageType": "search",
+      "source": "https://basiscampberlin.de/de/store?q=bremse",
+      "status": 200,
+      "capturedAt": "2026-11-02T02:51:54.055Z",
+      "elements": 760
+    },
+    {
+      "slug": "category",
+      "pageType": "category",
+      "source": "https://basiscampberlin.de/de/categories/mercedes-benz-baumuster-309-310-313-duedos-motor",
+      "status": 200,
+      "capturedAt": "2026-11-02T02:52:29.063Z",
+      "elements": 278
+    },
+    {
+      "slug": "collection",
+      "pageType": "collection",
+      "source": "https://basiscampberlin.de/de/collections/favoriten",
+      "status": 200,
+      "capturedAt": "2026-11-02T02:52:48.337Z",
+      "elements": 480
+    },
+    {
+      "slug": "product",
+      "pageType": "product detail",
+      "source": "https://basiscampberlin.de/de/products/11d3-32",
+      "status": 200,
+      "capturedAt": "2026-11-02T02:53:10.188Z",
+      "elements": 484
+    },
+    {
+      "slug": "cart-empty",
+      "pageType": "cart",
+      "source": "https://basiscampberlin.de/de/cart",
+      "status": 200,
+      "capturedAt": "2026-11-02T02:53:29.827Z",
+      "elements": 198
+    },
+    {
+      "slug": "checkout-no-cart",
+      "pageType": "checkout",
+      "source": "https://basiscampberlin.de/de/checkout",
+      "status": 404,
+      "capturedAt": "2026-11-02T02:53:44.042Z",
+      "elements": 190
+    },
+    {
+      "slug": "privacy",
+      "pageType": "content: privacy",
+      "source": "https://basiscampberlin.de/de/privacy",
+      "status": 200,
+      "capturedAt": "2026-11-02T02:53:58.555Z",
+      "elements": 224
+    },
+    {
+      "slug": "terms",
+      "pageType": "content: terms",
+      "source": "https://basiscampberlin.de/de/terms",
+      "status": 200,
+      "capturedAt": "2026-11-02T02:54:13.143Z",
+      "elements": 240
+    },
+    {
+      "slug": "login",
+      "pageType": "account: login",
+      "source": "https://basiscampberlin.de/de/account",
+      "status": 200,
+      "capturedAt": "2026-11-02T02:54:28.443Z",
+      "elements": 228
+    },
+    {
+      "slug": "request-reset",
+      "pageType": "account: password reset",
+      "source": "https://basiscampberlin.de/de/request-reset",
+      "status": 200,
+      "capturedAt": "2026-11-02T02:54:42.809Z",
+      "elements": 198
+    },
+    {
+      "slug": "shop-unavailable",
+      "pageType": "shop kill switch",
+      "source": "https://basiscampberlin.de/de/shop-unavailable",
+      "status": 200,
+      "capturedAt": "2026-11-02T02:54:56.384Z",
+      "elements": 173
+    },
+    {
+      "slug": "not-found",
+      "pageType": "not found",
+      "source": "https://basiscampberlin.de/de/search",
+      "status": 404,
+      "capturedAt": "2026-11-02T02:55:09.144Z",
+      "elements": 10
+    }
+  ]
+}
