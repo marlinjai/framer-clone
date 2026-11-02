@@ -57,6 +57,10 @@ jobs:
       - name: Floor against the run, row by row
         run: pnpm check:score-floor
 
+      # The "Framer, native" column is read from the score just published, so it moves with it.
+      - name: Framer comparison
+        run: pnpm score:framer
+
       # The probes' screenshots and per-run results, for reading a failure.
       - name: Keep the run
         if: always()
@@ -66,17 +70,18 @@ jobs:
           path: |
             test/score/.out/
             docs/primitives-score/latest.*
+            docs/primitives-score/framer.*
           retention-days: 14
 
       - name: Commit the report
         run: |
-          if git diff --quiet -- docs/primitives-score/latest.json docs/primitives-score/latest.md; then
+          if git diff --quiet -- docs/primitives-score/latest.json docs/primitives-score/latest.md docs/primitives-score/framer.json docs/primitives-score/framer.md; then
             echo "The report did not change."
             exit 0
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add docs/primitives-score/latest.json docs/primitives-score/latest.md
+          git add docs/primitives-score/latest.json docs/primitives-score/latest.md docs/primitives-score/framer.json docs/primitives-score/framer.md
           git commit -m "chore(score): publish the primitive score of ${GITHUB_SHA::7}"
           # A newer main gets its own run, which publishes; this one has nothing left to say.
           git push origin HEAD:main || echo "main moved on while this ran; the run for the newer main publishes."
