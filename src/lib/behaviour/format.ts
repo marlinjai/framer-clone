@@ -18,16 +18,23 @@
 //
 // What a refusal protects:
 //
-//   - What a visitor types. The taint rule: `{ event: 'value' }`, `{ event: 'key' }`
-//     and anything read from `text` state may flow only into `text` state, a `text`
-//     binding and `filter`, and it is tracked through every operator. This limits
+//   - What a visitor types. The taint rule: `{ event: 'value' }`, `{ event: 'key' }`,
+//     `{ active }` and anything read from `text` state may flow only into `text`
+//     state, a `text` binding and `filter`, and it is tracked through every operator.
+//     An active item's text counts because `filter` decides which items can become
+//     active. A trigger that fires per keystroke may only do what repeating leaves
+//     unchanged, so how much was typed reaches no reflected state either. This limits
 //     behaviour, it is not a guarantee about the page: `filter` makes visibility
 //     depend on typed text, and an author who also holds CSS can read that through
 //     the selector contract's residual route. Only a Content Security Policy on
 //     published pages closes that.
-//   - The keyboard. Focus verbs run only from a press, never around Tab or from an
-//     unfiltered key trigger, and `prevent` is refused on Tab, Escape, `cancel` and
-//     any key trigger without keys, so a stored page cannot hold focus.
+//   - The keyboard. Focus verbs run only from a press, at most a frame or two later,
+//     never around Tab or from an unfiltered key trigger, and `prevent` is refused on
+//     Tab, Escape, `cancel`, any key trigger without keys and any trigger hearing the
+//     whole page, so a stored page cannot hold focus.
+//   - What a stored value can become. A number is a number: an operator or a `set` on
+//     number state takes kind `number` only, since a map with mixed branches would add
+//     strings, and a custom property can hold an address.
 //   - The visitor's next page. `navigate` holds a checked literal and needs a press.
 //   - The islands. Forms, commerce and the sticky bar own their markup and state.
 //   - The tab. Every list has a cap, and `every` and `delay` have floors. The caps do
@@ -164,6 +171,8 @@ export const MAX_PROGRAM_BYTES = 64 * 1024;
 export const MIN_EVERY_MS = 1000;
 export const MIN_DELAY_MS = 16;
 export const MAX_DELAY_MS = 10_000;
+/** How long a focus move may wait: a frame or two for what the press opened, and no timer. */
+export const MAX_PRESS_WAIT_MS = 50;
 /** What a browser's timer can hold. Past this it overflows and fires at once. */
 const MAX_TIMER_MS = 2 ** 31 - 1;
 const MAX_OPTIONS = 64;
@@ -219,7 +228,7 @@ const VALUE_ATTRIBUTES: ReadonlySet<string> = new Set(['inert', 'open', 'disable
  * holds nothing that could end the attribute, the selector or the style element.
  */
 function isSafeChoice(text: unknown): text is string {
-  return typeof text === 'string' && text.length > 0 && text.length <= MAX_NAME_LENGTH
+  return typeof text === 'string' && text.length > 0 && text.length <= MAX_NAME_LENGTH && !RESERVED_KEYS.has(text)
     && !/[\u0000-\u001f\u007f{}<>;@\\"'`]/.test(text) && !text.includes('/*') && !/url\(/i.test(text);
 }
 
@@ -269,6 +278,8 @@ const KEY_EVENTS: ReadonlySet<string> = new Set(['keydown', 'keyup']);
 /** What a person does on purpose: the only causes of a focus move. */
 const INPUT_EVENTS: ReadonlySet<string> = new Set(['click', 'keydown', 'keyup']);
 const LEAVING_EVENTS: ReadonlySet<string> = new Set(['blur', 'focusout']);
+/** Fire as a person types into a field. `selectionchange` does too, wherever its trigger sits. */
+const TYPED_EVENTS: ReadonlySet<string> = new Set(['input', 'beforeinput']);
 const CUSTOM_EVENT = /^custom:([a-z0-9][a-z0-9_-]{0,63})$/;
 
 const isDomEvent = (on: string): boolean => DOM_EVENTS.has(on);
@@ -324,7 +335,8 @@ const COMMERCE_KINDS: ReadonlySet<string> = new Set([
 ]);
 const NON_TEXT_FIELD_TYPES: ReadonlySet<string> = new Set(['select', 'checkbox', 'consent']);
 const FIXED_INPUT_TYPES: ReadonlySet<string> = new Set(['range', 'checkbox', 'radio']);
-const NON_TEXT_INPUT_TYPES: ReadonlySet<string> = new Set([...FIXED_INPUT_TYPES, 'color', 'button', 'submit', 'reset', 'file']);
+/** `hidden` writes its `value` property into the attribute, so it holds no copied text. */
+const NON_TEXT_INPUT_TYPES: ReadonlySet<string> = new Set([...FIXED_INPUT_TYPES, 'color', 'button', 'submit', 'reset', 'file', 'hidden']);
 
 /** A node as it is stored or hydrated: all this parser needs of the tree. */
 export interface BehaviourNode {
@@ -348,6 +360,8 @@ export interface NodeFacts {
   nonTextField: boolean;
   /** Its value is a choice among fixed values, so `{ event: 'value' }` is no source. */
   fixedValue: boolean;
+  /** A `range`: the one control whose value is a number. */
+  numericValue: boolean;
   /** A person types into it. */
   textEntry: boolean;
   /** It renders exactly one text child and no element child. */
@@ -403,6 +417,7 @@ export function nodeFacts(node: BehaviourNode, insideIsland = false): NodeFacts 
     claimedField: insideIsland ? !isStickyCta(props) : formKind === 'form-field' || commerce,
     nonTextField: formKind === 'form-field' && typeof props.fieldType === 'string' && NON_TEXT_FIELD_TYPES.has(props.fieldType),
     fixedValue: tag === 'select' || (tag === 'input' && inputTypeText !== undefined && FIXED_INPUT_TYPES.has(inputTypeText)),
+    numericValue: tag === 'input' && inputTypeText === 'range',
     textEntry: !editableOff || tag === 'textarea'
       || (tag === 'input' && !(inputTypeText !== undefined && NON_TEXT_INPUT_TYPES.has(inputTypeText))),
     oneTextChild: isOneTextChild(props, node.children),
@@ -419,6 +434,7 @@ function mergeFacts(a: NodeFacts, b: NodeFacts): NodeFacts {
     claimedField: a.claimedField || b.claimedField,
     nonTextField: a.nonTextField && b.nonTextField,
     fixedValue: a.fixedValue && b.fixedValue,
+    numericValue: a.numericValue && b.numericValue,
     textEntry: a.textEntry || b.textEntry,
     oneTextChild: a.oneTextChild && b.oneTextChild,
     group: a.group && b.group,
@@ -442,6 +458,8 @@ interface ExpressionScope {
   nodes: ReadonlyMap<string, NodeFacts>;
   self: NodeFacts;
   event?: string;
+  /** The trigger hears the whole page, so what fired it need not be this node. */
+  hearsPage?: boolean;
 }
 
 const TAINT_REASON = 'typed text may flow only into text state, a text binding or filter';
@@ -451,7 +469,8 @@ const kindOfState = (state: StateValue): Kind =>
 
 const kindOfLiteral = (value: Literal): Kind => (typeof value === 'string' ? 'string' : typeof value === 'number' ? 'number' : 'boolean');
 
-const isNumeric = (read: ReadExpression): boolean => read.kind === 'number' || read.kind === 'any';
+/** `any` is no number: a map with mixed branches would add strings, and strings can hold an address. */
+const isNumeric = (read: ReadExpression): boolean => read.kind === 'number';
 
 function readList(list: unknown, count: number | null, scope: ExpressionScope, depth: number): Parsed<ReadExpression[]> {
   if (!Array.isArray(list) || list.length === 0 || (count !== null && list.length !== count)) {
@@ -478,6 +497,7 @@ function readMap(value: Record<string, unknown>, scope: ExpressionScope, depth: 
   const cases: [string, Expression][] = [];
   const reads: ReadExpression[] = [];
   for (const [key, entry] of entries) {
+    if (RESERVED_KEYS.has(key)) return refuse(`${key} cannot name a case`);
     const read = readExpression(entry, scope, depth + 1);
     if (!read.ok) return read;
     cases.push([key, read.value.value]);
@@ -500,7 +520,8 @@ function readEvent(value: Record<string, unknown>, scope: ExpressionScope): Pars
   if (event === undefined) return refuse('a binding has no event to read');
   if (value.event === 'value') {
     if (!isDomEvent(event)) return refuse(`${event} has no value to read`);
-    return accept({ value: { event: 'value' }, kind: 'any', tainted: !scope.self.fixedValue });
+    const own = scope.self.fixedValue && scope.hearsPage !== true;
+    return accept({ value: { event: 'value' }, kind: own && scope.self.numericValue ? 'number' : 'any', tainted: !own });
   }
   if (value.event === 'key') {
     if (!KEY_EVENTS.has(event)) return refuse(`${event} has no key to read`);
@@ -531,7 +552,8 @@ function readActive(value: Record<string, unknown>, scope: ExpressionScope): Par
   const target = referenceTo(value.active, scope);
   if (!target.ok) return target;
   if (!target.value.group) return refuse(`${String(value.active)} holds no focus group`);
-  return accept({ value: { active: target.value.key as string }, kind: 'string', tainted: false });
+  // `filter` decides which items can be active, so this text can answer what was typed.
+  return accept({ value: { active: target.value.key as string }, kind: 'string', tainted: true });
 }
 
 function readOperands(
@@ -546,7 +568,11 @@ function readOperands(
   if (!reads.ok) return reads;
   const list = reads.value;
   const numeric = operator === 'gt' || operator === 'lt' || operator === 'add' || operator === 'clamp';
-  if (numeric && !list.every(isNumeric)) return refuse(`${operator} works on numbers`);
+  if (numeric && !list.every(isNumeric)) {
+    // What only exists at run time could have been a number: then the taint is the reason.
+    const unknown = list.every((read) => isNumeric(read) || read.kind === 'any');
+    return refuse(unknown && anyTainted(list) ? TAINT_REASON : `${operator} works on numbers`);
+  }
   const rebuilt = { [operator]: list.map((read) => read.value) } as unknown as Expression;
   const kind: Kind = operator === 'add' || operator === 'clamp' ? 'number' : 'boolean';
   return accept({ value: rebuilt, kind, tainted: anyTainted(list) });
@@ -685,6 +711,10 @@ interface ActionScope extends ExpressionScope {
   on: string;
   keys?: string[];
   underDelay: boolean;
+  /** Milliseconds of `delay` around this action. */
+  waited: number;
+  /** This trigger fires per keystroke, so nothing here may build up across firings. */
+  typing: boolean;
   /** Actions counted so far in this trigger, nested ones too. */
   used: { count: number };
 }
@@ -735,8 +765,25 @@ function firesOnTab(scope: ActionScope): boolean {
 /** Why a verb that moves focus may not run here, or null. A focus move needs a press, and never answers Tab. */
 function refusedFocusMove(verb: string, scope: ActionScope, extraEvents: readonly string[] = []): string | null {
   if (LEAVING_EVENTS.has(scope.on)) return `${verb} in a ${scope.on} trigger could hold focus`;
+  if (scope.waited > MAX_PRESS_WAIT_MS) return `${verb} waits past the press that asked for it`;
   if (!INPUT_EVENTS.has(scope.on) && !extraEvents.includes(scope.on)) return `${verb} runs only from a press, not from ${scope.on}`;
   return firesOnTab(scope) ? `${verb} answering Tab could hold focus` : null;
+}
+
+const TYPING_REASON = 'this trigger fires per keystroke, so only what repeating leaves unchanged may run: a count of what was typed would reach reflected state';
+
+/**
+ * Why this verb may not run per keystroke, or null. A closed list of what repeating
+ * leaves unchanged, because the rest builds up: `step`, `toggle` and a `set` reading
+ * state count, `emit` and `delay` carry the count to another trigger, a native toggle
+ * comes back through `newState`, and any `rove` but `clear` moves an index.
+ */
+function refusedWhileTyping(verb: Verb, action: Record<string, unknown>, scope: ActionScope): string | null {
+  if (!scope.typing || verb === 'filter') return null;
+  if (verb === 'rove') return action.move === 'clear' ? null : TYPING_REASON;
+  if (verb !== 'set') return TYPING_REASON;
+  const state = typeof action.set === 'string' ? scope.states.get(action.set) : undefined;
+  return state?.type === 'text' || typeof action.value !== 'object' ? null : TYPING_REASON;
 }
 
 function targetOf(verb: Verb, key: unknown, scope: ActionScope): Parsed<NodeFacts & { key: string }> {
@@ -758,8 +805,8 @@ function stateOf(key: unknown, scope: ExpressionScope): Parsed<StateValue> {
  * Why a value may not be written into a choice state, or null. Every leaf the parser
  * can see is checked against the options: a literal must be one, a read of another
  * choice must hold only options of this one, and a map is checked through its cases
- * and default. What only exists at run time (an event value, the active item) cannot
- * be known here, so the runtime must keep a choice inside its options.
+ * and default. An event value only exists at run time, so the runtime must keep a
+ * choice inside its options.
  */
 function choiceRefusal(expr: Expression, id: string, options: readonly string[], states: ReadonlyMap<string, StateValue>): string | null {
   if (typeof expr === 'string') return options.includes(expr) ? null : `${expr} is not an option of ${id}`;
@@ -778,7 +825,7 @@ function choiceRefusal(expr: Expression, id: string, options: readonly string[],
     }
     return null;
   }
-  return 'event' in expr || 'active' in expr ? null : `${id} does not hold a number or a boolean`;
+  return 'event' in expr ? null : `${id} does not hold a number or a boolean`;
 }
 
 function parseSet(action: Record<string, unknown>, scope: ActionScope): Parsed<Action> {
@@ -788,8 +835,11 @@ function parseSet(action: Record<string, unknown>, scope: ActionScope): Parsed<A
   const read = readExpression(action.value, scope);
   if (!read.ok) return read;
   if (read.value.tainted && state.value.type !== 'text') return refuse(TAINT_REASON);
-  const expected = kindOfState(state.value);
-  if (read.value.kind !== 'any' && read.value.kind !== expected) return refuse(`${state.value.id} does not hold a ${read.value.kind}`);
+  // Only a choice is kept to its options at run time, and only text takes anything.
+  const open = state.value.type === 'text' || state.value.type === 'choice';
+  if (read.value.kind !== kindOfState(state.value) && !(open && read.value.kind === 'any')) {
+    return refuse(`${state.value.id} does not hold a ${read.value.kind === 'any' ? 'value of unknown kind' : read.value.kind}`);
+  }
   if (state.value.type === 'choice') {
     const reason = choiceRefusal(read.value.value, state.value.id, state.value.options, scope.states);
     if (reason) return refuse(reason);
@@ -829,9 +879,11 @@ function parseOpen(verb: 'dialog' | 'popover' | 'details' | 'fullscreen' | 'pict
   if (typeof action.op !== 'string' || !OPS[verb].includes(action.op)) return refuse(`${String(action.op)} is not an operation of ${verb}`);
   const target = targetOf(verb, action[verb], scope);
   if (!target.ok) return target;
-  if (verb === 'dialog' && (action.op === 'showModal' || action.op === 'show')) {
-    // Both run the dialog focusing steps, so both are focus moves.
-    const reason = refusedFocusMove(`dialog ${action.op}`, scope, action.op === 'showModal' ? ['page-ready', 'view-enter'] : []);
+  // Each of these can open the element, which runs its focusing steps and takes the
+  // keyboard to an `autofocus` child. Stored or client rendered content can hold that
+  // child, so it cannot be ruled out per target, and each counts as a focus move.
+  if ((verb === 'dialog' && action.op !== 'close') || (verb === 'popover' && action.op !== 'hide')) {
+    const reason = refusedFocusMove(`${verb} ${action.op}`, scope, action.op === 'showModal' ? ['page-ready', 'view-enter'] : []);
     if (reason) return refuse(reason);
   }
   return accept({ [verb]: target.value.key, op: action.op } as Action);
@@ -856,6 +908,9 @@ function parseScroll(action: Record<string, unknown>, scope: ActionScope): Parse
   if (!hasShape(action, ['scroll'], ['block'])) return refuse('scroll holds scroll and block');
   const target = targetOf('scroll', action.scroll, scope);
   if (!target.ok) return target;
+  // Moves what the reader is looking at, so as with focus only a press may.
+  const reason = refusedFocusMove('scroll', scope);
+  if (reason) return refuse(reason);
   if (action.block === undefined) return accept({ scroll: target.value.key });
   if (typeof action.block !== 'string' || !SCROLL_BLOCKS.includes(action.block)) return refuse('block is start, center, end or nearest');
   return accept({ scroll: target.value.key, block: action.block as 'start' });
@@ -873,7 +928,10 @@ function parseSetProp(action: Record<string, unknown>, scope: ActionScope): Pars
   if (typeof action.prop !== 'string' || !SET_PROPS.includes(action.prop)) return refuse(`${String(action.prop)} cannot be written`);
   const target = targetOf('setProp', action.setProp, scope);
   if (!target.ok) return target;
-  const read = readClean(action.value, scope);
+  // Enter copying an option into the field it was typed into: a property, which no
+  // selector reads, on a control that already holds typed text.
+  const copiesItem = action.prop === 'value' && target.value.textEntry && isPlainObject(action.value) && 'active' in action.value;
+  const read = copiesItem ? readExpression(action.value, scope) : readClean(action.value, scope);
   if (!read.ok) return read;
   return accept({ setProp: target.value.key, prop: action.prop as 'value', value: read.value.value });
 }
@@ -894,7 +952,7 @@ function parseDelay(action: Record<string, unknown>, scope: ActionScope): Parsed
     return refuse(`a delay runs ${MIN_DELAY_MS} ms to ${MAX_DELAY_MS} ms later`);
   }
   if (action.key !== undefined && (typeof action.key !== 'string' || !TOKEN.test(action.key))) return refuse('a delay key is a short name');
-  const list = parseActions(action.do, { ...scope, underDelay: true });
+  const list = parseActions(action.do, { ...scope, underDelay: true, waited: scope.waited + action.delay });
   if (!list.ok) return list;
   return accept({ delay: action.delay, ...(action.key !== undefined ? { key: action.key } : {}), do: list.value });
 }
@@ -927,7 +985,13 @@ function parseAction(action: unknown, scope: ActionScope): Parsed<Action> {
   if (scope.used.count > MAX_ACTIONS_PER_TRIGGER) return refuse(`a trigger runs at most ${MAX_ACTIONS_PER_TRIGGER} actions`);
   const family = refusedFamily(verb, scope.on);
   if (family) return refuse(family);
+  const parsed = parseVerb(verb, action, scope);
+  if (!parsed.ok) return parsed;
+  const typing = refusedWhileTyping(verb, action, scope);
+  return typing ? refuse(typing) : parsed;
+}
 
+function parseVerb(verb: Verb, action: Record<string, unknown>, scope: ActionScope): Parsed<Action> {
   switch (verb) {
     case 'set': return parseSet(action, scope);
     case 'step': return parseStep(action, scope);
@@ -1021,6 +1085,7 @@ function refusedPrevent(trigger: Record<string, unknown>, on: string): string | 
   if (trigger.prevent === undefined || trigger.prevent === false) return null;
   if (trigger.prevent !== true) return 'prevent is true or false';
   if (!isDomEvent(on)) return `${on} has no default to prevent`;
+  if (trigger.scope === 'document') return 'prevent across the whole page would stop links, scrolling and the consent banner';
   if (on === 'cancel') return 'prevent on cancel would keep a dialog open against Escape';
   if (on === 'keydown' && trigger.keys === undefined) return 'prevent needs keys, or it would swallow every key';
   const held = ((trigger.keys as string[] | undefined) ?? []).find((chord) => {
@@ -1056,11 +1121,15 @@ function parseTrigger(entry: unknown, base: ExpressionScope): Parsed<Trigger> {
     return refuse('ms belongs to every');
   }
 
-  const scope: ActionScope = { ...base, event: on, on, keys: entry.keys as string[] | undefined, underDelay: false, used: { count: 0 } };
+  // A fixed-value control hears only itself, unless the trigger hears the whole page.
+  const typing = on === 'selectionchange' || (TYPED_EVENTS.has(on) && (!base.self.fixedValue || entry.scope === 'document'));
+  const scope: ActionScope = { ...base, event: on, hearsPage: entry.scope === 'document', on, keys: entry.keys as string[] | undefined, underDelay: false, waited: 0, typing, used: { count: 0 } };
   const trigger: Trigger = { id: entry.id, on, do: [] };
   if (entry.if !== undefined) {
     const condition = parseIf(entry.if, scope);
     if (!condition.ok) return condition;
+    // Two triggers gated on each other's flags count in unary.
+    if (typing) return refuse(TYPING_REASON);
     trigger.if = condition.value;
   }
   const actions = parseActions(entry.do, scope);
@@ -1482,7 +1551,10 @@ function collectNodes(
 /**
  * Every node's behaviour in a tree, with the state on each node's path and every
  * other node in reach, and the page's caps applied in document order: past
- * 2,000 triggers later ones are refused, past 64 kilobytes later nodes are.
+ * 2,000 triggers later ones are refused, past 64 kilobytes later nodes are. The
+ * program holds one entry per key, so rows or placements repeating an entry are
+ * charged once, however many there are. A node with no stable key cannot be found
+ * by the runtime or by a reference, so it holds no behaviour.
  */
 export function readBehaviourTree(root: BehaviourNode): ReadBehaviourTree {
   const facts = new Map<BehaviourNode, NodeFacts>();
@@ -1492,32 +1564,42 @@ export function readBehaviourTree(root: BehaviourNode): ReadBehaviourTree {
   const result: ReadBehaviourTree = { behaviours: new Map(), refused: [] };
   let triggers = 0;
   let bytes = 0;
+  /** What an entry came to the first time: a repeat ends the same way and costs nothing. */
+  const settled = new Map<string, StoredBehaviour | null>();
+
+  const charge = (parsed: StoredBehaviour, nodeId: string | null, refused: RefusedOnNode[]): StoredBehaviour | null => {
+    const size = byteSize(parsed) ?? 0;
+    if (bytes + size > MAX_PROGRAM_BYTES) {
+      refused.push({ nodeId, entry: 'behaviour', value: parsed, reason: `a page holds at most ${MAX_PROGRAM_BYTES} bytes of behaviour` });
+      return null;
+    }
+    bytes += size;
+    if (!parsed.on) return parsed;
+    const room = Math.max(0, MAX_TRIGGERS_PER_PAGE - triggers);
+    parsed.on.slice(room).forEach((value) => {
+      refused.push({ nodeId, entry: 'on', value, reason: `a page holds at most ${MAX_TRIGGERS_PER_PAGE} triggers` });
+    });
+    parsed.on = parsed.on.slice(0, room);
+    triggers += parsed.on.length;
+    if (parsed.on.length === 0) delete parsed.on;
+    return Object.keys(parsed).length > 0 ? parsed : null;
+  };
 
   const walk = (node: BehaviourNode, states: ReadonlyMap<string, StateValue>, insideGroup: boolean): void => {
     const self = facts.get(node) as NodeFacts;
-    const read = parseBehaviour(node, { states, nodes, self, insideGroup });
     const nodeId = typeof node.id === 'string' ? node.id : null;
-    const refused = read.refused.map((entry) => ({ ...entry, nodeId }));
+    const stored = isPlainObject(node.props) ? node.props.behaviour : undefined;
+    const keyless = self.key === null && self.tag !== null && stored !== undefined;
+    const read: ReadBehaviour = keyless
+      ? { behaviour: null, refused: [{ entry: 'behaviour', value: stored, reason: 'a node with no stable id holds no behaviour' }] }
+      : parseBehaviour(node, { states, nodes, self, insideGroup });
+    const refused: RefusedOnNode[] = read.refused.map((entry) => ({ ...entry, nodeId }));
     let parsed = read.behaviour;
 
     if (parsed) {
-      const size = byteSize(parsed) ?? 0;
-      if (bytes + size > MAX_PROGRAM_BYTES) {
-        refused.push({ nodeId, entry: 'behaviour', value: parsed, reason: `a page holds at most ${MAX_PROGRAM_BYTES} bytes of behaviour` });
-        parsed = null;
-      } else {
-        bytes += size;
-      }
-    }
-    if (parsed?.on) {
-      const room = Math.max(0, MAX_TRIGGERS_PER_PAGE - triggers);
-      parsed.on.slice(room).forEach((value) => {
-        refused.push({ nodeId, entry: 'on', value, reason: `a page holds at most ${MAX_TRIGGERS_PER_PAGE} triggers` });
-      });
-      parsed.on = parsed.on.slice(0, room);
-      triggers += parsed.on.length;
-      if (parsed.on.length === 0) delete parsed.on;
-      if (Object.keys(parsed).length === 0) parsed = null;
+      const signature = `${self.key}\u0000${JSON.stringify(parsed)}`;
+      if (!settled.has(signature)) settled.set(signature, charge(parsed, nodeId, refused));
+      parsed = settled.get(signature) ?? null;
     }
 
     result.refused.push(...refused);

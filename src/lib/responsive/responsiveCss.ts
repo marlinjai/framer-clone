@@ -49,6 +49,16 @@
 // `@font-face` and the rest of the list in rules.ts. They have no breakpoint axis
 // and no wrapper, and applyResponsiveStyles has already removed duplicates.
 //
+// A rule that reads page state stands behind the gate (src/lib/behaviour/gate.ts), so
+// its condition is dead without JavaScript, and adds no specificity, so the rule keeps
+// exactly what its selector gave it:
+//
+//   :where(html[data-fc-b]) .fc_r-a.fc_r-a:where([data-fcs-s1="true"] *, [data-fcs-s1="true"]){color:#0a0}
+//
+// The condition goes straight after the class and before the rest of the selector,
+// because nothing may follow a pseudo-element. On a page with no gate nothing can
+// change, the prefix goes, and the condition reads what the server wrote.
+//
 // Rules arrive here parsed, which the type says, and applyResponsiveStyles is what
 // reads stored rules for the page. A type is erased at run time and selectors are
 // written raw, so isWritableRule and isWritableDefinition check them again here,
@@ -407,6 +417,8 @@ export interface BuildResponsiveCssOptions {
   fieldGuard?: boolean;
   /** Called for every definition or authored rule left out of the sheet. */
   onDropRule?: (dropped: DroppedRule) => void;
+  /** The page has the behaviour gate: rules reading state stand behind it. */
+  gated?: boolean;
 }
 
 /** True when a style value is a responsive map rather than a scalar. */
@@ -478,14 +490,24 @@ const isSafeRuleText = (text: unknown): text is string => typeof text === 'strin
 
 /** True when a rule's selectors and wrappers can be written raw into the sheet. */
 function isWritableRule(rule: ParsedSelectorRule): boolean {
-  const { parts, at, style } = rule;
+  const { parts, at, style, when } = rule;
   return (
+    (when === undefined || isSafeRuleText(when)) &&
     Array.isArray(parts) &&
     parts.every((part) => isSafeRuleText(part) && part.startsWith('&')) &&
     Array.isArray(at) &&
     at.every(isSafeRuleText) &&
     isStyleMap(style)
   );
+}
+
+const GATE_UP = ':where(html[data-fc-b]) ';
+const GATE_DOWN = ':where(html:not([data-fc-b]) *)';
+
+/** The selector standing for `&` in one rule: its classes, its gate and its condition. */
+function ruleSubject(className: string, rule: ParsedSelectorRule, gated: boolean): string {
+  const behindGate = gated && rule.gate !== 'off' && (rule.when !== undefined || rule.gate === 'on');
+  return `${behindGate ? GATE_UP : ''}.${className}.${className}${rule.when ?? ''}${rule.gate === 'off' ? GATE_DOWN : ''}`;
 }
 
 /**
@@ -498,9 +520,10 @@ function blocksOfRule(
   className: string,
   rule: ParsedSelectorRule,
   ordered: readonly BreakpointRef[],
+  gated: boolean,
 ): { blocks: RuleBlock[] } | { refused: string } {
   const blocks: RuleBlock[] = [];
-  const node = `.${className}.${className}`;
+  const node = ruleSubject(className, rule, gated);
   let refused: string | undefined;
   const widths = Math.max(ordered.length, 1);
   for (let index = 0; index < widths; index++) {
@@ -867,6 +890,7 @@ function authoredBlocks(
   ordered: readonly BreakpointRef[],
   onDropRule: (dropped: DroppedRule) => void,
   spent: RuleBudget,
+  gated: boolean,
 ): RuleBlock[] {
   const out: RuleBlock[] = [];
   let bytes = spent.bytes;
@@ -883,7 +907,7 @@ function authoredBlocks(
         drop('its selector or a wrapper could leave the rule');
         continue;
       }
-      const built = blocksOfRule(className, rule, ordered);
+      const built = blocksOfRule(className, rule, ordered, gated);
       if ('refused' in built) {
         drop(built.refused);
         continue;
@@ -959,7 +983,7 @@ export function buildResponsiveCss(
   const used = options.hoverPresets ?? [];
   const presets = serializeBlocks(HOVER_KINDS.filter(kind => used.includes(kind)).flatMap(kind => hoverPresetRules(kind)));
   if (presets) parts.push(presets);
-  const authored = serializeBlocks(authoredBlocks(options.authored ?? [], ordered, onDropRule, spent));
+  const authored = serializeBlocks(authoredBlocks(options.authored ?? [], ordered, onDropRule, spent, options.gated === true));
   if (authored) parts.push(authored);
   if (options.fieldGuard) parts.push(FIELD_SIZING_GUARD);
   return withoutMarkup(parts.join('\n'), onDropRule);

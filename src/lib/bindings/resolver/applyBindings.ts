@@ -132,6 +132,8 @@ export function applyBindings(
   const bindings = node.bindings ?? {};
   for (const [slot, entry] of Object.entries(bindings)) {
     if (!entry || entry.mode !== 'read' || slot === 'visible') continue;
+    // Nothing is bound into a behaviour: the one way in is a component's `state`.
+    if (slot === 'behaviour' || slot.startsWith('behaviour.')) continue;
 
     const resolved = resolveBinding(scope, entry);
     const value = slot === 'style.backgroundImage' && readsInput(entry) ? backgroundFromInput(resolved) : resolved;
