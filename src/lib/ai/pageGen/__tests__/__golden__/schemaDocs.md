@@ -13,7 +13,8 @@ component (a MobX-State-Tree ComponentSnapshotIn). Shape of one node:
     "imageQuery": "<img or container: English stock-photo search>",
     "href": "<a only>", "target": "<a only: _blank or _self>",
     "style": { "<camelCase CSS property>": <value or responsive map> },
-    "effects": { "appear": { ... } }  (optional, see Motion)
+    "effects": { "appear": { ... } }  (optional, see Motion),
+    "rules": [ { ... } ]  (optional, see States and decoration)
   },
   "children": [ <nodes> ]
 }
@@ -73,7 +74,21 @@ without it for visitors who ask for reduced motion. Use it sparingly, at most on
 - "delay" (0 to 600) only to follow a reveal right above. Duration is set by the editor
   (280ms); never ask for slow or repeated motion.
 Never on the navigation, the footer, body paragraphs or every element. No hover or scroll
-effects: those are dropped. At most 8 appear effects per generation.
+"effects": those are dropped, and a hover is a rule (see States and decoration).
+At most 8 appear effects per generation.
+
+## States and decoration
+
+Optional "props.rules": a list of {"id": "<short, unique on the node>", "selector": "<starts with &>",
+"at": [<optional wrappers>], "style": { <exactly like props.style, responsive maps included> }}.
+"&" is the node itself. Use only these forms:
+- Hover, on links and buttons: {"id":"hover","selector":"&:hover","at":["@media (hover:hover) and (pointer:fine)"],"style":{...}}.
+- Pressed: "selector":"&:active". Focused, for the keyboard: "selector":"&:focus-visible".
+- Decoration: "selector":"&::before" or "&::after", with "content":"''" in its style.
+- Rhythm, on the parent of a repeated row: "selector":"& > :nth-child(2n)".
+- A dark look, only when the brief asks for one: "selector":"&","at":["@media (prefers-color-scheme: dark)"].
+A rule holds no url(). At most 24 rules per generation: keep states for links and buttons, never
+every card. A rule that does not fit these rules is dropped whole.
 
 ## Fonts
 

@@ -8,6 +8,7 @@ import { componentEntries, dataVersions, scoredEntries } from './lib/universe';
 import { REPORT_DIR, readOut } from './lib/io';
 import { UNCAPTURED_PAGES, type UncapturedPage } from './busbasis/pages';
 import {
+  ACCEPTED_NOT_TAUGHT,
   GAPS,
   ROW_KINDS,
   SURFACES,
@@ -135,6 +136,8 @@ export interface Score {
   durationSeconds?: number;
   matrix: {
     surfaces: Record<Surface, Counts>;
+    /** AI passes the prompt does not teach: earned, but weaker than the column reads. */
+    acceptedNotTaught: number;
     byKind: Record<RowKind, Record<Surface, Counts>>;
     included: number;
     excluded: Array<{ kind: RowKind; id: string; reason: string }>;
@@ -219,6 +222,7 @@ export function buildScore(durationSeconds?: number): Score {
   ) as Record<RowKind, Record<Surface, Counts>>;
   const gapCells = new Map<GapId, number>();
   const rows: Score['matrix']['rows'] = {};
+  let acceptedNotTaught = 0;
 
   for (const entry of included) {
     const key = rowKey(entry.kind, entry.id);
@@ -230,6 +234,7 @@ export function buildScore(durationSeconds?: number): Score {
       tally(surfaces[surface], cell);
       tally(byKind[entry.kind][surface], cell);
       if (cell.status === 'fail' && cell.gap) gapCells.set(cell.gap, (gapCells.get(cell.gap) ?? 0) + 1);
+      if (cell.status === 'pass' && cell.note === ACCEPTED_NOT_TAUGHT) acceptedNotTaught += 1;
     }
     rows[key] = cells.join(' ');
   }
@@ -282,6 +287,7 @@ export function buildScore(durationSeconds?: number): Score {
     ...(durationSeconds === undefined ? {} : { durationSeconds }),
     matrix: {
       surfaces,
+      acceptedNotTaught,
       byKind,
       included: included.length,
       excluded: entries.filter((e) => e.excluded).map((e) => ({ kind: e.kind, id: e.id, reason: e.excluded as string })),
@@ -359,13 +365,14 @@ export function renderReport(score: Score): string {
     '- **Published renderer emits it:** the node goes through `applyResponsiveStyles` and `renderComponentNode`. An element or attribute must be in the markup, an attribute on the opening tag of its own element, and when that element is missing the attribute takes the element\'s gap. An SVG or MathML entry sits inside its root element and Chromium must parse the tag into that namespace. A CSS property must be there both ways a declaration reaches a page: inline, and in the page stylesheet as a responsive value, with `initial` as the value. A value row does the same with its sample on a host property. A WAI-ARIA pattern must pass its keyboard contract in real Chromium.',
     '- **Editor canvas shows it:** the same entry through the real `ComponentRenderer` with a real store, rendered to markup. An SVG attribute that arrives as a style declaration passes, because SVG maps those to the same property; an HTML one is `attribute-read-as-style`. A WAI-ARIA pattern runs its contract on the mounted editor instead: the real `EditorApp` in Chromium with the tree on a page, its server edge stubbed. A contract that passes when published and fails there is `canvas-editor-context`. A rule row renders the canvas sheet beside it and reads the text that sheet holds: pointer states and conditions on the editor must be dead until previewed, and the frame must answer a width.',
     '- **Panel can edit it:** the real `RightSidebar` is mounted for a node of each component category and every control is operated. A key counts only if an action changed it in the node, and an attribute only on the tag the action changed it on. An element counts when a palette entry produces it or a panel action sets it. A pattern counts when every tag and prop it uses does. A value row counts only for the kinds the driver types (a length, a color, a number) and when a control kept what was typed.',
-    '- **AI generator can produce it:** `validateGeneration` is given a node with the entry, and the entry must still be there afterwards. A tag rewritten to `div` is a fail. A value row needs the exact value back. A sample on a host property outside the allowlist fails as `ai-style-allowlist`, so it says nothing about the value.',
+    '- **AI generator can produce it:** `validateGeneration` is given a node with the entry, and the entry must still be there afterwards. A tag rewritten to `div` is a fail. A value row needs the exact value back. A sample on a host property outside the allowlist fails as `ai-style-allowlist`, so it says nothing about the value. A rule row needs its stored rule back unchanged, and carries the note `accepted, not taught` unless the prompt teaches that form.',
     '- **A reusable component row** is a promise of the format, not a web standard entry. Format: it survives the snapshot round trip with a reader. Published: it is emitted through `renderPublishedPage`. Canvas: it renders through the real `ComponentRenderer`. Panel: it changes through the real section. AI: it survives `validateGeneration`. A pass here proves less than it reads: the corpus is the test.',
   );
   push(
     `The panel writes ${score.panel.styleKeysWritten.length} style keys and ${score.panel.propKeysWritten.length} other props across every category. Palette tags: ${score.panel.paletteTags.map((t) => `\`${t}\``).join(', ')}.`,
     '',
     `Of the panel's passing cells, ${rawFieldCells(score)} are the \`raw field\`: a person typed the CSS, and no control exists for it. They pass, and they say less than a control would.`,
+    `Of the AI generator's passing cells, ${matrix.acceptedNotTaught} are \`accepted, not taught\`: the validator keeps the rule, and the prompt never asks for it. They pass, and they say the generator can write the form, not that it will.`,
   );
 
   push('## Parity corpus');

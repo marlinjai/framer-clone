@@ -16,6 +16,9 @@ export interface Cell {
   note?: string;
 }
 
+/** A cell the prompt does not teach: acceptance alone earned it. */
+export const ACCEPTED_NOT_TAUGHT = 'accepted, not taught';
+
 export const ROW_KINDS = [
   'html-element',
   'html-global-attribute',

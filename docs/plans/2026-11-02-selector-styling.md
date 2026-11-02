@@ -568,6 +568,24 @@ prompt teaches little, following the split the goal `fleet-ai-allowlists` introd
 
 Rules from the generator need the canvas, or nobody can see what it made, so this slice follows slice 6.
 
+Decided while building slice 9, say so if you disagree:
+
+- **A generated rule is never kept in part.** A declaration the validator refuses, in any breakpoint of a map,
+  drops the whole rule, as the parser does. Only a repair keeps it: a kebab-case key, a font outside the
+  library, a z-index clamped, an unknown breakpoint key, a missing id.
+- **The motion rules also bind Normal and the review,** because a stored `@keyframes` can be played from
+  `props.style`, where no gate can hold it. So `infinite` is refused on the animation properties in both, a
+  stored name (`u-`) outside a rule is refused, and the review cannot write either. A count above 10, and any
+  function but a timing function in `animation`, `animationName` or `animationIterationCount`, count as
+  `infinite`, because each can hide it. Other Normal `animation` values stay.
+- **The gate takes only the animation.** A rule that also holds a colour splits in two, and both count
+  towards the cap, so a visitor who asked for reduced motion keeps the rest of the state.
+- **Keyframes and `@position-try` go through every style check,** because a keyframe could otherwise animate a
+  z-index past the banner. Descriptors are no CSS properties, so only their values are checked.
+- **The single-value tells apply to rules,** because the tells screen reads `props.style` only.
+- **A review tree shows a rule's maps with breakpoint ids, and a selection sent back with them loses those
+  values with a warning,** as a `props.style` map does in a selection today. The review never edits a rule.
+
 ## React import and export
 
 Step 7 builds this; the contract says what it targets, and `parseCssText` is the single entry.

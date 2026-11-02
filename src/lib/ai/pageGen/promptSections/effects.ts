@@ -38,7 +38,8 @@ export function effectsDocs(): string {
     `- "delay" (0 to ${delay.max}) only to follow a reveal right above. Duration is set by the editor`,
     `  (${duration.default}ms); never ask for slow or repeated motion.`,
     'Never on the navigation, the footer, body paragraphs or every element. No hover or scroll',
-    `effects: those are dropped. At most ${MAX_GENERATED_APPEARS} appear effects per generation.`,
+    '"effects": those are dropped, and a hover is a rule (see States and decoration).',
+    `At most ${MAX_GENERATED_APPEARS} appear effects per generation.`,
   ].join('\n');
 }
 

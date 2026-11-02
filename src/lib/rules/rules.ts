@@ -647,7 +647,8 @@ export function refusedRuleValue(property: string, value: unknown): string | nul
 
 // --- whole rules ----------------------------------------------------------
 
-const RULE_ID = /^[A-Za-z0-9_-]{1,64}$/;
+/** A rule's stored id. */
+export const RULE_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
 /** What a rule's `when` and `gate` come to, or why they are refused. */
 function readCondition(rule: Record<string, unknown>, context: RuleContext): Parsed<Pick<ParsedSelectorRule, 'when' | 'gate'>> {

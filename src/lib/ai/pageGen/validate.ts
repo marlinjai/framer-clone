@@ -35,6 +35,10 @@
 //     - a fontFamily outside the self-hosted font library (Inter, Geist, an
 //       unhosted font) replaced by the library default of its category; a
 //       library family gets its canonical fallback stack (src/lib/fonts),
+//     - props.rules kept through the real parser (src/lib/rules/rules.ts) with
+//       each body through the style checks: a rule with anything refused is
+//       dropped whole, at most MAX_GENERATED_RULES per generation, an
+//       `animation` moved behind the reduced-motion gate (./promptSections/rules.ts),
 //     - responsive-map keys matched to the request's breakpoint keys
 //       (case-insensitive, label match), unknown keys dropped,
 //     - ids assigned fresh and `parentId` set on every nested node (a whole
@@ -84,6 +88,25 @@ import { REVIEWED_ANIMATED_ATTRIBUTES } from './reviewedVocabulary';
 import { svgAttributeAsStyle } from './svgAttributes';
 import { WEB_ATTRIBUTE_PROP_NAMES } from './webVocabulary';
 import { EFFECTS_PROP, cleanGeneratedEffects } from './promptSections/effects';
+import {
+  MAX_GENERATED_RULES,
+  REDUCED_MOTION_GATE,
+  RULES_PROP,
+  isMotionKey,
+  isReducedMotionGate,
+  motionValueProblem,
+  namesGeneratedKeyframes,
+} from './promptSections/rules';
+import { styleValueTell, textTell } from './tells';
+import {
+  RULE_ID,
+  holdsTooManyBlocks,
+  isRuleList,
+  parseRule,
+  type DefinitionRule,
+  type SelectorRule,
+  type StoredRule,
+} from '@/lib/rules/rules';
 import { isSafeHref } from '@/lib/links/safeHref';
 import {
   STICKY_CTA_PROP_KEYS,
@@ -156,6 +179,12 @@ export interface ValidateContext {
   allowStickyCta?: boolean;
 }
 
+/**
+ * Where a style sits, which decides what it may hold: a container's own style can
+ * carry a credited photo layer, and a rule can hold an animation behind its gate.
+ */
+type StylePlace = 'photo' | 'plain' | 'rule';
+
 /** Keys the model may send that we silently ignore because the editor owns them. */
 const OWNED_KEYS = new Set(['id', 'componentType', 'canvasNodeType', 'parentId']);
 const NODE_KEYS = new Set(['type', 'preset', 'label', 'props', 'children']);
@@ -197,10 +226,14 @@ export function clampedZIndex(value: string | number): string | number | undefin
  * Why a style value is refused for what it says, whichever path it came by:
  *   - a custom property holding an address: read through var(), it would pass every
  *     check on the property that uses it;
- *   - a var() in a font or in image-set(): the value that counts is not this one.
+ *   - a var() in a font or in image-set(): the value that counts is not this one;
+ *   - motion that never ends, or a stored keyframes outside a rule (./promptSections/rules.ts).
  */
-export function styleValueProblem(property: string, value: string): string | undefined {
+export function styleValueProblem(property: string, value: string, inRule = false): string | undefined {
   if (UNSAFE_VALUE.test(value) || STRING_URL_FUNCTION.test(value)) return 'unsafe value';
+  const motion = motionValueProblem(property, value);
+  if (motion) return motion;
+  if (!inRule && namesGeneratedKeyframes(property, value)) return 'a stored animation outside a rule';
   const scan = scanCssValue(value);
   if (scan.indirect) return 'var() inside image-set()';
   if ((property === 'fontFamily' || property === 'font') && /var\(/i.test(value)) return 'var() in a font';
@@ -257,6 +290,19 @@ function isUnsplashPage(value: unknown): value is string {
 
 /** A background with no px width says nothing about its size: assume a wide section. */
 const DEFAULT_BACKGROUND_WIDTH_PX = 1200;
+
+/** Why one descriptor of a definition is refused: its keys are no CSS properties, so its values are all there is to check. */
+function descriptorProblem(key: string, value: unknown): string | undefined {
+  if (typeof value === 'number') return Number.isFinite(value) ? undefined : 'a non-finite number';
+  if (typeof value !== 'string') return 'not a string or a number';
+  if (value.length > GENERATION_LIMITS.maxStyleValueChars) return 'too long';
+  if (styleValueBreaksOut(value)) return 'a bare ;, { } \\ or a control character';
+  // @property's initial value is read through var(), like a custom property.
+  const problem = styleValueProblem(key === 'initialValue' ? '--initial-value' : key, value, true);
+  if (problem) return problem;
+  if (scanCssValue(value).urls.some((url) => !url.startsWith('#') && !isSafeSrc(url))) return 'url() to a disallowed location';
+  return styleValueTell(key, value) ?? undefined;
+}
 
 /** The credit attributes of an existing stock photo, when complete and well-formed. */
 function unsplashCredit(props: Record<string, unknown>) {
@@ -395,6 +441,8 @@ class Validator {
   readonly idSlugs = new Map<string, string>();
   /** Appear effects accepted so far (capped: motion is used sparingly). */
   appearCount = 0;
+  /** Rules stored so far (capped: a state on everything is a tell). */
+  ruleCount = 0;
   maxDepth = 0;
   private readonly bpKeys: Map<string, string>;
   /** Breakpoint keys, largest breakpoint first (the editor's primary breakpoint). */
@@ -517,7 +565,7 @@ class Validator {
   }
 
   /** Validate a style value or a responsive map; returns undefined to drop it. */
-  private styleValue(path: string, key: string, raw: unknown, photoLayerAllowed: boolean): unknown {
+  private styleValue(path: string, key: string, raw: unknown, place: StylePlace): unknown {
     if (isPlainObject(raw)) {
       const out: Record<string, string | number> = {};
       for (const [mapKey, v] of Object.entries(raw)) {
@@ -527,8 +575,10 @@ class Validator {
           this.warn(path, `style.${key}: unknown breakpoint key "${mapKey}" dropped`);
           continue;
         }
-        const scalar = this.scalarStyleValue(path, key, mapKey, v, photoLayerAllowed);
+        const scalar = this.scalarStyleValue(path, key, mapKey, v, place);
         if (scalar !== undefined) out[canonical] = scalar;
+        // A rule is never kept in part, a breakpoint of it included.
+        else if (place === 'rule') return undefined;
       }
       if (Object.keys(out).length === 0) {
         this.warn(path, `style.${key}: responsive map had no usable value, dropped`);
@@ -540,7 +590,7 @@ class Validator {
       // breakpoint without one, and a smaller key's value its smaller ones.
       return out;
     }
-    return this.scalarStyleValue(path, key, undefined, raw, photoLayerAllowed);
+    return this.scalarStyleValue(path, key, undefined, raw, place);
   }
 
   private scalarStyleValue(
@@ -548,12 +598,17 @@ class Validator {
     property: string,
     mapKey: string | undefined,
     raw: unknown,
-    photoLayerAllowed: boolean,
+    place: StylePlace,
   ): string | number | undefined {
     const key = mapKey === undefined ? property : `${property}.${mapKey}`;
     if (typeof raw === 'number') {
       if (!Number.isFinite(raw)) {
         this.warn(path, `style.${key}: non-finite number dropped`);
+        return undefined;
+      }
+      const motion = motionValueProblem(property, String(raw));
+      if (motion) {
+        this.warn(path, `style.${key}: ${motion} dropped`);
         return undefined;
       }
       return property === 'zIndex' ? clampedZIndex(raw) : raw;
@@ -572,7 +627,7 @@ class Validator {
       this.warn(path, `style.${key}: value contains a bare ;, { } \\ or a control character, dropped`);
       return undefined;
     }
-    const problem = styleValueProblem(property, v);
+    const problem = styleValueProblem(property, v, place === 'rule');
     if (problem) {
       this.warn(path, `style.${key}: ${problem} dropped`);
       return undefined;
@@ -588,7 +643,7 @@ class Validator {
     // and it only reads the photo layer of a container's backgroundImage. Anywhere
     // else no credit can travel with it.
     const stock = urls.filter(isUnsplashPhotoUrl);
-    const isPhotoLayer = photoLayerAllowed && property === 'backgroundImage' && stock.length === 1 && photoUrlOf(v) === stock[0];
+    const isPhotoLayer = place === 'photo' && property === 'backgroundImage' && stock.length === 1 && photoUrlOf(v) === stock[0];
     if (stock.length > 0 && !isPhotoLayer) {
       this.warn(path, `style.${key}: an Unsplash photo outside a container's background cannot keep its credit, dropped`);
       return undefined;
@@ -608,10 +663,16 @@ class Validator {
       }
       return font.value;
     }
+    // The tells screen reads props.style, so a rule is read here, one value at a time.
+    const tell = place === 'rule' ? (styleValueTell(property, v) ?? (property === 'content' ? textTell(v) : null)) : null;
+    if (tell) {
+      this.warn(path, `style.${key}: ${tell}, dropped`);
+      return undefined;
+    }
     return v;
   }
 
-  private style(path: string, raw: unknown, photoLayerAllowed: boolean): Record<string, unknown> {
+  private style(path: string, raw: unknown, place: StylePlace): Record<string, unknown> {
     if (raw === undefined) return {};
     if (!isPlainObject(raw)) {
       this.warn(path, 'props.style must be an object, dropped');
@@ -628,10 +689,128 @@ class Validator {
         this.warn(path, `style key "${rawKey}" is not supported by the editor, dropped`);
         continue;
       }
-      const value = this.styleValue(path, key, rawValue, photoLayerAllowed);
+      const value = this.styleValue(path, key, rawValue, place);
       if (value !== undefined) out[key] = value;
     }
     return out;
+  }
+
+  /** A rule's or a keyframe's declarations, or undefined for none or for one refused: a rule is never kept in part. */
+  private declarations(path: string, raw: unknown): Record<string, unknown> | undefined {
+    const style = this.style(path, raw, 'rule');
+    const kept = Object.keys(style).length;
+    return kept > 0 && isPlainObject(raw) && kept === Object.keys(raw).length ? style : undefined;
+  }
+
+  private descriptors(path: string, raw: Record<string, unknown>): Record<string, unknown> | undefined {
+    for (const [key, value] of Object.entries(raw)) {
+      const problem = descriptorProblem(key, value);
+      if (problem) {
+        this.warn(path, `descriptor ${key}: ${problem}, dropped`);
+        return undefined;
+      }
+    }
+    return raw;
+  }
+
+  /**
+   * A definition. Its text is parsed first, because a descriptor (`src`, `syntax`) is
+   * no CSS property and only the parser knows which at-rule may hold which. Keyframes
+   * and `@position-try` hold real properties, so they get every check a style gets:
+   * a keyframe could otherwise animate a z-index past the banner.
+   */
+  private definition(path: string, raw: Record<string, unknown>, id: string): DefinitionRule | string {
+    const read = parseRule({ ...raw, id });
+    if (!read.ok) return read.reason;
+    if (read.value.kind !== 'definition') return 'a rule is either a selector or a definition';
+    const { atRule, style, blocks } = read.value;
+    const body = (from: Record<string, unknown>) =>
+      atRule === 'keyframes' || atRule === 'position-try' ? this.declarations(path, from) : this.descriptors(path, from);
+    const stored: DefinitionRule = { id, define: (raw.define as string).trim() };
+    if (style) {
+      const cleaned = body(style);
+      if (!cleaned) return 'a descriptor was refused';
+      stored.style = cleaned;
+    }
+    if (blocks) {
+      stored.blocks = [];
+      for (const block of blocks) {
+        const cleaned = body(block.style);
+        if (!cleaned) return 'a block was refused';
+        stored.blocks.push({ selector: block.selector, style: cleaned });
+      }
+    }
+    return stored;
+  }
+
+  /**
+   * A selector rule, with an `animation` behind the reduced-motion gate. The gate takes
+   * only the animation, because a visitor who asked for less motion keeps the rest of
+   * a hover. `freshId` names the rule that split off.
+   */
+  private selectorRules(path: string, raw: Record<string, unknown>, id: string, freshId: () => string): SelectorRule[] | string {
+    const style = this.declarations(path, raw.style);
+    if (!style) return 'a declaration was refused, or it has none';
+    // Everything the model sent is read, so a `when` or a `gate` is refused rather than
+    // left behind: without its condition a rule would be the permanent look.
+    const read = parseRule({ ...raw, id, style });
+    if (!read.ok) return read.reason;
+    if (read.value.kind !== 'selector') return 'a rule is either a selector or a definition';
+    const at = read.value.at;
+    const rule: SelectorRule = { id, selector: raw.selector as string, ...(at.length > 0 ? { at } : {}), style };
+    const motion = Object.keys(style).filter(isMotionKey);
+    if (motion.length === 0 || at.some(isReducedMotionGate)) return [rule];
+    const gated: SelectorRule = { ...rule, at: [REDUCED_MOTION_GATE, ...at] };
+    if (motion.length === Object.keys(style).length) return [gated];
+    const moving = Object.fromEntries(motion.map((key) => [key, style[key]]));
+    const rest = Object.fromEntries(Object.entries(style).filter(([key]) => !isMotionKey(key)));
+    return [{ ...rule, style: rest }, { ...gated, id: freshId(), style: moving }];
+  }
+
+  /** One rule of the model's, as what will be stored, or why it is dropped. */
+  private rule(path: string, raw: unknown, ids: Set<string>): StoredRule[] | string {
+    if (!isPlainObject(raw)) return 'a rule is an object';
+    if (holdsTooManyBlocks(raw)) return 'too many blocks';
+    const freshId = () => {
+      let n = ids.size + 1;
+      while (ids.has(`r${n}`)) n += 1;
+      ids.add(`r${n}`);
+      return `r${n}`;
+    };
+    // The editor needs an id and nothing depends on the model's: a missing one is filled.
+    const wanted = typeof raw.id === 'string' && RULE_ID.test(raw.id) && !ids.has(raw.id) ? raw.id : undefined;
+    if (wanted) ids.add(wanted);
+    const id = wanted ?? freshId();
+    const made = raw.define !== undefined ? this.definition(path, raw, id) : this.selectorRules(path, raw, id, freshId);
+    if (typeof made === 'string') return made;
+    const rules = Array.isArray(made) ? made : [made];
+    for (const rule of rules) {
+      // Last, on what will be stored: this is what the renderers will parse.
+      const final = parseRule(rule);
+      if (!final.ok) return final.reason;
+    }
+    return rules;
+  }
+
+  /** The stored form of props.rules, capped across the generation like appear effects. */
+  private rules(path: string, raw: unknown[]): StoredRule[] {
+    const kept: StoredRule[] = [];
+    const ids = new Set<string>();
+    for (const [index, item] of raw.entries()) {
+      const room = MAX_GENERATED_RULES - this.ruleCount;
+      if (room <= 0) {
+        this.warn(path, `more than ${MAX_GENERATED_RULES} rules in one generation, ${raw.length - index} dropped (use them sparingly)`);
+        break;
+      }
+      const rules = this.rule(`${path}.rules[${index}]`, item, ids);
+      if (typeof rules === 'string') this.warn(`${path}.rules[${index}]`, `rule dropped: ${rules}`);
+      else if (rules.length > room) this.warn(`${path}.rules[${index}]`, `rule dropped: more than ${MAX_GENERATED_RULES} rules in one generation`);
+      else {
+        kept.push(...rules);
+        this.ruleCount += rules.length;
+      }
+    }
+    return kept;
   }
 
   /**
@@ -806,6 +985,7 @@ class Validator {
     let imageQuery: string | undefined;
     let invalidQuery = false;
     let rawEffects: unknown;
+    let rawRules: unknown[] | undefined;
 
     // An Unsplash photo's credit (an earlier generation's image or background,
     // sent back in replace / insert context) is read separately below, never
@@ -825,6 +1005,12 @@ class Validator {
       if (key === EFFECTS_PROP) {
         // Cleaned after the children are known (stagger needs two of them).
         rawEffects = value;
+        continue;
+      }
+      // A string is the legacy table attribute, which stays an attribute.
+      if (key === RULES_PROP && typeof value !== 'string') {
+        if (isRuleList(value)) rawRules = value;
+        else this.warn(path, 'props.rules must be a list, dropped');
         continue;
       }
       if (formKeys.has(key)) {
@@ -887,7 +1073,7 @@ class Validator {
     const presetDefaults = (preset?.defaultProps ?? {}) as Record<string, unknown>;
     const presetStyle = isPlainObject(presetDefaults.style) ? presetDefaults.style : {};
     const rawModelStyle = isPlainObject(modelProps.style) ? modelProps.style : modelProps.style === undefined ? {} : modelProps.style;
-    const modelStyle = this.style(path, isPlainObject(rawModelStyle) ? { ...svgStyle, ...rawModelStyle } : rawModelStyle, isPhotoContainer);
+    const modelStyle = this.style(path, isPlainObject(rawModelStyle) ? { ...svgStyle, ...rawModelStyle } : rawModelStyle, isPhotoContainer ? 'photo' : 'plain');
     const style: Record<string, unknown> = { ...presetStyle, ...modelStyle };
     if (type === 'img' && modelStyle.aspectRatio !== undefined && modelStyle.height === undefined) {
       // The shape comes from the aspect ratio: a preset's fixed height would override it.
@@ -976,6 +1162,12 @@ class Validator {
         merged[EFFECTS_PROP] = cleaned.effects;
         this.appearCount += 1;
       }
+    }
+
+    // ---- rules (decided here for the same reason: the outer nodes come first) ----
+    if (rawRules) {
+      const rules = this.rules(path, rawRules);
+      if (rules.length > 0) merged[RULES_PROP] = rules;
     }
 
     const children: GeneratedNodeSnapshot[] = [];

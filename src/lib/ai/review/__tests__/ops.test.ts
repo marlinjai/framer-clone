@@ -42,6 +42,23 @@ describe('validateReviewOps', () => {
     expect(ops.map((o) => (o.op === 'update_style' ? o.breakpoint : 'x'))).toEqual([null, 'phone', null]);
   });
 
+  it('never starts stored keyframes outside a rule, or motion that does not end', () => {
+    const { ops, rejected } = validateReviewOps(
+      [
+        style({ property: 'animation', value: 'u-spin 1s' }),
+        style({ property: 'animationName', value: 'u-spin' }),
+        style({ property: 'animation', value: 'pulse 1s infinite' }),
+        style({ property: 'animationIterationCount', value: 'infinite' }),
+        style({ property: 'animationIterationCount', value: 1e9 }),
+        style({ property: 'animationIterationCount', value: 'var(--n)' }),
+        style({ property: 'animationDuration', value: '200ms' }),
+      ],
+      ctx(),
+    );
+    expect(rejected.map((r) => r.index)).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(ops).toHaveLength(1);
+  });
+
   it('converts kebab-case keys and keeps numbers and null (remove the value)', () => {
     const { ops } = validateReviewOps(
       [style({ property: 'line-height', value: 1.05 }), style({ property: 'maxWidth', value: null, breakpoint: 'tablet' })],

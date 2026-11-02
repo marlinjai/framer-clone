@@ -20,7 +20,8 @@
 //     node's background already holds that exact URL (the review may change
 //     the scrim over a photo, never bring in a new picture or drop a credited
 //     one). `null` removes the value on that breakpoint. A text node has no
-//     element to style, so it is refused.
+//     element to style, so it is refused. A page can hold keyframes now, so the
+//     review may not start one outside a rule or let any run without end.
 //   - update_text: only on a node whose content is plain text (string
 //     children, no child components), at most maxTextChars.
 //   - remove_node: at most REVIEW_LIMITS.maxRemovals per review; later
@@ -36,6 +37,7 @@ import { TEXT_NODE_TYPE } from '@/lib/renderer/textNode';
 import { cssUrlsIn } from '@/lib/responsive/responsiveCss';
 import { GENERATION_LIMITS, isAcceptedStyleKey, isSafeSrc, styleKeyFrom } from '@/lib/ai/pageGen/schema';
 import { clampedZIndex, styleValueBreaksOut, styleValueProblem } from '@/lib/ai/pageGen/validate';
+import { motionValueProblem } from '@/lib/ai/pageGen/promptSections/rules';
 import { styleValueTell, textTell } from '@/lib/ai/pageGen/tells';
 import { REVIEW_LIMITS, type RejectedOp, type ReviewOp, type ReviewTreeNode } from './protocol';
 
@@ -150,6 +152,8 @@ export function validateReviewOps(raw: unknown, ctx: OpValidationContext): { ops
         if (item.value === null) value = null;
         else if (typeof item.value === 'number') {
           if (!Number.isFinite(item.value)) return reject('non-finite number');
+          const motion = motionValueProblem(property, String(item.value));
+          if (motion) return reject(motion);
           value = item.value;
         } else if (typeof item.value === 'string') {
           const v = item.value.trim();

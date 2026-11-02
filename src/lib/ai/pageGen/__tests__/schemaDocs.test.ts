@@ -9,6 +9,8 @@ import { COMPONENT_REGISTRY } from '@/lib/componentRegistry';
 import { CSS_PROP_SET } from '@/models/ComponentModel';
 import { CONTAINER_TYPES, TEXT_TYPES } from '@/components/sidebars/right/sectionConfig';
 import { stableStringify } from '@/lib/ai/serializers/normalize';
+import { HOVER_GATE } from '@/lib/rules/states';
+import { TAUGHT_RULE_ROWS, rulesDocs } from '../promptSections/rules';
 import { buildSchemaDocs } from '../schemaDocs';
 import { BANNED_FONT_FAMILIES, FONT_LIBRARY, fontStack } from '@/lib/fonts/registry';
 import { deriveBreakpointKeys, listGenerationTags } from '../schema';
@@ -18,6 +20,18 @@ describe('buildSchemaDocs', () => {
 
   it('matches the golden file', async () => {
     await expect(docs).toMatchFileSnapshot('./__golden__/schemaDocs.md');
+  });
+
+  it('teaches the short list of rules and nothing else', () => {
+    const section = rulesDocs();
+    expect(docs).toContain(section);
+    for (const form of ['&:hover', HOVER_GATE, '&:active', '&:focus-visible', '&::before', '&::after', ':nth-child(2n)', 'prefers-color-scheme']) {
+      expect(section).toContain(form);
+    }
+    expect(TAUGHT_RULE_ROWS.size).toBe(7);
+    for (const untaught of ['@keyframes', '@font-face', '@container', '@supports', ':has', ':is(', 'animation', '"define"']) {
+      expect(section).not.toContain(untaught);
+    }
   });
 
   it('documents every registry entry with its type and defaults', () => {
