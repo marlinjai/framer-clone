@@ -147,6 +147,11 @@ function refusingWarnings(warnings: readonly string[]): string | null {
   return refusing.length > 5 ? `${shown}; and ${refusing.length - 5} more` : shown;
 }
 
+/** A failed validation as one reason: what dropped things first (the cause), then the errors. */
+function refusalOf(outcome: { errors: string[]; warnings: string[] }): string {
+  return [refusingWarnings(outcome.warnings), outcome.errors.slice(0, 5).join('; ')].filter(Boolean).join('; ');
+}
+
 /**
  * Run one node through the generator's rules as a one-node generation of `type`,
  * inside an svg or math wrapper when that is where the node stands. Returns the
@@ -161,7 +166,7 @@ function throughGenerator(
   const node = { type, props };
   const raw = foreign === 'svg' ? { type: 'svg', children: [node] } : foreign === 'math' ? { type: 'math', children: [node] } : node;
   const outcome = validateGeneration({ nodes: [raw] }, { breakpoints });
-  if (!outcome.ok) throw new OpRefused(outcome.errors.slice(0, 5).join('; '));
+  if (!outcome.ok) throw new OpRefused(refusalOf(outcome));
   const problem = refusingWarnings(outcome.result.warnings);
   if (problem) throw new OpRefused(problem);
   if (outcome.result.imageRequests.length > 0) throw new OpRefused('imageQuery is only read by insertNodes');
@@ -228,6 +233,38 @@ function nodeAtPath(input: unknown[], output: GeneratedNodeSnapshot[], path: num
   return found;
 }
 
+// ---------- the gates over a whole result ----------
+
+/** A node a write created or changed, on its page. */
+export interface TouchedNode {
+  page: PageModelType;
+  nodeId: string;
+}
+
+/**
+ * Why a written project must not be stored, or null: a touched node a renderer
+ * would drop something of (checked in the namespace it stands in), a site over
+ * the save size limit, or a snapshot the editor model refuses to read back.
+ * Shared by a batch and by a generated page (src/lib/siteOps/generated.ts).
+ */
+export function projectGateProblem(project: ProjectModelType, touched: readonly TouchedNode[]): string | null {
+  for (const { page, nodeId } of touched) {
+    const node = page.findComponent(nodeId) as ComponentInstance | undefined;
+    if (!node) continue; // removed by a later operation of the batch
+    const problem = renderGateProblem(getSnapshot(node) as unknown as GateNode, foreignContentOf(ancestorTypes(page, node)));
+    if (problem) return problem;
+  }
+  const snapshot = getSnapshot(project);
+  const bytes = JSON.stringify(snapshot).length;
+  if (bytes > PROJECT_BODY_MAX_BYTES) return `the site would be ${bytes} bytes, over the limit of ${PROJECT_BODY_MAX_BYTES}`;
+  try {
+    ProjectModel.create(snapshot);
+  } catch (err) {
+    return `the editor model could not read the result (${err instanceof Error ? err.message.split('\n')[0] : 'invalid snapshot'})`;
+  }
+  return null;
+}
+
 // ---------- the batch ----------
 
 /**
@@ -262,7 +299,7 @@ export async function applyOperations(
   // 2. Apply in order, each against the state the earlier ones left.
   const created: Record<string, string> = {};
   const summary: string[] = [];
-  const touched: Array<{ page: PageModelType; nodeId: string }> = [];
+  const touched: TouchedNode[] = [];
   const recorder = recordPatches(project);
   const refusedEdits = () => project.refusedComponents.filter((entry) => entry.edit).length;
   const undo = (): void => {
@@ -328,24 +365,7 @@ export async function applyOperations(
   }
 
   // 3. The gates over the whole result.
-  const finalProblem = (): string | null => {
-    for (const { page, nodeId } of touched) {
-      const node = page.findComponent(nodeId) as ComponentInstance | undefined;
-      if (!node) continue; // removed by a later operation of the batch
-      const problem = renderGateProblem(getSnapshot(node) as unknown as GateNode, foreignContentOf(ancestorTypes(page, node)));
-      if (problem) return problem;
-    }
-    const snapshot = getSnapshot(project);
-    const bytes = JSON.stringify(snapshot).length;
-    if (bytes > PROJECT_BODY_MAX_BYTES) return `the site would be ${bytes} bytes, over the limit of ${PROJECT_BODY_MAX_BYTES}`;
-    try {
-      ProjectModel.create(snapshot);
-    } catch (err) {
-      return `the editor model could not read the result (${err instanceof Error ? err.message.split('\n')[0] : 'invalid snapshot'})`;
-    }
-    return null;
-  };
-  const problem = finalProblem();
+  const problem = projectGateProblem(project, touched);
   recorder.stop();
   if (problem) {
     recorder.undo();
@@ -412,7 +432,7 @@ export async function applyOperations(
             mapAddress: address || null,
           },
         );
-        if (!outcome.ok) throw new OpRefused(outcome.errors.slice(0, 5).join('; '));
+        if (!outcome.ok) throw new OpRefused(refusalOf(outcome));
         const problem = refusingWarnings(outcome.result.warnings);
         if (problem) throw new OpRefused(problem);
 
