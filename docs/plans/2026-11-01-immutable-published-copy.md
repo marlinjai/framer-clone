@@ -47,7 +47,7 @@ revision holds `components` beside `pages`) is honoured here, and slice 8 of tha
 - The top bar gets "Published versions" (a dialog, in the More menu on a compact bar).
 - `POST /api/projects/<id>/erasures/search`, `POST /api/projects/<id>/erasures`, `GET /api/projects/<id>/erasures`
   (owner only): find, erase and list erasures of personal data (section "Erasing personal data from the history"). The
-  top bar's More menu gets "Erase personal data".
+  Published versions dialog gets "Erase personal data", since those versions are where an old value lives on.
 
 ## Migration
 
@@ -135,11 +135,62 @@ revision and from the working copy, without touching anything else.
 
 ### GDPR check
 
-Filled in from the `gdpr-compliance` review below (Articles 17 and 5(1)(e)).
+Run with the `gdpr-compliance` skill on 2026-11-02 against the built code, for Article 17 (right to erasure) and
+Article 5(1)(e) (storage limitation). Informational, not legal advice.
+
+**Roles.** The data on a site (a managing director, staff, a contact person) belongs to the company that owns the site,
+which is the controller (Art. 4(7)). Lumitra hosts it and acts on that company's instructions, which reads as a
+processor (Art. 4(8), Art. 28). Article 17 binds the controller; the tool is how Lumitra assists it, as Art. 28(3)(e)
+requires of a processor. That reading is an open point below.
+
+| # | Severity | Article | Finding | What the code does, or what remains |
+|---|---|---|---|---|
+| 1 | Resolved | Art. 17(1) | Before this, a value changed on a site stayed in up to 30 revisions with no way to remove it short of deleting the site, and a rollback republished it | Erased from every kept revision and the working copy in one transaction; no rollback can bring it back; a fresh search proves it (`remaining`) |
+| 2 | Resolved | Art. 5(2), Art. 32 | Erasing must be accountable without keeping what was erased | One audit row per erase with who, when and the places, never the value, an excerpt or a hash; search and erase are owner only, the value travels only in POST bodies and no log line or error carries it (pinned by the route test) |
+| 3 | Medium | Art. 5(1)(e) | Old revisions have no time limit: a site that is published 30 times in a week keeps a week, a site published twice keeps both versions for years. Erasure on request does not replace a storage limit | Open point A |
+| 4 | Medium | Art. 17(1) | Blocked matches are not erased: a value in a page slug, a redirect address, a class name, an id or a form key stays (reported by the preview and counted in `remaining`) | Open point B |
+| 5 | Medium | Art. 17(1) | Exact text only: `M. Mustermann`, a misspelling, a name split by markup, or a name inside an image is not found. The owner must search each form | Said in the dialog's result through `remaining`; the owner searches again for each variant. No code can find a person it is not told about |
+| 6 | High | Art. 17(1) | Uploaded files: erasing an image URL removes the reference from the revisions, but the file stays in Storage Brain, and a photo of a person is personal data itself | Open point C |
+| 7 | Medium | Art. 17(1), Art. 5(1)(e) | Database backups keep the erased value for their own retention period | Open point D |
+| 8 | Low | Art. 17(1) | Caches: the origin cache is revalidated at once, but a replica's on-disk entry is replaced only at its next visit or deploy; published HTML is rendered per request (`force-dynamic`), so this repository sets no edge caching for it; `sitemap.xml` and `robots.txt` carry `max-age=300` and hold only addresses | Nothing further in code. The Cloudflare zone configuration is not in this repository and was not checked |
+| 9 | Low | Art. 17(2) | Copies outside Lumitra (search engine caches, archives, people's browsers) are not reached | Open point E |
+| 10 | Low | Art. 17 | Other stores are out of scope: CMS rows, form submissions, commerce orders and receipt letters, Books, analytics. Each needs its own deletion path | Open point F |
+| 11 | Resolved | Art. 25(1) | A tab opened before an erase could write the value back on Save, and Publish would freeze it again | `sites.erasure_epoch` refuses those writes (`erased_since_load`); proven on Postgres, including races with save and publish |
 
 ### Open points (need a lawyer or a later decision, not code)
 
-Filled in from the GDPR check below.
+A. **A retention period for old published versions** (Art. 5(1)(e)). Today the newest 30 are kept with no age limit.
+   Whether an age limit is needed (for example versions older than 12 months pruned, the live one always kept), and how
+   long, is a legal and product call, not a technical one.
+
+B. **Erasing an address.** A value in a page slug or a redirect address is reported but not rewritten. Rewriting it
+   changes where visitors land and breaks links into a kept version. Needs a design (rename the slug in the editor,
+   then drop the old redirect and rewrite or prune the kept versions that still hold it) and Marlin's decision.
+
+C. **Uploaded files.** A revision references images and files by URL. Erasing the URL does not delete the file from
+   Storage Brain, and the same file may be used elsewhere. Needs a decision on who deletes a file (the site's owner in
+   the media library, or the erase tool when nothing references it any more) and a lawyer's view of whether an
+   unreferenced file at an unguessable URL is still "kept" for Art. 17.
+
+D. **Backups.** The erased value stays in database backups until they expire. Common practice is to document the
+   backup retention and to put the value "beyond use" (never restored into the live system without the erase being
+   repeated), as the EDPB's 2025 coordinated enforcement on erasure asks. Needs the backup retention period written
+   down and a lawyer's confirmation that this is acceptable, plus a runbook line: after any restore, repeat every erase
+   since the backup (the audit rows list the sites and dates, not the values, so the owner must supply them again).
+
+E. **Article 17(2), other controllers.** When the company made the data public, it must take reasonable steps to
+   inform those processing copies. Whether Lumitra owes the customer anything here (for example a search engine
+   removal request or a note in the dialog) is a lawyer's question.
+
+F. **The other stores.** Form submissions, CMS rows, orders and receipt letters, Books and analytics each need their
+   own erasure path and their own legal retention (accounting records, for example, have statutory retention that can
+   override Art. 17 through Art. 17(3)(b)). Out of scope here; a separate roadmap item.
+
+G. **The roles, the deadline and the audit row.** Confirm that Lumitra is the processor for site content and that the
+   data processing agreement covers assisting erasure (Art. 28(3)(e)); that the customer, not Lumitra, answers the data
+   subject within one month (Art. 12(3)); how long an audit row is kept (it names the owner who erased, an employee's
+   personal data) and whether it must name the data subject to support notifying recipients (Art. 19), which today it
+   deliberately does not.
 
 ## How it joined the reusable components column
 
@@ -166,3 +217,15 @@ frozen definitions, as the editor's check does.
   once; a save racing two publishes; a body near the limit on a first publish.
 - Unit: the route guards and answers, `parseRevisionDocument`, the resolver's use of a revision, the versions dialog
   with its confirmation and warnings.
+- Erasing (`src/server/sites/__tests__/erasePersonalData.itest.ts`, real Postgres): forward (every kept version and
+  the working copy, each document equal to the old one with only the value replaced, the live site and every rollback
+  clean, the audit row without the value and surviving a site delete, left-out and blocked matches kept, a site from
+  before revisions); backtrack (a publish or a save between preview and erase is refused and changes nothing);
+  resume (a failure injected at the last write rolls everything back, the same preview then goes through); re-entry
+  (a second erase finds nothing); stale tabs refused on Save and Publish; races of an erase with a save and with a
+  publish; bounds and a foreign workspace. Unit: the walker (`erase.test.ts`), the routes with the real guard and its
+  owner step (`erasures-route.test.ts`), the panel and the dialog (`ErasePersonalDataPanel.test.tsx`), the epoch in
+  `snapshot.test.ts` and `openProject.test.ts`, the memo key in `publicResolver.test.ts`.
+- Erase migration: `20261102230000_site_erasures`, additive (two columns with defaults, one table). Older code ignores
+  them: it neither fences stale tabs nor keys the memo on `rewritten_at`, so an erase made while old code still runs
+  can be undone by such a tab. Erase only once the new code is deployed everywhere.
