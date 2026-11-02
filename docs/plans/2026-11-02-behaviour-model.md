@@ -1081,9 +1081,9 @@ the two lands second.
 
 **Measured, as the contract asked.** `pnpm test:behaviour` serves stored pages through the real `(site)/[...slug]` route of a real production
 build, on a real Postgres, hydrated by React, in Chromium and WebKit. On a page with no trigger the browser fetched no byte of the runtime: on the
-wire, 198,352 bytes of script on `/plain`, and one more chunk of 4,930 bytes on `/accordion`. The route's first load fell from 190 to 188 kilobytes, since
+wire, 198,351 bytes of script on `/plain`, and one more chunk of 4,941 bytes on `/accordion`. The route's first load fell from 190 to 188 kilobytes, since
 the island's few lines are outweighed by the motion code and Lenis leaving for chunks of their own. On Slow 4G with a 4 times slower processor, on a page of
-60 paragraphs, three runs gave first paint to ready in 2,081 to 2,112 ms, and the boot script's 3 second gate had 891 to 910 ms left. So **the gate does
+60 paragraphs, four runs gave first paint to ready in 2,080 to 2,122 ms, and the boot script's 3 second gate had 869 to 910 ms left. So **the gate does
 not fall on an ordinary page and "decided 6" stands.** The margin is under a second on a server with no distance of its own, so a much heavier page can
 still reach "A late start", which is safe by design.
 
