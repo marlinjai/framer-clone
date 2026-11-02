@@ -9,7 +9,7 @@
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { BASE_CSS_FILE, BASE_META_FILE, publishedBaseInputs, type PublishedBaseMeta } from './lib/publishedBase';
+import { BASE_CSS_FILE, BASE_META_FILE, EDITOR_SHEET_MARKERS, publishedBaseInputs, type PublishedBaseMeta } from './lib/publishedBase';
 
 const ROOT = process.cwd();
 const BUILD_DIR = path.join(ROOT, '.next');
@@ -24,15 +24,50 @@ function build(): void {
   if (result.status !== 0) throw new Error('pnpm build failed, so there is no sheet to read');
 }
 
-function routeSheets(): string[] {
-  const manifest = JSON.parse(fs.readFileSync(path.join(BUILD_DIR, 'app-build-manifest.json'), 'utf8')) as { pages: Record<string, string[]> };
-  const sheets = PUBLISHED_ROUTE.flatMap((segment) => {
+/** Editor routes: each links the editor sheet, globals.css. */
+const EDITOR_ROUTES = ['/page', '/projects/layout', '/preview/layout'];
+
+type Manifest = { pages: Record<string, string[]> };
+
+function readManifest(): Manifest {
+  return JSON.parse(fs.readFileSync(path.join(BUILD_DIR, 'app-build-manifest.json'), 'utf8')) as Manifest;
+}
+
+function sheetsOf(manifest: Manifest, segments: readonly string[]): string[] {
+  const sheets = segments.flatMap((segment) => {
     const files = manifest.pages[segment];
     if (!files) throw new Error(`the build manifest has no entry for ${segment}`);
     return files.filter((file) => file.endsWith('.css'));
   });
-  if (sheets.length === 0) throw new Error('the build manifest lists no stylesheet for the published route');
   return [...new Set(sheets)];
+}
+
+function routeSheets(manifest: Manifest): string[] {
+  const sheets = sheetsOf(manifest, PUBLISHED_ROUTE);
+  if (sheets.length === 0) throw new Error('the build manifest lists no stylesheet for the published route');
+  return sheets;
+}
+
+const bytes = (sheet: string) => fs.statSync(path.join(BUILD_DIR, sheet)).size;
+
+/**
+ * Next decides CSS links per route segment and may merge chunks: this is where the build
+ * itself shows the published route and the editor got separate sheets. A sheet the
+ * editor routes link, other than the root layout's (the fonts, on every route), must
+ * not be linked by the published route, and no published sheet may hold an editor rule.
+ */
+function assertSeparated(manifest: Manifest, published: readonly string[]): string[] {
+  const shared = new Set(sheetsOf(manifest, ['/layout']));
+  const editor = sheetsOf(manifest, EDITOR_ROUTES).filter((sheet) => !shared.has(sheet));
+  if (editor.length === 0) throw new Error('the editor routes link no sheet of their own: globals.css is missing from the editor');
+  const leaked = published.filter((sheet) => editor.includes(sheet));
+  if (leaked.length > 0) throw new Error(`the published route links the editor's sheets: ${leaked.join(', ')}`);
+  for (const sheet of published) {
+    const css = fs.readFileSync(path.join(BUILD_DIR, sheet), 'utf8');
+    const marker = EDITOR_SHEET_MARKERS.find((m) => css.includes(m));
+    if (marker) throw new Error(`${sheet}, linked by the published route, holds the editor rule ${marker}`);
+  }
+  return editor;
 }
 
 /**
@@ -71,7 +106,9 @@ function layoutClasses(): { htmlClass: string; bodyClass: string } {
 
 function main(): void {
   build();
-  const sheets = routeSheets();
+  const manifest = readManifest();
+  const sheets = routeSheets(manifest);
+  const editor = assertSeparated(manifest, sheets);
   const css = sheets.map((sheet) => fs.readFileSync(path.join(BUILD_DIR, sheet), 'utf8')).join('\n');
   const { htmlClass, bodyClass } = layoutClasses();
   const meta: PublishedBaseMeta = {
@@ -84,6 +121,9 @@ function main(): void {
   fs.writeFileSync(BASE_CSS_FILE, `${inlineFonts(css)}\n`);
   fs.writeFileSync(BASE_META_FILE, `${JSON.stringify(meta, null, 2)}\n`);
   console.log(`Wrote ${path.relative(ROOT, BASE_CSS_FILE)} from ${sheets.join(', ')}`);
+  for (const [name, list] of [['published route', sheets], ['editor only', editor]] as const) {
+    console.log(`${name}: ${list.map((sheet) => `${sheet} ${bytes(sheet)} bytes`).join(', ')}`);
+  }
 }
 
 main();

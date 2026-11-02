@@ -1,12 +1,13 @@
 // @vitest-environment node
-// globals.css is the sheet under every published page, and Tailwind fills it with a
-// utility for every class name its automatic scan finds. A file that is not the app's
-// own UI code (the React import's Tailwind converter, a test, a fixture, the score
-// corpus, a document) can change that set without anyone touching the UI: the
-// converter's preamble once put strict <color> gradient @property rules on every
-// published page and turned an imported page's gradients transparent. This compiles
-// globals.css through the same PostCSS plugin as the build and checks every file the
-// scan read.
+// globals.css is the editor's sheet, and Tailwind fills it with a utility for every
+// class name its automatic scan finds. A file that is not the app's own UI code (the
+// React import's Tailwind converter, a test, a fixture, the score corpus, a document)
+// can change that set without anyone touching the UI: the converter's preamble once put
+// strict <color> gradient @property rules in it, and while it still shipped under every
+// published page, that turned an imported page's gradients transparent. A published page
+// now has its own sheet (src/app/__tests__/publishedSheet.test.ts); a hostile class string
+// read from a test would still break the production build. This compiles globals.css
+// through the same PostCSS plugin as the build and checks every file the scan read.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -35,7 +36,7 @@ function foreign(file: string): string | null {
   return null;
 }
 
-describe('the published site sheet', () => {
+describe('the editor sheet', () => {
   let scanned: string[];
   let css: string;
 

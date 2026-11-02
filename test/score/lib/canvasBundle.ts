@@ -11,6 +11,7 @@ import { ComponentTypeEnum } from '@/models/ComponentModel';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { OUT_DIR } from './io';
 import { readPublishedBase } from './publishedBase';
+import { editorSheet } from './editorSheet';
 
 const ROOT = process.cwd();
 
@@ -95,14 +96,18 @@ export async function openEditor(browser: Browser, bundle: string, contextOption
   page.on('pageerror', (error) => crashes.push(error.message));
   await page.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
   await page.goto('http://canvas-probe.local/');
-  // The bundle leaves CSS out, and the real editor sits under the same root layout as a
-  // published page. Without this sheet a comparison would hold a page with a reset
-  // against one without, and the overlays would take the pointer: their utilities are here.
+  // The bundle leaves CSS out. The real editor sits under the same root layout as a
+  // published page (its fonts and html and body classes, from the published base) and
+  // links the editor sheet, globals.css. Without that sheet a comparison would hold a page
+  // with a reset against one without, and the overlays would take the pointer: their
+  // utilities are there. The published base's own sheet is the editor sheet's reset,
+  // tokens and base layer again, so the two together cascade as the editor's alone.
   // The viewport line is the one Next writes into the editor's document. Without it a phone
   // lays the page out at 980 pixels and scales it down, so 390 would not be 390. A desktop
   // window ignores it.
   const { css, meta } = readPublishedBase();
-  await page.setContent(`<!doctype html><html lang="en" class="${meta.htmlClass}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>${css}</style></head><body class="${meta.bodyClass}"><div id="root"></div></body></html>`);
+  const editorCss = await editorSheet();
+  await page.setContent(`<!doctype html><html lang="en" class="${meta.htmlClass}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>${css}</style><style>${editorCss}</style></head><body class="${meta.bodyClass}"><div id="root"></div></body></html>`);
   await page.addScriptTag({ path: bundle });
   // The frames open under the left sidebar, as they do at this window size. A person
   // pans them out of it first, and so does a contract that clicks. A phone has no

@@ -69,8 +69,8 @@
 //   :root{scroll-behavior:auto}
 //   }
 //
-// A real page's `body` sets its own colours and font (the base layer of globals.css
-// and the site layout), and they would paint over what the document set. So a rule
+// A real page's `body` sets its own colours and font (the base layer of the site
+// sheet, src/app/(site)/site.css, and the site layout), and they would paint over what the document set. So a rule
 // setting one of those hands it back, under the same conditions, in constant text:
 //
 //   :root{color:#1d4ed8}
