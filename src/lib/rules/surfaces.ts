@@ -8,6 +8,11 @@
 //   - The canvas never reacts to the real pointer or the editor's environment. The
 //     five pointer pseudo-classes are written dead, or live for a previewed rule,
 //     and a condition on the window is evaluated against the frame.
+//   - Neither surface lets a stored rule read the editor. A rule shares a document
+//     with the signed-in editor, and `&:is(html:has([data-x*="a"]) *)` reads what it
+//     holds, with a Normal background to report it to a third party. So a condition
+//     that can look beyond the node is a constant here, whatever the document holds.
+//     The published page keeps it, where the document is the stored page itself.
 //   - Every rule declaration gets `!important`, which beats the inline Normal the
 //     way a rule beats Normal on the published page. That also beats what the editor
 //     writes inline, so editor-owned properties are never emitted on the canvas.
@@ -56,7 +61,7 @@ export const isEditorOwned = (property: string): boolean => EDITOR_OWNED.has(pro
  */
 export const asImportant = (declaration: string): string => `${declaration.replace(/\s*!\s*important\s*$/i, '')}!important`;
 
-// --- pointer states -------------------------------------------------------
+// --- constant conditions --------------------------------------------------
 
 const POINTER_STATES: ReadonlySet<string> = new Set(['hover', 'active', 'focus', 'focus-visible', 'focus-within']);
 
@@ -67,21 +72,105 @@ export const DEAD_STATE = ':not(*, :hover)';
 
 const isNameCharacter = (ch: string | undefined): boolean => ch !== undefined && (/[A-Za-z0-9_-]/.test(ch) || ch >= '\u0080');
 
+/** The index just past the quoted string opening at `start`. One left open, which only hand-built text can hold, ends the text. */
+function pastString(text: string, start: number): number {
+  const close = text.indexOf(text[start], start + 1);
+  return close === -1 ? text.length : close + 1;
+}
+
+/** The index of the `)` closing the `(` at `open`, or -1. */
+function closingParen(text: string, open: number): number {
+  let depth = 0;
+  let i = open;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === '"' || ch === "'") {
+      i = pastString(text, i);
+      continue;
+    }
+    if (ch === '(') depth++;
+    else if (ch === ')' && --depth === 0) return i;
+    i++;
+  }
+  return -1;
+}
+
+/** True when a selector list holds a complex selector: a combinator at its top level. */
+function holdsCombinator(list: string): boolean {
+  let depth = 0;
+  let i = 0;
+  let spaced = false;
+  let started = false;
+  while (i < list.length) {
+    const ch = list[i];
+    if (ch === '"' || ch === "'") {
+      i = pastString(list, i);
+      continue;
+    }
+    if (ch === '(' || ch === '[') depth++;
+    else if (ch === ')' || ch === ']') depth--;
+    if (depth === 0) {
+      if (ch === ',') {
+        spaced = false;
+        started = false;
+      } else if (/\s/.test(ch)) {
+        spaced = started;
+      } else {
+        if (ch === '>' || ch === '+' || ch === '~' || list.startsWith('||', i)) return true;
+        if (spaced) return true;
+        started = true;
+      }
+    } else if (spaced) {
+      return true;
+    } else {
+      started = true;
+    }
+    i++;
+  }
+  return false;
+}
+
 /**
- * The text with each pointer pseudo-class written live or dead, wherever it stands,
- * `:is()` included, in any case. A string or an attribute selector is not read, and
- * neither is a pseudo-element or a longer name. The parser has read this text, so
- * with no backslash a quote closes at its next match. One left open stops the read.
+ * True when this functional pseudo-class can look beyond the node. Deny by default,
+ * so a form that arrives later cannot slip through: any of them holding a complex
+ * selector counts, because `html x` or `* x` matches on what is above the node. That
+ * also catches one nested deeper, since the walk goes on inside what does not count.
+ * `:has()` does not: its arguments are relative to the node, and a sibling step from
+ * a page's root finds nothing on either surface. A compound argument only tests the
+ * subject itself or, in `:nth-child(n of x)`, its siblings: the stored page either way.
  */
-export function rewritePointerStates(text: string, live: boolean): string {
+function looksOutward(name: string, inner: string): boolean {
+  const lower = name.toLowerCase();
+  if (lower === 'has') return false;
+  if (!lower.startsWith('nth-')) return holdsCombinator(inner);
+  const of = /\bof\b/i.exec(inner);
+  return of !== null && holdsCombinator(inner.slice(of.index + of[0].length));
+}
+
+/**
+ * The text with what an editor surface must not read written as a constant, `live`
+ * for a previewed rule. Each form keeps the specificity of what it stands for, so a
+ * tie comes out as it does on the published page. Dead and live both have one result
+ * whatever their argument matches, so nothing in the editor can change the outcome.
+ *
+ *   - An outward condition, any depth, on either surface: `:is(html x)` becomes
+ *     `:not(*, :is(html x))`, and `:is(*, :is(html x))` when live. The preview has
+ *     nothing to preview with, so there it is always dead.
+ *   - A pointer state on the canvas only, wherever it stands and in any case. The
+ *     preview has a real pointer.
+ *
+ * A string or an attribute selector is not read, and neither is a pseudo-element's
+ * name or a longer name. The parser has read this text, so a quote closes at its next
+ * match. One left open stops the read.
+ */
+export function constantConditions(text: string, kind: EditorSurfaceKind, live: boolean): string {
   let out = '';
   let brackets = 0;
   let i = 0;
   while (i < text.length) {
     const ch = text[i];
     if (ch === '"' || ch === "'") {
-      const close = text.indexOf(ch, i + 1);
-      const end = close === -1 ? text.length : close + 1;
+      const end = pastString(text, i);
       out += text.slice(i, end);
       i = end;
       continue;
@@ -93,10 +182,20 @@ export function rewritePointerStates(text: string, live: boolean): string {
       i++;
       continue;
     }
-    const start = text[i + 1] === ':' ? i + 2 : i + 1;
+    const isElement = text[i + 1] === ':';
+    const start = isElement ? i + 2 : i + 1;
     let end = start;
     while (isNameCharacter(text[end])) end++;
-    const isState = start === i + 1 && text[end] !== '(' && POINTER_STATES.has(text.slice(start, end).toLowerCase());
+    const name = text.slice(start, end);
+    if (!isElement && text[end] === '(') {
+      const close = closingParen(text, end);
+      if (close !== -1 && looksOutward(name, text.slice(end + 1, close))) {
+        out += `${live ? ':is' : ':not'}(*, ${text.slice(i, close + 1)})`;
+        i = close + 1;
+        continue;
+      }
+    }
+    const isState = kind === 'canvas' && !isElement && text[end] !== '(' && POINTER_STATES.has(name.toLowerCase());
     out += isState ? (live ? LIVE_STATE : DEAD_STATE) : text.slice(i, end);
     i = end;
   }
@@ -314,8 +413,13 @@ export function surfaceWrappers(
       if (verdict === 'no' || (verdict !== 'yes' && !previewed)) return null;
       continue;
     }
-    // An `@scope` limit can hold a pointer state as much as a selector can.
-    out.push(kind === 'canvas' && name === 'scope' ? rewritePointerStates(wrapper, previewed) : wrapper);
+    if (match && name === 'scope' && match[2].trim()) {
+      // Its root is matched against what is above the node, compound or not, and
+      // that is the editor here. Dead, and live with the prelude gone when previewed.
+      if (previewed) continue;
+      return null;
+    }
+    out.push(wrapper);
   }
   return out;
 }

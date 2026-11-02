@@ -304,6 +304,47 @@ describe('what reaches a surface is what the parser accepted', () => {
   });
 });
 
+describe('reading the editor', () => {
+  const outward = [{ id: 'r', selector: '&:is(html:has([data-x]) *)', style: { color: 'red' } }];
+
+  it('writes an outward condition as a constant on both surfaces, and it goes live when previewed', () => {
+    const inner = ':is(html:has([data-x]) *)';
+    const tree = node('a', { rules: outward });
+    expect(canvas(tree, { frames: [FRAMES[0]] })).toContain(`${copy('desk', 'a')}:not(*, ${inner}){color:red!important}`);
+    expect(canvas(tree, { frames: [FRAMES[0]], previewRule: { componentId: 'a', ruleId: 'r' } })).toContain(`${copy('desk', 'a')}:is(*, ${inner}){color:red!important}`);
+    expect(preview(tree)).toContain(`:not(*, ${inner}){color:red!important}`);
+  });
+
+  it('leaves the published page alone, so .dark keeps working there', () => {
+    const rules = [{ id: 'r', selector: '&:is(.dark *)', style: { color: 'red' } }];
+    expect(applyResponsiveStyles({ id: 'a', type: 'div', props: { rules } as never }, BREAKPOINTS).css).toContain('.fc_r-a.fc_r-a:is(.dark *){color:red}');
+  });
+
+  it('clears an external custom property on any node of a page with a rule, on every copy', () => {
+    const tree = node('a', { rules: outward }, node('b', { style: { '--x': 'url(https://evil.test/x)', '--ok': 'url(/ok.png)' } }));
+    const css = canvas(tree);
+    for (const frame of ['desk', 'tab', 'mob']) expect(css).toContain(`${copy(frame, 'b')}{--x:initial!important}`);
+    expect(css).not.toContain('--ok');
+    expect(preview(tree)).toContain('[data-preview-frame] [data-component-id="tab-b"]{--x:initial!important}');
+  });
+
+  it('reads a responsive map, and a floating element', () => {
+    const external = { '--x': { base: 'red', tab: 'url(https://evil.test/x)' } };
+    const css = canvas(node('a', { rules: outward, style: external }), { floating: [node('f', { style: external })] });
+    expect(css).toContain(`${copy('tab', 'a')}{--x:initial!important}`);
+    expect(css).toContain('[data-floating-root-id] [data-component-id="-f"]{--x:initial!important}');
+  });
+
+  it('adds nothing to a page with no rule, which cannot read one', () => {
+    expect(canvas(node('a', { style: { '--x': 'url(https://evil.test/x)' } }))).toBe('');
+  });
+
+  it('skips an id that would break the selector', () => {
+    const css = canvas(node('a', { rules: outward }, node('b"]{}', { style: { '--x': 'url(https://evil.test/x)' } })));
+    expect(css).not.toContain('--x');
+  });
+});
+
 describe('memoising', () => {
   it('builds each rule once per copy and returns the same sheet', () => {
     const memo: SurfaceMemo = new WeakMap();

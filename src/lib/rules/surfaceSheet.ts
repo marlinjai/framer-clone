@@ -11,12 +11,18 @@
 // its reason, and definitions dedupe by identity with the first in walk order
 // winning. So a page that publishes without a rule shows without it here too.
 //
+// Normal stays inline on these surfaces, so the filter that drops a custom property
+// holding an external address from a published page cannot run on it. A rule could
+// reach that address through `var()`, on the signed-in origin, so the sheet clears
+// each such property on a page with a rule, which has the same effect.
+//
 // PURE: no React and no MobX. Reading MobX-State-Tree nodes through this inside an
 // observer is what subscribes the caller to them.
 
 import {
   buildResponsiveCss,
   cssPropertyName,
+  isStyleMap,
   type DefinitionInput,
   type SurfaceCopy,
   type SurfaceMemo,
@@ -25,7 +31,7 @@ import {
 import type { BreakpointRef } from '@/lib/responsive/cascade';
 import { normalizeHover, storedEffectsOf, type HoverKind } from '@/lib/effects/effects';
 import { isTextNodeType } from '@/lib/renderer/textNode';
-import { definitionClaims, isRuleList, readRules, storedRulesOf, type ParsedSelectorRule, type ReadRules } from './rules';
+import { definitionClaims, hasExternalAddress, isRuleList, readRules, storedRulesOf, type ParsedSelectorRule, type ReadRules } from './rules';
 import { previewedBy } from './states';
 import { FLOATING_ROOT, PREVIEW_ROOT, VIEWPORT_ROOT, type EditorSurfaceKind, type SurfaceFrame } from './surfaces';
 
@@ -78,6 +84,16 @@ function parsedRulesOf(node: SurfaceNode): ReadRules | null {
   return read;
 }
 
+/** The custom properties of a node's Normal that could give a rule an external address. */
+function externalVariables(node: SurfaceNode): string[] {
+  const style = (node.props as { style?: unknown } | undefined)?.style;
+  if (!isStyleMap(style) || isTextNodeType(node.type)) return [];
+  return Object.keys(style).filter((key) => {
+    const value = style[key];
+    return key.startsWith('--') && (isStyleMap(value) ? Object.values(value).some(hasExternalAddress) : hasExternalAddress(value));
+  });
+}
+
 const presetOf = (node: SurfaceNode): HoverKind => (isTextNodeType(node.type) ? 'none' : normalizeHover(storedEffectsOf(node.props)?.hover));
 
 /** The largest frame: a floating element has no frame of its own, and it reads as the largest breakpoint already. */
@@ -96,6 +112,7 @@ export function surfaceSheet(input: SurfaceSheetInput): string {
   const presets = new Set<HoverKind>();
   const previewedPresets: { selector: string; kind: HoverKind }[] = [];
   const previewedNodes: string[] = [];
+  const clearedVariables: { selector: string; property: string }[] = [];
   const claim = definitionClaims();
   const reported = new Set<string>();
 
@@ -130,11 +147,13 @@ export function surfaceSheet(input: SurfaceSheetInput): string {
     const preset = presetOf(node);
     if (preset !== 'none') presets.add(preset);
 
-    if (rules.length > 0 || preset !== 'none') {
+    const variables = externalVariables(node);
+    if (rules.length > 0 || preset !== 'none' || variables.length > 0) {
       if (!SAFE_ID.test(node.id)) {
         once({ node: node.id, reason: 'this node id cannot stand in a selector' });
       } else {
         const copies = copiesOf(node.id);
+        clearedVariables.push(...variables.flatMap((property) => copies.map(({ selector }) => ({ selector, property }))));
         const isPreviewed = canvas && previewRule?.componentId === node.id;
         const active = isPreviewed ? previewedBy(storedRulesOf(node.props), previewRule.ruleId) : undefined;
         if (rules.length > 0) nodes.push({ node: node.id, rules, copies, previewed: active?.ids ?? new Set() });
@@ -172,6 +191,16 @@ export function surfaceSheet(input: SurfaceSheetInput): string {
     definitions,
     hoverPresets: canvas ? [] : [...presets],
     onDropRule: ({ className, ruleId, reason }) => report({ node: className, rule: ruleId, reason }),
-    surface: { kind, nodes, framesShown: safeFrames.length, previewedPresets, previewedNodes, animated, memo },
+    surface: {
+      kind,
+      nodes,
+      framesShown: safeFrames.length,
+      previewedPresets,
+      previewedNodes,
+      animated,
+      // Only a rule can read one, and a page with none stays as it is.
+      clearedVariables: nodes.length + definitions.length > 0 ? clearedVariables : [],
+      memo,
+    },
   });
 }

@@ -76,10 +76,10 @@ import type { ParsedDefinitionRule, ParsedSelectorRule } from '@/lib/rules/rules
 import {
   animationsAtRest,
   asImportant,
+  constantConditions,
   isEditorOwned,
   LIVE_STATE,
   PREVIEW_ROOT,
-  rewritePointerStates,
   surfaceWrappers,
   type EditorSurfaceKind,
   type SurfaceFrame,
@@ -455,6 +455,8 @@ export interface EditorSurface {
   previewedNodes?: readonly string[];
   /** Every property a keyframe on the page moves, as CSS writes it. */
   animated?: ReadonlySet<string>;
+  /** Inline custom properties holding an external address, per copy. Normal stays inline here, so they are cleared. */
+  clearedVariables?: readonly { selector: string; property: string }[];
   memo?: SurfaceMemo;
 }
 
@@ -644,8 +646,7 @@ function blocksOnCopy(
   return {
     blocks: rule.parts.map((part) => {
       // Every part starts with `&`, and the parser allows no other.
-      const rest = part.slice(1);
-      return { wrappers, text: `${copy.selector}${kind === 'canvas' ? rewritePointerStates(rest, previewed) : rest}${body}` };
+      return { wrappers, text: `${copy.selector}${constantConditions(part.slice(1), kind, previewed)}${body}` };
     }),
   };
 }
@@ -1108,6 +1109,8 @@ function editorSheet(surface: EditorSurface, ordered: readonly BreakpointRef[], 
   if (presets) parts.push(presets);
   const authored = serializeBlocks(authoredBlocks(surfaceJobs(surface, ordered), onDropRule, spent, Math.max(surface.framesShown, 1)));
   if (authored) parts.push(authored);
+  const cleared = (surface.clearedVariables ?? []).filter(({ property }) => SAFE_PROPERTY.test(property) && property.startsWith('--'));
+  if (cleared.length > 0) parts.push(cleared.map(({ selector, property }) => `${selector}{${property}:initial!important}`).join('\n'));
   const hasRules = surface.nodes.length > 0 || (options.definitions?.length ?? 0) > 0;
   if (canvas && parts.length > 0) parts.push(animationsAtRest(surface.previewedNodes ?? []));
   // The canvas never has this: its selector would fix the editor's own fields.

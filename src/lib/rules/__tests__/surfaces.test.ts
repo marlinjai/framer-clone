@@ -6,12 +6,14 @@ import {
   asImportant,
   isEditorOwned,
   mediaVerdict,
-  rewritePointerStates,
+  constantConditions,
   surfaceWrappers,
 } from '../surfaces';
 
 const DESKTOP = { width: 1280, height: 800 };
 const PHONE = { width: 320, height: 640 };
+
+const rewritePointerStates = (text: string, live: boolean) => constantConditions(text, 'canvas', live);
 
 describe('editor-owned properties', () => {
   // What ComponentRenderer writes inline, and what would undo it wholesale.
@@ -46,7 +48,7 @@ describe('asImportant', () => {
   });
 });
 
-describe('rewritePointerStates', () => {
+describe('constantConditions, pointer states', () => {
   it.each([':hover', ':active', ':focus', ':focus-visible', ':focus-within'])('%s, dead and live', (state) => {
     expect(rewritePointerStates(state, false)).toBe(DEAD_STATE);
     expect(rewritePointerStates(state, true)).toBe(LIVE_STATE);
@@ -58,7 +60,7 @@ describe('rewritePointerStates', () => {
   });
 
   it('reads inside a function, and leaves what surrounds it', () => {
-    expect(rewritePointerStates(':is(.group:hover *) > a:focus::before', false)).toBe(`:is(.group${DEAD_STATE} *) > a${DEAD_STATE}::before`);
+    expect(rewritePointerStates(':is(a:hover, b) > a:focus::before', false)).toBe(`:is(a${DEAD_STATE}, b) > a${DEAD_STATE}::before`);
     expect(rewritePointerStates(':not(:active)', true)).toBe(`:not(${LIVE_STATE})`);
     expect(rewritePointerStates(':has(a:focus-within)', false)).toBe(`:has(a${DEAD_STATE})`);
   });
@@ -77,6 +79,75 @@ describe('rewritePointerStates', () => {
 
   it('stops at a quote left open, which only hand-built text can hold', () => {
     expect(rewritePointerStates('[a="b:hover', false)).toBe('[a="b:hover');
+  });
+});
+
+describe('constantConditions, outward conditions', () => {
+  const dead = (text: string) => `:not(*, ${text})`;
+  const live = (text: string) => `:is(*, ${text})`;
+
+  it.each([
+    ':is(html:has([data-x]) *)',
+    ':is(.dark *)',
+    ':is(.group:hover *)',
+    ':is(a b, c)',
+    ':is(c, a b)',
+    ':is(a>b)',
+    ':is(a > b)',
+    ':is(a+b)',
+    ':is(a~b)',
+    ':is(a || b)',
+    ':where(html *)',
+    ':not(html *)',
+    ':nth-child(n of html *)',
+    ':nth-last-child(2n + 1 of html x)',
+    ':-webkit-any(a b)',
+  ])('%s is a constant, dead and live, on both surfaces', (text) => {
+    expect(constantConditions(text, 'canvas', false)).toBe(dead(text));
+    expect(constantConditions(text, 'canvas', true)).toBe(live(text));
+    expect(constantConditions(text, 'preview', false)).toBe(dead(text));
+  });
+
+  it('finds one at any depth, and keeps what surrounds it', () => {
+    expect(constantConditions(':where(:not(:is(html x)))', 'canvas', false)).toBe(`:where(:not(${dead(':is(html x)')}))`);
+    expect(constantConditions(':is(:not(html *), b):first-child', 'canvas', true)).toBe(`:is(${live(':not(html *)')}, b):first-child`);
+    expect(constantConditions(':has(:is(html x))', 'canvas', false)).toBe(`:has(${dead(':is(html x)')})`);
+    expect(constantConditions(':nth-child(n of :is(html x))', 'canvas', false)).toBe(`:nth-child(n of ${dead(':is(html x)')})`);
+    expect(constantConditions(' h2:is(a b)::before', 'canvas', false)).toBe(` h2${dead(':is(a b)')}::before`);
+  });
+
+  it.each([
+    ':is(h1, h2)',
+    ':is( h1 , h2 )',
+    ':not(p)',
+    ':where(.a.b)',
+    ':is(a[title="x y"])',
+    ':is(a:not(b))',
+    ':has(img)',
+    ':has(> li)',
+    ':has(ul li)',
+    ':has(input:checked)',
+    ':nth-child(2n + 1)',
+    ':nth-of-type(2n + 1)',
+    ':nth-child(2n of li)',
+    ':nth-child(2n + 1 of .a, .b)',
+    ':lang(de)',
+    ':dir(rtl)',
+    '::part(a b)',
+    '::highlight(x)',
+    '[title=":is(a b)"]',
+  ])('%s only reads the stored page, and stays real', (text) => {
+    expect(constantConditions(text, 'canvas', false)).toBe(text);
+    expect(constantConditions(text, 'preview', false)).toBe(text);
+  });
+
+  it('leaves a pointer state real on the preview', () => {
+    expect(constantConditions(':hover', 'preview', false)).toBe(':hover');
+    expect(constantConditions(':is(a:focus, b)', 'preview', false)).toBe(':is(a:focus, b)');
+  });
+
+  it('stops at a bracket left open, which only hand-built text can hold', () => {
+    expect(constantConditions(':is(a b', 'canvas', false)).toBe(':is(a b');
   });
 });
 
@@ -178,9 +249,15 @@ describe('surfaceWrappers on the canvas', () => {
     expect(canvas(['@supports (display: grid)', '@media (min-width: 1px)', '@starting-style'])).toEqual(['@supports (display: grid)', '@starting-style']);
   });
 
-  it('rewrites a pointer state in an @scope prelude', () => {
-    expect(canvas(['@scope (.a:hover) to (.b)'])).toEqual([`@scope (.a${DEAD_STATE}) to (.b)`]);
-    expect(canvas(['@scope (.a:hover) to (.b)'], true)).toEqual([`@scope (.a${LIVE_STATE}) to (.b)`]);
+  it('holds any @scope prelude dead, because its root is matched above the node, and removes it when previewed', () => {
+    for (const at of ['@scope (html:has([data-x]))', '@scope (html[data-x*="a"])', '@scope (.card)', '@scope (.a) to (.b)', '@scope to (html x)']) {
+      expect(canvas([at])).toBeNull();
+      expect(canvas([at], true)).toEqual([]);
+    }
+  });
+
+  it('keeps an @scope with no prelude', () => {
+    expect(canvas(['@scope'])).toEqual(['@scope']);
   });
 
   it('leaves @supports selector() as the question it is', () => {
@@ -217,8 +294,8 @@ describe('surfaceWrappers on the preview', () => {
     expect(preview(['@media not print'])).toEqual(['@media not print']);
   });
 
-  it('leaves a pointer state real', () => {
-    expect(preview(['@scope (.a:hover)'])).toEqual(['@scope (.a:hover)']);
+  it('holds an @scope dead: nothing previews here', () => {
+    expect(preview(['@scope (html:has([data-x]))'])).toBeNull();
   });
 });
 

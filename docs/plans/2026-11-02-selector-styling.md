@@ -457,6 +457,15 @@ lose a tie against `&:first-child` that the published page wins. Otherwise a car
 tries to select it, and pressing to drag would show Pressed. State reflected in the document (`:checked`,
 `:disabled`, `:empty`) stays real and shows.
 
+**A stored page cannot read the editor.** The security review of slice 6 proved that `&:is(html:has([data-x*="a"]) *)`
+over a Normal external background reports the signed-in editor's attributes to a third party. So on both
+editor surfaces, any functional pseudo-class but `:has()` holding a complex selector, at any depth, is written
+`:not(*, <it>)`, or `:is(*, <it>)` when previewed. Each has one result whatever the document holds, and the
+specificity of what it stands for. A compound argument and `:has()` on the node stay real, since they read the
+stored page. The published page is untouched, so `.dark` and `group-hover` work there, and on the canvas they
+show when previewed. The preview has no way to preview a rule, so they stay dead in it. A Normal custom property
+holding an external address, which the published filter drops, is cleared by the sheet here on a page with a rule.
+
 **Conditions on the canvas.** The editor's window and system are not the frame's.
 
 | Condition | On the canvas |
@@ -464,7 +473,8 @@ tries to select it, and pressing to drag would show Pressed. State reflected in 
 | `width`, `height`, `aspect-ratio`, `orientation` with constant numbers, plain or `min`/`max` or in range form, where the name may stand on either side because the parser swaps a `<` | Evaluated against the frame's own size when the sheet is built: the block is written or omitted. Tailwind's `lg:` then stays out of the Mobile frame. A number is `px`, or `rem` at 16px, because Tailwind 4 compiles `lg:` to `(width >= 64rem)` |
 | A width query that cannot be evaluated (`em`, `calc()`, `or`) | Omitted unless previewed, with a note on the rule's row. `mediaVerdict` tells this case apart for that note, which arrives with the rows in slices 7 and 8 |
 | Media types and all other media features: `print`, `prefers-*`, `hover`, `pointer`, `forced-colors` and the rest | Dead until previewed, like the pointer states. `screen` and `all` are true |
-| `@supports`, `@container`, `@scope`, `@starting-style` | Real. A pointer state in an `@scope` prelude is rewritten like one in a selector |
+| `@supports`, `@container`, `@starting-style` | Real |
+| `@scope` with a prelude | Dead until previewed, and then live with the prelude removed. Its root is matched against what is above the node, which is the editor |
 
 A floating element has no frame, so its conditions read the largest frame, which is also how its values
 resolve (`resolveCascade` reads an empty breakpoint as the largest).

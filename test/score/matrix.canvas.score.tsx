@@ -144,8 +144,9 @@ function probeSelector(id: string, gap: GapId): Cell {
     return shown ? pass('dead until previewed') : fail(gap);
   }
   const parts = selector.split(/,(?![^(]*\))/).map((part) => part.trim().slice(1));
-  const sheet = canvasSheet(rule, false);
-  return parts.every((part) => holds(sheet, `${at.map((wrapper) => `${wrapper}{`).join('')}${COPY}${part}${DECLARED}`)) ? pass() : fail(gap);
+  // `:scope` needs an `@scope`, which reads what is above the node, so it waits for a preview.
+  const sheet = canvasSheet(rule, at.length > 0);
+  return parts.every((part) => holds(sheet, `${COPY}${part}${DECLARED}`)) ? pass(at.length > 0 ? 'dead until previewed' : undefined) : fail(gap);
 }
 
 /** An environment condition shows only when previewed, and then with its wrapper gone. */
@@ -162,7 +163,8 @@ function probeFrameCondition(at: string, gap: GapId): Cell {
 }
 
 function probeAtRule(id: string, gap: GapId): Cell {
-  if (id === '@media') return probeEnvironment(atRuleSample(id), gap);
+  // An `@scope` prelude is matched above the node, which is the editor here.
+  if (id === '@media' || id === '@scope') return probeEnvironment(atRuleSample(id), gap);
   const probe = atRuleProbe(id, atRuleSample(id));
   const css = canvasSheet(probe.rule, false);
   if ('define' in probe.rule) return stylesheetHasRule(css, probe) ? pass() : fail(gap);
