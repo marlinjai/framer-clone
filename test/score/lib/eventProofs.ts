@@ -300,9 +300,11 @@ const motionTree = (style: Record<string, unknown>) => (on: Behaviour): StoredPr
  * A cancel needs a motion that is running when the second press takes it away. The
  * second press waits for that, read from the element's own animations (reading them
  * dispatches nothing), so neither a late first frame nor a slow click decides the row.
+ * `playState` already reads `running` while the motion waits for its first frame, and one
+ * taken away then may never report a cancel, so it must have moved.
  */
 const running = (page: Page) =>
-  page.waitForFunction(() => document.querySelector('[data-t="mover"]')?.getAnimations().some((motion) => motion.playState === 'running') === true);
+  page.waitForFunction(() => document.querySelector('[data-t="mover"]')?.getAnimations().some((motion) => !motion.pending && Number(motion.currentTime ?? 0) > 0) === true);
 
 const animated = (style: Record<string, unknown>, twice = false): EventProof => ({
   state: [flag('go')],
