@@ -53,7 +53,7 @@ cells the mounted editor loses, the 100 event handler rows that fail in all five
    content can be edited. A new Interact tool runs the page and gives it the keyboard, with one chord that
    never yields.
 9. **An event row passes only on a real cause.** A stored action must run in Chromium with no `dispatchEvent`
-   anywhere. Five rows stay red, each with its reason.
+   anywhere. Five rows stay red, each with its reason, and three more wait for custom code.
 10. **Custom code runs in a frame with an opaque origin, from a separate small service on a separate
     registrable domain, never in the editor document.** It has no storage and no fetch. It is not free of
     network: see the preconnect residual. Code and what it may touch enter only through one guarded route.
@@ -675,10 +675,10 @@ effect to observe, and a new `events.score.ts` runs them. The cell cannot pass b
 | Loading | `load`, `error` | 2 | Close |
 | Media | `abort`, `canplay`, `canplaythrough`, `durationchange`, `emptied`, `ended`, `loadeddata`, `loadedmetadata`, `loadstart`, `pause`, `play`, `playing`, `progress`, `ratechange`, `resize`, `seeked`, `seeking`, `stalled`, `suspend`, `timeupdate`, `volumechange`, `cuechange` | 22 | Close, a generated sound or video as fixture, `cuechange` with a stored `track` |
 | Display | `fullscreenchange`, `fullscreenerror`, `enterpictureinpicture`, `leavepictureinpicture` | 4 | Close |
-| **Subtotal** | | **92** | **Expected until B5 runs.** Heard by a listener in the probe, which is not a stored action |
+| **Subtotal** | | **91 of these 92, run in slice B5** | All but `beforematch`, each a stored action from a real cause, in `test/score/events.score.ts`. `waiting` joined them, so the total is 92 |
 | Published only, with custom code | `securitypolicyviolation` | 1 | The only cause is a block trying to leave, on a site with custom code enabled. A fair proof of the event, a weak claim of support. **Never on the canvas,** since no frame mounts there |
 | Labelled `custom code` | `contextlost`, `contextrestored` | 2 | They need a drawing context, which only script can make, so only a frame can reach them. Proof inside a frame, counted apart in `report.ts` |
-| **Stay red** | `beforexrselect`, `encrypted`, `waitingforkey`, `slotchange`, `waiting` | 5 | See below |
+| **Stay red** | `beforexrselect`, `encrypted`, `waitingforkey`, `slotchange`, `beforematch` | 5 | See below |
 
 **Why the five stay failing,** with the note carried in the cell:
 
@@ -687,8 +687,9 @@ effect to observe, and a new `events.score.ts` runs them. The cell cannot pass b
   provider's licence server.
 - `slotchange` is not composed: the probe heard it on the shadow root and not on `document`. Reaching it means walking open shadow roots in
   the runtime, not worth its bytes for one row, and a frame cannot see the page's shadow roots.
-- `waiting` did not fire in the probe. The slice tries cutting a stream mid-file. If that gives a real cause, the row closes and this list is
-  corrected; a row is never closed by a synthetic event.
+- `beforematch` needs `hidden="until-found"`, and React writes `hidden` as a boolean, so a stored page cannot hold that value. It was on the list to close. The browser fires it on a hand-written page. Closing it means a change at both renderers, for one row.
+
+`waiting` was on this list and is closed: a file that never arrives is a real cause, and it fired. So the count held at 92 with one row swapped.
 
 So no row passes by a false route, and `blocked-event-handlers` stays the gap name for what remains. `report.ts` rewrites the meaning of the
 row, and its "What this does not measure yet" line about handlers that would run goes away.
@@ -1163,6 +1164,21 @@ The review (`2026-11-02-behaviour-model-review.md`, "Slice B3 and B4", probes be
 **The pointer read, the check for what is open and the viewport observer moved beside the key rules,** to bring Next's chunk under the limit. A program reading `{ pointer }`, or holding a `toggle` or `view-*` trigger, now asks for that chunk.
 
 **The key rules moved to the `verbs` chunk.** The fixes put the core past 5 kilobytes, and a program with no key trigger needs none of `keys.ts`. So a key trigger now asks for that chunk, which the island fetches with the core, and a runtime without the rules fires no key, which is the direction to fail in.
+
+## Decided in slice B5
+
+**The score's run: 92 of 100 rows pass,** in format and published page, and `baseline.json` rises by 92 cells in each (`format` 1,702 to 1,794 and `renderer` 1,662 to 1,754 of 1,833, both from the run). Canvas, panel and AI are untouched: B10 to B12.
+
+**Also decided while building it, say so if you disagree:**
+
+- **The page is the real published output with the real runtime bundled in, not a Next build,** which would take an hour per run. `test/behaviour` proves those two meet. It uses Chromium, as the contract asks.
+- **A control proves the rig:** a proof with its cause removed has to fail.
+- **Every action is one literal `set`,** so what differs per row is only the cause, and a row cannot pass through what the action did.
+- **A `dispatchEvent` on the page fails the row.** The method is watched before the page loads.
+- **An event that fired while the page loaded passes,** as `loadstart` does, because loading is its real cause. The state is checked to have started false on the server.
+- **`fullscreenerror` is caused by a press on an open popover,** which a browser refuses, and `stalled`, `waiting` and `abort` by a file that never arrives.
+- **`pointercancel` is caused by a native drag taking over a press.**
+- `blockedNodes.test.tsx` holds that no event string reaches a page, and the score throws if one does.
 
 ## Review findings not adopted
 

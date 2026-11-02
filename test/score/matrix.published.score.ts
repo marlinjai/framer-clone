@@ -155,13 +155,18 @@ function probeElementAttribute(namespace: Namespace, id: string, key: string): v
   else results.ai[key] = fail(CSS_PROP_SET.has(sample.prop) ? 'attribute-read-as-style' : 'ai-attribute-allowlist', made.warnings[0]);
 }
 
-/** A stored handler has no reader, and so no meaning, until it reaches the page: bytes alone prove nothing. */
+/**
+ * A stored handler is a string of code, and reaching the page would be the failure, so
+ * this throws. Whether the event works is a different question, asked in events.score.ts,
+ * whose cells replace these two in report.ts.
+ */
 function probeEventHandler(id: string, key: string): void {
   const camel = `on${id[2].toUpperCase()}${id.slice(3)}`;
   const attempts = [{ [id]: 'probe()' }, { [camel]: 'probe()' }];
   const reached = attempts.some((props) => openingTag(renderPublished({ id: 'probe', type: 'div', props: props as never }).html, 'div')?.includes(`${id}=`));
-  results.format[key] = reached ? pass() : fail('blocked-event-handlers', 'stored, but nothing reads it');
-  results.renderer[key] = reached ? pass() : fail('blocked-event-handlers');
+  if (reached) throw new Error(`a stored ${id} string reached the page`);
+  results.format[key] = fail('blocked-event-handlers', 'no proof ran');
+  results.renderer[key] = fail('blocked-event-handlers', 'no proof ran');
   const kept = attempts.some((props) => Object.keys(props)[0] in (generate({ type: 'div', props }).node?.props ?? {}));
   results.ai[key] = kept ? pass() : fail('blocked-event-handlers');
 }

@@ -185,6 +185,7 @@ export function buildScore(durationSeconds?: number): Score {
     ai: readOut('ai'),
   };
   const patterns = readOut<PatternsOut>('patterns');
+  const events = readOut<SurfaceResults>('events');
   const detail = readOut<PanelDetail>('panel-detail');
   const namespaces = readOut<SurfaceResults>('namespaces');
   const fixtures = readOut<CorpusResult[]>('corpus');
@@ -195,6 +196,10 @@ export function buildScore(durationSeconds?: number): Score {
   for (const [key, cell] of Object.entries(namespaces)) {
     if (cell.status !== 'pass' && results.renderer[key]?.status === 'pass') results.renderer[key] = cell;
   }
+
+  // An event row asks whether a stored action runs from a real cause, on both.
+  Object.assign(results.format, events);
+  Object.assign(results.renderer, events);
 
   Object.assign(results.format, patterns.format);
   Object.assign(results.renderer, patterns.renderer);
@@ -470,7 +475,7 @@ export function renderReport(score: Score): string {
   push(
     '- **CSS value grammar per property.** A value row is one sample on one host property, so it proves the value type survives, not that every property takes every type. Named syntaxes in mdn-data below the level of a type (such as `<bg-size>`) have no row.',
     '- **Attribute value grammar.** An attribute row proves the name reaches the page with one value. SVG and MathML samples are not checked for meaning, MathML attribute value notes have no row, and ARIA roles and attributes are still one sample each.',
-    '- **Handlers on `body` and `window`** (`onbeforeunload`, `onhashchange`, ...), because `body` is excluded. An event handler row only asks whether a stored handler reaches the page, and whether it would run is not tested.',
+    '- **Handlers on `body` and `window`** (`onbeforeunload`, `onhashchange`, ...), because `body` is excluded. An event row is one stored action run once from one real cause, in Chromium, on the published path with the runtime bundled in. On the canvas and in the panel it still asks the old question until slices B10 and B11.',
     '- **Canvas markup beyond the patterns.** Only the WAI-ARIA rows run on the mounted editor, and only by keyboard: their contracts never click, so a click that selects shows up through Enter and Space. Everything else in the canvas column is rendered to markup. `canvasRules.score.ts` runs stored rules on the mounted editor with a real pointer, as a gate that counts for no row, so a canvas cell for a rule says the text is in the sheet and that gate says what the text does. Dragging under a rule is not tested.',
     '- **Whether a panel control is any good.** A key counts as editable when a control changed it, whatever range or units that control offers. Only the properties panel and the palette are covered: the quick toolbar, context menus and the Layers panel were searched for tag changes and none found, not driven.',
     '- **The whole published page.** The corpus uses `applyResponsiveStyles` and `renderComponentNode`, without `hydrateBindings`, effects, the sticky bar, or the consent and font wrappers, and only in Chromium. The page around it is real: the sheet of a production build (`test/score/data/published-base.css`, refreshed by `pnpm score:refresh-base`). Its utilities also follow classes in `test` and `docs`, which the deployed image does not scan, so it can hold a few the live sheet lacks.',
