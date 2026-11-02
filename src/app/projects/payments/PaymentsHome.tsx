@@ -68,6 +68,16 @@ const STATUS_TEXT: Record<AccountStatus, { title: string; body: string }> = {
   },
 };
 
+/**
+ * Without an account that can take payments, a shop other than the demo company's refuses checkout altogether
+ * (demoCheckout.ts): the demo payment would issue real invoices for sales that never happened.
+ */
+const NO_CHECKOUT_TEXT = 'Until then your shop takes no orders: buyers are told it cannot take payments yet, and nothing is charged.';
+const NOT_CONNECTED_NO_CHECKOUT = {
+  title: 'Not connected',
+  body: `Connect a Stripe account to start selling. ${NO_CHECKOUT_TEXT}`,
+};
+
 /** The texts that change while the platform runs on Stripe's test keys: nothing a buyer pays is real. */
 const TEST_MODE_TEXT: Partial<Record<AccountStatus, { title: string; body: string }>> = {
   not_connected: {
@@ -93,6 +103,8 @@ export default function PaymentsHome({ returned }: { returned: string | null }) 
   const [status, setStatus] = useState<AccountStatus | null>(null);
   const [testMode, setTestMode] = useState(false);
   const [books, setBooks] = useState<BooksReadiness | null>(null);
+  // False for every company but the demo company: without a ready account its shop takes no orders at all.
+  const [demoCheckout, setDemoCheckout] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -104,6 +116,7 @@ export default function PaymentsHome({ returned }: { returned: string | null }) 
         status?: AccountStatus;
         testMode?: boolean;
         books?: BooksReadiness;
+        demoCheckout?: boolean;
         error?: { message?: string };
       };
       if (!res.ok || !body.status) {
@@ -113,6 +126,7 @@ export default function PaymentsHome({ returned }: { returned: string | null }) 
       setStatus(body.status);
       setTestMode(body.testMode === true);
       setBooks(body.books ?? null);
+      setDemoCheckout(body.demoCheckout !== false);
     } catch {
       setError('the payment status could not be read; check your connection and reload');
     }
@@ -147,9 +161,13 @@ export default function PaymentsHome({ returned }: { returned: string | null }) 
           title: 'Connected, payments paused',
           body: `Your Stripe account is ready, but your shop refuses payments until your Books can issue the receipt every paid order gets. Buyers are told the shop cannot take payments yet, and nothing is charged.`,
         }
-      : status
-        ? ((testMode ? TEST_MODE_TEXT[status] : undefined) ?? STATUS_TEXT[status])
-        : null;
+      : status === 'not_connected' && !demoCheckout
+        ? NOT_CONNECTED_NO_CHECKOUT
+        : status && status !== 'ready' && !demoCheckout
+          ? { ...STATUS_TEXT[status], body: `${STATUS_TEXT[status].body} ${NO_CHECKOUT_TEXT}` }
+          : status
+            ? ((testMode ? TEST_MODE_TEXT[status] : undefined) ?? STATUS_TEXT[status])
+            : null;
   const notice = returned && RETURN_TEXT[returned];
 
   return (

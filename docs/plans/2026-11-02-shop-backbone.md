@@ -1131,3 +1131,8 @@ checked against the code and hold. Findings about Stripe behaviour are adopted a
   placed, and the payments page names what is missing. The demo provider is unchanged. Also built: `sales_document.tax_country` (migration 027), the buyer's country
   stored on a receipt's draft and read in place of the reused customer row's, which closes the namesake case #211 left open (a paid order refused with
   `TAX_IDENTITY_MISMATCH` over the row's country). B11's profile comparison and B14's frozen profile should read the draft's `tax_country`, not the row.
+- 2026-11-02: decided after the money review (finding 4), say so if you disagree: the demo checkout is for the demo company only (`payment/demoCheckout.ts`). The
+  demo provider moves no money but issues real, numbered invoices, so on any other live shop a visitor could create invoices for sales that never happened. Every
+  other shop without a Stripe account that can take payments refuses checkout with 503 `payments_unavailable` before anything is reserved, as it does while its Books
+  cannot issue receipts, and a demo order such a shop placed before is refused at pay. The payments page tells that owner the shop takes no orders until Stripe is
+  ready.
