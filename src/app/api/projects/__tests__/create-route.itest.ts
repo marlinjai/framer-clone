@@ -64,6 +64,9 @@ import {
   type TenantScope,
 } from '@/server/sites';
 import { POST } from '../route';
+import { WHILE_BUSY_TIMEOUT_MS, whileBusy } from './whileBusy';
+
+vi.setConfig({ testTimeout: WHILE_BUSY_TIMEOUT_MS });
 
 const SCOPE_A: TenantScope = { workspaceId: 'ws_a', tenantGroupId: '018f9c10-0000-7000-8000-0000000000a1' };
 const SCOPE_B: TenantScope = { workspaceId: 'ws_b', tenantGroupId: '018f9c10-0000-7000-8000-0000000000b1' };
@@ -98,8 +101,8 @@ afterAll(async () => {
 describe('POST /api/projects (integration) — cross-workspace isolation', () => {
   it('creates draft rows in different workspaces that the other scope cannot load', async () => {
     // Session A and session B each create a fresh draft.
-    const resA = await POST(createReq('sess_a', 'A site'));
-    const resB = await POST(createReq('sess_b', 'B site'));
+    const resA = await whileBusy(() => POST(createReq('sess_a', 'A site')));
+    const resB = await whileBusy(() => POST(createReq('sess_b', 'B site')));
     expect(resA.status).toBe(200);
     expect(resB.status).toBe(200);
     const { siteId: siteA } = await resA.json();

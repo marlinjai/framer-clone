@@ -111,8 +111,9 @@ export const APPEND_ONLY_TABLES = [
  * with "tuple concurrently updated"; since provisioning only verifies the app
  * role ('verify', see the module comment) that collision cannot happen any more,
  * and the lock stays for the ordering and the bounded wait. Provisioning is rare
- * and short, so one global lock costs nothing. The integration fixtures take the
- * same key around their direct provisionTenant calls.
+ * and short, so one global lock costs nothing. The integration fixtures call
+ * provisionTenant directly under a key of their own: this queue shapes production
+ * requests, and they would only eat into the bounded wait of the routes they test.
  */
 export const COMMERCE_PROVISION_LOCK_KEY = 74_610_010;
 

@@ -53,6 +53,12 @@ import { acquireAdvisoryLock, CommerceLockTimeoutError, openOwnerSql, PROVISION_
 const provisionSpy = vi.mocked(provisionTenant);
 /** Short waits for the timeout cases, so the suite stays fast. */
 const SHORT = { lockTimeoutMs: 300, statementTimeoutMs: 5_000 };
+/**
+ * For companies provisioning at once, where the result matters and not the wait. The production
+ * 10 s for one holder (the suite's bounded-wait cases prove it) is shorter than one provision
+ * on a container whose cores other suites share, so it would fail these on load alone.
+ */
+const PATIENT = { lockTimeoutMs: 60_000, statementTimeoutMs: 90_000 };
 
 const DB_NAME = 'framer_clone_concurrency_test';
 const ROLES_SQL_PATH = path.resolve(__dirname, '../../../../../prisma/sql/commerce-roles.sql');
@@ -117,7 +123,7 @@ describe('commerce advisory locks', () => {
     const ids = Array.from({ length: 4 }, () => randomUUID());
     const results = await Promise.allSettled(
       ids.map((tenantGroupId, i) =>
-        provisionCommerceTenant({ tenantGroupId, slug: `parallel-${i}`, connectionString: ownerUrl }),
+        provisionCommerceTenant({ tenantGroupId, slug: `parallel-${i}`, connectionString: ownerUrl, timeouts: PATIENT }),
       ),
     );
     const failures = results
@@ -133,7 +139,7 @@ describe('commerce advisory locks', () => {
     // Both locks released: nothing is left holding an advisory lock.
     const held = await su!<{ n: number }[]>`SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory'`;
     expect(held[0].n).toBe(0);
-  });
+  }, 180_000);
   it('project create: the first project provisions, a later one neither provisions nor locks', async () => {
     const tenantGroupId = randomUUID();
     const slug = commerceSlugFor(tenantGroupId, 'fast-path');
@@ -307,7 +313,7 @@ describe('commerce advisory locks', () => {
     const a = randomUUID();
     const b = randomUUID();
     const results = await Promise.all(
-      [a, b].map((id) => ensureCommerceTenant({ tenantGroupId: id, slug: commerceSlugFor(id, 'Acme'), connectionString: ownerUrl })),
+      [a, b].map((id) => ensureCommerceTenant({ tenantGroupId: id, slug: commerceSlugFor(id, 'Acme'), connectionString: ownerUrl, timeouts: PATIENT })),
     );
     expect(results.map((r) => r.provisioned)).toEqual([true, true]);
     const rows = await su!<{ id: string; slug: string; status: string }[]>`
@@ -319,7 +325,7 @@ describe('commerce advisory locks', () => {
       expect(row.status).toBe('active');
       expect(row.slug).toBe(`acme-${row.id.replace(/-/g, '')}`);
     }
-  });
+  }, 180_000);
 
   /** Provision a fresh company through the project-create path; returns its id and schema. */
   async function freshCompany(label: string): Promise<{ id: string; schema: string }> {

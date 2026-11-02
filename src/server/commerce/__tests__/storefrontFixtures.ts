@@ -17,10 +17,8 @@
 //
 // Every suite provisions its OWN tenant groups (random UUIDs) and its own
 // published sites (random subdomains), so suites sharing the database in
-// parallel workers never see each other's rows. provisionTenant runs
-// `ALTER ROLE commerce_app ...`, which two concurrent transactions cannot both
-// do on the same role row, so provisioning is serialized across workers with a
-// session advisory lock.
+// parallel workers never see each other's rows. Fixture provisions run one at a
+// time across workers, on a lock of their own (FIXTURE_PROVISION_LOCK_KEY).
 
 import { randomUUID } from 'node:crypto';
 import type { Kysely } from 'kysely';
@@ -37,7 +35,7 @@ import postgres from 'postgres';
 
 import type { CommerceDB } from '../db-types';
 import { DEFAULT_WORKSPACE_ID } from '../inventory/reserve';
-import { COMMERCE_PROVISION_LOCK_KEY as PROVISION_LOCK_KEY, commerceProvisionOptions } from '../provisioning/provision';
+import { commerceProvisionOptions } from '../provisioning/provision';
 import { DEMO_COMPANY_ID } from '@/lib/renderer/server/demoTenant';
 
 export interface StorefrontFixtures {
@@ -95,19 +93,29 @@ export interface ProvisionedTenant {
   db: Kysely<CommerceDB>;
 }
 
+/**
+ * Serializes the fixture provisions, and is deliberately NOT the production
+ * COMMERCE_PROVISION_LOCK_KEY. On that key some 40 suites queued, unbounded, ahead
+ * of the routes under test, whose wait is bounded, so company-flow and
+ * create-route answered 503 commerce_busy under load. Without any lock the
+ * provisions run side by side and starve the container's cores: the suite took
+ * 286 s instead of 107 s, and provisions timed out across the board.
+ */
+const FIXTURE_PROVISION_LOCK_KEY = 74_610_020;
+
 /** Provision a fresh tenant group (random UUID) with the commerce migrations. */
 export async function provisionCommerceTenant(
   fx: StorefrontFixtures,
   slugPrefix: string,
 ): Promise<ProvisionedTenant> {
   const tgId = assertTenantGroupId(randomUUID());
-  await fx.owner`SELECT pg_advisory_lock(${PROVISION_LOCK_KEY})`;
+  await fx.owner`SELECT pg_advisory_lock(${FIXTURE_PROVISION_LOCK_KEY})`;
   try {
     // The production options (migrations, app-role grants, append-only REVOKE
     // seed), so the suites exercise exactly what an onboard provisions.
     await provisionTenant(fx.owner, commerceProvisionOptions(tgId, `${slugPrefix}-${tgId.slice(0, 8)}`));
   } finally {
-    await fx.owner`SELECT pg_advisory_unlock(${PROVISION_LOCK_KEY})`;
+    await fx.owner`SELECT pg_advisory_unlock(${FIXTURE_PROVISION_LOCK_KEY})`;
   }
   return { tgId, schema: tenantSchema(tgId), db: tenantDb(fx.ownerBase, tgId) };
 }
