@@ -3,11 +3,10 @@
 // the branches a stored mistake takes. jsdom has no layout, so `getClientRects` is given.
 
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
-import { isTextEntry, keysAnswer } from '../keys';
 import { compileProgram, type BehaviourProgram, type Kit, type ProgramEntry, type Run } from '../program';
 import { createRover } from '../rove';
 import { startBehaviour } from '../runtime';
-import { createVerbs } from '../verbs';
+import { createVerbs, isOpen, isTextEntry, keysAnswer, pointerAt, selectionAt, viewObserver } from '../verbs';
 
 const $ = (selector: string): HTMLElement => document.querySelector(selector) as HTMLElement;
 const clickDoing = (...actions: unknown[]) => ({ on: [{ id: 't', on: 'click', do: actions }] });
@@ -17,12 +16,14 @@ const program = (nodes: Record<string, object>): BehaviourProgram => ({
   nodes: Object.fromEntries(Object.entries(nodes).map(([key, entry]) => [key, [entry as ProgramEntry]])),
 });
 
+const extras = { keysAnswer, isTextEntry, pointerAt, isOpen, viewObserver, selectionAt };
+
 let warn: MockInstance;
 let stops: (() => void)[];
 
 function start(html: string, nodes: Record<string, object>, surface: 'published' | 'preview' | 'canvas' = 'published'): void {
   document.body.innerHTML = html;
-  stops.push(startBehaviour({ container: document, program: program(nodes), surface, verbs: createVerbs, rove: createRover, keys: { keysAnswer, isTextEntry } }));
+  stops.push(startBehaviour({ container: document, program: program(nodes), surface, verbs: createVerbs, rove: createRover, extras }));
 }
 
 beforeEach(() => {
@@ -160,6 +161,14 @@ describe('the native verbs', () => {
   });
 });
 
+describe('compileProgram on what the chunk holds for the core', () => {
+  const on = (event: string, ...actions: unknown[]) => ({ a: [{ on: [{ id: 't', on: event, do: actions }] }] }) as never;
+
+  it.each([['a key', on('keydown', { toggle: 's' })], ['a toggle', on('toggle', { toggle: 's' })], ['a pointer read', on('pointermove', { set: 's', value: { pointer: 'x', of: 'a', as: 'px' } })]])('asks for it for %s', (_, nodes) => {
+    expect(compileProgram(nodes).verbs).toBe(true);
+  });
+});
+
 describe('capturePointer', () => {
   const capturing = vi.fn();
   const down = (el: Element) => el.dispatchEvent(Object.assign(new MouseEvent('pointerdown', { bubbles: true }), { pointerId: 7 }));
@@ -232,7 +241,7 @@ describe('a group whose item is a form with a field named after what rove reads'
       program: program({ g: { group: { role: 'button', axis: 'line' }, on: [{ id: 'n', on: 'keydown', keys: ['ArrowRight'], do: [{ rove: 'g', move: 'next' }] }] } }),
       surface: 'preview',
       rove: createRover,
-      keys: { keysAnswer, isTextEntry },
+      extras,
     }));
     $('#in').focus();
     press($('#in'), 'ArrowRight');
@@ -322,7 +331,7 @@ describe('focus groups', () => {
 
   it('warns and moves nothing without its chunk', () => {
     document.body.innerHTML = line;
-    stops.push(startBehaviour({ container: document, program: program({ g: group() }), surface: 'published', keys: { keysAnswer, isTextEntry } }));
+    stops.push(startBehaviour({ container: document, program: program({ g: group() }), surface: 'published', extras }));
     $('#a').focus();
     press($('#a'), 'ArrowRight');
     expect(document.activeElement?.id).toBe('a');

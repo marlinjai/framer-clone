@@ -25,16 +25,17 @@
 //
 // What touches the page beyond state is in two chunks that load beside this one, each
 // only when the program needs it: `rove.ts` for focus groups, and `verbs.ts` for the native
-// and value actions, which also holds the key rules. A verb with no chunk here warns, as
-// for any verb it does not know, and with no rules no key fires.
+// and value actions, which also holds the key rules, the pointer read and what is open.
+// A verb with no chunk here warns, as for any verb it does not know, and with no rules no
+// key fires. The core's limit stands on Next's real chunk, so what few programs need is not here.
 //
 // PURE and client-safe: no React, no MST. It imports leaves only (names.ts, dom.ts),
 // because the parser would not fit the size limit test beside it.
 
-import type { Action, Expression } from './format';
+import type { Action } from './format';
 import { attrOf, childrenOf, closestTo, every, hasAttr, holds, isConnected, isElement, isMatch, one, parentOf, setAttr, toggleAttr, upFrom } from './dom';
 import { GATE_GLOBAL, NODE_ATTR, ROW_ATTR, SCOPE_ATTR, VARIANT_ATTR, isBooleanAttribute, stateAttribute } from './names';
-import type { BehaviourProgram, CreateRover, CreateVerbs, Kit, KeyRules, ProgramBinding, ProgramEntry, ProgramState, ProgramTrigger, Run } from './program';
+import type { BehaviourProgram, CreateRover, CreateVerbs, Extras, Kit, PointerRead, ProgramBinding, ProgramEntry, ProgramState, ProgramTrigger, Run } from './program';
 
 export interface StartBehaviourOptions {
   /** What the page is in: the document, or a preview or canvas frame. */
@@ -47,8 +48,8 @@ export interface StartBehaviourOptions {
   rove?: CreateRover;
   /** `createVerbs` of verbs.ts, when the program has a native or value action. */
   verbs?: CreateVerbs;
-  /** The key rules of keys.ts, in the same chunk, when the program has a key trigger. Without them no key fires. */
-  keys?: KeyRules;
+  /** What the same chunk holds for the core, when the program needs it. Without them no key fires. */
+  extras?: Extras;
 }
 
 /** What the boot script leaves on a published page (src/lib/behaviour/gate.ts). */
@@ -109,7 +110,7 @@ const NO_ENTRIES: readonly ProgramEntry[] = [];
 const hasValue = (value: unknown): boolean => value !== undefined && !Number.isNaN(value);
 const hasVerb = (action: Action, verbs: readonly string[]): boolean => verbs.some((verb) => verb in action);
 
-export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surface, rove, verbs, keys }: StartBehaviourOptions): () => void {
+export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surface, rove, verbs, extras }: StartBehaviourOptions): () => void {
   const doc = (container.ownerDocument ?? container) as Document;
   const view = doc.defaultView as Window & typeof globalThis;
   const entries = new Map(Object.entries(program.nodes));
@@ -125,7 +126,6 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
   const warned = new Set<string>();
   const pending = new WeakMap<Element, Map<string, number>>();
   const timers = new Set<number>();
-  const seen = new WeakSet<Element>();
   const adopted = new WeakSet<Element>();
   const groups = new Set<Element>();
   const stops: (() => void)[] = [];
@@ -261,18 +261,6 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
     return clone ? Number(attrOf(clone, ROW_ATTR)) : undefined;
   };
 
-  const pointerAt = (x: Extract<Expression, { pointer: string }>, run: Pick<Run, 'el' | 'event'>): number | undefined => {
-    const target = find(x.of, run.el);
-    const event = run.event as PointerEvent | null;
-    if (!target || !event) return undefined;
-    const box = target.getBoundingClientRect();
-    const across = x.pointer === 'x';
-    const raw = across ? event.clientX - box.left : event.clientY - box.top;
-    const size = across ? box.width : box.height;
-    if (x.as === 'px') return raw;
-    return size > 0 ? Math.round((raw / size) * 100) : undefined;
-  };
-
   /** A range's value is a number, which the DOM hands over as text. */
   const eventValue = (el: Element): unknown => {
     const { value, type } = el as HTMLInputElement;
@@ -319,7 +307,10 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
     }
     if ('row' in form) return rowOf(run.el);
     if ('active' in form) return rover?.active(form.active as string, run);
-    if ('pointer' in form) return pointerAt(x as Extract<Expression, { pointer: string }>, run);
+    if ('pointer' in form) {
+      const target = find(form.of as string, run.el);
+      return target && run.event ? extras?.pointerAt(x as PointerRead, run.event as PointerEvent, target) : undefined;
+    }
     if ('event' in form) {
       if (form.event === 'value') return eventValue(run.el);
       return (run.event as unknown as Record<string, unknown> | null)?.[form.event === 'key' ? 'key' : 'newState'];
@@ -566,7 +557,7 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
 
   const fire = (trigger: ProgramTrigger, el: Element, event: Event | null, depth: number, replay = false): void => {
     if (off.has(trigger) || !prompted(trigger, el)) return;
-    if ((trigger.on === 'keydown' || trigger.on === 'keyup') && !keys?.keysAnswer(trigger.keys, event as KeyboardEvent, el)) return;
+    if ((trigger.on === 'keydown' || trigger.on === 'keyup') && !extras?.keysAnswer(trigger.keys, event as KeyboardEvent, el)) return;
     if (trigger.if !== undefined && !evaluate(trigger.if, { el, event })) return;
     if (trigger.prevent && !replay) event?.preventDefault();
     perform(trigger.do, { el, event, trigger, depth, replay });
@@ -581,10 +572,7 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
   /** The element an event starts from. `selectionchange` targets the document. */
   const originOf = (event: Event): Element | null => {
     if (isElement(event.target)) return event.target;
-    if (event.type !== 'selectionchange') return null;
-    const anchor = doc.getSelection()?.anchorNode ?? null;
-    if (!anchor) return null;
-    return isElement(anchor) ? anchor : parentOf(anchor as Element);
+    return event.type === 'selectionchange' ? (extras?.selectionAt(doc) ?? null) : null;
   };
 
   const deliver = (event: Event, replay = false): void => {
@@ -600,8 +588,7 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
   /** A frame's document hears other frames too, so on one the event has to be its own. */
   const isOurs = (event: Event): boolean => {
     if (container === doc) return true;
-    const anchor = doc.getSelection()?.anchorNode ?? null;
-    return holds(container, event.target as Node) || (anchor !== null && holds(container, anchor));
+    return holds(container, event.target as Node);
   };
 
   const pageWide = new Map<string, [string, ProgramTrigger][]>();
@@ -663,16 +650,7 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
   };
 
   const watch = (el: Element): void => {
-    intersection ??= typeof IntersectionObserver === 'function'
-      ? new IntersectionObserver(guarded((records: IntersectionObserverEntry[]) => {
-          for (const { target, isIntersecting } of records) {
-            if (isIntersecting) seen.add(target);
-            else if (!seen.has(target)) continue;
-            else seen.delete(target);
-            fireOn(target, isIntersecting ? 'view-enter' : 'view-leave', null);
-          }
-        }))
-      : null;
+    intersection ??= extras?.viewObserver(guarded((target: Element, entered: boolean) => fireOn(target, entered ? 'view-enter' : 'view-leave', null))) ?? null;
     intersection?.observe(el);
   };
 
@@ -710,7 +688,7 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
   /** What was opened before the runtime started, which fired a `toggle` nobody heard. */
   const catchUp = (): void => {
     for (const [el, trigger] of opening.splice(0)) {
-      if (hasAttr(el, 'open') || (attrOf(el, 'popover') !== null && isMatch(el, ':popover-open'))) {
+      if (extras?.isOpen(el)) {
         fire(trigger, el, { newState: 'open' } as unknown as Event, 0, true);
       }
     }
@@ -720,7 +698,7 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
   const replay = (queue: Event[]): void => {
     for (const event of queue.splice(0)) {
       const target = event.target as Element | null;
-      if (!target || !isConnected(target) || (event.type === 'keydown' && keys?.isTextEntry(target))) continue;
+      if (!target || !isConnected(target) || (event.type === 'keydown' && extras?.isTextEntry(target))) continue;
       deliver(event, true);
     }
   };

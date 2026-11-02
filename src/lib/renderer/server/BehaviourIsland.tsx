@@ -20,7 +20,7 @@ export default function BehaviourIsland({ program }: { program: BehaviourProgram
       program.rove ? import('@/lib/behaviour/rove') : undefined,
     ]).then(
       ([{ startBehaviour }, verbs, rove]) => {
-        if (!left) stop = startBehaviour({ container: document, program, surface: 'published', verbs: verbs?.createVerbs, keys: verbs, rove: rove?.createRover });
+        if (!left) stop = startBehaviour({ container: document, program, surface: 'published', verbs: verbs?.createVerbs, extras: verbs, rove: rove?.createRover });
       },
       (error: unknown) => {
         console.error('Page behaviour did not load: showing everything.', error);

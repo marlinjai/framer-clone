@@ -7,9 +7,8 @@ import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { applyBehaviour } from '@/lib/renderer/server/applyBehaviour';
 import { renderComponentNode } from '@/lib/renderer/server/renderComponentNode';
 import { MAX_ACTIONS_PER_SECOND, MAX_ACTIONS_PER_TASK, MAX_PAGE_COST_PER_SECOND, MAX_UNPROMPTED_FIRINGS, startBehaviour } from '../runtime';
-import { isTextEntry, keysAnswer } from '../keys';
 import { GATE_GLOBAL } from '../names';
-import { createVerbs } from '../verbs';
+import { createVerbs, isOpen, isTextEntry, keysAnswer, pointerAt, selectionAt, viewObserver } from '../verbs';
 import type { BehaviourProgram, Kit, ProgramEntry } from '../program';
 
 const settle = () => Promise.resolve().then(() => Promise.resolve());
@@ -29,12 +28,14 @@ const program = (nodes: Nodes): BehaviourProgram => ({
 function fromStored(root: object): void {
   const compiled = applyBehaviour(root as ComponentNode);
   document.body.innerHTML = renderToStaticMarkup(renderComponentNode(compiled.root));
-  if (compiled.program) stops.push(startBehaviour({ container: document, program: compiled.program, surface: 'preview', verbs: createVerbs, keys: { keysAnswer, isTextEntry } }));
+  if (compiled.program) stops.push(startBehaviour({ container: document, program: compiled.program, surface: 'preview', verbs: createVerbs, extras }));
 }
 
 const $ = (selector: string): HTMLElement => document.querySelector(selector) as HTMLElement;
 const press = (el: Element, key: string, init: KeyboardEventInit = {}) =>
   el.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init }));
+
+const extras = { keysAnswer, isTextEntry, pointerAt, isOpen, viewObserver, selectionAt };
 
 let warn: MockInstance;
 let error: MockInstance;
@@ -43,7 +44,7 @@ let stops: (() => void)[];
 /** Starts the runtime on `html` as the published page would. */
 function start(html: string, nodes: Nodes, surface: 'published' | 'preview' | 'canvas' = 'preview'): void {
   document.body.innerHTML = html;
-  stops.push(startBehaviour({ container: document, program: program(nodes), surface, verbs: createVerbs, keys: { keysAnswer, isTextEntry } }));
+  stops.push(startBehaviour({ container: document, program: program(nodes), surface, verbs: createVerbs, extras }));
 }
 
 function setGate(ready = true) {
@@ -509,7 +510,7 @@ describe('a modal no press asked for', () => {
     const inner = frame.contentDocument as Document;
     (frame.contentWindow as unknown as { HTMLDialogElement: typeof HTMLDialogElement }).HTMLDialogElement.prototype.showModal = HTMLDialogElement.prototype.showModal;
     inner.body.innerHTML = html;
-    stops.push(startBehaviour({ container: inner, program: program(nodes), surface, verbs: createVerbs, keys: { keysAnswer, isTextEntry } }));
+    stops.push(startBehaviour({ container: inner, program: program(nodes), surface, verbs: createVerbs, extras }));
     return inner;
   };
   const once = {
@@ -590,7 +591,7 @@ describe('the boot script', () => {
     document.body.innerHTML = page;
     gate.queue.push(Object.defineProperty(new MouseEvent('click', { bubbles: true }), 'target', { value: $('[data-fc-n="b"]') }));
     HTMLDialogElement.prototype.showModal = vi.fn();
-    stops.push(startBehaviour({ container: document, program: program(nodes), surface: 'published', verbs: createVerbs, keys: { keysAnswer, isTextEntry } }));
+    stops.push(startBehaviour({ container: document, program: program(nodes), surface: 'published', verbs: createVerbs, extras }));
     expect(gate.ready).toHaveBeenCalledOnce();
     expect($('[data-fc-scope]').getAttribute('data-fcs-a')).toBe('true');
     expect($('[data-fc-scope]').getAttribute('data-fcs-n')).toBe('1');
@@ -602,7 +603,7 @@ describe('the boot script', () => {
     const gate = setGate();
     document.body.innerHTML = page;
     gate.queue.push(Object.defineProperty(new MouseEvent('click', { bubbles: true }), 'target', { value: $('#none') }));
-    stops.push(startBehaviour({ container: document, program: program(nodes), surface: 'published', verbs: createVerbs, keys: { keysAnswer, isTextEntry } }));
+    stops.push(startBehaviour({ container: document, program: program(nodes), surface: 'published', verbs: createVerbs, extras }));
     expect($('[data-fc-scope]').getAttribute('data-fcs-a')).toBe('false');
   });
 
@@ -624,7 +625,7 @@ describe('the boot script', () => {
     const gone = $('[data-fc-n="b"]');
     gate.queue.push(Object.defineProperty(new MouseEvent('click', { bubbles: true }), 'target', { value: gone }));
     gone.remove();
-    stops.push(startBehaviour({ container: document, program: program(nodes), surface: 'published', verbs: createVerbs, keys: { keysAnswer, isTextEntry } }));
+    stops.push(startBehaviour({ container: document, program: program(nodes), surface: 'published', verbs: createVerbs, extras }));
     expect($('[data-fc-scope]').getAttribute('data-fcs-a')).toBe('false');
   });
 
@@ -633,6 +634,21 @@ describe('the boot script', () => {
     start(page, nodes, 'published');
     $('[data-fc-n="b"]').click();
     expect($('[data-fc-scope]').getAttribute('data-fcs-a')).toBe('false');
+  });
+
+  it('reads the pointer on a node only with the chunk that holds it', () => {
+    const nodes = {
+      s: { state: [count('n')] },
+      b: { on: [{ id: 'p', on: 'click', do: [{ set: 'n', value: { pointer: 'x', of: 'b', as: 'px' } }] }] },
+    };
+    document.body.innerHTML = '<div data-fc-n="s" data-fc-scope><button data-fc-n="b"></button></div>';
+    stops.push(startBehaviour({ container: document, program: program(nodes), surface: 'preview' }));
+    $('button').dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 12 }));
+    expect($('[data-fc-scope]').getAttribute('data-fcs-n')).toBeNull();
+    stops.splice(0).forEach((stop) => stop());
+    stops.push(startBehaviour({ container: document, program: program(nodes), surface: 'preview', extras }));
+    $('button').dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 12 }));
+    expect($('[data-fc-scope]').getAttribute('data-fcs-n')).toBe('12');
   });
 
   it('catches up with what was opened before it started, which fired a toggle nobody heard', () => {
@@ -866,7 +882,7 @@ describe('in a frame of its own', () => {
 
   beforeEach(() => {
     document.body.innerHTML = frames;
-    for (const id of ['one', 'two']) stops.push(startBehaviour({ container: $(`#${id}`), program: program(nodes), surface: 'canvas', keys: { keysAnswer, isTextEntry } }));
+    for (const id of ['one', 'two']) stops.push(startBehaviour({ container: $(`#${id}`), program: program(nodes), surface: 'canvas', extras }));
   });
 
   it('keeps each frame to its own state', () => {
@@ -897,7 +913,7 @@ describe('a form holding a field named after what the runtime reads', () => {
     // A browser answers `form[member]` with the field. jsdom does not, so it is given, and
     // with the plain read of `parentElement` this test never ends, as the tab did not.
     Object.defineProperty(form, member, { value: form.querySelector('input') });
-    stops.push(startBehaviour({ container: document, program: program(nodes), surface: 'preview', verbs: createVerbs, keys: { keysAnswer, isTextEntry } }));
+    stops.push(startBehaviour({ container: document, program: program(nodes), surface: 'preview', verbs: createVerbs, extras }));
     $('button').click();
     $('input').click();
     expect(Element.prototype.getAttribute.call($('[data-fc-n="s"]'), 'data-fcs-n')).toBe('1');

@@ -422,7 +422,7 @@ canvas pass their frame as `container`.
 - **Every read of a stored element goes through `dom.ts`,** which holds the prototypes' own getters and methods, because a
   `form` answers `form.parentElement` with a field of that `name` or `id`.
 - **It never throws.** An unresolved target or unknown verb warns once with the node id and continues.
-- **Size:** a test bundles each chunk with esbuild: core 5 kilobytes gzipped, `rove` 3, broker 2. The prototype, with no
+- **Size:** core 5 kilobytes gzipped, `rove` 3, `verbs` 2.5, broker 2, **held on Next's real chunks** in `test/behaviour/runtime.spec.ts`, decided 2026-11-02, since they come out about a tenth larger than esbuild's. A test also bundles each chunk with esbuild, which takes a second and keeps the parser out. The prototype, with no
   parser and not minified, is 3.9 kilobytes for 229 lines. The review's estimate was 900 to 1,300 lines for the whole.
 
 **Whether the island is early enough is measured, not assumed.** Slice B3 records the time from first paint to runtime
@@ -776,6 +776,8 @@ a boundary, and it holds only with the parent policy.
 **Network is not zero.** Direct requests are closed in all three engines. A `preconnect` or `dns-prefetch` to a host name carrying data is not: WebKit
 opened a real connection and Firefox resolved the name, on plain HTTP. The header reduces it and no directive closes it. So **anything the frame holds
 can leave by host name.** That is why `text` state never reaches a frame (M4), and this is a stated residual, not a bug.
+
+**`isTrusted`, for slice C3.** The runtime does not read `event.isTrusted` today: nothing on a page can dispatch into it, since stored data holds no code, so every event it hears is real. Custom code changes that only if a frame can reach the parent document, and it cannot: its one way in is the broker's port. C3 must keep it so, and if a block ever gets a route to synthesize events in the parent, the press-only verbs need `isTrusted` as well as the event's name, because the parser's rule is by name alone.
 
 ### What it can reach
 
@@ -1157,6 +1159,8 @@ The review (`2026-11-02-behaviour-model-review.md`, "Slice B3 and B4", probes be
 6. **Loops across families** have two bounds, the wider family and the unprompted count. The count resets on `pointerdown`, `keydown`, `wheel` and `touchmove`, and those listeners exist only on a page with such a trigger.
 
 **The recheck** (same document, "Slice B3 and B4 recheck") found `media load` on a stored `autoplay` undoing a pause from a timer, and the fix covers `seek`, `rate` and `volume`, which take the same route to a visitor's own setting. It also turned the budget from per trigger to per trigger on one element. Left for the render gate, as the recheck says: a pressed modal storing `closedby="none"`, which a `command="show-modal"` button does with no behaviour at all, and `id="nodeType"` on a form.
+
+**The pointer read, the check for what is open and the viewport observer moved beside the key rules,** to bring Next's chunk under the limit. A program reading `{ pointer }`, or holding a `toggle` or `view-*` trigger, now asks for that chunk.
 
 **The key rules moved to the `verbs` chunk.** The fixes put the core past 5 kilobytes, and a program with no key trigger needs none of `keys.ts`. So a key trigger now asks for that chunk, which the island fetches with the core, and a runtime without the rules fires no key, which is the direction to fail in.
 

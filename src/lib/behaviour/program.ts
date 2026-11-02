@@ -71,10 +71,18 @@ export interface Rover {
 
 export type CreateRover = (kit: Kit) => Rover;
 
-/** What decides whether a key press fires anything, from keys.ts. */
-export interface KeyRules {
+export type PointerRead = Extract<Expression, { pointer: string }>;
+
+/** What verbs.ts holds for the core: `keys.ts`, the pointer read, and what is open. */
+export interface Extras {
   keysAnswer(keys: readonly string[] | undefined, event: KeyboardEvent, element: Element): boolean;
   isTextEntry(element: Element): boolean;
+  pointerAt(read: PointerRead, event: PointerEvent, target: Element): number | undefined;
+  isOpen(element: Element): boolean;
+  /** The element a selection starts in. */
+  selectionAt(doc: Document): Element | null;
+  /** Says when an element enters or leaves the viewport, and nothing for one never in view. Null where the browser cannot. */
+  viewObserver(report: (element: Element, entered: boolean) => void): IntersectionObserver | null;
 }
 
 export type RunVerb = (action: Action, run: Run) => void;
@@ -88,9 +96,11 @@ function needsVerbs(action: Action): boolean {
   return !STATE_AND_FLOW.some((verb) => verb in action);
 }
 
-/** The chunk also holds the key rules, so a key trigger needs it too. */
+const CHUNK_EVENTS: readonly string[] = ['keydown', 'keyup', 'toggle', 'selectionchange'];
+
+/** The chunk also holds what `Extras` lists, so these need it too. */
 const needsChunk = (trigger: ProgramTrigger): boolean =>
-  trigger.on === 'keydown' || trigger.on === 'keyup' || trigger.do.some(needsVerbs);
+  CHUNK_EVENTS.includes(trigger.on) || trigger.on.startsWith('view-') || trigger.do.some(needsVerbs) || JSON.stringify(trigger).includes('"pointer"');
 
 /** The whole program from its entries, saying which chunks it needs beside the core. */
 export function compileProgram(nodes: Record<string, ProgramEntry[]>): BehaviourProgram {

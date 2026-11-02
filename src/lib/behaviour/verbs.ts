@@ -17,11 +17,44 @@
 // PURE and client-safe: no React, no MST. The effects runtime is fetched when `effect` runs.
 
 import type { Action } from './format';
-import { closestTo, every, holds, isElement, isMatch, setAttr } from './dom';
+import { attrOf, closestTo, every, hasAttr, holds, isElement, isMatch, parentOf, setAttr } from './dom';
 import { leavesSite } from './keys';
-import type { CreateVerbs, Kit, Run } from './program';
+import type { CreateVerbs, Kit, PointerRead, Run } from './program';
 
 export { isTextEntry, keysAnswer } from './keys';
+
+/** Where the pointer is on `target`, in pixels or in percent of it. */
+export function pointerAt(read: PointerRead, event: PointerEvent, target: Element): number | undefined {
+  const box = target.getBoundingClientRect();
+  const across = read.pointer === 'x';
+  const raw = across ? event.clientX - box.left : event.clientY - box.top;
+  const size = across ? box.width : box.height;
+  if (read.as === 'px') return raw;
+  return size > 0 ? Math.round((raw / size) * 100) : undefined;
+}
+
+/** One shared observer: an element that was never in view has not left it. */
+export function viewObserver(report: (element: Element, entered: boolean) => void): IntersectionObserver | null {
+  if (typeof IntersectionObserver !== 'function') return null;
+  const inside = new WeakSet<Element>();
+  return new IntersectionObserver((records) => {
+    for (const { target, isIntersecting } of records) {
+      if (isIntersecting) inside.add(target);
+      else if (!inside.delete(target)) continue;
+      report(target, isIntersecting);
+    }
+  });
+}
+
+/** `selectionchange` targets the document, so what it happened in is read from the selection. */
+export function selectionAt(doc: Document): Element | null {
+  const anchor = doc.getSelection()?.anchorNode ?? null;
+  if (!anchor) return null;
+  return isElement(anchor) ? anchor : parentOf(anchor);
+}
+
+/** True for a `details`, a `dialog` or a popover standing open. */
+export const isOpen = (el: Element): boolean => hasAttr(el, 'open') || (attrOf(el, 'popover') !== null && isMatch(el, ':popover-open'));
 
 const PRESSES: ReadonlySet<string> = new Set(['click', 'keydown', 'keyup']);
 const TARGETED = ['focus', 'dialog', 'popover', 'details', 'media', 'fullscreen', 'pictureInPicture', 'scroll', 'form', 'setProp', 'filter', 'effect'] as const;
