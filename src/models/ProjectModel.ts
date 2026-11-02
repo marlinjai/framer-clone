@@ -21,7 +21,8 @@ import {
   type StateDefinition,
 } from '@/lib/components/definition';
 import { detachRefusal, detachedTree, type StoredNode } from '@/lib/components/detach';
-import { mapNodeProps } from '@/lib/components/breakpoints';
+import { mapNodeProps, mapResponsiveValue } from '@/lib/components/breakpoints';
+import { remapBehaviourRefs } from '@/lib/behaviour/format';
 import { inputDefinitionRefusal, mayBindToSlot, parseInputValue, type InputDefinition } from '@/lib/components/inputs';
 import { parseExpression } from '@/lib/bindings/resolver/expression';
 import { COMPONENT_LIMITS, PLACEMENT_TYPE, isPlacementType, serializedBytes, type PlacementProps } from '@/lib/components/placement';
@@ -708,6 +709,89 @@ export const ProjectModel = types
       if (refusal) return { ok: false, message: refusal };
       for (const { page, node } of placementsOf(definitionId)) detachNode(page, node);
       self.components.delete(definitionId);
+      self.metadata.updatedAt = new Date();
+      return { ok: true };
+    },
+
+    // A second definition to change apart from the first, from the Components panel.
+    // Every node and frame takes a fresh id, since ids are unique in the project, and
+    // the frames keep their widths, so each map is renamed exactly. No placement moves.
+    duplicateDefinition(definitionId: string): ComponentActionResult<{ definitionId: string }> {
+      const source = self.components.get(definitionId);
+      if (!source) return { ok: false, message: 'That component no longer exists.' };
+      if (self.components.size >= COMPONENT_LIMITS.definitionsPerSite) {
+        return { ok: false, message: `A site has at most ${COMPONENT_LIMITS.definitionsPerSite} components.` };
+      }
+      const names = new Set(Array.from(self.components.values(), definition => definition.name));
+      let name = `${source.name} copy`;
+      for (let n = 2; names.has(name); n++) name = `${source.name} copy ${n}`;
+
+      const stored = getSnapshot(source) as unknown as {
+        page: { appComponentTree: ComponentSnapshotIn; canvasNodes: Record<string, ComponentSnapshotIn> };
+        inputs: InputDefinition[];
+        states: StateDefinition[];
+        description?: string;
+        noScriptState?: string;
+      };
+      const stays = Object.values(stored.page.canvasNodes ?? {});
+      const frames = stays.filter(node => node.canvasNodeType === 'viewport' && node.breakpointId);
+      const from = extractBreakpoints(stored.page.canvasNodes ?? {});
+      const frameNodes = Object.fromEntries(frames.map(frame => {
+        const breakpointId = uuidv4();
+        const id = `viewport-${breakpointId}`;
+        return [id, { ...frame, id, breakpointId }];
+      }));
+      const to = extractBreakpoints(frameNodes);
+      const freshIds = new Map<string, string>();
+      const renew = (snapshot: ComponentSnapshotIn, parentId: string | undefined): ComponentSnapshotIn => {
+        const id = uuidv4();
+        freshIds.set(snapshot.id, id);
+        return {
+          ...snapshot,
+          id,
+          parentId,
+          props: mapNodeProps((snapshot.props ?? {}) as Record<string, unknown>, from, to),
+          children: (snapshot.children ?? []).map((child: ComponentSnapshotIn) => renew(child, id)),
+        };
+      };
+      const tree = remapBehaviourRefs(renew(stored.page.appComponentTree, undefined), freshIds);
+      // Whatever floats beside the component on its canvas comes along, at its spot.
+      const floating = stays
+        .filter(node => !frames.includes(node))
+        .map(node => remapBehaviourRefs(renew(node, undefined), freshIds));
+      const canvasNodes = { ...frameNodes, ...Object.fromEntries(floating.map(node => [node.id, node])) };
+      const copyId = uuidv4();
+      self.components.set(copyId, {
+        id: copyId,
+        name,
+        ...(stored.description ? { description: stored.description } : {}),
+        page: { id: `page-${copyId}`, metadata: { title: name }, appComponentTree: tree, canvasNodes },
+        inputs: stored.inputs.map(input => (input.default === undefined ? input : { ...input, default: mapResponsiveValue(input.default, from, to) })),
+        states: stored.states,
+        ...(stored.noScriptState ? { noScriptState: stored.noScriptState } : {}),
+      });
+      self.metadata.updatedAt = new Date();
+      return { ok: true, definitionId: copyId };
+    },
+
+    // "Make input" on a row of a node inside a definition: the input, with the node's
+    // current value as its default, and the binding that reads it, as one step.
+    makeInput(definitionId: string, nodeId: string, slot: string, input: InputDefinition, expression: string): ComponentActionResult {
+      const definition = self.components.get(definitionId);
+      if (!definition) return { ok: false, message: 'That component no longer exists.' };
+      const node = (definition.page as PageModelType).findComponent(nodeId);
+      if (!node) return { ok: false, message: 'That element is no longer in the component.' };
+      if (!mayBindToSlot(input.type, slot)) return { ok: false, message: `A ${input.type} input cannot set ${slot}.` };
+      const path = parseExpression(expression)?.path;
+      if (path?.[0] !== 'input' || path[1] !== input.id) return { ok: false, message: 'The binding does not read the new input.' };
+      if (definition.inputs.length >= COMPONENT_LIMITS.inputsPerDefinition) {
+        return { ok: false, message: `A component has at most ${COMPONENT_LIMITS.inputsPerDefinition} inputs.` };
+      }
+      const refusal = inputDefinitionRefusal(input);
+      if (refusal) return { ok: false, message: refusal };
+      if (definition.inputs.some(other => other.id === input.id)) return { ok: false, message: 'This component already has that input.' };
+      definition.setInputs([...definition.inputs, input]);
+      node.setBinding(slot, { mode: 'read', expression });
       self.metadata.updatedAt = new Date();
       return { ok: true };
     },

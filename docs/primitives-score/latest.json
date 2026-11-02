@@ -1,11 +1,11 @@
 {
-  "generatedAt": "2026-11-02T11:45:14.554Z",
+  "generatedAt": "2026-11-02T11:50:53.552Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 363,
+  "durationSeconds": 195,
   "matrix": {
     "surfaces": {
       "format": {
@@ -27,8 +27,8 @@
         "total": 1833
       },
       "panel": {
-        "pass": 1210,
-        "fail": 623,
+        "pass": 1223,
+        "fail": 610,
         "notTested": 0,
         "total": 1833
       },
@@ -509,8 +509,8 @@
           "total": 30
         },
         "panel": {
-          "pass": 0,
-          "fail": 30,
+          "pass": 13,
+          "fail": 17,
           "notTested": 0,
           "total": 30
         },
@@ -5074,13 +5074,13 @@
       "aria-pattern:treeview": "pass behaviour-state behaviour-state pass pass",
       "aria-pattern:treegrid": "pass behaviour-state behaviour-state pass pass",
       "aria-pattern:windowsplitter": "pass behaviour-state behaviour-state pass pass",
-      "component:text": "pass pass pass reusable-components reusable-components",
-      "component:number": "pass pass pass reusable-components reusable-components",
-      "component:toggle": "pass pass pass reusable-components reusable-components",
-      "component:color": "pass pass pass reusable-components reusable-components",
-      "component:image": "pass pass pass reusable-components reusable-components",
-      "component:link": "pass pass pass reusable-components reusable-components",
-      "component:choice": "pass pass pass reusable-components reusable-components",
+      "component:text": "pass pass pass pass reusable-components",
+      "component:number": "pass pass pass pass reusable-components",
+      "component:toggle": "pass pass pass pass reusable-components",
+      "component:color": "pass pass pass pass reusable-components",
+      "component:image": "pass pass pass pass reusable-components",
+      "component:link": "pass pass pass pass reusable-components",
+      "component:choice": "pass pass pass pass reusable-components",
       "component:richtext": "reusable-components reusable-components reusable-components reusable-components reusable-components",
       "component:file": "reusable-components reusable-components reusable-components reusable-components reusable-components",
       "component:date": "reusable-components reusable-components reusable-components reusable-components reusable-components",
@@ -5091,12 +5091,12 @@
       "component:list": "reusable-components reusable-components reusable-components reusable-components reusable-components",
       "component:gallery": "reusable-components reusable-components reusable-components reusable-components reusable-components",
       "component:event": "reusable-components reusable-components reusable-components reusable-components reusable-components",
-      "component:definition": "pass pass pass reusable-components reusable-components",
-      "component:placement": "pass pass pass reusable-components reusable-components",
-      "component:placement-style": "pass pass pass reusable-components reusable-components",
-      "component:nested": "pass pass pass reusable-components reusable-components",
-      "component:cycle-refused": "pass pass pass reusable-components reusable-components",
-      "component:collection-template": "pass pass pass reusable-components reusable-components",
+      "component:definition": "pass pass pass pass reusable-components",
+      "component:placement": "pass pass pass pass reusable-components",
+      "component:placement-style": "pass pass pass pass reusable-components",
+      "component:nested": "pass pass pass pass reusable-components",
+      "component:cycle-refused": "pass pass pass pass reusable-components",
+      "component:collection-template": "pass pass pass pass reusable-components",
       "component:state-hover": "reusable-components reusable-components reusable-components reusable-components reusable-components",
       "component:state-pressed": "reusable-components reusable-components reusable-components reusable-components reusable-components",
       "component:state-focused": "reusable-components reusable-components reusable-components reusable-components reusable-components",
@@ -8597,12 +8597,12 @@
     {
       "id": "reusable-components",
       "description": "A promise of the reusable component format (an input type, a placement, a state or an interaction) that this surface does not keep yet.",
-      "matrixCells": 111,
+      "matrixCells": 98,
       "corpusChecks": 0,
       "fixtures": [],
       "onlyGapOf": [],
       "roundTripCases": 0,
-      "cost": 111
+      "cost": 98
     },
     {
       "id": "panel-no-tag-choice",

@@ -272,9 +272,10 @@ describe('the tag picker', () => {
 });
 
 describe('the section map', () => {
-  it('closes every category but the viewport', () => {
+  it('closes every category but the viewport and a placement', () => {
     for (const [category, sections] of Object.entries(SECTION_MAP)) {
-      if (category === 'viewport') expect(sections).not.toContain('custom');
+      // A placement's styles and attributes are its definition's (decision 7 of the components contract).
+      if (category === 'viewport' || category === 'placement') expect(sections).not.toContain('custom');
       else expect(sections[sections.length - 1]).toBe('custom');
     }
   });

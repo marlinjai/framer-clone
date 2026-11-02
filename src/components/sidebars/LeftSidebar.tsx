@@ -26,6 +26,7 @@ import PagesPanel from './left/PagesPanel';
 import { PaneTabs, paneTabId, panePanelId, type PaneTab } from './left/PaneTabs';
 import ContentManagerPanel from '@/components/cms/ContentManagerPanel';
 import { tapInsertTarget } from '@/lib/layers/tapInsertTarget';
+import { placeDefinition } from '@/lib/components/editorCommands';
 import {
   LEFT_SIDEBAR_DEFAULT_WIDTH,
   LEFT_SIDEBAR_KEY_STEP,
@@ -75,6 +76,24 @@ const LeftSidebar = observer(({ variant = 'docked', onComponentInserted }: LeftS
         .sort((a, b) => (a.viewportWidth ?? Infinity) - (b.viewportWidth ?? Infinity))[0];
       editorUI.selectComponent(created, editorUI.selectedViewportNode?.breakpointId ?? narrowest?.breakpointId);
       onComponentInserted?.();
+    },
+    [editorUI, onComponentInserted],
+  );
+  // One of the site's own components, by the same rule, through ProjectModel.placeComponent.
+  const placeOnTap = useCallback(
+    (definitionId: string) => {
+      const page = editorUI.currentPage;
+      if (!page) return;
+      const narrowest = page.viewportNodes
+        .slice()
+        .sort((a, b) => (a.viewportWidth ?? Infinity) - (b.viewportWidth ?? Infinity))[0];
+      const placed = placeDefinition(
+        editorUI,
+        definitionId,
+        tapInsertTarget(editorUI.selectedComponent),
+        editorUI.selectedViewportNode?.breakpointId ?? narrowest?.breakpointId,
+      );
+      if (placed) onComponentInserted?.();
     },
     [editorUI, onComponentInserted],
   );
@@ -286,7 +305,7 @@ const LeftSidebar = observer(({ variant = 'docked', onComponentInserted }: LeftS
               aria-labelledby={paneTabId(tabsId, activeTab)}
               className="flex-1 overflow-y-auto p-3"
             >
-              {activeTab === 'components' && <ComponentsPanel onTapInsert={isSheet ? insertOnTap : undefined} />}
+              {activeTab === 'components' && <ComponentsPanel onTapInsert={isSheet ? insertOnTap : undefined} onTapPlace={isSheet ? placeOnTap : undefined} />}
               {activeTab === 'layers' && <LayersPanel />}
               {activeTab === 'content' && <ContentManagerPanel />}
             </div>
