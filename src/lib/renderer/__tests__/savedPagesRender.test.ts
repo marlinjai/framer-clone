@@ -1,6 +1,6 @@
 // Every tree the repo can put on a site keeps rendering whole. The render gate
-// refuses by default, so a page built from a registry entry, the demo seed, a legal
-// template or the corpus must lose nothing to it.
+// refuses by default, so a page built from a registry entry, a behaviour preset, the
+// demo seed, a legal template or the corpus must lose nothing to it.
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { COMPONENT_REGISTRY, FORM_COMPONENTS } from '@/lib/componentRegistry';
@@ -11,6 +11,7 @@ import { contentBelow, type ForeignContent, isBlockedTag, isDroppedId, isDropped
 import { buildHomeSnapshot } from '@/lib/renderer/server/seedDemoSite';
 import { EMPTY_BUSINESS } from '@/lib/site/siteSettings';
 import { stripStickyCtaProps } from '@/lib/stickyCta/stickyCta';
+import { PRESETS, type PresetKind } from '@/lib/behaviour/presets';
 import { FIXTURES } from '../../../../test/score/corpus/fixtures';
 
 interface Tree {
@@ -21,7 +22,7 @@ interface Tree {
 }
 
 /** Read by a renderer and removed before an element exists, so the gate never decides them. */
-const NOT_ATTRIBUTES = new Set([...FORM_CONFIG_PROPS, 'query', 'bindings', 'effects', 'rules']);
+const NOT_ATTRIBUTES = new Set([...FORM_CONFIG_PROPS, 'query', 'bindings', 'effects', 'rules', 'behaviour']);
 
 function losses(tree: Tree, where: string, out: string[] = [], foreign: ForeignContent = false): string[] {
   if (typeof tree.type === 'string' && (isRefusedTag(tree.type) || isBlockedTag(tree.type, foreign))) out.push(`${where}: <${tree.type}>`);
@@ -46,6 +47,10 @@ describe('saved pages', () => {
     const entries = { ...COMPONENT_REGISTRY, ...FORM_COMPONENTS };
     const found = Object.entries(entries).flatMap(([id, entry]) => losses({ type: entry.htmlType, props: entry.defaultProps as Record<string, unknown> }, id));
     expect(found).toEqual([]);
+  });
+
+  it.each(Object.keys(PRESETS) as PresetKind[])('loses nothing from the preset %s', (kind) => {
+    expect(losses(PRESETS[kind]('a1') as unknown as Tree, kind)).toEqual([]);
   });
 
   it('loses nothing from the demo seed', () => {

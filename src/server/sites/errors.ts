@@ -142,6 +142,16 @@ export class SiteDeleteConfirmationError extends SiteRepositoryError {
 }
 
 /**
+ * The revision asked for does not exist on this site: never published, or
+ * pruned as the oldest of the kept history. Nothing changed. 404.
+ */
+export class SiteRevisionNotFoundError extends SiteRepositoryError {
+  constructor(siteId: string, revision: number) {
+    super('revision_not_found', `site "${siteId}" has no published version ${revision}`, 404);
+  }
+}
+
+/**
  * Map any {@link SiteRepositoryError} to its Track-0 error envelope. A route
  * matches `instanceof SiteRepositoryError` once and returns this.
  */

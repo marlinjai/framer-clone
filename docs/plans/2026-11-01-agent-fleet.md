@@ -79,6 +79,8 @@ and baseline ratchet.
 2. AI allowlists derived from the data (1). General property and attribute editor, tag choice (2).
 3. Selector-level styling: contract, states, pseudo-elements, keyframes, at-rules, the state switch (6).
 4. Reusable components and component states: contract, model, canvas frames, connectors, inputs (5).
+   The first Create component button waits for the
+   [immutable published copy](2026-11-01-immutable-published-copy.md).
 5. Theme tokens, head items, navbar, marketing sections (4).
 6. Behaviour: contract, page state, events and actions, canvas run, the patterns that fail (8).
 7. Sandboxed custom code (3).

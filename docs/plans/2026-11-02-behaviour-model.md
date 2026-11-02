@@ -1182,6 +1182,28 @@ The review (`2026-11-02-behaviour-model-review.md`, "Slice B3 and B4", probes be
 - **`pointercancel` is caused by a native drag taking over a press.**
 - `blockedNodes.test.tsx` holds that no event string reaches a page, and the score throws if one does.
 
+## Decided in slice B6
+
+**Tabs, toolbar, tooltip and carousel are presets,** in `src/lib/behaviour/presets/`, on offer in the palette under "Interactive", and the score's four patterns take their trees from the same functions. Each passes its full contract on the published page. No verb, field or byte of the runtime was added.
+
+**The score's run:** `renderer` 1,754 to 1,758 of 1,833, the four pattern rows. `corpusChecks` 245 to 250, from `radix-tabs` built from the preset: its screenshot and its accessibility tree now match in all 9 states, and it still fails on computed styles, because the text of a panel that is not selected is on the page and Radix does not render it. `roundTrip` reads 126, which `main` already measured. Format, canvas, panel and AI unchanged. One run had `onanimationcancel` time out under load, a proof from B5 this slice does not touch; the next run passed it.
+
+**One `derive` step per preset is the whole preset.** Building one lays out its nodes and derives once; adding a tab or a slide clones the last item and derives again. Derive writes every generated entry, marked `preset: true`, and keeps everything else, so a person's own trigger survives and runs after the generated ones. `addTab`, `removeTab` and `addSlide` are those functions. The panel that calls them is slice B11's.
+
+**Also decided while building it, say so if you disagree:**
+
+- **Tabs keep a `number`, not a `choice`, deviating from the table above.** The Collection form needs a number, since the row index compares with one, and a number on hand placed tabs too means one derive for both. Removing a tab renumbers what is left and keeps the selection in range.
+- **Selection follows focus through a trigger on each tab** (`focus` sets its index), so the keys only move the focus. A press also takes the focus along, because WebKit does not focus a button on click and the Tab stop would stay behind.
+- **Tabs from a Collection are two Collections over one source,** a tab list and its panels, since a tab must sit in the tab list and a panel must not. A row has no id a binding can read (`{{row.*}}` reads its values), and a binding is one whole value, so no panel can get an `id` of its own per row. So a tab from data has no `aria-controls`, and its panel is named by the row's title through `aria-label` rather than by its tab through `aria-labelledby`. Selection, keys and the Tab stop are the same as on hand placed tabs. Pointing a tab at its panel needs a binding that can join text, which belongs to the bindings plan.
+- **A carousel rotates only when asked for.** The palette's carousel has no timer and no rotation control. With `rotateMs`, focus entering stops rotation until a person starts it again, as the Authoring Practices ask, hover holds it, and a press on the rotation control keeps the focus where it was, since focus arriving would stop what the press is about to switch. Under reduced motion the runtime starts no timer, so the control hides there by a rule rather than offer nothing. A carousel from a Collection is not offered: `step` with `wrap` needs a `max`, which only the rows know.
+- **A tooltip without the gate is in the flow,** by a `gate: 'off'` rule, so with scripts off it is the control's description and covers nothing.
+- **A seed starts every id a preset writes,** node ids, which a preset also uses as element ids, and state ids, so two presets on a page, or one inside another, stay apart. The palette's seed is the kind and 8 characters of a fresh identifier.
+- **Duplicating any node now moves an element `id` that something in the copy points at,** with what points at it (`renewCopyIds` in `idRefs.ts`, called by `PageModel.duplicateComponent`). A duplicated tab list pointed at the first one's panels before. An `id` nothing in the copy points at stays, as in a clone.
+- **The panel cell counts a pattern's `behaviour` only when the palette really places that preset** (`matrix.panel.jsdom.score.tsx` drops each one on a page and reads what landed), as "Score changes" says. A rule with `when` or `gate` is that behaviour's CSS and counts with it. A plain rule, such as the carousel's reduced motion one, counts through the raw field, which is where the panel writes any rule. No pattern held a rule before, so nothing else moved.
+- **The AI cell asks of a preset's tree what it asked of the aria-only tree:** `behaviour`, and rules on the gate or on a state, are left out of what the validator is given, because the validator learns `behaviour` in B12. B12 takes that out of `patterns.score.ts`. This keeps the four cells passing for the same reason as before, not because the generator can write a working tab list.
+- **`radix-tabs` is built from `deriveTabs`.** It still fails on the text of the hidden panel, which Radix does not render and a page without a script has to show.
+- **The score bundles the runtime once,** in `test/score/lib/runtime.ts`, shared by the event proofs, the patterns and the corpus.
+
 ## Review findings not adopted
 
 Everything in findings 1 to 22 is applied except the following, each decided by code or a test. M1 to M10 are recorded above with the review's defaults.

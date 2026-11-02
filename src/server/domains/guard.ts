@@ -54,7 +54,7 @@ function forbidden(): DomainProjectResult {
 export async function authorizeDomainProject(
   req: Request,
   projectId: string,
-  action: Extract<FramerAction, 'viewSite' | 'manageDomain'>,
+  action: Extract<FramerAction, 'viewSite' | 'manageDomain' | 'publishSite'>,
   prisma: PrismaClient = getPrismaClient(),
 ): Promise<DomainProjectResult> {
   if (!isEditorHost(req.headers.get('host'))) {

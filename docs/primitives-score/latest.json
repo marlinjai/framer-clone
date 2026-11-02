@@ -1,11 +1,11 @@
 {
-  "generatedAt": "2026-11-02T10:36:20.762Z",
+  "generatedAt": "2026-11-02T10:44:45.322Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 278,
+  "durationSeconds": 164,
   "matrix": {
     "surfaces": {
       "format": {
@@ -15,8 +15,8 @@
         "total": 1833
       },
       "renderer": {
-        "pass": 1755,
-        "fail": 78,
+        "pass": 1759,
+        "fail": 74,
         "notTested": 0,
         "total": 1833
       },
@@ -465,8 +465,8 @@
           "total": 30
         },
         "renderer": {
-          "pass": 17,
-          "fail": 13,
+          "pass": 21,
+          "fail": 9,
           "notTested": 0,
           "total": 30
         },
@@ -5049,7 +5049,7 @@
       "aria-pattern:alertdialog": "pass pass canvas-editor-context pass ai-attribute-allowlist",
       "aria-pattern:breadcrumb": "pass pass pass pass pass",
       "aria-pattern:button": "pass pass canvas-editor-context pass pass",
-      "aria-pattern:carousel": "pass behaviour-state behaviour-state pass pass",
+      "aria-pattern:carousel": "pass pass canvas-editor-context pass pass",
       "aria-pattern:checkbox": "pass pass pass pass ai-attribute-allowlist",
       "aria-pattern:combobox": "pass behaviour-state behaviour-state pass ai-attribute-allowlist",
       "aria-pattern:dialog-modal": "pass pass canvas-editor-context pass ai-attribute-allowlist",
@@ -5068,9 +5068,9 @@
       "aria-pattern:spinbutton": "pass pass pass pass ai-attribute-allowlist",
       "aria-pattern:switch": "pass pass pass pass ai-attribute-allowlist",
       "aria-pattern:table": "pass pass pass pass pass",
-      "aria-pattern:tabs": "pass behaviour-state behaviour-state pass pass",
-      "aria-pattern:toolbar": "pass behaviour-state behaviour-state pass pass",
-      "aria-pattern:tooltip": "pass behaviour-state behaviour-state pass pass",
+      "aria-pattern:tabs": "pass pass canvas-editor-context pass pass",
+      "aria-pattern:toolbar": "pass pass canvas-editor-context pass pass",
+      "aria-pattern:tooltip": "pass pass canvas-editor-context pass pass",
       "aria-pattern:treeview": "pass behaviour-state behaviour-state pass pass",
       "aria-pattern:treegrid": "pass behaviour-state behaviour-state pass pass",
       "aria-pattern:windowsplitter": "pass behaviour-state behaviour-state pass pass",
@@ -5111,15 +5111,15 @@
     "total": 16,
     "checks": {
       "screenshot": {
-        "pass": 83,
+        "pass": 85,
         "total": 96
       },
       "computed-styles": {
-        "pass": 75,
+        "pass": 72,
         "total": 96
       },
       "accessibility-tree": {
-        "pass": 78,
+        "pass": 84,
         "total": 96
       },
       "interaction": {
@@ -5788,15 +5788,15 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 7,
+            "pass": 9,
             "total": 9
           },
           "computed-styles": {
-            "pass": 3,
+            "pass": 0,
             "total": 9
           },
           "accessibility-tree": {
-            "pass": 3,
+            "pass": 9,
             "total": 9
           },
           "interaction": {
@@ -5808,18 +5808,18 @@
           {
             "fixture": "radix-tabs",
             "viewport": "Desktop",
-            "state": "arrow key changes the tab",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "behaviour-state",
-            "detail": "28 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.\""
+            "gap": "mixed-text",
+            "detail": "1 differences, first: content-password: text \"\" became \"Changeyourpassword.\""
           },
           {
             "fixture": "radix-tabs",
             "viewport": "Desktop",
             "state": "arrow key changes the tab",
-            "check": "accessibility-tree",
+            "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "original \"- tablist \\\"Settings\\\":\\n  - tab \\\"Account\\\"\\n  - tab \\\"Password\\\" [selected]\\n- tabpanel \\\"Password\\\": Change your password.\", replica \"- tablist \\\"Settings\\\":\\n  - tab \\\"Account\\\" [selected]\\n  - tab \\\"Password\\\"\\n- tabpanel \\\"A"
+            "detail": "1 differences, first: content-account: text \"\" became \"Changeyourname.\""
           },
           {
             "fixture": "radix-tabs",
@@ -5835,15 +5835,7 @@
             "state": "click changes the tab",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "22 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.\""
-          },
-          {
-            "fixture": "radix-tabs",
-            "viewport": "Desktop",
-            "state": "click changes the tab",
-            "check": "accessibility-tree",
-            "gap": "behaviour-state",
-            "detail": "original \"- tablist \\\"Settings\\\":\\n  - tab \\\"Account\\\"\\n  - tab \\\"Password\\\" [selected]\\n- tabpanel \\\"Password\\\": Change your password.\", replica \"- tablist \\\"Settings\\\":\\n  - tab \\\"Account\\\" [selected]\\n  - tab \\\"Password\\\"\\n- tabpanel \\\"A"
+            "detail": "1 differences, first: content-account: text \"\" became \"Changeyourname.\""
           },
           {
             "fixture": "radix-tabs",
@@ -5856,10 +5848,10 @@
           {
             "fixture": "radix-tabs",
             "viewport": "Tablet",
-            "state": "arrow key changes the tab",
-            "check": "screenshot",
-            "gap": "behaviour-state",
-            "detail": "0.11 percent of pixels differ"
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "mixed-text",
+            "detail": "1 differences, first: content-password: text \"\" became \"Changeyourpassword.\""
           },
           {
             "fixture": "radix-tabs",
@@ -5867,15 +5859,7 @@
             "state": "arrow key changes the tab",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "28 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.\""
-          },
-          {
-            "fixture": "radix-tabs",
-            "viewport": "Tablet",
-            "state": "arrow key changes the tab",
-            "check": "accessibility-tree",
-            "gap": "behaviour-state",
-            "detail": "original \"- tablist \\\"Settings\\\":\\n  - tab \\\"Account\\\"\\n  - tab \\\"Password\\\" [selected]\\n- tabpanel \\\"Password\\\": Change your password.\", replica \"- tablist \\\"Settings\\\":\\n  - tab \\\"Account\\\" [selected]\\n  - tab \\\"Password\\\"\\n- tabpanel \\\"A"
+            "detail": "1 differences, first: content-account: text \"\" became \"Changeyourname.\""
           },
           {
             "fixture": "radix-tabs",
@@ -5891,15 +5875,7 @@
             "state": "click changes the tab",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "22 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.\""
-          },
-          {
-            "fixture": "radix-tabs",
-            "viewport": "Tablet",
-            "state": "click changes the tab",
-            "check": "accessibility-tree",
-            "gap": "behaviour-state",
-            "detail": "original \"- tablist \\\"Settings\\\":\\n  - tab \\\"Account\\\"\\n  - tab \\\"Password\\\" [selected]\\n- tabpanel \\\"Password\\\": Change your password.\", replica \"- tablist \\\"Settings\\\":\\n  - tab \\\"Account\\\" [selected]\\n  - tab \\\"Password\\\"\\n- tabpanel \\\"A"
+            "detail": "1 differences, first: content-account: text \"\" became \"Changeyourname.\""
           },
           {
             "fixture": "radix-tabs",
@@ -5912,10 +5888,10 @@
           {
             "fixture": "radix-tabs",
             "viewport": "Mobile",
-            "state": "arrow key changes the tab",
-            "check": "screenshot",
-            "gap": "behaviour-state",
-            "detail": "0.33 percent of pixels differ"
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "mixed-text",
+            "detail": "1 differences, first: content-password: text \"\" became \"Changeyourpassword.\""
           },
           {
             "fixture": "radix-tabs",
@@ -5923,15 +5899,7 @@
             "state": "arrow key changes the tab",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "28 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.\""
-          },
-          {
-            "fixture": "radix-tabs",
-            "viewport": "Mobile",
-            "state": "arrow key changes the tab",
-            "check": "accessibility-tree",
-            "gap": "behaviour-state",
-            "detail": "original \"- tablist \\\"Settings\\\":\\n  - tab \\\"Account\\\"\\n  - tab \\\"Password\\\" [selected]\\n- tabpanel \\\"Password\\\": Change your password.\", replica \"- tablist \\\"Settings\\\":\\n  - tab \\\"Account\\\" [selected]\\n  - tab \\\"Password\\\"\\n- tabpanel \\\"A"
+            "detail": "1 differences, first: content-account: text \"\" became \"Changeyourname.\""
           },
           {
             "fixture": "radix-tabs",
@@ -5947,15 +5915,7 @@
             "state": "click changes the tab",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "22 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.\""
-          },
-          {
-            "fixture": "radix-tabs",
-            "viewport": "Mobile",
-            "state": "click changes the tab",
-            "check": "accessibility-tree",
-            "gap": "behaviour-state",
-            "detail": "original \"- tablist \\\"Settings\\\":\\n  - tab \\\"Account\\\"\\n  - tab \\\"Password\\\" [selected]\\n- tabpanel \\\"Password\\\": Change your password.\", replica \"- tablist \\\"Settings\\\":\\n  - tab \\\"Account\\\" [selected]\\n  - tab \\\"Password\\\"\\n- tabpanel \\\"A"
+            "detail": "1 differences, first: content-account: text \"\" became \"Changeyourname.\""
           },
           {
             "fixture": "radix-tabs",
@@ -8017,8 +7977,8 @@
   },
   "roundTrip": {
     "nodesToJsxToNodes": {
-      "pass": 113,
-      "total": 113
+      "pass": 117,
+      "total": 117
     },
     "jsxToNodesToRender": {
       "pass": 11,
@@ -8396,6 +8356,26 @@
         "pass": true
       },
       {
+        "id": "preset: tabs",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "preset: toolbar",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "preset: tooltip",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "preset: carousel",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
         "id": "synthetic: responsive style map",
         "direction": "nodes-jsx-nodes",
         "pass": true
@@ -8759,23 +8739,6 @@
       "cost": 111
     },
     {
-      "id": "behaviour-state",
-      "description": "Behaviour and state: no way to say that one element changes another.",
-      "matrixCells": 26,
-      "corpusChecks": 67,
-      "fixtures": [
-        "radix-accordion",
-        "radix-tabs",
-        "radix-dialog"
-      ],
-      "onlyGapOf": [
-        "radix-tabs",
-        "radix-dialog"
-      ],
-      "roundTripCases": 0,
-      "cost": 93
-    },
-    {
       "id": "panel-no-tag-choice",
       "description": "The tag picker of the Custom section does not offer SVG and MathML elements.",
       "matrixCells": 92,
@@ -8796,6 +8759,22 @@
       "onlyGapOf": [],
       "roundTripCases": 0,
       "cost": 87
+    },
+    {
+      "id": "behaviour-state",
+      "description": "Behaviour and state: no way to say that one element changes another.",
+      "matrixCells": 18,
+      "corpusChecks": 59,
+      "fixtures": [
+        "radix-accordion",
+        "radix-tabs",
+        "radix-dialog"
+      ],
+      "onlyGapOf": [
+        "radix-dialog"
+      ],
+      "roundTripCases": 0,
+      "cost": 77
     },
     {
       "id": "page-level-css",
@@ -8848,6 +8827,16 @@
       "cost": 22
     },
     {
+      "id": "canvas-editor-context",
+      "description": "The contract passes on the published page, but the mounted editor changes the outcome: Space pans, a link does not navigate, and the editor's own main element stops a header inside it being a banner. Closing it takes an interact mode on the canvas.",
+      "matrixCells": 10,
+      "corpusChecks": 0,
+      "fixtures": [],
+      "onlyGapOf": [],
+      "roundTripCases": 0,
+      "cost": 10
+    },
+    {
       "id": "import-dynamic-logic",
       "description": "JSX that is a program, not markup: reported as left over by the static import, as the plan requires.",
       "matrixCells": 0,
@@ -8870,14 +8859,16 @@
       "cost": 6
     },
     {
-      "id": "canvas-editor-context",
-      "description": "The contract passes on the published page, but the mounted editor changes the outcome: Space pans, a link does not navigate, and the editor's own main element stops a header inside it being a banner. Closing it takes an interact mode on the canvas.",
-      "matrixCells": 6,
-      "corpusChecks": 0,
-      "fixtures": [],
+      "id": "mixed-text",
+      "description": "Text mixed with elements: text beside an element is lost or lands out of order.",
+      "matrixCells": 0,
+      "corpusChecks": 3,
+      "fixtures": [
+        "radix-tabs"
+      ],
       "onlyGapOf": [],
       "roundTripCases": 0,
-      "cost": 6
+      "cost": 3
     },
     {
       "id": "renderer-drops-value",
@@ -9466,7 +9457,6 @@
       "aria-orientation",
       "aria-posinset",
       "aria-roledescription",
-      "aria-selected",
       "aria-setsize",
       "aria-valuemax",
       "aria-valuemin",
@@ -9715,6 +9705,12 @@
       "div",
       "img",
       "p"
+    ],
+    "presetsPlaced": [
+      "tabs",
+      "toolbar",
+      "tooltip",
+      "carousel"
     ],
     "rawFieldRows": [
       "css-at-rule:@container",

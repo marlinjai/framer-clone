@@ -364,6 +364,22 @@ not know stay pending by design, so the lateness 500 fires until the newer build
 back. To reach Marlin, add an Uptime Kuma monitor on the same route (a POST with the
 header); the timer alone only reaches the journal.
 
+## Rolling back past the published copy
+
+Migration `20261102200000_site_revisions` needs no reversing: older code ignores the table and the column. **That is
+the danger of a code rollback past it**, because older code serves `site_pages`, the working copy
+(plan `docs/plans/2026-11-01-immutable-published-copy.md`):
+
+- **Saved drafts go live** on every site, at once, including work deliberately not published.
+- **Rollbacks made in the Published versions dialog are undone**, because older code never reads the pointer.
+- **Rolling forward again hides what was published meanwhile:** older code writes rows and leaves
+  `sites.published_revision_id` alone, so visitors get the older frozen revision and the owner's publish has vanished.
+
+So prefer a fix forward. If the code must go back, note the time. Before rolling forward again, take each site published
+during that window and either republish it, or clear `published_revision_id` for it, which puts it back on the legacy
+path (it serves its rows until its next save or publish freezes them). Which sites: `status = 'published'` with
+`updated_at` after the noted time.
+
 ## Operator commands (from a checkout, against a forwarded database)
 
 | Command | Use |

@@ -4,6 +4,7 @@ import type { PrismaClient } from '@prisma/client';
 import {
   parseSubdomain,
   resolvePublishedSite,
+  resolvePublishedSiteByKey,
   hostLookupKeys,
   matchPageBySlug,
   resolvePublicIngestionKey,
@@ -71,7 +72,8 @@ function fakePrisma(): PrismaClient {
   const pages: PublishedPageRow[] = [
     { pageId: 'p1', slug: 'about', snapshot: { slug: 'about' } as never },
   ];
-  return {
+  const fake = {
+    $transaction: async (run: (tx: unknown) => Promise<unknown>) => run(fake),
     siteDomain: {
       findUnique: async ({
         where,
@@ -124,7 +126,8 @@ function fakePrisma(): PrismaClient {
         return null;
       },
     },
-  } as unknown as PrismaClient;
+  };
+  return fake as unknown as PrismaClient;
 }
 
 describe('resolvePublishedSite', () => {
@@ -360,5 +363,120 @@ describe('resolveAnalyticsProjectId', () => {
     expect(resolveAnalyticsProjectId(null)).toBe('proj_env');
     delete process.env.ANALYTICS_PROJECT_ID;
     expect(resolveAnalyticsProjectId(null)).toBeNull();
+  });
+});
+
+describe('resolvePublishedSiteByKey with a revision', () => {
+  /** A definition parseComponents keeps: an empty object is dropped as unreadable. */
+  const NAV = {
+    id: 'nav',
+    name: 'Nav',
+    page: {
+      id: 'nav-page',
+      slug: '',
+      metadata: { title: 'Nav' },
+      appComponentTree: { id: 'nav-root', type: 'nav', componentType: 'host', props: {}, children: [] },
+      canvasNodes: {},
+    },
+    inputs: [],
+    states: [],
+  };
+
+  function prismaWith(
+    publishedRevision: unknown,
+    pages: unknown[] = [],
+    publishedRevisionId: string | null = 'rev',
+  ): PrismaClient {
+    const fake = {
+      $transaction: async (run: (tx: unknown) => Promise<unknown>, options: unknown) => {
+        transactionOptions.push(options);
+        return run(fake);
+      },
+      siteDomain: { findUnique: async () => ({ siteId: 's1' }) },
+      site: {
+        findFirst: async () => ({
+          id: 's1',
+          workspaceId: 'ws',
+          tenantGroupId: 'tg',
+          companyId: 'c',
+          name: 'Working copy name',
+          analyticsProjectId: null,
+          ingestionEndpoint: null,
+          apiKeyRef: null,
+          lumitraEnabled: false,
+          redirects: [],
+          siteSettings: { language: 'fr' },
+          components: { nav: { ...NAV, name: 'Working nav' } },
+          updatedAt: new Date('2026-11-02T08:00:00.000Z'),
+          publishedRevisionId,
+          publishedRevision,
+          pages,
+        }),
+      },
+    };
+    return fake as unknown as PrismaClient;
+  }
+
+  const transactionOptions: unknown[] = [];
+
+  it('reads the frozen document, keeping identity and tenancy live', async () => {
+    const site = await resolvePublishedSiteByKey(
+      { kind: 'subdomain', value: 'demo' },
+      prismaWith({
+        number: 4,
+        document: {
+          schemaVersion: 1,
+          name: 'Frozen name',
+          siteSettings: { language: 'de' },
+          pages: [{ pageId: 'p', slug: 'about', snapshot: {} }],
+          components: { nav: NAV },
+        },
+      }),
+    );
+    expect(site).toMatchObject({
+      siteId: 's1',
+      workspaceId: 'ws',
+      companyId: 'c',
+      name: 'Frozen name',
+      revisionNumber: 4,
+    });
+    // Parsed once here, so the cached value is ready and no request parses it again.
+    expect(site?.components.nav?.name).toBe('Nav');
+    expect(site?.revision).toBe('revision:rev');
+    expect(site?.siteSettings.language).toBe('de');
+    expect(site?.pages.map((p) => p.slug)).toEqual(['about']);
+    // One snapshot, so a first save between Prisma's statements cannot empty the site.
+    expect(transactionOptions.at(-1)).toMatchObject({ isolationLevel: 'RepeatableRead' });
+  });
+
+  it('serves the working copy only when the pointer is null', async () => {
+    const site = await resolvePublishedSiteByKey(
+      { kind: 'subdomain', value: 'demo' },
+      prismaWith(null, [{ pageId: 'p', slug: 'draft', snapshot: {} }], null),
+    );
+    expect(site?.revisionNumber).toBeNull();
+    expect(site?.pages.map((p) => p.slug)).toEqual(['draft']);
+    // A site from before revisions serves its components column with its rows.
+    expect(site?.components.nav?.name).toBe('Working nav');
+    // Every save moves updated_at, so the expansion memo keys on it until a revision exists.
+    expect(site?.revision).toBe('working:2026-11-02T08:00:00.000Z');
+  });
+
+  it('throws when the pointer is set but no revision came back', async () => {
+    await expect(
+      resolvePublishedSiteByKey(
+        { kind: 'subdomain', value: 'demo' },
+        prismaWith(null, [{ pageId: 'p', slug: 'draft', snapshot: {} }], 'rev_gone'),
+      ),
+    ).rejects.toThrow('points at a revision that does not exist');
+  });
+
+  it('fails loudly on a damaged revision, never falling through to the working copy', async () => {
+    await expect(
+      resolvePublishedSiteByKey(
+        { kind: 'subdomain', value: 'demo' },
+        prismaWith({ number: 4, document: { name: 'no pages' } }, [{ pageId: 'p', slug: 'draft', snapshot: {} }]),
+      ),
+    ).rejects.toThrow('malformed site revision document');
   });
 });
