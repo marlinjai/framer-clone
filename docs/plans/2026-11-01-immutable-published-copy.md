@@ -48,7 +48,7 @@ revision holds `components` beside `pages`) is honoured here, and slice 8 of tha
 
 ## Migration
 
-`20261101000000_site_revisions`: one enum, one table, one nullable column with its index, one foreign key each way. It
+`20261102200000_site_revisions`: one enum, one table, one nullable column with its index, one foreign key each way. It
 rewrites no row
 and has no backfill, because the resolver's fallback covers every site that has no revision. `boot.sh` runs
 `prisma migrate deploy` before the server starts. While the old container is still up it keeps working: it ignores the
@@ -97,12 +97,19 @@ arrive?** `siteSettings` carries managing directors, phone, email and address, a
 them. After a change, up to 30 revisions keep the old values, and a rollback republishes them. Deleting a site cascades
 correctly, but no single value can be erased from history. Not decided here, and nothing is built for it.
 
-## What the reusable components slices must do
+## How it joined the reusable components column
 
-`sites.components` does not exist yet, so `publishProject` freezes `components` from the published body (`{}` when
-absent, and a baseline is `{}`). The slice that adds the column must make `freezeRevision` read the column instead, or
-a tab loaded before that deploy would publish no definitions. `PublishedSite.components` already carries the frozen
-value through the cache, and expansion reads it there.
+Slice 3 of the reusable components contract (`sites.components`) landed first, so this branch made the five edits that
+contract records ("How slice 3 and the published copy (#226) join"): `freezeRevision` reads the column, which the
+shared working-copy write has just written (or kept, for a body without the key), so a baseline and a publish both
+freeze it and a tab older than the column still publishes the definitions the site holds. The resolver's branch for a
+site with no revision serves the column too. `PublishedSite.components` is parsed once in the resolver, from the
+frozen value, so the cached site is ready to expand. The expansion memo keys on the served revision's id, or for a
+site with no revision on the row's `updated_at`, because a save no longer changes what is served.
+
+The theme and head keys (`mergeKeptSiteSettings`) are kept by the same shared write, so a revision freezes the merged
+settings. The publish warnings of a frozen version (`revisionPublishCheck`) now include the component issues, from the
+frozen definitions, as the editor's check does.
 
 ## Tests
 

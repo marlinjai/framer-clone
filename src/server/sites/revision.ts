@@ -13,6 +13,7 @@ import type { PageSnapshotOut } from '@/models/PageModel';
 import { parseSiteRedirects, type SiteRedirect } from '@/lib/pages/redirects';
 import { normalizeSiteSettings, type SiteSettings } from '@/lib/site/siteSettings';
 import { checkBeforePublish, type PublishCheck, type PublishCheckPage } from '@/lib/legal/publishCheck';
+import { parseComponents } from '@/lib/components/definition';
 
 /**
  * The format of a revision document. A revision can stay live for as long as a
@@ -106,16 +107,18 @@ export function parseRevisionDocument(raw: unknown): SiteRevisionDocument {
  */
 export function revisionPublishCheck(document: SiteRevisionDocument): PublishCheck {
   const pages = document.pages.map((page): PublishCheckPage => {
-    const snapshot = page.snapshot as unknown as {
+    const snapshot = page.snapshot as unknown as PublishCheckPage['snapshot'] & {
       metadata?: { title?: string; legalTemplate?: string };
-      appComponentTree?: PublishCheckPage['tree'];
     };
     return {
       id: page.pageId,
       slug: page.slug,
       metadata: { title: snapshot.metadata?.title ?? '', legalTemplate: snapshot.metadata?.legalTemplate },
-      tree: snapshot.appComponentTree,
+      snapshot,
     };
   });
-  return checkBeforePublish(document.siteSettings.business, pages);
+  // The frozen definitions, read as a visitor's render reads them: one that cannot
+  // be read is reported, exactly as the editor's check reports it.
+  const { definitions, refused } = parseComponents(document.components);
+  return checkBeforePublish(document.siteSettings.business, pages, { definitions, refused });
 }

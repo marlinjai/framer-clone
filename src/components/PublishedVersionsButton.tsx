@@ -76,14 +76,19 @@ function ConfirmMakeLive({ confirm, online, onConfirm, onCancel }: {
           ? `Make version ${number} live? Visitors see it at once.`
           : `Put this site back online with version ${number}? It is on the internet again at once.`}
       </p>
-      {check === 'loading' && <p className="text-sm text-muted-foreground">Checking the legal pages...</p>}
-      {check === 'failed' && <p className="text-sm text-muted-foreground">The legal pages of this version could not be checked.</p>}
+      {check === 'loading' && <p className="text-sm text-muted-foreground">Checking this version...</p>}
+      {check === 'failed' && <p className="text-sm text-muted-foreground">This version could not be checked.</p>}
       {typeof check === 'object' && hasPublishIssues(check) && (
         <ul className="list-disc space-y-1 pl-5 text-sm">
           {check.missingImpressum && <li>This version has business data but no Impressum page.</li>}
           {check.placeholders.map((issue) => (
             <li key={issue.pageId}>
               {issue.title} still has {issue.count} {issue.count === 1 ? 'placeholder' : 'placeholders'}.
+            </li>
+          ))}
+          {check.components.map((issue) => (
+            <li key={`${issue.pageId ?? issue.title}:${issue.message}`}>
+              {issue.title}: {issue.message}
             </li>
           ))}
         </ul>

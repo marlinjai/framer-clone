@@ -25,7 +25,7 @@ function json(body: unknown, status = 200): Response {
 
 const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>();
 
-const CLEAN = { missingImpressum: false, placeholders: [] };
+const CLEAN = { missingImpressum: false, placeholders: [], components: [] };
 
 /** Press Make live on the only row offering it and wait for the question. */
 async function askForVersion(name: RegExp) {
@@ -126,7 +126,11 @@ describe('PublishedVersionsButton', () => {
     fetchMock.mockResolvedValueOnce(json(LIST));
     fetchMock.mockResolvedValueOnce(json({
       number: 1,
-      check: { missingImpressum: true, placeholders: [{ kind: 'privacy', pageId: 'p', title: 'Privacy', count: 2 }] },
+      check: {
+        missingImpressum: true,
+        placeholders: [{ kind: 'privacy', pageId: 'p', title: 'Privacy', count: 2 }],
+        components: [{ pageId: 'home', title: 'Home', message: 'a placement here names a component that does not exist' }],
+      },
     }));
     openDialog();
 
@@ -134,6 +138,7 @@ describe('PublishedVersionsButton', () => {
 
     await within(question).findByText(/no Impressum page/);
     expect(within(question).getByText('Privacy still has 2 placeholders.')).toBeTruthy();
+    expect(within(question).getByText('Home: a placement here names a component that does not exist')).toBeTruthy();
     expect((within(question).getByRole('button', { name: 'Make live' }) as HTMLButtonElement).disabled).toBe(false);
   });
 

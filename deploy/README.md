@@ -366,7 +366,7 @@ header); the timer alone only reaches the journal.
 
 ## Rolling back past the published copy
 
-Migration `20261101000000_site_revisions` needs no reversing: older code ignores the table and the column. **That is
+Migration `20261102200000_site_revisions` needs no reversing: older code ignores the table and the column. **That is
 the danger of a code rollback past it**, because older code serves `site_pages`, the working copy
 (plan `docs/plans/2026-11-01-immutable-published-copy.md`):
 

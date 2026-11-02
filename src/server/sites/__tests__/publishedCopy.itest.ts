@@ -1,7 +1,7 @@
 // src/server/sites/__tests__/publishedCopy.itest.ts
 //
 // The immutable published copy against a REAL Postgres (the
-// `20261101000000_site_revisions` migration applied by the integration
+// `20261102200000_site_revisions` migration applied by the integration
 // globalSetup). `resolvePublishedSiteByKey` is what a cache miss runs (a restart,
 // a deploy, a second replica), so every assertion here is about what a visitor
 // gets when nothing is cached. Plan: docs/plans/2026-11-01-immutable-published-copy.md.
@@ -32,6 +32,23 @@ function page(id: string, slug: string, text: string) {
     metadata: { title: id },
     appComponentTree: { id: `root-${id}`, type: 'div', componentType: 'host', props: { children: text }, children: [] },
     canvasNodes: {},
+  };
+}
+
+/** A definition the reader keeps (reusable components contract): `name` tells versions apart. */
+function nav(name: string) {
+  return {
+    id: 'nav',
+    name,
+    page: {
+      id: 'nav-page',
+      slug: '',
+      metadata: { title: name },
+      appComponentTree: { id: 'nav-root', type: 'nav', componentType: 'host', props: { children: name }, children: [] },
+      canvasNodes: {},
+    },
+    inputs: [],
+    states: [],
   };
 }
 
@@ -147,13 +164,45 @@ describe('publish freezes what visitors read', () => {
 
   it('holds components beside pages, and rolls them back together (decision 12)', async () => {
     const repo = getSiteRepository();
-    await repo.publishProject(scope, project('v1', { components: { nav: { title: 'Nav one' } } }));
-    await repo.publishProject(scope, project('v2', { components: { nav: { title: 'Nav two' } } }));
-    expect((await visit())?.components).toEqual({ nav: { title: 'Nav two' } });
+    await repo.publishProject(scope, project('v1', { components: { nav: nav('Nav one') } }));
+    await repo.publishProject(scope, project('v2', { components: { nav: nav('Nav two') } }));
+    expect((await visit())?.components.nav?.name).toBe('Nav two');
     await repo.rollbackToRevision(scope, siteId, 1);
     const site = await visit();
-    expect(site?.components).toEqual({ nav: { title: 'Nav one' } });
+    expect(site?.components.nav?.name).toBe('Nav one');
     expect(textOf(site)).toBe('v1');
+  });
+
+  it('a publish from a tab older than the column freezes the definitions the column holds', async () => {
+    const repo = getSiteRepository();
+    await repo.saveProject(scope, project('v1', { components: { nav: nav('Stored nav') } }), { mustExist: true });
+    // No `components` key: the column keeps what it holds, and that is what freezes.
+    await repo.publishProject(scope, project('v1'));
+    expect((await visit())?.components.nav?.name).toBe('Stored nav');
+
+    // A later save of new definitions changes the working copy only.
+    await repo.saveProject(scope, project('v2', { components: { nav: nav('Draft nav') } }), { mustExist: true });
+    const site = await visit();
+    expect(site?.components.nav?.name).toBe('Stored nav');
+    expect(textOf(site)).toBe('v1');
+    expect((await repo.loadProject(scope, siteId)).components.get('nav')?.name).toBe('Draft nav');
+  });
+
+  it('freezes the theme and head a save from an older tab kept', async () => {
+    const repo = getSiteRepository();
+    const theme = { tokens: [{ id: 'ab12cd34', name: 'Ink', kind: 'color', light: '#111111' }], document: {} };
+    const head = [{ kind: 'meta', name: 'author', content: 'Bakery' }];
+    await repo.saveProject(scope, project('v1', { siteSettings: { theme, head } }), { mustExist: true });
+    // A body with neither key keeps the stored ones, and the revision holds them.
+    await repo.publishProject(scope, project('v1', { siteSettings: { siteName: 'Bakery' } }));
+    const site = await visit();
+    expect(site?.siteSettings.siteName).toBe('Bakery');
+    expect(site?.siteSettings.theme.tokens.map((token) => token.id)).toEqual(['ab12cd34']);
+    expect(site?.siteSettings.head).toEqual(head);
+
+    // Clearing them in the editor reaches visitors only with the next publish.
+    await repo.saveProject(scope, project('v2', { siteSettings: { theme: { tokens: [], document: {} }, head: [] } }), { mustExist: true });
+    expect((await visit())?.siteSettings.head).toEqual(head);
   });
 
   it('a site published with no components key holds none', async () => {
@@ -383,6 +432,19 @@ describe('a site published before revisions existed', () => {
     expect(site?.revisionNumber).toBeNull();
     expect(site?.siteSettings.siteName).toBe('Legacy');
     expect(await prisma.siteRevision.count({ where: { siteId } })).toBe(0);
+  });
+
+  it('serves its components column, and its first save freezes that as the baseline', async () => {
+    const repo = getSiteRepository();
+    await legacySite('legacy content');
+    await prisma.site.update({ where: { id: siteId }, data: { components: { nav: nav('Legacy nav') } } });
+    expect((await visit())?.components.nav?.name).toBe('Legacy nav');
+
+    await repo.saveProject(scope, project('first edit', { components: { nav: nav('Edited nav') } }), { mustExist: true });
+    const site = await visit();
+    expect(site?.revisionNumber).toBe(1);
+    expect(site?.components.nav?.name).toBe('Legacy nav');
+    expect(textOf(site)).toBe('legacy content');
   });
 
   it('freezes what it serves at the first save: visitors keep it, the save is kept as the working copy', async () => {

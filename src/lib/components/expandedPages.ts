@@ -6,11 +6,13 @@
 // revision expands each page once per process, and `siteFormIds` answers which
 // page holds a form without expanding anything for an id that does not exist.
 //
-// The key is `siteId` and `revision`, the row's `updated_at`. It is not the
-// contract's `projectUpdatedAt`: node edits never touch `metadata.updatedAt`, so
-// that value stays put when a definition or a page is saved, and the memo would
-// serve the old tree. Object identity is no key either, because the cached site
-// is deserialised afresh per request.
+// The key is `siteId` and `revision`: the id of the frozen revision being served
+// (plan 2026-11-01-immutable-published-copy), which every publish and rollback
+// changes, or for a site with no revision yet the row's `updated_at`, which every
+// save moves. It is not the contract's `projectUpdatedAt`: node edits never touch
+// `metadata.updatedAt`, so that value stays put when a definition or a page is
+// saved, and the memo would serve the old tree. Object identity is no key either,
+// because the cached site is deserialised afresh per request.
 //
 // A held tree is shared by every request, so nothing downstream may write to it,
 // which a test pins. Its budget is not shared: each caller gets its own, charged

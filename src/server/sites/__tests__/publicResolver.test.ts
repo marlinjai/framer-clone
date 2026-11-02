@@ -367,6 +367,21 @@ describe('resolveAnalyticsProjectId', () => {
 });
 
 describe('resolvePublishedSiteByKey with a revision', () => {
+  /** A definition parseComponents keeps: an empty object is dropped as unreadable. */
+  const NAV = {
+    id: 'nav',
+    name: 'Nav',
+    page: {
+      id: 'nav-page',
+      slug: '',
+      metadata: { title: 'Nav' },
+      appComponentTree: { id: 'nav-root', type: 'nav', componentType: 'host', props: {}, children: [] },
+      canvasNodes: {},
+    },
+    inputs: [],
+    states: [],
+  };
+
   function prismaWith(
     publishedRevision: unknown,
     pages: unknown[] = [],
@@ -391,6 +406,8 @@ describe('resolvePublishedSiteByKey with a revision', () => {
           lumitraEnabled: false,
           redirects: [],
           siteSettings: { language: 'fr' },
+          components: { nav: { ...NAV, name: 'Working nav' } },
+          updatedAt: new Date('2026-11-02T08:00:00.000Z'),
           publishedRevisionId,
           publishedRevision,
           pages,
@@ -412,7 +429,7 @@ describe('resolvePublishedSiteByKey with a revision', () => {
           name: 'Frozen name',
           siteSettings: { language: 'de' },
           pages: [{ pageId: 'p', slug: 'about', snapshot: {} }],
-          components: { nav: {} },
+          components: { nav: NAV },
         },
       }),
     );
@@ -422,8 +439,10 @@ describe('resolvePublishedSiteByKey with a revision', () => {
       companyId: 'c',
       name: 'Frozen name',
       revisionNumber: 4,
-      components: { nav: {} },
     });
+    // Parsed once here, so the cached value is ready and no request parses it again.
+    expect(site?.components.nav?.name).toBe('Nav');
+    expect(site?.revision).toBe('revision:rev');
     expect(site?.siteSettings.language).toBe('de');
     expect(site?.pages.map((p) => p.slug)).toEqual(['about']);
     // One snapshot, so a first save between Prisma's statements cannot empty the site.
@@ -437,6 +456,10 @@ describe('resolvePublishedSiteByKey with a revision', () => {
     );
     expect(site?.revisionNumber).toBeNull();
     expect(site?.pages.map((p) => p.slug)).toEqual(['draft']);
+    // A site from before revisions serves its components column with its rows.
+    expect(site?.components.nav?.name).toBe('Working nav');
+    // Every save moves updated_at, so the expansion memo keys on it until a revision exists.
+    expect(site?.revision).toBe('working:2026-11-02T08:00:00.000Z');
   });
 
   it('throws when the pointer is set but no revision came back', async () => {

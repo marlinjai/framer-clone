@@ -83,13 +83,22 @@ describe('revisionPublishCheck', () => {
     expect(revisionPublishCheck(doc)).toEqual({
       missingImpressum: true,
       placeholders: [{ kind: 'privacy', pageId: 'privacy', title: 'Datenschutz', count: 1 }],
+      components: [],
     });
+  });
+
+  it('reports a frozen definition that cannot be read, as the editor reports it', () => {
+    const doc = parseRevisionDocument({ schemaVersion, pages: [PAGE], components: { nav: { title: 'Nav' } } });
+    expect(revisionPublishCheck(doc).components).toEqual([
+      { title: 'nav', message: expect.stringMatching(/^this component cannot be read, so it shows nothing/) },
+    ]);
   });
 
   it('finds nothing on a site with no business data', () => {
     expect(revisionPublishCheck(parseRevisionDocument({ schemaVersion, pages: [PAGE] }))).toEqual({
       missingImpressum: false,
       placeholders: [],
+      components: [],
     });
   });
 });
