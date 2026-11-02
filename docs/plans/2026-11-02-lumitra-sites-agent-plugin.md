@@ -29,16 +29,16 @@ The patterns to follow already exist:
 
 1. **Name:** "Lumitra Sites". The endpoint is `https://app.lumitra.co/api/mcp`. The plugin is `lumitra-sites`, in the same marketplace as Studio.
 2. **The endpoint lives inside framer-clone, like Booking, not as a separate npm server like Studio.** One deploy, no version drift, and it works with `claude mcp add --transport http` and claude.ai connectors. The plugin is skills plus an `.mcp.json` pointing at that URL, with the key taken from an environment variable.
-3. **Auth is a company API key with the `sites` grant,** checked through `verifyApiKey`, failing closed with a 503 when auth-brain is down. A bearer header never falls back to the cookie. The scope is the key's company: its sites workspace via `resolveScopeForCompanyWorkspace` (`src/server/sites/scope.ts:294`). The service account counts as workspace admin only if the key's role allows it.
+3. **Auth is a company API key with the `sites` grant,** checked through `verifyApiKey`, failing closed with a 503 when auth-brain is down. A bearer header never falls back to the cookie. The scope is the key's company: the server takes the company id from the verified key, looks up that company's sites workspace itself and feeds that pair to `resolveScopeForCompanyWorkspace` (`src/server/sites/scope.ts:294`). A workspace or company identifier in the MCP request is never read, and key claims are never treated as session data. If that function cannot take a key-derived company without a session, a separate `resolveScopeForKey` is added next to it and tested for the same isolation. The service account counts as workspace admin only if the key's role allows it; edit and publish both need `workspace.admin` today, so a key without the admin role is refused on both.
 4. **One operations vocabulary, shared by the agent, the in-editor AI and later the CLI,** as the 2026-05-31 platform plan says ("do not build a separate agent API"). It extends the existing review ops (`src/lib/ai/review/ops.ts`) and maps one-to-one onto existing editor actions, which already run on the server (`POST /api/projects` calls `ProjectModel.create`).
 5. **Every agent write is applied on the server:** load the project, apply the ops as `ProjectModel` and `PageModel` actions, check them, then save with a version check. Nothing reaches storage without passing `ProjectModel.create` and the generation validator.
-6. **Publish is allowed,** with an explicit confirmation step (MCP elicitation, or a one-time token like Studio's `manageTools.ts`). It can be undone through revision rollback. Deleting sites or domains is not exposed in the first version.
+6. **Publish is allowed,** with an explicit confirmation step (MCP elicitation, or a one-time token like Studio's `manageTools.ts`). A token is bound to the company, the site, the `expectedVersion` and a hash of the publish payload, expires after a few minutes, and is consumed atomically on first use (a second use, another site or a newer version is refused), so a confirmation for one preview can never authorize different content. Publishing can be undone through revision rollback. Deleting sites or domains is not exposed in the first version.
 7. **First rollout is limited to Marlin's company.** The `sites` grant is operator-only today, so access is limited already. Opening it to customers comes later and is a separate decision.
 
 ## Work, in order
 
 **1. Version lock (needed by both the agent and the editor).**
-- Add a `version` integer column to `sites` (additive migration). `saveProject` and `publishProject` take an `expectedVersion` and refuse a stale write with 409 `site_changed`.
+- Add a `version` integer column to `sites`, `NOT NULL DEFAULT 1` (additive migration; existing rows backfill to 1 and new sites start at 1, so every site has a defined version). `saveProject`, `publishProject` and `rollbackToRevision` take an `expectedVersion`, compare and increment it in one atomic update in the same transaction as the write (`UPDATE ... WHERE version = expected`), refuse a stale write with 409 `site_changed` and return the new version on success.
 - The editor's Save sends the version it loaded. On 409 the editor shows "this site was changed elsewhere, reload or keep yours" instead of overwriting.
 - Files: `src/server/sites/repository.ts`, `src/app/api/projects/_schema.ts`, the save and publish routes, `src/stores/openProject.ts` (it already compares baseline, server and working copies on load).
 
@@ -55,6 +55,7 @@ The patterns to follow already exist:
   - `describe_vocabulary`: reuses `buildSchemaDocs()` from `src/lib/ai/pageGen/schemaDocs.ts`
 - **Write (one batch per call, all or nothing, validated):**
   - Sites and pages: `create_site`, `create_page`, `update_page_settings`.
+  - **Blocked content contract (all write tools):** a blocked tag or prop is rejected, never silently dropped. The call returns the rejected operations with a reason each, writes nothing and keeps the version unchanged. The only warnings on success are non-blocking ones (for example a limit nearly reached). The generation validator's drop-with-warning behavior is used only inside `generate_page`, whose result lists what was dropped.
   - Node trees and edits:
     - `insert_nodes` takes a node tree in the generation format, checked by `validateGeneration` (`validate.ts:1773`) then turned into editor nodes with `toEditorSnapshot` (`apply.ts:67`).
     - Single edits: `update_style`, `update_text`, `set_props`, `move_node`, `remove_node`.
@@ -65,15 +66,15 @@ The patterns to follow already exist:
   - `preview_url`: the editor preview link for the working copy.
   - `publish`, which requires confirmation.
   - `list_revisions` and `rollback`.
-- **Every write** takes `expectedVersion`, returns the new version, refuses blocked tags and props, and uses the same limits as generation (`GENERATION_LIMITS`).
+- **Every write** takes `expectedVersion`, returns the new version, rejects blocked tags and props (see the contract above), and uses the same limits as generation (`GENERATION_LIMITS`).
 
 **4. MCP endpoint `src/app/api/mcp/route.ts`.**
-- Streamable HTTP with no session state, copying Booking's tested handler: `initialize`, `ping`, `tools/list`, `tools/call`, protocol versions 2025-06-18, 2025-03-26 and 2024-11-05, a body size cap, 401 with `WWW-Authenticate: Bearer`, and 503 with `retry-after`.
+- Streamable HTTP with no session state, copying Booking's tested handler: `initialize`, `ping`, `tools/list`, `tools/call`, protocol versions 2025-06-18, 2025-03-26 and 2024-11-05. This is the `initialize` era: a client that speaks only the newer stateless protocol (2026-07-28, which replaces `initialize` with `server/discover`) cannot connect until a `server/discover` handler is added, which is a later slice; the supported clients (Claude Code, Claude Desktop, claude.ai connectors) fall back to `initialize`. The handler also has a body size cap, 401 with `WWW-Authenticate: Bearer`, and 503 with `retry-after`.
 - Tool annotations mark which tools only read and which are destructive.
 - Per-key rate limit. A server `instructions` text explains the workflow: read the vocabulary, outline, insert, check the preview, publish.
 
 **5. Plugin `plugin/lumitra-sites/` in framer-clone (Agent Plugins format, as Studio's).**
-- `plugin.json` and an `.mcp.json` of type http with `Authorization: Bearer ${LUMITRA_SITES_API_KEY}`.
+- `plugin.json` and an `.mcp.json` of type http pointing at the URL. The key is not expanded from an environment variable inside a header template, because not every client expands it and a client that does not would send the literal text as the key. Each target client gets its own verified setup: Claude Code through `claude mcp add --transport http ... --header` with the key injected from Infisical, and claude.ai connectors and Claude Desktop through the client's own credential prompt. The plugin's skills document each path, and the dogfood step checks every one.
 - Skills:
   - `build-a-site`: brief, design direction, structure, build, check the preview in a browser, publish.
   - `edit-a-site`: read first, make small batched edits.
@@ -92,9 +93,9 @@ The patterns to follow already exist:
 
 ## Verification
 
-- **Unit:** every op against `ProjectModel` (apply, reject, all-or-nothing batch, stale version refused, blocked tags dropped), the vocabulary docs and the rate limit.
+- **Unit:** every op against `ProjectModel` (apply, reject, all-or-nothing batch, stale version refused, blocked tags rejected with nothing written), the vocabulary docs and the rate limit.
 - **Integration** (`pnpm test:integration`):
-  - The MCP route with a mocked `verifyApiKey`: no key gives 401, a key without the grant gives 403, a foreign company gets no access, auth-brain down gives 503.
+  - The MCP route with a mocked `verifyApiKey`: no key gives 401, a key without the grant gives 403, a key with the grant but without the admin role gives 403 on edit and publish tools, a foreign company gets no access, auth-brain down gives 503.
   - A full chain: create site, insert, read back, publish, rollback.
   - The editor's Save gets 409 after an agent write.
 - **End to end on production after deploy:**
