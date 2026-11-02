@@ -31,7 +31,6 @@ import { commerceServerFault } from '@/server/commerce/faults';
 import { buyerSchema, readBuyer } from '@/server/commerce/payment/buyer';
 import { paymentDeps } from '@/server/commerce/payment/deps';
 import {
-  ExpirySweepError,
   handlePaymentEvent,
   sweepExpiredPayments,
   type PaymentOutcome,
@@ -73,13 +72,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ orderId
 
   try {
     const deps = paymentDeps(db, tenantGroupId, companyId);
-    // A payment whose window ran out closes first (its stock goes back), so it is not paid here. Another order
-    // that cannot be closed (logged by the sweep) never stops this buyer; this order's own failure does.
-    try {
-      await sweepExpiredPayments(deps, companyId);
-    } catch (err) {
-      if (!(err instanceof ExpirySweepError) || err.failed.includes(orderId)) throw err;
-    }
+    // This order, if its window ran out, closes first (its stock goes back), so it is not paid here. Only this
+    // order: every other one has its own expiry job, so no other order's trouble can reach this buyer.
+    await sweepExpiredPayments(deps, companyId, { orderId });
 
     const payment = await db
       .selectFrom('order_payment')

@@ -11,8 +11,10 @@ import 'server-only';
 //                       closed. Paid or refunded: nothing changes.
 //   payment_failed      pending -> failed, the reserved stock released.
 //   checkout_cancelled  pending -> cancelled, the reserved stock released.
-//   checkout_expired    pending -> expired, the reserved stock released (also sweepExpiredPayments, which runs
-//                       before a new order reserves, before a payment starts, and on a schedule: expirySweep.ts).
+//   checkout_expired    pending -> expired, the reserved stock released. Besides a provider's own report, our clock
+//                       closes a payment: its job when its window ends (expiryJob.ts), and sweepExpiredPayments, which
+//                       runs before a new order reserves, before a payment starts, and on a schedule (expirySweep.ts).
+//                       Those set `requireDue`: a payment that is not due writes nothing, not even the event.
 //
 // This row is the order's state. The order itself is append-only (005_minimal_orders revokes UPDATE from the
 // app role: a placed order is a bookkeeping record), so its `status` stays `confirmed`, meaning "placed",
@@ -24,15 +26,22 @@ import 'server-only';
 // commit (receipt.ts); when that fails the payment stays paid, the reason is kept on it, and the next delivery
 // of any event for the order (a provider retries a webhook that answered an error) tries again.
 
-import type { Kysely, Transaction } from 'kysely';
+import { sql, type Kysely, type Transaction } from 'kysely';
 
 import type { CommerceDB } from '../db-types';
 import { applyInventoryEffect, reserve, RESERVE_ISOLATION_LEVEL } from '../inventory/reserve';
+import { isLockTimeout } from '../provisioning/ownerSql';
 import type { PaymentEvent, PaymentProvider, ProviderId } from './provider';
 import { enqueueShopMail } from '../mail/outbox';
 
 /** How long a pending payment holds its stock (the design: 30 minutes). */
 export const PAYMENT_WINDOW_MS = 30 * 60 * 1000;
+
+/**
+ * How long a close by our own clock (`requireDue`) waits for locks. It can always come back later, so it never waits on
+ * a busy payment for longer than a job's deadline: until slice B6 a late refund holds this row across a Stripe call.
+ */
+export const DUE_LOCK_WAIT_MS = 2 * 60 * 1000;
 
 /**
  * The platform fee: 1% of the charged total, rounded half up, in the currency's minor unit (parent plan,
@@ -69,6 +78,25 @@ class LateStockGoneError extends Error {
   }
 }
 
+/** A close by our own clock gave up waiting for a lock. Nothing changed, and trying again later is the answer. */
+export class PaymentBusyError extends Error {
+  constructor(readonly orderId: string) {
+    super(`the payment of order ${orderId} stayed locked past the wait of a close by our clock`);
+    this.name = 'PaymentBusyError';
+  }
+}
+
+/**
+ * The expiry of a payment is recorded, yet the payment is still pending. The event and the close commit together and
+ * nothing returns a payment to pending, so this cannot happen. Finishing quietly would keep the stock held for good.
+ */
+export class ExpiryRecordedError extends Error {
+  constructor(readonly orderId: string) {
+    super(`the expiry of order ${orderId} is recorded, but its payment is still pending`);
+    this.name = 'ExpiryRecordedError';
+  }
+}
+
 /** A sweep could not close every expired payment. It closed the others; the next sweep tries these again. */
 export class ExpirySweepError extends Error {
   constructor(
@@ -88,6 +116,8 @@ export interface PaymentDeps {
   /** Issue the receipt of a paid order (receipt.ts ensureReceipt, bound to the company). */
   receipt: (orderId: string) => Promise<{ documentId: string }>;
   now?: () => Date;
+  /** Overrides DUE_LOCK_WAIT_MS. */
+  lockWaitMs?: number;
   /** The company's connected account for refunds (Stripe Connect). */
   connectedAccountId?: string;
   /**
@@ -106,6 +136,11 @@ export interface PaymentOutcome {
   receiptDocumentId: string | null;
   /** Why the receipt could not be issued (the payment stands). */
   receiptError: string | null;
+  /**
+   * `requireDue` found the payment not due and nothing was written. `expiresAt`: when its window now ends, for a
+   * payment still pending; null for one that closed or was paid.
+   */
+  notDue?: { expiresAt: Date | null };
 }
 
 type Trx = Transaction<CommerceDB>;
@@ -120,6 +155,22 @@ async function lockPayment(trx: Trx, tenantId: string, orderId: string) {
     .executeTakeFirst();
   if (!row) throw new UnknownPaymentError(orderId);
   return row;
+}
+
+/**
+ * Whether a locked payment's window is over, and when it ends. Decided by Postgres and read as an instant, because a
+ * timestamp read back as it is stored is only right when the process runs in UTC.
+ */
+async function readWindow(trx: Trx, tenantId: string, orderId: string, at: Date) {
+  return trx
+    .selectFrom('order_payment')
+    .select((eb) => [
+      eb('expires_at', '<=', at).as('due'),
+      sql<Date>`${sql.ref('expires_at')} AT TIME ZONE 'UTC'`.as('expiresAt'),
+    ])
+    .where('tenant_id', '=', tenantId)
+    .where('order_id', '=', orderId)
+    .executeTakeFirstOrThrow();
 }
 
 /** Record the event; false when it was recorded before (a repeated delivery). */
@@ -203,16 +254,30 @@ function inTransaction<T>(db: Kysely<CommerceDB>, fn: (trx: Trx) => Promise<T>):
 export async function handlePaymentEvent(deps: PaymentDeps, event: PaymentEvent): Promise<PaymentOutcome> {
   const now = deps.now ?? (() => new Date());
   let duplicate = false;
+  let notDue: PaymentOutcome['notDue'];
   let status: PaymentStatus;
   try {
     status = await inTransaction(deps.db, async (trx) => {
-      const payment = await lockPayment(trx, event.tenantId, event.orderId);
-      if (!(await recordEvent(trx, event))) {
-        duplicate = true;
-        return payment.status as PaymentStatus;
+      if (event.requireDue) {
+        const wait = `${deps.lockWaitMs ?? DUE_LOCK_WAIT_MS}ms`;
+        await sql`SELECT set_config('lock_timeout', ${wait}, true)`.execute(trx);
       }
+      const payment = await lockPayment(trx, event.tenantId, event.orderId);
       const at = now();
       const current = payment.status as PaymentStatus;
+      // Before the event: the append-only record must never say a payment closed that did not.
+      if (event.requireDue) {
+        const window = await readWindow(trx, event.tenantId, event.orderId, at);
+        if (current !== 'pending' || !window.due) {
+          notDue = { expiresAt: current === 'pending' ? window.expiresAt : null };
+          return current;
+        }
+      }
+      if (!(await recordEvent(trx, event))) {
+        if (event.requireDue) throw new ExpiryRecordedError(event.orderId);
+        duplicate = true;
+        return current;
+      }
       const close = async (next: 'failed' | 'cancelled' | 'expired') => {
         if (current !== 'pending') return current;
         await releaseStock(trx, deps.tgId, event.tenantId, event.orderId);
@@ -268,6 +333,7 @@ export async function handlePaymentEvent(deps: PaymentDeps, event: PaymentEvent)
       }
     });
   } catch (err) {
+    if (event.requireDue && isLockTimeout(err)) throw new PaymentBusyError(event.orderId);
     if (!(err instanceof LateStockGoneError)) throw err;
     status = await refundLatePayment(deps, event, now());
     if (status === 'refunded') deps.deliverMail?.(event.tenantId, event.orderId, 'late_refund');
@@ -279,8 +345,8 @@ export async function handlePaymentEvent(deps: PaymentDeps, event: PaymentEvent)
     .where('tenant_id', '=', event.tenantId)
     .where('order_id', '=', event.orderId)
     .executeTakeFirstOrThrow();
-  if (status !== 'paid' || after.receipt_document_id) {
-    return { status, duplicate, receiptDocumentId: after.receipt_document_id, receiptError: after.receipt_error };
+  if (notDue || status !== 'paid' || after.receipt_document_id) {
+    return { status, duplicate, receiptDocumentId: after.receipt_document_id, receiptError: after.receipt_error, notDue };
   }
   const receipt = await issueReceipt(deps, event.tenantId, event.orderId, now());
   // The buyer hears once the receipt exists (the letter links it); a retried receipt mails then.
@@ -369,17 +435,23 @@ export function receiptFailure(err: unknown): string {
  * Close every pending payment whose window ran out (checkout_expired, stock released). Idempotent and safe to
  * run concurrently: the payment row is locked and each expiry recorded once per order, so a second sweep finds
  * the event and releases nothing. Answers the orders it closed. One payment that cannot be closed never keeps
- * the others holding their stock: it is logged, the rest are closed, then ExpirySweepError reports it.
+ * the others holding their stock: it is logged, the rest are closed, then ExpirySweepError reports it. `only` narrows
+ * the sweep to one order: the pay route needs an answer about its own order, and each order's job closes the rest.
  */
-export async function sweepExpiredPayments(deps: PaymentDeps, tenantId: string): Promise<string[]> {
+export async function sweepExpiredPayments(
+  deps: PaymentDeps,
+  tenantId: string,
+  only?: { orderId: string },
+): Promise<string[]> {
   const at = (deps.now ?? (() => new Date()))();
-  const due = await deps.db
+  let query = deps.db
     .selectFrom('order_payment')
     .select(['order_id', 'provider'])
     .where('tenant_id', '=', tenantId)
     .where('status', '=', 'pending')
-    .where('expires_at', '<', at)
-    .execute();
+    .where('expires_at', '<', at);
+  if (only) query = query.where('order_id', '=', only.orderId);
+  const due = await query.execute();
   const closed: string[] = [];
   const failed: string[] = [];
   for (const row of due) {
@@ -390,8 +462,9 @@ export async function sweepExpiredPayments(deps: PaymentDeps, tenantId: string):
         type: 'checkout_expired',
         tenantId,
         orderId: row.order_id,
+        requireDue: true,
       });
-      if (!outcome.duplicate && outcome.status === 'expired') closed.push(row.order_id);
+      if (!outcome.duplicate && !outcome.notDue && outcome.status === 'expired') closed.push(row.order_id);
     } catch (err) {
       console.error(`[payments] order ${row.order_id}: the expired payment could not be closed:`, err);
       failed.push(row.order_id);

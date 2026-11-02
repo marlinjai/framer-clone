@@ -250,6 +250,10 @@ on its first transient failure in March.
 - Isolation between **companies inside a group** has no such guard, and the claim spans companies by design. So a
   handler receives a typed context bound to `job.tenant_id`, `ctx.company`, whose helpers add the `tenant_id`
   filter, and every kind has a test with two companies in one group proving it touches only its own.
+- A handler never holds the group's unfiltered handle. The state machine needs that handle and the group's id, so the
+  worker builds `PaymentDeps` in `jobs/run.ts` and hands over `ctx.payments`, whose `handleEvent` takes no `tenantId`:
+  the company comes from the job. A later slice that needs more of `PaymentDeps` adds a bound method there, and never
+  a handle.
 - A payload holds ids only and is parsed by a per-kind schema at claim. One that does not parse is `JobRefused`.
 
 ### 1.7 Running with one or several app copies
@@ -287,7 +291,9 @@ would add a write across schemas to every transaction.
 
 ### 1.8 Idempotency per kind
 
-A claim can run twice, so each handler names why that is safe.
+A claim can run twice, so each handler names why that is safe. A handler with no network call has nothing for its
+signal to reach, so `ctx.payments` passes the kind's `deadlineMs` to the payment transaction as its `lock_timeout`: a job
+blocked on a payment row becomes an ordinary retry, not an open claim that ends in a false `dead`.
 
 | Kind | Dedupe key | Why a repeat is harmless | Backoff, give up | Dead means |
 |---|---|---|---|---|
@@ -880,7 +886,8 @@ Eleven need his review (B3 to B8 without B3R, B10 to B14), four a one-line yes (
   backfill. `deploy/README.md`.
 - **F:** expiry runs on jobs alone.
 - **B:** n/a, removal only.
-- **R:** a deploy after this has no gap, because B3 has been live and the backfill has run.
+- **R:** a deploy after this has no gap, because B3 has been live and the backfill has run: wait for one hourly backfill
+  after the old container is gone, since it is what covers an order that container placed after the worker's first pass.
 - **E:** the watchdog still reports lateness.
 - **Needs Marlin:** yes, one line: uninstall the units on `coolify-shared-host` first, then deploy, so the unit does not fail
   on a 404.
@@ -1108,3 +1115,13 @@ checked against the code and hold. Findings about Stripe behaviour are adopted a
   grants it `SELECT (id)`, and a failed grant warns instead of failing the start. Decided: the pass covers every status, because `suspended` stops provisioning
   and not a selling shop. The route's answer gains `skipped`, and `findingsOpen` is 0 until B8. A signal stops the claiming, but Next exits without waiting for
   a handler, so a handler in hand at shutdown is cut off and recovers through its lease, as one open claim. The timer is not installed.
+- 2026-11-02: B3 built: `payment/expiryJob.ts`, `order.placed`, `requireDue`, the backfill, and the pay route narrowed to its own order, beside the old sweep, route and
+  timer, which B3R removes. No tenant migration: `commerce_job` already holds everything. Additions to the text. A handler needs the tenant group's id and handle, because
+  `handlePaymentEvent` and the stock writes take them, so `run.ts` builds `PaymentDeps` for `ctx.payments` (section 1.6), and `runNextJob(group, options)` and
+  `runJobNow(group, tenantId, jobId, options)` take the handle and id as one `JobTenantGroup`; `jobs/types.ts`, `run.ts` and `runtime.ts` were missing from B3's file list.
+  `PaymentEvent.requireDue` also bounds the lock wait (`lock_timeout`, section 1.8) and decides the date in Postgres, so it does not depend on the process running in UTC, and an
+  expiry recorded on a payment still pending throws instead of finishing `done` with the stock held. `order.placed` carries
+  `expiresAt`. `PaymentOutcome` gains `notDue`, because the job must tell a moved date from a closed payment and that answer has to come from under the lock. `scheduleJob`
+  lives in `jobs/schedule.ts`, re-exported by `emit.ts`: a consumer importing `emit.ts` loads the registry before the consumer exists, which left `order.placed` with an
+  undefined consumer. B4 must keep that in mind when `payments.ts` starts importing `emit.ts`. Until B7 no payment has a stored session, so the job closes without asking
+  Stripe, as the sweep does today, and the order route's per-company sweep still takes every expired payment.
