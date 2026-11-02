@@ -93,6 +93,10 @@ describe('mergeRules', () => {
     ['font over lineHeight', 'lineHeight', 'font'],
     ['whiteSpace over textWrapMode', 'textWrapMode', 'whiteSpace'],
     ['all over anything', 'color', 'all'],
+    ['-webkit-mask-image beside mask-image', 'maskImage', 'WebkitMaskImage'],
+    ['word-wrap beside overflow-wrap', 'overflowWrap', 'wordWrap'],
+    ['-webkit-backdrop-filter beside backdrop-filter', 'backdropFilter', 'WebkitBackdropFilter'],
+    ['-moz-appearance beside appearance', 'appearance', 'MozAppearance'],
   ])('does not move a rule past a shorthand that sets it: %s', (_, longhand, shorthand) => {
     const rules = [
       { selector: '&:hover', style: { [longhand]: 'a' } },

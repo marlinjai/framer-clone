@@ -17,7 +17,7 @@ import { DEFAULT_BREAKPOINT_IDS, isWidthWrapper, mapBreakpoints, type Breakpoint
 import { compileCandidates, refusedBeforeCompile, type CompiledSheet } from './compile';
 import { familyOf, mergeRules, type Declaration } from './flatten';
 import { orderEntries, placeClasses, type ClassSource, type PlacedClasses } from './order';
-import { DARK_SELECTOR, SYSTEM_DARK, keptClassName, keptSourceClass, keyframesName, readsClass, renameCustomProperties, rewriteEntry, storedValue, styleKey, styleOf, type ClassReader, type RewrittenEntry } from './rewrites';
+import { DARK_SELECTOR, SYSTEM_DARK, keptClassName, keptSourceClass, keyframesName, readsClass, renameCustomProperties, rewriteEntry, storedReads, storedValue, styleKey, styleOf, type ClassReader, type RewrittenEntry } from './rewrites';
 import { alwaysWritten, emptySheet, reachedTokens, readStylesheet, variablesIn, type SourceSheet, type TailwindLine } from './tokens';
 
 export type { ClassSource, VariantTable } from './order';
@@ -86,6 +86,8 @@ interface Candidates {
   /** Classes selectors name, by name in the source. */
   names: Set<string>;
   readers: ClassReader[];
+  /** Classes whose own selectors read classes: they carry the operand only because they name it. */
+  readerSources: Set<string>;
   produced: Set<string>;
   /** Classes refused before the compile, which never reached it. */
   capped: Map<string, 'variants' | 'negations'>;
@@ -93,7 +95,7 @@ interface Candidates {
 
 function rewriteCandidates(compiled: CompiledSheet, systemDark: boolean): Candidates {
   const produced = new Set(compiled.keyframes.keys());
-  const candidates: Candidates = { compiled, rewritten: new Map(), refused: new Map(), names: new Set(), readers: [], produced, capped: new Map() };
+  const candidates: Candidates = { compiled, rewritten: new Map(), refused: new Map(), names: new Set(), readers: [], readerSources: new Set(), produced, capped: new Map() };
   const refuse = (candidate: string, reason: string) => {
     const own = candidates.refused.get(candidate);
     if (own) own.push(reason);
@@ -122,6 +124,7 @@ function rewriteCandidates(compiled: CompiledSheet, systemDark: boolean): Candid
       }
       for (const name of rewritten.names) candidates.names.add(name);
       candidates.readers.push(...rewritten.readers);
+      if (rewritten.readers.length > 0) candidates.readerSources.add(candidate);
       kept.push(rewritten);
     }
     candidates.rewritten.set(candidate, kept);
@@ -136,14 +139,20 @@ const tokensOf = ({ classes, table }: ClassSource): string[] => [
   ...(table?.compound ?? []).flatMap(({ classes: tokens }) => tokens),
 ];
 
-function keptClasses(element: ElementClasses, classes: PlacedClasses | null, { names, readers }: Candidates, lines: TailwindLine[]): string[] {
+function keptClasses(element: ElementClasses, classes: PlacedClasses | null, { names, readers, readerSources }: Candidates, lines: TailwindLine[]): string[] {
   const own = new Set(classes?.placed.filter((each) => each.own).map((each) => each.token) ?? tokensOf(element));
   const kept = new Set<string>();
   for (const token of new Set(tokensOf(element))) {
     const name = names.has(token) ? keptClassName(token) : null;
-    const reading = readers.filter((reader) => readsClass(reader, token));
+    // `[&_svg:not([class*='size-'])]:size-4` holds `size-` because it names it, not because it is one.
+    const reading = readerSources.has(token) ? [] : readers.filter((reader) => readsClass(reader, token));
     if (!name && reading.length === 0) continue;
-    kept.add(name ?? keptSourceClass(token));
+    const stored = name ?? keptSourceClass(token);
+    kept.add(stored);
+    // The stored reader reads a kept class from its start, where the original read any part of the attribute.
+    if (readers.some((reader) => readsClass(reader, token) !== storedReads(reader, stored) && !readerSources.has(token))) {
+      lines.push({ kind: 'class', disposition: 'adapted', detail: 'classReaderNarrowed', next: ['accept'], nodeKey: element.key, source: token });
+    }
     // A class one value of a table brings is kept for all of them. That differs only where a reader matches it and
     // nothing the element always has: `size-9` beside a base class holding `size-` changes nothing `[class*='size-']` reads.
     const differs = !own.has(token) && (name !== null || reading.some((reader) => ![...own].some((each) => readsClass(reader, each))));

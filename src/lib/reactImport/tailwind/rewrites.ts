@@ -158,6 +158,19 @@ export interface ClassReader {
 /** A kept class in full, under the same encoding, so a reader's encoded operand still finds it. */
 export const keptSourceClass = (token: string): string => `${KEPT_CLASS_PREFIX}${encodeClass(token)}`;
 
+/** The operand a reader is stored with: a kept class from its start, so it cannot read the renderer's or the canvas's own classes. */
+export const storedOperand = ({ operand }: ClassReader): string => `${KEPT_CLASS_PREFIX}${encodeClass(operand)}`;
+
+/** Whether the stored reader matches a kept class: what the replica does, beside `readsClass`, what the original did. */
+export function storedReads(reader: ClassReader, kept: string): boolean {
+  const name = reader.caseInsensitive ? kept.toLowerCase() : kept;
+  const wanted = reader.caseInsensitive ? storedOperand(reader).toLowerCase() : storedOperand(reader);
+  if (reader.operator === '*=') return name.includes(wanted);
+  if (reader.operator === '^=') return name.startsWith(wanted);
+  if (reader.operator === '~=') return name === wanted;
+  return name === wanted || name.startsWith(`${wanted}-`);
+}
+
 /** Whether a reader could match this source class, on the name as it stood in the source. */
 export function readsClass({ operator, operand, caseInsensitive }: ClassReader, token: string): boolean {
   const name = caseInsensitive ? token.toLowerCase() : token;
@@ -238,10 +251,10 @@ export function readSelector(selector: string): ReadSelector {
       return whole;
     }
     readers.push({ operator, operand, caseInsensitive: flag === 'i' || flag === 'I' });
-    // The class is stored encoded, so the operand is too. A prefix match also takes the prefix.
+    // Stored as a kept class from its start, for every operator: a bare `*=` would also read the classes the canvas
+    // and the renderer write, and the encoding of a kept class (`[class*=si]` in `u-c-group_sitem`).
     const flagText = flag ? ` ${flag}` : '';
-    const encoded = encodeClass(operand);
-    return `[class${operator}"${operator === '*=' ? encoded : `${KEPT_CLASS_PREFIX}${encoded}`}"${flagText}]`;
+    return `[class${operator}"${storedOperand({ operator, operand, caseInsensitive: false })}"${flagText}]`;
   });
   if (refused) return { selector, names, readers, refused };
   const pieces = withOperands.split(DARK_SELECTOR).map((piece) => prefixClasses(piece, names));

@@ -95,13 +95,18 @@ const SHORTHAND_FAMILIES: Readonly<Record<string, string>> = {
   lineHeight: 'font',
   // `white-space` sets `text-wrap-mode`.
   white: 'text',
+  // `word-wrap` is the old name of `overflow-wrap`.
+  wordWrap: 'overflow',
 };
 
 /** What a property can overlap with, so that order between the two matters. A custom property only overlaps itself. */
 export function familyOf(key: string): string {
   if (key.startsWith('--')) return key;
-  if (Object.hasOwn(SHORTHAND_FAMILIES, key)) return SHORTHAND_FAMILIES[key];
-  const word = /^[A-Z]?[a-z]+/.exec(key)?.[0] ?? key;
+  // A prefixed alias sets what its standard name sets: Tailwind writes `-webkit-mask-image` beside `mask-image`.
+  const vendor = /^(?:Webkit|Moz|ms|O)(?=[A-Z])/.exec(key);
+  const standard = vendor ? key[vendor[0].length].toLowerCase() + key.slice(vendor[0].length + 1) : key;
+  if (Object.hasOwn(SHORTHAND_FAMILIES, standard)) return SHORTHAND_FAMILIES[standard];
+  const word = /^[a-z]+/.exec(standard)?.[0] ?? standard;
   return Object.hasOwn(SHORTHAND_FAMILIES, word) ? SHORTHAND_FAMILIES[word] : word;
 }
 

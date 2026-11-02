@@ -213,7 +213,9 @@ describe('classes that selectors read', () => {
     ]);
     expect(result.nodes.get('i')?.className).toBe('u-c-size-6');
     expect(result.nodes.get('i')?.style).toMatchObject({ width: 'calc(var(--spacing) * 6)' });
-    expect(selectorRules(result.nodes.get('b')?.rules)[0].selector).toBe('& svg:not([class*="size-"])');
+    expect(selectorRules(result.nodes.get('b')?.rules)[0].selector).toBe('& svg:not([class*="u-c-size-"])');
+    // The reader's own token holds `size-` because it names it: it is not kept.
+    expect(result.nodes.get('b')?.className).toBeUndefined();
   });
 
   it('prefixes the operand of a ^= reader', async () => {
@@ -248,9 +250,26 @@ describe('classes that selectors read', () => {
   });
 
   it('encodes a reader operand as the class it reads is encoded', async () => {
-    const result = await convert([{ key: 'b', classes: ["[&_[class*='a/b']]:p-1"] }, { key: 'i', parent: 'b', classes: ['xa/b'] }]);
-    expect(selectorRules(result.nodes.get('b')?.rules)[0].selector).toBe('& [class*="a_sb"]');
-    expect(result.nodes.get('i')?.className).toBe('u-c-xa_sb');
+    const result = await convert([{ key: 'b', classes: ["[&_[class*='a/b']]:p-1"] }, { key: 'i', parent: 'b', classes: ['a/bc'] }]);
+    expect(selectorRules(result.nodes.get('b')?.rules)[0].selector).toBe('& [class*="u-c-a_sb"]');
+    expect(result.nodes.get('i')?.className).toBe('u-c-a_sbc');
+    expect(linesFor(result, 'classReaderNarrowed')).toEqual([]);
+  });
+
+  it('says so where a substring reader matched the middle of a class, which a stored reader cannot', async () => {
+    const result = await convert([{ key: 'b', classes: ["[&_[class*='size-']]:p-1"] }, { key: 'i', parent: 'b', classes: ['icon-size-6'] }]);
+    expect(result.nodes.get('i')?.className).toBe('u-c-icon-size-6');
+    expect(linesFor(result, 'classReaderNarrowed')).toMatchObject([{ disposition: 'adapted', nodeKey: 'i', source: 'icon-size-6' }]);
+  });
+
+  it('cannot read across the encoding or the canvas raw classes', async () => {
+    for (const reader of ["[&_[class*='si']]:p-2", "[&_[class*='-c-g']]:p-2", "[&_[class*='x2f']]:p-2", "[&_[class*='ground-wrap']]:p-2"]) {
+      const result = await convert([{ key: 'b', classes: [reader] }, { key: 'i', parent: 'b', classes: ['group/item'] }]);
+      const selector = selectorRules(result.nodes.get('b')?.rules)[0]?.selector ?? '';
+      expect(selector).toMatch(/\[class\*="u-c-/);
+      // group/item holds none of these, so it is not kept, and the stored reader cannot match u-c-group_sitem.
+      expect(result.nodes.get('i')?.className).toBeUndefined();
+    }
   });
 
   it('drops a marker nothing reads, with no line', async () => {
@@ -409,10 +428,10 @@ describe('what the class string costs and holds', () => {
     expect(selectorRules(node.rules)).toHaveLength(4);
   });
 
-  it('refuses behavior and -moz-binding, which the sheet refuses by name', async () => {
-    const { node, result } = await one('[behavior:url(x.htc)] [-moz-binding:url(x.xml#b)] p-1');
+  it('refuses behavior, -ms-behavior and -moz-binding, which the sheet refuses by name', async () => {
+    const { node, result } = await one('[behavior:url(x.htc)] [-ms-behavior:url(x.htc)] [-moz-binding:url(x.xml#b)] p-1');
     expect(node.style).toEqual({ '--spacing': '0.25rem', padding: 'calc(var(--spacing) * 1)' });
-    expect(linesFor(result, 'refusedRule')).toHaveLength(2);
+    expect(linesFor(result, 'refusedRule')).toHaveLength(3);
   });
 
   it('stores no rules on a node over the cap, and says so', async () => {

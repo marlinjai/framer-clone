@@ -43,7 +43,7 @@ describe('readSelector', () => {
   });
 
   it('lists substring readers and prefixes operands that need it', () => {
-    expect(readSelector("& svg:not([class*='size-'])")).toMatchObject({ selector: '& svg:not([class*="size-"])', readers: [{ operator: '*=', operand: 'size-' }] });
+    expect(readSelector("& svg:not([class*='size-'])")).toMatchObject({ selector: '& svg:not([class*="u-c-size-"])', readers: [{ operator: '*=', operand: 'size-' }] });
     expect(readSelector("& [class~='x' i]").selector).toBe('& [class~="u-c-x" i]');
     expect(readSelector('& [class|=btn]').selector).toBe('& [class|="u-c-btn"]');
   });

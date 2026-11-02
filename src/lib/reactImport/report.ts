@@ -65,6 +65,7 @@ export const DETAILS = {
   classDynamic: 'Part of this class string is only known when the component runs.',
   classMerged: 'Removed, as tailwind-merge removes it in the original.',
   classKept: 'Kept as a class, because a selector reads it.',
+  classReaderNarrowed: 'Kept as a class, and a selector that reads part of it in the original reads it here only from the start of a class.',
   classKeptVariant: 'Kept as a class for every value, because a selector reads it, and the original has it for one value only.',
   classTable: 'A variant key or value here cannot be written as an attribute.',
   refusedRule: 'The rule parser refuses this output.',

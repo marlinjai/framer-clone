@@ -111,10 +111,10 @@ const UNITLESS_NUMBERS: ReadonlySet<string> = new Set(
 );
 
 /**
- * A style key React accepts: a camelCase name or a custom property. `behavior` and `-moz-binding` once ran
- * code, and the sheet's UNSAFE_VALUE refuses both by name, so inline style and rules refuse them too.
+ * A style key React accepts: a camelCase name or a custom property. `behavior`, `-ms-behavior` and `-moz-binding`
+ * once ran code, and the sheet's UNSAFE_VALUE refuses them by name, so inline style and rules refuse them too.
  */
-export const SAFE_PROPERTY = /^(?!(?:[Bb]ehavior|[Mm]ozBinding)$)(?:[A-Za-z][A-Za-z0-9]*|--[A-Za-z0-9_-]+)$/;
+export const SAFE_PROPERTY = /^(?!(?:[Bb]ehavior|[Mm]sBehavior|[Mm]ozBinding)$)(?:[A-Za-z][A-Za-z0-9]*|--[A-Za-z0-9_-]+)$/;
 
 /**
  * Characters that let a value escape its declaration wherever they appear,
