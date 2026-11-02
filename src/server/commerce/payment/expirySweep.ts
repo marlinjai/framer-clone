@@ -6,7 +6,8 @@ import 'server-only';
 // first, so this is what ends a hold in a shop nobody is buying from: without it the storefront would keep showing
 // the stock as taken. Called by a host timer through POST /api/internal/commerce/expired-payments.
 //
-// A stopgap on purpose: small enough for a Postgres job table to absorb later.
+// On its way out: each order now has its own job (expiryJob.ts). This pass stays beside it until that job has been live
+// for a deploy, then slice B3R of docs/plans/2026-11-02-shop-backbone.md removes it with its host timer.
 
 import { getPrismaClient } from '@/server/db';
 import { commerceTenantDbChecked, isCommerceTenantNotProvisioned } from '../db';

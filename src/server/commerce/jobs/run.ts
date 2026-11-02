@@ -18,6 +18,7 @@ import {
   JobRetryLater,
   type CommerceJob,
   type CompanyContext,
+  type JobContext,
   type JobKind,
   type JobKindRegistry,
   type JobPolicy,
@@ -48,6 +49,8 @@ export interface JobRunResult {
   outcome: JobRunOutcome;
 }
 
+type TenantGroup = JobContext<unknown>['group'];
+
 /** The handler's end, before it is written. */
 type Ending =
   | { type: 'done' }
@@ -77,19 +80,22 @@ export function companyContext(db: Kysely<CommerceDB>, tenantId: string): Compan
 
 /** The handler's run as an Ending. Never rejects, so a handler that answers after being abandoned harms nothing. */
 async function invoke(
-  db: Kysely<CommerceDB>,
+  group: TenantGroup,
   job: CommerceJob,
   kind: JobKind,
   payload: unknown,
   signal: AbortSignal,
+  now: () => Date,
 ): Promise<Ending> {
   const where = `${job.kind} ${job.id} of company ${job.tenant_id}`;
   try {
     const answer = await kind.run({
       job: { id: job.id, kind: job.kind, attempts: job.attempts },
-      company: companyContext(db, job.tenant_id),
+      company: companyContext(group.db, job.tenant_id),
       payload,
       signal,
+      now,
+      group,
     });
     if (!answer) return { type: 'done' };
     if (answer.payload === undefined) return { type: 'rerun', rerunAt: answer.rerunAt };
@@ -110,11 +116,12 @@ async function invoke(
 
 /** Run the handler under its deadline. A handler that ignores the signal is given up on when its lease ends. */
 async function attempt(
-  db: Kysely<CommerceDB>,
+  group: TenantGroup,
   job: CommerceJob,
   kind: JobKind,
   payload: unknown,
   leaseMs: number,
+  now: () => Date,
 ): Promise<Ending> {
   const deadline = new AbortController();
   const deadlineTimer = setTimeout(() => deadline.abort(new JobRetryLater(DEADLINE_EXCEEDED)), kind.policy.deadlineMs);
@@ -123,7 +130,7 @@ async function attempt(
     leaseTimer = setTimeout(() => resolve({ type: 'abandoned' }), leaseMs);
   });
   try {
-    return await Promise.race([invoke(db, job, kind, payload, deadline.signal), leaseOver]);
+    return await Promise.race([invoke(group, job, kind, payload, deadline.signal, now), leaseOver]);
   } finally {
     clearTimeout(deadlineTimer);
     clearTimeout(leaseTimer);
@@ -167,11 +174,12 @@ async function settle(
 
 /** Claim one job and run it. */
 async function claimAndRun(
-  db: Kysely<CommerceDB>,
+  group: TenantGroup,
   options: JobRunOptions,
   only?: ClaimOptions['only'],
 ): Promise<JobRunResult | null> {
   const { kinds = JOB_KINDS, now = () => new Date(), leaseMs = JOB_LEASE_MS } = options;
+  const { db } = group;
   const job = await claimJob(db, { kinds: Object.keys(kinds), now: now(), leaseMs, only });
   if (!job) return null;
   const result = { id: job.id, tenantId: job.tenant_id, kind: job.kind };
@@ -183,14 +191,18 @@ async function claimAndRun(
   const kind = kinds[job.kind];
   const payload = kind.payload.safeParse(job.payload);
   const ending = payload.success
-    ? await attempt(db, job, kind, payload.data, leaseMs)
+    ? await attempt(group, job, kind, payload.data, leaseMs, now)
     : ({ type: 'refused', reason: PAYLOAD_INVALID } as const);
   return { ...result, outcome: await settle(db, job, kind.policy, ending, now()) };
 }
 
 /** Claim the oldest due job of the tenant group and run it. Null when nothing is due. */
-export function runNextJob(db: Kysely<CommerceDB>, options: JobRunOptions = {}): Promise<JobRunResult | null> {
-  return claimAndRun(db, options);
+export function runNextJob(
+  db: Kysely<CommerceDB>,
+  tenantGroupId: string,
+  options: JobRunOptions = {},
+): Promise<JobRunResult | null> {
+  return claimAndRun({ id: tenantGroupId, db }, options);
 }
 
 /**
@@ -199,9 +211,10 @@ export function runNextJob(db: Kysely<CommerceDB>, options: JobRunOptions = {}):
  */
 export function runJobNow(
   db: Kysely<CommerceDB>,
+  tenantGroupId: string,
   tenantId: string,
   jobId: string,
   options: JobRunOptions = {},
 ): Promise<JobRunResult | null> {
-  return claimAndRun(db, options, { tenantId, id: jobId });
+  return claimAndRun({ id: tenantGroupId, db }, options, { tenantId, id: jobId });
 }

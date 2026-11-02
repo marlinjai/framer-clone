@@ -22,6 +22,12 @@ export interface PaymentEvent {
   currency?: string;
   /** A provider failure code, kept on the payment (a decline reason). */
   failureCode?: string;
+  /**
+   * Our own clock closes this payment, not a provider's word: the expiry job and the sweeps set it. Under the row lock
+   * and before anything is recorded, the payment must be pending with its window over, otherwise nothing is written. A
+   * provider's own `checkout_expired` never sets it.
+   */
+  requireDue?: true;
 }
 
 /** What starting a payment answers: the provider reference, and for a hosted page where to send the buyer. */

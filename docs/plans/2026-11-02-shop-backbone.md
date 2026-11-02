@@ -1108,3 +1108,11 @@ checked against the code and hold. Findings about Stripe behaviour are adopted a
   grants it `SELECT (id)`, and a failed grant warns instead of failing the start. Decided: the pass covers every status, because `suspended` stops provisioning
   and not a selling shop. The route's answer gains `skipped`, and `findingsOpen` is 0 until B8. A signal stops the claiming, but Next exits without waiting for
   a handler, so a handler in hand at shutdown is cut off and recovers through its lease, as one open claim. The timer is not installed.
+- 2026-11-02: B3 built: `payment/expiryJob.ts`, `order.placed`, `requireDue`, the backfill, and the pay route narrowed to its own order, beside the old sweep, route and
+  timer, which B3R removes. No tenant migration: `commerce_job` already holds everything. Additions to the text. A handler needs the tenant group's id and handle, because
+  `handlePaymentEvent` and the stock writes take them, so `JobContext` gains `group` and `now`, and `runNextJob(db, tenantGroupId, options)` and
+  `runJobNow(db, tenantGroupId, tenantId, jobId, options)` take the id; `jobs/types.ts`, `run.ts` and `runtime.ts` were missing from B3's file list. `order.placed` carries
+  `expiresAt`. `PaymentOutcome` gains `notDue`, because the job must tell a moved date from a closed payment and that answer has to come from under the lock. `scheduleJob`
+  lives in `jobs/schedule.ts`, re-exported by `emit.ts`: a consumer importing `emit.ts` loads the registry before the consumer exists, which left `order.placed` with an
+  undefined consumer. B4 must keep that in mind when `payments.ts` starts importing `emit.ts`. Until B7 no payment has a stored session, so the job closes without asking
+  Stripe, as the sweep does today, and the order route's per-company sweep still takes every expired payment.

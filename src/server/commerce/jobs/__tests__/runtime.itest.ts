@@ -178,6 +178,19 @@ describe('F: forward', () => {
     expect((await read(groupB, later)).status).toBe('pending');
   });
 
+  it('a handler is told the tenant group it runs in', async () => {
+    const seen: string[] = [];
+    handler.run = async (ctx) => {
+      seen.push((ctx as JobContext<{ orderId: string }>).group.id);
+    };
+    await schedule(groupA);
+    await schedule(groupB);
+
+    await runCommercePass();
+
+    expect(seen.sort()).toEqual([groupA, groupB].sort());
+  });
+
   it('with nothing to do a pass is harmless, and the route answers 200 with zeros', async () => {
     const res = await watchdog();
     expect(res.status).toBe(200);

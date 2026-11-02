@@ -163,7 +163,7 @@ export async function runCommercePass(options: CommercePassOptions = {}): Promis
     // Before the claims, so what a backfill writes can run in this pass. Its failure must not hold up jobs already due.
     const duties = await Promise.allSettled([runHourlyDuties(db, tenantGroupId, now(), backfills)]);
     for (let jobs = 0; jobs < JOBS_PER_GROUP && !globalForJobs.__commerceJobsStopping; jobs += 1) {
-      if (!(await runNextJob(db, options))) break;
+      if (!(await runNextJob(db, tenantGroupId, options))) break;
       ran += 1;
     }
     if (duties[0].status === 'rejected') throw duties[0].reason;

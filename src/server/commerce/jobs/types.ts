@@ -7,6 +7,7 @@
 import type {
   DeleteQueryBuilder,
   DeleteResult,
+  Kysely,
   Selectable,
   SelectQueryBuilder,
   Transaction,
@@ -36,7 +37,8 @@ export type CommerceJob = Selectable<CommerceJobTable>;
  * consumers' jobs in the caller's transaction.
  */
 export interface EventPayload {
-  'order.placed': { orderId: string };
+  /** Only an order that opened a payment: `expiresAt` is when that payment's hold ends. */
+  'order.placed': { orderId: string; expiresAt: Date };
   'payment.paid': { orderId: string };
   'payment.stock_gone': { orderId: string };
   'payment.refunded': { orderId: string };
@@ -141,6 +143,13 @@ export interface JobContext<P> {
   readonly payload: P;
   /** Fires at the kind's deadline. A handler passes it to every network call. */
   readonly signal: AbortSignal;
+  /** The worker's clock, the one that claimed this job. */
+  readonly now: () => Date;
+  /**
+   * The tenant group, for the payment state machine and the stock writes behind it, which need the group's id and take
+   * the company as an argument. A handler's own reads and writes go through `company`.
+   */
+  readonly group: { readonly id: string; readonly db: Kysely<CommerceDB> };
 }
 
 export interface JobKind<P = unknown> {

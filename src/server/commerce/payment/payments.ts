@@ -11,8 +11,10 @@ import 'server-only';
 //                       closed. Paid or refunded: nothing changes.
 //   payment_failed      pending -> failed, the reserved stock released.
 //   checkout_cancelled  pending -> cancelled, the reserved stock released.
-//   checkout_expired    pending -> expired, the reserved stock released (also sweepExpiredPayments, which runs
-//                       before a new order reserves, before a payment starts, and on a schedule: expirySweep.ts).
+//   checkout_expired    pending -> expired, the reserved stock released. Besides a provider's own report, our clock
+//                       closes a payment: its job when its window ends (expiryJob.ts), and sweepExpiredPayments, which
+//                       runs before a new order reserves, before a payment starts, and on a schedule (expirySweep.ts).
+//                       Those set `requireDue`: a payment that is not due writes nothing, not even the event.
 //
 // This row is the order's state. The order itself is append-only (005_minimal_orders revokes UPDATE from the
 // app role: a placed order is a bookkeeping record), so its `status` stays `confirmed`, meaning "placed",
@@ -106,6 +108,11 @@ export interface PaymentOutcome {
   receiptDocumentId: string | null;
   /** Why the receipt could not be issued (the payment stands). */
   receiptError: string | null;
+  /**
+   * `requireDue` found the payment not due and nothing was written. `expiresAt`: when its window now ends, for a
+   * payment still pending; null for one that closed or was paid.
+   */
+  notDue?: { expiresAt: Date | null };
 }
 
 type Trx = Transaction<CommerceDB>;
@@ -203,16 +210,22 @@ function inTransaction<T>(db: Kysely<CommerceDB>, fn: (trx: Trx) => Promise<T>):
 export async function handlePaymentEvent(deps: PaymentDeps, event: PaymentEvent): Promise<PaymentOutcome> {
   const now = deps.now ?? (() => new Date());
   let duplicate = false;
+  let notDue: PaymentOutcome['notDue'];
   let status: PaymentStatus;
   try {
     status = await inTransaction(deps.db, async (trx) => {
       const payment = await lockPayment(trx, event.tenantId, event.orderId);
-      if (!(await recordEvent(trx, event))) {
-        duplicate = true;
-        return payment.status as PaymentStatus;
-      }
       const at = now();
       const current = payment.status as PaymentStatus;
+      // Before the event: the append-only record must never say a payment closed that did not.
+      if (event.requireDue && (current !== 'pending' || payment.expires_at > at)) {
+        notDue = { expiresAt: current === 'pending' ? payment.expires_at : null };
+        return current;
+      }
+      if (!(await recordEvent(trx, event))) {
+        duplicate = true;
+        return current;
+      }
       const close = async (next: 'failed' | 'cancelled' | 'expired') => {
         if (current !== 'pending') return current;
         await releaseStock(trx, deps.tgId, event.tenantId, event.orderId);
@@ -279,8 +292,8 @@ export async function handlePaymentEvent(deps: PaymentDeps, event: PaymentEvent)
     .where('tenant_id', '=', event.tenantId)
     .where('order_id', '=', event.orderId)
     .executeTakeFirstOrThrow();
-  if (status !== 'paid' || after.receipt_document_id) {
-    return { status, duplicate, receiptDocumentId: after.receipt_document_id, receiptError: after.receipt_error };
+  if (notDue || status !== 'paid' || after.receipt_document_id) {
+    return { status, duplicate, receiptDocumentId: after.receipt_document_id, receiptError: after.receipt_error, notDue };
   }
   const receipt = await issueReceipt(deps, event.tenantId, event.orderId, now());
   // The buyer hears once the receipt exists (the letter links it); a retried receipt mails then.
@@ -369,17 +382,23 @@ export function receiptFailure(err: unknown): string {
  * Close every pending payment whose window ran out (checkout_expired, stock released). Idempotent and safe to
  * run concurrently: the payment row is locked and each expiry recorded once per order, so a second sweep finds
  * the event and releases nothing. Answers the orders it closed. One payment that cannot be closed never keeps
- * the others holding their stock: it is logged, the rest are closed, then ExpirySweepError reports it.
+ * the others holding their stock: it is logged, the rest are closed, then ExpirySweepError reports it. `only` narrows
+ * the sweep to one order: the pay route needs an answer about its own order, and each order's job closes the rest.
  */
-export async function sweepExpiredPayments(deps: PaymentDeps, tenantId: string): Promise<string[]> {
+export async function sweepExpiredPayments(
+  deps: PaymentDeps,
+  tenantId: string,
+  only?: { orderId: string },
+): Promise<string[]> {
   const at = (deps.now ?? (() => new Date()))();
-  const due = await deps.db
+  let query = deps.db
     .selectFrom('order_payment')
     .select(['order_id', 'provider'])
     .where('tenant_id', '=', tenantId)
     .where('status', '=', 'pending')
-    .where('expires_at', '<', at)
-    .execute();
+    .where('expires_at', '<', at);
+  if (only) query = query.where('order_id', '=', only.orderId);
+  const due = await query.execute();
   const closed: string[] = [];
   const failed: string[] = [];
   for (const row of due) {
@@ -390,8 +409,9 @@ export async function sweepExpiredPayments(deps: PaymentDeps, tenantId: string):
         type: 'checkout_expired',
         tenantId,
         orderId: row.order_id,
+        requireDue: true,
       });
-      if (!outcome.duplicate && outcome.status === 'expired') closed.push(row.order_id);
+      if (!outcome.duplicate && !outcome.notDue && outcome.status === 'expired') closed.push(row.order_id);
     } catch (err) {
       console.error(`[payments] order ${row.order_id}: the expired payment could not be closed:`, err);
       failed.push(row.order_id);
