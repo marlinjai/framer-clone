@@ -143,7 +143,9 @@ const SpacingHandlesLayer = observer(() => {
     editorUI.selectedTool === EditorTool.SELECT &&
     !(getDragManager()?.isActive ?? false) &&
     !editorUI.isResizing &&
-    !editorUI.editingComponent;
+    !editorUI.editingComponent &&
+    // These write Normal, so a state hides them.
+    !editorUI.activeRule;
   // Read so the observer re-runs placement when the node's styles or a
   // frame's height change (content moved).
   const selectedProps = selected?.props;

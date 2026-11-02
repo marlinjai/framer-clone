@@ -638,6 +638,11 @@ function refusedBody(style: unknown, options: { maps: boolean; skip?: string }):
   return null;
 }
 
+/** Why one declaration cannot be stored in a rule, or null: the check a whole rule's body gets. */
+export function refusedRuleValue(property: string, value: unknown): string | null {
+  return refusedBody({ [property]: value }, { maps: true });
+}
+
 // --- whole rules ----------------------------------------------------------
 
 const RULE_ID = /^[A-Za-z0-9_-]{1,64}$/;

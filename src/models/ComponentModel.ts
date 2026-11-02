@@ -36,6 +36,7 @@ import {
   isDefinitionRule,
   isLegacyRulesAttribute,
   parseRule,
+  refusedRuleValue,
   storedRulesOf,
   type DefinitionRule,
   type SelectorRule,
@@ -250,6 +251,11 @@ const ComponentModel: any = ComponentBase
       const page = self.pageBreakpoints;
       if (page.length > 0) return page;
       return breakpointId ? [{ id: breakpointId, minWidth: 0, label: '' }] : [];
+    },
+
+    /** True when this node can hold `props.rules`: an element of a page, not a frame, a text run or a placement. */
+    get holdsRules(): boolean {
+      return self.canvasNodeType !== CanvasNodeType.VIEWPORT && refuseRules(self.type) === null;
     },
 
     /**
@@ -576,6 +582,10 @@ const ComponentModel: any = ComponentBase
       const state = namedState(ruleId);
       if (!existing && !state) return { ok: false, reason: 'That rule no longer exists.' };
       if (!existing && rules.length >= MAX_RULES_PER_NODE) return { ok: false, reason: `A node holds at most ${MAX_RULES_PER_NODE} rules.` };
+      // A rule that does not parse is dropped whole, so one bad value here would
+      // silently take every other value of the state off the page.
+      const valueRefusal = value === undefined || value === '' ? null : refusedRuleValue(property, value);
+      if (valueRefusal) return { ok: false, reason: valueRefusal };
 
       const style: Record<string, unknown> = { ...(existing?.style ?? {}) };
       const next = writeCascade(style[property], value, breakpointId, self.cascadeBreakpoints(breakpointId));
@@ -592,6 +602,26 @@ const ComponentModel: any = ComponentBase
       const list = existing ? rules.flatMap((rule, i) => (i !== index ? [rule] : updated ? [updated] : [])) : [...rules, updated!];
       self.props = withRules(currentProps, orderRules(list));
       return { ok: true };
+    },
+
+    // Clear `properties` from a rule: on `breakpointId`, or on every breakpoint
+    // without one. One action, so a W / H row's reset is one undo step, and a rule
+    // left with no values goes, like a cleared value in setRuleStyle.
+    clearRuleStyles(ruleId: string, properties: readonly string[], breakpointId?: string) {
+      const currentProps = self.props || {};
+      const rules = storedRulesOf(currentProps);
+      const index = findRuleIndex(rules, ruleId);
+      const existing = rules[index];
+      if (!existing || isDefinitionRule(existing)) return;
+      const style: Record<string, unknown> = { ...(existing.style ?? {}) };
+      const breakpoints = self.cascadeBreakpoints(breakpointId);
+      for (const property of properties) {
+        const next = breakpointId ? writeCascade(style[property], undefined, breakpointId, breakpoints) : undefined;
+        if (next === undefined) delete style[property];
+        else style[property] = next;
+      }
+      const list = Object.keys(style).length === 0 ? rules.filter((_, i) => i !== index) : rules.map((rule, i) => (i === index ? { ...existing, style } : rule));
+      self.props = withRules(currentProps, list);
     },
 
     // Add one rule, as the panel or an import has it. It goes through the parser,

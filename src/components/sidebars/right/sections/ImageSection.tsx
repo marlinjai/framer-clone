@@ -28,7 +28,7 @@ import { observer } from 'mobx-react-lite';
 import { Crop } from 'lucide-react';
 import { ComponentInstance } from '@/models/ComponentModel';
 import { CONTAINER_TYPES } from '../sectionConfig';
-import { CollapsibleSection, DimensionInput, FieldPair, PropertyRow, PropertySelect, PropertySlider, PropertySwitch, TextInput } from '../primitives';
+import { CollapsibleSection, DimensionInput, FieldPair, NormalOnly, PropertyRow, PropertySelect, PropertySlider, PropertySwitch, TextInput } from '../primitives';
 import { altProblem, isDecorativeImage, type AltProblem } from '@/lib/ai/pageGen/essentials';
 import { DECORATIVE_ATTR } from '@/lib/ai/pageGen/schema';
 import {
@@ -41,8 +41,9 @@ import {
   type FocalPoint,
 } from '@/lib/images/imageStyle';
 import { hasStockCredit, isSameUnsplashPhoto } from '@/lib/ai/pageGen/stockCredit';
-import { breakpointLabel, styleSource, type BreakpointSourceInfo } from '../breakpointSource';
-import { BreakpointSourceDot } from '../primitives/BreakpointSourceDot';
+import type { BreakpointSourceInfo } from '../breakpointSource';
+import { useStyleTarget } from '../useStyleTarget';
+import { BreakpointSourceDot, STATE_INHERITED_FIELD, StateSourceCaption } from '../primitives/BreakpointSourceDot';
 
 const FIT_OPTIONS = [
   { value: 'cover', label: 'Cover (crop to fill)' },
@@ -88,8 +89,9 @@ function Row({ label, htmlFor, top, source, children }: {
         <label className={`${LABEL} block`} style={LABEL_STYLE} htmlFor={htmlFor}>
           {label}
         </label>
+        <StateSourceCaption source={source} className="mt-0.5" />
       </div>
-      <div className="min-w-0">{children}</div>
+      <div className={source?.kind === 'state-inherited' ? `min-w-0 ${STATE_INHERITED_FIELD}` : 'min-w-0'}>{children}</div>
     </div>
   );
 }
@@ -273,11 +275,8 @@ export const AltTextControls = observer(({ component }: { component: ComponentIn
 AltTextControls.displayName = 'AltTextControls';
 
 export const ImageSection = observer(({ component, breakpointId }: ImageSectionProps) => {
-  const getStyleValue = (prop: string) => component.getResponsiveStyleValue(prop, breakpointId);
-  const setStyleValue = (prop: string, value: string | number) => component.updateResponsiveStyle(prop, value, breakpointId);
-  // Where each row's value comes from on this breakpoint (the dot before the label).
-  const src = (...props: string[]) => styleSource(component, breakpointId, props);
-  const badge = breakpointLabel(component, breakpointId);
+  // The state being edited, or Normal: values, writes and each row's source.
+  const { getStyleValue, setStyleValue, src, badge, stateLabel } = useStyleTarget(component, breakpointId);
 
   if (component.type === 'img') {
     const imageSrc = typeof component.props?.src === 'string' ? (component.props.src as string) : undefined;
@@ -297,7 +296,9 @@ export const ImageSection = observer(({ component, breakpointId }: ImageSectionP
           onChange={(v) => setStyleValue('objectPosition', v)}
           source={src('objectPosition')}
         />
-        <AltTextControls component={component} />
+        <NormalOnly>
+          <AltTextControls component={component} />
+        </NormalOnly>
       </CollapsibleSection>
     );
   }
@@ -310,7 +311,8 @@ export const ImageSection = observer(({ component, breakpointId }: ImageSectionP
 
   const setPhotoUrl = (next: string) => {
     const previous = photoUrlOf(background);
-    setStyleValue('backgroundImage', withPhotoUrl(background, next));
+    // A state takes a site path or data: only, and the refusal shows under the switch.
+    if (setStyleValue('backgroundImage', withPhotoUrl(background, next))) return;
     if (next.trim() && !previous) {
       // A first photo: fill the box with it instead of tiling it.
       if (!getStyleValue('backgroundSize')) setStyleValue('backgroundSize', 'cover');
@@ -318,7 +320,8 @@ export const ImageSection = observer(({ component, breakpointId }: ImageSectionP
     }
     // A different picture no longer matches a stock photo's credit (an empty
     // field mid-edit or the same photo's size parameters keep it).
-    if (next.trim() && hasStockCredit(component.props) && !isSameUnsplashPhoto(previous, next)) {
+    // The credit belongs to Normal's picture, which a state leaves in place.
+    if (!stateLabel && next.trim() && hasStockCredit(component.props) && !isSameUnsplashPhoto(previous, next)) {
       component.clearStockCredit();
     }
   };

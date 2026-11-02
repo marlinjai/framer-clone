@@ -2,7 +2,7 @@
 import React, { useId } from 'react';
 import { cn } from '@/lib/utils';
 import { FIELD_LABEL, FieldContext } from './field';
-import { BreakpointSourceDot } from './BreakpointSourceDot';
+import { BreakpointSourceDot, STATE_INHERITED_FIELD, StateSourceCaption } from './BreakpointSourceDot';
 import type { BreakpointSourceInfo } from '../breakpointSource';
 
 interface PropertyRowProps {
@@ -35,6 +35,7 @@ interface PropertyRowProps {
 export function PropertyRow({ label, children, hint, group = false, source, className }: PropertyRowProps) {
   const id = useId();
   const labelId = `${id}-label`;
+  const field = cn('min-w-0', source?.kind === 'state-inherited' && STATE_INHERITED_FIELD);
 
   // A group (W / H, X / Y, four sides) gets the full panel width under a
   // caption: squeezed into the field column, two fields with a prefix and a
@@ -42,13 +43,14 @@ export function PropertyRow({ label, children, hint, group = false, source, clas
   if (group) {
     return (
       <div className={cn('flex flex-col gap-1.5', className)}>
-        <div className="relative min-w-0">
+        <div className="relative flex min-w-0 items-baseline justify-between gap-2">
           <BreakpointSourceDot source={source} />
           <span id={labelId} className={cn(FIELD_LABEL, 'block truncate')} title={hint ?? label}>
             {label}
           </span>
+          <StateSourceCaption source={source} className="flex-none" />
         </div>
-        <div className="min-w-0" role="group" aria-labelledby={labelId}>
+        <div className={field} role="group" aria-labelledby={labelId}>
           <FieldContext.Provider value={null}>{children}</FieldContext.Provider>
         </div>
       </div>
@@ -62,8 +64,9 @@ export function PropertyRow({ label, children, hint, group = false, source, clas
         <label htmlFor={id} className={cn(FIELD_LABEL, 'block truncate')} title={hint ?? label}>
           {label}
         </label>
+        <StateSourceCaption source={source} className="mt-0.5" />
       </div>
-      <div className="min-w-0">
+      <div className={field}>
         <FieldContext.Provider value={{ id, label }}>{children}</FieldContext.Provider>
       </div>
     </div>

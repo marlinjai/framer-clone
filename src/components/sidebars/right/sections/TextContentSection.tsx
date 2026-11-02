@@ -176,7 +176,7 @@ export const TextContentSection = observer(({ component }: TextContentSectionPro
   if (nodes.length === 0) return null;
 
   return (
-    <CollapsibleSection title="Text" icon={<Type size={14} />}>
+    <CollapsibleSection title="Text" icon={<Type size={14} />} normalOnly>
       <div className="flex min-w-0 flex-col gap-1.5" data-testid="text-content-section">
         {/* key: a new draft per node, so text typed for one element never
             lands on the next one selected. */}

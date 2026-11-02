@@ -11,7 +11,7 @@ import {
   PropertySelect,
   TextInput,
 } from '../primitives';
-import { styleSource } from '../breakpointSource';
+import { useStyleTarget } from '../useStyleTarget';
 
 const POSITION_OPTIONS = [
   { value: 'static', label: 'Static' },
@@ -27,10 +27,8 @@ interface PositionSectionProps {
 }
 
 export const PositionSection = observer(({ component, breakpointId }: PositionSectionProps) => {
-  const getStyleValue = (prop: string) => component.getResponsiveStyleValue(prop, breakpointId);
-  const setStyleValue = (prop: string, value: string) => component.updateResponsiveStyle(prop, value, breakpointId);
-  // Where each row's value comes from on this breakpoint (the dot before the label).
-  const src = (...props: string[]) => styleSource(component, breakpointId, props);
+  // The state being edited, or Normal: values, writes and each row's source.
+  const { getStyleValue, setStyleValue, src } = useStyleTarget(component, breakpointId);
 
   const position = getStyleValue('position') || 'static';
 

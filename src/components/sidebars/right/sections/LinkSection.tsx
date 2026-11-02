@@ -49,7 +49,7 @@ export const LinkSection = observer(({ component }: LinkSectionProps) => {
   const hasProductPage = Boolean(project?.productPagePath);
 
   return (
-    <CollapsibleSection title="Link" icon={<LinkIcon size={14} />}>
+    <CollapsibleSection title="Link" icon={<LinkIcon size={14} />} normalOnly>
       <div className="flex min-w-0 flex-col gap-1.5" data-testid="link-section">
         <span className={FIELD_LABEL}>Goes to</span>
         <BindingControl node={component} slot="href" meta={meta}>
