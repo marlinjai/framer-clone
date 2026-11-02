@@ -45,7 +45,7 @@ function pixels(value: unknown): number | null {
   const v = baseOf(value);
   if (typeof v === 'number' && Number.isFinite(v)) return v;
   if (typeof v === 'string') {
-    const m = /^\s*(\d+(?:\.\d+)?)\s*(px)?\s*$/.exec(v);
+    const m = /^\s*(\d+(?:\.\d+)?)(?:\s*px)?\s*$/.exec(v);
     if (m) return Number(m[1]);
   }
   return null;

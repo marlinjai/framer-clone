@@ -59,7 +59,11 @@ export const isEditorOwned = (property: string): boolean => EDITOR_OWNED.has(pro
  * text would be invalid and the rule would vanish on the editor surfaces only. A
  * string ends in a quote, so `content:"!important"` is left alone.
  */
-export const asImportant = (declaration: string): string => `${declaration.replace(/\s*!\s*important\s*$/i, '')}!important`;
+export function asImportant(declaration: string): string {
+  // Spaces in front are trimmed apart: a pattern starting with them retries from each one.
+  const without = declaration.replace(/!\s*important\s*$/i, '');
+  return `${without === declaration ? declaration : without.trimEnd()}!important`;
+}
 
 // --- constant conditions --------------------------------------------------
 
@@ -306,13 +310,13 @@ const frameValue = (name: string, frame: SurfaceFrame): number =>
  */
 function constantOf(name: string, text: string): number | null {
   if (name === 'aspect-ratio') {
-    const ratio = /^(\d*\.?\d+)\s*(?:\/\s*(\d*\.?\d+))?$/.exec(text);
+    const ratio = /^(\d+(?:\.\d+)?|\.\d+)\s*(?:\/\s*(\d+(?:\.\d+)?|\.\d+))?$/.exec(text);
     if (!ratio) return null;
     const divisor = ratio[2] === undefined ? 1 : Number(ratio[2]);
     return divisor === 0 ? null : Number(ratio[1]) / divisor;
   }
   if (text === '0') return 0;
-  const length = /^(-?\d*\.?\d+)(px|rem)$/i.exec(text);
+  const length = /^(-?(?:\d+(?:\.\d+)?|\.\d+))(px|rem)$/i.exec(text);
   if (!length) return null;
   return Number(length[1]) * (length[2].toLowerCase() === 'rem' ? 16 : 1);
 }

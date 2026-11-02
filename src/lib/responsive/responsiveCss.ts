@@ -266,7 +266,7 @@ export function cssUrlsIn(text: string): string[] {
 }
 
 /** Script-capable or import-capable CSS, and comments, which hide a `;` from isContainedValue. */
-export const UNSAFE_VALUE = /javascript:|vbscript:|expression\s*\(|<\s*\/?\s*script|@import|behavior\s*:|-moz-binding|\/\*/i;
+export const UNSAFE_VALUE = /javascript:|vbscript:|expression\s*\(|<[\s/]*script|@import|behavior\s*:|-moz-binding|\/\*/i;
 
 /**
  * A string's body as sheet text, or null. A hex escape stays, with the space that
