@@ -45,7 +45,7 @@ describe('applyEffects', () => {
     const props = hero.props as Record<string, unknown>;
     expect(props).not.toHaveProperty('effects');
     expect(props[FX_ATTR.appear]).toBe('');
-    expect(props).not.toHaveProperty(FX_ATTR.hover);
+    expect(props).not.toHaveProperty('data-fx-h');
     expect(hero.hoverPreset).toBe('lift');
     const style = props.style as Record<string, unknown>;
     expect(style.padding).toBe('24px');

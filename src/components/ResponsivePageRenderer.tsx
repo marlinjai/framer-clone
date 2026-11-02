@@ -20,6 +20,7 @@ import { isAlive } from 'mobx-state-tree';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import ComponentRenderer from './ComponentRenderer';
 import PageFontFaces from '@/lib/fonts/PageFontFaces';
+import { CanvasRuleStyles } from '@/lib/rules/CanvasRuleStyles';
 import GroundWrapper from './GroundWrapper';
 import { useStore } from '@/hooks/useStore';
 import { useDragSource } from '@/lib/drag';
@@ -56,6 +57,10 @@ function parsePxDim(value: unknown): number | undefined {
 const FLOATING_FALLBACK_WIDTH = 240;
 const FLOATING_FALLBACK_HEIGHT = 160;
 
+// The frame's size when the viewport node holds none, here and in the rule sheet.
+const FRAME_FALLBACK_WIDTH = 400;
+const FRAME_FALLBACK_HEIGHT = 600;
+
 const ResponsivePageRenderer = observer(() => {
   const rootStore = useStore();
   const project = rootStore.editorUI.currentProject;
@@ -84,6 +89,17 @@ const ResponsivePageRenderer = observer(() => {
     <>
       {/* The self-hosted web fonts the page uses (src/lib/fonts/registry.ts). */}
       <PageFontFaces roots={[appComponentTree, ...page.floatingElements]} />
+      {/* props.rules, for every frame. Here and not beside a node: see the component. */}
+      <CanvasRuleStyles
+        tree={appComponentTree}
+        floating={page.floatingElements}
+        frames={viewportNodes.map(viewport => ({
+          breakpointId: viewport.breakpointId!,
+          width: viewport.viewportWidth ?? FRAME_FALLBACK_WIDTH,
+          height: viewport.viewportHeight ?? FRAME_FALLBACK_HEIGHT,
+        }))}
+        breakpoints={breakpoints}
+      />
       {/* 1. Viewport frames */}
       {viewportNodes.map(viewport => (
         <ViewportFrame
@@ -130,8 +146,8 @@ export const ViewportFrame = observer(({
   );
   const frameRef = useRenderedFrameHeight(viewport);
 
-  const width = viewport.viewportWidth ?? 400;
-  const minHeight = viewport.viewportHeight ?? 600;
+  const width = viewport.viewportWidth ?? FRAME_FALLBACK_WIDTH;
+  const minHeight = viewport.viewportHeight ?? FRAME_FALLBACK_HEIGHT;
   const label = viewportFrameLabel(width, minHeight, viewport.renderedViewportHeight);
 
   return (

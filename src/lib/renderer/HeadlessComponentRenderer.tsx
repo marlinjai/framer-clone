@@ -20,7 +20,7 @@ import { ComponentInstance } from '@/models/ComponentModel';
 import { createComponentElement } from './createComponentElement';
 import { applyBindings } from '@/lib/bindings/resolver/applyBindings';
 import { createScope, type BindingScope } from '@/lib/bindings/resolver/scope';
-import { effectDomForBreakpoint, resolveEffects, storedEffectsOf } from '@/lib/effects/effects';
+import { effectDomForBreakpoint, hoverPresetClass, resolveEffects, storedEffectsOf } from '@/lib/effects/effects';
 import { isStickyCta } from '@/lib/stickyCta/stickyCta';
 
 /**
@@ -78,9 +78,14 @@ const HeadlessComponentRenderer = observer(({
   const fx = stored ? effectDomForBreakpoint(resolveEffects(stored, breakpointId, allBreakpoints)) : undefined;
   const styleWithFx = fx ? { ...effectiveStyle, ...fx.style } : effectiveStyle;
 
+  // A hover preset is a shared class, as on the published page (PreviewRuleStyles).
+  const storedClass = typeof resolvedAttributes.className === 'string' ? resolvedAttributes.className.trim() : '';
+  const presetClass = fx?.hover ? hoverPresetClass(fx.hover) : '';
+
   const finalProps: Record<string, unknown> = {
     ...resolvedAttributes,
     ...(fx?.attributes ?? {}),
+    ...(presetClass ? { className: storedClass ? `${storedClass} ${presetClass}` : presetClass } : {}),
     style: Object.keys(styleWithFx).length ? styleWithFx : undefined,
   };
 

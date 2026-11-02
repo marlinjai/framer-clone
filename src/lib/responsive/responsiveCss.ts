@@ -63,9 +63,27 @@
 // reads stored rules for the page. A type is erased at run time and selectors are
 // written raw, so isWritableRule and isWritableDefinition check them again here,
 // and the finished sheet must hold no `<`. A rule is emitted whole or not at all.
+//
+// The same function writes the sheet of the two editor surfaces, through the
+// `surface` option. They share a document with the editor and show one breakpoint
+// per copy of a node, so a selector names that copy and its values resolve for that
+// frame with no query. Normal stays inline there, so every rule declaration gets
+// `!important`. src/lib/rules/surfaces.ts holds what they rewrite, and every guard
+// above applies to them unchanged.
 
 import { HOVER_KINDS, hoverPresetRules, type HoverKind } from '@/lib/effects/effects';
 import type { ParsedDefinitionRule, ParsedSelectorRule } from '@/lib/rules/rules';
+import {
+  animationsAtRest,
+  asImportant,
+  constantConditions,
+  isEditorOwned,
+  LIVE_STATE,
+  PREVIEW_ROOT,
+  surfaceWrappers,
+  type EditorSurfaceKind,
+  type SurfaceFrame,
+} from '@/lib/rules/surfaces';
 import { largestFirst, resolveCascade, type BreakpointRef } from './cascade';
 
 /** At most this many emitted rules on one page, counted after rows share a rule class. */
@@ -404,6 +422,44 @@ export interface DefinitionInput {
   rule: ParsedDefinitionRule;
 }
 
+/** One rendered copy of a node on an editor surface. */
+export interface SurfaceCopy {
+  /** Stands in for `&`. Built from ids surfaceSheet.ts has checked. */
+  selector: string;
+  /** Its breakpoint, or '' for a floating element, which reads as the largest. */
+  breakpointId: string;
+  frame: SurfaceFrame;
+}
+
+/** One node's parsed rules and every copy of it on the surface. */
+export interface SurfaceRulesInput {
+  node: string;
+  rules: readonly ParsedSelectorRule[];
+  copies: readonly SurfaceCopy[];
+  /** The ids of the rules being previewed, on the canvas. */
+  previewed: ReadonlySet<string>;
+}
+
+/** Results kept per parsed rule, so a rule edit rebuilds one entry and not the page. */
+export type SurfaceMemo = WeakMap<object, Map<string, unknown>>;
+
+/** An editor surface to write the sheet for, in place of the published page. */
+export interface EditorSurface {
+  kind: EditorSurfaceKind;
+  nodes: readonly SurfaceRulesInput[];
+  /** How many copies a tree node has: the page caps count rules, and a copy repeats them. */
+  framesShown: number;
+  /** A hover preset being previewed on the canvas, per copy. */
+  previewedPresets?: readonly { selector: string; kind: HoverKind }[];
+  /** Ids of the nodes being previewed on the canvas, whose animations play. */
+  previewedNodes?: readonly string[];
+  /** Every property a keyframe on the page moves, as CSS writes it. */
+  animated?: ReadonlySet<string>;
+  /** Inline custom properties holding an external address, per copy. Normal stays inline here, so they are cleared. */
+  clearedVariables?: readonly { selector: string; property: string }[];
+  memo?: SurfaceMemo;
+}
+
 export interface BuildResponsiveCssOptions {
   /** Called for every declaration dropped as unsafe. */
   onDrop?: (dropped: DroppedDeclaration) => void;
@@ -419,6 +475,8 @@ export interface BuildResponsiveCssOptions {
   onDropRule?: (dropped: DroppedRule) => void;
   /** The page has the behaviour gate: rules reading state stand behind it. */
   gated?: boolean;
+  /** Writes an editor surface's sheet from its own inputs. `rules`, `authored` and `fieldGuard` then do nothing. */
+  surface?: EditorSurface;
 }
 
 /** True when a style value is a responsive map rather than a scalar. */
@@ -536,6 +594,61 @@ function blocksOfRule(
     for (const part of rule.parts) blocks.push({ wrappers, text: `${node}${part.slice(1)}{${decls.join(';')}}` });
   }
   return refused === undefined ? { blocks } : { refused: `the stylesheet refuses its ${refused}` };
+}
+
+/** What building one rule's blocks came to. */
+type BuiltRule = { blocks: RuleBlock[] } | { refused: string };
+
+/** The cached result for this key, built the first time it is asked for. */
+function remembered<T>(memo: SurfaceMemo | undefined, owner: object, key: string, build: () => T): T {
+  if (!memo) return build();
+  let entries = memo.get(owner);
+  if (!entries) memo.set(owner, (entries = new Map()));
+  if (!entries.has(key)) entries.set(key, build());
+  return entries.get(key) as T;
+}
+
+/**
+ * One rule on one copy of its node: its values resolved for that frame, `!important`,
+ * with no breakpoint query. On the canvas nothing editor-owned is written, the pointer
+ * states are rewritten, and the block is omitted when the frame rules it out. A refusal
+ * comes first and does not depend on the frame, so a rule the published page drops is
+ * dropped here on every frame, even for a property the canvas would have left out.
+ */
+function blocksOnCopy(
+  kind: EditorSurfaceKind,
+  rule: ParsedSelectorRule,
+  copy: SurfaceCopy,
+  ordered: readonly BreakpointRef[],
+  previewed: boolean,
+  animated: ReadonlySet<string>,
+): BuiltRule {
+  let refused: string | undefined;
+  const decls: string[] = [];
+  const startsAnimation = 'animation' in rule.style || 'animationName' in rule.style;
+  for (const [key, stored] of Object.entries(rule.style)) {
+    const value = isStyleMap(stored) ? resolveCascade(stored, copy.breakpointId, ordered).value : stored;
+    const decl = declaration(copy.selector, key, value, (d) => {
+      refused ??= d.property;
+    });
+    if (!decl) continue;
+    const property = cssPropertyName(key);
+    if (kind === 'canvas' && isEditorOwned(property)) continue;
+    // `!important` beats an animation too, so `{opacity:0;animation:reveal forwards}`
+    // would stay hidden. The rule's own start value keeps its normal weight, and the
+    // animation holding the property beats the inline Normal without any help.
+    decls.push(startsAnimation && animated.has(property) ? decl : asImportant(decl));
+  }
+  if (refused !== undefined) return { refused: `the stylesheet refuses its ${refused}` };
+  const wrappers = surfaceWrappers(rule.at, copy.frame, kind, previewed);
+  if (wrappers === null || decls.length === 0) return { blocks: [] };
+  const body = `{${decls.join(';')}}`;
+  return {
+    blocks: rule.parts.map((part) => {
+      // Every part starts with `&`, and the parser allows no other.
+      return { wrappers, text: `${copy.selector}${constantConditions(part.slice(1), kind, previewed)}${body}` };
+    }),
+  };
 }
 
 const sameWrappers = (a: readonly string[], b: readonly string[]): boolean =>
@@ -799,7 +912,7 @@ function definitionLength({ style, blocks }: ParsedDefinitionRule): number {
  * through `declaration()`, but for the constant above. The parser and the sheet
  * check values apart, so one refusal drops the whole definition.
  */
-function definitionText(rule: ParsedDefinitionRule): { text: string } | { refused: string } {
+function definitionText(rule: ParsedDefinitionRule, canvas: boolean): { text: string } | { refused: string } {
   const { atRule, name, style, blocks } = rule;
   let refused: string | undefined;
   const descriptors = (body: Record<string, unknown>): string => {
@@ -819,7 +932,9 @@ function definitionText(rule: ParsedDefinitionRule): { text: string } | { refuse
       const decl = declaration(`@${atRule}`, key, value, (d) => {
         refused ??= d.property;
       });
-      if (decl) out.push(decl);
+      // An animation beats inline style with no `!important`, and on the canvas one
+      // is held at its end, so a keyframe could lock a node for good.
+      if (decl && !(canvas && isEditorOwned(cssPropertyName(key)))) out.push(decl);
     }
     return out.join(';');
   };
@@ -845,6 +960,7 @@ interface RuleBudget {
 function definitionTexts(
   definitions: readonly DefinitionInput[],
   onDropRule: (dropped: DroppedRule) => void,
+  surface?: EditorSurface,
 ): { texts: string[]; spent: RuleBudget } {
   const texts: string[] = [];
   const spent: RuleBudget = { rules: 0, bytes: 0 };
@@ -860,7 +976,8 @@ function definitionTexts(
       drop('its name, a block, a descriptor or an address could leave the rule or the site');
       continue;
     }
-    const built = definitionText(rule);
+    const canvas = surface?.kind === 'canvas';
+    const built = remembered(surface?.memo, rule, canvas ? 'canvas' : 'sheet', () => definitionText(rule, canvas));
     if ('refused' in built) {
       drop(built.refused);
       continue;
@@ -878,51 +995,82 @@ function definitionTexts(
   return { texts, spent };
 }
 
+/** One rule to place in the sheet: who holds it, and how to build its blocks. */
+interface RuleJob {
+  className: string;
+  rule: ParsedSelectorRule;
+  build: () => BuiltRule;
+}
+
 /**
  * The authored section of the sheet, grouped by rule. In today's grouping by
  * breakpoint, a Tablet Hover would land after a Desktop Pressed and, having equal
  * specificity, beat it while pressing. Past a page cap, this rule and all later
  * ones are dropped, so a rule is never cut in half and the result never depends on
- * which later rule happens to be small enough to fit.
+ * which later rule happens to be small enough to fit. `copies` scales the caps on a
+ * surface that repeats each rule per frame, so a page the published sheet holds
+ * whole is not cut here.
  */
 function authoredBlocks(
-  authored: readonly AuthoredRulesInput[],
-  ordered: readonly BreakpointRef[],
+  jobs: Iterable<RuleJob>,
   onDropRule: (dropped: DroppedRule) => void,
   spent: RuleBudget,
-  gated: boolean,
+  copies = 1,
 ): RuleBlock[] {
   const out: RuleBlock[] = [];
   let bytes = spent.bytes;
   let full = false;
-  for (const { className, rules } of authored) {
-    if (!SAFE_RULE_CLASS.test(className)) continue;
-    for (const rule of rules) {
-      const drop = (reason: string) => onDropRule({ className, ruleId: rule.id, reason });
-      if (full) {
-        drop('the page is over its rule limit');
-        continue;
-      }
-      if (!isWritableRule(rule)) {
-        drop('its selector or a wrapper could leave the rule');
-        continue;
-      }
-      const built = blocksOfRule(className, rule, ordered, gated);
-      if ('refused' in built) {
-        drop(built.refused);
-        continue;
-      }
-      const size = built.blocks.reduce((sum, block) => sum + textBytes(block.text) + textBytes(block.wrappers.join('')), 0);
-      if (spent.rules + out.length + built.blocks.length > MAX_RULES_PER_PAGE || bytes + size > MAX_RULE_BYTES_PER_PAGE) {
-        full = true;
-        drop('the page is over its rule limit');
-        continue;
-      }
-      out.push(...built.blocks);
-      bytes += size;
+  for (const { className, rule, build } of jobs) {
+    const drop = (reason: string) => onDropRule({ className, ruleId: rule.id, reason });
+    if (full) {
+      drop('the page is over its rule limit');
+      continue;
     }
+    if (!isWritableRule(rule)) {
+      drop('its selector or a wrapper could leave the rule');
+      continue;
+    }
+    const built = build();
+    if ('refused' in built) {
+      drop(built.refused);
+      continue;
+    }
+    const size = built.blocks.reduce((sum, block) => sum + textBytes(block.text) + textBytes(block.wrappers.join('')), 0);
+    if (spent.rules + out.length + built.blocks.length > MAX_RULES_PER_PAGE * copies || bytes + size > MAX_RULE_BYTES_PER_PAGE * copies) {
+      full = true;
+      drop('the page is over its rule limit');
+      continue;
+    }
+    out.push(...built.blocks);
+    bytes += size;
   }
   return out;
+}
+
+function* publishedJobs(authored: readonly AuthoredRulesInput[], ordered: readonly BreakpointRef[], gated: boolean): Generator<RuleJob> {
+  for (const { className, rules } of authored) {
+    if (!SAFE_RULE_CLASS.test(className)) continue;
+    for (const rule of rules) yield { className, rule, build: () => blocksOfRule(className, rule, ordered, gated) };
+  }
+}
+
+function* surfaceJobs(surface: EditorSurface, ordered: readonly BreakpointRef[]): Generator<RuleJob> {
+  const breakpoints = ordered.map(({ id, minWidth }) => `${id}:${minWidth}`).join();
+  const animated = surface.animated ?? new Set<string>();
+  const moving = [...animated].join();
+  for (const { node, rules, copies, previewed } of surface.nodes) {
+    for (const rule of rules) {
+      const live = previewed.has(rule.id);
+      for (const copy of copies) {
+        const key = [surface.kind, copy.selector, copy.frame.width, copy.frame.height, live, breakpoints, moving].join('|');
+        yield {
+          className: node,
+          rule,
+          build: () => remembered(surface.memo, rule, key, () => blocksOnCopy(surface.kind, rule, copy, ordered, live, animated)),
+        };
+      }
+    }
+  }
 }
 
 /**
@@ -935,6 +1083,39 @@ export function withoutMarkup(sheet: string, onDropRule: (dropped: DroppedRule) 
   if (!sheet.includes('<')) return sheet;
   onDropRule({ className: 'sheet', ruleId: 'sheet', reason: 'the finished stylesheet held a <' });
   return '';
+}
+
+/**
+ * A previewed hover preset on the canvas. No `!important`: Normal stays inline, and a
+ * preset loses to an inline value on the published page too, so the two agree.
+ */
+function presetOnCopy(selector: string, kind: HoverKind): string[] {
+  return hoverPresetRules(kind, selector)
+    .filter(({ text }) => text.includes(':hover'))
+    .map(({ text }) => text.replace(':hover', LIVE_STATE));
+}
+
+/** The sheet of an editor surface. Same order as the published page, with no Normal. */
+function editorSheet(surface: EditorSurface, ordered: readonly BreakpointRef[], options: BuildResponsiveCssOptions): string {
+  const onDropRule = options.onDropRule ?? (() => {});
+  const canvas = surface.kind === 'canvas';
+  const { texts, spent } = definitionTexts(options.definitions ?? [], onDropRule, surface);
+  const parts: string[] = [...texts];
+  // On the preview a preset uses the shared class of the published page, and it
+  // shows on a real pointer. On the canvas it shows only when previewed.
+  const presets = canvas
+    ? (surface.previewedPresets ?? []).flatMap(({ selector, kind }) => presetOnCopy(selector, kind)).join('\n')
+    : serializeBlocks(HOVER_KINDS.filter(kind => (options.hoverPresets ?? []).includes(kind)).flatMap(kind => hoverPresetRules(kind)));
+  if (presets) parts.push(presets);
+  const authored = serializeBlocks(authoredBlocks(surfaceJobs(surface, ordered), onDropRule, spent, Math.max(surface.framesShown, 1)));
+  if (authored) parts.push(authored);
+  const cleared = (surface.clearedVariables ?? []).filter(({ property }) => SAFE_PROPERTY.test(property) && property.startsWith('--'));
+  if (cleared.length > 0) parts.push(cleared.map(({ selector, property }) => `${selector}{${property}:initial!important}`).join('\n'));
+  const hasRules = surface.nodes.length > 0 || (options.definitions?.length ?? 0) > 0;
+  if (canvas && parts.length > 0) parts.push(animationsAtRest(surface.previewedNodes ?? []));
+  // The canvas never has this: its selector would fix the editor's own fields.
+  if (!canvas && hasRules) parts.push(`${PREVIEW_ROOT} ${FIELD_SIZING_GUARD.replace(/,/g, `,${PREVIEW_ROOT} `)}`);
+  return withoutMarkup(parts.join('\n'), onDropRule);
 }
 
 /**
@@ -958,6 +1139,7 @@ export function buildResponsiveCss(
   const ordered = largestFirst(
     [...breakpoints].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
   );
+  if (options.surface) return editorSheet(options.surface, ordered, options);
   const safeRules = rules.filter(r => SAFE_CLASS.test(r.className));
 
   const block = (index: number): string =>
@@ -983,7 +1165,7 @@ export function buildResponsiveCss(
   const used = options.hoverPresets ?? [];
   const presets = serializeBlocks(HOVER_KINDS.filter(kind => used.includes(kind)).flatMap(kind => hoverPresetRules(kind)));
   if (presets) parts.push(presets);
-  const authored = serializeBlocks(authoredBlocks(options.authored ?? [], ordered, onDropRule, spent, options.gated === true));
+  const authored = serializeBlocks(authoredBlocks(publishedJobs(options.authored ?? [], ordered, options.gated === true), onDropRule, spent));
   if (authored) parts.push(authored);
   if (options.fieldGuard) parts.push(FIELD_SIZING_GUARD);
   return withoutMarkup(parts.join('\n'), onDropRule);

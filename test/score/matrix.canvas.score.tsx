@@ -4,6 +4,10 @@
 // purpose: jsdom's style object silently drops properties it does not know, which
 // would score jsdom instead of the editor. Effects, drag and selection do not run
 // in this render, so this answers "does it reach the DOM", nothing more.
+//
+// A rule row renders CanvasRuleStyles beside it, because that is what the canvas
+// mounts. What such a row must find is written here, not imported from the code under
+// test. canvasRules.score.ts proves on the mounted editor what that text then does.
 
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
@@ -13,10 +17,12 @@ import { ComponentTypeEnum, default as ComponentModel, type ComponentInstance } 
 import { cssPropertyName } from '@/lib/responsive/responsiveCss';
 import { isBlockedTag } from '@/lib/renderer/blockedNodes';
 import ComponentRenderer from '@/components/ComponentRenderer';
+import { CanvasRuleStyles } from '@/lib/rules/CanvasRuleStyles';
 import {
   atRuleProbe,
   inlineStylesheets,
   isPageLevelRow,
+  normalize,
   selectorProbe,
   stylesheetHasRule,
   wrapperProbe,
@@ -98,8 +104,71 @@ function probeElementAttribute(kind: RowKind, id: string): Cell {
   return fail('react-attribute-handling', `expected ${sample.html}`);
 }
 
-function probeRule(probe: RuleProbe, gap: GapId): Cell {
-  return stylesheetHasRule(inlineStylesheets(canvasMarkup('div', { rules: [probe.rule] })), probe) ? pass() : fail(gap);
+/** A frame every constant condition among the samples holds on: (min-height: 400px), 16 / 9, landscape. */
+const PROBE_FRAME = { breakpointId: 'desktop', width: 1600, height: 900 };
+/** What `&` becomes for the probe node in that frame. */
+const COPY = '[data-viewport-content-id] [data-component-id="desktop-probe"]';
+const DECLARED = '{color:rgb(1, 2, 3)!important}';
+
+/** Pointer rows, as the sheet writes them unpreviewed and previewed. */
+const POINTER_REWRITES: Record<string, { dead: string; live: string }> = Object.fromEntries(
+  [':hover', ':active', ':focus', ':focus-visible', ':focus-within'].map((row) => [row, { dead: ':not(*, :hover)', live: ':is(*, :hover)' }]),
+);
+
+/** Media feature rows answered from the frame itself. The others describe the editor. */
+const FRAME_FEATURES = new Set(['height', 'aspect-ratio', 'orientation']);
+
+/** The canvas sheet for one stored rule, with that rule previewed or not. */
+function canvasSheet(rule: RuleProbe['rule'], previewed: boolean): string {
+  const component = ComponentModel.create({ id: 'probe', type: 'div', componentType: ComponentTypeEnum.HOST, props: { rules: [rule] } }) as ComponentInstance;
+  store.editorUI.setPreviewRule(previewed ? { componentId: 'probe', ruleId: rule.id } : null);
+  const html = renderToStaticMarkup(
+    <>
+      <CanvasRuleStyles tree={component} floating={[]} frames={[PROBE_FRAME]} breakpoints={BREAKPOINTS} />
+      <ComponentRenderer component={component} breakpointId="desktop" allBreakpoints={BREAKPOINTS} />
+    </>,
+  );
+  store.editorUI.setPreviewRule(null);
+  return inlineStylesheets(html);
+}
+
+const holds = (css: string, text: string): boolean => normalize(css).includes(normalize(text));
+
+function probeSelector(id: string, gap: GapId): Cell {
+  const { rule } = selectorProbe(id, selectorSample(id));
+  const selector = 'selector' in rule ? rule.selector : '';
+  const at = 'selector' in rule ? (rule.at ?? []) : [];
+  const pointer = POINTER_REWRITES[id];
+  if (pointer) {
+    const shown = holds(canvasSheet(rule, false), `${COPY}${pointer.dead}${DECLARED}`) && holds(canvasSheet(rule, true), `${COPY}${pointer.live}${DECLARED}`);
+    return shown ? pass('dead until previewed') : fail(gap);
+  }
+  const parts = selector.split(/,(?![^(]*\))/).map((part) => part.trim().slice(1));
+  // `:scope` needs an `@scope`, which reads what is above the node, so it waits for a preview.
+  const sheet = canvasSheet(rule, at.length > 0);
+  return parts.every((part) => holds(sheet, `${COPY}${part}${DECLARED}`)) ? pass(at.length > 0 ? 'dead until previewed' : undefined) : fail(gap);
+}
+
+/** An environment condition shows only when previewed, and then with its wrapper gone. */
+function probeEnvironment(at: string, gap: GapId): Cell {
+  const { rule } = wrapperProbe(at);
+  const body = `${COPY}${DECLARED}`;
+  return !holds(canvasSheet(rule, false), body) && holds(canvasSheet(rule, true), body) ? pass('dead until previewed') : fail(gap);
+}
+
+/** A condition the frame answers: the block is there, with no query around it. */
+function probeFrameCondition(at: string, gap: GapId): Cell {
+  const css = canvasSheet(wrapperProbe(at).rule, false);
+  return holds(css, `${COPY}${DECLARED}`) && !css.includes('@media') ? pass('answered by the frame') : fail(gap);
+}
+
+function probeAtRule(id: string, gap: GapId): Cell {
+  // An `@scope` prelude is matched above the node, which is the editor here.
+  if (id === '@media' || id === '@scope') return probeEnvironment(atRuleSample(id), gap);
+  const probe = atRuleProbe(id, atRuleSample(id));
+  const css = canvasSheet(probe.rule, false);
+  if ('define' in probe.rule) return stylesheetHasRule(css, probe) ? pass() : fail(gap);
+  return holds(css, `${atRuleSample(id)}{${COPY}${DECLARED}`) ? pass() : fail(gap);
 }
 
 function probeEntry(kind: RowKind, id: string): Cell {
@@ -141,11 +210,13 @@ function probeEntry(kind: RowKind, id: string): Cell {
         : fail('renderer-drops-value', 'the canvas overwrites this property with its own value');
     }
     case 'css-selector':
-      return probeRule(selectorProbe(id, selectorSample(id)), 'selector-styles');
+      return probeSelector(id, 'selector-styles');
     case 'css-at-rule':
-      return probeRule(atRuleProbe(id, atRuleSample(id)), id === '@media' ? 'media-queries' : 'at-rules');
+      return probeAtRule(id, id === '@media' ? 'media-queries' : 'at-rules');
     case 'css-media-feature': {
-      if (id !== 'width') return probeRule(wrapperProbe(`@media ${mediaFeatureSample(id)}`), 'media-queries');
+      const at = `@media ${mediaFeatureSample(id)}`;
+      if (FRAME_FEATURES.has(id)) return probeFrameCondition(at, 'media-queries');
+      if (id !== 'width') return probeEnvironment(at, 'media-queries');
       const style = { color: { base: 'red', tablet: 'blue' } };
       const shown = canvasMarkup('div', { style }, 'desktop').includes('color:red') && canvasMarkup('div', { style }, 'tablet').includes('color:blue');
       return shown ? pass('as breakpoints') : fail('media-queries');

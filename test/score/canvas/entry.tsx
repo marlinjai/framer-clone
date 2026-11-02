@@ -1,8 +1,9 @@
 // The browser side of the mounted canvas probe: the real EditorApp with its real
 // root store, keyboard listeners, drag manager and Canvas, in real Chromium. Only
 // the server edge is stubbed (see lib/canvasBundle.ts). `window.__placeTree` puts a
-// tree on the home page, alone, and leaves one breakpoint frame, so a contract
-// finds one copy of each element.
+// tree on the home page, alone, and by default leaves one breakpoint frame, so a
+// contract finds one copy of each element. `window.__editor` is what a contract
+// about the editor itself needs from the store.
 
 import React from 'react';
 import { createRoot } from 'react-dom/client';
@@ -13,8 +14,26 @@ import EditorApp from '@/components/EditorApp';
 import { useStore as editorStore } from '@/hooks/useStore';
 import ComponentModel, { type ComponentInstance } from '@/models/ComponentModel';
 
+interface PlaceOptions {
+  /** Keep every breakpoint frame, for a contract that compares them. */
+  allFrames?: boolean;
+  /** Snapshots placed on the canvas outside any frame. */
+  floating?: Record<string, unknown>[];
+}
+
 interface ProbeWindow {
-  __placeTree: (snapshot: unknown) => void;
+  __placeTree: (snapshot: unknown, options?: PlaceOptions) => void;
+  __editor: {
+    frames: () => { breakpointId: string; label: string }[];
+    setPreviewRule: (preview: { componentId: string; ruleId: string } | null) => void;
+    setPreviewOpen: (open: boolean) => void;
+    setRuleStyle: (componentId: string, ruleId: string, style: Record<string, unknown>) => void;
+    setStyle: (componentId: string, style: Record<string, unknown>) => void;
+    toggleLock: (componentId: string) => void;
+    selectedId: () => string | undefined;
+    editingId: () => string | undefined;
+    propsOf: (componentId: string) => Record<string, unknown> | undefined;
+  };
 }
 
 const root = document.getElementById('root');
@@ -22,16 +41,53 @@ if (!root) throw new Error('the probe page has no root element');
 
 flushSync(() => createRoot(root).render(<EditorApp />));
 
-(window as unknown as ProbeWindow).__placeTree = (snapshot) => {
-  const { editorUI } = editorStore();
-  const page = editorUI.currentPage;
+const openPage = () => {
+  const page = editorStore().editorUI.currentPage;
   if (!page) throw new Error('the editor opened no page');
+  return page;
+};
+
+const find = (node: ComponentInstance, id: string): ComponentInstance | undefined =>
+  node.id === id ? node : (node.children as ComponentInstance[]).map((child) => find(child, id)).find(Boolean);
+
+const nodeById = (id: string): ComponentInstance | undefined => {
+  const page = openPage();
+  return [page.appComponentTree, ...page.floatingElements].map((root) => find(root as ComponentInstance, id)).find(Boolean);
+};
+
+(window as unknown as ProbeWindow).__placeTree = (snapshot, options = {}) => {
+  const page = openPage();
   const [first] = page.sortedViewportNodes;
   const nodes = getSnapshot(page.canvasNodes) as Record<string, unknown>;
-  applySnapshot(page.canvasNodes, { [first.id]: nodes[first.id] });
+  const kept = options.allFrames
+    ? Object.fromEntries(page.sortedViewportNodes.map((viewport: ComponentInstance) => [viewport.id, nodes[viewport.id]]))
+    : { [first.id]: nodes[first.id] };
+  const floating = Object.fromEntries((options.floating ?? []).map((node) => [node.id as string, { canvasNodeType: 'floating', canvasX: 40, canvasY: 900, ...node }]));
+  applySnapshot(page.canvasNodes, { ...kept, ...floating } as never);
   // The tree sits directly under a plain root. The demo page's own header and main
   // would be its ancestors and change what its landmarks mean.
   const root = page.appComponentTree as ComponentInstance;
   applySnapshot(root, { ...(getSnapshot(root) as object), type: 'div', props: {}, children: [] } as never);
   root.addChildren([ComponentModel.create(snapshot as never)]);
+};
+
+(window as unknown as ProbeWindow).__editor = {
+  frames: () => openPage().sortedViewportNodes.map((viewport: ComponentInstance) => ({ breakpointId: viewport.breakpointId!, label: viewport.label! })),
+  setPreviewRule: (preview) => editorStore().editorUI.setPreviewRule(preview),
+  setPreviewOpen: (open) => editorStore().editorUI.setPreviewOpen(open),
+  setRuleStyle: (componentId, ruleId, style) => {
+    const node = nodeById(componentId);
+    if (!node) throw new Error(`no node ${componentId}`);
+    const rules = (node.props.rules as { id: string }[]).map((rule) => (rule.id === ruleId ? { ...rule, style } : rule));
+    node.setProps({ ...node.props, rules });
+  },
+  setStyle: (componentId, style) => {
+    const node = nodeById(componentId);
+    if (!node) throw new Error(`no node ${componentId}`);
+    for (const [key, value] of Object.entries(style)) node.updateResponsiveStyle(key, value);
+  },
+  toggleLock: (componentId) => nodeById(componentId)?.toggleCanvasLock(),
+  selectedId: () => editorStore().editorUI.selectedComponent?.id,
+  editingId: () => editorStore().editorUI.editingComponent?.id,
+  propsOf: (componentId) => nodeById(componentId)?.props as Record<string, unknown> | undefined,
 };
