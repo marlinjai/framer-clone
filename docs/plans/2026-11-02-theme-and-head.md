@@ -3,7 +3,7 @@ type: plan
 status: draft
 date: 2026-11-02
 title: "Theme tokens and head items: the contract for a site's shared colours and fonts and a page's safe head tags"
-summary: "Where a site's colour and font tokens live, how a value refers to one so a rename touches nothing, light and dark without script, how tokens reach the canvas, preview, published page, rules and component definitions, and what the AI and the React importer may do with them. Then which head items a page may hold: meta from a closed list, link from the rels that contact no other host in three browser engines, JSON-LD as inert data, nothing that runs. Tokens sit in Site settings, so they freeze with the published copy. Nine slices, each verified on forward, backtrack, resume and re-entry."
+summary: "Where a site's colour and font tokens live, how a value refers to one so a rename touches nothing, light and dark without script, how tokens reach the canvas, preview, published page, rules and component definitions, how they share the document with a page's `:root` rule, and what the AI and the React importer may do with them. Then which head items a page may hold: meta from a closed list, link from the rels that contact no other host in three browser engines, JSON-LD as inert data, nothing that runs. Tokens sit in Site settings, so they freeze with the published copy. Revised after an independent review. Nine slices, each verified on forward, backtrack, resume and re-entry."
 tags: [framer-clone, primitives, theme, tokens, head, seo, renderer, fleet]
 projects: [framer-clone]
 ---
@@ -15,36 +15,42 @@ This is gap 5 of the [complete primitives plan](2026-11-01-complete-primitives.m
 tokens and head tags beyond the search metadata. The third, page-wide scripts, belongs to the sandboxed custom code of the
 [behaviour contract](2026-11-02-behaviour-model.md): nothing here runs.
 
-Read against commit `50bc4d6`. At that commit the rule format, text nodes, components slices 1 to 5, behaviour B1 to B4 and the render gate
-are merged. Open, and named as dependencies below: the immutable published copy (#226), the React importer's slices (none built), and
-`checkBeforePublish` growth from components.
+Read against commit `a8113ec` plus #261 at `1b7d4c0` (a rule on `:root`, open and on hold). Open, and named as dependencies below: #261, the
+immutable published copy (#226), and the React importer's slices (none built). #258, the generator writing rules, has merged.
+
+Revised after the independent review of 2026-11-02 (`~/software-dev/decision-pages/2026-11-02-theme-and-head-review.md`, verdict fix first), whose
+findings 1 to 18 are applied here. "Review findings, and what changed" says where each went and what was adapted, with the reason.
 
 **Evidence marks:** **[code]** read here, **[proven]** run for this contract in a real browser or against the real module, **[unproven]**
 designed but not run. The probes are outside the repo, at `~/software-dev/decision-pages/2026-11-02-theme-and-head-probes/`:
 `next-app` (a real Next 15.5.28 and React 19.1.9 build shaped like the `(site)` route), `head-raw.mjs` and `browser-next.mjs` against it,
-`link-rels.mjs` (Chromium 156, Firefox 157, WebKit 27.2), `preconnect.mjs`, `theme.mjs`, `csp.mjs`, and `repo-readers.mts` and
-`repo-readers-2.mts`, which call the real modules of this repo.
+`link-rels.mjs` (Chromium 156, Firefox 157, WebKit 27.2), `preconnect.mjs`, `theme.mjs`, `csp.mjs`, `repo-readers.mts` and
+`repo-readers-2.mts`, which call the real modules of this repo, `banner-look.mts`, which runs #261's real `legibleLook`, and the review's own, prefixed `review-`.
 
 Short forms: CSS (Cascading Style Sheets), JSON (JavaScript Object Notation), JSON-LD (JSON for Linked Data, the structured data search
 engines read), AI (artificial intelligence), CSP (Content Security Policy, the browser's list of what a page may load), HTML (HyperText
-Markup Language), SEO (search engine optimisation). A "token" is a named colour or font a site defines once. A "reference" is a style value
-that points at one. A "definition" and a "placement" are the components contract's words.
+Markup Language), SEO (search engine optimisation), MST (MobX State Tree, the editor's model library). A "token" is a named colour or font a
+site defines once. A "reference" is a style value that points at one. A "tombstone" is a deleted token kept so references still resolve. A
+"definition" and a "placement" are the components contract's words.
 
 ## The decisions
 
-1. **Tokens live in Site settings, as `siteSettings.theme`.** Column, parser, Yjs (the multiplayer sync library) blob and publish path
-   already exist, and the published copy freezes `siteSettings`, so a theme can never go live ahead of the pages that use it.
+1. **Tokens live in Site settings, as `siteSettings.theme`.** Column, parser and publish path already exist, and the published copy freezes
+   `siteSettings`, so a theme can never go live ahead of the pages that use it.
 2. **A reference is `var(--fc-t-<id>)`. The id is stable and the name is a label.** A rename touches one field and no node.
-3. **No fallback inside a reference, and a deleted token stays behind as a tombstone.** Deleting changes nothing on any page.
-4. **Modes are a site setting: `system`, `light` or `dark`.** Dark values come from a media query, so they work with no script. A forced mode
-   also decides what a node's own `prefers-color-scheme` rule means. There is no visitor switch.
+3. **No fallback inside a reference, and a deleted token stays behind as a tombstone.** Deleting changes nothing on any page. Nothing removes a
+   tombstone without a person pressing Clean up, and a value that stops parsing marks its token broken rather than deleting it.
+4. **`mode` is optional, and absent means not chosen.** A site with no choice shows light values, keeps every stored rule as it is, and writes no
+   `color-scheme`. `system`, `light` and `dark` are a person's choice, and only a forced choice decides what a node's `prefers-color-scheme` rule means.
+   Dark values come from a media query, so they work with no script. There is no visitor switch.
 5. **Published: one sheet on `:root`, in the `(site)` layout.** Everything on the page reaches it, including the consent banner and the default
    404, which sit outside the page tree. Editor surfaces: the same values on a frame wrapper, never on `:root`, because the canvas shares the
    editor's document.
 6. **Token values have a closed grammar, and font tokens hold a library id, never text.** So a token cannot hold an address, and no value reaches
-   the sheet that this contract did not list.
-7. **`--fc-t-*` is reserved.** No node, rule or import may set one.
-8. **A small `document` block closes "styles on html":** page colours and font, and a closed list of two properties on `html`.
+   the sheet that this contract did not list. The grammar only ever widens.
+7. **All of `--fc-` is reserved, by one check.** `isPlatformVariable`, exported from `rootProperties.ts`, is the only test, in every reader.
+8. **One rule for the document: a page's `:root` rule beats the theme.** The theme's `document` block is the site's default: two colours and a font. Scrolling
+   and overflow belong to the `:root` rule alone.
 9. **The AI reads tokens, uses them, and may add new ones. It never edits or deletes one, and it writes no head item.**
 10. **The importer keeps its output. Only what its root's custom properties hold changes:** each becomes an alias of a site token.
 11. **A head item is data parsed at render.** Three kinds, each emitted from constants plus checked values, in the page's real `<head>`.
@@ -63,9 +69,9 @@ token for dark was not seen, because that page has no dark values. Its head sett
 ## The stored shape
 
 ```ts
-/** siteSettings.theme. Absent or empty emits nothing, so every existing page stays byte for byte the same. */
+/** siteSettings.theme. No mode, no tokens and no document emit nothing, so every existing page stays byte for byte the same. */
 interface SiteTheme {
-  mode: 'system' | 'light' | 'dark';      // default 'light'
+  mode?: 'system' | 'light' | 'dark';     // absent: not chosen
   tokens: ThemeToken[];                   // panel order; ids unique
   document: DocumentStyles;
 }
@@ -79,6 +85,7 @@ interface ColorToken {
   light: string;     // the closed colour grammar below
   dark?: string;     // absent: the light value in both modes
   deleted?: true;    // a tombstone, see "Deleting"
+  broken?: true;     // a value that no longer parses, kept as stored, see "When a value stops parsing"
 }
 
 interface FontToken {
@@ -89,35 +96,39 @@ interface FontToken {
   deleted?: true;
 }
 
+/** The site's default for what a page inherits. A page's `:root` rule beats each of these. */
 interface DocumentStyles {
-  backgroundColor?: string; // a colour reference
-  color?: string;           // a colour reference
-  fontFamily?: string;      // a font reference
-  scrollBehavior?: 'smooth';
-  overflowX?: 'hidden' | 'clip';
+  backgroundColor?: string; // exactly a colour reference
+  color?: string;           // exactly a colour reference
+  fontFamily?: string;      // exactly a font reference
 }
 ```
 
-Caps: 200 live tokens. The name is plain text, emitted nowhere in CSS. `normalizeTheme` drops what does not parse, on the way in and on the way
-out, as `normalizeSiteSettings` does for every field. It runs on load and on publish, so a forged save reaches no renderer.
+Caps: 200 live tokens and 500 tombstones, both held in `normalizeTheme`, because `siteSettings.ts` promises a stored blob never grows without bound. At the tombstone
+cap Delete is refused with a pointer to Clean up. The name is plain text, emitted nowhere in CSS. `normalizeTheme` runs on load and on publish and keeps every token with a
+valid id. Only an id that fails its pattern is dropped, since no reference can name it.
 
-**Why Site settings [code].** One JSONB (binary JSON) column, so a new field needs no migration; one Yjs blob; always normalized when read; and
-#226's table freezes `siteSettings` in every revision. Its price is one blob, so two people editing tokens in the same second lose one edit to
-the last writer. That is accepted: it is the behaviour of every other site setting.
+**Why Site settings [code].** One JSONB (binary JSON) column, so a new field needs no migration; always normalized when read; and #226's table freezes `siteSettings` in every revision.
+Yjs (the multiplayer sync library) has a blob key for it, but nothing outside `src/lib/multiplayer` imports Yjs today, so there is no live sync to design for: this contract's
+concurrency is two tabs and a Save, and the [#226 revision](#publishing).
 
-Three traps, each a test in slice T1:
+Four traps, each a test in slice T1:
 
 - **`normalizeSiteSettings` drops an unknown key [proven].** So the field is listed there first, or nothing survives a load.
 - **The dialog would erase it [code].** `SiteSettingsDialog` edits a draft of the whole object and `updateSiteSettings` replaces the whole
   object, so a dialog opened before a token edit and saved after it would undo that edit. `updateSiteSettings` therefore always keeps the current
   `theme` and `head`, and only `updateTheme` and `updateSiteHead` write them.
-- **A tab from before the deploy would erase it [code].** Its `normalizeSiteSettings` has no `theme`, so its save sends none. The rule is the one
-  `components` already follows: `saveProject` keeps the stored `theme` and `head` when the incoming object lacks the key. A new build always sends
-  the key, so a real clear still works.
+- **A tab from before the deploy would erase it [code].** Its save sends no `theme`. `projectToPersisted` runs `normalizeSiteSettings` before `saveProject`, so once that function lists
+  `theme` the missing key is invisible by the time the repository sees it. So `projectToPersisted` reads the raw key, as it does for `components`, and passes `theme` and `head` on
+  only when present, and `saveProject` keeps the stored value otherwise. A new build always sends both keys, so a real clear still works.
+- **A second tab puts an old theme back, with no warning [code].** Save posts the whole snapshot, and `versionContent` in `src/stores/openProject.ts` compares pages and definitions only. A
+  tab loaded before a token edit would write its stale theme over every page. The components contract closed the same hole for definitions, for the same reason. So `ProjectContent` and
+  `VersionContent` gain `theme` and the site's `head`, both `markServerVersion` callers (`openProject.ts`, `PublishButton.tsx`) pass them, and `changedElsewhereMessage` names them. With that warning, last
+  writer wins on one blob is accepted: it is how every other site setting behaves.
 
-**Publishing.** Until #226 lands, save and publish write the same row, so a saved theme would reach visitors at the next cache miss, as a saved
-definition would. Same answer as the components contract: slices up to T3 proceed, because no person can create a token yet, and **T4, the first
-button that makes a token, waits for #226.** No join work is needed: `siteSettings` is already in its document.
+<a id="publishing"></a>**Publishing.** Until #226 lands, save and publish write the same row, so a saved theme would reach visitors at the next cache miss, as a saved
+definition would. Same answer as the components contract: T1 to T3 proceed, because no person can create a token yet, and **T4 and T6, the first two ways to make a token, wait for #226.** No join
+work is needed: `siteSettings` is already in its document.
 
 ## Referring to a token
 
@@ -141,31 +152,44 @@ and inputs need no new code to carry a reference.
 ### Deleting
 
 A colour in use must not change the page, and a walk rewriting every reference is the wrong tool: it costs one edit per use across every page and
-definition, and it races a person placing the same colour on another tab.
+definition.
 
 So **a delete sets `deleted: true`.** The token leaves the pickers and stays in the sheet, with both values, so nothing moves on any surface. A node
 that references one shows "Deleted colour: Accent" and offers Detach, which writes the current literal into that one value. Undo restores it.
 
-Each delete also removes every tombstone no value references any more, in the same undo step, so the list stays bounded by what pages use. "Used
-in N places" and Replace with another token share that scan, which is a deep search of the project snapshot for the reference text: pages, floating
-nodes, rules, keyframe blocks, definitions, placement overrides and inputs, all by construction, because a reference is a string wherever it sits.
+**Nothing removes a tombstone automatically.** A sweep would have to know every use, and it cannot: a value bound from a content collection can hold a reference no project scan sees. So the panel offers **Clean up
+unused**, which lists the tombstones it found no use of and removes them on a press, in one undo step, saying that content collection values are not scanned.
+
+"Used in N places", Clean up and Replace with another token share one scan: a deep search of the project snapshot for the reference text, across pages, floating nodes, rules, keyframe blocks,
+definitions, placement overrides, inputs **and `theme.document`**, because a reference is a string wherever it sits. A token used only as the page background is a named test.
+
+### When a value stops parsing
+
+`normalizeTheme` runs on what a frozen revision holds, and a revision stays live for up to 30 versions. So if a later build read a stored value more strictly, or a family left `FONT_LIBRARY`, dropping the token
+would kill every reference on a live page, with no publish to warn at, and the next save would make that permanent. So:
+
+- **A colour token whose value stops parsing keeps its id and stored text and gains `broken: true`.** The stored text is never emitted. References behave as missing, the panel shows it with its text, and `checkBeforePublish` names it.
+- **A font token with an unknown family emits `SYSTEM_FONT_STACK`,** so text stays readable, and the panel shows it.
+- **The grammar only widens.** A test holds a list of accepted values, and removing one fails it.
 
 ### Why no fallback
 
 A reference to nothing fails silently: `color` inherits, `background-color` goes transparent, and a `border` shorthand collapses to `0px` [proven].
 Framer's literal fallback is one answer. It is not taken here, for three reasons: the fallback goes stale at the first value edit, so a missing token
 shows an old colour rather than the current one; it holds no dark value, where a tombstone holds both; and it doubles the grammar every reader must
-parse. A tombstone covers deletion exactly.
+parse. A tombstone covers deletion exactly, and Save writes pages and theme from one tab together, so a stale tab overwrites both and stays consistent.
 
-What remains is a reference with no token and no tombstone, from a forged save or a peer's concurrent sweep. It is not a safety problem, because it is
-a harmless `var()`. It is a correctness one, so **it surfaces:** `checkBeforePublish` lists each with its page, as a warning like a missing component,
-and the panel shows "Missing colour" with Detach unavailable and Replace offered. This is the one decision here a reviewer should press on.
+What remains is a reference with no token, from a forged save or a broken value. It is not a safety problem, because it is a harmless `var()`. It is a correctness one, so **it surfaces:**
+`checkBeforePublish` lists each with its page, as a warning like a missing component, and the panel shows "Missing colour" with Replace offered.
 
 ### Reserved names
 
-Today a rule can set a token and the AI validator accepts one as a style key [proven], so a node could silently repaint a subtree. `--fc-t-*` joins the
-reserved names: `parseRule`, `styleValueProblem` and both renderers refuse it as a style key, by prefix, and the raw field in the panel says why.
-A value may still read one, including `--primary: var(--fc-t-ab12cd34)`, which the importer needs.
+Today a rule can set a token, the AI validator accepts one as a style key, and a keyframe block can too: `@keyframes u-a{to{--fc-t-a:red}}` passed `parseRule` and repainted a subtree in Chromium [proven]. #261 already
+refuses `--fc-` on `:root`, through a private constant. So `rootProperties.ts` **exports one `isPlatformVariable(key)`**, case-sensitive on the raw key as custom properties are, and every reader uses it: `isRootStyleKey`,
+`refusedBody` (not `parseSelectorRule`, so keyframe and definition bodies are covered), `styleValueProblem`, both renderers' style gate and the panel's raw field. All of `--fc-` is reserved everywhere, which also stops a node
+writing `--fc-sticky-cta-h`. The renderers' own passes write `--fx-*` and sheet text, not stored `--fc-` keys [code]; T2 confirms that with a test. The behaviour runtime's `cssVar` is safe already, because it requires `--u-`.
+
+A value may still read one, including `--primary: var(--fc-t-ab12cd34)`, which the importer needs. So only the key is refused, and a page can never redefine a token. That is also what lets the server judge the banner's colours: a token's value is exactly what the sheet says.
 
 `@property` on a token name is already refused, because `@property` needs a name starting `--u-` [proven]. That refusal matters: with `inherits: false`
 one definition would repaint every use on a page [proven]. It gets a test, so loosening that rule fails loudly.
@@ -173,20 +197,23 @@ one definition would repaint every use on a page [proven]. It gets a test, so lo
 ## The value grammar
 
 The sheet is written raw, and a token applies to the whole document. A hostile value broke out of it three ways in Chromium [proven]: `}` hid the body, `;`
-loaded an external `url()` on `:root`, and `</style>` ended the element and ran script.
+loaded an external `url()` on `:root`, and `</style>` ended the element and ran script. An unclosed bracket does it without any of those characters: `rgb(0 0 0;` left every later token empty and swallowed the `body` rule [proven].
 
-`cssValueText` is not the guard here: it returned all of those unchanged for a custom property name, along with `url(...)`, `initial` and `var(...)`
-[proven]. So the theme does not reuse it alone. `parseColorValue` is a small allowlist that runs first, in `normalizeTheme`, in the panel and in the
-AI validator:
+`cssValueText` is not the guard here: it returned the first three unchanged for a custom property name, along with `url(...)`, `initial` and `var(...)`
+[proven]. So the theme does not reuse it alone. `parseColorValue` is a small allowlist that runs first, in `normalizeTheme`, in the panel and in the AI validator:
 
 | Kind | Allowed | Refused |
 |---|---|---|
-| Colour | `#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`; `rgb()`, `rgba()`, `hsl()`, `hsla()`, `hwb()`, `lab()`, `lch()`, `oklab()`, `oklch()`, `color()` holding only numbers, percentages, angles, `none`, `/` and a colour space name; named colours from a list; `transparent`. At most 64 characters | Everything else: `url`, `var`, `calc`, `color-mix`, `light-dark`, `currentcolor`, `initial` and the other wide keywords, any `{ } ; < > \ " '`, comments |
+| Colour | `#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`; a whole `name(...)` with no nested bracket, `name` one of `rgb`, `rgba`, `hsl`, `hsla`, `hwb`, `lab`, `lch`, `oklab`, `oklch`, `color`, holding only numbers, percentages, angles, `none`, `/` and commas; `color()` takes `srgb`, `srgb-linear` or `display-p3` first; CSS colour names from a list; `transparent`. At most 64 characters | Everything else: `url`, `var`, `calc`, `color-mix`, `light-dark`, `currentcolor`, `initial` and the other wide keywords, any `{ } ; < > \ " '`, comments, an unclosed or stray bracket |
 | Font | A `FONT_LIBRARY` id or `system`. The emitted text is `fontStack(family)` or `SYSTEM_FONT_STACK`, from the registry, never stored text | Any other string |
 
 - **No alias between tokens.** `var` is refused, because an alias cycle reads as a missing token [proven]. `--sidebar: var(--background)` in an import resolves to a value first.
 - **`oklch(0.205 0 0)` and `oklch(1 0 0 / 10%)` pass,** so shadcn's themes fit unchanged [unproven until T1 has the parser].
 - **A wide keyword** in a token silently removes the value [proven for `initial`], so it is refused too.
+- **The whole grammar is readable by `parseColor`** after T2, which is why `color()` stops at three spaces: a colour the banner cannot judge goes neutral, see below.
+
+**`themeCss` trusts nothing it reads.** Stored `id`, `kind` and `document` values also reach the raw sheet, and a frozen revision predates any later tightening. So at emission it writes only ids matching the pattern, branches on `kind`,
+writes `document` values only when they match the exact reference form, and runs `parseColorValue` again. A value that fails is left out.
 
 Because a token holds no address, it cannot make a request conditional on a mode, and the selector contract's decision 6 keeps holding.
 
@@ -195,30 +222,47 @@ Because a token holds no address, it cannot make a request conditional on a mode
 `.dark` is dead on a published page, because the root layout writes `class="light"` [code]. The media query needs nothing: the same sheet showed both
 values with no script in Chromium, under `light`, `dark` and `no-preference`, and the last reads as light [proven].
 
-| `mode` | Sheet | `color-scheme` | Root layout |
-|---|---|---|---|
-| `light` | Light values | `light` | `class="light"`, as today |
-| `dark` | `dark ?? light` | `dark` | `class="dark"` |
-| `system` | Light, then dark in `@media (prefers-color-scheme:dark)` | `light dark` | `class="light"` |
+| `mode` | Sheet | `color-scheme` | Root layout | Node `prefers-color-scheme` rules |
+|---|---|---|---|---|
+| Absent | Light values | Not written | `class="light"`, as today | As stored, as today |
+| `light` | Light values | `light` | `class="light"` | Dark rules dropped, light rules unconditional |
+| `dark` | `dark ?? light` | `dark` | `class="dark"` | Dark rules unconditional, light rules dropped |
+| `system` | Light, then dark in `@media (prefers-color-scheme:dark)` | `light dark` | `class="light"` | As stored |
 
-A site with no tokens and no document block emits nothing, whatever its mode, so every existing page is unchanged.
+**Why absent exists.** Today a node rule under `@media (prefers-color-scheme: dark)` fires on a site with no theme [proven], #258 teaches the generator exactly that form, and the importer's dark rewrite lands on it. A default of `light` would delete those rules
+at T2, or at a site's first token. So nothing forces until a person picks. The price is a half dark page on a site that holds dark rules and has not chosen, which is what it has today: the panel warns on such a site, and the prompt learns the site's mode.
 
-**A forced mode decides node rules too.** A site set to `light` with a node rule under `@media (prefers-color-scheme: dark)`, on a dark system, shows
-the rule while the tokens stay light: a half dark page [proven]. So with `light` or `dark`, emission answers that one media feature as a constant.
-The evaluator exists: `surfaces.ts` already reads each media condition to a verdict for the canvas [code]. A constant yes removes the operand, a
-constant no drops the rule, and everything else is untouched. `system` emits the rule as stored. `applyResponsiveStyles` gets one option,
-`colorMode`, and its callers pass the site's `mode`.
+**A chosen mode always takes effect, tokens or not.** Absent mode with no tokens and no document emits nothing. `dark` with an empty theme still writes `class="dark"` and `color-scheme: dark`, so with no document background the page shows the editor's dark palette from the published base sheet,
+which is readable and not the site's own. The panel warns when `mode` is `system` or `dark` and the document block has no background.
 
-**`&:is(.dark *)` rules.** Forced `dark` writes the class, so a shadcn `dark:` rule works there, and the editor's `.dark` variable block in the published
-base sheet comes along, which is right for that site. In `system` no class is written, because the server cannot know, so these rules stay dead,
-and the importer's existing `use-system-dark` line stays true.
+**A forced mode decides node rules [proven that it must].** A site set to `light` with a node rule under `@media (prefers-color-scheme: dark)`, on a dark system, shows
+the rule while the tokens stay light: a half dark page. The existing evaluator does not answer this: `mediaVerdict` reads a frame and returns `environment` for every `prefers-color-scheme` form, `(prefers-color-scheme: dark) or (min-width: 600px)` is `unknown`, and `surfaceWrappers`
+keeps the condition on the preview [proven by the review]. So T2 adds **`withColorMode(prelude, mode)`**, pure, in `src/lib/rules/colorMode.ts`:
+
+- Per query in a comma list. A list with nothing left drops the rule.
+- `(prefers-color-scheme: x)` matching the mode is removed from its query; not matching drops that query. `not` inverts the answer.
+- An `or` holding the feature is left as stored and reported as a warning, because it cannot be answered by one operand.
+- It covers node rules and #261's `:root` rules. `applyResponsiveStyles` gets one option, `colorMode`, passed only when `mode` is `light` or `dark`.
+
+**`&:is(.dark *)` rules.** Forced `dark` writes the class, so such a rule works there, and the editor's `.dark` variable block in the published base sheet comes along, which is right for that site. In `system` no class is written, because the server cannot know, so these rules stay dead. So the
+importer stops writing this form: see "The React importer's theme lines".
 
 **No visitor switch.** It would need a stored choice, read before first paint by a script in the head, and every server render would disagree with
 it. It is left out, not parked: a site that wants one has `system`. A later behaviour action could add it, and nothing here blocks that.
 
-**The browser's own surfaces.** `generateViewport` in the `(site)` layout emits `color-scheme`, and `theme-color` when the document has a background,
-with a `media` pair in `system`. Both reach the real `<head>` for every user agent tested [proven]. The aim is that a dark page is not white before
-its first paint; that effect itself was not measured [unproven].
+**The browser's own surfaces.** With a chosen mode, `generateViewport` in the `(site)` layout emits `color-scheme`. It also emits `theme-color` when the document has a background, with a `media` pair in `system`. The document background is a reference and `theme-color` needs a literal, so `generateViewport`
+resolves it per mode and leaves out a value `parseColor` cannot read. Both reach the real `<head>` for every user agent tested [proven]. The aim is that a dark page is not white before its first paint; neither this contract's probes nor the review's could measure that [unproven].
+
+## One home per property: the theme and a page's `:root` rule
+
+#261 lets the page root hold a rule on `:root`, allowing `overflowX`, `scrollBehavior`, `colorScheme`, `color`, `backgroundColor`, `fontFamily` and more. The theme writes some of those too, so one has to win.
+
+**A page's `:root` rule beats the theme, for every property both can set.** The same reasoning as a page head item replacing a site one: the theme is the site's default, and a page saying something more specific meant it.
+
+- **Published.** The theme sheet stands in the layout, before the page's `data-fc-responsive` sheet, at equal specificity, so the later one wins with no extra work. With both in that order, `color-scheme`, and through #261's constant `body{color:inherit}` the `body` colour and font, came from the page rule [proven by the review]. T2 keeps that order under test.
+- **`color-scheme` included.** A page rule beats even a forced `dark` for this one property. No edit to #261, which is on hold, and the panel warns when a page's `colorScheme` disagrees with the site's mode. Tokens do not follow it: their dark values answer the system, and a page cannot redefine one.
+- **Scrolling and overflow live only on the `:root` rule.** They were in this contract's `document` block to close the BusBasis need "styles on html". #261 reports `html` matching on 479 of 480 properties with the frozen rules as `:root` rules, so they need no second home.
+- **On a surface.** #261 lands inherited values on the page root of each copy, inside the frame wrapper, so the root's values win there too and canvas and published agree [code].
 
 ## Where tokens reach
 
@@ -229,30 +273,49 @@ its first paint; that effect itself was not measured [unproven].
 ```css
 :root{--fc-t-ab12cd34:#112233;--fc-t-cd34ef56:Fraunces,Georgia,'Times New Roman',serif;color-scheme:light dark}
 @media (prefers-color-scheme:dark){:root{--fc-t-ab12cd34:#eeddcc}}
-html{overflow-x:hidden}
-@media (prefers-reduced-motion:no-preference){html{scroll-behavior:smooth}}
 body{background-color:var(--fc-t-11aa22bb);color:var(--fc-t-33cc44dd);font-family:var(--fc-t-cd34ef56)}
 ```
 
-It renders as `<style data-fc-theme="">` in the `(site)` layout, right after `data-fc-site-base`, not in `renderPublishedPage`, because the default
-404 has no page tree and a consent banner sits before it [code]. Both can hold a raw reference: `siteLookFromPages` hands `var(--fc-t-...)` straight
-through to inline styles [proven], and with the sheet on `:root` those inline styles resolve. A sheet in a body `<style>` applied to `html` and `body`
+It renders as `<style data-fc-theme-sheet="">` in the `(site)` layout, right after `data-fc-site-base`, not in `renderPublishedPage`, because the default
+404 has no page tree and a consent banner sits before it [code]. A sheet in a body `<style>` applied to `html` and `body`
 in the real Next build, under both modes [proven]. The layout's site comes from the same cached resolution its `generateMetadata` already awaits, so it adds no new failure; if resolving fails, no sheet is written and it logs, as `not-found.tsx` does.
 
 - **`@font-face`.** `collectPageFonts` finds nothing in a reference [proven], so a font token would never load. The theme sheet therefore also holds the
   faces of every font token. A declared face costs nothing until text needs it [code, the registry's own note]. This also covers the default 404, which
   no scan reaches. `collectPageFonts` gets the theme as an optional argument, only so a referenced heading family can still be preloaded.
-- **Size.** At most about 16 kilobytes, at the 200 token cap with both values at their longest, on every page. All tokens are emitted rather than those a tree
-  uses, because a value bound from the content system can hold a reference no walk sees.
+- **Size.** A typical site of 20 tokens adds about 2 kilobytes. The worst case is large, on every page before compression: 32.5 kilobytes at 200 colours with two 64 character values, 18.4 kilobytes of faces if every library family is a token, and up to 81 kilobytes
+  more for 500 tombstones at the same length, so about 132 kilobytes [the first two proven with the real `fontFaceCss`]. All tokens are emitted rather than those a tree uses, because a value bound from a content collection can hold a reference no walk sees. The caps exist for this.
 - **Document styles.** Unlayered, so they beat `@layer base` in the published base. With tokens alone a dark site keeps the editor's white body and dark
-  text; with the `body` rule both change, and an `input` follows [proven against the real `published-base.css`]. So the panel warns when `mode` is not
-  `light` and the document block has no background.
-- **Smooth scrolling.** Wrapped in a reduced motion query, unlike the original BusBasis rule, because a visitor who asked for less motion should get it.
-  With `siteSettings.smoothScroll` on, Lenis owns scrolling and the line is left out.
+  text; with the `body` rule both change, and an `input` follows [proven against the real `published-base.css`].
+
+### The consent banner and the default 404
+
+These read `siteLookFromPages`, which hands a raw reference through to inline styles [proven], so the sheet on `:root` does reach them. Whether the result is readable is another matter, and it is decided here, in T2.
+
+#261 fails closed, as decided: `legibleLook` gives the neutral pair to any pair it cannot show to read, judged apart for text and button, and a `var()` cannot be read. Alone, that means every site on tokens gets a neutral banner. That is readable, and it loses the site's look. So T2 feeds it real colours:
+
+1. **`look` reads `theme.document` first,** then the home page as today. The background lives in the document block, which `siteLookFromPages` never reads, so without this a dark text token stays on the default white ground.
+2. **`legibleLook(look, theme)` resolves references through the theme, once per mode in force:** the light values with no choice or `light`, the dark ones with `dark`, both with `system`.
+3. **A pair stays only if it reads in every one of those modes.** It stays as references, so it flips with the page. Otherwise that pair becomes the neutral pair, **as literals on both sides.** That is why it cannot flip: nothing in it refers to a token.
+4. **The font** resolves the same way before `isPlatformFontStack` reads it.
+5. **`parseColor` learns the rest of the grammar:** `lab`, `lch`, `oklab`, `hwb`, `color()` and `none`. Today those go neutral [proven with #261's real function]. Missing, broken, `transparent` and see-through colours stay neutral, by #261's own rules.
+6. **`DefaultNotFound` calls `legibleLook` too.** It takes the same look and has no guard at all.
+
+**How a stock shadcn dark theme stays readable** [each row from #261's real `legibleLook` on shadcn's own values, `banner-look.mts`]:
+
+| Site, `system` mode | Light | Dark | Banner |
+|---|---|---|---|
+| No document block: ink token on the default white ground | Text reads | Text fails, the ink flips to near white on white | Text pair goes neutral, `#111827` on `#ffffff`, in both modes. The button stays on its tokens, which read in both |
+| Document block set to shadcn's background and foreground | Reads | Reads | Text and button keep their references and flip with the page |
+| The same, with a literal `#ffffff` on the dark `--primary` | Reads | Button fails | Button pair goes neutral, text keeps its references |
+
+Without that guard the first row read 1.04 to 1 in dark [proven by the review]. So the banner is never unreadable. A site that wants its own look on the banner sets the document block, and the panel says so.
+
+The canvas never shows the banner. Render gate cases run at both system settings, in T2.
 
 ### Canvas and preview
 
-The canvas and preview render into the editor's own document, so a rule on `:root` would reach the editor. `themeCss(theme, { scope })` writes the same values
+The canvas and preview render into the editor's own document, so a rule on `:root` would reach the editor. `themeCss(theme, { scope: 'surface' })` writes the same values
 on an attribute instead:
 
 ```css
@@ -264,68 +327,81 @@ on an attribute instead:
 `GroundWrapper` writes `data-fc-theme="frame"` on a viewport frame and `data-fc-theme="floating"` on a floating element, because only a frame stands
 for a page, and a floating element must not gain a page background. `PreviewFrame` writes it on its root. In Chromium, on a page standing in for the editor,
 nothing outside the attribute saw a value, an editor button kept its look, two frames showed two modes side by side, and the attribute's values
-reached a modal `dialog`, its `::backdrop` and a popover [proven]. The `html` line is never emitted here. Whether editor overlays drawn inside a frame
+reached a modal `dialog`, its `::backdrop` and a popover [proven]. With no chosen mode, `color-scheme` is left out here too. Whether editor overlays drawn inside a frame
 look right under a dark `color-scheme` was not checked [unproven], so T3 checks it in the mounted editor.
 
-**The mode on the canvas.** `editorUI.previewColorMode` is `light` or `dark`. Forced sites show their mode. A `system` site gets a Light and Dark switch on
-the top bar, and a change writes nothing to the project. It feeds `surfaceSheet`, so that a `prefers-color-scheme` condition, which the selector contract keeps
-dead until previewed, reads the frame's mode as the answer. The node-level preview of one rule stays as it is.
+**The mode on the canvas.** `editorUI.previewColorMode` is `light` or `dark`. A forced site shows its mode. A `system` site gets a Light and Dark switch on the top bar, and a change writes nothing to the project. A site with no choice shows light, and its dark rules stay dead until previewed, as the selector contract says.
 
-`PageFontFaces` adds the theme's families, for the same reason as the published sheet. Editor surfaces are the same path for every reader, so the panel's
-swatches read the token, and a frame in dark mode needs no second tree.
+`surfaceWrappers` runs `withColorMode` with the frame's mode in the last two cases that have one, so a surface answers `prefers-color-scheme` from the site and never from the machine. On a forced site previewed on a dark machine the rule stays out, which is what T3's forward path tests. With no chosen mode the preview keeps the condition for the real system, as published does.
+
+**A forced `dark` frame matches the published page.** `class="dark"` on `html` changes what a published page reads: `--border` is `oklch(100% 0 0/.1)` published and `oklch(92% .004 286.32)` on the canvas, and `--background` differs the same way [proven by the review]. And `constantConditions` writes `&:is(.dark *)` dead. So on a forced `dark` site the frame carries `class="dark"`, and `surfaces.ts` answers that exact selector from it. On a `system` site previewing dark it does not, because the published page writes no class there, and the frame must show what a visitor gets.
+
+`PageFontFaces` adds the theme's families, for the same reason as the published sheet.
 
 ### Rules and definitions
 
 Both hold references as plain strings, so they need nothing [proven]. A definition is site scoped, so its references resolve on any page of that site, and an
 override can hold one. Component states compile at expansion and keep the string. A `@keyframes` block can hold one.
 
-Export writes `themeCss` to a `theme.css` beside the component, so that an exported reference still resolves. The export slices of the React contract take that one line.
+### Export
+
+A site's reference means nothing off the platform, so export has its own form, and the React contract's export slices take it. `themeCss(theme, { scope: 'export' })` writes named variables from a slug of each token's name (`--accent-blue`, unique, `--token-<id>` for a name with no usable letters), with the same light and dark rules on `:root`.
+
+- It leaves out `html`, `body` and `@font-face`, which would restyle whoever installs the export, and whose `/fonts/...` paths exist only on the platform. A font token exports its stack, with a report line saying the file is theirs to host.
+- References in the exported styles are rewritten to those names.
+
+That keeps the importer contract's property 2 ("export a tree, import the result, and the browser render matches"): `--fc-t-<id>` never leaves, so a re-import never meets a name this contract refuses.
 
 ## Every reader that has to learn it
 
 | Reader | Today [proven unless marked] | Change | Slice |
 |---|---|---|---|
-| `normalizeSiteSettings` | Drops `theme` | Lists `theme` and `head` | T1 |
+| `normalizeSiteSettings`, `projectToPersisted` | Drops `theme`; normalizes before the save sees it [code] | Lists `theme` and `head`; reads the raw key | T1 |
 | `updateSiteSettings`, `saveProject` | Would erase, see the traps [code] | Keep the stored value | T1 |
+| `ProjectContent`, `versionContent`, `changedElsewhereMessage` | Pages and definitions only [code] | Theme and site head, named in the warning | T1 |
 | `(site)/layout.tsx`, `app/layout.tsx` | Constant base; `class="light"` [code] | The sheet, `generateViewport`, the `dark` class | T2 |
 | `collectPageFonts`, `publishedFontAssets`, `PageFontFaces` | No ids from a reference | Theme faces in the sheet; preload resolves through the theme | T2, T3 |
-| `applyResponsiveStyles`, `surfaceSheet` | Emit `prefers-color-scheme` as stored | The `colorMode` option; the canvas reads the frame's mode | T2, T3 |
-| `parseRule`, `styleValueProblem`, both renderers | Accept `--fc-t-*` as a style key | Refuse it | T2 |
-| `GroundWrapper`, `PreviewFrame`, `EditorUIStore` | Nothing | The attribute, `previewColorMode` | T3 |
-| `ColorInput`, `FontFamilySelect`, raw style field | `toPickerHex` reads a reference as no colour [code] | Show the token's chip; a deleted or missing state; pick a token | T4 |
-| `checkBeforePublish` | Components and legal only [code] | Missing tokens; refused head items | T4, H3 |
+| `applyResponsiveStyles`, `surfaceWrappers` | Emit `prefers-color-scheme` as stored | `withColorMode`, the `colorMode` option; a surface reads the frame's mode | T2, T3 |
+| `constantConditions` | `&:is(.dark *)` always dead on a surface [code] | Answers that exact selector on a forced `dark` frame | T3 |
+| `refusedBody`, `isRootStyleKey`, `styleValueProblem`, both renderers | Accept `--fc-t-*` as a style key, keyframes included | `isPlatformVariable` | T2 |
+| `siteLookFromPages`, `legibleLook`, `ConsentBanner`, `DefaultNotFound` | Read no document block; a reference goes neutral; the 404 has no guard | See "The consent banner and the default 404" | T2 |
+| `parseColor` (`layoutAudit.ts`), so `layoutAudit` too | After #261 reads names, `hsl`, `oklch`; `lab`, `lch`, `oklab`, `hwb`, `color()` read as nothing, so the visual review goes quiet on those pairs | Reads the whole grammar | T2 |
+| `GroundWrapper`, `PreviewFrame`, `EditorUIStore` | Nothing | The attribute, `previewColorMode`, the frame's class | T3 |
+| `ColorInput`, `FontFamilySelect`, raw style field | `toPickerHex` reads a reference as no colour [code] | Show the token's chip; deleted, missing and broken states; pick a token | T4 |
+| `checkBeforePublish` | Components and legal only [code] | Missing and broken tokens; refused head items | T4, H3 |
 | `styleValueProblem` | Refuses `var()` in a font, so a font token cannot be written | Accepts a reference to a live font token, and only that | T5 |
 | `parseColors`, `essentials.ts` and the tells | Read no colour from a reference, so a contrast check goes blind | `resolveTokenRefs(value, theme, mode)` first, once per mode with dark values | T5 |
-| `siteContextText` | No theme | Live tokens as delimited data | T5 |
-| `reactImport/tailwind/tokens.ts` | Not built | Aliases, see below | T6 |
-| `siteLookFromPages`, `ConsentBanner`, `DefaultNotFound` | Pass a reference through to inline styles | None: the sheet reaches them. The legal page look does the same [code] | none |
-| `parseInputValue`, `hydrateBindings` | Carry the string | None | none |
+| `siteContextText`, `promptSections/rules.ts` | No theme; teaches the dark media form unconditionally | Live tokens and the mode as delimited data; the dark line follows the mode | T5 |
+| `reactImport/tailwind/tokens.ts`, its `dark:` rewrite | Not built | Aliases, the media form, see below | T6 |
+| `reactExport` | Not built | `scope: 'export'`, see "Export" | Export slices |
 | `PageMetadataModel`, `PageSeoMetadata`, `snapshotToComponentNode` | No `head` or `ogType` [code] | `head` as a frozen list, read through `parseHeadItem`; `ogType` | H1 |
 | `pageMetadata` | Writes `og:type: website` [code] | Reads `ogType` | H1 |
 | `renderSitePage`, `not-found.tsx` | Business JSON-LD only [code] | Items, above any `Suspense` | H2 |
+| `parseInputValue`, `hydrateBindings` | Carry the string | None | none |
 
 ## What the AI may read and write
 
 **Reads.** `SiteContext` gains `theme`: the live tokens with id, name, kind and values, the mode and the document block, as delimited JSON with `<` escaped
-like every other owner text. Tombstones are not sent. Head items are not sent.
+like every other owner text. Tombstones and broken tokens are not sent. Head items are not sent.
 
 **Writes, on a generated page.**
 
 - **Uses a token by reference,** and the prompt prefers one to a literal for anything in the palette. The validator accepts a reference to a live token of
   the right kind and refuses any other, with a repair message listing the real ones.
+- **The mode shapes the dark line.** `promptSections/rules.ts` teaches the dark media form today. With `system` or no choice it stays. With `light` or `dark` the prompt says the site is fixed and does not teach it, because the rule would be dropped or always on.
 - **May add tokens,** up to 12 in a generation, through a new optional `theme.tokens` field in its output, with `name`, `kind` and values through
-  `parseColorValue`. It writes a local name, and the validator mints the id and rewrites the references, so a model never chooses an id. A name that already
-  exists with the same values reuses that token; with different ones it is refused, because adding "Accent 2" silently is how palettes rot.
+  `parseColorValue`. It writes a local name, `new-1`, `new-2`, and refers to it as `var(--fc-t-new-1)`. The hyphen means it can never pass as an id, and an unresolved one is refused. The validator mints the id and rewrites the references, so a model never chooses an id.
+  A name that already exists with the same values reuses that token; with different ones it is refused, because adding "Accent 2" silently is how palettes rot.
 - **Tokens and page land in one undo step.** Rejecting the generation adds nothing.
-- **Never** edits a token, deletes one, changes `mode` or the document block, or sets `--fc-t-*`. An existing value applies to every page, and a brief is about one.
+- **Never** edits a token, deletes one, changes `mode` or the document block, or sets `--fc-`. An existing value applies to every page, and a brief is about one.
 
 **Head items are out of its reach, read and write.** A verification code cannot be guessed, and JSON-LD states facts to search engines: a generated rating or
 price is a false claim made in the owner's name. The score records those rows as refused on purpose, the way it does event handlers.
 
 ## The React importer's theme lines
 
-These are the importer contract's "Tokens" section and finding R1: a foreign theme must not silently take the editor's colours. That contract says tokens land
-on the import's root "until theme tokens exist", and that then "these move there, and nothing else changes". Taking that literally breaks R1, and here is why.
+These are the importer contract's "Tokens" section and finding R1 of its review: a foreign theme must not silently take the editor's colours. That contract said tokens land
+on the import's root "until theme tokens exist", then "these move there, and nothing else changes". Taken literally that breaks R1, and this pull request amends it.
 
 `--border` and `--ring` reach an element through the published base sheet's `* { border-color: var(--border) }`, not through any stored value. Move `--border`
 off the root into `--fc-t-<id>` and the base rule reads the editor's `--border` again, which is R1 back [code]. So the import keeps its names, and **each
@@ -343,14 +419,17 @@ custom property on the import's root becomes an alias:**
 | Non-colour values (`--radius`) and values outside the grammar (`color-mix`, `var`) | Stay on the root as they are today, with no line, because they lose nothing |
 | A `--font-*` naming a `FONT_LIBRARY` family | A font token, with the alias. Any other family keeps its existing line |
 | `var(--primary)` in compiled rules and styles | Unchanged. This is what keeps "nothing else changes" true for everything below the root |
-| `dark:` utilities on nodes | Unchanged, and `use-system-dark` stays |
+| `dark:` utilities on nodes | **Always rewritten to `@media (prefers-color-scheme: dark)`.** `use-system-dark` goes away |
 
-**Match or create, by name, ignoring case.** Same name and same values: reuse. Same name and different values: create `primary 2` and write an `adapted` line, because
-an import must never change what a site's other pages show. At the token cap the value stays literal on the root, with an `adapted` line.
+**Why the rewrite is unconditional.** A `system` site that imports shadcn flips its tokens while `&:is(.dark *)` utilities stay dead, which is the half dark page decision 4 exists to prevent. The media form works in every mode: live in `system`, as stored with no choice, a constant yes in `dark`, a constant no in `light`.
 
+**Match or create, by the name's slug, ignoring case, against the whole family.** The family of `primary` is `primary` and every `primary N`. Any member with the same values is reused, so a re-import adds nothing. If none matches, create the next `primary N` and write an `adapted` line, because
+an import must never change what a site's other pages show. Comparing slugs is what makes an exported `--accent-blue` find "Accent Blue" again. A token the owner renamed out of its family creates a new one, and the report says so. At the token cap the value stays literal on the root, with an `adapted` line.
+
+- **An imported `--fc-t-<id>`,** from a hand-edited file: the same id on the same site reuses that token, and anything else is a new token by the rule above.
 - `readBundle` proposes the tokens as data. They pass `normalizeTheme` like any other, and the placing action adds them in the same undo step as the definition.
-- Under a site's `light` mode an imported dark value is stored and not shown, which matches today, where it never fires.
-- Under `dark` or `system` the token's dark value appears, which is a change: imported components finally follow the site.
+- **With no chosen mode,** an imported dark value is stored and not shown, while a rewritten `dark:` rule fires, as the media form does on any site today. That is a half dark look on a dark system until someone chooses, so the placing report says so and offers System.
+- **Under `light`** both stay out. **Under `dark` or `system`** the token's dark value appears: imported components finally follow the site.
 - **What the panel sees.** A value `var(--primary)` below the root stays a raw value, not a chip. Accepted: the root's alias is what is counted and replaced.
 
 Every fixture still runs under the importer's foreign theme, and that is the measure of this section.
@@ -367,9 +446,12 @@ type HeadItem =
   | { kind: 'jsonld'; data: Record<string, unknown> };
 ```
 
-Two homes: `page.metadata.head`, and `siteSettings.head` for what every page carries. A page item replaces a site item with the same key: `name`, `property`, or
-`rel` with `hreflang`. JSON-LD has no key, so both emit. Caps: 30 items per page, 20 on a site, 3 JSON-LD per page, content 500 characters, href 2,048, JSON-LD
-16 kilobytes after serialising and 12 levels deep.
+Two homes: `page.metadata.head`, and `siteSettings.head` for what every page carries. Caps: 30 items per page, 20 on a site, content 500 characters, href 2,048, JSON-LD
+16 kilobytes after serialising and 12 levels deep, and 3 JSON-LD items on a rendered page, counting site and page together, with the page's first.
+
+**The merge.** A page item replaces site items with the same key, for names that may appear once. The key is `name`, `property`, or `rel` with `hreflang` and `type`. Repeatable keys are a stated list, where both emit and an exact duplicate drops: `article:tag`, `article:author`, `book:tag`, `book:author`, `og:locale:alternate`, `og:video`, `og:audio`, and `rel` `me`. JSON-LD has no key, so both emit.
+
+The normalizer keeps anything of the stored shape, valid or not, and only `parseHeadItem` at emission refuses. So an item a later build refuses shows as refused in the panel instead of having gone.
 
 The refused tags stay refused in nodes: `meta` and `link` remain in `BLOCKED_TAGS`. These items are a separate door with separate rules.
 
@@ -389,7 +471,7 @@ browser does, so they do not touch the claim about browsers.
 |---|---|
 | `http-equiv`, any value | Written from a server component, `refresh` navigated the page after under 800 milliseconds [proven]. It also carries `content-security-policy`, which would change a page's policy, and `default-style`. There is no field for it |
 | `name="referrer"` | Changed what the page sent to other hosts [proven], and it is a privacy setting, not a label |
-| `name="color-scheme"`, `theme-color` | Theme owns both. A hoisted one sat beside the viewport's and the page had two [proven] |
+| `name="color-scheme"`, `theme-color` | `generateViewport` writes both. A hoisted one sat beside the viewport's and the page had two [proven] |
 | `viewport` | The route owns it, and it changes layout |
 | `charset`, `itemprop` | `charset` is not owner data. `itemprop` is not hoisted, so it stays in the body [proven] |
 | `description`, `keywords`, `robots`, `og:title`, `og:description`, `og:image`, `og:url`, `og:site_name`, `og:locale`, `og:type`, `twitter:card`, `twitter:title`, `twitter:description`, `twitter:image` | **Owned.** `pageMetadata` writes them, so a second copy would disagree with the SEO panel. The refusal names the field to use |
@@ -417,19 +499,18 @@ Measured against another host with nothing else on the page, in Chromium, Firefo
 | `dns-prefetch` | 0, but a name lookup cannot be seen by this probe, and Chromium connected for neither this nor `preconnect` even on a local network address, so it may be off under automation | Refused, unproven as harmless |
 | Any other value, `mask-icon`, `dictionary` and `expect` among them | Not listed | Refused by default |
 
-- **`href`** is `https:` or a site path, judged as `isSafeAddress` reads it. Another host is allowed, because these rels never request it.
+- **`href`** passes `isHeadHref`, a small new check: absolute `https:` with a host, or a path starting with one `/`. Nothing else, so no `http`, `mailto`, `tel`, `sms`, `data:` or `//host`. It is not `isSafeAddress`, which is wider and private to the render gate. Another host is allowed, because these rels never request it.
 - **`alternate`** needs exactly one of `hreflang`, a language tag or `x-default`, or `type`, from `application/rss+xml`, `application/atom+xml`, `application/feed+json`. `text/css` is refused.
 - **`title`** is plain text, `content` the same. React escapes both, so markup in them is only text.
 
 **`jsonld`, data, never text.** The stored form is a parsed object. Emission is `jsonLdScriptText`, the existing function, so `<` becomes `<`, with the type a constant
 `application/ld+json`. The owner's text is never written into the element.
 
-Unescaped, `</script><script>...` in a value ran [proven]. Escaped, the same object ran nothing, under `<!--<script>` too, `JSON.parse` of the element gave back every
+Unescaped, `</script><script>...` in a value ran [proven]. Escaped, the same object ran nothing, under `<!--<script>`, `</SCRIPT\t>` and a key holding `</script>` too, in Chromium and WebKit, `JSON.parse` of the element gave back every
 string including U+2028, and hydration left it in place, with no console error [proven]. The panel parses as the person types and stores nothing that does not parse. It must be
-an object with a string `@context` on `schema.org`, and `@type`. A top-level array is split into items.
+an object with a string `@context` on `schema.org`, and either `@type` or an `@graph` array. A top-level array is split into items.
 
-JSON-LD stays in the body, as the business JSON-LD does today, because only `meta` and `link` are hoisted [proven]. That search engines read it there is Google's documented
-behaviour, and not something run here [unproven]. On the home page it emits beside the business block, and both are valid. Values do not bind: a product page's own
+JSON-LD stays in the body, as the business JSON-LD does today, because only `meta` and `link` are hoisted [proven]. That search engines read it there is taken from Google's documentation, recalled and not checked here, and not run [unproven]. On the home page it emits beside the business block, and both are valid. Values do not bind: a product page's own
 structured data belongs to the shop stream, generated from real product data.
 
 ### Where they render
@@ -443,8 +524,7 @@ field also reaches the head, but it has no `property` form, so one path serves b
 
 The designed 404 gets its items, through `renderSitePage`. The default 404 gets the site's items. A refused item renders nothing, logs, and appears in `checkBeforePublish`.
 
-`parseHeadItem` is the single entry, pure, in `src/lib/site/headItems.ts`, run at emission because a page is opaque JSON to the save route, and again in the panel. The site settings
-copy also passes through `normalizeSiteSettings`.
+`parseHeadItem` is the single entry, pure, in `src/lib/site/headItems.ts`, run at emission because a page is opaque JSON to the save route, and again in the panel.
 
 ## Consent and Content Security Policy
 
@@ -454,6 +534,8 @@ copy also passes through `normalizeSiteSettings`.
 - Fonts come only from the registry, which is self-hosted, so a font token cannot reintroduce the Google Fonts problem.
 - A token holds no address.
 - Nothing stores anything. The mode comes from the system, and the absence of a switch means no stored choice.
+
+What this contract does change on the banner is its look, and that stays readable by construction, see "The consent banner and the default 404".
 
 **The report-only policy and any later enforced one.**
 
@@ -471,9 +553,8 @@ of those and changes nothing about that answer. A `<meta>` policy cannot arrive 
 
 Every change lands with the slice that earns it, and each slice ratchets the baseline.
 
-**Rows that move.** `pageLevelRows` holds 14 rows. `:root` closes in Format, Published and Canvas with T3, in AI with T5 and in Panel with T4, with a note that it is theme and document
-styles, not any declaration on `:root`. The other 13 stay red under `page-level-css`: `@page`, `:first`, `:left`, `:right`, `@view-transition`, `@layer` and the view transition
-pseudo-elements. The selector contract cut them too, none is in BusBasis, and owning a page-wide stylesheet is a different question from tokens. T2 edits the gap's text to say so.
+**Rows that move.** This contract closes no existing row. #261 closes `css-selector::root` in Format, Published and Canvas and leaves its AI cell red. The other 13 of `pageLevelRows` stay red under `page-level-css`: `@page`, `:first`, `:left`, `:right`, `@view-transition`, `@layer` and the view transition
+pseudo-elements. The selector contract cut them too, none is in BusBasis, and owning a page-wide stylesheet is a different question from tokens.
 
 **Exclusions.** `head` and `title` stay excluded, as the route's. `meta` and `link` stay excluded as node tags, with their reason changed to point at head items.
 
@@ -481,24 +562,22 @@ pseudo-elements. The selector contract cut them too, none is in BusBasis, and ow
 
 | Rows | Count | Closes with |
 |---|---|---|
-| Colour token, font token, dark value, each of the three modes, document background, colour and font, `scrollBehavior`, `overflowX` | 11 | T2, T3, T4 |
+| Colour token, font token, dark value, each of the three chosen modes, document background, colour and font | 9 | T2, T3, T4 |
 | `meta` names | 17 | H2, H3 |
 | `property` entries | 8 | H2, H3 |
 | `link` rels | 7 | H2, H3 |
 | JSON-LD | 1 | H2, H3 |
 
-That is 44 rows, of which the 33 head rows are refused on purpose in the AI column, with a named reason. So AI tops out 1.8 percent lower on the widened list, and the arithmetic in the fleet
-plan should count it. Each head row's Published cell tests a raw HTML position, not merely that the tag exists.
+That is 42 rows, of which the 33 head rows are refused on purpose in the AI column, with a named reason. So AI tops out about 1.8 percent lower on the widened list, and the arithmetic in the fleet
+plan should count it. Each head row's Published cell tests a raw HTML position, not merely that the tag exists. The counts are this contract's arithmetic, not a score run.
 
-**BusBasis.** The need `styles on html`, in `test/score/busbasis/pages.ts`, stands on all 14 pages. Its note says the computed styles of `html` are not compared. T2 adds that
-comparison for `overflow-x` and `scroll-behavior` and the lift writes `document`, and only then may the need go. That file is held-out, so **the operator makes that one edit,** after
-reading the comparison. Style differences on `html` beyond those two would show as they appear.
+**BusBasis.** The need `styles on html`, in `test/score/busbasis/pages.ts`, is #261's. Per that pull request, closing it takes a new lift, `rebuild.ts`, an `html` comparison and `lang` from the page, and this contract adds nothing to that work. Lifted pages use `:root` rules and never the `document` block.
 
 **Corpus.** New fixtures: `theme-tokens` (a page by reference next to its literal copy), `theme-dark` (the same under each mode and each system setting, where a screenshot is the
-check), and `theme-font` (a font token that must load). The harness's `publishedDocument` gains the sheet in the position the layout writes it.
+check), `theme-font` (a font token that must load), and `theme-dark-rule` (a node with a dark media rule, which T2's before and after test needs because no fixture holds one). The harness's `publishedDocument` gains the sheet in the position the layout writes it.
 
 **Render gate.** `pnpm test:render-gate` gains every refused kind, as stored data, through the real emission, in Chromium and WebKit: each `http-equiv`, every `stylesheet` spelling,
-hostile JSON-LD, and hostile token values. A detector canary runs with them, as it does today.
+hostile JSON-LD, hostile token values with the unclosed bracket, `--fc-` in a keyframe block, and the banner's readability at both system settings. A detector canary runs with them, as it does today.
 
 ## Slices
 
@@ -508,65 +587,66 @@ persistence, **E** re-entry after completion or failure. Types, lint, unit tests
 
 | Slice | Name | Files | `shared_state` | Depends on |
 |---|---|---|---|---|
-| T1 | `theme-model` | `src/lib/site/theme.ts`, `siteSettings.ts`, `ProjectModel.ts`, `repository.ts` | | |
-| T2 | `theme-published` | `(site)/layout.tsx`, `app/layout.tsx`, `applyResponsiveStyles.ts`, `rules.ts`, `validate.ts`, both renderers, score | `renderer` | T1 |
+| T1 | `theme-model` | `src/lib/site/theme.ts`, `siteSettings.ts`, `ProjectModel.ts`, `repository.ts`, `snapshot.ts`, `src/stores/openProject.ts`, `PublishButton.tsx` | | #261 |
+| T2 | `theme-published` | `(site)/layout.tsx`, `app/layout.tsx`, `src/lib/rules/colorMode.ts`, `applyResponsiveStyles.ts`, `responsiveCss.ts`, `rootProperties.ts`, `rules.ts`, `validate.ts`, both renderers, `registry.ts`, `publishedFonts.tsx`, `notFoundDefault.ts`, `layoutAudit.ts`, `ConsentBanner.tsx`, `DefaultNotFound.tsx`, score | `renderer` | T1 |
 | T3 | `theme-canvas` | `GroundWrapper.tsx`, `PreviewFrame.tsx`, `surfaceSheet.ts`, `surfaces.ts`, `PageFontFaces.tsx`, `EditorUIStore.ts` | `renderer` | T2 |
 | T4 | `theme-panel` | A Theme panel, `ColorInput.tsx`, `FontFamilySelect.tsx`, `publishCheck.ts` | | T3, #226 |
-| T5 | `theme-ai` | `validate.ts`, `tells.ts`, `essentials.ts`, `siteContext.ts`, `prompt.ts`, `apply.ts`, `schema.ts` | | T4 |
-| T6 | `theme-import` | `reactImport/tailwind/tokens.ts`, `reactImport/bundle.ts` | | T1, import slice 3 |
+| T5 | `theme-ai` | `validate.ts`, `tells.ts`, `essentials.ts`, `siteContext.ts`, `promptSections/rules.ts`, `prompt.ts`, `apply.ts`, `schema.ts` | | T4 |
+| T6 | `theme-import` | `reactImport/tailwind/tokens.ts`, `reactImport/bundle.ts` | | T2, T3, #226, import slice 3 |
 | H1 | `head-model` | `src/lib/site/headItems.ts`, `PageModel.ts`, `siteSettings.ts`, `publishedHead.ts` | | T1, for the kept keys |
 | H2 | `head-published` | `renderSitePage.tsx`, `(site)/not-found.tsx`, `test/renderGate`, score | `renderer` | H1 |
 | H3 | `head-panel` | Page settings, `SiteSettingsDialog.tsx`, `publishCheck.ts` | | H2, #226 |
 
-**T1, the model.** `SiteTheme`, `normalizeTheme`, `parseColorValue`, `themeCss`, `resolveTokenRefs`, the reference scan, `updateTheme`, and the two keeps.
+T6 cannot come earlier: before T2 no sheet exists, so every alias dangles, which is R1 in a worse form, and before #226 a saved theme reaches visitors at a cache miss.
 
-- F: add, rename, set dark, delete, and the emitted text, as unit tests. Every grammar row, both ways, including each hostile value of the probe.
-- B: a rename changes one field and no page byte. Undo restores a tombstone with its values. Going `system`, `light`, `system` keeps every `dark` value, and the sheet is what `mode` says.
-- R: a blob through save, load and Yjs is identical. A malformed token is dropped alone. A bare theme key from an older build is read without throwing.
-- E: delete sweeps only what no value references. A dialog opened before an edit and saved after it keeps the edit. A save lacking the key keeps the column, and an explicit empty theme clears it.
+**T1, the model.** `SiteTheme`, `normalizeTheme`, `parseColorValue`, `themeCss` with its three scopes, `resolveTokenRefs`, the reference scan, `updateTheme`, the two keeps, and the version comparison.
 
-**T2, the published page.** The sheet, viewport, class, font faces, forced mode evaluation, reserved prefix, new rows and the `html` comparison.
+- F: add, rename, set dark, delete, and the emitted text, as unit tests. Every grammar row, both ways, including each hostile value of both probes, the unclosed and stray brackets, and `rgba(255, 0, 0, 0.5)`. Forged `id`, `kind` and `document` values never reach the sheet.
+- B: a rename changes one field and no page byte. Undo restores a tombstone with its values. Going `system`, `light`, `system` keeps every `dark` value, and the sheet is what `mode` says. Clearing `mode` returns to not chosen.
+- R: a blob through save and load is identical. An unknown family emits the system stack. A value that stops parsing keeps its id and text, is marked broken, is not emitted, and survives a save. A bare theme key from an older build is read without throwing.
+- E: Clean up removes only what the scan finds unused, and a token used only in `theme.document` stays. The 500th tombstone refuses a further delete, with the pointer. A dialog opened before an edit and saved after it keeps the edit. A body lacking the key keeps the column through `projectToPersisted` and `saveProject`, and an explicit empty theme clears it. A second tab, reloading after a token edit with unsaved changes of its own, gets the warning naming the theme.
 
-- F: in a real build and Chromium, computed values per mode and system setting, `html` and `body` included, the consent banner and default 404 reading a reference, and a font loading.
-- B: a forced `light` site drops a dark node rule, and `system` keeps it. Changing `mode` changes the sheet on the next read, with no stale cached sheet.
-- R: after a cache miss, a site with no theme key emits nothing, byte for byte, by a before and after test on the corpus. An unparseable stored theme emits nothing and logs.
-- E: a site that empties its theme returns to no sheet, and `generateViewport` to nothing. Rendering an error page keeps the sheet.
+**T2, the published page.** The sheet, viewport, class, font faces, `withColorMode`, `isPlatformVariable`, `look` and `legibleLook`, `parseColor`, new rows.
+
+- F: in a real build and Chromium, computed values per mode and system setting, `html` and `body` included, the default 404 reading a reference, a font loading, a page `:root` rule beating the theme on `color-scheme`, `color`, `backgroundColor` and `fontFamily`, and the banner table above at both system settings.
+- B: a forced `light` site drops a dark node rule and a `:root` rule under the same wrapper, and `system` and no choice keep them. Every `withColorMode` case: lists, `not`, `or`. Changing `mode` changes the sheet on the next read, with no stale cached sheet. A site's first token on a site with no choice changes no rule.
+- R: after a cache miss, a site with no theme key emits nothing, byte for byte, by a before and after test on the corpus, `theme-dark-rule` included. An unparseable stored theme emits nothing and logs.
+- E: a site that empties its theme and clears its mode returns to no sheet, and `generateViewport` to nothing. `dark` with no tokens gives the class and `color-scheme`. Rendering an error page keeps the sheet. `--fc-` is refused as a style key, in a rule, in a keyframe block and on `:root`, by one function.
 
 **T3, the canvas.** The scoped sheet, wrappers, mode switch, and the surface's reading of the frame's mode, in the mounted editor.
 
-- F: two frames, or a switch, show both modes with nothing outside changing, including editor overlays under `color-scheme: dark` and a font token loading.
+- F: two frames, or a switch, show both modes with nothing outside changing, including editor overlays under `color-scheme: dark` and a font token loading. On a forced site, the preview on a dark system shows no dark rule. A forced `dark` frame matches the published page on `--border`, `--background` and an `&:is(.dark *)` rule.
 - B: a token edit repaints each frame with no reload. Switching mode changes no project byte, so nothing shows as unsaved.
-- R: reload returns the project's state. A peer's edit arrives through Yjs and repaints. `previewColorMode` is not persisted.
+- R: reload returns the project's state, and `previewColorMode` is not persisted. A second tab that reloads shows the first tab's saved theme.
 - E: leaving preview and returning keeps the choice for the session. A theme emptied live removes the sheet, and floating elements never take a page background.
 
-**T4, the panel.** A Theme panel: list, name, values, mode, document block. Pick a token in `ColorInput` and `FontFamilySelect`, "Used in N places", Replace, Detach, the deleted and missing
-states, the warning when a dark mode has no background, and the publish warning. Waits for #226. A colour gesture is one undo step. Proven in the browser, per the fleet's rule.
+**T4, the panel.** A Theme panel: list, name, values, mode including not chosen, document block. Pick a token in `ColorInput` and `FontFamilySelect`, "Used in N places", Replace, Detach, Clean up unused, the deleted, missing and broken states, the warnings (dark rules with no choice, a dark mode with no background, a page `colorScheme` that disagrees), and the publish warning. Waits for #226. A colour gesture is one undo step. Proven in the browser, per the fleet's rule.
 
 - F: create, use, rename, edit, publish, and the live page shows it, only after publishing.
 - B: a token edit after a reference repaints, with the node unchanged. Undo through each. Replace followed by undo restores each reference.
-- R: reload mid-edit keeps the last commit, and an unsaved edit warns the way a page edit does. A published copy keeps the old theme while the draft moves on.
-- E: delete, then re-create the name: a new id, and the tombstone untouched. Delete the last token. Publish, then republish, is the same sheet. A forged dangling reference shows Missing, and `checkBeforePublish` names it.
+- R: the app has no `beforeunload` warning and this adds none. Reload brings back the tab's working copy, and `changedElsewhere` names the theme if it moved meanwhile. A published copy keeps the old theme while the draft moves on.
+- E: delete, then re-create the name: a new id, and the tombstone untouched. Delete the last token. Publish, then republish, is the same sheet. A forged dangling reference shows Missing, and `checkBeforePublish` names it. Clean up says what it did not scan.
 
 **T5, the AI.** As specified above.
 
-- F: a generation on a site with tokens uses them; one on an empty site adds a few, in one undo step.
+- F: a generation on a site with tokens uses them; one on an empty site adds a few, in one undo step. The prompt's dark line follows the mode.
 - B: rejecting removes both. Regenerating under an edited brief starts from the current theme, not the rejected run's tokens.
 - R: a run collected after a lost stream, through the existing GET, applies its tokens with its page. Tokens changed meanwhile are read again at apply, so a name that now differs is refused rather than overwritten.
-- E: a repair round after a refused reference converges or fails loudly. A contrast tell fires on a token pair that fails, in both modes. Rerun after failure adds no duplicates.
+- E: a repair round after a refused reference converges or fails loudly. A contrast tell fires on a token pair that fails, in both modes. Rerun after failure adds no duplicates. A local `new-1` left unresolved is refused.
 
 **T6, the importer.** As specified above, ledger included.
 
-- F: a shadcn theme produces tokens and aliases, and every fixture stays at parity under both themes.
+- F: a shadcn theme produces tokens and aliases, every fixture stays at parity under both themes, and a `dark:` utility arrives as the media form.
 - B: changing the token file discards the proposal, keyed to its inputs like every conversion result. Same inputs keep it.
 - R: a bundle read later against a site whose tokens changed re-decides match or create at placing.
-- E: re-importing reuses tokens and adds none. A forged bundle with a hostile value is refused by `normalizeTheme`.
+- E: re-importing the same component reuses tokens and adds none, across the whole family. A renamed token makes a new one, with its line. An export re-imports to the same render, and a hand-written `--fc-t-<id>` follows the stated rule. A forged bundle with a hostile value is refused by `normalizeTheme`.
 
-**H1, the model.** `HeadItem`, `parseHeadItem`, both homes, the merge, `ogType`, `updateSiteHead`.
+**H1, the model.** `HeadItem`, `parseHeadItem`, `isHeadHref`, both homes, the merge, `ogType`, `updateSiteHead`.
 
-- F: every row of every list, both ways. Every refusal above, as a stored item.
-- B: a page item replacing a site item, then removed, falls back to the site's. Changing `kind` drops the fields that kind cannot hold.
-- R: a save and load round trip. An old page with no `head` reads as empty. A forged item drops alone and its neighbours stay.
-- E: over a cap, the later items drop, and the check says so. A cleared list stays cleared after a tab from before the deploy saves.
+- F: every row of every list, both ways. Every refusal above, as a stored item. `@graph` passes.
+- B: a page item replacing a site item, then removed, falls back to the site's. Repeatable keys both emit, and two feeds with different `type` both stay. Changing `kind` drops the fields that kind cannot hold.
+- R: a save and load round trip. An old page with no `head` reads as empty. A forged item stays stored and refused, and its neighbours render.
+- E: over a cap, the later items drop, and the check says so. The site copy stays cleared and kept through a tab from before the deploy. A page's own `head` does not: MST in such a tab drops the unknown field and the page snapshot is replaced whole. That is accepted, because it needs a tab open across H1's deploy and through to H3's, the first thing that can write one.
 
 **H2, the published page.** Emission, new rows, render gate entries.
 
@@ -587,7 +667,7 @@ states, the warning when a dark mode has no background, and the publish warning.
 - **Page-wide scripts,** by the behaviour contract, sandboxed.
 - **Spacing, radius and shadow tokens.** Colour and font are what a site changes as a whole. An import's `--radius` stays on its root. The shape takes a new `kind` without a migration.
 - **A visitor's light and dark switch,** see above.
-- **Per-page themes and theme variants.** One site, one theme.
+- **Per-page themes and theme variants.** One site, one theme. A page's `:root` rule is the per-page answer for the three document properties.
 - **Tokens shared between sites.** No clipboard path between projects was found [code]. Whichever change adds one meets the dangling reference check.
 - **A page-wide stylesheet, `@page`, `@layer` and view transitions,** which stay red.
 - **Head items that take bindings,** and product structured data, which the shop stream generates.
@@ -597,23 +677,54 @@ states, the warning when a dark mode has no background, and the publish warning.
 
 The fleet plan gives contracts to a fresh review agent, so these do not wait for Marlin.
 
-1. `siteSettings.theme`, not a new column, accepting last writer wins on the blob.
-2. No fallback in a reference, with tombstones, unlike Framer. This is the one to press on: the failure left is a publish warning, not a look that survives.
-3. Default `mode` is `light`, and emptiness emits nothing.
-4. A forced mode evaluates `prefers-color-scheme` in node rules.
-5. Forced `dark` writes `class="dark"`, which wakes the editor's `.dark` variables on that site.
+1. `siteSettings.theme`, not a new column, with last writer wins on the blob behind a conflict warning.
+2. No fallback in a reference, with tombstones, unlike Framer. Confirmed by the operator after review, with no automatic sweep, a cap, and broken values kept.
+3. `mode` is optional, and absent means not chosen. Decided by the operator.
+4. A forced mode answers `prefers-color-scheme` in node and `:root` rules. `or` is left as stored.
+5. Forced `dark` writes `class="dark"`, on the document and on a frame, which wakes the editor's `.dark` variables on that site. A `system` site's frame does not.
 6. No visitor switch.
-7. Document styles are in scope, closed at two colours and a font on `body` plus two `html` properties, because every BusBasis page fails on them and the stop condition needs them. The fleet goal named tokens and head items, so this is scope added on purpose.
-8. `:root` closes with a note; the other 13 page-level rows stay red.
-9. Importer output keeps its names, and its root aliases site tokens. This departs from the importer contract's "these move there", because of `--border`.
-10. A token name collision on import makes `primary 2`, and on an AI generation is refused. An import is a person's deliberate act with a report, and a generation is not.
-11. The AI may add tokens and writes no head items.
-12. `next` and `prev` are out, because Firefox fetches `next` and search engines do not need them.
-13. JSON-LD emits in the body.
-14. A `style-src` policy stays out of scope, with the cost stated.
+7. A page's `:root` rule beats the theme, `color-scheme` included, so #261 needs no edit.
+8. The `document` block holds two colours and a font.
+9. The banner fails closed to the neutral pair, decided by the operator. T2 feeds it resolved colours, so a pair that reads keeps the site's look.
+10. Importer output keeps its names, and its root aliases site tokens.
+11. `dark:` always becomes the media form, and `use-system-dark` goes away.
+12. A token name collision on import makes `primary N`, and on an AI generation is refused. An import is a person's deliberate act with a report, and a generation is not.
+13. The AI may add tokens and writes no head items.
+14. `next` and `prev` are out, because Firefox fetches `next` and search engines do not need them.
+15. JSON-LD emits in the body.
+16. A page's own `head` is not kept against a tab from before H1's deploy.
+17. A `style-src` policy stays out of scope, with the cost stated.
+
+## Review findings, and what changed
+
+All 18 and the small items are applied. Where one was adapted, this says how and why.
+
+| Finding | Where it went | Adapted |
+|---|---|---|
+| 1, #261 | T1's dependency; "One home per property"; `document` cut to three; `isPlatformVariable`; score section | Of the two `colorScheme` options, the one that leaves #261 alone: the page rule wins, and "Theme owns" is gone |
+| 2, banner | "The consent banner and the default 404"; T2 | Taken with the operator's decision and #261's later fail closed, which replaced "passes unjudged". `color()` is limited to three spaces in the grammar so "extend `parseColor` to the grammar" is complete |
+| 3, default `light` | Decision 4; the mode table; T2 and `theme-dark-rule` | None |
+| 4, T6's order | Slice table | None |
+| 5, second tab, deploy trap, Yjs | The four traps; T1, T3 and T4's paths | None |
+| 6, export | "Export"; T6; the importer contract | Slug comparison added, because an exported name otherwise would not find its token |
+| 7, tombstones | "Deleting", "When a value stops parsing"; caps | Broken colours emit nothing, since no stored text may reach the sheet, and the grammar is append only so this should stay unused. Delete is refused at the cap rather than dropping |
+| 8, forced `dark` canvas | "Canvas and preview"; T3 | **Narrowed.** The class goes on a forced `dark` frame only, not every dark frame: a `system` site's published page has no class, so a frame carrying it would show what no visitor gets |
+| 9, `system` half dark | Importer table; the importer contract | None |
+| 10, the evaluator | `withColorMode`; T3 | Lives in a new file, `colorMode.ts`, because both the emitter and the surfaces read it |
+| 11, grammar | Grammar table; "`themeCss` trusts nothing"; `generateViewport` | None |
+| 12, keyframes | "Reserved names" | None |
+| 13, size | "Published page" | Tombstones counted too, which makes the worst case 132 kilobytes rather than 51 |
+| 14, refused items | "What a page may hold"; H1, H3 | None |
+| 15, merge key | "The merge"; H1 | None |
+| 16, `dark` with no theme | "Light and dark" | None |
+| 17, re-entry | "Match or create"; T6 | None |
+| 18, file lists | Slice table; H1; the AI's local name | The H1 line accepts the loss for a page's `head`, with its reason, instead of adding a server merge for a window that needs a tab across two deploys |
+| Small | `isHeadHref`, `@graph`, the JSON-LD cap, `data-fc-theme-sheet`, `layoutAudit` in the reader table | None |
+
+**Not adopted.** Nothing was declined. Two things in the review no longer apply as written: its `:root` row timing, since this contract now claims no such row, and "named colours and literals outside the grammar" as the open question, which the operator has decided.
 
 ## Open questions
 
-None needs an answer before slice T1. Whether a future policy adds `style-src` is the existing open decision on enforcing a Content Security Policy, and this contract only states its price.
+None needs an answer before slice T1, though T1 waits for #261. Whether a future policy adds `style-src` is the existing open decision on enforcing a Content Security Policy, and this contract only states its price.
 
-**What a fresh review should test, because it is unproven:** whether `dns-prefetch` and Chromium's `preconnect` truly stay silent outside automation (both are refused either way); whether the editor's overlays survive a dark `color-scheme` on a frame; whether a dark page avoids a white first paint; and the row counts, which are this contract's arithmetic, not a score run.
+**Still unproven, for whoever builds it:** whether `dns-prefetch` and Chromium's `preconnect` stay silent outside automation (both are refused either way); whether editor overlays survive a dark `color-scheme` on a frame, which T3 checks; whether a dark page avoids a white first paint; whether native dropdowns and scrollbars look right on a `system` site with no dark values; and the banner table, which comes from #261's `legibleLook` on resolved values, because T2's resolving does not exist yet.
