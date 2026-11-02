@@ -23,6 +23,7 @@ import {
 import { isVoidTag } from '@/lib/drag/voidTags';
 import { effectsDocs } from './promptSections/effects';
 import { rulesDocs } from './promptSections/rules';
+import { behaviourDocs } from './promptSections/behaviour';
 import { formPropKeysFor } from '@/lib/forms/generation';
 import { STICKY_CTA_PROP_KEYS, isStickyCta } from '@/lib/stickyCta/stickyCta';
 import { FONT_CATEGORIES, FONT_LIBRARY, fontStack } from '@/lib/fonts/registry';
@@ -80,7 +81,8 @@ export function buildSchemaDocs(): string {
     '    "href": "<a only>", "target": "<a only: _blank or _self>",',
     '    "style": { "<camelCase CSS property>": <value or responsive map> },',
     '    "effects": { "appear": { ... } }  (optional, see Motion),',
-    '    "rules": [ { ... } ]  (optional, see States and decoration)',
+    '    "rules": [ { ... } ]  (optional, see States and decoration),',
+    '    "behaviour": { ... }  (optional, see Behaviour)',
     '  },',
     '  "children": [ <nodes> ]',
     '}',
@@ -98,7 +100,7 @@ export function buildSchemaDocs(): string {
     '- Style values are strings ("16px", "#111827", "1fr 1fr") or numbers (unitless, e.g. fontWeight 600, opacity 0.8).',
     '- Use the tags, props and style keys listed here: the editor has controls for them. Any other standard HTML',
     '  tag, attribute or CSS property is kept when a design truly needs it (a list needs ul and li, a table its',
-    '  table tags, a shape clipPath). No class names, no CSS text, no event handlers, no HTML strings.',
+    '  table tags, a shape clipPath). No class names, no CSS text, no event handlers, no HTML strings, no code.',
     '- Links: href must start with https://, http://, mailto:, tel:, # or a single /. Images: src must be https://,',
     '  http:// or a site path starting with /. Always give images a meaningful alt in the page\'s language that',
     '  says what the image shows (never "image", "photo", a file name or the layer name). Only a purely',
@@ -132,6 +134,8 @@ export function buildSchemaDocs(): string {
     effectsDocs(),
     '',
     rulesDocs(),
+    '',
+    behaviourDocs(),
     '',
     '## Fonts',
     '',

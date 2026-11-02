@@ -3,15 +3,17 @@
 // runs there. The same contract then runs on the mounted canvas: the real EditorApp
 // with the tree on a page (lib/canvasBundle.ts). The panel column follows from the
 // matrix (report.ts): a pattern is editable only when every tag and prop it uses is.
+// The AI column asks the generator for a pattern built from a preset the way the prompt
+// teaches it, a preset request, and runs the contract on what the validator made of it.
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { chromium, type Browser } from 'playwright';
+import { chromium, type Browser, type Page } from 'playwright';
 import { getSnapshot } from 'mobx-state-tree';
 import ComponentModel from '@/models/ComponentModel';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { deriveBreakpointKeys } from '@/lib/ai/pageGen/schema';
 import { validateGeneration } from '@/lib/ai/pageGen/validate';
-import { PATTERNS, treeVocabulary } from './patterns';
+import { PATTERNS, treeVocabulary, type Pattern } from './patterns';
 import { BREAKPOINTS, publishedDocument, renderPublished, renderThroughPublishedPage } from './lib/published';
 import { bundleRuntime } from './lib/runtime';
 import { bundleEditor, mountOnCanvas, toSnapshot } from './lib/canvasBundle';
@@ -32,19 +34,27 @@ function storesAll(root: ComponentNode): boolean {
 }
 
 /**
- * The tree without what only stored behaviour gives it. The validator learns `behaviour`
- * in slice B12, so a pattern built from a preset is asked what an aria-only tree was asked,
- * and B12 takes this out. A rule on the gate or on a state means nothing without it.
+ * What the generator makes of a pattern built from a preset: the request it is taught to
+ * write goes through the validator, and what comes out must pass the pattern's whole
+ * contract on the published page, with the runtime, in Chromium. Kept vocabulary would say
+ * less: a tree can keep every prop and still not work.
  */
-function withoutBehaviour(node: ComponentNode): ComponentNode {
-  const props = Object.fromEntries(Object.entries(node.props ?? {}).filter(([name]) => name !== 'behaviour' && name !== 'rules'));
-  const { rules } = (node.props ?? {}) as { rules?: unknown };
-  const kept = Array.isArray(rules) ? rules.filter((rule) => !('gate' in rule) && !('when' in rule)) : [];
-  return {
-    ...node,
-    props: { ...props, ...(kept.length > 0 ? { rules: kept } : {}) } as ComponentNode['props'],
-    ...(node.children ? { children: node.children.map(withoutBehaviour) } : {}),
-  };
+async function generatedPasses(pattern: Pattern, page: Page, runtime: string): Promise<Cell> {
+  const outcome = validateGeneration({ nodes: [pattern.generated?.()] }, aiContext);
+  if (!outcome.ok) return { status: 'fail', gap: 'unclassified', note: `the generator refused the request: ${outcome.errors[0]}` };
+  if (outcome.result.nodes.length !== 1) return { status: 'fail', gap: 'unclassified', note: `the request gave ${outcome.result.nodes.length} nodes` };
+  const tree = outcome.result.nodes[0] as unknown as ComponentNode;
+  const published = await renderThroughPublishedPage({ tree, definitions: {} });
+  await page.setContent(publishedDocument(published, undefined, undefined, runtime));
+  try {
+    await pattern.contract(page, page);
+    return { status: 'pass' };
+  } catch (error) {
+    const note = (error instanceof Error ? error.message : String(error)).split('\n')[0];
+    return pattern.generatedRefusal
+      ? { status: 'fail', gap: 'ai-motion-refused', note: `${pattern.generatedRefusal} (${note})` }
+      : { status: 'fail', gap: 'unclassified', note: `the generated tree failed the contract: ${note}` };
+  }
 }
 
 /**
@@ -142,8 +152,15 @@ describe('coverage matrix: WAI-ARIA Authoring Practices patterns', () => {
       }
       await mounted.close();
 
-      const generated = generatorKeeps(withoutBehaviour(tree));
-      ai[key] = generated.kept ? { status: 'pass' } : { status: 'fail', gap: 'ai-attribute-allowlist', note: `lost: ${generated.lost}` };
+      if (pattern.generated) {
+        const aiPage = await browser.newPage();
+        aiPage.setDefaultTimeout(1500);
+        ai[key] = await generatedPasses(pattern, aiPage, runtime);
+        await aiPage.close();
+      } else {
+        const generated = generatorKeeps(tree);
+        ai[key] = generated.kept ? { status: 'pass' } : { status: 'fail', gap: 'ai-attribute-allowlist', note: `lost: ${generated.lost}` };
+      }
 
       const { tags, props } = treeVocabulary(tree);
       vocabulary[key] = { tags: [...tags], props: panelProps(tree, props), ...(pattern.preset ? { preset: pattern.preset } : {}) };

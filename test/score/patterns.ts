@@ -55,6 +55,14 @@ export interface Pattern {
   /** The preset the tree comes from, when `built` is 'behaviour'. */
   preset?: PresetKind;
   tree: () => ComponentNode;
+  /**
+   * What the generator is taught to write for this pattern, when `built` is 'behaviour': the
+   * preset request with the tree's own options, which the validator expands through the
+   * same function (src/lib/ai/pageGen/promptSections/behaviour.ts).
+   */
+  generated?: () => Record<string, unknown>;
+  /** Why the generated form cannot pass the contract, when the generator is refused part of it on purpose. */
+  generatedRefusal?: string;
   /** `root` is where the tree sits: the page once published, the frame's content on the canvas. */
   contract: (page: Page, root: Scope) => Promise<void>;
 }
@@ -197,6 +205,8 @@ export const PATTERNS: Pattern[] = [
     built: 'behaviour',
     preset: 'carousel',
     tree: () => carousel({ seed: 'pattern-carousel', label: 'Offers', slides: ['Slide one', 'Slide two', 'Slide three'], rotateMs: 1000 }) as ComponentNode,
+    generated: () => ({ preset: 'carousel', items: ['Slide one', 'Slide two', 'Slide three'], options: { label: 'Offers' } }),
+    generatedRefusal: 'a generated carousel never rotates by itself: every is refused, and the contract asks for rotation',
     contract: async (page, root) => {
       const shown = async () => {
         const out: string[] = [];
@@ -242,6 +252,7 @@ export const PATTERNS: Pattern[] = [
     built: 'behaviour',
     preset: 'combobox',
     tree: () => combobox({ seed: 'pattern-combobox', label: 'City', options: ['Bern', 'Zurich', 'Basel'] }) as ComponentNode,
+    generated: () => ({ preset: 'combobox', items: ['Bern', 'Zurich', 'Basel'], options: { label: 'City' } }),
     contract: async (page, root) => {
       const box = root.getByRole('combobox', { name: 'City' });
       await box.focus();
@@ -291,6 +302,14 @@ export const PATTERNS: Pattern[] = [
         feed({ seed: 'pattern-feed', label: 'News', articles: [{ title: 'One', body: 'First' }, { title: 'Two', body: 'Second' }, { title: 'Three', body: 'Third' }] }) as ComponentNode,
         t('a', 'After', { href: '#after' }),
       ),
+    generated: () => ({
+      type: 'div',
+      children: [
+        { type: 'a', props: { href: '#before', children: 'Before' } },
+        { preset: 'feed', items: [{ title: 'One', body: 'First' }, { title: 'Two', body: 'Second' }, { title: 'Three', body: 'Third' }], options: { label: 'News' } },
+        { type: 'a', props: { href: '#after', children: 'After' } },
+      ],
+    }),
     contract: async (page, root) => {
       const heading = () => page.evaluate(() => document.activeElement?.querySelector('h3')?.textContent ?? document.activeElement?.textContent);
       await root.getByRole('article').nth(0).focus();
@@ -310,6 +329,7 @@ export const PATTERNS: Pattern[] = [
     built: 'behaviour',
     preset: 'grid',
     tree: () => grid({ seed: 'pattern-grid', label: 'Prices', columns: ['A', 'B', 'C'], rows: [['A1', 'B1', 'C1'], ['A2', 'B2', 'C2'], ['A3', 'B3', 'C3']] }) as ComponentNode,
+    generated: () => ({ preset: 'dataGrid', items: [['A1', 'B1', 'C1'], ['A2', 'B2', 'C2'], ['A3', 'B3', 'C3']], options: { label: 'Prices', columns: ['A', 'B', 'C'] } }),
     contract: async (page, root) => {
       await root.getByRole('gridcell', { name: 'A1' }).focus();
       await walkKeys(page, [
@@ -380,6 +400,14 @@ export const PATTERNS: Pattern[] = [
           { title: 'Edit', href: '#edit', items: [{ title: 'Undo', href: '#undo' }, { title: 'Redo', href: '#redo' }] },
         ],
       }) as ComponentNode,
+    generated: () => ({
+      preset: 'menubar',
+      items: [
+        { title: 'File', href: '#file', items: [{ title: 'New', href: '#new' }, { title: 'Open', href: '#open' }] },
+        { title: 'Edit', href: '#edit', items: [{ title: 'Undo', href: '#undo' }, { title: 'Redo', href: '#redo' }] },
+      ],
+      options: { label: 'Main' },
+    }),
     contract: async (page, root) => {
       await root.getByRole('menuitem', { name: 'File' }).focus();
       await walkKeys(page, [['ArrowRight', 'Edit'], ['ArrowRight', 'File'], ['End', 'Edit'], ['Home', 'File']]);
@@ -403,6 +431,7 @@ export const PATTERNS: Pattern[] = [
     built: 'behaviour',
     preset: 'menu-button',
     tree: () => menuButton({ seed: 'pattern-menu', label: 'Actions', items: ['Copy', 'Paste', 'Delete'] }) as ComponentNode,
+    generated: () => ({ preset: 'menu-button', items: ['Copy', 'Paste', 'Delete'], options: { label: 'Actions' } }),
     contract: async (page, root) => {
       const button = root.getByRole('button', { name: 'Actions' });
       await button.focus();
@@ -461,6 +490,7 @@ export const PATTERNS: Pattern[] = [
     built: 'behaviour',
     preset: 'slider-multithumb',
     tree: () => multithumbSlider({ seed: 'pattern-range', label: 'Price', min: 0, max: 10, low: 2, high: 8 }) as ComponentNode,
+    generated: () => ({ preset: 'slider-multithumb', options: { label: 'Price', min: 0, max: 10, low: 2, high: 8 } }),
     contract: async (page, root) => {
       const low = root.getByRole('slider', { name: 'Price, lowest' });
       const high = root.getByRole('slider', { name: 'Price, highest' });
@@ -522,6 +552,11 @@ export const PATTERNS: Pattern[] = [
         seed: 'pattern-tabs',
         items: [{ title: 'One', body: 'Panel one' }, { title: 'Two', body: 'Panel two' }, { title: 'Three', body: 'Panel three' }],
       }) as ComponentNode,
+    generated: () => ({
+      preset: 'tabs',
+      items: [{ title: 'One', body: 'Panel one' }, { title: 'Two', body: 'Panel two' }, { title: 'Three', body: 'Panel three' }],
+      options: { label: 'Sections' },
+    }),
     contract: async (page, root) => {
       assert(!(await root.getByText('Panel two').isVisible()), 'a panel that is not selected shows');
       await root.getByRole('tab', { name: 'One' }).focus();
@@ -539,6 +574,7 @@ export const PATTERNS: Pattern[] = [
     built: 'behaviour',
     preset: 'toolbar',
     tree: () => toolbar({ seed: 'pattern-toolbar', label: 'Format', items: ['Bold', 'Italic', 'Underline'] }) as ComponentNode,
+    generated: () => ({ preset: 'toolbar', items: ['Bold', 'Italic', 'Underline'], options: { label: 'Format' } }),
     contract: async (page, root) => {
       await root.getByRole('button', { name: 'Bold' }).focus();
       await walkKeys(page, [['ArrowRight', 'Italic'], ['End', 'Underline'], ['ArrowRight', 'Bold'], ['ArrowLeft', 'Underline'], ['Home', 'Bold']]);
@@ -550,6 +586,7 @@ export const PATTERNS: Pattern[] = [
     built: 'behaviour',
     preset: 'tooltip',
     tree: () => tooltip({ seed: 'pattern-tooltip', label: 'Save', text: 'Saves the page' }) as ComponentNode,
+    generated: () => ({ preset: 'tooltip', options: { label: 'Save', text: 'Saves the page' } }),
     contract: async (page, root) => {
       const tip = root.getByRole('tooltip');
       assert(!(await tip.isVisible()), 'the tooltip shows on its own');
@@ -572,6 +609,7 @@ export const PATTERNS: Pattern[] = [
     built: 'behaviour',
     preset: 'treeview',
     tree: () => treeview({ seed: 'pattern-tree', label: 'Files', items: [{ title: 'src', children: [{ title: 'app.ts' }, { title: 'lib.ts' }] }, { title: 'docs' }] }) as ComponentNode,
+    generated: () => ({ preset: 'treeview', items: [{ title: 'src', children: [{ title: 'app.ts' }, { title: 'lib.ts' }] }, { title: 'docs' }], options: { label: 'Files' } }),
     contract: async (page, root) => {
       const name = () => page.evaluate(() => document.activeElement?.firstChild?.textContent ?? document.activeElement?.textContent);
       const src = root.getByRole('treeitem').first();
@@ -597,6 +635,7 @@ export const PATTERNS: Pattern[] = [
     built: 'behaviour',
     preset: 'treegrid',
     tree: () => treegrid({ seed: 'pattern-treegrid', label: 'Mail', columns: ['Subject'], rows: [{ cells: ['Thread'], children: [{ cells: ['Reply'] }] }, { cells: ['Other'] }] }) as ComponentNode,
+    generated: () => ({ preset: 'treegrid', items: [{ cells: ['Thread'], children: [{ cells: ['Reply'] }] }, { cells: ['Other'] }], options: { label: 'Mail', columns: ['Subject'] } }),
     contract: async (page, root) => {
       const thread = root.getByRole('row', { name: 'Thread' });
       await thread.focus();
@@ -614,6 +653,7 @@ export const PATTERNS: Pattern[] = [
     built: 'behaviour',
     preset: 'windowsplitter',
     tree: () => splitter({ seed: 'pattern-split', label: 'Resize', at: 50 }) as ComponentNode,
+    generated: () => ({ preset: 'windowsplitter', options: { label: 'Resize', at: 50, first: 'First pane', second: 'Second pane' } }),
     contract: async (page, root) => {
       const separator = root.getByRole('separator');
       const value = () => separator.getAttribute('aria-valuenow');

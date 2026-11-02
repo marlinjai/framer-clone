@@ -14,7 +14,8 @@ component (a MobX-State-Tree ComponentSnapshotIn). Shape of one node:
     "href": "<a only>", "target": "<a only: _blank or _self>",
     "style": { "<camelCase CSS property>": <value or responsive map> },
     "effects": { "appear": { ... } }  (optional, see Motion),
-    "rules": [ { ... } ]  (optional, see States and decoration)
+    "rules": [ { ... } ]  (optional, see States and decoration),
+    "behaviour": { ... }  (optional, see Behaviour)
   },
   "children": [ <nodes> ]
 }
@@ -32,7 +33,7 @@ Rules:
 - Style values are strings ("16px", "#111827", "1fr 1fr") or numbers (unitless, e.g. fontWeight 600, opacity 0.8).
 - Use the tags, props and style keys listed here: the editor has controls for them. Any other standard HTML
   tag, attribute or CSS property is kept when a design truly needs it (a list needs ul and li, a table its
-  table tags, a shape clipPath). No class names, no CSS text, no event handlers, no HTML strings.
+  table tags, a shape clipPath). No class names, no CSS text, no event handlers, no HTML strings, no code.
 - Links: href must start with https://, http://, mailto:, tel:, # or a single /. Images: src must be https://,
   http:// or a site path starting with /. Always give images a meaningful alt in the page's language that
   says what the image shows (never "image", "photo", a file name or the layer name). Only a purely
@@ -90,6 +91,37 @@ Optional "props.rules": a list of {"id": "<short, unique on the node>", "selecto
 A rule holds no url(). At most 24 rules per generation: keep states for links and buttons, never
 every card. A rule that does not fit these rules is dropped whole. On a generation with a rule, an image from
 another host is dropped: use imageQuery or a site path.
+
+## Behaviour
+
+Components a visitor operates are presets. Ask for one as a node of its own, with no type, props or children:
+{"preset": "<name>", "label": "<layers name>", "items": [ ... ], "options": { ... }}
+The editor builds it with keyboard support and a version that works without JavaScript. "options.label"
+is required: its name for a screen reader, in the page's language. Names:
+- "tabs": items [{"title","body"}] (2 to 8); options {"label", "orientation": "horizontal" or "vertical"}.
+- "toolbar": items ["<button text>"] (2 to 12); options {"label"}.
+- "tooltip": no items; options {"label": "<the button's text>", "text": "<what the tooltip says>"}.
+- "carousel": items ["<slide text>"] (2 to 12); options {"label"}. It moves only when a visitor moves it.
+- "menu-button": items ["<item text>"] (1 to 12); options {"label": "<the button's text>"}.
+- "menubar": items [{"title","href","items":[{"title","href"}]}] (1 to 6 menus, 1 to 8 links each); options {"label"}.
+- "combobox": items ["<option>"] (1 to 24); options {"label"}.
+- "slider-multithumb": no items; options {"label", "min", "max", "low", "high"} (numbers).
+- "windowsplitter": no items; options {"label", "first", "second"} (what each pane says), "at" (10 to 90, percent).
+- "feed": items [{"title","body"}] (1 to 12); options {"label"}.
+- "dataGrid": items [["<cell>", ...]] (rows, 1 to 12, one cell per column); options {"label", "columns": ["<heading>"]}.
+- "treeview": items [{"title","children":[...]}] (at most 3 levels, 24 items); options {"label"}.
+- "treegrid": items [{"cells":["<cell>"],"children":[...]}] (at most 3 levels, 24 rows); options {"label", "columns"}.
+At most 6 presets per generation. Use one only when the brief needs that kind of
+component: a question list is a details element per question, which needs no preset.
+
+One form you may write yourself, a button that shows and hides a part of its section: the section
+declares a value, the button toggles it, the part is shown while it is true.
+{"type":"div","props":{"behaviour":{"state":[{"id":"open","name":"Open","type":"boolean","initial":false}]}},
+ "children":[{"type":"button","props":{"type":"button","children":"Show details","behaviour":{"on":[{"id":"press",
+  "on":"click","do":[{"toggle":"open"}]}],"bind":[{"attr":"aria-expanded","from":{"get":"open"}}]}}},
+  {"type":"p","props":{"children":"...","behaviour":{"showWhen":{"state":"open","eq":true}}}}]}
+A value is read only by the nodes inside the one declaring it. Nothing else: no timers, no other events,
+no links or code in behaviour. At most 24 triggers per generation; anything that does not fit is dropped.
 
 ## Fonts
 

@@ -42,6 +42,17 @@
 //       reveals, nothing that reads a visitor's state or looks beyond the node,
 //       and on a generation that keeps a rule no address on another host in
 //       Normal or an img, but what the request's context held (./promptSections/rules.ts),
+//     - a behaviour preset request ({ preset: "tabs", items, options }) built by the
+//       palette's own function (src/lib/behaviour/presets), only the model's text and
+//       numbers cleaned (./promptSections/behaviour.ts), at most MAX_GENERATED_PRESETS,
+//       its nodes keeping the ids the preset gave them,
+//     - props.behaviour read through the real parser (src/lib/behaviour/format.ts) over
+//       the whole generation, so everything it accepts is kept and what it refuses is
+//       dropped; a node's `id` from the model only lets a reference inside the
+//       generation follow it; no trigger on a timer, no navigate off the site, at most
+//       MAX_GENERATED_TRIGGERS triggers the model wrote itself; a preset with any part
+//       refused dropped whole; behaviour counts as a rule for addresses on other hosts,
+//     - props.customCode dropped, always: only a person writes custom code,
 //     - responsive-map keys matched to the request's breakpoint keys
 //       (case-insensitive, label match), unknown keys dropped,
 //     - ids assigned fresh and `parentId` set on every nested node (a whole
@@ -123,6 +134,20 @@ import {
   type StoredRule,
 } from '@/lib/rules/rules';
 import { isSafeHref } from '@/lib/links/safeHref';
+import { readBehaviourTree, remapBehaviourRefs, type BehaviourNode, type StoredBehaviour } from '@/lib/behaviour/format';
+import type { PresetKind, PresetNode } from '@/lib/behaviour/presets';
+import { getComponentEntry } from '@/lib/componentRegistry';
+import {
+  BEHAVIOUR_PROP,
+  CUSTOM_CODE_PROP,
+  CUSTOM_CODE_REASON,
+  MAX_GENERATED_PRESETS,
+  MAX_GENERATED_TRIGGERS,
+  PRESET_REQUEST_KEYS,
+  behaviourPresetOf,
+  expandPresetRequest,
+  generatedTriggerRefusal,
+} from './promptSections/behaviour';
 import {
   STICKY_CTA_PROP_KEYS,
   cleanStickyCtaProp,
@@ -206,7 +231,7 @@ export interface ValidateContext {
  */
 type StylePlace = 'photo' | 'plain' | 'rule';
 
-/** Keys the model may send that we silently ignore because the editor owns them. */
+/** Keys the model may send that we silently ignore because the editor owns them. `id` is only a handle, see claimHandle. */
 const OWNED_KEYS = new Set(['id', 'componentType', 'canvasNodeType', 'parentId']);
 const NODE_KEYS = new Set(['type', 'preset', 'label', 'props', 'children']);
 
@@ -472,6 +497,13 @@ class Validator {
   ruleCount = 0;
   /** What those rules cost the sheet, so a generation cannot spend the page's budget. */
   ruleWeight = 0;
+  /** Behaviour presets placed so far (capped per generation). */
+  presetCount = 0;
+  /** The root id of every placed behaviour preset: a preset stands whole or not at all. */
+  readonly presetRoots = new Set<string>();
+  /** The `id` the model gave a node, to the id it got, so a behaviour reference follows it. Null when two nodes gave one. */
+  private readonly handles = new Map<string, string | null>();
+  private readonly seeds = new Set<string>();
   maxDepth = 0;
   private readonly bpKeys: Map<string, string>;
   /** Breakpoint keys, largest breakpoint first (the editor's primary breakpoint). */
@@ -583,6 +615,77 @@ class Validator {
   /** A short token, new for each generation. */
   scopeToken(): string {
     return this.newId().replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toLowerCase() || 'x';
+  }
+
+  /**
+   * Records the `id` the model gave a node as a handle to the id it got. Nothing else
+   * reads it: it only lets a behaviour reference inside the generation follow the
+   * node, and one given twice names no node at all.
+   */
+  private claimHandle(rawId: unknown, id: string): void {
+    if (typeof rawId !== 'string' || rawId === '') return;
+    this.handles.set(rawId, this.handles.has(rawId) ? null : id);
+  }
+
+  /** Every handle that names exactly one node. */
+  handleMap(): Map<string, string> {
+    return new Map([...this.handles].filter((entry): entry is [string, string] => entry[1] !== null));
+  }
+
+  /** A preset's seed as the palette makes one: its name and 8 fresh characters, never repeated. */
+  private presetSeed(name: string): string {
+    const stem = `${name.toLowerCase().replace(/[^a-z0-9-]/g, '')}-${this.scopeToken()}`;
+    let seed = stem;
+    for (let n = 2; this.seeds.has(seed); n += 1) seed = `${stem}-${n}`;
+    this.seeds.add(seed);
+    return seed;
+  }
+
+  /**
+   * A behaviour preset request, `{ preset, label, items, options }`, expanded through the
+   * palette's own function. The nodes keep the ids the preset gave them, since its
+   * behaviour and its `aria-*` references name them; its behaviour is read again with the
+   * rest of the generation (applyGeneratedBehaviour).
+   */
+  private presetRequest(
+    kind: PresetKind,
+    raw: Record<string, unknown>,
+    path: string,
+    depth: number,
+    parentId: string | undefined,
+    namespace: MarkupNamespace,
+  ): GeneratedNodeSnapshot[] {
+    const name = raw.preset as string;
+    if (namespace !== 'html') {
+      this.warn(path, `preset "${name}" cannot sit inside svg or math, dropped`);
+      return [];
+    }
+    for (const key of Object.keys(raw)) {
+      if (!PRESET_REQUEST_KEYS.has(key) && !OWNED_KEYS.has(key)) this.warn(path, `a preset request holds preset, label, items and options: "${key}" ignored`);
+    }
+    if (this.presetCount >= MAX_GENERATED_PRESETS) {
+      this.warn(path, `preset "${name}" dropped: more than ${MAX_GENERATED_PRESETS} presets in one generation`);
+      return [];
+    }
+    const made = expandPresetRequest(kind, raw, this.presetSeed(name), (message) => this.warn(path, `preset "${name}": ${message}`));
+    if ('refused' in made) {
+      this.warn(path, `preset "${name}" dropped: ${made.refused}`);
+      return [];
+    }
+    const deepest = depth + presetDepth(made.root) - 1;
+    if (deepest > GENERATION_LIMITS.maxDepth) {
+      this.warn(path, `preset "${name}" dropped: here it would nest deeper than ${GENERATION_LIMITS.maxDepth} levels`);
+      return [];
+    }
+    let label = typeof raw.label === 'string' ? raw.label.trim().slice(0, GENERATION_LIMITS.maxLabelChars) : '';
+    if (!label) label = getComponentEntry(name)?.label ?? name;
+    const root = presetSnapshot(made.root, parentId, label);
+    this.presetCount += 1;
+    this.presetRoots.add(root.id);
+    this.nodeCount += countNodes(root);
+    if (deepest > this.maxDepth) this.maxDepth = deepest;
+    this.claimHandle(raw.id, root.id);
+    return [root];
   }
 
   private warn(path: string, message: string): void {
@@ -1000,6 +1103,8 @@ class Validator {
       this.fail(path, `nesting deeper than ${GENERATION_LIMITS.maxDepth} levels`);
       return [];
     }
+    const behaviourPreset = behaviourPresetOf(raw.preset);
+    if (behaviourPreset) return this.presetRequest(behaviourPreset, raw, path, depth, parentId, namespace);
     for (const key of Object.keys(raw)) {
       if (!NODE_KEYS.has(key) && !OWNED_KEYS.has(key)) this.warn(path, `unknown key "${key}" ignored`);
     }
@@ -1040,6 +1145,7 @@ class Validator {
     let invalidQuery = false;
     let rawEffects: unknown;
     let rawRules: unknown[] | undefined;
+    let rawBehaviour: unknown;
 
     // An Unsplash photo's credit (an earlier generation's image or background,
     // sent back in replace / insert context) is read separately below, never
@@ -1059,6 +1165,15 @@ class Validator {
       if (key === EFFECTS_PROP) {
         // Cleaned after the children are known (stagger needs two of them).
         rawEffects = value;
+        continue;
+      }
+      if (key === CUSTOM_CODE_PROP) {
+        this.warn(path, `customCode dropped: ${CUSTOM_CODE_REASON}`);
+        continue;
+      }
+      if (key === BEHAVIOUR_PROP) {
+        // Read once the whole generation is built, since it names state and nodes around it.
+        rawBehaviour = value;
         continue;
       }
       // A string is the legacy table attribute, which stays an attribute.
@@ -1224,6 +1339,11 @@ class Validator {
       if (rules.length > 0) merged[RULES_PROP] = rules;
     }
 
+    // ---- behaviour (held as written: applyGeneratedBehaviour replaces it with what parses) ----
+    delete merged[BEHAVIOUR_PROP];
+    if (rawBehaviour !== undefined) merged[BEHAVIOUR_PROP] = rawBehaviour;
+    this.claimHandle(raw.id, id);
+
     const children: GeneratedNodeSnapshot[] = [];
     if (isVoidTag(type)) {
       if (rawChildren.length > 0) this.warn(path, `<${type}> cannot have children, ${rawChildren.length} dropped`);
@@ -1279,6 +1399,117 @@ class Validator {
 /** Count a subtree's nodes. */
 function countNodes(node: GeneratedNodeSnapshot): number {
   return 1 + node.children.reduce((n, c) => n + countNodes(c), 0);
+}
+
+/** How many levels a preset's nodes take, its root included. */
+function presetDepth(node: PresetNode): number {
+  return 1 + Math.max(0, ...(node.children ?? []).map(presetDepth));
+}
+
+/** A preset's nodes as generated nodes: ids, tags and props as the palette's function wrote them. */
+function presetSnapshot(node: PresetNode, parentId: string | undefined, label?: string): GeneratedNodeSnapshot {
+  const snapshot: GeneratedNodeSnapshot = {
+    id: node.id,
+    type: node.type,
+    componentType: ComponentTypeEnum.HOST,
+    label: label ?? node.label ?? node.type.charAt(0).toUpperCase() + node.type.slice(1),
+    props: { ...(node.props as Record<string, unknown>) },
+    children: (node.children ?? []).map((child) => presetSnapshot(child, node.id)),
+  };
+  if (parentId) snapshot.parentId = parentId;
+  return snapshot;
+}
+
+/** Every node of a forest in document order, with the preset root it belongs to, if any. */
+function walkWithPresets(nodes: GeneratedNodeSnapshot[], presetRoots: ReadonlySet<string>): Array<{ node: GeneratedNodeSnapshot; preset?: string }> {
+  const out: Array<{ node: GeneratedNodeSnapshot; preset?: string }> = [];
+  const visit = (node: GeneratedNodeSnapshot, preset: string | undefined): void => {
+    const own = preset ?? (presetRoots.has(node.id) ? node.id : undefined);
+    out.push({ node, ...(own ? { preset: own } : {}) });
+    node.children.forEach((child) => visit(child, own));
+  };
+  nodes.forEach((node) => visit(node, undefined));
+  return out;
+}
+
+/** The forest without the nodes whose ids are given, and their subtrees. */
+function withoutNodes(nodes: GeneratedNodeSnapshot[], ids: ReadonlySet<string>): GeneratedNodeSnapshot[] {
+  return nodes.filter((node) => !ids.has(node.id)).map((node) => (node.children.length > 0 ? { ...node, children: withoutNodes(node.children, ids) } : node));
+}
+
+/**
+ * The generation's behaviour, read as a page reads it. Raw `behaviour` was carried through
+ * node() untouched; here references follow the fresh ids, the whole forest goes through
+ * `readBehaviourTree` (the one trust boundary, src/lib/behaviour/format.ts), and what it
+ * refuses is dropped with a warning. On top, what only a generator may not do: a trigger on
+ * a timer, a `navigate` that leaves the site, and more than MAX_GENERATED_TRIGGERS triggers
+ * the model wrote itself. A preset's triggers are the palette's and do not count, and a
+ * preset with any part refused is dropped whole, since half a tab list is something nobody
+ * wrote.
+ *
+ * The forest is read under a root with no id, so nothing can name it, and with no state,
+ * so a value the model declares is in reach only of the nodes inside the one declaring it.
+ * State the page already holds is out of reach here: a reference to it is refused.
+ */
+function applyGeneratedBehaviour(nodes: GeneratedNodeSnapshot[], v: Validator): GeneratedNodeSnapshot[] {
+  const handles = v.handleMap();
+  let forest = handles.size > 0 ? nodes.map((node) => remapBehaviourRefs(node, handles)) : nodes;
+
+  for (;;) {
+    const read = readBehaviourTree({ type: 'div', props: {}, children: forest } as BehaviourNode);
+    const walked = walkWithPresets(forest, v.presetRoots);
+    const presetOf = new Map(walked.map(({ node, preset }) => [node.id, preset]));
+    const broken = new Set(read.refused.flatMap((entry) => {
+      const preset = entry.nodeId === null ? undefined : presetOf.get(entry.nodeId);
+      return preset ? [preset] : [];
+    }));
+    if (broken.size > 0) {
+      for (const { node, preset } of walked) {
+        if (preset !== node.id || !broken.has(node.id)) continue;
+        const reason = read.refused.find((entry) => entry.nodeId !== null && presetOf.get(entry.nodeId) === node.id)?.reason;
+        v.warnings.push(`${node.label}: preset dropped, its behaviour does not hold here (${reason})`);
+        v.nodeCount -= countNodes(node);
+        v.presetCount -= 1;
+        v.presetRoots.delete(node.id);
+      }
+      forest = withoutNodes(forest, broken);
+      continue;
+    }
+
+    for (const entry of read.refused) {
+      const label = walked.find(({ node }) => node.id === entry.nodeId)?.node.label ?? 'a node';
+      v.warnings.push(`${label}: behaviour ${entry.entry}${entry.index === undefined ? '' : `[${entry.index}]`} dropped: ${entry.reason}`);
+    }
+    const parsedOf = new Map([...read.behaviours].map(([node, behaviour]) => [node as unknown as GeneratedNodeSnapshot, behaviour]));
+    let written = 0;
+    for (const { node, preset } of walked) {
+      const parsed = parsedOf.get(node);
+      if (!parsed) {
+        delete node.props[BEHAVIOUR_PROP];
+        continue;
+      }
+      const kept: StoredBehaviour = { ...parsed };
+      const triggers = (parsed.on ?? []).filter((trigger) => {
+        const refusal = generatedTriggerRefusal(trigger);
+        if (refusal) {
+          v.warnings.push(`${node.label}: behaviour trigger "${trigger.id}" dropped: ${refusal}`);
+          return false;
+        }
+        if (preset) return true;
+        if (written >= MAX_GENERATED_TRIGGERS) {
+          v.warnings.push(`${node.label}: behaviour trigger "${trigger.id}" dropped: more than ${MAX_GENERATED_TRIGGERS} triggers in one generation`);
+          return false;
+        }
+        written += 1;
+        return true;
+      });
+      if (triggers.length > 0) kept.on = triggers;
+      else delete kept.on;
+      if (Object.keys(kept).length > 0) node.props[BEHAVIOUR_PROP] = kept;
+      else delete node.props[BEHAVIOUR_PROP];
+    }
+    return forest;
+  }
 }
 
 /**
@@ -1634,10 +1865,13 @@ export function addressesHeldBy(context: unknown): Set<string> {
  * `&:hover` and a media condition remain, and a generated page needs no foreign host:
  * its photos are stock and its files are the site's. So with a rule kept, nothing
  * else loads from elsewhere. The address goes rather than the rule, because a brief
- * can name an address, and only the owner's own addresses are worth keeping.
+ * can name an address, and only the owner's own addresses are worth keeping. Stored
+ * behaviour counts as a rule here: a `showWhen` is one at render, and an image shown
+ * when a visitor opens tab 3 tells its host that they did.
  */
 function dropForeignAddresses(nodes: GeneratedNodeSnapshot[], v: Validator, held: ReadonlySet<string>): void {
-  const anyRule = (list: GeneratedNodeSnapshot[]): boolean => list.some((node) => storedRulesOf(node.props).length > 0 || anyRule(node.children));
+  const anyRule = (list: GeneratedNodeSnapshot[]): boolean =>
+    list.some((node) => storedRulesOf(node.props).length > 0 || node.props[BEHAVIOUR_PROP] !== undefined || anyRule(node.children));
   if (!anyRule(nodes)) return;
   const foreign = (value: unknown): boolean => typeof value === 'string' && scanCssValue(value).urls.some((url) => isForeignAddress(url, held));
   const visit = (node: GeneratedNodeSnapshot): void => {
@@ -1726,7 +1960,7 @@ export function validateGeneration(raw: unknown, ctx: ValidateContext): Validati
   raw.nodes.forEach((n, i) => parsed.push(...v.node(n, `nodes[${i}]`, 1)));
   // Decided before any svg is dropped: a page past the limit was cut short, and must not pass for being under it.
   const overLimit = v.nodeCount > GENERATION_LIMITS.maxNodes;
-  const nodes = dropExpandingSvgs(scopeIds(placeStickyCta(parsed, v, ctx.allowStickyCta === true), v), v);
+  const nodes = applyGeneratedBehaviour(dropExpandingSvgs(scopeIds(placeStickyCta(parsed, v, ctx.allowStickyCta === true), v), v), v);
   gateStartValues(nodes, v);
   dropForeignAddresses(nodes, v, ctx.heldAddresses ?? new Set());
 
