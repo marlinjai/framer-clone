@@ -1,9 +1,10 @@
 // What the behaviour pass leaves on a page, which only a browser can say: the gate and
 // every row of its table, a page with no JavaScript, what a condition really selects,
 // and ids and references per row. This closes no matrix row. It runs here because this
-// is where Chromium is. Nothing starts a runtime: slice B3 does. The tests call what the
-// runtime will call, and the page is the real output of renderPublishedPage, served by
-// a real navigation, since a page set by script cannot have JavaScript off.
+// is where Chromium is. No runtime starts here: this markup carries no client chunk, and
+// test/behaviour/runtime.spec.ts has the real one. The tests call what the runtime calls,
+// and the page is the real output of renderPublishedPage, served by a real navigation,
+// since a page set by script cannot have JavaScript off.
 
 import React from 'react';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';

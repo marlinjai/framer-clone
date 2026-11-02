@@ -1049,8 +1049,6 @@ decision 7, which needs an author who also controls CSS, and only a policy on pu
 - A `set` on a boolean or a number takes that kind exactly. Only `text` and `choice` take a value known only at run time.
 - The gate script takes every method it calls later from its prototype before the content exists, since `<img name="removeEventListener">`
   shadows that method on `document`, and `fail` lowers the gate before anything else.
-- Until B3, nothing starts the runtime, so a page with a trigger drops its gate after 3 seconds with the console error. Only hand-written
-  JSON can reach that today.
 
 ### What B3 has to do, from the review of B2
 
@@ -1078,6 +1076,37 @@ and the prototype's preset needs it. 50 ms is a frame or two, not a timer anyone
 
 After #234, `nodeFacts` should use `isRefusedTag` rather than `BLOCKED_TAGS`, so a refused tag holds no behaviour. That is for whichever of
 the two lands second.
+
+## Decided in slice B3
+
+**Measured, as the contract asked.** `pnpm test:behaviour` serves stored pages through the real `(site)/[...slug]` route of a real production
+build, on a real Postgres, hydrated by React, in Chromium and WebKit. On a page with no trigger the browser fetched no byte of the runtime: on the
+wire, 198,352 bytes of script on `/plain`, and one more chunk of 4,930 bytes on `/accordion`. The route's first load fell from 190 to 188 kilobytes, since
+the island's few lines are outweighed by the motion code and Lenis leaving for chunks of their own. On Slow 4G with a 4 times slower processor, on a page of
+60 paragraphs, three runs gave first paint to ready in 2,081 to 2,112 ms, and the boot script's 3 second gate had 891 to 910 ms left. So **the gate does
+not fall on an ordinary page and "decided 6" stands.** The margin is under a second on a server with no distance of its own, so a much heavier page can
+still reach "A late start", which is safe by design.
+
+**Also decided while building it, say so if you disagree:**
+
+- **The budget charges nothing for an action that changed nothing.** A page-wide Escape reaches every row, so a `cancel` and a `set` on 500 closed rows
+  would spend 1,000 actions in one task and turn off the one key the visitor needs. A loop has to change something to go round, so it still pays.
+- **The 256 stay global per task,** not per element. So `page-ready` on more than 256 rows does turn its trigger off, which is what the number says, and
+  that event is "never used to set what the server could have rendered".
+- **A `delay` key lives on the nearest scope,** so two rows' tooltips do not cancel each other, and a `cancel` finds it from further in.
+- **`keydown` with no keys fires from a field only on a key this format names.** The contract's rule is "a printable key", and the browser also sends
+  `Dead`, `Process` and `Unidentified` for someone typing, so anything unnamed counts as typing, and nothing fires during a composition.
+- **What was opened before the runtime started is caught up,** since nobody heard its `toggle`: a `toggle` trigger on an open element runs once at start,
+  for state verbs only, as a replay does.
+- **`attr: 'value'` also sets the property on a control a person changed.** The attribute alone would stop following state at the first keystroke.
+- **The `showModal` guard is one per page load, not one per dialog,** kept per document so a restart does not reset it.
+- `dialog` runs here in B3, since finding 8 could not be proven without it. Every other native verb is B4.
+- Bindings run once at the end of a task, not per write, so 256 writes cost one pass over the page.
+- `EffectsIsland` sets `READY_GLOBAL` only once its chunk has arrived, so a chunk that fails leaves the boot script's timeout to show everything.
+- The key helpers and the attribute names moved to `keys.ts` and `names.ts`, leaves the runtime can import, and `format.ts` and `behaviourDom.ts` re-export
+  them. Importing them from where they were put the whole parser in the chunk.
+- **`pnpm test:behaviour` is not in continuous integration,** like `pnpm score:primitives`. It needs Docker, a full build and WebKit. The rules it proves are
+  also in `runtime.test.ts`, which `pnpm test` runs.
 
 ## Review findings not adopted
 

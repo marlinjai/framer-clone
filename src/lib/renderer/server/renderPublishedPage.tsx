@@ -23,8 +23,10 @@ import { DEFAULT_LOOK, type SiteLook } from '@/lib/site/notFoundDefault';
 import { renderComponentNode } from './renderComponentNode';
 import { applyResponsiveStyles } from './applyResponsiveStyles';
 import { applyEffects } from './applyEffects';
-import { applyBehaviour, type BehaviourProgram } from './applyBehaviour';
+import { applyBehaviour } from './applyBehaviour';
+import type { BehaviourProgram } from '@/lib/behaviour/program';
 import { behaviourBootScript } from '@/lib/behaviour/gate';
+import BehaviourIsland from './BehaviourIsland';
 import EffectsIsland from './EffectsIsland';
 import { publishedEffectsBootScript } from '@/lib/effects/effects';
 import { LENIS_CSS } from '@/lib/effects/smoothScroll';
@@ -110,7 +112,7 @@ export interface RenderedPage {
    * never part of the HTML.
    */
   analyticsGated: boolean;
-  /** The page's stored behaviour as data, for the runtime. Null when nothing on it can change. */
+  /** The program BehaviourIsland in `body` runs. Null when nothing on the page can change. */
   behaviour: BehaviourProgram | null;
 }
 
@@ -237,6 +239,7 @@ export async function renderPublishedPage(
         {effects.needsRuntime || smoothScroll ? (
           <EffectsIsland effects={effects.needsRuntime} smoothScroll={smoothScroll} />
         ) : null}
+        {behaviour.program ? <BehaviourIsland program={behaviour.program} /> : null}
       </>
     ),
     analyticsGated: tracker !== null,

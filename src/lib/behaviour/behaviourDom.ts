@@ -14,24 +14,16 @@
 // PURE and client-safe: no React, no MST.
 
 import { staticValue, type Binding, type Condition, type Expression, type StateValue } from './format';
+import { isBooleanAttribute, stateAttribute } from './names';
 
-/** Marks a scope: a node declaring state, a clone root, a placement root. */
-export const SCOPE_ATTR = 'data-fc-scope';
-/** The node's key: what a reference resolves and what keys the program. */
-export const NODE_ATTR = 'data-fc-n';
-/** A clone's position in its Collection. */
-export const ROW_ATTR = 'data-fc-i';
-/** Which of a shared key's program entries this element runs. Absent means the first. */
-export const VARIANT_ATTR = 'data-fc-v';
-/** The value of one state on its scope. */
-export const stateAttribute = (id: string): string => `data-fcs-${id}`;
+export { NODE_ATTR, ROW_ATTR, SCOPE_ATTR, VARIANT_ATTR, stateAttribute } from './names';
+
 /** True for a stored attribute only this step may write, because the selectors and the runtime honour it. */
 export const isIssuedAttribute = (name: string): boolean => /^data-fc(?:s-|-n$|-i$|-v$|-scope$)/i.test(name);
 
 /** Written by a showWhen that compares with the row, which a shared rule class cannot. */
 export const SHOW_ATTR = 'data-u-on';
 
-const BOOLEAN_ATTRIBUTES: ReadonlySet<string> = new Set(['inert', 'open', 'disabled']);
 /** A `value` prop would make React own the field, so a person could not change it. */
 const FORM_CONTROLS: ReadonlySet<string> = new Set(['input', 'textarea', 'select']);
 
@@ -96,7 +88,7 @@ export interface BindingDom {
 }
 
 function attributeOf(attr: string, value: unknown, tag: string | null): [string, unknown] {
-  if (BOOLEAN_ATTRIBUTES.has(attr)) return [attr, Boolean(value)];
+  if (isBooleanAttribute(attr)) return [attr, Boolean(value)];
   return [attr === 'value' && tag !== null && FORM_CONTROLS.has(tag) ? 'defaultValue' : attr, String(value)];
 }
 

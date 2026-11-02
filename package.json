@@ -20,6 +20,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:behaviour": "vitest run --config vitest.behaviour.config.ts",
     "score:primitives": "tsx test/score/run.ts",
     "generate:dom-members": "tsx scripts/generate-dom-members.ts",
     "test:render-gate": "vitest run --config vitest.renderGate.config.ts",

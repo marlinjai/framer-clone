@@ -47,6 +47,9 @@ import { BLOCKED_TAGS } from '@/lib/renderer/blockedNodes';
 import { TEXT_NODE_TYPE, isTextNodeType } from '@/lib/renderer/textNode';
 import { formKindOf } from '@/lib/forms/definition';
 import { isStickyCta } from '@/lib/stickyCta/stickyCta';
+import { NON_TEXT_INPUT_TYPES, isPrintableChord, keyOfChord } from './keys';
+
+export { isPrintableChord, keyOfChord, leavesSite } from './keys';
 
 // --- the stored shape -----------------------------------------------------
 
@@ -296,37 +299,6 @@ const FAMILIES: Readonly<Record<string, ReadonlySet<string>>> = {
   form: names('reset'),
 };
 
-// --- keys -----------------------------------------------------------------
-
-const NAMED_KEYS: ReadonlySet<string> = names(
-  'Printable Enter Space Escape Tab Backspace Delete Insert Home End PageUp PageDown '
-  + 'ArrowUp ArrowDown ArrowLeft ArrowRight InlineStart InlineEnd '
-  + 'F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12',
-);
-const CHORD = /^((?:(?:Ctrl|Shift|Alt|Meta)\+)*)([\s\S]+)$/u;
-
-/** The key of a chord, without its modifiers, or null when the text is no key at all. */
-export function keyOfChord(chord: unknown): string | null {
-  if (typeof chord !== 'string') return null;
-  const match = CHORD.exec(chord);
-  if (!match) return null;
-  const [, modifiers, key] = match;
-  if (key === 'Printable') return modifiers ? null : key;
-  if (NAMED_KEYS.has(key)) return key;
-  const single = [...key].length === 1 && !/[\s\p{C}]/u.test(key);
-  return single ? key : null;
-}
-
-/**
- * True for a chord whose key writes into a text field. The leak the taint rule
- * closes is per character, so Space counts, and so does a chord on a printable key.
- * Exported for the runtime, which checks this again against the event's target.
- */
-export function isPrintableChord(chord: string): boolean {
-  const key = keyOfChord(chord);
-  return key === null || key === 'Printable' || key === 'Space' || !NAMED_KEYS.has(key);
-}
-
 // --- what a node is -------------------------------------------------------
 
 /** The six commerce kinds. Mirrors COMMERCE_KINDS in createComponentElement, which holds React. */
@@ -335,8 +307,6 @@ const COMMERCE_KINDS: ReadonlySet<string> = new Set([
 ]);
 const NON_TEXT_FIELD_TYPES: ReadonlySet<string> = new Set(['select', 'checkbox', 'consent']);
 const FIXED_INPUT_TYPES: ReadonlySet<string> = new Set(['range', 'checkbox', 'radio']);
-/** `hidden` writes its `value` property into the attribute, so it holds no copied text. */
-const NON_TEXT_INPUT_TYPES: ReadonlySet<string> = new Set([...FIXED_INPUT_TYPES, 'color', 'button', 'submit', 'reset', 'file', 'hidden']);
 
 /** A node as it is stored or hydrated: all this parser needs of the tree. */
 export interface BehaviourNode {
@@ -970,11 +940,6 @@ function parseNavigate(action: Record<string, unknown>, scope: ActionScope): Par
   const href = action.navigate;
   if (typeof href !== 'string' || href !== href.trim() || !isSafeHref(href)) return refuse('navigate needs a safe literal address');
   return accept({ navigate: href });
-}
-
-/** True for an address that leaves the site, which the runtime checks against user activation. */
-export function leavesSite(href: string): boolean {
-  return !(href.startsWith('#') || (href.startsWith('/') && !href.startsWith('//')));
 }
 
 function parseAction(action: unknown, scope: ActionScope): Parsed<Action> {
