@@ -16,13 +16,21 @@
 //
 // Adding a field: add it to SiteSettings, to DEFAULT_SITE_SETTINGS and to
 // normalizeSiteSettings (and, when it has rules, to validateSiteSettings).
-// Nothing else in the persistence chain changes.
+// Nothing else in the persistence chain changes, except for the two keys with
+// their own writers below.
+//
+// `theme` and `head` (docs/plans/2026-11-02-theme-and-head.md) are written only
+// by their own actions (ProjectModel.updateTheme, and updateSiteHead from slice
+// H1), never by the dialog's whole-object save, which keeps the current value.
+// A body from a tab built before they existed carries neither key, and the save
+// path keeps the stored value then (see projectToPersisted and saveProject).
 //
 // Every stored value goes through normalizeSiteSettings on the way in AND on the
 // way out, so a blob written by an older or newer build (missing fields, wrong
 // types, unknown keys) never reaches the renderer in a shape it cannot handle.
 
 import { DEFAULT_PAGE_BASE, PAGE_BASES, type PageBase } from './pageBase';
+import { EMPTY_THEME, normalizeTheme, type SiteTheme } from './theme';
 
 /** Days in schema.org order, used by the opening-hours rows. */
 export const WEEKDAYS = [
@@ -100,10 +108,24 @@ export interface SiteSettings {
    * src/lib/site/pageBase.ts.
    */
   pageBase: PageBase;
+  /** The site's colour and font tokens, mode and document defaults (src/lib/site/theme.ts). */
+  theme: SiteTheme;
+  /**
+   * The head items every page carries. Slice H1 of the theme and head contract gives an
+   * item its shape and its parser (`parseHeadItem`, run at emission); until then this is
+   * kept as stored and emitted nowhere. Any plain object with a string `kind` is kept,
+   * valid or not, so an item a later build refuses can still be shown as refused.
+   */
+  head: StoredHeadItem[];
 }
 
+/** A head item as stored: opaque here, parsed at emission (slice H1). */
+export type StoredHeadItem = { kind: string } & Record<string, unknown>;
+
 /** The input to persistence and to ProjectModel: any subset, normalized on read. */
-export type SiteSettingsInput = Partial<Omit<SiteSettings, 'business'>> & {
+export type SiteSettingsInput = Partial<Omit<SiteSettings, 'business' | 'theme'>> & {
+  /** Any stored shape: normalizeTheme reads it. */
+  theme?: unknown;
   business?: Partial<BusinessInfo>;
 };
 
@@ -142,6 +164,8 @@ export const DEFAULT_SITE_SETTINGS: SiteSettings = {
   business: EMPTY_BUSINESS,
   smoothScroll: false,
   pageBase: DEFAULT_PAGE_BASE,
+  theme: EMPTY_THEME,
+  head: [],
 };
 
 /** What a project created from now on starts with. */
@@ -174,6 +198,17 @@ function normalizeHours(value: unknown): OpeningHoursRow[] {
     rows.push({ days, opens: str(raw.opens, 5), closes: str(raw.closes, 5) });
   }
   return rows;
+}
+
+/**
+ * Stored head items: plain objects with a string `kind`, kept as they are. No cap here:
+ * slice H1 caps at write and at emission, and the save route bounds the body.
+ */
+function normalizeHead(value: unknown): StoredHeadItem[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (item): item is StoredHeadItem => isRecord(item) && typeof item.kind === 'string',
+  );
 }
 
 function normalizeBusiness(value: unknown): BusinessInfo {
@@ -222,6 +257,8 @@ export function normalizeSiteSettings(raw: unknown): SiteSettings {
     business: normalizeBusiness(s.business),
     smoothScroll: s.smoothScroll === true,
     pageBase: PAGE_BASES.includes(s.pageBase as PageBase) ? (s.pageBase as PageBase) : DEFAULT_PAGE_BASE,
+    theme: normalizeTheme(s.theme),
+    head: normalizeHead(s.head),
   };
 }
 

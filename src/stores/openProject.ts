@@ -6,7 +6,9 @@
 // The store is a module singleton that survives client-side navigation, so
 // going Editor -> Preview -> Editor can keep one working copy, including work
 // not saved yet (a page just generated with AI). Whether it does is decided by
-// comparing three versions of the project's PAGES and reusable COMPONENTS:
+// comparing three versions of the project's PAGES, reusable COMPONENTS, and the
+// site's THEME and HEAD items (each reaches every page, so a stale copy of one
+// written back by a Save overwrites a change made elsewhere on every page):
 //   - the baseline: what this tab last loaded from, or saved to, the server;
 //   - the server copy just loaded;
 //   - the working copy in the store.
@@ -30,6 +32,7 @@ import type { RootStoreType } from '@/stores/RootStore';
 import { getHistoryStore } from '@/stores/RootStore';
 import { takeStashedDemoProject } from '@/lib/projects/demoStash';
 import { withDefaultViewports } from '@/lib/canvas/defaultViewports';
+import { normalizeSiteSettings } from '@/lib/site/siteSettings';
 
 export interface OpenedProject {
   project: ProjectModelType | undefined;
@@ -50,12 +53,27 @@ export interface OpenedProject {
    * placing them, which a person cannot see by looking at the page in hand.
    */
   changedDefinitions: string[];
+  /**
+   * The site-wide parts changed elsewhere, when `changedElsewhere`: the theme and the
+   * site's head items, which a Save here would put back as this tab holds them.
+   */
+  changedSiteParts: SitePart[];
 }
 
-/** The two parts of a project this file compares. */
+/** The site-wide parts of Site settings this file compares on their own. */
+export type SitePart = 'theme' | 'head';
+
+const SITE_PART_LABELS: Record<SitePart, string> = {
+  theme: 'the site theme (colours, fonts and colour mode)',
+  head: "the site's head items",
+};
+
+/** The parts of a project this file compares. */
 export interface ProjectContent {
   pages?: unknown;
   components?: unknown;
+  /** Only its `theme` and `head` are compared; the rest follows the dialog's own save. */
+  siteSettings?: unknown;
 }
 
 /** Key-order independent JSON, so a database round trip compares equal. */
@@ -79,18 +97,27 @@ function pagesContent(pages: unknown): string {
   return stableJson(repaired);
 }
 
-/** One version of a project: its pages, and each definition on its own, by id. */
+/** One version of a project: its pages, each definition on its own, by id, and the site parts. */
 interface VersionContent {
   pages: string;
   components: Record<string, string>;
+  site: Record<SitePart, string>;
 }
 
-function versionContent({ pages, components }: ProjectContent): VersionContent {
+function versionContent({ pages, components, siteSettings }: ProjectContent): VersionContent {
   const definitions = Object.entries((components ?? {}) as Record<string, unknown>);
+  // Normalized, as the server stores it, so a database round trip compares equal.
+  const settings = normalizeSiteSettings(siteSettings);
   return {
     pages: pagesContent(pages),
     components: Object.fromEntries(definitions.map(([id, definition]) => [id, stableJson(definition)])),
+    site: { theme: stableJson(settings.theme), head: stableJson(settings.head) },
   };
+}
+
+/** The site parts that differ between two versions, in a fixed order. */
+function changedSiteParts(from: VersionContent, to: VersionContent): SitePart[] {
+  return (['theme', 'head'] as const).filter((part) => from.site[part] !== to.site[part]);
 }
 
 /** The ids of the definitions added, removed or changed between two versions. */
@@ -100,7 +127,7 @@ function changedDefinitionIds(from: VersionContent, to: VersionContent): string[
 }
 
 function sameVersion(a: VersionContent, b: VersionContent): boolean {
-  return a.pages === b.pages && changedDefinitionIds(a, b).length === 0;
+  return a.pages === b.pages && changedDefinitionIds(a, b).length === 0 && changedSiteParts(a, b).length === 0;
 }
 
 /** A definition's name in a snapshot, if it holds that definition. */
@@ -116,10 +143,16 @@ export function markServerVersion(projectId: string, project: ProjectContent): v
   baselines.set(projectId, versionContent(project));
 }
 
-/** The warning for `changedElsewhere`, naming the components a Save would overwrite. */
-export function changedElsewhereMessage(changedDefinitions: readonly string[]): string {
+/** The warning for `changedElsewhere`, naming the components and site parts a Save would overwrite. */
+export function changedElsewhereMessage(
+  changedDefinitions: readonly string[],
+  changedSite: readonly SitePart[] = [],
+): string {
   const components = changedDefinitions.length > 0 ? ` Components changed there: ${changedDefinitions.join(', ')}.` : '';
-  return `This project was saved somewhere else since this tab loaded it, and this tab has unsaved changes too.${components} Saving here overwrites the other changes; loading the newer version discards the unsaved changes in this tab.`;
+  const site = changedSite.length > 0
+    ? ` Also changed there, for every page: ${changedSite.map((part) => SITE_PART_LABELS[part]).join(' and ')}.`
+    : '';
+  return `This project was saved somewhere else since this tab loaded it, and this tab has unsaved changes too.${components}${site} Saving here overwrites the other changes; loading the newer version discards the unsaved changes in this tab.`;
 }
 
 /** The page to show: the requested one if it exists, else home, else the first. */
@@ -154,6 +187,7 @@ export function openProject(
   let keep = false;
   let changedElsewhere = false;
   let changedDefinitions: string[] = [];
+  let changedSite: SitePart[] = [];
   if (existing) {
     const working = getSnapshot(existing);
     const workingContent = versionContent(working);
@@ -167,6 +201,7 @@ export function openProject(
       changedDefinitions = changedDefinitionIds(baseline, serverContent)
         .map((id) => definitionName(snapshot.components, id) ?? definitionName(working.components, id) ?? id)
         .sort((a, b) => a.localeCompare(b));
+      changedSite = changedSiteParts(baseline, serverContent);
     }
   }
 
@@ -192,7 +227,15 @@ export function openProject(
   // One project's undo steps never apply to another, and a (re)load is not
   // something to undo.
   if (!keep || previousProjectId !== project?.id) getHistoryStore()?.clear();
-  return { project, page, missingPageId, keptWorkingCopy: keep, changedElsewhere, changedDefinitions };
+  return {
+    project,
+    page,
+    missingPageId,
+    keptWorkingCopy: keep,
+    changedElsewhere,
+    changedDefinitions,
+    changedSiteParts: changedSite,
+  };
 }
 
 /** `?page=` of the current address (client only; null on the server). */
