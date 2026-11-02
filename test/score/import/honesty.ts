@@ -13,7 +13,7 @@ import type { ImportLine } from '@/lib/reactImport/report';
 export interface Difference {
   /** The parity id: `r` for the import's root, `r.0` for its first element child. */
   element: string;
-  /** A computed property, or `missing`, `text`, `::before`, `::after`. */
+  /** A computed property, or `missing`, `text`, `rendered text`, `::before`, `::after`. */
   property: string;
 }
 

@@ -6,51 +6,76 @@
 import { execSync, spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
+import net, { type AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { setup as startDatabase, teardown as stopDatabase } from '../../vitest.integration.setup';
 
-// BEHAVIOUR_SERVER_PORT moves the server off the default when another checkout's run holds it.
-const PORT = Number(process.env.BEHAVIOUR_SERVER_PORT ?? 3931);
-const LOG = path.join(os.tmpdir(), 'behaviour-next-start.log');
+// Each run takes a port the system hands out, so runs in parallel (the agent fleet, two
+// checkouts) never meet on one: a fixed port made the second run talk to the first run's
+// server, or fail to bind. The port is free when asked and taken a moment later by
+// `next start`; another process can take it in between, so a start that fails to bind
+// tries a new one.
+const START_ATTEMPTS = 3;
 
 let server: ChildProcess | undefined;
 
-async function answers(): Promise<boolean> {
-  try {
-    await fetch(`http://127.0.0.1:${PORT}/robots.txt`);
-    return true;
-  } catch {
-    return false;
-  }
+/** A port nothing listens on now, from the system. */
+function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe = net.createServer();
+    probe.unref();
+    probe.on('error', reject);
+    probe.listen(0, () => {
+      const { port } = probe.address() as AddressInfo;
+      probe.close(() => resolve(port));
+    });
+  });
 }
 
-/**
- * Another checkout's run on the same port would answer in place of this build, and every
- * proof would then hold for the wrong code: refuse a taken port, and a server that died.
- */
-async function assertPortFree(): Promise<void> {
-  if (await answers()) throw new Error(`port ${PORT} already answers, so a run would test another server: set BEHAVIOUR_SERVER_PORT to a free port`);
-}
-
-async function waitForServer(): Promise<void> {
+/** Resolves when this server answers; rejects as soon as it exits, so a dead start is never waited out. */
+async function waitForServer(child: ChildProcess, port: number, log: string): Promise<void> {
+  let exited: number | null | undefined;
+  child.once('exit', (code) => {
+    exited = code;
+  });
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
-    if (server?.exitCode !== null && server?.exitCode !== undefined) throw new Error(`next start exited with ${server.exitCode}, see ${LOG}`);
-    if (await answers()) return;
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    if (exited !== undefined) throw new Error(`next start exited with ${exited} on port ${port}, see ${log}`);
+    try {
+      await fetch(`http://127.0.0.1:${port}/robots.txt`);
+      return;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
   }
-  throw new Error(`next start did not answer, see ${LOG}`);
+  throw new Error(`next start did not answer on port ${port}, see ${log}`);
 }
 
 export async function setup(): Promise<void> {
-  await assertPortFree();
   await startDatabase();
   if (process.env.BEHAVIOUR_REUSE_BUILD !== '1') {
     execSync('pnpm build', { stdio: 'inherit', env: { ...process.env, NEXT_TELEMETRY_DISABLED: '1' } });
   }
-  const log = fs.openSync(LOG, 'w');
-  server = spawn('pnpm', ['exec', 'next', 'start', '-p', String(PORT)], {
+  for (let attempt = 1; ; attempt += 1) {
+    const port = await freePort();
+    const log = path.join(os.tmpdir(), `behaviour-next-start-${port}.log`);
+    server = start(port, log);
+    try {
+      await waitForServer(server, port, log);
+      process.env.BEHAVIOUR_PORT = String(port);
+      return;
+    } catch (error) {
+      stopServer();
+      const taken = fs.existsSync(log) && fs.readFileSync(log, 'utf8').includes('EADDRINUSE');
+      if (!taken || attempt === START_ATTEMPTS) throw error;
+    }
+  }
+}
+
+function start(port: number, logFile: string): ChildProcess {
+  const log = fs.openSync(logFile, 'w');
+  const child = spawn('pnpm', ['exec', 'next', 'start', '-p', String(port)], {
     stdio: ['ignore', log, log],
     detached: true,
     env: {
@@ -64,11 +89,24 @@ export async function setup(): Promise<void> {
       ANALYTICS_INGESTION_ENDPOINT: 'https://analytics.invalid/ingest',
     },
   });
-  await waitForServer();
-  process.env.BEHAVIOUR_PORT = String(PORT);
+  // The child holds its own copy of the file.
+  fs.closeSync(log);
+  return child;
+}
+
+/** Stops the server's whole process group, which `detached` made it lead. */
+function stopServer(): void {
+  if (!server?.pid) return;
+  try {
+    process.kill(-server.pid);
+  } catch (error) {
+    // Already gone, which is what this wanted.
+    if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+  }
+  server = undefined;
 }
 
 export async function teardown(): Promise<void> {
-  if (server?.pid && server.exitCode === null) process.kill(-server.pid);
+  stopServer();
   await stopDatabase();
 }

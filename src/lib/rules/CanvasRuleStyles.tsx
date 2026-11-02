@@ -43,7 +43,17 @@ export interface CanvasRuleStylesProps {
 
 export const CanvasRuleStyles = observer(({ tree, definitionTree, floating, frames, breakpoints, problems }: CanvasRuleStylesProps) => {
   const { editorUI } = useStore();
-  const css = useSheet({ kind: 'canvas', tree, definitionTree, floating, frames, breakpoints, previewRule: editorUI.previewRule }, problems);
+  const css = useSheet({
+    kind: 'canvas',
+    tree,
+    definitionTree,
+    floating,
+    frames,
+    breakpoints,
+    previewRule: editorUI.previewRule,
+    colorMode: editorUI.frameColorMode,
+    darkClass: editorUI.frameDarkClass,
+  }, problems);
   if (!css) return null;
   // The parser and the emitter's guards have read every stored character of this.
   return <style data-fc-rules="canvas" dangerouslySetInnerHTML={{ __html: css }} />;
@@ -59,7 +69,16 @@ export interface PreviewRuleStylesProps {
 }
 
 export const PreviewRuleStyles = observer(({ tree, definitionTree, frame, breakpoints, problems }: PreviewRuleStylesProps) => {
-  const css = useSheet({ kind: 'preview', tree, definitionTree, frames: [frame], breakpoints }, problems);
+  const { editorUI } = useStore();
+  const css = useSheet({
+    kind: 'preview',
+    tree,
+    definitionTree,
+    frames: [frame],
+    breakpoints,
+    colorMode: editorUI.frameColorMode,
+    darkClass: editorUI.frameDarkClass,
+  }, problems);
   if (!css) return null;
   return <style data-fc-rules="preview" dangerouslySetInnerHTML={{ __html: css }} />;
 });

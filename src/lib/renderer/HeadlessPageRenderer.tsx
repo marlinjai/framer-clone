@@ -23,6 +23,7 @@ function firstStickyCta(node: ComponentInstance): ComponentInstance | null {
   return null;
 }
 import PageFontFaces from '@/lib/fonts/PageFontFaces';
+import type { SiteTheme } from '@/lib/site/theme';
 import { createScope, pushInputFrame, pushPageFrame } from '@/lib/bindings/resolver/scope';
 import { defaultValuesAt } from '@/lib/components/frameInputs';
 import { useProductPageParams } from '@/lib/commerce/productPreview';
@@ -37,9 +38,11 @@ function productPagePathOf(page: PageModelType): string | null {
 export interface HeadlessPageRendererProps {
   page: PageModelType;
   breakpointId: string;
+  /** The site's theme, whose font tokens' faces are declared with the page's own. */
+  theme?: SiteTheme;
 }
 
-const HeadlessPageRenderer = observer(({ page, breakpointId }: HeadlessPageRendererProps) => {
+const HeadlessPageRenderer = observer(({ page, breakpointId, theme }: HeadlessPageRendererProps) => {
   const { appComponentTree } = page;
   const viewportNodes = page.sortedViewportNodes;
   const pageParams = useProductPageParams(page.slug);
@@ -70,7 +73,7 @@ const HeadlessPageRenderer = observer(({ page, breakpointId }: HeadlessPageRende
   return (
     <PreviewExpansionContext.Provider value={page.expansion}>
       {/* The self-hosted web fonts the page uses (src/lib/fonts/registry.ts). */}
-      <PageFontFaces roots={page.pageFontRoots} />
+      <PageFontFaces roots={page.pageFontRoots} theme={theme} />
       <StickyCtaPreviewContext.Provider value={true}>
         <HeadlessComponentRenderer
           component={appComponentTree}

@@ -12,6 +12,7 @@
 
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { CONSENT_TAP_GUARD_MS } from '@/lib/consent/consent';
 import { describe, expect, it, vi } from 'vitest';
 import { chromium, webkit, type BrowserType, type Page } from 'playwright';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
@@ -288,6 +289,9 @@ describe('nothing stored covers the consent banner', () => {
         // The footer's "Cookie settings" link calls the same open().
         await page.evaluate(() => (window as unknown as { __lumitraConsent: { open: () => void } }).__lumitraConsent.open());
         expect(await page.evaluate(() => document.getElementById('pop')!.matches(':popover-open'))).toBe(false);
+        // A banner opened from outside it ignores pointer clicks for a moment (the tap
+        // guard, CONSENT_TAP_GUARD_MS in src/lib/consent/consent.ts), as a visitor's would.
+        await page.waitForTimeout(CONSENT_TAP_GUARD_MS + 100);
         await page.locator('[data-fc-consent-decline]').click();
         expect(await page.evaluate(choice)).toBe('denied');
         await page.click('#open');

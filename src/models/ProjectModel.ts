@@ -753,8 +753,10 @@ export const ProjectModel = types
     },
 
     // The state, its rules, `noScriptState`, and the placements starting on it. The
-    // `choice` state and triggers compiled from states arrive with custom states,
-    // which extend this.
+    // `choice` a custom state joins is compiled from `states` at expansion, so it
+    // follows with nothing stored. A placement whose state comes from data and names
+    // the removed one starts in primary, with a warning. Triggers that set a state
+    // arrive with interactions (slice 14), which extend this.
     removeState(definitionId: string, stateId: string): ComponentActionResult {
       const definition = self.components.get(definitionId);
       if (!definition) return { ok: false, message: 'That component no longer exists.' };

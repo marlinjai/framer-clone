@@ -3,7 +3,9 @@
 // What the publish flow warns about before a site goes live (plan
 // docs/plans/2026-10-23-published-site-essentials.md, decision 5): a site
 // that carries business data but has no Impressum (German law requires one
-// for a business site), legal pages that still hold [placeholders], and reusable
+// for a business site), legal pages that still hold [placeholders], a Google Maps
+// embed the privacy policy does not name (it loads only after consent, but Google
+// still receives data then, so the policy must say so), and reusable
 // components that will not show. A footer can be a component, and the Impressum
 // link goes with it, so what expansion leaves out has to reach the owner. A
 // warning, never a gate: the owner can publish anyway. PURE.
@@ -17,6 +19,7 @@ import type { ExpansionFailureKind } from '@/lib/components/expand';
 import { literalPageTree, type LiteralPageSource } from '@/lib/renderer/server/snapshotToComponentNode';
 import { LEGAL_KINDS, findLegalPage, type LegalKind, type LegalPageLike } from './legalPages';
 import { findPlaceholders } from './templates';
+import { treesHoldMapEmbed } from '@/lib/mapEmbed/mapEmbed';
 
 interface NodeLike {
   props?: { children?: unknown } | null;
@@ -53,9 +56,24 @@ export interface LegalPlaceholderIssue {
   count: number;
 }
 
+/**
+ * Where the privacy policy stands on Google Maps, for a site that embeds a map:
+ * there is none, it does not name Google Maps, or it does.
+ */
+export type MapsPrivacyStatus = 'no-privacy-page' | 'not-named' | 'named';
+
+export interface MapsPrivacyCheck {
+  status: MapsPrivacyStatus;
+  /** The privacy policy page, when the site has one. */
+  privacyPageId: string | null;
+  privacyTitle: string | null;
+}
+
 export interface PublishCheck {
   /** Business data is filled in but no Impressum page exists. */
   missingImpressum: boolean;
+  /** Set when some page embeds a Google Map: what the privacy policy says about it. */
+  maps: MapsPrivacyCheck | null;
   /** Legal pages that still contain [placeholders]. */
   placeholders: LegalPlaceholderIssue[];
   /** Placements that render nothing, and definitions that could not be read. */
@@ -75,6 +93,44 @@ export function hasBusinessData(b: BusinessInfo): boolean {
   return Boolean(
     b.legalName || b.street || b.city || b.phone || b.email || b.vatId || b.registerEntry || b.managingDirectors.length > 0,
   );
+}
+
+/** Every text in a tree (bounded walk). */
+function textsOf(root: NodeLike | null | undefined): string[] {
+  const texts: string[] = [];
+  const stack: NodeLike[] = root ? [root] : [];
+  let seen = 0;
+  while (stack.length > 0 && seen < 20000) {
+    const node = stack.pop()!;
+    seen++;
+    const text = node.props?.children;
+    if (typeof text === 'string') texts.push(text);
+    if (Array.isArray(node.children)) stack.push(...node.children);
+  }
+  return texts;
+}
+
+/** Whether a privacy policy tree names Google Maps anywhere in its text. */
+export function namesGoogleMaps(root: NodeLike | null | undefined): boolean {
+  return textsOf(root).some((text) => /google[\s\u00a0-]*maps/i.test(text));
+}
+
+/**
+ * What the privacy policy says about Google Maps, or null when no page embeds a
+ * map. Exported for Site settings, which shows the same hint.
+ */
+export function mapsPrivacyCheck(
+  pages: readonly (LegalPageLike & { id: string; metadata: { title: string } })[],
+  treeOf: (pageId: string) => NodeLike | null | undefined,
+): MapsPrivacyCheck | null {
+  if (!treesHoldMapEmbed(pages.map((page) => treeOf(page.id) as never))) return null;
+  const privacy = findLegalPage(pages, 'privacy');
+  if (!privacy) return { status: 'no-privacy-page', privacyPageId: null, privacyTitle: null };
+  return {
+    status: namesGoogleMaps(treeOf(privacy.id)) ? 'named' : 'not-named',
+    privacyPageId: privacy.id,
+    privacyTitle: privacy.metadata.title,
+  };
 }
 
 function countPlaceholders(root: NodeLike | null | undefined): number {
@@ -120,6 +176,7 @@ export function checkBeforePublish(
 
   return {
     missingImpressum: hasBusinessData(business) && !findLegalPage(pages, 'impressum'),
+    maps: mapsPrivacyCheck(pages, (id) => trees.get(id)?.root as NodeLike | null | undefined),
     placeholders,
     components,
   };
@@ -127,5 +184,11 @@ export function checkBeforePublish(
 
 /** True when there is something to warn about. */
 export function hasPublishIssues(check: PublishCheck): boolean {
-  return check.missingImpressum || check.placeholders.length > 0 || check.components.length > 0;
+  return (
+    check.missingImpressum ||
+    // A check from before maps were checked (a stored revision's, an older server's) has none.
+    (check.maps != null && check.maps.status !== 'named') ||
+    check.placeholders.length > 0 ||
+    check.components.length > 0
+  );
 }

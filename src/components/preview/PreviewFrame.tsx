@@ -28,6 +28,10 @@ import { EffectsStyles } from '@/lib/effects/EffectsStyles';
 import { PreviewRuleStyles } from '@/lib/rules/CanvasRuleStyles';
 import { PREVIEW_ROOT } from '@/lib/rules/surfaces';
 import { PageBaseStyles } from '@/lib/site/PageBaseStyles';
+import { SurfaceThemeStyles } from '@/lib/site/SurfaceThemeStyles';
+import { surfaceFrameAttributes } from '@/lib/site/surfaceTheme';
+import type { SiteTheme } from '@/lib/site/theme';
+import { useStore } from '@/hooks/useStore';
 import { DEFAULT_PAGE_BASE, type PageBase } from '@/lib/site/pageBase';
 import { prefersReducedMotion, startEffects } from '@/lib/effects/runtime';
 import { startSmoothScroll } from '@/lib/effects/smoothScroll';
@@ -49,6 +53,11 @@ export interface PreviewFrameProps {
   smoothScroll?: boolean;
   /** The site's page base, as the published page has it. */
   pageBase?: PageBase;
+  /**
+   * The site's theme: its tokens, scheme and document block on this frame, in the mode
+   * the editor shows (EditorUIStore.frameColorScheme), as on the canvas.
+   */
+  theme?: SiteTheme;
   /** A click on a link to a path of the site (`/contact`), with that path. */
   onSitePath?: (path: string) => void;
 }
@@ -95,8 +104,9 @@ function usePreviewRuntime(frame: React.RefObject<HTMLDivElement | null>, progra
   }, [frame, program]);
 }
 
-const PreviewFrame = observer(({ page, width, height, fill = false, smoothScroll = false, pageBase = DEFAULT_PAGE_BASE, onSitePath }: PreviewFrameProps) => {
+const PreviewFrame = observer(({ page, width, height, fill = false, smoothScroll = false, pageBase = DEFAULT_PAGE_BASE, theme, onSitePath }: PreviewFrameProps) => {
   const frameRef = useRef<HTMLDivElement>(null);
+  const { editorUI } = useStore();
 
   const viewportNodes = page.sortedViewportNodes;
   const breakpointId = pickBreakpointForWidth(
@@ -152,12 +162,14 @@ const PreviewFrame = observer(({ page, width, height, fill = false, smoothScroll
   return (
     <div
       ref={frameRef}
-      className={
+      className={`${
         fill
           ? 'bg-white overflow-auto w-full h-full outline-none'
           : 'bg-white shadow-2xl overflow-auto outline-none'
-      }
+      }${editorUI.frameDarkClass ? ' dark' : ''}`}
       style={fill ? undefined : { width, height }}
+      // The page: the theme's tokens, scheme and document block land here (SurfaceThemeStyles).
+      {...surfaceFrameAttributes('frame', editorUI.frameColorScheme)}
       // Focusable from script, so Space, the arrows and Page Down scroll the
       // page (the shell focuses it when the preview opens).
       tabIndex={-1}
@@ -173,6 +185,7 @@ const PreviewFrame = observer(({ page, width, height, fill = false, smoothScroll
     >
       <EffectsStyles startScope={`[${FX_ATTR.scope}] `} smoothScroll={smoothScroll} />
       <PageBaseStyles base={pageBase} roots={PREVIEW_ROOTS} />
+      <SurfaceThemeStyles theme={theme} base={pageBase} />
       <PreviewRuleStyles
         tree={behaviour.root as SurfaceNode}
         definitionTree={page.isDefinitionPage}
@@ -181,7 +194,7 @@ const PreviewFrame = observer(({ page, width, height, fill = false, smoothScroll
         problems={behaviour.problems}
       />
       <SurfaceDomContext.Provider value={dom}>
-        <HeadlessPageRenderer page={page} breakpointId={breakpointId} />
+        <HeadlessPageRenderer page={page} breakpointId={breakpointId} theme={theme} />
       </SurfaceDomContext.Provider>
     </div>
   );

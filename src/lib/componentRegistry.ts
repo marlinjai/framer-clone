@@ -40,6 +40,7 @@ import {
   ShieldCheck as ConsentIcon,
   Send as SubmitIcon,
   PanelBottom as StickyCtaIcon,
+  MapPin as MapEmbedIcon,
   Link as LinkIcon,
   PanelTop as TabsIcon,
   Wrench as ToolbarIcon,
@@ -59,6 +60,7 @@ import type { PresetKind } from '@/lib/behaviour/presets';
 import type { BindableSlotMeta } from '@/lib/bindings/types';
 import { FORM_KIND_ATTR, DEFAULT_FORM_NAME, DEFAULT_SUCCESS_MESSAGE, type FieldType } from '@/lib/forms/definition';
 import { DEFAULT_STICKY_CTA, STICKY_CTA_ATTR, STICKY_CTA_MARKER } from '@/lib/stickyCta/stickyCta';
+import { MAP_EMBED_ATTR, MAP_EMBED_MARKER } from '@/lib/mapEmbed/mapEmbed';
 
 export type ComponentCategory = 'basic' | 'layout' | 'data' | 'commerce' | 'form' | 'interactive';
 
@@ -397,6 +399,30 @@ export const COMPONENT_REGISTRY: Record<string, ComponentRegistryEntry> = {
       },
     },
     defaultSize: { width: 390, height: 72 },
+  },
+  // A Google Maps embed (src/lib/mapEmbed/mapEmbed.ts): a box whose map is
+  // described by props (mapUrl, mapAddress, mapTitle) and drawn by the renderers.
+  // The published page shows a placeholder until the visitor consents to maps;
+  // the canvas and the preview never load the map.
+  mapEmbed: {
+    id: 'mapEmbed',
+    label: 'Google Map',
+    category: 'basic',
+    icon: MapEmbedIcon,
+    iconClassName: 'bg-blue-100 text-blue-600',
+    htmlType: 'div',
+    defaultProps: {
+      // No sample address: a sample would publish a map of somewhere else. The
+      // placeholder asks for one until the owner sets it.
+      [MAP_EMBED_ATTR]: MAP_EMBED_MARKER,
+      style: {
+        width: '100%',
+        height: '360px',
+        overflow: 'hidden',
+        borderRadius: '8px',
+      },
+    },
+    defaultSize: { width: 640, height: 360 },
   },
   image: {
     id: 'image',

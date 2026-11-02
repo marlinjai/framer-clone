@@ -29,6 +29,9 @@ import {
   placementMarker,
   placementMarkerSelector,
   POINTER_STATE_CSS,
+  PRIMARY_STATE,
+  customStateChoice,
+  customStateScope,
   type ComponentDefinition,
   type ComponentDefinitions,
 } from '@/lib/components/definition';
@@ -127,6 +130,8 @@ export interface PlacementInstance {
   /** The placement's values from data, under `input.<id>`. */
   bindings: BindingsRecord;
   inputDefinitions: InputDefinition[];
+  /** The placement's starting state from data (`{{row.tier}}`), resolved in hydration. */
+  state?: { definitionId: string; binding: BindingEntry };
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -137,12 +142,34 @@ export function placementInstance(
   props: Pick<PlacementProps, 'inputs'>,
   bindings: BindingsRecord | undefined,
   inputDefinitions: InputDefinition[],
+  definitionId?: string,
 ): PlacementInstance {
+  const state = bindings?.state;
   return {
     inputs: props.inputs ?? {},
     bindings: Object.fromEntries(Object.entries(bindings ?? {}).filter(([slot]) => slot.startsWith('input.'))),
     inputDefinitions,
+    ...(definitionId && state?.mode === 'read' ? { state: { definitionId, binding: state } } : {}),
   };
+}
+
+/**
+ * The root a placement expanded to, with its input frame's scope and its starting
+ * state from data written in. Hydration and the island pass both open a placement
+ * here, so the two cannot differ.
+ */
+export function openPlacement(
+  node: ComponentNode,
+  instance: PlacementInstance,
+  outerScope: BindingScope,
+  budget: RenderBudget,
+): { node: ComponentNode; scope: BindingScope } {
+  const scope = pushInputFrame(outerScope, resolveInputValues(instance, outerScope, budget));
+  const bare = withoutInstance(node);
+  const opened = instance.state
+    ? withInitialState(bare, instance.state.definitionId, boundValue(instance.state.binding, outerScope), budget)
+    : bare;
+  return { node: opened, scope };
 }
 
 export function placementInstanceOf(props: unknown): PlacementInstance | undefined {
@@ -150,6 +177,8 @@ export function placementInstanceOf(props: unknown): PlacementInstance | undefin
   // Expansion writes this, but a stored page is opaque JSON, so its shape is checked here.
   if (!isRecord(instance) || !isRecord(instance.inputs) || !isRecord(instance.bindings)) return undefined;
   if (!Array.isArray(instance.inputDefinitions) || !instance.inputDefinitions.every(isRecord)) return undefined;
+  const { state } = instance;
+  if (state !== undefined && !(isRecord(state) && typeof state.definitionId === 'string' && isRecord(state.binding))) return undefined;
   return instance as unknown as PlacementInstance;
 }
 
@@ -310,22 +339,28 @@ export function mergeStyle(definition: unknown, placement: unknown): unknown {
 // ---------- component states ----------
 
 /**
- * A node's stored rules with each pointer state rule compiled to an ordinary one,
- * relative to the marker on the placement root, and placed after every other rule
- * in the order of the definition's states, so a later state wins a tie. A compiled
- * rule adds no specificity (`:where`), so an element's own `&:hover` beats it.
+ * A node's stored rules with each state rule compiled to an ordinary one, placed
+ * after every other rule in the order of the definition's states, so a later state
+ * wins a tie whatever its kind. A compiled rule adds no specificity (`:where`, or a
+ * `when`, which is `:where` by design), so an element's own `&:hover` beats it.
+ *
+ * - A pointer state is plain CSS relative to the marker on the placement root:
+ *   `&:where(X:hover, X:hover *)` behind the hover gate, `:active`, or focus inside.
+ * - A custom state is a `when` on the placement root's choice `S`. The state named
+ *   by `noScriptState` is written a second time with `gate: 'off'`, for a page whose
+ *   script is off or failed.
  *
  * Fails closed: a rule naming a state the definition does not have, or written in
  * any shape but `selector: '&'`, is dropped with a warning, since without its
- * condition it would be the permanent look. A custom state needs the behaviour
- * model's `when`, which arrives with slice 12, so until then its rules are left out.
+ * condition it would be the permanent look. Compiled ids are positional, because a
+ * state id may be as long as a rule id.
  */
 export function compileStateRules(rules: unknown[], definition: ComponentDefinition, budget: RenderBudget): unknown[] {
   if (!rules.some(rule => componentStateOf(rule) !== undefined)) return rules;
   const marker = placementMarkerSelector(definition.id);
   const order = definition.states.map(state => state.id);
   const plain: unknown[] = [];
-  const compiled: { at: number; rule: Record<string, unknown> }[] = [];
+  const compiled: { at: number; rules: Record<string, unknown>[] }[] = [];
   for (const rule of rules) {
     const stateId = componentStateOf(rule);
     if (stateId === undefined) {
@@ -339,25 +374,58 @@ export function compileStateRules(rules: unknown[], definition: ComponentDefinit
       budget.warn(`a rule names a state ${definition.name} does not have: ${stateId || '(none)'}`);
       continue;
     }
-    if (!isPointerState(state)) continue;
     if (stored.selector !== '&' || stored.when !== undefined || stored.gate !== undefined) {
       budget.warn(`a rule of state ${state.name} in ${definition.name} is not in the stored shape, so it is left out`);
       continue;
     }
-    const active = `${marker}${POINTER_STATE_CSS[state.kind]}`;
-    const wrappers = [...(state.kind === 'hover' ? [HOVER_GATE] : []), ...(Array.isArray(stored.at) ? stored.at : [])];
+    const wrappers = Array.isArray(stored.at) ? stored.at : [];
+    const id = `state-${at}`;
+    if (isPointerState(state)) {
+      const active = `${marker}${POINTER_STATE_CSS[state.kind]}`;
+      const gated = [...(state.kind === 'hover' ? [HOVER_GATE] : []), ...wrappers];
+      compiled.push({ at, rules: [{ id, selector: `&:where(${active}, ${active} *)`, ...(gated.length > 0 ? { at: gated } : {}), style: stored.style }] });
+      continue;
+    }
+    const base = { selector: '&', ...(wrappers.length > 0 ? { at: wrappers } : {}), style: stored.style };
     compiled.push({
       at,
-      rule: {
-        id: stored.id,
-        selector: `&:where(${active}, ${active} *)`,
-        ...(wrappers.length > 0 ? { at: wrappers } : {}),
-        style: stored.style,
-      },
+      rules: [
+        { id, ...base, when: { state: customStateScope(definition.id), eq: state.id } },
+        ...(definition.noScriptState === state.id ? [{ id: `${id}-no-script`, ...base, gate: 'off' }] : []),
+      ],
     });
   }
   compiled.sort((a, b) => a.at - b.at);
-  return [...plain, ...compiled.map(({ rule }) => rule)];
+  return [...plain, ...compiled.flatMap(entry => entry.rules)];
+}
+
+/** The root's stored behaviour with the definition's custom states as one choice, or as it was. */
+function withCustomStates(behaviour: unknown, definition: ComponentDefinition): unknown {
+  const choice = customStateChoice(definition);
+  if (!choice) return behaviour;
+  const own = isRecord(behaviour) ? behaviour : {};
+  const states = Array.isArray(own.state) ? own.state : [];
+  return { ...own, state: [...states, choice] };
+}
+
+/**
+ * The root with this placement's starting state written into the choice: a custom
+ * state the definition has, or primary. Behaviour refuses a binding inside
+ * `initial`, so the value is a literal by the time it arrives here.
+ */
+export function withInitialState(node: ComponentNode, definitionId: string, value: unknown, budget: RenderBudget): ComponentNode {
+  const behaviour = (node.props as Record<string, unknown> | undefined)?.behaviour;
+  if (!isRecord(behaviour) || !Array.isArray(behaviour.state)) return node;
+  const scope = customStateScope(definitionId);
+  const state = behaviour.state.map((entry) => {
+    if (!isRecord(entry) || entry.id !== scope || !Array.isArray(entry.options)) return entry;
+    const known = typeof value === 'string' && entry.options.includes(value);
+    if (value !== undefined && value !== null && value !== '' && !known) {
+      budget.warn(`a placement starts in a state its component does not have, so it starts in primary: ${String(value)}`);
+    }
+    return { ...entry, initial: known ? value : PRIMARY_STATE };
+  });
+  return { ...node, props: { ...node.props, behaviour: { ...behaviour, state } } as ComponentNode['props'] };
 }
 
 // ---------- expansion ----------
@@ -465,7 +533,12 @@ export function expandPlacements(
       };
     };
     // A definition's own root cannot repeat: the list it would read opens inside it.
-    const adapted = withItemBindingsChecked(withoutRepeat(clean(componentSnapshotToNode(tree))), inputs, message => budget.warn(message));
+    const cleaned = withItemBindingsChecked(withoutRepeat(clean(componentSnapshotToNode(tree))), inputs, message => budget.warn(message));
+    // A placement root is the scope of its custom states: one choice, starting primary.
+    const behaviour = withCustomStates(cleaned.props?.behaviour, definition);
+    const adapted = behaviour === cleaned.props?.behaviour
+      ? cleaned
+      : { ...cleaned, props: { ...cleaned.props, behaviour } as ComponentNode['props'] };
     const mappedInputs = inputs.map(input =>
       input.default === undefined ? input : { ...input, default: mapResponsiveValue(input.default, own, pageBreakpoints) });
     const result = { tree: adapted, inputs: mappedInputs, nodes: countNodes(adapted), bytes };
@@ -552,7 +625,7 @@ export function expandPlacements(
     }
 
     const placementId = node.id ?? `p-${stableHash(`${stack.join('>')}>${id}`)}`;
-    const instance = placementInstance(props, node.bindings, ready.inputs);
+    const instance = placementInstance(props, node.bindings, ready.inputs, id);
     const tree = withIdentity(ready.tree, placementId);
     const rootProps = { ...tree.props } as Record<string, unknown>;
     if (props.style !== undefined) rootProps.style = mergeStyle(rootProps.style, props.style);
@@ -563,7 +636,9 @@ export function expandPlacements(
     if (repeat) rootProps[REPEAT_PROP] = repeat;
     if (!literal) rootProps.instance = instance;
     if (hasPointerState(definition)) rootProps[placementMarker(id)] = id;
-    const merged: ComponentNode = { ...tree, props: rootProps as ComponentNode['props'] };
+    // A literal state is known now; one from data waits for hydration, and a raw
+    // reader, which knows no data, sees primary.
+    const merged = withInitialState({ ...tree, props: rootProps as ComponentNode['props'] }, id, props.state, budget);
 
     const scope = literal
       ? pushInputFrame(createScope(), resolveInputValues(instance, outer ?? createScope(), budget, true))

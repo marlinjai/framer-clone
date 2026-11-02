@@ -80,8 +80,12 @@ const everything = (): ComponentNode =>
 const holdsBehaviour = (node: ComponentNode): boolean =>
   (node.props as Record<string, unknown> | undefined)?.behaviour !== undefined || (node.children ?? []).some(holdsBehaviour);
 
+// A fixture of reusable components holds placements, which expand against definitions the
+// bare tree does not carry, so it renders through renderThroughPublishedPage instead. Decided
+// from the fixture, not its tree: building a tree advances the node id counter these references carry.
+
 const pages: { id: string; tree: () => ComponentNode }[] = [
-  ...FIXTURES.map(({ id, tree }) => ({ id, tree })),
+  ...FIXTURES.filter(({ initialGap }) => initialGap !== 'reusable-components').map(({ id, tree }) => ({ id, tree })),
   { id: 'everything', tree: everything },
 ];
 

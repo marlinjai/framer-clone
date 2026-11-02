@@ -43,6 +43,21 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # The merge commit and its first parent, the base, for the score report guard.
+          fetch-depth: 2
+
+      # docs/primitives-score/latest.* is written only by the run on main (score.yml).
+      # A pull request that carries it conflicts with every other one that ran the score;
+      # what a pull request changes in the score shows in its baseline.json rows.
+      - name: Score report is main's
+        if: github.event_name == 'pull_request'
+        run: |
+          if ! git diff --quiet HEAD^1 HEAD -- docs/primitives-score/latest.json docs/primitives-score/latest.md; then
+            echo "This pull request changes docs/primitives-score/latest.*, which only the run on main writes."
+            echo "Put main's back: git checkout origin/main -- docs/primitives-score/latest.json docs/primitives-score/latest.md"
+            exit 1
+          fi
 
       # Reads the pnpm version from package.json "packageManager" (pnpm@9.15.0).
       - name: Setup pnpm
@@ -70,6 +85,12 @@ jobs:
       # client is guaranteed present before typecheck and build.
       - name: Generate Prisma client
         run: pnpm exec prisma generate
+
+      # The primitive score's floor (docs/primitives-score/baseline.json) is sound: a
+      # lowered row holds its reason. No browser, seconds. The floor against a run, row by
+      # row, is checked by score.yml on main after each run.
+      - name: Score floor is sound
+        run: pnpm check:score-floor --sound-only
 
       - name: Typecheck
         run: pnpm exec tsc --noEmit

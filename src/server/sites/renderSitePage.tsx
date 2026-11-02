@@ -29,6 +29,22 @@ import { jsonLdScriptText } from '@/lib/site/publishedHead';
 import { siteLookFromPages } from '@/lib/site/notFoundDefault';
 import { findLegalPage } from '@/lib/legal/legalPages';
 import { productPagePath } from '@/lib/pages/slug';
+import { treesHoldMapEmbed } from '@/lib/mapEmbed/mapEmbed';
+
+type TreeLike = Parameters<typeof treesHoldMapEmbed>[0] extends Iterable<infer T> ? T : never;
+
+/**
+ * Whether any page or reusable component of the site embeds a Google Map. Read from
+ * the stored trees: a definition holding one counts even where it is not placed, so
+ * the answer can only err towards offering withdrawal.
+ */
+export function siteHoldsMap(site: PublishedSite): boolean {
+  const trees = [
+    ...site.pages.map((p) => (p.snapshot as { appComponentTree?: TreeLike } | undefined)?.appComponentTree),
+    ...Object.values(site.components ?? {}).map((d) => (d.page as { appComponentTree?: TreeLike } | undefined)?.appComponentTree),
+  ];
+  return treesHoldMapEmbed(trees);
+}
 
 /** Path of the site's privacy policy page, or null when it has none. */
 export function privacyPolicyHref(site: PublishedSite): string | null {
@@ -120,6 +136,7 @@ export async function renderSitePage({ site, matched, adapted, jsonLd }: RenderS
       language: site.siteSettings.language,
       look: siteLookFromPages(site),
       privacyHref: privacyPolicyHref(site),
+      siteHasMap: siteHoldsMap(site),
     },
   });
 

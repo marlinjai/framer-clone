@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { componentEntries, dataVersions, pageItemEntries, scoredEntries } from './lib/universe';
+import { floorDrops, floorProblems, raiseFloor, serializeFloor, type Floor } from './lib/floor';
 import { REPORT_DIR, readOut } from './lib/io';
 import { UNCAPTURED_PAGES, type UncapturedPage } from './busbasis/pages';
 import type { ImportRun, ImportScoreOut } from './import/types';
@@ -584,7 +585,7 @@ export function renderReport(score: Score): string {
     '- **Whether a panel control is any good.** A key counts as editable when a control changed it, whatever range or units that control offers. Only the properties panel and the palette are covered: the quick toolbar, context menus and the Layers panel were searched for tag changes and none found, not driven.',
     '- **The whole published page.** The corpus uses `applyResponsiveStyles` and `renderComponentNode`, without `hydrateBindings`, effects, the sticky bar, or the consent and font wrappers, and only in Chromium. The page around it is real: the sheet of a production build (`test/score/data/published-base.css`, refreshed by `pnpm score:refresh-base`), and the mounted editor sits on the same sheet. Its utilities also follow classes in `test` and `docs`, which the deployed image does not scan, so it can hold a few the live sheet lacks.',
     '- **WAI-ARIA conformance.** A contract is the primary keyboard path of a pattern, not its whole page in the Guide.',
-    '- **Page-level items:** head tags, design tokens and page-wide scripts (gap 5 of the plan) have no rows, and script and style elements are excluded with a reason.',
+    '- **Page-level items:** a site theme has rows (`test/score/pageItems.score.ts`): format, published in Chromium, and the canvas on the mounted editor, its theme set through the project and measured on the frame, with what lies outside the frames checked unchanged. The preview, the panel (slice T4) and the AI (slice T5) are not measured, and neither is WebKit on the canvas. Head tags and page-wide scripts have no rows yet, and script and style elements are excluded with a reason.',
     '- **Script on the BusBasis pages.** A frozen page holds no script, so menus, modals, filters and the gallery cannot run on the original. They stand under "needs" as failures rather than as compared states. A page is frozen in one state: logged out, no cart, the first visit.',
     '- **React import beyond static JSX and Tailwind.** Props as inputs, `cva` tables, entries, hooks, Radix and the AI rebuild step of the plan are not built, so the real components read "not imported", honestly. The import score runs in Chromium only, on the default frames, and with no dark mode state.',
   );
@@ -605,90 +606,39 @@ export function renderReport(score: Score): string {
   return lines.join('\n');
 }
 
-export function writeScore(score: Score): void {
-  fs.mkdirSync(REPORT_DIR, { recursive: true });
-  fs.writeFileSync(path.join(REPORT_DIR, 'latest.json'), `${JSON.stringify(score, null, 2)}\n`);
-  fs.writeFileSync(path.join(REPORT_DIR, 'latest.md'), renderReport(score));
-}
-
-interface Baseline {
-  _doc: string;
-  matrix: Record<Surface, number>;
-  corpusFixtures: string[];
-  corpusChecks: number;
-  roundTrip: number;
-  import: {
-    /** Fixed at 0: a run that claims an import differs in nothing no line names. */
-    honestyFailures: number;
-    /** Fixed at 0. */
-    conservationFailures: number;
-    parityPassing: string[];
-    coverage: Record<string, number>;
-    forged: number;
-    mutationNamed: number;
-  };
+/**
+ * Writes latest.json and latest.md into `dir`. A run writes them beside its probe results
+ * (test/score/.out, not committed); only the run on main publishes them to
+ * docs/primitives-score (run.ts --publish, .github/workflows/score.yml), so a pull request
+ * never carries the report and never conflicts on it. What a pull request changes in the
+ * score shows in its baseline.json rows.
+ */
+export function writeScore(score: Score, dir: string): void {
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'latest.json'), `${JSON.stringify(score, null, 2)}\n`);
+  fs.writeFileSync(path.join(dir, 'latest.md'), renderReport(score));
 }
 
 const BASELINE_FILE = () => path.join(REPORT_DIR, 'baseline.json');
 
-function baselineOf(score: Score): Baseline {
-  return {
-    _doc: 'The ratchet floor, not a cache: pnpm score:primitives fails when any number drops below this. Raising it is a deliberate commit: pnpm score:primitives --update-baseline.',
-    matrix: Object.fromEntries(SURFACES.map((s) => [s, score.matrix.surfaces[s].pass])) as Record<Surface, number>,
-    corpusFixtures: [...score.corpus.fixtures, ...score.busbasis.pages].filter((f) => f.pass).map((f) => f.fixture),
-    corpusChecks: Object.values(score.corpus.checks).reduce((sum, c) => sum + c.pass, 0),
-    roundTrip: score.roundTrip.nodesToJsxToNodes.pass + score.roundTrip.jsxToNodesToRender.pass,
-    import: {
-      honestyFailures: 0,
-      conservationFailures: 0,
-      parityPassing: score.import.parityPassing,
-      coverage: score.import.coverage,
-      forged: score.import.forged.pass,
-      mutationNamed: score.import.mutation.named,
-    },
-  };
-}
-
-/** The drops against the committed floor; empty when nothing dropped. */
-export function checkRatchet(score: Score): string[] {
+/** The committed floor, refused when it is not sound: a run against a broken floor proves nothing. */
+export function readFloor(): Floor | undefined {
   const file = BASELINE_FILE();
-  if (!fs.existsSync(file)) return [`no baseline at ${file}: run pnpm score:primitives --update-baseline`];
-  const floor = JSON.parse(fs.readFileSync(file, 'utf8')) as Baseline;
-  const now = baselineOf(score);
-  const drops: string[] = [];
-  for (const surface of SURFACES) {
-    if (now.matrix[surface] < floor.matrix[surface]) {
-      drops.push(`matrix, ${SURFACE_LABEL[surface]}: ${floor.matrix[surface]} became ${now.matrix[surface]}`);
-    }
-  }
-  for (const fixture of floor.corpusFixtures) {
-    if (!now.corpusFixtures.includes(fixture)) drops.push(`corpus: ${fixture} no longer passes`);
-  }
-  if (now.corpusChecks < floor.corpusChecks) drops.push(`corpus checks: ${floor.corpusChecks} became ${now.corpusChecks}`);
-  if (now.roundTrip < floor.roundTrip) drops.push(`round trip: ${floor.roundTrip} became ${now.roundTrip}`);
-  drops.push(...importDrops(score.import, floor.import));
-  return drops;
+  if (!fs.existsSync(file)) return undefined;
+  const floor = JSON.parse(fs.readFileSync(file, 'utf8')) as unknown;
+  const problems = floorProblems(floor);
+  if (problems.length > 0) throw new Error(`${file} is not a sound floor:\n  ${problems.join('\n  ')}`);
+  return floor as Floor;
 }
 
+/** The drops against the committed floor; empty when nothing dropped. With no floor at all, only a run that writes the first one passes. */
+export function checkRatchet(score: Score, creating = false): string[] {
+  const floor = readFloor();
+  if (!floor) return creating ? [] : [`no baseline at ${BASELINE_FILE()}: run pnpm score:primitives --update-baseline`];
+  return floorDrops(score, floor);
+}
+
+/** Raises the committed floor by what this run passes. Never lowers: see raiseFloor. */
 export function writeBaseline(score: Score): void {
-  fs.writeFileSync(BASELINE_FILE(), `${JSON.stringify(baselineOf(score), null, 2)}\n`);
-}
-
-/** The import's floor. Honesty and conservation are not ratcheted: any failure is a drop, whatever the baseline says. */
-function importDrops(now: ImportSummary, floor: Baseline['import'] | undefined): string[] {
-  const drops: string[] = [];
-  if (now.honestyFailures > 0) drops.push(`import honesty: ${now.honestyFailures} runs claim an import and differ in something no line names`);
-  if (now.conservationFailures > 0) drops.push(`import conservation: ${now.conservationFailures} runs leave a construct off its line`);
-  if (!now.foreignThemeDistinct) drops.push('import: the foreign theme shares a token value with the repo theme');
-  if (!now.honestySees) drops.push('import: Honesty did not see tokens removed from a real import, so it is blind');
-  if (now.mutation.conserved < now.mutation.total) drops.push(`import mutation run: ${now.mutation.total - now.mutation.conserved} inserted constructs are not conserved`);
-  if (now.forged.pass < now.forged.total) drops.push(`import forged bundles: ${now.forged.total - now.forged.pass} read as more than they are`);
-  if (!floor) return drops;
-  for (const key of floor.parityPassing) if (!now.parityPassing.includes(key)) drops.push(`import parity: ${key} no longer passes`);
-  for (const [key, value] of Object.entries(floor.coverage)) {
-    if ((now.coverage[key] ?? 0) < value) drops.push(`import coverage, ${key}: ${value} became ${now.coverage[key] ?? 0}`);
-  }
-  if (now.forged.pass < floor.forged) drops.push(`import forged bundles: ${floor.forged} became ${now.forged.pass}`);
-  if (now.mutation.named < floor.mutationNamed) drops.push(`import mutation run: ${floor.mutationNamed} named became ${now.mutation.named}`);
-  return drops;
+  fs.writeFileSync(BASELINE_FILE(), serializeFloor(raiseFloor(readFloor(), score)));
 }

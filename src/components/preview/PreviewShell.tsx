@@ -22,6 +22,7 @@ import { PRODUCT_PARAM_SEGMENT } from '@/lib/pages/slug';
 import PreviewFrame from './PreviewFrame';
 import FullscreenExitControl from './FullscreenExitControl';
 import PreviewToolbar, { type PreviewFrameMode } from './PreviewToolbar';
+import ColorModeSwitch from '@/components/ColorModeSwitch';
 import { readFramePreference, writeFramePreference } from './framePreference';
 import ResizeGutter from './ResizeGutter';
 import { useFullscreen } from './useFullscreen';
@@ -289,6 +290,7 @@ const PreviewShell = observer(({ missingPageId, onClose }: PreviewShellProps = {
         currentPageId={page.id}
         onPageChange={onPageChange}
         productPicker={<ProductPreviewPicker slug={page.slug} tone="dark" />}
+        colorModeSwitch={<ColorModeSwitch tone="dark" />}
       />
       {/* Always present, so the notice is announced when its text appears. */}
       <div
@@ -331,6 +333,7 @@ const PreviewShell = observer(({ missingPageId, onClose }: PreviewShellProps = {
             fill
             smoothScroll={project?.site.smoothScroll ?? false}
             pageBase={project?.site.pageBase}
+            theme={project?.site.theme}
             onSitePath={onSitePath}
           />
         </div>
@@ -352,6 +355,7 @@ const PreviewShell = observer(({ missingPageId, onClose }: PreviewShellProps = {
                 height={height}
                 smoothScroll={project?.site.smoothScroll ?? false}
                 pageBase={project?.site.pageBase}
+                theme={project?.site.theme}
                 onSitePath={onSitePath}
               />
               <ResizeGutter

@@ -116,7 +116,7 @@ const RESERVED_PROPS: ReadonlySet<string> = new Set([
 
 /** Attributes the editor and renderers use as markers: changing one changes what the node is. */
 const RESERVED_MARKER =
-  /^data-(?:form-|component-|inner-component-|credit-|decorative$|sticky-cta$|fc-|viewport-id$|floating-root-id$|text-node-row$|editor-ui$|ground)/i;
+  /^data-(?:form-|component-|inner-component-|credit-|decorative$|sticky-cta$|map-embed$|fc-|viewport-id$|floating-root-id$|text-node-row$|editor-ui$|ground)/i;
 
 /** Attributes whose value is an address a browser follows or loads. */
 const URL_ATTRIBUTES: ReadonlySet<string> = new Set([

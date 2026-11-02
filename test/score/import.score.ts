@@ -88,6 +88,7 @@ function differences(a: Snapshot, b: Snapshot): Difference[] {
       continue;
     }
     if (facts.text !== other.text) out.push({ element, property: 'text' });
+    if (facts.rendered !== other.rendered) out.push({ element, property: 'rendered text' });
     for (const [property, value] of Object.entries(facts.styles)) if (other.styles[property] !== value) out.push({ element, property });
     if (facts.before !== other.before) out.push({ element, property: '::before' });
     if (facts.after !== other.after) out.push({ element, property: '::after' });

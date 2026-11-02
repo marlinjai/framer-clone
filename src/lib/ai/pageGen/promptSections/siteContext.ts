@@ -90,11 +90,14 @@ export function languageLabel(tag: string): string {
   }
 }
 
+/** The business address as one line ("Street 1, 10115 Berlin, DE"), empty when none is set. */
+export function siteAddressOf(ctx: Pick<SiteContext, 'street' | 'postalCode' | 'city' | 'country'>): string {
+  return [ctx.street, [ctx.postalCode, ctx.city].filter(Boolean).join(' '), ctx.country].filter(Boolean).join(', ');
+}
+
 /** The prompt section: language, real facts as data, and the never-invent rule. */
 export function siteContextText(ctx: SiteContext): string {
-  const address = [ctx.street, [ctx.postalCode, ctx.city].filter(Boolean).join(' '), ctx.country]
-    .filter(Boolean)
-    .join(', ');
+  const address = siteAddressOf(ctx);
   const facts: Record<string, string | string[]> = {};
   if (ctx.siteName) facts.businessName = ctx.siteName;
   if (ctx.legalName) facts.legalName = ctx.legalName;
