@@ -42,8 +42,17 @@ export function deriveCombobox(root: PresetNode): PresetNode {
     children: children.map((child) => {
       if (child === list) {
         // A press on an option copies its own text, which derive reads from it, so a pointer chooses as Enter does.
+        // It chooses on the pointer's release, not on `click`: a touch on a list item that is not a control does
+        // not always become a click (Linux WebKit drops it), while a release comes from every pointer, and a pan
+        // ends in `pointercancel` instead, so scrolling the list chooses nothing. The click, where there is one,
+        // gives the field its focus back, which only a press may do.
         const option = (node: PresetNode): PresetNode => (propsOf(node).role === 'option' && typeof propsOf(node).children === 'string'
-          ? derived(node, { on: [{ id: 'choose', on: 'click', do: [{ setProp: field.id, prop: 'value', value: propsOf(node).children as string }, set(false), { focus: field.id }] }] })
+          ? derived(node, {
+              on: [
+                { id: 'choose', on: 'pointerup', do: [{ setProp: field.id, prop: 'value', value: propsOf(node).children as string }, set(false)] },
+                { id: 'refocus', on: 'click', do: [{ focus: field.id }] },
+              ],
+            })
           : node);
         return {
           ...derived(child, { showWhen: { state: open, eq: true }, group: { role: 'option', axis: 'line', wrap: true, virtual: { owner: field.id } } }),
