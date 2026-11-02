@@ -5,6 +5,7 @@ import { createRootStore, getHistoryStore, type RootStoreType } from '@/stores/R
 import ProjectModel, { type ProjectSnapshotOut } from '@/models/ProjectModel';
 import { changedElsewhereMessage, markServerVersion, openProject, pickPage } from '../openProject';
 import { withDefaultViewports } from '@/lib/canvas/defaultViewports';
+import { pageWithShopParts } from '@/lib/commerce/parts';
 
 let store: RootStoreType;
 
@@ -304,6 +305,23 @@ describe('openProject when the server copy changed meanwhile', () => {
     const out = openProject(store, again as ProjectSnapshotOut, null, 1);
     expect(out.keptWorkingCopy).toBe(true);
     expect(out.changedElsewhere).toBe(false);
+  });
+
+  it('a checkout given its parts on load compares equal to the stored one without them', () => {
+    // The server's load path writes a shop control's parts (src/lib/commerce/parts.ts);
+    // the row keeps the old shape until the next Save. Neither is a change elsewhere.
+    const snap = JSON.parse(JSON.stringify(serverSnapshot())) as ProjectSnapshotOut;
+    const firstPage = Object.keys(snap.pages)[0];
+    const tree = (snap.pages[firstPage] as { appComponentTree: { children?: unknown[] } }).appComponentTree;
+    tree.children = [
+      ...(tree.children ?? []),
+      { id: 'co', type: 'div', componentType: 'host', props: { 'data-component-kind': 'checkout-button', label: 'Kaufen' } },
+    ];
+    const repaired = { ...snap, pages: { ...snap.pages, [firstPage]: pageWithShopParts(snap.pages[firstPage], 'en') } };
+    openProject(store, repaired as ProjectSnapshotOut, null, 1);
+    const out = openProject(store, snap, null, 1);
+    expect(out.changedElsewhere).toBe(false);
+    expect(out.keptWorkingCopy).toBe(true);
   });
 
 });
