@@ -41,6 +41,9 @@ import {
   SiteNotFoundError,
   SiteRevisionNotFoundError,
   SubdomainAllocationError,
+  SiteErasedSinceLoadError,
+  ErasePreviewStaleError,
+  NothingToEraseError,
 } from './errors';
 import { findProjectSlugProblem } from '@/lib/pages/slug';
 import { pickPrimaryHost } from './primaryHost';
@@ -48,6 +51,21 @@ import { nextSiteRedirects, parseSiteRedirects } from '@/lib/pages/redirects';
 import { generateSubdomain } from './subdomain';
 import { parseRevisionDocument, REVISION_SCHEMA_VERSION, revisionPublishCheck } from './revision';
 import type { PublishCheck } from '@/lib/legal/publishCheck';
+import {
+  assertRevisionShapeKept,
+  eraseMatcher,
+  EraseQueryError,
+  EraseShapeError,
+  ERASE_LIMITS,
+  findMatches,
+  matchesToken,
+  replacementContainsValue,
+  rewriteDocument,
+  type EraseArea,
+  type EraseLocation,
+  type EraseMatch,
+  type EraseQuery,
+} from './erase';
 
 /**
  * Bounded retries for the DB-enforced subdomain allocation. Each attempt
@@ -128,6 +146,8 @@ export interface SiteRevisionSummary {
   /** The auth-brain user who published; null for a baseline. */
   publishedBy: string | null;
   createdAt: Date;
+  /** When an erase of personal data last rewrote it; null when none did. */
+  rewrittenAt: Date | null;
 }
 
 /** A site's published history, newest first. */
@@ -137,6 +157,95 @@ export interface SiteRevisionList {
   /** The site's status (a pointer survives an unpublish, so `live` needs both). */
   status: string;
   revisions: SiteRevisionSummary[];
+}
+
+/** How many matches one stored document holds, for the preview's overview. */
+export interface ErasureLocationSummary {
+  location: EraseLocation;
+  /** For a revision: when it was published, its kind and whether visitors are served it. */
+  createdAt: Date | null;
+  kind: 'publish' | 'baseline' | null;
+  live: boolean;
+  matches: number;
+  erasable: number;
+}
+
+/** A search for one personal value across a site's history (the erase preview). */
+export interface PersonalDataSearch {
+  /** Repeated by the erase: a digest of every match, so a change in between is caught. */
+  token: string;
+  total: number;
+  erasable: number;
+  blocked: number;
+  /** The first ERASE_LIMITS.listed matches: the working copy first, then the revisions, newest first. */
+  matches: EraseMatch[];
+  truncated: boolean;
+  locations: ErasureLocationSummary[];
+}
+
+/** One place an erase changed, as the audit keeps it: never a value. */
+export interface ErasurePlace {
+  location: 'working' | 'revision';
+  revision: number | null;
+  pageId: string | null;
+  area: EraseArea;
+  path: string;
+}
+
+/** What an erase did. */
+export interface PersonalDataErasure {
+  erasureId: string;
+  erased: number;
+  places: ErasurePlace[];
+  /** Matches left in the rewritten documents, counted in the same transaction. */
+  remaining: number;
+}
+
+/** One audit row, for the owner's list. */
+export interface SiteErasureSummary {
+  id: string;
+  erasedBy: string;
+  erasedCount: number;
+  remainingCount: number;
+  places: ErasurePlace[];
+  createdAt: Date;
+}
+
+/**
+ * Limits of an erase: up to 30 revisions of up to 10 MB each are rewritten one at
+ * a time in one transaction, which a publish's 30 seconds do not cover.
+ */
+const ERASE_TRANSACTION = { maxWait: 5_000, timeout: 120_000 } as const;
+
+/** The working copy as one document, in the shape the walker reads (pages by id, so the order is stable). */
+function workingDocument(
+  site: { name: string; description: string; siteSettings: unknown; components: unknown; redirects: unknown },
+  pages: Array<{ pageId: string; slug: string; snapshot: unknown }>,
+): Record<string, unknown> {
+  return {
+    name: site.name,
+    description: site.description,
+    siteSettings: site.siteSettings,
+    components: site.components,
+    redirects: site.redirects,
+    pages: [...pages]
+      .sort((a, b) => (a.pageId < b.pageId ? -1 : a.pageId > b.pageId ? 1 : 0))
+      .map((p) => ({ pageId: p.pageId, slug: p.slug, snapshot: p.snapshot })),
+  };
+}
+
+function placeOf(match: EraseMatch): ErasurePlace {
+  return {
+    location: match.location.kind,
+    revision: match.location.kind === 'revision' ? match.location.number : null,
+    pageId: match.pageId,
+    area: match.area,
+    path: match.path,
+  };
+}
+
+function parsePlaces(raw: unknown): ErasurePlace[] {
+  return Array.isArray(raw) ? (raw as ErasurePlace[]) : [];
 }
 
 function assertScope(scope: TenantScope): void {
@@ -231,6 +340,7 @@ export class SiteRepository {
         components: true,
         projectCreatedAt: true,
         projectUpdatedAt: true,
+        erasureEpoch: true,
         pages: {
           select: { pageId: true, snapshot: true },
         },
@@ -250,6 +360,7 @@ export class SiteRepository {
       components: row.components,
       projectCreatedAt: row.projectCreatedAt,
       projectUpdatedAt: row.projectUpdatedAt,
+      erasureEpoch: row.erasureEpoch,
       pages: row.pages.map((p) => ({ pageId: p.pageId, snapshot: p.snapshot })),
     };
 
@@ -312,10 +423,17 @@ export class SiteRepository {
         siteSettings: true,
         status: true,
         publishedRevisionId: true,
+        erasureEpoch: true,
       },
     });
     if (existing && existing.workspaceId !== scope.workspaceId) {
       throw new SiteNotFoundError(persisted.siteId);
+    }
+    // A tab loaded before personal data was erased may still hold it: its Save or
+    // Publish would write the value back into the working copy, and a publish
+    // into a new revision. Refused, before anything is written or frozen.
+    if (existing && persisted.erasureEpoch < existing.erasureEpoch) {
+      throw new SiteErasedSinceLoadError();
     }
     // The editor's Save and Publish pass `mustExist`: they update a site, never
     // create one. Without this, an editor tab still open on a DELETED project
@@ -708,7 +826,7 @@ export class SiteRepository {
         publishedRevisionId: true,
         revisions: {
           orderBy: { number: 'desc' },
-          select: { id: true, number: true, kind: true, publishedBy: true, createdAt: true },
+          select: { id: true, number: true, kind: true, publishedBy: true, createdAt: true, rewrittenAt: true },
         },
       },
     });
@@ -716,13 +834,218 @@ export class SiteRepository {
     return {
       status: site.status,
       live: site.revisions.find((r) => r.id === site.publishedRevisionId)?.number ?? null,
-      revisions: site.revisions.map(({ number, kind, publishedBy, createdAt }) => ({
+      revisions: site.revisions.map(({ number, kind, publishedBy, createdAt, rewrittenAt }) => ({
         number,
         kind,
         publishedBy,
         createdAt,
+        rewrittenAt,
       })),
     };
+  }
+
+  /**
+   * Search every kept revision and the working copy for one personal value (the
+   * erase preview, plan 2026-11-01-immutable-published-copy, "Erasing personal
+   * data from the history"). One RepeatableRead snapshot, so the token describes
+   * one consistent state; documents are read one at a time, never all at once.
+   * Throws EraseQueryError for a value outside the bounds.
+   */
+  async searchPersonalData(scope: TenantScope, siteId: string, query: EraseQuery): Promise<PersonalDataSearch> {
+    assertScope(scope);
+    const matcher = eraseMatcher(query);
+    return this.prisma.$transaction(async (tx) => {
+      const site = await tx.site.findFirst({
+        where: { id: siteId, workspaceId: scope.workspaceId, tenantGroupId: scope.tenantGroupId },
+        select: {
+          name: true,
+          description: true,
+          siteSettings: true,
+          components: true,
+          redirects: true,
+          publishedRevisionId: true,
+          pages: { select: { pageId: true, slug: true, snapshot: true } },
+          revisions: { orderBy: { number: 'desc' }, select: { id: true, number: true, kind: true, createdAt: true } },
+        },
+      });
+      if (!site) throw new SiteNotFoundError(siteId);
+
+      const all: EraseMatch[] = [];
+      const locations: ErasureLocationSummary[] = [];
+      const record = (matches: EraseMatch[], summary: Omit<ErasureLocationSummary, 'matches' | 'erasable'>) => {
+        all.push(...matches);
+        locations.push({ ...summary, matches: matches.length, erasable: matches.filter((m) => m.blocked === null).length });
+      };
+
+      const working: EraseLocation = { kind: 'working' };
+      record(findMatches(workingDocument(site, site.pages), working, matcher), {
+        location: working,
+        createdAt: null,
+        kind: null,
+        live: false,
+      });
+      for (const revision of site.revisions) {
+        const row = await tx.siteRevision.findUnique({ where: { id: revision.id }, select: { document: true } });
+        if (!row) continue; // pruned by a publish that committed after the list was read: not part of this snapshot
+        const location: EraseLocation = { kind: 'revision', number: revision.number };
+        record(findMatches(row.document, location, matcher), {
+          location,
+          createdAt: revision.createdAt,
+          kind: revision.kind,
+          live: revision.id === site.publishedRevisionId,
+        });
+      }
+
+      const erasable = all.filter((m) => m.blocked === null).length;
+      return {
+        token: matchesToken(all),
+        total: all.length,
+        erasable,
+        blocked: all.length - erasable,
+        matches: all.slice(0, ERASE_LIMITS.listed),
+        truncated: all.length > ERASE_LIMITS.listed,
+        locations,
+      };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, ...PROJECT_WRITE_TRANSACTION });
+  }
+
+  /**
+   * Erase one personal value from every kept revision and the working copy, as
+   * ONE transaction behind the site row's lock (publish and rollback queue behind
+   * it). The search is run again under the lock: a token other than the
+   * preview's means something changed in between, and nothing is written
+   * (ErasePreviewStaleError). Only the matched strings change; each rewritten
+   * revision must keep its shape, or everything rolls back. The site's erasure
+   * epoch goes up, so editor tabs loaded before cannot write the value back, and
+   * one audit row records the places, never the value.
+   *
+   * The caller revalidates the cache, as after a rollback.
+   */
+  async erasePersonalData(
+    scope: TenantScope,
+    siteId: string,
+    input: {
+      query: EraseQuery;
+      replacement: string;
+      token: string;
+      leaveOut: readonly string[];
+      erasedBy: string;
+    },
+  ): Promise<PersonalDataErasure> {
+    assertScope(scope);
+    const { query, replacement, token, erasedBy } = input;
+    const matcher = eraseMatcher(query);
+    if (replacementContainsValue(replacement, query)) {
+      throw new EraseQueryError('replacement_contains_value', 'The replacement may not contain the value being erased.');
+    }
+    const leaveOut = new Set(input.leaveOut);
+
+    return withSerializationRetry(() => this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${siteId} FOR UPDATE`;
+      const where = { id: siteId, workspaceId: scope.workspaceId, tenantGroupId: scope.tenantGroupId };
+      const site = await tx.site.findFirst({
+        where,
+        select: {
+          name: true,
+          description: true,
+          siteSettings: true,
+          components: true,
+          redirects: true,
+          pages: { select: { pageId: true, slug: true, snapshot: true } },
+          revisions: { orderBy: { number: 'desc' }, select: { id: true, number: true } },
+        },
+      });
+      if (!site) throw new SiteNotFoundError(siteId);
+
+      const now = new Date();
+      const found: EraseMatch[] = [];
+      const erased: EraseMatch[] = [];
+      let remaining = 0;
+
+      // The working copy: the `sites` columns and each changed `site_pages` row.
+      const working: EraseLocation = { kind: 'working' };
+      const before = workingDocument(site, site.pages);
+      found.push(...findMatches(before, working, matcher));
+      const workingRewrite = rewriteDocument(before, working, matcher, replacement, leaveOut);
+      erased.push(...workingRewrite.erased);
+      const after = workingRewrite.document as Record<string, unknown>;
+      remaining += findMatches(after, working, matcher).length;
+      if (workingRewrite.erased.length > 0) {
+        const beforePages = before.pages as Array<{ pageId: string; slug: string; snapshot: unknown }>;
+        const afterPages = after.pages as Array<{ pageId: string; slug: string; snapshot: unknown }>;
+        // Slugs are never rewritten (blocked as addresses), so this only guards the walker.
+        const keys = (pages: Array<{ pageId: string; slug?: string }>) => JSON.stringify(pages.map((p) => [p.pageId, p.slug]));
+        if (keys(afterPages) !== keys(beforePages)) throw new EraseShapeError('pages or slugs changed');
+        for (let i = 0; i < afterPages.length; i++) {
+          if (afterPages[i].snapshot === beforePages[i].snapshot) continue;
+          await tx.sitePage.update({
+            where: { siteId_pageId: { siteId, pageId: afterPages[i].pageId } },
+            data: { snapshot: afterPages[i].snapshot as Prisma.InputJsonValue },
+          });
+        }
+        await tx.site.updateMany({
+          where,
+          data: {
+            name: after.name as string,
+            description: after.description as string,
+            siteSettings: after.siteSettings as Prisma.InputJsonValue,
+            components: after.components as Prisma.InputJsonValue,
+            redirects: after.redirects as Prisma.InputJsonValue,
+          },
+        });
+      }
+
+      // Every kept revision, one document at a time, rewritten in place.
+      for (const revision of site.revisions) {
+        const row = await tx.siteRevision.findUnique({ where: { id: revision.id }, select: { document: true } });
+        if (!row) throw new ErasePreviewStaleError();
+        const location: EraseLocation = { kind: 'revision', number: revision.number };
+        found.push(...findMatches(row.document, location, matcher));
+        const rewrite = rewriteDocument(row.document, location, matcher, replacement, leaveOut);
+        remaining += findMatches(rewrite.document, location, matcher).length;
+        if (rewrite.erased.length === 0) continue;
+        assertRevisionShapeKept(row.document, rewrite.document);
+        await tx.siteRevision.update({
+          where: { id: revision.id },
+          data: { document: rewrite.document as Prisma.InputJsonValue, rewrittenAt: now },
+        });
+        erased.push(...rewrite.erased);
+      }
+
+      // Checked last: throwing here rolls every write above back.
+      if (matchesToken(found) !== token) throw new ErasePreviewStaleError();
+      if (erased.length === 0) throw new NothingToEraseError();
+
+      // Every erase moves the epoch, also one that found the value only in old
+      // revisions: a tab loaded long ago may hold it even if the working copy does not.
+      await tx.site.updateMany({ where, data: { erasureEpoch: { increment: 1 } } });
+
+      const places = erased.map(placeOf);
+      const audit = await tx.siteErasure.create({
+        data: {
+          siteId,
+          workspaceId: scope.workspaceId,
+          tenantGroupId: scope.tenantGroupId,
+          erasedBy,
+          erasedCount: erased.length,
+          remainingCount: remaining,
+          places: places as unknown as Prisma.InputJsonValue,
+        },
+        select: { id: true },
+      });
+      return { erasureId: audit.id, erased: erased.length, places, remaining };
+    }, ERASE_TRANSACTION));
+  }
+
+  /** The erasures of a site, newest first (the owner's audit list). */
+  async listErasures(scope: TenantScope, siteId: string): Promise<SiteErasureSummary[]> {
+    assertScope(scope);
+    const rows = await this.prisma.siteErasure.findMany({
+      where: { siteId, workspaceId: scope.workspaceId, tenantGroupId: scope.tenantGroupId },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, erasedBy: true, erasedCount: true, remainingCount: true, places: true, createdAt: true },
+    });
+    return rows.map((row) => ({ ...row, places: parsePlaces(row.places) }));
   }
 
   /**

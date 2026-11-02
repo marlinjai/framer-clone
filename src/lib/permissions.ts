@@ -48,6 +48,13 @@ export const FRAMER_PERMISSIONS = definePermissions({
     requires: 'workspace.admin',
     description: 'Configure a custom domain or subdomain for a site.',
   },
+  // Erasing personal data from a site's history (docs/plans/2026-11-01-immutable-published-copy.md).
+  // OpenFGA has no workspace owner, so the routes ALSO require the session's role on the site's
+  // company to be `owner` (authorizeDomainProject's `requireCompanyOwner`); this is the floor.
+  eraseSiteData: {
+    requires: 'workspace.admin',
+    description: "Search and erase personal data in a site's published versions (with the company owner role).",
+  },
   // The Books (invoicing). Checked on the active company's editor workspace,
   // AFTER the company's auth-brain app grant `books` (src/server/books/http).
   // Reading invoices discloses customers and revenue, so even the read needs a

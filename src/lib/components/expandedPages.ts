@@ -8,8 +8,8 @@
 //
 // The key is `siteId` and `revision`: the id of the frozen revision being served
 // (plan 2026-11-01-immutable-published-copy), which every publish and rollback
-// changes, or for a site with no revision yet the row's `updated_at`, which every
-// save moves. It is not the contract's `projectUpdatedAt`: node edits never touch
+// changes, with the time an erase of personal data last rewrote it in place, or
+// for a site with no revision yet the row's `updated_at`, which every save moves. It is not the contract's `projectUpdatedAt`: node edits never touch
 // `metadata.updatedAt`, so that value stays put when a definition or a page is
 // saved, and the memo would serve the old tree. Object identity is no key either,
 // because the cached site is deserialised afresh per request.

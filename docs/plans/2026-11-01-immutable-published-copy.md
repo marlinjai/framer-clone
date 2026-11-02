@@ -45,6 +45,9 @@ revision holds `components` beside `pages`) is honoured here, and slice 8 of tha
 - `GET /api/projects/<id>/revisions/<number>` (`viewSite`): the publish warnings of that revision.
 - `POST /api/projects/<id>/revisions` `{ number }` (`publishSite`): make that revision live.
 - The top bar gets "Published versions" (a dialog, in the More menu on a compact bar).
+- `POST /api/projects/<id>/erasures/search`, `POST /api/projects/<id>/erasures`, `GET /api/projects/<id>/erasures`
+  (owner only): find, erase and list erasures of personal data (section "Erasing personal data from the history"). The
+  top bar's More menu gets "Erase personal data".
 
 ## Migration
 
@@ -90,12 +93,53 @@ The same goes for the reusable components work, whose definitions live inside th
 7. **A rename of a legacy site still shows live until its first save or publish.** Only `saveProject` freezes the
    baseline. Same behaviour as today, and it ends with that site's first save.
 
-## Open question for Marlin
+## Erasing personal data from the history
 
-**Is a history of 30 versions acceptable for personal data, or is an erase tool needed before business customers
-arrive?** `siteSettings` carries managing directors, phone, email and address, and pages carry whatever was written on
-them. After a change, up to 30 revisions keep the old values, and a rollback republishes them. Deleting a site cascades
-correctly, but no single value can be erased from history. Not decided here, and nothing is built for it.
+Decided by Marlin on 2026-11-02: an erase tool is needed. `siteSettings` carries managing directors, phone, email and
+address, and pages carry whatever was written on them. After a change, up to 30 revisions keep the old values, and a
+rollback would republish them. The erase tool removes one value (a name, an address, a phone number) from every kept
+revision and from the working copy, without touching anything else.
+
+### Contract
+
+| Question | Answer |
+|---|---|
+| Who | The company's **owner** only: the session's role on the company that holds the site is `owner` (auth-brain `tenants[].role`, server verified), on top of the editor guard every per-project route has (editor host, signed in, the company has `sites`, `workspace.admin` through OpenFGA as the new action `eraseSiteData`). An admin who is not the owner gets 403 `owner_required`. Searching is gated the same way, since it shows personal data from versions no other screen shows |
+| Audited | Every erase writes one `site_erasures` row in the same transaction: who, when, the site, every place changed (revision number or the working copy, the page id, the path inside the document, the kind of place) and what the proof found afterwards. **Never the searched value, an excerpt or a hash of it**: a hash of a name is still personal data. The row has no foreign key to the site, so it outlives a site delete. `GET .../erasures` lists them, owner only |
+| What is searched | Every string in every kept revision (`publish` and `baseline` alike) and in the working copy: `sites.name`, `description`, `site_settings` (business details, theme, head, everything else), `components` (definitions, their trees, inputs and defaults), `redirects`, and every `site_pages.snapshot` (text, attributes, bound values and binding templates, form labels, placeholders and defaults, page metadata). One generic walk over the stored JSON, so a field added later is searched without a change here |
+| Not searched | CMS rows, commerce, Books, form submissions, analytics: they are not part of a revision and have their own deletion paths. Database backups and logs (open points below) |
+| How a match is found | Exact text, case-insensitive unless asked otherwise, both in the composed (NFC) and decomposed (NFD) form of the value, so `Müller` typed on a Mac and stored from Windows both match. At least 3 and at most 200 characters, so a stray `a` cannot rewrite a site |
+| Preview | `POST .../erasures/search` (a POST, so the value never lands in an address or an access log) answers every match with where it is (revision number and date, or the working copy; the page and its slug; the kind of place; the path) and a short excerpt, plus a `token` over the full list. Up to 500 matches are listed; the counts are always complete |
+| Blocked matches | Reported, never rewritten: object keys, ids and id references (`id`, any `...Id` or `...Ids`, `for`, `aria-controls` and the other id lists), node and binding types and modes, page slugs and redirect addresses, class names, selectors and behaviour references, `data-*` attributes, form field keys and `name` attributes, analytics references, and any text inside a `{{ }}` binding reference. Rewriting these would change what a visitor sees beyond the value (styles, links, form keys, routing) or break the document. The preview says why, and an address (slug or redirect) is an open point below |
+| Choosing | The dialog erases every erasable match by default; the owner can leave single matches out. The erase request carries the search, the `token` from the preview, the replacement (empty, or a placeholder such as `[entfernt]`; it may not contain the value) and the matches left out |
+| Stale preview | The erase reruns the search under the lock. When its token differs from the preview's (a publish, a save, a rollback or another erase in between), nothing changes and the answer is 409 `erase_preview_stale`: search again |
+| Rewriting | One transaction that first takes `SELECT ... FOR UPDATE` on the site row, as publish does, so publish, rollback and other erases queue behind it. Each revision is read, rewritten and written back one at a time (30 documents of up to 10 MB). Only the matched strings change: the raw stored JSON is rewritten, never a normalised shape, so trimming or defaults cannot slip in. Number, kind, `published_by`, `created_at`, the pointer and the site's status stay. `site_revisions.rewritten_at` is set. Afterwards each document must still parse (`parseRevisionDocument`, `parseComponents`) with the same pages, ids and slugs, or the whole erase rolls back |
+| The working copy | Rewritten in the same transaction (`sites` columns and every `site_pages` row), and `sites.erasure_epoch` goes up by one |
+| Open editor tabs | A tab opened before the erase still holds the old value in memory. Its next Save or Publish would write it back, so the editor sends the epoch it loaded (`metadata.erasureEpoch`) and the server refuses an older one with 409 `erased_since_load`: reload the page. A tab without the field counts as epoch 0. Reopening a project in the same tab takes the server copy when the epoch moved and the tab has no unsaved work |
+| Published pages and caches | The live revision is rewritten in place, so its id does not change: the expanded-page memo keys on `revision:<id>:<rewritten_at>`, and the route revalidates the subdomain and every custom host (as rollback does, a failed revalidation answers 500 so the owner retries, which is idempotent). A site never published gets no subdomain from this |
+| An open rollback | A rollback only moves the pointer to a kept revision, and every kept revision has been rewritten, so no rollback can bring the value back. A rollback waiting on the lock runs after the erase and serves the rewritten version |
+| Proof | After the commit the route searches again, in a fresh read, and answers `remaining` (matches still there, including blocked ones and the ones left out) and the places changed. `remaining` goes into the audit row. Searching again later must find no erasable match |
+| Re-entry | A second erase of the same value finds nothing erasable and changes nothing (409 `nothing_to_erase`). A failed erase changes nothing, so it is simply repeated |
+
+### Decided here, say so if you disagree
+
+1. **Owner, not admin.** Erasing rewrites history nobody can restore, and searching shows every old value, so it sits
+   one level above publishing. OpenFGA has no workspace owner, so the owner is read from the verified session's role on
+   the company.
+2. **Addresses are not rewritten.** A slug or a redirect address holding a name would change where visitors land and
+   would break links in a kept version. Reported as blocked; see the open points.
+3. **The audit row keeps no trace of the value.** Proof that a value is gone is a search for it, which needs the value
+   from the person asking, never from our own records.
+4. **Open tabs are fenced, not merged.** Merging an old tab's unsaved work with an erase cannot be done without knowing
+   the value, which the server does not keep. The tab is asked to reload instead.
+
+### GDPR check
+
+Filled in from the `gdpr-compliance` review below (Articles 17 and 5(1)(e)).
+
+### Open points (need a lawyer or a later decision, not code)
+
+Filled in from the GDPR check below.
 
 ## How it joined the reusable components column
 

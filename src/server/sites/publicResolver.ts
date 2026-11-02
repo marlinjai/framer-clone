@@ -96,8 +96,9 @@ export interface PublishedSite {
   revisionNumber: number | null;
   /**
    * What the expansion memo keys on (src/lib/components/expandedPages.ts): the
-   * frozen revision's id, which changes on every publish and rollback, or for a
-   * site with no revision yet the row's `updated_at`, which every save moves. A
+   * frozen revision's id, which changes on every publish and rollback, with the
+   * time an erase last rewrote it (revisionMemoKey), or for a site with no
+   * revision yet the row's `updated_at`, which every save and erase moves. A
    * string, because this object is cached as JSON. Absent on a site cached before
    * the field, which is not memoised.
    */
@@ -223,6 +224,16 @@ async function siteIdForKey(key: SiteHostKey, prisma: PrismaClient): Promise<str
 }
 
 /**
+ * The expanded-page memo's key for a served revision. An erase of personal data
+ * rewrites a revision in place and keeps its id, so the time of that rewrite is
+ * part of the key: without it, a process would keep serving the tree it expanded
+ * before the erase.
+ */
+export function revisionMemoKey(revisionId: string, rewrittenAt: Date | null): string {
+  return rewrittenAt ? `revision:${revisionId}:${rewrittenAt.toISOString()}` : `revision:${revisionId}`;
+}
+
+/**
  * Resolve the published site one lookup key names. Null when the key maps to no
  * (serving) SiteDomain or the site is not `published`.
  */
@@ -253,7 +264,7 @@ export async function resolvePublishedSiteByKey(
       components: true,
       updatedAt: true,
       publishedRevisionId: true,
-      publishedRevision: { select: { number: true, document: true } },
+      publishedRevision: { select: { number: true, document: true, rewrittenAt: true } },
       // The working copy, only for a site with no revision: one query either way,
       // and a revisioned site does not pay for rows it never serves.
       pages: {
@@ -298,7 +309,7 @@ export async function resolvePublishedSiteByKey(
     components: parseComponents(frozen.components).definitions,
     revisionNumber: site.publishedRevision?.number ?? null,
     revision: site.publishedRevisionId
-      ? `revision:${site.publishedRevisionId}`
+      ? revisionMemoKey(site.publishedRevisionId, site.publishedRevision?.rewrittenAt ?? null)
       : `working:${site.updatedAt.toISOString()}`,
   };
 }
