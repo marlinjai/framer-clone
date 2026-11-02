@@ -5,6 +5,12 @@
 // product fields inside a Product list / Product detail) and a free-form
 // `{{...}}` input that red-borders when the expression fails to parse.
 //
+// Inside a reusable component's definition the tree offers the component's inputs
+// (`{{input.*}}`) instead of the page: what each placement passes is what a
+// definition reads (docs/plans/2026-11-02-reusable-components.md, "Inputs"). Only
+// the inputs whose type may set this slot are offered (an address slot takes a
+// link, an image or a file).
+//
 // The set of scope sections shown is driven by the slot's `scopeHint`. The
 // switch DEFAULTS (the `any` / `default` branch) on UNKNOWN hints so Track C's
 // additive commerce scopeHints (`product` / `variant` / `availability`) widen
@@ -15,13 +21,14 @@
 // the call site, in BindingControl).
 import React from 'react';
 import { observer } from 'mobx-react-lite';
-import { Database, FileText, Globe, ShoppingBag } from 'lucide-react';
+import { Component, Database, FileText, Globe, ShoppingBag } from 'lucide-react';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import type { BindableSlotMeta, ReadBinding } from '@/lib/bindings/types';
 import type { Collection, Column } from '@/lib/bindings/dataSource/types';
 import { useDataSource } from '@/lib/bindings/dataSource/context';
 import { parseExpression } from '@/lib/bindings/resolver/expression';
 import { getAvailableScopeFrames } from '@/lib/bindings/scopeIntrospection';
+import { inputExpressionFor, mayBindToSlot } from '@/lib/components/inputs';
 
 export interface BindingPickerProps {
   node: ComponentInstance;
@@ -69,7 +76,7 @@ export const PRODUCT_FIELDS: ReadonlyArray<{ path: string; label: string }> = [
 const ITEM_CLASS =
   'flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-xs text-foreground hover:bg-brand/10';
 
-const BindingPicker = observer(({ node, meta, onCommit, onClose }: BindingPickerProps) => {
+const BindingPicker = observer(({ node, slot, meta, onCommit, onClose }: BindingPickerProps) => {
   const dataSource = useDataSource();
   const sections = visibleSectionsForHint(meta.scopeHint);
 
@@ -79,6 +86,9 @@ const BindingPicker = observer(({ node, meta, onCommit, onClose }: BindingPicker
   const rowFrame = frames.find((f) => f.kind === 'row');
   const rowCollectionId = rowFrame?.collectionId ?? null;
   const hasProductFrame = frames.some((f) => f.kind === 'product');
+  const inputFrame = frames.find((f) => f.kind === 'input');
+  const hasPageFrame = frames.some((f) => f.kind === 'page');
+  const inputs = (inputFrame?.inputs ?? []).filter((input) => input.type !== 'event' && mayBindToSlot(input.type, slot));
 
   // LIVE columns for the row frame's source collection.
   const [rowColumns, setRowColumns] = React.useState<Column[] | null>(null);
@@ -171,8 +181,32 @@ const BindingPicker = observer(({ node, meta, onCommit, onClose }: BindingPicker
         Bind {meta.label}
       </div>
 
+      {/* The definition's inputs */}
+      {inputFrame && (
+        <div className="mb-2" data-testid="binding-picker-inputs">
+          <div className="flex items-center gap-1.5 px-1 py-1 text-[11px] font-medium text-muted-foreground">
+            <Component size={11} />
+            <span>Inputs</span>
+          </div>
+          {inputs.map((input) => {
+            const expression = inputExpressionFor(input, slot);
+            return (
+              <button key={input.id} type="button" className={ITEM_CLASS} onClick={() => commitRead(expression)}>
+                <span className="flex-1">{input.name}</span>
+                <span className="font-mono text-[10px] text-muted-foreground">{expression}</span>
+              </button>
+            );
+          })}
+          {inputs.length === 0 && (
+            <div className="px-2 py-1 text-[11px] text-muted-foreground">
+              No input fits here yet. Make input adds one from this value.
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Page scope */}
-      {sections.page && (
+      {sections.page && hasPageFrame && (
         <div className="mb-2">
           <div className="flex items-center gap-1.5 px-1 py-1 text-[11px] font-medium text-muted-foreground">
             <Globe size={11} />

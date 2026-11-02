@@ -1,9 +1,10 @@
 import { ComponentInstance } from '@/models/ComponentModel';
 import { formKindOf } from '@/lib/forms/definition';
 import { isStickyCta } from '@/lib/stickyCta/stickyCta';
+import { isComponentPlaceholderType } from '@/lib/components/placement';
 
-export type ComponentCategory = 'viewport' | 'container' | 'text' | 'link' | 'image' | 'generic' | 'form' | 'formField' | 'formSubmit' | 'stickyCta';
-export type SectionId = 'size' | 'position' | 'layout' | 'typography' | 'image' | 'styles' | 'effects' | 'form' | 'stickyCta' | 'link' | 'custom';
+export type ComponentCategory = 'viewport' | 'placement' | 'container' | 'text' | 'link' | 'image' | 'generic' | 'form' | 'formField' | 'formSubmit' | 'stickyCta';
+export type SectionId = 'component' | 'size' | 'position' | 'layout' | 'typography' | 'image' | 'styles' | 'effects' | 'form' | 'stickyCta' | 'link' | 'custom';
 
 // Exported so the AI page generator's schema docs (src/lib/ai/pageGen/schema.ts)
 // offer exactly the tags this properties panel knows how to edit.
@@ -12,6 +13,8 @@ export const TEXT_TYPES: ReadonlySet<string> = new Set(['p', 'span', 'h1', 'h2',
 
 export function getComponentCategory(component: ComponentInstance): ComponentCategory {
   if (component.isViewportNode) return 'viewport';
+  // A placement, or what is left of one whose definition is gone: no element of its own.
+  if (isComponentPlaceholderType(component.type)) return 'placement';
   // Form components first: their tags (div, button) would read as a plain container or generic node.
   const formKind = formKindOf(component.props as Record<string, unknown>);
   if (formKind === 'form') return 'form';
@@ -31,6 +34,9 @@ export function getComponentCategory(component: ComponentInstance): ComponentCat
 // breakpoint's frame, not an element of the page.
 export const SECTION_MAP: Record<ComponentCategory, SectionId[]> = {
   viewport:  ['size', 'layout', 'styles'],
+  // A placement changes only its input values, its state and how it sits on the
+  // page: everything else is the definition's (Edit component in the section).
+  placement: ['component', 'size', 'position', 'effects'],
   // Typography on a container sets the font its text inherits (a section's
   // body family, which is how generated pages set fonts).
   container: ['size', 'position', 'layout', 'typography', 'image', 'styles', 'effects', 'custom'],

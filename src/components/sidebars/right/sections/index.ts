@@ -11,3 +11,4 @@ export { StickyCtaSection } from './StickyCtaSection';
 export { TextContentSection } from './TextContentSection';
 export { LinkSection } from './LinkSection';
 export { CustomSection } from './CustomSection';
+export { ComponentSection } from './ComponentSection';

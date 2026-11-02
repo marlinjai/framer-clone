@@ -19,6 +19,8 @@ import { getUndoManager, getHistoryStore, getDragManager } from '@/stores/RootSt
 import { changedElsewhereMessage, openProject, pageIdFromLocation, pickPage, restoreStashedDemo } from '@/stores/openProject';
 import EditorNotice from './EditorNotice';
 import ComponentBreadcrumb from './ComponentBreadcrumb';
+import ComponentDialogs from './ComponentDialogs';
+import { requestCreateComponent } from '@/lib/components/editorCommands';
 import { isPlacementType, type PlacementProps } from '@/lib/components/placement';
 import InlineFormatBar from './InlineFormatBar';
 import LegalTemplateNotice from './site/LegalTemplateNotice';
@@ -217,6 +219,13 @@ export default function EditorApp({ projectSnapshot }: { projectSnapshot?: Proje
         return;
       }
 
+      if (match.action === 'createComponent') {
+        e.preventDefault();
+        if (rootStore.editorUI.selectedTool === EditorTool.GRAB || rootStore.editorUI.componentRequest) return;
+        requestCreateComponent(rootStore.editorUI);
+        return;
+      }
+
       if (match.action === 'selectTool' || match.action === 'grabTool') {
         e.preventDefault();
         rootStore.editorUI.setSelectedTool(match.action === 'selectTool' ? EditorTool.SELECT : EditorTool.GRAB);
@@ -285,6 +294,7 @@ export default function EditorApp({ projectSnapshot }: { projectSnapshot?: Proje
     <EditorCommerceProvider>
     <TransformProvider>
       <DragManagerBinding />
+      <ComponentDialogs />
 
     <div className="relative w-screen h-screen">
       <Canvas />

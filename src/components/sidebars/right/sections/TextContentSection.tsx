@@ -23,6 +23,7 @@ import { isTextBound, textNodesOf, textRunLabel } from '@/lib/renderer/textConte
 import { cn } from '@/lib/utils';
 import { CollapsibleSection, FIELD_LABEL } from '../primitives';
 import BindingControl from '../BindingControl';
+import { owningDefinition } from '@/lib/bindings/scopeIntrospection';
 import { getRegistryIdForNode } from '../registryId';
 
 interface TextContentFieldProps {
@@ -151,12 +152,14 @@ const TextNodeRow = observer(({ node, label }: TextNodeRowProps) => {
   const registryId = getRegistryIdForNode(node);
   const slotMeta = registryId ? getBindableSlotsFor(registryId).children : undefined;
   const bound = isTextBound(node);
+  // Inside a component's definition any text can become an input (Make input).
+  const inDefinition = owningDefinition(node) !== undefined;
   const field = <TextContentField node={node} label={label} />;
 
   return (
     <>
       {label && <span className={cn(FIELD_LABEL, 'min-w-0 break-words leading-snug')}>{label}</span>}
-      {slotMeta || bound ? (
+      {slotMeta || bound || inDefinition ? (
         // Bindable (or already bound): the binding control shows the field
         // with a bind button, or the binding chip instead of the field.
         <BindingControl node={node} slot="children" meta={slotMeta ?? FALLBACK_META}>

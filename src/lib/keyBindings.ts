@@ -9,7 +9,7 @@
 // Kept deliberately tiny. When the Settings page ships, swap `DEFAULT_BINDINGS`
 // for a MobX-observable map read from persisted user config.
 
-export type KeyBindingActionId = 'delete' | 'duplicate' | 'undo' | 'redo' | 'clearSelection' | 'enterComponent' | 'selectTool' | 'grabTool';
+export type KeyBindingActionId = 'delete' | 'duplicate' | 'undo' | 'redo' | 'clearSelection' | 'enterComponent' | 'createComponent' | 'selectTool' | 'grabTool';
 
 // Descriptor for a single key combo. Modifier keys are normalised across macOS
 // (Cmd) and other platforms (Ctrl) via `primary: true` — the matcher treats
@@ -77,6 +77,14 @@ export const DEFAULT_BINDINGS: KeyBindingDefinition[] = [
     ],
   },
   {
+    action: 'createComponent',
+    label: 'Create a component from the selection',
+    bindings: [
+      // Figma's and Framer's combination.
+      { key: 'k', primary: true, alt: true },
+    ],
+  },
+  {
     action: 'selectTool',
     label: 'Select tool',
     bindings: [
@@ -93,7 +101,10 @@ export const DEFAULT_BINDINGS: KeyBindingDefinition[] = [
 ];
 
 export function matchesBinding(event: KeyboardEvent, binding: KeyBinding): boolean {
-  if (event.key.toLowerCase() !== binding.key.toLowerCase()) return false;
+  // With Option held, a Mac types another character (Option+K is a ring above), so
+  // a letter binding with `alt` also matches on the physical key.
+  const letter = binding.alt && /^[a-z]$/i.test(binding.key) && event.code === `Key${binding.key.toUpperCase()}`;
+  if (event.key.toLowerCase() !== binding.key.toLowerCase() && !letter) return false;
 
   const primary = event.metaKey || event.ctrlKey;
   if (!!binding.primary !== primary) return false;
