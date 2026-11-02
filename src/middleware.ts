@@ -4,6 +4,7 @@ import type { NextRequest } from 'next/server';
 // that pulls `server-only` + Prisma, which cannot run in the edge middleware.
 import { HOME_REWRITE_SENTINEL } from '@/server/sites/homeSentinel';
 import { isEditorHost as isEditorHostname } from '@/lib/editorHost';
+import { publishedHostAllows, routeFor } from '@/lib/hostRoutes';
 import { CSP_REPORT_ONLY_HEADER, MAPS_CONSENT_COOKIE, reportOnlyPolicy } from '@/lib/site/cspReportOnly';
 
 /**
@@ -72,6 +73,30 @@ function withReportOnlyPolicy(request: NextRequest, response: NextResponse): Nex
   return response;
 }
 
+/**
+ * The 404 a published host answers for anything its allowlist
+ * (src/lib/hostRoutes.ts) does not name, or null when the request may pass.
+ * `routePath` is the path Next will route: the home sentinel for `/`. A server
+ * action is refused on every path: Next runs one posted to ANY page path, and
+ * every server action is the editor's. An `/api` path must name an allowlisted
+ * API route, never fall through to the site catch-all.
+ */
+function refuseOnPublishedHost(request: NextRequest, routePath: string): NextResponse | null {
+  const isApi = routePath === '/api' || routePath.startsWith('/api/');
+  const allowed =
+    !request.headers.has('next-action') &&
+    publishedHostAllows(routePath, request.method) &&
+    (!isApi || (routeFor(routePath)?.route.startsWith('/api/') ?? false));
+  if (allowed) return null;
+  if (isApi) {
+    return NextResponse.json({ error: { code: 'not_found', message: 'not found' } }, { status: 404 });
+  }
+  return new NextResponse('Not found', {
+    status: 404,
+    headers: { 'content-type': 'text/plain; charset=utf-8' },
+  });
+}
+
 export async function middleware(request: NextRequest) {
   // Host-aware root routing. Next is host-agnostic, so without this `/` is the
   // editor (`app/page.tsx`) on EVERY host. The discriminator is the request Host:
@@ -98,7 +123,10 @@ export async function middleware(request: NextRequest) {
       // check below, so an anonymous site visitor is served (NOT bounced to the
       // auth-brain login). A rewrite (NOT redirect): the visitor's URL stays `/`,
       // the required catch-all `(site)/[...slug]` route receives the sentinel
-      // segment and resolves it as the home request.
+      // segment and resolves it as the home request. Only a read: a post or a
+      // server action to the home page is refused like any other path.
+      const refused = refuseOnPublishedHost(request, `/${HOME_REWRITE_SENTINEL}`);
+      if (refused) return refused;
       return withReportOnlyPolicy(request, NextResponse.rewrite(new URL(`/${HOME_REWRITE_SENTINEL}`, request.url)));
     }
     // Editor host root: preserve EXACTLY today's behavior. The editor `/` is NOT
@@ -112,39 +140,31 @@ export async function middleware(request: NextRequest) {
   // sends it to `*.sites.lumitra.co`. But the published-site plane derives
   // tenancy from the HOST and must NEVER be AUTHORIZED by that apex session. So
   // on a NON-editor (published) host the middleware never applies the editor
-  // cookie gate (no login bounce) and REFUSES the session-authorized editor
-  // surfaces outright (404); everything else (storefront pages, reads and
-  // anonymous order POSTs) flows through to host-based tenant resolution. (No
+  // cookie gate (no login bounce) and serves only its allowlist (storefront
+  // pages, reads and anonymous order POSTs, which flow through to host-based
+  // tenant resolution); every other route answers 404 there. (No
   // auth-brain cookie-domain change is made; this is an authz decision, not a
   // cookie-transport one.)
   if (!isEditorHost) {
-    // The editor plane (`/projects/*` pages, `/api/projects/*`, `/api/ai/*`)
-    // must not run AT ALL on a published host: every one of them authorizes
-    // with the apex session the browser still sends here, which D2 forbids on
-    // the published plane. So they are refused with a 404 (as if the surface did
-    // not exist on this host, revealing nothing about the editor), BEFORE any
-    // handler or page runs and regardless of any cookie. A 404, NOT a login
-    // bounce: anonymous published-site traffic is never sent to the login page.
-    // In the current (inverted) deploy the editor is reached on its own
-    // EDITOR_HOST, which this check recognizes, so no editor path relies on a
-    // storefront host. The editor commerce handlers keep their own host check as
-    // defense in depth (src/server/commerce/editorTenant.ts).
-    const editorPlane = isEditorPlanePath(request.nextUrl.pathname);
-    if (editorPlane === 'api') {
-      return NextResponse.json(
-        { error: { code: 'not_found', message: 'not found' } },
-        { status: 404 },
-      );
-    }
-    if (editorPlane === 'page') {
-      return new NextResponse('Not found', {
-        status: 404,
-        headers: { 'content-type': 'text/plain; charset=utf-8' },
-      });
-    }
-    // The matcher also brings every API route here (for the check above, which
-    // only runs on the editor host): those are not pages, so they pass unmarked.
+    // A published host is a customer's origin, so it is an ALLOWLIST
+    // (src/lib/hostRoutes.ts): the site pages, the per-host files, and the few
+    // platform endpoints a published page calls (form submit, the storefront
+    // commerce reads, order and pay, the CSP report, the published CMS reads,
+    // health), each for its listed methods. Every other route answers 404 here,
+    // BEFORE any handler or page runs and regardless of any cookie: the editor
+    // pages and its preview, the authoring, AI, Books, catalogue and payments
+    // APIs (all of them authorize with the apex session the browser still sends
+    // here, which D2 forbids on this plane), the webhook and the host timers.
+    // A 404, NOT a login bounce, so nothing about the editor is revealed and
+    // anonymous traffic is never sent to the login page. A server action is
+    // refused too: Next runs one posted to ANY page path, and every server
+    // action is the editor's (refuseOnPublishedHost). The handlers keep their own host checks as
+    // defense in depth (src/server/commerce/editorTenant.ts and friends).
     const { pathname } = request.nextUrl;
+    const refused = refuseOnPublishedHost(request, pathname);
+    if (refused) return refused;
+    // The matcher also brings every API route here (for the cross-origin check,
+    // which only runs on the editor host): those are not pages, so they pass unmarked.
     if (pathname === '/api' || pathname.startsWith('/api/')) return NextResponse.next();
     return withReportOnlyPolicy(request, NextResponse.next());
   }
@@ -196,11 +216,13 @@ export const config = {
   //   - the `(site)/[...slug]` storefront catch-all + the published-site root
   //     serve anonymous traffic: matched only so a published page gets the
   //     report-only policy, never gated on any host
-  //   - /preview/* (and /projects/<id>/preview, reached via the gated dashboard)
-  //     render anonymous previews: matched only for the policy, as above
+  //   - /preview (and /projects/<id>/preview, reached via the gated dashboard)
+  //     render the editor's previews: open on the editor host, 404 on a
+  //     published host like every route its allowlist does not name
   //   - /api/health/* is the liveness probe
   //   - /api/cms + /api/commerce are LEFT OPEN here because they serve BOTH
-  //     planes: on a published-site host their reads are scoped to the Host's
+  //     planes (on a published host only the methods src/lib/hostRoutes.ts
+  //     lists, so CMS writes 404 there): on a published-site host their reads are scoped to the Host's
   //     site (never the session, D2/D4), on the editor host the CMS reads and
   //     all writes check the session themselves (src/server/cms/readScope.ts,
   //     the write guards, src/server/commerce/editorTenant.ts). Anonymous order
@@ -226,7 +248,7 @@ export const config = {
     // build output, what is inside /images and /fonts, and the per-host files.
     // Other public files carry the header, where it does nothing. /preview is
     // matched too: the host decides, so the editor's preview stays unmarked on
-    // the editor host, and a published host marks whatever document it serves.
+    // the editor host, and a published host answers it with a 404.
     '/((?!(?:api|_next)(?:/|$)|(?:images|fonts)/.|(?:favicon\\.ico|robots\\.txt|sitemap\\.xml|site\\.webmanifest)$).+)',
   ],
 };

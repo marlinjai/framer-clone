@@ -359,8 +359,14 @@ describe('middleware: the report-only policy of published pages', () => {
 
   it('does not mark an API answer on a published host, though the matcher brings API routes here', async () => {
     process.env.EDITOR_HOST = EDITOR;
-    for (const path of ['/api/cms/rows', '/api/commerce/products', '/api/forms/submit', '/api/health', '/api/csp-report']) {
-      const res = await middleware(req(`https://${PUBLISHED}${path}`, { host: PUBLISHED }));
+    for (const [method, path] of [
+      ['GET', '/api/cms/collections/c1/rows'],
+      ['GET', '/api/commerce/products'],
+      ['POST', '/api/forms/submit'],
+      ['GET', '/api/health'],
+      ['POST', '/api/csp-report'],
+    ]) {
+      const res = await middleware(new NextRequest(`https://${PUBLISHED}${path}`, { method, headers: { host: PUBLISHED } }));
       expect(isNext(res), path).toBe(true);
       expect(policy(res), path).toBeNull();
     }
@@ -430,9 +436,12 @@ describe('middleware: the report-only policy of published pages', () => {
     expect(matchesPublishedPages('/file.svg')).toBe(true);
   });
 
-  it('marks /preview on a published host and never on the editor host', async () => {
+  it('refuses /preview on a published host with an unmarked 404, and serves it unmarked on the editor host', async () => {
     process.env.EDITOR_HOST = EDITOR;
-    expect(policy(await middleware(req(`https://${PUBLISHED}/preview`, { host: PUBLISHED })))).toBe(PUBLISHED_REPORT_ONLY_POLICY);
+    const published = await middleware(req(`https://${PUBLISHED}/preview`, { host: PUBLISHED }));
+    expect(published.status).toBe(404);
+    expect(isNext(published)).toBe(false);
+    expect(policy(published)).toBeNull();
     const editor = await middleware(req(`https://${EDITOR}/preview`, { host: EDITOR }));
     expect(policy(editor)).toBeNull();
     expect(isNext(editor)).toBe(true);
