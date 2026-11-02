@@ -71,6 +71,12 @@ jobs:
       - name: Generate Prisma client
         run: pnpm exec prisma generate
 
+      # The primitive score's floor (docs/primitives-score/baseline.json) against the
+      # committed run beside it, row by row: no browser, seconds. A lowered row needs its
+      # reason, and a refusal a merge took back shows up as a pass the run lacks.
+      - name: Score floor matches the committed score
+        run: pnpm check:score-floor
+
       - name: Typecheck
         run: pnpm exec tsc --noEmit
 

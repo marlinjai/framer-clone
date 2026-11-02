@@ -4,7 +4,9 @@
 //   exit 1  the score dropped: the ratchet says which number
 //   exit 2  a harness error: a probe crashed, so there is no score
 //
-// A low score alone never fails. --update-baseline raises the floor on purpose.
+// A low score alone never fails. --update-baseline raises the floor on purpose, and only
+// raises it: a run that dropped writes nothing, and lowering is a hand edit with a reason
+// (test/score/lib/floor.ts).
 
 import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
@@ -25,7 +27,6 @@ if (probes.status !== 0) {
 
 const score = buildScore(Math.round((Date.now() - started) / 1000));
 writeScore(score);
-if (updateBaseline) writeBaseline(score);
 
 const { surfaces } = score.matrix;
 console.log('\nPrimitive score (full report: docs/primitives-score/latest.md)');
@@ -40,9 +41,14 @@ const imp = score.import;
 console.log(`  import    ${imp.parityPassing.length} of ${imp.runs.length} runs pass, honesty failures ${imp.honestyFailures}, conservation failures ${imp.conservationFailures}`);
 console.log(`  took ${score.durationSeconds} seconds`);
 
-const drops = checkRatchet(score);
+const drops = checkRatchet(score, updateBaseline);
 if (drops.length > 0) {
   console.error('\nThe score dropped below docs/primitives-score/baseline.json:');
   for (const drop of drops) console.error(`  ${drop}`);
+  if (updateBaseline) console.error('\n--update-baseline only raises the floor, so it wrote nothing. A deliberate lowering is a hand edit: the row gets its gap and lowered gets the reason.');
   process.exit(1);
+}
+if (updateBaseline) {
+  writeBaseline(score);
+  console.log('\nRaised docs/primitives-score/baseline.json by what this run passes.');
 }

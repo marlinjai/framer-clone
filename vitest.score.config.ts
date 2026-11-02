@@ -4,7 +4,8 @@ import path from 'node:path';
 // Primitive score config (run through `pnpm score:primitives`, test/score/run.ts).
 // Deliberately SEPARATE from vitest.config.ts: these probes record honest
 // failures as results and start a real browser, so they stay out of `pnpm test`
-// (which only matches src/**). `cache: false` because a score that replays an
+// (which matches src/** and only the pure `test/score/lib/*.test.ts`, never a
+// `.score.` probe). `cache: false` because a score that replays an
 // old result is worthless: every run measures from scratch.
 const alias = {
   '@': path.resolve(__dirname, './src'),

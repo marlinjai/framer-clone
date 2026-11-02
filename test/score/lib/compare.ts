@@ -39,6 +39,29 @@ export interface SnapshotOptions {
 /** The key the document element is compared under. No parity id can take it. */
 export const DOCUMENT_KEY = 'html';
 
+/**
+ * How long one capture (the full-page screenshot, or the accessibility tree) may take,
+ * apart from a page's own timeout for clicks and waits, because a capture that runs out of
+ * time stops the whole score with no number. Measured on 2026-11-02 over the 156 BusBasis
+ * captures with 28 busy loops beside the fleet. Before `painted`, the screenshot also paid
+ * for the page's first layout and paint: up to 2983 ms at load average 100, and one past
+ * the 5 seconds it then had, which crashed the run. After it, at load average 250, a
+ * screenshot took at most 359 ms and an accessibility tree 36 ms. 15 seconds is forty times
+ * that, and five times the worst seen without the readiness wait.
+ */
+export const CAPTURE_TIMEOUT_MS = 15_000;
+
+/**
+ * The page has drawn what it shows: its fonts are settled and two frames have gone by, so
+ * the capture starts on a finished page and its time is the capture's alone.
+ */
+export async function painted(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+}
+
 export async function takeSnapshot(page: Page, options: SnapshotOptions = {}): Promise<Snapshot> {
   const computed = await page.evaluate(({ withoutVariables, withDocument, documentKey }) => {
     const dump = (style: CSSStyleDeclaration) => {
@@ -70,10 +93,11 @@ export async function takeSnapshot(page: Page, options: SnapshotOptions = {}): P
     }
     return facts;
   }, { withoutVariables: options.withoutVariables ?? false, withDocument: options.withDocument ?? false, documentKey: DOCUMENT_KEY });
+  await painted(page);
   return {
-    png: await page.screenshot({ fullPage: true }),
+    png: await page.screenshot({ fullPage: true, timeout: CAPTURE_TIMEOUT_MS }),
     computed,
-    aria: await page.locator('body').ariaSnapshot(),
+    aria: await page.locator('body').ariaSnapshot({ timeout: CAPTURE_TIMEOUT_MS }),
   };
 }
 

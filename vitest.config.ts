@@ -57,6 +57,8 @@ export default defineConfig({
           include: [
             'src/server/**/*.{test,spec}.{ts,tsx}',
             'src/lib/bindings/resolver/**/*.{test,spec}.{ts,tsx}',
+            // The score's own pure logic (the floor), no browser: the probes stay in vitest.score.config.ts.
+            'test/score/lib/**/*.test.ts',
           ],
         },
       },

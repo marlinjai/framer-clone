@@ -296,29 +296,42 @@ const motionTree = (style: Record<string, unknown>) => (on: Behaviour): StoredPr
   }),
 ];
 
+/**
+ * A cancel needs a motion that is running when the second press takes it away. The
+ * second press waits for that, read from the element's own animations (reading them
+ * dispatches nothing), so neither a late first frame nor a slow click decides the row.
+ */
+const running = (page: Page) =>
+  page.waitForFunction(() => document.querySelector('[data-t="mover"]')?.getAnimations().some((motion) => motion.playState === 'running') === true);
+
 const animated = (style: Record<string, unknown>, twice = false): EventProof => ({
   state: [flag('go')],
   tree: motionTree(style),
   cause: async ({ page }) => {
     await at(page, 'go').click();
-    if (twice) await at(page, 'go').click();
+    if (!twice) return;
+    await running(page);
+    await at(page, 'go').click();
   },
 });
 
 const SHORT = { animation: 'u-probe 60ms linear 3' };
-const LONG = { animation: 'u-probe 5s linear' };
+// What a cancel takes away must not end first. A 5 second motion did, on a loaded machine
+// where the second press came later than that, and the row read red with nothing broken.
+// The animation never ends; a transition cannot be infinite, so it outlasts any timeout here.
+const ENDLESS = { animation: 'u-probe 1s linear infinite' };
+const ENDLESS_FADE = { opacity: '0.5', transition: 'opacity 600s linear' };
 const FADE = { opacity: '0.5', transition: 'opacity 60ms linear' };
-const SLOW_FADE = { opacity: '0.5', transition: 'opacity 5s linear' };
 
 const MOTION: Record<string, EventProof> = {
   animationstart: animated(SHORT),
   animationend: animated(SHORT),
   animationiteration: animated(SHORT),
-  animationcancel: animated(LONG, true),
+  animationcancel: animated(ENDLESS, true),
   transitionrun: animated(FADE),
   transitionstart: animated(FADE),
   transitionend: animated(FADE),
-  transitioncancel: animated(SLOW_FADE, true),
+  transitioncancel: animated(ENDLESS_FADE, true),
 };
 
 // ---- scrolling and loading --------------------------------------------------------------
