@@ -361,7 +361,7 @@ everything and letting the later rule win would be wrong, because Tailwind sorts
 the wrong colour with no error. So on the root of the import go every token a used value reaches, transitively, and **always the base-reached
 tokens the source defines**: `--border`, `--ring` and any token named in its `@layer base`, whose `@apply` classes are compiled as candidates to find
 them. No utility names those, so "reached" alone left a foreign theme on the editor's colours [proven]. Each colour or font among them becomes a site token, and the root keeps
-its name as an alias, `--primary: var(--fc-t-<id>)`, with the `.dark` value in that token's dark slot, because the base sheet reads `--border` by name. Everything else stays on the root. The
+its name as an alias, `--primary: var(--fc-t-<id>)`, with the `.dark` value in that token's dark slot, because the base sheet reads `--border` by name. Everything else stays on the root, and its `.dark` values become a `@media (prefers-color-scheme: dark)` rule on the root, like `dark:` below. The
 [theme contract](2026-11-02-theme-and-head.md), "The React importer's theme lines", holds the rules, and nothing below the root changes.
 
 - A source with no such base rule has `currentcolor` borders, so a `border` class on it gets an explicit `borderColor: currentcolor`, or the page's rule

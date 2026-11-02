@@ -1,6 +1,6 @@
 ---
 type: plan
-status: draft
+status: decided
 date: 2026-11-02
 title: "Theme tokens and head items: the contract for a site's shared colours and fonts and a page's safe head tags"
 summary: "Where a site's colour and font tokens live, how a value refers to one so a rename touches nothing, light and dark without script, how tokens reach the canvas, preview, published page, rules and component definitions, how they share the document with a page's `:root` rule, and what the AI and the React importer may do with them. Then which head items a page may hold: meta from a closed list, link from the rels that contact no other host in three browser engines, JSON-LD as inert data, nothing that runs. Tokens sit in Site settings, so they freeze with the published copy. Revised after an independent review. Nine slices, each verified on forward, backtrack, resume and re-entry."
@@ -104,9 +104,10 @@ interface DocumentStyles {
 }
 ```
 
-Caps: 200 live tokens and 500 tombstones, both held in `normalizeTheme`, because `siteSettings.ts` promises a stored blob never grows without bound. At the tombstone
-cap Delete is refused with a pointer to Clean up. The name is plain text, emitted nowhere in CSS. `normalizeTheme` runs on load and on publish and keeps every token with a
-valid id. Only an id that fails its pattern is dropped, since no reference can name it.
+Caps: 200 live tokens and 500 tombstones, because `siteSettings.ts` promises a stored blob never grows without bound. **They are enforced at write:** `updateTheme`, the AI apply and the import
+placing refuse what would pass one. At the tombstone cap Delete is refused with a pointer to Detach and Replace, which empty a tombstone of uses, and to Clean up, which then removes it. The name is plain text, emitted nowhere in CSS.
+**`normalizeTheme` on read keeps what is stored,** so a frozen revision never loses a referenced token: it drops only a token whose id fails its pattern, since no reference can name it, and
+a blob over a cap, forged or older, emits the first tokens up to the cap and logs a warning.
 
 **Why Site settings [code].** One JSONB (binary JSON) column, so a new field needs no migration; always normalized when read; and #226's table freezes `siteSettings` in every revision.
 Yjs (the multiplayer sync library) has a blob key for it, but nothing outside `src/lib/multiplayer` imports Yjs today, so there is no live sync to design for: this contract's
@@ -123,7 +124,7 @@ Four traps, each a test in slice T1:
   only when present, and `saveProject` keeps the stored value otherwise. A new build always sends both keys, so a real clear still works.
 - **A second tab puts an old theme back, with no warning [code].** Save posts the whole snapshot, and `versionContent` in `src/stores/openProject.ts` compares pages and definitions only. A
   tab loaded before a token edit would write its stale theme over every page. The components contract closed the same hole for definitions, for the same reason. So `ProjectContent` and
-  `VersionContent` gain `theme` and the site's `head`, both `markServerVersion` callers (`openProject.ts`, `PublishButton.tsx`) pass them, and `changedElsewhereMessage` names them. With that warning, last
+  `VersionContent` gain `theme` and the site's `head`, the three `markServerVersion` callers (`openProject.ts`, `PublishButton.tsx`, `SaveButton.tsx`) already pass the whole snapshot, so `versionContent` reads `siteSettings` from it with no caller change, and `changedElsewhereMessage` names them. With that warning, last
   writer wins on one blob is accepted: it is how every other site setting behaves.
 
 <a id="publishing"></a>**Publishing.** Until #226 lands, save and publish write the same row, so a saved theme would reach visitors at the next cache miss, as a saved
@@ -168,7 +169,8 @@ definitions, placement overrides, inputs **and `theme.document`**, because a ref
 `normalizeTheme` runs on what a frozen revision holds, and a revision stays live for up to 30 versions. So if a later build read a stored value more strictly, or a family left `FONT_LIBRARY`, dropping the token
 would kill every reference on a live page, with no publish to warn at, and the next save would make that permanent. So:
 
-- **A colour token whose value stops parsing keeps its id and stored text and gains `broken: true`.** The stored text is never emitted. References behave as missing, the panel shows it with its text, and `checkBeforePublish` names it.
+- **A colour token whose value stops parsing keeps its id and stored text and gains `broken: true`.** The stored text is never emitted, and is kept only up to 256 characters, beyond which it is replaced by nothing. References behave as missing, the panel shows it with its text, and `checkBeforePublish` names it.
+- **`broken` is recomputed on every read** from the stored text, and a stored flag is ignored. So a value an older container marked during a rollout reads as valid again under the build that accepts it.
 - **A font token with an unknown family emits `SYSTEM_FONT_STACK`,** so text stays readable, and the panel shows it.
 - **The grammar only widens.** A test holds a list of accepted values, and removing one fails it.
 
@@ -239,8 +241,11 @@ which is readable and not the site's own. The panel warns when `mode` is `system
 the rule while the tokens stay light: a half dark page. The existing evaluator does not answer this: `mediaVerdict` reads a frame and returns `environment` for every `prefers-color-scheme` form, `(prefers-color-scheme: dark) or (min-width: 600px)` is `unknown`, and `surfaceWrappers`
 keeps the condition on the preview [proven by the review]. So T2 adds **`withColorMode(prelude, mode)`**, pure, in `src/lib/rules/colorMode.ts`:
 
+- **It rewrites only queries in a grammar it recognises,** and leaves everything else as stored, invalid shapes included. That matters because `not (prefers-color-scheme: dark) and (min-width: 600px)` is not valid media query syntax: Chromium parses it to `not all`, which never matches under either setting [proven by the review]. Read literally, a rewrite would turn that dead query into a live one.
+- The recognised forms: a query made of `and`-joined operands, each `(feature: value)` or `(not (feature: value))`, and a whole query `not (prefers-color-scheme: x)`.
 - Per query in a comma list. A list with nothing left drops the rule.
 - `(prefers-color-scheme: x)` matching the mode is removed from its query; not matching drops that query. `not` inverts the answer.
+- The boolean `(prefers-color-scheme)` matches in both modes, so it is left as stored, which is already right.
 - An `or` holding the feature is left as stored and reported as a warning, because it cannot be answered by one operand.
 - It covers node rules and #261's `:root` rules. `applyResponsiveStyles` gets one option, `colorMode`, passed only when `mode` is `light` or `dark`.
 
@@ -345,7 +350,7 @@ override can hold one. Component states compile at expansion and keep the string
 
 ### Export
 
-A site's reference means nothing off the platform, so export has its own form, and the React contract's export slices take it. `themeCss(theme, { scope: 'export' })` writes named variables from a slug of each token's name (`--accent-blue`, unique, `--token-<id>` for a name with no usable letters), with the same light and dark rules on `:root`.
+A site's reference means nothing off the platform, so export has its own form, and the React contract's export slices take it. `themeCss(theme, { scope: 'export' })` writes named variables from a slug of each token's name (`--accent-blue`, unique), with the same light and dark rules on `:root`. A name with no usable letters, or whose slug starts `fc-` or `u-`, takes `--token-<id>` instead: "FC Text" would otherwise be `--fc-text`, which `isPlatformVariable` refuses on re-import, and "U Spin" `--u-spin`, the namespace of stored `@property` and `cssVar` names in the same `site.css`. The slug comparison reads `--token-<id>` as that token.
 
 - It leaves out `html`, `body` and `@font-face`, which would restyle whoever installs the export, and whose `/fonts/...` paths exist only on the platform. A font token exports its stack, with a report line saying the file is theirs to host.
 - References in the exported styles are rewritten to those names.
@@ -416,7 +421,7 @@ custom property on the import's root becomes an alias:**
 | A `:root` colour token the root would hold (`--primary: oklch(...)`) | A site colour token named `primary`, and the root holds the alias |
 | Its `.dark` value | That token's `dark` slot. The `&:is(.dark *)` rule on the root is no longer written for it |
 | Base-reached `--border`, `--ring` | The same, always, which keeps R1's rule |
-| Non-colour values (`--radius`) and values outside the grammar (`color-mix`, `var`) | Stay on the root as they are today, with no line, because they lose nothing |
+| Non-colour values (`--radius`) and values outside the grammar (`color-mix`, `var`) | Stay on the root as they are today, with no line. Their `.dark` values take the same media form rewrite as `dark:` utilities, as a `@media (prefers-color-scheme: dark)` rule on the root, so the half dark case below does not survive for them |
 | A `--font-*` naming a `FONT_LIBRARY` family | A font token, with the alias. Any other family keeps its existing line |
 | `var(--primary)` in compiled rules and styles | Unchanged. This is what keeps "nothing else changes" true for everything below the root |
 | `dark:` utilities on nodes | **Always rewritten to `@media (prefers-color-scheme: dark)`.** `use-system-dark` goes away |
@@ -587,8 +592,8 @@ persistence, **E** re-entry after completion or failure. Types, lint, unit tests
 
 | Slice | Name | Files | `shared_state` | Depends on |
 |---|---|---|---|---|
-| T1 | `theme-model` | `src/lib/site/theme.ts`, `siteSettings.ts`, `ProjectModel.ts`, `repository.ts`, `snapshot.ts`, `src/stores/openProject.ts`, `PublishButton.tsx` | | #261 |
-| T2 | `theme-published` | `(site)/layout.tsx`, `app/layout.tsx`, `src/lib/rules/colorMode.ts`, `applyResponsiveStyles.ts`, `responsiveCss.ts`, `rootProperties.ts`, `rules.ts`, `validate.ts`, both renderers, `registry.ts`, `publishedFonts.tsx`, `notFoundDefault.ts`, `layoutAudit.ts`, `ConsentBanner.tsx`, `DefaultNotFound.tsx`, score | `renderer` | T1 |
+| T1 | `theme-model` | `src/lib/site/theme.ts`, `siteSettings.ts`, `ProjectModel.ts`, `repository.ts`, `snapshot.ts`, `src/stores/openProject.ts` | | |
+| T2 | `theme-published` | `(site)/layout.tsx`, `app/layout.tsx`, `src/lib/rules/colorMode.ts`, `applyResponsiveStyles.ts`, `responsiveCss.ts`, `rootProperties.ts`, `rules.ts`, `validate.ts`, both renderers, `registry.ts`, `publishedFonts.tsx`, `notFoundDefault.ts`, `layoutAudit.ts`, `ConsentBanner.tsx`, `DefaultNotFound.tsx`, score | `renderer` | T1, #261 |
 | T3 | `theme-canvas` | `GroundWrapper.tsx`, `PreviewFrame.tsx`, `surfaceSheet.ts`, `surfaces.ts`, `PageFontFaces.tsx`, `EditorUIStore.ts` | `renderer` | T2 |
 | T4 | `theme-panel` | A Theme panel, `ColorInput.tsx`, `FontFamilySelect.tsx`, `publishCheck.ts` | | T3, #226 |
 | T5 | `theme-ai` | `validate.ts`, `tells.ts`, `essentials.ts`, `siteContext.ts`, `promptSections/rules.ts`, `prompt.ts`, `apply.ts`, `schema.ts` | | T4 |
@@ -603,13 +608,13 @@ T6 cannot come earlier: before T2 no sheet exists, so every alias dangles, which
 
 - F: add, rename, set dark, delete, and the emitted text, as unit tests. Every grammar row, both ways, including each hostile value of both probes, the unclosed and stray brackets, and `rgba(255, 0, 0, 0.5)`. Forged `id`, `kind` and `document` values never reach the sheet.
 - B: a rename changes one field and no page byte. Undo restores a tombstone with its values. Going `system`, `light`, `system` keeps every `dark` value, and the sheet is what `mode` says. Clearing `mode` returns to not chosen.
-- R: a blob through save and load is identical. An unknown family emits the system stack. A value that stops parsing keeps its id and text, is marked broken, is not emitted, and survives a save. A bare theme key from an older build is read without throwing.
-- E: Clean up removes only what the scan finds unused, and a token used only in `theme.document` stays. The 500th tombstone refuses a further delete, with the pointer. A dialog opened before an edit and saved after it keeps the edit. A body lacking the key keeps the column through `projectToPersisted` and `saveProject`, and an explicit empty theme clears it. A second tab, reloading after a token edit with unsaved changes of its own, gets the warning naming the theme.
+- R: a blob through save and load is identical. An unknown family emits the system stack. A value that stops parsing keeps its id and text, is marked broken, is not emitted, and survives a save. A bare theme key from an older build is read without throwing. A stored `broken: true` on a value this build accepts reads as valid. Broken text over 256 characters is cut to nothing.
+- E: Clean up removes only what the scan finds unused, and a token used only in `theme.document` stays. The 500th tombstone refuses a further delete, with the pointer to Detach, Replace and Clean up. A write over either cap is refused, and a stored blob over one loads, emits up to the cap and warns. A dialog opened before an edit and saved after it keeps the edit. A body lacking the key keeps the column through `projectToPersisted` and `saveProject`, and an explicit empty theme clears it. A second tab, reloading after a token edit with unsaved changes of its own, gets the warning naming the theme.
 
 **T2, the published page.** The sheet, viewport, class, font faces, `withColorMode`, `isPlatformVariable`, `look` and `legibleLook`, `parseColor`, new rows.
 
 - F: in a real build and Chromium, computed values per mode and system setting, `html` and `body` included, the default 404 reading a reference, a font loading, a page `:root` rule beating the theme on `color-scheme`, `color`, `backgroundColor` and `fontFamily`, and the banner table above at both system settings.
-- B: a forced `light` site drops a dark node rule and a `:root` rule under the same wrapper, and `system` and no choice keep them. Every `withColorMode` case: lists, `not`, `or`. Changing `mode` changes the sheet on the next read, with no stale cached sheet. A site's first token on a site with no choice changes no rule.
+- B: a forced `light` site drops a dark node rule and a `:root` rule under the same wrapper, and `system` and no choice keep them. Every `withColorMode` case: lists, `not`, `or`, the boolean form, and the invalid `not (prefers-color-scheme: dark) and (min-width: 600px)`, which stays as stored and stays dead. Changing `mode` changes the sheet on the next read, with no stale cached sheet. A site's first token on a site with no choice changes no rule.
 - R: after a cache miss, a site with no theme key emits nothing, byte for byte, by a before and after test on the corpus, `theme-dark-rule` included. An unparseable stored theme emits nothing and logs.
 - E: a site that empties its theme and clears its mode returns to no sheet, and `generateViewport` to nothing. `dark` with no tokens gives the class and `color-scheme`. Rendering an error page keeps the sheet. `--fc-` is refused as a style key, in a rule, in a keyframe block and on `:root`, by one function.
 
@@ -721,10 +726,12 @@ All 18 and the small items are applied. Where one was adapted, this says how and
 | 18, file lists | Slice table; H1; the AI's local name | The H1 line accepts the loss for a page's `head`, with its reason, instead of adding a server merge for a window that needs a tab across two deploys |
 | Small | `isHeadHref`, `@graph`, the JSON-LD cap, `data-fc-theme-sheet`, `layoutAudit` in the reader table | None |
 
+**The recheck at `b5b243f`** found eight small items, all applied: `withColorMode` rewrites only recognised forms; caps are enforced at write and broken text is limited; `broken` is recomputed on read; the cap points at Detach and Replace; export slugs avoid `fc-` and `u-`; non-token `.dark` values take the media form; `SaveButton.tsx` is named; and #261 moved from T1 to T2.
+
 **Not adopted.** Nothing was declined. Two things in the review no longer apply as written: its `:root` row timing, since this contract now claims no such row, and "named colours and literals outside the grammar" as the open question, which the operator has decided.
 
 ## Open questions
 
-None needs an answer before slice T1, though T1 waits for #261. Whether a future policy adds `style-src` is the existing open decision on enforcing a Content Security Policy, and this contract only states its price.
+None needs an answer before slice T1. T2 waits for #261, which holds `isPlatformVariable` and the `:root` rule; T1 does not. Whether a future policy adds `style-src` is the existing open decision on enforcing a Content Security Policy, and this contract only states its price.
 
 **Still unproven, for whoever builds it:** whether `dns-prefetch` and Chromium's `preconnect` stay silent outside automation (both are refused either way); whether editor overlays survive a dark `color-scheme` on a frame, which T3 checks; whether a dark page avoids a white first paint; whether native dropdowns and scrollbars look right on a `system` site with no dark values; and the banner table, which comes from #261's `legibleLook` on resolved values, because T2's resolving does not exist yet.
