@@ -22,6 +22,7 @@ import { PreviewRuleStyles } from '@/lib/rules/CanvasRuleStyles';
 import { prefersReducedMotion, startEffects } from '@/lib/effects/runtime';
 import { startSmoothScroll } from '@/lib/effects/smoothScroll';
 import { pickBreakpointForWidth } from '@/lib/renderer/pickBreakpoint';
+import type { SurfaceNode } from '@/lib/rules/surfaceSheet';
 import type { PageModelType } from '@/models/PageModel';
 
 export interface PreviewFrameProps {
@@ -124,7 +125,7 @@ const PreviewFrame = observer(({ page, width, height, fill = false, smoothScroll
     >
       <EffectsStyles startScope={`[${FX_ATTR.scope}] `} smoothScroll={smoothScroll} />
       <PreviewRuleStyles
-        tree={page.appComponentTree}
+        tree={page.expansion.root as SurfaceNode}
         frame={{ breakpointId, width, height }}
         breakpoints={viewportNodes.map(v => ({ id: v.breakpointId!, minWidth: v.breakpointMinWidth! }))}
       />

@@ -31,6 +31,7 @@ import {
   DATA_GROUND,
   DATA_GROUND_WRAPPER_ID,
   DATA_INNER_COMPONENT_ID,
+  DATA_PLACEMENT_ROOT,
   DATA_TEXT_NODE_ROW,
   DATA_VIEWPORT_ID,
 } from './markers';
@@ -202,7 +203,8 @@ function resolveInnerTarget(
 
   const rect = targetEl.getBoundingClientRect();
   const tagName = targetEl.tagName.toLowerCase();
-  const targetCanNest = !isVoidTag(tagName) && !targetEl.hasAttribute(DATA_TEXT_NODE_ROW);
+  // A placement is a leaf, whatever its root's tag: its content is its definition's.
+  const targetCanNest = !isVoidTag(tagName) && !targetEl.hasAttribute(DATA_TEXT_NODE_ROW) && !targetEl.hasAttribute(DATA_PLACEMENT_ROOT);
   // Allow 'inside' when the tag is a recognised container (even if empty) OR
   // when any tag already has element children. The container allowlist unlocks
   // dropping into freshly-created empty Containers; the child-count fallback

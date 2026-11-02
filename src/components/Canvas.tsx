@@ -36,6 +36,7 @@ import {
   type CameraTransform,
   type Tap,
 } from '@/lib/canvas/touchGestures';
+import { DATA_PLACEMENT_ROOT } from '@/lib/drag/markers';
 import { isEditingText, placeCaret, startInlineTextEdit } from '@/lib/canvas/inlineTextEdit';
 
 /**
@@ -60,6 +61,8 @@ function collectFrameCandidates(content: Element, rootId: string | undefined): M
   content.querySelectorAll('[data-inner-component-id]').forEach(el => {
     const id = el.getAttribute('data-inner-component-id');
     if (!id || id === rootId) return;
+    // A placement is one unit: what is inside it is not on this page.
+    if (el.parentElement?.closest(`[${DATA_PLACEMENT_ROOT}]`)) return;
     const rect = visibleRectInFrame(el);
     if (!rect) return; // clipped away by the frame
     const parentEl = el.parentElement?.closest('[data-inner-component-id]');

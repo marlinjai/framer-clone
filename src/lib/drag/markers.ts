@@ -19,6 +19,10 @@ export const DATA_FLOATING_ROOT_ID = 'data-floating-root-id';
 export const DATA_INNER_COMPONENT_ID = 'data-inner-component-id';
 // A Layers row of a text node: a drop goes before or after it, never inside.
 export const DATA_TEXT_NODE_ROW = 'data-text-node-row';
+// The root element of a placement: one unit on the canvas, so a drop goes before or
+// after it, never inside. Its value is `<frame>-<definition root id>`, which is how
+// the rule sheet reaches the root of every placement of a definition with one block.
+export const DATA_PLACEMENT_ROOT = 'data-placement-root';
 export const DATA_GROUND = 'data-ground';
 export const DATA_EDITOR_UI = 'data-editor-ui';
 export const DATA_GROUND_WRAPPER_ID = 'data-ground-wrapper-id';

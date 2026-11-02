@@ -1,11 +1,14 @@
 // src/stores/EditorUIStore.ts
 // UI state store - manages current selections, tools, and transient editor state
-import { types, Instance, getParentOfType, hasParentOfType } from 'mobx-state-tree';
+import { types, Instance, addDisposer, getParentOfType, hasParentOfType } from 'mobx-state-tree';
+import { comparer, reaction } from 'mobx';
 import ProjectModel, { ProjectModelType } from '../models/ProjectModel';
 import PageModel, { PageModelType } from '../models/PageModel';
 import ComponentModel, { ComponentInstance } from '../models/ComponentModel';
 import { LEFT_SIDEBAR_DEFAULT_WIDTH, clampLeftSidebarWidth } from '@/lib/layers/sidebarWidth';
 import { isTextNodeType } from '@/lib/renderer/textNode';
+import { isDefinitionRule, storedRulesOf } from '@/lib/rules/rules';
+import { findRuleIndex, namedState, namedStateOf } from '@/lib/rules/states';
 // Removed BreakpointModel - breakpoints are now viewport nodes
 
 // Available tools in our design editor (expanded from basic ToolStore)
@@ -23,6 +26,23 @@ export enum EditorTool {
 function selectionTarget(component: ComponentInstance): ComponentInstance {
   if (!isTextNodeType(component.type) || !hasParentOfType(component, ComponentModel)) return component;
   return getParentOfType(component, ComponentModel) as ComponentInstance;
+}
+
+// True while the panel itself writes into the active state.
+let panelWritesRule = false;
+
+/**
+ * Runs a write of the state switch's panel. The reset of a state's last value takes
+ * its rule with it and stays on that state, which is how to tell it from the rule
+ * going any other way (undo, a collaborator): those return to Normal.
+ */
+export function whilePanelWritesRule<T>(write: () => T): T {
+  panelWritesRule = true;
+  try {
+    return write();
+  } finally {
+    panelWritesRule = false;
+  }
 }
 
 /** 'refused': an action the editor would not carry out, and why. */
@@ -99,6 +119,13 @@ const EditorUIStore = types.model('EditorUI', {
   // and the sheet expands it through src/lib/rules/states.ts, so Pressed shows Hover
   // too. Editor session only: not saved with the project, not in undo history.
   previewRule: null as { componentId: string; ruleId: string } | null,
+  // The state the properties panel edits, beside the selection: a named state (which
+  // needs no rule until its first value) or a stored rule's id. Null is Normal. The
+  // switch sets previewRule with it, so the canvas shows what is being edited. Editor
+  // session only, so a reload opens on Normal with every rule intact.
+  activeRule: null as string | null,
+  // Why the last write into that state was refused, for the line under the switch.
+  ruleRefusal: null as string | null,
   // The preview shown over the editor (PreviewOverlay), from this store: no
   // navigation and no server round trip. The editor's own keyboard shortcuts
   // stand down while it is open. Editor session only.
@@ -150,11 +177,16 @@ const EditorUIStore = types.model('EditorUI', {
     self.previewProductHandle = handle;
   },
 
-  /** Shows or hides the preview over the editor (PreviewOverlay). */
+  /** Shows one rule on every copy of its node, or none. */
   setPreviewRule(preview: { componentId: string; ruleId: string } | null) {
     self.previewRule = preview;
   },
 
+  setRuleRefusal(reason: string | null) {
+    self.ruleRefusal = reason;
+  },
+
+  /** Shows or hides the preview over the editor (PreviewOverlay). */
   setPreviewOpen(open: boolean) {
     self.previewOpen = open;
     // Nothing that floats over the canvas outlives the switch.
@@ -405,6 +437,23 @@ const EditorUIStore = types.model('EditorUI', {
     return list;
   },
 
+  /** The one node the state switch works on, if the selection is such a node. */
+  get ruleTarget(): ComponentInstance | undefined {
+    const list = this.selectedComponentList;
+    return list.length === 1 && list[0].holdsRules ? list[0] : undefined;
+  },
+
+  /** The name of the state being edited, or undefined on Normal. */
+  get activeRuleLabel(): string | undefined {
+    const id = self.activeRule;
+    if (!id) return undefined;
+    const rules = this.ruleTarget ? storedRulesOf(this.ruleTarget.props) : [];
+    const rule = rules[findRuleIndex(rules, id)];
+    const state = namedState(id) ?? (rule && namedStateOf(rule));
+    if (state) return state.label;
+    return rule && !isDefinitionRule(rule) ? rule.selector : 'Rule';
+  },
+
   /** True when the component is part of the selection (primary or extra). */
   isSelected(componentId: string): boolean {
     if (self.selectedComponent?.id === componentId) return true;
@@ -455,6 +504,43 @@ const EditorUIStore = types.model('EditorUI', {
       }
     };
   }
+}))
+.actions(self => ({
+  /** Picks the state the panel edits and shows it on the canvas. Null is Normal. */
+  setActiveRule(ruleId: string | null) {
+    const target = self.ruleTarget;
+    const next = target ? ruleId : null;
+    self.activeRule = next;
+    self.previewRule = target && next ? { componentId: target.id, ruleId: next } : null;
+    self.ruleRefusal = null;
+  },
+}))
+.actions(self => ({
+  // The state only lasts while there is something for it to point at, however that
+  // ended: another selection, the node gone, a rule undone or deleted. Reading the
+  // outcome rather than each way there covers the ways nobody listed. Another frame
+  // of the same node keeps the state.
+  afterCreate() {
+    addDisposer(
+      self,
+      reaction(
+        () => {
+          const id = self.activeRule;
+          if (!id) return null;
+          const target = self.ruleTarget;
+          return { id, target: target?.id, exists: !!target && findRuleIndex(storedRulesOf(target.props), id) !== -1 };
+        },
+        (now, before) => {
+          if (!now) return;
+          const lostTarget = now.target === undefined || now.target !== self.previewRule?.componentId;
+          // A named state is fine with no rule, until its rule existed and went some way other than the panel.
+          const lostRule = !now.exists && (!namedState(now.id) || (before?.id === now.id && before.exists && !panelWritesRule));
+          if (lostTarget || lostRule) self.setActiveRule(null);
+        },
+        { equals: comparer.structural },
+      ),
+    );
+  },
 }));
 
 /** True when `ancestor` is a strict ancestor of `node` in the component tree. */

@@ -10,6 +10,10 @@
 // the sections is also scanned, so a key the panel writes but this driver did not
 // reach becomes "not tested" and never a silent fail or pass.
 //
+// The state switch is driven on its own: a click on it changes what every other
+// control writes, so the sweep leaves it alone, and a state counts when a value typed
+// into a real row of the panel ends up in that state's rule on the node.
+//
 // The Custom section's add fields take a name, then a value, so typing the same few
 // probes into every field cannot reach them. For those the driver types each name of
 // the universe, as a person would, and only a real write counts.
@@ -27,6 +31,8 @@ import { DataSourceProviderContext } from '@/lib/bindings/dataSource/context';
 import { InMemoryDataSourceProvider } from '@/lib/bindings/dataSource/inMemoryProvider';
 import RightSidebar from '@/components/sidebars/RightSidebar';
 import { BLOCKED_TAGS } from '@/lib/renderer/blockedNodes';
+import { storedRulesOf } from '@/lib/rules/rules';
+import { NAMED_STATES, namedStateOf } from '@/lib/rules/states';
 import { cssPropertyName } from '@/lib/responsive/responsiveCss';
 import { attributeName, attributeProp } from '@/lib/styles/customEditor';
 import { PATTERNS, treeVocabulary } from './patterns';
@@ -53,6 +59,8 @@ const written = {
   styleValues: new Set<string>(),
   types: new Set<string>(),
   breakpointOverride: false,
+  /** The pseudo-class of each named state that a row of the panel wrote a value into. */
+  states: new Set<string>(),
 };
 
 interface Scenario {
@@ -103,7 +111,7 @@ function record(before: Record<string, unknown>, after: Record<string, unknown>,
   const beforeProps = (before.props ?? {}) as Record<string, unknown>;
   const afterProps = (after.props ?? {}) as Record<string, unknown>;
   for (const key of new Set([...Object.keys(beforeProps), ...Object.keys(afterProps)])) {
-    if (key === 'style') continue;
+    if (key === 'style' || key === 'rules') continue;
     if (JSON.stringify(beforeProps[key]) !== JSON.stringify(afterProps[key])) {
       written.propKeys.add(key);
       written.propsOnTag.add(`${String(after.type)}.${key}`);
@@ -285,7 +293,7 @@ async function drive(scenario: Scenario, breakpointId?: string, customNames = fa
   for (let pass = 0; pass < 8; pass++) {
     const controls = Array.from(
       document.body.querySelectorAll('input,textarea,select,button,[role="switch"],[role="slider"],[role="combobox"]'),
-    );
+    ).filter((el) => !el.closest('[data-testid="state-switch"]'));
     let acted = false;
     for (const el of controls) {
       if (!el.isConnected || !isAlive(node)) continue;
@@ -301,6 +309,32 @@ async function drive(scenario: Scenario, breakpointId?: string, customNames = fa
     if (!acted || !isAlive(node)) break;
   }
   if (customNames) await driveCustomNames(node);
+  view.unmount();
+  cleanup();
+}
+
+/** Picks each state on the switch and types a width into the row, as a person would. */
+async function driveStates(scenario: Scenario): Promise<void> {
+  const node = setUp(scenario);
+  store.editorUI.selectComponent(node);
+  const view = render(
+    <DataSourceProviderContext.Provider value={new InMemoryDataSourceProvider()}>
+      <RightSidebar />
+    </DataSourceProviderContext.Provider>,
+  );
+  for (const [index, state] of NAMED_STATES.entries()) {
+    const radio = Array.from(document.body.querySelectorAll('[role="radio"]')).find((el) => el.textContent === state.label);
+    if (!radio) continue;
+    await act(async () => fireEvent.click(radio));
+    const field = document.body.querySelector('input[aria-label="Width"]');
+    if (!field) continue;
+    // A different width each: typing what a state already shows is no edit, and Pressed shows Hover's.
+    await step(node, false, () => fireEvent.change(field, { target: { value: String(37 + index) } }));
+    await step(node, false, () => fireEvent.keyDown(field, { key: 'Enter' }));
+    const rule = storedRulesOf(node.props).find((candidate) => namedStateOf(candidate) === state);
+    const normalWidth = (node.props.style as Record<string, unknown> | undefined)?.width;
+    if (rule?.style?.width !== undefined && normalWidth === undefined) written.states.add(state.selector.slice(1));
+  }
   view.unmount();
   cleanup();
 }
@@ -327,6 +361,7 @@ describe('coverage matrix: properties panel', () => {
     // A generic element shows fewer sections, so Custom accepts what a container's own controls hold.
     for (const scenario of SCENARIOS) await drive(scenario, undefined, ['container', 'generic', 'form control'].includes(scenario.label));
     await drive(SCENARIOS[0], 'tablet-probe');
+    await driveStates(SCENARIOS[0]);
 
     const referenced = referencedStyleKeys();
     const paletteTags = new Set(Object.values(COMPONENT_REGISTRY).map((entry) => entry.htmlType as string));
@@ -378,10 +413,7 @@ describe('coverage matrix: properties panel', () => {
           break;
         }
         case 'css-selector':
-          results[key] = fail(
-            'selector-styles',
-            entry.id === ':hover' ? 'partial through a preset: the Effects section offers three hover effects' : undefined,
-          );
+          results[key] = written.states.has(entry.id) ? pass('through the state switch') : fail('selector-styles');
           break;
         case 'css-at-rule':
           results[key] = fail(entry.id === '@media' ? 'media-queries' : 'at-rules');
@@ -393,6 +425,7 @@ describe('coverage matrix: properties panel', () => {
     }
 
     expect(written.styleKeys.size).toBeGreaterThan(10);
+    expect(written.states.size).toBe(NAMED_STATES.length);
     writeOut('panel', results);
     writeOut('panel-detail', {
       scenarios: SCENARIOS.map((s) => s.label),
