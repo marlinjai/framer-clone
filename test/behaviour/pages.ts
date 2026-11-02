@@ -141,6 +141,29 @@ const ordinary = (): StoredNode =>
     ...Array.from({ length: 60 }, (_, index) => node(`p${index}`, 'p', { children: `Paragraph ${index} of a page with real text on it, as a person would write it. `.repeat(4) })),
     accordion());
 
+/** A definition holding what `shared-by-many` places, with its own state per placement. */
+export const COMPONENTS = {
+  folding: {
+    id: 'folding',
+    name: 'Folding',
+    inputs: [],
+    states: [],
+    page: {
+      id: 'folding-page',
+      slug: '',
+      metadata: { title: 'Folding' },
+      canvasNodes: {},
+      appComponentTree: node('fold', 'details', {
+        behaviour: {
+          state: [flag('o')],
+          bind: [{ attr: 'open', from: { get: 'all' } }],
+          on: [{ id: 'seen', on: 'toggle', do: [{ set: 'o', value: { eq: [{ event: 'newState' }, 'open'] } }] }],
+        },
+      }, node('fold-name', 'summary', { children: 'More' })),
+    },
+  },
+};
+
 // ---- the security review of B3 and B4 ---------------------------------------------------
 
 /** What the runtime reads off an element, each a name a form's field could shadow. */
@@ -203,6 +226,14 @@ const slowLoop = (): StoredNode =>
     }),
     node('start', 'button', { type: 'button', children: 'Start', behaviour: { noScript: 'show', on: [{ id: 'c', on: 'click', do: [{ toggle: 'a' }] }] } }));
 
+/** Placements share one trigger, as rows do, and one press opens all of them. */
+export const OPENED = 300;
+
+const sharedByMany = (): StoredNode =>
+  node('shared', 'div', { behaviour: { state: [flag('all')] } },
+    node('open-all', 'button', { type: 'button', children: 'All', behaviour: { noScript: 'show', on: [{ id: 'c', on: 'click', do: [{ toggle: 'all' }] }] } }),
+    ...Array.from({ length: OPENED }, (_, index) => ({ id: `place-${index}`, type: '#component', componentType: 'host' as const, props: { component: 'folding', inputs: {} }, children: [] })));
+
 const consent = (): StoredNode =>
   node('with-banner', 'div', { behaviour: { state: [flag('s')], on: [{ id: 'k', on: 'keydown', scope: 'document', keys: ['Escape'], do: [{ set: 's', value: false }] }] } }, pay());
 
@@ -222,6 +253,7 @@ export const PAGES: Readonly<Record<string, () => StoredNode>> = {
   'escape-keyup-node': escapeBack('keyup', 'node'),
   'escape-keyup-page': escapeBack('keyup', 'page'),
   wall,
+  'shared-by-many': sharedByMany,
   timers,
   'slow-loop': slowLoop,
   consent,

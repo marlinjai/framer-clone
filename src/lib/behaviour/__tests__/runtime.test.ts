@@ -950,6 +950,46 @@ describe('what the parser refuses never runs', () => {
     expect(ran()).toBe(1);
   });
 
+  it.each([
+    ['load from a timer, which restarts a stored autoplay', { on: 'every', ms: 1000 }, { media: 'x', op: 'load' }],
+    ['load under a delay', { on: 'click' }, { delay: 16, do: [{ media: 'x', op: 'load' }] }],
+    ['load when the page appears', { on: 'page-ready' }, { media: 'x', op: 'load' }],
+    ['load from an emit', { on: 'custom:go' }, { media: 'x', op: 'load' }],
+    ['volume from a timer, which undoes a visitor turning it down', { on: 'every', ms: 1000 }, { media: 'x', op: 'volume', value: 1 }],
+    ['seek from a timer', { on: 'every', ms: 1000 }, { media: 'x', op: 'seek', value: 0 }],
+    ['rate from a timer', { on: 'every', ms: 1000 }, { media: 'x', op: 'rate', value: 2 }],
+    ['volume under a delay', { on: 'click' }, { delay: 16, do: [{ media: 'x', op: 'volume', value: 1 }] }],
+    ['seek on an element coming into view', { on: 'view-enter' }, { media: 'x', op: 'seek', value: 0 }],
+  ])('refuses %s', (_, head, action) => {
+    fromStored({ id: 'x', type: 'video', props: { behaviour: { on: [{ id: 't', ...head, do: [action] }] } } });
+    expect(ran()).toBe(1);
+  });
+
+  it.each([
+    ['load from a press', 'click', { media: 'x', op: 'load' }],
+    ['seek from a drag', 'pointermove', { media: 'x', op: 'seek', value: 1 }],
+    ['pause from anything', 'view-leave', { media: 'x', op: 'pause' }],
+  ])('still takes %s', (_, on, action) => {
+    fromStored({ id: 'x', type: 'video', props: { behaviour: { on: [{ id: 't', on, do: [action] }] } } });
+    expect(ran()).toBe(0);
+  });
+
+  it('still takes volume from a slider, which is a person too', () => {
+    fromStored(root({},
+      { id: 'clip', type: 'video', props: {} },
+      { id: 'level', type: 'input', props: { type: 'range', behaviour: { on: [{ id: 't', on: 'input', do: [{ media: 'clip', op: 'volume', value: { event: 'value' } }] }] } } }));
+    expect(ran()).toBe(0);
+  });
+
+  it('refuses capturePointer on the page root, and leaves it on a node inside', () => {
+    const capture = { behaviour: { on: [{ id: 'p', on: 'pointerdown', do: [{ capturePointer: true }] }] } };
+    fromStored(root(capture));
+    expect(ran()).toBe(1);
+    warn.mockClear();
+    fromStored(root({}, { id: 'grip', type: 'div', props: capture }));
+    expect(ran()).toBe(0);
+  });
+
   it('still lets a press take the screen', () => {
     fromStored({ id: 'x', type: 'video', props: { behaviour: { on: [{ id: 't', on: 'click', do: [{ media: 'x', op: 'play' }] }] } } });
     expect(ran()).toBe(0);
@@ -1045,6 +1085,46 @@ describe('the page-wide cap', () => {
     $('button').click();
     vi.advanceTimersByTime(5000);
     expect($('[data-fc-scope]').getAttribute('data-fcs-n')).toBeNull();
+  });
+});
+
+describe('one trigger shared by many rows', () => {
+  const rows = (count: number) => Array.from({ length: count }, (_, i) => `<details data-fc-n="r" data-fc-scope data-fc-i="${i}"></details>`).join('');
+  const toggled = (count: number) => {
+    start(`<div>${rows(count)}</div>`, {
+      r: { state: [flag('o')], on: [{ id: 'l', on: 'toggle', do: [{ toggle: 'o' }] }] },
+    });
+    return [...document.querySelectorAll('details')];
+  };
+  const stopped = () => warn.mock.calls.filter(([message]) => /unprompted|too often/.test(String(message))).length;
+
+  it('is not turned off by one press reaching 500 rows once', () => {
+    for (const row of toggled(500)) row.dispatchEvent(new Event('toggle'));
+    expect(stopped()).toBe(0);
+    expect(document.querySelectorAll('[data-fcs-o="true"]')).toHaveLength(500);
+  });
+
+  it('is not turned off by a task that reaches 500 rows, where 256 actions on one would be', () => {
+    start(`<ul>${Array.from({ length: 500 }, (_, i) => `<li data-fc-n="r" data-fc-scope data-fc-i="${i}"></li>`).join('')}</ul><button id="x"></button>`, {
+      r: { state: [flag('o', true)], on: [{ id: 'e', on: 'keydown', scope: 'document', keys: ['Escape'], do: [{ set: 'o', value: false }] }] },
+    });
+    press($('#x'), 'Escape');
+    expect(stopped()).toBe(0);
+    expect(document.querySelectorAll('[data-fcs-o="false"]')).toHaveLength(500);
+  });
+
+  it('still stops a loop on one of them, for all of them', () => {
+    const [row, other] = toggled(2);
+    const now = vi.spyOn(window.performance, 'now');
+    let clock = 5000;
+    now.mockImplementation(() => clock);
+    for (let i = 0; i < MAX_UNPROMPTED_FIRINGS + 1; i += 1) {
+      clock += 200;
+      row.dispatchEvent(new Event('toggle'));
+    }
+    expect(stopped()).toBe(1);
+    other.dispatchEvent(new Event('toggle'));
+    expect(other.getAttribute('data-fcs-o')).toBeNull();
   });
 });
 

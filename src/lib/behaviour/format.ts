@@ -280,6 +280,8 @@ const PSEUDO_EVENTS: ReadonlySet<string> = new Set(['view-enter', 'view-leave', 
 const KEY_EVENTS: ReadonlySet<string> = new Set(['keydown', 'keyup']);
 /** What a person does on purpose: the only causes of a focus move. */
 const INPUT_EVENTS: ReadonlySet<string> = new Set(['click', 'keydown', 'keyup']);
+/** A person acting on a control, which is wider than a press. */
+const PERSON_EVENTS: ReadonlySet<string> = new Set([...INPUT_EVENTS, 'input', 'change', 'pointerdown', 'pointermove', 'pointerup']);
 const LEAVING_EVENTS: ReadonlySet<string> = new Set(['blur', 'focusout']);
 /** Fire as a person types into a field. `selectionchange` does too, wherever its trigger sits. */
 const TYPED_EVENTS: ReadonlySet<string> = new Set(['input', 'beforeinput']);
@@ -436,6 +438,8 @@ interface ExpressionScope {
   event?: string;
   /** The trigger hears the whole page, so what fired it need not be this node. */
   hearsPage?: boolean;
+  /** This node is the page's root, so everything on the page is inside it. */
+  pageRoot?: boolean;
 }
 
 const TAINT_REASON = 'typed text may flow only into text state, a text binding or filter';
@@ -744,6 +748,17 @@ function refusedTakeover(verb: string, scope: ActionScope): string | null {
   return INPUT_EVENTS.has(scope.on) ? null : `${verb} runs only from a press, not from ${scope.on}`;
 }
 
+/**
+ * Why a change to how media plays may not run here, or null. From a timer it would undo
+ * what a visitor just set, every second. A volume slider and a scrubbing drag are a
+ * person too, so these take more than a press. `pause` stays free: stopping is no takeover.
+ */
+function refusedMediaChange(op: string, scope: ActionScope): string | null {
+  if (op === 'pause') return null;
+  if (scope.underDelay) return `media ${op} cannot wait: by then nobody asked for it`;
+  return PERSON_EVENTS.has(scope.on) ? null : `media ${op} runs only from what a person does, not from ${scope.on}`;
+}
+
 /** True for a key trigger that fires on Tab, by name or by having no keys. */
 function firesOnTab(scope: ActionScope): boolean {
   if (!KEY_EVENTS.has(scope.on)) return false;
@@ -888,7 +903,8 @@ function parseMedia(action: Record<string, unknown>, scope: ActionScope): Parsed
   const target = targetOf('media', action.media, scope);
   if (!target.ok) return target;
   const op = action.op as 'play' | 'pause' | 'load' | 'seek' | 'rate' | 'volume';
-  const takeover = op === 'play' ? refusedTakeover('media play', scope) : null;
+  // `load` on a stored `autoplay` starts the sound again, so it is `play` by another name.
+  const takeover = op === 'play' || op === 'load' ? refusedTakeover(`media ${op}`, scope) : refusedMediaChange(op, scope);
   if (takeover) return refuse(takeover);
   if (!MEDIA_VALUE_OPS.includes(op)) {
     return action.value === undefined ? accept({ media: target.value.key, op }) : refuse(`${op} takes no value`);
@@ -1015,6 +1031,7 @@ function parseVerb(verb: Verb, action: Record<string, unknown>, scope: ActionSco
     case 'capturePointer': {
       if (!hasShape(action, ['capturePointer']) || action.capturePointer !== true) return refuse('capturePointer is true');
       if (scope.on !== 'pointerdown' || scope.underDelay) return refuse('capturePointer runs directly from pointerdown');
+      if (scope.pageRoot) return refuse('capturePointer on the page root would take every press on the page');
       return accept({ capturePointer: true });
     }
     case 'cancel':
@@ -1350,6 +1367,8 @@ export interface BehaviourContext {
   self?: NodeFacts;
   /** A group sits on this node or above it. */
   insideGroup?: boolean;
+  /** This node is the page's root. */
+  pageRoot?: boolean;
 }
 
 const NODE_FIELDS: readonly string[] = ['state', 'on', 'bind', 'group', 'showWhen', 'noScript', 'preset'];
@@ -1460,7 +1479,7 @@ export function parseBehaviour(node: BehaviourNode, context: BehaviourContext = 
   const declared = readStates(stored, inherited, refused);
   const states = new Map(inherited);
   for (const state of declared) states.set(state.id, state);
-  const scope: ExpressionScope = { states, nodes: context.nodes ?? NO_NODES, self };
+  const scope: ExpressionScope = { states, nodes: context.nodes ?? NO_NODES, self, pageRoot: context.pageRoot };
 
   const behaviour: StoredBehaviour = {};
   if (declared.length > 0) behaviour.state = declared;
@@ -1583,7 +1602,7 @@ export function readBehaviourTree(root: BehaviourNode): ReadBehaviourTree {
     const keyless = self.key === null && self.tag !== null && stored !== undefined;
     const read: ReadBehaviour = keyless
       ? { behaviour: null, refused: [{ entry: 'behaviour', value: stored, reason: 'a node with no stable id holds no behaviour' }] }
-      : parseBehaviour(node, { states, nodes, self, insideGroup });
+      : parseBehaviour(node, { states, nodes, self, insideGroup, pageRoot: node === root });
     const refused: RefusedOnNode[] = read.refused.map((entry) => ({ ...entry, nodeId }));
     let parsed = read.behaviour;
 

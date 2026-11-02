@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { DEFAULT_VIEWPORTS } from '@/lib/canvas/defaultViewports';
 import { getPrismaClient } from '@/server/db';
 import { getSiteRepository, type TenantScope } from '@/server/sites';
-import { PAGES, type StoredNode } from './pages';
+import { COMPONENTS, PAGES, type StoredNode } from './pages';
 
 const SCOPE: TenantScope = {
   workspaceId: `ws_behaviour_${randomUUID().slice(0, 8)}`,
@@ -32,7 +32,7 @@ export async function publishPages(port: string, { analytics = false } = {}): Pr
   const repo = getSiteRepository();
   const siteId = randomUUID();
   const pages = { home: stored('', PAGES.plain()), ...Object.fromEntries(Object.entries(PAGES).map(([slug, tree]) => [slug, stored(slug, tree())])) };
-  const project = { id: siteId, metadata: { title: 'Behaviour', description: '', createdAt: 1, updatedAt: 2 }, pages };
+  const project = { id: siteId, metadata: { title: 'Behaviour', description: '', createdAt: 1, updatedAt: 2 }, pages, components: COMPONENTS };
   await repo.saveProject(SCOPE, project as never);
   if (analytics) await getPrismaClient().site.update({ where: { id: siteId }, data: { lumitraEnabled: true } });
   await repo.publishProject(SCOPE, siteId);

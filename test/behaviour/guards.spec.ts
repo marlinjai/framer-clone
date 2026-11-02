@@ -6,7 +6,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, webkit, type Browser, type BrowserContext, type BrowserType, type Page } from 'playwright';
 import { getPrismaClient } from '@/server/db';
-import { SHADOWED } from './pages';
+import { OPENED, SHADOWED } from './pages';
 import { publishPages } from './site';
 
 let origin: string;
@@ -153,6 +153,15 @@ describe.each(ENGINES)('in %s', (_name, engine) => {
       await el('pay').click();
       await page.waitForTimeout(1500);
       expect(await page.evaluate(() => document.fullscreenElement === null)).toBe(true);
+    });
+  });
+
+  describe('the recheck: one trigger shared by many', () => {
+    it('is not turned off by a single press reaching every placement', async () => {
+      await goTo('shared-by-many');
+      await el('open-all').click();
+      await expect.poll(() => page.locator('[data-fcs-o="true"]').count(), { timeout: 15_000 }).toBe(OPENED);
+      expect(warnings.filter((text) => /unprompted|too often/.test(text))).toEqual([]);
     });
   });
 

@@ -60,21 +60,29 @@ interface Cell {
   value: unknown;
 }
 
-interface Usage {
+/**
+ * What one trigger has spent on one element. A loop goes round on one element, and rows
+ * and placements share a trigger: counted together, a single press reaching 300 rows
+ * looked like a loop. The page's own cap is what bounds all of them at once.
+ */
+interface Rate {
   start: number;
   count: number;
-  off: boolean;
+  /** Which task `inTask` belongs to. */
+  task: number;
+  inTask: number;
   /** Firings on what the page caused itself, since a person last did anything. */
   unprompted: number;
   /** Which `prompts` that count belongs to. */
   prompt: number;
 }
 
+/** Of one trigger on one element. */
 export const MAX_ACTIONS_PER_TASK = 256;
 export const MAX_ACTIONS_PER_SECOND = 2000;
 /** All the page's work in a second: an action costs 1, and a full scan its items. */
 export const MAX_PAGE_COST_PER_SECOND = 100_000;
-/** Firings of one trigger on what the page caused, between two things a person did. */
+/** Firings of one trigger on one element on what the page caused, between two things a person did. */
 export const MAX_UNPROMPTED_FIRINGS = 256;
 const MAX_EMIT_DEPTH = 4;
 /** The parser's limit on text state. */
@@ -109,7 +117,8 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
   const scopes = new WeakMap<Element, Map<string, Cell>>();
   const kept = new Map<string, Map<string, Cell>>();
   const bound = new Set<Element>();
-  const usage = new Map<ProgramTrigger, Usage>();
+  const rates = new WeakMap<ProgramTrigger, WeakMap<Element, Rate>>();
+  const off = new WeakSet<ProgramTrigger>();
   const warned = new Set<string>();
   const pending = new WeakMap<Element, Map<string, number>>();
   const timers = new Set<number>();
@@ -122,7 +131,8 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
   let stopped = false;
   let dirty = false;
   let frame = 0;
-  let taskActions = 0;
+  let task = 0;
+  let taskOpen = false;
   let pageStart = 0;
   let pageCost = 0;
   let timersOff = false;
@@ -354,13 +364,21 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
 
   // ---- budget ------------------------------------------------------------
 
-  const usageOf = (trigger: ProgramTrigger): Usage => {
-    let use = usage.get(trigger);
-    if (!use) {
-      use = { start: 0, count: 0, off: false, unprompted: 0, prompt: 0 };
-      usage.set(trigger, use);
+  const rateOf = (trigger: ProgramTrigger, el: Element): Rate => {
+    const byElement = rates.get(trigger) ?? new WeakMap<Element, Rate>();
+    rates.set(trigger, byElement);
+    let rate = byElement.get(el);
+    if (!rate) {
+      rate = { start: 0, count: 0, task: 0, inTask: 0, unprompted: 0, prompt: 0 };
+      byElement.set(el, rate);
     }
-    return use;
+    return rate;
+  };
+
+  const turnOff = (trigger: ProgramTrigger, why: string): false => {
+    off.add(trigger);
+    warn(why, trigger.id);
+    return false;
   };
 
   /**
@@ -385,42 +403,47 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
   };
 
   /** Charges one action. False once the trigger went over, which turns it off for good. */
-  const spend = (trigger: ProgramTrigger): boolean => {
-    const use = usageOf(trigger);
-    if (use.off || !charge(1)) return false;
+  const spend = ({ trigger, el }: Run): boolean => {
+    if (off.has(trigger) || !charge(1)) return false;
+    const rate = rateOf(trigger, el);
     const now = view.performance.now();
-    if (now - use.start > 1000) {
-      use.start = now;
-      use.count = 0;
+    if (now - rate.start > 1000) {
+      rate.start = now;
+      rate.count = 0;
     }
-    use.count += 1;
-    if (taskActions === 0) queueMicrotask(() => { taskActions = 0; });
-    taskActions += 1;
-    if (use.count <= MAX_ACTIONS_PER_SECOND && taskActions <= MAX_ACTIONS_PER_TASK) return true;
-    use.off = true;
-    warn('ran too often', trigger.id);
-    return false;
+    rate.count += 1;
+    if (!taskOpen) {
+      taskOpen = true;
+      queueMicrotask(() => {
+        taskOpen = false;
+        task += 1;
+      });
+    }
+    if (rate.task !== task) {
+      rate.task = task;
+      rate.inTask = 0;
+    }
+    rate.inTask += 1;
+    return (rate.count <= MAX_ACTIONS_PER_SECOND && rate.inTask <= MAX_ACTIONS_PER_TASK) || turnOff(trigger, 'ran too often');
   };
 
-  const refund = (trigger: ProgramTrigger): void => {
-    usageOf(trigger).count -= 1;
-    taskActions -= 1;
+  const refund = ({ trigger, el }: Run): void => {
+    const rate = rateOf(trigger, el);
+    rate.count -= 1;
+    rate.inTask -= 1;
     pageCost -= 1;
   };
 
   /** False when a trigger on what the page caused has gone round too long with nobody there. */
-  const prompted = (trigger: ProgramTrigger): boolean => {
+  const prompted = (trigger: ProgramTrigger, el: Element): boolean => {
     if (!SELF_CAUSED.test(trigger.on)) return true;
-    const use = usageOf(trigger);
-    if (use.prompt !== prompts) {
-      use.prompt = prompts;
-      use.unprompted = 0;
+    const rate = rateOf(trigger, el);
+    if (rate.prompt !== prompts) {
+      rate.prompt = prompts;
+      rate.unprompted = 0;
     }
-    use.unprompted += 1;
-    if (use.unprompted <= MAX_UNPROMPTED_FIRINGS) return true;
-    use.off = true;
-    warn('ran unprompted too long', trigger.id);
-    return false;
+    rate.unprompted += 1;
+    return rate.unprompted <= MAX_UNPROMPTED_FIRINGS || turnOff(trigger, 'ran unprompted too long');
   };
 
   const kit: Kit = {
@@ -519,19 +542,19 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
 
   const perform = (actions: readonly Action[], run: Run): void => {
     for (const action of actions) {
-      if (!spend(run.trigger)) return;
+      if (!spend(run)) return;
       if (run.replay && !hasVerb(action, REPLAYED)) {
-        refund(run.trigger);
+        refund(run);
         continue;
       }
-      if (!act(action, run)) refund(run.trigger);
+      if (!act(action, run)) refund(run);
     }
   };
 
   // ---- triggers ----------------------------------------------------------
 
   const fire = (trigger: ProgramTrigger, el: Element, event: Event | null, depth: number, replay = false): void => {
-    if (usageOf(trigger).off || !prompted(trigger)) return;
+    if (off.has(trigger) || !prompted(trigger, el)) return;
     if ((trigger.on === 'keydown' || trigger.on === 'keyup') && !keys?.keysAnswer(trigger.keys, event as KeyboardEvent, el)) return;
     if (trigger.if !== undefined && !evaluate(trigger.if, { el, event })) return;
     if (trigger.prevent && !replay) event?.preventDefault();

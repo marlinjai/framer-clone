@@ -281,8 +281,10 @@ or under `delay`.
 **Page-wide triggers.** `scope: 'document'` takes only `keydown` or `keyup` with non-printable keys, and only `set`, `toggle`, `step` and `cancel`. Anything else
 there reaches every press on the page, the consent banner and checkout included: `capturePointer` swallowed them, `navigate` turned "Decline" into a redirect.
 
-**What a person has to ask for, right then.** `fullscreen` and `pictureInPicture` with `enter`, and `media` with `play`, run only from `click`, `keydown` or `keyup`,
-and not under `delay`. `showModal` is refused from a trigger whose keys hold Escape, which would reopen what Escape closed. A `showModal` no press asked for runs once per
+**What a person has to ask for, right then.** `fullscreen` and `pictureInPicture` with `enter`, and `media` with `play` or `load`, run only from `click`, `keydown` or `keyup`,
+and not under `delay`: `load` on a stored `autoplay` starts the sound again. `media` with `seek`, `rate` or `volume` runs only from what a person does (a press, `input`, `change`, or
+`pointerdown`, `pointermove` and `pointerup`, for a slider or a scrubbing drag), and not under `delay`, since from a timer it undoes what a visitor just set. `pause` stays free.
+`capturePointer` is refused on the page root, and takes no press aimed at a control inside the node. `showModal` is refused from a trigger whose keys hold Escape, which would reopen what Escape closed. A `showModal` no press asked for runs once per
 page load, and the runtime sets `closedby="closerequest"` first, so Escape always closes it.
 
 **`prevent`** is refused on `cancel`, on `Tab`, on any `keydown` without `keys`, and on any trigger with `scope: 'document'`,
@@ -410,7 +412,8 @@ canvas pass their frame as `container`.
 - **Islands re-render:** a `MutationObserver` re-applies bindings to added nodes and restores a remounted scope's
   state. Values are kept in a map keyed by the scope's path (`data-fc-n` and `data-fc-i` up the tree), not by element.
 - **A run-time budget,** because the caps below do not bound work on their own: at most 256 actions per task and 2,000
-  per second per trigger, after which that trigger is disabled with a warning. Depth carries across `delay`. Proven:
+  per second, per trigger on one element, after which that trigger is disabled with a warning, on every element. Rows and
+  placements share a trigger, so counted together one press reaching 300 rows looked like a loop, and a loop goes round on one element. Depth carries across `delay`. Proven:
   the prototype stopped a `toggle` loop and a 16-way `delay` fan-out in all three engines, and the page stayed responsive.
   On top of that, **100,000 units of work per second across the page,** an action costing 1 and a full scan its items.
   Past it nothing runs for the rest of the second, and timers stop for the visit, since many small triggers can each stay
@@ -1132,6 +1135,8 @@ The review (`2026-11-02-behaviour-model-review.md`, "Slice B3 and B4", probes be
 4. **Fullscreen and sound from a timer,** the same paragraph.
 5. **The budget counted actions, not cost,** see "A run-time budget". `filter`, a rove's look at its items and a flush of bindings are charged by items. The no-op rule stays: it was reviewed and found sound. A real press changing more than 256 things still turns its trigger off, which needs 256 changes from one press and is not a limit any preset meets.
 6. **Loops across families** have two bounds, the wider family and the unprompted count. The count resets on `pointerdown`, `keydown`, `wheel` and `touchmove`, and those listeners exist only on a page with such a trigger.
+
+**The recheck** (same document, "Slice B3 and B4 recheck") found `media load` on a stored `autoplay` undoing a pause from a timer, and the fix covers `seek`, `rate` and `volume`, which take the same route to a visitor's own setting. It also turned the budget from per trigger to per trigger on one element. Left for the render gate, as the recheck says: a pressed modal storing `closedby="none"`, which a `command="show-modal"` button does with no behaviour at all, and `id="nodeType"` on a form.
 
 **The key rules moved to the `verbs` chunk.** The fixes put the core past 5 kilobytes, and a program with no key trigger needs none of `keys.ts`. So a key trigger now asks for that chunk, which the island fetches with the core, and a runtime without the rules fires no key, which is the direction to fail in.
 
