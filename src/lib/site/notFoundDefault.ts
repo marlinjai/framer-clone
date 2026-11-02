@@ -9,6 +9,8 @@
 
 import type { PublishedPageRow } from '@/server/sites/publicResolver';
 import { literalPage, type ExpandableSite } from '@/lib/components/expandedPages';
+import { colorText, composite, contrastRatio, parseColor } from '@/lib/ai/review/layoutAudit';
+import { platformFontStack } from '@/lib/fonts/registry';
 
 export interface NotFoundCopy {
   eyebrow: string;
@@ -77,6 +79,42 @@ export const DEFAULT_LOOK: SiteLook = {
   accent: '#111827',
   accentText: '#ffffff',
 };
+
+/** WCAG 2.2 AA for body text. */
+const MIN_CONTRAST = 4.5;
+
+/**
+ * The pair as CSS written from its parsed numbers, or null unless it can be shown to
+ * read. It fails closed: a value with no colour to judge, such as var(), color-mix(),
+ * currentColor, inherit or a gradient, is not legible, because what cannot be read
+ * here can be anything in the browser. So is a see-through ground, because what is
+ * behind it is not known. What comes back is the parse, never the stored text, so
+ * nothing the parser and the browser read differently reaches the banner.
+ */
+function legiblePair(text: string, ground: string): { ink: string; on: string } | null {
+  const on = parseColor(ground);
+  const ink = parseColor(text);
+  if (!on || !ink || on.a < 1 || ink.a === 0) return null;
+  return contrastRatio(composite(ink, on), on) >= MIN_CONTRAST ? { ink: colorText(ink), on: colorText(on) } : null;
+}
+
+/**
+ * The look as the banner writes it: each pair from its parsed numbers, or the neutral
+ * pair when it cannot be shown to read, and the font as the registry writes it, or the
+ * neutral stack when a family comes from outside it, whose glyphs could be empty. For
+ * what has to stay readable whatever a site sets, which is the consent banner.
+ */
+export function legibleLook(look: SiteLook): SiteLook {
+  const text = legiblePair(look.color, look.background);
+  const button = legiblePair(look.accentText, look.accent);
+  return {
+    fontFamily: platformFontStack(look.fontFamily) ?? DEFAULT_LOOK.fontFamily,
+    color: text?.ink ?? DEFAULT_LOOK.color,
+    background: text?.on ?? DEFAULT_LOOK.background,
+    accent: button?.on ?? DEFAULT_LOOK.accent,
+    accentText: button?.ink ?? DEFAULT_LOOK.accentText,
+  };
+}
 
 interface NodeLike {
   type?: unknown;

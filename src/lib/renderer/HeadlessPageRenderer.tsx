@@ -11,7 +11,7 @@ import { getParent, hasParent } from 'mobx-state-tree';
 import type { PageModelType } from '@/models/PageModel';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import HeadlessComponentRenderer, { PreviewExpansionContext, StickyCtaPreviewContext } from './HeadlessComponentRenderer';
-import { isStickyCta, STICKY_CTA_Z_INDEX } from '@/lib/stickyCta/stickyCta';
+import { isStickyCta, STICKY_CTA_MAX_HEIGHT, STICKY_CTA_Z_INDEX } from '@/lib/stickyCta/stickyCta';
 
 /** The first sticky call to action in the tree (depth first), or null. */
 function firstStickyCta(node: ComponentInstance): ComponentInstance | null {
@@ -82,7 +82,7 @@ const HeadlessPageRenderer = observer(({ page, breakpointId }: HeadlessPageRende
           // After the page root, as a child of the preview frame (the scroll
           // container): sticky keeps it at the frame's bottom whatever the
           // root's overflow, where fixed would pin it to the browser window.
-          <div data-fc-sticky-cta-preview="" style={{ position: 'sticky', bottom: 0, zIndex: STICKY_CTA_Z_INDEX }}>
+          <div data-fc-sticky-cta-preview="" style={{ position: 'sticky', bottom: 0, zIndex: STICKY_CTA_Z_INDEX, maxHeight: STICKY_CTA_MAX_HEIGHT, overflow: 'hidden' }}>
             <HeadlessComponentRenderer
               component={stickyBar}
               breakpointId={breakpointId}

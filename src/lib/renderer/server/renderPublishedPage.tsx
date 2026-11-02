@@ -204,6 +204,7 @@ export async function renderPublishedPage(
             language={consent?.language ?? 'en'}
             look={consent?.look ?? DEFAULT_LOOK}
             privacyHref={consent?.privacyHref ?? null}
+            pageBase={pageBase}
           />
         ) : (
           // Nothing needs consent: a footer "Cookie settings" link would do nothing.

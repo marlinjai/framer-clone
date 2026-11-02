@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Empty variables</title>
+<style>
+  section { font: 16px/1.5 Arial, sans-serif; margin: 0; }
+  p {
+    --tw-blur: ;
+    --tw-sepia: ;
+    --tw-ring-inset: ;
+    --tw-ring-shadow: 0 0 #0000;
+    --tw-shadow: 0 1px 2px #0003;
+    padding: 24px;
+    filter: var(--tw-blur) var(--tw-sepia) drop-shadow(0 1px 1px #0004);
+    box-shadow: var(--tw-ring-inset) var(--tw-ring-shadow), var(--tw-shadow);
+  }
+  @media (max-width: 767.98px) {
+    .sheet { padding: 8px; }
+  }
+</style>
+</head>
+<body style="margin:0">
+<section data-parity-id="page">
+  <p class="sheet" data-parity-id="sheet">In the sheet</p>
+  <p data-parity-id="inline">Inline</p>
+</section>
+</body>
+</html>

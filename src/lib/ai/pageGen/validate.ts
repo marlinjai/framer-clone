@@ -640,7 +640,8 @@ class Validator {
       return undefined;
     }
     const v = raw.trim();
-    if (v.length === 0) return undefined;
+    // Whitespace on a custom property is CSS's empty value, see cssValueText.
+    if (v.length === 0) return property.startsWith('--') && raw.length > 0 ? ' ' : undefined;
     if (v.length > GENERATION_LIMITS.maxStyleValueChars) {
       this.warn(path, `style.${key}: value longer than ${GENERATION_LIMITS.maxStyleValueChars} characters dropped`);
       return undefined;

@@ -76,7 +76,7 @@ const PageFonts = observer(({ page }: { page: PageModelType }) => <PageFontFaces
 // The expanded page, so a rule inside a definition shows on each placement of it.
 const PageRuleStyles = observer(({ page, ...sheet }: { page: PageModelType } & Pick<CanvasRuleStylesProps, 'frames' | 'breakpoints'>) => {
   const { root, floating } = page.expansion;
-  return <CanvasRuleStyles {...sheet} tree={root as SurfaceNode} floating={floating as SurfaceNode[]} />;
+  return <CanvasRuleStyles {...sheet} tree={root as SurfaceNode} definitionTree={page.isDefinitionPage} floating={floating as SurfaceNode[]} />;
 });
 
 const ResponsivePageRenderer = observer(() => {

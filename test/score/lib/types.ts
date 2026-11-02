@@ -64,7 +64,7 @@ export const GAPS = {
   'selector-styles': 'CSS that needs a selector (states, pseudo-elements, structural selectors): a node only holds inline declarations, so no rule can be written.',
   'at-rules': 'At-rules: no way to store @keyframes, @container, @supports, @font-face and the rest.',
   'media-queries': 'Media queries beyond width: print, dark mode and reduced motion have no home.',
-  'page-level-css': 'CSS that applies to the document rather than a node (`:root`, view transitions, `@page`, `@layer`): the route owns `html`, so these close with the page-level items of the plan.',
+  'page-level-css': 'CSS that applies to the document rather than a node (view transitions, `@page`, `@layer`): the route owns `html`. A rule on `:root` on the page root is the one form held today.',
   'mixed-text': 'Text mixed with elements: text beside an element is lost or lands out of order.',
   'behaviour-state': 'Behaviour and state: no way to say that one element changes another.',
   'blocked-embedded-content': 'What the render gate refuses (blockedNodes.ts and renderVocabulary.ts): embedded content (iframe, object, embed, ...), although these are ordinary content elements, and attributes that act by themselves (ping, the shadow root ones).',

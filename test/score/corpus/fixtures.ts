@@ -63,6 +63,11 @@ const DOT_SVG = 'PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g
 
 const responsive = (base: unknown, tablet: unknown, mobile: unknown) => ({ base, tablet, mobile });
 
+/** Tailwind's defaults for what a utility has not set: the empty value, so its var() list stays valid. */
+const TAILWIND_EMPTY = { '--tw-blur': ' ', '--tw-sepia': ' ', '--tw-ring-inset': ' ', '--tw-ring-shadow': '0 0 #0000', '--tw-shadow': '0 1px 2px #0003' };
+const TAILWIND_FILTER = 'var(--tw-blur) var(--tw-sepia) drop-shadow(0 1px 1px #0004)';
+const TAILWIND_RING = 'var(--tw-ring-inset) var(--tw-ring-shadow), var(--tw-shadow)';
+
 /** The named states, written the way the panel stores them (src/lib/rules/states.ts). */
 const hoverRule = (style: Record<string, unknown>) => ({ id: 'hover', selector: '&:hover', at: [HOVER_GATE], style });
 const focusedRule = (style: Record<string, unknown>) => ({ id: 'focused', selector: '&:focus-visible', style });
@@ -345,6 +350,44 @@ export const FIXTURES: Fixture[] = [
           },
         }),
         t('p', 'Pattern behind the text', parity('copy', { style: { margin: 0 } })),
+      ),
+    states: [],
+  },
+  {
+    id: 'empty-variables',
+    group: 'edge',
+    source: 'hand-written: the var() chain Tailwind builds, with empty custom properties, in the sheet and inline',
+    original: { html: 'empty-variables.html' },
+    initialGap: 'empty-custom-property',
+    tree: () =>
+      n(
+        'section',
+        parity('page', { style: { font: `16px/1.5 ${FONT}`, margin: 0 } }),
+        // Responsive, so its styles go to the sheet, where an empty value used to be dropped.
+        t('p', 'In the sheet', parity('sheet', { style: { ...TAILWIND_EMPTY, padding: responsive('24px', undefined, '8px'), filter: TAILWIND_FILTER, boxShadow: TAILWIND_RING } })),
+        t('p', 'Inline', parity('inline', { style: { ...TAILWIND_EMPTY, padding: '24px', filter: TAILWIND_FILTER, boxShadow: TAILWIND_RING } })),
+      ),
+    states: [],
+  },
+  {
+    id: 'document-styles',
+    group: 'edge',
+    source: 'hand-written: what a page sets on html and :root, read by the nodes under it',
+    original: { html: 'document-styles.html' },
+    initialGap: 'page-level-css',
+    tree: () =>
+      n(
+        'main',
+        parity('page', {
+          style: { margin: 0, fontFamily: FONT },
+          rules: [
+            { id: 'document', selector: ':root', style: { scrollBehavior: 'smooth', overflowX: 'hidden', fontSize: responsive('20px', undefined, '16px'), color: '#1d4ed8', '--accent': '#b91c1c', '--gap': ' ' } },
+            { id: 'still', selector: ':root', at: ['@media (prefers-reduced-motion: reduce)'], style: { scrollBehavior: 'auto' } },
+          ],
+        }),
+        // A rem reads the document, and the colour and the variable come down from it.
+        t('p', 'Sized from the document', parity('copy', { style: { width: '10rem', margin: 0 } })),
+        t('p', 'Coloured from the document', parity('accent', { style: { color: 'var(--accent)', filter: 'var(--gap) blur(1px)', margin: 0 } })),
       ),
     states: [],
   },

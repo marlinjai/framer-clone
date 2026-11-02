@@ -68,9 +68,17 @@ const nodeById = (id: string): ComponentInstance | undefined => {
   applySnapshot(page.canvasNodes, { ...kept, ...floating } as never);
   // The tree sits directly under a plain root. The demo page's own header and main
   // would be its ancestors and change what its landmarks mean.
+  // A rule on `:root` belongs to the page root, which the tree is on a published page:
+  // the plain root takes it, so the canvas is asked what it shows for the same page.
+  const props = ((snapshot as { props?: Record<string, unknown> }).props ?? {}) as Record<string, unknown>;
+  const stored = Array.isArray(props.rules) ? (props.rules as { selector?: unknown }[]) : [];
+  const onDocument = stored.filter((rule) => rule.selector === ':root');
+  const nodeRules = stored.filter((rule) => rule.selector !== ':root');
+  const tree = onDocument.length === 0 ? snapshot : { ...(snapshot as object), props: { ...props, ...(nodeRules.length > 0 ? { rules: nodeRules } : {}) } };
+  if (nodeRules.length === 0 && onDocument.length > 0) delete (tree as { props: Record<string, unknown> }).props.rules;
   const root = page.appComponentTree as ComponentInstance;
-  applySnapshot(root, { ...(getSnapshot(root) as object), type: 'div', props: {}, children: [] } as never);
-  root.addChildren([ComponentModel.create(snapshot as never)]);
+  applySnapshot(root, { ...(getSnapshot(root) as object), type: 'div', props: onDocument.length > 0 ? { rules: onDocument } : {}, children: [] } as never);
+  root.addChildren([ComponentModel.create(tree as never)]);
 };
 
 (window as unknown as ProbeWindow).__editor = {

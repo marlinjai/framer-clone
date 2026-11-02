@@ -134,6 +134,7 @@ const PreviewFrame = observer(({ page, width, height, fill = false, smoothScroll
       <PageBaseStyles base={pageBase} roots={PREVIEW_ROOTS} />
       <PreviewRuleStyles
         tree={page.expansion.root as SurfaceNode}
+        definitionTree={page.isDefinitionPage}
         frame={{ breakpointId, width, height }}
         breakpoints={viewportNodes.map(v => ({ id: v.breakpointId!, minWidth: v.breakpointMinWidth! }))}
       />

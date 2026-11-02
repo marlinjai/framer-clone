@@ -98,6 +98,43 @@ describe('adding a rule', () => {
     expect(field()).toHaveProperty('value', '& + p');
   });
 
+  it('shows why :root stands nowhere but on the page root, and stores nothing', () => {
+    mountPanel();
+    add(':root { color: red }');
+    expect(alertText()).toBe(':root: only the root of a page can hold a rule on :root.');
+    expect(rules()).toEqual([]);
+  });
+
+  it('takes :root on the page root, and shows it as a working rule', () => {
+    const root = store.editorUI.currentPage!.appComponentTree as ComponentInstance;
+    store.editorUI.selectComponent(root, desktop);
+    mountPanel();
+    add(':root { scroll-behavior: smooth }');
+    expect(alertText()).toBe('');
+    expect(rules(root).map((rule) => ('selector' in rule ? rule.selector : ''))).toEqual([':root']);
+    expect(document.body.querySelector('.bg-destructive')).toBeNull();
+  });
+
+  it('refuses a property the document does not take before it writes, and shows the reason', () => {
+    const root = store.editorUI.currentPage!.appComponentTree as ComponentInstance;
+    store.editorUI.selectComponent(root, desktop);
+    mountPanel();
+    add(':root { color: red }');
+    const before = rules(root);
+    fireEvent.change(screen.getByLabelText('CSS property name'), { target: { value: 'clip-path' } });
+    fireEvent.change(screen.getByLabelText('CSS property value'), { target: { value: 'circle(50%)' } });
+    fireEvent.keyDown(screen.getByLabelText('CSS property value'), { key: 'Enter' });
+    expect(rules(root)).toEqual(before);
+    expect(document.body.textContent).toContain('clipPath cannot be set on the document');
+  });
+
+  it('gives the reason for a near miss of :root, and stores nothing', () => {
+    mountPanel();
+    add(':ROOT { color: red }');
+    expect(alertText()).toContain('every part of a selector starts with &');
+    expect(rules()).toEqual([]);
+  });
+
   it('asks for something on empty text', () => {
     mountPanel();
     add('   ');

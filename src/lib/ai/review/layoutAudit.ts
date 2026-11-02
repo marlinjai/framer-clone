@@ -45,6 +45,8 @@
 // gridColumn), because those are the ways this editor's CSS layers one thing
 // over another on purpose. Everything else that intersects is accidental.
 
+import { NAMED_COLOR_HEX } from './namedColors';
+
 /** A rectangle in layout px, relative to the frame's content box. */
 export interface Box {
   x: number;
@@ -174,6 +176,8 @@ function excess(inner: Box, outer: Box): { left: number; right: number; top: num
 
 // ---------- colour ----------
 
+const NAMED_COLORS: Readonly<Record<string, string>> = Object.assign(Object.create(null), NAMED_COLOR_HEX);
+
 export interface Rgba {
   r: number;
   g: number;
@@ -181,11 +185,111 @@ export interface Rgba {
   a: number;
 }
 
-/** Parse a computed colour: rgb()/rgba() (comma or space syntax), #hex, or transparent. */
+// A dot needs a digit after it: CSS refuses `0.`, so a parser that read it would judge
+// a colour the browser drops.
+const NUMBER = /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:e[+-]?\d+)?$/;
+const PERCENT = /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:e[+-]?\d+)?%$/;
+const clamp = (value: number, max: number) => Math.min(max, Math.max(0, value));
+
+/** An alpha as 0 to 1, or undefined when it is not one. */
+function alphaOf(text: string | undefined): number | undefined {
+  if (text === undefined) return 1;
+  if (PERCENT.test(text)) return clamp(parseFloat(text) / 100, 1);
+  return NUMBER.test(text) ? clamp(parseFloat(text), 1) : undefined;
+}
+
+/**
+ * A colour function's arguments as a browser takes them: three or four separated by
+ * commas, or three by spaces with an optional `/ alpha`. Anything else, such as
+ * `rgb(1, 2 3)`, is invalid CSS, which drops the declaration and leaves an inherited
+ * colour in its place, so it must not read as the colour it looks like.
+ */
+function colorArguments(body: string): { parts: string[]; legacy: boolean } | undefined {
+  const text = body.trim();
+  if (text.includes(',')) {
+    const parts = text.split(',').map((part) => part.trim());
+    return (parts.length === 3 || parts.length === 4) && !parts.some((part) => part === '' || /\s|\//.test(part)) ? { parts, legacy: true } : undefined;
+  }
+  const [channels, alpha, extra] = text.split('/').map((part) => part.trim());
+  const parts = channels.split(/\s+/);
+  if (extra !== undefined || parts.length !== 3 || alpha === '') return undefined;
+  return { parts: alpha === undefined ? parts : [...parts, alpha], legacy: false };
+}
+
+function rgbColor(body: string): Rgba | undefined {
+  const read = colorArguments(body);
+  if (!read) return undefined;
+  const [r, g, b, alpha] = read.parts;
+  const channels = [r, g, b];
+  const percents = channels.filter((part) => PERCENT.test(part)).length;
+  if (channels.some((part) => !PERCENT.test(part) && !NUMBER.test(part))) return undefined;
+  if (read.legacy && percents !== 0 && percents !== 3) return undefined;
+  const channel = (part: string) => clamp(PERCENT.test(part) ? (parseFloat(part) / 100) * 255 : parseFloat(part), 255);
+  const a = alphaOf(alpha);
+  return a === undefined ? undefined : { r: channel(r), g: channel(g), b: channel(b), a };
+}
+
+/** An angle in degrees, or undefined. */
+function degrees(text: string): number | undefined {
+  const match = /^(.*?)(deg|grad|rad|turn)?$/.exec(text);
+  if (!match || !NUMBER.test(match[1])) return undefined;
+  const unit = { deg: 1, grad: 0.9, rad: 180 / Math.PI, turn: 360 }[match[2] ?? 'deg'] as number;
+  return parseFloat(match[1]) * unit;
+}
+
+function hslColor(body: string): Rgba | undefined {
+  const read = colorArguments(body);
+  if (!read) return undefined;
+  const [hue, saturation, lightness, alpha] = read.parts;
+  const h = degrees(hue);
+  const a = alphaOf(alpha);
+  if (h === undefined || a === undefined || !PERCENT.test(saturation) || !PERCENT.test(lightness)) return undefined;
+  const sat = clamp(parseFloat(saturation) / 100, 1);
+  const light = clamp(parseFloat(lightness) / 100, 1);
+  const f = (n: number) => {
+    const k = (n + ((h % 360) + 360) / 30) % 12;
+    return (light - sat * Math.min(light, 1 - light) * Math.max(-1, Math.min(k - 3, 9 - k, 1))) * 255;
+  };
+  return { r: f(0), g: f(8), b: f(4), a };
+}
+
+function oklchColor(body: string): Rgba | undefined {
+  const read = colorArguments(body);
+  if (!read || read.legacy) return undefined;
+  const [lightness, chroma, hue, alpha] = read.parts;
+  const number = (part: string, full: number) => (PERCENT.test(part) ? (parseFloat(part) / 100) * full : NUMBER.test(part) ? parseFloat(part) : undefined);
+  const L = number(lightness, 1);
+  const C = number(chroma, 0.4);
+  const h = degrees(hue);
+  const a = alphaOf(alpha);
+  if (L === undefined || C === undefined || h === undefined || a === undefined) return undefined;
+  const radians = (h * Math.PI) / 180;
+  const A = C * Math.cos(radians);
+  const B = C * Math.sin(radians);
+  const l = (L + 0.3963377774 * A + 0.2158037573 * B) ** 3;
+  const m = (L - 0.1055613458 * A - 0.0638541728 * B) ** 3;
+  const s = (L - 0.0894841775 * A - 1.291485548 * B) ** 3;
+  const gamma = (linear: number) => {
+    const v = clamp(linear, 1);
+    return (v <= 0.0031308 ? 12.92 * v : 1.055 * v ** (1 / 2.4) - 0.055) * 255;
+  };
+  return {
+    r: gamma(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s),
+    g: gamma(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s),
+    b: gamma(-0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s),
+    a,
+  };
+}
+
+/**
+ * Parse a colour as a browser would: a name, #hex, rgb(), hsl(), oklch() or
+ * transparent. Undefined for anything else, and for anything a browser would refuse.
+ * `var()`, `color-mix()`, `currentColor` and `inherit` have no value here.
+ */
 export function parseColor(input: string): Rgba | undefined {
   const s = input.trim().toLowerCase();
   if (s === 'transparent') return { r: 0, g: 0, b: 0, a: 0 };
-  const hex = /^#([0-9a-f]{3,8})$/.exec(s);
+  const hex = /^#([0-9a-f]{3,8})$/.exec(NAMED_COLORS[s] ?? s);
   if (hex) {
     let h = hex[1];
     if (h.length === 3 || h.length === 4) h = [...h].map((c) => c + c).join('');
@@ -197,14 +301,16 @@ export function parseColor(input: string): Rgba | undefined {
       a: h.length === 8 ? parseInt(h.slice(6, 8), 16) / 255 : 1,
     };
   }
-  const fn = /^rgba?\(([^)]*)\)$/.exec(s);
+  const fn = /^(rgba?|hsla?|oklch)\(([^()]*)\)$/.exec(s);
   if (!fn) return undefined;
-  const parts = fn[1].split(/[\s,/]+/).filter(Boolean);
-  if (parts.length < 3) return undefined;
-  const channel = (p: string) => (p.endsWith('%') ? (parseFloat(p) / 100) * 255 : parseFloat(p));
-  const alpha = parts[3] === undefined ? 1 : parts[3].endsWith('%') ? parseFloat(parts[3]) / 100 : parseFloat(parts[3]);
-  const out = { r: channel(parts[0]), g: channel(parts[1]), b: channel(parts[2]), a: alpha };
-  return [out.r, out.g, out.b, out.a].every(Number.isFinite) ? out : undefined;
+  if (fn[1] === 'oklch') return oklchColor(fn[2]);
+  return fn[1].startsWith('rgb') ? rgbColor(fn[2]) : hslColor(fn[2]);
+}
+
+/** A parsed colour as CSS text, written from its numbers alone. */
+export function colorText(color: Rgba): string {
+  const n = (value: number) => Number(value.toFixed(3));
+  return `rgb(${n(color.r)} ${n(color.g)} ${n(color.b)} / ${n(color.a)})`;
 }
 
 /** Every colour inside a CSS value (gradient stops), in order. */
