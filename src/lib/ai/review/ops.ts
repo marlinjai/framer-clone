@@ -39,6 +39,7 @@ import { GENERATION_LIMITS, isAcceptedStyleKey, isSafeSrc, styleKeyFrom } from '
 import { clampedZIndex, styleValueBreaksOut, styleValueProblem } from '@/lib/ai/pageGen/validate';
 import { motionValueProblem } from '@/lib/ai/pageGen/promptSections/rules';
 import { styleValueTell, textTell } from '@/lib/ai/pageGen/tells';
+import { placementOpRefusal } from './placementOps';
 import { REVIEW_LIMITS, type RejectedOp, type ReviewOp, type ReviewTreeNode } from './protocol';
 
 interface IndexedNode {
@@ -134,6 +135,8 @@ export function validateReviewOps(raw: unknown, ctx: OpValidationContext): { ops
     if (!node) return reject(`unknown node id ${JSON.stringify(item.nodeId)}`);
     if (removed.some((r) => isInside(nodeId, r, ctx.nodes))) return reject('the node was removed by an earlier operation');
     const reason = typeof item.reason === 'string' ? item.reason.trim().slice(0, REVIEW_LIMITS.maxReasonChars) : '';
+    const onPlacement = placementOpRefusal(node.type, item.op);
+    if (onPlacement) return reject(onPlacement);
 
     switch (item.op) {
       case 'update_style': {

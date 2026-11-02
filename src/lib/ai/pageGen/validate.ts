@@ -67,6 +67,9 @@ import ComponentModel, { ComponentTypeEnum } from '@/models/ComponentModel';
 import { UNSAFE_VALUE, holdsTopLayerValue, isContainedValue, scanCssValue } from '@/lib/responsive/responsiveCss';
 import { isVoidTag } from '@/lib/drag/voidTags';
 import { TEXT_NODE_TYPE, refusesBareText } from '@/lib/renderer/textNode';
+import { PLACEMENT_TYPE } from '@/lib/components/placement';
+import type { GenerationComponents } from '@/lib/components/summaries';
+import { checkPlacement, isPlacementInput } from './validatePlacement';
 import { formPropKeysFor, presetFormKind, sanitizeGeneratedFormProps } from '@/lib/forms/generation';
 import {
   BASE_KEY,
@@ -206,6 +209,11 @@ export interface ValidateContext {
    * location or writes a map address of its own. Defaults to none.
    */
   mapAddress?: string | null;
+  /**
+   * The site's components a generation may place (src/lib/components/summaries.ts),
+   * and where it lands. Without it a placement is dropped.
+   */
+  components?: GenerationComponents;
 }
 
 /**
@@ -486,8 +494,14 @@ class Validator {
   private readonly orderedKeys: string[];
   private readonly newId: () => string;
 
+  /** The site's components, for placements. */
+  private readonly components: GenerationComponents | undefined;
+  /** The tags above the node being read, nearest first. */
+  private readonly tagStack: string[] = [];
+
   constructor(ctx: ValidateContext) {
     this.newId = ctx.newId ?? uuidv4;
+    this.components = ctx.components;
     this.orderedKeys = [...ctx.breakpoints].sort((a, b) => b.minWidth - a.minWidth).map((b) => b.key);
     // Accept the exact key, its lowercase, and the breakpoint's label, all
     // mapping to the canonical key.
@@ -911,6 +925,30 @@ class Validator {
     props[WEB_ATTRIBUTE_PROP_NAMES[name] ?? name] = typeof value === 'string' || name === 'id' ? text : value;
   }
 
+  /** A placement of the site's own component (validatePlacement.ts). */
+  private placement(raw: Record<string, unknown>, path: string, depth: number, parentId?: string): GeneratedNodeSnapshot[] {
+    const checked = checkPlacement(raw, this.components, this.tagStack);
+    for (const warning of checked.warnings) this.warn(path, warning);
+    if (!checked.props) return [];
+    this.nodeCount += 1;
+    if (depth > this.maxDepth) this.maxDepth = depth;
+    const props: Record<string, unknown> = { ...checked.props };
+    if (checked.style !== undefined) {
+      const style = this.style(`${path}.props.style`, checked.style, 'plain');
+      if (Object.keys(style).length > 0) props.style = style;
+    }
+    const snapshot: GeneratedNodeSnapshot = {
+      id: `component-${this.newId()}`,
+      type: PLACEMENT_TYPE,
+      componentType: ComponentTypeEnum.HOST,
+      label: typeof raw.label === 'string' && raw.label.trim() ? raw.label.trim().slice(0, 80) : checked.name ?? 'Component',
+      props,
+      children: [],
+    };
+    if (parentId) snapshot.parentId = parentId;
+    return [snapshot];
+  }
+
   /** Resolve type + preset. Returns null when the node must be dropped. */
   private resolveType(
     path: string,
@@ -1008,12 +1046,16 @@ class Validator {
       this.fail(path, `nesting deeper than ${GENERATION_LIMITS.maxDepth} levels`);
       return [];
     }
-    for (const key of Object.keys(raw)) {
+    // A placement's keys are its own (validatePlacement.ts).
+    for (const key of isPlacementInput(raw) ? [] : Object.keys(raw)) {
       if (!NODE_KEYS.has(key) && !OWNED_KEYS.has(key)) this.warn(path, `unknown key "${key}" ignored`);
     }
 
     if (isTextNodeInput(raw)) {
       return this.textNode(raw, path, depth, parentId);
+    }
+    if (isPlacementInput(raw)) {
+      return namespace === 'html' ? this.placement(raw, path, depth, parentId) : (this.warn(path, 'a component cannot sit inside svg or math, dropped'), []);
     }
 
     const resolved = this.resolveType(path, raw.type, raw.preset, namespace);
@@ -1276,7 +1318,12 @@ class Validator {
           this.warn(childPath, `a #text node cannot sit directly inside <${type}>, dropped`);
           return;
         }
-        children.push(...this.node(child, childPath, depth + 1, id, childNamespace(type, namespace)));
+        this.tagStack.unshift(type);
+        try {
+          children.push(...this.node(child, childPath, depth + 1, id, childNamespace(type, namespace)));
+        } finally {
+          this.tagStack.shift();
+        }
       });
     }
     if (isStickyCta(presetDefaults)) {

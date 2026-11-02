@@ -15,6 +15,8 @@ import { BASE_KEY, type BreakpointKey } from './schema';
 import type { PageGenTarget } from './protocol';
 import { siteContextText, type SiteContext } from './promptSections/siteContext';
 import { legalLinksText } from './promptSections/legalLinks';
+import { componentsText } from './promptSections/components';
+import type { ComponentSummary } from '@/lib/components/summaries';
 
 export const EMIT_TOOL_NAME = 'emit_page';
 
@@ -166,6 +168,9 @@ export function emitPageTool(): BetaTool {
               label: { type: 'string' },
               props: { type: 'object' },
               children: { type: 'array', items: { type: 'object' } },
+              name: { type: 'string', description: 'A placement ("#component") only: the name of the site component it places.' },
+              inputs: { type: 'object', description: 'A placement only: input id to value.' },
+              state: { type: 'string', description: 'A placement only: the state it starts in.' },
             },
             required: ['type'],
           },
@@ -191,6 +196,8 @@ export interface RequestContextInput {
   existingPageTitles?: string[];
   /** Site settings for language and real contact data (promptSections/siteContext.ts). */
   siteContext?: SiteContext;
+  /** The site's own components a generation may place (promptSections/components.ts). */
+  components?: readonly ComponentSummary[];
 }
 
 /** The volatile part of the system prompt (after the cache breakpoint). */
@@ -222,6 +229,8 @@ export function requestContextText(input: RequestContextInput): string {
   }
   if (input.siteContext) lines.push('', siteContextText(input.siteContext));
   if (input.siteContext?.legalLinks?.length) lines.push('', legalLinksText(input.siteContext.legalLinks));
+  const components = componentsText(input.components ?? []);
+  if (components) lines.push('', components);
   return lines.join('\n');
 }
 

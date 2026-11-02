@@ -11,6 +11,8 @@ import {
   CanvasNodeType,
   type ComponentInstance,
 } from '@/models/ComponentModel';
+import { getParent, hasParent } from 'mobx-state-tree';
+import { isPlacementType, type PlacementProps } from '@/lib/components/placement';
 import { normalize } from './normalize';
 import { truncateTreeToBudget } from './tokenBudget';
 
@@ -34,11 +36,51 @@ export type SerializedComponent = {
   children: SerializedComponent[];
   componentType: 'host' | 'function';
   id: string;
+  /** A placement ("#component"): the name of the component it places. */
+  name?: string;
+  /** A placement: its input values, as the generator writes them. */
+  inputs?: Record<string, unknown>;
+  /** A placement: the state it starts in. */
+  state?: string;
   label?: string;
   parentId?: string;
   props: Record<string, unknown>;
   type: string;
 };
+
+/** The site's definitions, from the project holding this node. */
+function definitionsAbove(node: object): Record<string, { name?: unknown }> {
+  let current: object = node;
+  while (hasParent(current)) {
+    current = getParent(current);
+    if ('definitions' in current) return (current as { definitions: Record<string, { name?: unknown }> }).definitions;
+  }
+  return {};
+}
+
+/**
+ * A placement as the generator writes one: its component's name and its own
+ * values, never the component's inner tree, which is the definition's and is far
+ * more tokens (docs/plans/2026-11-02-reusable-components.md, "AI generation").
+ */
+function serializePlacement(c: ComponentInstance): SerializedComponent {
+  const { component, inputs, state, style } = (c.props ?? {}) as Partial<PlacementProps>;
+  const definition = typeof component === 'string' ? definitionsAbove(c)[component] : undefined;
+  const node: Record<string, unknown> = {
+    id: c.id,
+    type: c.type,
+    componentType: isHostOrFunction(c.componentType),
+    canvasNodeType: isCanvasNodeType(c.canvasNodeType),
+    name: typeof definition?.name === 'string' ? definition.name : 'Missing component',
+    inputs: inputs ?? {},
+    props: style !== undefined ? { style } : {},
+    children: [],
+  };
+  if (typeof state === 'string') node.state = state;
+  if (c.label !== undefined) node.label = c.label;
+  if (c.parentId !== undefined) node.parentId = c.parentId;
+  return normalize(node) as SerializedComponent;
+}
 
 function isHostOrFunction(v: string): 'host' | 'function' {
   return v === ComponentTypeEnum.FUNCTION ? 'function' : 'host';
@@ -51,6 +93,7 @@ function isCanvasNodeType(v: string): 'component' | 'viewport' | 'floating' {
 }
 
 function serializeOne(c: ComponentInstance): SerializedComponent {
+  if (isPlacementType(c.type)) return serializePlacement(c);
   // Read children first so MobX tracks the dependency consistently.
   const kids: SerializedComponent[] = [];
   for (const child of c.children) {

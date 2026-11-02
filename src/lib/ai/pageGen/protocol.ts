@@ -3,6 +3,7 @@
 // Client-safe wire types shared by POST /api/ai/generate-page (server) and the
 // editor's Generate page dialog (client). No server-only imports.
 
+import type { GenerationComponents } from '@/lib/components/summaries';
 import type { GeneratedNodeSnapshot } from './validate';
 import type { BreakpointInput } from './schema';
 import { MODEL_CHOICES, type ModelChoice } from '@/lib/ai/modelChoice';
@@ -37,6 +38,8 @@ export interface PageGenRequest {
   existingPageTitles?: string[];
   /** Site language and real contact data from Site settings (promptSections/siteContext.ts). */
   siteContext?: SiteContext;
+  /** The site's components a generation may place, and where it lands (src/lib/components/summaries.ts). */
+  components?: GenerationComponents;
   /** The run's id (a UUID), chosen by the browser transport before sending. */
   runId?: string;
 }

@@ -122,6 +122,7 @@ import {
 import { FOCAL_MODEL, detectFocalPoints } from '@/lib/ai/pageGen/focalPoints';
 import { detectEssentials, fillMissingAlt, type EssentialsOptions } from '@/lib/ai/pageGen/essentials';
 import { SiteContextSchema, siteAddressOf } from '@/lib/ai/pageGen/promptSections/siteContext';
+import { GenerationComponentsSchema, type ComponentSummary, type GenerationComponents } from '@/lib/components/summaries';
 import type { AiEffort, AiModelKey } from '@/lib/ai/anthropicClient';
 
 export const dynamic = 'force-dynamic';
@@ -179,6 +180,8 @@ const BodySchema = z.strictObject({
   projectName: z.string().max(120).optional(),
   existingPageTitles: z.array(z.string().max(120)).max(100).optional(),
   siteContext: SiteContextSchema.optional(),
+  // The site's components a generation may place, and where it lands (src/lib/components/summaries.ts).
+  components: GenerationComponentsSchema.optional(),
   /** The run's id, chosen by the browser so it can collect a run whose response it never saw. */
   runId: z.string().uuid().optional(),
 });
@@ -336,6 +339,7 @@ async function runGeneration(args: RunArgs): Promise<void> {
           projectName: body.projectName,
           existingPageTitles: body.existingPageTitles,
           siteContext: body.siteContext,
+          components: body.components?.summaries as ComponentSummary[] | undefined,
         }),
         cache: false,
       },
@@ -523,6 +527,8 @@ async function runGeneration(args: RunArgs): Promise<void> {
           heldAddresses: addressesHeldBy(body.target.kind === 'newPage' ? null : body.target.context),
           // A Google map shows the business address of the Site settings, or is dropped.
           mapAddress: body.siteContext ? siteAddressOf(body.siteContext) : null,
+          // A placement names one of these, or is dropped.
+          ...(body.components ? { components: body.components as GenerationComponents } : {}),
         });
         if (outcome.ok) {
           const screened = screenTells(outcome.result, breakpoints, essentials);

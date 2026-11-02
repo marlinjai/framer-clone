@@ -27,7 +27,7 @@ import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { FIXTURES } from './corpus/fixtures';
 import { PATTERNS, n, run, t } from './patterns';
 import { renderPublished } from './lib/published';
-import { jsxToNodes, nodesToJsx, normalise, withPlaceIds } from './roundtrip/jsx';
+import { jsxToNodes, nodesToJsx, normalise, withPlaceIds, type ComponentNames } from './roundtrip/jsx';
 import { writeOut } from './lib/io';
 import type { GapId, RoundTripCase } from './lib/types';
 
@@ -251,6 +251,33 @@ const MUST_REFUSE: Array<{ id: string; node: ComponentNode }> = [
   { id: 'a stored prop named nodeId', node: { type: 'div', props: { nodeId: 'x' } as never } },
 ];
 
+/** The site's components the placement cases name, by id. */
+const COMPONENT_NAMES: ComponentNames = { card: 'Card', menu: 'Menu' };
+const placed = (component: string, props: Record<string, unknown> = {}, bindings?: Record<string, unknown>): ComponentNode => ({
+  type: '#component',
+  props: { component, ...props } as never,
+  ...(bindings ? { bindings: bindings as never } : {}),
+});
+
+/** A placement and what it carries: `<Card title="..." />`, and back. */
+const PLACEMENT_CASES: Array<{ id: string; node: ComponentNode }> = [
+  { id: 'a placement', node: { type: 'section', props: {} as never, children: [placed('card', { inputs: { title: 'One', featured: true, price: 12 } }), placed('card', { inputs: { title: 'Two' } })] } },
+  {
+    id: 'nested placements',
+    node: { type: 'main', props: {} as never, children: [{ type: 'section', props: {} as never, children: [{ type: 'div', props: { className: 'grid' } as never, children: [placed('card'), placed('menu')] }] }] },
+  },
+  { id: 'a starting state', node: { type: 'header', props: {} as never, children: [placed('menu', { state: 'open', style: { width: { base: '100%' } } })] } },
+  {
+    id: 'an input bound to data',
+    node: {
+      type: 'div',
+      props: { 'data-component-kind': 'collection' } as never,
+      bindings: { collection: { mode: 'read', expression: 'posts' } } as never,
+      children: [placed('card', { inputs: { featured: false } }, { 'input.title': { mode: 'read', expression: '{{row.title}}' }, state: { mode: 'read', expression: '{{row.tier}}' } })],
+    },
+  },
+];
+
 const JSX_CASES: Array<{ id: string; jsx: string }> = [
   { id: 'static markup', jsx: `<section style={{ padding: 16 }}><h1>Title</h1><p className="lead">Copy</p></section>` },
   { id: 'attributes', jsx: `<a href="/x" aria-label="Go" data-track="1" target="_blank">Link</a>` },
@@ -277,15 +304,15 @@ function renderJsx(jsx: string): string {
   return renderToStaticMarkup(React.createElement(React.Fragment, null, result.exports));
 }
 
-function nodesCase(id: string, node: ComponentNode): RoundTripCase {
+function nodesCase(id: string, node: ComponentNode, components: ComponentNames = {}): RoundTripCase {
   const base = { id, direction: 'nodes-jsx-nodes' as const };
   let jsx: string;
   try {
-    jsx = nodesToJsx(node);
+    jsx = nodesToJsx(node, components);
   } catch (error) {
     return { ...base, pass: false, gap: 'roundtrip-not-representable', detail: error instanceof Error ? error.message : String(error) };
   }
-  const imported = jsxToNodes(jsx);
+  const imported = jsxToNodes(jsx, components);
   if (!imported.node || imported.leftOver.length > 0) {
     return { ...base, pass: false, gap: 'roundtrip-not-representable', detail: 'not imported', leftOver: imported.leftOver };
   }
@@ -393,6 +420,7 @@ describe('round trip', () => {
       cases.push(nodesCase(`preset: ${entry.id}`, { type: entry.htmlType, props: entry.defaultProps as never }));
     }
     for (const { id, node } of SYNTHETIC) cases.push(nodesCase(`synthetic: ${id}`, node));
+    for (const { id, node } of PLACEMENT_CASES) cases.push(nodesCase(`component: ${id}`, node, COMPONENT_NAMES));
     for (const { id, node, sheet } of RULE_CASES) cases.push(publishedCase(`rules: ${id}`, node, sheet));
     for (const { id, rule, reason } of REFUSED_RULES) cases.push(refusedRuleCase(id, rule, reason));
     for (const { id, node, page } of BEHAVIOUR_CASES) cases.push(publishedCase(`behaviour: ${id}`, node, page));

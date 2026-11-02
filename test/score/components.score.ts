@@ -20,7 +20,10 @@ import { componentEntries } from './lib/universe';
 import { CARD, definition, definitionsOf, INPUT_PROBES, jsonTrip, page, placement, read, type Stored } from './lib/componentProbes';
 import { BREAKPOINTS, renderThroughPublishedPage } from './lib/published';
 import { writeOut } from './lib/io';
-import { rowKey, type Cell, type SurfaceResults } from './lib/types';
+import { ACCEPTED_NOT_TAUGHT, rowKey, type Cell, type SurfaceResults } from './lib/types';
+import { validateGeneration } from '@/lib/ai/pageGen/validate';
+import { deriveBreakpointKeys } from '@/lib/ai/pageGen/schema';
+import { componentSummaries, type GenerationComponents } from '@/lib/components/summaries';
 
 /** Through the editor's model, a snapshot, JSON and the model again, as a save and load does. */
 function savedAndLoaded(node: Stored): Stored {
@@ -300,9 +303,115 @@ async function publishedCells(): Promise<SurfaceResults> {
   return out;
 }
 
+// ---------- the AI generator ----------
+
+const AI_BREAKPOINTS = deriveBreakpointKeys([{ label: 'Desktop', minWidth: 1200 }, { label: 'Tablet', minWidth: 768 }, { label: 'Mobile', minWidth: 0 }]);
+
+/** What `validateGeneration` keeps of these nodes, given the site's components and where they land. */
+function generated(nodes: unknown[], stored: ReturnType<typeof definition>[], where: Omit<GenerationComponents, 'summaries'> = {}) {
+  const definitions = definitionsOf(...stored);
+  const outcome = validateGeneration({ nodes }, { breakpoints: AI_BREAKPOINTS, newId: (() => { let n = 0; return () => `g${++n}`; })(), components: { summaries: componentSummaries(definitions), ...where } });
+  return { definitions, nodes: outcome.ok ? outcome.result.nodes : [], warnings: outcome.ok ? outcome.result.warnings : outcome.errors };
+}
+
+/** The placement props the generator kept, the first one. */
+const placedProps = (nodes: { type: string; props: Record<string, unknown> }[]): Record<string, unknown> | undefined =>
+  nodes.find((node) => node.type === '#component')?.props;
+
+/** The page a generated placement expands to, as published. */
+const expandedFrom = (nodes: unknown[], definitions: ComponentDefinitions): ComponentNode =>
+  expandPlacements(savedAndLoaded(page(nodes as Stored[])) as ComponentNode, definitions, BREAKPOINTS);
+
+/** The prompt teaches placing, inputs by these types, a state and the placement's own style. */
+const TAUGHT_TYPES: ReadonlySet<string> = new Set(['text', 'number', 'toggle', 'choice', 'link', 'richtext', 'image']);
+const taught = (ok: boolean, note: string, isTaught: boolean): Cell =>
+  ok ? (isTaught ? pass() : { status: 'pass', note: ACCEPTED_NOT_TAUGHT }) : fail(note);
+
+async function aiCells(): Promise<SurfaceResults> {
+  const out: SurfaceResults = {};
+  out[key('definition')] = await probe(() => {
+    const { nodes } = generated([{ type: '#component', name: 'card' }], [CARD]);
+    return cell(placedProps(nodes)?.component === 'card', `the placement was not kept: ${JSON.stringify(nodes)}`);
+  });
+  out[key('placement')] = await probe(() => {
+    const { nodes } = generated([
+      { type: '#component', name: 'card', inputs: { title: 'One' } },
+      { type: '#component', name: 'card', inputs: { title: 'Two' } },
+    ], [CARD]);
+    const titles = nodes.map((node) => (node.props.inputs as Record<string, unknown> | undefined)?.title);
+    return cell(JSON.stringify(titles) === '["One","Two"]', `two placements were not kept with their inputs: ${JSON.stringify(nodes)}`);
+  });
+  out[key('placement-style')] = await probe(() => {
+    const { nodes } = generated([{ type: '#component', name: 'card', props: { style: { width: { base: '300px', mobile: '100%' } } } }], [CARD]);
+    const width = (placedProps(nodes)?.style as Record<string, unknown> | undefined)?.width;
+    return cell(JSON.stringify(width) === JSON.stringify({ base: '300px', mobile: '100%' }), `the placement's width was ${JSON.stringify(width)}`);
+  });
+  out[key('nested')] = await probe(() => {
+    const outer = definition('outer', { id: 'o', type: 'section', children: [] });
+    const { nodes } = generated([{ type: '#component', name: 'card' }], [outer, CARD], { insideDefinition: 'outer' });
+    return cell(placedProps(nodes)?.component === 'card', `a placement inside another component was not kept: ${JSON.stringify(nodes)}`);
+  });
+  out[key('cycle-refused')] = await probe(() => {
+    const a = definition('a', { id: 'a-r', type: 'div', children: [placement('x', 'b')] });
+    const b = definition('b', { id: 'b-r', type: 'div', children: [] });
+    const { nodes, warnings } = generated([{ type: 'div', children: [{ type: '#component', name: 'a' }] }], [a, b], { insideDefinition: 'b' });
+    const kept = JSON.stringify(nodes).includes('#component');
+    return cell(!kept && warnings.some((warning) => warning.includes('b contains a, which contains b')), `a cycle was not refused with its path: ${JSON.stringify(warnings)}`);
+  });
+  out[key('collection-template')] = await probe(() =>
+    fail('a generated node holds no binding, so a placement cannot read a row: the generator writes no data connections'));
+  for (const [row, kind] of Object.entries(POINTER_KINDS)) {
+    out[key(row)] = await probe(() => {
+      const { nodes, definitions } = generated([{ type: '#component', name: 'btn' }], [pointerButton(kind)]);
+      const expanded = expandedFrom(nodes, definitions).children?.[0];
+      const read = readRules(expanded?.props);
+      const ok = placedProps(nodes)?.component === 'btn' && expanded?.props?.['data-u-c-btn'] === 'btn' && read.refused.length === 0 && read.rules.length === 1;
+      return cell(ok, `a generated placement did not carry the ${kind} state: ${JSON.stringify(read)}`);
+    });
+  }
+  out[key('state-custom')] = await probe(() => {
+    const { nodes } = generated([{ type: '#component', name: 'menu', state: 'Open' }], [customMenu()]);
+    const props = placedProps(nodes);
+    const refused = generated([{ type: '#component', name: 'menu', state: 'closed' }], [customMenu()]);
+    return cell(props?.state === 'open' && placedProps(refused.nodes)?.state === undefined, `the starting state was ${JSON.stringify(props?.state)}`);
+  });
+  for (const [row, on] of [['interaction-click', 'click'], ['interaction-appear', 'view-enter']] as const) {
+    out[key(row)] = await probe(() => {
+      const { nodes, definitions } = generated([{ type: '#component', name: 'menu' }], [interactiveMenu(on)]);
+      const text = JSON.stringify(expandedFrom(nodes, definitions));
+      const ok = placedProps(nodes)?.component === 'menu' && text.includes(`{"id":"open","on":"${on}","do":[{"set":"${MENU_STATE}","value":"open"}]}`);
+      return cell(ok, `a generated placement did not carry the ${on} trigger`);
+    });
+  }
+  out[key('placement-trigger')] = await probe(() =>
+    fail("the generator writes no behaviour on a placement yet, so a placement's own trigger is not kept"));
+  out[key('event')] = await probe(() =>
+    fail('an Event input is wired by a listener on the placement, which the generator does not write yet'));
+  for (const [type, sample] of Object.entries(INPUT_PROBES)) {
+    out[key(type)] = await probe(() => {
+      const stored = definition('d', { id: 'r', type: 'div' }, [{ id: 'x', name: 'X', type: type as InputType, ...sample.input }]);
+      const { nodes } = generated([{ type: '#component', name: 'd', inputs: { x: sample.value } }], [stored]);
+      const kept = (placedProps(nodes)?.inputs as Record<string, unknown> | undefined)?.x;
+      const refused = generated([{ type: '#component', name: 'd', inputs: { x: sample.refused } }], [stored]);
+      const keptRefused = (placedProps(refused.nodes)?.inputs as Record<string, unknown> | undefined)?.x;
+      const ok = JSON.stringify(kept) === JSON.stringify(sample.value) && keptRefused === undefined && placedProps(refused.nodes) !== undefined;
+      return taught(ok, `kept ${JSON.stringify(kept)}, refused sample kept ${JSON.stringify(keptRefused)}`, TAUGHT_TYPES.has(type));
+    });
+  }
+  // A component's pointer states and triggers are its own: placing it carries them, and
+  // the prompt teaches nothing about them, so they are accepted, not taught.
+  for (const row of ['state-hover', 'state-pressed', 'state-focused', 'interaction-click', 'interaction-appear']) {
+    const result = out[key(row)];
+    if (result?.status === 'pass') out[key(row)] = { status: 'pass', note: ACCEPTED_NOT_TAUGHT };
+  }
+  return out;
+}
+
 describe('reusable component rows', () => {
   it('measures what is built, and names nothing that is not a row', async () => {
-    const results = { format: await formatCells(), renderer: await publishedCells() };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const results = { format: await formatCells(), renderer: await publishedCells(), ai: await aiCells() };
+    warn.mockRestore();
     const rows = new Set(componentEntries().map((e) => rowKey(e.kind, e.id)));
     for (const surface of Object.values(results)) {
       for (const name of Object.keys(surface)) expect(rows.has(name), name).toBe(true);

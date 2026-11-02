@@ -24,6 +24,7 @@ import {
 } from './apply';
 import type { PageGenModel, PageGenRequest, PageGenResultPayload } from './protocol';
 import { siteContextFromSettings } from './promptSections/siteContext';
+import { componentSummaries } from '@/lib/components/summaries';
 
 export type TargetKind = 'newPage' | 'replace' | 'insert';
 
@@ -140,12 +141,28 @@ export function buildRequest(input: {
 }): PageGenRequest {
   const { target, project } = input;
   const breakpoints = target.breakpoints.map(({ label, minWidth }) => ({ label, minWidth }));
+  // A definition is a page of its own: generating inside one may place others, not itself.
+  const page = project.findPageById(target.pageId);
+  const component = page && target.componentId ? findInPage(page, target.componentId) : undefined;
+  const summaries = componentSummaries(project.definitions);
+  const insideDefinition = page?.definitionOfPage?.id;
+  // What holds the new nodes: the container on insert, the replaced node's parent on replace.
+  const holder = component && target.kind === 'replace' ? parentOf(page!, component) : component;
   const base = {
     brief: input.brief.trim(),
     model: input.model,
     breakpoints,
     projectName: project.metadata.title,
     siteContext: siteContextFromSettings(project.site, project.metadata.title, project.pagesArray),
+    ...(summaries.length > 0
+      ? {
+          components: {
+            summaries,
+            ...(insideDefinition ? { insideDefinition } : {}),
+            ...(holder && page ? { ancestorTags: tagsUpFrom(page, holder) } : {}),
+          },
+        }
+      : {}),
   };
   if (target.kind === 'newPage') {
     return {
@@ -154,11 +171,25 @@ export function buildRequest(input: {
       existingPageTitles: project.pagesArray.map(p => p.metadata.title).slice(0, 100),
     };
   }
-  const page = project.getPage(target.pageId);
-  const component = page && target.componentId ? findInPage(page, target.componentId) : undefined;
   // ~8k tokens of context, the same budget the edit route's page serializer uses.
   const context = component ? serializeSubtree(component, { maxTokens: 8000 }) : null;
   return { ...base, target: { kind: target.kind, context } };
+}
+
+/** The node holding `node` in the page's tree, or undefined for the root. */
+function parentOf(page: PageModelType, node: ComponentInstance): ComponentInstance | undefined {
+  return node.parentId ? findInPage(page, node.parentId) : undefined;
+}
+
+/** The tags from `node` up to the root, nearest first, at most 64. */
+function tagsUpFrom(page: PageModelType, node: ComponentInstance): string[] {
+  const tags: string[] = [];
+  let current: ComponentInstance | undefined = node;
+  while (current && tags.length < 64) {
+    if (/^[a-z][a-z0-9-]*$/.test(current.type)) tags.push(current.type);
+    current = parentOf(page, current);
+  }
+  return tags;
 }
 
 function findInPage(page: PageModelType, id: string): ComponentInstance | undefined {
@@ -205,7 +236,7 @@ export function applyResult(
       },
     };
   }
-  const page = project.getPage(target.pageId);
+  const page = project.findPageById(target.pageId);
   if (!page) return { ok: false, reason: 'The page this was generated for no longer exists.' };
   if (!target.componentId) return { ok: false, reason: 'No component was selected.' };
   const outcome = page.applyGeneratedNodes(target.kind, target.componentId, snapshots, result.generationId);
@@ -233,7 +264,7 @@ export function undoGeneration(
     project.removePage(record.pageId);
     return { ok: true, value: null };
   }
-  const page = project.getPage(record.pageId);
+  const page = project.findPageById(record.pageId);
   if (!page) return { ok: false, reason: 'The page was removed.' };
   return page.revertGeneration(record);
 }

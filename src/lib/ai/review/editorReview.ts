@@ -78,7 +78,8 @@ function toReviewNode(n: SerializedComponent, idToKey: Map<string, string>): Rev
   return {
     id: n.id,
     type: n.type,
-    ...(n.label ? { label: n.label } : {}),
+    // A placement reads as its component's name: the review sees no inner tree to name it by.
+    ...(n.label ? { label: n.label } : n.name ? { label: n.name } : {}),
     props,
     children: (n.children ?? []).map((c) => toReviewNode(c, idToKey)),
   };

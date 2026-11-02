@@ -21,6 +21,7 @@ import { FORM_KIND_ATTR } from '@/lib/forms/definition';
 import { isLegacyRulesAttribute, isRuleList, readRules, type RuleContext } from '@/lib/rules/rules';
 import { STICKY_CTA_ATTR, STICKY_CTA_MARKER } from '@/lib/stickyCta/stickyCta';
 import { TEXT_NODE_TYPE, isTextNodeType } from '@/lib/renderer/textNode';
+import { PLACEMENT_TYPE, isPlacementType } from '@/lib/components/placement';
 
 /** A text node with a binding: bare text has nowhere to carry the bindings prop. */
 const TEXT_RUN_TAG = 'TextRun';
@@ -33,6 +34,20 @@ const NODE_ID_PROP = 'nodeId';
 
 /** Props the JSX form claims for itself: a stored prop of the same name has no JSX form. */
 const NAMED_PROPS: readonly string[] = [BINDINGS_PROP, NODE_ID_PROP];
+
+/**
+ * A placement of one of the site's components is `<Card title="..." />`: the tag is the
+ * component's name, each input value is a prop, and `state`, `style` and `behaviour`
+ * are named props, as `bindings` is (docs/plans/2026-11-02-reusable-components.md,
+ * "React import and export"). An input whose id is one of these, or no JSX prop name,
+ * has no JSX form.
+ */
+const PLACEMENT_NAMED: readonly string[] = ['state', 'style', 'behaviour', BINDINGS_PROP, NODE_ID_PROP, 'key', 'ref', 'children'];
+const COMPONENT_NAME = /^[A-Z][A-Za-z0-9]*$/;
+const PROP_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** The site's components by id, for a placement's tag: `{ card: 'Card' }`. */
+export type ComponentNames = Readonly<Record<string, string>>;
 
 /** An island's own element: a submit button is a button, a form is a div. */
 const ISLAND_HOST_PROP = 'as';
@@ -154,10 +169,29 @@ function renderTextNode(n: NormalNode): string {
   return text ? `<${TEXT_RUN_TAG}${bindings}>${text}</${TEXT_RUN_TAG}>` : `<${TEXT_RUN_TAG}${bindings} />`;
 }
 
+/** A placement as its component's tag, or a throw when it has no JSX form. */
+function renderPlacement(n: NormalNode, components: ComponentNames): string {
+  const { component, inputs, ...rest } = n.props as { component?: unknown; inputs?: unknown } & Record<string, unknown>;
+  const name = typeof component === 'string' ? components[component] : undefined;
+  if (!name || !COMPONENT_NAME.test(name)) throw new Error(`placement of ${JSON.stringify(component)} has no component name to be its tag`);
+  if (n.children.length > 0 || n.text !== undefined) throw new Error('a placement holds no children');
+  const extra = Object.keys(rest).filter((key) => !['state', 'style', 'behaviour'].includes(key));
+  if (extra.length > 0) throw new Error(`a placement holds no ${extra.join(', ')}`);
+  const values = (inputs ?? {}) as Record<string, unknown>;
+  const attrs = Object.entries(values).map(([id, value]) => {
+    if (!PROP_NAME.test(id) || PLACEMENT_NAMED.includes(id)) throw new Error(`input ${JSON.stringify(id)} has no JSX prop`);
+    return attributeText(id, value);
+  });
+  const named = ['state', 'style', 'behaviour'].map((key) => attributeText(key, rest[key])).join('')
+    + attributeText(NODE_ID_PROP, n.id) + (n.bindings === undefined ? '' : attributeText(BINDINGS_PROP, n.bindings));
+  return `<${name}${attrs.join('')}${named} />`;
+}
+
 /** Total over the normalised form: a node with no JSX representation throws. */
-export function nodesToJsx(node: ComponentNode): string {
+export function nodesToJsx(node: ComponentNode, components: ComponentNames = {}): string {
   const render = (n: NormalNode): string => {
     if (isTextNodeType(n.type)) return renderTextNode(n);
+    if (isPlacementType(n.type)) return renderPlacement(n, components);
     const island = Object.entries(ISLANDS).find(([, { attr, value }]) => n.props[attr] === value);
     const name = island ? island[0] : n.type;
     if (!island && !/^[a-z][a-zA-Z0-9-]*$/.test(name)) throw new Error(`type ${JSON.stringify(name)} is not a JSX tag`);
@@ -325,7 +359,52 @@ function settleTree(root: ComponentNode, leftOver: string[]): void {
   walk(root, keyed, new Map());
 }
 
-export function jsxToNodes(jsx: string): ImportResult {
+/** One `<Card ... />` as a placement of the component of that name. */
+function placementFrom(
+  open: ts.JsxOpeningLikeElement,
+  element: ts.JsxElement | ts.JsxSelfClosingElement,
+  id: string,
+  source: ts.SourceFile,
+  leftOver: string[],
+  textOf: (node: ts.Node) => string,
+): ComponentNode {
+  const props: Record<string, unknown> = { component: id };
+  const inputs: Record<string, unknown> = {};
+  let bindings: ComponentNode['bindings'];
+  let nodeId: string | undefined;
+  for (const attribute of open.attributes.properties) {
+    if (!ts.isJsxAttribute(attribute)) {
+      leftOver.push(`spread props: ${textOf(attribute)}`);
+      continue;
+    }
+    const name = attribute.name.getText(source);
+    const init = attribute.initializer;
+    let value: unknown = true;
+    if (init && ts.isStringLiteral(init)) value = init.text;
+    else if (init && ts.isJsxExpression(init) && init.expression) {
+      const literal = literalValue(init.expression, source);
+      if (!literal.ok) {
+        leftOver.push(`dynamic prop ${textOf(attribute)}`);
+        continue;
+      }
+      value = literal.value;
+    }
+    if (name === BINDINGS_PROP) bindings = value as ComponentNode['bindings'];
+    else if (name === NODE_ID_PROP && typeof value === 'string') nodeId = value;
+    else if (name === 'state' || name === 'style' || name === 'behaviour') props[name] = value;
+    else inputs[name] = value;
+  }
+  if (ts.isJsxElement(element) && element.children.some((child) => !ts.isJsxText(child) || jsxText(child.text).length > 0)) {
+    leftOver.push(`children of a component: ${textOf(element)}`);
+  }
+  if (Object.keys(inputs).length > 0) props.inputs = inputs;
+  const node: ComponentNode = { type: PLACEMENT_TYPE, props: props as ComponentNode['props'] };
+  if (nodeId !== undefined) node.id = nodeId;
+  if (bindings) node.bindings = bindings;
+  return node;
+}
+
+export function jsxToNodes(jsx: string, components: ComponentNames = {}): ImportResult {
   const source = ts.createSourceFile('import.tsx', `const root = (${jsx});`, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const leftOver: string[] = [];
   const textOf = (node: ts.Node) => node.getText(source).replace(/\s+/g, ' ').slice(0, 120);
@@ -336,6 +415,8 @@ export function jsxToNodes(jsx: string): ImportResult {
     const tag = open.tagName.getText(source);
     const island = ISLANDS[tag];
     const textRun = tag === TEXT_RUN_TAG;
+    const placed = !island && !textRun ? Object.entries(components).find(([, name]) => name === tag)?.[0] : undefined;
+    if (placed) return placementFrom(open, element, placed, source, leftOver, textOf);
     if (!island && !textRun && !/^[a-z]/.test(tag)) {
       leftOver.push(`unknown component <${tag}>`);
       return undefined;

@@ -364,7 +364,7 @@ const PHRASING_TAGS: ReadonlySet<string> = new Set([
   'svg', 'textarea', 'time', 'u', 'var', 'video', 'wbr',
 ]);
 
-function holdsInteractive(tree: unknown, definitions: ComponentDefinitions, stack: readonly string[] = []): boolean {
+export function holdsInteractive(tree: unknown, definitions: ComponentDefinitions, stack: readonly string[] = []): boolean {
   if (!isRecord(tree)) return false;
   if (typeof tree.type === 'string' && INTERACTIVE_TAGS.has(tree.type)) return true;
   if (isPlacementType(tree.type)) {
