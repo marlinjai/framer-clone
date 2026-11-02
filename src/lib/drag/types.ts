@@ -4,6 +4,8 @@
 //   - `create`: a new component to be inserted from the registry (panel item).
 //   - `moveNode`: an existing node being reparented (tree child, floating
 //      element, or viewport).
+//   - `place`: a placement of one of the site's own components (the Components
+//      panel's "This site" list), inserted through ProjectModel.placeComponent.
 //
 // DragMode decides whether the source follows the cursor in canvas space
 // (`live`, e.g. floating / viewport position drag) or stays put while a ghost
@@ -15,7 +17,8 @@ import type { InsertTarget } from '@/models/PageModel';
 
 export type DragSource =
   | { kind: 'create'; registryId: string }
-  | { kind: 'moveNode'; nodeId: string };
+  | { kind: 'moveNode'; nodeId: string }
+  | { kind: 'place'; definitionId: string };
 
 export type DragMode = 'live' | 'ghost';
 

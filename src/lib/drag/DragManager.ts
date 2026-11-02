@@ -42,6 +42,7 @@ import type { DragSource, DragMode, IndicatorSpec } from './types';
 import { isTextNodeType } from '@/lib/renderer/textNode';
 import { resolveDropTarget } from './resolveDropTarget';
 import { dragThresholdFor } from '@/lib/canvas/touchGestures';
+import { placeDefinition } from '@/lib/components/editorCommands';
 
 export interface DragManagerDeps {
   getTransform: () => { panX: number; panY: number; zoom: number };
@@ -57,21 +58,30 @@ export interface DragManagerDeps {
 
 function batchName(source: DragSource, sourceNode?: ComponentInstance): string {
   if (source.kind === 'create') return 'Create component';
+  if (source.kind === 'place') return 'Place component';
   if (sourceNode?.isViewportNode) return 'Move viewport';
   if (sourceNode?.isFloatingElement) return 'Move element';
   return 'Move component';
 }
 
 function modeFor(source: DragSource, sourceNode?: ComponentInstance): DragMode {
-  if (source.kind === 'create') return 'ghost';
+  if (source.kind === 'create' || source.kind === 'place') return 'ghost';
   if (sourceNode?.isViewportNode) return 'live';
   if (sourceNode?.isFloatingElement) return 'live';
   return 'ghost';
 }
 
-function labelFor(source: DragSource, sourceNode?: ComponentInstance): string {
+function labelFor(source: DragSource, sourceNode?: ComponentInstance, definitionName?: string): string {
   if (source.kind === 'create') return source.registryId;
+  if (source.kind === 'place') return definitionName ?? 'Component';
   return sourceNode?.displayName ?? 'Component';
+}
+
+/** Why this source may not land on this target, or undefined when it may. A refused drop paints nothing. */
+function dropRefusalFor(page: PageModelType, source: DragSource | null, target: InsertTarget): string | undefined {
+  if (source?.kind === 'moveNode') return page.dropRefusal(source.nodeId, target);
+  if (source?.kind === 'place') return page.placementRefusal(source.definitionId, target);
+  return undefined;
 }
 
 const DragManagerModel = types
@@ -230,7 +240,7 @@ const DragManagerModel = types
       });
       // A refused drop paints nothing and says why on release.
       const page = self.deps?.getPage();
-      const refused = self.source?.kind === 'moveNode' && !!target && !!page?.dropRefusal(self.source.nodeId, target);
+      const refused = !!target && !!page && dropRefusalFor(page, self.source, target) !== undefined;
       self._setPending(target, refused ? null : indicator);
 
       // Live mode: keep source's canvasX/Y pinned to cursor in canvas space.
@@ -284,6 +294,9 @@ const DragManagerModel = types
               const breakpointId = editorUI.selectedViewportNode?.breakpointId;
               editorUI.selectComponent(result, breakpointId);
             }
+          } else if (source.kind === 'place') {
+            const breakpointId = editorUI.selectedViewportNode?.breakpointId;
+            placeDefinition(editorUI, source.definitionId, target, breakpointId);
           } else if (source.kind === 'moveNode') {
             const isViewport = sourceNode?.isViewportNode === true;
             const isFloating = sourceNode?.isFloatingElement === true;
@@ -469,7 +482,11 @@ const DragManagerModel = types
           startCanvasPos,
           mode,
           pointerId,
-          ghostLabel: labelFor(source, sourceNode),
+          ghostLabel: labelFor(
+            source,
+            sourceNode,
+            source.kind === 'place' ? deps.getEditorUI().currentProject?.components.get(source.definitionId)?.name : undefined,
+          ),
           threshold: dragThresholdFor(event.pointerType),
         });
         self._setCleanup(cleanup);

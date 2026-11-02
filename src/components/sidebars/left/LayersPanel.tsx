@@ -47,7 +47,7 @@ import { ComponentInstance } from '@/models/ComponentModel';
 import { DATA_TEXT_NODE_ROW, useDragSource } from '@/lib/drag';
 import { isTextNodeType } from '@/lib/renderer/textNode';
 import { isPlacementType, type PlacementProps } from '@/lib/components/placement';
-import { detachLosesFormHistory } from '@/lib/components/detach';
+import { requestCreateComponent, requestDetach } from '@/lib/components/editorCommands';
 import { getHistoryStore } from '@/stores/RootStore';
 import {
   collapseAll,
@@ -339,13 +339,13 @@ const LayerNode = observer(({ component, depth, breakpointId, hiddenByAncestor =
 
   const onDetach = () => {
     const page = editorUI.currentPage;
-    const project = editorUI.currentProject;
-    if (!page || !project) return;
-    const stored = definitionId ? project.definitions[definitionId] : undefined;
-    if (stored && detachLosesFormHistory(stored) && !window.confirm('This component holds a form. A plain copy gets a new form, and past submissions stay with the old one.')) return;
-    const result = project.detachPlacement(page.id, component.id);
-    if (!result.ok) editorUI.setEditorNotice({ kind: 'refused', message: result.message });
-    else if (result.root) editorUI.selectComponent(result.root, breakpointId);
+    if (page) requestDetach(editorUI, page.id, component.id, breakpointId);
+  };
+
+  // The row's own node when it is not part of the selection, otherwise the selection.
+  const onCreateComponent = () => {
+    if (!editorUI.isSelected(component.id)) editorUI.selectComponent(component, breakpointId);
+    requestCreateComponent(editorUI);
   };
 
   const menuItems: MenuItem[] = [
@@ -373,6 +373,9 @@ const LayerNode = observer(({ component, depth, breakpointId, hiddenByAncestor =
           icon: isFolded ? <ChevronDown size={14} /> : <ChevronRight size={14} />,
           onClick: () => editorUI.setCollapsedLayerIds(toggleFold(editorUI.collapsedLayerIds, component.id)),
         }]
+      : []),
+    ...(deletable && !isTextRow && component.hasParent
+      ? [{ label: 'Create component', icon: <Component size={14} />, onClick: onCreateComponent }]
       : []),
     ...(deletable
       ? [

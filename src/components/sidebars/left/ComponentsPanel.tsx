@@ -7,6 +7,9 @@
 // In the phone layout's sheet (`onTapInsert`), where the canvas is covered and
 // there is nowhere to drag to, a tap (or Enter / Space) adds the component
 // instead, next to or inside the selection (src/lib/layers/tapInsertTarget.ts).
+//
+// The site's own reusable components come first ("This site", SiteComponents.tsx),
+// placed the same two ways.
 'use client';
 import React from 'react';
 import { observer } from 'mobx-react-lite';
@@ -17,6 +20,7 @@ import {
   listComponentsByCategory,
 } from '@/lib/componentRegistry';
 import { useDragSource } from '@/lib/drag';
+import { SiteComponents } from './SiteComponents';
 
 const ComponentItem = ({ entry, onTapInsert }: { entry: ComponentRegistryEntry; onTapInsert?: (registryId: string) => void }) => {
   const IconComponent = entry.icon;
@@ -55,9 +59,11 @@ const ComponentItem = ({ entry, onTapInsert }: { entry: ComponentRegistryEntry; 
 export interface ComponentsPanelProps {
   /** Add on tap instead of drag (the phone sheet). */
   onTapInsert?: (registryId: string) => void;
+  /** Place one of the site's components on tap instead of drag (the phone sheet). */
+  onTapPlace?: (definitionId: string) => void;
 }
 
-const ComponentsPanel = observer(({ onTapInsert }: ComponentsPanelProps = {}) => {
+const ComponentsPanel = observer(({ onTapInsert, onTapPlace }: ComponentsPanelProps = {}) => {
   const basicComponents = listComponentsByCategory('basic');
   const layoutComponents = listComponentsByCategory('layout');
   const dataComponents = listComponentsByCategory('data');
@@ -70,6 +76,7 @@ const ComponentsPanel = observer(({ onTapInsert }: ComponentsPanelProps = {}) =>
       {onTapInsert && (
         <p className="text-xs text-muted-foreground">Tap a component to add it inside or after the selected element.</p>
       )}
+      <SiteComponents onTapPlace={onTapPlace} />
       <div>
         <div className="flex items-center space-x-2 mb-3">
           <h3 className="text-sm font-medium text-foreground">Basic</h3>

@@ -7,10 +7,11 @@ import { useStore } from '@/hooks/useStore';
 import RightSidebarHeader from './right/RightSidebarHeader';
 import StateSwitch from './right/StateSwitch';
 import { getComponentCategory, SECTION_MAP, type SectionId } from './right/sectionConfig';
-import { SizeSection, PositionSection, StylesSection, LayoutSection, TypographySection, ImageSection, DataSourceSection, EffectsSection, FormSection, StickyCtaSection, TextContentSection, LinkSection, CustomSection } from './right/sections';
+import { SizeSection, PositionSection, StylesSection, LayoutSection, TypographySection, ImageSection, DataSourceSection, EffectsSection, FormSection, StickyCtaSection, TextContentSection, LinkSection, CustomSection, ComponentSection } from './right/sections';
 import { ComponentInstance } from '@/models/ComponentModel';
 
 const SECTION_COMPONENTS: Record<SectionId, React.ComponentType<{ component: ComponentInstance; breakpointId?: string }>> = {
+  component: ComponentSection,
   size: SizeSection,
   position: PositionSection,
   layout: LayoutSection,
@@ -82,7 +83,7 @@ const RightSidebar = observer(({ variant = 'docked' }: RightSidebarProps) => {
                 {/* Text first for every element that holds its own text: on a
                     phone this field is the dependable way to change text (a
                     form field always opens the keyboard). Null otherwise. */}
-                <TextContentSection component={target} breakpointId={breakpointId} />
+                {category !== 'placement' && <TextContentSection component={target} breakpointId={breakpointId} />}
                 {sections.map((sectionId) => {
                   const SectionComponent = SECTION_COMPONENTS[sectionId];
                   return (
@@ -95,7 +96,7 @@ const RightSidebar = observer(({ variant = 'docked' }: RightSidebarProps) => {
                 })}
                 {/* Data section: renders only when the node has bindable slots
                     (text / button / image / data components); null otherwise. */}
-                <DataSourceSection component={target} breakpointId={breakpointId} />
+                {category !== 'placement' && <DataSourceSection component={target} breakpointId={breakpointId} />}
               </>
             ) : (
               <p className="p-3 text-[12px] text-muted-foreground">Select an element to edit its properties.</p>
