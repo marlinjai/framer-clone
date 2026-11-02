@@ -713,6 +713,26 @@ describe('verifyCompanyKey: the global limit cannot lock out working agents', ()
   });
 });
 
+describe('verifyCompanyKey: a forbidden key is no longer known good', () => {
+  let now = 20_000_000;
+  const clock = () => now;
+
+  it('loses its global-limit bypass once auth-brain withdraws the sites grant', async () => {
+    const key = fakeKey();
+    mockVerifyApiKey.mockResolvedValueOnce(verifyResponse());
+    expect((await verifyCompanyKey(bearerRequest(key), clock)).kind).toBe('key');
+    now += KEY_CACHE_TTL_MS + 1;
+    mockVerifyApiKey.mockResolvedValueOnce(verifyResponse({ grants: [] }));
+    expect(await verifyCompanyKey(bearerRequest(key), clock)).toMatchObject({ kind: 'forbidden' });
+
+    mockVerifyApiKey.mockResolvedValue(null);
+    for (let i = 0; i < REFUSALS_GLOBAL; i++) {
+      await verifyCompanyKey(request({ authorization: 'Bearer short', 'x-real-ip': `10.2.${Math.floor(i / 250)}.${i % 250}` }), clock);
+    }
+    expect(await verifyCompanyKey(bearerRequest(key, { 'x-real-ip': '192.0.2.20' }), clock)).toMatchObject({ kind: 'throttled' });
+  });
+});
+
 describe('client address buckets', () => {
   it('keeps IPv4 whole and buckets IPv6 by /64', () => {
     expect(addressBucket('198.51.100.7')).toBe('198.51.100.7');
@@ -721,6 +741,8 @@ describe('client address buckets', () => {
     expect(addressBucket('[2001:db8:1:2::9]')).toBe('2001:db8:1:2::/64');
     expect(addressBucket('2001:db8::1')).toBe('2001:db8:0:0::/64');
     expect(addressBucket('::ffff:198.51.100.7')).toBe('198.51.100.7');
+    expect(addressBucket('::ffff:c000:280')).toBe('192.0.2.128');
+    expect(addressBucket('0:0:0:0:0:ffff:c633:6407')).toBe('198.51.100.7');
     expect(addressBucket('not-an-address')).toBe('not-an-address');
   });
 

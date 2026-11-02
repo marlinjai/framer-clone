@@ -19,6 +19,9 @@ import 'server-only';
  *      retry-after) without asking auth-brain. The global limit never locks
  *      out a key that verified successfully within the last hour (it is still
  *      verified again every time), so a flood only slows keys never seen good.
+ *      Accepted trade-off: neighbours on one shared IPv6 /64 share a refused-key
+ *      bucket, so one of them presenting bad keys can throttle the others' new
+ *      keys for up to a minute (REFUSAL_WINDOW_MS).
  *   1. A bearer at all, of a plausible shape. A request with a Bearer header is
  *      judged by it alone: the browser session that came along is never read
  *      (src/lib/bearer.ts; the middleware also strips the cookie).
@@ -319,6 +322,13 @@ export function addressBucket(address: string): string {
   if (!raw.includes(':')) return raw;
   const mapped = /^(?:0*:)*:?ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(raw);
   if (mapped) return mapped[1];
+  // The same mapping written in hex (`::ffff:c000:280` is 192.0.2.128).
+  const mappedHex = /^(?:0*:)*:?ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(raw);
+  if (mappedHex) {
+    const hi = parseInt(mappedHex[1], 16);
+    const lo = parseInt(mappedHex[2], 16);
+    return [hi >> 8, hi & 0xff, lo >> 8, lo & 0xff].join('.');
+  }
   const halves = raw.split('::');
   if (halves.length > 2) return raw;
   const head = halves[0] ? halves[0].split(':') : [];
@@ -630,6 +640,8 @@ export async function verifyCompanyKey(request: Request, now: () => number = Dat
     recordRefusal(client, now());
     knownGood.delete(id);
   }
+  // A key that may no longer use Sites here is no longer "known good" either.
+  if (result.kind === 'forbidden') knownGood.delete(id);
   if (leader && result.kind === 'key') {
     const at = now();
     remember(id, result, Math.min(at + KEY_CACHE_TTL_MS, keyExpiresAt ?? Number.POSITIVE_INFINITY));
