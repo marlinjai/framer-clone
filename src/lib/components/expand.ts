@@ -44,7 +44,7 @@ import { evaluateExpression, parseExpression } from '@/lib/bindings/resolver/exp
 import { createScope, lookup, pushInputFrame, pushItemFrame, type BindingScope } from '@/lib/bindings/resolver/scope';
 import { componentSnapshotToNode, extractBreakpoints, type ComponentSnapshotLike } from '@/lib/renderer/server/componentSnapshot';
 import { mapNodeProps, mapResponsiveValue } from './breakpoints';
-import { mayBindToSlot, parseInputValue, type InputDefinition } from './inputs';
+import { eventInputOf, mayBindToSlot, parseInputValue, type InputDefinition } from './inputs';
 import { REPEAT_PROP, repeatedCopies, repeatInputId, withItemBindingsChecked, withoutRepeat } from './repeat';
 import { COMPONENT_LIMITS, isPlacementType, MISSING_TYPE, serializedBytes, type PlacementProps } from './placement';
 
@@ -428,6 +428,69 @@ export function withInitialState(node: ComponentNode, definitionId: string, valu
   return { ...node, props: { ...node.props, behaviour: { ...behaviour, state } } as ComponentNode['props'] };
 }
 
+// ---------- interactions ----------
+
+/**
+ * The name an Event input's emit and its placement's listener share once expanded:
+ * one per definition and input, so an inner component's event never reaches an
+ * outer placement listening for an input of the same id.
+ */
+export const compiledEventName = (definitionId: string, inputId: string): string =>
+  `ev-${stableHash(`${definitionId}\u0000${inputId}`)}`;
+
+/** The ids of a definition's Event inputs. */
+const eventInputIds = (inputs: readonly InputDefinition[]): Set<string> =>
+  new Set(inputs.filter(input => input.type === 'event').map(input => input.id));
+
+/** Actions with each `emit` of an Event input renamed, `delay` bodies included. */
+function renameEmits(actions: unknown, rename: (name: string) => string | undefined): unknown {
+  if (!Array.isArray(actions)) return actions;
+  return actions.map((action) => {
+    if (!isRecord(action)) return action;
+    if (typeof action.emit === 'string') {
+      const renamed = rename(action.emit);
+      return renamed ? { ...action, emit: renamed } : action;
+    }
+    return Array.isArray(action.do) ? { ...action, do: renameEmits(action.do, rename) } : action;
+  });
+}
+
+/** A definition node's behaviour with its Event inputs' emits renamed, or the same value. */
+function compileEmits(behaviour: unknown, definitionId: string, events: ReadonlySet<string>): unknown {
+  if (events.size === 0 || !isRecord(behaviour) || !Array.isArray(behaviour.on)) return behaviour;
+  const rename = (name: string) => {
+    const input = eventInputOf(name);
+    return input !== undefined && events.has(input) ? compiledEventName(definitionId, input) : undefined;
+  };
+  return { ...behaviour, on: behaviour.on.map(trigger => (isRecord(trigger) ? { ...trigger, do: renameEmits(trigger.do, rename) } : trigger)) };
+}
+
+/**
+ * The root's behaviour with the placement's Trigger field merged in: its `on`
+ * appended to the root's, each listener for one of the definition's Event inputs
+ * renamed to match the emit, and its `showWhen` set on the root. Only `on` and
+ * `showWhen` pass: a placement holds nothing else of behaviour.
+ */
+export function withPlacementBehaviour(
+  root: unknown,
+  placed: unknown,
+  definitionId: string,
+  inputs: readonly InputDefinition[],
+): unknown {
+  if (!isRecord(placed)) return root;
+  const events = eventInputIds(inputs);
+  const listen = (trigger: unknown) => {
+    if (!isRecord(trigger) || typeof trigger.on !== 'string' || !trigger.on.startsWith('custom:')) return trigger;
+    const input = eventInputOf(trigger.on.slice('custom:'.length));
+    return input !== undefined && events.has(input) ? { ...trigger, on: `custom:${compiledEventName(definitionId, input)}` } : trigger;
+  };
+  const added = Array.isArray(placed.on) ? placed.on.map(listen) : [];
+  if (added.length === 0 && placed.showWhen === undefined) return root;
+  const own = isRecord(root) ? root : {};
+  const on = [...(Array.isArray(own.on) ? own.on : []), ...added];
+  return { ...own, ...(on.length > 0 ? { on } : {}), ...(placed.showWhen === undefined ? {} : { showWhen: placed.showWhen }) };
+}
+
 // ---------- expansion ----------
 
 export interface ExpandOptions {
@@ -515,9 +578,11 @@ export function expandPlacements(
     if (bytes > COMPONENT_LIMITS.definitionBytes) return null;
     const own = extractBreakpoints(definition.page.canvasNodes);
     const inputs = definition.inputs ?? [];
+    const events = eventInputIds(inputs);
     const clean = (stored: ComponentNode): ComponentNode => {
       const node = withoutRendererOwned(stored);
       const props = mapNodeProps((node.props ?? {}) as Record<string, unknown>, own, pageBreakpoints);
+      if (props.behaviour !== undefined) props.behaviour = compileEmits(props.behaviour, id, events);
       // Compilation is what makes a state rule safe. Until it runs, an uncompiled
       // one would read as a rule that always applies, so the parser refuses it.
       if (Array.isArray(props.rules)) {
@@ -630,6 +695,10 @@ export function expandPlacements(
     const rootProps = { ...tree.props } as Record<string, unknown>;
     if (props.style !== undefined) rootProps.style = mergeStyle(rootProps.style, props.style);
     if (isRecord(props.effects)) rootProps.effects = { ...(isRecord(rootProps.effects) ? rootProps.effects : {}), ...props.effects };
+    if (props.behaviour !== undefined) {
+      const behaviour = withPlacementBehaviour(rootProps.behaviour, props.behaviour, id, ready.inputs);
+      if (behaviour !== undefined) rootProps.behaviour = behaviour;
+    }
     // A placement repeated for a list of the component around it: the root carries
     // the marker, and the copies are made where the outer list is known.
     const repeat = repeatInputId(props);
