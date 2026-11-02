@@ -8,12 +8,13 @@
 // "Cookie settings" on a page without a map, on a maps-only site and on a site with
 // both; the review's payloads (a transparent map box over a decoy, the note hidden by
 // a stored rule); phone width; the report-only policy per consent; the frame's
-// sandbox; and BusBasis home's map case (a 300px box with rounded corners, the German
-// title of the original frame).
+// sandbox; and BusBasis home's map as the held-out lift wrote it (the box and the map
+// from test/score/corpus/busbasis, measured against the original frame's size).
 
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, webkit, type Browser, type BrowserContext, type BrowserType, type Page, type Response } from 'playwright';
 import { getPrismaClient } from '@/server/db';
@@ -23,9 +24,42 @@ import { CONSENT_TAP_GUARD_MS } from '@/lib/consent/consent';
 
 const SHARE = 'https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d2419.6!2d13.2834!3d52.6871!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!5e0!3m2!1sde!2sde!4v1730000000000';
 const ADDRESS = 'Hauptstraße 1, 16547 Birkenwerder';
-const BUSBASIS_TITLE = 'Karte: Werkstatt in der xxxxxxxxxxx 00, Birkenwerder';
-const BUSBASIS_ADDRESS = 'Werkstatt in der xxxxxxxxxxx 00, Birkenwerder';
 const SANDBOX = 'allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox';
+
+/**
+ * BusBasis home's map exactly as the lift wrote it into the held-out tree: the box (e404,
+ * 0.5rem corners, 300px high and 350px from 640px wide) around the map component (e405)
+ * the lift made of the original's Google frame, with the frame's recaptured address and
+ * title. `heights` is the original frame's height per captured width, from the live page.
+ */
+const busbasis = (() => {
+  const dir = path.resolve(process.cwd(), 'test/score/corpus/busbasis');
+  type Lifted = { id: string; type: string; props: Record<string, unknown>; children?: Lifted[] };
+  const tree = JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(dir, 'pages/home.tree.json.gz'))).toString()) as Lifted;
+  const find = (n: Lifted, id: string): Lifted | undefined =>
+    n.props['data-parity-id'] === id ? n : (n.children ?? []).map((c) => find(c, id)).find(Boolean);
+  const stored = (n: Lifted): StoredNode => ({
+    id: n.id,
+    type: n.type,
+    componentType: 'host',
+    props: { 'data-t': n.props['data-parity-id'], ...n.props },
+    children: (n.children ?? []).map(stored),
+  });
+  const box = find(tree, 'e404');
+  const map = box && find(box, 'e405');
+  if (!box || !map || map.props['data-map-embed'] !== 'google') throw new Error('the held-out home tree has no lifted map at e404 and e405');
+  const computed = JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(dir, 'pages/home.computed.json.gz'))).toString()) as Record<
+    string,
+    { width: number; firsts: Record<string, Record<string, string>>; rows: Record<string, { t: string; d: Record<string, string> }> }
+  >;
+  const heights = Object.fromEntries(
+    Object.values(computed).map((w) => {
+      const row = w.rows.e405;
+      return [w.width, parseFloat({ ...w.firsts[row.t], ...row.d }.height)];
+    }),
+  ) as Record<number, number>;
+  return { box: stored(box), title: map.props.mapTitle as string, src: map.props.mapUrl as string, heights };
+})();
 
 const map = (id: string, props: Record<string, unknown>) => node(id, 'div', { 'data-map-embed': 'google', ...props });
 const footer = () => node('footer', 'footer', {}, node('cookie-link', 'a', { href: '#cookie-settings', children: 'Cookie settings' }));
@@ -59,13 +93,7 @@ const PAGES = {
   ),
   // The review's quieter payload: the note that Google receives data hidden, the button kept.
   quiet: page(map('quiet-map', { mapUrl: SHARE, mapAddress: ADDRESS, rules: [{ id: 'q', selector: '& p', style: { display: 'none' } }] })),
-  // BusBasis home (test/score/corpus/busbasis/pages/home.html, e404 and e405): a 300px box
-  // with 0.5rem corners and overflow hidden around a full-size frame with this title. The
-  // capture dropped the frame's address, so the box searches for the address instead.
-  'busbasis-home-map': page(
-    node('location', 'section', {}, node('heading', 'h2', { children: 'Unsere Werkstatt' }),
-      map('busbasis-map', { mapAddress: BUSBASIS_ADDRESS, mapTitle: BUSBASIS_TITLE, style: { height: '300px', overflow: 'hidden', borderRadius: '0.5rem' } })),
-  ),
+  'busbasis-home-map': page(node('location', 'section', {}, node('heading', 'h2', { children: 'Unsere Werkstatt' }), busbasis.box)),
 };
 
 const ENGINES: [string, BrowserType][] = [['chromium', chromium], ['webkit', webkit]];
@@ -401,27 +429,35 @@ describe.each(ENGINES)('in %s', (engineName, engine) => {
     expect(errors).toEqual([]);
   });
 
-  it('covers BusBasis home\'s map: the 300px box, German copy, the original frame\'s title', async () => {
-    await open(`${german}/busbasis-home-map`);
-    record('BusBasis home map, no choice');
-    expect(google()).toEqual([]);
-    const box = tab.locator('[data-t="busbasis-map"]');
-    expect((await box.boundingBox())?.height).toBe(300);
-    expect(await box.evaluate((el) => getComputedStyle(el).borderTopLeftRadius)).toBe('8px');
-    expect(await placeholder().textContent()).toContain(BUSBASIS_ADDRESS);
-    expect(await banner().textContent()).toContain('Google Maps');
-    await tab.getByRole('button', { name: 'Karte laden' }).click();
-    expect(await frame().count()).toBe(0);
-    await pastGuard();
-    await banner().getByRole('button', { name: 'Akzeptieren' }).click();
-    await expect.poll(() => frame().count()).toBe(1);
-    expect(await frame().getAttribute('title')).toBe(BUSBASIS_TITLE);
-    const src = `https://www.google.com/maps?q=${encodeURIComponent(BUSBASIS_ADDRESS)}&output=embed`;
-    expect(await frame().getAttribute('src')).toBe(src);
-    expect((await box.boundingBox())?.height).toBe(300);
-    expect((await frame().boundingBox())?.height).toBe(300);
-    await expect.poll(() => google()).toEqual([src]);
-    record('BusBasis home map, after Karte laden and Akzeptieren');
-    expect(errors).toEqual([]);
+  it('shows BusBasis home\'s lifted map as the original frame is sized, and after consent the frame itself', async () => {
+    for (const width of [1280, 375]) {
+      if (width !== 1280) {
+        await context.close();
+        await start(width, 800);
+      }
+      await open(`${german}/busbasis-home-map`);
+      record(`BusBasis home map at ${width}, no choice`);
+      expect(google()).toEqual([]);
+      const box = tab.locator('[data-t="e404"]');
+      const host = tab.locator('[data-t="e405"]');
+      expect(await box.evaluate((el) => getComputedStyle(el).borderTopLeftRadius)).toBe('8px');
+      // Before consent the placeholder takes the original frame's place, at its height.
+      expect((await host.boundingBox())?.height).toBe(busbasis.heights[width]);
+      expect((await placeholder().boundingBox())?.height).toBe(busbasis.heights[width]);
+      expect(await placeholder().textContent()).toContain('Karte laden');
+      await tab.getByRole('button', { name: 'Karte laden' }).click();
+      expect(await frame().count()).toBe(0);
+      await pastGuard();
+      await banner().getByRole('button', { name: 'Akzeptieren' }).click();
+      // After consent the frame: the original's address and title, at the original's height.
+      await expect.poll(() => frame().count()).toBe(1);
+      expect(await frame().getAttribute('title')).toBe(busbasis.title);
+      expect(await frame().getAttribute('src')).toBe(busbasis.src);
+      expect((await frame().boundingBox())?.height).toBe(busbasis.heights[width]);
+      expect((await box.boundingBox())?.height).toBe(busbasis.heights[width]);
+      await expect.poll(() => google()).toEqual([busbasis.src]);
+      record(`BusBasis home map at ${width}, after Karte laden and Akzeptieren`);
+      expect(errors).toEqual([]);
+    }
   });
 });

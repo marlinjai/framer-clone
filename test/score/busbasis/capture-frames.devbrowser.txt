@@ -1,0 +1,19 @@
+// The address of every embedded frame of one live page, and nothing else: for a page
+// frozen before capture.devbrowser.txt recorded them (home, 2026-11-02). capture.sh puts
+// the page on line 1, as for the full capture:
+//
+//   { printf 'const SLUG="home"; const URL_PATH="/de";\n'; cat test/score/busbasis/capture-frames.devbrowser.txt; } > /tmp/frames.js
+//   dev-browser-auto --timeout 120 run /tmp/frames.js
+//   pnpm exec tsx test/score/busbasis/freeze.ts --frames-only home
+//
+// Only a GET, logged out, against https://basiscampberlin.de. The addresses are listed in
+// document order, which is how freeze.ts pairs them with the frozen page's iframes.
+const page = await browser.getPage('bb-fixtures');
+await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'no-preference' });
+await page.setViewportSize({ width: 1280, height: 800 });
+const res = await page.goto('https://basiscampberlin.de' + URL_PATH, { waitUntil: 'load', timeout: 40000 });
+await page.waitForTimeout(2500);
+const frames = await page.evaluate(() => [...document.querySelectorAll('iframe')].map((f) => f.getAttribute('src') || ''));
+await writeFile('bb-' + SLUG + '-frames.json', JSON.stringify({ slug: SLUG, path: URL_PATH, status: res.status(), finalUrl: page.url(), capturedAt: new Date().toISOString(), frames }));
+// The addresses themselves stay in the file: they name the shop's street, which freeze.ts masks.
+console.log(JSON.stringify({ slug: SLUG, status: res.status(), frames: frames.length, hosts: frames.map((src) => src.replace(/^(https?:\/\/[^/?#]+[^?#]*).*$/, '$1')) }));
