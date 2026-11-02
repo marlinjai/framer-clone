@@ -17,6 +17,7 @@ import { completeOauth, oauthState, oauthUrl, readAccount, readOauthState, refre
 import type { OwnerContext } from './ownerRoute';
 import { isStripeTestMode } from './client';
 import { receiptReadiness } from '../receiptReadiness';
+import { demoCheckoutAllowed } from '../demoCheckout';
 
 /** Where the owner manages payments in the editor. */
 export const PAYMENTS_PAGE = '/projects/payments';
@@ -37,7 +38,9 @@ export async function accountStatus(ctx: OwnerContext): Promise<Response> {
   // The shop refuses Stripe payments until the Books can issue their receipts (receiptReadiness.ts): the page says
   // what is missing, so an owner whose account is ready knows why buyers cannot pay.
   const books = await receiptReadiness(ctx.db, ctx.tenantGroupId, ctx.companyId);
-  return Response.json({ status: account.status, testMode: isStripeTestMode(ctx.config), books });
+  // Without a ready account only the demo company's shop takes (demo) orders; every other shop refuses checkout.
+  const demoCheckout = demoCheckoutAllowed(ctx.companyId);
+  return Response.json({ status: account.status, testMode: isStripeTestMode(ctx.config), books, demoCheckout });
 }
 
 export async function onboarding(ctx: OwnerContext, req: Request): Promise<Response> {

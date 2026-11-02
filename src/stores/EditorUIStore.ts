@@ -63,6 +63,17 @@ export interface CanvasCamera {
   write(position: CameraPosition): void;
 }
 
+/**
+ * A component dialog that is open (src/components/ComponentDialogs.tsx): naming a new
+ * component, renaming one, or confirming a delete or a detach. Ids, so a node or a
+ * definition that goes away while the dialog is open shows as gone rather than stale.
+ */
+export type ComponentRequest =
+  | { kind: 'create'; pageId: string; nodeIds: readonly string[] }
+  | { kind: 'rename'; definitionId: string }
+  | { kind: 'delete'; definitionId: string }
+  | { kind: 'detach'; pageId: string; placementId: string };
+
 /** Where to go back to from a definition. Ids, so a reloaded project still resolves it. */
 export interface ComponentReturn {
   pageId: string;
@@ -153,6 +164,8 @@ const EditorUIStore = types.model('EditorUI', {
   // The way back out of the definitions open on the canvas, outermost first. A nested
   // definition adds one. Volatile on purpose: a reload opens on a real page.
   componentTrail: [] as readonly ComponentReturn[],
+  // The component dialog open over the editor, if any. Editor session only.
+  componentRequest: null as ComponentRequest | null,
   // Registered by Canvas while it is mounted.
   canvasCamera: undefined as CanvasCamera | undefined,
   // Phone layout (docs/plans/2026-10-24-editor-on-phones.md, "Quick toolbar"):
@@ -214,6 +227,10 @@ const EditorUIStore = types.model('EditorUI', {
     self.editorNotice = notice;
   },
 
+  setComponentRequest(request: ComponentRequest | null) {
+    self.componentRequest = request;
+  },
+
   setPreviewProductHandle(handle: string | undefined) {
     self.previewProductHandle = handle;
   },
@@ -251,6 +268,7 @@ const EditorUIStore = types.model('EditorUI', {
       self.selectedComponents.clear();
       self.hoverComponent = undefined;
       self.componentTrail = [];
+      self.componentRequest = null;
     }
     self.currentProject = project;
   },

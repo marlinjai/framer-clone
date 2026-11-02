@@ -111,6 +111,19 @@ describe('PaymentsHome', () => {
     expect(document.querySelector('[data-payments-books-blocked]')).toBeNull();
   });
 
+  it('a company other than the demo company hears that its shop takes no orders until Stripe is ready', async () => {
+    respond({ 'GET /api/payments/stripe/account': { status: 200, body: { status: 'not_connected', demoCheckout: false } } });
+    render(<PaymentsHome returned={null} />);
+    expect(await screen.findByText(/Connect a Stripe account to start selling/)).toBeTruthy();
+    expect(document.body.textContent).toMatch(/takes no orders: buyers are told it cannot take payments yet, and nothing is charged/);
+    expect(document.body.textContent).not.toMatch(/demo payments/);
+    cleanup();
+
+    respond({ 'GET /api/payments/stripe/account': { status: 200, body: { status: 'pending', demoCheckout: false } } });
+    render(<PaymentsHome returned={null} />);
+    expect(await screen.findByText(/Stripe still needs details.*takes no orders/)).toBeTruthy();
+  });
+
   it('a refusal of the server is shown, never a blank page', async () => {
     respond({
       'GET /api/payments/stripe/account': {

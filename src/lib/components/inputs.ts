@@ -304,3 +304,10 @@ const ADDRESS_TYPES: ReadonlySet<InputType> = new Set<InputType>(['image', 'link
 export function mayBindToSlot(type: InputType, slot: string): boolean {
   return !ADDRESS_SLOTS.has(slot.toLowerCase()) || ADDRESS_TYPES.has(type);
 }
+
+/** The expression that reads this input into this slot: an image gives its address to `src` and its text to `alt`. */
+export function inputExpressionFor(input: Pick<InputDefinition, 'id' | 'type'>, slot: string): string {
+  if (input.type === 'image' && slot === 'src') return `{{input.${input.id}.src}}`;
+  if (input.type === 'image' && slot === 'alt') return `{{input.${input.id}.alt}}`;
+  return `{{input.${input.id}}}`;
+}

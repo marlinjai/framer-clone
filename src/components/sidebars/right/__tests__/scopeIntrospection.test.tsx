@@ -3,6 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import ComponentModel from '@/models/ComponentModel';
 import { getAvailableScopeFrames } from '@/lib/bindings/scopeIntrospection';
+import { ComponentDefinitionModel } from '@/models/ComponentDefinitionModel';
 
 function deepCollectionTree() {
   return ComponentModel.create({
@@ -124,5 +125,22 @@ describe('getAvailableScopeFrames', () => {
     const rowFrame = frames.find((f) => f.kind === 'row');
     expect(rowFrame).toBeDefined();
     expect(rowFrame?.collectionId ?? null).toBeNull();
+  });
+
+  it('inside a definition offers its inputs instead of the page, and keeps a collection of its own', () => {
+    const definition = ComponentDefinitionModel.create({
+      id: 'card',
+      name: 'Card',
+      inputs: [{ id: 'title', name: 'Title', type: 'text' }],
+      page: {
+        id: 'card-page',
+        metadata: { title: 'Card' },
+        appComponentTree: { id: 'root', type: 'div', componentType: 'host', props: {}, children: [deepCollectionTree() as never] },
+      },
+    });
+    const text = definition.page.findComponent('text-1')!;
+    const frames = getAvailableScopeFrames(text);
+    expect(frames.map((f) => f.kind)).toEqual(['input', 'row']);
+    expect(frames[0]).toMatchObject({ definitionId: 'card', inputs: [{ id: 'title' }] });
   });
 });

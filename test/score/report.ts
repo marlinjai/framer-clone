@@ -255,6 +255,7 @@ export function buildScore(durationSeconds?: number): Score {
   const measured = {
     ...readOut<Partial<Record<Surface, SurfaceResults>>>('components'),
     canvas: readOut<SurfaceResults>('components-canvas'),
+    panel: readOut<SurfaceResults>('components-panel'),
   };
   for (const entry of componentEntries()) {
     const key = rowKey(entry.kind, entry.id);

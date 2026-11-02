@@ -1,22 +1,22 @@
 {
-  "generatedAt": "2026-11-02T10:54:04.266Z",
+  "generatedAt": "2026-11-02T11:54:05.922Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 253,
+  "durationSeconds": 187,
   "matrix": {
     "surfaces": {
       "format": {
-        "pass": 1794,
-        "fail": 39,
+        "pass": 1793,
+        "fail": 40,
         "notTested": 0,
         "total": 1833
       },
       "renderer": {
-        "pass": 1763,
-        "fail": 70,
+        "pass": 1762,
+        "fail": 71,
         "notTested": 0,
         "total": 1833
       },
@@ -27,8 +27,8 @@
         "total": 1833
       },
       "panel": {
-        "pass": 1210,
-        "fail": 623,
+        "pass": 1223,
+        "fail": 610,
         "notTested": 0,
         "total": 1833
       },
@@ -139,14 +139,14 @@
       },
       "html-event-handler": {
         "format": {
-          "pass": 92,
-          "fail": 8,
+          "pass": 91,
+          "fail": 9,
           "notTested": 0,
           "total": 100
         },
         "renderer": {
-          "pass": 92,
-          "fail": 8,
+          "pass": 91,
+          "fail": 9,
           "notTested": 0,
           "total": 100
         },
@@ -509,8 +509,8 @@
           "total": 30
         },
         "panel": {
-          "pass": 0,
-          "fail": 30,
+          "pass": 13,
+          "fail": 17,
           "notTested": 0,
           "total": 30
         },
@@ -3650,7 +3650,7 @@
       "html-element-attribute:video.preload": "pass pass pass pass pass",
       "html-element-attribute:video.src": "pass pass pass pass pass",
       "html-element-attribute:video.width": "pass pass attribute-read-as-style pass attribute-read-as-style",
-      "html-event-handler:onanimationcancel": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onanimationcancel": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
       "html-event-handler:onanimationend": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
       "html-event-handler:onanimationiteration": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
       "html-event-handler:onanimationstart": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
@@ -5074,13 +5074,13 @@
       "aria-pattern:treeview": "pass behaviour-state behaviour-state pass pass",
       "aria-pattern:treegrid": "pass behaviour-state behaviour-state pass pass",
       "aria-pattern:windowsplitter": "pass pass canvas-editor-context pass pass",
-      "component:text": "pass pass pass reusable-components reusable-components",
-      "component:number": "pass pass pass reusable-components reusable-components",
-      "component:toggle": "pass pass pass reusable-components reusable-components",
-      "component:color": "pass pass pass reusable-components reusable-components",
-      "component:image": "pass pass pass reusable-components reusable-components",
-      "component:link": "pass pass pass reusable-components reusable-components",
-      "component:choice": "pass pass pass reusable-components reusable-components",
+      "component:text": "pass pass pass pass reusable-components",
+      "component:number": "pass pass pass pass reusable-components",
+      "component:toggle": "pass pass pass pass reusable-components",
+      "component:color": "pass pass pass pass reusable-components",
+      "component:image": "pass pass pass pass reusable-components",
+      "component:link": "pass pass pass pass reusable-components",
+      "component:choice": "pass pass pass pass reusable-components",
       "component:richtext": "reusable-components reusable-components reusable-components reusable-components reusable-components",
       "component:file": "reusable-components reusable-components reusable-components reusable-components reusable-components",
       "component:date": "reusable-components reusable-components reusable-components reusable-components reusable-components",
@@ -5091,12 +5091,12 @@
       "component:list": "reusable-components reusable-components reusable-components reusable-components reusable-components",
       "component:gallery": "reusable-components reusable-components reusable-components reusable-components reusable-components",
       "component:event": "reusable-components reusable-components reusable-components reusable-components reusable-components",
-      "component:definition": "pass pass pass reusable-components reusable-components",
-      "component:placement": "pass pass pass reusable-components reusable-components",
-      "component:placement-style": "pass pass pass reusable-components reusable-components",
-      "component:nested": "pass pass pass reusable-components reusable-components",
-      "component:cycle-refused": "pass pass pass reusable-components reusable-components",
-      "component:collection-template": "pass pass pass reusable-components reusable-components",
+      "component:definition": "pass pass pass pass reusable-components",
+      "component:placement": "pass pass pass pass reusable-components",
+      "component:placement-style": "pass pass pass pass reusable-components",
+      "component:nested": "pass pass pass pass reusable-components",
+      "component:cycle-refused": "pass pass pass pass reusable-components",
+      "component:collection-template": "pass pass pass pass reusable-components",
       "component:state-hover": "reusable-components reusable-components reusable-components reusable-components reusable-components",
       "component:state-pressed": "reusable-components reusable-components reusable-components reusable-components reusable-components",
       "component:state-focused": "reusable-components reusable-components reusable-components reusable-components reusable-components",
@@ -6168,7 +6168,7 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 0,
+            "pass": 4,
             "total": 4
           },
           "computed-styles": {
@@ -6189,17 +6189,9 @@
             "fixture": "busbasis-home",
             "viewport": "Desktop",
             "state": "initial",
-            "check": "screenshot",
-            "gap": "published-base",
-            "detail": "0.44 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-home",
-            "viewport": "Desktop",
-            "state": "initial",
             "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "10 differences on 10 elements, first: e168: background-image linear-gradient(to right, rgb(255, 255, 255), rgb(163, 163, 163)) became linear-gradient(to right, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0))"
+            "gap": "blocked-embedded-content",
+            "detail": "1 differences on 1 elements, first: e405: not in the replica"
           },
           {
             "fixture": "busbasis-home",
@@ -6213,17 +6205,9 @@
             "fixture": "busbasis-home",
             "viewport": "Desktop",
             "state": "hover e41",
-            "check": "screenshot",
-            "gap": "published-base",
-            "detail": "0.44 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-home",
-            "viewport": "Desktop",
-            "state": "hover e41",
             "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "10 differences on 10 elements, first: e168: background-image linear-gradient(to right, rgb(255, 255, 255), rgb(163, 163, 163)) became linear-gradient(to right, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0))"
+            "gap": "blocked-embedded-content",
+            "detail": "1 differences on 1 elements, first: e405: not in the replica"
           },
           {
             "fixture": "busbasis-home",
@@ -6238,24 +6222,16 @@
             "viewport": "Desktop",
             "state": "hover e41",
             "check": "interaction",
-            "gap": "published-base",
+            "gap": "blocked-embedded-content",
             "detail": "the replica did not end up where the original did"
           },
           {
             "fixture": "busbasis-home",
             "viewport": "Tablet",
             "state": "initial",
-            "check": "screenshot",
-            "gap": "published-base",
-            "detail": "0.57 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-home",
-            "viewport": "Tablet",
-            "state": "initial",
             "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "10 differences on 10 elements, first: e168: background-image linear-gradient(to right, rgb(255, 255, 255), rgb(163, 163, 163)) became linear-gradient(to right, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0))"
+            "gap": "blocked-embedded-content",
+            "detail": "1 differences on 1 elements, first: e405: not in the replica"
           },
           {
             "fixture": "busbasis-home",
@@ -6269,17 +6245,9 @@
             "fixture": "busbasis-home",
             "viewport": "Mobile",
             "state": "initial",
-            "check": "screenshot",
-            "gap": "published-base",
-            "detail": "0.85 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-home",
-            "viewport": "Mobile",
-            "state": "initial",
             "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "10 differences on 10 elements, first: e168: background-image linear-gradient(to right, rgb(255, 255, 255), rgb(163, 163, 163)) became linear-gradient(to right, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0))"
+            "gap": "blocked-embedded-content",
+            "detail": "1 differences on 1 elements, first: e405: not in the replica"
           },
           {
             "fixture": "busbasis-home",
@@ -6348,19 +6316,14 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.004407319568452381,
+            "ratio": 0,
             "elementsCompared": 532,
-            "elementsDiffering": 10,
-            "differences": 10,
+            "elementsDiffering": 1,
+            "differences": 1,
             "byGap": {
-              "published-base": 9,
               "blocked-embedded-content": 1
             },
             "byProperty": [
-              [
-                "background-image",
-                9
-              ],
               [
                 "missing",
                 1
@@ -6370,19 +6333,14 @@
           {
             "viewport": "Desktop",
             "state": "hover e41",
-            "ratio": 0.004407319568452381,
+            "ratio": 0,
             "elementsCompared": 532,
-            "elementsDiffering": 10,
-            "differences": 10,
+            "elementsDiffering": 1,
+            "differences": 1,
             "byGap": {
-              "published-base": 9,
               "blocked-embedded-content": 1
             },
             "byProperty": [
-              [
-                "background-image",
-                9
-              ],
               [
                 "missing",
                 1
@@ -6392,19 +6350,14 @@
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0.005712011681348142,
+            "ratio": 0,
             "elementsCompared": 532,
-            "elementsDiffering": 10,
-            "differences": 10,
+            "elementsDiffering": 1,
+            "differences": 1,
             "byGap": {
-              "published-base": 9,
               "blocked-embedded-content": 1
             },
             "byProperty": [
-              [
-                "background-image",
-                9
-              ],
               [
                 "missing",
                 1
@@ -6414,19 +6367,14 @@
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0.008511234630284656,
+            "ratio": 0,
             "elementsCompared": 532,
-            "elementsDiffering": 10,
-            "differences": 10,
+            "elementsDiffering": 1,
+            "differences": 1,
             "byGap": {
-              "published-base": 9,
               "blocked-embedded-content": 1
             },
             "byProperty": [
-              [
-                "background-image",
-                9
-              ],
               [
                 "missing",
                 1
@@ -7829,14 +7777,6 @@
         "styleDifferences": 0
       },
       {
-        "id": "published-base",
-        "pages": [
-          "busbasis-home"
-        ],
-        "needs": 0,
-        "styleDifferences": 36
-      },
-      {
         "id": "blocked-embedded-content",
         "pages": [
           "busbasis-home"
@@ -8662,12 +8602,12 @@
     {
       "id": "blocked-event-handlers",
       "description": "A stored event handler attribute is a string of code, so both renderers drop it on purpose (blockedNodes.ts). A cell here means no stored action ran from a real cause: the note says why, and the published page and the format already run most of them (events.score.ts). The canvas, the panel and the AI columns still wait for slices B10 to B12.",
-      "matrixCells": 316,
+      "matrixCells": 318,
       "corpusChecks": 0,
       "fixtures": [],
       "onlyGapOf": [],
       "roundTripCases": 0,
-      "cost": 316
+      "cost": 318
     },
     {
       "id": "ai-tag-allowlist",
@@ -8682,12 +8622,12 @@
     {
       "id": "reusable-components",
       "description": "A promise of the reusable component format (an input type, a placement, a state or an interaction) that this surface does not keep yet.",
-      "matrixCells": 111,
+      "matrixCells": 98,
       "corpusChecks": 0,
       "fixtures": [],
       "onlyGapOf": [],
       "roundTripCases": 0,
-      "cost": 111
+      "cost": 98
     },
     {
       "id": "panel-no-tag-choice",
@@ -8703,13 +8643,13 @@
       "id": "blocked-embedded-content",
       "description": "What the render gate refuses (blockedNodes.ts and renderVocabulary.ts): embedded content (iframe, object, embed, ...), although these are ordinary content elements, and attributes that act by themselves (ping, the shadow root ones).",
       "matrixCells": 78,
-      "corpusChecks": 4,
+      "corpusChecks": 9,
       "fixtures": [
         "busbasis-home"
       ],
       "onlyGapOf": [],
       "roundTripCases": 0,
-      "cost": 82
+      "cost": 87
     },
     {
       "id": "behaviour-state",
@@ -8786,18 +8726,6 @@
       "onlyGapOf": [],
       "roundTripCases": 0,
       "cost": 15
-    },
-    {
-      "id": "published-base",
-      "description": "The published route ships the root layout's sheet to every visitor (Tailwind's reset, the theme, the base layer), and the page base of a site takes that out again. A check here fails with that sheet in place and passes on a page without it, so the page base left something behind. Measured, not guessed: the same replica matches its original on a page without the base.",
-      "matrixCells": 0,
-      "corpusChecks": 9,
-      "fixtures": [
-        "busbasis-home"
-      ],
-      "onlyGapOf": [],
-      "roundTripCases": 0,
-      "cost": 9
     },
     {
       "id": "import-dynamic-logic",
@@ -10389,7 +10317,7 @@
           "converted": 5,
           "adapted": 3,
           "rebuilt": 0,
-          "left": 7
+          "left": 8
         },
         "atoms": {
           "converted": 11,
@@ -10402,6 +10330,7 @@
         "blocking": [
           "This value is only known when the component runs.",
           "Spread props are not converted yet.",
+          "This stylesheet import is never followed.",
           "Part of this class string is only known when the component runs.",
           "Some of these classes are not converted: the lines for this element say which.",
           "The rule parser refuses this output."
@@ -11015,13 +10944,13 @@
         "fixture": "static-badge",
         "group": "hand-written",
         "theme": "repo",
-        "verdict": "imported-with-differences",
+        "verdict": "not-imported",
         "readVerdict": "not-imported",
         "lines": {
           "converted": 13,
           "adapted": 3,
           "rebuilt": 0,
-          "left": 0
+          "left": 1
         },
         "atoms": {
           "converted": 31,
@@ -11032,6 +10961,7 @@
         },
         "coverage": 1,
         "blocking": [
+          "This stylesheet import is never followed.",
           "The rule parser refuses this output."
         ],
         "conservation": {
@@ -11127,13 +11057,13 @@
         "fixture": "static-card",
         "group": "hand-written",
         "theme": "repo",
-        "verdict": "imported-with-differences",
+        "verdict": "not-imported",
         "readVerdict": "not-imported",
         "lines": {
           "converted": 19,
           "adapted": 6,
           "rebuilt": 0,
-          "left": 0
+          "left": 1
         },
         "atoms": {
           "converted": 37,
@@ -11144,6 +11074,7 @@
         },
         "coverage": 1,
         "blocking": [
+          "This stylesheet import is never followed.",
           "The rule parser refuses this output."
         ],
         "conservation": {
@@ -11245,7 +11176,7 @@
           "converted": 6,
           "adapted": 2,
           "rebuilt": 0,
-          "left": 9
+          "left": 10
         },
         "atoms": {
           "converted": 11,
@@ -11258,6 +11189,7 @@
         "blocking": [
           "An event handler is not converted yet.",
           "An unknown component: it is not local, and its package is not read yet.",
+          "This stylesheet import is never followed.",
           "Part of this class string is only known when the component runs.",
           "Tailwind produced nothing for this class.",
           "Some of these classes are not converted: the lines for this element say which.",

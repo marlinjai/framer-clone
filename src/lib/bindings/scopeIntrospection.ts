@@ -13,9 +13,11 @@
 // collectionId returned here. It NEVER throws; an orphan / detached node simply
 // yields the page frame only.
 
-import { getParent, hasParent, isStateTreeNode } from 'mobx-state-tree';
+import { getParent, getParentOfType, hasParent, hasParentOfType, isStateTreeNode } from 'mobx-state-tree';
 import type { ComponentInstance } from '@/models/ComponentModel';
+import { ComponentDefinitionModel, type ComponentDefinitionInstance } from '@/models/ComponentDefinitionModel';
 import type { ReadBinding } from '@/lib/bindings/types';
+import type { InputDefinition } from '@/lib/components/inputs';
 
 /** The kind of data component an ancestor row frame is sourced from. */
 export type ScopeFrameSource = 'collection' | 'record-view' | 'table-view';
@@ -30,11 +32,27 @@ export type ScopeFrameSource = 'collection' | 'record-view' | 'table-view';
  *   which data component supplied the frame.
  * - `product`: present when an ancestor is a Product list or Product detail,
  *   which push a product frame (`{{product.*}}`) at render time.
+ * - `input`: the node is inside a reusable component's definition, which reads
+ *   what each placement passes (`{{input.*}}`). It replaces the page frame there:
+ *   a definition that reads the page, or a collection around one placement, works
+ *   in one place and silently nowhere else. `inputs` are the definition's.
  */
 export interface ScopeFrameInfo {
-  kind: 'page' | 'row' | 'product';
+  kind: 'page' | 'row' | 'product' | 'input';
   collectionId?: string | null;
   source?: ScopeFrameSource;
+  inputs?: readonly InputDefinition[];
+  definitionId?: string;
+}
+
+/** The reusable component whose definition holds this node, if one does. */
+export function owningDefinition(node: ComponentInstance): ComponentDefinitionInstance | undefined {
+  if (!isStateTreeNode(node)) return undefined;
+  try {
+    return hasParentOfType(node, ComponentDefinitionModel) ? getParentOfType(node, ComponentDefinitionModel) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -120,7 +138,7 @@ function rowFrameFor(node: ComponentInstance): ScopeFrameInfo | null {
 /**
  * Walk a node's ancestry and return the scope frames available to it.
  *
- * Always returns a page frame. When the node lives (at any depth) inside a
+ * Returns a page frame, or inside a definition an input frame. When the node lives (at any depth) inside a
  * Collection / RecordView / TableView, the INNERMOST such ancestor contributes
  * a row frame carrying that ancestor's source collectionId; inside a Product
  * list or Product detail a product frame is added. A deeply-nested
@@ -128,7 +146,10 @@ function rowFrameFor(node: ComponentInstance): ScopeFrameInfo | null {
  * Collection ancestor's collectionId.
  */
 export function getAvailableScopeFrames(node: ComponentInstance): ScopeFrameInfo[] {
-  const frames: ScopeFrameInfo[] = [{ kind: 'page' }];
+  const definition = owningDefinition(node);
+  const frames: ScopeFrameInfo[] = definition
+    ? [{ kind: 'input', inputs: definition.inputs, definitionId: definition.id }]
+    : [{ kind: 'page' }];
 
   let current = getParentComponent(node);
   let hasRow = false;

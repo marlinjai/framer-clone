@@ -64,6 +64,7 @@ import { sweepExpiredPayments } from '@/server/commerce/payment/payments';
 import { UnknownVariantError } from '@/server/commerce/repository/errors';
 import { readOrderTotal, resolveOrderLines } from '@/server/commerce/repository/storefront';
 import { resolvePublishedSite } from '@/server/sites/publicResolver';
+import { DEMO_COMPANY_ID } from '@/lib/renderer/server/demoTenant';
 import { POST } from '../route';
 
 const createOrderMock = vi.mocked(createOrder);
@@ -84,15 +85,19 @@ function postReq(body: unknown, host = 'store-a.example.com'): Request {
   });
 }
 
-/** The company the storefront site belongs to (sites.company_id, 020_catalogue_company). */
-const COMPANY_A = '018f9c10-0000-7000-8000-0000000000a1';
+/**
+ * The company the storefront site belongs to (sites.company_id, 020_catalogue_company). The demo company: with no
+ * Stripe here every order takes the demo provider, which only the demo company may use (demoCheckout.ts).
+ */
+const COMPANY_A = DEMO_COMPANY_ID;
+const ANOTHER_COMPANY = '018f9c10-0000-7000-8000-0000000000a1';
 
-function site(tenantGroupId: unknown) {
+function site(tenantGroupId: unknown, companyId: string = COMPANY_A) {
   return {
     siteId: 'site_a',
     workspaceId: 'ws_a',
     tenantGroupId,
-    companyId: COMPANY_A,
+    companyId,
   } as unknown as Awaited<ReturnType<typeof resolvePublishedSite>>;
 }
 
@@ -115,6 +120,17 @@ beforeEach(() => {
   );
   readTotalMock.mockResolvedValue({ totalCents: 4760, currency: 'EUR', orderNumber: 'ORD-000007' });
   createOrderMock.mockResolvedValue({ ok: true, orderId: 'order_created' });
+});
+
+describe('POST /api/commerce/orders without Stripe, for a company other than the demo company', () => {
+  it('refuses the order with 503 payments_unavailable before anything is reserved', async () => {
+    resolveSiteMock.mockResolvedValue(site(TG_A, ANOTHER_COMPANY));
+    const res = await POST(postReq({ lines: [{ variantId: 'var_1', quantity: 1 }] }));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ error: { code: 'payments_unavailable' } });
+    expect(createOrderMock).not.toHaveBeenCalled();
+    expect(sweepMock).not.toHaveBeenCalled();
+  });
 });
 
 describe('POST /api/commerce/orders closes expired holds first', () => {

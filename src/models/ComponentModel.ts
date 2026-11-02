@@ -807,6 +807,18 @@ const ComponentModel: any = ComponentBase
       self.bindings = {};
     },
 
+    // A placement's Reset all: every input value, the initial state and what binds
+    // them go, as one step, so it reads as a fresh placement. How it sits on the page
+    // (size, position, effects) stays.
+    resetPlacementValues() {
+      if (!isPlacementType(self.type)) return;
+      const { inputs: _inputs, state: _state, ...props } = self.props as Record<string, unknown>;
+      void _inputs;
+      void _state;
+      self.props = props;
+      self.bindings = Object.fromEntries(Object.entries(self.bindings).filter(([slot]) => !isPlacementSlot(slot)));
+    },
+
     // ---------- QUERY (MST-WRITE) ----------
     // Structured filter / sort / limit for data components (Collection /
     // TableView). The QueryBuilder picker writes the whole Query object here.
