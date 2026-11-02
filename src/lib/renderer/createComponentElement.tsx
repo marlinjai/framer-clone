@@ -15,9 +15,12 @@ import { getParent, hasParent, isStateTreeNode } from 'mobx-state-tree';
 import { ComponentInstance } from '@/models/ComponentModel';
 import { isVoidTag } from '@/lib/drag';
 import {
+  contentBelow,
+  type ForeignContent,
+  dependsOnSvgContent,
   isBlockedTag,
   withoutBlockedProps,
-  withoutDocumentId,
+  withoutClobberingId,
   refuseSubmit,
   withoutEditorSurfaceProps,
 } from '@/lib/renderer/blockedNodes';
@@ -41,6 +44,7 @@ import CheckoutButton from '@/lib/renderer/commerce/CheckoutButton';
 import { CommerceErrorBoundary, type CommerceControlKind } from '@/lib/renderer/commerce/CommerceErrorBoundary';
 import { createEditorFormElement, formKindOfComponent } from '@/lib/renderer/forms/editorFormElement';
 import { isStickyCta } from '@/lib/stickyCta/stickyCta';
+import { formKindOf } from '@/lib/forms/definition';
 import { createStickyCtaElement } from '@/lib/renderer/stickyCta/stickyCtaElement';
 
 // The six Track C commerce kinds. Disjoint from the CMS kinds, so the commerce
@@ -105,18 +109,28 @@ export interface CreateComponentElementOptions {
   mode?: 'editor' | 'preview';
 }
 
-/** Whether an ancestor makes this node SVG content. MST nodes only; a tree outside MST has no parent to ask. */
-function isSvgContent(component: ComponentInstance): boolean {
-  if (String(component.type).toLowerCase() !== 'title') return false;
+/** The host ancestors of a node, nearest first. MST nodes only; a tree outside MST has no parent to ask. */
+function ancestorsOf(component: ComponentInstance): { type?: unknown; props?: unknown }[] {
+  const out: { type?: unknown; props?: unknown }[] = [];
   let current: unknown = component;
-  for (let i = 0; i < 128 && isStateTreeNode(current as object) && hasParent(current as object); i++) {
+  for (let i = 0; i < 256 && isStateTreeNode(current as object) && hasParent(current as object); i++) {
     current = getParent(current as object);
-    const type = (current as { type?: unknown }).type;
-    if (typeof type !== 'string') continue;
-    if (type.toLowerCase() === 'svg') return true;
-    if (type.toLowerCase() === 'foreignobject') return false;
+    if (!Array.isArray(current)) out.push(current as { type?: unknown; props?: unknown });
   }
-  return false;
+  return out;
+}
+
+/** What this node stands in for the HTML parser, when its tag depends on that. */
+function foreignContentOf(component: ComponentInstance): ForeignContent {
+  if (!dependsOnSvgContent(String(component.type))) return false;
+  const types = ancestorsOf(component).map((node) => node.type).filter((type): type is string => typeof type === 'string');
+  return types.reduceRight<ForeignContent>((content, type) => contentBelow(type, content), false);
+}
+
+/** A stored plain form under a live form: the parser drops it, and React would make it, see FormIsland. */
+function isFormInLiveForm(component: ComponentInstance): boolean {
+  if (String(component.type).toLowerCase() !== 'form') return false;
+  return ancestorsOf(component).some((node) => formKindOf(node.props as Record<string, unknown> | undefined) === 'form');
 }
 
 export function createComponentElement(
@@ -138,11 +152,11 @@ export function createComponentElement(
   if (isComponentPlaceholderType(component.type)) return null;
 
   // Only a host's type is a tag: otherwise it names an entry of the registry below.
-  if (component.isHostElement && isBlockedTag(component.type, isSvgContent(component))) return null;
+  if (component.isHostElement && isBlockedTag(component.type, foreignContentOf(component))) return null;
 
   const content = ownTextThenChildren(rawTextChildren, children) as React.ReactNode;
   const identity = options?.identity;
-  const surfaceProps = withoutEditorSurfaceProps(withoutDocumentId(component.type, withoutBlockedProps(finalProps)));
+  const surfaceProps = withoutEditorSurfaceProps(component.type, withoutClobberingId(component.type, withoutBlockedProps(finalProps)));
   const safeProps =
     String(component.type).toLowerCase() === 'form' ? { ...surfaceProps, onSubmit: refuseSubmit } : surfaceProps;
   const propsWithIdentity: Record<string, unknown> = identity
@@ -361,7 +375,7 @@ export function createComponentElement(
       return React.createElement(component.type as any, propsWithIdentity, placeholder);
     }
 
-    return React.createElement(component.type as any, propsWithIdentity, content);
+    return React.createElement((isFormInLiveForm(component) ? 'div' : component.type) as any, propsWithIdentity, content);
   }
 
   const Impl = (window as any).__componentRegistry?.[component.type];

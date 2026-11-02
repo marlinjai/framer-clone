@@ -479,6 +479,54 @@ describe('stored rules on the mounted editor', () => {
     });
   });
 
+  // The slice 3 review: a rule from a stranger must not look one way to the person editing and another to every
+  // visitor. Outward conditions are constant on the canvas already. What the renderer writes on the node itself
+  // (`style`, `class`, `id`, its marks) differed, so the parser refuses reading it, and both surfaces must agree.
+  describe('a stored rule reads the same in the editor and on a page', () => {
+    const FORMS: Record<string, Partial<Rule>> = {
+      'the wrapper class, as a substring': { selector: '&:is([class*="ground-wrap"] *)' },
+      'the wrapper class, as a word': { selector: '&:is([class~="ground-wrapper"] *)' },
+      'the wrapper class': { selector: '&:is(.ground-wrapper *)' },
+      'the wrapper class, from the root': { selector: '&:is(:root:has(.ground-wrapper) *)' },
+      'the wrapper class, as a scope': { selector: '&', at: ['@scope (.ground-wrapper)'] },
+      'the wrapper id': { selector: '&:is([id^="ground-wrapper"] *)' },
+      'the camera transform': { selector: '&:is([style*="transform"] *)' },
+      'the canvas wrapper attribute': { selector: '&:is([data-ground] *)' },
+      'the renderer mark inside': { selector: '&:has([data-fc-n])' },
+      'the canvas mark on the node': { selector: '&[data-inner-component-id]' },
+      'the node style': { selector: '&[style]' },
+      'a node style substring': { selector: '&[style*="width"]' },
+      'no node style': { selector: '&:not([style])' },
+      'the node class': { selector: '&[class]' },
+      'no node class': { selector: '&:not([class])' },
+      'a node class substring': { selector: '&[class*="fc"]' },
+      'a child style': { selector: '& [style]' },
+      'the runtime show mark': { selector: '&:not([data-u-on])' },
+      'the stored class, the control': { selector: '&.mine' },
+      'the stored id, the control': { selector: '&#own' },
+    };
+    const ON = 'rgb(9, 9, 9)';
+    const OFF = 'rgb(1, 1, 1)';
+    const treeOf = (form: Partial<Rule>) =>
+      pageOf(
+        node('a', { id: 'own', className: 'mine', 'data-probe': 'a', style: { ...BOX, outlineStyle: 'solid', outlineColor: OFF }, rules: [{ id: 'r', style: { outlineColor: ON }, ...form }] },
+          node('kid', { 'data-probe': 'kid', style: { width: '10px', height: '10px', outlineStyle: 'solid', outlineColor: OFF } })),
+      );
+
+    it.each(Object.keys(FORMS))('%s', async (name) => {
+      const tree = treeOf(FORMS[name]);
+      const canvas = await mounted(tree);
+      const onCanvas = [await computed(canvas, 'a', 'outline-color'), await computed(canvas, 'kid', 'outline-color')];
+      await canvas.close();
+      const page = await browser.newPage();
+      await page.setContent(publishedDocument(renderPublished(tree)));
+      const onPage = await Promise.all(['a', 'kid'].map((probe) => page.locator(`[data-probe="${probe}"]`).evaluate((el) => getComputedStyle(el).outlineColor)));
+      await page.close();
+      expect(onCanvas).toEqual(onPage);
+      if (name.endsWith('the control')) expect(onPage[0]).toBe(ON);
+    });
+  });
+
   it('previews a hover preset without letting it beat an inline value', async () => {
     const page = await mounted(
       pageOf(

@@ -95,8 +95,11 @@ export const REFUSED_RENDER_ATTRIBUTES: ReadonlySet<string> = new Set(words(`
  * author's own name that merely starts alike is kept. renderVocabulary.test.ts fails
  * when the code starts using a `data-fc-` name that is neither here nor issued. The
  * bare `data-fc-sticky-cta` passes: hoistStickyCta writes it, and it only pins a bar.
+ * `data-fc-theme` and its `-mode` and `-sheet` forms belong to the theme sheet
+ * (src/lib/site/theme.ts): a stored node carrying `data-fc-theme="frame"` would take
+ * the page background on a surface, and one carrying the mode would show the other mode.
  */
-const RENDERER_ATTRIBUTE = /^data-fc-(?:consent|sticky-cta-|site-base|page-base|fonts|effects|rules|responsive|behaviour|b$)/;
+const RENDERER_ATTRIBUTE = /^data-fc-(?:consent|sticky-cta-|site-base|page-base|fonts|effects|rules|responsive|behaviour|theme|b$)/;
 
 /** A custom element's shape. A colon would let createElementNS read `x-y:script` as `script`. */
 const CUSTOM_ELEMENT = /^[a-z][a-z0-9._]*-[a-z0-9._-]*$/;
@@ -112,6 +115,26 @@ const DATA_OR_ARIA = /^(?:data|aria)-[a-z0-9._:-]+$/;
  * renderVocabulary.test.ts asks for a decision.
  */
 const AUTHOR_ATTRIBUTE = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$/;
+
+/**
+ * Names a renderer reads or writes itself. Markup ignores case, so `ACTION` beside the
+ * `action` a live form writes is a second spelling of one attribute, and the first
+ * wins in server markup. Every check here compares in lower case, and stored names
+ * stay as written, because SVG's are not (`viewBox`), but code that reads `props.action`
+ * would not see `ACTION`. So these have one spelling, or React's, and no other.
+ */
+const ONE_SPELLING = new Set(words(`
+  action children class classname data-component-kind data-form-id data-form-kind disabled enctype
+  form formaction formenctype formmethod formnovalidate formtarget href id key method name novalidate
+  ref rel style target type
+`));
+const REACT_SPELLINGS = new Set(words('className encType formAction formEncType formMethod formNoValidate formTarget noValidate'));
+
+/** Whether this spelling of a name is one no renderer would recognise as that name. */
+export function isOtherSpelling(name: string): boolean {
+  const lower = name.toLowerCase();
+  return name !== lower && ONE_SPELLING.has(lower) && !REACT_SPELLINGS.has(name);
+}
 
 /** Whether a page may hold this tag, in any case. */
 export function isRenderedTag(tag: string): boolean {

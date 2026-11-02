@@ -26,6 +26,7 @@ import { Prisma, type PrismaClient } from '@prisma/client';
 import { getPrismaClient } from '@/server/db';
 import ProjectModel, { type ProjectModelType } from '@/models/ProjectModel';
 import {
+  mergeKeptSiteSettings,
   projectToPersisted,
   persistedToProjectSnapshot,
   type PersistedSite,
@@ -248,7 +249,7 @@ export class SiteRepository {
       // refuse rather than overwrite or leak.
       const existing = await tx.site.findUnique({
         where: { id: persisted.siteId },
-        select: { id: true, workspaceId: true, redirects: true },
+        select: { id: true, workspaceId: true, redirects: true, siteSettings: true },
       });
       if (existing && existing.workspaceId !== scope.workspaceId) {
         throw new SiteNotFoundError(persisted.siteId);
@@ -306,13 +307,17 @@ export class SiteRepository {
         ? { components: persisted.components as unknown as Prisma.InputJsonValue }
         : {};
 
+      // `theme` and `head` the body lacked (a tab built before they existed) keep
+      // what the row stores: the column is one blob, replaced whole below.
+      const siteSettings = mergeKeptSiteSettings(persisted.siteSettings, existing?.siteSettings);
+
       const updateData = {
         description: persisted.description,
         analyticsProjectId: persisted.analyticsProjectId,
         ingestionEndpoint: persisted.ingestionEndpoint,
         apiKeyRef: persisted.apiKeyRef,
         lumitraEnabled: persisted.lumitraEnabled,
-        siteSettings: persisted.siteSettings as unknown as Prisma.InputJsonValue,
+        siteSettings: siteSettings as unknown as Prisma.InputJsonValue,
         // projectCreatedAt is immutable (set on create); only the
         // application "last edited" time advances on update.
         projectUpdatedAt: new Date(persisted.projectUpdatedAt),
@@ -345,7 +350,7 @@ export class SiteRepository {
             ingestionEndpoint: persisted.ingestionEndpoint,
             apiKeyRef: persisted.apiKeyRef,
             lumitraEnabled: persisted.lumitraEnabled,
-            siteSettings: persisted.siteSettings as unknown as Prisma.InputJsonValue,
+            siteSettings: siteSettings as unknown as Prisma.InputJsonValue,
             projectCreatedAt: new Date(persisted.projectCreatedAt),
             projectUpdatedAt: new Date(persisted.projectUpdatedAt),
             redirects: redirects as unknown as Prisma.InputJsonValue,

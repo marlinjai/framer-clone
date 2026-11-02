@@ -54,6 +54,7 @@ import { localeOf, type FieldValue, type FormLocale } from '@/lib/forms/validati
 import { SUBMIT_PATH, sendForm } from '@/lib/forms/sendForm';
 import { FormFieldView } from './FormFieldView';
 import { renderNodeChildren, nodeDomProps } from '../server/renderComponentNode';
+import { withoutClobberingId, withoutFormOverrides } from '../blockedNodes';
 
 interface FormRuntime {
   formId: string;
@@ -111,6 +112,21 @@ function NestedFormShell({ node, scope }: { node: ComponentNode; scope: BindingS
     domProps,
     renderNodeChildren(node, scope),
   );
+}
+
+/**
+ * A live form's tree with nothing that could send it past the platform's submission:
+ * no control override, and no stored plain form, which the parser drops from server
+ * markup and a client render then makes, taking the live form's fields with it.
+ */
+function withoutOverridesBelow(node: ComponentNode): ComponentNode {
+  return {
+    ...node,
+    ...(typeof node.type === 'string' && node.type.toLowerCase() === 'form' ? { type: 'div' } : {}),
+    ...(node.props ? { props: withoutFormOverrides(node.props) } : {}),
+    ...(node.bindings ? { bindings: withoutFormOverrides(node.bindings) as ComponentNode['bindings'] } : {}),
+    children: node.children?.map(withoutOverridesBelow),
+  };
 }
 
 function LiveForm({ node, scope, renderedAt }: FormIslandProps) {
@@ -221,6 +237,7 @@ function LiveForm({ node, scope, renderedAt }: FormIslandProps) {
   };
 
   const runtime: FormRuntime = { formId, fields, fieldsByNode, state, dispatch, hydrated };
+  const contents = useMemo(() => withoutOverridesBelow(node), [node]);
   const domProps = stripFormConfigProps(nodeDomProps(node));
 
   return (
@@ -255,7 +272,7 @@ function LiveForm({ node, scope, renderedAt }: FormIslandProps) {
             </button>
           </div>
         ) : (
-          renderNodeChildren(node, scope)
+          renderNodeChildren(contents, scope)
         )}
         <p
           id={formErrorId}
@@ -300,7 +317,8 @@ export function FormFieldIsland({ node }: { node: ComponentNode }) {
 /** The submit button: disabled with the loading label and a spinner while sending. */
 export function FormSubmitIsland({ node }: { node: ComponentNode }) {
   const runtime = useContext(FormRuntimeContext);
-  const domProps = stripFormConfigProps(nodeDomProps(node));
+  // Always a button, whatever the node's type.
+  const domProps = withoutClobberingId('button', stripFormConfigProps(nodeDomProps(node)));
   const label = typeof (node.props as any)?.children === 'string' ? ((node.props as any).children as string) : 'Send';
   const loadingLabel =
     typeof (node.props as any)?.loadingLabel === 'string' && (node.props as any).loadingLabel.trim()

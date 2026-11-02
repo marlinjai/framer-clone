@@ -9,7 +9,8 @@
 
 import ts from 'typescript';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
-import { isDroppedProp, isBlockedTag, safeInlineStyle, withoutDocumentId } from '@/lib/renderer/blockedNodes';
+import { contentBelow, type ForeignContent, isDroppedId, isDroppedProp, isBlockedTag, safeInlineStyle } from '@/lib/renderer/blockedNodes';
+import { isPlatformAttribute } from '@/lib/renderer/platformAttributes';
 import { isRenderedAttribute } from '@/lib/renderer/renderVocabulary';
 import { TEXT_NODE_TYPE, refusesBareText } from '@/lib/renderer/textNode';
 import { isVoidTag } from '@/lib/drag/voidTags';
@@ -19,21 +20,6 @@ import type { ImportBudget } from './budget';
 import type { Claim, Ledger } from './ledger';
 import type { DetailKey, LineKind } from './report';
 import { UNKNOWN, createEvaluator, fileScope, functionScope, holdsEffect, toPlain, type Evaluated, type Evaluator, type Scope } from './staticEval';
-
-/**
- * Attributes the code reads as instructions. An island's marker turns a `div` into a form, and an editor
- * mark makes a node the target of a click. The names outside these families are the ones
- * `platformAttributes.test.ts` finds read in `src`, so a new one fails there until it is judged here.
- */
-const PLATFORM_FAMILY = /^data-(?:fc|fcs|fx|u|island|component|inner-component|form|sticky|repeat|ground|viewport|breakpoint|floating-root|preview|editor|camera|lenis)(?:-|$)/i;
-const PLATFORM_NAMES: ReadonlySet<string> = new Set([
-  'data-add-line', 'data-discard-row', 'data-drag-handle', 'data-escape-local', 'data-focus-key', 'data-haptics', 'data-import-all',
-  'data-import-row', 'data-layer-breakpoint', 'data-layer-row', 'data-logo-choose', 'data-menu-item', 'data-notice-action',
-  'data-outline-select', 'data-page-overlay', 'data-page-settings-button', 'data-pan-cursor', 'data-placement', 'data-placement-root', 'data-pointer',
-  'data-radius-corner', 'data-resize-direction', 'data-resume-offer', 'data-shown', 'data-spacing-band', 'data-spacing-handle', 'data-text-node-row',
-]);
-
-export const isPlatformAttribute = (name: string): boolean => PLATFORM_FAMILY.test(name) || PLATFORM_NAMES.has(name.toLowerCase());
 
 /**
  * The names this layer decides on, each with its one spelling. The render gate lower-cases a name and HTML
@@ -175,7 +161,7 @@ interface LayerContext {
 interface Place {
   key: string;
   scope: Scope;
-  insideSvg: boolean;
+  foreign: ForeignContent;
   parentTag: string;
   /** Elements above this one, in the output: inlining multiplies what the source's own depth allows. */
   depth: number;
@@ -245,7 +231,7 @@ function readAttribute({ evaluator, budget }: LayerContext, attribute: ts.JsxAtt
   if (value === null || value === undefined) return { claim: converted('attribute', 'emptyValue', key), reads };
   const stored = toPlain(value);
   if (isDroppedProp(name, stored)) return { claim: left('refused-attribute', 'refusedAttribute', key) };
-  if (name === 'id' && withoutDocumentId(tag, { id: stored }).id === undefined) return { claim: left('refused-attribute', 'refusedAttribute', key) };
+  if (name === 'id' && isDroppedId(tag, stored)) return { claim: left('refused-attribute', 'refusedAttribute', key) };
   const external = typeof stored === 'string' && fetchesElsewhere(lower, tag.toLowerCase(), stored);
   return {
     store: { name, value: stored },
@@ -362,11 +348,11 @@ function settleContents(context: LayerContext, node: ComponentNode, contents: Co
 
 function convertElement(context: LayerContext, element: ts.JsxElement | ts.JsxSelfClosingElement, tag: string, place: Place, out: Content[]): void {
   const { file, ledger, budget } = context;
-  const { key, scope, insideSvg, depth } = place;
+  const { key, scope, foreign, depth } = place;
   budget.checkOutputDepth(depth);
   budget.chargeNodes(1);
   const open = ts.isJsxElement(element) ? element.openingElement : element;
-  if (!PLAIN_TAG.test(tag) || isBlockedTag(tag, insideSvg)) {
+  if (!PLAIN_TAG.test(tag) || isBlockedTag(tag, foreign)) {
     ledger.claimSubtree(file.source, element, left('refused-tag', 'refusedTag', key));
     return;
   }
@@ -384,7 +370,7 @@ function convertElement(context: LayerContext, element: ts.JsxElement | ts.JsxSe
       for (const child of element.children) ledger.claimSubtree(file.source, child, left('expression', 'voidChildren', key));
     } else {
       const lower = tag.toLowerCase();
-      const inner = { key, scope, insideSvg: lower !== 'foreignobject' && (insideSvg || lower === 'svg'), parentTag: tag, depth: depth + 1 };
+      const inner = { key, scope, foreign: contentBelow(lower, foreign), parentTag: tag, depth: depth + 1 };
       convertChildren(context, element.children, inner, contents);
     }
   }
@@ -567,7 +553,7 @@ export function convertFile(file: ParsedFile, ledger: Ledger, budget: ImportBudg
   const scope = fileScope(source);
   const contents: Content[] = [];
   const key = ROOT_NODE_KEY;
-  const place: Place = { key, scope, insideSvg: false, parentTag: '', depth: 0 };
+  const place: Place = { key, scope, foreign: false, parentTag: '', depth: 0 };
 
   // A pasted fragment is a file whose last statement is markup.
   const last = source.statements[source.statements.length - 1];

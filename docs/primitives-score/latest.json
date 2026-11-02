@@ -1,28 +1,28 @@
 {
-  "generatedAt": "2026-11-02T08:40:14.735Z",
+  "generatedAt": "2026-11-02T09:07:57.279Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 345,
+  "durationSeconds": 373,
   "matrix": {
     "surfaces": {
       "format": {
-        "pass": 1795,
-        "fail": 38,
+        "pass": 1794,
+        "fail": 39,
         "notTested": 0,
         "total": 1833
       },
       "renderer": {
-        "pass": 1755,
-        "fail": 78,
+        "pass": 1754,
+        "fail": 79,
         "notTested": 0,
         "total": 1833
       },
       "canvas": {
-        "pass": 1637,
-        "fail": 196,
+        "pass": 1627,
+        "fail": 206,
         "notTested": 0,
         "total": 1833
       },
@@ -119,8 +119,8 @@
           "total": 239
         },
         "canvas": {
-          "pass": 197,
-          "fail": 42,
+          "pass": 187,
+          "fail": 52,
           "notTested": 0,
           "total": 239
         },
@@ -139,14 +139,14 @@
       },
       "html-event-handler": {
         "format": {
-          "pass": 92,
-          "fail": 8,
+          "pass": 91,
+          "fail": 9,
           "notTested": 0,
           "total": 100
         },
         "renderer": {
-          "pass": 92,
-          "fail": 8,
+          "pass": 91,
+          "fail": 9,
           "notTested": 0,
           "total": 100
         },
@@ -3442,10 +3442,10 @@
       "html-element-attribute:button.command": "pass pass react-attribute-handling pass ai-attribute-allowlist",
       "html-element-attribute:button.commandfor": "pass pass react-attribute-handling pass ai-attribute-allowlist",
       "html-element-attribute:button.disabled": "pass pass pass pass pass",
-      "html-element-attribute:button.form": "pass pass pass pass ai-attribute-allowlist",
+      "html-element-attribute:button.form": "pass pass react-attribute-handling pass ai-attribute-allowlist",
       "html-element-attribute:button.formaction": "pass pass react-attribute-handling pass ai-attribute-allowlist",
-      "html-element-attribute:button.formenctype": "pass pass pass pass ai-attribute-allowlist",
-      "html-element-attribute:button.formmethod": "pass pass pass pass ai-attribute-allowlist",
+      "html-element-attribute:button.formenctype": "pass pass react-attribute-handling pass ai-attribute-allowlist",
+      "html-element-attribute:button.formmethod": "pass pass react-attribute-handling pass ai-attribute-allowlist",
       "html-element-attribute:button.formnovalidate": "pass pass pass pass ai-attribute-allowlist",
       "html-element-attribute:button.formtarget": "pass pass react-attribute-handling pass ai-attribute-allowlist",
       "html-element-attribute:button.name": "pass pass pass pass pass",
@@ -3469,7 +3469,7 @@
       "html-element-attribute:embed.type": "pass blocked-embedded-content blocked-embedded-content blocked-embedded-content ai-tag-allowlist",
       "html-element-attribute:embed.width": "pass blocked-embedded-content blocked-embedded-content blocked-embedded-content ai-tag-allowlist",
       "html-element-attribute:fieldset.disabled": "pass pass pass pass pass",
-      "html-element-attribute:fieldset.form": "pass pass pass pass ai-attribute-allowlist",
+      "html-element-attribute:fieldset.form": "pass pass react-attribute-handling pass ai-attribute-allowlist",
       "html-element-attribute:fieldset.name": "pass pass pass pass pass",
       "html-element-attribute:form.accept-charset": "pass pass pass pass ai-tag-allowlist",
       "html-element-attribute:form.action": "pass pass react-attribute-handling pass ai-tag-allowlist",
@@ -3516,10 +3516,10 @@
       "html-element-attribute:input.colorspace": "pass pass pass pass ai-tag-allowlist",
       "html-element-attribute:input.dirname": "pass pass pass pass ai-tag-allowlist",
       "html-element-attribute:input.disabled": "pass pass pass pass ai-tag-allowlist",
-      "html-element-attribute:input.form": "pass pass pass pass ai-tag-allowlist",
+      "html-element-attribute:input.form": "pass pass react-attribute-handling pass ai-tag-allowlist",
       "html-element-attribute:input.formaction": "pass pass react-attribute-handling pass ai-tag-allowlist",
-      "html-element-attribute:input.formenctype": "pass pass pass pass ai-tag-allowlist",
-      "html-element-attribute:input.formmethod": "pass pass pass pass ai-tag-allowlist",
+      "html-element-attribute:input.formenctype": "pass pass react-attribute-handling pass ai-tag-allowlist",
+      "html-element-attribute:input.formmethod": "pass pass react-attribute-handling pass ai-tag-allowlist",
       "html-element-attribute:input.formnovalidate": "pass pass pass pass ai-tag-allowlist",
       "html-element-attribute:input.formtarget": "pass pass react-attribute-handling pass ai-tag-allowlist",
       "html-element-attribute:input.max": "pass pass pass pass ai-tag-allowlist",
@@ -3587,14 +3587,14 @@
       "html-element-attribute:option.selected": "pass pass pass pass pass",
       "html-element-attribute:option.value": "pass pass pass pass pass",
       "html-element-attribute:output.for": "pass pass pass pass ai-attribute-allowlist",
-      "html-element-attribute:output.form": "pass pass pass pass ai-attribute-allowlist",
+      "html-element-attribute:output.form": "pass pass react-attribute-handling pass ai-attribute-allowlist",
       "html-element-attribute:output.name": "pass pass pass pass pass",
       "html-element-attribute:progress.max": "pass pass pass pass pass",
       "html-element-attribute:progress.value": "pass pass pass pass pass",
       "html-element-attribute:q.cite": "pass pass pass pass pass",
       "html-element-attribute:select.autocomplete": "pass pass pass pass ai-tag-allowlist",
       "html-element-attribute:select.disabled": "pass pass pass pass ai-tag-allowlist",
-      "html-element-attribute:select.form": "pass pass pass pass ai-tag-allowlist",
+      "html-element-attribute:select.form": "pass pass react-attribute-handling pass ai-tag-allowlist",
       "html-element-attribute:select.multiple": "pass pass pass pass ai-tag-allowlist",
       "html-element-attribute:select.name": "pass pass pass pass ai-tag-allowlist",
       "html-element-attribute:select.required": "pass pass pass pass ai-tag-allowlist",
@@ -3615,7 +3615,7 @@
       "html-element-attribute:textarea.cols": "pass pass pass pass ai-tag-allowlist",
       "html-element-attribute:textarea.dirname": "pass pass pass pass ai-tag-allowlist",
       "html-element-attribute:textarea.disabled": "pass pass pass pass ai-tag-allowlist",
-      "html-element-attribute:textarea.form": "pass pass pass pass ai-tag-allowlist",
+      "html-element-attribute:textarea.form": "pass pass react-attribute-handling pass ai-tag-allowlist",
       "html-element-attribute:textarea.maxlength": "pass pass pass pass ai-tag-allowlist",
       "html-element-attribute:textarea.minlength": "pass pass pass pass ai-tag-allowlist",
       "html-element-attribute:textarea.name": "pass pass pass pass ai-tag-allowlist",
@@ -3650,7 +3650,7 @@
       "html-element-attribute:video.preload": "pass pass pass pass pass",
       "html-element-attribute:video.src": "pass pass pass pass pass",
       "html-element-attribute:video.width": "pass pass attribute-read-as-style pass attribute-read-as-style",
-      "html-event-handler:onanimationcancel": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onanimationcancel": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
       "html-event-handler:onanimationend": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
       "html-event-handler:onanimationiteration": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
       "html-event-handler:onanimationstart": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
@@ -6644,7 +6644,7 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.000007725587144622992,
+            "ratio": 0,
             "elementsCompared": 760,
             "elementsDiffering": 0,
             "differences": 0,
@@ -8731,12 +8731,12 @@
     {
       "id": "blocked-event-handlers",
       "description": "A stored event handler attribute is a string of code, so both renderers drop it on purpose (blockedNodes.ts). A cell here means no stored action ran from a real cause: the note says why, and the published page and the format already run most of them (events.score.ts). The canvas, the panel and the AI columns still wait for slices B10 to B12.",
-      "matrixCells": 316,
+      "matrixCells": 318,
       "corpusChecks": 0,
       "fixtures": [],
       "onlyGapOf": [],
       "roundTripCases": 0,
-      "cost": 316
+      "cost": 318
     },
     {
       "id": "ai-tag-allowlist",
@@ -8840,12 +8840,12 @@
     {
       "id": "react-attribute-handling",
       "description": "React drops or rewrites an attribute that is valid HTML.",
-      "matrixCells": 12,
+      "matrixCells": 22,
       "corpusChecks": 0,
       "fixtures": [],
       "onlyGapOf": [],
       "roundTripCases": 0,
-      "cost": 12
+      "cost": 22
     },
     {
       "id": "import-dynamic-logic",

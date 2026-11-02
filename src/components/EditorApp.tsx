@@ -95,7 +95,7 @@ export default function EditorApp({ projectSnapshot }: { projectSnapshot?: Proje
       if (opened.changedElsewhere) {
         editorUI.setEditorNotice({
           kind: 'changedElsewhere',
-          message: changedElsewhereMessage(opened.changedDefinitions),
+          message: changedElsewhereMessage(opened.changedDefinitions, opened.changedSiteParts),
         });
       }
     } else {

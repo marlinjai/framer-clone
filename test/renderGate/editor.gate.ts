@@ -10,7 +10,7 @@ import { ComponentTypeEnum } from '@/models/ComponentModel';
 import { buildProbes, type ProbeNode } from './probes';
 
 const EMBEDS = 'script,style,iframe,object,embed,fencedframe,portal';
-const HOSTILE = /^tag .* in (?:html|svg)$|^<(?:x-y|div) \w+=html>$|proto|^an? \w+ ref$|as text|^a style|^<(?:a|form) (?:href|action)=js-array>$/;
+const HOSTILE = /^tag .* in (?:html|svg)$|^<(?:x-y|div) \w+=html>$|proto|^an? \w+ ref$|as text|^a style|^<(?:a|form) (?:href|action)=js-array>$|^<form> holding <(?:input|image) id=|^<input id=\w+ form=>|^a stored form with a (?:field|submit button|marked div)/;
 
 const toSnapshot = (node: ProbeNode): Record<string, unknown> => ({
   id: node.id,
@@ -51,6 +51,12 @@ describe('render gate on the mounted editor', () => {
       await page.evaluate((snapshot) => (window as unknown as { __placeTree: (s: unknown) => void }).__placeTree(snapshot), tree);
       await page.locator('#gate-end').first().waitFor({ state: 'attached', timeout: 30_000 });
 
+      const clobbered = await page.evaluate(() => {
+        const forms = Array.from(document.querySelectorAll('[data-inner-component-id="gate-root"] form'));
+        const members = ['parentElement', 'parentNode', 'closest', 'matches', 'elements', 'submit', 'getAttribute', 'tagName'];
+        return { forms: forms.length, replaced: forms.filter((form) => members.some((name) => Object.getOwnPropertyDescriptor(form, name))).length };
+      });
+
       const embedded = await page.evaluate(async (selector) => {
         const nodes = Array.from(document.querySelectorAll('[data-inner-component-id="gate-root"] *')) as HTMLElement[];
         for (const el of nodes) {
@@ -77,6 +83,9 @@ describe('render gate on the mounted editor', () => {
 
       expect(hits).toEqual(['canary']);
       expect(embedded).toBe(0);
+      expect(clobbered.replaced).toBe(0);
+      // Not blind: the probes' forms are on the canvas to be asked.
+      expect(clobbered.forms).toBeGreaterThan(50);
       expect(errors).toEqual([]);
     } finally {
       await browser.close();

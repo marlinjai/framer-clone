@@ -19,6 +19,7 @@ import { getParent, hasParent } from 'mobx-state-tree';
 import { Braces, ChevronDown, X } from 'lucide-react';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import { cssStyleKey, cssPropertyName } from '@/lib/responsive/responsiveCss';
+import { formKindOf } from '@/lib/forms/definition';
 import {
   attributeName,
   attributeNameError,
@@ -387,6 +388,8 @@ const AttributeEditor = observer(({ component, category }: { component: Componen
   const owned = useMemo(() => ownedProps(category), [category]);
   const tag = component.type as string;
   const props = component.props as Record<string, unknown>;
+  // A submit button is a button whatever its stored type.
+  const renderedTag = formKindOf(props) === 'form-submit' ? 'button' : tag;
   const rows = Object.keys(props).filter((prop) => {
     const kind = typeof props[prop];
     return isAttributeProp(prop) && !owned.has(prop) && (kind === 'string' || kind === 'number' || kind === 'boolean');
@@ -419,7 +422,7 @@ const AttributeEditor = observer(({ component, category }: { component: Componen
             removeLabel={`Remove ${name}`}
             onRemove={() => component.setProps({ [prop]: undefined })}
             onCommit={(text) => {
-              const problem = attributeValueError(name, text);
+              const problem = attributeValueError(name, text, renderedTag);
               if (!problem) write(name, text);
               return problem;
             }}
@@ -432,7 +435,7 @@ const AttributeEditor = observer(({ component, category }: { component: Componen
         valuePlaceholder="Value"
         suggestions={suggestions}
         nameError={nameError}
-        valueError={attributeValueError}
+        valueError={(name, value) => attributeValueError(name, value, renderedTag)}
         allowsEmptyValue
         needsNoValue={isBooleanAttribute}
         onAdd={write}

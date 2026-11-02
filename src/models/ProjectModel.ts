@@ -43,6 +43,7 @@ import {
   type SiteSettingsInput,
 } from '@/lib/site/siteSettings';
 import { effectiveSiteName } from '@/lib/site/siteSettings';
+import { normalizeTheme, validateThemeWrite, type SiteTheme } from '@/lib/site/theme';
 import {
   COOKIE_SETTINGS_HASH,
   COOKIE_SETTINGS_LABELS,
@@ -190,6 +191,9 @@ export type SetHomePageResult =
 
 /** The outcome of ProjectModel.updateSiteSettings. */
 export type SiteSettingsResult = { ok: true } | { ok: false; errors: SiteSettingsErrors };
+
+/** The outcome of ProjectModel.updateTheme. */
+export type ThemeResult = { ok: true } | { ok: false; errors: string[] };
 
 // Project metadata model
 const ProjectMetadataModel = types.model('ProjectMetadata', {
@@ -1083,8 +1087,14 @@ export const ProjectModel = types
     // The Site settings dialog's save: the whole object in ONE action (one
     // undo step). Normalized, then validated; on any problem nothing changes.
     // The 404 pointer must name an existing page that is not the home page.
+    //
+    // The theme and the site's head items are not this dialog's: it edits a draft
+    // of the whole object, so a dialog opened before a token edit and saved after
+    // it would put the old theme back. Their current values are always kept, and
+    // only updateTheme (and updateSiteHead, slice H1) write them.
     updateSiteSettings(input: SiteSettingsInput): SiteSettingsResult {
-      const next: SiteSettings = normalizeSiteSettings(input);
+      const kept = normalizeSiteSettings(self.siteSettings);
+      const next: SiteSettings = { ...normalizeSiteSettings(input), theme: kept.theme, head: kept.head };
       const errors = validateSiteSettings(next);
       if (next.notFoundPageId) {
         const target = self.pages.get(next.notFoundPageId);
@@ -1095,6 +1105,22 @@ export const ProjectModel = types
       const current = normalizeSiteSettings(self.siteSettings);
       if (JSON.stringify(current) === JSON.stringify(next)) return { ok: true };
       self.siteSettings = next;
+      self.metadata.updatedAt = new Date();
+      return { ok: true };
+    },
+
+    // The site's theme (src/lib/site/theme.ts), replaced as a whole in ONE action,
+    // so a token edit, a rename, a delete or a Clean up is one undo step. Refused
+    // whole, with nothing changed, when validateThemeWrite finds a problem: a cap
+    // passed, a name taken, a value outside the grammar, a live token removed
+    // outright, or a document value that is not a live token of its kind.
+    updateTheme(input: SiteTheme): ThemeResult {
+      const settings = normalizeSiteSettings(self.siteSettings);
+      const next = normalizeTheme(input);
+      const errors = validateThemeWrite(next, settings.theme);
+      if (errors.length > 0) return { ok: false, errors };
+      if (JSON.stringify(settings.theme) === JSON.stringify(next)) return { ok: true };
+      self.siteSettings = { ...settings, theme: next };
       self.metadata.updatedAt = new Date();
       return { ok: true };
     },
