@@ -111,6 +111,9 @@ export async function renderSitePage({ site, matched, adapted, jsonLd }: RenderS
     // visitors who ask for reduced motion, decided in the browser).
     smoothScroll: site.siteSettings.smoothScroll === true,
     pageBase: site.siteSettings.pageBase,
+    // The site's theme: a forced light or dark mode answers `prefers-color-scheme` in
+    // the page's rules, and the banner reads token references through it.
+    theme: site.siteSettings.theme,
     // The consent banner (shown only when analytics needs consent) speaks the
     // site language, looks like the home page and links the privacy policy.
     consent: {

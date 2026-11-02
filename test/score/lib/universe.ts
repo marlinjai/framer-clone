@@ -10,6 +10,7 @@ import exclusions from '../data/exclusions.json';
 import samples from '../data/samples.json';
 import apg from '../data/apg-patterns.json';
 import componentCapabilities from '../data/component-capabilities.json';
+import pageItems from '../data/page-items.json';
 
 const require = createRequire(path.join(process.cwd(), 'package.json'));
 
@@ -278,9 +279,19 @@ export function componentEntries(): Entry[] {
   return [...inputTypes, ...capabilities].map((id) => entry('component', id, source));
 }
 
+/**
+ * What applies to a whole site or page, hand-listed from the theme and head contract:
+ * a site's theme today, as `theme:<what>`. Not part of allEntries for the same reason as
+ * the component rows: a node cannot hold one, so the node probes have nothing to ask.
+ * Cells come from pageItems.score.ts, and a cell nothing measured fails.
+ */
+export function pageItemEntries(): Entry[] {
+  return pageItems.theme.map((id) => entry('page-item', `theme:${id}`, pageItems.source));
+}
+
 /** Every row of the matrix. */
 export function scoredEntries(): Entry[] {
-  return [...allEntries(), ...componentEntries()];
+  return [...allEntries(), ...componentEntries(), ...pageItemEntries()];
 }
 
 /** The sample selector text for a mdn-data selector row. */

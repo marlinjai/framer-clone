@@ -1,0 +1,15 @@
+{
+  "_doc": "Page-level items: what applies to a whole site or page rather than a node (docs/plans/2026-11-02-theme-and-head.md, Score changes). The theme rows land with slice T2; the head item rows (meta, property, link, JSON-LD) land with slices H2 and H3.",
+  "source": "docs/plans/2026-11-02-theme-and-head.md",
+  "theme": [
+    "color-token",
+    "font-token",
+    "dark-value",
+    "mode-system",
+    "mode-light",
+    "mode-dark",
+    "document-background",
+    "document-color",
+    "document-font"
+  ]
+}

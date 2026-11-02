@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   auditFrames,
+  colorsIn,
   classifyFrame,
   contrastRatio,
   estimateBackground,
@@ -196,7 +197,17 @@ describe('contrast', () => {
     expect(parseColor('rgb(0 0 0 / 50%)')).toEqual({ r: 0, g: 0, b: 0, a: 0.5 });
     expect(parseColor('#fff')).toEqual({ r: 255, g: 255, b: 255, a: 1 });
     expect(parseColor('transparent')?.a).toBe(0);
-    expect(parseColor('color(display-p3 1 0 0)')).toBeUndefined();
+    // The shared parser reads every computed form a browser writes, a wide gamut colour
+    // clamped to sRGB (src/lib/color/cssColor.ts).
+    const p3 = parseColor('color(display-p3 1 0 0)')!;
+    expect([p3.r, p3.g, p3.b].map(Math.round)).toEqual([255, 0, 0]);
+    expect(parseColor('lab(50 20 30)')).toBeDefined();
+    expect(parseColor('rgb(1, 2 3)')).toBeUndefined();
+  });
+
+  it('reads the colours inside a gradient, and none inside an address', () => {
+    const stops = colorsIn('linear-gradient(to right, red, oklch(0 0 0) 40%, #00ff00, url(blue.png))');
+    expect(stops.map((c) => [c.r, c.g, c.b].map(Math.round))).toEqual([[255, 0, 0], [0, 0, 0], [0, 255, 0]]);
   });
 
   it('computes WCAG ratios', () => {

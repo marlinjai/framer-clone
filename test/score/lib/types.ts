@@ -35,6 +35,7 @@ export const ROW_KINDS = [
   'css-media-feature',
   'aria-pattern',
   'component',
+  'page-item',
 ] as const;
 export type RowKind = (typeof ROW_KINDS)[number];
 
@@ -85,6 +86,7 @@ export const GAPS = {
   'react-attribute-handling': 'React drops or rewrites an attribute that is valid HTML.',
   'roundtrip-not-representable': 'A construct that cannot survive nodes to JSX and back, because the format has nowhere to put it.',
   'import-dynamic-logic': 'JSX that is a program, not markup: reported as left over by the static import, as the plan requires.',
+  theme: 'A site\'s shared colour and font tokens, its colour mode and its document defaults (docs/plans/2026-11-02-theme-and-head.md). Stored (T1) and published (T2); the editor canvas waits for slice T3, the panel for T4 and the generator for T5.',
   'reusable-components': 'A promise of the reusable component format (an input type, a placement, a state or an interaction) that this surface does not keep yet.',
   'published-base': 'The published route ships the root layout\'s sheet to every visitor (Tailwind\'s reset, the theme, the base layer), and the page base of a site takes that out again. A check here fails with that sheet in place and passes on a page without it, so the page base left something behind. Measured, not guessed: the same replica matches its original on a page without the base.',
   'shop-feature-missing': 'A real BusBasis page depends on a shop feature that is not built: the page stays failed however close its pixels are.',

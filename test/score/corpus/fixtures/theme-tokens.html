@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Theme tokens</title>
+<style>
+  /* A site's shared colours, set once on the document, next to their literal copies. */
+  :root { --fc-t-ac000001: #1d4ed8; --fc-t-in000002: #111827; --fc-t-wa000003: oklch(0.75 0.15 70 / 0.5); }
+  main { margin: 0; padding: 16px; font-family: Arial, sans-serif; }
+  .by-reference { color: var(--fc-t-ac000001); border: 2px solid var(--fc-t-in000002); margin: 0 0 8px; padding: 8px; }
+  .literal { color: #1d4ed8; border: 2px solid #111827; margin: 0 0 8px; padding: 8px; }
+  .gradient { height: 24px; margin: 0 0 8px; background-image: linear-gradient(90deg, var(--fc-t-ac000001), var(--fc-t-wa000003)); }
+  .shadow { width: 120px; height: 40px; box-shadow: 0 4px 12px var(--fc-t-in000002); }
+</style>
+</head>
+<body style="margin:0">
+<main data-parity-id="page">
+  <p class="by-reference" data-parity-id="by-reference">Coloured by reference</p>
+  <p class="literal" data-parity-id="literal">Coloured by its literal copy</p>
+  <div class="gradient" data-parity-id="gradient"></div>
+  <div class="shadow" data-parity-id="shadow"></div>
+</main>
+</body>
+</html>

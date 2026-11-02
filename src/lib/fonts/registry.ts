@@ -357,11 +357,33 @@ export interface PageFonts {
   displayId?: string;
 }
 
+export interface CollectPageFontsOptions {
+  /**
+   * Reads a theme's font token references (`var(--fc-t-<id>)`) as the stack each stands
+   * for (src/lib/site/theme.ts, resolveTokenRefs). Only the family to preload uses it:
+   * the theme's own sheet already declares every font token's faces.
+   */
+  resolve?: (value: string) => string;
+  /** The family the page root inherits, the theme's document font: a heading that sets none has it. */
+  inherited?: string;
+}
+
 /** Scan one or more trees for the library families their styles use. */
-export function collectPageFonts(roots: Iterable<FontScanNode | null | undefined>): PageFonts {
+export function collectPageFonts(roots: Iterable<FontScanNode | null | undefined>, options: CollectPageFontsOptions = {}): PageFonts {
   const ids: string[] = [];
   let h1: string | undefined;
   let h2: string | undefined;
+  const { resolve } = options;
+  /** The first library family a style names once its token references are read. */
+  const resolvedFamily = (style: unknown): string | undefined => {
+    if (!resolve || !style || typeof style !== 'object') return undefined;
+    const s = style as Record<string, unknown>;
+    const families = [
+      ...stringsOf(s.fontFamily).flatMap((v) => libraryFamiliesIn(resolve(v))),
+      ...stringsOf(s.font).flatMap((v) => libraryFamiliesIn(familiesFromFontShorthand(resolve(v)))),
+    ];
+    return families[0]?.id;
+  };
 
   const visit = (node: FontScanNode, inherited: string | undefined) => {
     const props = node.props as { style?: unknown; rules?: unknown } | undefined;
@@ -378,13 +400,13 @@ export function collectPageFonts(roots: Iterable<FontScanNode | null | undefined
         }
       }
     }
-    const own = families[0]?.id ?? inherited;
+    const own = families[0]?.id ?? resolvedFamily(props?.style) ?? inherited;
     if (node.type === 'h1' && h1 === undefined && own) h1 = own;
     if (node.type === 'h2' && h2 === undefined && own) h2 = own;
     if (node.children) for (const child of node.children) if (child) visit(child, own);
   };
 
-  for (const root of roots) if (root) visit(root, undefined);
+  for (const root of roots) if (root) visit(root, options.inherited);
   return { ids, displayId: h1 ?? h2 };
 }
 

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Theme dark</title>
+<style>
+  /* A site that follows the visitor's system: light values, dark ones under the media query,
+     and the document's background and text colour from them. */
+  :root { --fc-t-gr000001: #ffffff; --fc-t-in000002: #111827; --fc-t-ac000003: #1d4ed8; color-scheme: light dark; }
+  @media (prefers-color-scheme: dark) {
+    :root { --fc-t-gr000001: #030712; --fc-t-in000002: #f9fafb; --fc-t-ac000003: #93c5fd; }
+  }
+  body { background-color: var(--fc-t-gr000001); color: var(--fc-t-in000002); }
+  main { margin: 0; padding: 16px; font-family: Arial, sans-serif; }
+  .copy { margin: 0 0 8px; }
+  .accent { margin: 0; padding: 8px 12px; border: 1px solid var(--fc-t-ac000003); color: var(--fc-t-ac000003); }
+</style>
+</head>
+<body style="margin:0">
+<main data-parity-id="page">
+  <p class="copy" data-parity-id="copy">Text that inherits the document colour</p>
+  <p class="accent" data-parity-id="accent">An accent that flips with the system</p>
+</main>
+</body>
+</html>

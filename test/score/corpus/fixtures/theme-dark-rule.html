@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Theme dark rule</title>
+<style>
+  /* A node with its own dark look, on a site with no theme: the visitor's system decides. */
+  main { margin: 0; padding: 16px; font-family: Arial, sans-serif; }
+  .card { margin: 0; padding: 12px; color: #111827; background-color: #f3f4f6; border-radius: 8px; }
+  @media (prefers-color-scheme: dark) {
+    .card { color: #f9fafb; background-color: #1f2937; }
+  }
+</style>
+</head>
+<body style="margin:0">
+<main data-parity-id="page">
+  <p class="card" data-parity-id="card">A card with a dark look of its own</p>
+</main>
+</body>
+</html>

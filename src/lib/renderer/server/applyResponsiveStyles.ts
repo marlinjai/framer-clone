@@ -94,6 +94,8 @@ import {
   type ReadRules,
 } from '@/lib/rules/rules';
 import { hoverPresetClass, type HoverKind } from '@/lib/effects/effects';
+import { isPlatformVariable } from '@/lib/rules/rootProperties';
+import type { ColorScheme } from '@/lib/site/theme';
 
 export interface ResponsiveStylesResult {
   /** The tree with responsive styles replaced by classes (a new tree; the input is not mutated). */
@@ -137,6 +139,7 @@ interface RuleProblem {
 }
 
 const EXTERNAL_VARIABLE = 'a custom property cannot hold an external address on a page with rules';
+const PLATFORM_VARIABLE = "one of the platform's own custom properties cannot be set by a stored style";
 const FIELD_SIZING = 'a control cannot size itself to its text on a page with rules';
 
 /**
@@ -147,7 +150,14 @@ const FIELD_SIZING = 'a control cannot size itself to its text on a page with ru
 export function applyResponsiveStyles(
   root: ComponentNode,
   breakpoints: readonly BreakpointRef[],
-  options: { gated?: boolean } = {},
+  options: {
+    gated?: boolean;
+    /**
+     * The site's forced colour mode, only when its theme says `light` or `dark`: rules
+     * under `prefers-color-scheme` then follow the site, not the visitor's system.
+     */
+    colorMode?: ColorScheme;
+  } = {},
 ): ResponsiveStylesResult {
   const breakpointIds = new Set(breakpoints.map(b => b.id));
   const primaryId = largestFirst(breakpoints)[0]?.id;
@@ -241,6 +251,23 @@ export function applyResponsiveStyles(
   const pageHasRule = (node: ComponentNode): boolean =>
     (readNode(node)?.rules.length ?? 0) > 0 || (node.children ?? []).some(pageHasRule);
 
+  /**
+   * The style without a key naming one of the platform's own custom properties
+   * (isPlatformVariable), on every page: a node redefining `--fc-t-<id>` would repaint
+   * every use of a theme token below it. Removed, not kept inline, because an inline
+   * declaration would do exactly that.
+   */
+  const withoutPlatformVariables = (node: ComponentNode, style: Record<string, unknown>): Record<string, unknown> => {
+    const refused = Object.keys(style).filter(isPlatformVariable);
+    if (refused.length === 0) return style;
+    const clean = { ...style };
+    for (const key of refused) {
+      problems.push({ node: node.id ?? 'unnamed', property: key, reason: PLATFORM_VARIABLE });
+      delete clean[key];
+    }
+    return clean;
+  };
+
   /** Normal without what a rule on this page could use to report on a visitor. */
   const withoutReportingValues = (node: ComponentNode, style: Record<string, unknown>): Record<string, unknown> => {
     const refusal = (key: string): string | null => {
@@ -315,7 +342,8 @@ export function applyResponsiveStyles(
       const classes: string[] = [];
       const stored = props.style;
       if (isStyleMap(stored)) {
-        const style = hasRules ? withoutReportingValues(node, stored) : stored;
+        const own = withoutPlatformVariables(node, stored);
+        const style = hasRules ? withoutReportingValues(node, own) : own;
         const emptied = style !== stored && Object.keys(style).length === 0;
         if (emptied) delete props.style;
         else props.style = style;
@@ -365,6 +393,8 @@ export function applyResponsiveStyles(
     rootRules,
     fieldGuard: hasRules,
     gated: options.gated,
+    colorMode: options.colorMode,
+    onColorModeWarning: reason => problems.push({ node: 'page', reason }),
     onDropRule: ({ className, ruleId, reason }: DroppedRule) => problems.push({ node: className, rule: ruleId, reason }),
   });
   if (dropped.length + kept.length + problems.length > 0) {

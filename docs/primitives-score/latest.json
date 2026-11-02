@@ -1,42 +1,42 @@
 {
-  "generatedAt": "2026-11-02T13:40:54.333Z",
+  "generatedAt": "2026-11-02T13:57:01.967Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 353,
+  "durationSeconds": 414,
   "matrix": {
     "surfaces": {
       "format": {
-        "pass": 1806,
+        "pass": 1815,
         "fail": 27,
         "notTested": 0,
-        "total": 1833
+        "total": 1842
       },
       "renderer": {
-        "pass": 1779,
+        "pass": 1788,
         "fail": 54,
         "notTested": 0,
-        "total": 1833
+        "total": 1842
       },
       "canvas": {
         "pass": 1635,
-        "fail": 198,
+        "fail": 207,
         "notTested": 0,
-        "total": 1833
+        "total": 1842
       },
       "panel": {
         "pass": 1232,
-        "fail": 601,
+        "fail": 610,
         "notTested": 0,
-        "total": 1833
+        "total": 1842
       },
       "ai": {
         "pass": 1433,
-        "fail": 400,
+        "fail": 409,
         "notTested": 0,
-        "total": 1833
+        "total": 1842
       }
     },
     "acceptedNotTaught": 89,
@@ -520,9 +520,41 @@
           "notTested": 0,
           "total": 30
         }
+      },
+      "page-item": {
+        "format": {
+          "pass": 9,
+          "fail": 0,
+          "notTested": 0,
+          "total": 9
+        },
+        "renderer": {
+          "pass": 9,
+          "fail": 0,
+          "notTested": 0,
+          "total": 9
+        },
+        "canvas": {
+          "pass": 0,
+          "fail": 9,
+          "notTested": 0,
+          "total": 9
+        },
+        "panel": {
+          "pass": 0,
+          "fail": 9,
+          "notTested": 0,
+          "total": 9
+        },
+        "ai": {
+          "pass": 0,
+          "fail": 9,
+          "notTested": 0,
+          "total": 9
+        }
       }
     },
-    "included": 1833,
+    "included": 1842,
     "excluded": [
       {
         "kind": "html-element",
@@ -5103,28 +5135,37 @@
       "component:state-custom": "reusable-components reusable-components reusable-components reusable-components reusable-components",
       "component:interaction-click": "reusable-components reusable-components reusable-components reusable-components reusable-components",
       "component:interaction-appear": "reusable-components reusable-components reusable-components reusable-components reusable-components",
-      "component:placement-trigger": "reusable-components reusable-components reusable-components reusable-components reusable-components"
+      "component:placement-trigger": "reusable-components reusable-components reusable-components reusable-components reusable-components",
+      "page-item:theme:color-token": "pass pass theme theme theme",
+      "page-item:theme:font-token": "pass pass theme theme theme",
+      "page-item:theme:dark-value": "pass pass theme theme theme",
+      "page-item:theme:mode-system": "pass pass theme theme theme",
+      "page-item:theme:mode-light": "pass pass theme theme theme",
+      "page-item:theme:mode-dark": "pass pass theme theme theme",
+      "page-item:theme:document-background": "pass pass theme theme theme",
+      "page-item:theme:document-color": "pass pass theme theme theme",
+      "page-item:theme:document-font": "pass pass theme theme theme"
     }
   },
   "corpus": {
-    "passed": 13,
-    "total": 16,
+    "passed": 17,
+    "total": 20,
     "checks": {
       "screenshot": {
-        "pass": 85,
-        "total": 96
+        "pass": 103,
+        "total": 114
       },
       "computed-styles": {
-        "pass": 72,
-        "total": 96
+        "pass": 90,
+        "total": 114
       },
       "accessibility-tree": {
-        "pass": 84,
-        "total": 96
+        "pass": 102,
+        "total": 114
       },
       "interaction": {
-        "pass": 27,
-        "total": 48
+        "pass": 33,
+        "total": 54
       }
     },
     "fixtures": [
@@ -6154,6 +6195,126 @@
           "pass": 0,
           "total": 3
         }
+      },
+      {
+        "fixture": "theme-tokens",
+        "group": "edge",
+        "source": "hand-written: a site's shared colours on the document, used by reference next to their literal copies",
+        "pass": true,
+        "checks": {
+          "screenshot": {
+            "pass": 3,
+            "total": 3
+          },
+          "computed-styles": {
+            "pass": 3,
+            "total": 3
+          },
+          "accessibility-tree": {
+            "pass": 3,
+            "total": 3
+          },
+          "interaction": {
+            "pass": 0,
+            "total": 0
+          }
+        },
+        "failures": [],
+        "notMeasured": [],
+        "defaultBase": {
+          "pass": 0,
+          "total": 3
+        }
+      },
+      {
+        "fixture": "theme-dark",
+        "group": "edge",
+        "source": "hand-written: a site that follows the visitor's system, with its document colours from its tokens",
+        "pass": true,
+        "checks": {
+          "screenshot": {
+            "pass": 6,
+            "total": 6
+          },
+          "computed-styles": {
+            "pass": 6,
+            "total": 6
+          },
+          "accessibility-tree": {
+            "pass": 6,
+            "total": 6
+          },
+          "interaction": {
+            "pass": 3,
+            "total": 3
+          }
+        },
+        "failures": [],
+        "notMeasured": [],
+        "defaultBase": {
+          "pass": 0,
+          "total": 3
+        }
+      },
+      {
+        "fixture": "theme-font",
+        "group": "edge",
+        "source": "hand-written: a display face from the font library, named by a font token, that must load",
+        "pass": true,
+        "checks": {
+          "screenshot": {
+            "pass": 3,
+            "total": 3
+          },
+          "computed-styles": {
+            "pass": 3,
+            "total": 3
+          },
+          "accessibility-tree": {
+            "pass": 3,
+            "total": 3
+          },
+          "interaction": {
+            "pass": 0,
+            "total": 0
+          }
+        },
+        "failures": [],
+        "notMeasured": [],
+        "defaultBase": {
+          "pass": 0,
+          "total": 3
+        }
+      },
+      {
+        "fixture": "theme-dark-rule",
+        "group": "edge",
+        "source": "hand-written: a node with a dark look of its own, on a site with no theme",
+        "pass": true,
+        "checks": {
+          "screenshot": {
+            "pass": 6,
+            "total": 6
+          },
+          "computed-styles": {
+            "pass": 6,
+            "total": 6
+          },
+          "accessibility-tree": {
+            "pass": 6,
+            "total": 6
+          },
+          "interaction": {
+            "pass": 3,
+            "total": 3
+          }
+        },
+        "failures": [],
+        "notMeasured": [],
+        "defaultBase": {
+          "pass": 0,
+          "total": 3
+        }
       }
     ]
   },
@@ -6466,7 +6627,7 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.000007841907151819322,
+            "ratio": 0,
             "elementsCompared": 754,
             "elementsDiffering": 0,
             "differences": 0,
@@ -7843,8 +8004,8 @@
   },
   "roundTrip": {
     "nodesToJsxToNodes": {
-      "pass": 126,
-      "total": 126
+      "pass": 130,
+      "total": 130
     },
     "jsxToNodesToRender": {
       "pass": 11,
@@ -7928,6 +8089,26 @@
       },
       {
         "id": "corpus: radix-dialog",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "corpus: theme-tokens",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "corpus: theme-dark",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "corpus: theme-font",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "corpus: theme-dark-rule",
         "direction": "nodes-jsx-nodes",
         "pass": true
       },
@@ -8726,6 +8907,16 @@
       "onlyGapOf": [],
       "roundTripCases": 0,
       "cost": 44
+    },
+    {
+      "id": "theme",
+      "description": "A site's shared colour and font tokens, its colour mode and its document defaults (docs/plans/2026-11-02-theme-and-head.md). Stored (T1) and published (T2); the editor canvas waits for slice T3, the panel for T4 and the generator for T5.",
+      "matrixCells": 27,
+      "corpusChecks": 0,
+      "fixtures": [],
+      "onlyGapOf": [],
+      "roundTripCases": 0,
+      "cost": 27
     },
     {
       "id": "react-attribute-handling",

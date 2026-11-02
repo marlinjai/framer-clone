@@ -1,9 +1,9 @@
 // src/lib/color/namedColors.ts
 //
 // The named colours of CSS Color 4, as the strict colour parser (cssColor.ts) reads
-// them. The same table as #261's src/lib/ai/review/namedColors.ts, which can import it
-// from here once both are on main. A gate test checks every entry against a real
-// browser (test/renderGate/theme.gate.ts).
+// them, and so do the consent banner's guard and the visual review, through the same
+// parser. A gate test checks every entry against a real browser
+// (test/renderGate/theme.gate.ts).
 
 export const NAMED_COLOR_HEX = {
   aliceblue: '#f0f8ff', antiquewhite: '#faebd7', aqua: '#00ffff', aquamarine: '#7fffd4', azure: '#f0ffff',

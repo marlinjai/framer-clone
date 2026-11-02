@@ -4,12 +4,12 @@
   "bodyClass": "__variable_8eaea4 __variable_8c25df antialiased",
   "sheets": [
     "static/css/15730e9f7c5c55ef.css",
-    "static/css/577d9bb6d9137058.css"
+    "static/css/8a16c07ef5349915.css"
   ],
   "inputs": {
     "src/app/globals.css": "441b6f9269836eb0971824eba4e0abe272ea2538e4a181d130d56a499f9edf1e",
-    "src/app/layout.tsx": "d4fb4c107afd3a45fe24fb1e5c69aca3ac6e616b9c70dd718692ec7055ea1276",
-    "src/app/(site)/layout.tsx": "866db1c50c37659ee8d9558eb38063ab34c3fc2386e457d01050366d1579ddc9",
+    "src/app/layout.tsx": "b50712ec9a3b1dad2a424d71c12d0c75ca23467261d9f91641362447d9c9cee0",
+    "src/app/(site)/layout.tsx": "c328c472580ccbfdc8a720e3dde097f63673b97d38aef9171bff481999c69569",
     "next": "15.5.28",
     "tailwindcss": "4.2.1",
     "@tailwindcss/postcss": "4.2.1",

@@ -656,11 +656,12 @@ const ComponentModel: any = ComponentBase
       if (!existing && rules.length >= MAX_RULES_PER_NODE) return { ok: false, reason: `A node holds at most ${MAX_RULES_PER_NODE} rules.` };
       // A rule that does not parse is dropped whole, so one bad value here would
       // silently take every other value of the state off the page.
-      const valueRefusal = value === undefined || value === '' ? null : refusedRuleValue(property, value);
-      if (valueRefusal) return { ok: false, reason: valueRefusal };
+      // The document's own list first, so a key it does not hold is named as such.
       if (existing && (existing as SelectorRule).selector === ROOT_SELECTOR && value !== undefined && value !== '' && !isRootStyleKey(property)) {
         return { ok: false, reason: `${property} cannot be set on the document` };
       }
+      const valueRefusal = value === undefined || value === '' ? null : refusedRuleValue(property, value);
+      if (valueRefusal) return { ok: false, reason: valueRefusal };
 
       const style: Record<string, unknown> = { ...(existing?.style ?? {}) };
       const next = writeCascade(style[property], value, breakpointId, self.cascadeBreakpoints(breakpointId));
