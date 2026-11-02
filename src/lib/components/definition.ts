@@ -17,7 +17,7 @@
 import { withDefaultViewports } from '@/lib/canvas/defaultViewports';
 import { isStickyCta } from '@/lib/stickyCta/stickyCta';
 import { inputDefinitionRefusal, type InputDefinition } from './inputs';
-import { COMPONENT_LIMITS, serializedBytes } from './placement';
+import { COMPONENT_LIMITS, isPlacementType, serializedBytes } from './placement';
 import type { PageSnapshotOut } from '@/models/PageModel';
 
 export type StateKind = 'hover' | 'pressed' | 'focused' | 'custom';
@@ -60,6 +60,8 @@ export type ComponentDefinitions = Record<string, ComponentDefinition>;
 export interface RefusedDefinition {
   id: string;
   reason: string;
+  /** Set when the definition is fine and one edit to it was undone instead. */
+  edit?: boolean;
 }
 
 export interface ParsedComponents {
@@ -107,7 +109,8 @@ function treeRefusal(tree: unknown): string | null {
   return null;
 }
 
-function stateRefusal(state: unknown): string | null {
+/** Why a stored state cannot be used, or null. */
+export function stateRefusal(state: unknown): string | null {
   if (!isRecord(state)) return 'a state is an object';
   const { id, name, kind, implies, x, y } = state;
   if (typeof id !== 'string' || !STATE_ID.test(id)) return 'a state id is letters, digits, dashes and underscores, and never starts fc-';
@@ -208,4 +211,127 @@ export function parseComponents(raw: unknown): ParsedComponents {
     console.warn(`parseComponents: skipped ${refused.length} definition(s)`, refused.slice(0, 10));
   }
   return { definitions, refused };
+}
+
+// ---------- nesting ----------
+
+const treeOf = (definition: ComponentDefinition | undefined): unknown => definition?.page?.appComponentTree;
+
+/** The definition ids a stored tree places directly, in document order. */
+export function placedDefinitionIds(tree: unknown): string[] {
+  const found: string[] = [];
+  const visit = (node: unknown) => {
+    if (!isRecord(node)) return;
+    if (isPlacementType(node.type)) {
+      const { component } = (node.props ?? {}) as { component?: unknown };
+      if (typeof component === 'string') found.push(component);
+    }
+    if (Array.isArray(node.children)) node.children.forEach(visit);
+  };
+  visit(tree);
+  return found;
+}
+
+/**
+ * The chain of definition ids that placing `placedId` inside `targetId` would
+ * close, target first and last, or null when it closes none.
+ */
+export function wouldCycle(definitions: ComponentDefinitions, targetId: string, placedId: string): string[] | null {
+  const seen = new Set<string>();
+  const visit = (id: string, path: readonly string[]): string[] | null => {
+    if (id === targetId) return [...path, id];
+    if (seen.has(id)) return null;
+    seen.add(id);
+    for (const next of placedDefinitionIds(treeOf(definitions[id]))) {
+      const found = visit(next, [...path, id]);
+      if (found) return found;
+    }
+    return null;
+  };
+  const found = visit(placedId, [targetId]);
+  return found;
+}
+
+/** "Card contains Grid, which contains Card". */
+export function cycleReason(definitions: ComponentDefinitions, path: readonly string[]): string {
+  const names = path.map(id => definitions[id]?.name ?? id);
+  const [first, second, ...rest] = names;
+  return `${first} contains ${second}${rest.map(name => `, which contains ${name}`).join('')}.`;
+}
+
+/** How many definitions deep the longest chain below this one runs, itself included. */
+function depthBelow(definitions: ComponentDefinitions, id: string, stack: readonly string[] = []): number {
+  if (stack.includes(id) || !Object.hasOwn(definitions, id)) return 0;
+  const below = placedDefinitionIds(treeOf(definitions[id])).map(next => depthBelow(definitions, next, [...stack, id]));
+  return 1 + Math.max(0, ...below);
+}
+
+/** How many definitions deep the longest chain above this one runs, itself included. */
+function depthAbove(definitions: ComponentDefinitions, id: string, stack: readonly string[] = []): number {
+  if (stack.includes(id)) return 0;
+  const holders = Object.keys(definitions).filter(holder => placedDefinitionIds(treeOf(definitions[holder])).includes(id));
+  return 1 + Math.max(0, ...holders.map(holder => depthAbove(definitions, holder, [...stack, id])));
+}
+
+/**
+ * Why `placedId` cannot go inside `targetId`, a definition, or on a page when
+ * undefined. Expansion checks again, since stored JSON can say anything.
+ */
+export function placementRefusal(
+  definitions: ComponentDefinitions,
+  targetId: string | undefined,
+  placedId: string,
+): string | null {
+  if (!Object.hasOwn(definitions, placedId)) return 'That component no longer exists.';
+  if (targetId === undefined) return null;
+  const cycle = wouldCycle(definitions, targetId, placedId);
+  if (cycle) return cycleReason(definitions, cycle);
+  const depth = depthAbove(definitions, targetId) + depthBelow(definitions, placedId);
+  return depth > COMPONENT_LIMITS.nestingDepth
+    ? `Components nest at most ${COMPONENT_LIMITS.nestingDepth} deep, and this would make ${depth}.`
+    : null;
+}
+
+// ---------- placing by content model ----------
+
+// A browser's parser closes the outer element on these, so the tree would not
+// stay what the editor shows.
+const INTERACTIVE_TAGS: ReadonlySet<string> = new Set(['a', 'button', 'input', 'select', 'textarea', 'details', 'label', 'iframe', 'embed']);
+const PHRASING_TAGS: ReadonlySet<string> = new Set([
+  'a', 'abbr', 'audio', 'b', 'bdi', 'bdo', 'br', 'button', 'canvas', 'cite', 'code', 'data', 'dfn', 'em', 'i', 'img',
+  'input', 'kbd', 'label', 'mark', 'picture', 'q', 's', 'samp', 'select', 'small', 'span', 'strong', 'sub', 'sup',
+  'svg', 'textarea', 'time', 'u', 'var', 'video', 'wbr',
+]);
+
+function holdsInteractive(tree: unknown, definitions: ComponentDefinitions, stack: readonly string[] = []): boolean {
+  if (!isRecord(tree)) return false;
+  if (typeof tree.type === 'string' && INTERACTIVE_TAGS.has(tree.type)) return true;
+  if (isPlacementType(tree.type)) {
+    const { component } = (tree.props ?? {}) as { component?: unknown };
+    if (typeof component !== 'string' || stack.includes(component)) return false;
+    return holdsInteractive(treeOf(definitions[component]), definitions, [...stack, component]);
+  }
+  return Array.isArray(tree.children) && tree.children.some(child => holdsInteractive(child, definitions, stack));
+}
+
+/**
+ * Why a placement of this definition may not sit inside these ancestors' tags, or
+ * null. Reads the definition's root tag and whether it holds interactive content,
+ * because the placement itself has no element for a drop to ask about.
+ */
+export function contentModelRefusal(
+  definitions: ComponentDefinitions,
+  definitionId: string,
+  ancestorTags: readonly string[],
+): string | null {
+  const tree = treeOf(definitions[definitionId]);
+  if (!isRecord(tree)) return null;
+  const inside = ancestorTags.find(tag => tag === 'a' || tag === 'button');
+  if (inside && holdsInteractive(tree, definitions, [definitionId])) {
+    return `This component holds a link or a control, and a browser would move it out of the <${inside}>.`;
+  }
+  if (ancestorTags.includes('p') && !PHRASING_TAGS.has(String(tree.type))) {
+    return `A browser would end the paragraph at this component's <${String(tree.type)}>.`;
+  }
+  return null;
 }

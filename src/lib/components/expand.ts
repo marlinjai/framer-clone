@@ -133,7 +133,7 @@ export function withoutInstance(node: ComponentNode): ComponentNode {
   return { ...node, props };
 }
 
-function boundValue(binding: BindingEntry | undefined, scope: BindingScope): unknown {
+export function boundValue(binding: BindingEntry | undefined, scope: BindingScope): unknown {
   if (binding?.mode !== 'read') return undefined;
   const parsed = parseExpression(binding.expression);
   return parsed ? evaluateExpression(parsed, scope) : undefined;
@@ -230,7 +230,7 @@ function hasWork(root: ComponentNode): boolean {
 const MAX_PATH = 120;
 
 /** A stable 53 bit hash: the same text gives the same id on every render and in both runtimes. */
-function stableHash(text: string): string {
+export function stableHash(text: string): string {
   let h1 = 0xdeadbeef;
   let h2 = 0x41c6ce57;
   for (let i = 0; i < text.length; i++) {
@@ -249,7 +249,7 @@ function pathId(prefix: string, id: string): string {
   return path.length > MAX_PATH ? `p-${stableHash(path)}` : path;
 }
 
-function rewriteReferences(node: ComponentNode, renamed: ReadonlyMap<string, string>): ComponentNode {
+export function rewriteReferences(node: ComponentNode, renamed: ReadonlyMap<string, string>): ComponentNode {
   return {
     ...node,
     ...(node.props ? { props: withFollowedRefs(node.props, renamed) as ComponentNode['props'] } : {}),
@@ -270,7 +270,7 @@ function mergeValue(definition: unknown, placement: unknown): unknown {
  * always lands last: spreading alone keeps a shared key's old position, and a
  * definition's `paddingTop` would beat a placement's `padding`.
  */
-function mergeStyle(definition: unknown, placement: unknown): unknown {
+export function mergeStyle(definition: unknown, placement: unknown): unknown {
   if (!isRecord(placement)) return definition;
   const merged: Record<string, unknown> = isRecord(definition) ? { ...definition } : {};
   for (const [key, value] of Object.entries(placement)) {
@@ -318,7 +318,7 @@ function countNodes(node: ComponentNode): number {
 }
 
 /** A binding of an input to an address, by a type whose check is no address check. */
-function bindingsAllowed(bindings: BindingsRecord, inputs: readonly InputDefinition[], budget: RenderBudget): BindingsRecord {
+export function bindingsAllowed(bindings: BindingsRecord, inputs: readonly InputDefinition[], budget: RenderBudget): BindingsRecord {
   const kept: BindingsRecord = {};
   for (const [slot, entry] of Object.entries(bindings)) {
     const path = entry.mode === 'read' ? parseExpression(entry.expression)?.path : undefined;

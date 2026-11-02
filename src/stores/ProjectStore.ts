@@ -1,5 +1,6 @@
 // src/stores/ProjectStore.ts  
 // Domain store for managing projects collection
+import { parseModelComponents } from '@/models/ComponentDefinitionModel';
 import { types, Instance } from 'mobx-state-tree';
 import ProjectModel, { ProjectModelType, ProjectSnapshotIn } from '../models/ProjectModel';
 import { v4 as uuidv4 } from 'uuid';
@@ -242,6 +243,9 @@ const ProjectStore = types.model('ProjectStore', {
   // existing project with the same id (pre-MVP: no merge semantics needed).
   ingestProjectSnapshot(snapshot: ProjectSnapshotIn): string {
     self.projects.set(snapshot.id, snapshot);
+    // The model drops a definition it cannot read, so the reasons are taken here,
+    // while the stored value is still in hand, for the publish check to show.
+    self.projects.get(snapshot.id)?.noteRefusedComponents(parseModelComponents(snapshot.components).refused);
     return snapshot.id;
   },
 

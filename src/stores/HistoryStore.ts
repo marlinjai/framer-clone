@@ -31,6 +31,23 @@ const HistoryEntryModel = types.model('HistoryEntry', {
 
 export type HistoryEntryInstance = Instance<typeof HistoryEntryModel>;
 
+// True while ProjectModel's size guard takes back an edit it refused.
+let takingBackRefusedEdit = false;
+
+/**
+ * Runs the undo of a refused edit. That edit's entry is already in, because the
+ * guard sits below this store's middleware in the call, so the entry goes, and the
+ * undo records none: there is nothing to step back through.
+ */
+export function takeBackRefusedEdit(undo: () => void): void {
+  takingBackRefusedEdit = true;
+  try {
+    undo();
+  } finally {
+    takingBackRefusedEdit = false;
+  }
+}
+
 // Max entries kept. Older ones are trimmed from the front.
 const MAX_HISTORY = 500;
 
@@ -129,6 +146,10 @@ const HistoryStore = types
               self.batch.inversePatches.push(...recorder.inversePatches);
               return;
             }
+            if (takingBackRefusedEdit) {
+              this.forgetLastEntry();
+              return;
+            }
             this.recordEntry(
               call.name,
               recorder.patches,
@@ -167,6 +188,13 @@ const HistoryStore = types
             self.history.splice(0, self.history.length - MAX_HISTORY);
           }
           self.undoIdx = self.history.length;
+        });
+      },
+
+      forgetLastEntry() {
+        withoutRecording(() => {
+          self.history.splice(self.undoIdx - 1, 1);
+          self.undoIdx -= 1;
         });
       },
 

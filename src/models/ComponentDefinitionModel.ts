@@ -32,6 +32,15 @@ export const ComponentDefinitionModel = types
     setInputs(inputs: InputDefinition[]) {
       self.inputs = inputs;
     },
+    setStates(states: StateDefinition[]) {
+      self.states = states;
+    },
+    setName(name: string) {
+      self.name = name;
+    },
+    setNoScriptState(state: string | undefined) {
+      self.noScriptState = state;
+    },
   }));
 
 export type ComponentDefinitionInstance = Instance<typeof ComponentDefinitionModel>;

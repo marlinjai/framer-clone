@@ -214,6 +214,11 @@ describe('checkBeforePublish', () => {
     expect(result.components[0].pageId).toBeUndefined();
   });
 
+  it('words an undone edit as an edit, not as an unreadable component', () => {
+    const result = check([page('home', pageOf())], {}, [{ id: 'Card', reason: 'too large', edit: true } as never]);
+    expect(result.components[0].message).toMatch(/last edit.*undone.*too large/);
+  });
+
   it('lists a cycle', () => {
     const cyclic = definitions({
       a: { tree: { id: 'a', type: 'div', props: {}, children: [placement('to-b', 'b')] } },

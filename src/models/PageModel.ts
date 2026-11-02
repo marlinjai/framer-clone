@@ -8,7 +8,9 @@ import {
   IAnyModelType,
   detach,
   getRoot,
+  getParent,
   getSnapshot,
+  hasParent,
 } from 'mobx-state-tree';
 import { v4 as uuidv4 } from 'uuid';
 import ComponentModel, {
@@ -20,6 +22,13 @@ import ComponentModel, {
 } from './ComponentModel';
 import { isStickyCta } from '@/lib/stickyCta/stickyCta';
 import { remapBehaviourRefs } from '@/lib/behaviour/format';
+import {
+  contentModelRefusal,
+  placedDefinitionIds,
+  placementRefusal,
+  type ComponentDefinitions,
+} from '@/lib/components/definition';
+import { PLACEMENT_TYPE, isPlacementType } from '@/lib/components/placement';
 import { getComponentEntry } from '@/lib/componentRegistry';
 import type { ApplyOutcome, GenerationUndoRecord } from '@/lib/ai/pageGen/apply';
 import { isVoidTag } from '@/lib/drag/voidTags';
@@ -77,6 +86,67 @@ function findComponentInPage(page: PageLike, id: string): ComponentInstance | un
   return undefined;
 }
 
+/** The project around a page, whichever of its pages or definitions this is. */
+function projectOf(page: object): { definitions: ComponentDefinitions } | undefined {
+  let node: object = page;
+  while (hasParent(node)) {
+    node = getParent(node);
+    if ('definitions' in node) return node as { definitions: ComponentDefinitions };
+  }
+  return undefined;
+}
+
+/** The id of the definition this page belongs to, when it is one's. */
+function owningDefinition(page: object): string | undefined {
+  if (!hasParent(page)) return undefined;
+  const parent: object = getParent(page);
+  return 'page' in parent && parent.page === page ? (parent as unknown as { id: string }).id : undefined;
+}
+
+/** The tags from `parent` up to the root, the parent's first. */
+function tagsUpFrom(page: PageLike, parent: ComponentInstance): string[] {
+  const tags: string[] = [];
+  let node: ComponentInstance | undefined = parent;
+  while (node) {
+    tags.push(node.type);
+    node = node.parentId ? findComponentInPage(page, node.parentId) : undefined;
+  }
+  return tags;
+}
+
+/** Why a placement of this definition may not land inside `parent` on this page. */
+function placementDropRefusal(page: PageLike, definitionId: string, parent: ComponentInstance): string | undefined {
+  const definitions = projectOf(page)?.definitions;
+  if (!definitions) return undefined;
+  return placementRefusal(definitions, owningDefinition(page), definitionId)
+    ?? contentModelRefusal(definitions, definitionId, tagsUpFrom(page, parent))
+    ?? undefined;
+}
+
+/** Where an insert lands, the app tree when the target is gone. */
+function insertPlace(page: PageLike, target: InsertTarget): { parent: ComponentInstance; index?: number } {
+  let parent: ComponentInstance | undefined;
+  let index: number | undefined;
+  if (target.kind === 'appTree') {
+    parent = page.appComponentTree;
+  } else if (target.kind === 'parent') {
+    parent = findComponentInPage(page, target.parentId);
+    index = target.index;
+  } else if (target.kind === 'sibling') {
+    const sibling = findComponentInPage(page, target.siblingId);
+    if (sibling?.parentId) {
+      parent = findComponentInPage(page, sibling.parentId);
+      if (parent) {
+        const siblingIdx = parent.children.findIndex((c: ComponentInstance) => c.id === sibling.id);
+        index = target.position === 'before' ? siblingIdx : siblingIdx + 1;
+      }
+    }
+  }
+  if (parent) return { parent, index };
+  console.warn('[PageModel] Insert target parent not found, falling back to appTree');
+  return { parent: page.appComponentTree };
+}
+
 /** The element `target` would place a node inside; undefined for the canvas or a target that is gone. */
 function targetParent(page: PageLike, target: InsertTarget): ComponentInstance | undefined {
   if (target.kind === 'appTree') return page.appComponentTree;
@@ -95,7 +165,13 @@ function dropRefusalFor(page: PageLike, component: ComponentInstance, target: In
   const parent = targetParent(page, target);
   if (!parent) return undefined;
   if (isTextNodeType(parent.type)) return 'Text cannot hold other elements. Drop this next to it instead.';
-  return isText ? bareTextRefusal(parent.type) : undefined;
+  if (isPlacementType(parent.type)) return 'A component holds no children. Edit it, or drop this next to it instead.';
+  if (isText) return bareTextRefusal(parent.type);
+  for (const definitionId of placedDefinitionIds(getSnapshot(component))) {
+    const refusal = placementDropRefusal(page, definitionId, parent);
+    if (refusal) return refusal;
+  }
+  return undefined;
 }
 
 
@@ -179,6 +255,16 @@ const PageModel = PageWithComponents
     const component = findComponentInPage(self, componentId);
     return component ? dropRefusalFor(self, component, target) : undefined;
   },
+
+  /** Why a placement of this definition may not go to `target`, or undefined. */
+  placementRefusal(definitionId: string, target: InsertTarget): string | undefined {
+    const parent = targetParent(self, target);
+    if (parent && (isTextNodeType(parent.type) || isPlacementType(parent.type))) {
+      return 'Text and components hold no children. Drop this next to them instead.';
+    }
+    const page: PageLike = self as unknown as PageLike;
+    return placementDropRefusal(page, definitionId, parent ?? page.appComponentTree);
+  },
   }))
   .actions(self => ({
   // Update page metadata
@@ -197,6 +283,11 @@ const PageModel = PageWithComponents
   
   // Set app component tree (deployable responsive app)
   setAppComponentTree(component: ComponentInstance | SnapshotIn<typeof ComponentModel>) {
+    // A failed placement at the root would leave the page with no root at all.
+    if (String(component.type).startsWith('#')) {
+      console.warn('[PageModel] a page or definition root is an element');
+      return;
+    }
     self.appComponentTree = component;
     self.updatedAt = new Date();
   },
@@ -248,6 +339,10 @@ const PageModel = PageWithComponents
     // most one per page, always at the end of the page, wherever it was
     // dropped. A second drop selects the existing bar instead.
     if (isStickyCta(entry.defaultProps)) {
+      if (owningDefinition(self)) {
+        console.warn('[PageModel] a sticky bar is one per page, so a definition cannot hold it');
+        return undefined;
+      }
       const appTree = self.appComponentTree as ComponentInstance | undefined;
       if (!appTree) return undefined;
       const existing = findStickyCta(appTree);
@@ -282,36 +377,34 @@ const PageModel = PageWithComponents
     child.setLabel(entry.label);
     addRegistryDefaultChildren(child, entry.defaultChildren);
 
-    let parent: ComponentInstance | undefined;
-    let insertIndex: number | undefined;
-    if (target.kind === 'appTree') {
-      parent = self.appComponentTree as ComponentInstance;
-    } else if (target.kind === 'parent') {
-      parent = findComponentInPage(self, target.parentId);
-      insertIndex = target.index;
-    } else if (target.kind === 'sibling') {
-      const sibling = findComponentInPage(self, target.siblingId);
-      if (sibling?.parentId) {
-        parent = findComponentInPage(self, sibling.parentId);
-        if (parent) {
-          const siblingIdx = parent.children.findIndex((c: ComponentInstance) => c.id === sibling.id);
-          insertIndex = target.position === 'before' ? siblingIdx : siblingIdx + 1;
-        }
-      }
-    }
-
-    if (!parent) {
-      console.warn('[PageModel] Insert target parent not found, falling back to appTree');
-      parent = self.appComponentTree as ComponentInstance;
-    }
-    if (isTextNodeType(parent.type)) {
-      console.warn('[PageModel] Insert target is a text node, which holds no children');
+    const { parent, index } = insertPlace(self, target);
+    if (isTextNodeType(parent.type) || isPlacementType(parent.type)) {
+      console.warn('[PageModel] Insert target is a text node or a placement, which hold no children');
       return undefined;
     }
 
-    parent.addChild(child, insertIndex);
+    parent.addChild(child, index);
     self.updatedAt = new Date();
     return child;
+  },
+
+  // Place a reusable component. The caller, ProjectModel.placeComponent, has the
+  // definition and gives the reason for a refusal; this writes the node.
+  insertPlacement(definitionId: string, label: string, target: InsertTarget): ComponentInstance | undefined {
+    const id = `component-${uuidv4()}`;
+    if (target.kind === 'floating') {
+      const floating = createFloatingCanvasComponent(id, PLACEMENT_TYPE as never, { component: definitionId }, Math.round(target.x), Math.round(target.y));
+      floating.setLabel(label);
+      self.canvasNodes.set(floating.id, floating);
+      self.updatedAt = new Date();
+      return self.canvasNodes.get(floating.id);
+    }
+    const { parent, index } = insertPlace(self, target);
+    const placement = createIntrinsicComponent(id, PLACEMENT_TYPE as never, { component: definitionId });
+    placement.setLabel(label);
+    parent.addChild(placement, index);
+    self.updatedAt = new Date();
+    return placement;
   },
 
   // ---------- AI PAGE GENERATION (one action = one history entry) ----------

@@ -74,7 +74,7 @@ const PublishButton = observer(() => {
           metadata: { title: p.metadata.title, legalTemplate: p.metadata.legalTemplate },
           snapshot: getSnapshot(p),
         })),
-        { definitions: project.definitions, refused: [] },
+        { definitions: project.definitions, refused: project.refusedComponents },
       );
       if (hasPublishIssues(check)) {
         setState({ kind: 'confirm', check });
@@ -99,6 +99,7 @@ const PublishButton = observer(() => {
       }
       // The server now holds exactly this project (see openProject).
       markServerVersion(project.id, snapshot as ProjectContent);
+      project.clearRefusedEdits();
       const ok = payload as
         | { publishedPages?: unknown; liveUrl?: unknown; subdomain?: unknown }
         | null;

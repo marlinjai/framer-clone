@@ -33,7 +33,7 @@ export interface PublishCheckPage extends LegalPageLike {
 /** The site's reusable components, as the check needs them. */
 export interface PublishCheckComponents {
   definitions: ComponentDefinitions;
-  /** Stored definitions that could not be read, so their placements show nothing. */
+  /** Stored definitions that could not be read, and edits to one that were undone. */
   refused: readonly RefusedDefinition[];
 }
 
@@ -105,9 +105,11 @@ export function checkBeforePublish(
     if (count > 0) placeholders.push({ kind, pageId: page.id, title: page.metadata.title, count });
   }
 
-  const components: ComponentIssue[] = refused.map(({ id, reason }) => ({
+  const components: ComponentIssue[] = refused.map(({ id, reason, edit }) => ({
     title: id,
-    message: `this component cannot be read, so it shows nothing wherever it is placed (${reason})`,
+    message: edit
+      ? `your last edit to this component was undone (${reason})`
+      : `this component cannot be read, so it shows nothing wherever it is placed (${reason})`,
   }));
   for (const page of pages) {
     const kinds = new Set(trees.get(page.id)?.budget.failures.map((failure) => failure.kind));
