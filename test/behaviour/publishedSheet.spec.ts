@@ -86,8 +86,8 @@ async function publish(port: string, { analytics = false, siteSettings }: { anal
     ...(analytics ? { lumitra: { enabled: true } } : {}),
     ...(siteSettings ? { siteSettings } : {}),
   };
-  await repo.saveProject(SCOPE, project as never);
-  await repo.publishProject(SCOPE, project as never);
+  const saved = await repo.saveProject(SCOPE, project as never);
+  await repo.publishProject(SCOPE, project as never, { expectedVersion: saved.version });
   const { subdomain } = await repo.ensureSiteDomain(SCOPE, siteId);
   return `http://${subdomain}.sites.localhost:${port}`;
 }
