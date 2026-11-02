@@ -111,6 +111,32 @@ describe('a designed checkout, published', () => {
   });
 });
 
+describe('formatted text in a message part', () => {
+  afterEach(() => window.history.replaceState(null, '', '/'));
+
+  it('keeps its link outside a button and fills its tokens run by run', async () => {
+    window.history.replaceState(null, '', '/cart?checkout=cancelled&order=ORD-7');
+    const tree = designed(normalizeShopControl(control, 'de', 'node'), {
+      'checkout.returned-cancelled': (props) => ({
+        ...props,
+        children: { runs: [{ text: 'Abgebrochen. ' }, { text: 'Hilfe', href: '/hilfe' }] },
+      }),
+      'checkout.button-label': (props) => ({ ...props, children: { runs: [{ text: 'Kasse', href: '/kasse' }] } }),
+    });
+    const { container } = await publish(page(tree), 'de');
+    const cancelled = await waitFor(() => {
+      const found = container.querySelector('[data-checkout-returned="cancelled"]');
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    expect(cancelled.querySelector('a')?.getAttribute('href')).toBe('/hilfe');
+    // Inside the button a link would be invalid: the text stays, the link does not.
+    const button = container.querySelector('button[data-checkout]')!;
+    expect(button.textContent).toBe('Kasse');
+    expect(button.querySelector('a')).toBeNull();
+  });
+});
+
 describe('a checkout published before parts', () => {
   it('gets the default parts in the site language, its old label kept', async () => {
     window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify([{ variantId: 'var_a', quantity: 1 }]));

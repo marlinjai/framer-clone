@@ -244,6 +244,7 @@ export function createComponentElement(
           storedText={rawTextChildren}
           content={children.length > 0 ? children : undefined}
           surface={options?.mode === 'editor' ? 'editor' : 'preview'}
+          linksAllowed={options?.runLinksAllowed !== false}
         />
       );
     }

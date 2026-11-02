@@ -16,7 +16,7 @@
 import React, { createContext, useContext } from 'react';
 import { isVoidTag } from '@/lib/drag/voidTags';
 import { createRunElement } from '@/lib/renderer/runElements';
-import { renderOwnText } from '@/lib/renderer/textNode';
+import { renderOwnText, runLinksAllowedIn } from '@/lib/renderer/textNode';
 import {
   fillShopTokensIn,
   shopPartControl,
@@ -86,19 +86,21 @@ export interface ShopPartElementProps {
   content?: React.ReactNode;
   /** Where it renders when no control is around it: the canvas shows a stray part, a page does not. */
   surface: 'editor' | 'preview';
+  /** False inside a link or a button, where formatted text leaves its links out. */
+  linksAllowed?: boolean;
 }
 
-/** A part's text as element children, spread so React needs no keys. Links stay out: a part may sit in a button. */
-function textChildren(text: unknown): React.ReactNode[] {
+/** A part's text as element children, spread so React needs no keys. Links only where a link is valid (not in a button). */
+function textChildren(text: unknown, linksAllowed: boolean): React.ReactNode[] {
   if (text === undefined || text === null) return [];
-  const rendered = renderOwnText(text, createRunElement, false) as React.ReactNode;
+  const rendered = renderOwnText(text, createRunElement, linksAllowed) as React.ReactNode;
   return Array.isArray(rendered) ? rendered : [rendered];
 }
 
 const STRAY_STYLE = { opacity: 0.5, outline: '1px dashed #f59e0b' };
 
 /** One shop part, drawn as its control's runtime says. */
-export function ShopPartElement({ role, tag, domProps, storedText, content, surface }: ShopPartElementProps): React.ReactElement | null {
+export function ShopPartElement({ role, tag, domProps, storedText, content, surface, linksAllowed = true }: ShopPartElementProps): React.ReactElement | null {
   const runtime = useContext(ShopRuntimeContext);
   const locale = useContext(ShopLocaleContext);
 
@@ -111,7 +113,7 @@ export function ShopPartElement({ role, tag, domProps, storedText, content, surf
     return React.createElement(
       tag,
       { ...domProps, style, title: 'This shop part works only inside its shop control.' },
-      ...(isVoidTag(tag) ? [] : [...textChildren(shopPartText(role, storedText, locale)), content]),
+      ...(isVoidTag(tag) ? [] : [...textChildren(shopPartText(role, storedText, locale), linksAllowed && runLinksAllowedIn(tag)), content]),
     );
   }
 
@@ -131,7 +133,7 @@ export function ShopPartElement({ role, tag, domProps, storedText, content, surf
       return React.createElement(elementTag, props);
     }
     const text = editing ? raw : fillShopTokensIn(raw, tokens ?? {});
-    return React.createElement(elementTag, props, ...textChildren(text), content);
+    return React.createElement(elementTag, props, ...textChildren(text, linksAllowed && runLinksAllowedIn(elementTag)), content);
   };
 
   if (render.items) {

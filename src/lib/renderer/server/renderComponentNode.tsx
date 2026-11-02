@@ -161,10 +161,10 @@ export function renderNodeChildren(
 }
 
 /** A node's child nodes without its own text (a shop part draws its text itself). */
-function renderNodeChildrenOnly(node: ComponentNode, scope: BindingScope, foreign: ForeignContent): React.ReactNode {
+function renderNodeChildrenOnly(node: ComponentNode, scope: BindingScope, foreign: ForeignContent, inLink: boolean): React.ReactNode {
   const children = node.children ?? [];
   if (children.length === 0) return undefined;
-  return children.map((child, index) => renderComponentNode(child, scope, child.id ?? index, foreign, true));
+  return children.map((child, index) => renderComponentNode(child, scope, child.id ?? index, foreign, inLink));
 }
 
 /**
@@ -225,8 +225,9 @@ export function renderComponentNode(
         tag={partTag}
         domProps={nodeDomProps(node)}
         storedText={(node.props as any)?.children}
-        content={isVoidTag(partTag) ? undefined : renderNodeChildrenOnly(node, scope, contentBelow(partTag, foreign))}
+        content={isVoidTag(partTag) ? undefined : renderNodeChildrenOnly(node, scope, contentBelow(partTag, foreign), inLink || !runLinksAllowedIn(partTag))}
         surface="preview"
+        linksAllowed={!inLink}
       />
     );
   }
