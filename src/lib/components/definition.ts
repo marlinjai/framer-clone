@@ -86,6 +86,35 @@ export const placementMarkerSelector = (definitionId: string): string =>
 export const hasPointerState = (definition: Pick<ComponentDefinition, 'states'>): boolean =>
   (definition.states ?? []).some(isPointerState);
 
+// ---------- custom states ----------
+
+/** The state a placement starts in when it names none, or one its definition lacks. */
+export const PRIMARY_STATE = 'primary';
+
+/**
+ * `S`: the behaviour state on a placement root that holds which custom state it is
+ * in. Lower case, as behaviour state ids are, since an attribute name ignores case.
+ */
+export const customStateScope = (definitionId: string): string => `cs-${definitionId.slice(0, 8).toLowerCase()}`;
+
+/** The custom states of a definition, in their order. */
+export const customStatesOf = (definition: Pick<ComponentDefinition, 'states'>): StateDefinition[] =>
+  (definition.states ?? []).filter(state => state.kind === 'custom');
+
+/** The `choice` a definition's custom states compile to, or null when it has none. */
+export function customStateChoice(definition: Pick<ComponentDefinition, 'id' | 'states'>, initial = PRIMARY_STATE) {
+  const custom = customStatesOf(definition);
+  if (custom.length === 0) return null;
+  const options = [PRIMARY_STATE, ...custom.map(state => state.id)];
+  return {
+    id: customStateScope(definition.id),
+    name: 'State',
+    type: 'choice' as const,
+    initial: options.includes(initial) ? initial : PRIMARY_STATE,
+    options,
+  };
+}
+
 /** A site's definitions by id, as `parseComponents` gives them. */
 export type ComponentDefinitions = Record<string, ComponentDefinition>;
 

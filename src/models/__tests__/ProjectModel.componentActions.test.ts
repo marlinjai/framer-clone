@@ -10,6 +10,8 @@ import HistoryStore from '@/stores/HistoryStore';
 import ProjectStore from '@/stores/ProjectStore';
 import { COMPONENT_LIMITS } from '@/lib/components/placement';
 import { readRules } from '@/lib/rules/rules';
+import { expandPlacements } from '@/lib/components/expand';
+import { parseComponents } from '@/lib/components/definition';
 
 const read = (expression: string) => ({ mode: 'read', expression });
 
@@ -472,6 +474,27 @@ describe('states', () => {
       expect(root.setRuleStyle('state-hover', 'color', 'red')).toMatchObject({ ok: false });
       expect(root.addRule({ selector: '&', componentState: 'pressed', style: { color: 'red' } } as never)).toMatchObject({ ok: false });
     });
+  });
+
+  it('removes a custom state a placement from data still names, which then starts in primary', () => {
+    const menu = definition('menu', host('m', 'nav', { rules: [{ id: 'state-open', componentState: 'open', selector: '&', style: { color: 'red' } }] }), {
+      states: [{ id: 'open', name: 'Open', kind: 'custom' }],
+      noScriptState: 'open',
+    });
+    const { project, page } = setup({ menu });
+    fill(page, host('p1', '#component', { component: 'menu' }, [], { state: read('{{row.tier}}') }), host('p2', '#component', { component: 'menu', state: 'open' }));
+    const expandOnce = () => expandPlacements(
+      getSnapshot(page.appComponentTree) as never,
+      parseComponents(JSON.parse(JSON.stringify(getSnapshot(project.components)))).definitions,
+      [],
+    );
+    const initials = () => (expandOnce().children ?? []).map(node => JSON.stringify((node.props as Record<string, unknown>).behaviour ?? null));
+    expect(initials()[1]).toContain('"initial":"open"');
+    expect(project.removeState('menu', 'open').ok).toBe(true);
+    // The choice went with its last state, and the placement that started on it starts in primary.
+    expect(initials()).toEqual(['null', 'null']);
+    expect((rootOf(page).children[1] as ComponentInstance).props).toEqual({ component: 'menu' });
+    expect((rootOf(page).children[0] as ComponentInstance).bindings).toEqual({ state: read('{{row.tier}}') });
   });
 
   it('adds up to the limit, and refuses a bad state', () => {

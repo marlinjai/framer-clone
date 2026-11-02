@@ -53,6 +53,18 @@ function pointerButton(kind: keyof typeof POINTER_CSS) {
   return { ...definition('btn', tree), states: [{ id: kind, name: kind, kind }] } as unknown as ReturnType<typeof definition>;
 }
 
+/** A menu whose list shows only in its custom Open state, through ComponentModel and JSON. */
+function customMenu() {
+  const tree = savedAndLoaded({
+    id: 'm-root', type: 'nav', props: {},
+    children: [{ id: 'm-links', type: 'ul', props: { style: { display: 'none' }, rules: [
+      { id: 'state-open', componentState: 'open', selector: '&', style: { display: 'flex' } },
+    ] } }],
+  });
+  return { ...definition('menu', tree), states: [{ id: 'open', name: 'Open', kind: 'custom' }] } as unknown as ReturnType<typeof definition>;
+}
+const MENU_STATE = 'cs-menu';
+
 const pass = (): Cell => ({ status: 'pass' });
 const fail = (note: string): Cell => ({ status: 'fail', gap: 'reusable-components', note });
 const cell = (ok: boolean, note: string): Cell => (ok ? pass() : fail(note));
@@ -119,6 +131,16 @@ async function formatCells(): Promise<SurfaceResults> {
       return cell(refused.length === 0 && raw && compiled && marked, `the ${kind} state did not survive the round trip and compile: ${JSON.stringify(read)}`);
     });
   }
+  out[key('state-custom')] = await probe(() => {
+    const { definitions, refused } = parseComponents(jsonTrip({ menu: customMenu() }));
+    const expanded = expandedRoot([placement('p1', 'menu', { state: 'open' })], definitions).children?.[0];
+    const choice = ((expanded?.props?.behaviour as { state?: Record<string, unknown>[] } | undefined)?.state ?? [])[0];
+    const rule = ((expanded?.children?.[0].props?.rules ?? []) as Record<string, unknown>[])[0];
+    const ok = refused.length === 0 && choice?.id === MENU_STATE && choice.initial === 'open'
+      && JSON.stringify(choice.options) === '["primary","open"]'
+      && JSON.stringify(rule?.when) === JSON.stringify({ state: MENU_STATE, eq: 'open' }) && !('componentState' in (rule ?? {}));
+    return cell(ok, `the custom state did not survive the round trip and compile: ${JSON.stringify(expanded).slice(0, 300)}`);
+  });
   for (const [type, sample] of Object.entries(INPUT_PROBES)) {
     out[key(type)] = await probe(() => {
       const input = jsonTrip({ id: 'x', name: 'X', type, ...sample.input }) as InputDefinition;
@@ -184,6 +206,12 @@ async function publishedCells(): Promise<SurfaceResults> {
       return cell(ok, `the ${kind} state did not reach the sheet once, relative to both placements: ${text.slice(0, 400)}`);
     });
   }
+  out[key('state-custom')] = await probe(async () => {
+    const text = await html([placement('p1', 'menu', { state: 'open' }), placement('p2', 'menu')], definitionsOf(customMenu()));
+    const rule = `.fc_r-m-links.fc_r-m-links:where([data-fcs-${MENU_STATE}="open"] *, [data-fcs-${MENU_STATE}="open"]){display:flex}`;
+    const ok = text.split(rule).length === 2 && text.includes(`<nav data-fcs-${MENU_STATE}="open"`) && text.includes(`<nav data-fcs-${MENU_STATE}="primary"`);
+    return cell(ok, `each placement did not start in its own state: ${text.slice(0, 400)}`);
+  });
   for (const [type, sample] of Object.entries(INPUT_PROBES)) {
     out[key(type)] = await probe(async () => {
       const stored = definition('d', { id: 'r', ...sample.node }, [{ id: 'x', name: 'X', type: type as InputType, ...sample.input }]);
