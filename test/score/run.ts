@@ -4,15 +4,21 @@
 //   exit 1  the score dropped: the ratchet says which number
 //   exit 2  a harness error: a probe crashed, so there is no score
 //
-// A low score alone never fails. --update-baseline raises the floor on purpose.
+// The report goes to test/score/.out/latest.md. --publish also writes it to
+// docs/primitives-score, which only the run on main does (.github/workflows/score.yml).
+//
+// A low score alone never fails. --update-baseline raises the floor on purpose, and only
+// raises it: a run that dropped writes nothing, and lowering is a hand edit with a reason
+// (test/score/lib/floor.ts).
 
 import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { OUT_DIR } from './lib/io';
+import { OUT_DIR, REPORT_DIR } from './lib/io';
 import { buildScore, checkRatchet, writeBaseline, writeScore } from './report';
 
 const started = Date.now();
 const updateBaseline = process.argv.includes('--update-baseline');
+const publish = process.argv.includes('--publish');
 
 fs.rmSync(OUT_DIR, { recursive: true, force: true });
 
@@ -24,11 +30,11 @@ if (probes.status !== 0) {
 }
 
 const score = buildScore(Math.round((Date.now() - started) / 1000));
-writeScore(score);
-if (updateBaseline) writeBaseline(score);
+writeScore(score, OUT_DIR);
+if (publish) writeScore(score, REPORT_DIR);
 
 const { surfaces } = score.matrix;
-console.log('\nPrimitive score (full report: docs/primitives-score/latest.md)');
+console.log(`\nPrimitive score (full report: ${publish ? 'docs/primitives-score/latest.md' : 'test/score/.out/latest.md'})`);
 for (const [surface, c] of Object.entries(surfaces)) {
   console.log(`  ${surface.padEnd(9)} ${c.pass} of ${c.total}${c.notTested ? `, ${c.notTested} not tested` : ''}`);
 }
@@ -40,9 +46,14 @@ const imp = score.import;
 console.log(`  import    ${imp.parityPassing.length} of ${imp.runs.length} runs pass, honesty failures ${imp.honestyFailures}, conservation failures ${imp.conservationFailures}`);
 console.log(`  took ${score.durationSeconds} seconds`);
 
-const drops = checkRatchet(score);
+const drops = checkRatchet(score, updateBaseline);
 if (drops.length > 0) {
   console.error('\nThe score dropped below docs/primitives-score/baseline.json:');
   for (const drop of drops) console.error(`  ${drop}`);
+  if (updateBaseline) console.error('\n--update-baseline only raises the floor, so it wrote nothing. A deliberate lowering is a hand edit: the row gets its gap and lowered gets the reason.');
   process.exit(1);
+}
+if (updateBaseline) {
+  writeBaseline(score);
+  console.log('\nRaised docs/primitives-score/baseline.json by what this run passes.');
 }

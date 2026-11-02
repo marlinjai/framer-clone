@@ -1,0 +1,82 @@
+name: score
+
+# The primitive score on main, and the only place docs/primitives-score/latest.* is
+# written. Pull requests do not carry the report (ci.yml refuses one that does), so they
+# never conflict on it; what a pull request changes in the score shows in its
+# baseline.json rows, raised by its own run (pnpm score:primitives --update-baseline).
+#
+# After each merge this runs the score from a clean slate, fails when the run drops below
+# the floor, checks the floor against the run row by row, and commits the report. The
+# commit is pushed with the workflow token, which starts no other workflow.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/primitives-score/latest.json'
+      - 'docs/primitives-score/latest.md'
+  workflow_dispatch:
+
+# Only the newest main is worth publishing.
+concurrency:
+  group: score-main
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  score:
+    name: score
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      NEXT_TELEMETRY_DISABLED: 1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install browsers
+        run: pnpm exec playwright install --with-deps chromium webkit
+
+      - name: Primitive score
+        run: pnpm score:primitives --publish
+
+      - name: Floor against the run, row by row
+        run: pnpm check:score-floor
+
+      # The probes' screenshots and per-run results, for reading a failure.
+      - name: Keep the run
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: primitive-score
+          path: |
+            test/score/.out/
+            docs/primitives-score/latest.*
+          retention-days: 14
+
+      - name: Commit the report
+        run: |
+          if git diff --quiet -- docs/primitives-score/latest.json docs/primitives-score/latest.md; then
+            echo "The report did not change."
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs/primitives-score/latest.json docs/primitives-score/latest.md
+          git commit -m "chore(score): publish the primitive score of ${GITHUB_SHA::7}"
+          # A newer main gets its own run, which publishes; this one has nothing left to say.
+          git push origin HEAD:main || echo "main moved on while this ran; the run for the newer main publishes."
