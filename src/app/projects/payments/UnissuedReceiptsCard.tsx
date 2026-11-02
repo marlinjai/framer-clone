@@ -34,8 +34,8 @@ const REASON_TEXT: Record<string, string> = {
 };
 
 const STATE_TEXT: Record<UnissuedOrder['state'], string> = {
-  retrying: 'The shop keeps trying on its own.',
-  stopped: 'The shop stopped trying: this needs you.',
+  retrying: 'The shop keeps trying on its own and issues it once the reason is fixed.',
+  stopped: 'The shop stopped trying: this needs you. After the reason is fixed, an operator must restart the receipt.',
 };
 
 function formatDay(iso: string): string {
@@ -83,7 +83,7 @@ export default function UnissuedReceiptsCard() {
             {data.count === 1 ? '1 paid order without an invoice' : `${data.count} paid orders without an invoice`}
           </h2>
           <p className="text-sm text-muted-foreground">
-            These buyers paid, but their receipt could not be issued yet. Fix the reason, and the shop issues it.
+            These buyers paid, but their receipt could not be issued yet. What happens next depends on the order.
           </p>
         </div>
       </div>
