@@ -548,7 +548,6 @@ export interface SalesDocumentTable {
   intro_format: JsonColumn<RichText> | null;
   outro_format: JsonColumn<RichText> | null;
   paid_on: DateString | null;
-  // 027: the country a shop receipt is taxed under (the buyer's); null for every other document, which reads its customer.
   tax_country: string | null;
 }
 
