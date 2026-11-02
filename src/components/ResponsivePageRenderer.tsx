@@ -308,7 +308,7 @@ export const ViewportFrame = observer(({
         {/* Viewport label - clickable for viewport selection */}
         <div
           className="absolute -top-8 left-0 text-sm font-medium text-gray-600 cursor-pointer hover:bg-gray-100 rounded px-2 py-1 -mx-2 -my-1"
-          onClick={(e) => {
+          onClick={interact ? undefined : (e) => {
             e.stopPropagation();
             editorUI.setSelectedViewportNode(viewport);
           }}
