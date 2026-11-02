@@ -95,7 +95,7 @@ would drift. The cost is about 1.5 kilobytes of viewport frames per definition, 
 
 **Structure rules,** in the model, the panel and `parseComponents` ([proven] for parsing):
 
-- **A definition root** is an element. A `#component` root would put two `data-fc-c` values on one element, and a
+- **A definition root** is an element. A `#component` root would put two placement markers on one element, and a
   `#text` root has no element for a state or a style.
 - **Create component from several selected nodes** wraps them in a `div`, which is the definition's root.
 - **A page root** cannot be a placement. A failed expansion there would make `root` null and the page a 404.
@@ -424,7 +424,7 @@ For each `#component` node, depth first:
    `submit.ts`, and six uuid segments are already 226. `classKey` is the definition node's id. The root's id is the
    placement's own.
 6. **Merge the placement** onto the root: style, effects and behaviour, as above.
-7. **Mark the root:** `data-fc-c="<definition id>"` when the definition has a pointer state, and record
+7. **Mark the root:** `data-u-c-<first 8 of the definition id>="<definition id>"` (see "Compiled at expansion") when the definition has a pointer state, and record
    `props.instance = { inputs, bindings, state, inputDefinitions }` for hydration. `instance` is denied as a DOM prop
    and survives MST, which the preview needs.
 8. **Compile the state rules,** see "Component states".
@@ -609,7 +609,17 @@ one hidden in each state. Text varying by state is refused in the panel (those s
 
 ### Compiled at expansion
 
-`X` is `[data-fc-c="<definition id>"]` on the placement root, and `S` is the definition's `cs-<first 8 of its id>`.
+`X` is `[data-u-c-<first 8 of the definition id, lower case>="<definition id>"]` on the placement root, and `S` is the
+definition's `cs-<first 8 of its id>`.
+
+**Changed in slice 11, from `data-fc-c`.** The rule parser refuses every `data-fc-` name in a selector as owned by the
+renderer (`isPlatformMarker`, from #268), so a compiled `[data-fc-c="…"]` was refused whole [proven, slice 11]. `data-u-c-`
+is the one stored family a rule may read, and detach already writes it on a plain copy's root, with an empty value. A
+live placement writes the definition id as the value, so a live placement's rules never match a detached copy, and the
+copy's `[data-u-c-…]` rules (no value) do match a live root only where that root sits in the copy, which a copy cannot
+hold. The three compiled selectors parse at 141, 143 and 211 characters with a uuid [proven]. Expansion writes the
+marker, so the published page and the preview (which draws the expansion and parses it with the same parser) read it
+identically; the canvas draws the live definition, where a state rule stays refused until slice 13's tiles.
 
 | Kind | Stored rule becomes | `at` | Runtime |
 |---|---|---|---|
@@ -626,7 +636,7 @@ contract's, emitted as
 root, `behaviour.state: [{ id: S, name: 'State', type: 'choice', initial: 'primary', options: ['primary', 's1', ...] }]`.
 The model keeps `options` in step with `states`. `S` is unique per definition, because a state id must be unique on its
 path to the root, and nested definitions are different definitions. A row or a placement is its own scope, so a hundred
-cards each hold their own state and share one rule block. `data-fc-c` appears only with a pointer state.
+cards each hold their own state and share one rule block. The marker appears only with a pointer state.
 
 **A placement picks its initial state** in the panel, stored as `props.state`, or from data with a `state` binding, such
 as `{{row.tier}}`, matched against state ids. `hydrateNode` writes it into `initial`, which `applyBehaviour` then
@@ -790,7 +800,7 @@ canvas position and the selection.
   whose definition vanished stays as the "Missing component" box, deletable, and is not removed from the page by the
   editor, so restoring the definition restores it.
 
-**Preview.** `data-fcs-*`, `data-fc-c` and the compiled rules are placed by expansion, so preview must run it too.
+**Preview.** `data-fcs-*`, the `data-u-c-` marker and the compiled rules are placed by expansion, so preview must run it too.
 `HeadlessComponentRenderer`, at a placement, calls `expandPlacements` on that placement's snapshot, memoised on it and the
 definition, creates a detached MST tree from the result, and renders that with the input frame pushed. So preview proves
 the published compile path and no third way of drawing a component appears. The sheet takes `surface: 'preview'`, and
