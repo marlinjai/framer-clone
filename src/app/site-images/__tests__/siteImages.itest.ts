@@ -102,14 +102,14 @@ async function currentVersion(scope: TenantScope, siteId: string): Promise<numbe
   return (await getSiteRepository().loadProjectWithVersion(scope, siteId)).version;
 }
 
-async function publishAtCurrentVersion(scope: TenantScope, proj: ReturnType<typeof project>) {
+async function publishAtCurrentVersion(scope: TenantScope, proj: { id: string }) {
   const expectedVersion = await currentVersion(scope, proj.id);
-  return getSiteRepository().publishProject(scope, proj, { expectedVersion });
+  return getSiteRepository().publishProject(scope, proj as never, { expectedVersion });
 }
 
-async function saveAtCurrentVersion(scope: TenantScope, proj: ReturnType<typeof project>) {
+async function saveAtCurrentVersion(scope: TenantScope, proj: { id: string }) {
   const expectedVersion = await currentVersion(scope, proj.id);
-  return getSiteRepository().saveProject(scope, proj, { mustExist: true, expectedVersion });
+  return getSiteRepository().saveProject(scope, proj as never, { mustExist: true, expectedVersion });
 }
 
 async function makeSite(label: string, options: { published?: boolean } = {}): Promise<TestSite> {
