@@ -20,7 +20,8 @@
 //   - ICO: the icon directory (reserved 0, type 1, a count), then one 16 byte
 //     entry per image (width and height as one byte each, 0 meaning 256, the
 //     data's size and offset). Every entry's data must lie inside the file and
-//     be a PNG or a bitmap header; the size is the largest entry's.
+//     be a PNG or a bitmap header whose own size matches the directory entry;
+//     the size is the largest entry's, as its data declares it.
 //   - SVG is recognised only to be named in a refusal (looksLikeSvg): it is
 //     text that can carry script, and no caller accepts it.
 
@@ -132,6 +133,22 @@ function webpSize(bytes: Uint8Array): ImageSize | null {
 /** The most images one icon file may list (real ones hold a handful). */
 export const MAX_ICO_ENTRIES = 64;
 
+/**
+ * The size one icon entry's data declares: a PNG's image header, or a bitmap
+ * without its file header (BITMAPINFOHEADER, 40 bytes: signed 32-bit width,
+ * then a height that counts the image and its transparency mask, so twice the
+ * image's, negative for a top-down bitmap). Null for anything else.
+ */
+function icoEntrySize(data: Uint8Array): ImageSize | null {
+  if (isPng(data)) return pngSize(data);
+  if (data.length < 12 || u32le(data, 0) !== 40) return null;
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const width = view.getInt32(4, true);
+  const height = Math.abs(view.getInt32(8, true)) / 2;
+  if (width < 1 || !Number.isInteger(height) || height < 1) return null;
+  return { width, height };
+}
+
 function icoSize(bytes: Uint8Array): ImageSize | null {
   const count = u16le(bytes, 4);
   if (count < 1 || count > MAX_ICO_ENTRIES) return null;
@@ -140,14 +157,17 @@ function icoSize(bytes: Uint8Array): ImageSize | null {
   let best: ImageSize | null = null;
   for (let i = 0; i < count; i++) {
     const entry = 6 + 16 * i;
-    const width = bytes[entry] || 256;
-    const height = bytes[entry + 1] || 256;
     const size = u32le(bytes, entry + 8);
     const offset = u32le(bytes, entry + 12);
     if (size < 8 || offset < dataStart || offset + size > bytes.length) return null;
-    // The image data is a PNG or a bitmap without its file header (BITMAPINFOHEADER, 40 bytes).
-    if (!isPng(bytes, offset) && u32le(bytes, offset) !== 40) return null;
-    if (!best || width * height > best.width * best.height) best = { width, height };
+    // The size that counts is the one the image data itself declares, never the
+    // directory's alone: a 16 by 16 entry could wrap a 9000 by 9000 PNG.
+    const embedded = icoEntrySize(bytes.subarray(offset, offset + size));
+    if (!embedded) return null;
+    // The directory holds one byte per side, 0 meaning 256 or more.
+    const fits = (declared: number, actual: number) => (declared === 0 ? actual >= 256 : declared === actual);
+    if (!fits(bytes[entry], embedded.width) || !fits(bytes[entry + 1], embedded.height)) return null;
+    if (!best || embedded.width * embedded.height > best.width * best.height) best = embedded;
   }
   return best;
 }

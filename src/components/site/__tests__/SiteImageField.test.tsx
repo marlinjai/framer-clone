@@ -34,9 +34,9 @@ function Harness({ kind = 'favicon', initial = '', onValue }: { kind?: 'favicon'
 
 function pick(kind: 'favicon' | 'sharing', bytes: Uint8Array, name: string, type = 'image/png') {
   const input = screen.getByTestId(`site-image-file-${kind}`) as HTMLInputElement;
-  const file = new File([bytes], name, { type });
+  const file = new File([bytes as BlobPart], name, { type });
   // jsdom's File may lack arrayBuffer in older versions: the component reads it.
-  if (!('arrayBuffer' in file)) Object.assign(file, { arrayBuffer: async () => bytes.buffer });
+  if (!('arrayBuffer' in file)) Object.assign(file, { arrayBuffer: async () => bytes.slice().buffer });
   fireEvent.change(input, { target: { files: [file] } });
 }
 
@@ -139,7 +139,10 @@ describe('uploadFailureMessage', () => {
     expect(uploadFailureMessage(401, undefined)).toMatch(/signed out/);
     expect(uploadFailureMessage(404, undefined)).toMatch(/Reload the editor/);
     expect(uploadFailureMessage(503, undefined)).toMatch(/not answering/);
-    expect(uploadFailureMessage(500, undefined)).toMatch(/Nothing was stored/);
+    expect(uploadFailureMessage(500, undefined)).toMatch(/Nothing was changed; upload the file again/);
+    expect(uploadFailureMessage(401, undefined, 'delete the image')).toMatch(/then delete the image again/);
+    expect(uploadFailureMessage(404, 'This image does not exist on this site.')).toBe('This image does not exist on this site.');
+    expect(uploadFailureMessage(429, 'Too many uploads in a short time.')).toBe('Too many uploads in a short time.');
     expect(uploadFailureMessage(413, 'too big, make it smaller')).toBe('too big, make it smaller');
   });
 });

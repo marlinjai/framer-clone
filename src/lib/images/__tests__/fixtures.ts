@@ -8,8 +8,22 @@ import { png } from '@/server/catalog/__tests__/imageFixtures';
 
 export { jpegHeader, png, webpExtended, webpLossless, webpLossy } from '@/server/catalog/__tests__/imageFixtures';
 
+/** The first 33 bytes of a PNG (signature and image header) declaring any size, without pixels. */
+export function pngHeader(width: number, height: number): Uint8Array {
+  const out = new Uint8Array(33);
+  out.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+  const view = new DataView(out.buffer);
+  view.setUint32(8, 13);
+  out.set([0x49, 0x48, 0x44, 0x52], 12); // IHDR
+  view.setUint32(16, width);
+  view.setUint32(20, height);
+  out[24] = 8;
+  out[25] = 6;
+  return out;
+}
+
 /** A 40-byte BITMAPINFOHEADER and a few bytes of pixels, as an ICO stores a bitmap entry. */
-function bitmapEntry(width: number, height: number): Uint8Array {
+export function bitmapEntry(width: number, height: number): Uint8Array {
   const data = new Uint8Array(48);
   const view = new DataView(data.buffer);
   view.setUint32(0, 40, true);
@@ -20,7 +34,13 @@ function bitmapEntry(width: number, height: number): Uint8Array {
 
 /** An ICO file with one entry per size; `png: true` stores PNG data, else bitmaps. 256 is written as 0. */
 export function ico(sizes: number[], options: { png?: boolean } = {}): Uint8Array {
-  const images = sizes.map((s) => (options.png ? png(s, s) : bitmapEntry(s, s)));
+  return icoWith(sizes.map((s) => ({ declared: s, data: options.png ? png(s, s) : bitmapEntry(s, s) })));
+}
+
+/** An ICO whose directory declares one size per entry around whatever data is given (to forge a mismatch). */
+export function icoWith(entries: { declared: number; data: Uint8Array }[]): Uint8Array {
+  const sizes = entries.map((e) => e.declared);
+  const images = entries.map((e) => e.data);
   const header = new Uint8Array(6 + 16 * sizes.length);
   const view = new DataView(header.buffer);
   view.setUint16(0, 0, true);

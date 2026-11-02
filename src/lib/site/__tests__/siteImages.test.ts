@@ -8,10 +8,11 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { ico, jpegHeader, png, svgText, webpLossy } from '@/lib/images/__tests__/fixtures';
+import { ico, icoWith, jpegHeader, png, pngHeader, svgText, webpLossy } from '@/lib/images/__tests__/fixtures';
 import {
   MAX_SITE_IMAGE_BYTES,
   checkSiteImage,
+  namedSiteImages,
   editorSiteImageUrl,
   isSiteImagePath,
   parseSiteImageFile,
@@ -73,6 +74,32 @@ describe('checkSiteImage', () => {
     expect(refusal(jpegHeader(9000, 100), 'sharing')).toMatchObject({ code: 'image_invalid', status: 422 });
     expect(refusal(png(8, 8), 'favicon')?.message).toMatch(/at least 16 by 16/);
     expect(checkSiteImage(png(8, 8), 'sharing').ok).toBe(true);
+  });
+
+  it('caps a favicon at 1024 pixels a side, a sharing image only at 8000', () => {
+    expect(checkSiteImage(pngHeader(1024, 1024), 'favicon').ok).toBe(true);
+    expect(refusal(pngHeader(1025, 1024), 'favicon')).toMatchObject({ code: 'image_invalid', status: 422 });
+    expect(refusal(pngHeader(1025, 1024), 'favicon')?.message).toMatch(/at most 1024 pixels/);
+    expect(checkSiteImage(pngHeader(4000, 2100), 'sharing').ok).toBe(true);
+  });
+
+  it('refuses an ICO favicon whose entry hides a larger image than its directory says', () => {
+    expect(refusal(icoWith([{ declared: 16, data: pngHeader(9000, 9000) }]), 'favicon')).toMatchObject({ code: 'image_invalid', status: 422 });
+    // An honest entry over the favicon cap is refused by the cap.
+    expect(refusal(icoWith([{ declared: 0, data: pngHeader(2048, 2048) }]), 'favicon')?.message).toMatch(/at most 1024 pixels/);
+  });
+});
+
+describe('namedSiteImages', () => {
+  it('collects the uploads the settings and pages name, and nothing else', () => {
+    const a = `/site-images/${'a'.repeat(64)}.png`;
+    const b = `/site-images/${'b'.repeat(64)}.jpg`;
+    const named = namedSiteImages({ faviconUrl: a, ogImageUrl: 'https://x.test/i.png' }, [b, '', undefined, 42, a]);
+    expect([...named.entries()]).toEqual([
+      ['a'.repeat(64), a],
+      ['b'.repeat(64), b],
+    ]);
+    expect(namedSiteImages(null, []).size).toBe(0);
   });
 });
 

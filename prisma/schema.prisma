@@ -319,8 +319,8 @@ model Site {
 
 /// One uploaded site image (favicon or sharing image, src/lib/site/siteImages.ts): the checked bytes, stored once
 /// per site and SHA-256, named in the settings by `/site-images/<sha256>.<ext>` and served on the site's own hosts
-/// (src/app/site-images/[file]/route.ts). Never updated and never deleted while the site exists: published
-/// revisions freeze the path, so the bytes behind it must stay. Deleting the site deletes its images.
+/// (src/app/site-images/[file]/route.ts). Never updated; deleted only once nothing names it (no setting, no page,
+/// no kept revision, which freezes the path). Deleting the site deletes its images.
 model SiteImage {
   id String @id @default(uuid())
 

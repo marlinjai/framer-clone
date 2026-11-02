@@ -50,10 +50,14 @@ import { getVerifiedSession } from '@/lib/auth-api';
 import { checkWorkspaceAccess } from '@/lib/auth-check';
 import { getPrismaClient } from '@/server/db';
 import { getSiteRepository, type TenantScope } from '@/server/sites';
-import { ico, jpegHeader, png, svgText } from '@/lib/images/__tests__/fixtures';
+import { ico, icoWith, jpegHeader, png, pngHeader, svgText } from '@/lib/images/__tests__/fixtures';
 import { MAX_SITE_IMAGE_BYTES } from '@/lib/site/siteImages';
-import { POST as uploadPOST } from '@/app/api/projects/[projectId]/images/route';
-import { GET as editorGET } from '@/app/api/projects/[projectId]/images/[sha256]/route';
+import { GET as listGET, POST as uploadPOST } from '@/app/api/projects/[projectId]/images/route';
+import { DELETE as editorDELETE, GET as editorGET } from '@/app/api/projects/[projectId]/images/[sha256]/route';
+import { SiteImageError, storeSiteImage } from '@/server/sites/siteImages';
+import { __resetUploadRateLimiterForTests } from '@/server/uploads/rateLimit';
+import { middleware } from '@/middleware';
+import { NextRequest } from 'next/server';
 import { GET as publicGET } from '../[file]/route';
 import { generateMetadata as layoutMetadata } from '@/app/(site)/layout';
 import { generateMetadata as pageMetadata } from '@/app/(site)/[...slug]/page';
@@ -91,12 +95,15 @@ function project(id: string, siteSettings: object = {}, aboutImage = '') {
   } as never;
 }
 
-async function makeSite(label: string): Promise<TestSite> {
+const createdSites: string[] = [];
+
+async function makeSite(label: string, options: { published?: boolean } = {}): Promise<TestSite> {
   const id = randomUUID();
   const scope: TenantScope = { workspaceId: `ws_img_${label}_${randomUUID().slice(0, 8)}`, tenantGroupId: randomUUID() };
   const repo = getSiteRepository();
   await repo.saveProject(scope, project(id));
-  await repo.publishProject(scope, project(id));
+  createdSites.push(id);
+  if (options.published !== false) await repo.publishProject(scope, project(id));
   const { subdomain } = await repo.ensureSiteDomain(scope, id);
   return { id, scope, companyId: randomUUID(), host: `${subdomain}.example.com` };
 }
@@ -116,10 +123,44 @@ function upload(projectId: string, bytes: Uint8Array, kind = 'favicon', headers:
     new Request(`https://${host}/api/projects/${projectId}/images?kind=${kind}`, {
       method: 'POST',
       headers: { host, cookie: 'lumitra_session=faked', 'content-type': 'image/png', ...headers },
-      body: bytes,
+      body: bytes as BodyInit,
     }),
     { params: Promise.resolve({ projectId }) },
   );
+}
+
+function list(projectId: string) {
+  return listGET(new Request(`https://${EDITOR}/api/projects/${projectId}/images`, { headers: { host: EDITOR } }), {
+    params: Promise.resolve({ projectId }),
+  });
+}
+
+function remove(projectId: string, sha256: string) {
+  return editorDELETE(new Request(`https://${EDITOR}/api/projects/${projectId}/images/${sha256}`, { method: 'DELETE', headers: { host: EDITOR } }), {
+    params: Promise.resolve({ projectId, sha256 }),
+  });
+}
+
+/** Fill a site's image rows directly (tiny distinct PNGs), to stand at a limit without uploading each. */
+async function fillImages(site: TestSite, count: number): Promise<void> {
+  await prisma.siteImage.createMany({
+    data: Array.from({ length: count }, (_, i) => {
+      const bytes = png(1, 1, [i % 256, Math.floor(i / 256), 7]);
+      return {
+        id: randomUUID(),
+        siteId: site.id,
+        workspaceId: site.scope.workspaceId,
+        tenantGroupId: site.scope.tenantGroupId,
+        sha256: sha(bytes),
+        contentType: 'image/png',
+        byteSize: bytes.byteLength,
+        width: 1,
+        height: 1,
+        content: Buffer.from(bytes),
+        uploadedBy: 'fixture',
+      };
+    }),
+  });
 }
 
 function preview(projectId: string, sha256: string, headers: Record<string, string> = {}) {
@@ -159,13 +200,14 @@ beforeAll(async () => {
 
 afterAll(async () => {
   delete process.env.EDITOR_HOST;
-  const ids = [siteA?.id, siteB?.id].filter((id): id is string => Boolean(id));
+  const ids = [...createdSites];
   await prisma.site.deleteMany({ where: { id: { in: ids } } });
   // Deleting a site deletes its images.
   expect(await prisma.siteImage.count({ where: { siteId: { in: ids } } })).toBe(0);
 });
 
 beforeEach(() => {
+  __resetUploadRateLimiterForTests();
   sessionMock.mockReset();
   accessMock.mockReset();
   // OpenFGA, faked: a user holds every right on the one workspace their session names.
@@ -354,5 +396,158 @@ describe('the published head and the published revision', () => {
     const res = await visit(siteA.host, publishedPath.slice('/site-images/'.length));
     expect(res.status).toBe(200);
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(published);
+  });
+});
+
+describe('limits', () => {
+  it('refuses the next image at 100 with 409 image_limit, naming the way forward', async () => {
+    const site = await makeSite('count');
+    await fillImages(site, 100);
+    sessionMock.mockResolvedValue(memberOf(site));
+    const res = await upload(site.id, png(64, 64, [9, 9, 9]));
+    expect(res.status).toBe(409);
+    const { error } = await res.json();
+    expect(error.code).toBe('image_limit');
+    expect(error.message).toMatch(/100 images or 50 MB/);
+    expect(error.message).toMatch(/Delete images you no longer use under "Uploaded images" in Site settings/);
+    // A file the site already stores is still answered at the limit (nothing new is stored).
+    expect((await upload(site.id, png(1, 1, [0, 0, 7]), 'sharing')).status).toBe(200);
+  });
+
+  it('refuses an image that would pass the byte budget with the same 409', async () => {
+    const site = await makeSite('bytes');
+    const first = png(64, 64, [1, 1, 1]);
+    const owner = { id: site.id, workspaceId: site.scope.workspaceId, tenantGroupId: site.scope.tenantGroupId };
+    const limits = { maxImages: 100, maxBytes: first.byteLength + 10 };
+    await storeSiteImage(owner, first, 'sharing', 'u', prisma, limits);
+    await expect(storeSiteImage(owner, png(64, 64, [2, 2, 2]), 'sharing', 'u', prisma, limits)).rejects.toMatchObject({
+      code: 'image_limit',
+      status: 409,
+    });
+  });
+
+  it('cannot be raced past: concurrent uploads at the limit store exactly up to it', async () => {
+    const site = await makeSite('race');
+    const owner = { id: site.id, workspaceId: site.scope.workspaceId, tenantGroupId: site.scope.tenantGroupId };
+    const limits = { maxImages: 3, maxBytes: 50 * 1024 * 1024 };
+    const results = await Promise.allSettled(
+      Array.from({ length: 8 }, (_, i) => storeSiteImage(owner, png(32, 32, [i, 100, 100]), 'sharing', 'u', prisma, limits)),
+    );
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(3);
+    for (const r of results.filter((r): r is PromiseRejectedResult => r.status === 'rejected')) {
+      expect(r.reason).toBeInstanceOf(SiteImageError);
+      expect(r.reason.code).toBe('image_limit');
+    }
+    expect(await prisma.siteImage.count({ where: { siteId: site.id } })).toBe(3);
+  });
+
+  it('caps a favicon at 1024 px and refuses an ICO whose entry data disagrees with its directory', async () => {
+    expect((await upload(siteA.id, png(1025, 1025))).status).toBe(422);
+    const forged = icoWith([{ declared: 16, data: pngHeader(9000, 9000) }]);
+    const res = await upload(siteA.id, forged);
+    expect(res.status).toBe(422);
+    expect((await res.json()).error.code).toBe('image_invalid');
+  });
+
+  it('limits one user to 30 upload attempts in 10 minutes (429 with Retry-After)', async () => {
+    for (let i = 0; i < 30; i++) expect((await upload(siteA.id, png(8, 8))).status).toBe(422);
+    const limited = await upload(siteA.id, png(64, 64));
+    expect(limited.status).toBe(429);
+    expect(Number(limited.headers.get('retry-after'))).toBeGreaterThan(0);
+    expect((await limited.json()).error.code).toBe('rate_limited');
+  });
+});
+
+describe('listing and deleting', () => {
+  it('lists the images with what is in use, deletes an unused one, and refuses one in use', async () => {
+    const site = await makeSite('delete');
+    sessionMock.mockResolvedValue(memberOf(site));
+    const used = png(200, 200, [3, 3, 3]);
+    const old = png(200, 200, [4, 4, 4]);
+    const unused = png(200, 200, [5, 5, 5]);
+    const usedPath = (await (await upload(site.id, used)).json()).path as string;
+    const oldPath = (await (await upload(site.id, old)).json()).path as string;
+    await upload(site.id, unused);
+
+    const repo = getSiteRepository();
+    // `old` is in revision 2 only (kept for rollback); `used` is in the working copy and revision 3.
+    await repo.publishProject(site.scope, project(site.id, { faviconUrl: oldPath }));
+    await repo.publishProject(site.scope, project(site.id, { faviconUrl: usedPath }));
+
+    const listed = await (await list(site.id)).json();
+    const inUse = Object.fromEntries(listed.items.map((i: { sha256: string; inUse: boolean }) => [i.sha256, i.inUse]));
+    expect(inUse).toEqual({ [sha(used)]: true, [sha(old)]: true, [sha(unused)]: false });
+    expect(listed).toMatchObject({ maxImages: 100, maxBytes: 50 * 1024 * 1024, totalBytes: used.byteLength + old.byteLength + unused.byteLength });
+
+    const inUseRes = await remove(site.id, sha(used));
+    expect(inUseRes.status).toBe(409);
+    expect((await inUseRes.json()).error.code).toBe('image_in_use');
+    expect((await remove(site.id, sha(old))).status).toBe(409);
+
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    expect((await remove(site.id, sha(unused))).status).toBe(204);
+    expect(info.mock.calls.flat().join(' ')).toMatch(new RegExp(`audit: user user-${site.scope.workspaceId} deleted ${sha(unused)} from site ${site.id}`));
+    info.mockRestore();
+    expect(await prisma.siteImage.count({ where: { siteId: site.id, sha256: sha(unused) } })).toBe(0);
+    expect((await visit(site.host, `${sha(unused)}.png`)).status).toBe(404);
+    expect((await remove(site.id, sha(unused))).status).toBe(404);
+  });
+
+  it('guards the delete: editSite needed, another site answers 404', async () => {
+    const icon = png(210, 210);
+    await upload(siteA.id, icon);
+    accessMock.mockImplementation(async (_u, _w, action) => action === 'viewSite');
+    expect((await remove(siteA.id, sha(icon))).status).toBe(403);
+    accessMock.mockImplementation(async (userId, workspaceId) => userId === `user-${workspaceId}`);
+    sessionMock.mockResolvedValue(memberOf(siteB));
+    expect((await remove(siteB.id, sha(icon))).status).toBe(404);
+    expect(await prisma.siteImage.count({ where: { siteId: siteA.id, sha256: sha(icon) } })).toBe(1);
+  });
+});
+
+describe('a path the site does not store', () => {
+  it('is refused on save and publish, for the settings and a page, typed or from another site', async () => {
+    const theirs = png(220, 220, [8, 8, 8]);
+    sessionMock.mockResolvedValue(memberOf(siteB));
+    const theirPath = (await (await upload(siteB.id, theirs)).json()).path as string;
+    const repo = getSiteRepository();
+    const typed = `/site-images/${'f'.repeat(64)}.png`;
+
+    for (const attempt of [
+      () => repo.saveProject(siteA.scope, project(siteA.id, { faviconUrl: theirPath }), { mustExist: true }),
+      () => repo.saveProject(siteA.scope, project(siteA.id, { ogImageUrl: typed }), { mustExist: true }),
+      () => repo.saveProject(siteA.scope, project(siteA.id, {}, theirPath), { mustExist: true }),
+      () => repo.publishProject(siteA.scope, project(siteA.id, { faviconUrl: typed })),
+    ]) {
+      await expect(attempt()).rejects.toMatchObject({ code: 'site_image_missing', status: 422 });
+    }
+  });
+});
+
+describe('who may reach the routes', () => {
+  it('answers 404 on a draft site, whose images exist', async () => {
+    const draft = await makeSite('draft', { published: false });
+    sessionMock.mockResolvedValue(memberOf(draft));
+    const icon = png(230, 230);
+    expect((await upload(draft.id, icon)).status).toBe(201);
+    expect((await visit(draft.host, `${sha(icon)}.png`)).status).toBe(404);
+  });
+
+  it('refuses an upload from a published site origin before any handler runs (cross_origin_refused)', async () => {
+    for (const headers of [
+      { 'sec-fetch-site': 'same-site', origin: 'https://shop.sites.lumitra.co', 'content-type': 'text/plain' },
+      { 'sec-fetch-site': 'cross-site', origin: 'https://www.kunde.de', 'content-type': 'image/png' },
+      { origin: 'https://shop.sites.lumitra.co', 'content-type': 'text/plain' },
+    ]) {
+      const res = await middleware(
+        new NextRequest(`https://${EDITOR}/api/projects/${siteA.id}/images?kind=favicon`, {
+          method: 'POST',
+          headers: { host: EDITOR, cookie: 'lumitra_session=faked', ...headers },
+          body: 'not an image',
+        }),
+      );
+      expect(res.status).toBe(403);
+      expect((await res.json()).error.code).toBe('cross_origin_refused');
+    }
   });
 });

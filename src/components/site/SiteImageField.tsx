@@ -72,19 +72,20 @@ interface UploadAnswer {
 }
 
 /** A failed upload's message, by status, with the next step. */
-export function uploadFailureMessage(status: number, serverMessage: string | undefined): string {
+export function uploadFailureMessage(status: number, serverMessage: string | undefined, action = 'upload the file'): string {
   switch (status) {
     case 401:
-      return 'You are signed out. Sign in again (for example in a new tab), then upload the file again.';
+      return `You are signed out. Sign in again (for example in a new tab), then ${action} again.`;
     case 403:
       return 'You are not allowed to change this site. Ask an admin of the company for edit rights, or switch to the company that owns this site.';
-    case 404:
-      return 'This site was not found on the server. Reload the editor and try again.';
     case 503:
-      return 'The sign-in service is not answering right now. Wait a moment and upload the file again.';
+      return `The sign-in service is not answering right now. Wait a moment and ${action} again.`;
+    case 404:
+      // `image_not_found` says which image; the guard's bare 404 means the site is gone.
+      return serverMessage && serverMessage !== 'not found' ? serverMessage : 'This site was not found on the server. Reload the editor and try again.';
     default:
-      // 409, 413, 415 and 422 carry their own message with the next step.
-      return serverMessage || `The upload failed (status ${status}). Nothing was stored; try again in a moment.`;
+      // The image routes' own refusals (409, 413, 415, 422, 429) carry a message with the next step.
+      return serverMessage || `The request failed (status ${status}). Nothing was changed; ${action} again in a moment.`;
   }
 }
 
@@ -103,9 +104,11 @@ export interface SiteImageFieldProps {
   hintText: string;
   /** Show the preview as a small square (the favicon). */
   square?: boolean;
+  /** Called after an upload was stored (the uploaded images list reloads). */
+  onUploaded?: () => void;
 }
 
-export function SiteImageField({ projectId, kind, inputId, inputRef, label, value, onChange, onBlur, error, hintText, square }: SiteImageFieldProps) {
+export function SiteImageField({ projectId, kind, inputId, inputRef, label, value, onChange, onBlur, error, hintText, square, onUploaded }: SiteImageFieldProps) {
   const fileRef = React.useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = React.useState(false);
   const [uploadError, setUploadError] = React.useState('');
@@ -165,6 +168,7 @@ export function SiteImageField({ projectId, kind, inputId, inputRef, label, valu
     setFacts({ fileName: file.name, byteSize: answer.byteSize, contentType: answer.contentType, width: answer.width, height: answer.height });
     setStatus(`${file.name} uploaded. Save the settings to use it.`);
     onChange(answer.path);
+    onUploaded?.();
   };
 
   const onFile = (event: React.ChangeEvent<HTMLInputElement>) => {

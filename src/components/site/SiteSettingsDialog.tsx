@@ -64,6 +64,8 @@ import { literalPageTree } from '@/lib/renderer/server/snapshotToComponentNode';
 import { getSnapshot } from 'mobx-state-tree';
 import { GoogleMapsPrivacyHint } from './GoogleMapsPrivacyHint';
 import { SiteImageField } from './SiteImageField';
+import { SiteImageLibrary } from './SiteImageLibrary';
+import { namedSiteImages } from '@/lib/site/siteImages';
 
 const fieldLabel = 'text-[11px] font-semibold uppercase tracking-wide text-muted-foreground';
 const inputBase =
@@ -164,6 +166,8 @@ const SiteSettingsForm = observer(({ project, onClose }: { project: ProjectModel
   const [submitted, setSubmitted] = React.useState(false);
   const [saveErrors, setSaveErrors] = React.useState<SiteSettingsErrors>({});
   const [announcement, setAnnouncement] = React.useState('');
+  const [libraryOpen, setLibraryOpen] = React.useState(false);
+  const [libraryVersion, setLibraryVersion] = React.useState(0);
 
   const candidate: SiteSettings = normalizeSiteSettings({
     ...draft,
@@ -191,6 +195,13 @@ const SiteSettingsForm = observer(({ project, onClose }: { project: ProjectModel
       openingHours: draft.business.openingHours.map((r, i) => (i === index ? { ...r, ...patch } : r)),
     });
   };
+
+  // Uploaded images this editor names, saved or not (the draft, the stored settings, every page's sharing image):
+  // the list never offers them for deletion.
+  const namedHere = new Set([
+    ...namedSiteImages(draft, []).keys(),
+    ...namedSiteImages(project.site, project.pagesArray.map((p) => p.metadata.ogImage)).keys(),
+  ]);
 
   const siteName = effectiveSiteName(candidate, project.metadata.title);
   const titlePreview = applyTitleTemplate(effectiveTitleTemplate(candidate, siteName), 'About us');
@@ -356,6 +367,7 @@ const SiteSettingsForm = observer(({ project, onClose }: { project: ProjectModel
             error={visible('faviconUrl')}
             square
             hintText="A square image, at least 180 by 180 pixels (512 by 512 works everywhere). Empty: no site icon."
+            onUploaded={() => setLibraryVersion((n) => n + 1)}
           />
           <SiteImageField
             projectId={project.id}
@@ -367,7 +379,21 @@ const SiteSettingsForm = observer(({ project, onClose }: { project: ProjectModel
             onBlur={touch('ogImageUrl')}
             error={visible('ogImageUrl')}
             hintText="Shown when a page is shared on social media or in chats, unless the page has its own. 1200 by 630 pixels works everywhere."
+            onUploaded={() => setLibraryVersion((n) => n + 1)}
           />
+          <details
+            className="flex flex-col gap-2"
+            data-testid="site-image-library-section"
+            onToggle={(e) => setLibraryOpen(e.currentTarget.open)}
+          >
+            <summary className={`${fieldLabel} cursor-pointer select-none`}>Uploaded images</summary>
+            {/* Loaded only when opened: most visits to the settings never need the list. */}
+            {libraryOpen && (
+              <div className="mt-2">
+                <SiteImageLibrary projectId={project.id} namedHere={namedHere} version={libraryVersion} />
+              </div>
+            )}
+          </details>
           <div className="flex flex-col gap-1.5">
             <label htmlFor={fieldId('twitterCard')} className={fieldLabel}>Card on X (Twitter)</label>
             <select

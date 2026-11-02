@@ -34,6 +34,7 @@ export {
   SiteErasedSinceLoadError,
   ErasePreviewStaleError,
   NothingToEraseError,
+  SiteImageMissingError,
   siteRepositoryErrorResponse,
 } from './errors';
 

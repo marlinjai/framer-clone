@@ -11,11 +11,14 @@
 // The path is served on every host of the site (src/app/site-images/[file]),
 // so it keeps working when a custom domain is connected later, and it is
 // frozen with the settings into every published revision. The bytes behind
-// a path never change and are never deleted while the site exists, so a
-// revision shows the image it was published with for as long as it is kept.
+// a path never change, and an image can be deleted only once nothing names it
+// (no setting, no page, no kept revision), so a revision shows the image it
+// was published with for as long as it is kept. A save that names an image
+// the site does not store is refused (SiteImageMissingError): a typed or
+// copied path from another site, or one deleted since.
 //
 // What is accepted, always read from the bytes (src/lib/images/imageHeader.ts):
-//   - favicon: PNG or ICO, at least 16 pixels on each side. SVG is refused:
+//   - favicon: PNG or ICO, 16 to 1024 pixels on each side. SVG is refused:
 //     it is a document that can carry script, served from the site's own
 //     origin it would be a place to run code there, and no header check can
 //     prove an SVG harmless. A PNG of 512 by 512 pixels covers every browser
@@ -45,8 +48,17 @@ export const MAX_SITE_IMAGE_BYTES = 2 * 1024 * 1024;
 export const MAX_SITE_IMAGE_PX = 8000;
 /** The smallest favicon side, in pixels. */
 export const MIN_FAVICON_PX = 16;
-/** The most images one site stores (bounds what one site can put into the database). */
-export const MAX_SITE_IMAGES = 500;
+/** The largest favicon side, in pixels (no browser or home screen uses more than 512). */
+export const MAX_FAVICON_PX = 1024;
+/** The most images one site stores. */
+export const MAX_SITE_IMAGES = 100;
+/** The most bytes one site's images may add up to (50 MB): with the count, what one site can put into the database. */
+export const MAX_SITE_IMAGE_TOTAL_BYTES = 50 * 1024 * 1024;
+
+/** The refusal at the per-site limit, naming the way forward. */
+export const SITE_IMAGE_LIMIT_MESSAGE =
+  `This site already stores the most images allowed (${MAX_SITE_IMAGES} images or 50 MB in all). ` +
+  'Delete images you no longer use under "Uploaded images" in Site settings, or enter an https address instead.';
 
 /** The public path prefix of an uploaded site image. */
 export const SITE_IMAGE_PREFIX = '/site-images/';
@@ -90,6 +102,24 @@ export function parseSiteImagePath(value: string): { sha256: string; contentType
 /** True for `/site-images/<sha256>.<ext>`, exactly. */
 export function isSiteImagePath(value: string): boolean {
   return parseSiteImagePath(value) !== null;
+}
+
+/**
+ * The uploaded images a site names where the published head reads them: the
+ * favicon and sharing image of the settings, and each page's own sharing
+ * image. Hash -> path, so a save can check each against what the site stores.
+ */
+export function namedSiteImages(
+  siteSettings: { faviconUrl?: unknown; ogImageUrl?: unknown } | null | undefined,
+  pageOgImages: readonly unknown[],
+): Map<string, string> {
+  const named = new Map<string, string>();
+  for (const value of [siteSettings?.faviconUrl, siteSettings?.ogImageUrl, ...pageOgImages]) {
+    if (typeof value !== 'string') continue;
+    const parsed = parseSiteImagePath(value);
+    if (parsed) named.set(parsed.sha256, value);
+  }
+  return named;
 }
 
 /** The editor's own address of an uploaded image (the dialogs' preview, behind sign-in). */
@@ -164,6 +194,9 @@ export function checkSiteImage(bytes: Uint8Array, kind: SiteImageKind): SiteImag
   }
   if (kind === 'favicon' && (width < MIN_FAVICON_PX || height < MIN_FAVICON_PX)) {
     return refuse('image_invalid', `This icon is ${width} by ${height} pixels; a favicon needs at least ${MIN_FAVICON_PX} by ${MIN_FAVICON_PX}. Use a larger square image (512 by 512 works everywhere).`);
+  }
+  if (kind === 'favicon' && (width > MAX_FAVICON_PX || height > MAX_FAVICON_PX)) {
+    return refuse('image_invalid', `This icon is ${width} by ${height} pixels; a favicon may have at most ${MAX_FAVICON_PX} pixels on each side. Save it at 512 by 512 and upload it again.`);
   }
   return { ok: true, contentType: type, width, height };
 }

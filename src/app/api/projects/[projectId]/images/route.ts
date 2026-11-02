@@ -20,19 +20,30 @@
 // an unknown project), auth-brain or OpenFGA outages as 503. Errors use the
 // `{ error: { code, message } }` envelope, each message saying what to do:
 //   400 bad_kind                 `kind` is not favicon or sharing
-//   409 image_limit              the site stores the most images allowed
+//   409 image_limit              the site stores 100 images or 50 MB (the message
+//                                names the way forward: delete unused images)
 //   413 image_too_large          more than 2 MB
 //   415 unsupported_image_type   not an accepted type for this kind (SVG named as such)
-//   422 image_invalid            unreadable header, too many pixels, a favicon under 16 px
+//   422 image_invalid            unreadable header, too many pixels, a favicon under 16 or over 1024 px
+//   429 rate_limited             more than 30 upload attempts by the user in 10 minutes (Retry-After)
 //   500 image_upload_failed      anything else; nothing was stored
 // The log line carries the site, the hash and the size only.
+//
+// GET /api/projects/<projectId>/images   (viewSite)
+//   -> 200 { items: [{ sha256, contentType, byteSize, width, height, path, inUse, createdAt }],
+//            totalBytes, maxImages, maxBytes }
+// The site's uploaded images, newest first, for the "Uploaded images" list in
+// Site settings: `inUse` is what the delete checks (the settings, a page or a
+// kept published version names it), so the list offers a delete only for an
+// image nothing names.
 
 import { jsonError } from '@/lib/api/respond';
 import { withAuthAvailability } from '@/lib/authBrainAvailability';
 import { MAX_SITE_IMAGE_BYTES, isSiteImageKind, siteImageWarnings, tooLargeProblem } from '@/lib/site/siteImages';
 import { boundedBytes } from '@/server/books/http/boundedBody';
 import { authorizeDomainProject } from '@/server/domains/guard';
-import { SiteImageError, storeSiteImage } from '@/server/sites/siteImages';
+import { SiteImageError, listSiteImages, storeSiteImage } from '@/server/sites/siteImages';
+import { getUploadRateLimiter, uploadRateLimitedResponse } from '@/server/uploads/rateLimit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -48,6 +59,9 @@ async function handlePOST(req: Request, { params }: Ctx): Promise<Response> {
   if (!isSiteImageKind(kind)) {
     return jsonError('bad_kind', 'Say which image this is: kind=favicon or kind=sharing.', 400);
   }
+  // Counted before the body is read: every attempt, accepted or not.
+  const limited = getUploadRateLimiter().hit('site-images', auth.userId, Date.now());
+  if (!limited.ok) return uploadRateLimitedResponse(limited.retryAfterSec);
   const bytes = await boundedBytes(req, MAX_SITE_IMAGE_BYTES);
   if (bytes === null) {
     const problem = tooLargeProblem();
@@ -67,6 +81,19 @@ async function handlePOST(req: Request, { params }: Ctx): Promise<Response> {
   }
 }
 
+async function handleGET(req: Request, { params }: Ctx): Promise<Response> {
+  const { projectId } = await params;
+  const auth = await authorizeDomainProject(req, projectId, 'viewSite');
+  if (!auth.ok) return auth.response;
+  try {
+    return Response.json(await listSiteImages(auth.project.id), { headers: { 'cache-control': 'no-store' } });
+  } catch (err) {
+    console.error(`[site-images] site ${auth.project.id}: listing failed`, err);
+    return jsonError('image_list_failed', 'The uploaded images could not be listed. Try again in a moment.', 500);
+  }
+}
+
 // An auth-brain outage during session verify answers JSON 503 `auth_unavailable`,
 // and OpenFGA failing a permission check answers JSON 503 `authz_unavailable`.
 export const POST = withAuthAvailability(handlePOST);
+export const GET = withAuthAvailability(handleGET);

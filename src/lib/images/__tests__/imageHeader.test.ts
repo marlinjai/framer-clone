@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { looksLikeSvg, readImageSize, sniffImageType } from '../imageHeader';
-import { ico, jpegHeader, png, svgText, webpLossy } from './fixtures';
+import { bitmapEntry, ico, icoWith, jpegHeader, png, pngHeader, svgText, webpLossy } from './fixtures';
 
 describe('sniffImageType', () => {
   it('names PNG, JPEG, WebP and ICO from the bytes alone', () => {
@@ -43,6 +43,16 @@ describe('readImageSize for ICO', () => {
     expect(readImageSize(garbage, 'image/x-icon')).toBeNull();
 
     expect(readImageSize(ico([16, 32]).subarray(0, 20), 'image/x-icon')).toBeNull();
+  });
+
+  it('takes the size from the entry data and refuses one that disagrees with its directory entry', () => {
+    // A 16 by 16 directory entry wrapping a PNG whose header says 9000 by 9000.
+    expect(readImageSize(icoWith([{ declared: 16, data: pngHeader(9000, 9000) }]), 'image/x-icon')).toBeNull();
+    expect(readImageSize(icoWith([{ declared: 16, data: pngHeader(16, 16) }]), 'image/x-icon')).toEqual({ width: 16, height: 16 });
+    // A bitmap entry claiming 16 while its header says 64.
+    expect(readImageSize(icoWith([{ declared: 16, data: bitmapEntry(64, 64) }]), 'image/x-icon')).toBeNull();
+    // The directory's 0 means 256 or more, so a large PNG entry reads at its real size.
+    expect(readImageSize(icoWith([{ declared: 0, data: png(300, 300) }]), 'image/x-icon')).toEqual({ width: 300, height: 300 });
   });
 });
 

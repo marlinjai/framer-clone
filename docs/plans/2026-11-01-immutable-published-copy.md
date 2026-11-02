@@ -188,8 +188,15 @@ C. **Uploaded files.** A revision references images and files by URL. The erase 
    errors), and a "delete the file too" option offered only at zero references. A lawyer should say whether an
    unreferenced file at an unguessable address still counts as kept under Art. 17.
    Since 2026-11-02 the favicon and the sharing images can be uploaded: they are stored in `site_images` (Postgres,
-   one row per site and hash, deleted only with the site) and named by `/site-images/<sha256>.<ext>`, which the erase
-   reports as an image address. The same reference index and a delete with zero references would apply to them
+   one row per site and hash) and named by `/site-images/<sha256>.<ext>`, which the erase reports as an image address
+   and never cuts. For these files the delete exists ("Uploaded images" in Site settings,
+   `DELETE /api/projects/<id>/images/<sha256>`): a hard delete of the row, offered and allowed only at zero
+   references, where a reference is the path anywhere in the settings, a component, a page of the working copy or
+   any kept revision, checked under the site row lock in a serializable transaction, with an audit line. No original
+   file name or metadata is stored to scrub. So erasing an uploaded photo of a person takes: remove it from the
+   settings and pages, publish until no kept revision names it (or until it is pruned), then delete it. Nothing
+   caches these files in front of the app, but browsers that loaded one may keep it until their copy expires. Still
+   open: a way to drop the kept revisions that name it sooner, and the lawyer's view on the rest of this point
    ([published site essentials](2026-10-23-published-site-essentials.md), "Uploaded favicon and sharing image").
 
 D. **Backups.** The erased value stays in database backups until they expire. Common practice is to document the
