@@ -39,6 +39,7 @@ import { createStickyCtaElement } from '../stickyCta/stickyCtaElement';
 import { isMapEmbed, MAP_EMBED_PROP_KEYS, stripMapEmbedProps } from '@/lib/mapEmbed/mapEmbed';
 import MapEmbedIsland from '../mapEmbed/MapEmbedIsland';
 import { shopPartRoleOf } from '@/lib/commerce/parts';
+import { applyBindings } from '@/lib/bindings/resolver/applyBindings';
 import { ShopPartElement } from '@/lib/commerce/shopRuntime';
 
 /** The four interactive commerce kinds emitted as client islands (never baked
@@ -218,13 +219,16 @@ export function renderComponentNode(
   const shopRole = shopPartRoleOf(node.props);
   if (shopRole) {
     const partTag = resolveHtmlTag(node.type) ?? 'div';
+    // Inside an island nothing hydrated its text binding: a label bound to the
+    // product ({{product.title}}) reads the frames the island sits in here.
+    const partText = node.bindings?.children ? applyBindings(node, node.props ?? {}, scope).resolvedProps.children : (node.props as any)?.children;
     return (
       <ShopPartElement
         key={key}
         role={shopRole}
         tag={partTag}
         domProps={nodeDomProps(node)}
-        storedText={(node.props as any)?.children}
+        storedText={partText}
         content={isVoidTag(partTag) ? undefined : renderNodeChildrenOnly(node, scope, contentBelow(partTag, foreign), inLink || !runLinksAllowedIn(partTag))}
         surface="preview"
         linksAllowed={!inLink}

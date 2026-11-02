@@ -35,9 +35,9 @@ export function shopLocaleOf(language: string | null | undefined): ShopLocale {
 type Localized = Readonly<Record<ShopLocale, string>>;
 
 /** The shop controls whose visible parts are nodes. */
-export type ShopControlKind = 'checkout-button';
+export type ShopControlKind = 'checkout-button' | 'add-to-cart' | 'cart-view';
 
-export const SHOP_CONTROL_KINDS: readonly ShopControlKind[] = ['checkout-button'];
+export const SHOP_CONTROL_KINDS: readonly ShopControlKind[] = ['checkout-button', 'add-to-cart', 'cart-view'];
 
 export function isShopControlKind(kind: unknown): kind is ShopControlKind {
   return typeof kind === 'string' && (SHOP_CONTROL_KINDS as readonly string[]).includes(kind);
@@ -495,8 +495,215 @@ export const CHECKOUT_PREVIEW_STATES = [
 
 export type CheckoutPreviewStateId = (typeof CHECKOUT_PREVIEW_STATES)[number]['id'];
 
+// ---------------------------------------------------------------------------
+// Add to cart
+// ---------------------------------------------------------------------------
+
+const ADD_TO_CART_PARTS: readonly ShopPartSpec[] = [
+  {
+    role: 'addToCart.button',
+    label: 'Add to cart button',
+    tag: 'button',
+    required: true,
+    style: PRIMARY_BUTTON,
+    rules: BUTTON_RULES(),
+    children: [
+      { role: 'addToCart.button-label', label: 'Label', tag: 'span', required: true, text: { en: 'Add to cart', de: 'In den Warenkorb' } },
+      { role: 'addToCart.button-soldout', label: 'Sold out label', tag: 'span', required: true, text: { en: 'Sold out', de: 'Ausverkauft' } },
+    ],
+  },
+  {
+    role: 'addToCart.error',
+    label: 'Availability check failed',
+    tag: 'span',
+    required: true,
+    text: {
+      en: 'Availability could not be checked right now. Please try again later.',
+      de: 'Die Verfügbarkeit kann gerade nicht geprüft werden. Bitte versuchen Sie es später erneut.',
+    },
+    style: { display: 'block', ...MESSAGE, color: '#b91c1c' },
+  },
+];
+
+/** The add to cart's preview states: real states of the island, with sample data on the canvas. */
+export const ADD_TO_CART_PREVIEW_STATES = [
+  { id: 'ready', label: 'Ready' },
+  { id: 'no-variant', label: 'No option chosen (disabled)' },
+  { id: 'checking', label: 'Checking availability (loading)' },
+  { id: 'sold-out', label: 'Sold out (disabled)' },
+  { id: 'error', label: 'Availability check failed' },
+] as const satisfies readonly ShopPreviewState[];
+
+// ---------------------------------------------------------------------------
+// Cart
+// ---------------------------------------------------------------------------
+
+const SMALL_BUTTON = {
+  padding: '2px 8px',
+  border: '1px solid #d1d5db',
+  borderRadius: '4px',
+  backgroundColor: '#ffffff',
+  color: '#111827',
+  cursor: 'pointer',
+  fontFamily: 'inherit',
+  fontSize: '12px',
+};
+
+const NOTE = { color: '#6b7280', fontSize: '12px', fontFamily: 'inherit' };
+const LINE_WARNING = {
+  color: '#b45309',
+  backgroundColor: '#fffbeb',
+  border: '1px solid #fde68a',
+  borderRadius: '4px',
+  padding: '2px 6px',
+  fontSize: '12px',
+  fontFamily: 'inherit',
+};
+
+const CART_PARTS: readonly ShopPartSpec[] = [
+  {
+    role: 'cart.empty',
+    label: 'Empty cart message',
+    tag: 'span',
+    required: true,
+    text: { en: 'Your cart is empty', de: 'Ihr Warenkorb ist leer' },
+    style: NOTE,
+  },
+  {
+    role: 'cart.lines',
+    label: 'Lines',
+    tag: 'div',
+    required: true,
+    style: { display: 'flex', flexDirection: 'column' },
+    children: [
+      {
+        role: 'cart.line',
+        label: 'Line (repeated per item)',
+        tag: 'div',
+        required: true,
+        repeat: true,
+        style: { display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center', padding: '6px 0', fontFamily: 'inherit', fontSize: '14px' },
+        children: [
+          { role: 'cart.line-title', label: 'Item name', tag: 'span', required: true, requiredTokens: ['title'], text: { en: '{title}', de: '{title}' } },
+          {
+            role: 'cart.line-price',
+            label: 'Price',
+            tag: 'span',
+            required: true,
+            requiredTokens: ['price'],
+            text: { en: '{price}', de: '{price}' },
+            style: NOTE,
+          },
+          {
+            role: 'cart.line-qty',
+            label: 'Quantity',
+            tag: 'label',
+            required: true,
+            style: { display: 'inline-flex', alignItems: 'center', gap: '4px', ...NOTE },
+            children: [
+              { role: 'cart.line-qty-text', label: 'Label', tag: 'span', required: true, text: { en: 'Qty', de: 'Menge' } },
+              {
+                role: 'cart.line-qty-input',
+                label: 'Input',
+                tag: 'input',
+                required: true,
+                style: { width: '56px', padding: '2px 4px', border: '1px solid #d1d5db', borderRadius: '4px', fontFamily: 'inherit' },
+              },
+            ],
+          },
+          {
+            role: 'cart.line-remove',
+            label: 'Remove button',
+            tag: 'button',
+            required: true,
+            text: { en: 'Remove', de: 'Entfernen' },
+            style: SMALL_BUTTON,
+            rules: [{ id: 'hover', selector: '&:hover', at: [HOVER_GATE], style: { backgroundColor: '#f3f4f6' } }],
+          },
+          {
+            role: 'cart.line-warning',
+            label: 'Low stock warning',
+            tag: 'span',
+            required: true,
+            text: { en: 'Only {available} advertised as available (estimate).', de: 'Nur noch {available} als verfügbar angegeben (Schätzung).' },
+            style: LINE_WARNING,
+          },
+          { role: 'cart.line-loading', label: 'Loading', tag: 'span', required: true, text: { en: 'Loading...', de: 'Wird geladen...' }, style: NOTE },
+          {
+            role: 'cart.line-unavailable',
+            label: 'Item no longer sold',
+            tag: 'span',
+            required: true,
+            text: { en: 'This item is no longer available.', de: 'Dieser Artikel ist nicht mehr erhältlich.' },
+            style: LINE_WARNING,
+          },
+          {
+            role: 'cart.line-error',
+            label: 'Item failed to load',
+            tag: 'span',
+            required: true,
+            text: { en: 'This item could not be loaded right now.', de: 'Dieser Artikel kann gerade nicht geladen werden.' },
+            style: { ...LINE_WARNING, color: '#b91c1c' },
+          },
+        ],
+      },
+    ],
+  },
+  {
+    role: 'cart.subtotal',
+    label: 'Estimated subtotal',
+    tag: 'div',
+    required: true,
+    requiredTokens: ['subtotal'],
+    text: { en: 'Estimated subtotal: {subtotal}', de: 'Zwischensumme (geschätzt): {subtotal}' },
+    style: { fontFamily: 'inherit', fontSize: '14px', fontWeight: 600 },
+  },
+  {
+    role: 'cart.subtotal-note',
+    label: 'Estimate notice',
+    tag: 'div',
+    required: true,
+    keepVisible: true,
+    fixedReason: 'Fixed text: the subtotal here is an estimate, and the shop must not let it pass for the final total.',
+    fixedText: { en: 'Estimate only. The final total is calculated at checkout.', de: 'Nur eine Schätzung. Die Endsumme wird an der Kasse berechnet.' },
+    style: NOTE,
+  },
+];
+
+/** The cart's preview states: real states of the island, with sample lines on the canvas. */
+export const CART_PREVIEW_STATES = [
+  { id: 'ready', label: 'Items in the cart' },
+  { id: 'empty', label: 'Empty cart' },
+  { id: 'loading', label: 'Loading the items' },
+  { id: 'low-stock', label: 'Low stock warning' },
+  { id: 'unavailable', label: 'An item no longer sold' },
+  { id: 'error', label: 'An item failed to load' },
+] as const satisfies readonly ShopPreviewState[];
+
+/** The default style of a cart control: a column with its lines, subtotal and notice. */
+export const CART_CONTROL_STYLE: Readonly<Record<string, unknown>> = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '8px',
+  padding: '16px',
+  border: '1px solid #e5e7eb',
+  borderRadius: '8px',
+  backgroundColor: '#ffffff',
+};
+
+/** The default style of an add to cart control. */
+export const ADD_TO_CART_CONTROL_STYLE: Readonly<Record<string, unknown>> = {
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'flex-start',
+  gap: '4px',
+  padding: '4px',
+};
+
 export const SHOP_CONTROLS: Readonly<Record<ShopControlKind, ShopControlSpec>> = {
   'checkout-button': { kind: 'checkout-button', states: CHECKOUT_PREVIEW_STATES, parts: CHECKOUT_PARTS },
+  'add-to-cart': { kind: 'add-to-cart', states: ADD_TO_CART_PREVIEW_STATES, parts: ADD_TO_CART_PARTS },
+  'cart-view': { kind: 'cart-view', states: CART_PREVIEW_STATES, parts: CART_PARTS },
 };
 
 /** The default style of a checkout control: a column, so its steps stack. */
@@ -600,6 +807,7 @@ export interface ShopTreeNode {
   type?: unknown;
   props?: Record<string, unknown>;
   children?: ShopTreeNode[];
+  bindings?: Record<string, unknown>;
   /** Stored snapshots only. */
   label?: string;
   componentType?: string;
@@ -654,20 +862,48 @@ function newPartNode(
   return node;
 }
 
-/** Legacy props of a control that become part text: the label of the old one-prop checkout. */
+/**
+ * The props and bindings of the controls before parts, and the part each moves to:
+ * the checkout's and the add to cart's label, the checkout's pay label, the cart's
+ * empty message. A prop becomes the part's text, a binding the part's text binding.
+ */
+const LEGACY: Readonly<Record<ShopControlKind, { props: Record<string, { role: string; text: (value: string) => string }>; bindings: Record<string, string> }>> = {
+  'checkout-button': {
+    props: {
+      label: { role: 'checkout.button-label', text: (value) => value },
+      // The old pay label leaves the control and goes nowhere: the pay wording is fixed.
+      payLabel: { role: '', text: () => '' },
+    },
+    bindings: { label: 'checkout.button-label' },
+  },
+  'add-to-cart': {
+    props: { label: { role: 'addToCart.button-label', text: (value) => value } },
+    bindings: { label: 'addToCart.button-label' },
+  },
+  'cart-view': {
+    props: { emptyContent: { role: 'cart.empty', text: (value) => value } },
+    bindings: { emptyContent: 'cart.empty' },
+  },
+};
+
+/** Legacy props of a control that become part text. */
 function legacyTexts(kind: ShopControlKind, props: Record<string, unknown> | undefined): Record<string, string> {
   const out: Record<string, string> = {};
-  if (kind === 'checkout-button') {
-    const label = props?.label;
-    if (typeof label === 'string' && label.trim()) out['checkout.button-label'] = label;
+  for (const [key, { role, text }] of Object.entries(LEGACY[kind].props)) {
+    const value = props?.[key];
+    if (role && typeof value === 'string' && value.trim()) out[role] = text(value);
   }
   return out;
 }
 
-/** The control props the parts replace (the old pay label goes: the pay button's wording is fixed). */
-const LEGACY_CONTROL_PROPS: Readonly<Record<ShopControlKind, readonly string[]>> = {
-  'checkout-button': ['label', 'payLabel'],
-};
+/** Legacy bindings of a control that become a part's text binding. */
+function legacyBindings(kind: ShopControlKind, bindings: Record<string, unknown> | undefined): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, role] of Object.entries(LEGACY[kind].bindings)) {
+    if (bindings && bindings[key] !== undefined) out[role] = bindings[key];
+  }
+  return out;
+}
 
 /** A whole default part tree for a control, as nodes with deterministic ids (a palette insert, the demo seed). */
 export function buildShopParts(
@@ -676,11 +912,13 @@ export function buildShopParts(
   locale: ShopLocale,
   shape: ShopNodeShape = 'snapshot',
   texts: Readonly<Record<string, string>> = {},
+  bindings: Readonly<Record<string, unknown>> = {},
   taken?: Set<string>,
 ): ShopTreeNode[] {
   const build = (specs: readonly ShopPartSpec[], parentId: string): ShopTreeNode[] =>
     specs.map((spec) => {
       const node = newPartNode(spec, controlId, parentId, locale, shape, texts[spec.role], taken);
+      if (bindings[spec.role] !== undefined) node.bindings = { children: bindings[spec.role] };
       node.children = spec.children ? build(spec.children, node.id as string) : [];
       return node;
     });
@@ -890,7 +1128,13 @@ export function normalizeShopControl<N extends object>(
   let root: ShopTreeNode = control;
 
   if (existing.size === 0) {
-    root = { ...control, children: [...(control.children ?? []), ...buildShopParts(kind, controlId, locale, shape, legacyTexts(kind, control.props), taken)] };
+    root = {
+      ...control,
+      children: [
+        ...(control.children ?? []),
+        ...buildShopParts(kind, controlId, locale, shape, legacyTexts(kind, control.props), legacyBindings(kind, control.bindings), taken),
+      ],
+    };
     changed = true;
   } else {
     // Missing required parts, top down, so a part comes back before the parts inside it.
@@ -919,12 +1163,19 @@ export function normalizeShopControl<N extends object>(
     }
   }
 
-  // Legacy label props leave the control once their text lives in the parts.
-  const legacy = LEGACY_CONTROL_PROPS[kind].filter((key) => root.props && key in root.props);
+  // Legacy label props and bindings leave the control once their text lives in the parts.
+  const legacy = Object.keys(LEGACY[kind].props).filter((key) => root.props && key in root.props);
   if (legacy.length > 0) {
     const props = { ...(root.props ?? {}) };
     for (const key of legacy) delete props[key];
     root = { ...root, props };
+    changed = true;
+  }
+  const legacyBound = Object.keys(LEGACY[kind].bindings).filter((key) => root.bindings && key in root.bindings);
+  if (legacyBound.length > 0) {
+    const bindings = { ...(root.bindings ?? {}) };
+    for (const key of legacyBound) delete bindings[key];
+    root = { ...root, bindings };
     changed = true;
   }
 

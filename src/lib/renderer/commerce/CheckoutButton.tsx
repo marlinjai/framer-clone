@@ -52,11 +52,9 @@ import type { ComponentInstance } from '@/models/ComponentModel';
 import type { BindingScope } from '@/lib/bindings/resolver/scope';
 import { useCart, useCheckoutUnavailableReason, type CartLine } from '@/lib/commerce/cart';
 import { getPaymentGateway, type CheckoutBuyer, type PaymentGateway, type RefusedBuyerField } from '@/lib/commerce/payment';
-import { CHECKOUT_BUYER_FIELDS, CHECKOUT_PREVIEW_STATES, missingShopParts, normalizeShopControl, type CheckoutPreviewStateId, type ShopLocale, type ShopTreeNode } from '@/lib/commerce/parts';
+import { CHECKOUT_BUYER_FIELDS, CHECKOUT_PREVIEW_STATES, type CheckoutPreviewStateId, type ShopLocale } from '@/lib/commerce/parts';
 import { ShopDesignContext, ShopLocaleContext, ShopRuntimeContext, type ShopPartRender, type ShopRuntime } from '@/lib/commerce/shopRuntime';
-import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
-import { renderNodeChildren } from '@/lib/renderer/server/renderComponentNode';
-import { createScope } from '@/lib/bindings/resolver/scope';
+import { ShopControlContent } from './ShopControlContent';
 
 /** A single per-line shortage, in the client's variant vocabulary. */
 export interface CheckoutShortage {
@@ -503,33 +501,13 @@ function CheckoutLive({ node, hostType = 'div', hostProps = {}, gateway, childre
     hostType,
     wrapperProps,
     <ShopRuntimeContext.Provider value={runtime}>
-      <CheckoutContent node={node} locale={locale} drawn={children} />
+      <ShopControlContent node={node} kind="checkout-button" locale={locale} drawn={children} />
     </ShopRuntimeContext.Provider>,
     unavailableReason && noteShown ? (
       <p data-checkout-unavailable role="status" style={UNAVAILABLE_NOTE_STYLE}>
         {unavailableReason}
       </p>
     ) : null,
-  );
-}
-
-/**
- * The control's parts: those the surface already drew plus any required part the
- * tree lacks, or on a published page the control's own children (completed the
- * same way). Either way every required part is on the page.
- */
-function CheckoutContent({ node, locale, drawn }: { node: ComponentInstance; locale: ShopLocale; drawn: React.ReactNode }) {
-  const fallback = React.useMemo(() => (drawn === undefined ? null : missingShopParts(node, locale, 'checkout-button')), [node, drawn, locale]);
-  const own = React.useMemo(
-    () => (drawn === undefined ? normalizeShopControl(node as unknown as ShopTreeNode, locale, 'node', 'checkout-button') : null),
-    [node, drawn, locale],
-  );
-  if (own) return <>{renderNodeChildren(own as unknown as ComponentNode, createScope())}</>;
-  return (
-    <>
-      {drawn}
-      {fallback && fallback.length > 0 ? renderNodeChildren({ type: 'div', children: fallback } as ComponentNode, createScope()) : null}
-    </>
   );
 }
 
@@ -863,7 +841,7 @@ function CheckoutCanvas({ node, hostType = 'div', hostProps = {}, children }: Ch
     hostType,
     wrapperProps,
     <ShopRuntimeContext.Provider value={runtime}>
-      <CheckoutContent node={node} locale={locale} drawn={children ?? null} />
+      <ShopControlContent node={node} kind="checkout-button" locale={locale} drawn={children ?? null} />
     </ShopRuntimeContext.Provider>,
   );
 }

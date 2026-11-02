@@ -135,9 +135,15 @@ assistive technology what an element is), AI (the page generator).
 
 1. **Plan, shared parts, the checkout** (built, held for review because it touches the checkout): the spec,
    builder, normaliser, runtime, canvas state preview, delete guard, Layers icons, generator schema, tests.
-2. **Add to cart and the cart:** the button, its label, the availability error; the cart's empty message, a
-   line item template (title, variant, quantity control, line price, remove button) drawn once per line,
-   subtotal and the display-only notice. The cart's `emptyContent` binding moves to the empty message part.
+2. **Add to cart and the cart** (built, held until slice 1 lands): the add to cart's button with its label
+   and a sold out label, and the availability error; the cart's empty message, a line template (name, price,
+   quantity with its label, remove button, the low stock warning, and the loading, no longer sold and failed
+   messages) drawn once per cart line with each copy reading its own line, the estimated subtotal (it must
+   keep `{subtotal}`) and the estimate notice (fixed text, kept in sight). The old `label` and `emptyContent`
+   props and their bindings move to the label and empty message parts, where a binding resolves against the
+   frames the island sits in. Canvas states: ready, no option chosen, checking (loading), sold out and a failed
+   check for the add to cart; items, empty, loading, low stock, an item no longer sold and an item that failed
+   for the cart.
 3. **Variant selector:** the option groups, option labels and the choice buttons as a template drawn per
    option value, with the selected and sold-out looks as stored rules.
 

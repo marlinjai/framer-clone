@@ -34,10 +34,21 @@ export interface ShopPartRender {
   props?: Record<string, unknown>;
   /** The values of the part's `{token}` placeholders. */
   tokens?: Readonly<Record<string, string>>;
-  /** The text of a part whose text is the runtime's (a message from the server). */
+  /**
+   * The text of a part whose text is the runtime's (a message from the server), or
+   * the runtime's own words in place of the designer's (an error chip in the editor).
+   */
   text?: string;
-  /** A repeated part: one element per item, each with its tokens and attributes. */
-  items?: readonly { key: string; tokens: Readonly<Record<string, string>>; props?: Record<string, unknown> }[];
+  /**
+   * A repeated part: one element per item, each with its tokens and attributes, and
+   * the runtime its own parts read (a cart line's title, price and quantity).
+   */
+  items?: readonly {
+    key: string;
+    tokens: Readonly<Record<string, string>>;
+    props?: Record<string, unknown>;
+    runtime?: ShopRuntime;
+  }[];
 }
 
 export interface ShopRuntime {
@@ -179,9 +190,14 @@ export function ShopPartElement({ role, tag, domProps, storedText, content, surf
   if (!render.visible) return null;
   const editing = ownProps.contentEditable === 'true';
   // While the designer types, the box holds the stored text as typed, tokens and all.
-  const raw = spec?.dynamicText ? render.text : editing ? storedText : shopPartText(role, storedText, runtime.locale);
+  const raw = spec?.dynamicText || render.text !== undefined ? render.text : editing ? storedText : shopPartText(role, storedText, runtime.locale);
 
-  const draw = (key: React.Key | undefined, tokens: Readonly<Record<string, string>> | undefined, extra?: Record<string, unknown>) => {
+  const draw = (
+    key: React.Key | undefined,
+    tokens: Readonly<Record<string, string>> | undefined,
+    extra?: Record<string, unknown>,
+    itemRuntime?: ShopRuntime,
+  ) => {
     const props: Record<string, unknown> = { ...ownProps, ...(render.props ?? {}), ...(extra ?? {}) };
     if (key !== undefined) props.key = key;
     if (isVoidTag(elementTag)) {
@@ -189,7 +205,9 @@ export function ShopPartElement({ role, tag, domProps, storedText, content, surf
       return React.createElement(elementTag, props);
     }
     const text = editing ? raw : fillShopTokensIn(raw, tokens ?? {});
-    return React.createElement(elementTag, props, ...textChildren(text, linksAllowed && runLinksAllowedIn(elementTag)), content);
+    // A repeated part's own parts read their item (a cart line's title reads that line).
+    const inner = itemRuntime && content !== undefined ? <ShopRuntimeContext.Provider value={itemRuntime}>{content}</ShopRuntimeContext.Provider> : content;
+    return React.createElement(elementTag, props, ...textChildren(text, linksAllowed && runLinksAllowedIn(elementTag)), inner);
   };
 
   if (render.items) {
@@ -198,7 +216,12 @@ export function ShopPartElement({ role, tag, domProps, storedText, content, surf
     return (
       <>
         {render.items.map((item, index) =>
-          draw(item.key, { ...(render.tokens ?? {}), ...item.tokens }, index === 0 ? item.props : { ...item.props, 'data-component-id': undefined, 'data-inner-component-id': undefined }),
+          draw(
+            item.key,
+            { ...(render.tokens ?? {}), ...item.tokens },
+            index === 0 ? item.props : { ...item.props, 'data-component-id': undefined, 'data-inner-component-id': undefined },
+            item.runtime,
+          ),
         )}
       </>
     );

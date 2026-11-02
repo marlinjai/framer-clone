@@ -300,7 +300,10 @@ export function createComponentElement(
             hostType={hostType}
             hostProps={propsWithIdentity}
             mode={mode}
-          />,
+            surface={mode === 'editor' ? 'canvas' : 'live'}
+          >
+            {children}
+          </CartView>,
         );
       }
       if (dataKind === 'checkout-button') {
@@ -328,7 +331,10 @@ export function createComponentElement(
             hostType={hostType}
             hostProps={propsWithIdentity}
             mode={mode}
-          />,
+            surface={mode === 'editor' ? 'canvas' : 'live'}
+          >
+            {children}
+          </AddToCartButton>,
         );
       }
       if (dataKind === 'variant-selector' && renderNode) {
