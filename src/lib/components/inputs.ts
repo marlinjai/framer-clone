@@ -81,12 +81,35 @@ export interface TextRun {
   href?: string;
 }
 
-const CURSORS: ReadonlySet<string> = new Set([
+/** What a person calls each type: Framer's editor names. */
+export const INPUT_TYPE_LABELS: Readonly<Record<InputType, string>> = {
+  text: 'Plain text',
+  number: 'Number',
+  toggle: 'Toggle',
+  color: 'Color',
+  image: 'Image',
+  link: 'Link',
+  choice: 'Option',
+  richtext: 'Formatted text',
+  file: 'File',
+  date: 'Date',
+  border: 'Border',
+  shadow: 'Shadow',
+  cursor: 'Cursor',
+  transition: 'Transition',
+  list: 'List',
+  gallery: 'Gallery',
+  event: 'Event',
+};
+
+/** The cursor keywords a `cursor` input takes, in the order the panel offers them. */
+export const CURSOR_KEYWORDS: readonly string[] = [
   'auto', 'default', 'none', 'context-menu', 'help', 'pointer', 'progress', 'wait', 'cell', 'crosshair', 'text',
   'vertical-text', 'alias', 'copy', 'move', 'no-drop', 'not-allowed', 'grab', 'grabbing', 'all-scroll', 'col-resize',
   'row-resize', 'n-resize', 'e-resize', 's-resize', 'w-resize', 'ne-resize', 'nw-resize', 'se-resize', 'sw-resize',
   'ew-resize', 'ns-resize', 'nesw-resize', 'nwse-resize', 'zoom-in', 'zoom-out',
-]);
+];
+const CURSORS: ReadonlySet<string> = new Set(CURSOR_KEYWORDS);
 
 const INPUT_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const UNIT = /^[A-Za-z%]{1,8}$/;
@@ -290,6 +313,58 @@ export function inputDefinitionRefusal(input: unknown): string | null {
     if (!parsed.ok) return `input ${id} has a default it refuses: ${parsed.reason}`;
   }
   return null;
+}
+
+/** The fields of an input that only one type reads, dropped when its type changes. */
+const PER_TYPE_FIELDS = ['options', 'multiline', 'maxLength', 'min', 'max', 'step', 'unit', 'fields'] as const;
+
+/**
+ * The options of a `choice` input as the panel writes them: `Light, Dark`, one per
+ * comma, the label its own value, or `Dark = dark` where the two differ.
+ */
+export function optionsToText(options: readonly { label: string; value: string }[] | undefined): string {
+  return (options ?? []).map(({ label, value }) => (label === value ? label : `${label} = ${value}`)).join(', ');
+}
+
+/** The options from text `optionsToText` writes, or why it cannot be read. */
+export function optionsFromText(text: string): Parsed<{ label: string; value: string }[]> {
+  const entries = text.split(',').map(entry => entry.trim()).filter(entry => entry !== '');
+  if (entries.length === 0) return { ok: false, reason: 'an option input needs at least one option' };
+  const options = entries.map(entry => {
+    const at = entry.indexOf('=');
+    if (at === -1) return { label: entry, value: entry };
+    return { label: entry.slice(0, at).trim(), value: entry.slice(at + 1).trim() };
+  });
+  if (options.some(option => option.label === '' || option.value === '')) {
+    return { ok: false, reason: 'each option needs a label and a value' };
+  }
+  if (new Set(options.map(option => option.value)).size !== options.length) {
+    return { ok: false, reason: 'two options have the same value' };
+  }
+  return { ok: true, value: options };
+}
+
+/**
+ * The same input with another type, ready for `changeInputType`: its id, name,
+ * group and description stay, the fields only the old type read go, and a type
+ * that needs more gets a start (an Option its default as the first choice, a List
+ * one text field). The default stays only when the new type takes it.
+ */
+export function retypedInput(input: InputDefinition, type: InputType): { next: InputDefinition; defaultDropped: boolean } {
+  if (type === input.type) return { next: input, defaultDropped: false };
+  const next: InputDefinition = { ...input, type };
+  for (const field of PER_TYPE_FIELDS) delete next[field];
+  delete next.default;
+  // An Option starts with the old default as its one choice, so the default stays.
+  if (type === 'choice') {
+    const first = typeof input.default === 'string' && input.default.trim() !== '' ? input.default : 'Option 1';
+    next.options = [{ label: first, value: first }];
+  }
+  if (type === 'list') next.fields = [{ id: 'text', name: 'Text', type: 'text' }];
+  if (input.default === undefined) return { next, defaultDropped: false };
+  const kept = parseInputValue(next, input.default).ok;
+  if (kept) next.default = input.default;
+  return { next, defaultDropped: !kept };
 }
 
 /** Slots that are addresses, in lower case. Escaping does not make an address safe. */

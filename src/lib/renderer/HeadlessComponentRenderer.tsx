@@ -17,7 +17,7 @@
 import React from 'react';
 import { observer } from 'mobx-react-lite';
 import { ComponentInstance } from '@/models/ComponentModel';
-import { createComponentElement } from './createComponentElement';
+import { createComponentElement, RunLinksContext } from './createComponentElement';
 import { applyBindings } from '@/lib/bindings/resolver/applyBindings';
 import { createScope, pushInputFrame, type BindingScope } from '@/lib/bindings/resolver/scope';
 import { placementInstanceOf } from '@/lib/components/expand';
@@ -58,6 +58,8 @@ const HeadlessComponentRenderer = observer(({
 }: HeadlessComponentRendererProps) => {
   const pageDrawsStickyCta = React.useContext(StickyCtaPreviewContext);
   const expansion = React.useContext(PreviewExpansionContext);
+  // Inside a link or a button, formatted text holds no links (createComponentElement).
+  const runLinksAllowed = React.useContext(RunLinksContext);
 
   // A placement draws what the published page compiles: its expansion as a detached
   // tree, so no third way of drawing a component appears. The live tree around it
@@ -135,6 +137,7 @@ const HeadlessComponentRenderer = observer(({
     // Preview/headless/static-emit surface: data renderers render nothing for
     // an errored slot (no broken layout, no thrown render during SSR).
     mode: 'preview',
+    runLinksAllowed,
   });
 });
 

@@ -19,6 +19,7 @@ import { placeDefinition, requestCreateComponent } from '@/lib/components/editor
 import { tapInsertTarget } from '@/lib/layers/tapInsertTarget';
 import type { InputType } from '@/lib/components/inputs';
 import type { PlacementProps } from '@/lib/components/placement';
+import { formatRuns } from '@/lib/components/richText';
 import { INPUT_PROBES } from './lib/componentProbes';
 import { writeOut } from './lib/io';
 import { rowKey, type Cell, type SurfaceResults } from './lib/types';
@@ -132,9 +133,17 @@ async function operate(type: InputType, node: ComponentInstance): Promise<Cell> 
     await act(async () => fireEvent.click(screen.getByRole('switch', { name })));
     return cell(stored() === true, 'the switch stored no boolean');
   }
-  if (type === 'choice') {
+  if (type === 'choice' || type === 'cursor') {
     await act(async () => fireEvent.change(screen.getByLabelText(name), { target: { value: sample.value } }));
     return cell(stored() === sample.value, 'the select stored nothing');
+  }
+  if (type === 'richtext') {
+    // Typed in the field's notation, which must store the runs, not the text.
+    const field = screen.getByLabelText(name);
+    await typeInto(field, formatRuns(sample.refused));
+    const refusedKept = stored() === undefined;
+    await typeInto(field, formatRuns(sample.value));
+    return cell(refusedKept && JSON.stringify(stored()) === JSON.stringify(sample.value), `refused kept out: ${refusedKept}, stored ${JSON.stringify(stored())}`);
   }
   if (type === 'image') {
     const value = sample.value as { src: string; alt: string };

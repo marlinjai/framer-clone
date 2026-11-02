@@ -12,6 +12,7 @@ import type { InsertTarget } from '@/models/PageModel';
 import type { EditorUIType } from '@/stores/EditorUIStore';
 import { formKindOf } from '@/lib/forms/definition';
 import { detachLosesFormHistory } from './detach';
+import type { InputDefinition } from './inputs';
 
 /** What Create component would act on now, or why it cannot. */
 export type ComponentSelection =
@@ -62,6 +63,26 @@ export function placeDefinition(editorUI: EditorUIType, definitionId: string, ta
   if (editorUI.editorNotice?.kind === 'refused') editorUI.setEditorNotice(undefined);
   editorUI.selectComponent(result.placement, breakpointId);
   return result.placement;
+}
+
+/**
+ * A new type or new options for an input. What the change takes with it (placement
+ * values the new input refuses, connections to fields it may not set, a default it
+ * refuses) is said first in a dialog; a change that takes nothing runs at once, as
+ * one undoable step.
+ */
+export function requestInputEdit(editorUI: EditorUIType, definitionId: string, next: InputDefinition, defaultDropped: boolean): void {
+  const project = editorUI.currentProject;
+  if (!project) return;
+  const takes = defaultDropped
+    || project.inputTypeChangeLoss(definitionId, next) > 0
+    || project.inputTypeChangeBindingLoss(definitionId, next) > 0;
+  if (takes) {
+    editorUI.setComponentRequest({ kind: 'editInput', definitionId, next, defaultDropped });
+    return;
+  }
+  const result = project.changeInputType(definitionId, next);
+  if (!result.ok) editorUI.setEditorNotice({ kind: 'refused', message: result.message });
 }
 
 /** Runs Detach, selecting the plain copy, or shows why not. */

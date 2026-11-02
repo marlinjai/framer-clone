@@ -26,7 +26,8 @@ import { isVoidTag } from '@/lib/drag/voidTags';
 import { contentBelow, type ForeignContent, isBlockedProp, isBlockedTag, renderedInlineStyle, withoutClobberingId, withoutFormOverrides } from '@/lib/renderer/blockedNodes';
 import { isLegacyRulesAttribute } from '@/lib/rules/rules';
 import { isComponentPlaceholderType } from '@/lib/components/placement';
-import { isTextNodeType, ownTextThenChildren, renderableText } from '@/lib/renderer/textNode';
+import { isTextNodeType, ownTextThenChildren, renderOwnText, runLinksAllowedIn } from '@/lib/renderer/textNode';
+import { createRunElement } from '@/lib/renderer/runElements';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import type { BindingScope } from '@/lib/bindings/resolver/scope';
 import { createScope } from '@/lib/bindings/resolver/scope';
@@ -128,20 +129,31 @@ export function nodeHostTag(node: ComponentNode): string {
   return resolveHtmlTag(node.type) ?? 'div';
 }
 
-/** The raw-text child of a node (a string/number `props.children`), or null. */
-function rawTextChild(node: ComponentNode): React.ReactNode {
-  return renderableText((node.props as any)?.children);
+/**
+ * The text of a node with no element: a string or number `props.children`, or
+ * formatted text as its runs. `inLink` leaves a run's address out inside a link or
+ * a button, where a link would be invalid and the HTML parser would close the
+ * outer one.
+ */
+function rawTextChild(node: ComponentNode, inLink: boolean): React.ReactNode {
+  return renderOwnText((node.props as any)?.children, createRunElement, !inLink) as React.ReactNode;
 }
 
 /**
  * What goes inside a node's element: its own text, then its child nodes in
- * order. Exported for the form island, which renders its own wrapper.
+ * order. Exported for the form island, which renders its own wrapper. `inLink`
+ * says the node sits inside a link or a button, its own tag included.
  */
-export function renderNodeChildren(node: ComponentNode, scope: BindingScope, foreign: ForeignContent = false): React.ReactNode {
+export function renderNodeChildren(
+  node: ComponentNode,
+  scope: BindingScope,
+  foreign: ForeignContent = false,
+  inLink = !runLinksAllowedIn(node.type),
+): React.ReactNode {
   const rendered = (node.children ?? []).map((child, index) =>
-    renderComponentNode(child, scope, child.id ?? index, foreign),
+    renderComponentNode(child, scope, child.id ?? index, foreign, inLink),
   );
-  return ownTextThenChildren(rawTextChild(node), rendered) as React.ReactNode;
+  return ownTextThenChildren((node.props as any)?.children, rendered, createRunElement, !inLink) as React.ReactNode;
 }
 
 /**
@@ -154,9 +166,10 @@ export function renderComponentNode(
   scope: BindingScope = createScope(),
   key: React.Key = node.id ?? 0,
   foreign: ForeignContent = false,
+  inLink = false,
 ): React.ReactNode {
   // No element at all, so nothing below (a tag, an island, a marker) applies.
-  if (isTextNodeType(node.type)) return rawTextChild(node);
+  if (isTextNodeType(node.type)) return rawTextChild(node, inLink);
 
   // Expansion leaves none but a `#missing` one, and `#component` cannot be a tag.
   if (isComponentPlaceholderType(node.type)) return null;
@@ -209,7 +222,7 @@ export function renderComponentNode(
     return React.createElement(tag, props);
   }
 
-  return React.createElement(tag, props, renderNodeChildren(node, scope, contentBelow(tag, foreign)));
+  return React.createElement(tag, props, renderNodeChildren(node, scope, contentBelow(tag, foreign), inLink || !runLinksAllowedIn(tag)));
 }
 
 export default renderComponentNode;
