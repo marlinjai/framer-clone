@@ -1021,8 +1021,6 @@ describe('a modal no press asked for, closed by Escape whatever was stored', () 
 });
 
 describe('the page-wide cap', () => {
-  const bigStep = Array.from({ length: 16 }, () => ({ step: 'n' }));
-
   it('stops timers for the visit once many small triggers add up, each under its own limit', () => {
     vi.useFakeTimers();
     vi.spyOn(window.performance, 'now').mockReturnValue(5000);

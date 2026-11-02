@@ -165,6 +165,77 @@ describe.each(ENGINES)('in %s', (_name, engine) => {
     });
   });
 
+  describe('the recheck: what a visitor set stays set', () => {
+    const clip = <T,>(read: string): Promise<T> =>
+      page.evaluate((name) => (document.querySelector('audio') as unknown as Record<string, T>)[name], read);
+
+    it('leaves a pause on an autoplaying sound alone, and a turned down volume', async () => {
+      await goTo('autoplay-timers');
+      await el('pay').click();
+      await page.evaluate(async () => {
+        const audio = document.querySelector('audio') as HTMLAudioElement;
+        await audio.play();
+        audio.pause();
+        audio.volume = 0.2;
+      });
+      const position = await clip<number>('currentTime');
+      await page.waitForTimeout(2300);
+      expect(await clip<boolean>('paused')).toBe(true);
+      expect(await clip<number>('currentTime')).toBe(position);
+      expect(await clip<number>('volume')).toBeCloseTo(0.2);
+      expect(await clip<number>('playbackRate')).toBe(1);
+    });
+  });
+
+  describe('the recheck: capturePointer', () => {
+    const paid = () => page.evaluate(() => (window as unknown as { paid?: number }).paid ?? 0);
+    const countPay = () => page.evaluate(() => {
+      document.querySelector('[data-t="pay"]')?.addEventListener('click', () => {
+        const w = window as unknown as { paid?: number };
+        w.paid = (w.paid ?? 0) + 1;
+      });
+    });
+
+    it.each(['capture-on-root', 'capture-around'])('leaves a control pressable on /%s', async (slug) => {
+      await goTo(slug);
+      await countPay();
+      await el('pay').click();
+      expect(await paid()).toBe(1);
+    });
+  });
+
+  describe('finding 4, sound', () => {
+    it('leaves a pause alone: no timer can start the sound again', async () => {
+      await goTo('sound');
+      await el('pay').click();
+      await page.waitForTimeout(1500);
+      expect(await page.evaluate(() => (document.querySelector('audio') as HTMLAudioElement).paused)).toBe(true);
+    });
+  });
+
+  describe('finding 5: many small triggers', () => {
+    it('stops them, warns, and leaves the main thread answering', async () => {
+      await goTo('stacked');
+      await expect.poll(() => warnings.filter((text) => text.includes('timers off')).length, { timeout: 15_000 }).toBe(1);
+      const ticks = await page.evaluate(() => new Promise<{ ticks: number; longest: number }>((resolve) => {
+        let last = performance.now();
+        let longest = 0;
+        let count = 0;
+        const timer = setInterval(() => {
+          const now = performance.now();
+          longest = Math.max(longest, now - last);
+          last = now;
+          count += 1;
+          if (count === 100) {
+            clearInterval(timer);
+            resolve({ ticks: count, longest });
+          }
+        }, 10);
+      }));
+      expect(ticks.longest).toBeLessThan(300);
+    });
+  });
+
   describe('finding 6: a loop through what the page itself causes', () => {
     it('turns off a real transition chasing its own state, below any rate, and warns', async () => {
       await goTo('slow-loop');

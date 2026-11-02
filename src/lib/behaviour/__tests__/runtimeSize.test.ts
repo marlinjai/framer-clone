@@ -36,12 +36,17 @@ describe('the behaviour chunks', () => {
     expect(bytes).toBeLessThanOrEqual(5 * KILOBYTE);
   });
 
-  it('verbs stays within 2 kilobytes gzipped', async () => {
-    const { bytes } = await gzippedSize('verbs.ts');
-    expect(bytes).toBeLessThanOrEqual(2 * KILOBYTE);
+  it('rove stays within 3 kilobytes gzipped', async () => {
+    const { bytes } = await gzippedSize('rove.ts');
+    expect(bytes).toBeLessThanOrEqual(3 * KILOBYTE);
   });
 
-  it.each(['runtime.ts', 'verbs.ts'])('%s holds no part of the parser, and no code from a string', async (entry) => {
+  it('verbs, with the key rules, stays within 2.5 kilobytes gzipped', async () => {
+    const { bytes } = await gzippedSize('verbs.ts');
+    expect(bytes).toBeLessThanOrEqual(2.5 * KILOBYTE);
+  });
+
+  it.each(['runtime.ts', 'rove.ts', 'verbs.ts'])('%s holds no part of the parser, and no code from a string', async (entry) => {
     const { raw } = await gzippedSize(entry);
     expect(raw).not.toContain('a trigger needs');
     expect(raw).not.toMatch(/\beval\(|new Function\(/);

@@ -470,21 +470,21 @@ describe.each(ENGINES)('in %s', (name, engine) => {
     });
 
     describe('time to ready on a throttled profile', () => {
-      it('is measured on an ordinary page, and comes before the gate falls', async () => {
+      it.each(['ordinary', 'ordinary-all-chunks'])('is measured on /%s, and comes before the gate falls', async (slug) => {
         const session = await context.newCDPSession(page);
         await session.send('Network.enable');
         await session.send('Network.setCacheDisabled', { cacheDisabled: true });
         // Slow 4G and a phone's processor, the profile Lighthouse uses.
         await session.send('Network.emulateNetworkConditions', { offline: false, latency: 562.5, downloadThroughput: (1.6 * 1024 * 1024) / 8, uploadThroughput: (750 * 1024) / 8 });
         await session.send('Emulation.setCPUThrottlingRate', { rate: 4 });
-        await openReady('ordinary');
+        await openReady(slug);
         const timing = await page.evaluate(() => {
           const w = window as unknown as { __behaviourReadyAt: number; __behaviourBootAt: number };
           return { paint: performance.getEntriesByName('first-paint')[0]?.startTime ?? 0, ready: w.__behaviourReadyAt, boot: w.__behaviourBootAt };
         });
         const leftOfTheGate = START_STATE_TIMEOUT_MS - (timing.ready - timing.boot);
         // A shared runner under this throttle says nothing about the margin, so there it is only recorded.
-        note(`throttled: boot script ${Math.round(timing.boot)} ms, first paint ${Math.round(timing.paint)} ms, runtime ready ${Math.round(timing.ready)} ms, paint to ready ${Math.round(timing.ready - timing.paint)} ms, left of the 3 second gate ${Math.round(leftOfTheGate)} ms`);
+        note(`throttled /${slug}: boot script ${Math.round(timing.boot)} ms, first paint ${Math.round(timing.paint)} ms, runtime ready ${Math.round(timing.ready)} ms, paint to ready ${Math.round(timing.ready - timing.paint)} ms, left of the 3 second gate ${Math.round(leftOfTheGate)} ms`);
         if (!process.env.CI) expect(leftOfTheGate).toBeGreaterThan(0);
         expect(problems).toEqual([]);
       });

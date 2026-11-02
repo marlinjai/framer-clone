@@ -7,7 +7,7 @@
 //
 // PURE and client-safe: no React, no MST. The runtime imports only the types here.
 
-import type { Action, Binding, Expression, FocusGroup, StateValue, StoredBehaviour, Trigger } from './format';
+import type { Action, Binding, Expression, FocusGroup, Rove, StateValue, StoredBehaviour, Trigger } from './format';
 
 type Sent<T> = T extends unknown ? Omit<T, 'name' | 'preset'> : never;
 
@@ -27,6 +27,8 @@ export interface ProgramEntry {
 export interface BehaviourProgram {
   /** Key to entries. An element runs the entry `data-fc-v` names, the first without it. */
   nodes: Record<string, ProgramEntry[]>;
+  /** Some node is a focus group: the page needs the `rove` chunk. */
+  rove?: true;
   /** Some action touches the page beyond state, or a trigger reads keys: the page needs the `verbs` chunk. */
   verbs?: true;
 }
@@ -58,6 +60,17 @@ export interface Kit {
   charge(cost: number): boolean;
 }
 
+export interface Rover {
+  move(group: string, move: Rove, run: Run): void;
+  /** The text of a group's active item. */
+  active(group: string, run: Pick<Run, 'el'>): string;
+  /** Keeps one Tab stop in a group, on an item that can be seen. */
+  sync(group: Element): void;
+  stop(): void;
+}
+
+export type CreateRover = (kit: Kit) => Rover;
+
 /** What decides whether a key press fires anything, from keys.ts. */
 export interface KeyRules {
   keysAnswer(keys: readonly string[] | undefined, event: KeyboardEvent, element: Element): boolean;
@@ -84,6 +97,7 @@ export function compileProgram(nodes: Record<string, ProgramEntry[]>): Behaviour
   const entries = Object.values(nodes).flat();
   return {
     nodes,
+    ...(entries.some((entry) => entry.group) ? { rove: true as const } : {}),
     ...(entries.some((entry) => entry.on?.some(needsChunk)) ? { verbs: true as const } : {}),
   };
 }

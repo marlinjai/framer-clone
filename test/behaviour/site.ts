@@ -23,7 +23,7 @@ const stored = (slug: string, tree: StoredNode) => ({
   id: slug || 'home',
   slug,
   metadata: { title: slug || 'Home' },
-  appComponentTree: { id: `root-${slug || 'home'}`, type: 'div', componentType: 'host', props: {}, children: [tree] },
+  appComponentTree: tree.id === 'page-root' ? tree : { id: `root-${slug || 'home'}`, type: 'div', componentType: 'host', props: {}, children: [tree] },
   canvasNodes: frames,
 });
 

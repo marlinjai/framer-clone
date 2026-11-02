@@ -136,10 +136,256 @@ const effects = (): StoredNode =>
   node('moved', 'div', { children: 'Revealed', effects: { appear: { kind: 'fade' } } });
 
 /** A page with some weight, for the time to ready. */
-const ordinary = (): StoredNode =>
+const ordinary = (...more: StoredNode[]): StoredNode =>
   node('ordinary', 'main', {},
     ...Array.from({ length: 60 }, (_, index) => node(`p${index}`, 'p', { children: `Paragraph ${index} of a page with real text on it, as a person would write it. `.repeat(4) })),
-    accordion());
+    accordion(),
+    ...more);
+
+// ---- slice B4: the prototype's presets, stored and through the real parser ------------
+
+const key = (id: string, keys: string[], ...actions: unknown[]) => ({ id, on: 'keydown', keys, prevent: true, do: actions });
+const go = (group: string, move: string) => ({ rove: group, move });
+const set = (state: string, value: unknown) => ({ set: state, value });
+
+const toolbarKeys = (forward: string, back: string) => [
+  key('n', [forward], go('tb', 'next')),
+  key('p', [back], go('tb', 'prev')),
+  key('h', ['Home'], go('tb', 'first')),
+  key('e', ['End'], go('tb', 'last')),
+];
+
+const edges = (...children: StoredNode[]): StoredNode =>
+  node('edges', 'div', {},
+    node('before', 'button', { type: 'button', children: 'before' }),
+    ...children,
+    node('after', 'button', { type: 'button', children: 'after' }));
+
+const toolbar = (forward = 'ArrowRight', back = 'ArrowLeft', style: Props = {}): StoredNode =>
+  edges(node('tb', 'div', {
+    role: 'toolbar', 'aria-label': 'Format', style,
+    behaviour: { group: { role: 'button', axis: 'line', wrap: true }, on: toolbarKeys(forward, back) },
+  },
+    node('bold', 'button', { type: 'button', role: 'button', children: 'Bold' }),
+    node('italic', 'button', { type: 'button', role: 'button', children: 'Italic' }),
+    node('under', 'button', { type: 'button', role: 'button', children: 'Under' })));
+
+const feed = (): StoredNode =>
+  node('around', 'div', {},
+    node('pre', 'a', { href: '#x', children: 'pre' }),
+    node('fd', 'div', {
+      role: 'feed', 'aria-label': 'News',
+      behaviour: {
+        group: { role: 'article', axis: 'line' },
+        on: [key('d', ['PageDown'], go('fd', 'next')), key('u', ['PageUp'], go('fd', 'prev')), key('x', ['Ctrl+End'], go('fd', 'exit-after')), key('y', ['Ctrl+Home'], go('fd', 'exit-before'))],
+      },
+    },
+      node('one', 'article', { role: 'article', tabIndex: 0, children: 'One' }),
+      node('two', 'article', { role: 'article', tabIndex: 0, children: 'Two' }),
+      node('three', 'article', { role: 'article', tabIndex: 0, children: 'Three' })),
+    node('post', 'a', { href: '#y', children: 'post' }));
+
+const number = (id: string, initial: number) => ({ id, name: id, type: 'number', initial, min: 0, max: 100 });
+
+const slider = (): StoredNode =>
+  node('wrap', 'div', { behaviour: { state: [number('lo', 2), number('hi', 8)] } },
+    node('low', 'input', {
+      type: 'range', min: 0, max: 10, defaultValue: 2, 'aria-label': 'Low',
+      behaviour: { on: [{ id: 'l', on: 'input', do: [set('lo', { clamp: [{ event: 'value' }, 0, { get: 'hi' }] }), { setProp: 'low', prop: 'value', value: { get: 'lo' } }] }] },
+    }),
+    node('high', 'input', {
+      type: 'range', min: 0, max: 10, defaultValue: 8, 'aria-label': 'High',
+      behaviour: { on: [{ id: 'h', on: 'input', do: [set('hi', { clamp: [{ event: 'value' }, { get: 'lo' }, 10] }), { setProp: 'high', prop: 'value', value: { get: 'hi' } }] }] },
+    }));
+
+const splitter = (): StoredNode =>
+  node('wrap', 'div', {
+    style: { display: 'flex', width: '600px', height: '80px' },
+    behaviour: { state: [number('pos', 50), flag('drag')], bind: [{ cssVar: '--u-split', from: { get: 'pos' }, unit: '%' }] },
+  },
+    node('left', 'div', { style: { width: 'var(--u-split, 50%)', background: '#ccc' } }),
+    node('sep', 'div', {
+      role: 'separator', tabIndex: 0, 'aria-orientation': 'vertical', 'aria-label': 'Resize', 'aria-valuemin': 0, 'aria-valuemax': 100,
+      style: { width: '10px', background: '#333', touchAction: 'none' },
+      behaviour: {
+        bind: [{ attr: 'aria-valuenow', from: { get: 'pos' } }],
+        on: [
+          key('l', ['ArrowLeft'], { step: 'pos', by: -5 }),
+          key('r', ['ArrowRight'], { step: 'pos', by: 5 }),
+          key('h', ['Home'], set('pos', 0)),
+          key('e', ['End'], set('pos', 100)),
+          { id: 'd', on: 'pointerdown', do: [{ capturePointer: true }, set('drag', true)] },
+          { id: 'm', on: 'pointermove', if: { get: 'drag' }, do: [set('pos', { clamp: [{ pointer: 'x', of: 'wrap', as: 'percent' }, 0, 100] })] },
+          { id: 'u', on: 'pointerup', do: [set('drag', false)] },
+        ],
+      },
+    }));
+
+const later = (id: string, on: string, ms: number, value: boolean) => ({ id, on, do: [{ delay: ms, key: 'tip', do: [set('tip', value)] }] });
+
+const tooltip = (): StoredNode =>
+  node('wrap', 'div', {
+    style: { padding: '40px' },
+    behaviour: { state: [flag('tip')], on: [{ id: 'esc', on: 'keydown', scope: 'document', keys: ['Escape'], do: [{ cancel: 'tip' }, set('tip', false)] }] },
+  },
+    node('btn', 'button', {
+      type: 'button', 'aria-describedby': 'tip', children: 'Save',
+      behaviour: { noScript: 'show', on: [later('en', 'mouseenter', 40, true), later('le', 'mouseleave', 150, false), { id: 'fi', on: 'focus', do: [set('tip', true)] }, { id: 'fo', on: 'blur', do: [set('tip', false)] }] },
+    }),
+    node('tip', 'div', {
+      id: 'tip', role: 'tooltip', children: 'Saves the page', style: { width: '160px', height: '30px', background: '#eee' },
+      behaviour: { showWhen: { state: 'tip', eq: true }, on: [{ id: 'te', on: 'mouseenter', do: [{ cancel: 'tip' }] }, later('tl', 'mouseleave', 150, false)] },
+    }));
+
+const menuButton = (): StoredNode =>
+  node('around', 'div', {},
+    node('wrap', 'div', { behaviour: { state: [flag('open')] } },
+      node('btn', 'button', {
+        type: 'button', popoverTarget: 'menu', 'aria-haspopup': 'menu', children: 'Actions',
+        behaviour: {
+          bind: [{ attr: 'aria-expanded', from: { get: 'open' } }],
+          on: [
+            key('d', ['ArrowDown'], { popover: 'menu', op: 'show' }, go('menu', 'first')),
+            key('u', ['ArrowUp'], { popover: 'menu', op: 'show' }, go('menu', 'last')),
+            { id: 'o', on: 'click', do: [{ delay: 16, do: [go('menu', 'first')] }] },
+          ],
+        },
+      }),
+      node('menu', 'div', {
+        id: 'menu', popover: 'auto', role: 'menu',
+        behaviour: {
+          group: { role: 'menuitem', axis: 'line', wrap: true },
+          on: [
+            { id: 's', on: 'toggle', do: [set('open', { eq: [{ event: 'newState' }, 'open'] })] },
+            key('n', ['ArrowDown'], go('menu', 'next')),
+            key('p', ['ArrowUp'], go('menu', 'prev')),
+            key('h', ['Home'], go('menu', 'first')),
+            key('e', ['End'], go('menu', 'last')),
+            { id: 't', on: 'keydown', keys: ['Printable'], do: [go('menu', 'type')] },
+          ],
+        },
+      },
+        node('copy', 'button', { type: 'button', role: 'menuitem', children: 'Copy' }),
+        node('paste', 'button', { type: 'button', role: 'menuitem', children: 'Paste' }),
+        node('delete', 'button', { type: 'button', role: 'menuitem', children: 'Delete' }))),
+    node('out', 'p', { children: 'outside' }));
+
+const natives = (): StoredNode =>
+  node('wrap', 'div', { behaviour: { state: [flag('dopen'), flag('mopen')] } },
+    node('more', 'details', { behaviour: { on: [{ id: 't', on: 'toggle', do: [set('dopen', { eq: [{ event: 'newState' }, 'open'] })] }] } },
+      node('sum', 'summary', { children: 'More' }),
+      node('inside', 'p', { children: 'x' })),
+    node('dlg', 'dialog', { id: 'dlg', behaviour: { on: [{ id: 'to', on: 'toggle', do: [set('mopen', { eq: [{ event: 'newState' }, 'open'] })] }] } },
+      node('hi', 'p', { children: 'hi' })),
+    node('open-dlg', 'button', { type: 'button', children: 'Open', behaviour: { noScript: 'show', on: [{ id: 'o', on: 'click', do: [{ dialog: 'dlg', op: 'showModal' }] }] } }),
+    node('open-more', 'button', { type: 'button', children: 'Details', behaviour: { noScript: 'show', on: [{ id: 'o', on: 'click', do: [{ details: 'more', op: 'toggle' }] }] } }));
+
+const combobox = (): StoredNode =>
+  node('wrap', 'div', { behaviour: { state: [flag('open')] } },
+    node('in', 'input', {
+      role: 'combobox', 'aria-label': 'City', 'aria-controls': 'cities', type: 'text',
+      behaviour: {
+        bind: [{ attr: 'aria-expanded', from: { get: 'open' } }],
+        on: [
+          { id: 'i', on: 'input', do: [go('list', 'clear'), { filter: 'list', role: 'option', text: { event: 'value' } }, set('open', true)] },
+          key('d', ['ArrowDown'], set('open', true), go('list', 'next')),
+          key('u', ['ArrowUp'], set('open', true), go('list', 'prev')),
+          { ...key('e', ['Enter'], { setProp: 'in', prop: 'value', value: { active: 'list' } }, set('open', false)), if: { get: 'open' } },
+          { id: 'x', on: 'keydown', keys: ['Escape'], do: [set('open', false)] },
+        ],
+      },
+    }),
+    node('list', 'ul', {
+      id: 'cities', role: 'listbox',
+      behaviour: { showWhen: { state: 'open', eq: true }, group: { role: 'option', axis: 'line', wrap: true, virtual: { owner: 'in' } } },
+    },
+      node('o1', 'li', { id: 'o1', role: 'option', children: 'Bern' }),
+      node('o2', 'li', { id: 'o2', role: 'option', children: 'Zurich' }),
+      node('o3', 'li', { id: 'o3', role: 'option', children: 'Basel' })));
+
+const grid = (): StoredNode => {
+  const cell = (row: number, column: number) => node(`c${row}${column}`, 'td', { role: 'gridcell', children: `${row}${column}` });
+  return edges(node('gr', 'table', {
+    role: 'grid', 'aria-label': 'Numbers',
+    behaviour: {
+      group: { role: 'gridcell', axis: 'grid' },
+      on: [
+        key('r', ['ArrowRight'], go('gr', 'next')), key('l', ['ArrowLeft'], go('gr', 'prev')),
+        key('d', ['ArrowDown'], go('gr', 'down')), key('u', ['ArrowUp'], go('gr', 'up')),
+        key('h', ['Home', 'Ctrl+Home'], go('gr', 'first')), key('e', ['End', 'Ctrl+End'], go('gr', 'last')),
+        key('pd', ['PageDown'], go('gr', 'page-down')), key('pu', ['PageUp'], go('gr', 'page-up')),
+      ],
+    },
+  }, node('body', 'tbody', {}, ...[0, 1, 2].map((row) => node(`r${row}`, 'tr', { role: 'row' }, ...[0, 1, 2].map((column) => cell(row, column)))))));
+};
+
+const tree = (): StoredNode =>
+  node('around', 'div', { behaviour: { state: [flag('b1', true)] } },
+    node('shut', 'button', { type: 'button', children: 'Branch', behaviour: { noScript: 'show', on: [{ id: 't', on: 'click', do: [{ toggle: 'b1' }] }] } }),
+    node('tr', 'ul', {
+      role: 'tree', 'aria-label': 'Files',
+      behaviour: {
+        group: { role: 'treeitem', axis: 'tree' },
+        on: [
+          key('d', ['ArrowDown'], go('tr', 'next')), key('u', ['ArrowUp'], go('tr', 'prev')),
+          key('r', ['ArrowRight'], go('tr', 'down')), key('l', ['ArrowLeft'], go('tr', 'up')),
+          key('h', ['Home'], go('tr', 'first')), key('e', ['End'], go('tr', 'last')),
+        ],
+      },
+    },
+      node('fruit', 'li', { role: 'treeitem' },
+        node('fruit-name', 'span', { children: 'Fruit' }),
+        node('fruits', 'ul', { role: 'group', behaviour: { showWhen: { state: 'b1', eq: true } } },
+          node('apple', 'li', { role: 'treeitem', children: 'Apple' }),
+          node('pear', 'li', { role: 'treeitem', children: 'Pear' }))),
+      node('veg', 'li', { role: 'treeitem', children: 'Veg' })));
+
+/** A short silent sound, so media verbs have something real to act on. */
+const silence = (): string => {
+  const samples = 8000;
+  const wav = Buffer.alloc(44 + samples);
+  wav.write('RIFF', 0);
+  wav.writeUInt32LE(36 + samples, 4);
+  wav.write('WAVEfmt ', 8);
+  wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20);
+  wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(8000, 24);
+  wav.writeUInt32LE(8000, 28);
+  wav.writeUInt16LE(1, 32);
+  wav.writeUInt16LE(8, 34);
+  wav.write('data', 36);
+  wav.writeUInt32LE(samples, 40);
+  wav.fill(128, 44);
+  return `data:audio/wav;base64,${wav.toString('base64')}`;
+};
+
+const press = (id: string, ...actions: unknown[]): StoredNode =>
+  node(id, 'button', { type: 'button', children: id, behaviour: { noScript: 'show', on: [{ id: 'c', on: 'click', do: actions }] } });
+
+const actions = (): StoredNode =>
+  node('page-area', 'div', {},
+    node('sound', 'audio', { src: silence(), preload: 'auto', controls: true }),
+    press('play', { media: 'sound', op: 'play' }),
+    press('pause', { media: 'sound', op: 'pause' }),
+    press('seek', { media: 'sound', op: 'seek', value: 0.5 }),
+    press('rate', { media: 'sound', op: 'rate', value: 2 }),
+    press('volume', { media: 'sound', op: 'volume', value: 5 }),
+    node('pane', 'div', { children: 'Pane' }),
+    press('full', { fullscreen: 'pane', op: 'enter' }),
+    node('field', 'input', { type: 'text', 'aria-label': 'Field' }),
+    press('take-focus', { focus: 'field' }),
+    node('tick', 'input', { type: 'checkbox', 'aria-label': 'Tick' }),
+    press('check', { setProp: 'tick', prop: 'checked', value: true }, { setProp: 'field', prop: 'disabled', value: true }),
+    node('sheet', 'form', {},
+      node('shadow', 'input', { name: 'reset', type: 'text', defaultValue: 'first', 'aria-label': 'Shadow' })),
+    press('clear', { form: 'sheet', op: 'reset' }),
+    press('jump', { scroll: 'far', block: 'center' }),
+    press('show-far', { effect: 'far' }),
+    press('inside', { navigate: '/plain' }),
+    press('outside', { navigate: 'https://example.invalid/away' }),
+    node('gap', 'div', { style: { height: '3000px' } }),
+    node('far', 'p', { children: 'Far', effects: { appear: { kind: 'fade' } } }));
 
 /** A definition holding what `shared-by-many` places, with its own state per placement. */
 export const COMPONENTS = {
@@ -234,6 +480,41 @@ const sharedByMany = (): StoredNode =>
     node('open-all', 'button', { type: 'button', children: 'All', behaviour: { noScript: 'show', on: [{ id: 'c', on: 'click', do: [{ toggle: 'all' }] }] } }),
     ...Array.from({ length: OPENED }, (_, index) => ({ id: `place-${index}`, type: '#component', componentType: 'host' as const, props: { component: 'folding', inputs: {} }, children: [] })));
 
+/** Within the program cap, many small triggers each under their limit, and a long list to read. */
+const stacked = (): StoredNode =>
+  node('stacked', 'div', {},
+    node('long', 'ul', {}, ...Array.from({ length: 2000 }, (_, index) => node(`i${index}`, 'li', { role: 'x', children: `item ${index}` }))),
+    ...Array.from({ length: 30 }, (_, holder) => node(`h${holder}`, 'div', {
+      behaviour: { on: Array.from({ length: 5 }, (__, trigger) => ({ id: `t${trigger}`, on: 'every', ms: 1000, do: Array.from({ length: 16 }, () => ({ filter: 'long', role: 'x', text: 'item' })) })) },
+    })));
+
+const sound = (): StoredNode =>
+  node('sounds', 'div', { behaviour: { on: [{ id: 'p', on: 'every', ms: 1000, do: [{ media: 'clip', op: 'play' }] }] } },
+    node('clip', 'audio', { src: silence(), preload: 'auto' }),
+    pay());
+
+/** Each timer tries to undo what a visitor set. The parser leaves none of them standing. */
+const autoplayTimers = (): StoredNode =>
+  node('playing', 'div', {
+    behaviour: {
+      on: [
+        { id: 'l', on: 'every', ms: 1000, do: [{ media: 'clip', op: 'load' }] },
+        { id: 'v', on: 'every', ms: 1000, do: [{ media: 'clip', op: 'volume', value: 1 }] },
+        { id: 's', on: 'every', ms: 1000, do: [{ media: 'clip', op: 'seek', value: 0 }] },
+        { id: 'r', on: 'every', ms: 1000, do: [{ media: 'clip', op: 'rate', value: 2 }] },
+      ],
+    },
+  },
+    node('clip', 'audio', { src: silence(), autoPlay: true, loop: true, preload: 'auto' }),
+    pay());
+
+const captures = { behaviour: { on: [{ id: 'p', on: 'pointerdown', do: [{ capturePointer: true }] }] } };
+
+/** Its id tells site.ts to store this as the page's root, not inside one. */
+const captureOnRoot = (): StoredNode => node('page-root', 'div', captures, pay());
+
+const captureAround = (): StoredNode => node('around-pay', 'div', captures, pay());
+
 const consent = (): StoredNode =>
   node('with-banner', 'div', { behaviour: { state: [flag('s')], on: [{ id: 'k', on: 'keydown', scope: 'document', keys: ['Escape'], do: [{ set: 's', value: false }] }] } }, pay());
 
@@ -253,9 +534,27 @@ export const PAGES: Readonly<Record<string, () => StoredNode>> = {
   'escape-keyup-node': escapeBack('keyup', 'node'),
   'escape-keyup-page': escapeBack('keyup', 'page'),
   wall,
+  'autoplay-timers': autoplayTimers,
+  'capture-on-root': captureOnRoot,
+  'capture-around': captureAround,
   'shared-by-many': sharedByMany,
   timers,
   'slow-loop': slowLoop,
   consent,
-  ordinary,
+  ordinary: () => ordinary(),
+  'ordinary-all-chunks': () => ordinary(menuButton()),
+  toolbar: () => toolbar(),
+  'toolbar-rtl': () => toolbar('InlineEnd', 'InlineStart', { direction: 'rtl' }),
+  feed,
+  slider,
+  splitter,
+  tooltip,
+  'menu-button': menuButton,
+  natives,
+  combobox,
+  grid,
+  tree,
+  actions,
+  stacked,
+  sound,
 };
