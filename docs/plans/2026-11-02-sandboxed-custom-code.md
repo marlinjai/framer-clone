@@ -158,7 +158,8 @@ Cache-Control: public, max-age=300
 
 **D6. The enforced `frame-src` on published pages goes out from the middleware, not `next.config.ts`.** The behaviour plan's C2 added
 build arguments because `headers()` is fixed at build. The middleware already sends a run-time policy, so C2 adds a second header
-there, an enforced `Content-Security-Policy: frame-src https://run.<domain>/box/` plus `https://www.google.com` when the maps
+there, on every published document and on the editor host's standalone preview route (`/projects/<id>/preview`, which runs real
+frames: the header was the only control that stopped `blob:` self-navigation in all three engines, so the preview needs it too), an enforced `Content-Security-Policy: frame-src https://run.<domain>/box/` plus `https://www.google.com` when the maps
 consent cookie is set, the same switch the report-only policy uses. It is constant per consent state and names no site, so it needs
 no database read in the middleware. A per-site `<meta>` tightens it to `/box/<siteId>/` where it reaches `head`. The report-only
 header stays as it is, measuring the rest. Enforcing `frame-src` alone is not the open decision of the roadmap line "Enforcing the
@@ -168,7 +169,7 @@ kinds (the map after consent and the box), both listed. A test proves the map st
 **D7. Agents and import propose, a person accepts.** The behaviour plan says the generator never writes custom code. The MCP endpoint
 of the [agent plugin plan](2026-11-02-lumitra-sites-agent-plugin.md) (in #308) and the React importer's leftover regions
 ([React import plan](2026-11-02-react-import.md), "Custom code is the remaining route for a `left` region") both meet code that only
-a block can carry. Neither writes a blob. They may write a **proposal**: a `custom_code_proposals` row (site, source `import` or
+a block can carry. Neither writes a blob. (MCP is the Model Context Protocol, the standard way an agent such as Claude Code calls a server's tools.) They may write a **proposal**: a `custom_code_proposals` row (site, source `import` or
 `agent`, the code, a suggested declaration, who created it), written through `editSite`, never served by the box, never rendered.
 The node they insert carries `props.customCode = { proposal: <id>, title }`, which every renderer treats as "no hash": the fallback
 shows. The panel shows the proposal marked "Proposed by import" or "Proposed by agent, not active", with the code, and only a person
@@ -221,7 +222,7 @@ password, as D3 says.
 
 ### Inside
 
-- **Lookup:** `(siteId, sha256)` validated by shape (a UUID and 64 hex characters) before any query. One prepared statement on the
+- **Lookup:** `(siteId, sha256)` validated by shape (a universally unique identifier (UUID) and 64 hex characters) before any query. One prepared statement on the
   view.
 - **Cache:** an in-memory least-recently-used cache of 32 megabytes, keyed on the pair, holding the document and the live flag, each
   entry 60 seconds. With the 300-second HTTP cache that bounds how long a disabled block can keep loading at six minutes; the kill
@@ -256,10 +257,10 @@ Terraform in the infra repository like every other zone.
 |---|---|---|
 | `run` A (and AAAA if the server has IPv6) | The shared server, **DNS only, not proxied** | A Cloudflare challenge cannot pass inside a frame, and a proxied host would set Cloudflare cookies, breaking "no cookies ever" |
 | apex A | The shared server, DNS only | The plain "what is this domain" page with the abuse contact |
-| `CAA` | `0 issue "letsencrypt.org"` and `0 iodef "mailto:<security contact>"` | Only the certificate authority Traefik uses may issue |
+| `CAA` (Certification Authority Authorization) | `0 issue "letsencrypt.org"` and `0 iodef "mailto:<security contact>"` | Only the certificate authority Traefik uses may issue |
 | `MX` | Per M10: a forwarding mailbox for `abuse@` and `security@`, or a null `MX` (`0 .`) if the contact lives elsewhere | Blocklist operators write to `abuse@<domain>` first |
-| `TXT` SPF | `v=spf1 -all` (or the mail provider's, if M10 gives the domain mail) | The domain sends nothing |
-| `_dmarc` TXT | `v=DMARC1; p=reject` | Nobody can send mail as the domain |
+| `TXT` SPF (Sender Policy Framework) | `v=spf1 -all` (or the mail provider's, if M10 gives the domain mail) | The domain sends nothing |
+| `_dmarc` TXT (Domain-based Message Authentication, Reporting and Conformance) | `v=DMARC1; p=reject` | Nobody can send mail as the domain |
 
 **Certificates:** Traefik on the shared server obtains two Let's Encrypt certificates (apex and `run`) by the HTTP-01 challenge, the
 same way every other Coolify application gets one. No wildcard, no DNS token anywhere (D1). `Strict-Transport-Security` without
@@ -323,6 +324,10 @@ The parent trusts nothing about the frame's origin, which is `null`. Version 1 o
 | `resize` | frame to parent | `{ height }` | Only with `sizing: 'content'`, clamped to 10,000 pixels, at most 10 a second |
 | `ping`, `pong` | both | `{}` | The parent pings every 5 seconds; three missed and the frame is removed |
 | `error` | frame to parent | `{ message }` | Counted, shown in the console with the block's title |
+
+The 5-second `hello` clock starts at the frame's `load` event, not at its creation: the frame is `loading="lazy"`, so a block below the
+fold would otherwise be removed before it ever loads. The broker creates the frame only once the wrapper is within one viewport of
+the screen.
 
 Anything undeclared, of the wrong type, of an unknown kind, over 64 kilobytes, or past 30 messages a second is dropped with a console
 warning naming the block. **The shell's client** gives the author a small API instead of raw messages:
@@ -438,7 +443,7 @@ status page.
   - navigating `top`, opening a window, submitting a form, self-navigating to `blob:` and `data:`;
   - `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `sendBeacon`, an image or font from another host, a nested `iframe`, a
     worker (all blocked, each producing a CSP report counted for the site);
-  - WebRTC after the shell (STUN packets counted at zero in Chromium and WebKit);
+  - WebRTC after the shell (STUN, Session Traversal Utilities for NAT, packets counted at zero in Chromium and WebKit);
   - `preconnect` and `dns-prefetch` to a data-carrying host name: **expected to leak in WebKit and Firefox,** asserted as the stated
     residual so a change in either direction is noticed;
   - a direct visit to the box address (403), and framing the box from a host not in `frame-ancestors` (refused);
@@ -458,7 +463,7 @@ status page.
 The 3D scene primitive is being planned in parallel by another agent in `docs/plans/2026-11-02-3d-scene-primitive.md`. Both plans
 use the same scene as their forcing case: the truck wash page built for the client Grothe, where a vehicle drives through a
 four-station wash hall as the visitor scrolls, with glTF models, procedural foam, a camera flight tied to the page's sections, and a
-GSAP intro.
+GSAP (GreenSock Animation Platform) intro.
 
 **What the scene needs, measured from its code:** three.js `three.module.min.js` (672 kilobytes), addons (GLTFLoader, DRACOLoader with
 its WebAssembly decoder, RoomEnvironment, RoundedBoxGeometry, BufferGeometryUtils, MeshSurfaceSampler, about 420 kilobytes), GSAP
@@ -518,7 +523,7 @@ C1 to C6 can be built now: nothing is served on the real domain until O1, and no
 |---|---|---|---|---|---|
 | C1 | `sandbox-service` | `services/box/` (server, cache, rate limit, shell), `src/lib/customCode/contract.ts`, Prisma migration (`custom_code_blobs`, `custom_code_audit`, `custom_code_proposals`, `sites.custom_code_enabled`, view `box_documents`), `prisma/sql/box-reader.sql`, `Dockerfile.box`, `.github/workflows/box.yml`, `deploy/README.md` section | none | 3 sessions | Every box test above passes against the built image and a real Postgres; `box_reader` reads only the view; the image runs read-only as non-root; `contract.ts` imports nothing; the migration is additive |
 | O1 | `sandbox-domain-and-host` (operator, not a worker) | Infra repo: Cloudflare zone and records in Terraform, Infisical project `framer-clone-box` and its machine identity, Coolify application, `box_reader` applied, five Kuma monitors | C1, **M2 bought** | Half a day | `curl` with and without fetch metadata headers gives 200 and 403 on `run.<domain>`; certificates valid; no `Set-Cookie`; all monitors green; abuse page answers |
-| C2 | `sandbox-element` | `src/lib/customCode/customCode.ts` (pure parse), `src/lib/renderer/customCode/customCodeElement.tsx`, `renderComponentNode.tsx`, `createComponentElement.tsx`, `HeadlessComponentRenderer.tsx`, `componentRegistry.ts`, `middleware.ts` and `src/lib/site/cspReportOnly.ts` (enforced `frame-src`, D6), the tile | C1 | 2 sessions | Renderer tests above; the map embed still loads after consent with the header enforced; no `iframe` in the mounted editor; `renderer` collision tag |
+| C2 | `sandbox-element` | `src/lib/customCode/customCode.ts` (pure parse), `src/lib/renderer/customCode/customCodeElement.tsx`, `renderComponentNode.tsx`, `createComponentElement.tsx`, `HeadlessComponentRenderer.tsx`, `componentRegistry.ts`, `middleware.ts` and `src/lib/site/cspReportOnly.ts` (enforced `frame-src`, D6), the tile | C1 | 2 sessions | Renderer tests above; the map embed still loads after consent with the header enforced; the standalone preview route carries the enforced `frame-src` (a middleware route test); no `iframe` in the mounted editor; `renderer` collision tag |
 | C3 | `sandbox-bridge` | `src/lib/customCode/broker.ts`, `CustomCodeIsland.tsx`, the shell client in `contract.ts`, `runtime.ts` (third lazy chunk), size test (broker at most 2 kilobytes gzipped, as the behaviour plan holds) | C2, B4 | 3 sessions | Bridge tests above in three engines; a page without blocks loads no broker byte; the focus watch proven or replaced with the proof attached |
 | C4 | `sandbox-authoring` | `POST /api/projects/[projectId]/custom-code` and its read, `permissions.ts` (`manageCustomCode`), `CustomCodeSection.tsx` with CodeMirror, insert menu entry, Layers badge, model action, audit writes, the author API reference page in `docs/` | C3, B11 | 3 sessions | Hash covers the declaration (a changed declaration is a new hash); every refusal returns its reason; all four stateful paths; `pnpm test:integration`. The insert entry and the route are behind `CUSTOM_CODE_AVAILABLE`, off in production until C7 |
 | C5 | `sandbox-lifecycle` | `src/server/sites/repository.ts` (blob pruning with revisions), `src/server/sites/erase.ts` (D9), publish dialog listing, `publishCheck.ts` warnings, proposals (D7): `propose_custom_code` in the site operations, the importer's "Propose as custom code", the panel's Accept, `POST /api/internal/custom-code/block` | C4 | 2 sessions | Rollback to a revision whose blob was blocked shows the fallback; an erase inside code rewrites the hash in every kept revision in one transaction; a proposal never reaches the box; an agent key cannot write a hash |
