@@ -62,8 +62,13 @@ export interface PersistedSite {
   apiKeyRef: string | null;
   /** LumitraBindingModel.enabled — gates snippet injection on publish. */
   lumitraEnabled: boolean;
-  /** ProjectModel.siteSettings, normalized (the `site_settings` column). */
-  siteSettings: SiteSettings;
+  /**
+   * ProjectModel.siteSettings, normalized (the `site_settings` column), except that
+   * `theme` and `head` are present only when the snapshot carried them. A tab built
+   * before they existed sends neither, and the repository keeps the stored value
+   * then; normalizing first would turn the missing key into an empty one and erase it.
+   */
+  siteSettings: PersistedSiteSettings;
   /**
    * ProjectModel.metadata.createdAt as epoch ms (MST `types.Date` serializes to
    * a number). Persisted so it survives a load -> save round-trip.
@@ -79,6 +84,27 @@ export interface PersistedSite {
    * what it holds).
    */
   components?: Record<string, unknown>;
+}
+
+/** Site settings as a save carries them: `theme` and `head` only when the body held them. */
+export type PersistedSiteSettings = Omit<SiteSettings, 'theme' | 'head'> &
+  Partial<Pick<SiteSettings, 'theme' | 'head'>>;
+
+/** The keys of site settings a save keeps from the stored row when the body lacks them. */
+export const KEPT_SITE_SETTINGS_KEYS = ['theme', 'head'] as const;
+
+/**
+ * Site settings as the repository writes them: the save's own values, with each kept key
+ * the body lacked taken from what the row stores. An explicit value, empty included, wins,
+ * so a real clear still works.
+ */
+export function mergeKeptSiteSettings(saved: PersistedSiteSettings, stored: unknown): SiteSettings {
+  const previous = normalizeSiteSettings(stored);
+  return normalizeSiteSettings({
+    ...saved,
+    theme: saved.theme ?? previous.theme,
+    head: saved.head ?? previous.head,
+  });
 }
 
 /**
@@ -120,6 +146,17 @@ export function projectToPersisted(
       ? { components: rawComponents as Record<string, unknown> }
       : {};
 
+  // `theme` and `head` are read raw, before normalizeSiteSettings defaults them, the
+  // way `components` is read above (theme and head contract, "Four traps").
+  const rawSettings = (snap as { siteSettings?: unknown }).siteSettings;
+  const settings = normalizeSiteSettings(rawSettings);
+  const siteSettings: PersistedSiteSettings = { ...settings };
+  for (const key of KEPT_SITE_SETTINGS_KEYS) {
+    const present = typeof rawSettings === 'object' && rawSettings !== null && key in rawSettings
+      && (rawSettings as Record<string, unknown>)[key] !== undefined;
+    if (!present) delete siteSettings[key];
+  }
+
   return {
     siteId: snap.id,
     name: snap.metadata.title,
@@ -128,7 +165,7 @@ export function projectToPersisted(
     ingestionEndpoint: snap.lumitra?.ingestionEndpoint ?? null,
     apiKeyRef: snap.lumitra?.apiKeyRef ?? null,
     lumitraEnabled: snap.lumitra?.enabled ?? false,
-    siteSettings: normalizeSiteSettings(snap.siteSettings),
+    siteSettings,
     // MST `types.Date` serializes to epoch ms in the SnapshotOut.
     projectCreatedAt: snap.metadata.createdAt as number,
     projectUpdatedAt: snap.metadata.updatedAt as number,
