@@ -29,10 +29,11 @@ import type { BreakpointRef } from '@/lib/responsive/cascade';
 import type { BindingEntry, BindingsRecord } from '@/lib/bindings/types';
 import { applyBindings, readsInput } from '@/lib/bindings/resolver/applyBindings';
 import { evaluateExpression, parseExpression } from '@/lib/bindings/resolver/expression';
-import { createScope, pushInputFrame, type BindingScope } from '@/lib/bindings/resolver/scope';
+import { createScope, lookup, pushInputFrame, pushItemFrame, type BindingScope } from '@/lib/bindings/resolver/scope';
 import { componentSnapshotToNode, extractBreakpoints, type ComponentSnapshotLike } from '@/lib/renderer/server/componentSnapshot';
 import { mapNodeProps, mapResponsiveValue } from './breakpoints';
 import { mayBindToSlot, parseInputValue, type InputDefinition } from './inputs';
+import { REPEAT_PROP, repeatedCopies, repeatInputId, withItemBindingsChecked, withoutRepeat } from './repeat';
 import { COMPONENT_LIMITS, isPlacementType, MISSING_TYPE, serializedBytes, type PlacementProps } from './placement';
 
 // ---------- the budget ----------
@@ -399,7 +400,8 @@ export function expandPlacements(
         ...(node.children ? { children: node.children.map(clean) } : {}),
       };
     };
-    const adapted = clean(componentSnapshotToNode(tree));
+    // A definition's own root cannot repeat: the list it would read opens inside it.
+    const adapted = withItemBindingsChecked(withoutRepeat(clean(componentSnapshotToNode(tree))), inputs, message => budget.warn(message));
     const mappedInputs = inputs.map(input =>
       input.default === undefined ? input : { ...input, default: mapResponsiveValue(input.default, own, pageBreakpoints) });
     const result = { tree: adapted, inputs: mappedInputs, nodes: countNodes(adapted), bytes };
@@ -451,7 +453,13 @@ export function expandPlacements(
     }
     if (baked.children) {
       next.children = baked.children
-        .map(child => finishExpansion(child, placementId, stack, scope, renamed))
+        .flatMap(child => {
+          // Raw readers see each item a literal list gives, as the page does.
+          const repeatId = scope ? repeatInputId(child.props) : undefined;
+          if (!scope || !repeatId) return [finishExpansion(child, placementId, stack, scope, renamed)];
+          return repeatedCopies(child, lookup(scope, ['input', repeatId]))
+            .map(copy => finishExpansion(copy.node, placementId, stack, pushItemFrame(scope, copy.item), renamed));
+        })
         .filter(child => child !== null);
     }
     return next;
@@ -485,6 +493,10 @@ export function expandPlacements(
     const rootProps = { ...tree.props } as Record<string, unknown>;
     if (props.style !== undefined) rootProps.style = mergeStyle(rootProps.style, props.style);
     if (isRecord(props.effects)) rootProps.effects = { ...(isRecord(rootProps.effects) ? rootProps.effects : {}), ...props.effects };
+    // A placement repeated for a list of the component around it: the root carries
+    // the marker, and the copies are made where the outer list is known.
+    const repeat = repeatInputId(props);
+    if (repeat) rootProps[REPEAT_PROP] = repeat;
     if (!literal) rootProps.instance = instance;
     const merged: ComponentNode = { ...tree, props: rootProps as ComponentNode['props'] };
 

@@ -261,7 +261,7 @@ const EditInputForm = observer(({ request, onClose }: { request: Extract<Compone
             {connections > 0 && (
               <p className={NOTE}>
                 {plural(connections, 'field in the component stops', 'fields in the component stop')} reading it: an
-                address can only come from a Link, File or Image input.
+                address can only come from a Link, File or Image input, and a repeat from a List or Gallery.
               </p>
             )}
             {request.defaultDropped && <p className={NOTE}>Its default does not fit the new type, so it goes.</p>}

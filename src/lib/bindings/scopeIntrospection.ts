@@ -18,6 +18,7 @@ import type { ComponentInstance } from '@/models/ComponentModel';
 import { ComponentDefinitionModel, type ComponentDefinitionInstance } from '@/models/ComponentDefinitionModel';
 import type { ReadBinding } from '@/lib/bindings/types';
 import type { InputDefinition } from '@/lib/components/inputs';
+import { isRepeatable, repeatInputId } from '@/lib/components/repeat';
 
 /** The kind of data component an ancestor row frame is sourced from. */
 export type ScopeFrameSource = 'collection' | 'record-view' | 'table-view';
@@ -36,13 +37,17 @@ export type ScopeFrameSource = 'collection' | 'record-view' | 'table-view';
  *   what each placement passes (`{{input.*}}`). It replaces the page frame there:
  *   a definition that reads the page, or a collection around one placement, works
  *   in one place and silently nowhere else. `inputs` are the definition's.
+ * - `item`: the node is, or sits inside, a node of the definition repeated once
+ *   per item of a `list` or `gallery` input (`props['data-repeat']`), which reads
+ *   its item (`{{item.*}}`). `list` is that input.
  */
 export interface ScopeFrameInfo {
-  kind: 'page' | 'row' | 'product' | 'input';
+  kind: 'page' | 'row' | 'product' | 'input' | 'item';
   collectionId?: string | null;
   source?: ScopeFrameSource;
   inputs?: readonly InputDefinition[];
   definitionId?: string;
+  list?: InputDefinition;
 }
 
 /** The reusable component whose definition holds this node, if one does. */
@@ -150,6 +155,17 @@ export function getAvailableScopeFrames(node: ComponentInstance): ScopeFrameInfo
   const frames: ScopeFrameInfo[] = definition
     ? [{ kind: 'input', inputs: definition.inputs, definitionId: definition.id }]
     : [{ kind: 'page' }];
+
+  // The nearest repeat, the node's own included, gives the item it reads.
+  if (definition) {
+    for (let at: ComponentInstance | undefined = node, depth = 0; at && depth < 1000; at = getParentComponent(at), depth++) {
+      const repeatId = repeatInputId(at.props);
+      if (!repeatId) continue;
+      const list = definition.inputs.find((input) => input.id === repeatId && isRepeatable(input));
+      if (list) frames.push({ kind: 'item', list });
+      break;
+    }
+  }
 
   let current = getParentComponent(node);
   let hasRow = false;
