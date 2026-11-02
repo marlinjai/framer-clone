@@ -16,6 +16,16 @@
 // published origin into the editor. (The container probe hits 127.0.0.1, which
 // then counts as a published host; it asks only for /api/health, which every
 // host serves.)
+//
+// SERVER ACTIONS, read before moving one: when a page posts a server action
+// that its own server bundle does not contain, Next forwards the request to
+// the worker that has it, over fetch to __NEXT_PRIVATE_ORIGIN. Node 22's fetch
+// ignores the caller's Host header, so that forwarded hop arrives as
+// `Host: localhost:<port>`, which in production is a published host, and the
+// middleware refuses every server action there (404). This fails closed on
+// purpose and must stay so: keep each server action imported by the pages
+// that call it (directly, or through a module those pages import), so Next
+// never has to forward it. src/__tests__/middleware.test.ts pins the 404.
 
 /** Normalize a Host header value: drop the port, lowercase. */
 function hostnameOf(host: string | null | undefined): string {

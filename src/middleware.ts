@@ -189,6 +189,12 @@ function refuseOnPublishedHost(request: NextRequest, routePath: string): NextRes
   const normalized = normalizedPath(routePath);
   const isApi = isUnder(normalized, '/api');
   const allowed =
+    // A server action is never served here. That includes the hop Next makes
+    // when it forwards an action to the worker that holds it: Node 22's fetch
+    // drops the caller's Host, so the hop arrives as `Host: localhost:<port>`,
+    // a published host in production (src/lib/editorHost.ts), and gets this
+    // 404. Fail closed on purpose: keep each server action imported by the
+    // pages that call it, so Next never forwards one.
     !request.headers.has('next-action') &&
     isEditorPlanePath(routePath) === null &&
     publishedHostAllows(routePath, request.method) &&

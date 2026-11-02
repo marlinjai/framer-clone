@@ -19,7 +19,7 @@
 //     `/editor`, `/api/sites`, `/api/admin` patterns are gone;
 //   - a published page carries the report-only policy and nothing else does:
 //     a page path on the editor host is matched but never gated or marked.
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { middleware, config } from '../middleware';
 import { HOME_REWRITE_SENTINEL } from '@/server/sites/homeSentinel';
@@ -680,6 +680,45 @@ describe('middleware: machine door hardening', () => {
     const res = await middleware(call('/about', { cookie: 'lumitra_session=valid' }, { method: 'GET' }));
     expect(isNext(res)).toBe(true);
     expect(res.headers.get('x-middleware-override-headers')).toBeNull();
+  });
+});
+
+describe('middleware: a forwarded server action (Host: localhost) fails closed in production', () => {
+  // Next forwards a server action its own bundle lacks to the worker holding
+  // it; Node 22's fetch drops the caller's Host, so that hop arrives as
+  // `Host: localhost:<port>`. In production that is a published host, and the
+  // action must get a 404, never run (src/lib/editorHost.ts).
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('refuses a next-action request with Host: localhost:<port> in production, on editor and page paths', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    vi.stubEnv('NODE_ENV', 'production');
+    for (const host of ['localhost:3000', '127.0.0.1:3000']) {
+      for (const path of ['/projects/p1', '/projects', '/about', '/']) {
+        const res = await middleware(
+          new NextRequest(`http://${host}${path}`, {
+            method: 'POST',
+            headers: { host, 'next-action': 'a1b2c3', cookie: 'lumitra_session=valid', 'sec-fetch-site': 'same-origin' },
+          }),
+        );
+        expect(res.status, `${host} ${path}`).toBe(404);
+        expect(isNext(res)).toBe(false);
+      }
+    }
+  });
+
+  it('still runs it on localhost outside production (development)', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    vi.stubEnv('NODE_ENV', 'development');
+    const res = await middleware(
+      new NextRequest('http://localhost:3000/projects/p1', {
+        method: 'POST',
+        headers: { host: 'localhost:3000', 'next-action': 'a1b2c3', cookie: 'lumitra_session=valid', 'sec-fetch-site': 'same-origin' },
+      }),
+    );
+    expect(isNext(res)).toBe(true);
   });
 });
 
