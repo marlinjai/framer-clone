@@ -5,7 +5,8 @@
 // visitor who already chose never sees it flash, and a visitor without
 // JavaScript sees nothing (nothing loads without JavaScript either, so there
 // is nothing to ask). No 'use client': there is no island, the runtime is the
-// inline script.
+// inline script. It asks about what the page uses (analytics, Google Maps
+// embeds): the copy names exactly those.
 //
 // Accessibility: a non-modal dialog (role="dialog", aria-modal="false")
 // labelled by its heading and described by its text, so it never blocks the
