@@ -101,7 +101,8 @@ export function main(): void {
     shared = link.text;
 
     const extra = raw.sheets.filter((s) => s !== link).map((s) => `<style>${freezeCss(s.text)}</style>`).join('');
-    const body = scrubText(raw.widths.desktop.html);
+    // Line endings too: git normalises them, which would break the hash, and HTML parsing already does.
+    const body = scrubText(raw.widths.desktop.html).replace(/\r\n?/g, '\n');
     const html = `<!doctype html>\n<html lang="${raw.head.htmlLang}" class="${raw.head.htmlClass}"><head><meta charset="utf-8"><title>${scrubText(raw.head.title)}</title>${SHEET_MARKER}${extra}</head>${body}</html>\n`;
     if (/<script|https?:\/\/(?!www\.w3\.org)/.test(html.replace(/xmlns(?::\w+)?="[^"]*"/g, ''))) {
       throw new Error(`${page.slug}: a script or an address survived the freeze`);
