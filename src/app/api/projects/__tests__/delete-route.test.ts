@@ -49,7 +49,7 @@ vi.mock('@/server/forms/projectDelete', () => ({
 }));
 
 // ---- in-memory database (sites, site_domains with ON DELETE CASCADE) ------
-type Site = { id: string; workspaceId: string; tenantGroupId: string; name: string; status: string };
+type Site = { id: string; workspaceId: string; tenantGroupId: string; name: string; status: string; updatedAt?: Date };
 type Domain = {
   id: string;
   siteId: string;
