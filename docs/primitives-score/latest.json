@@ -1,22 +1,22 @@
 {
-  "generatedAt": "2026-11-02T00:31:00.499Z",
+  "generatedAt": "2026-11-02T00:59:45.514Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 149,
+  "durationSeconds": 81,
   "matrix": {
     "surfaces": {
       "format": {
-        "pass": 1708,
-        "fail": 138,
+        "pass": 1715,
+        "fail": 131,
         "notTested": 0,
         "total": 1846
       },
       "renderer": {
-        "pass": 1668,
-        "fail": 178,
+        "pass": 1675,
+        "fail": 171,
         "notTested": 0,
         "total": 1846
       },
@@ -394,14 +394,14 @@
       },
       "css-at-rule": {
         "format": {
-          "pass": 5,
-          "fail": 10,
+          "pass": 12,
+          "fail": 3,
           "notTested": 0,
           "total": 15
         },
         "renderer": {
-          "pass": 5,
-          "fail": 10,
+          "pass": 12,
+          "fail": 3,
           "notTested": 0,
           "total": 15
         },
@@ -4942,17 +4942,17 @@
       "css-selector:::view-transition-image-pair()": "page-level-css page-level-css page-level-css selector-styles page-level-css",
       "css-selector:::view-transition-new()": "page-level-css page-level-css page-level-css selector-styles page-level-css",
       "css-selector:::view-transition-old()": "page-level-css page-level-css page-level-css selector-styles page-level-css",
-      "css-at-rule:@counter-style": "at-rules at-rules at-rules at-rules at-rules",
+      "css-at-rule:@counter-style": "pass pass at-rules at-rules at-rules",
       "css-at-rule:@container": "pass pass at-rules at-rules at-rules",
-      "css-at-rule:@font-face": "at-rules at-rules at-rules at-rules at-rules",
-      "css-at-rule:@font-feature-values": "at-rules at-rules at-rules at-rules at-rules",
-      "css-at-rule:@font-palette-values": "at-rules at-rules at-rules at-rules at-rules",
-      "css-at-rule:@keyframes": "at-rules at-rules at-rules at-rules at-rules",
+      "css-at-rule:@font-face": "pass pass at-rules at-rules at-rules",
+      "css-at-rule:@font-feature-values": "pass pass at-rules at-rules at-rules",
+      "css-at-rule:@font-palette-values": "pass pass at-rules at-rules at-rules",
+      "css-at-rule:@keyframes": "pass pass at-rules at-rules at-rules",
       "css-at-rule:@layer": "page-level-css page-level-css page-level-css at-rules page-level-css",
       "css-at-rule:@media": "pass pass media-queries media-queries media-queries",
       "css-at-rule:@page": "page-level-css page-level-css page-level-css at-rules page-level-css",
-      "css-at-rule:@position-try": "at-rules at-rules at-rules at-rules at-rules",
-      "css-at-rule:@property": "at-rules at-rules at-rules at-rules at-rules",
+      "css-at-rule:@position-try": "pass pass at-rules at-rules at-rules",
+      "css-at-rule:@property": "pass pass at-rules at-rules at-rules",
       "css-at-rule:@scope": "pass pass at-rules at-rules at-rules",
       "css-at-rule:@starting-style": "pass pass at-rules at-rules at-rules",
       "css-at-rule:@supports": "pass pass at-rules at-rules at-rules",
@@ -5054,15 +5054,15 @@
     }
   },
   "corpus": {
-    "passed": 10,
+    "passed": 11,
     "total": 14,
     "checks": {
       "screenshot": {
-        "pass": 74,
+        "pass": 77,
         "total": 90
       },
       "computed-styles": {
-        "pass": 63,
+        "pass": 69,
         "total": 90
       },
       "accessibility-tree": {
@@ -5070,7 +5070,7 @@
         "total": 90
       },
       "interaction": {
-        "pass": 24,
+        "pass": 27,
         "total": 48
       }
     },
@@ -5131,14 +5131,14 @@
         "fixture": "keyframes",
         "group": "edge",
         "source": "hand-written",
-        "pass": false,
+        "pass": true,
         "checks": {
           "screenshot": {
-            "pass": 3,
+            "pass": 6,
             "total": 6
           },
           "computed-styles": {
-            "pass": 0,
+            "pass": 6,
             "total": 6
           },
           "accessibility-tree": {
@@ -5146,108 +5146,11 @@
             "total": 6
           },
           "interaction": {
-            "pass": 0,
+            "pass": 3,
             "total": 3
           }
         },
-        "failures": [
-          {
-            "fixture": "keyframes",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "at-rules",
-            "detail": "1 differences, first: dot: transform matrix(1, 0, 0, 1, 0, 0) became none"
-          },
-          {
-            "fixture": "keyframes",
-            "viewport": "Desktop",
-            "state": "half way through the animation",
-            "check": "screenshot",
-            "gap": "at-rules",
-            "detail": "0.45 percent of pixels differ"
-          },
-          {
-            "fixture": "keyframes",
-            "viewport": "Desktop",
-            "state": "half way through the animation",
-            "check": "computed-styles",
-            "gap": "at-rules",
-            "detail": "2 differences, first: dot: opacity 0.6 became 1"
-          },
-          {
-            "fixture": "keyframes",
-            "viewport": "Desktop",
-            "state": "half way through the animation",
-            "check": "interaction",
-            "gap": "at-rules",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "keyframes",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "at-rules",
-            "detail": "1 differences, first: dot: transform matrix(1, 0, 0, 1, 0, 0) became none"
-          },
-          {
-            "fixture": "keyframes",
-            "viewport": "Tablet",
-            "state": "half way through the animation",
-            "check": "screenshot",
-            "gap": "at-rules",
-            "detail": "0.57 percent of pixels differ"
-          },
-          {
-            "fixture": "keyframes",
-            "viewport": "Tablet",
-            "state": "half way through the animation",
-            "check": "computed-styles",
-            "gap": "at-rules",
-            "detail": "2 differences, first: dot: opacity 0.6 became 1"
-          },
-          {
-            "fixture": "keyframes",
-            "viewport": "Tablet",
-            "state": "half way through the animation",
-            "check": "interaction",
-            "gap": "at-rules",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "keyframes",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "at-rules",
-            "detail": "1 differences, first: dot: transform matrix(1, 0, 0, 1, 0, 0) became none"
-          },
-          {
-            "fixture": "keyframes",
-            "viewport": "Mobile",
-            "state": "half way through the animation",
-            "check": "screenshot",
-            "gap": "at-rules",
-            "detail": "1.85 percent of pixels differ"
-          },
-          {
-            "fixture": "keyframes",
-            "viewport": "Mobile",
-            "state": "half way through the animation",
-            "check": "computed-styles",
-            "gap": "at-rules",
-            "detail": "2 differences, first: dot: opacity 0.6 became 1"
-          },
-          {
-            "fixture": "keyframes",
-            "viewport": "Mobile",
-            "state": "half way through the animation",
-            "check": "interaction",
-            "gap": "at-rules",
-            "detail": "the replica did not end up where the original did"
-          }
-        ],
+        "failures": [],
         "notMeasured": []
       },
       {
@@ -6773,20 +6676,6 @@
       "cost": 78
     },
     {
-      "id": "at-rules",
-      "description": "At-rules: no way to store @keyframes, @container, @supports, @font-face and the rest.",
-      "matrixCells": 50,
-      "corpusChecks": 12,
-      "fixtures": [
-        "keyframes"
-      ],
-      "onlyGapOf": [
-        "keyframes"
-      ],
-      "roundTripCases": 0,
-      "cost": 62
-    },
-    {
       "id": "ai-attribute-allowlist",
       "description": "The AI generator validator refuses this attribute on purpose, or a tree lost a raw form control (see the tag gap).",
       "matrixCells": 59,
@@ -6815,6 +6704,16 @@
       "onlyGapOf": [],
       "roundTripCases": 0,
       "cost": 52
+    },
+    {
+      "id": "at-rules",
+      "description": "At-rules: no way to store @keyframes, @container, @supports, @font-face and the rest.",
+      "matrixCells": 36,
+      "corpusChecks": 0,
+      "fixtures": [],
+      "onlyGapOf": [],
+      "roundTripCases": 0,
+      "cost": 36
     },
     {
       "id": "import-dynamic-logic",
