@@ -63,12 +63,17 @@ vi.mock('@/lib/auth-brain', () => ({
   authBrainClient: {
     verifySession: (cookie: string) => mockVerifySession(cookie),
     can: vi.fn(async () => true),
+    verifyApiKey: vi.fn(),
+    getCurrentUser: vi.fn(),
+  },
+}));
+vi.mock('@/lib/auth-brain-machine', () => ({
+  machineAuthBrainClient: {
     verifyApiKey: vi.fn(async (key: string) => {
       if (key === KEY_A) return verified('mk-tenant-a', 'key-a');
       if (key === KEY_B) return verified('mk-tenant-b', 'key-b');
       return null;
     }),
-    getCurrentUser: vi.fn(),
   },
 }));
 

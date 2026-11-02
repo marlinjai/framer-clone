@@ -13,12 +13,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { AuthBrainError, AuthBrainNetworkError } from '@marlinjai/auth-brain-sdk';
 
 const mockVerifyApiKey = vi.fn();
-vi.mock('@/lib/auth-brain', () => ({
-  authBrainClient: {
+vi.mock('@/lib/auth-brain-machine', () => ({
+  machineAuthBrainClient: {
     verifyApiKey: (...args: unknown[]) => mockVerifyApiKey(...args),
-    verifySession: vi.fn(),
-    can: vi.fn(),
-    getCurrentUser: vi.fn(),
   },
 }));
 
@@ -29,13 +26,21 @@ vi.mock('@/lib/openfgaRead', async (importOriginal) => {
 });
 
 const mockFindMany = vi.fn();
-vi.mock('@/server/db', () => ({
-  getPrismaClient: () => ({ site: { findMany: (...args: unknown[]) => mockFindMany(...args) } }),
-}));
+const mockExecuteRaw = vi.fn();
+vi.mock('@/server/db', () => {
+  const tx = {
+    $executeRawUnsafe: (...args: unknown[]) => mockExecuteRaw(...args),
+    site: { findMany: (...args: unknown[]) => mockFindMany(...args) },
+  };
+  return { getPrismaClient: () => ({ $transaction: (fn: (t: typeof tx) => unknown) => fn(tx) }) };
+});
 
 import {
   KEY_CACHE_MAX,
   KEY_VERIFY_TIMEOUT_MS,
+  KNOWN_GOOD_TTL_MS,
+  SITE_ROW_STATEMENT_TIMEOUT_MS,
+  addressBucket,
   REFUSALS_GLOBAL,
   REFUSALS_PER_CLIENT,
   REFUSAL_WINDOW_MS,
@@ -108,6 +113,8 @@ beforeEach(() => {
   mockReadCompanyStructure.mockResolvedValue({ groupIds: [GROUP], workspaceIds: [WORKSPACE] });
   mockFindMany.mockReset();
   mockFindMany.mockResolvedValue([]);
+  mockExecuteRaw.mockReset();
+  mockExecuteRaw.mockResolvedValue(0);
   infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
   errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -477,6 +484,31 @@ describe('machineAuthDenial', () => {
 });
 
 describe('verifyCompanyKey: hardening', () => {
+  it('answers unavailable when the whole verification overruns the deadline at any step', async () => {
+    vi.useFakeTimers();
+    try {
+      // OpenFGA hangs.
+      mockVerifyApiKey.mockResolvedValue(verifyResponse());
+      mockReadCompanyStructure.mockReturnValueOnce(new Promise(() => {}));
+      let pending = verifyCompanyKey(bearerRequest(fakeKey()));
+      await vi.advanceTimersByTimeAsync(KEY_VERIFY_TIMEOUT_MS);
+      expect(await pending).toEqual({ kind: 'unavailable' });
+      // The site-row query hangs.
+      mockFindMany.mockReturnValueOnce(new Promise(() => {}));
+      pending = verifyCompanyKey(bearerRequest(fakeKey()));
+      await vi.advanceTimersByTimeAsync(KEY_VERIFY_TIMEOUT_MS);
+      expect(await pending).toEqual({ kind: 'unavailable' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('runs the site-row check under a Postgres statement timeout', async () => {
+    mockVerifyApiKey.mockResolvedValue(verifyResponse());
+    await verifyCompanyKey(bearerRequest(fakeKey()));
+    expect(mockExecuteRaw).toHaveBeenCalledWith(`SET LOCAL statement_timeout = ${SITE_ROW_STATEMENT_TIMEOUT_MS}`);
+  });
+
   it('answers unavailable when auth-brain never answers within the deadline', async () => {
     vi.useFakeTimers();
     try {
@@ -506,6 +538,10 @@ describe('verifyCompanyKey: hardening', () => {
       expect(await verifyCompanyKey(bearerRequest(fakeKey()))).toMatchObject({ kind: 'forbidden', reason: 'workspace_mismatch' });
     }
     expect(keyCacheSize()).toBe(0);
+    expect(auditLines().filter((l) => l.reason === 'workspace_mismatch')).toEqual([
+      expect.objectContaining({ outcome: 'failed', keyId: 'key-1', tenantId: TENANT, workspaceId: WORKSPACE }),
+      expect.objectContaining({ outcome: 'failed' }),
+    ]);
   });
 
   it('accepts a workspace whose site rows agree, and checks the rows of that workspace', async () => {
@@ -630,5 +666,86 @@ describe('verifyCompanyKey: header edge cases', () => {
     const long = fakeKey() + 'a'.repeat(520);
     expect(await verifyCompanyKey(bearerRequest(long))).toEqual({ kind: 'refused' });
     expect(mockVerifyApiKey).not.toHaveBeenCalled();
+  });
+});
+
+describe('verifyCompanyKey: the global limit cannot lock out working agents', () => {
+  const flood = async () => {
+    mockVerifyApiKey.mockResolvedValue(null);
+    for (let i = 0; i < REFUSALS_GLOBAL; i++) {
+      await verifyCompanyKey(request({ authorization: 'Bearer short', 'x-real-ip': `10.1.${Math.floor(i / 250)}.${i % 250}` }), clock);
+    }
+  };
+  let now = 9_000_000;
+  const clock = () => now;
+
+  it('keeps a key that verified within the last hour working after its cache entry expired, and re-verifies it', async () => {
+    const good = fakeKey();
+    mockVerifyApiKey.mockResolvedValueOnce(verifyResponse());
+    expect((await verifyCompanyKey(bearerRequest(good), clock)).kind).toBe('key');
+    now += KEY_CACHE_TTL_MS + 1;
+    await flood();
+    expect(await verifyCompanyKey(bearerRequest(fakeKey(), { 'x-real-ip': '192.0.2.9' }), clock)).toMatchObject({ kind: 'throttled' });
+
+    mockVerifyApiKey.mockResolvedValueOnce(verifyResponse());
+    const calls = mockVerifyApiKey.mock.calls.length;
+    expect((await verifyCompanyKey(bearerRequest(good, { 'x-real-ip': '192.0.2.9' }), clock)).kind).toBe('key');
+    expect(mockVerifyApiKey.mock.calls.length).toBe(calls + 1);
+  });
+
+  it('forgets a known-good key once auth-brain refuses it, and after an hour', async () => {
+    const good = fakeKey();
+    mockVerifyApiKey.mockResolvedValueOnce(verifyResponse());
+    await verifyCompanyKey(bearerRequest(good), clock);
+    now += KEY_CACHE_TTL_MS + 1;
+    mockVerifyApiKey.mockResolvedValueOnce(null);
+    expect(await verifyCompanyKey(bearerRequest(good), clock)).toEqual({ kind: 'refused' });
+    await flood();
+    expect(await verifyCompanyKey(bearerRequest(good, { 'x-real-ip': '192.0.2.10' }), clock)).toMatchObject({ kind: 'throttled' });
+
+    clearKeyCache();
+    const other = fakeKey();
+    mockVerifyApiKey.mockResolvedValueOnce(verifyResponse());
+    await verifyCompanyKey(bearerRequest(other), clock);
+    now += KNOWN_GOOD_TTL_MS;
+    await flood();
+    expect(await verifyCompanyKey(bearerRequest(other, { 'x-real-ip': '192.0.2.11' }), clock)).toMatchObject({ kind: 'throttled' });
+  });
+});
+
+describe('client address buckets', () => {
+  it('keeps IPv4 whole and buckets IPv6 by /64', () => {
+    expect(addressBucket('198.51.100.7')).toBe('198.51.100.7');
+    expect(addressBucket('2001:db8:1:2:aaaa::1')).toBe('2001:db8:1:2::/64');
+    expect(addressBucket('2001:0db8:0001:0002:ffff:ffff:ffff:ffff')).toBe('2001:db8:1:2::/64');
+    expect(addressBucket('[2001:db8:1:2::9]')).toBe('2001:db8:1:2::/64');
+    expect(addressBucket('2001:db8::1')).toBe('2001:db8:0:0::/64');
+    expect(addressBucket('::ffff:198.51.100.7')).toBe('198.51.100.7');
+    expect(addressBucket('not-an-address')).toBe('not-an-address');
+  });
+
+  it('counts two addresses of one IPv6 /64 in one bucket', async () => {
+    mockVerifyApiKey.mockResolvedValue(null);
+    const from = (ip: string) => bearerRequest(fakeKey(), { 'x-real-ip': ip });
+    for (let i = 0; i < REFUSALS_PER_CLIENT; i++) {
+      await verifyCompanyKey(from(i % 2 ? '2001:db8:1:2::a' : '2001:db8:1:2:ffff::b'));
+    }
+    expect(await verifyCompanyKey(from('2001:db8:1:2::c'))).toMatchObject({ kind: 'throttled' });
+    expect(await verifyCompanyKey(from('2001:db8:1:3::a'))).toEqual({ kind: 'refused' });
+  });
+
+  it('counts by the rightmost x-forwarded-for entry, the one the proxy appended', async () => {
+    mockVerifyApiKey.mockResolvedValue(null);
+    // The client forges the left entries; the proxy appended 198.51.100.50.
+    for (let i = 0; i < REFUSALS_PER_CLIENT; i++) {
+      await verifyCompanyKey(bearerRequest(fakeKey(), { 'x-forwarded-for': `10.9.9.${i}, 198.51.100.50` }));
+    }
+    expect(
+      await verifyCompanyKey(bearerRequest(fakeKey(), { 'x-forwarded-for': '10.9.9.200, 198.51.100.50' })),
+    ).toMatchObject({ kind: 'throttled' });
+    // The same forged left entry with another proxy-appended address is another client.
+    expect(await verifyCompanyKey(bearerRequest(fakeKey(), { 'x-forwarded-for': '10.9.9.1, 198.51.100.51' }))).toEqual({
+      kind: 'refused',
+    });
   });
 });

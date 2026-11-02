@@ -14,14 +14,17 @@ import 'server-only';
  * WHAT A KEY MUST BE (verifyCompanyKey), checked in this order:
  *
  *   0. Not from a client that keeps presenting bad keys: refused or malformed
- *      keys are counted per client address and globally, and over the limit the
- *      answer is `throttled` (429 with retry-after) without asking auth-brain.
+ *      keys are counted per client address (an IPv6 address by its /64) and
+ *      globally, and over the limit the answer is `throttled` (429 with
+ *      retry-after) without asking auth-brain. The global limit never locks
+ *      out a key that verified successfully within the last hour (it is still
+ *      verified again every time), so a flood only slows keys never seen good.
  *   1. A bearer at all, of a plausible shape. A request with a Bearer header is
  *      judged by it alone: the browser session that came along is never read
  *      (src/lib/bearer.ts; the middleware also strips the cookie).
- *   2. Known to auth-brain (`verifyApiKey`, with a 5 second deadline).
- *      Unknown, revoked, expired or malformed is `refused` (401). auth-brain
- *      unreachable, slower than the deadline, a 5xx, a 408 or a 429 is
+ *   2. Known to auth-brain (`verifyApiKey`). Unknown, revoked, expired or
+ *      malformed is `refused` (401). auth-brain unreachable, a 5xx, a 408 or a
+ *      429 is
  *      `unavailable` (503 with retry-after): the key may be fine, the caller
  *      retries and must not conclude it was revoked.
  *   3. A service account's key scoped to ONE company
@@ -80,6 +83,13 @@ import 'server-only';
  * the key's `scope` (workspace and tenant group). A site of another company is
  * simply not found. authorizeKeyAction therefore takes no site id.
  *
+ * DEADLINE. The whole fresh verification (auth-brain, the OpenFGA reads, the
+ * site-row query) must finish within KEY_VERIFY_TIMEOUT_MS, else the answer is
+ * `unavailable`. Underneath, the auth-brain request itself is aborted by its
+ * own fetch deadline (src/lib/auth-brain-machine.ts), each OpenFGA read has
+ * one (src/lib/openfgaRead.ts), and the site-row query runs under a Postgres
+ * statement timeout, so nothing stays hung behind the answer.
+ *
  * CACHING AND REVOCATION. A successful verification (key, company, scope and
  * role) is kept in this process, frozen, for KEY_CACHE_TTL_MS (10 seconds) or
  * until the key's own `expires_at`, whichever comes first; keyed by a SHA-256 of
@@ -100,7 +110,7 @@ import 'server-only';
 
 import { createHash } from 'node:crypto';
 import type { ApiKeyVerifyResponse } from '@marlinjai/auth-brain-sdk';
-import { authBrainClient } from './auth-brain';
+import { machineAuthBrainClient } from './auth-brain-machine';
 import { isAuthServiceFailure } from './authBrainAvailability';
 import { presentedBearer } from './bearer';
 import { readCompanyStructure } from './openfgaRead';
@@ -132,8 +142,14 @@ export const MACHINE_ACTIONS: ReadonlySet<FramerAction> = new Set<FramerAction>(
 
 export const KEY_CACHE_TTL_MS = 10_000;
 export const KEY_CACHE_MAX = 256;
-/** How long auth-brain may take to verify a key before the answer is `unavailable`. */
-export const KEY_VERIFY_TIMEOUT_MS = 5_000;
+/** How long a whole fresh verification may take before the answer is `unavailable`. */
+export const KEY_VERIFY_TIMEOUT_MS = 8_000;
+/** The Postgres statement timeout of the site-row check. */
+export const SITE_ROW_STATEMENT_TIMEOUT_MS = 2_000;
+/** How long a key that verified successfully bypasses the global refusal limit. */
+export const KNOWN_GOOD_TTL_MS = 60 * 60_000;
+/** Key hashes remembered as recently good; the oldest is dropped beyond it. */
+export const KNOWN_GOOD_MAX = 4096;
 /** The window refused keys are counted in. */
 export const REFUSAL_WINDOW_MS = 60_000;
 /** Refused or malformed keys one client address may present per window. */
@@ -215,6 +231,34 @@ interface CacheEntry {
 const keyCache = new Map<string, CacheEntry>();
 const inFlight = new Map<string, Promise<FreshResult>>();
 
+/**
+ * Hashes of keys that verified successfully, with when. Never a credential on
+ * its own: a known-good key is verified against auth-brain like any other. It
+ * only lets that key past the GLOBAL refusal limit, so a flood of bad keys
+ * cannot lock out the agents that were working before it.
+ */
+const knownGood = new Map<string, number>();
+
+function isKnownGood(id: string, now: number): boolean {
+  const at = knownGood.get(id);
+  if (at === undefined) return false;
+  if (now - at >= KNOWN_GOOD_TTL_MS) {
+    knownGood.delete(id);
+    return false;
+  }
+  return true;
+}
+
+function rememberGood(id: string, now: number): void {
+  knownGood.delete(id);
+  while (knownGood.size >= KNOWN_GOOD_MAX) {
+    const oldest = knownGood.keys().next().value;
+    if (oldest === undefined) break;
+    knownGood.delete(oldest);
+  }
+  knownGood.set(id, now);
+}
+
 function cacheId(presented: string): string {
   return createHash('sha256').update(presented).digest('hex');
 }
@@ -243,6 +287,7 @@ function remember(id: string, key: VerifiedKey, expiresAt: number): void {
 export function clearKeyCache(): void {
   keyCache.clear();
   inFlight.clear();
+  knownGood.clear();
   clientRefusals.clear();
   globalRefusals.windowStart = 0;
   globalRefusals.count = 0;
@@ -264,15 +309,42 @@ const clientRefusals = new Map<string, RefusalWindow>();
 const globalRefusals: RefusalWindow = { windowStart: 0, count: 0 };
 
 /**
- * The client address of a request. The rightmost `x-forwarded-for` entry is the
- * one the proxy in front of the app (Traefik) appended, so a client cannot pick
- * it; entries to its left are whatever the client sent. Rotating forged
- * addresses therefore buys nothing, and the global limit caps the rest.
+ * The bucket an address is counted in: an IPv4 address whole, an IPv6 address
+ * by its /64 (one host usually holds a whole /64, so counting single IPv6
+ * addresses would let it rotate freely). An IPv4-mapped IPv6 address counts as
+ * its IPv4 address. Exported for tests.
+ */
+export function addressBucket(address: string): string {
+  const raw = address.trim().replace(/^\[|\]$/g, '').split('%')[0].toLowerCase();
+  if (!raw.includes(':')) return raw;
+  const mapped = /^(?:0*:)*:?ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(raw);
+  if (mapped) return mapped[1];
+  const halves = raw.split('::');
+  if (halves.length > 2) return raw;
+  const head = halves[0] ? halves[0].split(':') : [];
+  const tail = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
+  const missing = 8 - head.length - tail.length;
+  if (missing < 0 || (halves.length === 1 && missing !== 0)) return raw;
+  const groups = [...head, ...Array<string>(missing).fill('0'), ...tail];
+  if (!groups.every((g) => /^[0-9a-f]{1,4}$/.test(g))) return raw;
+  return `${groups.slice(0, 4).map((g) => g.replace(/^0+(?=.)/, '')).join(':')}::/64`;
+}
+
+/**
+ * The client address of a request, as its throttle bucket. The rightmost
+ * `x-forwarded-for` entry is the one the proxy in front of the app (Traefik)
+ * appended, so a client cannot pick it; entries to its left are whatever the
+ * client sent. Rotating forged addresses therefore buys nothing, and the
+ * global limit caps the rest.
+ *
+ * If app.lumitra.co is ever proxied through Cloudflare, the rightmost entry
+ * becomes a Cloudflare edge address and this must read `cf-connecting-ip`
+ * first, as src/server/forms/rateLimit.ts (clientIpOf) does.
  */
 function clientAddress(request: Request): string {
   const forwarded = request.headers.get('x-forwarded-for');
   const last = forwarded?.split(',').map((p) => p.trim()).filter(Boolean).pop();
-  return last || request.headers.get('x-real-ip')?.trim() || 'unknown';
+  return addressBucket(last || request.headers.get('x-real-ip')?.trim() || 'unknown');
 }
 
 function liveWindow(w: RefusalWindow | undefined, now: number): RefusalWindow | null {
@@ -394,24 +466,19 @@ export function authorizeKeyAction(
 /** A plausible key: no whitespace, printable, bounded. Anything else never reaches auth-brain. */
 const KEY_SHAPE = /^[A-Za-z0-9_\-.~+/=]{16,512}$/;
 
-class KeyVerifyTimeoutError extends Error {
-  constructor() {
-    super(`api key verify took longer than ${KEY_VERIFY_TIMEOUT_MS} ms`);
-    this.name = 'KeyVerifyTimeoutError';
-  }
-}
-
 /**
- * auth-brain's verify, bounded by KEY_VERIFY_TIMEOUT_MS. The SDK's fetch carries
- * no deadline, so a hanging auth-brain would otherwise hold the request open
- * forever; past the deadline the answer is a timeout error (`unavailable`).
+ * The fresh verification, bounded by KEY_VERIFY_TIMEOUT_MS as a whole: past the
+ * deadline the answer is `unavailable`, whichever step was slow.
  */
-function verifyWithDeadline(presented: string): Promise<ApiKeyVerifyResponse | null> {
+function verifyFreshWithDeadline(presented: string): Promise<FreshResult> {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new KeyVerifyTimeoutError()), KEY_VERIFY_TIMEOUT_MS);
+  const deadline = new Promise<FreshResult>((resolve) => {
+    timer = setTimeout(() => {
+      console.error(`[machine-auth] key verification took longer than ${KEY_VERIFY_TIMEOUT_MS} ms; answering unavailable`);
+      resolve(unavailableResult);
+    }, KEY_VERIFY_TIMEOUT_MS);
   });
-  return Promise.race([authBrainClient.verifyApiKey(presented), deadline]).finally(() => clearTimeout(timer));
+  return Promise.race([verifyFresh(presented), deadline]).finally(() => clearTimeout(timer));
 }
 
 /**
@@ -420,12 +487,19 @@ function verifyWithDeadline(presented: string): Promise<ApiKeyVerifyResponse | n
  * with a company names `tenantId`. Throws when the database cannot answer.
  */
 async function siteRowsAgree(scope: TenantScope, tenantId: string): Promise<boolean> {
-  const rows = await getPrismaClient().site.findMany({
-    where: { workspaceId: scope.workspaceId },
-    distinct: ['tenantGroupId', 'companyId'],
-    select: { tenantGroupId: true, companyId: true },
-    take: 50,
-  });
+  const rows = await getPrismaClient().$transaction(
+    async (tx) => {
+      // A constant, never interpolated: SET takes no bind parameters.
+      await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = ${SITE_ROW_STATEMENT_TIMEOUT_MS}`);
+      return tx.site.findMany({
+        where: { workspaceId: scope.workspaceId },
+        distinct: ['tenantGroupId', 'companyId'],
+        select: { tenantGroupId: true, companyId: true },
+        take: 50,
+      });
+    },
+    { timeout: SITE_ROW_STATEMENT_TIMEOUT_MS + 1_000 },
+  );
   return rows.every((r) => r.tenantGroupId === scope.tenantGroupId && (r.companyId === null || r.companyId === tenantId));
 }
 
@@ -437,7 +511,7 @@ const unavailableResult: FreshResult = { result: { kind: 'unavailable' }, keyExp
 async function verifyFresh(presented: string): Promise<FreshResult> {
   let verified: ApiKeyVerifyResponse | null;
   try {
-    verified = await verifyWithDeadline(presented);
+    verified = await machineAuthBrainClient.verifyApiKey(presented);
   } catch (err) {
     if (!isAuthServiceFailure(err)) return refusedResult;
     console.error(
@@ -497,7 +571,11 @@ async function verifyFresh(presented: string): Promise<FreshResult> {
       '[machine-auth] the workspace OpenFGA maps this company to holds sites of another company or tenant group',
       JSON.stringify({ keyId, tenantId, workspaceId: resolved.scope.workspaceId }),
     );
-    return forbidden('workspace_mismatch');
+    auditMachineAction(
+      { keyId, serviceAccountId, tenantId, scope: resolved.scope },
+      { action: 'authenticate', outcome: 'failed', reason: 'workspace_mismatch' },
+    );
+    return { result: { kind: 'forbidden', reason: 'workspace_mismatch', keyId, tenantId }, keyExpiresAt: null };
   }
 
   const expires = verified.key?.expires_at ? Date.parse(verified.key.expires_at) : Number.NaN;
@@ -533,22 +611,29 @@ export async function verifyCompanyKey(request: Request, now: () => number = Dat
   const hit = cached(id, now());
   if (hit) return hit;
 
-  // A flood of bad keys from many addresses: new keys wait, known good ones (above) pass.
-  const throttledAll = globalThrottle(now());
-  if (throttledAll) return throttledAll;
+  // A flood of bad keys from many addresses: keys never seen good wait; a cached
+  // key (above) or one that verified within the last hour still goes through.
+  if (!isKnownGood(id, now())) {
+    const throttledAll = globalThrottle(now());
+    if (throttledAll) return throttledAll;
+  }
 
   let pending = inFlight.get(id);
   const leader = !pending;
   if (!pending) {
-    pending = verifyFresh(presented).finally(() => inFlight.delete(id));
+    pending = verifyFreshWithDeadline(presented).finally(() => inFlight.delete(id));
     inFlight.set(id, pending);
   }
   const { result, keyExpiresAt } = await pending;
 
-  if (result.kind === 'refused') recordRefusal(client, now());
+  if (result.kind === 'refused') {
+    recordRefusal(client, now());
+    knownGood.delete(id);
+  }
   if (leader && result.kind === 'key') {
     const at = now();
     remember(id, result, Math.min(at + KEY_CACHE_TTL_MS, keyExpiresAt ?? Number.POSITIVE_INFINITY));
+    rememberGood(id, at);
     auditMachineAction(result, { action: 'authenticate', outcome: 'allowed' });
   }
   return result;
