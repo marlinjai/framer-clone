@@ -187,14 +187,60 @@ describe('a page with a trigger', () => {
     expect(html).toContain('.fc_r-btn.fc_r-btn:where(html:not([data-fc-b]) *){display:none !important}');
   });
 
-  it('keeps a control with a native job, and honours an explicit choice', async () => {
+  describe('the default for what a script runs', () => {
     const bound = { on: [click({ toggle: 's1' })], bind: [{ attr: 'aria-expanded', from: { get: 's1' } }] };
-    const { html } = await published(node('p', 'div', behaviour({ state: [bool('s1')] }),
-      node('link', 'a', { href: '/x', ...behaviour(bound) }),
-      node('pop', 'button', { popoverTarget: 'm', ...behaviour(bound) }),
-      node('shown', 'button', behaviour({ ...bound, noScript: 'show' })),
-      node('m', 'div', { id: 'm' })));
-    expect(html).not.toContain('html:not([data-fc-b])');
+    const page = (...children: ComponentNode[]) => published(node('p', 'div', behaviour({ state: [bool('s1')] }), ...children));
+    const link = node('l', 'a', { href: '/x', children: 'Go' });
+
+    it('keeps everything that may hold content or has a job of its own', async () => {
+      const { html } = await page(
+        node('nav1', 'nav', behaviour(bound), link),
+        node('around', 'div', behaviour(bound), node('l2', 'a', { href: '/y' })),
+        node('words', 'span', { children: 'Plain', ...behaviour(bound) }),
+        node('link', 'a', { href: '/x', ...behaviour(bound) }),
+        node('rolelink', 'a', { href: '/x', role: 'button', ...behaviour(bound) }),
+        node('pop', 'button', { popoverTarget: 'm', ...behaviour(bound) }),
+        node('cmd', 'button', { commandfor: 'm', ...behaviour(bound) }),
+        node('sub', 'button', { type: 'submit', ...behaviour(bound) }),
+        node('res', 'button', { type: 'reset', ...behaviour(bound) }),
+        node('fa', 'button', { type: 'button', formAction: '/x', ...behaviour(bound) }),
+        node('ft', 'button', { type: 'button', form: 'm', ...behaviour(bound) }),
+        node('shown', 'button', behaviour({ ...bound, noScript: 'show' })),
+        node('holds', 'button', { type: 'button', ...behaviour(bound) }, link),
+        node('m', 'div', { id: 'm' }),
+      );
+      expect(html).not.toContain('html:not([data-fc-b])');
+    });
+
+    it('keeps a button a form would submit with, plain or an island', async () => {
+      const plain = await page(node('f', 'form', {}, node('wrap', 'div', {}, node('send', 'button', { children: 'Send', ...behaviour(bound) }))));
+      expect(plain.html).not.toContain('html:not([data-fc-b])');
+      const island = await page(node('f', 'div', { 'data-form-kind': 'form' }, node('send', 'button', { children: 'Send', ...behaviour(bound) })));
+      expect(island.html).not.toContain('html:not([data-fc-b])');
+    });
+
+    it('hides a button with a script as its only job', async () => {
+      const { html } = await page(
+        node('a', 'button', { children: 'Open', ...behaviour(bound) }),
+        node('b', 'button', { type: 'button', ...behaviour(bound) }, node('t', '#text', { children: 'Open' }), node('i', 'svg')),
+        node('c', 'div', { role: 'button', tabIndex: 0, ...behaviour(bound) }, node('j', 'img', { alt: '' })),
+        node('d', 'f', {}, node('e', 'button', { type: 'button', ...behaviour(bound) })),
+      );
+      for (const key of ['a', 'b', 'c', 'e']) expect(html).toContain(`.fc_r-${key}.fc_r-${key}:where(html:not([data-fc-b]) *){display:none !important}`);
+    });
+
+    it('still hides what an author asked to hide, whatever it is', async () => {
+      const { html } = await page(node('n', 'nav', behaviour({ ...bound, noScript: 'hide' })));
+      expect(html).toContain('.fc_r-n.fc_r-n:where(html:not([data-fc-b]) *)');
+    });
+  });
+
+  it('reads a list repeated across rows once', async () => {
+    const list = [{ id: 'r', selector: '&', when: { state: 's1', eq: true }, style: { color: 'red' } }, { id: 'x', selector: '&', when: { state: 'nope', eq: true }, style: { color: 'blue' } }];
+    const { root, cmsRepo } = collection(40, node('tpl', 'li', { rules: list }));
+    const { html } = await published(node('p', 'div', behaviour({ state: [bool('s1')], on: [click({ toggle: 's1' })] }), root), cmsRepo);
+    expect(html.match(/color:red/g)).toHaveLength(1);
+    expect((warn.mock.calls[0][1] as unknown[])).toHaveLength(1);
   });
 
   it('does not hide what only watches a native event', async () => {
@@ -389,7 +435,7 @@ describe('rows', () => {
   });
 
   it('keeps nested Collections apart', async () => {
-    const inner = { id: 'inner', type: 'ul', props: { 'data-component-kind': 'collection' }, bindings: { collection: { mode: 'read', expression: 'c2' } }, children: [node('leaf', 'li', {}, node('x', 'span', { id: 'deep' }))] } as ComponentNode;
+    const inner = { id: 'inner', type: 'ul', props: { 'data-component-kind': 'collection' }, bindings: { collection: { mode: 'read', expression: 'c2' } }, children: [node('leaf', 'li', {}, node('x', 'span', { id: 'deep', 'aria-owns': 'deep' }))] } as ComponentNode;
     const { root, cmsRepo } = collection(2, node('outer', 'li', {}, inner));
     const { dom } = await published(root, cmsRepo);
     expect(idProblems(dom)).toEqual([]);
@@ -577,6 +623,32 @@ describe('what bindings write', () => {
   it('warns once per page, however many entries were refused', async () => {
     await published(node('p', 'div', behaviour({ bind: [{ attr: 'href', from: 'x' }, { attr: 'src', from: 'y' }], on: [{ id: 'x', on: 'nope', do: [] }] })));
     expect(warn).toHaveBeenCalledOnce();
+  });
+});
+
+describe('the payloads of the review', () => {
+  it('writes no address from a mixed map into a custom property, the sheet or the program', async () => {
+    const mixed = (a: unknown, b: unknown) => ({ map: 'c', cases: { a, b } });
+    const { html, program } = await published(node('p', 'div', {
+      style: { color: 'red' },
+      ...behaviour({ state: [choice('c', ['a', 'b'])], on: [click({ set: 'c', value: 'b' })], bind: [{ cssVar: '--u-x', from: { add: [mixed('url(http://evil.example/add', 1), mixed(')', 1)] } }] }),
+    }));
+    expect(html).not.toContain('evil.example');
+    expect(JSON.stringify(program)).not.toContain('evil.example');
+  });
+
+  it('leaves a rule reading an id inside a row matching on every row', async () => {
+    const { root, cmsRepo } = collection(3, node('rw', 'li', { rules: [{ id: 'r', selector: '& #badge', style: { color: 'red' } }] }, node('b', 'span', { id: 'badge', 'aria-owns': 'badge' })));
+    const { dom, html } = await published(root, cmsRepo);
+    expect(html).toContain('.fc_r-rw.fc_r-rw #badge{color:red}');
+    expect([...dom.querySelectorAll('span')].map((el) => el.id)).toEqual(['badge', 'badge', 'badge']);
+  });
+
+  it('points an image map at its own row', async () => {
+    const { root, cmsRepo } = collection(2, node('rw', 'li', {}, node('i', 'img', { src: '/a.png', useMap: '#m' }), node('m', 'map', { name: 'm' })));
+    const { dom } = await published(root, cmsRepo);
+    expect(dom.querySelectorAll('img')[1].getAttribute('usemap')).toBe('#m-r1');
+    expect(dom.querySelectorAll('map')[1].getAttribute('name')).toBe('m-r1');
   });
 });
 

@@ -22,8 +22,8 @@
 // a row whose bound `type` changes what parses. So the program holds a list per key, and
 // `data-fc-v` says which entry an element runs. References stay on the key.
 //
-// A page with no behaviour gets the same tree back, but for repeated ids in a Collection
-// (src/lib/renderer/idRefs.ts). A page with state and no trigger can never change, so it
+// A page with no behaviour gets the same tree back, but for an id repeated in a Collection
+// that something in the row points at (src/lib/renderer/idRefs.ts). A page with state and no trigger can never change, so it
 // gets no gate, no marks and no program: its rules read what the server wrote.
 //
 // A stored `data-fc-n` or `data-fcs-*` would forge a target or a state, past every
@@ -61,7 +61,8 @@ import {
 } from '@/lib/behaviour/behaviourDom';
 import { isIdReference, suffixCloneIds } from '@/lib/renderer/idRefs';
 import { TEXT_NODE_TYPE, isTextNodeType } from '@/lib/renderer/textNode';
-import { isRuleList, readRules, type ParsedRule, type ParsedSelectorRule } from '@/lib/rules/rules';
+import { isRuleList, readRules, type ParsedRule, type ParsedSelectorRule, type ReadRules } from '@/lib/rules/rules';
+import { formKindOf } from '@/lib/forms/definition';
 
 /** What the runtime needs of one node, shared by every element that runs it. */
 export interface ProgramEntry {
@@ -90,31 +91,37 @@ const HIDE = { display: 'none !important' };
 
 /** What a person presses. A trigger on anything else watches what the element does natively. */
 const PRESS_EVENTS: ReadonlySet<string> = new Set(['click', 'dblclick', 'keydown', 'keyup', 'pointerdown', 'pointerup', 'mousedown', 'mouseup']);
-/** Elements that do their job with no script at all. */
-const NATIVE_TAGS: ReadonlySet<string> = new Set(['details', 'summary', 'dialog', 'input', 'select', 'textarea', 'label', 'form', 'option']);
-const NATIVE_COMMANDS: ReadonlySet<string> = new Set(['popovertarget', 'commandfor']);
+/** On a button, these give it a job with no script at all. */
+const NATIVE_COMMANDS: ReadonlySet<string> = new Set(['popovertarget', 'commandfor', 'formaction', 'form']);
+/** What may sit in a button that is otherwise only its label. */
+const ICON_TAGS: ReadonlySet<string> = new Set(['svg', 'img', 'i']);
 
 function holdsBehaviour(node: ComponentNode): boolean {
   return (node.props as Record<string, unknown> | undefined)?.behaviour !== undefined || (node.children ?? []).some(holdsBehaviour);
 }
 
-/** True for a control that still does something when no script ever runs. */
-function hasNativeJob(tag: string | null, props: Record<string, unknown>): boolean {
-  if (tag !== null && NATIVE_TAGS.has(tag)) return true;
-  if (tag === 'a' && typeof props.href === 'string') return true;
-  const type = typeof props.type === 'string' ? props.type.toLowerCase() : '';
-  if (tag === 'button' && (type === 'submit' || type === 'reset')) return true;
-  return Object.keys(props).some((name) => NATIVE_COMMANDS.has(name.toLowerCase()));
+/** True for a button with nothing inside it but its label, and nothing to do without a script. */
+function isScriptOnlyButton(node: ComponentNode, tag: string | null, insideForm: boolean): boolean {
+  const props = (node.props ?? {}) as Record<string, unknown>;
+  const typed = typeof props.type === 'string' ? props.type.toLowerCase() : undefined;
+  const role = typeof props.role === 'string' ? props.role.toLowerCase() : undefined;
+  // A `button` in a form with no type of its own is that form's submit.
+  const inert = tag === 'button' ? typed === 'button' || (typed === undefined && !insideForm) : role === 'button' && tag !== 'a';
+  if (!inert || Object.keys(props).some((name) => NATIVE_COMMANDS.has(name.toLowerCase()))) return false;
+  return (node.children ?? []).every((child) => isTextNodeType(child.type) || ICON_TAGS.has(child.type.toLowerCase()));
 }
 
-/** `noScript`, or its default: a button that needs the script, which would lie through a stale `aria-*`. */
-function noScriptOf(behaviour: StoredBehaviour, node: ComponentNode): 'show' | 'hide' | undefined {
+/**
+ * `noScript`, or its default. Only a button that needs the script is hidden, which would
+ * otherwise do nothing and lie through a stale `aria-*`. Anything else may hold content,
+ * and content stays reachable without a script.
+ */
+function noScriptOf(behaviour: StoredBehaviour, node: ComponentNode, insideForm: boolean): 'show' | 'hide' | undefined {
   if (behaviour.noScript) return behaviour.noScript;
-  const props = (node.props ?? {}) as Record<string, unknown>;
   const facts = nodeFacts(node);
   const presses = (behaviour.on ?? []).some((trigger) => PRESS_EVENTS.has(trigger.on));
   const claims = (behaviour.bind ?? []).some((binding) => 'attr' in binding && binding.attr.startsWith('aria-'));
-  return presses && claims && !facts.island && !hasNativeJob(facts.tag, props) ? 'hide' : undefined;
+  return presses && claims && !facts.island && isScriptOnlyButton(node, facts.tag, insideForm) ? 'hide' : undefined;
 }
 
 /** Adds every node key an expression names. */
@@ -198,6 +205,8 @@ interface Reach {
   states: ReadonlyMap<string, StateValue>;
   /** The nearest clone's index. */
   row?: number;
+  /** A form sits above this node, so a button with no type submits it. */
+  insideForm?: boolean;
 }
 
 export function applyBehaviour(root: ComponentNode): BehaviourResult {
@@ -209,7 +218,22 @@ export function applyBehaviour(root: ComponentNode): BehaviourResult {
   const hasGate = behaviours.some((behaviour) => (behaviour.on?.length ?? 0) > 0);
   const targets = referencedKeys(behaviours);
   const entries = new Map<string, { signature: string; entry: ProgramEntry }[]>();
+  const readLists = new Map<string, ReadRules>();
   let marks = 0;
+
+  /** Rows repeat one list against the same state, so a page reads each pairing once. */
+  const readConditional = (list: unknown[], states: ReadonlyMap<string, StateValue>, nodeId: string): ReadRules => {
+    const signature = `${JSON.stringify([...states.values()])}\u0000${JSON.stringify(list)}`;
+    const known = readLists.get(signature);
+    if (known) return known;
+    const read = readRules({ rules: list }, { states });
+    readLists.set(signature, read);
+    for (const { index, reason, rule } of read.refused) {
+      const id = (rule as { id?: unknown } | null)?.id;
+      problems.push({ node: nodeId, rule: typeof id === 'string' ? id : `#${index}`, reason });
+    }
+    return read;
+  };
 
   /** The list of rules a node's list and behaviour come to, or null when its list stays as stored. */
   const compileRules = (node: ComponentNode, props: Record<string, unknown>, behaviour: StoredBehaviour | undefined, bindings: Binding[], reach: Reach): ParsedRule[] | null => {
@@ -217,16 +241,12 @@ export function applyBehaviour(root: ComponentNode): BehaviourResult {
     const nodeId = node.id ?? 'unnamed';
     const rules: ParsedRule[] = [];
     const list = isRuleList(props.rules) ? props.rules : [];
-    const noScript = behaviour ? noScriptOf(behaviour, node) : undefined;
+    const noScript = behaviour ? noScriptOf(behaviour, node, reach.insideForm === true) : undefined;
     if (!holdsCondition(list) && !behaviour?.showWhen && noScript !== 'hide') return null;
 
     if (list.length > 0) {
-      const read = readRules({ rules: list }, { states: reach.states });
+      const read = readConditional(list, reach.states, nodeId);
       rules.push(...read.rules.filter((rule) => hasGate || rule.kind !== 'selector' || rule.gate !== 'off'));
-      for (const { index, reason, rule } of read.refused) {
-        const id = (rule as { id?: unknown } | null)?.id;
-        problems.push({ node: nodeId, rule: typeof id === 'string' ? id : `#${index}`, reason });
-      }
       delete props.rules;
     }
     if (noScript === 'hide' && hasGate) rules.push(selectorRule('no-script', ['&'], { gate: 'off' }));
@@ -277,7 +297,8 @@ export function applyBehaviour(root: ComponentNode): BehaviourResult {
   const visit = (node: ComponentNode, outer: Reach): ComponentNode => {
     const behaviour = tree.behaviours.get(node);
     const isClone = typeof node.cloneIndex === 'number';
-    const reach: Reach = { states: outer.states, row: isClone ? node.cloneIndex : outer.row };
+    const isForm = typeof node.type === 'string' && (node.type.toLowerCase() === 'form' || formKindOf((node.props ?? {}) as Record<string, unknown>) === 'form');
+    const reach: Reach = { states: outer.states, row: isClone ? node.cloneIndex : outer.row, insideForm: outer.insideForm || isForm };
     if (behaviour?.state) reach.states = new Map([...outer.states, ...behaviour.state.map((state): [string, StateValue] => [state.id, state])]);
 
     const next: ComponentNode = { ...node };

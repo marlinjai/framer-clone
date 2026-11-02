@@ -157,6 +157,28 @@ describe('the behaviour pass in real Chromium', () => {
       expect(await gate()).toBe(false);
     });
 
+    it('survives an image named after the methods it calls, which a Collection could bind from data', async () => {
+      const named = node('page', 'div', {},
+        node('i1', 'img', { name: 'removeEventListener', alt: '' }),
+        node('i2', 'img', { name: 'addEventListener', alt: '' }),
+        accordion());
+      await open(named);
+      expect(await page.evaluate(() => typeof document.removeEventListener)).toBe('object');
+      await page.evaluate(() => (window as unknown as { __fcB: { fail(): void } }).__fcB.fail());
+      expect(await gate()).toBe(false);
+      expect(await shown('panel')).toBe(true);
+      await page.unrouteAll();
+      await open(named);
+      expect(await ready()).toBe(true);
+      await page.unrouteAll();
+      await open(named);
+      await page.waitForTimeout(PAST_THE_GATE);
+      expect(await gate()).toBe(false);
+      expect(await shown('panel')).toBe(true);
+      await page.keyboard.press('a');
+      expect(await ready()).toBe(false);
+    });
+
     it('comes down for good on a later failure, so nothing stays hidden behind a dead runtime', async () => {
       await open(accordion());
       await ready();
@@ -187,11 +209,45 @@ describe('the behaviour pass in real Chromium', () => {
       expect(await queued()).toEqual([]);
     });
 
+    it('keeps no key typed into a field inside a marked node', async () => {
+      await open(node('item', 'div', { behaviour: { state: [flag('s1')], on: [toggle('s1')] } },
+        node('field', 'input', {}), node('note', 'div', { children: 'Note', contentEditable: true, suppressContentEditableWarning: true })));
+      await el('field').focus();
+      await page.keyboard.press('h');
+      await el('note').focus();
+      await page.keyboard.press('i');
+      expect(await queued()).toEqual([]);
+    });
+
+    it('is not broken by a form field named closest', async () => {
+      await open(node('item', 'div', { behaviour: { state: [flag('s1')], on: [toggle('s1')] } },
+        node('f', 'form', {}, node('field', 'input', { name: 'closest' }))));
+      await page.evaluate(() => document.querySelector('form')?.click());
+      expect(await queued()).toEqual(['click']);
+    });
+
     it('stops once the runtime is ready, which starts from there', async () => {
       await open(accordion());
       await ready();
       await el('btn').click();
       expect(await queued()).toEqual([]);
+    });
+  });
+
+  describe('with scripts off', () => {
+    const bound = { on: [toggle('s1')], bind: [{ attr: 'aria-expanded', from: { get: 's1' } }] };
+
+    it('keeps a nav with a link, and a link in it reachable', async () => {
+      const off = await browser.newContext({ javaScriptEnabled: false });
+      const target = await off.newPage();
+      await serve(target, await documentOf(node('item', 'div', { behaviour: { state: [flag('s1')] } },
+        node('nav1', 'nav', { behaviour: bound }, node('go', 'a', { href: '/x', children: 'Go' })),
+        node('sent', 'form', {}, node('send', 'button', { children: 'Send', behaviour: bound })),
+        node('only', 'button', { children: 'Open', behaviour: bound }))));
+      expect(await shown('go', target)).toBe(true);
+      expect(await shown('send', target)).toBe(true);
+      expect(await shown('only', target)).toBe(false);
+      await off.close();
     });
   });
 

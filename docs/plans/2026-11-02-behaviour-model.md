@@ -208,8 +208,8 @@ A closed JSON form, at most 6 levels deep, and total: it cannot throw or loop.
 |---|---|
 | literal, `{ get: stateId }` | A value |
 | `{ eq: [a, b] }`, `{ gt }`, `{ lt }`, `{ not }`, `{ and }`, `{ or }` | Logic |
-| `{ add: [a, b] }`, `{ clamp: [v, min, max] }`, `{ map: stateId, cases, default }` | Arithmetic and lookup |
-| `{ event: 'value' }` | The value of **the node holding the trigger**, never of `event.target`, so a wrapper cannot read a field inside it |
+| `{ add: [a, b] }`, `{ clamp: [v, min, max] }`, `{ map: stateId, cases, default }` | Arithmetic and lookup. `add`, `clamp`, `gt` and `lt` take kind `number` only, and a `map` with mixed branches is not a number |
+| `{ event: 'value' }` | The value of **the node holding the trigger**, never of `event.target`, so a wrapper cannot read a field inside it. A number only on a `range` |
 | `{ event: 'key' }`, `{ event: 'newState' }` | The key pressed; `newState` of a `toggle` or `beforetoggle` |
 | `{ pointer: 'x' \| 'y', of: node, as: 'px' \| 'percent' }` | The pointer's position relative to a node |
 | `{ active: groupNode }` | The text of a group's active item. A source of the taint rule |
@@ -218,7 +218,8 @@ A closed JSON form, at most 6 levels deep, and total: it cannot throw or loop.
 **The taint rule,** enforced by `parseBehaviour` over the whole expression, so a derived value is caught.
 
 - **Sources:** `{ event: 'value' }`, `{ event: 'key' }`, `{ active }`, and `{ get }` or `{ map }` of `text` state. The value
-  of a `range`, `select`, `checkbox` or `radio` is a choice among fixed values and is not a source.
+  of a `range`, `select`, `checkbox` or `radio` is a choice among fixed values and is not a source, unless the trigger has
+  `scope: 'document'`, which hears what any field on the page did.
 - **Allowed sinks:** `set` on `text` state, a `text` binding, and `filter`'s text. A bare `{ active }` may also go into
   `setProp` of `value` on a text entry control, which is how Enter copies an option in a `combobox`.
 - **Everything else is refused:** `if`, `set` on other types, `setProp`, `cssVar`, `attr`, `when`, `showWhen`,
@@ -268,14 +269,17 @@ gets one (decision M6).
 
 **User-input verbs.** `focus`, `rove`, `dialog` with `showModal`, `show` or `toggle`, and `popover` with `show` or `toggle`
 run only from `click`, `keydown` or `keyup`, except that `showModal` may run from `page-ready` or `view-enter` on a
-published page, and `rove` with `clear`, which moves no focus. So nothing steals focus from a timer, a `blur` or a frame,
-and all of these in `blur` or `focusout` triggers are refused, directly or under `delay`.
+published page, and `rove` with `clear`, which moves no focus. `scroll` holds to the same rule, since it moves what a reader
+is looking at. Under `delay` they may wait at most 50 ms in total, which `menu-button` needs to focus what its press opened. So
+nothing steals focus from a timer, a `blur` or a frame, and all of these in `blur` or `focusout` triggers are refused, directly
+or under `delay`.
 
 **Family refusal.** A native verb is refused inside a trigger on the events it causes: `popover`, `details` and
 `dialog` in `toggle`, `beforetoggle`, `close` or `cancel`; `media` in media events; `fullscreen` in `fullscreenchange`;
 `scroll` in `scroll` or `scrollend`.
 
-**`prevent`** is refused on `cancel`, on `Tab`, and on any `keydown` without `keys`.
+**`prevent`** is refused on `cancel`, on `Tab`, on any `keydown` without `keys`, and on any trigger with `scope: 'document'`,
+which would stop links, scrolling and the consent banner's buttons across the page.
 
 ### Bindings
 
@@ -321,10 +325,11 @@ The pass:
    list. `!important` because a `&:focus-within { display: flex }` on the same node would otherwise outrank it.
    A `showWhen` reading `{ row: 'index' }` cannot be a selector, since the rule class is shared across rows, so it
    compiles to a binding `data-u-on` and a rule on `:not([data-u-on="true"])`.
-6. Rewrites `id`s per clone. A row after the first gets a stable suffix, and its `for`, `aria-controls`,
-   `aria-labelledby`, `aria-describedby`, `aria-owns`, `aria-activedescendant`, `popovertarget`, `commandfor` and `#`
-   links follow, through the helper the components contract defines for placements, moved to
-   `src/lib/renderer/idRefs.ts`. A test walks the published HTML for duplicate ids and dangling references.
+6. Rewrites an `id` per clone when something inside the clone points at it and no rule names it. A row after the first gets
+   a stable suffix, and its `for`, `aria-controls`, `aria-labelledby`, `aria-describedby`, `aria-owns`,
+   `aria-activedescendant`, `popovertarget`, `commandfor`, `usemap` and `#` links follow, through the helper the components
+   contract defines for placements, moved to `src/lib/renderer/idRefs.ts`. A test walks the published HTML for duplicate ids
+   and dangling references among what points at an id.
 7. Adds `data-fc-n="<classKey ?? id>"` only to nodes a trigger, a binding that can change, a declared state, a group or a
    target needs.
 8. Removes `behaviour`, and returns the program: a table keyed on `classKey ?? id`, so 500 rows or twelve placements
@@ -334,7 +339,8 @@ The pass:
 tree object: no attribute, no gate, no script, no island. The proof is a browser counting bytes over the network on
 such a page, because the HTML comparison passes regardless. To be exact: published pages already load Next's own client
 code and the commerce providers, and this adds nothing to that. Step 6 is the one exception to identical HTML: a page
-with a repeated `id` inside a Collection, a bug today, gets it fixed.
+whose rows repeat an `id` that something in the row points at, a bug today, gets it fixed. A repeated `id` nothing points at
+stays as it is, since a rule may read it and nothing is broken.
 
 **A page with state and no trigger** can never change, so it has no gate and no runtime. Its `when` rules are emitted
 without the gate prefix and read the server's attributes, which needs no script. Rules with `gate: 'off'` and
@@ -372,7 +378,7 @@ state verbs only, so a press during loading is not lost and no native action can
 
 | Situation | What the visitor gets |
 |---|---|
-| JavaScript off | No gate. `when` rules are dead, so every panel shows. A control with `noScript: 'hide'` is hidden. `applyBehaviour` defaults it to `'hide'` on a node whose triggers all need the script and which binds `aria-*`, so a button that does nothing and a stale `aria-expanded="false"` are both gone |
+| JavaScript off | No gate. `when` rules are dead, so every panel shows. A control with `noScript: 'hide'` is hidden. `applyBehaviour` defaults it to `'hide'` only on a button whose one job is the script and which binds `aria-*`, so a button that does nothing and a stale `aria-expanded="false"` are both gone. Everything else stays, see "Decided in slice B2" |
 | Script blocked or failed | The gate falls after 3 seconds and the page becomes the no-JavaScript page, with a console error |
 | A late start | Once the gate fell and the visitor has scrolled or typed, it is not set again: panels never collapse under a reader, and the page stays in its no-JavaScript form for that visit |
 | A later failure | Dispatch is wrapped: an uncaught error removes the gate, so nothing stays hidden behind a dead runtime |
@@ -1028,13 +1034,50 @@ decision 7, which needs an author who also controls CSS, and only a policy on pu
 - Expansion marks a placement root with `placementRoot: true` on the node, beside `classKey`, which `expand.ts` now writes. Like
   `cloneIndex`, it ends at `applyResponsiveStyles`, so it never crosses to an island.
 - A binding slot named `behaviour` is skipped by `applyBindings`, so a row cannot write into a behaviour past the `{{binding}}` refusal.
-- Step 6 changes an `id` only where it repeats. An `id` bound per row is already unique, and rewriting it would break its anchors. A
-  bound id reference that can change in a clone is refused, because one program entry cannot write a different id per row.
+- Step 6 changes an `id` only where it repeats, something in the clone points at it, and no rule names it. An `id` bound per row is
+  already unique, and rewriting a repeat nothing points at would stop `& #badge` matching from the second row on a page that opted into
+  nothing. On a `map`, `name` counts as the `id`, because that is what `usemap` finds. A bound id reference that can change in a clone
+  is refused, because one program entry cannot write a different id per row.
 - `value` on a form control is written as `defaultValue`. As a prop, React would own the field and a person could not change it.
-- Without a trigger on a press, `noScript` does not default to `hide`: a `toggle` trigger mirrors what the element does natively. A
-  control with a native job (a link, a field, `popovertarget`) keeps working without the script and is not hidden.
+- **`noScript` defaults to `hide` on less than the table once said, a deviation made after the security review.** "A node whose triggers
+  all need the script" hid a `nav` holding links, a `div` around links, a `span` of plain text and a form's own submit button, which
+  broke decision 6: content stays reachable without JavaScript. The default now needs a press trigger and a bound `aria-*`, on a
+  `button` of `type="button"` or with no type outside a form, or on `role="button"` that is not a link, with nothing inside but text and
+  an icon (`svg`, `img`, `i`), and no `popovertarget`, `commandfor`, `formaction` or `form`. Everything else defaults to `show`, and an
+  author can still set `noScript: 'hide'`. Such a node keeps its `aria-*` beside a shown panel, which is what the page is, not a lie
+  about a control that cannot work. A `button` holding a `span` label is not hidden by default, so a preset stores its own `noScript`.
+- A `set` on a boolean or a number takes that kind exactly. Only `text` and `choice` take a value known only at run time.
+- The gate script takes every method it calls later from its prototype before the content exists, since `<img name="removeEventListener">`
+  shadows that method on `document`, and `fail` lowers the gate before anything else.
 - Until B3, nothing starts the runtime, so a page with a trigger drops its gate after 3 seconds with the console error. Only hand-written
   JSON can reach that today.
+
+### What B3 has to do, from the review of B2
+
+The review of pull request #239 (`2026-11-02-behaviour-model-review.md`, section "Slice B2") left these to the runtime. Each needs a test
+in B3, and B3 does not land without them.
+
+1. **A `showModal` from anything but a press runs once per page load.** Finding 8: `close` can set a flag that shows a sentinel whose
+   `view-enter` runs `showModal`, which reopens the modal forever, and static `closedby="none"` turns Escape off. The consent banner is
+   inert meanwhile. The parser cannot see this cycle.
+2. **A wrapper's printable trigger never fires from a text entry target.** Finding 9: `keydown` with printable keys on a wrapper around
+   a field parses, because the parser reads only the node holding the trigger. The same goes for a `keydown` with no `keys`. Test it
+   with a real field inside a real wrapper.
+3. **The program leaves through a path that escapes `<`.** Finding 13: it carries raw `</script>` in literals, state names and `cases`
+   keys. It is safe today only because it is not emitted. B3 also drops `name` and `preset` from what it sends, and reads `cases` with
+   `Object.hasOwn`.
+4. **Coerce with `Number` and keep a `choice` to its options.** A `range` reads as a string, so a number from one goes through `Number`,
+   and a value that is not finite is dropped. A `choice` set from an event value is kept to its options, as the parser's comment says.
+5. **Replay no key from a text entry control,** and read `__fcB.queue` knowing a click inside a scope may have triggered nothing.
+
+Findings 6, 7, 10, 11, 12, 14 and the parser half of 13 are fixed in B2: `prevent` with `scope: 'document'` is refused, focus moves and
+`scroll` under `delay` wait at most 50 ms, the queue keeps no key from a field, `hidden` is not text entry, `scroll` needs a press, a
+list repeated across rows is read once, and `__proto__`, `constructor` and `prototype` cannot name a case or an option. Finding 7 asked to
+refuse focus moves under any `delay`. That is narrowed, because `menu-button` focuses its first item 16 ms after the press that opened it
+and the prototype's preset needs it. 50 ms is a frame or two, not a timer anyone can aim.
+
+After #234, `nodeFacts` should use `isRefusedTag` rather than `BLOCKED_TAGS`, so a refused tag holds no behaviour. That is for whichever of
+the two lands second.
 
 ## Review findings not adopted
 

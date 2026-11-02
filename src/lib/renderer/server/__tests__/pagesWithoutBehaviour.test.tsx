@@ -53,7 +53,9 @@ const everything = (): ComponentNode =>
     node('hero', 'h1', { children: 'Hello', rules: [{ id: 'hover', selector: '&:hover', style: { color: 'red' } }] }),
     node('fx', 'div', { effects: { appear: { kind: 'fade' } }, children: 'Revealed' }),
     node('list', 'ul', { 'data-component-kind': 'collection' }, [
-      node('row', 'li', {}, [
+      node('row', 'li', { rules: [{ id: 'badge', selector: '& #badge', style: { color: 'red' } }] }, [
+        node('badge', 'b', { id: 'badge', children: 'New' }),
+        node('note', 'i', { id: 'note', children: 'Nothing points here' }),
         node('row-title', 'span', { className: 'title' }, [], { children: { mode: 'read', expression: '{{row.title}}' } }),
         node('row-anchor', 'a', { href: '#top' }, [], { id: { mode: 'read', expression: '{{row.slug}}' } }),
       ]),
