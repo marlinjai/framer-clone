@@ -18,6 +18,9 @@
 // breakpoint's min width minus 0.02px (not 1px), so a fractional viewport width
 // such as 809.5px still lands on the breakpoint `pickBreakpoint` would choose.
 //
+// Then the hover presets the page uses (hoverPresetRules in effects.ts), once each
+// on a shared class, after Normal as they have always been.
+//
 // After those come the authored rules of `props.rules` (src/lib/rules/rules.ts),
 // grouped by rule rather than by breakpoint, so Pressed stays above Hover at every
 // width. Each rule's breakpoint query is outermost, then its `at`, then the
@@ -51,6 +54,7 @@
 // written raw, so isWritableRule and isWritableDefinition check them again here,
 // and the finished sheet must hold no `<`. A rule is emitted whole or not at all.
 
+import { HOVER_KINDS, hoverPresetRules, type HoverKind } from '@/lib/effects/effects';
 import type { ParsedDefinitionRule, ParsedSelectorRule } from '@/lib/rules/rules';
 import { largestFirst, resolveCascade, type BreakpointRef } from './cascade';
 
@@ -395,6 +399,8 @@ export interface BuildResponsiveCssOptions {
   onDrop?: (dropped: DroppedDeclaration) => void;
   /** Definitions, deduped, in walk order. They precede every Normal block. */
   definitions?: readonly DefinitionInput[];
+  /** The hover presets used on the page. They follow every Normal block and precede the authored rules. */
+  hoverPresets?: readonly HoverKind[];
   /** Authored rules, in walk order. They follow every Normal block. */
   authored?: readonly AuthoredRulesInput[];
   /** Adds FIELD_SIZING_GUARD: true on a page holding a stored rule or definition. */
@@ -949,6 +955,10 @@ export function buildResponsiveCss(
     if (!body) continue;
     parts.push(`${mediaBelow(ordered[i - 1].minWidth)}{\n${body}\n}`);
   }
+  // Constants, so they spend nothing of the page caps and no rule can push them out.
+  const used = options.hoverPresets ?? [];
+  const presets = serializeBlocks(HOVER_KINDS.filter(kind => used.includes(kind)).flatMap(kind => hoverPresetRules(kind)));
+  if (presets) parts.push(presets);
   const authored = serializeBlocks(authoredBlocks(options.authored ?? [], ordered, onDropRule, spent));
   if (authored) parts.push(authored);
   if (options.fieldGuard) parts.push(FIELD_SIZING_GUARD);

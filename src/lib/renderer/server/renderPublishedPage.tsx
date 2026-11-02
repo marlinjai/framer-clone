@@ -24,8 +24,8 @@ import { renderComponentNode } from './renderComponentNode';
 import { applyResponsiveStyles } from './applyResponsiveStyles';
 import { applyEffects } from './applyEffects';
 import EffectsIsland from './EffectsIsland';
-import { EffectsStyles } from '@/lib/effects/EffectsStyles';
 import { publishedEffectsBootScript } from '@/lib/effects/effects';
+import { LENIS_CSS } from '@/lib/effects/smoothScroll';
 import { publishedFontAssets } from './publishedFonts';
 import { applyImageLoading, HeroPreload } from './imageLoading';
 import type { BreakpointRef } from '@/lib/responsive/cascade';
@@ -168,7 +168,7 @@ export async function renderPublishedPage(
   const images = applyImageLoading(hydrated);
   // Effects next: they become data attributes plus custom properties in
   // `style`, which the responsive pass then moves into the stylesheet per
-  // breakpoint like any responsive style.
+  // breakpoint like any responsive style. The hover presets land in that sheet too.
   const effects = applyEffects(images.root, breakpoints);
   const responsive = applyResponsiveStyles(effects.root, breakpoints);
   // The self-hosted web fonts the page uses, scanned before the responsive
@@ -204,9 +204,7 @@ export async function renderPublishedPage(
           // a `<`, see sheetValueText and parseSelector.
           <style data-fc-responsive="" dangerouslySetInnerHTML={{ __html: responsive.css }} />
         ) : null}
-        {effects.hasEffects || smoothScroll ? (
-          <EffectsStyles smoothScroll={smoothScroll} />
-        ) : null}
+        {smoothScroll ? <style data-fc-effects="" dangerouslySetInnerHTML={{ __html: LENIS_CSS }} /> : null}
         {effects.needsRuntime ? (
           // Parsed and run before the content it gates: it injects the
           // start-state rules (never part of the HTML, so nothing is hidden

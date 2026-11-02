@@ -1,6 +1,7 @@
 // applyEffects: turns each node's stored `props.effects` into what the
-// published page renders: data attributes the effects runtime and stylesheet
-// key on, plus CSS custom properties carrying the values. The properties are
+// published page renders: data attributes the effects runtime keys on, plus CSS
+// custom properties carrying the values, plus the hover preset as a mark on the
+// node, which applyResponsiveStyles turns into a shared class. The properties are
 // written into `style` as responsive maps (`{ base, <breakpointId>: value }`)
 // where a breakpoint differs, so applyResponsiveStyles, which runs next, moves
 // them into the page's media-query stylesheet exactly like a responsive style.
@@ -21,13 +22,10 @@ export interface EffectsResult {
   root: ComponentNode;
   /** Some node has an appear or a parallax: the page needs the client runtime and the start-state rules. */
   needsRuntime: boolean;
-  /** Some node has any effect: the page needs the effects stylesheet. */
-  hasEffects: boolean;
 }
 
 export function applyEffects(root: ComponentNode, breakpoints: readonly BreakpointRef[]): EffectsResult {
   let needsRuntime = false;
-  let hasEffects = false;
 
   const visit = (node: ComponentNode): ComponentNode => {
     const next: ComponentNode = { ...node };
@@ -37,8 +35,8 @@ export function applyEffects(root: ComponentNode, breakpoints: readonly Breakpoi
       void _drop;
       const dom = effectDomAcrossBreakpoints(storedEffectsOf(props), breakpoints);
       if (dom) {
-        hasEffects = true;
         if (dom.needsRuntime) needsRuntime = true;
+        if (dom.hover && dom.hover !== 'none') next.hoverPreset = dom.hover;
         const style = rest.style && typeof rest.style === 'object' && !Array.isArray(rest.style)
           ? (rest.style as Record<string, unknown>)
           : {};
@@ -53,5 +51,5 @@ export function applyEffects(root: ComponentNode, breakpoints: readonly Breakpoi
     return next;
   };
 
-  return { root: visit(root), needsRuntime, hasEffects };
+  return { root: visit(root), needsRuntime };
 }

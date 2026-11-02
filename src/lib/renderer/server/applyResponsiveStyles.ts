@@ -18,6 +18,8 @@
 //     Its rules go on a second class, `fc_r-<id>`, keyed on the rules alone, so
 //     rows that differ only in a bound value share one rule block. A preset or a
 //     definition is not an authored rule here and moves nothing.
+//   - A hover preset (the mark applyEffects leaves on a node) adds its shared class,
+//     `fc_fx-<kind>`, and moves nothing. Each kind used is emitted once.
 //   - A definition (`@keyframes`, `@font-face`, ...) is global to the page, whichever
 //     node holds it. Identical ones dedupe, so 500 cloned rows emit one. A different
 //     one with the same identity (definitionIdentity in rules.ts) is a clash: the
@@ -81,6 +83,7 @@ import {
   type ParsedSelectorRule,
   type ReadRules,
 } from '@/lib/rules/rules';
+import { hoverPresetClass, type HoverKind } from '@/lib/effects/effects';
 
 export interface ResponsiveStylesResult {
   /** The tree with responsive styles replaced by classes (a new tree; the input is not mutated). */
@@ -140,6 +143,7 @@ export function applyResponsiveStyles(
   const rules: ResponsiveRuleInput[] = [];
   const authored: AuthoredRulesInput[] = [];
   const definitions: DefinitionInput[] = [];
+  const hoverPresets = new Set<HoverKind>();
   /** A definition's identity -> the body that claimed it, in walk order. */
   const claimed = new Map<string, string>();
   /** Bodies that lost a claim, so a clash on a cloned row is reported once. */
@@ -249,7 +253,8 @@ export function applyResponsiveStyles(
   const hasRules = pageHasRule(root);
 
   const visit = (node: ComponentNode, insideReachingRule: boolean): ComponentNode => {
-    const next: ComponentNode = { ...node };
+    // The mark ends here: a commerce island's node crosses to the client as it is.
+    const { hoverPreset, ...next }: ComponentNode = node;
     const read = readNode(node);
     const selectorRules = (read?.rules ?? []).filter((rule): rule is ParsedSelectorRule => rule.kind === 'selector');
     for (const rule of read?.rules ?? []) if (rule.kind === 'definition') claimDefinition(node, rule);
@@ -308,6 +313,10 @@ export function applyResponsiveStyles(
         }
       }
       if (selectorRules.length > 0) classes.push(ruleClassFor(node, selectorRules));
+      if (hoverPreset && !isTextNodeType(node.type)) {
+        hoverPresets.add(hoverPreset);
+        classes.push(hoverPresetClass(hoverPreset));
+      }
       if (classes.length > 0) {
         const existing = typeof props.className === 'string' ? props.className.trim() : '';
         props.className = [...(existing ? [existing] : []), ...classes].join(' ');
@@ -324,6 +333,7 @@ export function applyResponsiveStyles(
   const css = buildResponsiveCss(rules, breakpoints, {
     onDrop: d => dropped.push(d),
     definitions,
+    hoverPresets: [...hoverPresets],
     authored,
     fieldGuard: hasRules,
     onDropRule: ({ className, ruleId, reason }: DroppedRule) => problems.push({ node: className, rule: ruleId, reason }),
