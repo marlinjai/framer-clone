@@ -1,22 +1,22 @@
 {
-  "generatedAt": "2026-11-02T06:43:42.627Z",
+  "generatedAt": "2026-11-02T08:03:48.315Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 275,
+  "durationSeconds": 399,
   "matrix": {
     "surfaces": {
       "format": {
-        "pass": 1702,
-        "fail": 131,
+        "pass": 1794,
+        "fail": 39,
         "notTested": 0,
         "total": 1833
       },
       "renderer": {
-        "pass": 1662,
-        "fail": 171,
+        "pass": 1758,
+        "fail": 75,
         "notTested": 0,
         "total": 1833
       },
@@ -139,14 +139,14 @@
       },
       "html-event-handler": {
         "format": {
-          "pass": 0,
-          "fail": 100,
+          "pass": 92,
+          "fail": 8,
           "notTested": 0,
           "total": 100
         },
         "renderer": {
-          "pass": 0,
-          "fail": 100,
+          "pass": 92,
+          "fail": 8,
           "notTested": 0,
           "total": 100
         },
@@ -465,8 +465,8 @@
           "total": 30
         },
         "renderer": {
-          "pass": 17,
-          "fail": 13,
+          "pass": 21,
+          "fail": 9,
           "notTested": 0,
           "total": 30
         },
@@ -3650,106 +3650,106 @@
       "html-element-attribute:video.preload": "pass pass pass pass pass",
       "html-element-attribute:video.src": "pass pass pass pass pass",
       "html-element-attribute:video.width": "pass pass attribute-read-as-style pass attribute-read-as-style",
-      "html-event-handler:onanimationcancel": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onanimationend": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onanimationiteration": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onanimationstart": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onauxclick": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onbeforeinput": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onanimationcancel": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onanimationend": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onanimationiteration": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onanimationstart": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onauxclick": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onbeforeinput": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
       "html-event-handler:onbeforematch": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
       "html-event-handler:onbeforexrselect": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onblur": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onclick": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:oncontentvisibilityautostatechange": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:oncontextmenu": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:oncopy": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:oncut": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:ondblclick": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onfocus": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onfullscreenchange": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onfullscreenerror": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:ongotpointercapture": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:oninput": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onkeydown": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onkeyup": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onlostpointercapture": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onmousedown": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onmouseenter": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onmouseleave": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onmousemove": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onmouseout": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onmouseover": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onmouseup": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onpaste": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onpointercancel": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onpointerdown": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onpointerenter": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onpointerleave": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onpointermove": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onpointerout": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onpointerover": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onpointerup": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onscroll": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onscrollend": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onscrollsnapchange": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onscrollsnapchanging": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onblur": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onclick": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:oncontentvisibilityautostatechange": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:oncontextmenu": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:oncopy": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:oncut": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:ondblclick": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onfocus": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onfullscreenchange": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onfullscreenerror": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:ongotpointercapture": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:oninput": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onkeydown": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onkeyup": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onlostpointercapture": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onmousedown": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onmouseenter": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onmouseleave": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onmousemove": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onmouseout": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onmouseover": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onmouseup": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onpaste": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onpointercancel": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onpointerdown": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onpointerenter": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onpointerleave": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onpointermove": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onpointerout": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onpointerover": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onpointerup": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onscroll": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onscrollend": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onscrollsnapchange": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onscrollsnapchanging": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
       "html-event-handler:onsecuritypolicyviolation": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:ontransitioncancel": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:ontransitionend": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:ontransitionrun": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:ontransitionstart": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onwheel": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:ontransitioncancel": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:ontransitionend": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:ontransitionrun": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:ontransitionstart": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onwheel": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
       "html-event-handler:oncontextlost": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
       "html-event-handler:oncontextrestored": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:oncancel": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onclose": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onbeforetoggle": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onchange": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:oncommand": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:ondrag": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:ondragend": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:ondragenter": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:ondragleave": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:ondragover": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:ondragstart": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:ondrop": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onload": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:ontoggle": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onformdata": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onreset": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onsubmit": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:oninvalid": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onselect": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onselectionchange": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onabort": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:oncanplay": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:oncanplaythrough": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:ondurationchange": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onemptied": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:oncancel": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onclose": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onbeforetoggle": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onchange": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:oncommand": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:ondrag": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:ondragend": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:ondragenter": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:ondragleave": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:ondragover": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:ondragstart": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:ondrop": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onload": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:ontoggle": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onformdata": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onreset": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onsubmit": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:oninvalid": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onselect": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onselectionchange": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onabort": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:oncanplay": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:oncanplaythrough": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:ondurationchange": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onemptied": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
       "html-event-handler:onencrypted": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onended": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onerror": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onloadeddata": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onloadedmetadata": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onloadstart": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onpause": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onplay": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onplaying": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onprogress": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onratechange": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onseeked": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onseeking": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onstalled": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onsuspend": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:ontimeupdate": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onvolumechange": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onwaiting": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onended": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onerror": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onloadeddata": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onloadedmetadata": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onloadstart": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onpause": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onplay": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onplaying": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onprogress": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onratechange": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onseeked": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onseeking": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onstalled": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onsuspend": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:ontimeupdate": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onvolumechange": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onwaiting": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
       "html-event-handler:onwaitingforkey": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
       "html-event-handler:onslotchange": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:oncuechange": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onenterpictureinpicture": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onleavepictureinpicture": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
-      "html-event-handler:onresize": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:oncuechange": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onenterpictureinpicture": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onleavepictureinpicture": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onresize": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
       "svg-element:a": "pass pass pass panel-no-tag-choice pass",
       "svg-element:animate": "pass pass pass panel-no-tag-choice pass",
       "svg-element:animateMotion": "pass pass pass panel-no-tag-choice pass",
@@ -5049,7 +5049,7 @@
       "aria-pattern:alertdialog": "pass pass canvas-editor-context pass ai-attribute-allowlist",
       "aria-pattern:breadcrumb": "pass pass pass pass pass",
       "aria-pattern:button": "pass pass canvas-editor-context pass pass",
-      "aria-pattern:carousel": "pass behaviour-state behaviour-state pass pass",
+      "aria-pattern:carousel": "pass pass canvas-editor-context pass pass",
       "aria-pattern:checkbox": "pass pass pass pass ai-attribute-allowlist",
       "aria-pattern:combobox": "pass behaviour-state behaviour-state pass ai-attribute-allowlist",
       "aria-pattern:dialog-modal": "pass pass canvas-editor-context pass ai-attribute-allowlist",
@@ -5068,9 +5068,9 @@
       "aria-pattern:spinbutton": "pass pass pass pass ai-attribute-allowlist",
       "aria-pattern:switch": "pass pass pass pass ai-attribute-allowlist",
       "aria-pattern:table": "pass pass pass pass pass",
-      "aria-pattern:tabs": "pass behaviour-state behaviour-state pass pass",
-      "aria-pattern:toolbar": "pass behaviour-state behaviour-state pass pass",
-      "aria-pattern:tooltip": "pass behaviour-state behaviour-state pass pass",
+      "aria-pattern:tabs": "pass pass canvas-editor-context pass pass",
+      "aria-pattern:toolbar": "pass pass canvas-editor-context pass pass",
+      "aria-pattern:tooltip": "pass pass canvas-editor-context pass pass",
       "aria-pattern:treeview": "pass behaviour-state behaviour-state pass pass",
       "aria-pattern:treegrid": "pass behaviour-state behaviour-state pass pass",
       "aria-pattern:windowsplitter": "pass behaviour-state behaviour-state pass pass",
@@ -5111,15 +5111,15 @@
     "total": 14,
     "checks": {
       "screenshot": {
-        "pass": 77,
+        "pass": 79,
         "total": 90
       },
       "computed-styles": {
-        "pass": 69,
+        "pass": 66,
         "total": 90
       },
       "accessibility-tree": {
-        "pass": 72,
+        "pass": 78,
         "total": 90
       },
       "interaction": {
@@ -5728,15 +5728,15 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 7,
+            "pass": 9,
             "total": 9
           },
           "computed-styles": {
-            "pass": 3,
+            "pass": 0,
             "total": 9
           },
           "accessibility-tree": {
-            "pass": 3,
+            "pass": 9,
             "total": 9
           },
           "interaction": {
@@ -5748,18 +5748,18 @@
           {
             "fixture": "radix-tabs",
             "viewport": "Desktop",
-            "state": "arrow key changes the tab",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "behaviour-state",
-            "detail": "28 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.\""
+            "gap": "mixed-text",
+            "detail": "3 differences, first: page: text \"AccountPasswordChangeyourname.\" became \"AccountPasswordChangeyourname.Changeyour\""
           },
           {
             "fixture": "radix-tabs",
             "viewport": "Desktop",
             "state": "arrow key changes the tab",
-            "check": "accessibility-tree",
+            "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "original \"- tablist \\\"Settings\\\":\\n  - tab \\\"Account\\\"\\n  - tab \\\"Password\\\" [selected]\\n- tabpanel \\\"Password\\\": Change your password.\", replica \"- tablist \\\"Settings\\\":\\n  - tab \\\"Account\\\" [selected]\\n  - tab \\\"Password\\\"\\n- tabpanel \\\"A"
+            "detail": "3 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.Changeyour\""
           },
           {
             "fixture": "radix-tabs",
@@ -5775,15 +5775,7 @@
             "state": "click changes the tab",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "22 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.\""
-          },
-          {
-            "fixture": "radix-tabs",
-            "viewport": "Desktop",
-            "state": "click changes the tab",
-            "check": "accessibility-tree",
-            "gap": "behaviour-state",
-            "detail": "original \"- tablist \\\"Settings\\\":\\n  - tab \\\"Account\\\"\\n  - tab \\\"Password\\\" [selected]\\n- tabpanel \\\"Password\\\": Change your password.\", replica \"- tablist \\\"Settings\\\":\\n  - tab \\\"Account\\\" [selected]\\n  - tab \\\"Password\\\"\\n- tabpanel \\\"A"
+            "detail": "3 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.Changeyour\""
           },
           {
             "fixture": "radix-tabs",
@@ -5796,10 +5788,10 @@
           {
             "fixture": "radix-tabs",
             "viewport": "Tablet",
-            "state": "arrow key changes the tab",
-            "check": "screenshot",
-            "gap": "behaviour-state",
-            "detail": "0.11 percent of pixels differ"
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "mixed-text",
+            "detail": "3 differences, first: page: text \"AccountPasswordChangeyourname.\" became \"AccountPasswordChangeyourname.Changeyour\""
           },
           {
             "fixture": "radix-tabs",
@@ -5807,15 +5799,7 @@
             "state": "arrow key changes the tab",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "28 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.\""
-          },
-          {
-            "fixture": "radix-tabs",
-            "viewport": "Tablet",
-            "state": "arrow key changes the tab",
-            "check": "accessibility-tree",
-            "gap": "behaviour-state",
-            "detail": "original \"- tablist \\\"Settings\\\":\\n  - tab \\\"Account\\\"\\n  - tab \\\"Password\\\" [selected]\\n- tabpanel \\\"Password\\\": Change your password.\", replica \"- tablist \\\"Settings\\\":\\n  - tab \\\"Account\\\" [selected]\\n  - tab \\\"Password\\\"\\n- tabpanel \\\"A"
+            "detail": "3 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.Changeyour\""
           },
           {
             "fixture": "radix-tabs",
@@ -5831,15 +5815,7 @@
             "state": "click changes the tab",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "22 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.\""
-          },
-          {
-            "fixture": "radix-tabs",
-            "viewport": "Tablet",
-            "state": "click changes the tab",
-            "check": "accessibility-tree",
-            "gap": "behaviour-state",
-            "detail": "original \"- tablist \\\"Settings\\\":\\n  - tab \\\"Account\\\"\\n  - tab \\\"Password\\\" [selected]\\n- tabpanel \\\"Password\\\": Change your password.\", replica \"- tablist \\\"Settings\\\":\\n  - tab \\\"Account\\\" [selected]\\n  - tab \\\"Password\\\"\\n- tabpanel \\\"A"
+            "detail": "3 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.Changeyour\""
           },
           {
             "fixture": "radix-tabs",
@@ -5852,10 +5828,10 @@
           {
             "fixture": "radix-tabs",
             "viewport": "Mobile",
-            "state": "arrow key changes the tab",
-            "check": "screenshot",
-            "gap": "behaviour-state",
-            "detail": "0.33 percent of pixels differ"
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "mixed-text",
+            "detail": "3 differences, first: page: text \"AccountPasswordChangeyourname.\" became \"AccountPasswordChangeyourname.Changeyour\""
           },
           {
             "fixture": "radix-tabs",
@@ -5863,15 +5839,7 @@
             "state": "arrow key changes the tab",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "28 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.\""
-          },
-          {
-            "fixture": "radix-tabs",
-            "viewport": "Mobile",
-            "state": "arrow key changes the tab",
-            "check": "accessibility-tree",
-            "gap": "behaviour-state",
-            "detail": "original \"- tablist \\\"Settings\\\":\\n  - tab \\\"Account\\\"\\n  - tab \\\"Password\\\" [selected]\\n- tabpanel \\\"Password\\\": Change your password.\", replica \"- tablist \\\"Settings\\\":\\n  - tab \\\"Account\\\" [selected]\\n  - tab \\\"Password\\\"\\n- tabpanel \\\"A"
+            "detail": "3 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.Changeyour\""
           },
           {
             "fixture": "radix-tabs",
@@ -5887,15 +5855,7 @@
             "state": "click changes the tab",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "22 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.\""
-          },
-          {
-            "fixture": "radix-tabs",
-            "viewport": "Mobile",
-            "state": "click changes the tab",
-            "check": "accessibility-tree",
-            "gap": "behaviour-state",
-            "detail": "original \"- tablist \\\"Settings\\\":\\n  - tab \\\"Account\\\"\\n  - tab \\\"Password\\\" [selected]\\n- tabpanel \\\"Password\\\": Change your password.\", replica \"- tablist \\\"Settings\\\":\\n  - tab \\\"Account\\\" [selected]\\n  - tab \\\"Password\\\"\\n- tabpanel \\\"A"
+            "detail": "3 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.Changeyour\""
           },
           {
             "fixture": "radix-tabs",
@@ -9859,8 +9819,8 @@
   },
   "roundTrip": {
     "nodesToJsxToNodes": {
-      "pass": 111,
-      "total": 111
+      "pass": 115,
+      "total": 115
     },
     "jsxToNodesToRender": {
       "pass": 11,
@@ -10228,6 +10188,26 @@
         "pass": true
       },
       {
+        "id": "preset: tabs",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "preset: toolbar",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "preset: tooltip",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "preset: carousel",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
         "id": "synthetic: responsive style map",
         "direction": "nodes-jsx-nodes",
         "pass": true
@@ -10551,16 +10531,6 @@
   },
   "gaps": [
     {
-      "id": "blocked-event-handlers",
-      "description": "A stored event handler attribute is a string of code, so both renderers drop it on purpose (blockedNodes.ts). What closes this is a stored behaviour for the event: the behaviour model or custom code, neither of which exists yet.",
-      "matrixCells": 500,
-      "corpusChecks": 0,
-      "fixtures": [],
-      "onlyGapOf": [],
-      "roundTripCases": 0,
-      "cost": 500
-    },
-    {
       "id": "panel-no-general-editor",
       "description": "What the Custom section of the properties panel, the general style and attribute editor, cannot write: SVG and MathML attributes.",
       "matrixCells": 360,
@@ -10569,6 +10539,16 @@
       "onlyGapOf": [],
       "roundTripCases": 0,
       "cost": 360
+    },
+    {
+      "id": "blocked-event-handlers",
+      "description": "A stored event handler attribute is a string of code, so both renderers drop it on purpose (blockedNodes.ts). A cell here means no stored action ran from a real cause: the note says why, and the published page and the format already run most of them (events.score.ts). The canvas, the panel and the AI columns still wait for slices B10 to B12.",
+      "matrixCells": 316,
+      "corpusChecks": 0,
+      "fixtures": [],
+      "onlyGapOf": [],
+      "roundTripCases": 0,
+      "cost": 316
     },
     {
       "id": "unclassified",
@@ -10616,23 +10596,6 @@
       "cost": 111
     },
     {
-      "id": "behaviour-state",
-      "description": "Behaviour and state: no way to say that one element changes another.",
-      "matrixCells": 26,
-      "corpusChecks": 67,
-      "fixtures": [
-        "radix-accordion",
-        "radix-tabs",
-        "radix-dialog"
-      ],
-      "onlyGapOf": [
-        "radix-tabs",
-        "radix-dialog"
-      ],
-      "roundTripCases": 0,
-      "cost": 93
-    },
-    {
       "id": "panel-no-tag-choice",
       "description": "The tag picker of the Custom section does not offer SVG and MathML elements.",
       "matrixCells": 92,
@@ -10653,6 +10616,22 @@
       "onlyGapOf": [],
       "roundTripCases": 0,
       "cost": 82
+    },
+    {
+      "id": "behaviour-state",
+      "description": "Behaviour and state: no way to say that one element changes another.",
+      "matrixCells": 18,
+      "corpusChecks": 59,
+      "fixtures": [
+        "radix-accordion",
+        "radix-tabs",
+        "radix-dialog"
+      ],
+      "onlyGapOf": [
+        "radix-dialog"
+      ],
+      "roundTripCases": 0,
+      "cost": 77
     },
     {
       "id": "page-level-css",
@@ -10705,6 +10684,16 @@
       "cost": 12
     },
     {
+      "id": "canvas-editor-context",
+      "description": "The contract passes on the published page, but the mounted editor changes the outcome: Space pans, a link does not navigate, and the editor's own main element stops a header inside it being a banner. Closing it takes an interact mode on the canvas.",
+      "matrixCells": 10,
+      "corpusChecks": 0,
+      "fixtures": [],
+      "onlyGapOf": [],
+      "roundTripCases": 0,
+      "cost": 10
+    },
+    {
       "id": "import-dynamic-logic",
       "description": "JSX that is a program, not markup: reported as left over by the static import, as the plan requires.",
       "matrixCells": 0,
@@ -10727,14 +10716,16 @@
       "cost": 6
     },
     {
-      "id": "canvas-editor-context",
-      "description": "The contract passes on the published page, but the mounted editor changes the outcome: Space pans, a link does not navigate, and the editor's own main element stops a header inside it being a banner. Closing it takes an interact mode on the canvas.",
-      "matrixCells": 6,
-      "corpusChecks": 0,
-      "fixtures": [],
+      "id": "mixed-text",
+      "description": "Text mixed with elements: text beside an element is lost or lands out of order.",
+      "matrixCells": 0,
+      "corpusChecks": 3,
+      "fixtures": [
+        "radix-tabs"
+      ],
       "onlyGapOf": [],
       "roundTripCases": 0,
-      "cost": 6
+      "cost": 3
     },
     {
       "id": "renderer-drops-value",
@@ -11323,7 +11314,6 @@
       "aria-orientation",
       "aria-posinset",
       "aria-roledescription",
-      "aria-selected",
       "aria-setsize",
       "aria-valuemax",
       "aria-valuemin",
@@ -11572,6 +11562,12 @@
       "div",
       "img",
       "p"
+    ],
+    "presetsPlaced": [
+      "tabs",
+      "toolbar",
+      "tooltip",
+      "carousel"
     ],
     "rawFieldRows": [
       "css-at-rule:@container",

@@ -47,6 +47,26 @@ function withoutBehaviour(node: ComponentNode): ComponentNode {
   };
 }
 
+/**
+ * The props the panel has to be able to write. A rule on a state or on the gate is the CSS
+ * of stored behaviour and goes with `behaviour`; `rules` stays only for a plain rule, which
+ * the panel writes through its raw field.
+ */
+function panelProps(root: ComponentNode, props: Set<string>): string[] {
+  const rules: Record<string, unknown>[] = [];
+  const walk = (node: ComponentNode) => {
+    const stored = (node.props as { rules?: unknown } | undefined)?.rules;
+    if (Array.isArray(stored)) rules.push(...(stored as Record<string, unknown>[]));
+    node.children?.forEach(walk);
+  };
+  walk(root);
+  const ofBehaviour = (rule: Record<string, unknown>) => 'when' in rule || 'gate' in rule;
+  const out = new Set([...props].filter((prop) => prop !== 'rules'));
+  if (rules.some(ofBehaviour)) out.add('behaviour');
+  if (rules.some((rule) => !ofBehaviour(rule))) out.add('rules');
+  return [...out];
+}
+
 /** Whether the validator keeps every tag and every prop of the tree. */
 function generatorKeeps(root: ComponentNode): { kept: boolean; lost: string } {
   const toRaw = (node: ComponentNode): Record<string, unknown> => ({
@@ -126,7 +146,7 @@ describe('coverage matrix: WAI-ARIA Authoring Practices patterns', () => {
       ai[key] = generated.kept ? { status: 'pass' } : { status: 'fail', gap: 'ai-attribute-allowlist', note: `lost: ${generated.lost}` };
 
       const { tags, props } = treeVocabulary(tree);
-      vocabulary[key] = { tags: [...tags], props: [...props], ...(pattern.preset ? { preset: pattern.preset } : {}) };
+      vocabulary[key] = { tags: [...tags], props: panelProps(tree, props), ...(pattern.preset ? { preset: pattern.preset } : {}) };
     }
 
     writeOut('patterns', { format, renderer, canvas, ai, vocabulary });

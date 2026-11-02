@@ -1184,6 +1184,8 @@ The review (`2026-11-02-behaviour-model-review.md`, "Slice B3 and B4", probes be
 
 **Tabs, toolbar, tooltip and carousel are presets,** in `src/lib/behaviour/presets/`, on offer in the palette under "Interactive", and the score's four patterns take their trees from the same functions. Each passes its full contract on the published page. No verb, field or byte of the runtime was added.
 
+**The score's run:** `renderer` 1,754 to 1,758 of 1,833, the four pattern rows. `corpusChecks` 245 to 250, from `radix-tabs` built from the preset: its screenshot and its accessibility tree now match in all 9 states, and it still fails on computed styles, because the text of a panel that is not selected is on the page and Radix does not render it. `roundTrip` reads 126, which `main` already measured. Format, canvas, panel and AI unchanged. One run had `onanimationcancel` time out under load, a proof from B5 this slice does not touch; the next run passed it.
+
 **One `derive` step per preset is the whole preset.** Building one lays out its nodes and derives once; adding a tab or a slide clones the last item and derives again. Derive writes every generated entry, marked `preset: true`, and keeps everything else, so a person's own trigger survives and runs after the generated ones. `addTab`, `removeTab` and `addSlide` are those functions. The panel that calls them is slice B11's.
 
 **Also decided while building it, say so if you disagree:**
@@ -1195,9 +1197,9 @@ The review (`2026-11-02-behaviour-model-review.md`, "Slice B3 and B4", probes be
 - **A tooltip without the gate is in the flow,** by a `gate: 'off'` rule, so with scripts off it is the control's description and covers nothing.
 - **A seed starts every id a preset writes,** node ids, which a preset also uses as element ids, and state ids, so two presets on a page, or one inside another, stay apart. The palette's seed is the kind and 8 characters of a fresh identifier.
 - **Duplicating any node now moves an element `id` that something in the copy points at,** with what points at it (`renewCopyIds` in `idRefs.ts`, called by `PageModel.duplicateComponent`). A duplicated tab list pointed at the first one's panels before. An `id` nothing in the copy points at stays, as in a clone.
-- **The panel cell counts a pattern's `behaviour` only when the palette really places that preset** (`matrix.panel.jsdom.score.tsx` drops each one on a page and reads what landed), as "Score changes" says.
+- **The panel cell counts a pattern's `behaviour` only when the palette really places that preset** (`matrix.panel.jsdom.score.tsx` drops each one on a page and reads what landed), as "Score changes" says. A rule with `when` or `gate` is that behaviour's CSS and counts with it. A plain rule, such as the carousel's reduced motion one, counts through the raw field, which is where the panel writes any rule. No pattern held a rule before, so nothing else moved.
 - **The AI cell asks of a preset's tree what it asked of the aria-only tree:** `behaviour`, and rules on the gate or on a state, are left out of what the validator is given, because the validator learns `behaviour` in B12. B12 takes that out of `patterns.score.ts`. This keeps the four cells passing for the same reason as before, not because the generator can write a working tab list.
-- **`radix-tabs` is built from `deriveTabs`.** It still fails, on the page base and on the text of the hidden panel, which Radix does not render and a page without a script has to.
+- **`radix-tabs` is built from `deriveTabs`.** It still fails on the text of the hidden panel, which Radix does not render and a page without a script has to show.
 - **The score bundles the runtime once,** in `test/score/lib/runtime.ts`, shared by the event proofs, the patterns and the corpus.
 
 ## Review findings not adopted
