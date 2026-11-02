@@ -82,8 +82,7 @@ const CANVAS_ROOTS = [VIEWPORT_ROOT, FLOATING_ROOT];
 /**
  * A frame's content in Interact. The canvas takes text selection away (`select-none` on
  * the ground), which would leave a field's text and a paragraph unselectable, so the page
- * gets it back. Touch scrolling needs nothing here: a scroller inside the page is where a
- * finger's pan stops looking at the canvas's `touch-action: none`.
+ * gets it back. Touch is Canvas.tsx's: the ground drops `touch-action: none` in Interact.
  */
 const INTERACT_CONTENT_STYLE: React.CSSProperties = { userSelect: 'text', WebkitUserSelect: 'text' };
 
