@@ -412,6 +412,10 @@ describe('reads', () => {
     const withSite = await call(s, 'describe_vocabulary', { siteId: 'site-1' });
     expect((withSite.structuredContent.site as { pages: unknown[] }).pages).toHaveLength(1);
 
+    const revisions = await call(s, 'list_revisions', { siteId: 'site-1' });
+    expect(revisions.structuredContent).toMatchObject({ live: 7, status: 'published' });
+    expect((revisions.structuredContent.revisions as Array<{ number: number }>).map((r) => r.number)).toEqual([7, 6]);
+
     const preview = await call(s, 'preview_url', { siteId: 'site-1', pageId: 'home' });
     expect(preview.structuredContent.url).toBe('https://app.example/projects/site-1/preview?page=home');
   });
@@ -422,6 +426,11 @@ describe('reads', () => {
     expect(errorOf(await call(s, 'get_page', { siteId: 'site-1', pageId: 'missing' })).code).toBe('page_not_found');
     expect(errorOf(await call(s, 'get_page', { siteId: 'site-1', pageId: 'home', cursor: 'no-such-node' })).code).toBe('invalid_request');
     expect(errorOf(await call(s, 'preview_url', { siteId: 'site-1', pageId: 'missing' })).code).toBe('page_not_found');
+    expect(errorOf(await call(s, 'describe_vocabulary', { siteId: 'nope' })).code).toBe('site_not_found');
+    s.mock.listRevisions.mockRejectedValueOnce(new SiteNotFoundError('nope'));
+    expect(errorOf(await call(s, 'list_revisions', { siteId: 'nope' })).code).toBe('site_not_found');
+    s.mock.listSites.mockRejectedValueOnce(new Error('database down'));
+    expect(errorOf(await call(s, 'list_sites')).code).toBe('failed');
     const bad = await call(s, 'get_site', { siteId: 42, extra: true });
     expect(errorOf(bad)).toMatchObject({ code: 'invalid_request' });
     expect((errorOf(bad).issues as string[]).length).toBeGreaterThan(0);
@@ -643,6 +652,18 @@ describe('publish confirmed by a one-time token', () => {
     expect(s.confirmations.size).toBe(0);
   });
 
+  it('a rate limit on the confirmed call does not spend the person\'s yes', async () => {
+    const writes = createPageGenRateLimiter({ maxPerWindow: 1, windowMs: 60_000 });
+    const s = setup({ deps: { limits: { writes, images: createPageGenRateLimiter() } } });
+    const token = (await call(s, 'publish', { siteId: 'site-1', expectedVersion: 3 })).structuredContent.confirmationToken as string;
+    // Another write of this key takes the only slot of the window.
+    expect(writes.acquire('key:key_1').ok).toBe(true);
+    const limitedCall = await call(s, 'publish', { siteId: 'site-1', expectedVersion: 3, confirmationToken: token });
+    expect(errorOf(limitedCall).code).toBe('rate_limited');
+    expect(s.confirmations.size).toBe(1);
+    expect(s.state.published).toHaveLength(0);
+  });
+
   it('a token expires', async () => {
     let now = 1_000_000;
     const s = setup({ now: () => now });
@@ -803,6 +824,14 @@ describe('publish confirmed through the client dialog (elicitation)', () => {
       expect(result.structuredContent.confirmationRequired).toBe(true);
     }
     expect(s.state.published).toHaveLength(0);
+  });
+
+  it('a client that does not accept a stream gets plain JSON and a token even with the dialog capability', async () => {
+    const s = setup();
+    const session = await initialize(s, { elicitation: {} });
+    const res = await s.handler.POST(post(s.key, rpc('tools/call', { name: 'publish', arguments: { siteId: 'site-1', expectedVersion: 3 } }), { 'mcp-session-id': session, accept: 'application/json' }));
+    expect(res.headers.get('content-type')).toBe('application/json');
+    expect(((await res.json()) as { result: { structuredContent: Record<string, unknown> } }).result.structuredContent.confirmationRequired).toBe(true);
   });
 
   it('a read tool is plain JSON even with the dialog capability', async () => {

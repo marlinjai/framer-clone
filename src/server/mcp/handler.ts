@@ -249,7 +249,8 @@ export function createMcpHandler(deps: McpDeps) {
 
     const session = readSessionId(request.headers.get('mcp-session-id'), fingerprint);
     // A single confirming tool call from a client with a dialog: answered as a stream.
-    if (!batch && isRequest(parsed) && parsed.method === 'tools/call' && parsed.id !== undefined && session?.elicitation) {
+    const acceptsStream = (request.headers.get('accept') ?? '').includes('text/event-stream');
+    if (!batch && acceptsStream && isRequest(parsed) && parsed.method === 'tools/call' && parsed.id !== undefined && session?.elicitation) {
       const tool = findTool(parsed.params?.name);
       if (tool?.confirms) return streamedCall(request, verified, parsed, fingerprint);
     }

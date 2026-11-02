@@ -177,6 +177,32 @@ async function confirmWithPerson(
   );
 }
 
+/**
+ * Confirm, then write under the per-key write limit. A call that brings a token
+ * takes its write slot first, so a rate limit never spends the person's yes. A
+ * call that asks through the dialog takes it after the answer, so a dialog left
+ * open does not block the key's other writes (only a call whose token turns out
+ * invalid and that then asks through the dialog holds it while asking; a client
+ * with a dialog is never handed a token in the first place).
+ */
+async function confirmedWrite(
+  ctx: ToolContext,
+  summary: string,
+  subject: string,
+  token: string | undefined,
+  done: string,
+  write: () => Promise<ToolResult>,
+): Promise<ToolResult> {
+  if (token) {
+    return limited(ctx.limits.writes, ctx, 'write', async () => {
+      const gate = await confirmWithPerson(ctx, summary, subject, token, done);
+      return gate === 'proceed' ? write() : gate;
+    });
+  }
+  const gate = await confirmWithPerson(ctx, summary, subject, undefined, done);
+  return gate === 'proceed' ? limited(ctx.limits.writes, ctx, 'write', write) : gate;
+}
+
 async function allowed(ctx: ToolContext, action: SiteOpsAction): Promise<ToolResult | null> {
   try {
     if (await ctx.caller.can(action)) return null;
@@ -480,9 +506,7 @@ export const TOOLS: ToolDef[] = [
       const where = site.value.address ? `at ${site.value.address}` : 'at a new address allocated now (its first publish)';
       const summary = `Publish ${siteSummaryLine(site.value.name, args.siteId, args.expectedVersion, site.value.pages)} ${where}? Visitors see it immediately. An earlier published version can be served again with a rollback.`;
       const subject = ['publish', ctx.key.tenantId, ctx.key.keyId, args.siteId, args.expectedVersion].join('|');
-      const gate = await confirmWithPerson(ctx, summary, subject, args.confirmationToken, 'published');
-      if (gate !== 'proceed') return gate;
-      return limited(ctx.limits.writes, ctx, 'write', async () =>
+      return confirmedWrite(ctx, summary, subject, args.confirmationToken, 'published', async () =>
         fromResult(await publish(ctx.caller, { siteId: args.siteId, expectedVersion: args.expectedVersion }, ctx.deps)),
       );
     },
@@ -519,9 +543,7 @@ export const TOOLS: ToolDef[] = [
       const live = history.value.live;
       const summary = `Serve version ${args.revision} of "${site.value.name}" (site ${args.siteId}, published ${target.createdAt.toISOString().slice(0, 16).replace('T', ' ')} UTC) to visitors again${live ? `, instead of version ${live}` : ''}${site.value.address ? ` at ${site.value.address}` : ''}? The draft stays as it is.`;
       const subject = ['rollback', ctx.key.tenantId, ctx.key.keyId, args.siteId, args.revision, site.value.version, live ?? 'none'].join('|');
-      const gate = await confirmWithPerson(ctx, summary, subject, args.confirmationToken, 'rolled back');
-      if (gate !== 'proceed') return gate;
-      return limited(ctx.limits.writes, ctx, 'write', async () =>
+      return confirmedWrite(ctx, summary, subject, args.confirmationToken, 'rolled back', async () =>
         fromResult(await rollback(ctx.caller, { siteId: args.siteId, number: args.revision }, ctx.deps)),
       );
     },
