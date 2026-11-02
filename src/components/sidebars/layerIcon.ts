@@ -18,9 +18,11 @@ import {
   Box,
   Component,
   Database,
+  Info,
   LayoutList,
   Minus,
   Monitor,
+  Repeat,
   Shapes,
   Sheet,
   Smartphone,
@@ -31,6 +33,7 @@ import {
 import type { ComponentInstance } from '@/models/ComponentModel';
 import { COMPONENT_REGISTRY, FORM_COMPONENTS, type ComponentRegistryEntry, type DataComponentKind } from '@/lib/componentRegistry';
 import { fieldTypeOf } from '@/lib/forms/definition';
+import { shopPartRoleOf, shopPartSpec } from '@/lib/commerce/parts';
 import { isComponentPlaceholderType } from '@/lib/components/placement';
 import { isTextNodeType } from '@/lib/renderer/textNode';
 import { CONTAINER_TAGS } from '@/lib/drag/resolveDropTarget';
@@ -110,6 +113,17 @@ export function layerIconOf(component: ComponentInstance, at?: LayerIconBreakpoi
   if (isTextNodeType(component.type)) return Type;
   if (component.isViewportNode) return viewportIconOf(component.label);
   if (isComponentPlaceholderType(component.type)) return Component;
+
+  // A shop part (src/lib/commerce/parts.ts) by what it is: its tag alone would call
+  // a notice whose text is the platform's an empty box.
+  const shopRole = shopPartRoleOf(component.props);
+  const shopSpec = shopRole ? shopPartSpec(shopRole) : undefined;
+  if (shopSpec) {
+    if (shopSpec.fixedText) return Info;
+    if (shopSpec.repeat) return Repeat;
+    if (shopSpec.tag === 'input') return shopRole === 'checkout.decline-input' ? FORM_COMPONENTS.formCheckbox.icon : FORM_COMPONENTS.formText.icon;
+    if (shopSpec.dynamicText) return Type;
+  }
 
   // A data component is a div the CMS or commerce renderer fills.
   const dataKind = component.props?.['data-component-kind'];

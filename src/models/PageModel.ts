@@ -38,6 +38,7 @@ import { expandPage, literalPageRoots, type PageExpansion } from '@/lib/componen
 import { extractBreakpoints, type ComponentSnapshotLike } from '@/lib/renderer/server/componentSnapshot';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { getComponentEntry } from '@/lib/componentRegistry';
+import { REQUIRED_SHOP_PART_MESSAGE, buildShopParts, holdsRequiredShopPart, shopControlKindOf, shopLocaleOf, withShopParts, type ShopTreeNode } from '@/lib/commerce/parts';
 import type { ApplyOutcome, GenerationUndoRecord } from '@/lib/ai/pageGen/apply';
 import { isVoidTag } from '@/lib/drag/voidTags';
 import { bareTextRefusal, isTextNodeType } from '@/lib/renderer/textNode';
@@ -102,6 +103,29 @@ function projectOf(page: object): { definitions: ComponentDefinitions } | undefi
     if ('definitions' in node) return node as { definitions: ComponentDefinitions };
   }
   return undefined;
+}
+
+/** The site language of the project around a page ('en' when it has none, such as a page on its own). */
+function siteLanguageOf(page: object): string | undefined {
+  let node: object = page;
+  while (hasParent(node)) {
+    node = getParent(node);
+    if ('siteSettings' in node) return (node as { siteSettings?: { language?: string } }).siteSettings?.language;
+  }
+  return undefined;
+}
+
+/**
+ * A shop control's parts (src/lib/commerce/parts.ts) as child nodes, in the site
+ * language: a checkout arrives with its button, payment step and messages, every
+ * one of them a node the designer styles. Nothing for any other node.
+ */
+function addShopParts(page: object, control: ComponentInstance): void {
+  const kind = shopControlKindOf(control.props);
+  if (!kind) return;
+  for (const part of buildShopParts(kind, control.id, shopLocaleOf(siteLanguageOf(page)), 'snapshot')) {
+    control.addChild(ComponentModel.create(part as ComponentSnapshotIn) as ComponentInstance);
+  }
 }
 
 /** The id of the definition this page belongs to, when it is one's. */
@@ -412,6 +436,7 @@ const PageModel = PageWithComponents
       );
       floating.setLabel(entry.label);
       addRegistryDefaultChildren(floating, entry.defaultChildren);
+      addShopParts(self, floating);
       self.canvasNodes.set(floating.id, floating);
       self.updatedAt = new Date();
       return self.canvasNodes.get(floating.id);
@@ -423,6 +448,7 @@ const PageModel = PageWithComponents
     if (!preset) {
       child.setLabel(entry.label);
       addRegistryDefaultChildren(child, entry.defaultChildren);
+      addShopParts(self, child);
     }
 
     const { parent, index } = insertPlace(self, target);
@@ -479,8 +505,10 @@ const PageModel = PageWithComponents
     const appTree = self.appComponentTree as ComponentInstance;
     const insertedIds = snapshots.map(s => s.id as string);
 
+    // A generated shop control gets its parts like a dropped one (src/lib/commerce/parts.ts).
+    const locale = shopLocaleOf(siteLanguageOf(self));
     const createAll = (parentId: string) =>
-      snapshots.map(s => ComponentModel.create({ ...s, parentId }) as ComponentInstance);
+      snapshots.map(s => ComponentModel.create(withShopParts({ ...s, parentId } as ShopTreeNode, locale, 'snapshot') as ComponentSnapshotIn) as ComponentInstance);
 
     if (mode === 'insert') {
       if (isVoidTag(target.type) || isTextNodeType(target.type) || target.props?.['data-component-kind']) {
@@ -632,6 +660,27 @@ const PageModel = PageWithComponents
     // Never destroy the app tree root or a viewport node via this action.
     const appTree = self.appComponentTree as ComponentInstance;
     if (component.id === appTree.id || component.isViewportNode) {
+      return false;
+    }
+
+    // A required part of a shop control (or a wrapper holding one) stays: the
+    // control cannot work without it. It can be restyled, or the whole control deleted.
+    const ancestors: ComponentInstance[] = [];
+    for (let parentId = component.parentId as string | undefined; parentId; ) {
+      const ancestor = findComponentInPage(self, parentId);
+      if (!ancestor || ancestors.includes(ancestor)) break;
+      ancestors.push(ancestor);
+      parentId = ancestor.parentId as string | undefined;
+    }
+    if (holdsRequiredShopPart(component, ancestors)) {
+      try {
+        getRoot<{ editorUI?: { setEditorNotice?: (notice: { kind: 'refused'; message: string }) => void } }>(self).editorUI?.setEditorNotice?.({
+          kind: 'refused',
+          message: REQUIRED_SHOP_PART_MESSAGE,
+        });
+      } catch {
+        // No editor around this tree: the refusal is the answer.
+      }
       return false;
     }
 

@@ -16,7 +16,9 @@
 //   - Both flags are model props on the project tree, so toggling them is an
 //     undoable step, saved with the project and synced to collaborators.
 
+import { getParent, hasParent } from 'mobx-state-tree';
 import type { ComponentInstance } from '@/models/ComponentModel';
+import { holdsRequiredShopPart } from '@/lib/commerce/parts';
 import type { PageModelType } from '@/models/PageModel';
 import type { EditorUIType } from '@/stores/EditorUIStore';
 import type { HistoryStoreInstance } from '@/stores/HistoryStore';
@@ -43,14 +45,32 @@ export function isLockedOnCanvas(component: ComponentInstance, find: FindCompone
   return ancestorIdsOf(component, find).some(id => !!find(id)?.canvasLocked);
 }
 
-/** Whether a Layers row offers Delete: never the page root or a breakpoint frame. */
+/** The node's ancestors in the tree, nearest first. */
+function treeAncestors(component: ComponentInstance): ComponentInstance[] {
+  const out: ComponentInstance[] = [];
+  let current: object = component;
+  for (let i = 0; i < 256 && hasParent(current); i++) {
+    current = getParent(current);
+    if (!Array.isArray(current) && 'props' in current) out.push(current as ComponentInstance);
+  }
+  return out;
+}
+
+/**
+ * Whether a Layers row offers Delete: never the page root or a breakpoint frame,
+ * and never a required part of a shop control (src/lib/commerce/parts.ts).
+ */
 export function canDeleteLayer(component: ComponentInstance): boolean {
   if (component.isViewportNode) return false;
+  if (holdsRequiredShopPart(component, treeAncestors(component))) return false;
   return component.hasParent || component.isFloatingElement;
 }
 
-/** Whether a Layers row offers Duplicate: the same nodes Delete accepts. */
-export const canDuplicateLayer = canDeleteLayer;
+/** Whether a Layers row offers Duplicate: any node but the page root and a breakpoint frame (a required part copies fine). */
+export function canDuplicateLayer(component: ComponentInstance): boolean {
+  if (component.isViewportNode) return false;
+  return component.hasParent || component.isFloatingElement;
+}
 
 /**
  * Duplicate from a Layers row or Cmd+D. When the row is part of the selection

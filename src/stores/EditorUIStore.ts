@@ -150,6 +150,9 @@ const EditorUIStore = types.model('EditorUI', {
   // The product a product page shows while designing (src/lib/commerce/productPreview.tsx),
   // by handle; undefined means the first in the catalogue. Never saved with the project.
   previewProductHandle: undefined as string | undefined,
+  // The state each shop control shows on the canvas (src/lib/commerce/parts.ts), by
+  // the control's node id; absent means its first state. Never saved with the project.
+  shopPreviewStates: {} as Readonly<Record<string, string>>,
   isResizing: false,
   // One rule shown on every copy of its node as though it applied (a state on
   // the canvas is otherwise dead). `ruleId` is a stored rule's id or a named state,
@@ -271,6 +274,12 @@ const EditorUIStore = types.model('EditorUI', {
     self.previewProductHandle = handle;
   },
 
+  /** The state a shop control shows on the canvas (ShopPreviewBar). */
+  setShopPreviewState(controlId: string, state: string) {
+    if (self.shopPreviewStates[controlId] === state) return;
+    self.shopPreviewStates = { ...self.shopPreviewStates, [controlId]: state };
+  },
+
   /** Shows one rule on every copy of its node, or none. */
   setPreviewRule(preview: { componentId: string; ruleId: string } | null) {
     self.previewRule = preview;
@@ -318,6 +327,7 @@ const EditorUIStore = types.model('EditorUI', {
     if (self.currentProject?.id !== project?.id) {
       self.editorNotice = undefined;
       self.previewProductHandle = undefined;
+      self.shopPreviewStates = {};
       self.editingComponent = undefined;
       self.selectedViewportNode = undefined;
       self.selectedComponents.clear();

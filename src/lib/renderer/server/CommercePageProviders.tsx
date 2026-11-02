@@ -19,15 +19,21 @@ import React from 'react';
 import { CommerceDataSourceContext } from '@/lib/commerce/context';
 import { getSharedHttpCommerceDataSource } from '@/lib/commerce/httpCommerceDataSource';
 import { CartProvider } from '@/lib/commerce/cart';
+import { shopLocaleOf } from '@/lib/commerce/parts';
+import { ShopLocaleContext } from '@/lib/commerce/shopRuntime';
 
 export interface CommercePageProvidersProps {
   children: React.ReactNode;
+  /** The site language: the shop controls speak it (their fixed notices and default texts). */
+  language?: string;
 }
 
-export default function CommercePageProviders({ children }: CommercePageProvidersProps) {
+export default function CommercePageProviders({ children, language }: CommercePageProvidersProps) {
   return (
     <CommerceDataSourceContext.Provider value={getSharedHttpCommerceDataSource()}>
-      <CartProvider>{children}</CartProvider>
+      <ShopLocaleContext.Provider value={shopLocaleOf(language)}>
+        <CartProvider>{children}</CartProvider>
+      </ShopLocaleContext.Provider>
     </CommerceDataSourceContext.Provider>
   );
 }

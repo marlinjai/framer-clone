@@ -276,7 +276,11 @@ describe('CheckoutButton pay declined (demo decline toggle)', () => {
     await act(async () => {
       fireEvent.click(container.querySelector('button[data-checkout-pay]')!);
     });
-    expect(container.querySelector('[data-checkout-payment-declined]')?.textContent).toMatch(/name, email and address/);
+    // Its own message, as an alert: missing details are not a failed payment.
+    const missing = container.querySelector('[data-checkout-buyer-missing]');
+    expect(missing?.textContent).toMatch(/name, email and address/);
+    expect(missing?.getAttribute('role')).toBe('alert');
+    expect(container.querySelector('[data-checkout-payment-declined]')).toBeNull();
     expect(authorize).not.toHaveBeenCalled();
   });
 });
@@ -695,20 +699,25 @@ describe('CheckoutButton unknown variant (422)', () => {
 describe('CheckoutButton where checkout is unavailable (the editor preview)', () => {
   afterEach(cleanup);
 
-  it('disables the button, says why, and never posts an order', () => {
+  it('keeps the designed button, says why when pressed, and never posts an order', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify([{ variantId: 'var_a', quantity: 1 }]));
     const { container } = render(
-      <CheckoutUnavailableContext.Provider value="Checkout is not available in the editor preview.">
+      <CheckoutUnavailableContext.Provider value="Orders cannot be placed in the editor preview.">
         <CartProvider>
           <CheckoutButton node={makeNode()} scope={createScope()} />
         </CartProvider>
       </CheckoutUnavailableContext.Provider>,
     );
     const button = container.querySelector('[data-checkout]') as HTMLButtonElement;
-    expect(button.disabled).toBe(true);
-    fireEvent.click(button);
-    expect(container.querySelector('[data-checkout-unavailable]')?.textContent).toContain('editor preview');
+    // The design is shown as it publishes, not greyed; nothing is said before a press.
+    await waitFor(() => expect(button.disabled).toBe(false));
+    expect(container.querySelector('[data-checkout-unavailable]')).toBeNull();
+    act(() => fireEvent.click(button));
+    const note = container.querySelector('[data-checkout-unavailable]');
+    expect(note?.textContent).toContain('editor preview');
+    expect(note?.getAttribute('role')).toBe('status');
+    expect(container.querySelector('[data-checkout-payment]')).toBeNull();
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
     window.localStorage.clear();

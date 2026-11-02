@@ -38,6 +38,7 @@ import { applyImageLoading, HeroPreload } from './imageLoading';
 import type { BreakpointRef } from '@/lib/responsive/cascade';
 import type { RenderBudget } from '@/lib/components/expand';
 import CommercePageProviders from './CommercePageProviders';
+import { shopLocaleOf, withShopParts } from '@/lib/commerce/parts';
 import { hoistStickyCta, stickyCtaCss, stickyCtaMeasureScript } from '@/lib/stickyCta/stickyCta';
 
 /**
@@ -190,7 +191,11 @@ export async function renderPublishedPage(
   // Map embeds (src/lib/mapEmbed/mapEmbed.ts) speak the site language and make the
   // page ask for `maps` consent: nothing of Google loads before the visitor says yes.
   const maps = withMapLanguage(sticky.root, consent?.language ?? 'en');
-  const hydrated = maps.root;
+  // Shop controls with every part they need (src/lib/commerce/parts.ts): a page saved
+  // before parts gets the default design in the site language, and a required part
+  // or an honesty notice cannot be missing or hidden. Before the stylesheet pass, so
+  // the parts' styles and states reach it like any node's.
+  const hydrated = withShopParts(maps.root, shopLocaleOf(consent?.language), 'node');
   const consentCategories: ConsentCategory[] = [
     ...(tracker ? (['analytics'] as const) : []),
     ...(maps.hasMap ? (['maps'] as const) : []),
@@ -272,7 +277,7 @@ export async function renderPublishedPage(
           // the consent banner above it. Constant text apart from numbers.
           <style data-fc-sticky-cta-style="" dangerouslySetInnerHTML={{ __html: stickyCtaCss(breakpoints) }} />
         ) : null}
-        <CommercePageProviders>{tree}</CommercePageProviders>
+        <CommercePageProviders language={consent?.language}>{tree}</CommercePageProviders>
         {sticky.bar ? (
           // Measures the bar for the page padding (a fallback height applies without it).
           <script data-fc-sticky-cta-measure="" dangerouslySetInnerHTML={{ __html: stickyCtaMeasureScript() }} />

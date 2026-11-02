@@ -155,8 +155,8 @@ library default of its kind; a plain system stack (system-ui, Georgia, ...) is k
 - defaults: {"data-component-kind":"cart-view","style":{"backgroundColor":"#f9fafb","border":"1px dashed #d1d5db","borderRadius":"8px","display":"flex","flexDirection":"column","gap":"8px","minHeight":"120px","padding":"16px"}}
 ### preset "checkoutButton" (Checkout, category commerce)
 - type: div
-- data component "checkout-button": renders a placeholder until the user binds it in the properties panel (bindable: label). Use it only when the brief clearly asks for this kind of content; never add children to it.
-- defaults: {"data-component-kind":"checkout-button","label":"Checkout","style":{"display":"inline-flex","padding":"4px"}}
+- shop control "checkout-button": the page adds its parts (buttons, fields, messages) as child nodes in the site language, which the user then styles. Use it only when the brief clearly asks for it; never add children to it.
+- defaults: {"data-component-kind":"checkout-button","style":{"alignItems":"flex-start","display":"flex","flexDirection":"column","gap":"8px","padding":"4px"}}
 ### preset "collection" (Collection, category data)
 - type: div
 - data component "collection": renders a placeholder until the user binds it in the properties panel (bindable: collection, filter, limit, sort). Use it only when the brief clearly asks for this kind of content; never add children to it.

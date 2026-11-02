@@ -103,12 +103,13 @@ describe('component registry commerce entries', () => {
   });
 
   it('declares bindableSlots for the picker on every entry that has a bindable prop', () => {
-    // The two source kinds plus the three label/empty-text controls declare
-    // slots; the variant-selector reads its product from scope (no slot).
+    // The two source kinds plus the label/empty-text controls declare slots; the
+    // variant-selector reads its product from scope (no slot). The checkout has
+    // none: its label is a part node (src/lib/commerce/parts.ts), bound like any text.
     expect(Object.keys(getBindableSlotsFor('productList'))).toContain('products');
     expect(Object.keys(getBindableSlotsFor('productDetail'))).toContain('product');
     expect(Object.keys(getBindableSlotsFor('addToCart'))).toContain('label');
-    expect(Object.keys(getBindableSlotsFor('checkoutButton'))).toContain('label');
+    expect(getBindableSlotsFor('checkoutButton')).toEqual({});
     expect(Object.keys(getBindableSlotsFor('cartView'))).toContain('emptyContent');
     // variant-selector has no data-source slot: getBindableSlotsFor stays graceful.
     expect(getBindableSlotsFor('variantSelector')).toEqual({});

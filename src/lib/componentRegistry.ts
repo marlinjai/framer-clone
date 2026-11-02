@@ -61,6 +61,7 @@ import type { BindableSlotMeta } from '@/lib/bindings/types';
 import { FORM_KIND_ATTR, DEFAULT_FORM_NAME, DEFAULT_SUCCESS_MESSAGE, type FieldType } from '@/lib/forms/definition';
 import { DEFAULT_STICKY_CTA, STICKY_CTA_ATTR, STICKY_CTA_MARKER } from '@/lib/stickyCta/stickyCta';
 import { MAP_EMBED_ATTR, MAP_EMBED_MARKER } from '@/lib/mapEmbed/mapEmbed';
+import { CHECKOUT_CONTROL_STYLE } from '@/lib/commerce/parts';
 
 export type ComponentCategory = 'basic' | 'layout' | 'data' | 'commerce' | 'form' | 'interactive';
 
@@ -836,20 +837,15 @@ export const COMPONENT_REGISTRY: Record<string, ComponentRegistryEntry> = {
     icon: CreditCardIcon,
     iconClassName: 'bg-indigo-100 text-indigo-600',
     htmlType: 'div',
+    // Its button, payment step and messages arrive as child nodes, each a part the
+    // designer styles and retypes (src/lib/commerce/parts.ts, added by
+    // PageModel.insertRegistryComponent in the site language). What they do stays
+    // the island's, so there is no label prop and no bindable slot here.
     defaultProps: {
       'data-component-kind': 'checkout-button',
-      label: 'Checkout',
-      style: {
-        display: 'inline-flex',
-        padding: '4px',
-      },
+      style: { ...CHECKOUT_CONTROL_STYLE },
     },
-    defaultSize: { width: 160, height: 48 },
-    bindableSlots: {
-      // The button label is bindable text; checkout posts the client cart
-      // (React context) to the order-create route, so there is no source slot.
-      label: { label: 'Label', allowedModes: ['read'], scopeHint: 'any' },
-    },
+    defaultSize: { width: 360, height: 48 },
   },
 
   ...FORM_COMPONENTS,

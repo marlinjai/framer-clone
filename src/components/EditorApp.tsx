@@ -32,6 +32,7 @@ import { DataSourceProviderContext } from '@/lib/bindings/dataSource/context';
 import { getSharedPrismaDataSourceProvider } from '@/lib/bindings/dataSource/prismaProvider';
 import EditorCommerceProvider from '@/components/EditorCommerceProvider';
 import ProductPreviewBar from '@/components/ProductPreviewBar';
+import ShopPreviewBar from '@/components/ShopPreviewBar';
 import PreviewOverlay, { previewRequestedInLocation } from '@/components/preview/PreviewOverlay';
 import type { ProjectSnapshotOut } from '@/models/ProjectModel';
 
@@ -301,6 +302,7 @@ export default function EditorApp({ projectSnapshot, projectVersion }: EditorApp
         <EditorNotice />
         <LegalTemplateNotice />
         <ProductPreviewBar />
+        <ShopPreviewBar />
       </div>
       {isPhone ? (
         <PhoneEditorChrome editorUI={rootStore.editorUI} />
