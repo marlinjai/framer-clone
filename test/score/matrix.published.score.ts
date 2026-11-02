@@ -10,6 +10,7 @@ import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { cssPropertyName, maxWidthBelow } from '@/lib/responsive/responsiveCss';
 import { CSS_PROP_SET } from '@/lib/styles/cssPropSet';
 import { deriveBreakpointKeys } from '@/lib/ai/pageGen/schema';
+import { TAUGHT_RULE_ROWS } from '@/lib/ai/pageGen/promptSections/rules';
 import { validateGeneration } from '@/lib/ai/pageGen/validate';
 import { isBlockedTag } from '@/lib/renderer/blockedNodes';
 import { COMPONENT_REGISTRY } from '@/lib/componentRegistry';
@@ -41,7 +42,7 @@ import {
   type NodeShape,
 } from './lib/universe';
 import { writeOut } from './lib/io';
-import { rowKey, type Cell, type Entry, type GapId, type SurfaceResults } from './lib/types';
+import { ACCEPTED_NOT_TAUGHT, rowKey, type Cell, type Entry, type GapId, type SurfaceResults } from './lib/types';
 
 const pass = (note?: string): Cell => ({ status: 'pass', ...(note ? { note } : {}) });
 const fail = (gap: GapId, note?: string): Cell => ({ status: 'fail', gap, ...(note ? { note } : {}) });
@@ -249,7 +250,9 @@ function probeRule(probe: RuleProbe, key: string, gap: GapId, presetNote?: strin
   results.renderer[key] = reached ? pass() : fail(gap, presetNote);
 
   const out = (generate({ type: 'div', props: { rules: [rule] } }).node?.props.rules ?? []) as unknown[];
-  results.ai[key] = out.some((kept) => JSON.stringify(kept) === JSON.stringify(rule)) ? pass() : fail(gap);
+  // Acceptance alone earns the cell: the label says the prompt does not ask for it.
+  const taught = TAUGHT_RULE_ROWS.has(key.slice(key.indexOf(':') + 1));
+  results.ai[key] = out.some((kept) => JSON.stringify(kept) === JSON.stringify(rule)) ? pass(taught ? undefined : ACCEPTED_NOT_TAUGHT) : fail(reached && stored ? 'ai-rule-refused' : gap);
 }
 
 /** A row the route owns: it is left red on purpose, whatever a node could hold. */

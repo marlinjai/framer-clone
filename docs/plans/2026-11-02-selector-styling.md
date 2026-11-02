@@ -555,7 +555,7 @@ top of its sheet. Motion in the panel follows the design skills' rules.
 ## AI output
 
 The validator gains `props.rules`, through the same parser, with each rule's body through the existing
-`style()` and `url()` checks. Everything parseable is accepted, which is what closes the column, and the
+`style()` and `url()` checks. Everything parseable is accepted, but for what reads a visitor (below), and the
 prompt teaches little, following the split the goal `fleet-ai-allowlists` introduces.
 
 - `schemaDocs` teaches Hover, Pressed and Focused on links and buttons, `::before` and `::after` for
@@ -567,6 +567,58 @@ prompt teaches little, following the split the goal `fleet-ai-allowlists` introd
   because fidelity is the point of an import.
 
 Rules from the generator need the canvas, or nobody can see what it made, so this slice follows slice 6.
+
+Decided while building slice 9, say so if you disagree:
+
+- **A generated rule is never kept in part.** A declaration the validator refuses, in any breakpoint of a map,
+  drops the whole rule, as the parser does. Only a repair keeps it: a kebab-case key, a font outside the
+  library, a z-index clamped, an unknown breakpoint key, a missing id.
+- **The motion rules also bind Normal and the review,** because a stored `@keyframes` can be played from
+  `props.style`, where no gate can hold it. So `infinite` is refused on the animation properties in both, a
+  stored name (`u-`) outside a rule is refused, and `validateReviewOps` refuses both for the same reason. A
+  count above 10, a `!`, and any function but a timing function in `animation`, `animationName` or
+  `animationIterationCount`, count as `infinite`, because each can hide it. The value is read as tokens with
+  its strings blanked first, because CSS needs no separator after a string or a `)`. Other Normal `animation`
+  values stay. This binds generated output only: nothing in the panel or the parser checks motion, so no
+  authored path shares it.
+- **The gate takes the animation and its start values.** A rule that also holds a colour splits in two, and
+  both count towards the cap, so a visitor who asked for reduced motion keeps the rest of the state. What a
+  keyframes of the generation moves goes behind the gate with it, and so does anything that hides a node
+  (`opacity:0`, `visibility:hidden`, `display:none`, a zero scale, a full clip), from the same rule, another
+  rule with the same parts, and the Normal and plain `&` rules of every node the animation can land on,
+  children under `& > p` included. From Normal it moves to a gated rule on the node that held it, so a visitor
+  with no preference sees what was written. A colour stays in Normal, because it hides nothing. Which child a
+  selector lands on is read wider than a browser would, because a child shown early costs less than one
+  never shown. Otherwise a reveal never shows for the visitor who asked for less motion.
+- **Bounded is not short.** A generated animation can still run ten times for a million seconds, thirty can
+  fit one value, and a `transition` under `@starting-style` is an entrance no gate covers. Each ends, and only
+  the animations sit behind the gate.
+- **A generated rule cannot read a visitor, on a list of allowed pseudo-classes:** the pointer states, the
+  structural ones, `:is`, `:not`, `:where` and `:has`. So `:checked`, `:valid`, `:placeholder-shown`, `:target`,
+  `:visited` and any new state are refused to the generator. Those rows lose their AI cell, on purpose, as
+  `ai-rule-refused`, and stay open to a person. This is why the AI column ends below this slice's ceiling.
+- **A generated rule cannot look past its node** (`looksBeyondNode` in `surfaces.ts`): no combinator inside
+  `:is`, `:where` or `:not`, no sibling step at the start of any `:has()` entry, at any depth, and no `@scope`
+  with a prelude. The one outward form kept is exactly `:is(.dark *)`.
+- **A generation with a rule keeps no address on another host,** in Normal or an `img`, but the stock library,
+  site paths and what the selected component already loads: its `style` values and the `src` of an `img`, never
+  its text, which reaches the model too. `&:hover` and a media condition remain, and a
+  rule can switch on what Normal holds, so without this a generation can still report a visitor. The address
+  goes rather than the rule. What stays open: a rule added beside an address the page already holds can
+  still switch it on, and only an enforced Content Security Policy closes that (open question 1), which now
+  matters more, because a prompt injection in a brief can write the rule.
+- **A generated selector holds at most 8 parts and `maxStyleValueChars` in total,** and a generation spends at
+  most 32 KiB of the page's 256 KiB rule budget, in sheet bytes, counting one block per part and per
+  breakpoint. Past a page cap the sheet drops a rule and all later ones, so this is what keeps a generation
+  from taking an owner's rules. **Where that stops:** the validator sees one generation, not the page. Seven
+  full generations earlier in the page than an owner's rule leave it in place, and the eighth, or fewer on a
+  page that already spends the budget, can remove it. The sheet reports the drop in its log and nothing refuses
+  it. A page-wide check would have to run where the whole page is known, at apply, which this slice does not do.
+- **Keyframes and `@position-try` go through every style check,** because a keyframe could otherwise animate a
+  z-index past the banner. Descriptors are no CSS properties, so only their values are checked.
+- **The single-value tells apply to rules,** because the tells screen reads `props.style` only.
+- **A review tree shows a rule's maps with breakpoint ids, and a selection sent back with them loses those
+  values with a warning,** as a `props.style` map does in a selection today. The review never edits a rule.
 
 ## React import and export
 
@@ -752,7 +804,7 @@ happened. These do not wait for Marlin.
 8. Attribute selectors on `value` with an operator are refused, as the protection for typed text.
 9. External addresses are refused inside rules and definitions, without limiting `:is()` and `:has()`.
 10. `@layer` is refused as a wrapper.
-11. Generated rules are capped at 24, while everything parseable is accepted.
+11. Generated rules are capped at 24, while everything parseable is accepted but what reads a visitor.
 12. A range comparison's `<` is rewritten by the parser rather than refused, so `<` still never reaches the
     sheet.
 

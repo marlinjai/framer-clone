@@ -10,6 +10,7 @@
 // therefore ONE HistoryStore entry: Cmd+Z reverts a whole generation in one step.
 
 import type { ComponentSnapshotIn } from '@/models/ComponentModel';
+import { isRuleList } from '@/lib/rules/rules';
 import { BASE_KEY, deriveBreakpointKeys, type BreakpointInput } from './schema';
 import type { GeneratedNodeSnapshot } from './validate';
 
@@ -55,6 +56,13 @@ function remapStyle(style: Record<string, unknown>, keyMap: Map<string, string>)
   return out;
 }
 
+/** A rule's declarations have the shape of props.style, so their maps need the same keys. */
+function remapRules(rules: unknown[], keyMap: Map<string, string>): unknown[] {
+  return rules.map((rule) =>
+    isPlainObject(rule) && isPlainObject(rule.style) ? { ...rule, style: remapStyle(rule.style, keyMap) } : rule,
+  );
+}
+
 /** Re-key every responsive map in a generated subtree to real breakpoint ids. */
 export function toEditorSnapshot(
   node: GeneratedNodeSnapshot,
@@ -62,6 +70,7 @@ export function toEditorSnapshot(
 ): ComponentSnapshotIn {
   const props = { ...node.props };
   if (isPlainObject(props.style)) props.style = remapStyle(props.style, keyMap);
+  if (isRuleList(props.rules)) props.rules = remapRules(props.rules, keyMap);
   return {
     ...node,
     props,

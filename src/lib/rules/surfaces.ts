@@ -202,6 +202,88 @@ export function constantConditions(text: string, kind: EditorSurfaceKind, live: 
   return out;
 }
 
+/** Every functional pseudo-class of `text` with its argument, in reading order, nested ones included. */
+function functionalPseudoClasses(text: string): { name: string; inner: string }[] {
+  const found: { name: string; inner: string }[] = [];
+  forEachPseudo(text, (name, isElement, end) => {
+    if (isElement || text[end] !== '(') return;
+    const close = closingParen(text, end);
+    if (close !== -1) found.push({ name: name.toLowerCase(), inner: text.slice(end + 1, close) });
+  });
+  return found;
+}
+
+/** Calls `visit` for each pseudo-class and pseudo-element. A string or an attribute selector is not read. */
+function forEachPseudo(text: string, visit: (name: string, isElement: boolean, end: number) => void): void {
+  let brackets = 0;
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === '"' || ch === "'") {
+      i = pastString(text, i);
+      continue;
+    }
+    if (ch === '[') brackets++;
+    else if (ch === ']') brackets--;
+    if (ch !== ':' || brackets > 0) {
+      i++;
+      continue;
+    }
+    const isElement = text[i + 1] === ':';
+    const start = isElement ? i + 2 : i + 1;
+    let end = start;
+    while (isNameCharacter(text[end])) end++;
+    visit(text.slice(start, end), isElement, end);
+    i = end;
+  }
+}
+
+/** Every pseudo-class in the text at any depth, in lower case, without its argument. */
+export function pseudoClassesIn(text: string): string[] {
+  const names: string[] = [];
+  forEachPseudo(text, (name, isElement) => {
+    if (!isElement) names.push(name.toLowerCase());
+  });
+  return names;
+}
+
+/** The entries of a selector list, trimmed. */
+function listEntries(list: string): string[] {
+  const entries: string[] = [];
+  let depth = 0;
+  let start = 0;
+  let i = 0;
+  while (i < list.length) {
+    const ch = list[i];
+    if (ch === '"' || ch === "'") {
+      i = pastString(list, i);
+      continue;
+    }
+    if (ch === '(' || ch === '[') depth++;
+    else if (ch === ')' || ch === ']') depth--;
+    else if (ch === ',' && depth === 0) {
+      entries.push(list.slice(start, i).trim());
+      start = i + 1;
+    }
+    i++;
+  }
+  entries.push(list.slice(start).trim());
+  return entries;
+}
+
+/**
+ * True when any condition in this selector can read past the node, at any depth. It
+ * is stricter than `constantConditions`, which leaves `:has()` alone because a
+ * sibling step from a page's root finds nothing there. A generated rule sits at any
+ * depth of a stored page, so `&:has(~ * input:checked)` reads a sibling's subtree. The
+ * walk is flat, because `functionalPseudoClasses` already reaches every depth.
+ */
+export function looksBeyondNode(selector: string): boolean {
+  return functionalPseudoClasses(selector).some(({ name, inner }) =>
+    name === 'has' ? listEntries(inner).some((entry) => /^(?:[~+]|\|\|)/.test(entry)) : looksOutward(name, inner),
+  );
+}
+
 // --- conditions -----------------------------------------------------------
 
 /**
