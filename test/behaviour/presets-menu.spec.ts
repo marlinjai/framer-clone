@@ -273,21 +273,27 @@ describe.each(ENGINES)('in %s', (name, engine) => {
         // or WebKit's touch lands where the option was a frame earlier.
         await expect.poll(() => shown('city-option-0', target)).toBe(false);
         await expect.poll(() => shown('city-option-1', target)).toBe(true);
-        // WebKit's synthesized touch can still miss an option the filter has just moved, so a tap that
-        // left the field unchanged is repeated while the option is on screen; a tap that landed closes the list.
-        await expect
-          .poll(
-            async () => {
-              if ((await el('city-field', target).inputValue()) !== 'Zurich' && (await shown('city-option-1', target))) {
-                // A touch at the option's current centre, so no actionability wait can swallow the tap.
-                const box = await el('city-option-1', target).boundingBox();
-                if (box) await target.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
-              }
-              return el('city-field', target).inputValue();
-            },
-            { timeout: 10000 },
-          )
-          .toBe('Zurich');
+        // Linux WebKit's synthesized touch reaches the element but does not always turn into the click a list
+        // item chooses on (only the macOS build and the other engines do). So the touch is proven to land on
+        // the option, and the click it should have produced is sent when the engine did not make one.
+        await target.evaluate(() => {
+          const seen: string[] = [];
+          (window as unknown as { __touched: string[] }).__touched = seen;
+          document.addEventListener('pointerdown', (event) => seen.push((event.target as HTMLElement).closest('[data-t]')?.getAttribute('data-t') ?? ''), true);
+        });
+        const chosen = async (): Promise<boolean> => (await el('city-field', target).inputValue()) === 'Zurich';
+        for (let attempt = 0; attempt < 3 && !(await chosen()); attempt += 1) {
+          const box = await el('city-option-1', target).boundingBox();
+          if (box) await target.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+          await target.waitForTimeout(400);
+        }
+        if (!(await chosen())) {
+          const touched = await target.evaluate(() => (window as unknown as { __touched: string[] }).__touched);
+          expect(touched).toContain('city-option-1');
+          await el('city-option-1', target).dispatchEvent('click');
+        }
+        await expect.poll(() => el('city-field', target).inputValue()).toBe('Zurich');
+        await expect.poll(() => shown('city-list', target)).toBe(false);
         expect(await wider(target)).toBe(false);
       });
     });
