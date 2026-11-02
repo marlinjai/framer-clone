@@ -18,6 +18,9 @@
 //     maps five fields, and this is not one of them.
 //   - On a page with a trigger, `data-fc-*` marks what the runtime has to find.
 //
+// The program is what leaves for the browser, so `compileEntry` reduces each entry to what
+// the runtime reads. It travels in the props of BehaviourIsland, in the payload Next escapes.
+//
 // One key can cover nodes whose behaviour differs: a placement with its own trigger, or
 // a row whose bound `type` changes what parses. So the program holds a list per key, and
 // `data-fc-v` says which entry an element runs. References stay on the key.
@@ -40,10 +43,8 @@ import {
   type Action,
   type Binding,
   type Expression,
-  type FocusGroup,
   type StateValue,
   type StoredBehaviour,
-  type Trigger,
 } from '@/lib/behaviour/format';
 import {
   NODE_ATTR,
@@ -59,24 +60,11 @@ import {
   readsRow,
   stateAttributes,
 } from '@/lib/behaviour/behaviourDom';
+import { compileEntry, compileProgram, type BehaviourProgram, type ProgramEntry } from '@/lib/behaviour/program';
 import { isIdReference, suffixCloneIds } from '@/lib/renderer/idRefs';
 import { TEXT_NODE_TYPE, isTextNodeType } from '@/lib/renderer/textNode';
 import { isRuleList, readRules, type ParsedRule, type ParsedSelectorRule, type ReadRules } from '@/lib/rules/rules';
 import { formKindOf } from '@/lib/forms/definition';
-
-/** What the runtime needs of one node, shared by every element that runs it. */
-export interface ProgramEntry {
-  state?: StateValue[];
-  on?: Trigger[];
-  bind?: Binding[];
-  group?: FocusGroup;
-}
-
-/** The stored program as data. Every value went through the parser. */
-export interface BehaviourProgram {
-  /** Key to entries. An element runs the entry `data-fc-v` names, the first without it. */
-  nodes: Record<string, ProgramEntry[]>;
-}
 
 export interface BehaviourResult {
   /** The rewritten tree, or the same tree when there was nothing to do. */
@@ -274,15 +262,8 @@ export function applyBehaviour(root: ComponentNode): BehaviourResult {
     });
 
   /** What the runtime has to do on this node, as one program entry. */
-  const entryOf = (behaviour: StoredBehaviour | undefined, bindings: Binding[]): ProgramEntry => {
-    const live = bindings.filter((binding) => !isConstant('text' in binding ? binding.text : binding.from));
-    return {
-      ...(behaviour?.state ? { state: behaviour.state } : {}),
-      ...(behaviour?.on ? { on: behaviour.on } : {}),
-      ...(live.length > 0 ? { bind: live } : {}),
-      ...(behaviour?.group ? { group: behaviour.group } : {}),
-    };
-  };
+  const entryOf = (behaviour: StoredBehaviour | undefined, bindings: Binding[]): ProgramEntry =>
+    compileEntry(behaviour, bindings.filter((binding) => !isConstant('text' in binding ? binding.text : binding.from)));
 
   /** Files the entry under the key, and says which of the key's entries it is. */
   const fileEntry = (key: string, entry: ProgramEntry): number => {
@@ -348,5 +329,5 @@ export function applyBehaviour(root: ComponentNode): BehaviourResult {
   const nodes = Object.fromEntries(
     [...entries].filter(([, list]) => list.some(({ entry }) => Object.keys(entry).length > 0)).map(([key, list]) => [key, list.map(({ entry }) => entry)]),
   );
-  return { root: suffixCloneIds(rewritten), program: hasGate ? { nodes } : null, hasGate };
+  return { root: suffixCloneIds(rewritten), program: hasGate ? compileProgram(nodes) : null, hasGate };
 }

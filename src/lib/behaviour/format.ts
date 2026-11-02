@@ -47,6 +47,9 @@ import { BLOCKED_TAGS } from '@/lib/renderer/blockedNodes';
 import { TEXT_NODE_TYPE, isTextNodeType } from '@/lib/renderer/textNode';
 import { formKindOf } from '@/lib/forms/definition';
 import { isStickyCta } from '@/lib/stickyCta/stickyCta';
+import { NON_TEXT_INPUT_TYPES, isPrintableChord, keyOfChord } from './keys';
+
+export { isPrintableChord, keyOfChord, leavesSite } from './keys';
 
 // --- the stored shape -----------------------------------------------------
 
@@ -277,6 +280,8 @@ const PSEUDO_EVENTS: ReadonlySet<string> = new Set(['view-enter', 'view-leave', 
 const KEY_EVENTS: ReadonlySet<string> = new Set(['keydown', 'keyup']);
 /** What a person does on purpose: the only causes of a focus move. */
 const INPUT_EVENTS: ReadonlySet<string> = new Set(['click', 'keydown', 'keyup']);
+/** A person acting on a control, which is wider than a press. */
+const PERSON_EVENTS: ReadonlySet<string> = new Set([...INPUT_EVENTS, 'input', 'change', 'pointerdown', 'pointermove', 'pointerup']);
 const LEAVING_EVENTS: ReadonlySet<string> = new Set(['blur', 'focusout']);
 /** Fire as a person types into a field. `selectionchange` does too, wherever its trigger sits. */
 const TYPED_EVENTS: ReadonlySet<string> = new Set(['input', 'beforeinput']);
@@ -284,48 +289,23 @@ const CUSTOM_EVENT = /^custom:([a-z0-9][a-z0-9_-]{0,63})$/;
 
 const isDomEvent = (on: string): boolean => DOM_EVENTS.has(on);
 
+/** Opening or closing something runs its transitions and animations too, which come back later than any rate can see. */
+const OPENING_CAUSES: ReadonlySet<string> = new Set([
+  ...OPEN_CLOSE_EVENTS,
+  ...names('animationstart animationend animationiteration animationcancel transitionrun transitionstart transitionend transitioncancel'),
+]);
+
 /** Each native verb, and the events it causes: a trigger on one of those may not run it. */
 const FAMILIES: Readonly<Record<string, ReadonlySet<string>>> = {
-  popover: OPEN_CLOSE_EVENTS,
-  details: OPEN_CLOSE_EVENTS,
-  dialog: OPEN_CLOSE_EVENTS,
+  popover: OPENING_CAUSES,
+  details: OPENING_CAUSES,
+  dialog: OPENING_CAUSES,
   media: MEDIA_EVENTS,
   fullscreen: FULLSCREEN_EVENTS,
   pictureInPicture: PICTURE_EVENTS,
   scroll: SCROLL_EVENTS,
   form: names('reset'),
 };
-
-// --- keys -----------------------------------------------------------------
-
-const NAMED_KEYS: ReadonlySet<string> = names(
-  'Printable Enter Space Escape Tab Backspace Delete Insert Home End PageUp PageDown '
-  + 'ArrowUp ArrowDown ArrowLeft ArrowRight InlineStart InlineEnd '
-  + 'F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12',
-);
-const CHORD = /^((?:(?:Ctrl|Shift|Alt|Meta)\+)*)([\s\S]+)$/u;
-
-/** The key of a chord, without its modifiers, or null when the text is no key at all. */
-export function keyOfChord(chord: unknown): string | null {
-  if (typeof chord !== 'string') return null;
-  const match = CHORD.exec(chord);
-  if (!match) return null;
-  const [, modifiers, key] = match;
-  if (key === 'Printable') return modifiers ? null : key;
-  if (NAMED_KEYS.has(key)) return key;
-  const single = [...key].length === 1 && !/[\s\p{C}]/u.test(key);
-  return single ? key : null;
-}
-
-/**
- * True for a chord whose key writes into a text field. The leak the taint rule
- * closes is per character, so Space counts, and so does a chord on a printable key.
- * Exported for the runtime, which checks this again against the event's target.
- */
-export function isPrintableChord(chord: string): boolean {
-  const key = keyOfChord(chord);
-  return key === null || key === 'Printable' || key === 'Space' || !NAMED_KEYS.has(key);
-}
 
 // --- what a node is -------------------------------------------------------
 
@@ -335,8 +315,6 @@ const COMMERCE_KINDS: ReadonlySet<string> = new Set([
 ]);
 const NON_TEXT_FIELD_TYPES: ReadonlySet<string> = new Set(['select', 'checkbox', 'consent']);
 const FIXED_INPUT_TYPES: ReadonlySet<string> = new Set(['range', 'checkbox', 'radio']);
-/** `hidden` writes its `value` property into the attribute, so it holds no copied text. */
-const NON_TEXT_INPUT_TYPES: ReadonlySet<string> = new Set([...FIXED_INPUT_TYPES, 'color', 'button', 'submit', 'reset', 'file', 'hidden']);
 
 /** A node as it is stored or hydrated: all this parser needs of the tree. */
 export interface BehaviourNode {
@@ -460,6 +438,8 @@ interface ExpressionScope {
   event?: string;
   /** The trigger hears the whole page, so what fired it need not be this node. */
   hearsPage?: boolean;
+  /** This node is the page's root, so everything on the page is inside it. */
+  pageRoot?: boolean;
 }
 
 const TAINT_REASON = 'typed text may flow only into text state, a text binding or filter';
@@ -756,6 +736,29 @@ function refusedFamily(verb: Verb, on: string): string | null {
   return family?.has(on) ? `${verb} in a ${on} trigger would cause its own event` : null;
 }
 
+/** What a trigger hearing the whole page may do: change state, and nothing a page-wide press could turn into a click. */
+const PAGE_WIDE_VERBS: ReadonlySet<string> = new Set(['set', 'toggle', 'step', 'cancel']);
+
+/** True for a trigger whose keys hold Escape, which a modal opened from it would answer by reopening. */
+const answersEscape = (scope: ActionScope): boolean => scope.keys?.some((chord) => keyOfChord(chord) === 'Escape') === true;
+
+/** Why a verb that takes over the screen or starts sound may not run here, or null. Only a press, right then. */
+function refusedTakeover(verb: string, scope: ActionScope): string | null {
+  if (scope.underDelay) return `${verb} cannot wait: by then it is no longer a press`;
+  return INPUT_EVENTS.has(scope.on) ? null : `${verb} runs only from a press, not from ${scope.on}`;
+}
+
+/**
+ * Why a change to how media plays may not run here, or null. From a timer it would undo
+ * what a visitor just set, every second. A volume slider and a scrubbing drag are a
+ * person too, so these take more than a press. `pause` stays free: stopping is no takeover.
+ */
+function refusedMediaChange(op: string, scope: ActionScope): string | null {
+  if (op === 'pause') return null;
+  if (scope.underDelay) return `media ${op} cannot wait: by then nobody asked for it`;
+  return PERSON_EVENTS.has(scope.on) ? null : `media ${op} runs only from what a person does, not from ${scope.on}`;
+}
+
 /** True for a key trigger that fires on Tab, by name or by having no keys. */
 function firesOnTab(scope: ActionScope): boolean {
   if (!KEY_EVENTS.has(scope.on)) return false;
@@ -885,6 +888,11 @@ function parseOpen(verb: 'dialog' | 'popover' | 'details' | 'fullscreen' | 'pict
   if ((verb === 'dialog' && action.op !== 'close') || (verb === 'popover' && action.op !== 'hide')) {
     const reason = refusedFocusMove(`${verb} ${action.op}`, scope, action.op === 'showModal' ? ['page-ready', 'view-enter'] : []);
     if (reason) return refuse(reason);
+    if (action.op === 'showModal' && answersEscape(scope)) return refuse('showModal from Escape would reopen what Escape just closed');
+  }
+  if ((verb === 'fullscreen' || verb === 'pictureInPicture') && action.op === 'enter') {
+    const reason = refusedTakeover(`${verb} enter`, scope);
+    if (reason) return refuse(reason);
   }
   return accept({ [verb]: target.value.key, op: action.op } as Action);
 }
@@ -895,6 +903,9 @@ function parseMedia(action: Record<string, unknown>, scope: ActionScope): Parsed
   const target = targetOf('media', action.media, scope);
   if (!target.ok) return target;
   const op = action.op as 'play' | 'pause' | 'load' | 'seek' | 'rate' | 'volume';
+  // `load` on a stored `autoplay` starts the sound again, so it is `play` by another name.
+  const takeover = op === 'play' || op === 'load' ? refusedTakeover(`media ${op}`, scope) : refusedMediaChange(op, scope);
+  if (takeover) return refuse(takeover);
   if (!MEDIA_VALUE_OPS.includes(op)) {
     return action.value === undefined ? accept({ media: target.value.key, op }) : refuse(`${op} takes no value`);
   }
@@ -972,17 +983,13 @@ function parseNavigate(action: Record<string, unknown>, scope: ActionScope): Par
   return accept({ navigate: href });
 }
 
-/** True for an address that leaves the site, which the runtime checks against user activation. */
-export function leavesSite(href: string): boolean {
-  return !(href.startsWith('#') || (href.startsWith('/') && !href.startsWith('//')));
-}
-
 function parseAction(action: unknown, scope: ActionScope): Parsed<Action> {
   if (!isPlainObject(action)) return refuse('an action is an object');
   const verb = VERBS.find((name) => Object.hasOwn(action, name));
   if (!verb) return refuse(`${Object.keys(action)[0] ?? 'this'} is not an action`);
   scope.used.count += 1;
   if (scope.used.count > MAX_ACTIONS_PER_TRIGGER) return refuse(`a trigger runs at most ${MAX_ACTIONS_PER_TRIGGER} actions`);
+  if (scope.hearsPage && !PAGE_WIDE_VERBS.has(verb)) return refuse(`${verb} cannot hear the whole page: only state and cancel can`);
   const family = refusedFamily(verb, scope.on);
   if (family) return refuse(family);
   const parsed = parseVerb(verb, action, scope);
@@ -1024,6 +1031,7 @@ function parseVerb(verb: Verb, action: Record<string, unknown>, scope: ActionSco
     case 'capturePointer': {
       if (!hasShape(action, ['capturePointer']) || action.capturePointer !== true) return refuse('capturePointer is true');
       if (scope.on !== 'pointerdown' || scope.underDelay) return refuse('capturePointer runs directly from pointerdown');
+      if (scope.pageRoot) return refuse('capturePointer on the page root would take every press on the page');
       return accept({ capturePointer: true });
     }
     case 'cancel':
@@ -1109,7 +1117,7 @@ function parseTrigger(entry: unknown, base: ExpressionScope): Parsed<Trigger> {
   if (refusedName) return refuse(refusedName);
   const on = entry.on as string;
   if (entry.scope !== undefined && entry.scope !== 'document') return refuse('scope is document');
-  if (entry.scope === 'document' && !isDomEvent(on)) return refuse(`${on} is not a document event`);
+  if (entry.scope === 'document' && !KEY_EVENTS.has(on)) return refuse('a document trigger hears keydown or keyup, for Escape on what has no focus');
   if (entry.preset !== undefined && entry.preset !== true) return refuse('preset marks an entry with true');
 
   const reason = refusedKeys(entry, on, base.self) ?? refusedPrevent(entry, on) ?? refusedPlacement(on, base.self);
@@ -1359,6 +1367,8 @@ export interface BehaviourContext {
   self?: NodeFacts;
   /** A group sits on this node or above it. */
   insideGroup?: boolean;
+  /** This node is the page's root. */
+  pageRoot?: boolean;
 }
 
 const NODE_FIELDS: readonly string[] = ['state', 'on', 'bind', 'group', 'showWhen', 'noScript', 'preset'];
@@ -1469,7 +1479,7 @@ export function parseBehaviour(node: BehaviourNode, context: BehaviourContext = 
   const declared = readStates(stored, inherited, refused);
   const states = new Map(inherited);
   for (const state of declared) states.set(state.id, state);
-  const scope: ExpressionScope = { states, nodes: context.nodes ?? NO_NODES, self };
+  const scope: ExpressionScope = { states, nodes: context.nodes ?? NO_NODES, self, pageRoot: context.pageRoot };
 
   const behaviour: StoredBehaviour = {};
   if (declared.length > 0) behaviour.state = declared;
@@ -1592,7 +1602,7 @@ export function readBehaviourTree(root: BehaviourNode): ReadBehaviourTree {
     const keyless = self.key === null && self.tag !== null && stored !== undefined;
     const read: ReadBehaviour = keyless
       ? { behaviour: null, refused: [{ entry: 'behaviour', value: stored, reason: 'a node with no stable id holds no behaviour' }] }
-      : parseBehaviour(node, { states, nodes, self, insideGroup });
+      : parseBehaviour(node, { states, nodes, self, insideGroup, pageRoot: node === root });
     const refused: RefusedOnNode[] = read.refused.map((entry) => ({ ...entry, nodeId }));
     let parsed = read.behaviour;
 

@@ -492,16 +492,16 @@ describe('what the review of the compile step found', () => {
     it('reads typed text, so its value is a source', () => {
       for (const event of ['change', 'focusout', 'click']) {
         for (const state of ['n', 'c', 'b']) {
-          refused({ ...on(event, { set: state, value: { event: 'value' } }), scope: 'document' }, /typed text/, select);
+          refused({ ...on(event, { set: state, value: { event: 'value' } }), scope: 'document' }, /document trigger/, select);
         }
-        refused({ ...on(event, { setProp: 'box', prop: 'disabled', value: { event: 'value' } }), scope: 'document' }, /typed text/, select);
-        refused({ ...on(event, { emit: 'x' }), scope: 'document', if: { eq: [{ event: 'value' }, 'a'] } }, /typed text/, select);
-        refused({ ...on(event, { set: 'n', value: { event: 'value' } }), scope: 'document' }, /typed text/, range);
+        refused({ ...on(event, { setProp: 'box', prop: 'disabled', value: { event: 'value' } }), scope: 'document' }, /document trigger/, select);
+        refused({ ...on(event, { emit: 'x' }), scope: 'document', if: { eq: [{ event: 'value' }, 'a'] } }, /document trigger/, select);
+        refused({ ...on(event, { set: 'n', value: { event: 'value' } }), scope: 'document' }, /document trigger/, range);
       }
     });
 
     it('may still put it where typed text may go', () => {
-      accepted({ ...on('change', { set: 't', value: { event: 'value' } }), scope: 'document' }, select);
+      refused({ ...on('change', { set: 't', value: { event: 'value' } }), scope: 'document' }, /document trigger/, select);
     });
 
     it('keeps its own value clean with no document scope', () => {
@@ -510,7 +510,7 @@ describe('what the review of the compile step found', () => {
   });
 
   it('refuses prevent across the whole page', () => {
-    for (const event of ['click', 'wheel', 'paste']) refused({ ...on(event, { emit: 'x' }), scope: 'document', prevent: true }, /whole page/);
+    for (const event of ['click', 'wheel', 'paste']) refused({ ...on(event, { emit: 'x' }), scope: 'document', prevent: true }, /document trigger/);
     refused({ ...key(['Enter'], { emit: 'x' }), scope: 'document', prevent: true }, /whole page/);
     refused({ ...key(['ArrowDown'], { emit: 'x' }), scope: 'document', prevent: true }, /whole page/);
     accepted({ ...key(['ArrowDown'], { emit: 'x' }), prevent: true });
@@ -620,7 +620,7 @@ describe('the leaks closed with the compile step', () => {
     });
 
     it('holds for a fixed value control that hears the whole page', () => {
-      refused({ ...on('input', { step: 'n' }), scope: 'document' }, /per keystroke/, range);
+      refused({ ...on('input', { step: 'n' }), scope: 'document' }, /document trigger/, range);
       refused(on('selectionchange', { step: 'n' }), /per keystroke/, range);
     });
 
@@ -751,7 +751,7 @@ describe('triggers', () => {
     refused({ id: 't', on: 'click', do: [] }, /list of actions/);
     refused({ id: 't', on: 'click', do: {} }, /list of actions/);
     refused({ ...on('click', { toggle: 'b' }), scope: 'window' }, /scope is document/);
-    refused({ ...on('every', { toggle: 'b' }), ms: 1000, scope: 'document' }, /not a document event/);
+    refused({ ...on('every', { toggle: 'b' }), ms: 1000, scope: 'document' }, /document trigger/);
     refused({ ...on('click', { toggle: 'b' }), preset: 1 }, /preset/);
   });
 
@@ -883,7 +883,8 @@ describe('focus verbs', () => {
   it('are refused from anything that answers Tab, which `prevent` alone does not catch', () => {
     for (const action of moves) {
       refused({ id: 't', on: 'keyup', keys: ['Tab'], do: [action] }, /answering Tab/);
-      refused({ id: 't', on: 'keyup', keys: ['Tab'], scope: 'document', do: [{ delay: 16, do: [action] }] }, /answering Tab/);
+      refused({ id: 't', on: 'keyup', keys: ['Tab'], do: [{ delay: 16, do: [action] }] }, /answering Tab/);
+      refused({ id: 't', on: 'keyup', keys: ['Tab'], scope: 'document', do: [{ delay: 16, do: [action] }] }, /whole page/);
       refused(key(['Shift+Tab'], action), /answering Tab/);
       refused(on('keyup', action), /answering Tab/);
       refused(on('keydown', action), /answering Tab/);

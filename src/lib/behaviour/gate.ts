@@ -25,12 +25,9 @@
 // Only constants go into the script. PURE and client-safe: no React, no MST.
 
 import { START_STATE_TIMEOUT_MS } from '@/lib/effects/effects';
-import { NODE_ATTR } from './behaviourDom';
+import { GATE_ATTR, GATE_GLOBAL, NODE_ATTR } from './names';
 
-/** Stands on `html` while state rules apply. */
-export const GATE_ATTR = 'data-fc-b';
-/** What the script leaves for the runtime. */
-export const GATE_GLOBAL = '__fcB';
+export { GATE_ATTR, GATE_GLOBAL } from './names';
 
 /** The inline script. `<` is escaped so the text can never close the script element. */
 export function behaviourBootScript(): string {
