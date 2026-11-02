@@ -9,12 +9,14 @@ import {
   namedState,
   namedStateOf,
   orderRules,
+  stateRuleId,
 } from '@/lib/rules/states';
 
 const hover: StoredRule = { id: 'r1', selector: '&:hover', at: [HOVER_GATE], style: {} };
 const focused: StoredRule = { id: 'r2', selector: '&:focus-visible', style: {} };
 const pressed: StoredRule = { id: 'r3', selector: '&:active', style: {} };
 const custom = (id: string): StoredRule => ({ id, selector: '&:nth-child(2n)', style: {} });
+const componentState = (state: string): StoredRule => ({ id: stateRuleId(state), componentState: state, selector: '&', style: {} }) as StoredRule;
 
 describe('the named states', () => {
   it('are in the contract order, Pressed last because pressing also hovers', () => {
@@ -79,5 +81,18 @@ describe('the order of the list', () => {
     expect(moveRuleTo(rules, 'hover', 1)).toEqual(rules);
     expect(moveRuleTo(rules, 'nope', 1)).toEqual(rules);
     expect(moveRuleTo([hover, custom('a'), custom('b')], 'a', 99).map((rule) => rule.id)).toEqual(['r1', 'b', 'a']);
+  });
+
+  it('puts a component\'s state rules last, in the order of its states, then any it does not know', () => {
+    const ordered = orderRules([componentState('gone'), componentState('hover'), custom('a'), componentState('open'), hover], ['open', 'hover']);
+    expect(ordered.map((rule) => rule.id)).toEqual(['r1', 'a', 'state-open', 'state-hover', 'state-gone']);
+    // Without the component's order they keep their own, still after every other rule.
+    expect(orderRules([componentState('b'), custom('a'), componentState('a')]).map((rule) => rule.id)).toEqual(['a', 'state-b', 'state-a']);
+  });
+
+  it('never moves a component state rule, nor an authored rule past one', () => {
+    const rules = [hover, custom('a'), custom('b'), componentState('hover')];
+    expect(moveRuleTo(rules, 'state-hover', 0)).toEqual(rules);
+    expect(moveRuleTo(rules, 'a', 99).map((rule) => rule.id)).toEqual(['r1', 'b', 'a', 'state-hover']);
   });
 });

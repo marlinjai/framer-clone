@@ -10,6 +10,8 @@ import { getSnapshot } from 'mobx-state-tree';
 import ComponentModel, { ComponentTypeEnum } from '@/models/ComponentModel';
 import { parseComponents, type ComponentDefinitions } from '@/lib/components/definition';
 import { expandPlacements } from '@/lib/components/expand';
+import { readRules } from '@/lib/rules/rules';
+import { HOVER_GATE } from '@/lib/rules/states';
 import { parseInputValue, type InputDefinition, type InputType } from '@/lib/components/inputs';
 import { MISSING_TYPE } from '@/lib/components/placement';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
@@ -36,6 +38,20 @@ const expandedRoot = (children: Stored[], definitions: ComponentDefinitions): Co
   const stored = savedAndLoaded(page(children));
   return expandPlacements(stored as ComponentNode, definitions, BREAKPOINTS);
 };
+
+/** A button whose root and label each hold one stored rule for a pointer state, through ComponentModel and JSON. */
+const POINTER_KINDS = { 'state-hover': 'hover', 'state-pressed': 'pressed', 'state-focused': 'focused' } as const;
+const POINTER_CSS = { hover: ':hover', pressed: ':active', focused: ':is(:focus-visible, :has(:focus-visible))' } as const;
+const MARKER = '[data-u-c-btn="btn"]';
+
+function pointerButton(kind: keyof typeof POINTER_CSS) {
+  const rule = (style: Record<string, unknown>) => ({ id: `state-${kind}`, componentState: kind, selector: '&', style });
+  const tree = savedAndLoaded({
+    id: 'b-root', type: 'button', props: { rules: [rule({ color: 'rgb(1, 2, 3)' })] },
+    children: [{ id: 'b-label', type: 'span', props: { children: 'Go', rules: [rule({ fontWeight: '700' })] } }],
+  });
+  return { ...definition('btn', tree), states: [{ id: kind, name: kind, kind }] } as unknown as ReturnType<typeof definition>;
+}
 
 const pass = (): Cell => ({ status: 'pass' });
 const fail = (note: string): Cell => ({ status: 'fail', gap: 'reusable-components', note });
@@ -87,6 +103,22 @@ async function formatCells(): Promise<SurfaceResults> {
     const template = expandedRoot([collection], cards).children?.[0].children?.[0];
     return cell(template?.type === 'article' && JSON.stringify(template.props).includes('{{row.title}}'), 'the row binding did not survive');
   });
+  for (const [row, kind] of Object.entries(POINTER_KINDS)) {
+    out[key(row)] = await probe(() => {
+      const { definitions, refused } = parseComponents(jsonTrip({ btn: pointerButton(kind) }));
+      const stored = definitions.btn?.page.appComponentTree as unknown as Stored | undefined;
+      // Fail closed: the stored rule is refused raw, and only expansion makes it apply.
+      const raw = readRules(stored?.props).refused.length === 1;
+      const expanded = expandedRoot([placement('p1', 'btn')], definitions).children?.[0];
+      const read = readRules(expanded?.props);
+      const active = `${MARKER}${POINTER_CSS[kind]}`;
+      const compiled = read.refused.length === 0 && read.rules[0]?.kind === 'selector'
+        && read.rules[0].parts[0] === `&:where(${active}, ${active} *)`
+        && (read.rules[0].at[0] === HOVER_GATE) === (kind === 'hover');
+      const marked = expanded?.props?.['data-u-c-btn'] === 'btn' && definitions.btn.states[0]?.kind === kind;
+      return cell(refused.length === 0 && raw && compiled && marked, `the ${kind} state did not survive the round trip and compile: ${JSON.stringify(read)}`);
+    });
+  }
   for (const [type, sample] of Object.entries(INPUT_PROBES)) {
     out[key(type)] = await probe(() => {
       const input = jsonTrip({ id: 'x', name: 'X', type, ...sample.input }) as InputDefinition;
@@ -141,6 +173,17 @@ async function publishedCells(): Promise<SurfaceResults> {
     const text = await html([collection], cards, [{ title: 'Row one' }, { title: 'Row two' }]);
     return cell(text.includes('<h3>Row one</h3>') && text.includes('<h3>Row two</h3>'), 'a row did not reach its card');
   });
+  for (const [row, kind] of Object.entries(POINTER_KINDS)) {
+    out[key(row)] = await probe(async () => {
+      const text = await html([placement('p1', 'btn'), placement('p2', 'btn')], definitionsOf(pointerButton(kind)));
+      const active = `${MARKER}${POINTER_CSS[kind]}`;
+      const label = `.fc_r-b-label.fc_r-b-label:where(${active}, ${active} *){font-weight:700}`;
+      const root = `.fc_r-b-root.fc_r-b-root:where(${active}, ${active} *){color:rgb(1, 2, 3)}`;
+      const gated = kind !== 'hover' || text.includes(`@media (hover:hover) and (pointer:fine){\n${root}`);
+      const ok = text.split(label).length === 2 && text.includes(root) && gated && (text.match(/<button data-u-c-btn="btn"/g) ?? []).length === 2;
+      return cell(ok, `the ${kind} state did not reach the sheet once, relative to both placements: ${text.slice(0, 400)}`);
+    });
+  }
   for (const [type, sample] of Object.entries(INPUT_PROBES)) {
     out[key(type)] = await probe(async () => {
       const stored = definition('d', { id: 'r', ...sample.node }, [{ id: 'x', name: 'X', type: type as InputType, ...sample.input }]);

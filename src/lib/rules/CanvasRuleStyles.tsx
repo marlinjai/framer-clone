@@ -22,9 +22,10 @@ function useProblemWarning(problems: readonly SurfaceProblem[]): void {
   }, [key]);
 }
 
-function useSheet(input: Omit<SurfaceSheetInput, 'memo' | 'onProblem'>): string {
+/** `found` is what the behaviour pass left out on the way here, reported with what the sheet leaves out. */
+function useSheet(input: Omit<SurfaceSheetInput, 'memo' | 'onProblem'>, found: readonly SurfaceProblem[] = []): string {
   const memo = React.useRef<SurfaceMemo>(new WeakMap());
-  const problems: SurfaceProblem[] = [];
+  const problems: SurfaceProblem[] = [...found];
   const css = surfaceSheet({ ...input, memo: memo.current, onProblem: (problem) => problems.push(problem) });
   useProblemWarning(problems);
   return css;
@@ -36,11 +37,13 @@ export interface CanvasRuleStylesProps {
   floating: readonly SurfaceNode[];
   frames: readonly SurfaceFrameInput[];
   breakpoints: readonly BreakpointRef[];
+  /** What the behaviour pass left out of `tree`. */
+  problems?: readonly SurfaceProblem[];
 }
 
-export const CanvasRuleStyles = observer(({ tree, definitionTree, floating, frames, breakpoints }: CanvasRuleStylesProps) => {
+export const CanvasRuleStyles = observer(({ tree, definitionTree, floating, frames, breakpoints, problems }: CanvasRuleStylesProps) => {
   const { editorUI } = useStore();
-  const css = useSheet({ kind: 'canvas', tree, definitionTree, floating, frames, breakpoints, previewRule: editorUI.previewRule });
+  const css = useSheet({ kind: 'canvas', tree, definitionTree, floating, frames, breakpoints, previewRule: editorUI.previewRule }, problems);
   if (!css) return null;
   // The parser and the emitter's guards have read every stored character of this.
   return <style data-fc-rules="canvas" dangerouslySetInnerHTML={{ __html: css }} />;
@@ -51,10 +54,12 @@ export interface PreviewRuleStylesProps {
   definitionTree?: boolean;
   frame: SurfaceFrameInput;
   breakpoints: readonly BreakpointRef[];
+  /** What the behaviour pass left out of `tree`. */
+  problems?: readonly SurfaceProblem[];
 }
 
-export const PreviewRuleStyles = observer(({ tree, definitionTree, frame, breakpoints }: PreviewRuleStylesProps) => {
-  const css = useSheet({ kind: 'preview', tree, definitionTree, frames: [frame], breakpoints });
+export const PreviewRuleStyles = observer(({ tree, definitionTree, frame, breakpoints, problems }: PreviewRuleStylesProps) => {
+  const css = useSheet({ kind: 'preview', tree, definitionTree, frames: [frame], breakpoints }, problems);
   if (!css) return null;
   return <style data-fc-rules="preview" dangerouslySetInnerHTML={{ __html: css }} />;
 });

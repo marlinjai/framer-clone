@@ -706,8 +706,10 @@ function blocksOnCopy(
   const body = `{${decls.join(';')}}`;
   return {
     blocks: rule.parts.map((part) => {
-      // Every part starts with `&`, and the parser allows no other.
-      return { wrappers, text: `${copy.selector}${constantConditions(part.slice(1), kind, previewed)}${body}` };
+      // Every part starts with `&`, and the parser allows no other. A `when` goes straight
+      // after the node, as on the published page, with no gate: a surface has none. It reads
+      // only `data-fcs-*`, which the surface's renderer writes, so it is not made constant.
+      return { wrappers, text: `${copy.selector}${rule.when ?? ''}${constantConditions(part.slice(1), kind, previewed)}${body}` };
     }),
   };
 }

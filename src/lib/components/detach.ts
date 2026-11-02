@@ -29,7 +29,7 @@ import { extractBreakpoints } from '@/lib/renderer/server/componentSnapshot';
 import type { BreakpointRef } from '@/lib/responsive/cascade';
 import { HOVER_GATE } from '@/lib/rules/states';
 import { mapNodeProps, mapResponsiveValue } from './breakpoints';
-import type { ComponentDefinition, StateDefinition } from './definition';
+import { isPointerState, placementMarker, POINTER_STATE_CSS, type ComponentDefinition, type PointerStateKind, type StateDefinition } from './definition';
 import {
   bakeInputBindings,
   bindingsAllowed,
@@ -80,10 +80,10 @@ export function detachRefusal(definition: ComponentDefinition): string | null {
 }
 
 /** The selector a pointer state becomes once its component is gone. */
-function pointerRule(rule: Record<string, unknown>, state: StateDefinition, isRoot: boolean, marker: string): Record<string, unknown> {
+function pointerRule(rule: Record<string, unknown>, state: StateDefinition & { kind: PointerStateKind }, isRoot: boolean, marker: string): Record<string, unknown> {
   const { componentState: _state, ...stored } = rule;
   void _state;
-  const active = state.kind === 'hover' ? ':hover' : state.kind === 'pressed' ? ':active' : ':is(:focus-visible, :has(:focus-visible))';
+  const active = POINTER_STATE_CSS[state.kind];
   const selector = isRoot ? `&${active}` : `&:where([${marker}]${active} *)`;
   const at = [...(Array.isArray(rule.at) ? rule.at as string[] : []), ...(state.kind === 'hover' ? [HOVER_GATE] : [])];
   return { ...stored, selector, ...(at.length > 0 ? { at } : {}) };
@@ -117,7 +117,8 @@ export function detachedTree(placement: StoredNode, options: DetachOptions): Sto
   const budget = createRenderBudget();
   const placementScope = pushInputFrame(createScope(), resolveInputValues(instance, createScope(), budget, true));
 
-  const marker = `data-u-c-${definition.id.slice(0, 8).toLowerCase()}`;
+  // The live marker's name with no value, so a live placement's rules never match the copy.
+  const marker = placementMarker(definition.id);
   const ids = new Map<string, string>();
   const taken = new Set(takenIds);
   const renamed = new Map<string, string>();
@@ -158,7 +159,7 @@ export function detachedTree(placement: StoredNode, options: DetachOptions): Sto
     const rules = props.rules.flatMap(rule => {
       if (!isRecord(rule) || !('componentState' in rule)) return [rule];
       const state = definition.states.find(candidate => candidate.id === rule.componentState);
-      if (!state || state.kind === 'custom') return [];
+      if (!state || !isPointerState(state)) return [];
       if (!isRoot) markRoot = true;
       return [pointerRule(rule, state, isRoot, marker)];
     });

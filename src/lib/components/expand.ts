@@ -23,7 +23,16 @@
 // PURE: no React, no MST, no server-only.
 
 import { withFollowedRefs } from '@/lib/renderer/idRefs';
-import type { ComponentDefinition, ComponentDefinitions } from '@/lib/components/definition';
+import {
+  hasPointerState,
+  isPointerState,
+  placementMarker,
+  placementMarkerSelector,
+  POINTER_STATE_CSS,
+  type ComponentDefinition,
+  type ComponentDefinitions,
+} from '@/lib/components/definition';
+import { HOVER_GATE, componentStateOf } from '@/lib/rules/states';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import type { BreakpointRef } from '@/lib/responsive/cascade';
 import type { BindingEntry, BindingsRecord } from '@/lib/bindings/types';
@@ -298,6 +307,59 @@ export function mergeStyle(definition: unknown, placement: unknown): unknown {
   return merged;
 }
 
+// ---------- component states ----------
+
+/**
+ * A node's stored rules with each pointer state rule compiled to an ordinary one,
+ * relative to the marker on the placement root, and placed after every other rule
+ * in the order of the definition's states, so a later state wins a tie. A compiled
+ * rule adds no specificity (`:where`), so an element's own `&:hover` beats it.
+ *
+ * Fails closed: a rule naming a state the definition does not have, or written in
+ * any shape but `selector: '&'`, is dropped with a warning, since without its
+ * condition it would be the permanent look. A custom state needs the behaviour
+ * model's `when`, which arrives with slice 12, so until then its rules are left out.
+ */
+export function compileStateRules(rules: unknown[], definition: ComponentDefinition, budget: RenderBudget): unknown[] {
+  if (!rules.some(rule => componentStateOf(rule) !== undefined)) return rules;
+  const marker = placementMarkerSelector(definition.id);
+  const order = definition.states.map(state => state.id);
+  const plain: unknown[] = [];
+  const compiled: { at: number; rule: Record<string, unknown> }[] = [];
+  for (const rule of rules) {
+    const stateId = componentStateOf(rule);
+    if (stateId === undefined) {
+      plain.push(rule);
+      continue;
+    }
+    const stored = rule as Record<string, unknown>;
+    const at = order.indexOf(stateId);
+    const state = definition.states[at];
+    if (!state) {
+      budget.warn(`a rule names a state ${definition.name} does not have: ${stateId || '(none)'}`);
+      continue;
+    }
+    if (!isPointerState(state)) continue;
+    if (stored.selector !== '&' || stored.when !== undefined || stored.gate !== undefined) {
+      budget.warn(`a rule of state ${state.name} in ${definition.name} is not in the stored shape, so it is left out`);
+      continue;
+    }
+    const active = `${marker}${POINTER_STATE_CSS[state.kind]}`;
+    const wrappers = [...(state.kind === 'hover' ? [HOVER_GATE] : []), ...(Array.isArray(stored.at) ? stored.at : [])];
+    compiled.push({
+      at,
+      rule: {
+        id: stored.id,
+        selector: `&:where(${active}, ${active} *)`,
+        ...(wrappers.length > 0 ? { at: wrappers } : {}),
+        style: stored.style,
+      },
+    });
+  }
+  compiled.sort((a, b) => a.at - b.at);
+  return [...plain, ...compiled.map(({ rule }) => rule)];
+}
+
 // ---------- expansion ----------
 
 export interface ExpandOptions {
@@ -389,9 +451,11 @@ export function expandPlacements(
       const node = withoutRendererOwned(stored);
       const props = mapNodeProps((node.props ?? {}) as Record<string, unknown>, own, pageBreakpoints);
       // Compilation is what makes a state rule safe. Until it runs, an uncompiled
-      // one would read as a rule that always applies.
+      // one would read as a rule that always applies, so the parser refuses it.
       if (Array.isArray(props.rules)) {
-        props.rules = props.rules.filter(rule => !(isRecord(rule) && 'componentState' in rule));
+        const rules = compileStateRules(props.rules, definition, budget);
+        if (rules.length > 0) props.rules = rules;
+        else delete props.rules;
       }
       return {
         ...node,
@@ -498,6 +562,7 @@ export function expandPlacements(
     const repeat = repeatInputId(props);
     if (repeat) rootProps[REPEAT_PROP] = repeat;
     if (!literal) rootProps.instance = instance;
+    if (hasPointerState(definition)) rootProps[placementMarker(id)] = id;
     const merged: ComponentNode = { ...tree, props: rootProps as ComponentNode['props'] };
 
     const scope = literal

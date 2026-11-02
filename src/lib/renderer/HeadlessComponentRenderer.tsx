@@ -28,6 +28,7 @@ import { detachedExpansion } from './detachedExpansion';
 import { effectDomForBreakpoint, hoverPresetClass, resolveEffects, storedEffectsOf } from '@/lib/effects/effects';
 import { isStickyCta } from '@/lib/stickyCta/stickyCta';
 import { childrenWithRepeats } from './repeatChildren';
+import { SurfaceDomContext, withSurfaceDom } from '@/lib/behaviour/surfaceDom';
 
 /**
  * True inside HeadlessPageRenderer, which draws the page's sticky call to
@@ -61,6 +62,8 @@ const HeadlessComponentRenderer = observer(({
   const expansion = React.useContext(PreviewExpansionContext);
   // Inside a link or a button, formatted text holds no links (createComponentElement).
   const runLinksAllowed = React.useContext(RunLinksContext);
+  // What the behaviour pass wrote, so the runtime PreviewFrame starts finds the page it expects.
+  const surfaceDom = React.useContext(SurfaceDomContext);
 
   // A placement draws what the published page compiles: its expansion as a detached
   // tree, so no third way of drawing a component appears. The live tree around it
@@ -97,8 +100,11 @@ const HeadlessComponentRenderer = observer(({
   // Apply read bindings against the active scope. Style is fed in alongside
   // attributes so `style.*` slots resolve, then split back out.
   const { resolvedProps } = applyBindings(component, { ...attributes, style }, activeScope);
-  const { style: boundStyle, ...resolvedAttributes } = resolvedProps as Record<string, unknown>;
-  const effectiveStyle = (boundStyle ?? {}) as Record<string, unknown>;
+  const { style: boundStyle, ...boundAttributes } = resolvedProps as Record<string, unknown>;
+  // A placement's nodes are its expansion's, so their ids are the ones the pass keyed.
+  const shown = withSurfaceDom(boundAttributes, (boundStyle ?? {}) as Record<string, unknown>, surfaceDom?.get(component.id), 'preview');
+  const resolvedAttributes = shown.attributes;
+  const effectiveStyle = shown.style;
 
   // Effects play here as on the published page (src/lib/effects): this
   // surface renders one breakpoint, so the values resolve for it directly into
