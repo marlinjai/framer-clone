@@ -116,12 +116,6 @@ describe('row action buttons', () => {
     expect(page.findComponent('span-child')).toBeDefined();
   });
 
-  it('the page root offers no Delete', () => {
-    render(<LayersPanel />);
-    press(within(rowOf(root)).getByRole('button', { name: 'More layer actions' }));
-    expect(within(screen.getByRole('menu')).queryByRole('menuitem', { name: 'Delete layer' })).toBeNull();
-  });
-
   it('the More menu and a right-click offer the same actions', () => {
     render(<LayersPanel />);
     const { armed } = press(within(rowOf(main)).getByRole('button', { name: 'More layer actions' }));
@@ -152,20 +146,36 @@ describe('folding', () => {
   });
 
   it('Alt+click folds the whole subtree, and Alt+click again opens it all', () => {
+    nested.addChild(createIntrinsicComponent('deep', 'em', { children: 'Deep' }));
     render(<LayersPanel />);
-    fireEvent.click(within(rowOf(root)).getByRole('button', { name: `Collapse ${root.displayName}` }), { altKey: true });
-    expect(store.editorUI.collapsedLayerIds.has(root.id)).toBe(true);
+    fireEvent.click(within(rowOf(main)).getByRole('button', { name: `Collapse ${main.displayName}` }), { altKey: true });
     expect(store.editorUI.collapsedLayerIds.has(main.id)).toBe(true);
-    fireEvent.click(within(rowOf(root)).getByRole('button', { name: `Expand ${root.displayName}` }), { altKey: true });
-    expect(store.editorUI.collapsedLayerIds.has(root.id)).toBe(false);
+    expect(store.editorUI.collapsedLayerIds.has(nested.id)).toBe(true);
+    fireEvent.click(within(rowOf(main)).getByRole('button', { name: `Expand ${main.displayName}` }), { altKey: true });
     expect(store.editorUI.collapsedLayerIds.has(main.id)).toBe(false);
+    expect(store.editorUI.collapsedLayerIds.has(nested.id)).toBe(false);
   });
 
-  it('Collapse all and Expand all fold every container', () => {
+  it('Alt+click on a breakpoint row folds the group with every container in it', () => {
+    render(<LayersPanel />);
+    const desktop = page.sortedViewportNodes[0];
+    fireEvent.click(within(rowOf(root)).getByRole('button', { name: `Collapse ${desktop.label}` }), { altKey: true });
+    expect(store.editorUI.collapsedLayerIds.has(desktop.id)).toBe(true);
+    expect(store.editorUI.collapsedLayerIds.has(main.id)).toBe(true);
+    expect(rowOf(main)).toBeNull();
+    fireEvent.click(within(rowOf(root)).getByRole('button', { name: `Expand ${desktop.label}` }), { altKey: true });
+    expect(store.editorUI.collapsedLayerIds.has(desktop.id)).toBe(false);
+    expect(rowOf(nested)).not.toBeNull();
+  });
+
+  it('Collapse all folds every container but keeps the page sections listed; Expand all opens them', () => {
     render(<LayersPanel />);
     fireEvent.click(screen.getByRole('button', { name: 'Collapse all layers' }));
     expect(rowOf(root)).not.toBeNull();
-    expect(rowOf(main)).toBeNull();
+    expect(rowOf(main)).not.toBeNull();
+    expect(rowOf(nested)).toBeNull();
+    // The root has no row to fold, so its id never piles up in the fold state.
+    expect(store.editorUI.collapsedLayerIds.has(root.id)).toBe(false);
     fireEvent.click(screen.getByRole('button', { name: 'Expand all layers' }));
     expect(rowOf(nested)).not.toBeNull();
   });
@@ -226,5 +236,172 @@ describe('text nodes in the Layers panel', () => {
     expect(row.queryByRole('button', { name: 'Lock layer' })).toBeNull();
     fireEvent.click(row.getByRole('button', { name: 'Hide layer' }));
     expect(run.canvasVisible).toBe(false);
+  });
+});
+
+describe('the page root is the breakpoint row', () => {
+  const desktopOf = () => page.sortedViewportNodes[0];
+  const rowIn = (c: ComponentInstance, bp: string) =>
+    document.querySelector<HTMLElement>(`[data-layer-row="${c.id}"][data-layer-breakpoint="${bp}"]`)!;
+
+  it('lists the root children directly under the breakpoint, with no row of its own', () => {
+    render(<LayersPanel />);
+    // No component row (a tree drop target) for the root anywhere.
+    expect(document.querySelector(`[data-inner-component-id="${root.id}"]`)).toBeNull();
+    // The breakpoint row stands for it.
+    const bpRow = rowOf(root);
+    expect(bpRow.getAttribute('data-viewport-id')).toBe(desktopOf().id);
+    expect(bpRow.textContent).toContain(desktopOf().label);
+    // Its children are top-level rows (no indent guide), their children indented once.
+    expect(rowOf(main).textContent).not.toContain('│');
+    expect(rowOf(nested).textContent).toContain('│');
+  });
+
+  it('clicking the breakpoint row, or its name, selects the root in that breakpoint', () => {
+    render(<LayersPanel />);
+    act(() => store.editorUI.selectComponent(main, breakpointId));
+    fireEvent.click(rowOf(root));
+    expect(store.editorUI.selectedComponent).toBe(root);
+    expect(store.editorUI.selectedViewportNode?.id).toBe(desktopOf().id);
+    const tablet = page.sortedViewportNodes[1];
+    fireEvent.click(screen.getByText(tablet.label!));
+    expect(store.editorUI.selectedComponent).toBe(root);
+    expect(store.editorUI.selectedViewportNode?.id).toBe(tablet.id);
+  });
+
+  it('marks the breakpoint row selected only in the breakpoint the root was picked in', () => {
+    render(<LayersPanel />);
+    const tablet = page.sortedViewportNodes[1];
+    const tabletRow = rowIn(root, tablet.breakpointId!);
+    expect(rowOf(root).className).toContain('bg-brand/10');
+    expect(tabletRow.className).not.toContain('bg-brand/10');
+    // On a touch screen the selected row keeps its action cluster visible.
+    const cluster = (row: HTMLElement) => within(row).getByRole('button', { name: 'More layer actions' }).parentElement!;
+    expect(cluster(rowOf(root)).className).toContain('[@media(hover:none)]:opacity-100');
+    expect(cluster(tabletRow).className).not.toContain('[@media(hover:none)]:opacity-100');
+  });
+
+  it('the breakpoint row menu holds the root actions, never Delete or Duplicate', () => {
+    render(<LayersPanel />);
+    const { armed } = press(within(rowOf(root)).getByRole('button', { name: 'More layer actions' }));
+    expect(armed).toBe(false);
+    const labels = within(screen.getByRole('menu')).getAllByRole('menuitem').map(b => b.textContent);
+    expect(labels).toEqual(['Hide layer', 'Lock layer', 'Collapse']);
+    fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Hide layer' }));
+    expect(root.canvasVisible).toBe(false);
+    // Rows under a hidden page body are dimmed like it.
+    expect(within(rowOf(main)).getByText(main.displayName).className).toContain('opacity-50');
+    // A right-click opens the same menu, and its Collapse folds the group.
+    fireEvent.contextMenu(rowOf(root), { clientX: 10, clientY: 10 });
+    const menu = screen.getByRole('menu');
+    expect(within(menu).queryByRole('menuitem', { name: 'Delete layer' })).toBeNull();
+    expect(within(menu).queryByRole('menuitem', { name: 'Duplicate' })).toBeNull();
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Collapse' }));
+    expect(rowOf(main)).toBeNull();
+  });
+
+  it('a drop onto the breakpoint row inserts the dragged node into the root', () => {
+    render(<LayersPanel />);
+    const bpRow = rowOf(root);
+    const pointer = { pointerId: 1, pointerType: 'mouse', isPrimary: true, button: 0 };
+    (document as { elementsFromPoint?: Document['elementsFromPoint'] }).elementsFromPoint = () => [bpRow];
+    try {
+      const source = rowOf(nested);
+      fireEvent.pointerDown(source, { ...pointer, clientX: 0, clientY: 0 });
+      fireEvent.pointerMove(source, { ...pointer, clientX: 40, clientY: 40 });
+      expect(getDragManager()!.pendingTarget).toEqual({ kind: 'appTree' });
+      fireEvent.pointerUp(source, { ...pointer, clientX: 40, clientY: 40 });
+    } finally {
+      delete (document as { elementsFromPoint?: Document['elementsFromPoint'] }).elementsFromPoint;
+    }
+    expect(nested.parentId).toBe(root.id);
+    expect(root.children[root.children.length - 1].id).toBe(nested.id);
+    // One undo step puts it back.
+    getHistoryStore()!.undo();
+    expect(page.findComponent(nested.id)?.parentId).toBe(main.id);
+  });
+
+  it('a canvas selection of the root opens its collapsed breakpoint group', async () => {
+    render(<LayersPanel />);
+    const tablet = page.sortedViewportNodes[1];
+    expect(store.editorUI.collapsedLayerIds.has(tablet.id)).toBe(true);
+    await act(async () => {
+      store.editorUI.selectComponent(root, tablet.breakpointId);
+    });
+    expect(store.editorUI.collapsedLayerIds.has(tablet.id)).toBe(false);
+    expect(rowIn(main, tablet.breakpointId!)).not.toBeNull();
+  });
+
+  it('inside a component definition the root is the component and keeps its own row', () => {
+    const created = store.editorUI.currentProject!.createComponentFromSelection(page.id, [main.id], 'Card');
+    if (!created.ok) throw new Error(created.message);
+    store.editorUI.enterComponent(created.definitionId);
+    expect(store.editorUI.inComponent).toBe(true);
+    const definitionRoot = store.editorUI.currentPage!.appComponentTree as ComponentInstance;
+    render(<LayersPanel />);
+    expect(document.querySelector(`[data-inner-component-id="${definitionRoot.id}"]`)).not.toBeNull();
+    // The breakpoint row is only the group header there: no drop marker into the root.
+    expect(document.querySelector('[data-viewport-id]')).toBeNull();
+  });
+});
+
+describe('row icons', () => {
+  // The row's type icon: the first lucide svg that is not the fold chevron.
+  const iconOf = (c: ComponentInstance) =>
+    rowOf(c).querySelector('svg.lucide:not(.lucide-chevron-down):not(.lucide-chevron-right)')!.getAttribute('class');
+  const add = (parent: ComponentInstance, id: string, type: string, props: Record<string, unknown>) => {
+    parent.addChild(createIntrinsicComponent(id, type as 'div', props));
+    return parent.children[parent.children.length - 1] as ComponentInstance;
+  };
+
+  it('names each kind of node with its own icon instead of a text "T" for everything', () => {
+    const section = add(root, 'hero-x', 'section', {});
+    const title = add(section, 'hero-title', 'h1', { children: 'Hello' });
+    const nav = add(root, 'nav-x', 'nav', { style: { display: 'flex', flexDirection: 'row' } });
+    const link = add(nav, 'nav-link', 'a', { href: '/', children: 'Home' });
+    const stack = add(root, 'stack-x', 'div', { style: { display: 'flex', flexDirection: 'column' } });
+    const grid = add(root, 'grid-x', 'div', { style: { display: 'grid' } });
+    const paragraph = add(root, 'para-x', 'p', { children: 'Copy' });
+    const button = add(root, 'btn-x', 'button', { children: 'Go' });
+    const video = add(root, 'video-x', 'video', {});
+    const list = add(root, 'list-x', 'ul', {});
+    const item = add(list, 'item-x', 'li', { children: 'One' });
+    const collection = add(root, 'coll-x', 'div', { 'data-component-kind': 'collection' });
+    const products = add(root, 'prod-x', 'div', { 'data-component-kind': 'product-list' });
+    const form = add(root, 'form-x', 'div', { 'data-form-kind': 'form' });
+    const email = add(form, 'email-x', 'div', { 'data-form-kind': 'form-field', fieldType: 'email' });
+    render(<LayersPanel />);
+
+    expect(iconOf(main)).toContain('lucide-container');
+    expect(iconOf(section)).toContain('lucide-container');
+    expect(iconOf(title)).toContain('lucide-type');
+    expect(iconOf(nav)).toContain('lucide-columns-2');
+    expect(iconOf(link)).toContain('lucide-link');
+    expect(iconOf(stack)).toContain('lucide-align-vertical-space-around');
+    expect(iconOf(grid)).toContain('lucide-grid-3x3');
+    expect(iconOf(paragraph)).toContain('lucide-type');
+    expect(iconOf(button)).toContain('lucide-square');
+    expect(iconOf(video)).toContain('lucide-video');
+    expect(iconOf(list)).toContain('lucide-layout-list');
+    expect(iconOf(item)).toContain('lucide-type');
+    expect(iconOf(collection)).toContain('lucide-list');
+    expect(iconOf(products)).toContain('lucide-shopping-bag');
+    expect(iconOf(form)).toContain('lucide-clipboard-list');
+    expect(iconOf(email)).toContain('lucide-mail');
+    expect(iconOf(image)).toContain('lucide-image');
+    expect(iconOf(nested)).toContain('lucide-type');
+  });
+
+  it('follows the layout of the breakpoint the row is listed in', () => {
+    const [desktop, tablet] = page.sortedViewportNodes;
+    const responsive = add(root, 'resp-x', 'div', {
+      style: { display: { [desktop.breakpointId!]: 'grid', [tablet.breakpointId!]: 'block' } },
+    });
+    store.editorUI.setCollapsedLayerIds(new Set());
+    render(<LayersPanel />);
+    const rowIn = (bp: string) =>
+      document.querySelector<HTMLElement>(`[data-layer-row="${responsive.id}"][data-layer-breakpoint="${bp}"]`)!;
+    expect(rowIn(desktop.breakpointId!).querySelector('svg.lucide-grid-3x3')).not.toBeNull();
+    expect(rowIn(tablet.breakpointId!).querySelector('svg.lucide-container')).not.toBeNull();
   });
 });
