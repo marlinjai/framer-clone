@@ -1,14 +1,14 @@
-// What a real published page sits on, beyond its own sheet: the CSS the root layout
-// ships to every route, and the classes on html and body. A page's own sheet alone is
+// What a real published page sits on, beyond its own sheet: the root layout's fonts, the
+// site sheet the (site) layout links (src/app/(site)/site.css: the reset, the theme
+// tokens, the base layer), and the classes on html and body. A page's own sheet alone is
 // a page no visitor sees: no reset, no theme, no base layer.
 //
 // test/score/data/published-base.css and .json are generated from the production build
 // by `pnpm score:refresh-base` (test/score/refreshBase.ts) and committed, so a
 // score run needs no build. `publishedBaseInputs` is what keeps them honest: the files
 // and versions that decide the base, compared by src/app/__tests__/publishedBase.test.ts,
-// which fails when one changes without a refresh. The utilities in the sheet also follow
-// every class written in the repo, so they lag until the next refresh. That is on
-// purpose: the reset, the theme and the base layer are what a stored page depends on.
+// which fails when one changes without a refresh. The site sheet scans no code, so
+// nothing else changes it.
 
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
@@ -18,8 +18,15 @@ const DATA_DIR = path.resolve(process.cwd(), 'test/score/data');
 export const BASE_CSS_FILE = path.join(DATA_DIR, 'published-base.css');
 export const BASE_META_FILE = path.join(DATA_DIR, 'published-base.json');
 
-/** The layouts every published page sits under, and the sheet they import. */
-export const BASE_SOURCES = ['src/app/globals.css', 'src/app/layout.tsx', 'src/app/(site)/layout.tsx'] as const;
+/**
+ * The layouts every published page sits under, and the sheet they import with what it
+ * imports. Not the editor's globals.css: a published page never links it, so an editor
+ * change needs no refresh (src/app/__tests__/publishedSheet.test.ts holds that).
+ */
+export const BASE_SOURCES = ['src/app/(site)/site.css', 'src/app/theme-tokens.css', 'src/app/layout.tsx', 'src/app/(site)/layout.tsx'] as const;
+/** Rules only the editor sheet (globals.css) holds: its own surfaces, never a published page's. */
+export const EDITOR_SHEET_MARKERS = ['.glass-surface', 'data-pan-cursor', 'data-resize-direction'] as const;
+
 /** The packages that compile the sheet or write the font classes. */
 const BASE_PACKAGES = ['next', 'tailwindcss', '@tailwindcss/postcss', 'tw-animate-css'] as const;
 

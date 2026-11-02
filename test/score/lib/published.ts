@@ -110,7 +110,7 @@ const started = (behaviour: PublishedOutput['behaviour'], runtime: string | unde
   (behaviour && runtime ? runtimeScripts(runtime, behaviour) : '');
 
 /**
- * A complete page for Chromium, as a visitor gets it: the root layout's sheets in the
+ * A complete page for Chromium, as a visitor gets it: the sheets the root and site layouts link in the
  * head (inline, because `page.setContent` has no origin to load a link from), its
  * classes on html and body, and the site layout's sheets (the base font, then the
  * site's theme, src/lib/site/siteSheets.tsx), then the sheet of the site's page base and

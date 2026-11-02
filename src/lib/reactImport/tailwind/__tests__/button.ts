@@ -1,7 +1,6 @@
 // The repo's own button table and its theme, as the contract's probes used them. Shared by the tests.
 
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
+import { editorSheetSource } from '../../../../../test/score/lib/editorSheet';
 import type { VariantTable } from '../order';
 
 export const BUTTON_BASE =
@@ -35,5 +34,9 @@ export const BUTTON_TABLE: VariantTable = {
   ],
 };
 
-/** The repo's own `globals.css`, which is a shadcn theme: what a developer's sheet looks like. */
-export const GLOBALS_CSS = readFileSync(path.join(process.cwd(), 'src/app/globals.css'), 'utf8');
+/**
+ * The repo's own `globals.css`, which is a shadcn theme: what a developer's sheet looks like.
+ * Its tokens live in src/app/theme-tokens.css, which it imports; a developer's sheet holds
+ * them in place, so they are written in.
+ */
+export const GLOBALS_CSS = editorSheetSource();

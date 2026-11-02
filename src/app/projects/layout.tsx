@@ -9,6 +9,9 @@
 // `cms-grid-theme.css` overrides pin the engine tokens to the light Studio-iris
 // theme. This segment layout adds NO `<html>`/`<body>` (only the root owns those).
 import React from 'react';
+// The editor's own sheet first, as when the root layout carried it: the grid
+// sheets below override some of its rules by order.
+import '../globals.css';
 import '@marlinjai/data-table-react/dist/styles/variables.css';
 import '@marlinjai/data-table-react/dist/styles/base.css';
 import '../cms-grid-theme.css';

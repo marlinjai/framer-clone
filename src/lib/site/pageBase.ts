@@ -1,9 +1,9 @@
 // src/lib/site/pageBase.ts
 //
 // What elements look like on a site before anyone styles them, the Site settings
-// field `pageBase`. The root layout ships Tailwind's reset and the editor's base
-// layer to every route, and CSS links are decided per route, so a site cannot be
-// left out of them. Two bases come out of that:
+// field `pageBase`. The site sheet (src/app/(site)/site.css) ships Tailwind's reset
+// and the base layer to every published route, so a site cannot be left out of
+// them. Two bases come out of that:
 //
 //   - `reset`, every site's default: the reset stands. Headings, lists, margins and
 //     form controls start bare, and a page shows only what its nodes set.

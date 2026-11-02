@@ -35,6 +35,8 @@ vi.mock('@/server/sites/renderSitePage', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/server/sites/renderSitePage')>();
   return { ...actual, renderSitePage: (input: never) => renderSitePage(input) };
 });
+// The site sheet, which a build compiles; nothing here reads it.
+vi.mock('../site.css', () => ({}));
 
 import { generateMetadata } from '../layout';
 import SiteNotFound from '../not-found';

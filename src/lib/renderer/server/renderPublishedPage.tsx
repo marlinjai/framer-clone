@@ -221,7 +221,7 @@ export async function renderPublishedPage(
         )}
         {fonts}
         {images.preloadUrl ? <HeroPreload url={images.preloadUrl} /> : null}
-        {/* Constant text, after the root layout's sheets, whose layers it needs. */}
+        {/* Constant text, after the site sheet, whose layers it needs. */}
         {baseCss ? <style data-fc-page-base="" dangerouslySetInnerHTML={{ __html: baseCss }} /> : null}
         {responsive.css ? (
           // Rendered in place (no href / precedence, so React does not hoist

@@ -10,25 +10,41 @@ import os from 'node:os';
 import path from 'node:path';
 import { setup as startDatabase, teardown as stopDatabase } from '../../vitest.integration.setup';
 
-const PORT = 3931;
+// BEHAVIOUR_SERVER_PORT moves the server off the default when another checkout's run holds it.
+const PORT = Number(process.env.BEHAVIOUR_SERVER_PORT ?? 3931);
 const LOG = path.join(os.tmpdir(), 'behaviour-next-start.log');
 
 let server: ChildProcess | undefined;
 
+async function answers(): Promise<boolean> {
+  try {
+    await fetch(`http://127.0.0.1:${PORT}/robots.txt`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Another checkout's run on the same port would answer in place of this build, and every
+ * proof would then hold for the wrong code: refuse a taken port, and a server that died.
+ */
+async function assertPortFree(): Promise<void> {
+  if (await answers()) throw new Error(`port ${PORT} already answers, so a run would test another server: set BEHAVIOUR_SERVER_PORT to a free port`);
+}
+
 async function waitForServer(): Promise<void> {
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
-    try {
-      await fetch(`http://127.0.0.1:${PORT}/robots.txt`);
-      return;
-    } catch {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-    }
+    if (server?.exitCode !== null && server?.exitCode !== undefined) throw new Error(`next start exited with ${server.exitCode}, see ${LOG}`);
+    if (await answers()) return;
+    await new Promise((resolve) => setTimeout(resolve, 250));
   }
   throw new Error(`next start did not answer, see ${LOG}`);
 }
 
 export async function setup(): Promise<void> {
+  await assertPortFree();
   await startDatabase();
   if (process.env.BEHAVIOUR_REUSE_BUILD !== '1') {
     execSync('pnpm build', { stdio: 'inherit', env: { ...process.env, NEXT_TELEMETRY_DISABLED: '1' } });
@@ -53,6 +69,6 @@ export async function setup(): Promise<void> {
 }
 
 export async function teardown(): Promise<void> {
-  if (server?.pid) process.kill(-server.pid);
+  if (server?.pid && server.exitCode === null) process.kill(-server.pid);
   await stopDatabase();
 }
