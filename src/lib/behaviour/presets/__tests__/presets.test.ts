@@ -134,6 +134,21 @@ describe('carousel', () => {
     expect(refusals(rotating)).toEqual([]);
   });
 
+  it('refuses a rotation faster than the page would run', () => {
+    expect(() => carousel({ seed: 'a1', rotateMs: 500 })).toThrow(/1000 ms/);
+    expect(() => carousel({ seed: 'a1', rotateMs: Number.NaN })).toThrow();
+  });
+
+  it('finds its controls when a person put something else in the root', () => {
+    const base = carousel({ seed: 'a1', rotateMs: 5000 });
+    const heading = { id: 'a1-heading', type: 'h2', props: { children: 'Offers' } };
+    const edited = addSlide({ ...base, children: [heading, ...(base.children ?? [])] }, 'Fourth');
+    const buttons = nodes(edited).filter((node) => node.type === 'button');
+    expect(buttons.map((button) => behaviourOf(button).on?.map((trigger) => trigger.id))).toEqual([['keep-focus', 'press'], ['press'], ['press']]);
+    expect(behaviourOf(edited.children?.[0] as PresetNode)).toEqual({});
+    expect(refusals(edited)).toEqual([]);
+  });
+
   it('adding a slide keeps rotation and numbers every slide', () => {
     const after = addSlide(carousel({ seed: 'a1', rotateMs: 5000 }), 'Fourth');
     const slides = nodes(after).filter((node) => propsOf(node)['aria-roledescription'] === 'slide');
