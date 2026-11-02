@@ -156,6 +156,18 @@ const PROBES: Probe[] = [
     },
   },
   {
+    id: 'popover-dialog',
+    topLayer: true,
+    what: 'a full-viewport dialog with a popover attribute, opened with showPopover (open in the top layer, but not modal)',
+    nodes: [
+      node('open', 'button', { id: 'open', popovertarget: 'pdlg', style: { position: 'absolute', top: 8, left: 8 }, children: 'Open' }),
+      node('pdlg', 'dialog', { id: 'pdlg', popover: 'manual', style: { ...COVER, width: '100vw', height: '100vh', maxWidth: 'none', maxHeight: 'none', margin: 0, border: 0 }, children: 'Covering' }),
+    ],
+    act: async (page) => {
+      await page.click('#open');
+    },
+  },
+  {
     id: 'modal',
     topLayer: true,
     what: 'a modal dialog, by command="show-modal" where the engine has it, else as the behaviour verb opens one',

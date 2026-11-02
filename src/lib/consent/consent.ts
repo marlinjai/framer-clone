@@ -174,7 +174,7 @@ export function consentRuntimeScript(input: ConsentRuntimeConfig): string {
     // guarded: an engine without one of these features throws on its name.
     'function up(){return !!el&&!el.hidden;}' +
     "var told=false;function tell(){if(!told){told=true;console.warn('[consent] closed a popover, dialog or fullscreen that would cover the consent banner');}}" +
-    "function shut(t){try{if(t.tagName==='DIALOG'){if(t.open&&t.matches(':modal')){t.close();tell();}}else if(t.matches(':popover-open')){t.hidePopover();tell();}}catch(e){}}" +
+    "function shut(t){try{if(t.tagName==='DIALOG'&&t.open&&t.matches(':modal')){t.close();tell();}if(t.matches(':popover-open')){t.hidePopover();tell();}}catch(e){}}" +
     'function unfull(){var f=d.fullscreenElement||d.webkitFullscreenElement;if(!f)return;tell();' +
     'try{var p=d.exitFullscreen?d.exitFullscreen():d.webkitExitFullscreen();if(p&&p.catch)p.catch(function(){});}catch(e){}}' +
     "function clear(){var all=[];try{all=d.querySelectorAll('dialog[open]');}catch(e){}for(var i=0;i<all.length;i++)shut(all[i]);" +
