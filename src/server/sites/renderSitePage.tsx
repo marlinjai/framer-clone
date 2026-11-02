@@ -110,6 +110,7 @@ export async function renderSitePage({ site, matched, adapted, jsonLd }: RenderS
     // Lenis smooth scrolling, the site's setting (off by default; off for
     // visitors who ask for reduced motion, decided in the browser).
     smoothScroll: site.siteSettings.smoothScroll === true,
+    pageBase: site.siteSettings.pageBase,
     // The consent banner (shown only when analytics needs consent) speaks the
     // site language, looks like the home page and links the privacy policy.
     consent: {

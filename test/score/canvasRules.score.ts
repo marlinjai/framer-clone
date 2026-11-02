@@ -11,7 +11,6 @@ import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { HOVER_GATE } from '@/lib/rules/states';
 import { bundleEditor, mountOnCanvas, openEditor, placeTree, type MountOptions } from './lib/canvasBundle';
 import { publishedDocument, renderPublished } from './lib/published';
-import { readPublishedBase } from './lib/publishedBase';
 import { FIXTURES } from './corpus/fixtures';
 
 interface EditorHooks {
@@ -607,13 +606,6 @@ describe('stored rules on the mounted editor', () => {
       await published.close();
 
       const canvas = await mounted(tree);
-      // The bundle leaves the stylesheet out, and the real editor sits under the same root
-      // layout. Without it this would compare a reset page with one that has none.
-      await canvas.evaluate((css) => {
-        const sheet = document.createElement('style');
-        sheet.textContent = css;
-        document.head.prepend(sheet);
-      }, readPublishedBase().css);
       const copyOf = canvas.locator(`[data-viewport-content-id] [data-parity-id="${parityId}"]`);
       const componentId = await copyOf.getAttribute('data-inner-component-id');
       await preview(canvas, componentId, ruleId);

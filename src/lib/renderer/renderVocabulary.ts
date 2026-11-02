@@ -96,7 +96,7 @@ export const REFUSED_RENDER_ATTRIBUTES: ReadonlySet<string> = new Set(words(`
  * when the code starts using a `data-fc-` name that is neither here nor issued. The
  * bare `data-fc-sticky-cta` passes: hoistStickyCta writes it, and it only pins a bar.
  */
-const RENDERER_ATTRIBUTE = /^data-fc-(?:consent|sticky-cta-|site-base|fonts|effects|rules|responsive|behaviour|b$)/;
+const RENDERER_ATTRIBUTE = /^data-fc-(?:consent|sticky-cta-|site-base|page-base|fonts|effects|rules|responsive|behaviour|b$)/;
 
 /** A custom element's shape. A colon would let createElementNS read `x-y:script` as `script`. */
 const CUSTOM_ELEMENT = /^[a-z][a-z0-9._]*-[a-z0-9._-]*$/;

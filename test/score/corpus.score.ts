@@ -6,6 +6,11 @@
 //
 // Non-vacuous by construction: a scripted state that leaves the ORIGINAL unchanged
 // is a harness error, so a fixture cannot "pass" a state that tests nothing.
+//
+// A fixture is a page written against the browser's own defaults, so its replica is
+// on a site that chose that base (Site settings, src/lib/site/pageBase.ts), through
+// the same sheet a visitor of that site gets. The same output is also compared on the
+// default base, untouched, so that number stays in the report.
 
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -14,8 +19,12 @@ import { build } from 'esbuild';
 import { FIXTURES, fixtureFile, readFixtureFile, type Fixture, type FixtureState } from './corpus/fixtures';
 import { BREAKPOINTS, bareDocument, publishedDocument, renderPublished } from './lib/published';
 import { MAX_DIFF_RATIO, diffComputed, diffRatio, takeSnapshot, type Snapshot } from './lib/compare';
+import { normalizeSiteSettings } from '@/lib/site/siteSettings';
 import { OUT_DIR, writeOut } from './lib/io';
 import type { CheckName, CorpusFailure, CorpusResult, GapId } from './lib/types';
+
+/** The Site settings of the site every replica sits on. */
+const CORPUS_SITE = normalizeSiteSettings({ pageBase: 'browser' });
 
 async function originalDocument(fixture: Fixture): Promise<string> {
   if ('html' in fixture.original) return readFixtureFile(fixture.original.html);
@@ -66,8 +75,10 @@ describe('parity corpus', () => {
     for (const fixture of FIXTURES) {
       const original = await originalDocument(fixture);
       const output = fixture.published ? await fixture.published() : renderPublished(fixture.tree());
-      const replica = publishedDocument(output);
+      const replica = publishedDocument(output, CORPUS_SITE.pageBase);
+      const onDefaultBase = publishedDocument(output);
       const bare = bareDocument(output);
+      const defaultBase = { pass: 0, total: 0 };
       const failures: CorpusFailure[] = [];
       const checks: CorpusResult['checks'] = {
         screenshot: { pass: 0, total: 0 },
@@ -121,6 +132,18 @@ describe('parity corpus', () => {
             return new Set(passing);
           };
 
+          if (!state) {
+            const page = await open(browser, onDefaultBase, viewport, fixture);
+            const snapshot = await takeSnapshot(page);
+            await page.close();
+            const same =
+              diffRatio(a.png, snapshot.png, path.join(OUT_DIR, 'scratch.png')) <= MAX_DIFF_RATIO &&
+              diffComputed(a.computed, snapshot.computed).count === 0 &&
+              a.aria === snapshot.aria;
+            defaultBase.total += 1;
+            if (same) defaultBase.pass += 1;
+          }
+
           if (!state) initialOriginal = a;
           else if (initialOriginal && !state.media) {
             const unchanged =
@@ -173,6 +196,7 @@ describe('parity corpus', () => {
         checks,
         failures,
         notMeasured: fixture.notMeasured ?? [],
+        defaultBase,
       });
     }
 

@@ -22,6 +22,8 @@ import type { PageModelType } from '@/models/PageModel';
 import ComponentRenderer from './ComponentRenderer';
 import PageFontFaces from '@/lib/fonts/PageFontFaces';
 import { CanvasRuleStyles, type CanvasRuleStylesProps } from '@/lib/rules/CanvasRuleStyles';
+import { FLOATING_ROOT, VIEWPORT_ROOT } from '@/lib/rules/surfaces';
+import { PageBaseStyles } from '@/lib/site/PageBaseStyles';
 import type { SurfaceNode } from '@/lib/rules/surfaceSheet';
 import GroundWrapper from './GroundWrapper';
 import { useStore } from '@/hooks/useStore';
@@ -64,6 +66,8 @@ const FLOATING_FALLBACK_HEIGHT = 160;
 // The frame's size when the viewport node holds none, here and in the rule sheet.
 const FRAME_FALLBACK_WIDTH = 400;
 const FRAME_FALLBACK_HEIGHT = 600;
+
+const CANVAS_ROOTS = [VIEWPORT_ROOT, FLOATING_ROOT];
 
 // Apart from ResponsivePageRenderer, so an edit redraws these and not every frame:
 // both read the page's expansion, which changes with any node.
@@ -108,6 +112,8 @@ const ResponsivePageRenderer = observer(() => {
     <>
       {/* The self-hosted web fonts the page uses (src/lib/fonts/registry.ts). */}
       <PageFonts page={page} />
+      {/* The site's page base, as the published page has it. */}
+      <PageBaseStyles base={project.site.pageBase} roots={CANVAS_ROOTS} />
       {/* props.rules, for every frame. Here and not beside a node: see the component. */}
       <PageRuleStyles
         page={page}

@@ -30,6 +30,7 @@ import BehaviourIsland from './BehaviourIsland';
 import EffectsIsland from './EffectsIsland';
 import { publishedEffectsBootScript } from '@/lib/effects/effects';
 import { LENIS_CSS } from '@/lib/effects/smoothScroll';
+import { DEFAULT_PAGE_BASE, pageBaseSheet, type PageBase } from '@/lib/site/pageBase';
 import { publishedFontAssets } from './publishedFonts';
 import { applyImageLoading, HeroPreload } from './imageLoading';
 import type { BreakpointRef } from '@/lib/responsive/cascade';
@@ -89,6 +90,8 @@ export interface RenderPublishedPageInput {
    * visitors who ask for reduced motion.
    */
   smoothScroll?: boolean;
+  /** The site's page base (src/lib/site/pageBase.ts): `reset` unless the site chose otherwise. */
+  pageBase?: PageBase;
   /**
    * How the consent banner speaks and looks: the site language, the site's
    * look and its privacy policy path. Only used when analytics needs consent.
@@ -153,7 +156,7 @@ function resolveTracker(analytics: ResolvedAnalytics | undefined): TrackerPayloa
 export async function renderPublishedPage(
   input: RenderPublishedPageInput,
 ): Promise<RenderedPage> {
-  const { root, budget, pageParams, cmsRepo, commerceRepo, analytics, productPagePath = null, breakpoints = [], smoothScroll = false, consent } = input;
+  const { root, budget, pageParams, cmsRepo, commerceRepo, analytics, productPagePath = null, breakpoints = [], smoothScroll = false, pageBase = DEFAULT_PAGE_BASE, consent } = input;
   const tracker = resolveTracker(analytics);
 
   const hydratedTree = await hydrateBindings(root, pageParams, { cmsRepo, commerceRepo }, productPagePath, budget);
@@ -188,6 +191,7 @@ export async function renderPublishedPage(
   // The page frame drives any island re-resolution of {{page.params.*}} and {{product.href}}.
   const scope = pushPageFrame(createScope(), pageParams, productPagePath);
   const tree = renderComponentNode(responsive.root, scope);
+  const baseCss = pageBaseSheet(pageBase);
 
   return {
     body: (
@@ -207,6 +211,8 @@ export async function renderPublishedPage(
         )}
         {fonts}
         {images.preloadUrl ? <HeroPreload url={images.preloadUrl} /> : null}
+        {/* Constant text, after the root layout's sheets, whose layers it needs. */}
+        {baseCss ? <style data-fc-page-base="" dangerouslySetInnerHTML={{ __html: baseCss }} /> : null}
         {responsive.css ? (
           // Rendered in place (no href / precedence, so React does not hoist
           // it) ahead of the content it styles, so streamed HTML never paints

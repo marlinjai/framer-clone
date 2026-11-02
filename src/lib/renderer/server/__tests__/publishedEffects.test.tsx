@@ -14,6 +14,7 @@ import { renderPublishedPage } from '../renderPublishedPage';
 import { renderComponentNode } from '../renderComponentNode';
 import { FX_ATTR, FX_VAR } from '@/lib/effects/effects';
 import { STICKY_CTA_ATTR, STICKY_CTA_MARKER } from '@/lib/stickyCta/stickyCta';
+import type { PageBase } from '@/lib/site/pageBase';
 
 const BPS = [
   { id: 'desktop', minWidth: 1200 },
@@ -109,6 +110,16 @@ describe('renderPublishedPage with effects', () => {
     const on = renderToString(<>{(await renderPublishedPage({ root: page(undefined), pageParams: {}, cmsRepo, breakpoints: BPS, smoothScroll: true })).body}</>);
     expect(on).toContain('html.lenis');
     expect(on).not.toContain('data-fx-h');
+  });
+
+  it('the page base adds its sheet ahead of the page\'s own, only for a site that chose it', async () => {
+    const render = async (pageBase?: PageBase) =>
+      renderToString(<>{(await renderPublishedPage({ root: page({ hover: 'lift' }), pageParams: {}, cmsRepo, breakpoints: BPS, pageBase })).body}</>);
+    expect(await render()).not.toContain('data-fc-page-base');
+    expect(await render('reset')).not.toContain('data-fc-page-base');
+    const html = await render('browser');
+    expect(html).toContain('all:revert-layer');
+    expect(html.indexOf('data-fc-page-base')).toBeLessThan(html.indexOf('data-fc-responsive'));
   });
 });
 

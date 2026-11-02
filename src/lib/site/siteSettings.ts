@@ -22,6 +22,8 @@
 // way out, so a blob written by an older or newer build (missing fields, wrong
 // types, unknown keys) never reaches the renderer in a shape it cannot handle.
 
+import { DEFAULT_PAGE_BASE, PAGE_BASES, type PageBase } from './pageBase';
+
 /** Days in schema.org order, used by the opening-hours rows. */
 export const WEEKDAYS = [
   'Monday',
@@ -92,6 +94,12 @@ export interface SiteSettings {
    * reduced motion. See docs/plans/2026-10-23-motion-effects.md.
    */
   smoothScroll: boolean;
+  /**
+   * What elements look like before anyone styles them: `reset` strips them, `browser`
+   * keeps the browser's look, on the published page, the preview and the canvas. See
+   * src/lib/site/pageBase.ts.
+   */
+  pageBase: PageBase;
 }
 
 /** The input to persistence and to ProjectModel: any subset, normalized on read. */
@@ -133,6 +141,7 @@ export const DEFAULT_SITE_SETTINGS: SiteSettings = {
   notFoundPageId: '',
   business: EMPTY_BUSINESS,
   smoothScroll: false,
+  pageBase: DEFAULT_PAGE_BASE,
 };
 
 /** What a project created from now on starts with. */
@@ -212,6 +221,7 @@ export function normalizeSiteSettings(raw: unknown): SiteSettings {
     notFoundPageId: str(s.notFoundPageId),
     business: normalizeBusiness(s.business),
     smoothScroll: s.smoothScroll === true,
+    pageBase: PAGE_BASES.includes(s.pageBase as PageBase) ? (s.pageBase as PageBase) : DEFAULT_PAGE_BASE,
   };
 }
 

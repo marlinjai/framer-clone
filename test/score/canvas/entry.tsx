@@ -13,6 +13,7 @@ import EditorApp from '@/components/EditorApp';
 // Named for what it is here: the singleton getter behind the hook, called outside React.
 import { useStore as editorStore } from '@/hooks/useStore';
 import ComponentModel, { type ComponentInstance } from '@/models/ComponentModel';
+import type { PageBase } from '@/lib/site/pageBase';
 
 interface PlaceOptions {
   /** Keep every breakpoint frame, for a contract that compares them. */
@@ -27,6 +28,7 @@ interface ProbeWindow {
     frames: () => { breakpointId: string; label: string }[];
     setPreviewRule: (preview: { componentId: string; ruleId: string } | null) => void;
     setPreviewOpen: (open: boolean) => void;
+    setPageBase: (base: PageBase) => void;
     setRuleStyle: (componentId: string, ruleId: string, style: Record<string, unknown>) => void;
     setStyle: (componentId: string, style: Record<string, unknown>) => void;
     toggleLock: (componentId: string) => void;
@@ -75,6 +77,12 @@ const nodeById = (id: string): ComponentInstance | undefined => {
   frames: () => openPage().sortedViewportNodes.map((viewport: ComponentInstance) => ({ breakpointId: viewport.breakpointId!, label: viewport.label! })),
   setPreviewRule: (preview) => editorStore().editorUI.setPreviewRule(preview),
   setPreviewOpen: (open) => editorStore().editorUI.setPreviewOpen(open),
+  setPageBase: (base) => {
+    const project = editorStore().editorUI.currentProject;
+    if (!project) throw new Error('the editor opened no project');
+    const result = project.updateSiteSettings({ ...project.site, pageBase: base });
+    if (!result.ok) throw new Error(`the settings were refused: ${JSON.stringify(result.errors)}`);
+  },
   setRuleStyle: (componentId, ruleId, style) => {
     const node = nodeById(componentId);
     if (!node) throw new Error(`no node ${componentId}`);
