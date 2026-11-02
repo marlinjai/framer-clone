@@ -74,7 +74,8 @@ export function derived(node: PresetNode, derive: Derived): PresetNode {
     if (list.length > 0) merged[name] = list;
     else delete merged[name];
   }
-  const { behaviour: _old, ...rest } = propsOf(node);
+  const rest: Record<string, unknown> = { ...propsOf(node) };
+  delete rest.behaviour;
   const behaviour = compactBehaviour(merged);
   return { ...node, props: (behaviour ? { ...rest, behaviour } : rest) as PresetNode['props'] };
 }
