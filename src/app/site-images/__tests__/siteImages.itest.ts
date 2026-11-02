@@ -25,7 +25,10 @@
 //   7. a published revision keeps showing the image it was published with
 //      after the settings are saved with another one.
 //
-// Runs only under `pnpm test:integration` (Docker).
+// Runs only under `pnpm test:integration` (Docker). The setup saves and
+// publishes through `latestVersionRepository()`, which names the stored version
+// as an editor tab that has just loaded the site would; the version lock itself
+// is proven in src/server/sites/__tests__/versionLock.itest.ts.
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHash, randomUUID } from 'node:crypto';
@@ -49,7 +52,8 @@ vi.mock('@/lib/auth-check', () => ({ checkWorkspaceAccess: vi.fn() }));
 import { getVerifiedSession } from '@/lib/auth-api';
 import { checkWorkspaceAccess } from '@/lib/auth-check';
 import { getPrismaClient } from '@/server/db';
-import { getSiteRepository, type TenantScope } from '@/server/sites';
+import type { TenantScope } from '@/server/sites';
+import { latestVersionRepository } from '@/server/sites/__tests__/latestVersionRepository';
 import { ico, icoWith, jpegHeader, png, pngHeader, svgText } from '@/lib/images/__tests__/fixtures';
 import { MAX_SITE_IMAGE_BYTES } from '@/lib/site/siteImages';
 import { GET as listGET, POST as uploadPOST } from '@/app/api/projects/[projectId]/images/route';
@@ -100,10 +104,10 @@ const createdSites: string[] = [];
 async function makeSite(label: string, options: { published?: boolean } = {}): Promise<TestSite> {
   const id = randomUUID();
   const scope: TenantScope = { workspaceId: `ws_img_${label}_${randomUUID().slice(0, 8)}`, tenantGroupId: randomUUID() };
-  const repo = getSiteRepository();
-  const { version } = await repo.saveProject(scope, project(id));
+  const repo = latestVersionRepository();
+  await repo.saveProject(scope, project(id));
   createdSites.push(id);
-  if (options.published !== false) await repo.publishProject(scope, project(id), { expectedVersion: version });
+  if (options.published !== false) await repo.publishProject(scope, project(id));
   const { subdomain } = await repo.ensureSiteDomain(scope, id);
   return { id, scope, companyId: randomUUID(), host: `${subdomain}.example.com` };
 }
@@ -362,7 +366,7 @@ describe('the published head and the published revision', () => {
     const sharingPath = (await (await upload(siteA.id, sharing, 'sharing')).json()).path as string;
     const aboutPath = (await (await upload(siteA.id, about, 'sharing')).json()).path as string;
 
-    await getSiteRepository().publishProject(siteA.scope, project(siteA.id, { faviconUrl: iconPath, ogImageUrl: sharingPath }, aboutPath));
+    await latestVersionRepository().publishProject(siteA.scope, project(siteA.id, { faviconUrl: iconPath, ogImageUrl: sharingPath }, aboutPath));
 
     requestHost = siteA.host;
     const base = await layoutMetadata();
@@ -386,7 +390,7 @@ describe('the published head and the published revision', () => {
     const later = png(512, 512, [4, 5, 6]);
     const publishedPath = (await (await upload(siteA.id, published)).json()).path as string;
     const laterPath = (await (await upload(siteA.id, later)).json()).path as string;
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.publishProject(siteA.scope, project(siteA.id, { faviconUrl: publishedPath }));
     await repo.saveProject(siteA.scope, project(siteA.id, { faviconUrl: laterPath }), { mustExist: true });
 
@@ -469,7 +473,7 @@ describe('listing and deleting', () => {
     const oldPath = (await (await upload(site.id, old)).json()).path as string;
     await upload(site.id, unused);
 
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     // `old` is in revision 2 only (kept for rollback); `used` is in the working copy and revision 3.
     await repo.publishProject(site.scope, project(site.id, { faviconUrl: oldPath }));
     await repo.publishProject(site.scope, project(site.id, { faviconUrl: usedPath }));
@@ -559,7 +563,7 @@ describe('a path the site does not store', () => {
     const theirs = png(220, 220, [8, 8, 8]);
     sessionMock.mockResolvedValue(memberOf(siteB));
     const theirPath = (await (await upload(siteB.id, theirs)).json()).path as string;
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     const typed = `/site-images/${'f'.repeat(64)}.png`;
 
     for (const attempt of [
