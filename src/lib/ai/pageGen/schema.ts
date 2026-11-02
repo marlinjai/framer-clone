@@ -118,9 +118,14 @@ export interface GenerationPreset {
   bindableSlots: string[];
 }
 
-/** Every registry entry, sorted by id for deterministic docs and cache-stable prompts. */
+/**
+ * Every registry entry, sorted by id for deterministic docs and cache-stable prompts. A
+ * behaviour preset is left out: its entry stands for nodes a function builds, not for the
+ * element it names, and the generator is taught presets in slice B12 of the behaviour model.
+ */
 export function listGenerationPresets(): GenerationPreset[] {
   return Object.values(COMPONENT_REGISTRY)
+    .filter((entry) => !entry.preset)
     .map((entry) => ({
       id: entry.id,
       label: entry.label,

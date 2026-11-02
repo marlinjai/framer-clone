@@ -30,6 +30,7 @@ import {
 } from '@marlinjai/tenant-db';
 import { COMMERCE_TENANT_MIGRATIONS } from '../index';
 import { commerceJob } from '../025_commerce_job';
+import { orderRequestKey } from '../026_order_request_key';
 import { APPEND_ONLY_TABLES, revokeAppendOnlyWrites } from '../../../provisioning/provision';
 
 const DB_NAME = 'framer_clone_test';
@@ -65,6 +66,7 @@ const EXPECTED_MIGRATION_IDS = [
   '023_shop_mail',
   '024_receipt_paid_on',
   '025_commerce_job',
+  '026_order_request_key',
 ];
 
 const EXPECTED_ENUMS: Record<string, string[]> = {
@@ -517,6 +519,49 @@ describe('CM-04 provisionTenant(COMMERCE_TENANT_MIGRATIONS) — structural probe
              has_table_privilege(${APP_ROLE}, ${SCHEMA + '.commerce_job'}, 'DELETE') AS can_delete
     `;
     expect(rights[0]).toEqual({ can_insert: true, can_update: true, can_delete: true });
+  });
+
+  // --- the order key (026) ---------------------------------------------------
+  it('026 moves live orders to a key per company, and is re-runnable', async () => {
+    const companyA = '018f9c10-0000-7000-8000-0000000000da';
+    const companyB = '018f9c10-0000-7000-8000-0000000000db';
+    const insertOrder = (id: string, tenantId: string | null, requestId: string) =>
+      inSchema((tx) => tx`
+        INSERT INTO "order" (tenant_id, id, order_number, request_id, currency_code, tax_region, subtotal, tax_amount, total, updated_at)
+        VALUES (${tenantId}, ${id}, ${`ON-${id}`}, ${requestId}, 'EUR', 'DE', 0, 0, 0, now())
+      `);
+    const orderIndexes = async () =>
+      (await owner!`
+        SELECT indexname, indexdef FROM pg_indexes
+         WHERE schemaname = ${SCHEMA} AND tablename = 'order' AND indexname LIKE '%request_id%'
+      `).map((row) => `${row.indexname}: ${/\(.*\)/.exec(row.indexdef as string)?.[0]}`);
+
+    // The schema as 025 left it, holding a company's order and a legacy order without one (a row from before 020:
+    // its NOT VALID check exempts the rows it found, and only this drop lets the test write one now).
+    await inSchema(async (tx) => {
+      await tx`DROP INDEX "order_tenant_request_id_key"`;
+      await tx`CREATE UNIQUE INDEX "order_request_id_key" ON "order" ("request_id")`;
+      await tx`ALTER TABLE "order" DROP CONSTRAINT "order_tenant_id_present"`;
+    });
+    await insertOrder('rk_a1', companyA, 'RK-SHARED');
+    await insertOrder('rk_legacy', null, 'RK-LEGACY');
+    await inSchema((tx) => tx`ALTER TABLE "order" ADD CONSTRAINT "order_tenant_id_present" CHECK ("tenant_id" IS NOT NULL) NOT VALID`);
+    await expect(insertOrder('rk_b0', companyB, 'RK-SHARED')).rejects.toThrow(/order_request_id_key/);
+
+    await inSchema((tx) => orderRequestKey.up(tx));
+    expect(await orderIndexes()).toEqual(['order_tenant_request_id_key: (tenant_id, request_id)']);
+
+    // Live rows survive. A key is unique within a company, free in another, and a repeat names the new index.
+    const rows = await owner!`SELECT id FROM ${owner!(SCHEMA)}."order" WHERE id IN ('rk_a1', 'rk_legacy')`;
+    expect(rows).toHaveLength(2);
+    await insertOrder('rk_b1', companyB, 'RK-SHARED');
+    await expect(insertOrder('rk_a2', companyA, 'RK-SHARED')).rejects.toMatchObject({
+      code: '23505',
+      constraint_name: 'order_tenant_request_id_key',
+    });
+
+    await inSchema((tx) => orderRequestKey.up(tx));
+    expect(await orderIndexes()).toEqual(['order_tenant_request_id_key: (tenant_id, request_id)']);
   });
 
   // --- partial-unique indexes (live-only) --------------------------------

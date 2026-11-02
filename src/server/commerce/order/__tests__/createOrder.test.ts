@@ -17,7 +17,7 @@
 //   - validateCart's guards (empty lines, missing requestId, quantity <= 0, and the
 //     reverse-charge B2C precondition),
 //   - both duplicate-detector predicates (the name-tagged reserve sentinel and the
-//     postgres.js 23505 on order_request_id_key), and the fresh-transaction
+//     postgres.js 23505 on order_tenant_request_id_key), and the fresh-transaction
 //     re-read they trigger; an unrelated 23505 must propagate,
 //   - the transaction runs at READ COMMITTED, the idempotency pre-check return,
 //     and the happy-path order assembly.
@@ -310,12 +310,13 @@ describe('duplicate-detector predicates', () => {
   });
 
   it('isOrderRequestIdConflict matches a 23505 on the order request_id index, not others', () => {
-    expect(isOrderRequestIdConflict(makePgUniqueViolation('order_request_id_key'))).toBe(true);
+    expect(isOrderRequestIdConflict(makePgUniqueViolation('order_tenant_request_id_key'))).toBe(true);
     expect(isOrderRequestIdConflict(makePgUniqueViolation('order_number_key'))).toBe(false);
+    expect(isOrderRequestIdConflict(makePgUniqueViolation('order_request_id_key'))).toBe(false);
     expect(isOrderRequestIdConflict(makePgUniqueViolation('order_pkey'))).toBe(false);
     expect(
       isOrderRequestIdConflict(
-        Object.assign(new Error('fk'), { code: '23503', constraint_name: 'order_request_id_key' }),
+        Object.assign(new Error('fk'), { code: '23503', constraint_name: 'order_tenant_request_id_key' }),
       ),
     ).toBe(false);
     expect(isOrderRequestIdConflict(new Error('plain'))).toBe(false);
@@ -390,7 +391,7 @@ describe('createOrder control flow', () => {
       inventoryItemId: 'inv-1',
       variantId: 'var-1',
       needed: 2,
-      requestId: 'req-1:0',
+      requestId: '018f9c10-0000-7000-8000-0000000000dc:req-1:0',
       refType: 'order_line',
       refId: 'line-1',
     });
@@ -400,27 +401,32 @@ describe('createOrder control flow', () => {
     const { db } = makeFakeDb();
     findByRequestIdMock.mockResolvedValue({ id: 'prior-order' } as never);
 
-    const result = await createOrder(db, TG, baseCart());
+    const cart = baseCart();
+    const result = await createOrder(db, TG, cart);
     expect(result).toEqual({ ok: true, orderId: 'prior-order' });
+    // The pre-check is the selling company's: a key says nothing across companies.
+    expect(findByRequestIdMock).toHaveBeenCalledWith(expect.anything(), cart.tenantId, cart.requestId);
     // No price resolution, no insert, no reserve: the prior order wins outright.
     expect(resolvePriceMock).not.toHaveBeenCalled();
     expect(insertOrderMock).not.toHaveBeenCalled();
     expect(reserveMock).not.toHaveBeenCalled();
   });
 
-  it('a lost order request_id race (23505 on order_request_id_key) re-reads the winner in a FRESH transaction', async () => {
+  it('a lost order request_id race (23505 on order_tenant_request_id_key) re-reads the winner in a FRESH transaction', async () => {
     const { db, isolationLevels, transactionCount } = makeFakeDb();
     findByRequestIdMock
       .mockResolvedValueOnce(undefined) // in-transaction pre-check: not there yet
       .mockResolvedValueOnce({ id: 'winner-order' } as never); // fresh re-read
     resolvePriceMock.mockResolvedValue(1000);
     nextOrderNumberMock.mockResolvedValue('ORD-000002');
-    insertOrderMock.mockRejectedValue(makePgUniqueViolation('order_request_id_key'));
+    insertOrderMock.mockRejectedValue(makePgUniqueViolation('order_tenant_request_id_key'));
 
-    const result = await createOrder(db, TG, baseCart());
+    const cart = baseCart();
+    const result = await createOrder(db, TG, cart);
     expect(result).toEqual({ ok: true, orderId: 'winner-order' });
     expect(transactionCount()).toBe(2);
     expect(isolationLevels).toEqual(['read committed', 'read committed']);
+    expect(findByRequestIdMock).toHaveBeenLastCalledWith(expect.anything(), cart.tenantId, cart.requestId);
   });
 
   it('a lost per-line reservation race (the reserve sentinel) also resolves to the prior order', async () => {
@@ -445,7 +451,7 @@ describe('createOrder control flow', () => {
     findByRequestIdMock.mockResolvedValue(undefined);
     resolvePriceMock.mockResolvedValue(1000);
     nextOrderNumberMock.mockResolvedValue('ORD-000004');
-    insertOrderMock.mockRejectedValue(makePgUniqueViolation('order_request_id_key'));
+    insertOrderMock.mockRejectedValue(makePgUniqueViolation('order_tenant_request_id_key'));
 
     await expect(createOrder(db, TG, baseCart())).rejects.toThrow(/no prior order was found/);
   });

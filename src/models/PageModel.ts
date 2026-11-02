@@ -17,11 +17,15 @@ import ComponentModel, {
   ComponentInstance,
   ComponentSnapshotIn,
   CanvasNodeType,
+  ComponentTypeEnum,
+  type PropsRecord,
   createIntrinsicComponent,
   createFloatingCanvasComponent,
 } from './ComponentModel';
 import { isStickyCta } from '@/lib/stickyCta/stickyCta';
 import { remapBehaviourRefs } from '@/lib/behaviour/format';
+import { PRESETS, type PresetKind, type PresetNode } from '@/lib/behaviour/presets';
+import { renewCopyIds } from '@/lib/renderer/idRefs';
 import {
   contentModelRefusal,
   placedDefinitionIds,
@@ -242,6 +246,22 @@ function addRegistryDefaultChildren(parent: ComponentInstance, ids: readonly str
   }
 }
 
+/** A preset's nodes as one snapshot, each child knowing its parent: a subtree created whole bypasses addChild. */
+function presetSnapshot(node: PresetNode, parentId?: string): ComponentSnapshotIn {
+  return {
+    id: node.id,
+    type: node.type as ComponentSnapshotIn['type'],
+    componentType: ComponentTypeEnum.HOST,
+    props: node.props as PropsRecord,
+    ...(node.label ? { label: node.label } : {}),
+    ...(parentId ? { parentId } : {}),
+    ...(node.children ? { children: node.children.map((child) => presetSnapshot(child, node.id)) } : {}),
+  };
+}
+
+/** A fresh use of a preset. The seed is short because it starts every id the preset writes. */
+const presetSeed = (kind: PresetKind): string => `${kind}-${uuidv4().slice(0, 8)}`;
+
 /** The page's sticky call to action bar, if it has one (depth first). */
 function findStickyCta(node: ComponentInstance): ComponentInstance | undefined {
   if (isStickyCta(node.props)) return node;
@@ -363,6 +383,22 @@ const PageModel = PageWithComponents
       return bar;
     }
 
+    const preset = entry.preset ? presetSnapshot(PRESETS[entry.preset](presetSeed(entry.preset))) : undefined;
+
+    if (preset && target.kind === 'floating') {
+      const floating = ComponentModel.create({
+        ...preset,
+        label: entry.label,
+        canvasNodeType: CanvasNodeType.FLOATING_ELEMENT,
+        canvasX: Math.round(target.x),
+        canvasY: Math.round(target.y),
+        canvasScale: 1,
+      });
+      self.canvasNodes.set(floating.id, floating);
+      self.updatedAt = new Date();
+      return self.canvasNodes.get(floating.id);
+    }
+
     if (target.kind === 'floating') {
       const floating = createFloatingCanvasComponent(
         `${entry.id}-${uuidv4()}`,
@@ -378,13 +414,13 @@ const PageModel = PageWithComponents
       return self.canvasNodes.get(floating.id);
     }
 
-    const child = createIntrinsicComponent(
-      `${entry.id}-${uuidv4()}`,
-      entry.htmlType,
-      entry.defaultProps,
-    );
-    child.setLabel(entry.label);
-    addRegistryDefaultChildren(child, entry.defaultChildren);
+    const child = preset
+      ? ComponentModel.create({ ...preset, label: entry.label })
+      : createIntrinsicComponent(`${entry.id}-${uuidv4()}`, entry.htmlType, entry.defaultProps);
+    if (!preset) {
+      child.setLabel(entry.label);
+      addRegistryDefaultChildren(child, entry.defaultChildren);
+    }
 
     const { parent, index } = insertPlace(self, target);
     if (isTextNodeType(parent.type) || isPlacementType(parent.type)) {
@@ -526,7 +562,8 @@ const PageModel = PageWithComponents
    * Duplicate a node and its whole subtree as one history entry. Every id in
    * the copy is fresh and every child's parentId follows it, and so does
    * behaviour: a reference to a node in the copy takes its new id, a reference
-   * to one outside stays. A tree child is inserted right after the original; a
+   * to one outside stays. The same goes for an element `id` and what points at
+   * it, so a duplicated tab list does not point at the first one's panels. A tree child is inserted right after the original; a
    * floating element is placed 24px down and right of it on the canvas. The page
    * root and breakpoint frames are not duplicable. Returns the copy, or undefined
    * when nothing was duplicated.
@@ -551,9 +588,10 @@ const PageModel = PageWithComponents
         children: (snap.children ?? []).map((c: ComponentSnapshotIn) => renewIds(c, id)),
       };
     };
-    // A second pass, because a reference can point at a node later in the walk.
+    // A second pass, because a reference can point at a node later in the walk. An
+    // element `id` something in the copy points at moves too: it would repeat otherwise.
     const withFreshIds = (snap: ComponentSnapshotIn, parentId: string | undefined): ComponentSnapshotIn =>
-      remapBehaviourRefs(renewIds(snap, parentId), freshIds);
+      renewCopyIds(remapBehaviourRefs(renewIds(snap, parentId), freshIds), uuidv4().slice(0, 8));
 
     if (component.hasParent && component.parentId) {
       const parent = findComponentInPage(self, component.parentId);

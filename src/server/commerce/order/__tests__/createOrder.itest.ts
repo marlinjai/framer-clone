@@ -41,7 +41,7 @@ import {
   provisionCommerceTenant,
   type StorefrontFixtures,
 } from '../../__tests__/storefrontFixtures';
-import { createOrder, type Cart } from '../createOrder';
+import { createOrder, orderLineRequestId, type Cart } from '../createOrder';
 import { DEMO_COMPANY_ID } from '@/lib/renderer/server/demoTenant';
 
 let fx: StorefrontFixtures;
@@ -234,8 +234,8 @@ describe('createOrder (tenant schema, Dockerized Postgres)', () => {
 
     expect(await count('order', requestId)).toBe(0);
     for (const i of [0, 1]) {
-      expect(await count('reservation', `${requestId}:${i}`)).toBe(0);
-      expect(await count('stock_movement', `${requestId}:${i}`)).toBe(0);
+      expect(await count('reservation', orderLineRequestId(DEMO_COMPANY_ID, requestId, i))).toBe(0);
+      expect(await count('stock_movement', orderLineRequestId(DEMO_COMPANY_ID, requestId, i))).toBe(0);
     }
     expect(await reservedOf(stockA.itemId, stockA.locationId)).toBe(0);
   });
@@ -359,8 +359,8 @@ describe('createOrder (tenant schema, Dockerized Postgres)', () => {
     if (!first.ok || !second.ok) throw new Error('unreachable');
     expect(second.orderId).toBe(first.orderId);
     expect(await count('order', requestId)).toBe(1);
-    expect(await count('reservation', `${requestId}:0`)).toBe(1);
-    expect(await count('stock_movement', `${requestId}:0`)).toBe(1);
+    expect(await count('reservation', orderLineRequestId(DEMO_COMPANY_ID, requestId, 0))).toBe(1);
+    expect(await count('stock_movement', orderLineRequestId(DEMO_COMPANY_ID, requestId, 0))).toBe(1);
     expect(await reservedOf(itemId, locationId)).toBe(2);
   });
 
@@ -380,8 +380,8 @@ describe('createOrder (tenant schema, Dockerized Postgres)', () => {
     if (!a.ok || !b.ok) throw new Error(`expected both ok, got ${JSON.stringify([a, b])}`);
     expect(a.orderId).toBe(b.orderId);
     expect(await count('order', requestId)).toBe(1);
-    expect(await count('reservation', `${requestId}:0`)).toBe(1);
-    expect(await count('stock_movement', `${requestId}:0`)).toBe(1);
+    expect(await count('reservation', orderLineRequestId(DEMO_COMPANY_ID, requestId, 0))).toBe(1);
+    expect(await count('stock_movement', orderLineRequestId(DEMO_COMPANY_ID, requestId, 0))).toBe(1);
     expect(await reservedOf(itemId, locationId)).toBe(3);
   });
 

@@ -158,7 +158,7 @@ const TABLE_DOCS: Record<string, string> = {
     '004_pricing_and_tax (+ 005 order_id): storefront credit note (Storno /\nGutschrift). Append-only, no updated_at. amount = INTEGER cents.',
   credit_note_ref: '004_pricing_and_tax: credit-note reference (append-only, no updated_at).',
   order:
-    '005_minimal_orders: order ("order" is a reserved word; the key stays bare).\nFull German order-level tax model; money columns are INTEGER cents.',
+    '005_minimal_orders: order ("order" is a reserved word; the key stays bare).\nFull German order-level tax model; money columns are INTEGER cents.\nrequest_id is unique per company (026_order_request_key).',
   order_line_item:
     '005_minimal_orders: order line item (variant snapshot + tax treatment).\nAppend-only, no updated_at. `tax_rate` is integer BASIS POINTS (1900 = 19%).',
   books_company_settings:

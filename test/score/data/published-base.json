@@ -4,10 +4,10 @@
   "bodyClass": "__variable_8eaea4 __variable_8c25df antialiased",
   "sheets": [
     "static/css/15730e9f7c5c55ef.css",
-    "static/css/f4aa10a6bf8d009f.css"
+    "static/css/435a91cab32d1625.css"
   ],
   "inputs": {
-    "src/app/globals.css": "e9c379bce028cad6270525d39868963eec733e098eefdf52a87c46032e3e237a",
+    "src/app/globals.css": "5edadfce54e6716035275aa80ec4f8331c6ca342a073158296982578af005cef",
     "src/app/layout.tsx": "d4fb4c107afd3a45fe24fb1e5c69aca3ac6e616b9c70dd718692ec7055ea1276",
     "src/app/(site)/layout.tsx": "866db1c50c37659ee8d9558eb38063ab34c3fc2386e457d01050366d1579ddc9",
     "next": "15.5.28",

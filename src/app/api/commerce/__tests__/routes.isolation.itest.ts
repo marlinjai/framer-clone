@@ -269,6 +269,52 @@ describe('route-level two-tenant isolation (host decides the tenant group)', () 
   });
 });
 
+describe('route-level isolation between two companies of one tenant group', () => {
+  it("orders: a key reused on the other company's site answers that site's own order, never the first company's", async () => {
+    const companyA = randomUUID();
+    const companyB = randomUUID();
+    const group = await provisionCommerceTenant(fx, 'b0-group');
+    const { host: siteOfA } = await createPublishedSite(fx, group.tgId, 'b0-a', companyA);
+    const { host: siteOfB } = await createPublishedSite(fx, group.tgId, 'b0-b', companyB);
+    const key = `b0-shared-${randomUUID()}`;
+
+    const priceyA = await seedBuyableProduct(group.db, {
+      title: 'PRICEY_A',
+      handle: `pricey-a-${randomUUID().slice(0, 8)}`,
+      amountCents: 123400,
+      stocked: 5,
+      tenantId: companyA,
+    });
+    const placedA = await post({ lines: [{ variantId: priceyA.variantId, quantity: 1 }], idempotencyKey: key }, siteOfA);
+    expect(placedA.status).toBe(201);
+    const orderA = (await placedA.json()) as { orderId: string; orderNumber: string; totalCents: number };
+
+    // Seeded after A's order: a seed repoints the group's one default fulfillment location.
+    const cheapB = await seedBuyableProduct(group.db, {
+      title: 'CHEAP_B',
+      handle: `cheap-b-${randomUUID().slice(0, 8)}`,
+      amountCents: 100,
+      stocked: 5,
+      tenantId: companyB,
+    });
+    const placedB = await post({ lines: [{ variantId: cheapB.variantId, quantity: 1 }], idempotencyKey: key }, siteOfB);
+    expect(placedB.status).toBe(201);
+    const orderB = (await placedB.json()) as { orderId: string; orderNumber: string; totalCents: number };
+
+    // B's answer is B's own: 1.00 plus 19% VAT, not A's 1234.00 plus VAT under A's id and number.
+    expect(orderB.totalCents).toBe(119);
+    expect(orderB.orderNumber).not.toBe(orderA.orderNumber);
+    expect(orderB.orderId).not.toBe(orderA.orderId);
+
+    const levelB = await group.db
+      .selectFrom('inventory_level')
+      .select('reserved_quantity')
+      .where('inventory_item_id', '=', cheapB.inventoryItemId)
+      .executeTakeFirstOrThrow();
+    expect(levelB.reserved_quantity).toBe(1);
+  });
+});
+
 describe('FAIL CLOSED: a published site with no valid tenant group, or no schema', () => {
   it.each([
     ['a legacy non-UUID tenant group', () => hostUnprovisioned],

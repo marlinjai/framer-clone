@@ -14,6 +14,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import type { BreakpointRef } from '@/lib/responsive/cascade';
 import type { BehaviourProgram } from '@/lib/behaviour/program';
+import { runtimeScripts } from './runtime';
 import { applyResponsiveStyles } from '@/lib/renderer/server/applyResponsiveStyles';
 import { renderComponentNode } from '@/lib/renderer/server/renderComponentNode';
 import { DEFAULT_VIEWPORTS } from '@/lib/canvas/defaultViewports';
@@ -105,22 +106,26 @@ const pageBase = (() => {
   };
 })();
 
+/** What runs a page's stored behaviour, on a page that has any. */
+const started = (behaviour: PublishedOutput['behaviour'], runtime: string | undefined): string =>
+  (behaviour && runtime ? runtimeScripts(runtime, behaviour) : '');
+
 /**
  * A complete page for Chromium, as a visitor gets it: the root layout's sheets in the
  * head (inline, because `page.setContent` has no origin to load a link from), its
  * classes on html and body, and the site layout's style, then the sheet of the site's
  * page base and the page's own sheet, in the body, where the published route puts them.
  */
-export function publishedDocument({ html, css }: PublishedOutput, base: PageBase = DEFAULT_PAGE_BASE): string {
+export function publishedDocument({ html, css, behaviour }: PublishedOutput, base: PageBase = DEFAULT_PAGE_BASE, runtime?: string): string {
   const [head, body] = pageBase();
   const baseCss = pageBaseSheet(base);
-  return `${head}${body}${baseCss ? `<style data-fc-page-base="">${baseCss}</style>` : ''}${css ? `<style data-fc-responsive="">${css}</style>` : ''}${html}</body></html>`;
+  return `${head}${body}${baseCss ? `<style data-fc-page-base="">${baseCss}</style>` : ''}${css ? `<style data-fc-responsive="">${css}</style>` : ''}${html}${started(behaviour, runtime)}</body></html>`;
 }
 
 /**
  * The same output with no page base, which no visitor ever gets. It exists for one
  * question only: when a check fails on the real page, would it pass without the base?
  */
-export function bareDocument({ html, css }: PublishedOutput): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><style>${css}</style></head><body style="margin:0">${html}</body></html>`;
+export function bareDocument({ html, css, behaviour }: PublishedOutput, runtime?: string): string {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><style>${css}</style></head><body style="margin:0">${html}${started(behaviour, runtime)}</body></html>`;
 }

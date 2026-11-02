@@ -9,7 +9,8 @@ import 'server-only';
 // sole author of money and stock.
 //
 // What happens inside the single transaction, in order:
-//   1. sequential idempotency pre-check (re-read by the order request_id),
+//   1. sequential idempotency pre-check (re-read by the company and the order
+//      request_id),
 //   2. resolve each line's unit price via pricingRepository.resolvePrice
 //      (integer cents),
 //   3. snapshot each line (variant title/sku, unit price, quantity) and compute
@@ -33,8 +34,8 @@ import 'server-only';
 //   inner reserve re-throws a DuplicateRequestError sentinel (name-tagged) out of
 //   the transaction on a request_id UNIQUE (SQLSTATE 23505) race; we replicate
 //   its recovery at the ORDER level: roll back, then re-read and return the prior
-//   committed order in a FRESH transaction keyed on the order's request_id (the
-//   naive in-transaction re-read fails with Postgres 25P02).
+//   committed order in a FRESH transaction keyed on the company and the order's
+//   request_id (the naive in-transaction re-read fails with Postgres 25P02).
 //
 //   pricing / tax: each line snapshots the FULL resolved tax treatment, not a
 //   bare rate, so a reprint reproduces the legal invoice with ZERO recomputation.
@@ -114,7 +115,7 @@ export interface Cart {
   tenantId: string;
   /** The site the order is placed on (stored on the order). */
   siteId?: string | null;
-  /** The ORDER-level idempotency key (UNIQUE on order.request_id). */
+  /** The ORDER-level idempotency key (UNIQUE per company on order.tenant_id, order.request_id). */
   requestId: string;
   /** ISO-4217 alpha-3 currency, uppercase (matches the b5 currency CHECK). */
   currency: string;
@@ -204,8 +205,21 @@ export function validateCart(cart: Cart): void {
 }
 
 /**
+ * The request_id of an order line's reservation: stable across retries (so a re-run
+ * is idempotent) and unique per line within the order. It carries the company
+ * because the stock ledger's UNIQUE(request_id) spans the tenant group's schema: on
+ * the bare order key, a second company reusing that key would be answered with the
+ * first company's reservation and its order would hold no stock.
+ */
+export function orderLineRequestId(tenantId: string, requestId: string, lineIndex: number): string {
+  return `${tenantId}:${requestId}:${lineIndex}`;
+}
+
+/**
  * True iff `error` is a postgres.js unique-violation (SQLSTATE 23505) on the
- * order's UNIQUE(request_id) index (`order_request_id_key`). kysely-postgres-js
+ * order's UNIQUE(tenant_id, request_id) index (`order_tenant_request_id_key`,
+ * 026_order_request_key; the start step migrates before this code serves, so the
+ * old `order_request_id_key` is never seen here). kysely-postgres-js
  * rethrows the raw postgres.js `PostgresError`, which carries `.code` ('23505')
  * and `.constraint_name` (the violated index). Matching the EXACT constraint name
  * is load-bearing: a miss would treat a duplicate order as a fresh failure (a
@@ -216,17 +230,15 @@ export function isOrderRequestIdConflict(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
   const e = error as { code?: unknown; constraint_name?: unknown };
   if (e.code !== '23505') return false;
-  const name = e.constraint_name;
-  if (typeof name !== 'string') return false;
-  return name === 'order_request_id_key' || name.includes('request_id');
+  return e.constraint_name === 'order_tenant_request_id_key';
 }
 
 /**
  * cart -> order in ONE READ COMMITTED transaction on the scoped `db`. Returns
  * { ok:true, orderId } on success, the explicit
  * { ok:false, shortages } when any line short-stocks (the whole order rolls back),
- * and is idempotent on the order's request_id (a duplicate returns the prior
- * order). `tgId` is threaded through for the per-tenant order_number_seq read and
+ * and is idempotent per company on the order's request_id (a duplicate returns the
+ * company's prior order, another company's use of the key is unrelated). `tgId` is threaded through for the per-tenant order_number_seq read and
  * the inner reserve's raw guarded UPDATE.
  */
 export async function createOrder(
@@ -249,7 +261,7 @@ export async function createOrder(
       // or on a per-line reservation via the inner reserve's name-tagged
       // DuplicateRequestError). The loser rolled back; the winner committed. Re-read
       // the winner in a FRESH transaction (the aborted one cannot be queried).
-      return resolvePriorOrder(db, cart.requestId);
+      return resolvePriorOrder(db, cart.tenantId, cart.requestId);
     }
     throw error;
   }
@@ -268,8 +280,8 @@ function runOrderTransaction(
       // NO `SET LOCAL search_path`: `trx` is already schema-qualified (it inherits
       // withSchema from commerceTenantDb(tgId)).
 
-      // (1) Sequential idempotency: a prior order with this request_id wins.
-      const prior = await orderRepository.findByRequestId(trx, cart.requestId);
+      // (1) Sequential idempotency: this company's prior order with this request_id wins.
+      const prior = await orderRepository.findByRequestId(trx, cart.tenantId, cart.requestId);
       if (prior) return { ok: true, orderId: prior.id };
 
       const reverseCharge = cart.reverseCharge ?? false;
@@ -409,9 +421,7 @@ function runOrderTransaction(
           variantId: cartLine.variantId,
           locationId: cartLine.locationId,
           needed: cartLine.quantity,
-          // Per-line request_id derived from the order key: stable across retries
-          // (so a re-run is idempotent) and unique per line within the order.
-          requestId: `${cart.requestId}:${i}`,
+          requestId: orderLineRequestId(cart.tenantId, cart.requestId, i),
           refType: 'order_line',
           refId: lineItem.id,
         });
@@ -455,19 +465,20 @@ function runOrderTransaction(
 }
 
 /**
- * Re-read the prior committed order for `requestId` in a FRESH READ COMMITTED
- * transaction and return it as the idempotent success. If it is somehow absent,
- * surface loudly (never a silent 500).
+ * Re-read the company's prior committed order for `requestId` in a FRESH READ
+ * COMMITTED transaction and return it as the idempotent success. If it is somehow
+ * absent, surface loudly (never a silent 500).
  */
 function resolvePriorOrder(
   db: Kysely<CommerceDB>,
+  tenantId: string,
   requestId: string,
 ): Promise<CreateOrderResult> {
   return db
     .transaction()
     .setIsolationLevel(RESERVE_ISOLATION_LEVEL)
     .execute(async (trx) => {
-      const prior = await orderRepository.findByRequestId(trx, requestId);
+      const prior = await orderRepository.findByRequestId(trx, tenantId, requestId);
       if (!prior) {
         throw new Error(
           `createOrder: request_id ${requestId} hit a UNIQUE violation but no prior order was found`,

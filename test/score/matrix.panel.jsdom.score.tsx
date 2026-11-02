@@ -210,6 +210,20 @@ async function operate(el: Element, node: ComponentInstance, onBreakpoint: boole
   await step(node, onBreakpoint, () => fireEvent.click(el));
 }
 
+/** Each preset the palette offers, dropped on a real page as a drop does it: what comes back says which really landed. */
+function placePresets(): string[] {
+  const { projectStore } = createRootStore();
+  projectStore.createProject('Preset probe');
+  const page = projectStore.findProjectByTitle('Preset probe')?.findPageBySlug('');
+  if (!page) throw new Error('no page to place a preset on');
+  return Object.values(COMPONENT_REGISTRY).flatMap((entry) => {
+    if (!entry.preset) return [];
+    const placed = page.insertRegistryComponent(entry.id, { kind: 'appTree' });
+    const kind = (placed?.props.behaviour as { preset?: { kind: string } } | undefined)?.preset?.kind;
+    return kind ? [kind] : [];
+  });
+}
+
 /** Adds one property or attribute through the Custom section, by keyboard. */
 async function addThroughCustom(node: ComponentInstance, thing: string, name: string, value: string): Promise<void> {
   const field = (kind: string) => document.body.querySelector(`input[aria-label="${thing} ${kind}"]`);
@@ -431,6 +445,7 @@ describe('coverage matrix: properties panel', () => {
 
     const referenced = referencedStyleKeys();
     const paletteTags = new Set(Object.values(COMPONENT_REGISTRY).map((entry) => entry.htmlType as string));
+    const presetsPlaced = placePresets();
     const results: SurfaceResults = {};
     const anyStyle = written.styleKeys.size > 0;
 
@@ -504,6 +519,7 @@ describe('coverage matrix: properties panel', () => {
       typesWritten: [...written.types].sort(),
       referencedNotDriven: [...referenced].filter((k) => !written.styleKeys.has(k)).sort(),
       paletteTags: [...paletteTags].sort(),
+      presetsPlaced,
       rawFieldRows: [...written.rawField].sort(),
     });
   }, 400_000);

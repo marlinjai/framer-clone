@@ -1,4 +1,9 @@
 @import "tailwindcss";
+/* Tests carry hostile and malformed class strings on purpose (the React import's
+   Tailwind converter is tested against them); Tailwind's automatic scan must not
+   turn those into CSS, or the production build fails on them. */
+@source not "../**/__tests__";
+@source not "../**/*.test.{ts,tsx}";
 /* The Books template composer's inspector fields carry their own utility classes. */
 @source "../../node_modules/@marlinjai/block-editor-react/dist";
 @import "tw-animate-css";

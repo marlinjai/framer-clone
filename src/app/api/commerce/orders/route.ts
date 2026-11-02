@@ -231,7 +231,7 @@ export async function POST(req: Request): Promise<Response> {
 
     // Read the server-authoritative total back from the committed order (b6
     // returns only the id). currency + total (cents) are server-computed.
-    const order = await readOrderTotal(db, result.orderId);
+    const order = await readOrderTotal(db, companyId, result.orderId);
     if (!order) {
       // The order committed but vanished on read back: a server fault, surfaced
       // loudly (logged in full) rather than returned as a false success.

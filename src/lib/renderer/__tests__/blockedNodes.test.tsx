@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createComponentElement } from '@/lib/renderer/createComponentElement';
 import { renderComponentNode } from '@/lib/renderer/server/renderComponentNode';
+import { safeInlineStyle } from '@/lib/renderer/blockedNodes';
 
 const published = (node: Record<string, unknown>) => renderToStaticMarkup(renderComponentNode({ id: 'n', ...node } as never) as never);
 const editor = (type: string, props: Record<string, unknown>) =>
@@ -374,5 +375,12 @@ describe('blocked nodes', () => {
     const onClick = () => {};
     const element = createComponentElement({ type: 'div', props: {}, isHostElement: true } as never, { onClick }, []) as React.ReactElement<{ onClick: unknown }>;
     expect(element.props.onClick).toBe(onClick);
+  });
+
+  it('drops behavior and -moz-binding from an inline style, as the sheet does', () => {
+    for (const key of ['behavior', 'Behavior', 'MozBinding', 'mozBinding']) {
+      expect(safeInlineStyle({ [key]: 'url(x.htc)', color: 'red' })).toEqual({ color: 'red' });
+    }
+    expect(published({ type: 'div', props: { style: { behavior: 'url(x.htc)', color: 'red' } } })).toBe('<div style="color:red"></div>');
   });
 });

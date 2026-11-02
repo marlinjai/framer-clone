@@ -6,12 +6,20 @@
 // and states and the contract fails: that failure is what the behaviour model
 // (step 6 of the plan) has to close.
 //
+// A pattern with `built: 'behaviour'` takes its tree from its preset, the same function
+// the palette calls, and its contract grows to the keys the Guide lists.
+//
 // A contract is one interaction, not the whole Guide page: passing means the
 // primary keyboard path works, not that the pattern is fully conformant.
 
 import type { Locator, Page } from 'playwright';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { TEXT_NODE_TYPE } from '@/lib/renderer/textNode';
+import { carousel } from '@/lib/behaviour/presets/carousel';
+import { tabs } from '@/lib/behaviour/presets/tabs';
+import { toolbar } from '@/lib/behaviour/presets/toolbar';
+import { tooltip } from '@/lib/behaviour/presets/tooltip';
+import type { PresetKind } from '@/lib/behaviour/presets';
 
 type Props = Record<string, unknown>;
 
@@ -35,7 +43,9 @@ function assert(condition: unknown, message: string): asserts condition {
 export interface Pattern {
   id: string;
   /** How the tree is built, in a few words. */
-  built: 'native' | 'aria-only';
+  built: 'native' | 'aria-only' | 'behaviour';
+  /** The preset the tree comes from, when `built` is 'behaviour'. */
+  preset?: PresetKind;
   tree: () => ComponentNode;
   /** `root` is where the tree sits: the page once published, the frame's content on the canvas. */
   contract: (page: Page, root: Scope) => Promise<void>;
@@ -50,6 +60,24 @@ const pressed = async (page: Page, key: string) => {
 };
 
 const attr = (root: Scope, selector: string, name: string) => root.locator(selector).first().getAttribute(name);
+
+const focusedText = (page: Page) => page.evaluate(() => document.activeElement?.textContent);
+
+/** Presses each key in turn, and says where the focus must land after it. */
+async function walkKeys(page: Page, steps: [string, string][]): Promise<void> {
+  for (const [key, want] of steps) {
+    await pressed(page, key);
+    const at = await focusedText(page);
+    assert(at === want, `${key} put the focus on ${JSON.stringify(at)}, not ${JSON.stringify(want)}`);
+  }
+}
+
+/** One Tab stop in a group: Tab from inside leaves it. */
+async function leavesWithTab(page: Page, root: Scope, role: 'tab' | 'button'): Promise<void> {
+  await pressed(page, 'Tab');
+  const inside = await root.getByRole(role).evaluateAll((items) => items.includes(document.activeElement as HTMLElement));
+  assert(!inside, 'Tab stayed inside the group: it holds more than one Tab stop');
+}
 
 /** Opens by keyboard, puts focus inside, closes with Escape, gives focus back. */
 async function modalContract(page: Page, root: Scope, role: 'dialog' | 'alertdialog'): Promise<void> {
@@ -165,19 +193,36 @@ export const PATTERNS: Pattern[] = [
   },
   {
     id: 'carousel',
-    built: 'aria-only',
-    tree: () =>
-      n(
-        'section',
-        { 'aria-roledescription': 'carousel', 'aria-label': 'Offers' },
-        t('button', 'Next slide'),
-        t('div', 'Slide one', { role: 'group', 'aria-roledescription': 'slide' }),
-        t('div', 'Slide two', { role: 'group', 'aria-roledescription': 'slide', hidden: true }),
-      ),
+    built: 'behaviour',
+    preset: 'carousel',
+    tree: () => carousel({ seed: 'pattern-carousel', label: 'Offers', slides: ['Slide one', 'Slide two', 'Slide three'], rotateMs: 1000 }) as ComponentNode,
     contract: async (page, root) => {
+      const shown = async () => {
+        const out: string[] = [];
+        for (const slide of await root.getByRole('group').all()) if (await slide.isVisible()) out.push((await slide.textContent()) ?? '');
+        return out;
+      };
+      // Focus arriving stops rotation, wherever it had got to, so the rest starts from a fixed slide.
       await root.getByRole('button', { name: 'Next slide' }).focus();
+      const start = await shown();
+      assert(start.length === 1, `${start.length} slides show at once`);
+      const titles = ['Slide one', 'Slide two', 'Slide three'];
+      const after = (by: number) => titles[(titles.indexOf(start[0]) + by + 3) % 3];
       await pressed(page, 'Enter');
-      assert(await root.getByText('Slide two').isVisible(), 'Next slide did not show the next slide');
+      assert((await shown())[0] === after(1), 'Next slide did not show the next slide');
+      await root.getByRole('button', { name: 'Previous slide' }).focus();
+      await pressed(page, 'Enter');
+      await pressed(page, 'Enter');
+      assert((await shown())[0] === after(-1), 'Previous slide did not go back one and wrap');
+      await page.waitForTimeout(1300);
+      assert((await shown())[0] === after(-1), 'rotation went on after focus entered');
+      const live = await root.locator('[aria-live]').first().getAttribute('aria-live');
+      assert(live === 'polite', `a slide a person moved is not announced: aria-live is ${live}`);
+      await root.getByRole('button', { name: 'Start rotation' }).focus();
+      await pressed(page, 'Enter');
+      assert((await focusedText(page)) === 'Stop rotation', 'the rotation control does not say what it does');
+      await page.waitForTimeout(1300);
+      assert((await shown())[0] !== after(-1), 'Start rotation did not start it');
     },
   },
   {
@@ -431,56 +476,56 @@ export const PATTERNS: Pattern[] = [
   },
   {
     id: 'tabs',
-    built: 'aria-only',
+    built: 'behaviour',
+    preset: 'tabs',
     tree: () =>
-      n(
-        'div',
-        {},
-        n(
-          'div',
-          { role: 'tablist', 'aria-label': 'Sections' },
-          t('button', 'One', { role: 'tab', 'aria-selected': 'true', 'aria-controls': 'p1', tabIndex: 0 }),
-          t('button', 'Two', { role: 'tab', 'aria-selected': 'false', 'aria-controls': 'p2', tabIndex: -1 }),
-        ),
-        t('div', 'Panel one', { id: 'p1', role: 'tabpanel' }),
-        t('div', 'Panel two', { id: 'p2', role: 'tabpanel', hidden: true }),
-      ),
+      tabs({
+        seed: 'pattern-tabs',
+        items: [{ title: 'One', body: 'Panel one' }, { title: 'Two', body: 'Panel two' }, { title: 'Three', body: 'Panel three' }],
+      }) as ComponentNode,
     contract: async (page, root) => {
+      assert(!(await root.getByText('Panel two').isVisible()), 'a panel that is not selected shows');
       await root.getByRole('tab', { name: 'One' }).focus();
-      await pressed(page, 'ArrowRight');
+      await walkKeys(page, [['ArrowRight', 'Two']]);
       assert(await root.getByText('Panel two').isVisible(), 'ArrowRight did not change the tab');
+      assert(!(await root.getByText('Panel one').isVisible()), 'the first panel stayed');
+      assert((await root.getByRole('tab', { name: 'Two' }).getAttribute('aria-selected')) === 'true', 'aria-selected did not follow');
+      await walkKeys(page, [['End', 'Three'], ['ArrowRight', 'One'], ['ArrowLeft', 'Three'], ['Home', 'One']]);
+      assert(await root.getByText('Panel one').isVisible(), 'Home did not select the first tab');
+      await leavesWithTab(page, root, 'tab');
     },
   },
   {
     id: 'toolbar',
-    built: 'aria-only',
-    tree: () =>
-      n(
-        'div',
-        { role: 'toolbar', 'aria-label': 'Format' },
-        t('button', 'Bold', { tabIndex: 0 }),
-        t('button', 'Italic', { tabIndex: -1 }),
-      ),
+    built: 'behaviour',
+    preset: 'toolbar',
+    tree: () => toolbar({ seed: 'pattern-toolbar', label: 'Format', items: ['Bold', 'Italic', 'Underline'] }) as ComponentNode,
     contract: async (page, root) => {
       await root.getByRole('button', { name: 'Bold' }).focus();
-      await pressed(page, 'ArrowRight');
-      assert((await page.evaluate(() => document.activeElement?.textContent)) === 'Italic', 'ArrowRight did not move');
+      await walkKeys(page, [['ArrowRight', 'Italic'], ['End', 'Underline'], ['ArrowRight', 'Bold'], ['ArrowLeft', 'Underline'], ['Home', 'Bold']]);
+      await leavesWithTab(page, root, 'button');
     },
   },
   {
     id: 'tooltip',
-    built: 'aria-only',
-    tree: () =>
-      n(
-        'div',
-        {},
-        t('button', 'Save', { 'aria-describedby': 'tip' }),
-        t('div', 'Saves the page', { id: 'tip', role: 'tooltip', hidden: true }),
-      ),
+    built: 'behaviour',
+    preset: 'tooltip',
+    tree: () => tooltip({ seed: 'pattern-tooltip', label: 'Save', text: 'Saves the page' }) as ComponentNode,
     contract: async (page, root) => {
-      await root.getByRole('button', { name: 'Save' }).focus();
+      const tip = root.getByRole('tooltip');
+      assert(!(await tip.isVisible()), 'the tooltip shows on its own');
+      const save = root.getByRole('button', { name: 'Save' });
+      await save.focus();
       await page.waitForTimeout(50);
-      assert(await root.getByRole('tooltip').isVisible(), 'focus did not show the tooltip');
+      assert(await tip.isVisible(), 'focus did not show the tooltip');
+      await pressed(page, 'Escape');
+      assert(!(await tip.isVisible()), 'Escape did not dismiss the tooltip');
+      await save.blur();
+      await save.hover();
+      await page.waitForTimeout(100);
+      assert(await tip.isVisible(), 'hover did not show the tooltip');
+      await pressed(page, 'Escape');
+      assert(!(await tip.isVisible()), 'Escape did not dismiss a tooltip from hover alone');
     },
   },
   {
