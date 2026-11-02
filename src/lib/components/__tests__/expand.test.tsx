@@ -110,8 +110,12 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/** Whether a tree holds a `#component` placement anywhere. The corpus's reusable-component fixtures do. */
+const hasPlacement = (node: ComponentNode): boolean =>
+  node.type === '#component' || (node.children ?? []).some(hasPlacement);
+
 describe('a page without placements', () => {
-  it.each(FIXTURES.map(f => [f.id, f] as const))('%s comes back by reference', (_, fixture) => {
+  it.each(FIXTURES.filter(f => !hasPlacement(f.tree())).map(f => [f.id, f] as const))('%s comes back by reference', (_, fixture) => {
     const tree = fixture.tree();
     expect(expandPlacements(tree, {}, BREAKPOINTS)).toBe(tree);
   });
