@@ -346,12 +346,15 @@ export function collectPageFonts(roots: Iterable<FontScanNode | null | undefined
     const props = node.props as { style?: unknown; rules?: unknown } | undefined;
     const families = styleFontFamilies(props?.style);
     for (const f of families) if (!ids.includes(f.id)) ids.push(f.id);
-    // A family used only on Hover must load too, but a rule says nothing about the
+    // A family used only on Hover or in a keyframe must load too, but a rule says nothing about the
     // node's own family, so it never decides what to preload. `rules` can also be
     // the legacy <table> attribute, which is a string.
     if (Array.isArray(props?.rules)) {
-      for (const rule of props.rules as ({ style?: unknown } | null)[]) {
-        for (const f of styleFontFamilies(rule?.style)) if (!ids.includes(f.id)) ids.push(f.id);
+      for (const rule of props.rules as ({ style?: unknown; blocks?: unknown } | null)[]) {
+        const blocks = Array.isArray(rule?.blocks) ? (rule.blocks as ({ style?: unknown } | null)[]) : [];
+        for (const style of [rule?.style, ...blocks.map((block) => block?.style)]) {
+          for (const f of styleFontFamilies(style)) if (!ids.includes(f.id)) ids.push(f.id);
+        }
       }
     }
     const own = families[0]?.id ?? inherited;

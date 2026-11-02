@@ -18,6 +18,11 @@
 //     Its rules go on a second class, `fc_r-<id>`, keyed on the rules alone, so
 //     rows that differ only in a bound value share one rule block. A preset or a
 //     definition is not an authored rule here and moves nothing.
+//   - A definition (`@keyframes`, `@font-face`, ...) is global to the page, whichever
+//     node holds it. Identical ones dedupe, so 500 cloned rows emit one. A different
+//     one with the same identity (definitionIdentity in rules.ts) is a clash: the
+//     first in walk order wins and the rest are reported. Regular and Bold of one
+//     family differ in identity, so both stay.
 //   - On a move a rule caused, a declaration the sheet refuses stays inline,
 //     alone, and is reported, so a rule never costs a value. A map keeps its
 //     largest value there and loses its breakpoints, which the report names. A
@@ -56,16 +61,19 @@ import {
   isStyleMap,
   unsafeDeclaration,
   type AuthoredRulesInput,
+  type DefinitionInput,
   type DroppedDeclaration,
   type DroppedRule,
   type ResponsiveRuleInput,
 } from '@/lib/responsive/responsiveCss';
 import { isTextNodeType } from '@/lib/renderer/textNode';
 import {
+  definitionIdentity,
   hasExternalAddress,
   isRuleList,
   reachesInsideNode,
   readRules,
+  type ParsedDefinitionRule,
   type ParsedSelectorRule,
   type ReadRules,
 } from '@/lib/rules/rules';
@@ -121,6 +129,11 @@ export function applyResponsiveStyles(
   const primaryId = largestFirst(breakpoints)[0]?.id;
   const rules: ResponsiveRuleInput[] = [];
   const authored: AuthoredRulesInput[] = [];
+  const definitions: DefinitionInput[] = [];
+  /** A definition's identity -> the body that claimed it, in walk order. */
+  const claimed = new Map<string, string>();
+  /** Bodies that lost a claim, so a clash on a cloned row is reported once. */
+  const clashing = new Set<string>();
   /** className -> the serialized input it was issued for (dedupe of cloned rows). */
   const issued = new Map<string, string>();
   /** `fc-<stem>` or `fc_r-<stem>` -> the classes issued under it, in order. */
@@ -158,6 +171,20 @@ export function applyResponsiveStyles(
     const { name, isNew } = issueClass('fc_r-', classStem(node.classKey ?? node.id) ?? 'anon', JSON.stringify(selectorRules));
     if (isNew) authored.push({ className: name, rules: selectorRules });
     return name;
+  };
+
+  const claimDefinition = (node: ComponentNode, rule: ParsedDefinitionRule): void => {
+    const identity = definitionIdentity(rule);
+    // The rule's id is left out: two nodes may hold one definition under two ids.
+    const body = JSON.stringify([rule.atRule, rule.name, rule.style, rule.blocks]);
+    const first = claimed.get(identity);
+    if (first === undefined) {
+      claimed.set(identity, body);
+      definitions.push({ node: node.id ?? 'unnamed', rule });
+    } else if (first !== body && !clashing.has(body)) {
+      clashing.add(body);
+      problems.push({ node: node.id ?? 'unnamed', rule: rule.id, reason: 'another definition on this page already has this name' });
+    }
   };
 
   const readNode = (node: ComponentNode): ReadRules | null => {
@@ -207,6 +234,7 @@ export function applyResponsiveStyles(
     const next: ComponentNode = { ...node };
     const read = readNode(node);
     const selectorRules = (read?.rules ?? []).filter((rule): rule is ParsedSelectorRule => rule.kind === 'selector');
+    for (const rule of read?.rules ?? []) if (rule.kind === 'definition') claimDefinition(node, rule);
     const reaches = selectorRules.some(rule => rule.parts.some(reachesInsideNode));
     if (node.props) {
       const props: Record<string, unknown> = {};
@@ -277,6 +305,7 @@ export function applyResponsiveStyles(
   const dropped: DroppedDeclaration[] = [];
   const css = buildResponsiveCss(rules, breakpoints, {
     onDrop: d => dropped.push(d),
+    definitions,
     authored,
     onDropRule: ({ className, ruleId, reason }: DroppedRule) => problems.push({ node: className, rule: ruleId, reason }),
   });

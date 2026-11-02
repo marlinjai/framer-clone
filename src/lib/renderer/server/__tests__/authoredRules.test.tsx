@@ -266,7 +266,7 @@ describe('what the parser refuses', () => {
     const definition = { id: 'k', define: '@keyframes u-a', blocks: [{ selector: 'from', style: { opacity: 0 } }] };
     const { root, css } = applyResponsiveStyles(node('a', { style: { color: 'red' }, rules: [definition] }), BPS);
     expect(root.props).toEqual({ style: { color: 'red' } });
-    expect(css).toBe('');
+    expect(css).toBe('@keyframes u-a{\nfrom{opacity:0}\n}');
   });
 });
 

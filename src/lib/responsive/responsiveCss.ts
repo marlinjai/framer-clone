@@ -42,12 +42,16 @@
 // `url("data:image/png;base64,...")`, and isContainedValue tells the two apart. A
 // CSS escape inside a string is data too, as in `content:"\201C"`.
 //
+// Definitions come first in the sheet, before every Normal block: `@keyframes`,
+// `@font-face` and the rest of the list in rules.ts. They have no breakpoint axis
+// and no wrapper, and applyResponsiveStyles has already removed duplicates.
+//
 // Rules arrive here parsed, which the type says, and applyResponsiveStyles is what
 // reads stored rules for the page. A type is erased at run time and selectors are
-// written raw, so isWritableRule checks them again here, and the finished sheet
-// must hold no `<`. A rule is emitted whole or not at all.
+// written raw, so isWritableRule and isWritableDefinition check them again here,
+// and the finished sheet must hold no `<`. A rule is emitted whole or not at all.
 
-import type { ParsedSelectorRule } from '@/lib/rules/rules';
+import type { ParsedDefinitionRule, ParsedSelectorRule } from '@/lib/rules/rules';
 import { largestFirst, resolveCascade, type BreakpointRef } from './cascade';
 
 /** At most this many emitted rules on one page, counted after rows share a rule class. */
@@ -380,12 +384,20 @@ export interface DroppedRule {
   reason: string;
 }
 
+/** One definition and the node it sits on, which is only there to name it in a report. */
+export interface DefinitionInput {
+  node: string;
+  rule: ParsedDefinitionRule;
+}
+
 export interface BuildResponsiveCssOptions {
   /** Called for every declaration dropped as unsafe. */
   onDrop?: (dropped: DroppedDeclaration) => void;
+  /** Definitions, deduped, in walk order. They precede every Normal block. */
+  definitions?: readonly DefinitionInput[];
   /** Authored rules, in walk order. They follow every Normal block. */
   authored?: readonly AuthoredRulesInput[];
-  /** Called for every authored rule left out of the sheet. */
+  /** Called for every definition or authored rule left out of the sheet. */
   onDropRule?: (dropped: DroppedRule) => void;
 }
 
@@ -515,6 +527,156 @@ const ENCODER = new TextEncoder();
 const textBytes = (text: string): number => ENCODER.encode(text).length;
 
 /**
+ * What `syntax` of an `@property` may be, exactly as stored. A constant, never
+ * stored text: definitionText writes this list's own entry rather than the value
+ * it was given, which is how a `<` reaches a descriptor without widening what a
+ * value may hold. `<url>` and `<image>` are left out, they would only carry an
+ * address.
+ */
+export const PROPERTY_SYNTAXES: ReadonlySet<string> = new Set([
+  '"*"',
+  '"<angle>"',
+  '"<color>"',
+  '"<custom-ident>"',
+  '"<integer>"',
+  '"<length>"',
+  '"<length-percentage>"',
+  '"<number>"',
+  '"<percentage>"',
+  '"<resolution>"',
+  '"<time>"',
+  '"<transform-function>"',
+  '"<transform-list>"',
+]);
+
+/** A syntax as the sheet holds it. CSS reads `\3c ` in a string as a `<`, and the sheet never holds one. */
+const propertySyntaxText = (stored: unknown): string | null =>
+  typeof stored === 'string' && PROPERTY_SYNTAXES.has(stored) ? stored.replace('<', '\\3c ') : null;
+
+const DEFINITION_AT_RULES: ReadonlySet<string> = new Set([
+  'keyframes',
+  'font-face',
+  'font-feature-values',
+  'font-palette-values',
+  'counter-style',
+  'property',
+  'position-try',
+]);
+
+/** At-rules holding real properties, where a number means pixels as in a style. In the others it stays a number. */
+const PROPERTY_BODIES: ReadonlySet<string> = new Set(['keyframes', 'position-try']);
+
+const DEFINITION_NAME = /^(?:--)?u-[a-z0-9-]+$/;
+const FONT_FACE_FAMILY = /^(?:u-[a-z0-9-]+|"u-[a-z0-9-]+"|'u-[a-z0-9-]+')$/;
+/** `from`, `50%, 75.5%`, `@styleset`. */
+const BLOCK_SELECTOR = /^@?[A-Za-z0-9%., -]+$/;
+
+/**
+ * True when a definition can be written into the sheet. The prelude is built from
+ * these fields, so a name that fails here cannot leave the rule, and it cannot
+ * replace a name the editor uses either, which is worth a constant check on a
+ * sheet the canvas will share. As with isWritableRule, the parser decides the rest.
+ */
+function isWritableDefinition(rule: ParsedDefinitionRule): boolean {
+  const { atRule, name, style, blocks } = rule;
+  if (!DEFINITION_AT_RULES.has(atRule)) return false;
+  if (atRule === 'font-face') {
+    if (name !== undefined || typeof style?.fontFamily !== 'string' || !FONT_FACE_FAMILY.test(style.fontFamily.trim())) return false;
+  } else if (typeof name !== 'string' || !DEFINITION_NAME.test(name)) {
+    return false;
+  }
+  if (blocks === undefined) return isStyleMap(style);
+  return (
+    style === undefined &&
+    Array.isArray(blocks) &&
+    blocks.every((block) => typeof block?.selector === 'string' && BLOCK_SELECTOR.test(block.selector) && isStyleMap(block.style))
+  );
+}
+
+/**
+ * One definition as sheet text, or the reason it stays out. Every declaration goes
+ * through `declaration()`, but for the constant above. The parser and the sheet
+ * check values apart, so one refusal drops the whole definition.
+ */
+function definitionText(rule: ParsedDefinitionRule): { text: string } | { refused: string } {
+  const { atRule, name, style, blocks } = rule;
+  let refused: string | undefined;
+  const descriptors = (body: Record<string, unknown>): string => {
+    const out: string[] = [];
+    for (const [key, stored] of Object.entries(body)) {
+      if (atRule === 'property' && key === 'syntax') {
+        const syntax = propertySyntaxText(stored);
+        if (syntax) out.push(`syntax:${syntax}`);
+        else refused ??= key;
+        continue;
+      }
+      if (isStyleMap(stored)) {
+        refused ??= key;
+        continue;
+      }
+      const value = typeof stored === 'number' && !PROPERTY_BODIES.has(atRule) && Number.isFinite(stored) ? String(stored) : stored;
+      const decl = declaration(`@${atRule}`, key, value, (d) => {
+        refused ??= d.property;
+      });
+      if (decl) out.push(decl);
+    }
+    return out.join(';');
+  };
+  const prelude = name ? `@${atRule} ${name}` : `@${atRule}`;
+  const text = blocks
+    ? `${prelude}{\n${blocks.map((block) => `${block.selector}{${descriptors(block.style)}}`).join('\n')}\n}`
+    : `${prelude}{${descriptors(style ?? {})}}`;
+  return refused === undefined ? { text } : { refused: `the stylesheet refuses its ${refused}` };
+}
+
+/** What a section of the sheet used of the two page caps. */
+interface RuleBudget {
+  rules: number;
+  bytes: number;
+}
+
+/**
+ * The definitions section of the sheet, and what it used of the page caps. Past a
+ * cap, this definition and all later ones are dropped, for the reason given at
+ * authoredBlocks. Rules then get what is left: a dropped `data:` font spends
+ * nothing, so it costs the page that font and not its hover states.
+ */
+function definitionTexts(
+  definitions: readonly DefinitionInput[],
+  onDropRule: (dropped: DroppedRule) => void,
+): { texts: string[]; spent: RuleBudget } {
+  const texts: string[] = [];
+  const spent: RuleBudget = { rules: 0, bytes: 0 };
+  let full = false;
+  for (const { node, rule } of definitions) {
+    const drop = (reason: string) => onDropRule({ className: node, ruleId: rule.id, reason });
+    if (full) {
+      drop('the page is over its rule limit');
+      continue;
+    }
+    if (!isWritableDefinition(rule)) {
+      drop('its name, a block or its descriptors could leave the rule');
+      continue;
+    }
+    const built = definitionText(rule);
+    if ('refused' in built) {
+      drop(built.refused);
+      continue;
+    }
+    const size = textBytes(built.text);
+    if (spent.rules + 1 > MAX_RULES_PER_PAGE || spent.bytes + size > MAX_RULE_BYTES_PER_PAGE) {
+      full = true;
+      drop('the page is over its rule limit');
+      continue;
+    }
+    texts.push(built.text);
+    spent.rules += 1;
+    spent.bytes += size;
+  }
+  return { texts, spent };
+}
+
+/**
  * The authored section of the sheet, grouped by rule. In today's grouping by
  * breakpoint, a Tablet Hover would land after a Desktop Pressed and, having equal
  * specificity, beat it while pressing. Past a page cap, this rule and all later
@@ -525,9 +687,10 @@ function authoredBlocks(
   authored: readonly AuthoredRulesInput[],
   ordered: readonly BreakpointRef[],
   onDropRule: (dropped: DroppedRule) => void,
+  spent: RuleBudget,
 ): RuleBlock[] {
   const out: RuleBlock[] = [];
-  let bytes = 0;
+  let bytes = spent.bytes;
   let full = false;
   for (const { className, rules } of authored) {
     if (!SAFE_RULE_CLASS.test(className)) continue;
@@ -547,7 +710,7 @@ function authoredBlocks(
         continue;
       }
       const size = built.blocks.reduce((sum, block) => sum + textBytes(block.text) + textBytes(block.wrappers.join('')), 0);
-      if (out.length + built.blocks.length > MAX_RULES_PER_PAGE || bytes + size > MAX_RULE_BYTES_PER_PAGE) {
+      if (spent.rules + out.length + built.blocks.length > MAX_RULES_PER_PAGE || bytes + size > MAX_RULE_BYTES_PER_PAGE) {
         full = true;
         drop('the page is over its rule limit');
         continue;
@@ -603,7 +766,9 @@ export function buildResponsiveCss(
       .filter(Boolean)
       .join('\n');
 
-  const parts: string[] = [];
+  const onDropRule = options.onDropRule ?? (() => {});
+  const { texts: definitions, spent } = definitionTexts(options.definitions ?? [], onDropRule);
+  const parts: string[] = [...definitions];
   const base = block(0);
   if (base) parts.push(base);
   for (let i = 1; i < ordered.length; i++) {
@@ -611,8 +776,7 @@ export function buildResponsiveCss(
     if (!body) continue;
     parts.push(`${mediaBelow(ordered[i - 1].minWidth)}{\n${body}\n}`);
   }
-  const onDropRule = options.onDropRule ?? (() => {});
-  const authored = serializeBlocks(authoredBlocks(options.authored ?? [], ordered, onDropRule));
+  const authored = serializeBlocks(authoredBlocks(options.authored ?? [], ordered, onDropRule, spent));
   if (authored) parts.push(authored);
   return withoutMarkup(parts.join('\n'), onDropRule);
 }

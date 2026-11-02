@@ -413,6 +413,10 @@ node cannot, and inline text editing works. In Chromium a rule `pointer-events:n
 `auto` made a node unclickable, and Radix and shadcn output is full of those rules. These properties work
 on the published page; the canvas just never shows them.
 
+The same list applies inside a `@keyframes` block on the canvas. An animation beats inline style without
+any `!important`, and the neutraliser below holds a `forwards` animation at its end, so
+`@keyframes u-lock{to{pointer-events:none}}` would otherwise lock a node for the editor.
+
 **The real pointer does nothing.** `:hover`, `:active`, `:focus`, `:focus-visible` and `:focus-within`,
 in any case, are rewritten by the tokenizer, wherever they stand, including inside `:is()`. Dead, each
 becomes `:not(*, :hover)`: it never matches and keeps the original's specificity. A plain `:not(*)` would

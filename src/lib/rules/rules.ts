@@ -38,7 +38,9 @@
 //
 // PURE and client-safe: no React, no MST, no new dependency.
 
-import { SAFE_PROPERTY, UNSAFE_VALUE, cssValueText, isStyleMap } from '@/lib/responsive/responsiveCss';
+import { PROPERTY_SYNTAXES, SAFE_PROPERTY, UNSAFE_VALUE, cssValueText, isStyleMap } from '@/lib/responsive/responsiveCss';
+
+export { PROPERTY_SYNTAXES };
 
 /** One rule that applies to the node or to something inside it. */
 export interface SelectorRule {
@@ -452,27 +454,6 @@ const FEATURE_BLOCKS: ReadonlySet<string> = new Set([
   '@swash',
 ]);
 
-/**
- * What `syntax` of an `@property` may be. A constant lookup, never stored text: it
- * needs a `<`, so the emitter writes this constant rather than widen what a value
- * may hold. `<url>` and `<image>` are left out, they would only carry an address.
- */
-export const PROPERTY_SYNTAXES: ReadonlySet<string> = new Set([
-  '"*"',
-  '"<angle>"',
-  '"<color>"',
-  '"<custom-ident>"',
-  '"<integer>"',
-  '"<length>"',
-  '"<length-percentage>"',
-  '"<number>"',
-  '"<percentage>"',
-  '"<resolution>"',
-  '"<time>"',
-  '"<transform-function>"',
-  '"<transform-list>"',
-]);
-
 const keyframeSelector = (text: string): boolean =>
   text.split(',').every((part) => /^(?:from|to|(?:\d{1,2}(?:\.\d+)?|100(?:\.0+)?)%)$/i.test(part.trim()));
 
@@ -523,6 +504,34 @@ function parseDefinition(rule: Record<string, unknown>, id: string): Parsed<Pars
     if (reason) return refuse(reason);
   }
   return accept({ kind: 'definition', id, atRule, name, blocks: rule.blocks as ParsedDefinitionRule['blocks'] });
+}
+
+/** A font-face descriptor as identity compares it: `Bold`, `bold` and ` bold ` are one weight. */
+const faceText = (value: unknown, initial: string): string => {
+  const text = cssValueText('fontWeight', value)?.toLowerCase().replace(/\s+/g, ' ');
+  return text === undefined || text === 'normal' ? initial : text;
+};
+
+/**
+ * What makes two definitions the same definition. A later one with this identity
+ * and a different body is a clash, and the first wins. For nearly every at-rule
+ * that is the name, but Regular and Bold of one family are two `@font-face` rules,
+ * so there it is what the browser picks a face by: family, weight, style, stretch
+ * and `unicode-range`. An absent descriptor counts as its initial value, because
+ * that is what the browser reads, so a face with no weight clashes with `400`.
+ */
+export function definitionIdentity(rule: ParsedDefinitionRule): string {
+  if (rule.atRule !== 'font-face') return `${rule.atRule} ${rule.name}`;
+  const { fontFamily, fontWeight, fontStyle, fontStretch, unicodeRange } = rule.style ?? {};
+  const weight = faceText(fontWeight, '400');
+  return [
+    rule.atRule,
+    unquote(String(fontFamily).trim()),
+    weight === 'bold' ? '700' : weight,
+    faceText(fontStyle, 'normal'),
+    faceText(fontStretch, '100%'),
+    faceText(unicodeRange, 'u+0-10ffff').replace(/ /g, ''),
+  ].join('|');
 }
 
 // --- values and addresses -------------------------------------------------
