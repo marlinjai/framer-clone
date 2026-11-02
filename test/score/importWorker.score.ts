@@ -101,6 +101,9 @@ describe('the importer in a browser worker', () => {
     ['a long sum', `const a = ${'a+'.repeat(100_000)}a;`],
     ['a doubling constant', `const a0 = ["xxxxxxxxxxxxxxxx"];\n${Array.from({ length: 40 }, (_, i) => `const a${i + 1} = [...a${i}, ...a${i}];`).join('\n')}\n<div>${Array.from({ length: 41 }, (_, i) => `<i title={a${i}[0]} />`).join('')}</div>`, DETAILS.overEvaluated],
     ['a component that renders itself', 'function A() { return <A />; }', DETAILS.recursive],
+    ['the parser exponential family', `const x = ${'async(a='.repeat(26)}1${')'.repeat(26)};`, DETAILS.tooDeep],
+    ['a tree of fragments', [...Array.from({ length: 15 }, (_, i) => `function C${i}() { return <>${`<C${i + 1} />`.repeat(8)}</>; }`), 'function C15() { return <></>; }', '<C0 />'].join('\n'), DETAILS.overSteps],
+    ['a constant written out thousands of times', `const s0="${'x'.repeat(200_000)}";\nconst s1=\`\${s0}\${s0}\`;\nconst s2=\`\${s1}\${s1}\`;\nconst s3=\`\${s2}\${s2}\`;\n<div>${'<i title={s3} />'.repeat(4_900)}</div>`, DETAILS.overEvaluated],
   ])('answers %s with a refusal, inside the deadline', async (_name, text, detail) => {
     const { outcome, milliseconds } = await reply([{ name: 'paste.tsx', text }]);
     console.log(`${_name}: ${milliseconds.toFixed(1)} milliseconds`);

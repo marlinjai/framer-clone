@@ -69,13 +69,14 @@ function childrenOf(node: ts.Node): ts.Node[] {
   return children;
 }
 
-/** Calls `visit` for every node, parents first, in source order, until it says `stop`. */
-export function walk<T>(root: ts.Node, context: T, visit: (node: ts.Node, context: T) => { stop?: boolean; next: T }): void {
+/** Calls `visit` for every node, parents first, in source order, until it says `stop`. `skip` leaves out what a node holds. */
+export function walk<T>(root: ts.Node, context: T, visit: (node: ts.Node, context: T) => { stop?: boolean; skip?: boolean; next: T }): void {
   const stack: Array<{ node: ts.Node; context: T }> = [{ node: root, context }];
   while (stack.length > 0) {
     const { node, context: from } = stack.pop() as { node: ts.Node; context: T };
-    const { stop, next } = visit(node, from);
+    const { stop, skip, next } = visit(node, from);
     if (stop) return;
+    if (skip) continue;
     const children = childrenOf(node);
     for (let i = children.length - 1; i >= 0; i -= 1) stack.push({ node: children[i], context: next });
   }
@@ -99,6 +100,40 @@ export const extensionOf = (name: string): string => /\.([a-z0-9]+)$/i.exec(name
 
 /** Whether a file of this name is source. */
 export const isScript = (name: string): boolean => Object.hasOwn(SCRIPT_KINDS, extensionOf(name));
+
+/** How many `async(` may stand open inside each other. No real file comes near it. */
+const ASYNC_NESTING_LIMIT = 8;
+
+const OPENERS: ReadonlySet<ts.SyntaxKind> = new Set([ts.SyntaxKind.OpenParenToken, ts.SyntaxKind.OpenBracketToken, ts.SyntaxKind.OpenBraceToken]);
+const CLOSERS: ReadonlySet<ts.SyntaxKind> = new Set([ts.SyntaxKind.CloseParenToken, ts.SyntaxKind.CloseBracketToken, ts.SyntaxKind.CloseBraceToken]);
+
+/**
+ * Whether a text holds the parser's exponential case. On `async(a=async(a=...` TypeScript tries the arrow
+ * function and the call at every level, so 246 bytes outlast the worker's deadline, inside
+ * `createSourceFile`, before any limit here can act. So this runs first, on tokens, which is linear.
+ *
+ * It catches the family, not everything. Tokens read JSX text as code, so a quote in text can hide a run
+ * from it, and other shapes may exist. Those are what the host's deadline is for.
+ */
+export function hasParserTrap(text: string): boolean {
+  const scanner = ts.createScanner(ts.ScriptTarget.Latest, true, ts.LanguageVariant.JSX, text);
+  const open: number[] = [];
+  let depth = 0;
+  let afterAsync = false;
+  for (let token = scanner.scan(); token !== ts.SyntaxKind.EndOfFileToken; token = scanner.scan()) {
+    if (afterAsync && (token === ts.SyntaxKind.OpenParenToken || token === ts.SyntaxKind.LessThanToken)) {
+      open.push(depth);
+      if (open.length > ASYNC_NESTING_LIMIT) return true;
+    }
+    if (OPENERS.has(token)) depth += 1;
+    else if (CLOSERS.has(token)) {
+      depth = Math.max(0, depth - 1);
+      while (open.length > 0 && open[open.length - 1] >= depth) open.pop();
+    }
+    afterAsync = token === ts.SyntaxKind.AsyncKeyword;
+  }
+  return false;
+}
 
 /**
  * The tree of one file, with no parent pointers: nothing here reads them, and so no

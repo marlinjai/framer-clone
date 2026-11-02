@@ -124,8 +124,23 @@ describe('what a constant is not', () => {
     ['an array writer', 'o.push(1);'],
     ['a call that receives it', 'merge(o);'],
     ['a call that receives a piece of it', 'merge(o.b);'],
+    ['an alias', 'const p = o; p.a = 2;'],
+    ['an alias of an alias', 'const p = o; const q = p; q.a = 2;'],
+    ['an array pattern', '[o.a] = [2];'],
+    ['a nested pattern', '[{ x: o.a }] = [{ x: 2 }];'],
+    ['an object pattern', '({ x: o.a } = { x: 2 });'],
+    ['a for-of target', 'for (o.a of [2]);'],
+    ['a for-in target', 'for (o.a in {});'],
+    ['new', 'new Mutate(o);'],
+    ['a tagged template', 'mutate`${o}`;'],
   ])('reads no object written through by %s', (_name, write) => {
     expect(value('o.a', `const o = { a: 1, b: {} };\n${write}`)).toBe(UNKNOWN);
+  });
+
+  it('reads nothing past what a double cannot hold', () => {
+    expect(value('1e999')).toBe(UNKNOWN);
+    expect(value('-1e999')).toBe(UNKNOWN);
+    expect(value('1e308')).toBe(1e308);
   });
 
   it('still reads a string passed to a call, which nothing can write', () => {

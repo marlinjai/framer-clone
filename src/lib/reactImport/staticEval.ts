@@ -78,6 +78,33 @@ function rootName(expression: ts.Expression): string | undefined {
   return current.text;
 }
 
+/** The names a write target reaches: `o.a`, or every one in a pattern such as `[o.a]` or `{ x: o.a }`. */
+function addTargets(target: ts.Expression | ts.ForInitializer, add: (expression: ts.Expression) => void): void {
+  walk(target, undefined, (node) => {
+    if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node) || ts.isIdentifier(node)) {
+      add(node);
+      return { skip: true, next: undefined };
+    }
+    return { next: undefined };
+  });
+}
+
+const isAssignment = (node: ts.BinaryExpression): boolean =>
+  node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && node.operatorToken.kind <= ts.SyntaxKind.LastAssignment;
+
+/** Whether a declaration or statement does something when it runs. A function it merely holds has not run. */
+export function holdsEffect(root: ts.Node): boolean {
+  let found = false;
+  walk(root, undefined, (node) => {
+    if (ts.isFunctionLike(node)) return { skip: true, next: undefined };
+    found = ts.isCallExpression(node) || ts.isNewExpression(node) || ts.isTaggedTemplateExpression(node) || ts.isAwaitExpression(node)
+      || ts.isYieldExpression(node) || ts.isDeleteExpression(node) || (ts.isBinaryExpression(node) && isAssignment(node))
+      || ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) && (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken));
+    return { stop: found, next: undefined };
+  });
+  return found;
+}
+
 /**
  * Names something may write through. `const` keeps a name, not a value: after `o.a = 2`
  * or `merge(o)`, reading the literal would be a confident wrong answer, so an object or
@@ -85,12 +112,20 @@ function rootName(expression: ts.Expression): string | undefined {
  */
 function namesWrittenThrough(source: ts.SourceFile): ReadonlySet<string> {
   const names = new Set<string>();
+  const aliases = new Map<string, string>();
   const add = (expression: ts.Expression) => {
     const name = rootName(expression);
     if (name) names.add(name);
   };
   walk(source, undefined, (node) => {
-    if (ts.isBinaryExpression(node) && node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && node.operatorToken.kind <= ts.SyntaxKind.LastAssignment) add(node.left);
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      const root = rootName(node.initializer);
+      if (root) aliases.set(node.name.text, root);
+    }
+    if (ts.isBinaryExpression(node) && isAssignment(node)) addTargets(node.left, add);
+    else if ((ts.isForOfStatement(node) || ts.isForInStatement(node)) && !ts.isVariableDeclarationList(node.initializer)) addTargets(node.initializer, add);
+    else if (ts.isNewExpression(node)) node.arguments?.forEach(add);
+    else if (ts.isTaggedTemplateExpression(node) && ts.isTemplateExpression(node.template)) node.template.templateSpans.forEach((span) => add(span.expression));
     else if (ts.isDeleteExpression(node)) add(node.expression);
     else if ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) && (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)) add(node.operand);
     else if (ts.isCallExpression(node)) {
@@ -99,6 +134,11 @@ function namesWrittenThrough(source: ts.SourceFile): ReadonlySet<string> {
     }
     return { next: undefined };
   });
+  // `const p = o; p.a = 2` writes through `o`. A set grows as it is read, so this reaches the end of a chain.
+  for (const name of names) {
+    const target = aliases.get(name);
+    if (target) names.add(target);
+  }
   return names;
 }
 
@@ -119,6 +159,8 @@ export function functionScope(fn: ts.SignatureDeclaration, body: readonly ts.Sta
 const SLOT_BYTES = 8;
 
 export interface Evaluator {
+  /** What a value costs written out once. */
+  sizeOf(value: StaticValue): number;
   /** The value, and the constant declarations it read, which the caller claims when it keeps the value. */
   evaluate(expression: ts.Expression, scope: Scope): { value: Evaluated; reads: ReadonlySet<ts.VariableDeclaration> };
 }
@@ -152,6 +194,8 @@ export function createEvaluator(budget: ImportBudget): Evaluator {
     }
     const { value } = result;
     if (typeof value === 'object' && value !== null && binding.scope.mutated.has(binding.name)) return UNKNOWN;
+    // Each read copies the set, and a chain of constants grows it, so this is not free either.
+    budget.chargeEvaluated(result.reads.size);
     for (const read of result.reads) reads.add(read);
     return value;
   }
@@ -253,7 +297,11 @@ export function createEvaluator(budget: ImportBudget): Evaluator {
       budget.chargeEvaluated(node.text.length);
       return node.text;
     }
-    if (ts.isNumericLiteral(node)) return Number(node.text);
+    if (ts.isNumericLiteral(node)) {
+      // `1e999` has no JSON form: a save would turn it into `null`.
+      const number = Number(node.text);
+      return Number.isFinite(number) ? number : UNKNOWN;
+    }
     if (node.kind === ts.SyntaxKind.TrueKeyword) return true;
     if (node.kind === ts.SyntaxKind.FalseKeyword) return false;
     if (node.kind === ts.SyntaxKind.NullKeyword) return null;
@@ -283,6 +331,7 @@ export function createEvaluator(budget: ImportBudget): Evaluator {
   }
 
   return {
+    sizeOf,
     evaluate(expression, scope) {
       const reads = new Set<ts.VariableDeclaration>();
       const value = run(expression, scope, 0, reads);

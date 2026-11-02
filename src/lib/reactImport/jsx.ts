@@ -1,65 +1,61 @@
-// Layer 1, static JSX to nodes, and the normal form's parser for the round trip test.
-//
-// `convertFile` is the importer's: it reads a file as what it is, a source from a
+// Layer 1, static JSX to nodes. It reads a file as what it is, a source from a
 // stranger. A tag or attribute goes through the render gate's own functions, because
 // otherwise the gate would drop it at render time with nobody told, and an attribute
 // that means something to the platform is refused, since a source may not set it. What
 // it cannot read is a line. Classes wait for layer 2, props for layer 3, handlers for
 // layer 4 and loops for layer 5.
 //
-// `jsxToNodes` is the other direction of `nodesToJsx` in test/score/roundtrip/jsx.ts. It
-// reads a small language of its own (`rules`, `bindings`, islands by name), which exists
-// for that test and no developer sees. It is not a way into a project.
-//
 // The contract is docs/plans/2026-11-02-react-import.md, "Layer 1: static JSX".
 
 import ts from 'typescript';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { isDroppedProp, isBlockedTag, safeInlineStyle, withoutDocumentId } from '@/lib/renderer/blockedNodes';
-import { readBehaviourTree, type StateValue } from '@/lib/behaviour/format';
-import { FORM_KIND_ATTR } from '@/lib/forms/definition';
-import { isLegacyRulesAttribute, isRuleList, readRules, type RuleContext } from '@/lib/rules/rules';
-import { STICKY_CTA_ATTR, STICKY_CTA_MARKER } from '@/lib/stickyCta/stickyCta';
 import { isRenderedAttribute } from '@/lib/renderer/renderVocabulary';
-import { TEXT_NODE_TYPE, isTextNodeType, refusesBareText } from '@/lib/renderer/textNode';
+import { TEXT_NODE_TYPE, refusesBareText } from '@/lib/renderer/textNode';
 import { isVoidTag } from '@/lib/drag/voidTags';
-import { isTooDeep, parseFile, type ParsedFile } from './atoms';
+import { scanCssValue } from '@/lib/responsive/responsiveCss';
+import type { ParsedFile } from './atoms';
 import type { ImportBudget } from './budget';
 import type { Claim, Ledger } from './ledger';
 import type { DetailKey, LineKind } from './report';
-import { UNKNOWN, createEvaluator, fileScope, functionScope, toPlain, type Evaluated, type Evaluator, type Scope } from './staticEval';
+import { UNKNOWN, createEvaluator, fileScope, functionScope, holdsEffect, toPlain, type Evaluated, type Evaluator, type Scope } from './staticEval';
 
-/** A text node with a binding: bare text has nowhere to carry the bindings prop. */
-export const TEXT_RUN_TAG = 'TextRun';
+/**
+ * Attributes the code reads as instructions. An island's marker turns a `div` into a form, and an editor
+ * mark makes a node the target of a click. The names outside these families are the ones
+ * `platformAttributes.test.ts` finds read in `src`, so a new one fails there until it is judged here.
+ */
+const PLATFORM_FAMILY = /^data-(?:fc|fcs|fx|u|island|component|inner-component|form|sticky|repeat|ground|viewport|breakpoint|floating-root|preview|editor|camera|lenis)(?:-|$)/i;
+const PLATFORM_NAMES: ReadonlySet<string> = new Set([
+  'data-add-line', 'data-discard-row', 'data-drag-handle', 'data-escape-local', 'data-focus-key', 'data-haptics', 'data-import-all',
+  'data-import-row', 'data-layer-breakpoint', 'data-layer-row', 'data-logo-choose', 'data-menu-item', 'data-notice-action',
+  'data-outline-select', 'data-page-overlay', 'data-page-settings-button', 'data-pan-cursor', 'data-placement', 'data-pointer',
+  'data-radius-corner', 'data-resize-direction', 'data-resume-offer', 'data-shown', 'data-spacing-band', 'data-spacing-handle',
+]);
 
-/** The bindings prop on a JSX element: the plan's "explicit, named prop". */
-export const BINDINGS_PROP = 'bindings';
+export const isPlatformAttribute = (name: string): boolean => PLATFORM_FAMILY.test(name) || PLATFORM_NAMES.has(name.toLowerCase());
 
-/** An island's own element: a submit button is a button, a form is a div. */
-export const ISLAND_HOST_PROP = 'as';
+/**
+ * The names this layer decides on, each with its one spelling. The render gate lower-cases a name and HTML
+ * reads one in any case, so `ACTION` or `ID` would pass every comparison here and still act on a page. Any
+ * other spelling is refused. A stored name is never lower-cased, because SVG needs `viewBox`.
+ */
+const KEYED_NAMES: ReadonlyMap<string, string> = new Map([
+  ['style', 'style'], ['id', 'id'], ['class', 'class'], ['classname', 'className'], ['children', 'children'], ['key', 'key'], ['ref', 'ref'], ['action', 'action'],
+]);
 
-/** Runtime islands are named components; import maps the name back to the marker prop. */
-export const ISLANDS: Record<string, { attr: string; value: string }> = {
-  Form: { attr: FORM_KIND_ATTR, value: 'form' },
-  FormField: { attr: FORM_KIND_ATTR, value: 'form-field' },
-  FormSubmit: { attr: FORM_KIND_ATTR, value: 'form-submit' },
-  StickyCta: { attr: STICKY_CTA_ATTR, value: STICKY_CTA_MARKER },
-  Collection: { attr: 'data-component-kind', value: 'collection' },
-  RecordView: { attr: 'data-component-kind', value: 'record-view' },
-  TableView: { attr: 'data-component-kind', value: 'table-view' },
-  ProductList: { attr: 'data-component-kind', value: 'product-list' },
-  ProductDetail: { attr: 'data-component-kind', value: 'product-detail' },
-  VariantSelector: { attr: 'data-component-kind', value: 'variant-selector' },
-  AddToCart: { attr: 'data-component-kind', value: 'add-to-cart' },
-  CartView: { attr: 'data-component-kind', value: 'cart-view' },
-  CheckoutButton: { attr: 'data-component-kind', value: 'checkout-button' },
-};
-
-/** Attributes the renderers read as instructions: an island's marker turns a `div` into a form. */
-const PLATFORM_ATTRIBUTE = /^data-(?:fc|fcs|u|island|component|inner-component|form|sticky|repeat)(?:-|$)/i;
+/** Attributes that make a form of any element, or join one from anywhere. */
+const FORM_LOGIC_NAMES: ReadonlySet<string> = new Set(['formaction', 'formmethod', 'formtarget', 'formenctype', 'form']);
 
 /** The name is the tag, and only a plain one can be: `a:b` and `a.b` are not elements. */
 const PLAIN_TAG = /^[a-z][a-zA-Z0-9-]*$/;
+
+/** A loop, because a pattern anchored at the end retries from every space, and a line of them is quadratic. */
+function withoutTrailingSpaces(line: string): string {
+  let end = line.length;
+  while (end > 0 && line[end - 1] === ' ') end -= 1;
+  return line.slice(0, end);
+}
 
 /** JSX text as React reads it: lines trimmed, blank lines dropped, joined by a space. */
 function jsxText(raw: string): string {
@@ -68,7 +64,7 @@ function jsxText(raw: string): string {
     .map((line, i) => {
       let text = line.replace(/\t/g, ' ');
       if (i > 0) text = text.replace(/^ +/, '');
-      if (i < lines.length - 1) text = text.replace(/ +$/, '');
+      if (i < lines.length - 1) text = withoutTrailingSpaces(text);
       return text;
     })
     .filter((line) => line.length > 0);
@@ -96,8 +92,46 @@ function decodeEntities(text: string): string | undefined {
   return unknown ? undefined : decoded;
 }
 
-/** A style value that loads a file from elsewhere. Allowed by the format, and a visitor's address reaches a third party. */
-const EXTERNAL_ADDRESS = /(?:url|image-set|image)\(\s*['"]?\s*(?:[a-z][a-z0-9+.-]*:)?\/\//i;
+/** The address without what a browser ignores in front of it. */
+function withoutLeadingControls(address: string): string {
+  let start = 0;
+  while (start < address.length && (address.charCodeAt(start) <= 32 || address.charCodeAt(start) === 127)) start += 1;
+  return address.slice(start);
+}
+
+/** Whether an address reaches another host: a scheme, or two slashes of either kind. A data address is here already. */
+const hasHost = (address: string): boolean => /^(?:[/\\]{2}|(?!data:)[a-z][a-z0-9+.-]*:)/i.test(withoutLeadingControls(address));
+
+/** Attributes whose address the browser fetches with no click. `href` on an `a` only goes anywhere on one. */
+function fetchesElsewhere(name: string, tag: string, value: string): boolean {
+  if (name === 'srcset') return value.split(/[\s,]+/).some(hasHost);
+  if (name === 'src' || name === 'poster' || name === 'data') return hasHost(value);
+  return (name === 'href' || name === 'xlinkhref') && (tag === 'use' || tag === 'image') && hasHost(value);
+}
+
+/**
+ * Whether `scanCssValue`, which must not meet them, would misread this text: a backslash outside a
+ * string, which is how `url(` is spelled without the letters, or a raw newline inside one.
+ */
+function hidesFromScan(text: string): boolean {
+  let quote = '';
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (quote) {
+      if (ch === '\\') i += 1;
+      else if (ch === '\n' || ch === '\r' || ch === '\f') return true;
+      else if (ch === quote) quote = '';
+    } else if (ch === '\\') return true;
+    else if (ch === '"' || ch === "'") quote = ch;
+  }
+  return false;
+}
+
+/** A value that loads a file from elsewhere. Allowed by the format, and a visitor's address reaches a third party. */
+function loadsElsewhere(text: string): boolean {
+  const { indirect, urls, strings } = scanCssValue(text);
+  return indirect || urls.some(hasHost) || text.includes('://') || strings.some((each) => each.includes('://') || each.startsWith('//'));
+}
 
 type Markup = ts.JsxElement | ts.JsxSelfClosingElement | ts.JsxFragment;
 type ComponentFunction = ts.FunctionDeclaration | ts.ArrowFunction | ts.FunctionExpression;
@@ -123,6 +157,8 @@ interface LayerContext {
   ledger: Ledger;
   budget: ImportBudget;
   evaluator: Evaluator;
+  /** Constants already claimed: a table read by every attribute is walked once. */
+  claimedReads: Set<ts.VariableDeclaration>;
 }
 
 /** Where a piece of markup stands: its node key, its scope, and what the element around it decides. */
@@ -131,6 +167,8 @@ interface Place {
   scope: Scope;
   insideSvg: boolean;
   parentTag: string;
+  /** Elements above this one, in the output: inlining multiplies what the source's own depth allows. */
+  depth: number;
 }
 
 const childKey = (parent: string, index: number) => `${parent}-${index}`;
@@ -150,8 +188,9 @@ function readStyle(value: Evaluated, key: string): Pick<AttributeResult, 'store'
   const style = toPlain(value);
   if (typeof style !== 'object' || style === null || Array.isArray(style)) return { claim: left('refused-attribute', 'refusedStyle', key) };
   const declarations = style as Record<string, unknown>;
-  if (safeInlineStyle(declarations) !== declarations) return { claim: left('refused-attribute', 'refusedStyle', key) };
-  const external = Object.values(declarations).some((text) => typeof text === 'string' && EXTERNAL_ADDRESS.test(text));
+  const texts = Object.values(declarations).filter((text): text is string => typeof text === 'string');
+  if (safeInlineStyle(declarations) !== declarations || texts.some(hidesFromScan)) return { claim: left('refused-attribute', 'refusedStyle', key) };
+  const external = texts.some(loadsElsewhere);
   return {
     store: { name: 'style', value: declarations },
     claim: external
@@ -163,16 +202,19 @@ function readStyle(value: Evaluated, key: string): Pick<AttributeResult, 'store'
 function readAttribute({ evaluator, budget }: LayerContext, attribute: ts.JsxAttribute, tag: string, key: string, scope: Scope): AttributeResult {
   if (!ts.isIdentifier(attribute.name)) return { claim: left('refused-attribute', 'refusedAttribute', key) };
   const name = attribute.name.text;
+  const lower = name.toLowerCase();
   // Not a value, but a line each: an element with a million attributes costs what it says.
   budget.chargeEvaluated(name.length + 64);
+  const keyed = KEYED_NAMES.get(lower);
+  if (keyed !== undefined && keyed !== name) return { claim: left('refused-attribute', 'refusedAttribute', key) };
   if (name === 'key') return { claim: converted('attribute', 'key', key) };
   if (name === 'ref') return { claim: left('attribute', 'ref', key) };
   if (name === 'className' || name === 'class') return { claim: left('class', 'classPending', key) };
   if (/^on[A-Z]/.test(name)) return { claim: left('handler', 'handler', key) };
   if (name === 'children') return { claim: left('attribute', 'childrenAttribute', key) };
-  if (PLATFORM_ATTRIBUTE.test(name)) return { claim: left('refused-attribute', 'platformAttribute', key) };
+  if (isPlatformAttribute(name)) return { claim: left('refused-attribute', 'platformAttribute', key) };
   // By name, before the value is read: a dynamic `dangerouslySetInnerHTML` is refused, not "dynamic".
-  if (name === 'dangerouslySetInnerHTML' || (name !== 'style' && !isRenderedAttribute(name.toLowerCase()))) return { claim: left('refused-attribute', 'refusedAttribute', key) };
+  if (name === 'dangerouslySetInnerHTML' || (name !== 'style' && !isRenderedAttribute(lower))) return { claim: left('refused-attribute', 'refusedAttribute', key) };
 
   const init = attribute.initializer;
   let value: Evaluated = true;
@@ -186,17 +228,26 @@ function readAttribute({ evaluator, budget }: LayerContext, attribute: ts.JsxAtt
     return { claim: left('attribute', 'dynamicAttribute', key) };
   }
 
+  // Paid per write. The constant was paid for once, and 4,900 attributes write it out 4,900 times.
+  if (value !== UNKNOWN) budget.chargeEvaluated(evaluator.sizeOf(value));
   if (name === 'style') return { ...readStyle(value, key), reads };
   if (value === UNKNOWN) return { claim: left('attribute', 'dynamicAttribute', key) };
   if (value === null || value === undefined) return { claim: converted('attribute', 'emptyValue', key), reads };
   const stored = toPlain(value);
   if (isDroppedProp(name, stored)) return { claim: left('refused-attribute', 'refusedAttribute', key) };
   if (name === 'id' && withoutDocumentId(tag, { id: stored }).id === undefined) return { claim: left('refused-attribute', 'refusedAttribute', key) };
-  return { store: { name, value: stored }, claim: converted('attribute', 'attribute', key), reads };
+  const external = typeof stored === 'string' && fetchesElsewhere(lower, tag.toLowerCase(), stored);
+  return {
+    store: { name, value: stored },
+    claim: external ? { kind: 'external-address', disposition: 'adapted', detail: 'attributeExternal', nodeKey: key, next: ['accept'] } : converted('attribute', 'attribute', key),
+    reads,
+  };
 }
 
-function claimReads({ file, ledger }: LayerContext, reads: ReadonlySet<ts.VariableDeclaration> | undefined): void {
+function claimReads({ file, ledger, claimedReads }: LayerContext, reads: ReadonlySet<ts.VariableDeclaration> | undefined): void {
   for (const declaration of reads ?? []) {
+    if (claimedReads.has(declaration)) continue;
+    claimedReads.add(declaration);
     ledger.claimSubtree(file.source, declaration, { kind: 'statement', disposition: 'converted', detail: 'constant', invisible: true });
   }
 }
@@ -219,10 +270,15 @@ function convertAttributes(context: LayerContext, open: ts.JsxOpeningLikeElement
   return props;
 }
 
-/** A form works through its island, so a form with its own logic is not the form it looks like. */
+/** A form works through its island, so one with logic of its own, on it or on a control, is not the form it looks like. */
 function isFormWithLogic(tag: string, open: ts.JsxOpeningLikeElement): boolean {
-  return tag.toLowerCase() === 'form' && open.attributes.properties.some((attribute) =>
-    ts.isJsxSpreadAttribute(attribute) || (ts.isIdentifier(attribute.name) && (attribute.name.text === 'action' || /^on[A-Z]/.test(attribute.name.text))));
+  const isForm = tag.toLowerCase() === 'form';
+  return open.attributes.properties.some((attribute) => {
+    if (ts.isJsxSpreadAttribute(attribute)) return isForm;
+    if (!ts.isIdentifier(attribute.name)) return false;
+    const lower = attribute.name.text.toLowerCase();
+    return FORM_LOGIC_NAMES.has(lower) || (isForm && (lower === 'action' || lower.startsWith('on')));
+  });
 }
 
 function pushText(context: LayerContext, node: ts.Node, text: string | number, { key, parentTag }: Place, out: Content[]): void {
@@ -294,7 +350,8 @@ function settleContents(context: LayerContext, node: ComponentNode, contents: Co
 
 function convertElement(context: LayerContext, element: ts.JsxElement | ts.JsxSelfClosingElement, tag: string, place: Place, out: Content[]): void {
   const { file, ledger, budget } = context;
-  const { key, scope, insideSvg } = place;
+  const { key, scope, insideSvg, depth } = place;
+  budget.checkOutputDepth(depth);
   budget.chargeNodes(1);
   const open = ts.isJsxElement(element) ? element.openingElement : element;
   if (!PLAIN_TAG.test(tag) || isBlockedTag(tag, insideSvg)) {
@@ -315,7 +372,7 @@ function convertElement(context: LayerContext, element: ts.JsxElement | ts.JsxSe
       for (const child of element.children) ledger.claimSubtree(file.source, child, left('expression', 'voidChildren', key));
     } else {
       const lower = tag.toLowerCase();
-      const inner = { key, scope, insideSvg: lower !== 'foreignobject' && (insideSvg || lower === 'svg'), parentTag: tag };
+      const inner = { key, scope, insideSvg: lower !== 'foreignobject' && (insideSvg || lower === 'svg'), parentTag: tag, depth: depth + 1 };
       convertChildren(context, element.children, inner, contents);
     }
   }
@@ -354,8 +411,10 @@ function convertComponent(context: LayerContext, element: ts.JsxElement | ts.Jsx
 }
 
 function convertMarkup(context: LayerContext, markup: Markup, place: Place, out: Content[]): void {
-  const { file, ledger } = context;
+  const { file, ledger, budget } = context;
   const { key } = place;
+  // A fragment or a component makes no node, so without this a tree of them costs nothing and never ends.
+  budget.chargeSteps(1);
   if (ts.isJsxFragment(markup)) {
     ledger.claim(file.source, [markup], converted('element', 'fragment', key));
     convertChildren(context, markup.children, place, out);
@@ -379,12 +438,27 @@ function convertRootExpression(context: LayerContext, expression: ts.Expression,
   convertMarkup(context, inner, place, out);
 }
 
-/** Statements on the way to the markup. A declaration only matters if read, anything else can change what renders. */
-function leaveDeciders({ file, ledger }: LayerContext, statements: readonly ts.Statement[], key: string): void {
+/** `X.displayName = "..."`, which real components have and which changes nothing a visitor sees. */
+function isDisplayName(expression: ts.Expression): boolean {
+  return ts.isBinaryExpression(expression) && expression.operatorToken.kind === ts.SyntaxKind.EqualsToken
+    && ts.isPropertyAccessExpression(expression.left) && ts.isIdentifier(expression.left.expression)
+    && expression.left.name.text === 'displayName' && ts.isStringLiteralLike(expression.right);
+}
+
+/** Whether a statement does anything when it runs, rather than only naming something. */
+function isDecider(statement: ts.Statement): boolean {
+  if (ts.isImportDeclaration(statement)) return !statement.importClause;
+  if (ts.isVariableStatement(statement) || ts.isClassDeclaration(statement) || ts.isExportAssignment(statement)) return holdsEffect(statement);
+  if (ts.isExpressionStatement(statement)) return !ts.isStringLiteral(statement.expression) && !isDisplayName(statement.expression);
+  return !(ts.isFunctionDeclaration(statement) || ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement)
+    || ts.isEnumDeclaration(statement) || ts.isExportDeclaration(statement) || ts.isImportEqualsDeclaration(statement) || ts.isEmptyStatement(statement));
+}
+
+/** Statements on the way to the markup. What only names something matters if read, anything else can change what renders. */
+function leaveDeciders({ file, ledger, budget }: LayerContext, statements: readonly ts.Statement[], key: string): void {
+  budget.chargeSteps(statements.length);
   for (const statement of statements) {
-    const declares = ts.isVariableStatement(statement) || ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)
-      || ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement) || ts.isImportDeclaration(statement);
-    if (!declares) ledger.claimSubtree(file.source, statement, left('statement', 'leftInTree', key));
+    if (isDecider(statement)) ledger.claimSubtree(file.source, statement, left('statement', 'leftInTree', key));
   }
 }
 
@@ -466,20 +540,23 @@ function chooseComponent(candidates: readonly Candidate[]): Candidate | undefine
 
 const ROOT_KEY = 'n';
 
+/** The key of a result's first node, for a line about the whole of it. */
+export const ROOT_NODE_KEY = childKey(ROOT_KEY, 0);
+
 /** Layer 1 over one file: its markup as nodes, each construct claimed or left in the ledger. */
 export function convertFile(file: ParsedFile, ledger: Ledger, budget: ImportBudget): ComponentNode | undefined {
-  const context: LayerContext = { file, ledger, budget, evaluator: createEvaluator(budget) };
+  const context: LayerContext = { file, ledger, budget, evaluator: createEvaluator(budget), claimedReads: new Set() };
   const { source } = file;
   const scope = fileScope(source);
   const contents: Content[] = [];
-  const key = childKey(ROOT_KEY, 0);
-  const place: Place = { key, scope, insideSvg: false, parentTag: '' };
+  const key = ROOT_NODE_KEY;
+  const place: Place = { key, scope, insideSvg: false, parentTag: '', depth: 0 };
 
   // A pasted fragment is a file whose last statement is markup.
   const last = source.statements[source.statements.length - 1];
   const fragment = last && ts.isExpressionStatement(last) && isMarkup(unwrap(last.expression).inner) ? last : undefined;
+  leaveDeciders(context, fragment ? source.statements.slice(0, -1) : source.statements, key);
   if (fragment) {
-    leaveDeciders(context, source.statements.slice(0, -1), key);
     ledger.claim(source, [fragment], converted('statement', 'fragment', key));
     convertRootExpression(context, fragment.expression, place, contents);
   } else {
@@ -506,207 +583,4 @@ export function convertFile(file: ParsedFile, ledger: Ledger, budget: ImportBudg
   const wrapper: ComponentNode = { id: ROOT_KEY, type: 'div', props: {} as ComponentNode['props'] };
   settleContents(context, wrapper, contents, ROOT_KEY);
   return wrapper;
-}
-
-export interface ImportResult {
-  node?: ComponentNode;
-  /** Everything not converted, by source text: reported, never dropped silently. */
-  leftOver: string[];
-}
-
-/**
- * A literal expression's value, or a refusal when it is a program. Not the evaluator:
- * this reads the JSON that `nodesToJsx` writes, so a `__proto__` key is a key, and
- * reaches the rule parser, which refuses it by name. In real source it sets a prototype.
- */
-function literalValue(expr: ts.Expression): { ok: true; value: unknown } | { ok: false } {
-  if (ts.isStringLiteralLike(expr)) return { ok: true, value: expr.text };
-  if (ts.isNumericLiteral(expr)) return { ok: true, value: Number(expr.text) };
-  if (expr.kind === ts.SyntaxKind.TrueKeyword) return { ok: true, value: true };
-  if (expr.kind === ts.SyntaxKind.FalseKeyword) return { ok: true, value: false };
-  if (expr.kind === ts.SyntaxKind.NullKeyword) return { ok: true, value: null };
-  if (ts.isPrefixUnaryExpression(expr) && expr.operator === ts.SyntaxKind.MinusToken) {
-    const inner = literalValue(expr.operand);
-    return inner.ok ? { ok: true, value: -(inner.value as number) } : inner;
-  }
-  if (ts.isArrayLiteralExpression(expr)) {
-    const values = expr.elements.map((e) => literalValue(e));
-    if (values.some((v) => !v.ok)) return { ok: false };
-    return { ok: true, value: values.map((v) => (v as { value: unknown }).value) };
-  }
-  if (ts.isObjectLiteralExpression(expr)) {
-    const out: Record<string, unknown> = {};
-    for (const prop of expr.properties) {
-      if (!ts.isPropertyAssignment(prop)) return { ok: false };
-      const key = ts.isIdentifier(prop.name) ? prop.name.text : ts.isStringLiteralLike(prop.name) ? prop.name.text : undefined;
-      if (key === undefined) return { ok: false };
-      const value = literalValue(prop.initializer);
-      if (!value.ok) return { ok: false };
-      // Plain assignment to `__proto__` would drop the key, and hide it from the parser.
-      Object.defineProperty(out, key, { value: value.value, enumerable: true, writable: true, configurable: true });
-    }
-    return { ok: true, value: out };
-  }
-  return { ok: false };
-}
-
-/** The tree with ids from each node's place, which JSX does not carry and behaviour needs. */
-export function withPlaceIds(node: ComponentNode, place = 'n'): ComponentNode {
-  const children = node.children?.map((child, index) => withPlaceIds(child, `${place}-${index}`));
-  return { ...node, id: place, ...(children ? { children } : {}) };
-}
-
-/** Leaves one node's `rules` as what a stylesheet could take, and reports the rest. */
-function settleRules(node: ComponentNode, context: RuleContext, leftOver: string[]): void {
-  const props = node.props as Record<string, unknown> | undefined;
-  const stored = props?.rules;
-  if (!props || stored === undefined) return;
-  if (isTextNodeType(node.type)) {
-    leftOver.push(`rules on a text node: ${JSON.stringify(stored).slice(0, 120)}`);
-    delete props.rules;
-    return;
-  }
-  if (isLegacyRulesAttribute(stored)) return;
-  if (!isRuleList(stored)) {
-    leftOver.push(`rules is neither a list nor a table attribute: ${JSON.stringify(stored).slice(0, 120)}`);
-    delete props.rules;
-    return;
-  }
-  const { refused } = readRules({ rules: stored }, context);
-  if (refused.length === 0) return;
-  for (const { index, rule, reason } of refused) {
-    const id = (rule as { id?: unknown } | null)?.id;
-    leftOver.push(`refused rule ${typeof id === 'string' ? id : `#${index}`}: ${reason}`);
-  }
-  const out = new Set(refused.map(({ index }) => index));
-  const kept = stored.filter((_, index) => !out.has(index));
-  if (kept.length > 0) props.rules = kept;
-  else delete props.rules;
-}
-
-/** Every node's rules, against the state on its path, as the behaviour pass reads them. */
-function settleTreeRules(root: ComponentNode, leftOver: string[]): void {
-  const keyed = withPlaceIds(root);
-  const { behaviours } = readBehaviourTree(keyed);
-  const walkTree = (node: ComponentNode, copy: ComponentNode, outer: ReadonlyMap<string, StateValue>) => {
-    const state = behaviours.get(copy)?.state;
-    const states = state ? new Map([...outer, ...state.map((value): [string, StateValue] => [value.id, value])]) : outer;
-    // A page with no behaviour never reaches that pass, so no state is in reach at all.
-    settleRules(node, behaviours.size > 0 ? { states } : {}, leftOver);
-    node.children?.forEach((child, index) => walkTree(child, (copy.children as ComponentNode[])[index], states));
-  };
-  walkTree(root, keyed, new Map());
-}
-
-function jsxToNodesUnguarded(jsx: string, source: ts.SourceFile): ImportResult {
-  const leftOver: string[] = [];
-  const textOf = (node: ts.Node) => node.getText(source).replace(/\s+/g, ' ').slice(0, 120);
-
-  const convert = (element: ts.JsxElement | ts.JsxSelfClosingElement): ComponentNode | undefined => {
-    const open = ts.isJsxElement(element) ? element.openingElement : element;
-    const tag = open.tagName.getText(source);
-    const island = Object.hasOwn(ISLANDS, tag) ? ISLANDS[tag] : undefined;
-    const textRun = tag === TEXT_RUN_TAG;
-    if (!island && !textRun && !/^[a-z]/.test(tag)) {
-      leftOver.push(`unknown component <${tag}>`);
-      return undefined;
-    }
-    const props: Record<string, unknown> = island ? { [island.attr]: island.value } : {};
-    let bindings: ComponentNode['bindings'];
-    let host = tag;
-    for (const attribute of open.attributes.properties) {
-      if (!ts.isJsxAttribute(attribute)) {
-        leftOver.push(`spread props: ${textOf(attribute)}`);
-        continue;
-      }
-      const name = attribute.name.getText(source);
-      const init = attribute.initializer;
-      let value: unknown = true;
-      if (init && ts.isStringLiteral(init)) value = init.text;
-      else if (init && ts.isJsxExpression(init) && init.expression) {
-        const literal = literalValue(init.expression);
-        if (!literal.ok) {
-          leftOver.push(`dynamic prop ${textOf(attribute)}`);
-          continue;
-        }
-        value = literal.value;
-      }
-      if (name === BINDINGS_PROP) bindings = value as ComponentNode['bindings'];
-      else if (island && name === ISLAND_HOST_PROP) host = String(value);
-      else props[name] = value;
-    }
-
-    // Text and elements in source order; which form a run takes is known at the end.
-    const contents: Content[] = [];
-    if (ts.isJsxElement(element)) {
-      for (const child of element.children) {
-        let text: string | number | undefined;
-        if (ts.isJsxText(child)) {
-          text = jsxText(child.text);
-          if (text.length === 0) continue;
-        } else if (ts.isJsxExpression(child)) {
-          if (!child.expression) continue;
-          const literal = literalValue(child.expression);
-          if (!literal.ok || (typeof literal.value !== 'string' && typeof literal.value !== 'number')) {
-            leftOver.push(`dynamic child ${textOf(child)}`);
-            continue;
-          }
-          text = literal.value;
-        } else if (ts.isJsxElement(child) || ts.isJsxSelfClosingElement(child)) {
-          const converted = convert(child);
-          if (converted) contents.push(converted);
-          continue;
-        } else {
-          leftOver.push(`unsupported child ${textOf(child)}`);
-          continue;
-        }
-        contents.push(text);
-      }
-    }
-
-    // A lone run is the element's own text; beside anything else each run is a text node.
-    let children: ComponentNode[] = [];
-    if (contents.length === 1 && typeof contents[0] !== 'object') props.children = contents[0];
-    else {
-      children = contents.map((item) =>
-        typeof item === 'object' ? item : { type: TEXT_NODE_TYPE, props: { children: item } as ComponentNode['props'] },
-      );
-    }
-
-    const node: ComponentNode = { type: textRun ? TEXT_NODE_TYPE : host, props: props as ComponentNode['props'] };
-    if (bindings) node.bindings = bindings;
-    if (children.length > 0) node.children = children;
-    return node;
-  };
-
-  let root: ts.JsxElement | ts.JsxSelfClosingElement | undefined;
-  const find = (node: ts.Node) => {
-    if (!root && (ts.isJsxElement(node) || ts.isJsxSelfClosingElement(node))) root = node;
-    if (!root) ts.forEachChild(node, find);
-  };
-  find(source);
-  if (!root) return { leftOver: [`not JSX: ${jsx.slice(0, 80)}`] };
-
-  // Only a bare element converts: `cond && <p />` or `items.map(...)` is a program.
-  const statement = source.statements[0] as ts.VariableStatement;
-  let init = statement.declarationList.declarations[0].initializer;
-  while (init && ts.isParenthesizedExpression(init)) init = init.expression;
-  if (init !== root) {
-    return { leftOver: [`logic around the markup: ${textOf(init as ts.Node)}`] };
-  }
-  const node = convert(root);
-  if (node) settleTreeRules(node, leftOver);
-  return { node, leftOver };
-}
-
-/** The normal form's parser. It holds the same line as the importer on a hostile input: a refusal, never a throw. */
-export function jsxToNodes(jsx: string): ImportResult {
-  try {
-    const { source } = parseFile('import.tsx', `const root = (${jsx});`);
-    if (isTooDeep(source)) return { leftOver: ['nested too deeply to read safely'] };
-    return jsxToNodesUnguarded(jsx, source);
-  } catch (error) {
-    if (error instanceof RangeError) return { leftOver: ['nested too deeply to read safely'] };
-    throw error;
-  }
 }

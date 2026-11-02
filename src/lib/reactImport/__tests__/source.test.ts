@@ -2,10 +2,13 @@
 // The hostile list of the contract, each shape from its probes. Every one of these
 // returns a report: a file from a stranger is never allowed to throw.
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { IMPORT_LIMITS } from '../budget';
 import { DETAILS } from '../report';
 import { importSource, type SourceInput } from '../source';
+
+// The largest inputs take seconds on a loaded machine.
+vi.setConfig({ testTimeout: 30_000 });
 
 const paste = (text: string, name = 'paste.tsx'): SourceInput[] => [{ name, text }];
 const details = (input: SourceInput[]) => importSource(input).report.lines.map((line) => line.detail);

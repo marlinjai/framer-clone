@@ -50,6 +50,8 @@ function kindOfSyntax(kind: ts.SyntaxKind | undefined): LineKind {
 export class Ledger {
   private readonly files: OpenFile[] = [];
   private readonly lines: ImportLine[] = [];
+  /** Nodes walked by a subtree claim: inlining meets the same one again, and a walk is not free. */
+  private readonly walked = new Set<ts.Node>();
 
   constructor(private readonly excerpts: boolean = true) {}
 
@@ -75,6 +77,8 @@ export class Ledger {
 
   /** A claim over a node and all it holds, for what is wholly read or wholly refused. */
   claimSubtree(source: ts.SourceFile, node: ts.Node, claim: Claim): void {
+    if (this.walked.has(node)) return;
+    this.walked.add(node);
     const file = this.fileOf(source);
     const atoms: Atom[] = [];
     walk(node, undefined, (each) => {

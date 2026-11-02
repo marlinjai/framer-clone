@@ -3,7 +3,7 @@
 // It also says whether TypeScript found a system to read, which it must not.
 
 import ts from 'typescript';
-import { importSource, type ImportOptions, type SourceInput } from '../source';
+import { importAndPost, type ImportOptions, type SourceInput } from '../source';
 
 export interface WorkerRequest {
   files: SourceInput[];
@@ -12,6 +12,7 @@ export interface WorkerRequest {
 
 self.onmessage = (event: MessageEvent<WorkerRequest>) => {
   const started = performance.now();
-  const outcome = importSource(event.data.files, event.data.options);
-  self.postMessage({ outcome, hasSystem: ts.sys !== undefined, milliseconds: performance.now() - started });
+  importAndPost(event.data.files, event.data.options ?? {}, (outcome) => {
+    self.postMessage({ outcome, hasSystem: ts.sys !== undefined, milliseconds: performance.now() - started });
+  });
 };

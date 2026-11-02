@@ -139,7 +139,7 @@ zip in the first version, because a zip needs its own expansion limits and a fol
 fc-import components/ui/button.tsx --css app/globals.css --entry examples/button-demo.tsx --out button.import.json
 ```
 
-It reads files inside the project root only (no symbolic link out, no `node_modules`), reads `paths` from `tsconfig.json` with
+It reads files inside the project root only (no symbolic link out, no `node_modules`), runs the conversion in a `worker_threads` worker under the same 20 second deadline as the tab, reads `paths` from `tsconfig.json` with
 `ts.parseConfigFileTextToJson`, because real ones hold comments, follows `extends` only inside the root, and prints the report with
 `file:line` so an editor can jump to it. It runs under the same budget as the worker, because Node's heap exhaustion cannot be caught. The exit code is 0 when imported, 1 with
 differences to accept, 2 when not imported, so it fits a pipeline. It holds no login and makes no network call: its output
@@ -241,7 +241,7 @@ collapsed to a count, so a person reads the few that need them.
 
 ### Layer 1: static JSX
 
-`ts.createSourceFile` builds the AST, as `test/score/roundtrip/jsx.ts` already does, and that code moves here. The parser reads
+`ts.createSourceFile` builds the AST, as `test/score/roundtrip/jsx.ts` already does. The parser reads
 one file and resolves nothing. No `ts.createProgram`, because a program reads `lib` files and follows imports. Types are read by
 syntax only.
 
@@ -620,7 +620,7 @@ Import reads text from strangers: a component off the web, a paste from a chat. 
 | Code execution while importing | Nothing evaluates source. `ts.createSourceFile` parses only [proven: a module-scope assignment and `throw` did not run]. Layer 2 runs no code from the source: no plugin, config or `loadModule`. The real `tailwind-merge` runs on literal strings. An `eval`-shaped call in `src/lib/reactImport` fails a static test. No flag changes any of this |
 | A file that overflows the parser or a walker | At most 64 files, 512 kilobytes per file, 2 megabytes in all. After the parse, AST depth is checked with an iterative walk, limit 256, because a bracket scan misses `!`, `a=>`, `if` and `a+a+...` [proven]. Every layer, not only the parse, runs inside one catch, so a `RangeError` anywhere is a refusal with its reason |
 | A file whose output explodes | **The conversion budget,** one object across all layers, in worker and CLI alike: 5,000 output nodes, the render limit; 4 megabytes of evaluated text; 5,000 unrolled items; inlining depth 16 with a visited stack, so `function A(){return <A/>}` and two components using each other twice stop. Over budget is a `left` line, kind `cap`, and conversion stops. The input limits bound source, not output, so this is what keeps memory down |
-| A file that hangs | A 20 second deadline ending in `worker.terminate()`. Allocation can outrun a deadline and crash the tab, which is why the budget comes first. The cost of a failure is the tab, not "one worker", so the dialog offers to save first |
+| A file that hangs | A 20 second deadline ending in `worker.terminate()` in the tab, and in the CLI a `worker_threads` worker with `terminate`, because `importSource` cannot interrupt the parser: `async(a=async(a=...` is exponential inside `ts.createSourceFile` [proven], so a linear token scan refuses that family first, and the deadline is what covers any other shape. Allocation can outrun a deadline and crash the tab, which is why the budget comes first. The cost of a failure is the tab, not "one worker", so the dialog offers to save first |
 | Our server | It parses no source. It sees a region only on a person's press |
 | Candidates as an attack on the compiler | Arbitrary-value classes are data to Tailwind, and each output is parsed. The candidate count is capped at 4,000 |
 | `@import`, `@plugin`, `@config` in supplied CSS | Never compile input, see layer 2 |
@@ -778,7 +778,7 @@ a browser". It sends nobody off to run anything. When custom code's frame exists
 
 | Reader | Change |
 |---|---|
-| `test/score/roundtrip/jsx.ts` | Its parser moves to `src/lib/reactImport/jsx.ts`. The test imports it. Node-to-JSX stays, as the normal form |
+| `test/score/roundtrip/jsx.ts` | No change. Its parser reads a small language of its own, with no gate and no budget, so it stays with the test rather than sit in the production folder (review of slice 2, S15). Layer 1 is written fresh in `src/lib/reactImport/jsx.ts` |
 | `src/lib/rules/rules.ts` | `MAX_DEFINITIONS_PER_NODE`, so definitions leave the rule cap |
 | `src/lib/components/inputs.ts`, `definition.ts`, `placement.ts` | `slot`, one `#slot` per input, the two new rows of the change table |
 | `ComponentModel.ts` | A placement takes children with a `slotInput`, and refuses them otherwise. `setTag` and text stay refused |
@@ -811,7 +811,7 @@ is honest, and a fixture that falls was never passing in production. How far it 
 | # | Slice | Files | Tag | Depends on | Closes |
 |---|---|---|---|---|---|
 | 1 | `score-real-base` | `test/score/lib/published.ts`, `corpus.score.ts`, `baseline.json`, `report.ts`, `test/score/data/published-base.*`, a script | | none | `publishedDocument` carries the sheet of a real page, **generated from the production build** rather than re-composed: the built CSS, `html` and `body` classes, the site base style. The generated file is committed, so a score run needs no build, and a test fails when `globals.css` changes without a refresh. **The goal must allow the baseline to move** |
-| 2 | `import-core` | `src/lib/reactImport/{source,atoms,ledger,report,budget,staticEval,jsx}.ts` and tests, `test/score/roundtrip/jsx.ts` | | none | Limits, the AST depth check, the budget, the whole-pipeline catch, doubling constants and recursive components refused, null-prototype objects, the static eval test. A real browser Worker parsing a real file, with chunk size stated |
+| 2 | `import-core` | `src/lib/reactImport/{source,atoms,ledger,report,budget,staticEval,jsx}.ts` and tests | | none | Limits, the AST depth check, the budget, the whole-pipeline catch, doubling constants and recursive components refused, null-prototype objects, the static eval test. A real browser Worker parsing a real file, with chunk size stated |
 | 3 | `import-tailwind` | `src/lib/reactImport/tailwind/{preamble,compile,flatten,rewrites,order,breakpoints,tokens}.ts`, a generate script, `package.json` (`postcss`) | `lockfile` | 2 | Every row of the rewrite and breakpoint tables, the flush order, both order modes, the order-safe merge, silent candidates, classes selectors read, named groups, tokens with base-reached ones, token name refusal, `dark:`, the cap. The button probe as a unit test |
 | 4 | `import-score` | `test/score/import.score.ts`, `test/score/import/*` (foreign theme, fixtures), `src/lib/reactImport/{bundle,secrets}.ts`, `run.ts`, `report.ts`, `baseline.json` | | 1, 3 | The harness and all measures, every fixture under both themes, through pure `readBundle`, with forged cases. Conservation with ranges and its mutation run. Honesty. `button` (no variants yet) with an icon child, `input`, `label`, `separator` as far as they go. Every later slice ratchets here |
 | 5 | `import-props` | `src/lib/reactImport/{props,cva,conditions}.ts`, `src/lib/rules/rules.ts` (definition cap), `bindings/types.ts`, `applyBindings.ts`, `hydrateBindings.ts`, corpus entries | `renderer` | 4 | Inputs from types, `cva` to `:where` rules in layers, displaced entries, a conflict between two keys and one inside a selector, `compoundVariants`, `test`, rest spread, `asChild`. `button` at all variants. The goal states rule counts for `button`, `badge`, `tabs` |
@@ -824,7 +824,7 @@ is honest, and a fixture that falls was never passing in production. How far it 
 | 12 | `import-hooks` | `src/lib/reactImport/{hooks,events}.ts` | | 10, B3 | `useState` shapes, the escape check, the event table, `when` from classes and `data-state`. A taint refusal reported |
 | 13 | `import-radix` | `src/lib/reactImport/radix.ts`, `src/lib/behaviour/presets/*` (`importParts`), the native switch, checkbox and radio presets | | 12, B6, B7, B8 | The package table, version ranges, parts. All three Radix fixtures. Held-out batch scored after this |
 | 14 | `import-dialog` | `src/lib/reactImport/worker.ts`, `ImportDialog.tsx`, `ProjectModel.ts`, `PublishButton.tsx` | | 10, components 8 (so the published copy) | `readBundle` in the worker, the unverified label, `importBundle` in one undo step, the offer to save, all four stateful paths, upload and paste in a browser, terminate on a hostile file |
-| 15 | `import-cli` | `packages/import-cli/`, `pnpm-workspace.yaml` | `lockfile` | 14 | Root containment, `tsconfig.json` with comments and `extends`, the budget, `--no-excerpts`, exit codes, a bundle uploaded in a browser. Private until the name is decided |
+| 15 | `import-cli` | `packages/import-cli/`, `pnpm-workspace.yaml` | `lockfile` | 14 | Root containment, `tsconfig.json` with comments and `extends`, the budget, the deadline in a `worker_threads` worker, `--no-excerpts`, exit codes, a bundle uploaded in a browser. Private until the name is decided |
 | 16 | `import-ai` | `src/app/api/ai/import-region/route.ts`, `src/lib/reactImport/aiRegions.ts`, `promptSections`, goldens, `ImportDialog.tsx` | | 14 | Preview, the scan over the whole payload, comments stripped, nothing logged, `customCode` dropped, proposal per region, `pnpm test:integration`. An injection fixture |
 | 17 | `export-core` | `src/lib/reactExport/{identifiers,jsx,inputs,bindings,gate,report}.ts`, `surface: 'export'` in `responsiveCss.ts` | | 5, 6, 7 | Definitions, placements, `{children}`, styles under `x-` names, bindings by bracket. The gate on values, `__proto__`, case-insensitive file names, the hostile name test. Round trip properties 2 and 3 without behaviour |
 | 18 | `export-behaviour` | `src/lib/reactExport/{behaviour,islands}.ts`, the runtime bundling | | 17, B8 | Behaviour, effects, islands, custom code stub. Radix fixtures through property 3 |

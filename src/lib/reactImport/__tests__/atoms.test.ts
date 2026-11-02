@@ -2,7 +2,7 @@
 
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
-import { collectAtoms, exemptReason, isTooDeep, parseFile } from '../atoms';
+import { collectAtoms, exemptReason, hasParserTrap, isTooDeep, parseFile } from '../atoms';
 import { IMPORT_LIMITS } from '../budget';
 import { Ledger } from '../ledger';
 
@@ -63,6 +63,25 @@ describe('the depth check', () => {
     expect(isTooDeep(parsed(`const a = ${'!'.repeat(300)}1;`).source)).toBe(true);
     expect(isTooDeep(parsed(`const a = ${'a=>'.repeat(300)}1;`).source)).toBe(true);
     expect(isTooDeep(parsed(`const a = ${'a+'.repeat(300)}a;`).source)).toBe(true);
+  });
+});
+
+describe('the parser trap', () => {
+  const nested = (levels: number) => `${'async(a='.repeat(levels)}1${')'.repeat(levels)}`;
+
+  it('counts nesting, not occurrences', () => {
+    expect(hasParserTrap(nested(8))).toBe(false);
+    expect(hasParserTrap(nested(9))).toBe(true);
+    expect(hasParserTrap('async(a=1);'.repeat(1_000))).toBe(false);
+  });
+
+  it('reads tokens, so a string or comment is not code', () => {
+    expect(hasParserTrap(`const a = "${nested(20)}";`)).toBe(false);
+    expect(hasParserTrap(`// ${nested(20)}`)).toBe(false);
+  });
+
+  it('survives a stray closer', () => {
+    expect(hasParserTrap(`)))${nested(20)}`)).toBe(true);
   });
 });
 

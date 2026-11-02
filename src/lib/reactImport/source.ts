@@ -3,15 +3,17 @@
 //
 // A file from a stranger can overflow the parser or any walker, or expand past memory.
 // So the input is measured first, depth is read from the tree, one budget runs across
-// all layers, and every layer runs inside one catch. A hostile file costs a refusal
-// with its reason, and `importSource` always returns.
+// all layers, and every layer runs inside one catch. What throws costs a refusal with
+// its reason. What hangs is another matter: TypeScript's parser has exponential cases,
+// `hasParserTrap` refuses the known family, and nothing in here can interrupt the parser.
+// So a host always runs this under `IMPORT_LIMITS.deadlineMs`, and ends it from outside.
 //
 // The contract is docs/plans/2026-11-02-react-import.md, "Untrusted input".
 
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
-import { extensionOf, isScript, isTooDeep, parseFile, type ParsedFile } from './atoms';
+import { extensionOf, hasParserTrap, isScript, isTooDeep, parseFile, type ParsedFile } from './atoms';
 import { BudgetExceeded, IMPORT_LIMITS, createImportBudget, type BudgetLimit } from './budget';
-import { convertFile } from './jsx';
+import { ROOT_NODE_KEY, convertFile } from './jsx';
 import { Ledger } from './ledger';
 import { DETAILS, buildReport, type DetailKey, type ImportReport } from './report';
 
@@ -49,6 +51,8 @@ function brokenLimit(files: readonly SourceInput[]): DetailKey | undefined {
 
 const BUDGET_DETAILS: Readonly<Record<BudgetLimit, DetailKey>> = {
   nodes: 'overNodes',
+  'output-depth': 'overDepth',
+  steps: 'overSteps',
   evaluated: 'overEvaluated',
   unrolled: 'overUnrolled',
   'inlining-depth': 'overInlining',
@@ -68,7 +72,14 @@ function openFiles(files: readonly SourceInput[], ledger: Ledger): { readable: b
   for (const { name, text } of files) {
     if (!isScript(name)) {
       const detail = extensionOf(name) === 'css' ? 'stylesheet' : 'notRead';
-      ledger.openWhole(name, text, { kind: detail === 'stylesheet' ? 'css-rule' : 'statement', disposition: 'left', detail, next: ['rewrite'] });
+      // A sheet can change what the result looks like, so it blocks until slice `import-stylesheet` reads it.
+      const stylesheet = detail === 'stylesheet' ? { kind: 'css-rule' as const, nodeKey: ROOT_NODE_KEY } : { kind: 'statement' as const };
+      ledger.openWhole(name, text, { ...stylesheet, disposition: 'left', detail, next: ['rewrite'] });
+      continue;
+    }
+    if (hasParserTrap(text)) {
+      readable = false;
+      ledger.openWhole(name, text, { kind: 'cap', disposition: 'left', detail: 'tooDeep', next: ['rewrite'] });
       continue;
     }
     const parsed = parseFile(name, text);
@@ -93,6 +104,7 @@ const failedReport = (): ImportReport => ({
   verdict: 'not-imported',
 });
 
+/** The conversion, unless a host's deadline ends it first. See the head of this file. */
 export function importSource(files: readonly SourceInput[], options: ImportOptions = {}): ImportOutcome {
   const ledger = new Ledger(options.excerpts ?? true);
   try {
@@ -112,5 +124,17 @@ export function importSource(files: readonly SourceInput[], options: ImportOptio
     } catch {
       return { report: failedReport() };
     }
+  }
+}
+
+/**
+ * The conversion and its delivery, for a host, with the same promise: a result too big to clone
+ * (`DataCloneError`) is a failure of this import, so it reaches the dialog as a report, not as an error event.
+ */
+export function importAndPost(files: readonly SourceInput[], options: ImportOptions, post: (outcome: ImportOutcome) => void): void {
+  try {
+    post(importSource(files, options));
+  } catch {
+    post({ report: failedReport() });
   }
 }
