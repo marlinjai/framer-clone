@@ -66,11 +66,13 @@ import {
   withoutInstance,
   type RenderBudget,
 } from '@/lib/components/expand';
+import { repeatedCopies, repeatInputId, withoutRepeat } from '@/lib/components/repeat';
 import {
   createScope,
   lookup,
   pushAvailabilityFrame,
   pushInputFrame,
+  pushItemFrame,
   pushPageFrame,
   pushProductFrame,
   pushRowFrame,
@@ -300,7 +302,11 @@ async function hydrateNode(
 ): Promise<ComponentNode | null> {
   const instance = placementInstanceOf(stored.props);
   const scope = instance ? pushInputFrame(outerScope, resolveInputValues(instance, outerScope, repos.budget)) : outerScope;
-  const node = instance ? withoutInstance(stored) : stored;
+  const placed = instance ? withoutInstance(stored) : stored;
+  // A repeat is expanded by whatever holds the node (repeatScopes). One reached
+  // any other way, a Collection's row template say, renders once, never as a marker.
+  if (repeatInputId(placed.props)) repos.budget.warn(`a repeat for "${repeatInputId(placed.props)}" can only sit inside an element`);
+  const node = withoutRepeat(placed);
   if (isHiddenByBinding(node, scope)) return null;
 
   // A text node is only its text (which may be bound), whatever else a stored
@@ -352,12 +358,12 @@ async function hydrateNode(
  */
 function bakeIsland(node: ComponentNode, scope: BindingScope, budget: RenderBudget): ComponentNode {
   const baked = bakeInputBindings(node, scope);
-  const children = node.children?.flatMap((child) => {
+  const children = node.children?.flatMap((outer) => repeatScopes(outer, scope, budget).flatMap(({ node: child, scope: at }) => {
     const instance = placementInstanceOf(child.props);
-    const childScope = instance ? pushInputFrame(scope, resolveInputValues(instance, scope, budget)) : scope;
+    const childScope = instance ? pushInputFrame(at, resolveInputValues(instance, at, budget)) : at;
     const stored = instance ? withoutInstance(child) : child;
     return isHiddenByBinding(stored, childScope) ? [] : [bakeIsland(stored, childScope, budget)];
-  });
+  }));
   const same = !children || (children.length === node.children?.length && children.every((child, i) => child === node.children?.[i]));
   return same ? baked : { ...baked, children };
 }
@@ -378,8 +384,27 @@ async function hydrateChildren(
   repos: HydrationContext,
 ): Promise<ComponentNode[]> {
   if (!children || children.length === 0) return [];
-  const hydrated = await Promise.all(children.map((child) => hydrateNode(child, scope, repos)));
+  const hydrated = await Promise.all(children.flatMap((child) =>
+    repeatScopes(child, scope, repos.budget).map(({ node, scope: at }) => hydrateNode(node, at, repos))));
   return hydrated.filter((child) => child !== null);
+}
+
+/**
+ * A child as it renders: itself, or one copy per item of the list it repeats for
+ * (src/lib/components/repeat.ts), each against an item frame. Expansion paid for
+ * the first copy, so each further one draws on the budget, as a Collection's rows
+ * do, and the copies past the limit are left out. The list is read here, outside
+ * the child, so a nested placement repeated for a list of the component around it
+ * opens its own frame per item, with `{{item.*}}` known to its input bindings.
+ */
+function repeatScopes(child: ComponentNode, scope: BindingScope, budget: RenderBudget): { node: ComponentNode; scope: BindingScope }[] {
+  const repeatId = repeatInputId(child.props);
+  if (!repeatId) return [{ node: child, scope }];
+  const copies = repeatedCopies(child, lookup(scope, ['input', repeatId]));
+  const cost = templateCostOf(child);
+  return copies
+    .filter((_, index) => index === 0 || !cost || budget.charge(cost.nodes, cost.bytes))
+    .map((copy) => ({ node: copy.node, scope: pushItemFrame(scope, copy.item) }));
 }
 
 /** What one more copy of a template costs, or null for one no placement made. */

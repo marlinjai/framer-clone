@@ -10,6 +10,7 @@ import { getComponentCategory, SECTION_MAP, type SectionId } from './right/secti
 import { SizeSection, PositionSection, StylesSection, LayoutSection, TypographySection, ImageSection, DataSourceSection, EffectsSection, FormSection, StickyCtaSection, TextContentSection, LinkSection, CustomSection, ComponentSection } from './right/sections';
 import { ComponentInstance } from '@/models/ComponentModel';
 import { InputsSection } from './right/sections/InputsSection';
+import { RepeatSection } from './right/sections/RepeatSection';
 
 const SECTION_COMPONENTS: Record<SectionId, React.ComponentType<{ component: ComponentInstance; breakpointId?: string }>> = {
   component: ComponentSection,
@@ -64,8 +65,11 @@ const RightSidebar = observer(({ variant = 'docked' }: RightSidebarProps) => {
 
   // The root of a component open on the canvas holds the component's Inputs list.
   const page = editorUI.currentPage;
-  const openDefinition = page && target && target === page.appComponentTree
-    ? Array.from(editorUI.currentProject?.components.values() ?? []).find((definition) => definition.page === page)
+  const definitionOnCanvas = page ? Array.from(editorUI.currentProject?.components.values() ?? []).find((definition) => definition.page === page) : undefined;
+  const openDefinition = definitionOnCanvas && target === page?.appComponentTree ? definitionOnCanvas : undefined;
+  // Any other element of it may repeat for one of its lists.
+  const repeatable = definitionOnCanvas && target && !openDefinition && !target.isViewportNode && target.type !== '#text'
+    ? definitionOnCanvas
     : undefined;
 
   return (
@@ -88,6 +92,7 @@ const RightSidebar = observer(({ variant = 'docked' }: RightSidebarProps) => {
             {editsDefinition ? null : target ? (
               <>
                 {openDefinition && <InputsSection definition={openDefinition} />}
+                {repeatable && target && <RepeatSection definition={repeatable} node={target} />}
                 {/* Text first for every element that holds its own text: on a
                     phone this field is the dependable way to change text (a
                     form field always opens the keyboard). Null otherwise. */}

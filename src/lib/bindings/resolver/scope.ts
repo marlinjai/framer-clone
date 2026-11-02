@@ -82,6 +82,14 @@ export interface InputFrame {
   values: Record<string, unknown>;
 }
 
+/** An item frame holds one item of a component's `list` or `gallery` input, for
+ *  the clone of a repeated node (`props['data-repeat']`) that shows it.
+ *  `{{item.label}}` and, for a gallery, `{{item.src}}` resolve against it. */
+export interface ItemFrame {
+  kind: 'item';
+  item: unknown;
+}
+
 export type BindingFrame =
   | RowFrame
   | CollectionFrame
@@ -89,7 +97,8 @@ export type BindingFrame =
   | ProductFrame
   | VariantFrame
   | AvailabilityFrame
-  | InputFrame;
+  | InputFrame
+  | ItemFrame;
 
 /** A scope is an ordered stack of frames. Later frames are INNERMOST: a
  *  single-segment expression and a `{{row.*}}` lookup resolve against the
@@ -169,6 +178,11 @@ export function pushInputFrame(
   return { frames: [...scope.frames, { kind: 'input', values }] };
 }
 
+/** Push an item frame, returning a NEW immutable scope. Drives `{{item.*}}`. */
+export function pushItemFrame(scope: BindingScope, item: unknown): BindingScope {
+  return { frames: [...scope.frames, { kind: 'item', item }] };
+}
+
 /** Find the innermost frame of a given kind, or undefined. */
 function findFrame<K extends BindingFrame['kind']>(
   scope: BindingScope,
@@ -210,6 +224,7 @@ function getNested(root: unknown, segments: string[]): unknown {
  * - `['availability', ...]` -> innermost availability frame, rest against it
  *   (advisory / display-only)
  * - `['input', id, ...]`   -> innermost input frame, when there is one
+ * - `['item', ...]`        -> innermost item frame, when there is one
  * - anything else (e.g. `['title']`) -> innermost row frame, whole path
  *   against row.values (single-segment sugar)
  */
@@ -258,6 +273,12 @@ export function lookup(scope: BindingScope, path: string[]): unknown {
   if (head === 'input' && rest.length > 0) {
     const frame = findFrame(scope, 'input');
     if (frame) return getNested(frame.values, rest);
+  }
+
+  // `{{item}}` is the whole item (a gallery's image), `{{item.label}}` a field of it.
+  if (head === 'item') {
+    const frame = findFrame(scope, 'item');
+    if (frame) return rest.length === 0 ? frame.item : getNested(frame.item, rest);
   }
 
   // Single-segment / unqualified path: resolve against the innermost row's

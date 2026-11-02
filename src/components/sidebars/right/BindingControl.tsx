@@ -176,7 +176,8 @@ const BindingControl = observer(({ node, slot, meta, children }: BindingControlP
       </div>
 
       {pickerOpen && !readBinding && (
-        <div className="absolute right-0 top-8">
+        // Above the sections that follow, which would otherwise cover it and take its clicks.
+        <div className="absolute right-0 top-8 z-50">
           <BindingPicker
             node={node}
             slot={slot}

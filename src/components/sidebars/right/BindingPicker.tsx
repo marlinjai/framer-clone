@@ -29,6 +29,7 @@ import { useDataSource } from '@/lib/bindings/dataSource/context';
 import { parseExpression } from '@/lib/bindings/resolver/expression';
 import { getAvailableScopeFrames } from '@/lib/bindings/scopeIntrospection';
 import { inputExpressionFor, mayBindToSlot } from '@/lib/components/inputs';
+import { isRepeatable, itemChoicesFor } from '@/lib/components/repeat';
 
 export interface BindingPickerProps {
   node: ComponentInstance;
@@ -88,7 +89,11 @@ const BindingPicker = observer(({ node, slot, meta, onCommit, onClose }: Binding
   const hasProductFrame = frames.some((f) => f.kind === 'product');
   const inputFrame = frames.find((f) => f.kind === 'input');
   const hasPageFrame = frames.some((f) => f.kind === 'page');
-  const inputs = (inputFrame?.inputs ?? []).filter((input) => input.type !== 'event' && mayBindToSlot(input.type, slot));
+  // A list or gallery has no one value to show: an element repeats for it (Repeat), and reads its item.
+  const inputs = (inputFrame?.inputs ?? []).filter((input) => input.type !== 'event' && !isRepeatable(input) && mayBindToSlot(input.type, slot));
+  // Inside a node repeated for a list: what each item offers this slot.
+  const itemFrame = frames.find((f) => f.kind === 'item');
+  const itemChoices = itemFrame?.list ? itemChoicesFor(itemFrame.list, slot) : [];
 
   // LIVE columns for the row frame's source collection.
   const [rowColumns, setRowColumns] = React.useState<Column[] | null>(null);
@@ -201,6 +206,25 @@ const BindingPicker = observer(({ node, slot, meta, onCommit, onClose }: Binding
             <div className="px-2 py-1 text-[11px] text-muted-foreground">
               No input fits here yet. Make input adds one from this value.
             </div>
+          )}
+        </div>
+      )}
+
+      {/* The item of the list a repeated node shows */}
+      {itemFrame?.list && (
+        <div className="mb-2" data-testid="binding-picker-item">
+          <div className="flex items-center gap-1.5 px-1 py-1 text-[11px] font-medium text-muted-foreground">
+            <Component size={11} />
+            <span>Each item of {itemFrame.list.name}</span>
+          </div>
+          {itemChoices.map((choice) => (
+            <button key={choice.expression} type="button" className={ITEM_CLASS} onClick={() => commitRead(choice.expression)}>
+              <span className="flex-1">{choice.label}</span>
+              <span className="font-mono text-[10px] text-muted-foreground">{choice.expression}</span>
+            </button>
+          ))}
+          {itemChoices.length === 0 && (
+            <div className="px-2 py-1 text-[11px] text-muted-foreground">No field of an item fits here.</div>
           )}
         </div>
       )}

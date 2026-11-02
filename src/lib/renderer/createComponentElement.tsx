@@ -28,6 +28,7 @@ import { isFormattedText, isTextNodeType, ownTextThenChildren, renderOwnText, ru
 import { createRunElement } from '@/lib/renderer/runElements';
 import { isComponentPlaceholderType } from '@/lib/components/placement';
 import { boundValue } from '@/lib/components/expand';
+import { REPEAT_PROP } from '@/lib/components/repeat';
 import type { BindingScope } from '@/lib/bindings/resolver/scope';
 import { createScope } from '@/lib/bindings/resolver/scope';
 import CollectionRenderer, {
@@ -198,7 +199,10 @@ export function createComponentElement(
     ? <RunLinksContext.Provider value={false}>{own}</RunLinksContext.Provider>
     : own;
   const identity = options?.identity;
-  const surfaceProps = withoutEditorSurfaceProps(component.type, withoutClobberingId(component.type, withoutBlockedProps(finalProps)));
+  // The repeat marker is the renderer's (repeatChildren.tsx), never an attribute.
+  const { [REPEAT_PROP]: _repeat, ...unmarked } = finalProps;
+  void _repeat;
+  const surfaceProps = withoutEditorSurfaceProps(component.type, withoutClobberingId(component.type, withoutBlockedProps(unmarked)));
   const safeProps =
     String(component.type).toLowerCase() === 'form' ? { ...surfaceProps, onSubmit: refuseSubmit } : surfaceProps;
   const propsWithIdentity: Record<string, unknown> = identity
