@@ -1,11 +1,11 @@
 {
-  "generatedAt": "2026-11-02T15:58:26.562Z",
+  "generatedAt": "2026-11-02T16:10:10.377Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 385,
+  "durationSeconds": 587,
   "matrix": {
     "surfaces": {
       "format": {
@@ -11997,13 +11997,13 @@
               "viewport": "Desktop",
               "state": "initial",
               "check": "computed-styles",
-              "detail": "27 differences, first: r background-color, r block-size, r border-bottom-left-radius, r border-bottom-right-radius"
+              "detail": "26 differences, first: r block-size, r border-bottom-left-radius, r border-bottom-right-radius, r border-end-end-radius"
             },
             {
               "viewport": "Tablet",
               "state": "initial",
               "check": "computed-styles",
-              "detail": "27 differences, first: r background-color, r block-size, r border-bottom-left-radius, r border-bottom-right-radius"
+              "detail": "26 differences, first: r block-size, r border-bottom-left-radius, r border-bottom-right-radius, r border-end-end-radius"
             },
             {
               "viewport": "Mobile",
@@ -12015,7 +12015,7 @@
               "viewport": "Mobile",
               "state": "initial",
               "check": "computed-styles",
-              "detail": "27 differences, first: r background-color, r block-size, r border-bottom-left-radius, r border-bottom-right-radius"
+              "detail": "26 differences, first: r block-size, r border-bottom-left-radius, r border-bottom-right-radius, r border-end-end-radius"
             }
           ]
         },
@@ -12063,7 +12063,7 @@
           "pass": false,
           "checks": {
             "screenshot": {
-              "pass": 0,
+              "pass": 2,
               "total": 3
             },
             "computed-styles": {
@@ -12083,38 +12083,26 @@
             {
               "viewport": "Desktop",
               "state": "initial",
-              "check": "screenshot",
-              "detail": "8.46 percent of pixels differ"
-            },
-            {
-              "viewport": "Desktop",
-              "state": "initial",
               "check": "computed-styles",
-              "detail": "43 differences, first: r background-color, r block-size, r border-bottom-left-radius, r border-bottom-right-radius"
-            },
-            {
-              "viewport": "Tablet",
-              "state": "initial",
-              "check": "screenshot",
-              "detail": "6.59 percent of pixels differ"
+              "detail": "42 differences, first: r block-size, r border-bottom-left-radius, r border-bottom-right-radius, r border-end-end-radius"
             },
             {
               "viewport": "Tablet",
               "state": "initial",
               "check": "computed-styles",
-              "detail": "43 differences, first: r background-color, r block-size, r border-bottom-left-radius, r border-bottom-right-radius"
+              "detail": "42 differences, first: r block-size, r border-bottom-left-radius, r border-bottom-right-radius, r border-end-end-radius"
             },
             {
               "viewport": "Mobile",
               "state": "initial",
               "check": "screenshot",
-              "detail": "10.05 percent of pixels differ"
+              "detail": "0.10 percent of pixels differ"
             },
             {
               "viewport": "Mobile",
               "state": "initial",
               "check": "computed-styles",
-              "detail": "43 differences, first: r background-color, r block-size, r border-bottom-left-radius, r border-bottom-right-radius"
+              "detail": "42 differences, first: r block-size, r border-bottom-left-radius, r border-bottom-right-radius, r border-end-end-radius"
             }
           ]
         },

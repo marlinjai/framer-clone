@@ -121,7 +121,7 @@ Real components through the importer (`src/lib/reactImport`) and the one door a 
 | static-card | repo | not-imported | 100.0 percent | 0 of 43 | pass | pass | pass | 9/9 | 9/9 | 9/9 | 6/6 |  |
 | static-card | foreign | not-imported | 100.0 percent | 0 of 43 | pass | pass | pass | 9/9 | 9/9 | 9/9 | 6/6 |  |
 | refusals | repo | not-imported | 23.4 percent | 36 of 47 | pass | pass | fail | 2/3 | 0/3 | 3/3 | 0/0 | nothing: it exists to be refused, with a line for each refusal |
-| refusals | foreign | not-imported | 23.4 percent | 36 of 47 | pass | pass | fail | 0/3 | 0/3 | 3/3 | 0/0 | nothing: it exists to be refused, with a line for each refusal |
+| refusals | foreign | not-imported | 23.4 percent | 36 of 47 | pass | pass | fail | 2/3 | 0/3 | 3/3 | 0/0 | nothing: it exists to be refused, with a line for each refusal |
 
 What a line of the report excuses, for Honesty. Anything else that differs is a Honesty failure.
 
