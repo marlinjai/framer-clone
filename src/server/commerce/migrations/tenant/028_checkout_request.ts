@@ -9,10 +9,13 @@ import type { Migration } from '@marlinjai/tenant-db';
  * fault, and the pay route had already overwritten the buyer while the first session, made out to the first email,
  * stayed payable: the receipt could go to the second buyer.
  *
- * `order_payment.checkout_request` holds the parameters of the first start (email, return address, the session's end).
- * Every later start sends exactly those, so Stripe answers the same session. Two rules, one trigger:
+ * `order_payment.checkout_request` holds the request a start sends (email and return address; the session's end follows
+ * from the payment window) and whether Stripe confirmed it with a session (`confirmed`). Every later start with the same
+ * buyer sends exactly that, so Stripe answers the same session. Until Stripe confirmed it, another buyer may replace it:
+ * no session is made out to anyone yet, so a first click that failed at Stripe locks no typo in (the review's second
+ * round, R2-3). Once confirmed, one trigger holds two rules:
  *   - the request is set once (BK018 on a change);
- *   - once it is set, the buyer is fixed too (BK018): the session is made out to them.
+ *   - the buyer is fixed too (BK018): the session is made out to them.
  *
  * Additive: one nullable column, a CHECK, and a trigger beside `order_payment_guard` (021), which stays as it is. House
  * style as 007 to 027: BARE names. Re-runnable.
@@ -38,11 +41,14 @@ export const checkoutRequest: Migration = {
       SET search_path FROM CURRENT
       AS $$
       BEGIN
-          IF OLD."checkout_request" IS NOT NULL AND NEW."checkout_request" IS DISTINCT FROM OLD."checkout_request" THEN
+          IF coalesce((OLD."checkout_request" ->> 'confirmed')::boolean, false) = false THEN
+              RETURN NEW;
+          END IF;
+          IF NEW."checkout_request" IS DISTINCT FROM OLD."checkout_request" THEN
               RAISE EXCEPTION 'order_payment of order %: the hosted checkout request is set once', OLD."order_id"
                   USING ERRCODE = 'BK018';
           END IF;
-          IF OLD."checkout_request" IS NOT NULL AND NEW."buyer" IS DISTINCT FROM OLD."buyer" THEN
+          IF NEW."buyer" IS DISTINCT FROM OLD."buyer" THEN
               RAISE EXCEPTION 'order_payment of order %: the buyer is fixed once a hosted checkout is made out to them', OLD."order_id"
                   USING ERRCODE = 'BK018';
           END IF;

@@ -7,7 +7,9 @@
 //
 //   - forward: the first click opens a session and fixes its request and buyer;
 //   - resume: a buyer back from Stripe presses Pay again, later and from another page, and gets the same session;
-//   - backtrack: another buyer on the same order is refused (409 buyer_fixed), the first buyer stays, Stripe is not asked;
+//   - backtrack: another buyer on an order whose session Stripe confirmed is refused (409 buyer_fixed), the first buyer
+//     stays, Stripe is not asked; but while no session is confirmed (Stripe failed on the first click), the buyer may
+//     correct their details and the corrected ones are what the session is made out to (second round, R2-3);
 //   - re-entry: two clicks at once agree on one request and one session; the database refuses a later change of the
 //     request or the buyer (BK018).
 // All data is synthetic.
@@ -54,10 +56,18 @@ class IdempotentStripe {
   private readonly byKey = new Map<string, { body: string; session: { id: string; url: string } }>();
   created = 0;
   refused = 0;
+  /** The next calls fail as Stripe being unreachable would, before anything is stored under the key. */
+  failNext = 0;
+  /** The email of every session created, in order. */
+  emails: string[] = [];
   createAccount = async () => ({ id: `acct_${randomBytes(6).toString('hex')}`, charges_enabled: false, details_submitted: false });
   retrieveAccount = async (id: string) => ({ id, charges_enabled: true, details_submitted: true });
   createAccountLink = async () => ({ url: 'https://connect.stripe.test/setup' });
   createCheckoutSession = async (args: Record<string, unknown> & { idempotencyKey: string }) => {
+    if (this.failNext > 0) {
+      this.failNext -= 1;
+      throw new StripeApiError(503, null, 'Stripe could not be reached');
+    }
     const { idempotencyKey, ...request } = args;
     const body = JSON.stringify(request);
     const earlier = this.byKey.get(idempotencyKey);
@@ -69,6 +79,7 @@ class IdempotentStripe {
       return earlier.session;
     }
     this.created += 1;
+    this.emails.push(String(request.customerEmail));
     const session = { id: `cs_${randomBytes(6).toString('hex')}`, url: `https://checkout.stripe.test/pay/${this.created}` };
     this.byKey.set(idempotencyKey, { body, session });
     return session;
@@ -148,7 +159,7 @@ describe('pressing Pay again on a Stripe order', () => {
     expect(await paymentOf(orderId)).toMatchObject({
       status: 'pending',
       buyer: { email: 'alex@example.com' },
-      checkout_request: { buyerEmail: 'alex@example.com', returnUrl: `https://${host}/shop` },
+      checkout_request: { buyerEmail: 'alex@example.com', returnUrl: `https://${host}/shop`, confirmed: true },
     });
 
     // Back from Stripe five minutes later, on another page: the clock and the page moved, the request did not.
@@ -192,6 +203,47 @@ describe('pressing Pay again on a Stripe order', () => {
     expect(a).toEqual(b);
     expect(stripe.created).toBe(1);
     expect(stripe.refused).toBe(0);
+  });
+
+  it('backtrack: Stripe failing on the first click locks no typo in; the corrected buyer is the one the session gets', async () => {
+    const orderId = await stripeOrder();
+    stripe.failNext = 1;
+    const typo = buyer({ email: 'alex@exmaple.com' });
+    expect((await payOrder(orderId, { buyer: typo })).status).toBe(500);
+    // Written before Stripe was asked, and not confirmed: nothing is made out to it.
+    expect((await paymentOf(orderId)).checkout_request).toMatchObject({ buyerEmail: 'alex@exmaple.com', confirmed: false });
+
+    const corrected = await payOrder(orderId, { buyer: buyer() });
+    expect(corrected).toMatchObject({ status: 200, body: { status: 'redirect' } });
+    expect(stripe.emails).toEqual(['alex@example.com']);
+    expect(await paymentOf(orderId)).toMatchObject({
+      buyer: { email: 'alex@example.com' },
+      checkout_request: { buyerEmail: 'alex@example.com', confirmed: true },
+    });
+    // Now confirmed: the typo can no longer come back.
+    expect(await payOrder(orderId, { buyer: typo })).toMatchObject({ status: 409, body: { error: { code: 'buyer_fixed' } } });
+  });
+
+  it('two clicks at once with different buyers: one session, and the order holds the buyer it is made out to', async () => {
+    const orderId = await stripeOrder();
+    const answers = await Promise.all([
+      payOrder(orderId, { buyer: buyer() }),
+      payOrder(orderId, { buyer: buyer({ name: 'Bea Other', email: 'bea@example.com' }) }),
+    ]);
+    expect(answers.filter((a) => a.status === 200)).toHaveLength(1);
+    expect(stripe.created).toBe(1);
+    const row = await paymentOf(orderId);
+    expect(row.checkout_request).toMatchObject({ buyerEmail: stripe.emails[0], confirmed: true });
+    expect((row.buyer as { email: string }).email).toBe(stripe.emails[0]);
+  });
+
+  it('the database lets an unconfirmed request change, and fixes the request and its buyer once confirmed (BK018)', async () => {
+    const orderId = await stripeOrder();
+    const update = (set: Record<string, unknown>) =>
+      tenant.db.updateTable('order_payment').set(set).where('order_id', '=', orderId).execute();
+    await update({ checkout_request: toJsonb({ buyerEmail: 'a@example.com', returnUrl: 'https://a.example/', confirmed: false }) });
+    await expect(update({ buyer: toJsonb(buyer({ email: 'b@example.com' })) })).resolves.toBeDefined();
+    await expect(update({ checkout_request: null })).resolves.toBeDefined();
   });
 
   it('the database fixes the request and its buyer once set (BK018)', async () => {
