@@ -111,6 +111,12 @@ describe('parseComponents', () => {
       expect(reasonFor(withRoot({ id: 'r', type: 'div', children: [{ id: 'w', type: 'div', children: [bar] }] }))).toMatch(/sticky/);
     });
 
+    it('refuses a malformed node anywhere in the tree', () => {
+      expect(reasonFor(withRoot({ id: 'r', type: 'div', children: [null] }))).toMatch(/object/);
+      expect(reasonFor(withRoot({ id: 'r', type: 'div', children: 'x' }))).toMatch(/list/);
+      expect(reasonFor(withRoot({ id: 'r', type: 'div', children: [{ id: 'w', type: 'div', children: [{ id: 'x' }] }] }))).toMatch(/type/);
+    });
+
     it('refuses a noScriptState naming no state', () => {
       expect(reasonFor(stored({ noScriptState: 's1' }))).toMatch(/noScriptState/);
       expect(parseComponents({ [ID]: stored({

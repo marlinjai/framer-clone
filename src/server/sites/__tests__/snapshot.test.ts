@@ -27,6 +27,23 @@ function makeProjectWithPages() {
   return project;
 }
 
+describe('projectToPersisted and reusable components', () => {
+  const base = { ...getSnapshot(makeProjectWithPages()) } as Record<string, unknown>;
+
+  it('carries a present key, including an empty one', () => {
+    expect(projectToPersisted({ ...base, components: { card: {} } } as never).components).toEqual({ card: {} });
+    expect(projectToPersisted({ ...base, components: {} } as never).components).toEqual({});
+  });
+
+  it('has no key at all for an old-shape body, or for a value that is no record', () => {
+    const oldShape = { ...base };
+    delete oldShape.components;
+    expect('components' in projectToPersisted(oldShape as never)).toBe(false);
+    expect('components' in projectToPersisted({ ...base, components: null } as never)).toBe(false);
+    expect('components' in projectToPersisted({ ...base, components: ['card'] } as never)).toBe(false);
+  });
+});
+
 describe('projectToPersisted', () => {
   it('splits a ProjectModel into site scalars + one entry per page', () => {
     const project = makeProjectWithPages();

@@ -80,6 +80,20 @@ function holdsStickyBar(node: Record<string, unknown>): boolean {
   return Array.isArray(children) && children.some(child => isRecord(child) && holdsStickyBar(child));
 }
 
+/** Why a node, or anything under it, is not a component node, or null. */
+function nodeShapeRefusal(node: unknown): string | null {
+  if (!isRecord(node)) return 'every node in a definition is an object';
+  if (typeof node.type !== 'string' || node.type.length === 0) return 'every node in a definition needs a type';
+  const { children } = node;
+  if (children === undefined) return null;
+  if (!Array.isArray(children)) return 'a node\'s children are a list';
+  for (const child of children) {
+    const reason = nodeShapeRefusal(child);
+    if (reason) return reason;
+  }
+  return null;
+}
+
 /** Why a tree cannot be a definition's: its root needs an element of its own. */
 function treeRefusal(tree: unknown): string | null {
   if (!isRecord(tree)) return 'a definition needs a component tree';
@@ -87,6 +101,8 @@ function treeRefusal(tree: unknown): string | null {
   if (typeof type !== 'string' || type.length === 0) return 'a definition root needs a type';
   if (type.startsWith('#')) return 'a definition root is an element, not text or another placement';
   // One per page and page-level: a component placed twice would be two bars.
+  const malformed = nodeShapeRefusal(tree);
+  if (malformed) return malformed;
   if (holdsStickyBar(tree)) return 'a sticky bar is one per page, so a definition cannot hold it';
   return null;
 }

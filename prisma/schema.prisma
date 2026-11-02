@@ -263,6 +263,12 @@ model Site {
   // normalizeSiteSettings, so a new field needs no migration.
   siteSettings Json @default("{}") @map("site_settings")
 
+  // Reusable component definitions by id (docs/plans/2026-11-02-reusable-components.md): a JSON object
+  // mirroring ProjectModel.components, saved in one transaction with the pages that place them. Always read
+  // through parseComponents, because stored JSON can say anything. A save that sends no `components` key
+  // leaves it alone: only a tab from before this column sends none.
+  components Json @default("{}")
+
   // The auth-brain company the site belongs to (docs/plans/2026-10-25-catalogue-design.md): the storefront
   // has no session, so the catalogue reads of a published site find the company here. Stamped at creation
   // and whenever a signed-in member of the company opens the site in the editor; NULL only for a site

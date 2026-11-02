@@ -32,6 +32,7 @@ import type { PageSnapshotOut } from '@/models/PageModel';
 import { HOME_REWRITE_SENTINEL } from '@/server/sites/homeSentinel';
 import { parseSiteRedirects, type SiteRedirect } from '@/lib/pages/redirects';
 import { normalizeSiteSettings, type SiteSettings } from '@/lib/site/siteSettings';
+import { parseComponents, type ComponentDefinitions } from '@/lib/components/definition';
 import { RFC1035_LABEL } from '@/server/sites/subdomain';
 import {
   isClaimableHostname,
@@ -73,6 +74,11 @@ export interface PublishedSite {
   redirects: SiteRedirect[];
   /** Site settings (src/lib/site/siteSettings.ts), always normalized. */
   siteSettings: SiteSettings;
+  /**
+   * Reusable component definitions, parsed here and only here, so the cross-request
+   * cache holds them ready and a request never parses them again.
+   */
+  components: ComponentDefinitions;
 }
 
 /**
@@ -218,6 +224,7 @@ export async function resolvePublishedSiteByKey(
       lumitraEnabled: true,
       redirects: true,
       siteSettings: true,
+      components: true,
       pages: { select: { pageId: true, slug: true, snapshot: true } },
     },
   });
@@ -240,6 +247,7 @@ export async function resolvePublishedSiteByKey(
     })),
     redirects: parseSiteRedirects(site.redirects),
     siteSettings: normalizeSiteSettings(site.siteSettings),
+    components: parseComponents(site.components).definitions,
   };
 }
 

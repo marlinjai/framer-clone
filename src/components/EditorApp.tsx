@@ -16,7 +16,7 @@ import { DropIndicatorLayer, DragGhostLayer } from '@/lib/drag';
 import makeInspectable from 'mobx-devtools-mst';
 import { EditorTool } from '@/stores/EditorUIStore';
 import { getUndoManager, getHistoryStore, getDragManager } from '@/stores/RootStore';
-import { openProject, pageIdFromLocation, pickPage, restoreStashedDemo } from '@/stores/openProject';
+import { changedElsewhereMessage, openProject, pageIdFromLocation, pickPage, restoreStashedDemo } from '@/stores/openProject';
 import EditorNotice from './EditorNotice';
 import InlineFormatBar from './InlineFormatBar';
 import LegalTemplateNotice from './site/LegalTemplateNotice';
@@ -93,8 +93,7 @@ export default function EditorApp({ projectSnapshot }: { projectSnapshot?: Proje
       if (opened.changedElsewhere) {
         editorUI.setEditorNotice({
           kind: 'changedElsewhere',
-          message:
-            'This project was saved somewhere else since this tab loaded it, and this tab has unsaved changes too. Saving here overwrites the other changes; loading the newer version discards the unsaved changes in this tab.',
+          message: changedElsewhereMessage(opened.changedDefinitions),
         });
       }
     } else {

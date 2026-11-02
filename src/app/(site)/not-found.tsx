@@ -22,7 +22,6 @@ import { DefaultNotFound } from '@/components/site/DefaultNotFound';
 import { resolveSiteForRequest } from '@/server/sites/requestSite';
 import { findNotFoundPage, renderSitePage } from '@/server/sites/renderSitePage';
 import { snapshotToComponentNode } from '@/lib/renderer/server/snapshotToComponentNode';
-import { NO_DEFINITIONS } from '@/lib/components/placement';
 import { effectiveSiteName, DEFAULT_LANGUAGE } from '@/lib/site/siteSettings';
 import { DEFAULT_LOOK, siteLookFromPages } from '@/lib/site/notFoundDefault';
 
@@ -40,7 +39,7 @@ export default async function SiteNotFound() {
 
   const designed = findNotFoundPage(site);
   if (designed) {
-    const adapted = snapshotToComponentNode(designed.snapshot, NO_DEFINITIONS);
+    const adapted = snapshotToComponentNode(designed.snapshot, site.components);
     if (adapted.root) {
       try {
         return await renderSitePage({

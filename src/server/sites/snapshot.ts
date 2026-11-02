@@ -73,6 +73,12 @@ export interface PersistedSite {
   projectUpdatedAt: number;
   /** One entry per MST page. */
   pages: PersistedPage[];
+  /**
+   * Reusable component definitions, when the snapshot carries them (a key an
+   * older tab does not send stays undefined, and the `components` column keeps
+   * what it holds).
+   */
+  components?: Record<string, unknown>;
 }
 
 /**
@@ -105,6 +111,15 @@ export function projectToPersisted(
     }),
   );
 
+  // Only a present key travels on (reusable components contract, "An absent key
+  // leaves the column alone"). Defaulting it to `{}` would let one Save from a
+  // tab loaded before the column existed delete every definition of the site.
+  const rawComponents = (snap as { components?: unknown }).components;
+  const components =
+    typeof rawComponents === 'object' && rawComponents !== null && !Array.isArray(rawComponents)
+      ? { components: rawComponents as Record<string, unknown> }
+      : {};
+
   return {
     siteId: snap.id,
     name: snap.metadata.title,
@@ -118,6 +133,7 @@ export function projectToPersisted(
     projectCreatedAt: snap.metadata.createdAt as number,
     projectUpdatedAt: snap.metadata.updatedAt as number,
     pages,
+    ...components,
   };
 }
 
@@ -136,6 +152,8 @@ export interface SiteRowData {
   lumitraEnabled: boolean;
   /** The `site_settings` JSON column (any shape; normalized here). */
   siteSettings?: unknown;
+  /** The `components` JSON column (any shape; ProjectModel normalizes it). */
+  components?: unknown;
   /** Persistence-layer Date columns (Prisma returns `Date`). */
   projectCreatedAt: Date;
   projectUpdatedAt: Date;
@@ -181,6 +199,7 @@ export function persistedToProjectSnapshot(row: SiteRowData): ProjectSnapshotIn 
     },
     pages,
     siteSettings: normalizeSiteSettings(row.siteSettings),
+    components: (row.components ?? {}) as ProjectSnapshotIn['components'],
   };
 
   if (hasBinding) {

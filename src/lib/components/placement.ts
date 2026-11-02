@@ -30,12 +30,6 @@ export function isComponentPlaceholderType(type: unknown): boolean {
   return isPlacementType(type) || isMissingType(type);
 }
 
-/**
- * No definitions. For a caller that has none to pass yet: a site's own arrive with
- * the `components` column, and that caller then passes them.
- */
-export const NO_DEFINITIONS: Readonly<Record<string, never>> = Object.freeze({});
-
 /** What a placement stores. A value from data sits in `node.bindings` under `input.<id>`. */
 export interface PlacementProps {
   /** The definition id. */

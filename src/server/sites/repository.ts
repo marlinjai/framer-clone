@@ -190,6 +190,7 @@ export class SiteRepository {
         apiKeyRef: true,
         lumitraEnabled: true,
         siteSettings: true,
+        components: true,
         projectCreatedAt: true,
         projectUpdatedAt: true,
         pages: {
@@ -208,6 +209,7 @@ export class SiteRepository {
       apiKeyRef: row.apiKeyRef,
       lumitraEnabled: row.lumitraEnabled,
       siteSettings: row.siteSettings,
+      components: row.components,
       projectCreatedAt: row.projectCreatedAt,
       projectUpdatedAt: row.projectUpdatedAt,
       pages: row.pages.map((p) => ({ pageId: p.pageId, snapshot: p.snapshot })),
@@ -297,6 +299,13 @@ export class SiteRepository {
         now: new Date(),
       });
 
+      // Only a present key writes: a tab loaded before the column existed sends
+      // none, and that must not empty it. In this transaction, so a definition
+      // and the pages placing it are never saved apart.
+      const componentsColumn = persisted.components
+        ? { components: persisted.components as unknown as Prisma.InputJsonValue }
+        : {};
+
       const updateData = {
         description: persisted.description,
         analyticsProjectId: persisted.analyticsProjectId,
@@ -308,6 +317,7 @@ export class SiteRepository {
         // application "last edited" time advances on update.
         projectUpdatedAt: new Date(persisted.projectUpdatedAt),
         redirects: redirects as unknown as Prisma.InputJsonValue,
+        ...componentsColumn,
       };
 
       if (options.mustExist) {
@@ -340,6 +350,7 @@ export class SiteRepository {
             projectUpdatedAt: new Date(persisted.projectUpdatedAt),
             redirects: redirects as unknown as Prisma.InputJsonValue,
             companyId: options.companyId ?? null,
+            ...componentsColumn,
           },
           // `name` is written on create only. After that the rename action
           // (renameSite, PATCH /api/projects/<id>) is its only writer: an editor

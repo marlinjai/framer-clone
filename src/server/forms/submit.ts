@@ -58,7 +58,6 @@ import type { PublishedSite } from '@/server/sites/publicResolver';
 import { boundedText } from '@/server/books/http/boundedBody';
 import { jsonError } from '@/lib/api/respond';
 import { snapshotToComponentNode } from '@/lib/renderer/server/snapshotToComponentNode';
-import { NO_DEFINITIONS } from '@/lib/components/placement';
 import {
   FORM_LIMITS,
   TRANSPORT_FIELDS,
@@ -176,9 +175,9 @@ interface LocatedForm {
 }
 
 /** The form in the published site, on whichever page holds it (component ids are unique; first match). */
-export function locateForm(site: Pick<PublishedSite, 'pages'>, formId: string): LocatedForm | null {
+export function locateForm(site: Pick<PublishedSite, 'pages' | 'components'>, formId: string): LocatedForm | null {
   for (const page of site.pages) {
-    const root = snapshotToComponentNode(page.snapshot, NO_DEFINITIONS).root;
+    const root = snapshotToComponentNode(page.snapshot, site.components).root;
     const form = findFormNode<FormTreeNode>(root as FormTreeNode | null, formId);
     if (form) return { pageId: page.pageId, pageSlug: page.slug, form };
   }

@@ -4,6 +4,7 @@ import { defaultViewportSnapshots } from '@/lib/canvas/defaultViewports';
 import { types, Instance, SnapshotIn, SnapshotOut, getSnapshot } from 'mobx-state-tree';
 import { v4 as uuidv4 } from 'uuid';
 import PageModel, { PageModelType } from './PageModel';
+import { ComponentDefinitionModel, parseModelComponents } from './ComponentDefinitionModel';
 import ComponentModel, { createIntrinsicComponent, createViewportNode, type ComponentInstance, type ComponentSnapshotIn } from './ComponentModel';
 import { isDynamicSegment, productPagePath, suggestSlug, validateSlug, type SlugValidation } from '@/lib/pages/slug';
 import {
@@ -204,6 +205,18 @@ export const ProjectModel = types
     siteSettings: types.optional(
       types.snapshotProcessor(types.frozen<SiteSettings>(), {
         preProcessor: (raw: SiteSettingsInput | undefined) => normalizeSiteSettings(raw),
+      }),
+      {},
+    ),
+
+    // Reusable components (src/models/ComponentDefinitionModel.ts), by id. Older
+    // snapshots omit the key, which is no definitions. Normalized on the way in,
+    // on every path into the model: stored JSON can say anything, and a
+    // definition that cannot be read is skipped with a warning, so its placements
+    // show as missing and the project still opens.
+    components: types.optional(
+      types.snapshotProcessor(types.map(ComponentDefinitionModel), {
+        preProcessor: (raw: unknown) => parseModelComponents(raw).definitions as never,
       }),
       {},
     ),

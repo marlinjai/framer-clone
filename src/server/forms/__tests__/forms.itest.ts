@@ -148,6 +148,52 @@ describe('POST /api/forms/submit end to end', () => {
     expect(JSON.stringify(rows[0])).not.toMatch(/198\.51\.100/);
   });
 
+  it('a form inside a component placed twice takes two separate submissions', async () => {
+    const placed = await createPublishedSite(fx, tgId, 'forms-placed');
+    await fx.prisma.site.update({
+      where: { id: placed.siteId },
+      data: {
+        components: {
+          contact: {
+            id: 'contact',
+            name: 'Contact',
+            page: {
+              id: 'contact-page',
+              slug: '',
+              metadata: { title: 'Contact' },
+              canvasNodes: {},
+              appComponentTree: { id: 'c-root', type: 'section', componentType: 'host', props: {}, children: [FORM_TREE] },
+            },
+            inputs: [],
+            states: [],
+          },
+        },
+      },
+    });
+    const placement = (id: string) => ({ id, type: '#component', componentType: 'host', props: { component: 'contact' } });
+    await fx.prisma.sitePage.create({
+      data: {
+        siteId: placed.siteId,
+        workspaceId: placed.workspaceId,
+        tenantGroupId: tgId,
+        pageId: 'p-twice',
+        slug: 'zweimal',
+        snapshot: { id: 'p-twice', slug: 'zweimal', metadata: { title: 'Zweimal' }, canvasNodes: {}, appComponentTree: { id: 'root', type: 'div', componentType: 'host', props: {}, children: [placement('top'), placement('bottom')] } },
+      },
+    });
+
+    const values = { name: 'Ana', email: 'ana@example.com' };
+    for (const formId of ['top__form-1', 'bottom__form-1']) {
+      expect((await post({ formId, values, elapsedMs: 9000 }, placed.host)).status).toBe(200);
+    }
+    // The definition's own id is no form on this site.
+    expect((await post({ formId: 'form-1', values, elapsedMs: 9000 }, placed.host)).status).toBe(404);
+
+    const { submissions } = await listFormSubmissions(appDb, { tenantId: tgId, siteId: placed.siteId });
+    expect(submissions.map((s) => s.formId).sort()).toEqual(['bottom__form-1', 'top__form-1']);
+    expect(submissions.every((s) => s.pageId === 'p-twice' && s.formName === 'Contact')).toBe(true);
+  });
+
   it('refuses invalid values and stores nothing; an unknown host is no storefront', async () => {
     const res = await post({ formId: 'form-1', values: { name: '', email: 'x' }, elapsedMs: 9000 });
     expect(res.status).toBe(422);

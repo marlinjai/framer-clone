@@ -20,7 +20,7 @@ import { getSnapshot } from 'mobx-state-tree';
 import { Save } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useStore } from '@/hooks/useStore';
-import { markServerVersion } from '@/stores/openProject';
+import { markServerVersion, type ProjectContent } from '@/stores/openProject';
 import SaveAsNewProjectDialog from './SaveAsNewProjectDialog';
 import { TopBarStatus } from './TopBarStatus';
 
@@ -67,8 +67,8 @@ const SaveButton = observer(() => {
         setState({ kind: 'error', message });
         return;
       }
-      // The server now holds exactly these pages (see openProject).
-      markServerVersion(project.id, (snapshot as { pages?: unknown }).pages);
+      // The server now holds exactly this project (see openProject).
+      markServerVersion(project.id, snapshot as ProjectContent);
       const saved = (payload as { savedPages?: unknown } | null)?.savedPages;
       const count = Array.isArray(saved) ? saved.length : 0;
       setState({
@@ -110,7 +110,7 @@ const SaveButton = observer(() => {
           open={saveAsOpen}
           onOpenChange={setSaveAsOpen}
           defaultName={project.metadata.title || 'Untitled Project'}
-          getSnapshot={() => getSnapshot(project) as unknown as { pages: Record<string, unknown> }}
+          getSnapshot={() => getSnapshot(project) as unknown as { pages: Record<string, unknown>; components: Record<string, unknown> }}
           currentPageId={rootStore.editorUI.currentPage?.id}
           onSaved={() => rootStore.editorUI.consumeDemo()}
         />
