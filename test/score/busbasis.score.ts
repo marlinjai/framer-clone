@@ -4,6 +4,15 @@
 // every breakpoint AND it needs nothing that is not built. See test/score/corpus/busbasis.
 //
 // A refused hash stops the run: nothing here may change without a new capture.
+//
+// A BusBasis page brings its own base: the storefront's Tailwind reset is in its sheet,
+// and the lift writes it onto every node. So its replica sits on a site that keeps
+// browser defaults (Page base in Site settings, src/lib/site/pageBase.ts), where our
+// reset and the root layout's `antialiased` body step aside and the page's own base
+// stands. Measured on 2026-11-02: on the default base, where our reset stays, every
+// element differs in font smoothing and `<option>` loses its padding, and both are gone
+// on this base. The default base is still compared, untouched, so that number stays in
+// the report.
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -13,14 +22,18 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type Page } from 'playwright';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { MAX_DIFF_RATIO, diffComputed, diffRatio, takeSnapshot, type ComputedDiff, type Snapshot } from './lib/compare';
-import { BREAKPOINTS, publishedDocument, renderPublished, type PublishedOutput } from './lib/published';
+import { BREAKPOINTS, bareDocument, publishedDocument, renderPublished, type PublishedOutput } from './lib/published';
+import { normalizeSiteSettings } from '@/lib/site/siteSettings';
 import { OUT_DIR, writeOut } from './lib/io';
 import { BUSBASIS_PAGES } from './busbasis/pages';
 import { CORPUS_DIR, SHARED_SHEET, SHEET_MARKER } from './busbasis/freeze';
 import { classifyDifferences } from './busbasis/classify';
 import type { CheckName, CorpusFailure, CorpusResult, GapId, PageDifference } from './lib/types';
 
-const TIMEOUT = 15 * 60 * 1000;
+const TIMEOUT = 25 * 60 * 1000;
+
+/** The Site settings of the site every BusBasis replica sits on. */
+const BUSBASIS_SITE = normalizeSiteSettings({ pageBase: 'browser' });
 
 interface ManifestPage {
   slug: string;
@@ -104,11 +117,14 @@ describe('held-out BusBasis pages', () => {
       if (!meta) throw new Error(`${listed.slug} is listed but has no capture`);
       const original = originalDocument(listed.slug);
       const output: PublishedOutput = renderPublished(readTree(listed.slug));
-      const replica = publishedDocument(output);
+      const replica = publishedDocument(output, BUSBASIS_SITE.pageBase);
+      const onDefaultBase = publishedDocument(output);
+      const bare = bareDocument(output);
 
       const fixture = `busbasis-${listed.slug}`;
       const failures: CorpusFailure[] = [];
       const differences: PageDifference[] = [];
+      const defaultBase = { pass: 0, total: 0 };
       const checks: CorpusResult['checks'] = {
         screenshot: { pass: 0, total: 0 },
         'computed-styles': { pass: 0, total: 0 },
@@ -153,17 +169,52 @@ describe('held-out BusBasis pages', () => {
           const file = path.join(OUT_DIR, 'diffs', `${fixture}-${breakpoint.id}-${label.replace(/\W+/g, '-')}.png`);
           const ratio = diffRatio(a.png, b.png, file);
           const computed: ComputedDiff = diffComputed(a.computed, b.computed);
-          const classified = classifyDifferences(computed);
+          const pixelsOk = ratio <= MAX_DIFF_RATIO;
+          const stylesOk = computed.count === 0;
+          const treeOk = a.aria === b.aria;
+
+          // Only a failure needs a cause. The bare page answers whether the base is it.
+          let withoutBase: { pixels: boolean; styles: boolean; tree: boolean; computed: ComputedDiff } | undefined;
+          if (!pixelsOk || !stylesOk || !treeOk) {
+            const page = await open(browser, bare, viewport, hover).catch(() => undefined);
+            if (page) {
+              const snapshot = await takeSnapshot(page, { withoutVariables: true });
+              await page.close();
+              const bareComputed = diffComputed(a.computed, snapshot.computed);
+              withoutBase = {
+                pixels: diffRatio(a.png, snapshot.png, path.join(OUT_DIR, 'scratch.png')) <= MAX_DIFF_RATIO,
+                styles: bareComputed.count === 0,
+                tree: a.aria === snapshot.aria,
+                computed: bareComputed,
+              };
+            }
+          }
+
+          const classified = classifyDifferences(computed, withoutBase?.computed);
           const gap: GapId = computed.textLost ? 'mixed-text' : computed.count === 0 && stateId ? 'selector-styles' : classified.top;
           const ariaGap: GapId = computed.byProperty.missing ? 'blocked-embedded-content' : gap;
+          /** A check that fails here and passes with no base at all is the base's. */
+          const cause = (passesBare: boolean | undefined, own: GapId): GapId => (passesBare ? 'published-base' : own);
           differences.push({ viewport: breakpoint.label, state: label, ratio, elementsCompared: Object.keys(a.computed).length, elementsDiffering: computed.elements.length, differences: computed.count, byGap: classified.byGap, byProperty: classified.topProperties });
 
-          record(breakpoint.label, label, 'screenshot', gap, ratio <= MAX_DIFF_RATIO, `${(ratio * 100).toFixed(2)} percent of pixels differ`);
-          record(breakpoint.label, label, 'computed-styles', gap, computed.count === 0, `${computed.count} differences on ${computed.elements.length} elements, first: ${computed.firstDetail}`);
-          record(breakpoint.label, label, 'accessibility-tree', ariaGap, a.aria === b.aria, `original ${JSON.stringify(a.aria.slice(0, 120))}, replica ${JSON.stringify(b.aria.slice(0, 120))}`);
+          record(breakpoint.label, label, 'screenshot', cause(withoutBase?.pixels, gap), pixelsOk, `${(ratio * 100).toFixed(2)} percent of pixels differ`);
+          record(breakpoint.label, label, 'computed-styles', cause(withoutBase?.styles, gap), stylesOk, `${computed.count} differences on ${computed.elements.length} elements, first: ${computed.firstDetail}`);
+          record(breakpoint.label, label, 'accessibility-tree', cause(withoutBase?.tree, ariaGap), treeOk, `original ${JSON.stringify(a.aria.slice(0, 120))}, replica ${JSON.stringify(b.aria.slice(0, 120))}`);
           if (stateId) {
-            const landed = !interactionError && ratio <= MAX_DIFF_RATIO && computed.count === 0 && a.aria === b.aria;
-            record(breakpoint.label, label, 'interaction', gap, landed, interactionError ?? 'the replica did not end up where the original did');
+            const landed = !interactionError && pixelsOk && stylesOk && treeOk;
+            const bareLanded = !interactionError && withoutBase && withoutBase.pixels && withoutBase.styles && withoutBase.tree;
+            record(breakpoint.label, label, 'interaction', cause(bareLanded, gap), landed, interactionError ?? 'the replica did not end up where the original did');
+          } else {
+            // The same replica on the default base, untouched: all three checks at once.
+            const page = await open(browser, onDefaultBase, viewport, null);
+            const snapshot = await takeSnapshot(page, { withoutVariables: true });
+            await page.close();
+            const same =
+              diffRatio(a.png, snapshot.png, path.join(OUT_DIR, 'scratch.png')) <= MAX_DIFF_RATIO &&
+              diffComputed(a.computed, snapshot.computed).count === 0 &&
+              a.aria === snapshot.aria;
+            defaultBase.total += 1;
+            if (same) defaultBase.pass += 1;
           }
         }
       }
@@ -178,6 +229,7 @@ describe('held-out BusBasis pages', () => {
         checks,
         failures,
         notMeasured: [],
+        defaultBase,
         pageType: listed.pageType,
         differences,
       });

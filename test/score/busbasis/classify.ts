@@ -1,12 +1,16 @@
-// Which named gap the computed differences of a real page belong to. A property maps
-// to a gap only where the difference was traced to it on the first run (2026-11-02).
-// Anything else stays `unclassified`, the honest bucket, and shows in the report.
+// Which named gap the computed differences of a real page belong to, measured rather
+// than guessed from a property's name. The same replica is also opened with no root
+// layout sheet and no page base at all (`bareDocument`), which no visitor gets: what
+// differs on the real page and not on that one is the page base's doing, so it is
+// `published-base`. An element the replica does not have is `blocked-embedded-content`,
+// the only cause found on these pages. Anything else stays `unclassified`, the honest
+// bucket, and shows in the report.
+//
+// The comparison counts per property, so the split is per property too: of the
+// differences in one property, as many as the bare page does not have are the base's.
 
 import type { ComputedDiff } from '../lib/compare';
 import type { GapId } from '../lib/types';
-
-/** Values Tailwind builds from a var() list holding empty variables. */
-const FROM_EMPTY_VARIABLES = new Set(['filter', 'backdrop-filter', '-webkit-backdrop-filter', 'background-image', 'box-shadow']);
 
 export interface Classified {
   top: GapId;
@@ -16,15 +20,22 @@ export interface Classified {
 
 function gapOf(property: string): GapId {
   if (property === 'missing') return 'blocked-embedded-content';
-  if (FROM_EMPTY_VARIABLES.has(property)) return 'empty-custom-property';
   return 'unclassified';
 }
 
-export function classifyDifferences(diff: ComputedDiff): Classified {
+/**
+ * `withoutBase` is the same original against the replica on a page with no base, when
+ * it was measured. Without it nothing can be put on the base, so nothing is.
+ */
+export function classifyDifferences(diff: ComputedDiff, withoutBase?: ComputedDiff): Classified {
   const byGap: Partial<Record<GapId, number>> = {};
+  const add = (gap: GapId, count: number) => {
+    if (count > 0) byGap[gap] = (byGap[gap] ?? 0) + count;
+  };
   for (const [property, count] of Object.entries(diff.byProperty)) {
-    const gap = gapOf(property);
-    byGap[gap] = (byGap[gap] ?? 0) + count;
+    const left = withoutBase ? Math.min(count, withoutBase.byProperty[property] ?? 0) : count;
+    add('published-base', count - left);
+    add(gapOf(property), left);
   }
   const ranked = Object.entries(byGap).sort((a, b) => b[1] - a[1]);
   return {

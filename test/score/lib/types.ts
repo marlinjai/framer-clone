@@ -126,7 +126,7 @@ export interface CorpusResult {
   checks: Record<CheckName, { pass: number; total: number }>;
   failures: CorpusFailure[];
   notMeasured: string[];
-  /** A corpus fixture: its untouched page per breakpoint on the default page base, all three checks at once. */
+  /** Its untouched page per breakpoint on the default page base, all three checks at once. */
   defaultBase?: { pass: number; total: number };
   /** A held-out page: what kind of page it is, and its differences per viewport. */
   pageType?: string;

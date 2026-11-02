@@ -10,7 +10,11 @@
 //   - `browser`: the page sheet takes the reset back out. This is what a page written
 //     as plain HTML and CSS expects, and it cannot be reached from the nodes: what the
 //     reset changes includes `tab-size` and the border style of every borderless
-//     element, which nobody would write on a node.
+//     element, which nobody would write on a node. It is also the base for a page
+//     that brings its own reset, such as a Tailwind site's: its reset is already on
+//     its nodes, and ours would add what it leaves alone (the `antialiased` body,
+//     the padding of `<option>`). No third value is needed for that: measured on the
+//     BusBasis pages (test/score/busbasis.score.ts), this base leaves nothing behind.
 //
 // `revert-layer` inside the `base` layer rolls an element back past that layer and
 // keeps everything around it. `revert` would not do: it also drops what the markup

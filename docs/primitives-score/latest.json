@@ -1,11 +1,11 @@
 {
-  "generatedAt": "2026-11-02T08:39:47.487Z",
+  "generatedAt": "2026-11-02T09:07:57.279Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 233,
+  "durationSeconds": 373,
   "matrix": {
     "surfaces": {
       "format": {
@@ -6208,7 +6208,7 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 0,
+            "pass": 4,
             "total": 4
           },
           "computed-styles": {
@@ -6229,17 +6229,9 @@
             "fixture": "busbasis-home",
             "viewport": "Desktop",
             "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.56 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-home",
-            "viewport": "Desktop",
-            "state": "initial",
             "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "531 differences on 531 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "gap": "blocked-embedded-content",
+            "detail": "1 differences on 1 elements, first: e405: not in the replica"
           },
           {
             "fixture": "busbasis-home",
@@ -6253,17 +6245,9 @@
             "fixture": "busbasis-home",
             "viewport": "Desktop",
             "state": "hover e41",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.56 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-home",
-            "viewport": "Desktop",
-            "state": "hover e41",
             "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "531 differences on 531 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "gap": "blocked-embedded-content",
+            "detail": "1 differences on 1 elements, first: e405: not in the replica"
           },
           {
             "fixture": "busbasis-home",
@@ -6278,24 +6262,16 @@
             "viewport": "Desktop",
             "state": "hover e41",
             "check": "interaction",
-            "gap": "unclassified",
+            "gap": "blocked-embedded-content",
             "detail": "the replica did not end up where the original did"
           },
           {
             "fixture": "busbasis-home",
             "viewport": "Tablet",
             "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.68 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-home",
-            "viewport": "Tablet",
-            "state": "initial",
             "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "531 differences on 531 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "gap": "blocked-embedded-content",
+            "detail": "1 differences on 1 elements, first: e405: not in the replica"
           },
           {
             "fixture": "busbasis-home",
@@ -6309,17 +6285,9 @@
             "fixture": "busbasis-home",
             "viewport": "Mobile",
             "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.99 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-home",
-            "viewport": "Mobile",
-            "state": "initial",
             "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "531 differences on 531 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+            "gap": "blocked-embedded-content",
+            "detail": "1 differences on 1 elements, first: e405: not in the replica"
           },
           {
             "fixture": "busbasis-home",
@@ -6387,24 +6355,23 @@
           }
         ],
         "notMeasured": [],
+        "defaultBase": {
+          "pass": 0,
+          "total": 3
+        },
         "pageType": "home",
         "differences": [
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.00563913173776455,
+            "ratio": 0,
             "elementsCompared": 531,
-            "elementsDiffering": 531,
-            "differences": 531,
+            "elementsDiffering": 1,
+            "differences": 1,
             "byGap": {
-              "unclassified": 530,
               "blocked-embedded-content": 1
             },
             "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                530
-              ],
               [
                 "missing",
                 1
@@ -6414,19 +6381,14 @@
           {
             "viewport": "Desktop",
             "state": "hover e41",
-            "ratio": 0.005639002562830688,
+            "ratio": 0,
             "elementsCompared": 531,
-            "elementsDiffering": 531,
-            "differences": 531,
+            "elementsDiffering": 1,
+            "differences": 1,
             "byGap": {
-              "unclassified": 530,
               "blocked-embedded-content": 1
             },
             "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                530
-              ],
               [
                 "missing",
                 1
@@ -6436,19 +6398,14 @@
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0.006847199614877229,
+            "ratio": 0,
             "elementsCompared": 531,
-            "elementsDiffering": 531,
-            "differences": 531,
+            "elementsDiffering": 1,
+            "differences": 1,
             "byGap": {
-              "unclassified": 530,
               "blocked-embedded-content": 1
             },
             "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                530
-              ],
               [
                 "missing",
                 1
@@ -6458,19 +6415,14 @@
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0.009867340407613273,
+            "ratio": 0,
             "elementsCompared": 531,
-            "elementsDiffering": 531,
-            "differences": 531,
+            "elementsDiffering": 1,
+            "differences": 1,
             "byGap": {
-              "unclassified": 530,
               "blocked-embedded-content": 1
             },
             "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                530
-              ],
               [
                 "missing",
                 1
@@ -6486,11 +6438,11 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 0,
+            "pass": 4,
             "total": 4
           },
           "computed-styles": {
-            "pass": 0,
+            "pass": 4,
             "total": 4
           },
           "accessibility-tree": {
@@ -6498,83 +6450,11 @@
             "total": 4
           },
           "interaction": {
-            "pass": 0,
+            "pass": 1,
             "total": 8
           }
         },
         "failures": [
-          {
-            "fixture": "busbasis-store",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.65 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-store",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "813 differences on 753 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-store",
-            "viewport": "Desktop",
-            "state": "hover e26",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.65 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-store",
-            "viewport": "Desktop",
-            "state": "hover e26",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "813 differences on 753 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-store",
-            "viewport": "Desktop",
-            "state": "hover e26",
-            "check": "interaction",
-            "gap": "unclassified",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "busbasis-store",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.81 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-store",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "813 differences on 753 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-store",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "1.03 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-store",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "813 differences on 753 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
           {
             "fixture": "busbasis-store",
             "viewport": "all",
@@ -6633,171 +6513,51 @@
           }
         ],
         "notMeasured": [],
+        "defaultBase": {
+          "pass": 0,
+          "total": 3
+        },
         "pageType": "product list",
         "differences": [
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.006511070158929318,
+            "ratio": 0,
             "elementsCompared": 753,
-            "elementsDiffering": 753,
-            "differences": 813,
-            "byGap": {
-              "unclassified": 813
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                753
-              ],
-              [
-                "padding-block-end",
-                10
-              ],
-              [
-                "padding-bottom",
-                10
-              ],
-              [
-                "padding-inline-end",
-                10
-              ],
-              [
-                "padding-inline-start",
-                10
-              ],
-              [
-                "padding-left",
-                10
-              ],
-              [
-                "padding-right",
-                10
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           },
           {
             "viewport": "Desktop",
             "state": "hover e26",
-            "ratio": 0.006511070158929318,
+            "ratio": 0,
             "elementsCompared": 753,
-            "elementsDiffering": 753,
-            "differences": 813,
-            "byGap": {
-              "unclassified": 813
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                753
-              ],
-              [
-                "padding-block-end",
-                10
-              ],
-              [
-                "padding-bottom",
-                10
-              ],
-              [
-                "padding-inline-end",
-                10
-              ],
-              [
-                "padding-inline-start",
-                10
-              ],
-              [
-                "padding-left",
-                10
-              ],
-              [
-                "padding-right",
-                10
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           },
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0.008114598629466471,
+            "ratio": 0,
             "elementsCompared": 753,
-            "elementsDiffering": 753,
-            "differences": 813,
-            "byGap": {
-              "unclassified": 813
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                753
-              ],
-              [
-                "padding-block-end",
-                10
-              ],
-              [
-                "padding-bottom",
-                10
-              ],
-              [
-                "padding-inline-end",
-                10
-              ],
-              [
-                "padding-inline-start",
-                10
-              ],
-              [
-                "padding-left",
-                10
-              ],
-              [
-                "padding-right",
-                10
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           },
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0.010332350049164208,
+            "ratio": 0,
             "elementsCompared": 753,
-            "elementsDiffering": 753,
-            "differences": 813,
-            "byGap": {
-              "unclassified": 813
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                753
-              ],
-              [
-                "padding-block-end",
-                10
-              ],
-              [
-                "padding-bottom",
-                10
-              ],
-              [
-                "padding-inline-end",
-                10
-              ],
-              [
-                "padding-inline-start",
-                10
-              ],
-              [
-                "padding-left",
-                10
-              ],
-              [
-                "padding-right",
-                10
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           }
         ]
       },
@@ -6808,11 +6568,11 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 0,
+            "pass": 4,
             "total": 4
           },
           "computed-styles": {
-            "pass": 0,
+            "pass": 4,
             "total": 4
           },
           "accessibility-tree": {
@@ -6820,83 +6580,11 @@
             "total": 4
           },
           "interaction": {
-            "pass": 0,
+            "pass": 1,
             "total": 7
           }
         },
         "failures": [
-          {
-            "fixture": "busbasis-search",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.64 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-search",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "820 differences on 760 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-search",
-            "viewport": "Desktop",
-            "state": "hover e26",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.64 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-search",
-            "viewport": "Desktop",
-            "state": "hover e26",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "820 differences on 760 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-search",
-            "viewport": "Desktop",
-            "state": "hover e26",
-            "check": "interaction",
-            "gap": "unclassified",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "busbasis-search",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.78 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-search",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "820 differences on 760 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-search",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "1.04 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-search",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "820 differences on 760 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
           {
             "fixture": "busbasis-search",
             "viewport": "all",
@@ -6947,171 +6635,51 @@
           }
         ],
         "notMeasured": [],
+        "defaultBase": {
+          "pass": 0,
+          "total": 3
+        },
         "pageType": "search",
         "differences": [
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.006358158220024722,
+            "ratio": 0,
             "elementsCompared": 760,
-            "elementsDiffering": 760,
-            "differences": 820,
-            "byGap": {
-              "unclassified": 820
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                760
-              ],
-              [
-                "padding-block-end",
-                10
-              ],
-              [
-                "padding-bottom",
-                10
-              ],
-              [
-                "padding-inline-end",
-                10
-              ],
-              [
-                "padding-inline-start",
-                10
-              ],
-              [
-                "padding-left",
-                10
-              ],
-              [
-                "padding-right",
-                10
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           },
           {
             "viewport": "Desktop",
             "state": "hover e26",
-            "ratio": 0.006358158220024722,
+            "ratio": 0,
             "elementsCompared": 760,
-            "elementsDiffering": 760,
-            "differences": 820,
-            "byGap": {
-              "unclassified": 820
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                760
-              ],
-              [
-                "padding-block-end",
-                10
-              ],
-              [
-                "padding-bottom",
-                10
-              ],
-              [
-                "padding-inline-end",
-                10
-              ],
-              [
-                "padding-inline-start",
-                10
-              ],
-              [
-                "padding-left",
-                10
-              ],
-              [
-                "padding-right",
-                10
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           },
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0.0077872613803230545,
+            "ratio": 0,
             "elementsCompared": 760,
-            "elementsDiffering": 760,
-            "differences": 820,
-            "byGap": {
-              "unclassified": 820
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                760
-              ],
-              [
-                "padding-block-end",
-                10
-              ],
-              [
-                "padding-bottom",
-                10
-              ],
-              [
-                "padding-inline-end",
-                10
-              ],
-              [
-                "padding-inline-start",
-                10
-              ],
-              [
-                "padding-left",
-                10
-              ],
-              [
-                "padding-right",
-                10
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           },
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0.010361848574237954,
+            "ratio": 0,
             "elementsCompared": 760,
-            "elementsDiffering": 760,
-            "differences": 820,
-            "byGap": {
-              "unclassified": 820
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                760
-              ],
-              [
-                "padding-block-end",
-                10
-              ],
-              [
-                "padding-bottom",
-                10
-              ],
-              [
-                "padding-inline-end",
-                10
-              ],
-              [
-                "padding-inline-start",
-                10
-              ],
-              [
-                "padding-left",
-                10
-              ],
-              [
-                "padding-right",
-                10
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           }
         ]
       },
@@ -7122,11 +6690,11 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 0,
+            "pass": 4,
             "total": 4
           },
           "computed-styles": {
-            "pass": 0,
+            "pass": 4,
             "total": 4
           },
           "accessibility-tree": {
@@ -7134,83 +6702,11 @@
             "total": 4
           },
           "interaction": {
-            "pass": 0,
+            "pass": 1,
             "total": 7
           }
         },
         "failures": [
-          {
-            "fixture": "busbasis-category",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.50 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-category",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "278 differences on 278 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-category",
-            "viewport": "Desktop",
-            "state": "hover e41",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.50 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-category",
-            "viewport": "Desktop",
-            "state": "hover e41",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "278 differences on 278 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-category",
-            "viewport": "Desktop",
-            "state": "hover e41",
-            "check": "interaction",
-            "gap": "unclassified",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "busbasis-category",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.66 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-category",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "278 differences on 278 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-category",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.91 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-category",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "278 differences on 278 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
           {
             "fixture": "busbasis-category",
             "viewport": "all",
@@ -7261,75 +6757,51 @@
           }
         ],
         "notMeasured": [],
+        "defaultBase": {
+          "pass": 0,
+          "total": 3
+        },
         "pageType": "category",
         "differences": [
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.005022158260233918,
+            "ratio": 0,
             "elementsCompared": 278,
-            "elementsDiffering": 278,
-            "differences": 278,
-            "byGap": {
-              "unclassified": 278
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                278
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           },
           {
             "viewport": "Desktop",
             "state": "hover e41",
-            "ratio": 0.005022158260233918,
+            "ratio": 0,
             "elementsCompared": 278,
-            "elementsDiffering": 278,
-            "differences": 278,
-            "byGap": {
-              "unclassified": 278
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                278
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           },
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0.006595489261947973,
+            "ratio": 0,
             "elementsCompared": 278,
-            "elementsDiffering": 278,
-            "differences": 278,
-            "byGap": {
-              "unclassified": 278
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                278
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           },
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0.009087735998730763,
+            "ratio": 0,
             "elementsCompared": 278,
-            "elementsDiffering": 278,
-            "differences": 278,
-            "byGap": {
-              "unclassified": 278
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                278
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           }
         ]
       },
@@ -7340,11 +6812,11 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 0,
+            "pass": 4,
             "total": 4
           },
           "computed-styles": {
-            "pass": 0,
+            "pass": 4,
             "total": 4
           },
           "accessibility-tree": {
@@ -7352,83 +6824,11 @@
             "total": 4
           },
           "interaction": {
-            "pass": 0,
+            "pass": 1,
             "total": 6
           }
         },
         "failures": [
-          {
-            "fixture": "busbasis-collection",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.50 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-collection",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "480 differences on 480 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-collection",
-            "viewport": "Desktop",
-            "state": "hover e41",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.50 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-collection",
-            "viewport": "Desktop",
-            "state": "hover e41",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "480 differences on 480 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-collection",
-            "viewport": "Desktop",
-            "state": "hover e41",
-            "check": "interaction",
-            "gap": "unclassified",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "busbasis-collection",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.46 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-collection",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "480 differences on 480 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-collection",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.86 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-collection",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "480 differences on 480 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
           {
             "fixture": "busbasis-collection",
             "viewport": "all",
@@ -7471,75 +6871,51 @@
           }
         ],
         "notMeasured": [],
+        "defaultBase": {
+          "pass": 0,
+          "total": 3
+        },
         "pageType": "collection",
         "differences": [
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.004960139613211647,
+            "ratio": 0,
             "elementsCompared": 480,
-            "elementsDiffering": 480,
-            "differences": 480,
-            "byGap": {
-              "unclassified": 480
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                480
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           },
           {
             "viewport": "Desktop",
             "state": "hover e41",
-            "ratio": 0.004960139613211647,
+            "ratio": 0,
             "elementsCompared": 480,
-            "elementsDiffering": 480,
-            "differences": 480,
-            "byGap": {
-              "unclassified": 480
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                480
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           },
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0.004615006471525289,
+            "ratio": 0,
             "elementsCompared": 480,
-            "elementsDiffering": 480,
-            "differences": 480,
-            "byGap": {
-              "unclassified": 480
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                480
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           },
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0.008588705926132664,
+            "ratio": 0,
             "elementsCompared": 480,
-            "elementsDiffering": 480,
-            "differences": 480,
-            "byGap": {
-              "unclassified": 480
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                480
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           }
         ]
       },
@@ -7550,11 +6926,11 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 0,
+            "pass": 4,
             "total": 4
           },
           "computed-styles": {
-            "pass": 0,
+            "pass": 4,
             "total": 4
           },
           "accessibility-tree": {
@@ -7562,83 +6938,11 @@
             "total": 4
           },
           "interaction": {
-            "pass": 0,
+            "pass": 1,
             "total": 7
           }
         },
         "failures": [
-          {
-            "fixture": "busbasis-product",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.33 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-product",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "550 differences on 484 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-product",
-            "viewport": "Desktop",
-            "state": "hover e41",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.33 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-product",
-            "viewport": "Desktop",
-            "state": "hover e41",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "550 differences on 484 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-product",
-            "viewport": "Desktop",
-            "state": "hover e41",
-            "check": "interaction",
-            "gap": "unclassified",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "busbasis-product",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.38 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-product",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "550 differences on 484 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-product",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.63 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-product",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "550 differences on 484 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
           {
             "fixture": "busbasis-product",
             "viewport": "all",
@@ -7689,171 +6993,51 @@
           }
         ],
         "notMeasured": [],
+        "defaultBase": {
+          "pass": 0,
+          "total": 3
+        },
         "pageType": "product detail",
         "differences": [
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.0033074927606177606,
+            "ratio": 0,
             "elementsCompared": 484,
-            "elementsDiffering": 484,
-            "differences": 550,
-            "byGap": {
-              "unclassified": 550
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                484
-              ],
-              [
-                "padding-block-end",
-                11
-              ],
-              [
-                "padding-bottom",
-                11
-              ],
-              [
-                "padding-inline-end",
-                11
-              ],
-              [
-                "padding-inline-start",
-                11
-              ],
-              [
-                "padding-left",
-                11
-              ],
-              [
-                "padding-right",
-                11
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           },
           {
             "viewport": "Desktop",
             "state": "hover e41",
-            "ratio": 0.0033074927606177606,
+            "ratio": 0,
             "elementsCompared": 484,
-            "elementsDiffering": 484,
-            "differences": 550,
-            "byGap": {
-              "unclassified": 550
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                484
-              ],
-              [
-                "padding-block-end",
-                11
-              ],
-              [
-                "padding-bottom",
-                11
-              ],
-              [
-                "padding-inline-end",
-                11
-              ],
-              [
-                "padding-inline-start",
-                11
-              ],
-              [
-                "padding-left",
-                11
-              ],
-              [
-                "padding-right",
-                11
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           },
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0.003797952124812674,
+            "ratio": 0,
             "elementsCompared": 484,
-            "elementsDiffering": 484,
-            "differences": 550,
-            "byGap": {
-              "unclassified": 550
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                484
-              ],
-              [
-                "padding-block-end",
-                11
-              ],
-              [
-                "padding-bottom",
-                11
-              ],
-              [
-                "padding-inline-end",
-                11
-              ],
-              [
-                "padding-inline-start",
-                11
-              ],
-              [
-                "padding-left",
-                11
-              ],
-              [
-                "padding-right",
-                11
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           },
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0.0062778864970645795,
+            "ratio": 0,
             "elementsCompared": 484,
-            "elementsDiffering": 484,
-            "differences": 550,
-            "byGap": {
-              "unclassified": 550
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                484
-              ],
-              [
-                "padding-block-end",
-                11
-              ],
-              [
-                "padding-bottom",
-                11
-              ],
-              [
-                "padding-inline-end",
-                11
-              ],
-              [
-                "padding-inline-start",
-                11
-              ],
-              [
-                "padding-left",
-                11
-              ],
-              [
-                "padding-right",
-                11
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           }
         ]
       },
@@ -7864,11 +7048,11 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 0,
+            "pass": 4,
             "total": 4
           },
           "computed-styles": {
-            "pass": 0,
+            "pass": 4,
             "total": 4
           },
           "accessibility-tree": {
@@ -7876,83 +7060,11 @@
             "total": 4
           },
           "interaction": {
-            "pass": 0,
+            "pass": 1,
             "total": 6
           }
         },
         "failures": [
-          {
-            "fixture": "busbasis-cart-empty",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.41 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-cart-empty",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "198 differences on 198 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-cart-empty",
-            "viewport": "Desktop",
-            "state": "hover e41",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.41 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-cart-empty",
-            "viewport": "Desktop",
-            "state": "hover e41",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "198 differences on 198 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-cart-empty",
-            "viewport": "Desktop",
-            "state": "hover e41",
-            "check": "interaction",
-            "gap": "unclassified",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "busbasis-cart-empty",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.55 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-cart-empty",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "198 differences on 198 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-cart-empty",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.90 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-cart-empty",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "198 differences on 198 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
           {
             "fixture": "busbasis-cart-empty",
             "viewport": "all",
@@ -7995,75 +7107,51 @@
           }
         ],
         "notMeasured": [],
+        "defaultBase": {
+          "pass": 0,
+          "total": 3
+        },
         "pageType": "cart",
         "differences": [
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.004088445571955719,
+            "ratio": 0,
             "elementsCompared": 198,
-            "elementsDiffering": 198,
-            "differences": 198,
-            "byGap": {
-              "unclassified": 198
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                198
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           },
           {
             "viewport": "Desktop",
             "state": "hover e41",
-            "ratio": 0.004088445571955719,
+            "ratio": 0,
             "elementsCompared": 198,
-            "elementsDiffering": 198,
-            "differences": 198,
-            "byGap": {
-              "unclassified": 198
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                198
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           },
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0.00548297237915882,
+            "ratio": 0,
             "elementsCompared": 198,
-            "elementsDiffering": 198,
-            "differences": 198,
-            "byGap": {
-              "unclassified": 198
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                198
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           },
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0.009001434132349929,
+            "ratio": 0,
             "elementsCompared": 198,
-            "elementsDiffering": 198,
-            "differences": 198,
-            "byGap": {
-              "unclassified": 198
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                198
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           }
         ]
       },
@@ -8074,11 +7162,11 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 0,
+            "pass": 4,
             "total": 4
           },
           "computed-styles": {
-            "pass": 0,
+            "pass": 4,
             "total": 4
           },
           "accessibility-tree": {
@@ -8086,83 +7174,11 @@
             "total": 4
           },
           "interaction": {
-            "pass": 0,
+            "pass": 1,
             "total": 6
           }
         },
         "failures": [
-          {
-            "fixture": "busbasis-checkout-no-cart",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.36 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-checkout-no-cart",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "190 differences on 190 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-checkout-no-cart",
-            "viewport": "Desktop",
-            "state": "hover e41",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.36 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-checkout-no-cart",
-            "viewport": "Desktop",
-            "state": "hover e41",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "190 differences on 190 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-checkout-no-cart",
-            "viewport": "Desktop",
-            "state": "hover e41",
-            "check": "interaction",
-            "gap": "unclassified",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "busbasis-checkout-no-cart",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.46 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-checkout-no-cart",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "190 differences on 190 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-checkout-no-cart",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.90 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-checkout-no-cart",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "190 differences on 190 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
           {
             "fixture": "busbasis-checkout-no-cart",
             "viewport": "all",
@@ -8205,75 +7221,51 @@
           }
         ],
         "notMeasured": [],
+        "defaultBase": {
+          "pass": 0,
+          "total": 3
+        },
         "pageType": "checkout",
         "differences": [
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.003591648973814579,
+            "ratio": 0,
             "elementsCompared": 190,
-            "elementsDiffering": 190,
-            "differences": 190,
-            "byGap": {
-              "unclassified": 190
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                190
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           },
           {
             "viewport": "Desktop",
             "state": "hover e41",
-            "ratio": 0.003591648973814579,
+            "ratio": 0,
             "elementsCompared": 190,
-            "elementsDiffering": 190,
-            "differences": 190,
-            "byGap": {
-              "unclassified": 190
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                190
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           },
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0.004556173678687273,
+            "ratio": 0,
             "elementsCompared": 190,
-            "elementsDiffering": 190,
-            "differences": 190,
-            "byGap": {
-              "unclassified": 190
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                190
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           },
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0.008977653631284915,
+            "ratio": 0,
             "elementsCompared": 190,
-            "elementsDiffering": 190,
-            "differences": 190,
-            "byGap": {
-              "unclassified": 190
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                190
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           }
         ]
       },
@@ -8284,11 +7276,11 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 0,
+            "pass": 4,
             "total": 4
           },
           "computed-styles": {
-            "pass": 0,
+            "pass": 4,
             "total": 4
           },
           "accessibility-tree": {
@@ -8296,83 +7288,11 @@
             "total": 4
           },
           "interaction": {
-            "pass": 0,
+            "pass": 1,
             "total": 5
           }
         },
         "failures": [
-          {
-            "fixture": "busbasis-privacy",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.68 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-privacy",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "224 differences on 224 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-privacy",
-            "viewport": "Desktop",
-            "state": "hover e41",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.68 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-privacy",
-            "viewport": "Desktop",
-            "state": "hover e41",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "224 differences on 224 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-privacy",
-            "viewport": "Desktop",
-            "state": "hover e41",
-            "check": "interaction",
-            "gap": "unclassified",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "busbasis-privacy",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "1.05 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-privacy",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "224 differences on 224 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-privacy",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "1.74 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-privacy",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "224 differences on 224 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
           {
             "fixture": "busbasis-privacy",
             "viewport": "all",
@@ -8407,75 +7327,51 @@
           }
         ],
         "notMeasured": [],
+        "defaultBase": {
+          "pass": 0,
+          "total": 3
+        },
         "pageType": "content: privacy",
         "differences": [
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.00676134492976295,
+            "ratio": 0,
             "elementsCompared": 224,
-            "elementsDiffering": 224,
-            "differences": 224,
-            "byGap": {
-              "unclassified": 224
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                224
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           },
           {
             "viewport": "Desktop",
             "state": "hover e41",
-            "ratio": 0.00676134492976295,
+            "ratio": 0,
             "elementsCompared": 224,
-            "elementsDiffering": 224,
-            "differences": 224,
-            "byGap": {
-              "unclassified": 224
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                224
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           },
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0.010469746602884081,
+            "ratio": 0,
             "elementsCompared": 224,
-            "elementsDiffering": 224,
-            "differences": 224,
-            "byGap": {
-              "unclassified": 224
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                224
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           },
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0.017420612813370474,
+            "ratio": 0,
             "elementsCompared": 224,
-            "elementsDiffering": 224,
-            "differences": 224,
-            "byGap": {
-              "unclassified": 224
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                224
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           }
         ]
       },
@@ -8486,11 +7382,11 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 0,
+            "pass": 4,
             "total": 4
           },
           "computed-styles": {
-            "pass": 0,
+            "pass": 4,
             "total": 4
           },
           "accessibility-tree": {
@@ -8498,83 +7394,11 @@
             "total": 4
           },
           "interaction": {
-            "pass": 0,
+            "pass": 1,
             "total": 5
           }
         },
         "failures": [
-          {
-            "fixture": "busbasis-terms",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.77 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-terms",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "240 differences on 240 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-terms",
-            "viewport": "Desktop",
-            "state": "hover e41",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.77 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-terms",
-            "viewport": "Desktop",
-            "state": "hover e41",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "240 differences on 240 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-terms",
-            "viewport": "Desktop",
-            "state": "hover e41",
-            "check": "interaction",
-            "gap": "unclassified",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "busbasis-terms",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "1.17 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-terms",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "240 differences on 240 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-terms",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "1.87 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-terms",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "240 differences on 240 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
           {
             "fixture": "busbasis-terms",
             "viewport": "all",
@@ -8609,75 +7433,51 @@
           }
         ],
         "notMeasured": [],
+        "defaultBase": {
+          "pass": 0,
+          "total": 3
+        },
         "pageType": "content: terms",
         "differences": [
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.0076707507820646505,
+            "ratio": 0,
             "elementsCompared": 240,
-            "elementsDiffering": 240,
-            "differences": 240,
-            "byGap": {
-              "unclassified": 240
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                240
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           },
           {
             "viewport": "Desktop",
             "state": "hover e41",
-            "ratio": 0.0076707507820646505,
+            "ratio": 0,
             "elementsCompared": 240,
-            "elementsDiffering": 240,
-            "differences": 240,
-            "byGap": {
-              "unclassified": 240
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                240
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           },
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0.01174283917559234,
+            "ratio": 0,
             "elementsCompared": 240,
-            "elementsDiffering": 240,
-            "differences": 240,
-            "byGap": {
-              "unclassified": 240
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                240
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           },
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0.018745077809302724,
+            "ratio": 0,
             "elementsCompared": 240,
-            "elementsDiffering": 240,
-            "differences": 240,
-            "byGap": {
-              "unclassified": 240
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                240
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           }
         ]
       },
@@ -8688,11 +7488,11 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 0,
+            "pass": 4,
             "total": 4
           },
           "computed-styles": {
-            "pass": 0,
+            "pass": 4,
             "total": 4
           },
           "accessibility-tree": {
@@ -8700,83 +7500,11 @@
             "total": 4
           },
           "interaction": {
-            "pass": 0,
+            "pass": 1,
             "total": 6
           }
         },
         "failures": [
-          {
-            "fixture": "busbasis-login",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.46 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-login",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "224 differences on 224 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-login",
-            "viewport": "Desktop",
-            "state": "hover e41",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.46 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-login",
-            "viewport": "Desktop",
-            "state": "hover e41",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "224 differences on 224 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-login",
-            "viewport": "Desktop",
-            "state": "hover e41",
-            "check": "interaction",
-            "gap": "unclassified",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "busbasis-login",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.65 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-login",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "224 differences on 224 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-login",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "1.10 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-login",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "224 differences on 224 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
           {
             "fixture": "busbasis-login",
             "viewport": "all",
@@ -8819,75 +7547,51 @@
           }
         ],
         "notMeasured": [],
+        "defaultBase": {
+          "pass": 0,
+          "total": 3
+        },
         "pageType": "account: login",
         "differences": [
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.0045774287352555705,
+            "ratio": 0,
             "elementsCompared": 224,
-            "elementsDiffering": 224,
-            "differences": 224,
-            "byGap": {
-              "unclassified": 224
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                224
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           },
           {
             "viewport": "Desktop",
             "state": "hover e41",
-            "ratio": 0.0045774287352555705,
+            "ratio": 0,
             "elementsCompared": 224,
-            "elementsDiffering": 224,
-            "differences": 224,
-            "byGap": {
-              "unclassified": 224
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                224
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           },
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0.006507363716295428,
+            "ratio": 0,
             "elementsCompared": 224,
-            "elementsDiffering": 224,
-            "differences": 224,
-            "byGap": {
-              "unclassified": 224
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                224
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           },
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0.010976674191121144,
+            "ratio": 0,
             "elementsCompared": 224,
-            "elementsDiffering": 224,
-            "differences": 224,
-            "byGap": {
-              "unclassified": 224
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                224
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           }
         ]
       },
@@ -8898,11 +7602,11 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 0,
+            "pass": 4,
             "total": 4
           },
           "computed-styles": {
-            "pass": 0,
+            "pass": 4,
             "total": 4
           },
           "accessibility-tree": {
@@ -8910,83 +7614,11 @@
             "total": 4
           },
           "interaction": {
-            "pass": 0,
+            "pass": 1,
             "total": 6
           }
         },
         "failures": [
-          {
-            "fixture": "busbasis-request-reset",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.47 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-request-reset",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "198 differences on 198 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-request-reset",
-            "viewport": "Desktop",
-            "state": "hover e41",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.47 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-request-reset",
-            "viewport": "Desktop",
-            "state": "hover e41",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "198 differences on 198 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-request-reset",
-            "viewport": "Desktop",
-            "state": "hover e41",
-            "check": "interaction",
-            "gap": "unclassified",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "busbasis-request-reset",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.62 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-request-reset",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "198 differences on 198 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-request-reset",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "1.15 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-request-reset",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "198 differences on 198 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
           {
             "fixture": "busbasis-request-reset",
             "viewport": "all",
@@ -9029,75 +7661,51 @@
           }
         ],
         "notMeasured": [],
+        "defaultBase": {
+          "pass": 0,
+          "total": 3
+        },
         "pageType": "account: password reset",
         "differences": [
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.004708647525135344,
+            "ratio": 0,
             "elementsCompared": 198,
-            "elementsDiffering": 198,
-            "differences": 198,
-            "byGap": {
-              "unclassified": 198
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                198
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           },
           {
             "viewport": "Desktop",
             "state": "hover e41",
-            "ratio": 0.004708647525135344,
+            "ratio": 0,
             "elementsCompared": 198,
-            "elementsDiffering": 198,
-            "differences": 198,
-            "byGap": {
-              "unclassified": 198
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                198
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           },
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0.006165135782747604,
+            "ratio": 0,
             "elementsCompared": 198,
-            "elementsDiffering": 198,
-            "differences": 198,
-            "byGap": {
-              "unclassified": 198
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                198
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           },
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0.011519777931991673,
+            "ratio": 0,
             "elementsCompared": 198,
-            "elementsDiffering": 198,
-            "differences": 198,
-            "byGap": {
-              "unclassified": 198
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                198
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           }
         ]
       },
@@ -9108,11 +7716,11 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 0,
+            "pass": 4,
             "total": 4
           },
           "computed-styles": {
-            "pass": 0,
+            "pass": 4,
             "total": 4
           },
           "accessibility-tree": {
@@ -9120,83 +7728,11 @@
             "total": 4
           },
           "interaction": {
-            "pass": 0,
+            "pass": 1,
             "total": 5
           }
         },
         "failures": [
-          {
-            "fixture": "busbasis-shop-unavailable",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.53 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-shop-unavailable",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "173 differences on 173 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-shop-unavailable",
-            "viewport": "Desktop",
-            "state": "hover e26",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.53 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-shop-unavailable",
-            "viewport": "Desktop",
-            "state": "hover e26",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "173 differences on 173 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-shop-unavailable",
-            "viewport": "Desktop",
-            "state": "hover e26",
-            "check": "interaction",
-            "gap": "unclassified",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "busbasis-shop-unavailable",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "0.75 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-shop-unavailable",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "173 differences on 173 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-shop-unavailable",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "1.09 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-shop-unavailable",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "173 differences on 173 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
           {
             "fixture": "busbasis-shop-unavailable",
             "viewport": "all",
@@ -9231,75 +7767,51 @@
           }
         ],
         "notMeasured": [],
+        "defaultBase": {
+          "pass": 0,
+          "total": 3
+        },
         "pageType": "shop kill switch",
         "differences": [
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.00525443689745837,
+            "ratio": 0,
             "elementsCompared": 173,
-            "elementsDiffering": 173,
-            "differences": 173,
-            "byGap": {
-              "unclassified": 173
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                173
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           },
           {
             "viewport": "Desktop",
             "state": "hover e26",
-            "ratio": 0.00525443689745837,
+            "ratio": 0,
             "elementsCompared": 173,
-            "elementsDiffering": 173,
-            "differences": 173,
-            "byGap": {
-              "unclassified": 173
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                173
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           },
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0.007530912917653249,
+            "ratio": 0,
             "elementsCompared": 173,
-            "elementsDiffering": 173,
-            "differences": 173,
-            "byGap": {
-              "unclassified": 173
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                173
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           },
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0.010892406515255793,
+            "ratio": 0,
             "elementsCompared": 173,
-            "elementsDiffering": 173,
-            "differences": 173,
-            "byGap": {
-              "unclassified": 173
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                173
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           }
         ]
       },
@@ -9310,11 +7822,11 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 0,
+            "pass": 3,
             "total": 3
           },
           "computed-styles": {
-            "pass": 0,
+            "pass": 3,
             "total": 3
           },
           "accessibility-tree": {
@@ -9329,54 +7841,6 @@
         "failures": [
           {
             "fixture": "busbasis-not-found",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "8.04 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-not-found",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "10 differences on 10 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-not-found",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "6.31 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-not-found",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "10 differences on 10 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-not-found",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "unclassified",
-            "detail": "9.76 percent of pixels differ"
-          },
-          {
-            "fixture": "busbasis-not-found",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "unclassified",
-            "detail": "10 differences on 10 elements, first: e0: -webkit-font-smoothing auto became antialiased"
-          },
-          {
-            "fixture": "busbasis-not-found",
             "viewport": "all",
             "state": "needs: styles on html",
             "check": "interaction",
@@ -9385,84 +7849,46 @@
           }
         ],
         "notMeasured": [],
+        "defaultBase": {
+          "pass": 0,
+          "total": 3
+        },
         "pageType": "not found",
         "differences": [
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.0804248046875,
+            "ratio": 0,
             "elementsCompared": 10,
-            "elementsDiffering": 10,
-            "differences": 10,
-            "byGap": {
-              "unclassified": 10
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                10
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           },
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0.06305313110351562,
+            "ratio": 0,
             "elementsCompared": 10,
-            "elementsDiffering": 10,
-            "differences": 10,
-            "byGap": {
-              "unclassified": 10
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                10
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           },
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0.0975832083958021,
+            "ratio": 0,
             "elementsCompared": 10,
-            "elementsDiffering": 10,
-            "differences": 10,
-            "byGap": {
-              "unclassified": 10
-            },
-            "byProperty": [
-              [
-                "-webkit-font-smoothing",
-                10
-              ]
-            ]
+            "elementsDiffering": 0,
+            "differences": 0,
+            "byGap": {},
+            "byProperty": []
           }
         ]
       }
     ],
     "gaps": [
-      {
-        "id": "unclassified",
-        "pages": [
-          "busbasis-home",
-          "busbasis-store",
-          "busbasis-search",
-          "busbasis-category",
-          "busbasis-collection",
-          "busbasis-product",
-          "busbasis-cart-empty",
-          "busbasis-checkout-no-cart",
-          "busbasis-privacy",
-          "busbasis-terms",
-          "busbasis-login",
-          "busbasis-request-reset",
-          "busbasis-shop-unavailable",
-          "busbasis-not-found"
-        ],
-        "needs": 0,
-        "styleDifferences": 19702
-      },
       {
         "id": "page-level-css",
         "pages": [
@@ -10313,31 +8739,6 @@
       "cost": 318
     },
     {
-      "id": "unclassified",
-      "description": "A difference no rule explains yet. Investigate before trusting the score.",
-      "matrixCells": 0,
-      "corpusChecks": 123,
-      "fixtures": [
-        "busbasis-home",
-        "busbasis-store",
-        "busbasis-search",
-        "busbasis-category",
-        "busbasis-collection",
-        "busbasis-product",
-        "busbasis-cart-empty",
-        "busbasis-checkout-no-cart",
-        "busbasis-privacy",
-        "busbasis-terms",
-        "busbasis-login",
-        "busbasis-request-reset",
-        "busbasis-shop-unavailable",
-        "busbasis-not-found"
-      ],
-      "onlyGapOf": [],
-      "roundTripCases": 0,
-      "cost": 123
-    },
-    {
       "id": "ai-tag-allowlist",
       "description": "The AI generator validator refuses this tag on purpose: blocked in every renderer, or a raw form control, which only works through the form presets.",
       "matrixCells": 116,
@@ -10388,13 +8789,13 @@
       "id": "blocked-embedded-content",
       "description": "What the render gate refuses (blockedNodes.ts and renderVocabulary.ts): embedded content (iframe, object, embed, ...), although these are ordinary content elements, and attributes that act by themselves (ping, the shadow root ones).",
       "matrixCells": 78,
-      "corpusChecks": 4,
+      "corpusChecks": 9,
       "fixtures": [
         "busbasis-home"
       ],
       "onlyGapOf": [],
       "roundTripCases": 0,
-      "cost": 82
+      "cost": 87
     },
     {
       "id": "page-level-css",

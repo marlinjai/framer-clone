@@ -421,7 +421,8 @@ const SiteSettingsForm = observer(({ project, onClose }: { project: ProjectModel
             <p id={`${fieldId('pageBase')}-hint`} className={hint}>
               What elements look like before you style them. Clean slate removes heading sizes, margins, list markers
               and form styling, so a page shows only what you set. Browser defaults keeps them, which suits a page
-              written as plain HTML and CSS. Changing this changes every page that relies on it.
+              written as plain HTML and CSS, or one that brings its own reset, such as a page from a Tailwind site.
+              Changing this changes every page that relies on it.
             </p>
           </div>
         </section>
