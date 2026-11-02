@@ -33,6 +33,7 @@ import { normalizeHover, storedEffectsOf, type HoverKind } from '@/lib/effects/e
 import { isTextNodeType } from '@/lib/renderer/textNode';
 import { definitionClaims, hasExternalAddress, isRuleList, readRules, storedRulesOf, type ParsedSelectorRule, type ReadRules } from './rules';
 import { previewedBy } from './states';
+import { DATA_PLACEMENT_ROOT } from '@/lib/drag/markers';
 import { FLOATING_ROOT, PREVIEW_ROOT, VIEWPORT_ROOT, type EditorSurfaceKind, type SurfaceFrame } from './surfaces';
 
 /** A node on either surface: a plain tree or a MobX-State-Tree instance. */
@@ -41,6 +42,10 @@ export interface SurfaceNode {
   type: string;
   props?: unknown;
   children?: readonly unknown[];
+  /** From expansion: the definition node this one is a copy of. */
+  classKey?: string;
+  /** From expansion: the element a placement stands on. */
+  placementRoot?: boolean;
 }
 
 /** One frame a tree renders into. */
@@ -129,7 +134,18 @@ export function surfaceSheet(input: SurfaceSheetInput): string {
     report(problem);
   };
 
-  const visit = (node: SurfaceNode, copiesOf: (id: string) => SurfaceCopy[]): void => {
+  // On the canvas a definition's nodes keep their definition id across placements, so
+  // one block per definition node per frame reaches them all, and the placement
+  // root's element carries the attribute that lets a root rule do the same. A preview
+  // renders a detached tree with an id per placement, so it writes one block for each.
+  const addressOf = (node: SurfaceNode): { attribute: string; key: string; shared: boolean } => {
+    const key = (canvas && node.classKey) || node.id;
+    const attribute = canvas && node.placementRoot ? DATA_PLACEMENT_ROOT : 'data-component-id';
+    return { attribute, key, shared: canvas && node.classKey !== undefined };
+  };
+  const drawn = new Set<string>();
+
+  const visit = (node: SurfaceNode, copiesOf: (attribute: string, id: string) => SurfaceCopy[]): void => {
     const read = parsedRulesOf(node);
     if (read) {
       for (const { index, rule, reason } of read.refused) {
@@ -149,14 +165,17 @@ export function surfaceSheet(input: SurfaceSheetInput): string {
 
     const variables = externalVariables(node);
     if (rules.length > 0 || preset !== 'none' || variables.length > 0) {
-      if (!SAFE_ID.test(node.id)) {
+      const { attribute, key, shared } = addressOf(node);
+      if (!SAFE_ID.test(key)) {
         once({ node: node.id, reason: 'this node id cannot stand in a selector' });
       } else {
-        const copies = copiesOf(node.id);
+        const copies = copiesOf(attribute, key);
         clearedVariables.push(...variables.flatMap((property) => copies.map(({ selector }) => ({ selector, property }))));
         const isPreviewed = canvas && previewRule?.componentId === node.id;
         const active = isPreviewed ? previewedBy(storedRulesOf(node.props), previewRule.ruleId) : undefined;
-        if (rules.length > 0) nodes.push({ node: node.id, rules, copies, previewed: active?.ids ?? new Set() });
+        const first = !shared || !drawn.has(key);
+        if (shared) drawn.add(key);
+        if (rules.length > 0 && first) nodes.push({ node: key, rules, copies, previewed: active?.ids ?? new Set() });
         const showsPreset = active?.hover === true && preset !== 'none';
         if (showsPreset) previewedPresets.push(...copies.map(({ selector }) => ({ selector, kind: preset })));
         if (active && (active.ids.size > 0 || showsPreset)) previewedNodes.push(node.id);
@@ -167,9 +186,9 @@ export function surfaceSheet(input: SurfaceSheetInput): string {
 
   if (tree && safeFrames.length > 0) {
     const root = canvas ? VIEWPORT_ROOT : PREVIEW_ROOT;
-    visit(tree, (id) =>
+    visit(tree, (attribute, id) =>
       safeFrames.map(({ breakpointId, width, height }) => ({
-        selector: `${root} [data-component-id="${breakpointId}-${id}"]`,
+        selector: `${root} [${attribute}="${breakpointId}-${id}"]`,
         breakpointId,
         frame: { width, height },
       })),
@@ -177,8 +196,8 @@ export function surfaceSheet(input: SurfaceSheetInput): string {
   }
   if (canvas && floating.length > 0) {
     const { width, height } = largestFrame(frames, breakpoints) ?? { width: 0, height: 0 };
-    const copiesOf = (id: string): SurfaceCopy[] => [
-      { selector: `${FLOATING_ROOT} [data-component-id="-${id}"]`, breakpointId: '', frame: { width, height } },
+    const copiesOf = (attribute: string, id: string): SurfaceCopy[] => [
+      { selector: `${FLOATING_ROOT} [${attribute}="-${id}"]`, breakpointId: '', frame: { width, height } },
     ];
     for (const element of floating) visit(element, copiesOf);
   }
