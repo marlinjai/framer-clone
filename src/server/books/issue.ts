@@ -259,7 +259,7 @@ export async function issue(
         // (5) Tax profile, every line and the totals recomputed from the inputs.
         let profile;
         try {
-          profile = profileFor(settings, customer);
+          profile = profileFor(settings, customer, row.tax_country);
         } catch (err) {
           if (err instanceof ReverseChargeNotAllowedError) {
             throw new BooksError('REVERSE_CHARGE_NOT_ALLOWED', 'REVERSE_CHARGE_NOT_ALLOWED', undefined, { cause: err });
@@ -268,7 +268,7 @@ export async function issue(
         }
         if (!profile.supported) {
           throw new BooksError('TAX_CASE_UNSUPPORTED', 'TAX_CASE_UNSUPPORTED: a recipient outside the EU under regular taxation', {
-            countryCode: customer.country_code,
+            countryCode: row.tax_country ?? customer.country_code,
           });
         }
         // The sender, now that the profile says whether this is reverse charge

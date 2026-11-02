@@ -147,11 +147,11 @@ async function variantDefaults(
   };
 }
 
-/** The draft's tax profile computed now (company settings and its customer's current tax fields). */
+/** The draft's tax profile computed now (company settings, its customer's current tax fields, a receipt's own country). */
 async function draftProfile(trx: Transaction<CommerceDB>, scope: BooksScope, row: DocumentRowWithSnapshots) {
   const settings = await requireSettings(trx, scope);
   const customer = row.customer_id ? ((await selectCustomerRow(trx, scope, row.customer_id)) ?? null) : null;
-  return profileFor(settings, customer);
+  return profileFor(settings, customer, row.tax_country);
 }
 
 /** Derived values of one line under the draft's current profile (INVALID_LINE beyond the money limit). */
