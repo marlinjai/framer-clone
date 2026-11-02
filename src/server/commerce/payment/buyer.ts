@@ -3,7 +3,8 @@
 // The buyer as entered at checkout (order_payment.buyer, 021_order_payment): what the receipt's contact in
 // the company's contacts database is made from. A person or an organization with a name, an email address
 // for the confirmation, and the postal address an invoice needs (section 14 (4) UStG: full name and address
-// of the recipient). A business may add its VAT id. Parsed with zod on the way in and on every read.
+// of the recipient). A business may add its VAT id; a blank one is none, on the way in and for a buyer already
+// stored, because the Books refuse an empty id after the payment. Parsed with zod on the way in and on every read.
 
 import { z } from 'zod';
 
@@ -24,7 +25,13 @@ export const buyerSchema = z
       .trim()
       .transform((v) => v.toUpperCase())
       .refine((v) => /^[A-Z]{2}$/.test(v), 'expected a two-letter country code such as DE'),
-    vatId: z.string().trim().max(32).nullable().optional(),
+    vatId: z
+      .string()
+      .trim()
+      .max(32)
+      .transform((v) => (v === '' ? null : v))
+      .nullable()
+      .optional(),
   })
   .strict();
 
