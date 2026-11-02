@@ -1,9 +1,11 @@
-// The page-level item rows that can be measured so far: a site's theme, in the format
-// column and the published column (docs/plans/2026-11-02-theme-and-head.md, slice T2).
-// Every check runs the real code: a theme goes through normalizeSiteSettings, JSON and
-// the reader again, and a page through renderPublishedPage and the layout's sheets, then
-// Chromium computes what a visitor sees. The canvas, panel and AI columns are slices T3
-// to T5: nothing measures them here, so report.ts fails them under the theme gap.
+// The page-level item rows that can be measured so far: a site's theme, in the format,
+// published and canvas columns (docs/plans/2026-11-02-theme-and-head.md, slices T2 and
+// T3). Every check runs the real code: a theme goes through normalizeSiteSettings, JSON
+// and the reader again, a page through renderPublishedPage and the layout's sheets, then
+// Chromium computes what a visitor sees; and the canvas is the real EditorApp in Chromium
+// (lib/canvasBundle.ts), its theme set through the project's own updateTheme, measured on
+// the frame a person looks at. The panel and AI columns are slices T4 and T5: nothing
+// measures them here, so report.ts fails them under the theme gap.
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
@@ -18,6 +20,7 @@ import { renderPublishedPage } from '@/lib/renderer/server/renderPublishedPage';
 import { normalizeSiteSettings } from '@/lib/site/siteSettings';
 import type { SiteTheme, ThemeMode } from '@/lib/site/theme';
 import { pageItemEntries } from './lib/universe';
+import { bundleEditor, openEditor, placeTree } from './lib/canvasBundle';
 import { BREAKPOINTS, publishedDocument } from './lib/published';
 import { writeOut } from './lib/io';
 import { rowKey, type Cell, type SurfaceResults } from './lib/types';
@@ -31,6 +34,7 @@ const ref = (id: string) => `var(--fc-t-${id})`;
 const INK = { light: 'rgb(17, 24, 39)', dark: 'rgb(249, 250, 251)' };
 const GROUND = { light: 'rgb(255, 255, 255)', dark: 'rgb(3, 7, 18)' };
 const DARK_RULE = 'rgb(1, 2, 3)';
+const DARK_CLASS_RULE = 'rgb(4, 5, 6)';
 
 function theme(mode: ThemeMode | undefined, document: SiteTheme['document'] = {}): SiteTheme {
   return {
@@ -58,8 +62,17 @@ const TREE: ComponentNode = {
       type: 'p',
       props: { id: 'rule', children: 'Dark rule', style: { color: ref(ID.ink) }, rules: [{ id: 'd', selector: '&', at: ['@media (prefers-color-scheme: dark)'], style: { color: DARK_RULE } }] as never },
     },
+    {
+      // Tailwind's dark variant as the importer writes it: live only under `class="dark"`.
+      id: 'klass',
+      type: 'p',
+      props: { id: 'klass', children: 'Dark class', style: { color: ref(ID.ink) }, rules: [{ id: 'k', selector: '&:is(.dark *)', style: { color: DARK_CLASS_RULE } }] as never },
+    },
   ],
 };
+
+/** A floating element on the canvas: it takes the tokens and never the page's background. */
+const FLOATING: ComponentNode = { id: 'float', type: 'div', props: { style: { width: '120px', height: '60px' } } };
 
 async function documentFor(siteTheme: SiteTheme): Promise<string> {
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -78,8 +91,29 @@ interface Seen {
   plain: string;
   token: string;
   rule: string;
+  klass: string;
   font: string;
   fontLoaded: boolean;
+  /** The editor's own variables where the page reads them: `html` published. */
+  border: string;
+  background: string;
+}
+
+interface CanvasSeen {
+  scheme: string;
+  dark: boolean;
+  frame: { background: string; color: string; font: string };
+  plain: string;
+  token: string;
+  rule: string;
+  klass: string;
+  font: string;
+  fontLoaded: boolean;
+  /** The editor's own variables on the frame's page box. */
+  border: string;
+  background: string;
+  /** What lies outside every frame: the editor's own document, the frame's label, a floating element. */
+  editor: { scheme: string; token: string; labelFont: string; bodyFont: string; floatingBackground: string };
 }
 
 const pass = (): Cell => ({ status: 'pass' });
@@ -116,11 +150,12 @@ function formatCells(): SurfaceResults {
 
 describe('page-level item rows', () => {
   let browser: Browser;
+  let bundle: string;
   beforeAll(async () => {
     // The self-hosted faces a font token loads, copied from the pinned packages.
     if (!existsSync(path.join(FONTS, 'fraunces'))) execFileSync('pnpm', ['fonts:sync'], { stdio: 'ignore' });
-    browser = await chromium.launch();
-  }, 120_000);
+    [browser, bundle] = await Promise.all([chromium.launch(), bundleEditor()]);
+  }, 180_000);
   afterAll(async () => {
     await browser?.close();
   });
@@ -151,8 +186,11 @@ describe('page-level item rows', () => {
           plain: byId('plain').color,
           token: byId('token').color,
           rule: byId('rule').color,
+          klass: byId('klass').color,
           font: byId('font').fontFamily,
           fontLoaded: [...document.fonts].some((face) => /fraunces/i.test(face.family) && face.status === 'loaded'),
+          border: style(document.documentElement).getPropertyValue('--border').trim(),
+          background: style(document.documentElement).getPropertyValue('--background').trim(),
         };
       });
     } finally {
@@ -200,8 +238,114 @@ describe('page-level item rows', () => {
     return out;
   }
 
+  /** What the person sees on the canvas: the real editor, the theme set through the project, one frame. */
+  async function seeOnCanvas(siteTheme: SiteTheme, system: 'light' | 'dark', previewed: 'light' | 'dark' = 'light'): Promise<CanvasSeen> {
+    const { page, crashes } = await openEditor(browser, bundle, { colorScheme: system });
+    try {
+      // The faces a font token loads: openEditor answers every other request with `{}`.
+      await page.route('**/fonts/**', (route) => {
+        const url = new URL(route.request().url());
+        const file = path.join(FONTS, url.pathname.replace(/^\/fonts\//, ''));
+        if (file.startsWith(FONTS) && existsSync(file)) return route.fulfill({ status: 200, contentType: 'font/woff2', body: readFileSync(file) });
+        return route.fulfill({ status: 404, body: '' });
+      });
+      await placeTree(page, crashes, TREE, { floating: [FLOATING] });
+      await page.evaluate(([t, mode]) => {
+        const editor = (window as unknown as { __editor: { setTheme: (x: unknown) => void; setPreviewColorMode: (m: string) => void } }).__editor;
+        editor.setTheme(t);
+        editor.setPreviewColorMode(mode as string);
+      }, [siteTheme, previewed] as const);
+      await page.locator('style[data-fc-theme-sheet="surface"]').waitFor({ state: 'attached' });
+      await page.evaluate(() => document.fonts.load('16px Fraunces'));
+      if (crashes.length > 0) throw new Error(`the editor crashed: ${crashes[0]}`);
+      return await page.evaluate(() => {
+        const box = document.querySelector('[data-viewport-content-id]') as HTMLElement;
+        const style = (el: Element) => getComputedStyle(el);
+        const node = (id: string) => style(box.querySelector(`[data-inner-component-id="${id}"]`)!);
+        const label = box.closest('[data-viewport-id]')!.firstElementChild!;
+        const floating = document.querySelector('[data-floating-root-id]');
+        return {
+          scheme: style(box).colorScheme,
+          dark: box.classList.contains('dark'),
+          frame: { background: style(box).backgroundColor, color: style(box).color, font: style(box).fontFamily },
+          plain: node('plain').color,
+          token: node('token').color,
+          rule: node('rule').color,
+          klass: node('klass').color,
+          font: node('font').fontFamily,
+          fontLoaded: [...document.fonts].some((face) => /fraunces/i.test(face.family) && face.status === 'loaded'),
+          border: style(box).getPropertyValue('--border').trim(),
+          background: style(box).getPropertyValue('--background').trim(),
+          editor: {
+            scheme: style(document.documentElement).colorScheme,
+            token: style(document.body).getPropertyValue('--fc-t-in000001').trim(),
+            labelFont: style(label).fontFamily,
+            bodyFont: style(document.body).fontFamily,
+            floatingBackground: floating ? style(floating).backgroundColor : 'none',
+          },
+        };
+      });
+    } finally {
+      await page.close();
+    }
+  }
+
+  /** Canvas: the frame shows what the published page shows, and nothing outside a frame changes. */
+  async function canvasCells(): Promise<SurfaceResults> {
+    const out: SurfaceResults = {};
+    // Outside the frames the editor stays as it is: no token, no scheme, its own fonts.
+    const untouched = (seen: CanvasSeen) =>
+      seen.editor.token === '' && seen.editor.scheme === 'normal' && seen.editor.labelFont === seen.editor.bodyFont && !/fraunces/i.test(seen.editor.labelFont);
+    out[key('color-token')] = await probe(async () => {
+      const seen = await seeOnCanvas(theme(undefined), 'light');
+      return cell(seen.token === INK.light && untouched(seen), `a reference computed ${seen.token}, editor ${JSON.stringify(seen.editor)}`);
+    });
+    out[key('font-token')] = await probe(async () => {
+      const seen = await seeOnCanvas(theme(undefined), 'light');
+      return cell(seen.font.startsWith('Fraunces') && seen.fontLoaded, `the font token gave ${seen.font}, loaded ${seen.fontLoaded}`);
+    });
+    // A `system` site: the switch alone decides, on either machine, and the editor's system is never asked.
+    const systemDark = await seeOnCanvas(theme('system'), 'light', 'dark');
+    const systemLight = await seeOnCanvas(theme('system'), 'dark', 'light');
+    out[key('dark-value')] = cell(
+      systemDark.token === INK.dark && systemLight.token === INK.light && untouched(systemDark),
+      `the token computed ${systemLight.token} and ${systemDark.token}`,
+    );
+    out[key('mode-system')] = cell(
+      systemDark.scheme === 'dark' && systemLight.scheme === 'light' && systemDark.rule === DARK_RULE && systemLight.rule === INK.light
+        && !systemDark.dark && systemDark.klass === INK.dark && untouched(systemDark),
+      `color-scheme ${systemLight.scheme} and ${systemDark.scheme}, the dark rule gave ${systemLight.rule} and ${systemDark.rule}, class ${systemDark.dark}`,
+    );
+    out[key('mode-light')] = await probe(async () => {
+      // On a dark machine, the switch on dark: a forced light site still shows light, and its dark rule stays out.
+      const seen = await seeOnCanvas(theme('light'), 'dark', 'dark');
+      return cell(seen.scheme === 'light' && seen.token === INK.light && seen.rule === INK.light, `color-scheme ${seen.scheme}, token ${seen.token}, rule ${seen.rule}`);
+    });
+    out[key('mode-dark')] = await probe(async () => {
+      // On a light machine: the dark values, the class, the dark rule, and the editor's own
+      // dark variables and `&:is(.dark *)` as the published page of that site has them.
+      const seen = await seeOnCanvas(theme('dark'), 'light');
+      const published = await see(theme('dark'), 'light');
+      const ok = seen.scheme === 'dark' && seen.dark && seen.token === INK.dark && seen.rule === DARK_RULE
+        && seen.border === published.border && seen.background === published.background
+        && seen.klass === DARK_CLASS_RULE && published.klass === DARK_CLASS_RULE && untouched(seen);
+      return cell(ok, `color-scheme ${seen.scheme}, class ${seen.dark}, token ${seen.token}, rule ${seen.rule}, --border ${seen.border} vs ${published.border}, --background ${seen.background} vs ${published.background}, class rule ${seen.klass} vs ${published.klass}`);
+    });
+    const withDocument = await seeOnCanvas(theme('system', DOCUMENT), 'light', 'dark');
+    out[key('document-background')] = cell(
+      withDocument.frame.background === GROUND.dark && withDocument.editor.floatingBackground !== GROUND.dark,
+      `frame background ${withDocument.frame.background}, floating ${withDocument.editor.floatingBackground}`,
+    );
+    out[key('document-color')] = cell(withDocument.frame.color === INK.dark && withDocument.plain === INK.dark, `frame colour ${withDocument.frame.color}, text ${withDocument.plain}`);
+    out[key('document-font')] = cell(
+      withDocument.frame.font.startsWith('Fraunces') && withDocument.fontLoaded && untouched(withDocument),
+      `frame font ${withDocument.frame.font}, label ${withDocument.editor.labelFont}`,
+    );
+    return out;
+  }
+
   it('measures what is built, and names nothing that is not a row', async () => {
-    const results = { format: formatCells(), renderer: await publishedCells() };
+    const results = { format: formatCells(), renderer: await publishedCells(), canvas: await canvasCells() };
     const rows = new Set(pageItemEntries().map((e) => rowKey(e.kind, e.id)));
     for (const surface of Object.values(results)) {
       for (const name of Object.keys(surface)) expect(rows.has(name), name).toBe(true);

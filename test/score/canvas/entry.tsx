@@ -15,6 +15,7 @@ import { useStore as editorStore } from '@/hooks/useStore';
 import { getUndoManager } from '@/stores/RootStore';
 import ComponentModel, { type ComponentInstance } from '@/models/ComponentModel';
 import type { PageBase } from '@/lib/site/pageBase';
+import type { ColorScheme, SiteTheme } from '@/lib/site/theme';
 
 interface PlaceOptions {
   /** Keep every breakpoint frame, for a contract that compares them. */
@@ -30,6 +31,8 @@ interface ProbeWindow {
     setPreviewRule: (preview: { componentId: string; ruleId: string } | null) => void;
     setPreviewOpen: (open: boolean) => void;
     setPageBase: (base: PageBase) => void;
+    setTheme: (theme: SiteTheme) => void;
+    setPreviewColorMode: (mode: ColorScheme) => void;
     setRuleStyle: (componentId: string, ruleId: string, style: Record<string, unknown>) => void;
     setStyle: (componentId: string, style: Record<string, unknown>) => void;
     toggleLock: (componentId: string) => void;
@@ -96,6 +99,13 @@ const nodeById = (id: string): ComponentInstance | undefined => {
     const result = project.updateSiteSettings({ ...project.site, pageBase: base });
     if (!result.ok) throw new Error(`the settings were refused: ${JSON.stringify(result.errors)}`);
   },
+  setTheme: (theme) => {
+    const project = editorStore().editorUI.currentProject;
+    if (!project) throw new Error('the editor opened no project');
+    const result = project.updateTheme(theme);
+    if (!result.ok) throw new Error(`the theme was refused: ${JSON.stringify(result.errors)}`);
+  },
+  setPreviewColorMode: (mode) => editorStore().editorUI.setPreviewColorMode(mode),
   setRuleStyle: (componentId, ruleId, style) => {
     const node = nodeById(componentId);
     if (!node) throw new Error(`no node ${componentId}`);

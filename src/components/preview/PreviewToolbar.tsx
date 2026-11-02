@@ -33,6 +33,8 @@ export interface PreviewToolbarProps {
   onPageChange: (pageId: string) => void;
   /** Which product a product page shows; renders nothing on any other page. */
   productPicker?: React.ReactNode;
+  /** Light and Dark for a site that follows each visitor's system (ColorModeSwitch). */
+  colorModeSwitch?: React.ReactNode;
 }
 
 const PreviewToolbar = observer(({
@@ -52,6 +54,7 @@ const PreviewToolbar = observer(({
   currentPageId,
   onPageChange,
   productPicker,
+  colorModeSwitch,
 }: PreviewToolbarProps) => {
   const isDevice = frame === 'device';
 
@@ -120,6 +123,7 @@ const PreviewToolbar = observer(({
         ))}
       </select>
       {productPicker}
+      {colorModeSwitch}
 
       <div className="flex-1" />
 
