@@ -397,6 +397,8 @@ export interface BuildResponsiveCssOptions {
   definitions?: readonly DefinitionInput[];
   /** Authored rules, in walk order. They follow every Normal block. */
   authored?: readonly AuthoredRulesInput[];
+  /** Adds FIELD_SIZING_GUARD: true on a page holding a stored rule or definition. */
+  fieldGuard?: boolean;
   /** Called for every definition or authored rule left out of the sheet. */
   onDropRule?: (dropped: DroppedRule) => void;
 }
@@ -526,6 +528,162 @@ function serializeBlocks(blocks: readonly RuleBlock[]): string {
 const ENCODER = new TextEncoder();
 const textBytes = (text: string): number => ENCODER.encode(text).length;
 
+/** Functions that fetch what they are given, in lower case. */
+const FETCHING: ReadonlySet<string> = new Set(['url', 'image-set', '-webkit-image-set', 'image', 'src', 'cross-fade', '-webkit-cross-fade']);
+
+/**
+ * Any name ending like one. Refusing `--src()` or `-moz-image-set()` costs nothing
+ * real, and a custom function can return an address the text does not show.
+ */
+const FETCHING_TAIL = /(?:url|image-set|image|src|cross-fade)$/;
+
+/**
+ * What may stand inside a fetching function besides its addresses. A whitelist,
+ * because `image-set(var(--x) 1x)` fetches a bare string held elsewhere, so
+ * anything that fills in a value later cannot be proven to be no address.
+ */
+const INSIDE_FETCHING = /^(?:type|calc|rgba?|hsla?|hwb|lab|lch|oklab|oklch|color|color-mix|(?:repeating-)?(?:linear|radial|conic)-gradient)$/;
+
+const ADDRESS_REFUSAL = 'a rule cannot hold an external address: use a site path with one leading / or data:';
+
+/**
+ * True for an address a rule may hold: a site path with one leading `/`, or
+ * `data:`. Compared the way the URL parser reads it, which removes tabs and
+ * newlines anywhere, so `/` + newline + `/host` is the two slashes it becomes.
+ */
+function isAllowedAddress(raw: string): boolean {
+  const address = raw.replace(/[\t\n\r\f]/g, '').trim();
+  return /^\/(?!\/)/.test(address) || /^data:/i.test(address);
+}
+
+/** The name standing directly before the `(` at `open`, in lower case, non-ASCII characters included. */
+export function rawFunctionName(text: string, open: number): string {
+  let start = open;
+  while (start > 0 && /[A-Za-z0-9_\-\u0080-￿]/.test(text[start - 1])) start--;
+  return text.slice(start, open).toLowerCase();
+}
+
+export type ValueProblem = { kind: 'shape' | 'address'; reason: string };
+
+const shapeProblem = (reason: string): ValueProblem => ({ kind: 'shape', reason });
+const addressProblem = (reason: string = ADDRESS_REFUSAL): ValueProblem => ({ kind: 'address', reason });
+
+/** Whether a fetching function's name is one that can be read, and may stand here. */
+function functionProblem(name: string, insideFetching: boolean): ValueProblem | null {
+  if (FETCHING.has(name)) return null;
+  // A non-ASCII name is read differently by browsers and by the specification.
+  if (FETCHING_TAIL.test(name.replace(/[^\x00-\x7f]/g, ''))) return addressProblem();
+  if (insideFetching && !INSIDE_FETCHING.test(name)) {
+    return addressProblem(`${name || 'a block'}() inside a function that fetches cannot be proven to be no address`);
+  }
+  return null;
+}
+
+/**
+ * Read a value the way the browser tokenizes it, and report the first thing that
+ * stops it being contained in its declaration or that holds an external address.
+ * Plain strings are text: `content:"https://example.com"` is fine. Call only on
+ * text with no backslash, because an escape can spell any of these names.
+ *
+ * A `;` counts as data only inside a string or an unquoted url(), as in
+ * isContainedValue (responsiveCss.ts). `<` and `>` count as data only in a string,
+ * where the emitter owns the output.
+ */
+export function scanValue(text: string): ValueProblem | null {
+  const stack: string[] = [];
+  // A count, not a walk of the stack: a stored value can be any length.
+  let fetching = 0;
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === '"' || ch === "'") {
+      const close = text.indexOf(ch, i + 1);
+      if (close === -1) return shapeProblem('a quote is left open');
+      if (fetching > 0 && stack[stack.length - 1] !== 'type' && !isAllowedAddress(text.slice(i + 1, close))) return addressProblem();
+      i = close + 1;
+    } else if (ch === '(') {
+      const name = rawFunctionName(text, i);
+      const problem = functionProblem(name, fetching > 0);
+      if (problem) return problem;
+      let body = i + 1;
+      while (text[body] === ' ') body++;
+      if (name === 'url' && text[body] !== '"' && text[body] !== "'") {
+        const end = text.indexOf(')', body);
+        if (end === -1) return addressProblem();
+        const address = text.slice(body, end).trim();
+        if (/["'(\s]/.test(address)) return shapeProblem('a url() does not parse');
+        const markup = /[<>]/.exec(address);
+        if (markup) return shapeProblem(`a ${markup[0]} outside a string could end the style element`);
+        if (!isAllowedAddress(address)) return addressProblem();
+        i = end + 1;
+      } else {
+        stack.push(name);
+        if (FETCHING.has(name)) fetching++;
+        i++;
+      }
+    } else if (ch === '[') {
+      stack.push('[');
+      i++;
+    } else if (ch === ')' || ch === ']') {
+      const open = stack.pop();
+      if (open === undefined || (open === '[') !== (ch === ']')) return shapeProblem('its brackets do not balance');
+      if (FETCHING.has(open)) fetching--;
+      i++;
+    } else if (ch === ';') {
+      return shapeProblem('a ; outside a string ends the declaration');
+    } else if (ch === '<' || ch === '>') {
+      return shapeProblem(`a ${ch} outside a string could end the style element`);
+    } else {
+      i++;
+    }
+  }
+  return stack.length > 0 ? shapeProblem('a bracket is left open') : null;
+}
+
+/**
+ * True when a plain style value could give a rule an external address through
+ * `var()`: a custom property holding a fetching function that cannot be proven to
+ * hold only a site path or `data:`. Normal is not filtered for escapes the way a
+ * rule is, and `\75rl(...)` is a real url(), so an escape or a comment proves
+ * nothing and counts. Called at emission for every `--*` value of a page with an
+ * authored rule, which needs no rule on that node.
+ */
+export function hasExternalAddress(value: unknown): boolean {
+  if (typeof value !== 'string') return false;
+  if (value.includes('\\') || value.includes('/*')) return true;
+  const problem = scanValue(value);
+  if (problem === null) return false;
+  // A value left open is closed by the end of an inline style, so a broken shape
+  // proves nothing either as soon as a fetching name is in it.
+  return problem.kind === 'address' || /(?:url|image-set|image|src|cross-fade)\s*\(/i.test(value);
+}
+
+/**
+ * The last line of a sheet on a page with a stored rule or definition. A control
+ * sized by its text turns what a visitor types into a width, one stored font per
+ * character can magnify it, and a container query can read it, with no selector
+ * touching `value`. A fixed width carries nothing, whichever threshold is chosen.
+ * This is a constant on purpose: it needs no parsing and it cannot vary per tenant.
+ * It lands in the page's own sheet only, because the canvas shares a document with
+ * the editor's own fields. It does not reach a shadow tree and a stored rule could
+ * outrank it, so rules.ts refuses `fieldSizing` in a rule and setsFieldSizing drops
+ * it from Normal. See the plan: this narrows the route and an enforced Content
+ * Security Policy closes it.
+ */
+export const FIELD_SIZING_GUARD = 'input,textarea,select{field-sizing:fixed!important}';
+
+/**
+ * True when a plain style entry would set `field-sizing` inline, where it would
+ * beat the guard: under its own key, or smuggled after a `;` in another value,
+ * escapes resolved. A mention that stays inside its declaration sets nothing, as in
+ * `transition:field-sizing 1s` or `content:"field-sizing"`.
+ */
+export function setsFieldSizing(key: string, value: unknown): boolean {
+  if (key === 'fieldSizing') return true;
+  if (typeof value !== 'string') return false;
+  return /field-sizing/i.test(withoutEscapes(value)) && !isContainedValue(value);
+}
+
 /**
  * What `syntax` of an `@property` may be, exactly as stored. A constant, never
  * stored text: definitionText writes this list's own entry rather than the value
@@ -563,6 +721,9 @@ const DEFINITION_AT_RULES: ReadonlySet<string> = new Set([
   'position-try',
 ]);
 
+/** At most this many blocks in one definition, which is more than a real keyframe list or feature table holds. */
+export const MAX_DEFINITION_BLOCKS = 256;
+
 /** At-rules holding real properties, where a number means pixels as in a style. In the others it stays a number. */
 const PROPERTY_BODIES: ReadonlySet<string> = new Set(['keyframes', 'position-try']);
 
@@ -575,7 +736,8 @@ const BLOCK_SELECTOR = /^@?[A-Za-z0-9%., -]+$/;
  * True when a definition can be written into the sheet. The prelude is built from
  * these fields, so a name that fails here cannot leave the rule, and it cannot
  * replace a name the editor uses either, which is worth a constant check on a
- * sheet the canvas will share. As with isWritableRule, the parser decides the rest.
+ * sheet the canvas will share. No value may hold an external address either, read
+ * by the parser's own scanner. The parser decides the rest.
  */
 function isWritableDefinition(rule: ParsedDefinitionRule): boolean {
   const { atRule, name, style, blocks } = rule;
@@ -585,12 +747,22 @@ function isWritableDefinition(rule: ParsedDefinitionRule): boolean {
   } else if (typeof name !== 'string' || !DEFINITION_NAME.test(name)) {
     return false;
   }
-  if (blocks === undefined) return isStyleMap(style);
+  const stayOnSite = (body: Record<string, unknown>): boolean => !Object.values(body).some(hasExternalAddress);
+  if (blocks === undefined) return isStyleMap(style) && stayOnSite(style);
   return (
     style === undefined &&
     Array.isArray(blocks) &&
-    blocks.every((block) => typeof block?.selector === 'string' && BLOCK_SELECTOR.test(block.selector) && isStyleMap(block.style))
+    blocks.length <= MAX_DEFINITION_BLOCKS &&
+    blocks.every((block) => typeof block?.selector === 'string' && BLOCK_SELECTOR.test(block.selector) && isStyleMap(block.style) && stayOnSite(block.style))
   );
+}
+
+const bodyLength = (body: unknown): number =>
+  isStyleMap(body) ? Object.entries(body).reduce((sum, [key, value]) => sum + key.length + (typeof value === 'string' ? value.length : 0), 0) : 0;
+
+/** A lower bound on a definition's bytes, in characters, so a definition too big to fit costs no text to find out. */
+function definitionLength({ style, blocks }: ParsedDefinitionRule): number {
+  return bodyLength(style) + (Array.isArray(blocks) ? blocks.reduce((sum, block) => sum + bodyLength(block?.style), 0) : 0);
 }
 
 /**
@@ -650,12 +822,13 @@ function definitionTexts(
   let full = false;
   for (const { node, rule } of definitions) {
     const drop = (reason: string) => onDropRule({ className: node, ruleId: rule.id, reason });
-    if (full) {
+    if (full || spent.bytes + definitionLength(rule) > MAX_RULE_BYTES_PER_PAGE) {
+      full = true;
       drop('the page is over its rule limit');
       continue;
     }
     if (!isWritableDefinition(rule)) {
-      drop('its name, a block or its descriptors could leave the rule');
+      drop('its name, a block, a descriptor or an address could leave the rule or the site');
       continue;
     }
     const built = definitionText(rule);
@@ -778,5 +951,6 @@ export function buildResponsiveCss(
   }
   const authored = serializeBlocks(authoredBlocks(options.authored ?? [], ordered, onDropRule, spent));
   if (authored) parts.push(authored);
+  if (options.fieldGuard) parts.push(FIELD_SIZING_GUARD);
   return withoutMarkup(parts.join('\n'), onDropRule);
 }

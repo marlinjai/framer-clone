@@ -32,15 +32,30 @@
 //     Content Security Policy on published pages closes it, which is open question
 //     1 of the plan. A selector also cannot read what a visitor types: attribute
 //     selectors on `value` with an operator are refused, because React mirrors a
-//     controlled input's value into the attribute.
+//     controlled input's value into the attribute. A control sized by its text would
+//     give that back as a width a container query can read, so `fieldSizing` is
+//     refused here and the sheet fixes it, see FIELD_SIZING_GUARD. A definition adds
+//     a timing switch to the same route: a delayed keyframe can flip a custom
+//     property Normal reads, which reports how long a visitor stayed. Only the
+//     policy closes that.
 //   - The editor. Global names must carry the `u-` prefix, because on the canvas
 //     the document is the editor itself.
 //
 // PURE and client-safe: no React, no MST, no new dependency.
 
-import { PROPERTY_SYNTAXES, SAFE_PROPERTY, UNSAFE_VALUE, cssValueText, isStyleMap } from '@/lib/responsive/responsiveCss';
+import {
+  MAX_DEFINITION_BLOCKS,
+  PROPERTY_SYNTAXES,
+  SAFE_PROPERTY,
+  UNSAFE_VALUE,
+  cssValueText,
+  hasExternalAddress,
+  isStyleMap,
+  rawFunctionName,
+  scanValue,
+} from '@/lib/responsive/responsiveCss';
 
-export { PROPERTY_SYNTAXES };
+export { MAX_DEFINITION_BLOCKS, PROPERTY_SYNTAXES, hasExternalAddress };
 
 /** One rule that applies to the node or to something inside it. */
 export interface SelectorRule {
@@ -368,7 +383,7 @@ function withoutLessThan(text: string): string {
     }
     const end = closingParen(text, i);
     const body = text.slice(i + 1, end);
-    const name = functionName(text, i);
+    const name = rawFunctionName(text, i);
     const queries = name === '' || name === 'style';
     out += `(${queries && body.includes('<') ? (flippedRange(body) ?? withoutLessThan(body)) : body})`;
     i = end + 1;
@@ -463,11 +478,21 @@ function refusedBlockSelector(atRule: string, selector: unknown): string | null 
   return FEATURE_BLOCKS.has(selector.toLowerCase()) ? null : `${selector} is not a font feature block`;
 }
 
+/** True for a stored rule the parser refuses by count alone, which is cheap to ask of any input. */
+export function holdsTooManyBlocks(rule: unknown): boolean {
+  return isPlainObject(rule) && Array.isArray(rule.blocks) && rule.blocks.length > MAX_DEFINITION_BLOCKS;
+}
+
 /** Why a definition's body is refused, beyond what every value is checked for. */
 function refusedDescriptors(atRule: string, style: Record<string, unknown>): string | null {
   if (atRule === 'font-face') {
     const family = style.fontFamily;
     if (typeof family !== 'string' || !PLAIN_NAME.test(unquote(family.trim()))) return '@font-face needs a fontFamily starting u-';
+    // Whether a face resolves tells a measuring page what the visitor has installed,
+    // and nothing a site needs depends on that.
+    if (typeof style.src === 'string' && /local\s*\(/i.test(style.src.replace(/"[^"]*"|'[^']*'/g, '""'))) {
+      return '@font-face takes site paths and data: only, because local() reveals the fonts a visitor has';
+    }
   }
   if (atRule === 'property') {
     if (typeof style.syntax !== 'string' || !PROPERTY_SYNTAXES.has(style.syntax)) return 'the syntax of @property comes from a fixed list';
@@ -498,6 +523,7 @@ function parseDefinition(rule: Record<string, unknown>, id: string): Parsed<Pars
 
   if (rule.style !== undefined) return refuse(`@${atRule} takes blocks, not descriptors`);
   if (!Array.isArray(rule.blocks) || rule.blocks.length === 0) return refuse(`@${atRule} needs blocks`);
+  if (holdsTooManyBlocks(rule)) return refuse(`@${atRule} holds at most ${MAX_DEFINITION_BLOCKS} blocks`);
   for (const block of rule.blocks as unknown[]) {
     if (!isPlainObject(block)) return refuse('a block needs a selector and a style');
     const reason = refusedBlockSelector(atRule, block.selector) ?? refusedBody(block.style, { maps: false });
@@ -536,118 +562,6 @@ export function definitionIdentity(rule: ParsedDefinitionRule): string {
 
 // --- values and addresses -------------------------------------------------
 
-/** Functions that fetch what they are given, in lower case. */
-const FETCHING: ReadonlySet<string> = new Set(['url', 'image-set', '-webkit-image-set', 'image', 'src', 'cross-fade', '-webkit-cross-fade']);
-
-/**
- * Any name ending like one. Refusing `--src()` or `-moz-image-set()` costs nothing
- * real, and a custom function can return an address the text does not show.
- */
-const FETCHING_TAIL = /(?:url|image-set|image|src|cross-fade)$/;
-
-/**
- * What may stand inside a fetching function besides its addresses. A whitelist,
- * because `image-set(var(--x) 1x)` fetches a bare string held elsewhere, so
- * anything that fills in a value later cannot be proven to be no address.
- */
-const INSIDE_FETCHING = /^(?:type|calc|rgba?|hsla?|hwb|lab|lch|oklab|oklch|color|color-mix|(?:repeating-)?(?:linear|radial|conic)-gradient)$/;
-
-const ADDRESS_REFUSAL = 'a rule cannot hold an external address: use a site path with one leading / or data:';
-
-/**
- * True for an address a rule may hold: a site path with one leading `/`, or
- * `data:`. Compared the way the URL parser reads it, which removes tabs and
- * newlines anywhere, so `/` + newline + `/host` is the two slashes it becomes.
- */
-function isAllowedAddress(raw: string): boolean {
-  const address = raw.replace(/[\t\n\r\f]/g, '').trim();
-  return /^\/(?!\/)/.test(address) || /^data:/i.test(address);
-}
-
-/** The name standing directly before the `(` at `open`, in lower case. */
-function functionName(text: string, open: number): string {
-  let start = open;
-  while (start > 0 && /[A-Za-z0-9_\-\u0080-￿]/.test(text[start - 1])) start--;
-  return text.slice(start, open).toLowerCase();
-}
-
-type ValueProblem = { kind: 'shape' | 'address'; reason: string };
-
-const shapeProblem = (reason: string): ValueProblem => ({ kind: 'shape', reason });
-const addressProblem = (reason: string = ADDRESS_REFUSAL): ValueProblem => ({ kind: 'address', reason });
-
-/** Whether a fetching function's name is one that can be read, and may stand here. */
-function functionProblem(name: string, insideFetching: boolean): ValueProblem | null {
-  if (FETCHING.has(name)) return null;
-  // A non-ASCII name is read differently by browsers and by the specification.
-  if (FETCHING_TAIL.test(name.replace(/[^\x00-\x7f]/g, ''))) return addressProblem();
-  if (insideFetching && !INSIDE_FETCHING.test(name)) {
-    return addressProblem(`${name || 'a block'}() inside a function that fetches cannot be proven to be no address`);
-  }
-  return null;
-}
-
-/**
- * Read a value the way the browser tokenizes it, and report the first thing that
- * stops it being contained in its declaration or that holds an external address.
- * Plain strings are text: `content:"https://example.com"` is fine. Call only on
- * text with no backslash, because an escape can spell any of these names.
- *
- * A `;` counts as data only inside a string or an unquoted url(), as in
- * isContainedValue (responsiveCss.ts). `<` and `>` count as data only in a string,
- * where the emitter owns the output.
- */
-function scanValue(text: string): ValueProblem | null {
-  const stack: string[] = [];
-  // A count, not a walk of the stack: a stored value can be any length.
-  let fetching = 0;
-  let i = 0;
-  while (i < text.length) {
-    const ch = text[i];
-    if (ch === '"' || ch === "'") {
-      const close = text.indexOf(ch, i + 1);
-      if (close === -1) return shapeProblem('a quote is left open');
-      if (fetching > 0 && stack[stack.length - 1] !== 'type' && !isAllowedAddress(text.slice(i + 1, close))) return addressProblem();
-      i = close + 1;
-    } else if (ch === '(') {
-      const name = functionName(text, i);
-      const problem = functionProblem(name, fetching > 0);
-      if (problem) return problem;
-      let body = i + 1;
-      while (text[body] === ' ') body++;
-      if (name === 'url' && text[body] !== '"' && text[body] !== "'") {
-        const end = text.indexOf(')', body);
-        if (end === -1) return addressProblem();
-        const address = text.slice(body, end).trim();
-        if (/["'(\s]/.test(address)) return shapeProblem('a url() does not parse');
-        const markup = /[<>]/.exec(address);
-        if (markup) return shapeProblem(`a ${markup[0]} outside a string could end the style element`);
-        if (!isAllowedAddress(address)) return addressProblem();
-        i = end + 1;
-      } else {
-        stack.push(name);
-        if (FETCHING.has(name)) fetching++;
-        i++;
-      }
-    } else if (ch === '[') {
-      stack.push('[');
-      i++;
-    } else if (ch === ')' || ch === ']') {
-      const open = stack.pop();
-      if (open === undefined || (open === '[') !== (ch === ']')) return shapeProblem('its brackets do not balance');
-      if (FETCHING.has(open)) fetching--;
-      i++;
-    } else if (ch === ';') {
-      return shapeProblem('a ; outside a string ends the declaration');
-    } else if (ch === '<' || ch === '>') {
-      return shapeProblem(`a ${ch} outside a string could end the style element`);
-    } else {
-      i++;
-    }
-  }
-  return stack.length > 0 ? shapeProblem('a bracket is left open') : null;
-}
-
 /** Why a value's text is refused, or null. A tab or newline is left to the emitter to normalise. */
 function refusedValueText(text: string): string | null {
   if (UNSAFE_VALUE.test(text)) return 'the value holds script-capable or import-capable CSS';
@@ -667,6 +581,8 @@ function refusedBody(style: unknown, options: { maps: boolean; skip?: string }):
   for (const [key, stored] of Object.entries(style)) {
     if (!SAFE_PROPERTY.test(key)) return `${key} is not a property name`;
     if (key === options.skip) continue;
+    // A rule can outrank the sheet's guard, so this one cannot be left to it.
+    if (key === 'fieldSizing') return 'fieldSizing would let a control grow with what a visitor types, which a rule could read';
     if (!isStyleMap(stored)) {
       const reason = refusedScalar(key, stored);
       if (reason) return reason;
@@ -679,24 +595,6 @@ function refusedBody(style: unknown, options: { maps: boolean; skip?: string }):
     }
   }
   return null;
-}
-
-/**
- * True when a plain style value could give a rule an external address through
- * `var()`: a custom property holding a fetching function that cannot be proven to
- * hold only a site path or `data:`. Normal is not filtered for escapes the way a
- * rule is, and `\75rl(...)` is a real url(), so an escape or a comment proves
- * nothing and counts. Called at emission for every `--*` value of a page with an
- * authored rule, which needs no rule on that node.
- */
-export function hasExternalAddress(value: unknown): boolean {
-  if (typeof value !== 'string') return false;
-  if (value.includes('\\') || value.includes('/*')) return true;
-  const problem = scanValue(value);
-  if (problem === null) return false;
-  // A value left open is closed by the end of an inline style, so a broken shape
-  // proves nothing either as soon as a fetching name is in it.
-  return problem.kind === 'address' || /(?:url|image-set|image|src|cross-fade)\s*\(/i.test(value);
 }
 
 // --- whole rules ----------------------------------------------------------

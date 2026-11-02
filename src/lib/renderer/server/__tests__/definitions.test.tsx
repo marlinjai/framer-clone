@@ -8,9 +8,17 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { ComponentNode, CommerceServerRepository } from '@/lib/renderer/publish/hydrateBindings';
 import type { CmsReadRepository } from '@/server/cms';
 import type { BreakpointRef } from '@/lib/responsive/cascade';
-import { buildResponsiveCss, MAX_RULE_BYTES_PER_PAGE, MAX_RULES_PER_PAGE, type DroppedRule } from '@/lib/responsive/responsiveCss';
+import {
+  buildResponsiveCss,
+  FIELD_SIZING_GUARD,
+  MAX_DEFINITION_BLOCKS,
+  MAX_RULE_BYTES_PER_PAGE,
+  MAX_RULES_PER_PAGE,
+  setsFieldSizing,
+  type DroppedRule,
+} from '@/lib/responsive/responsiveCss';
 import { collectPageFonts, FONT_LIBRARY } from '@/lib/fonts/registry';
-import { PROPERTY_SYNTAXES, readRules, type ParsedDefinitionRule } from '@/lib/rules/rules';
+import { parseRule, PROPERTY_SYNTAXES, readRules, type ParsedDefinitionRule } from '@/lib/rules/rules';
 import { applyResponsiveStyles } from '../applyResponsiveStyles';
 import { renderPublishedPage } from '../renderPublishedPage';
 import { componentSnapshotToNode } from '../snapshotToComponentNode';
@@ -18,6 +26,9 @@ import { componentSnapshotToNode } from '../snapshotToComponentNode';
 afterEach(() => {
   vi.restoreAllMocks();
 });
+
+/** A sheet on a page holding a stored rule or definition, which always ends with the guard. */
+const withGuard = (text: string): string => `${text}\n${FIELD_SIZING_GUARD}`;
 
 const BPS: BreakpointRef[] = [
   { id: 'desktop', minWidth: 1280 },
@@ -42,18 +53,18 @@ const cssOf = (rules: unknown[]): string => applyResponsiveStyles(node('n', { ru
 describe('what the sheet holds', () => {
   it.each<[string, unknown, string]>([
     ['@keyframes', { id: 'r', define: '@keyframes u-spin', blocks: [{ selector: 'from', style: { opacity: 0 } }, { selector: '50%, 75.5%', style: { opacity: 0.5 } }, { selector: 'to', style: { opacity: 1, translate: '0 10px' } }] }, '@keyframes u-spin{\nfrom{opacity:0}\n50%, 75.5%{opacity:0.5}\nto{opacity:1;translate:0 10px}\n}'],
-    ['@font-face', { id: 'r', define: '@font-face', style: { fontFamily: '"u-brand"', src: 'url(/a.woff2) format("woff2"), local("Arial")', fontWeight: 700, fontDisplay: 'swap' } }, '@font-face{font-family:"u-brand";src:url(/a.woff2) format("woff2"), local("Arial");font-weight:700;font-display:swap}'],
+    ['@font-face', { id: 'r', define: '@font-face', style: { fontFamily: '"u-brand"', src: 'url(/a.woff2) format("woff2"), url(data:font/woff2;base64,AAAA)', fontWeight: 700, fontDisplay: 'swap' } }, '@font-face{font-family:"u-brand";src:url(/a.woff2) format("woff2"), url(data:font/woff2;base64,AAAA);font-weight:700;font-display:swap}'],
     ['@font-feature-values', { id: 'r', define: '@font-feature-values u-brand', blocks: [{ selector: '@styleset', style: { nice: 1, fancy: '2 3' } }] }, '@font-feature-values u-brand{\n@styleset{nice:1;fancy:2 3}\n}'],
     ['@font-palette-values', { id: 'r', define: '@font-palette-values --u-warm', style: { fontFamily: 'u-brand', basePalette: 2 } }, '@font-palette-values --u-warm{font-family:u-brand;base-palette:2}'],
     ['@counter-style', { id: 'r', define: '@counter-style u-stars', style: { system: 'cyclic', symbols: '"*"', pad: '2 "0"' } }, '@counter-style u-stars{system:cyclic;symbols:"*";pad:2 "0"}'],
     ['@position-try', { id: 'r', define: '@position-try --u-under', style: { top: 'anchor(bottom)', marginTop: 8 } }, '@position-try --u-under{top:anchor(bottom);margin-top:8px}'],
     ['@property', { id: 'r', define: '@property --u-accent', style: { syntax: '"<color>"', inherits: 'false', initialValue: 'red' } }, '@property --u-accent{syntax:"\\3c color>";inherits:false;initial-value:red}'],
   ])('writes %s from the parsed name, never the stored text', (_, rule, expected) => {
-    expect(cssOf([rule])).toBe(expected);
+    expect(cssOf([rule])).toBe(withGuard(expected));
   });
 
   it('writes the name it parsed, so an odd spelling of the at-rule does not reach the page', () => {
-    expect(cssOf([{ id: 'r', define: '  @KEYFRAMES   u-spin ', blocks: [{ selector: 'to', style: { opacity: 0 } }] }])).toBe('@keyframes u-spin{\nto{opacity:0}\n}');
+    expect(cssOf([{ id: 'r', define: '  @KEYFRAMES   u-spin ', blocks: [{ selector: 'to', style: { opacity: 0 } }] }])).toBe(withGuard('@keyframes u-spin{\nto{opacity:0}\n}'));
   });
 
   it('puts definitions before every Normal block and every rule, whichever node holds them', () => {
@@ -98,7 +109,7 @@ describe('a definition on a node', () => {
 
   it('is global: the sheet holds it once however deep it sits', () => {
     const tree = node('a', {}, [node('b', {}, [node('c', { rules: [keyframes('u-deep')] })])]);
-    expect(applyResponsiveStyles(tree, BPS).css).toBe('@keyframes u-deep{\nto{opacity:0}\n}');
+    expect(applyResponsiveStyles(tree, BPS).css).toBe(withGuard('@keyframes u-deep{\nto{opacity:0}\n}'));
   });
 
   it('is refused on a text node, which has no element, with a report', () => {
@@ -147,7 +158,7 @@ describe('identity', () => {
   it('dedupes identical definitions across nodes, whatever their ids, with no warning', () => {
     const warn = silence();
     const tree = node('a', { rules: [keyframes('u-x', { opacity: 0 }, 'one')] }, [node('b', { rules: [keyframes('u-x', { opacity: 0 }, 'two')] })]);
-    expect(applyResponsiveStyles(tree, BPS).css).toBe('@keyframes u-x{\nto{opacity:0}\n}');
+    expect(applyResponsiveStyles(tree, BPS).css).toBe(withGuard('@keyframes u-x{\nto{opacity:0}\n}'));
     expect(warn).not.toHaveBeenCalled();
   });
 
@@ -162,7 +173,7 @@ describe('identity', () => {
     const warn = silence();
     const loser = () => node('b', { rules: [keyframes('u-x', { opacity: 1 })] });
     const { css } = applyResponsiveStyles(node('a', { rules: [keyframes('u-x', { opacity: 0 })] }, [loser(), loser()]), BPS);
-    expect(css).toBe('@keyframes u-x{\nto{opacity:0}\n}');
+    expect(css).toBe(withGuard('@keyframes u-x{\nto{opacity:0}\n}'));
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0][0]).toContain('left out 1 rule(s)');
   });
@@ -279,8 +290,142 @@ describe('the page caps', () => {
     const warn = silence();
     const huge = face({ src: `url(data:font/woff2;base64,${'A'.repeat(MAX_RULE_BYTES_PER_PAGE)})` });
     const { css } = applyResponsiveStyles(node('n', { rules: [huge, { id: 'h', selector: '&:hover', style: { color: 'red' } }] }), BPS);
-    expect(css).toBe('.fc_r-n.fc_r-n:hover{color:red}');
+    expect(css).toBe(withGuard('.fc_r-n.fc_r-n:hover{color:red}'));
     expect(warn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('the field sizing guard', () => {
+  const hover = { id: 'h', selector: '&:hover', style: { color: 'blue' } };
+
+  it('ends the sheet of a page with a selector rule, and of a page with only a definition', () => {
+    expect(cssOf([hover]).endsWith(`\n${FIELD_SIZING_GUARD}`)).toBe(true);
+    expect(cssOf([keyframes('u-x')]).endsWith(`\n${FIELD_SIZING_GUARD}`)).toBe(true);
+    expect(cssOf([face({})]).endsWith(`\n${FIELD_SIZING_GUARD}`)).toBe(true);
+    expect(FIELD_SIZING_GUARD).toBe('input,textarea,select{field-sizing:fixed!important}');
+  });
+
+  it('stays off a page with no rule, and a page whose rules were all refused', () => {
+    const warn = silence();
+    expect(applyResponsiveStyles(node('a', { style: { color: { base: 'red', tablet: 'blue' } } }), BPS).css).not.toContain('field-sizing');
+    expect(cssOf([keyframes('spin')])).toBe('');
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves a plain field-sizing alone on a page with no rule, which nothing can read', () => {
+    const { root } = applyResponsiveStyles(node('a', { style: { fieldSizing: 'content' } }), BPS);
+    expect(propsOf(root).style).toEqual({ fieldSizing: 'content' });
+  });
+
+  it.each<[string, Record<string, unknown>, Record<string, unknown> | undefined]>([
+    ['its own key', { fieldSizing: 'content' }, undefined],
+    ['an important value, which would beat the guard inline', { fieldSizing: 'content!important' }, undefined],
+    ['a breakpoint map', { fieldSizing: { base: 'fixed', tablet: 'content' } }, undefined],
+    ['a value smuggled after a ;', { color: 'red;field-sizing:content!important' }, undefined],
+    ['an escaped smuggle', { color: 'red;fi\\65ld-sizing:content!important' }, undefined],
+    ['a smuggle in a map', { color: { base: 'red;field-sizing:content' } }, undefined],
+    ['one entry among others', { margin: '0', fieldSizing: 'content' }, { margin: '0' }],
+  ])('drops an inline field-sizing on a page with a rule: %s', (_, style, kept) => {
+    const warn = silence();
+    const tree = node('a', {}, [node('b', { rules: [keyframes('u-x')] }), { id: 'i', type: 'input', props: { style } } as ComponentNode]);
+    const { root } = applyResponsiveStyles(tree, BPS);
+    expect(propsOf(root.children?.[1]).style).toEqual(kept);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it.each<[string, unknown, boolean]>([
+    ['fieldSizing', 'fixed', true],
+    ['transition', 'field-sizing 1s', false],
+    ['content', '"field-sizing:content"', false],
+    ['content', '"a;field-sizing:content"', false],
+    ['color', 'red', false],
+    ['width', 7, false],
+  ])('reads %s: %s', (key, value, sets) => {
+    expect(setsFieldSizing(key, value)).toBe(sets);
+  });
+
+  it.each<[string, unknown]>([
+    ['on the node', { id: 'r', selector: '&', style: { fieldSizing: 'content' } }],
+    ['on a control inside it, which outranks the guard', { id: 'r', selector: '& input', style: { fieldSizing: 'content!important' } }],
+    ['in a breakpoint map', { id: 'r', selector: '& input', style: { fieldSizing: { base: 'content' } } }],
+    ['in a keyframe', keyframes('u-x', { fieldSizing: 'content' })],
+  ])('refuses fieldSizing in a rule: %s', (_, rule) => {
+    expect(parseRule(rule)).toMatchObject({ ok: false, reason: expect.stringContaining('fieldSizing') });
+  });
+});
+
+describe('local() in src', () => {
+  it('refuses the exact payload of the review', () => {
+    const rule = { id: 'r', define: '@font-face', style: { fontFamily: 'u-ka', src: 'local("Menlo-Regular")', unicodeRange: 'U+61', sizeAdjust: '3000%' } };
+    expect(parseRule(rule)).toMatchObject({ ok: false, reason: expect.stringContaining('local()') });
+  });
+
+  it.each(['local(Menlo)', 'LOCAL("Menlo")', 'Local( "Menlo" )', 'local ("Menlo")', 'url(/a.woff2), local("Menlo")', 'local("A"), url(data:font/woff2;base64,AAAA)'])('refuses %s', (src) => {
+    expect(parseRule(face({ src }))).toMatchObject({ ok: false });
+  });
+
+  it.each(['url(/a.woff2)', 'url("/a.woff2") format("woff2")', 'url(data:font/woff2;base64,AAAA)', 'url("/local(1).woff2")'])('keeps %s', (src) => {
+    expect(parseRule(face({ src }))).toMatchObject({ ok: true });
+  });
+});
+
+describe('the size of a definition', () => {
+  const frames = (count: number) => Array.from({ length: count }, () => ({ selector: 'to', style: { opacity: 0 } }));
+
+  it('holds the most blocks the cap allows, and refuses one more', () => {
+    expect(parseRule({ id: 'k', define: '@keyframes u-x', blocks: frames(MAX_DEFINITION_BLOCKS) })).toMatchObject({ ok: true });
+    expect(parseRule({ id: 'k', define: '@keyframes u-x', blocks: frames(MAX_DEFINITION_BLOCKS + 1) })).toMatchObject({ ok: false, reason: expect.stringContaining('blocks') });
+  });
+
+  it('refuses the payload of the review by count: 64 definitions of 100,000 blocks', () => {
+    const warn = silence();
+    const blocks = frames(100_000);
+    const rules = Array.from({ length: 64 }, (_, index) => ({ id: `k${index}`, define: `@keyframes u-${index}`, blocks }));
+    expect(readRules({ rules }).refused.map(({ reason }) => reason)).toEqual(rules.map(() => `@keyframes holds at most ${MAX_DEFINITION_BLOCKS} blocks`));
+    expect(cssOf(rules)).toBe('');
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops a hand-built definition over the block cap', () => {
+    const dropped: DroppedRule[] = [];
+    const rule: ParsedDefinitionRule = { kind: 'definition', id: 'k', atRule: 'keyframes', name: 'u-x', blocks: frames(MAX_DEFINITION_BLOCKS + 1) };
+    expect(buildResponsiveCss([], BPS, { definitions: [{ node: 'n', rule }], onDropRule: (d) => dropped.push(d) })).toBe('');
+    expect(dropped).toHaveLength(1);
+  });
+
+  it('checks the size before it builds any text', () => {
+    const dropped: DroppedRule[] = [];
+    // Refused by the sheet if it were ever written, so the reason shows which check came first.
+    const rule: ParsedDefinitionRule = { kind: 'definition', id: 'k', atRule: 'counter-style', name: 'u-x', style: { suffix: `"${'x'.repeat(MAX_RULE_BYTES_PER_PAGE)}"}` } };
+    expect(buildResponsiveCss([], BPS, { definitions: [{ node: 'n', rule }], onDropRule: (d) => dropped.push(d) })).toBe('');
+    expect(dropped).toEqual([{ className: 'n', ruleId: 'k', reason: 'the page is over its rule limit' }]);
+  });
+});
+
+describe('the guard behind the parser, on addresses', () => {
+  const faceWith = (src: string): ParsedDefinitionRule => ({ kind: 'definition', id: 'r', atRule: 'font-face', style: { fontFamily: 'u-x', src } });
+  const frameWith = (style: Record<string, unknown>): ParsedDefinitionRule => ({ kind: 'definition', id: 'r', atRule: 'keyframes', name: 'u-x', blocks: [{ selector: 'to', style }] });
+
+  it.each<[string, ParsedDefinitionRule]>([
+    ['the payload of the review', faceWith('url(https://evil.test/a)')],
+    ['a quoted address', faceWith('url("https://evil.test/a")')],
+    ['a protocol-relative address', faceWith('url(//evil.test/a)')],
+    ['an escape in a string', faceWith('url("\\68ttps://evil.test/a")')],
+    ['a slash hidden by an escape', faceWith('url("/\\/evil.test/a")')],
+    ['src()', faceWith('src("https://evil.test/a")')],
+    ['a bare string in image-set()', frameWith({ backgroundImage: 'image-set("https://evil.test/a" 1x)' })],
+    ['cross-fade()', frameWith({ backgroundImage: 'cross-fade(url(https://evil.test/a), url(/b.png))' })],
+    ['a custom property in a block', frameWith({ '--z': 'url(https://evil.test/a)' })],
+  ])('drops %s, which never met the parser', (_, rule) => {
+    const dropped: DroppedRule[] = [];
+    expect(buildResponsiveCss([], BPS, { definitions: [{ node: 'n', rule }], onDropRule: (d) => dropped.push(d) })).toBe('');
+    expect(dropped).toHaveLength(1);
+  });
+
+  it('keeps a site path, data: and plain text', () => {
+    const css = buildResponsiveCss([], BPS, { definitions: [{ node: 'n', rule: faceWith('url(/a.woff2) format("woff2"), url(data:font/woff2;base64,AAAA)') }, { node: 'n', rule: frameWith({ content: '"https://example.com"' }) }] });
+    expect(css).toContain('@font-face');
+    expect(css).toContain('@keyframes u-x');
   });
 });
 

@@ -7,7 +7,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { ComponentNode, CommerceServerRepository } from '@/lib/renderer/publish/hydrateBindings';
 import type { CmsReadRepository } from '@/server/cms';
 import type { BreakpointRef } from '@/lib/responsive/cascade';
-import { buildResponsiveCss, MAX_RULE_BYTES_PER_PAGE, MAX_RULES_PER_PAGE, withoutMarkup } from '@/lib/responsive/responsiveCss';
+import { buildResponsiveCss, FIELD_SIZING_GUARD, MAX_RULE_BYTES_PER_PAGE, MAX_RULES_PER_PAGE, withoutMarkup } from '@/lib/responsive/responsiveCss';
 import { collectPageFonts } from '@/lib/fonts/registry';
 import { readRules, type ParsedSelectorRule } from '@/lib/rules/rules';
 import { HOVER_GATE } from '@/lib/rules/states';
@@ -19,6 +19,9 @@ import { componentSnapshotToNode } from '../snapshotToComponentNode';
 afterEach(() => {
   vi.restoreAllMocks();
 });
+
+/** A sheet on a page holding a stored rule or definition, which always ends with the guard. */
+const withGuard = (text: string): string => `${text}\n${FIELD_SIZING_GUARD}`;
 
 const BPS: BreakpointRef[] = [
   { id: 'desktop', minWidth: 1280 },
@@ -53,12 +56,11 @@ describe('a rule in the sheet', () => {
       rules: [hover({ color: { base: '#00f', tablet: '#0a0' } })],
     });
     const { root: out, css } = applyResponsiveStyles(root, BPS);
-    expect(css).toBe(
+    expect(css).toBe(withGuard(
       '.fc-a1.fc-a1{color:#111}\n' +
         '@media (max-width:1279.98px){\n.fc-a1.fc-a1{color:#222}\n}\n' +
         '@media (hover:hover) and (pointer:fine){\n.fc_r-a1.fc_r-a1:hover{color:#00f}\n}\n' +
-        '@media (max-width:1279.98px){\n@media (hover:hover) and (pointer:fine){\n.fc_r-a1.fc_r-a1:hover{color:#0a0}\n}\n}',
-    );
+        '@media (max-width:1279.98px){\n@media (hover:hover) and (pointer:fine){\n.fc_r-a1.fc_r-a1:hover{color:#0a0}\n}\n}'));
     expect(out.props).toEqual({ className: 'fc-a1 fc_r-a1' });
   });
 
@@ -72,7 +74,7 @@ describe('a rule in the sheet', () => {
 
   it('writes one rule per part of a list, so one unknown part cannot lose the rest', () => {
     const { css } = applyResponsiveStyles(node('a', { rules: [{ id: 'r', selector: '&::picker(select), &:hover', style: { color: 'red' } }] }), BPS);
-    expect(css).toBe('.fc_r-a.fc_r-a::picker(select){color:red}\n.fc_r-a.fc_r-a:hover{color:red}');
+    expect(css).toBe(withGuard('.fc_r-a.fc_r-a::picker(select){color:red}\n.fc_r-a.fc_r-a:hover{color:red}'));
   });
 
   it('merges adjacent blocks with identical wrappers and nests wrappers in stored order', () => {
@@ -81,7 +83,7 @@ describe('a rule in the sheet', () => {
       node('a', { rules: [{ id: 'r', selector: '&', at, style: { color: 'red' } }, { id: 's', selector: '&::after', at, style: { color: 'blue' } }] }),
       BPS,
     );
-    expect(css).toBe('@supports (display:grid){\n@media print{\n.fc_r-a.fc_r-a{color:red}\n.fc_r-a.fc_r-a::after{color:blue}\n}\n}');
+    expect(css).toBe(withGuard('@supports (display:grid){\n@media print{\n.fc_r-a.fc_r-a{color:red}\n.fc_r-a.fc_r-a::after{color:blue}\n}\n}'));
   });
 
   it('writes rules after every Normal block, in walk order and stored order', () => {
@@ -89,14 +91,13 @@ describe('a rule in the sheet', () => {
       node('c', { style: { margin: { base: 1, mobile: 2 } }, rules: [{ id: 's', selector: '&', style: { color: 'blue' } }] }),
     ]);
     const { css } = applyResponsiveStyles(root, BPS);
-    expect(css).toBe(
+    expect(css).toBe(withGuard(
       '.fc-c.fc-c{margin:1px}\n@media (max-width:767.98px){\n.fc-c.fc-c{margin:2px}\n}\n' +
-        '.fc_r-p.fc_r-p{color:red}\n.fc_r-c.fc_r-c{color:blue}',
-    );
+        '.fc_r-p.fc_r-p{color:red}\n.fc_r-c.fc_r-c{color:blue}'));
   });
 
   it('still applies with no breakpoints at all', () => {
-    expect(applyResponsiveStyles(node('a', { rules: [pressed({ color: { base: 'red' } })] }), []).css).toBe('.fc_r-a.fc_r-a:active{color:red}');
+    expect(applyResponsiveStyles(node('a', { rules: [pressed({ color: { base: 'red' } })] }), []).css).toBe(withGuard('.fc_r-a.fc_r-a:active{color:red}'));
   });
 
   it('issues no Normal class for a node with only rules', () => {
@@ -219,7 +220,7 @@ describe('what the parser refuses', () => {
       node('b', { rules: [{ id: 'worse', selector: '&<', style: {} }] }),
     ]);
     const { css } = applyResponsiveStyles(root, BPS);
-    expect(css).toBe('.fc_r-a.fc_r-a:active{color:red}');
+    expect(css).toBe(withGuard('.fc_r-a.fc_r-a:active{color:red}'));
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0][2]).toHaveLength(3);
   });
@@ -232,7 +233,7 @@ describe('what the parser refuses', () => {
 
   it('escapes a < in a quoted url, which is a string the emitter owns', () => {
     const { css } = applyResponsiveStyles(node('a', { rules: [{ id: 'r', selector: '&', style: { backgroundImage: "url('/a<b.png')" } }] }), BPS);
-    expect(css).toBe(".fc_r-a.fc_r-a{background-image:url('/a\\3c b.png')}");
+    expect(css).toBe(withGuard(".fc_r-a.fc_r-a{background-image:url('/a\\3c b.png')}"));
   });
 
   it.each([
@@ -266,7 +267,7 @@ describe('what the parser refuses', () => {
     const definition = { id: 'k', define: '@keyframes u-a', blocks: [{ selector: 'from', style: { opacity: 0 } }] };
     const { root, css } = applyResponsiveStyles(node('a', { style: { color: 'red' }, rules: [definition] }), BPS);
     expect(root.props).toEqual({ style: { color: 'red' } });
-    expect(css).toBe('@keyframes u-a{\nfrom{opacity:0}\n}');
+    expect(css).toBe(withGuard('@keyframes u-a{\nfrom{opacity:0}\n}'));
   });
 });
 
@@ -308,7 +309,7 @@ describe('moving Normal', () => {
       BPS,
     );
     expect(root.props).toEqual({ className: 'fc_r-a', style: { backgroundImage: REFUSED_BY_THE_SHEET } });
-    expect(css).toBe('.fc_r-a.fc_r-a:active{color:blue}');
+    expect(css).toBe(withGuard('.fc_r-a.fc_r-a:active{color:blue}'));
     expect(warn.mock.calls[0][1]).toEqual([
       { className: 'fc-a', property: 'backgroundImage', reason: 'unsafe-value', lostBreakpoints: ['mobile'] },
     ]);
@@ -364,7 +365,7 @@ describe('moving Normal', () => {
       const { root, css } = applyResponsiveStyles(card({ id: 'r', selector: '&:hover h2', style: { color: 'blue' } }), BPS);
       expect(propsOf(root.children?.[0])).toEqual({ children: 'x', className: 'fc-title' });
       expect(propsOf(root.children?.[1]?.children?.[0])).toEqual({ className: 'fc-deep' });
-      expect(css).toBe('.fc-title.fc-title{color:red}\n.fc-deep.fc-deep{color:green}\n.fc_r-card.fc_r-card:hover h2{color:blue}');
+      expect(css).toBe(withGuard('.fc-title.fc-title{color:red}\n.fc-deep.fc-deep{color:green}\n.fc_r-card.fc_r-card:hover h2{color:blue}'));
     });
 
     it('skips a text node, which would get a class with no element', () => {
@@ -425,7 +426,7 @@ describe('a stored className', () => {
     const victim = node('v', { rules: [pressed({ color: 'red' })] });
     const thief = node('t', { className: 'fc_r-v' });
     const { root, css } = applyResponsiveStyles(node('p', {}, [victim, thief]), BPS);
-    expect(css).toBe('.fc_r-v.fc_r-v:active{color:red}');
+    expect(css).toBe(withGuard('.fc_r-v.fc_r-v:active{color:red}'));
     expect(propsOf(root.children?.[0]).className).toBe('fc_r-v');
     expect(root.children?.[1]?.props).toEqual({});
   });
@@ -473,7 +474,7 @@ describe('rows and the page caps', () => {
     const warn = silence();
     const rows = Array.from({ length: 3000 }, () => node('tpl', { rules: [pressed({ color: 'red' }), { id: 'bad', selector: 'nope', style: {} }] }));
     const { css } = applyResponsiveStyles(node('list', {}, rows), BPS);
-    expect(css).toBe('.fc_r-tpl.fc_r-tpl:active{color:red}');
+    expect(css).toBe(withGuard('.fc_r-tpl.fc_r-tpl:active{color:red}'));
     expect(warn.mock.calls[0][2]).toHaveLength(1);
   });
 
