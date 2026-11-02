@@ -213,6 +213,34 @@ describe('parseSelector: its refusals', () => {
     expect(selectorRefused(text)).toMatch(/fc-/);
   });
 
+  // What a canvas wraps content in and a page does not: reading one shows the editor one thing and a visitor another.
+  it.each([
+    ['an ancestor through :is', '&:is([data-ground] *)'],
+    ['upper case', '&:is([DATA-GROUND] *)'],
+    ['a namespace', '&:is([*|data-ground] *)'],
+    ['through :where', '&:where([data-viewport-id] *)'],
+    ['a group variant', '&:is(:where(.group)[data-viewport-id] *)'],
+    ['the camera', '&:is([data-camera-transform] *)'],
+    ['the root pointer', '&:is(:root[data-pointer] *)'],
+    ['inside :has on html', '&:is(html:has([data-ground]) *)'],
+    ['inside :not', '&:not([data-editor-ui])'],
+    ['the renderer mark inside the node', '&:has([data-fc-n])'],
+    ['a state mark', '&[data-fcs-s1="true"]'],
+    ['with a value', '&:is([data-breakpoint-id="x"] *)'],
+  ])('refuses a platform attribute: %s', (_, text) => {
+    expect(selectorRefused(text)).toMatch(/belongs to the editor or the renderer/);
+  });
+
+  it('refuses a platform attribute in an @scope prelude', () => {
+    expect(parseWrapper('@scope ([data-ground]) to ([data-fc-n])')).toMatchObject({ ok: false });
+  });
+
+  it('lets a rule read what authors and the platform write for it', () => {
+    for (const text of ['&[data-u-on]', '&:where([data-u-v-variant="outline"])', '&[data-state="open"]', '&:is([data-slot="card"] *)', '&[data-groundless]']) {
+      expect(selectorRefused(text)).toBeUndefined();
+    }
+  });
+
   it('lets a class through that only starts alike, since the check is for stability', () => {
     expect(selectorRefused('&.fcx')).toBeUndefined();
     expect(selectorRefused('&.afc-b')).toBeUndefined();

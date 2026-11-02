@@ -10,6 +10,7 @@
 import ts from 'typescript';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { isDroppedProp, isBlockedTag, safeInlineStyle, withoutDocumentId } from '@/lib/renderer/blockedNodes';
+import { isPlatformAttribute } from '@/lib/renderer/platformAttributes';
 import { isRenderedAttribute } from '@/lib/renderer/renderVocabulary';
 import { TEXT_NODE_TYPE, refusesBareText } from '@/lib/renderer/textNode';
 import { isVoidTag } from '@/lib/drag/voidTags';
@@ -19,21 +20,6 @@ import type { ImportBudget } from './budget';
 import type { Claim, Ledger } from './ledger';
 import type { DetailKey, LineKind } from './report';
 import { UNKNOWN, createEvaluator, fileScope, functionScope, holdsEffect, toPlain, type Evaluated, type Evaluator, type Scope } from './staticEval';
-
-/**
- * Attributes the code reads as instructions. An island's marker turns a `div` into a form, and an editor
- * mark makes a node the target of a click. The names outside these families are the ones
- * `platformAttributes.test.ts` finds read in `src`, so a new one fails there until it is judged here.
- */
-const PLATFORM_FAMILY = /^data-(?:fc|fcs|fx|u|island|component|inner-component|form|sticky|repeat|ground|viewport|breakpoint|floating-root|preview|editor|camera|lenis)(?:-|$)/i;
-const PLATFORM_NAMES: ReadonlySet<string> = new Set([
-  'data-add-line', 'data-discard-row', 'data-drag-handle', 'data-escape-local', 'data-focus-key', 'data-haptics', 'data-import-all',
-  'data-import-row', 'data-layer-breakpoint', 'data-layer-row', 'data-logo-choose', 'data-menu-item', 'data-notice-action',
-  'data-outline-select', 'data-page-overlay', 'data-page-settings-button', 'data-pan-cursor', 'data-placement', 'data-placement-root', 'data-pointer',
-  'data-radius-corner', 'data-resize-direction', 'data-resume-offer', 'data-shown', 'data-spacing-band', 'data-spacing-handle', 'data-text-node-row',
-]);
-
-export const isPlatformAttribute = (name: string): boolean => PLATFORM_FAMILY.test(name) || PLATFORM_NAMES.has(name.toLowerCase());
 
 /**
  * The names this layer decides on, each with its one spelling. The render gate lower-cases a name and HTML

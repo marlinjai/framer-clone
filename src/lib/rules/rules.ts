@@ -51,6 +51,7 @@
 
 import { conditionSelector } from '@/lib/behaviour/behaviourDom';
 import { parseCondition, type Condition, type StateValue } from '@/lib/behaviour/format';
+import { isPlatformMarker } from '@/lib/renderer/platformAttributes';
 import {
   MAX_DEFINITION_BLOCKS,
   PROPERTY_SYNTAXES,
@@ -231,6 +232,9 @@ function refusedNames(text: string): string | null {
       const match = ATTRIBUTE.exec(text);
       if (!match) return 'it holds an attribute selector that cannot be read';
       const [, name, operator, value] = match;
+      // The canvas wraps content in these and a page does not, so a rule reading one shows the editor
+      // one thing and a visitor another. Any case, any depth: inside `:is`, `:where`, `:not` and `:has` alike.
+      if (isPlatformMarker(name)) return `${name} belongs to the editor or the renderer, so a rule cannot read it`;
       if (operator && name.toLowerCase() === 'value') {
         return 'an attribute selector on value with an operator would read what a visitor types';
       }
