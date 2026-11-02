@@ -24,7 +24,7 @@ import {
   type ImportOrigin,
 } from './importInvoices';
 import { addDays, berlinToday, isIsoDate } from './numbering';
-import { normalizeVatId } from './repository/customers';
+import { normalizeVatId } from '../tax/germanVat';
 import { EU_MEMBER_STATES } from '../tax/germanVat';
 import type { SenderBlockV1 } from './snapshots';
 

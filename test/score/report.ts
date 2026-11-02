@@ -406,10 +406,13 @@ export function renderReport(score: Score): string {
   push(
     `The stop condition of the primitive stream is that every BusBasis page passes, so these are real pages of basiscampberlin.de frozen from the live site, not small fixtures, and ${UNCAPTURED_PAGES.length} more page types are listed below as not captured. Each tree is lifted mechanically by \`test/score/busbasis/lift.ts\`, one rule set for all pages, with no page-specific code. The checks are the corpus checks, except that custom properties are not compared (their effect shows in what reads them) and images and video are same-size placeholders, so image content is not compared. A page also fails on everything under "needs": a page that matches pixel for pixel is not that page while what it exists for does not work. The files are held out: nothing in \`test/score/corpus/busbasis\` changes without a new capture, and the run stops when a hash does not match.`,
   );
+  push(
+    'A BusBasis page brings its own base: the storefront\'s Tailwind reset is in its sheet, and the lift writes it onto every node. So, like the corpus, its replica sits on a site with Browser defaults as its page base, where the reset of the root layout steps aside and the page\'s own base stands. "Default base" is the same replica on the default page base, its untouched page at each breakpoint, all three checks at once, reported and not ratcheted: there every element inherits the root layout\'s font smoothing and `<option>` loses its padding, which no node of this page sets. A difference that goes away on the same output with no root layout sheet at all is `published-base`, measured per property.',
+  );
   const worst = (page: CorpusResult, read: (d: NonNullable<CorpusResult['differences']>[number]) => number) => Math.max(0, ...(page.differences ?? []).map(read));
   push(
     table(
-      ['Page type', 'Source', 'Result', 'Screenshots', 'Computed styles', 'Accessibility tree', 'Hover', 'Worst pixels differing', 'Worst elements differing', 'Blocked by'],
+      ['Page type', 'Source', 'Result', 'Screenshots', 'Computed styles', 'Accessibility tree', 'Hover', 'Worst pixels differing', 'Worst elements differing', 'Default base', 'Blocked by'],
       busbasis.pages.map((p) => {
         const needs = p.failures.filter((f) => f.state.startsWith('needs: '));
         const hover = { pass: p.checks.interaction.pass, total: p.checks.interaction.total - needs.length };
@@ -424,6 +427,7 @@ export function renderReport(score: Score): string {
           `${hover.pass}/${hover.total}`,
           `${(worst(p, (d) => d.ratio) * 100).toFixed(1)} percent`,
           `${worst(p, (d) => d.elementsDiffering)} of ${compared}`,
+          p.defaultBase ? `${p.defaultBase.pass}/${p.defaultBase.total}` : 'not measured',
           escapeCell(needs.map((f) => f.state.slice('needs: '.length)).join('; ') || 'none'),
         ];
       }),

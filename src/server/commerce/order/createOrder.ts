@@ -21,7 +21,8 @@ import 'server-only';
 //      company's own `order_number_seq`),
 //   6. reserve each line's stock by calling the INNER reserve(trx, tgId, ...) so
 //      a short-stock on ANY line rolls back the WHOLE order atomically (zero
-//      reservations, zero order).
+//      reservations, zero order),
+//   7. open the payment and emit `order.placed`, whose job ends the stock hold.
 //
 // Consumer contracts honored exactly:
 //
@@ -52,6 +53,7 @@ import { pricingRepository } from '../repository/pricing';
 import { orderRepository } from '../repository/order';
 import { UnknownVariantError } from '../repository/errors';
 import { toJsonb } from '../../books/snapshots';
+import { emitCommerceEvent } from '../jobs/emit';
 import type { Buyer } from '../payment/buyer';
 import { PAYMENT_WINDOW_MS, platformFee } from '../payment/payments';
 import type { ProviderId } from '../payment/provider';
@@ -424,6 +426,7 @@ function runOrderTransaction(
       // (7) the payment, pending until the provider reports (a free order needs none).
       if (cart.payment && total > 0) {
         const opened = cart.now ?? new Date();
+        const expiresAt = new Date(opened.getTime() + (cart.payment.windowMs ?? PAYMENT_WINDOW_MS));
         await trx
           .insertInto('order_payment')
           .values({
@@ -434,10 +437,17 @@ function runOrderTransaction(
             currency_code: cart.currency,
             application_fee_amount: platformFee(total),
             buyer: toJsonb(cart.payment.buyer ?? {}),
-            expires_at: new Date(opened.getTime() + (cart.payment.windowMs ?? PAYMENT_WINDOW_MS)),
+            expires_at: expiresAt,
             updated_at: opened,
           })
           .execute();
+        // Here, so the job that ends the hold exists from the moment the hold does.
+        await emitCommerceEvent(trx, {
+          tenantId: cart.tenantId,
+          type: 'order.placed',
+          payload: { orderId: order.id, expiresAt },
+          at: opened,
+        });
       }
 
       return { ok: true, orderId: order.id };

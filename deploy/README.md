@@ -243,7 +243,7 @@ says where each comes from.
 | `CUSTOM_DOMAIN_TARGET_IPV6` | no | Comma-separated IPv6 address(es) Traefik answers on. Unset means "no AAAA record allowed": a customer AAAA record pointing elsewhere is reported, because Let's Encrypt would try it first and fail |
 | `CUSTOM_DOMAIN_DNS_SERVERS` | no, recommended | Resolver IPs for the ownership check, e.g. `1.1.1.1,8.8.8.8`, so a TXT record a customer just added is not hidden by the container resolver's negative cache |
 | `CUSTOM_DOMAIN_TLS_PROBE` | no | `off` skips the certificate probe that moves a domain from verified to active (it then stays verified) |
-| `CUSTOM_DOMAIN_SYNC_TOKEN` | for custom domains | Bearer token (at least 32 characters, generated) the host timers present to `GET /api/internal/custom-domains/hostnames`, `POST /api/internal/custom-domains/recheck`, `POST /api/internal/commerce/expired-payments` and `POST /api/internal/commerce/jobs/run`. Unset means all four answer 503, the proxy keeps its last file, live domains are not re-checked, abandoned checkouts close only when the next order or payment of the same company comes in and the job watchdog is off (the poller still runs) |
+| `CUSTOM_DOMAIN_SYNC_TOKEN` | for custom domains | Bearer token (at least 32 characters, generated) the host timers present to `GET /api/internal/custom-domains/hostnames`, `POST /api/internal/custom-domains/recheck`, `POST /api/internal/commerce/expired-payments` and `POST /api/internal/commerce/jobs/run`. Unset means all four answer 503, the proxy keeps its last file, live domains are not re-checked, the expired payment sweep is off (each order's expiry job still closes it) and the job watchdog is off (the poller still runs) |
 
 A published site only injects analytics when its `lumitraEnabled` flag is set.
 
@@ -289,9 +289,16 @@ values. The ordered operator steps live in the infra RUNBOOK.
 
 ## Abandoned checkouts: the expired payment sweep
 
-A pending payment holds its stock for 30 minutes. A new order or payment closes
-its own company's expired payments first, but a shop nobody buys from would keep
-showing the stock as taken, so a host timer closes them across all companies:
+A pending payment holds its stock for 30 minutes. Each order that opens a payment
+writes a `payment_expiry` job in `commerce_job`, due when the hold ends, and the
+poller (see below) closes the payment then, so that job is the first place to look
+when a hold did not end: a `dead` one counts in the watchdog's `deadUnacknowledged`
+and means stock held past its window. A new order also closes its own company's
+expired payments first, and a payment closes its own order if that ran out, never
+another order. Orders from before this job get theirs from the worker's backfill.
+
+Beside the job, until its removal in slice B3R, a host timer closes expired payments
+across all companies:
 `deploy/commerce/framer-clone-commerce-expired-payments.timer`, every 5 minutes,
 calls `POST /api/internal/commerce/expired-payments`. With nothing due a call
 costs one indexed query per tenant group. It runs on `coolify-shared-host` and

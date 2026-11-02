@@ -25,7 +25,7 @@ const crashes = defineJobKind({
 
 async function main(): Promise<void> {
   const base = createNodeDb<CommerceDB>({ connectionString: url, max: 1 });
-  const result = await runNextJob(tenantDb(base, tenantGroupId), { kinds: { crashes }, now: () => new Date(now) });
+  const result = await runNextJob({ id: tenantGroupId, db: tenantDb(base, tenantGroupId) }, { kinds: { crashes }, now: () => new Date(now) });
   process.stdout.write(JSON.stringify({ outcome: result?.outcome ?? null }));
   await base.destroy();
 }
