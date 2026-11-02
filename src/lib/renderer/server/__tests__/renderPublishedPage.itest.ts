@@ -76,7 +76,7 @@ async function renderHomeToHtml(site: PublishedSite): Promise<string> {
   const matched = matchPageBySlug(site.pages, []);
   expect(matched, 'home page must match empty segments').not.toBeNull();
 
-  const adapted = snapshotToComponentNode(matched!.page.snapshot);
+  const adapted = snapshotToComponentNode(matched!.page.snapshot, {});
   expect(adapted.root, 'adapted snapshot must yield a renderable root').not.toBeNull();
 
   // CM-10: the commerce repo comes from the render route's OWN helper,
@@ -217,7 +217,7 @@ describe('published-site render smoke (real Postgres, real seeded data)', () => 
       // row that was never restamped). The render helper must refuse it: no
       // shared-schema fallback, so the page renders WITHOUT any commerce data.
       const unprovisioned: PublishedSite = { ...site!, tenantGroupId: 'demo-tenant-group' };
-      const home = snapshotToComponentNode(matchPageBySlug(site!.pages, [])!.page.snapshot);
+      const home = snapshotToComponentNode(matchPageBySlug(site!.pages, [])!.page.snapshot, {});
       // The home page DOES have bound commerce sources, so only the invalid
       // tenant group is what makes the helper refuse.
       expect(treeNeedsCommerceRepo(home.root!)).toBe(true);

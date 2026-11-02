@@ -38,7 +38,7 @@ describe('a dropped Form, published', () => {
     form.children[1].updateResponsiveStyle('fontSize', '15px', mobileId);
     form.children[4].updateResponsiveStyle('padding', '16px 24px', breakpointId);
 
-    const adapted = snapshotToComponentNode(getSnapshot(page) as never);
+    const adapted = snapshotToComponentNode(getSnapshot(page) as never, {});
     const { body } = await renderPublishedPage({
       root: adapted.root as ComponentNode,
       pageParams: {},

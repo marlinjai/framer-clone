@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { extractBreakpoints } from '@/lib/renderer/server/snapshotToComponentNode';
-import { parseComponents, serializedBytes } from '../definition';
-import { isComponentPlaceholderType, isMissingType, isPlacementType, COMPONENT_LIMITS } from '../placement';
+import { parseComponents } from '../definition';
+import { COMPONENT_LIMITS, isComponentPlaceholderType, isMissingType, isPlacementType, serializedBytes } from '../placement';
 
 const ID = '2f6c1a9e-0000-4000-8000-000000000001';
 

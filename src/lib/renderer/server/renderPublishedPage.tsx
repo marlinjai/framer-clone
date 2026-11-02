@@ -29,6 +29,7 @@ import { publishedEffectsBootScript } from '@/lib/effects/effects';
 import { publishedFontAssets } from './publishedFonts';
 import { applyImageLoading, HeroPreload } from './imageLoading';
 import type { BreakpointRef } from '@/lib/responsive/cascade';
+import type { RenderBudget } from '@/lib/components/expand';
 import CommercePageProviders from './CommercePageProviders';
 import { hoistStickyCta, stickyCtaCss, stickyCtaMeasureScript } from '@/lib/stickyCta/stickyCta';
 
@@ -54,6 +55,8 @@ export interface ResolvedAnalytics {
 export interface RenderPublishedPageInput {
   /** The adapted renderable root (from snapshotToComponentNode). */
   root: ComponentNode;
+  /** What expanding `root` spent (from snapshotToComponentNode): rows draw on the same budget. */
+  budget?: RenderBudget;
   /** Route params extracted from the slug ({{page.params.id}} / .handle). */
   pageParams: Record<string, string>;
   cmsRepo: CmsReadRepository;
@@ -144,10 +147,10 @@ function resolveTracker(analytics: ResolvedAnalytics | undefined): TrackerPayloa
 export async function renderPublishedPage(
   input: RenderPublishedPageInput,
 ): Promise<RenderedPage> {
-  const { root, pageParams, cmsRepo, commerceRepo, analytics, productPagePath = null, breakpoints = [], smoothScroll = false, consent } = input;
+  const { root, budget, pageParams, cmsRepo, commerceRepo, analytics, productPagePath = null, breakpoints = [], smoothScroll = false, consent } = input;
   const tracker = resolveTracker(analytics);
 
-  const hydratedTree = await hydrateBindings(root, pageParams, { cmsRepo, commerceRepo }, productPagePath);
+  const hydratedTree = await hydrateBindings(root, pageParams, { cmsRepo, commerceRepo }, productPagePath, budget);
   // The sticky call to action (src/lib/stickyCta): the page's first bar moves
   // to the end of the page root (its pinned place in the reading order),
   // further ones are dropped (at most one per page).

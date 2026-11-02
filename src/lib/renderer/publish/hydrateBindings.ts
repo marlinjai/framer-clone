@@ -56,10 +56,20 @@
 
 import { applyBindings, type Props } from '@/lib/bindings/resolver/applyBindings';
 import { isTextNodeType, renderableText } from '@/lib/renderer/textNode';
+import { MISSING_TYPE, serializedBytes } from '@/lib/components/placement';
+import {
+  bakeInputBindings,
+  createRenderBudget,
+  placementInstanceOf,
+  resolveInputValues,
+  withoutInstance,
+  type RenderBudget,
+} from '@/lib/components/expand';
 import {
   createScope,
   lookup,
   pushAvailabilityFrame,
+  pushInputFrame,
   pushPageFrame,
   pushProductFrame,
   pushRowFrame,
@@ -101,6 +111,12 @@ export interface ComponentNode {
   children?: ComponentNode[];
   /** Optional stable id, preserved verbatim when present. */
   id?: string;
+  /**
+   * On a node a placement expanded to: the definition node's id. `id` is unique to
+   * the placement, so a form placed twice is two forms; a class keys on this, so
+   * twelve cards share their CSS. Spreading a node keeps both.
+   */
+  classKey?: string;
   /**
    * On an interactive commerce island only: the commerce frames (product, variant, availability) of the
    * source it sits in, as the hydrator resolved them. The island is shipped verbatim and rendered later
@@ -149,6 +165,11 @@ export interface CommerceServerRepository {
 export interface HydrationRepos {
   cmsRepo: CmsReadRepository;
   commerceRepo?: CommerceServerRepository;
+}
+
+/** The repositories, and the page's budget, which rows draw on after expansion. */
+interface HydrationContext extends HydrationRepos {
+  budget: RenderBudget;
 }
 
 // The four INTERACTIVE commerce kinds. These are NEVER baked: they are left
@@ -224,22 +245,47 @@ export async function hydrateBindings(
   pageParams: Record<string, string>,
   repos: HydrationRepos,
   productPagePath?: string | null,
+  budget: RenderBudget = createRenderBudget(),
 ): Promise<ComponentNode> {
   // The page frame drives `{{page.params.*}}` resolution (RecordView row id,
   // ProductDetail handle) and `{{product.href}}` (the site's product page path).
   const rootScope = pushPageFrame(createScope(), pageParams, productPagePath);
-  return hydrateNode(pageTree, rootScope, repos);
+  const root = await hydrateNode(pageTree, rootScope, { ...repos, budget });
+  // A root that hides itself: the page still serves, with nothing on it.
+  return root ?? { type: MISSING_TYPE };
 }
 
 // =============================================================================
 // node dispatch
 // =============================================================================
 
+/**
+ * True when a bound `visible` resolves to exactly `false`, which removes the node
+ * from the markup. Anything else keeps it, so a binding that fails shows content
+ * rather than hiding it.
+ */
+function isHiddenByBinding(node: ComponentNode, scope: BindingScope): boolean {
+  const binding = node.bindings?.visible;
+  if (!binding || binding.mode !== 'read') return false;
+  const parsed = parseExpression(binding.expression);
+  return !!parsed && evaluateExpression(parsed, scope) === false;
+}
+
+/**
+ * Null when `visible` removes the node. A placement root opens its input frame
+ * here, with its values resolved in the scope outside it and parsed after they
+ * resolve, because a value bound to data is only known now.
+ */
 async function hydrateNode(
-  node: ComponentNode,
-  scope: BindingScope,
-  repos: HydrationRepos,
-): Promise<ComponentNode> {
+  stored: ComponentNode,
+  outerScope: BindingScope,
+  repos: HydrationContext,
+): Promise<ComponentNode | null> {
+  const instance = placementInstanceOf(stored.props);
+  const scope = instance ? pushInputFrame(outerScope, resolveInputValues(instance, outerScope, repos.budget)) : outerScope;
+  const node = instance ? withoutInstance(stored) : stored;
+  if (isHiddenByBinding(node, scope)) return null;
+
   // A text node is only its text (which may be bound), whatever else a stored
   // row carries: no dispatch below applies to it.
   if (isTextNodeType(node.type)) {
@@ -254,8 +300,9 @@ async function hydrateNode(
   // bindings, and we do NOT recurse into their subtree: the whole island is
   // shipped as-is for client-side hydration.
   if (typeof dataKind === 'string' && INTERACTIVE_COMMERCE_KINDS.has(dataKind)) {
+    const island = bakeIsland(node, scope, repos.budget);
     const islandFrames = commerceFramesOf(scope);
-    return islandFrames.length > 0 ? { ...node, islandFrames } : node;
+    return islandFrames.length > 0 ? { ...island, islandFrames } : island;
   }
   if (typeof dataKind === 'string' && COMMERCE_SOURCE_KINDS.has(dataKind)) {
     return hydrateCommerceSource(node, scope, repos, dataKind, hasBindings);
@@ -280,10 +327,28 @@ async function hydrateNode(
   return hydrateOrdinary(node, scope, repos);
 }
 
+/**
+ * An island ships verbatim and no renderer applies bindings inside it, so what
+ * only this pass can know is baked in first: input values and `visible`, and any
+ * placement inside it opens its frame here. Commerce bindings stay for the
+ * client. A node none of that touches comes back as it went in.
+ */
+function bakeIsland(node: ComponentNode, scope: BindingScope, budget: RenderBudget): ComponentNode {
+  const baked = bakeInputBindings(node, scope);
+  const children = node.children?.flatMap((child) => {
+    const instance = placementInstanceOf(child.props);
+    const childScope = instance ? pushInputFrame(scope, resolveInputValues(instance, scope, budget)) : scope;
+    const stored = instance ? withoutInstance(child) : child;
+    return isHiddenByBinding(stored, childScope) ? [] : [bakeIsland(stored, childScope, budget)];
+  });
+  const same = !children || (children.length === node.children?.length && children.every((child, i) => child === node.children?.[i]));
+  return same ? baked : { ...baked, children };
+}
+
 async function hydrateOrdinary(
   node: ComponentNode,
   scope: BindingScope,
-  repos: HydrationRepos,
+  repos: HydrationContext,
 ): Promise<ComponentNode> {
   const { resolvedProps } = applyBindings(node, node.props ?? {}, scope);
   const children = await hydrateChildren(node.children, scope, repos);
@@ -293,10 +358,56 @@ async function hydrateOrdinary(
 async function hydrateChildren(
   children: ComponentNode[] | undefined,
   scope: BindingScope,
-  repos: HydrationRepos,
+  repos: HydrationContext,
 ): Promise<ComponentNode[]> {
   if (!children || children.length === 0) return [];
-  return Promise.all(children.map((child) => hydrateNode(child, scope, repos)));
+  const hydrated = await Promise.all(children.map((child) => hydrateNode(child, scope, repos)));
+  return hydrated.filter((child) => child !== null);
+}
+
+/** What one more copy of a template costs, or null for one no placement made. */
+interface TemplateCost {
+  nodes: number;
+  bytes: number;
+}
+
+const templateCosts = new WeakMap<ComponentNode, TemplateCost | null>();
+
+function templateCostOf(template: ComponentNode): TemplateCost | null {
+  const known = templateCosts.get(template);
+  if (known !== undefined) return known;
+  let nodes = 0;
+  let expanded = false;
+  const stack = [template];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    nodes += 1;
+    expanded ||= node.classKey !== undefined;
+    for (const child of node.children ?? []) stack.push(child);
+  }
+  const cost = expanded ? { nodes, bytes: serializedBytes(template) } : null;
+  templateCosts.set(template, cost);
+  return cost;
+}
+
+/**
+ * One hydrated copy of a template per scope. Expansion paid for the first copy,
+ * and each further one of a template holding expanded nodes draws on the budget,
+ * so a large card in a 100 row Collection is counted as what it renders. Past the
+ * limit the rows that do not fit are left out. A template no placement made is
+ * never charged: a page without placements renders every row, as it always has.
+ */
+async function hydrateCopies(
+  template: ComponentNode,
+  scopes: BindingScope[],
+  repos: HydrationContext,
+): Promise<ComponentNode[]> {
+  const cost = templateCostOf(template);
+  const paid = cost
+    ? scopes.filter((_, index) => index === 0 || repos.budget.charge(cost.nodes, cost.bytes))
+    : scopes;
+  const copies = await Promise.all(paid.map((scope) => hydrateNode(template, scope, repos)));
+  return copies.filter((copy) => copy !== null);
 }
 
 // =============================================================================
@@ -306,7 +417,7 @@ async function hydrateChildren(
 async function hydrateCollection(
   node: ComponentNode,
   scope: BindingScope,
-  repos: HydrationRepos,
+  repos: HydrationContext,
 ): Promise<ComponentNode> {
   const collectionId = resolveCollectionId(node.bindings?.collection, scope);
   // Unresolved / missing source binding: a configuration note, never a silent
@@ -346,9 +457,7 @@ async function hydrateCollection(
 
   // One hydrated template instance per row, each against a row-scoped chain so
   // descendants resolve `{{row.field}}` to that row's values.
-  const items = await Promise.all(
-    rows.map((row) => hydrateNode(template, pushRowFrame(scope, row), repos)),
-  );
+  const items = await hydrateCopies(template, rows.map((row) => pushRowFrame(scope, row)), repos);
   return { ...node, props: wrapperPropsOf(node, scope), children: items };
 }
 
@@ -359,7 +468,7 @@ async function hydrateCollection(
 async function hydrateRecordView(
   node: ComponentNode,
   scope: BindingScope,
-  repos: HydrationRepos,
+  repos: HydrationContext,
 ): Promise<ComponentNode> {
   const collectionId = resolveCollectionId(node.bindings?.record, scope);
   if (!collectionId) {
@@ -409,7 +518,7 @@ async function hydrateRecordView(
 async function hydrateCommerceSource(
   node: ComponentNode,
   scope: BindingScope,
-  repos: HydrationRepos,
+  repos: HydrationContext,
   dataKind: string,
   hasBindings: boolean,
 ): Promise<ComponentNode> {
@@ -432,7 +541,7 @@ async function hydrateCommerceSource(
 async function hydrateProductList(
   node: ComponentNode,
   scope: BindingScope,
-  repos: HydrationRepos,
+  repos: HydrationContext,
 ): Promise<ComponentNode> {
   // Guaranteed present by hydrateCommerceSource's gate.
   const commerceRepo = repos.commerceRepo!;
@@ -466,11 +575,7 @@ async function hydrateProductList(
 
   // One hydrated template instance per product, each against a product-scoped
   // chain so descendants resolve `{{product.field}}` to that product's values.
-  const items = await Promise.all(
-    products.map((product) =>
-      hydrateNode(template, pushProductFrame(scope, product), repos),
-    ),
-  );
+  const items = await hydrateCopies(template, products.map((product) => pushProductFrame(scope, product)), repos);
   return { ...node, props: wrapperPropsOf(node, scope), children: items };
 }
 
@@ -490,7 +595,7 @@ async function hydrateProductList(
 async function hydrateProductDetail(
   node: ComponentNode,
   scope: BindingScope,
-  repos: HydrationRepos,
+  repos: HydrationContext,
 ): Promise<ComponentNode> {
   // Guaranteed present by hydrateCommerceSource's gate.
   const commerceRepo = repos.commerceRepo!;

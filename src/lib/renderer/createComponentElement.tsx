@@ -15,6 +15,7 @@ import { ComponentInstance } from '@/models/ComponentModel';
 import { isVoidTag } from '@/lib/drag';
 import { isBlockedTag, withoutBlockedProps } from '@/lib/renderer/blockedNodes';
 import { isTextNodeType, ownTextThenChildren, renderableText } from '@/lib/renderer/textNode';
+import { isComponentPlaceholderType } from '@/lib/components/placement';
 import type { BindingScope } from '@/lib/bindings/resolver/scope';
 import { createScope } from '@/lib/bindings/resolver/scope';
 import CollectionRenderer, {
@@ -106,6 +107,9 @@ export function createComponentElement(
   // A text node emits no element, so it carries no identity attributes either:
   // the canvas selects its parent element (EditorUIStore.selectComponent).
   if (isTextNodeType(component.type)) return renderableText(rawTextChildren);
+
+  // A `#` type cannot be a tag, and createElement would throw on it.
+  if (isComponentPlaceholderType(component.type)) return null;
 
   if (isBlockedTag(component.type)) return null;
 

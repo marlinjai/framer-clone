@@ -17,6 +17,7 @@ import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { HOVER_GATE } from '@/lib/rules/states';
 import { n, run, t } from '../patterns';
 import type { GapId } from '../lib/types';
+import type { PublishedOutput } from '../lib/published';
 
 const FIXTURE_DIR = path.resolve(process.cwd(), 'test/score/corpus/fixtures');
 
@@ -37,6 +38,11 @@ export interface Fixture {
   /** A whole HTML file, or a Radix mount script bundled in the page. */
   original: { html: string } | { mount: string; css: string };
   tree: () => ComponentNode;
+  /**
+   * The replica through the whole published path, for a fixture that needs
+   * hydration, as a placement does (renderThroughPublishedPage). Used instead of `tree`.
+   */
+  published?: () => Promise<PublishedOutput>;
   /** The gap of a difference in the untouched page, when the fixture exists to probe one. */
   initialGap: GapId;
   /** Runs before the initial state: fixes moving parts so a snapshot is repeatable. */

@@ -25,6 +25,7 @@ import React from 'react';
 import { isVoidTag } from '@/lib/drag/voidTags';
 import { isBlockedProp, isBlockedTag } from '@/lib/renderer/blockedNodes';
 import { isLegacyRulesAttribute } from '@/lib/rules/rules';
+import { isComponentPlaceholderType } from '@/lib/components/placement';
 import { isTextNodeType, ownTextThenChildren, renderableText } from '@/lib/renderer/textNode';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import type { BindingScope } from '@/lib/bindings/resolver/scope';
@@ -152,6 +153,9 @@ export function renderComponentNode(
 ): React.ReactNode {
   // No element at all, so nothing below (a tag, an island, a marker) applies.
   if (isTextNodeType(node.type)) return rawTextChild(node);
+
+  // Expansion leaves none but a `#missing` one, and `#component` cannot be a tag.
+  if (isComponentPlaceholderType(node.type)) return null;
 
   // Checked first: an island below would otherwise mount with this host tag.
   if (isBlockedTag(resolveHtmlTag(node.type))) return null;

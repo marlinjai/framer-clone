@@ -43,6 +43,8 @@
 // hydrateBindings clones a template subtree per collection row, so one id can
 // appear many times. Identical rules share one class; a different rule under
 // the same id gets a numbered class, in walk order, so output is deterministic.
+// Placements of one definition have distinct ids and a shared `classKey`, which
+// is what a class is keyed on, so twelve cards share their CSS the same way.
 //
 // PURE: no React, no MST, no server-only.
 
@@ -145,7 +147,7 @@ export function applyResponsiveStyles(
   };
 
   const classFor = (node: ComponentNode, style: Record<string, unknown>): string => {
-    const stem = classStem(node.id) ?? `anon-${++anonymous}`;
+    const stem = classStem(node.classKey ?? node.id) ?? `anon-${++anonymous}`;
     const { name, isNew } = issueClass('fc-', stem, JSON.stringify(style));
     if (isNew) rules.push({ className: name, style });
     return name;
@@ -153,7 +155,7 @@ export function applyResponsiveStyles(
 
   /** Keyed on the rules alone, so a node without an id still shares a block by what it holds. */
   const ruleClassFor = (node: ComponentNode, selectorRules: ParsedSelectorRule[]): string => {
-    const { name, isNew } = issueClass('fc_r-', classStem(node.id) ?? 'anon', JSON.stringify(selectorRules));
+    const { name, isNew } = issueClass('fc_r-', classStem(node.classKey ?? node.id) ?? 'anon', JSON.stringify(selectorRules));
     if (isNew) authored.push({ className: name, rules: selectorRules });
     return name;
   };
@@ -249,7 +251,7 @@ export function applyResponsiveStyles(
             const map = style[key];
             const lost = isStyleMap(map) ? Object.keys(map).filter(id => id !== 'base') : [];
             kept.push({
-              className: className ?? `fc-${classStem(node.id) ?? 'anon'}`,
+              className: className ?? `fc-${classStem(node.classKey ?? node.id) ?? 'anon'}`,
               property: key,
               reason: unsafeDeclaration(key, cssValueText(key, value)) ?? 'unsafe-value',
               ...(lost.length > 0 ? { lostBreakpoints: lost } : {}),
