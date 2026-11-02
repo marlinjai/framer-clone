@@ -5,7 +5,7 @@
 // matrix (report.ts): a pattern is editable only when every tag and prop it uses is.
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { chromium, type Browser, type Page } from 'playwright';
+import { chromium, type Browser } from 'playwright';
 import { getSnapshot } from 'mobx-state-tree';
 import ComponentModel from '@/models/ComponentModel';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
