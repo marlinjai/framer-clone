@@ -101,8 +101,10 @@ import {
   type EditorSurfaceKind,
   type SurfaceFrame,
 } from '@/lib/rules/surfaces';
-import { isRootStyleKey } from '@/lib/rules/rootProperties';
+import { isPlatformVariable, isRootStyleKey } from '@/lib/rules/rootProperties';
 import { cappedZIndex } from '@/lib/styles/stacking';
+import { wrappersInColorMode } from '@/lib/rules/colorMode';
+import type { ColorScheme } from '@/lib/site/theme';
 import { largestFirst, resolveCascade, type BreakpointRef } from './cascade';
 
 /** At most this many emitted rules on one page, counted after rows share a rule class. */
@@ -425,7 +427,8 @@ function declaration(
   onDrop: (d: DroppedDeclaration) => void,
 ): string | null {
   const text = SAFE_PROPERTY.test(key) ? cssValueText(key, value) : undefined;
-  const reason = unsafeDeclaration(key, text);
+  // Behind the parser and the renderers' style gates: the sheet never sets a token.
+  const reason = isPlatformVariable(key) ? 'unsafe-property' : unsafeDeclaration(key, text);
   if (reason) {
     onDrop({ className, property: key, reason });
     return null;
@@ -524,6 +527,14 @@ export interface BuildResponsiveCssOptions {
   gated?: boolean;
   /** Writes an editor surface's sheet from its own inputs. `rules`, `authored` and `fieldGuard` then do nothing. */
   surface?: EditorSurface;
+  /**
+   * The site's forced colour mode, set only when its theme says `light` or `dark`: node
+   * and document rules then have `prefers-color-scheme` answered by the site rather than
+   * the visitor's system (src/lib/rules/colorMode.ts). Absent, every wrapper stays as stored.
+   */
+  colorMode?: ColorScheme;
+  /** Called for a wrapper that reads the colour scheme in a form the forced mode cannot answer. */
+  onColorModeWarning?: (warning: string) => void;
 }
 
 /** True when a style value is a responsive map rather than a scalar. */
@@ -1184,6 +1195,31 @@ function rootJobs(rules: readonly ParsedRootRule[], ordered: readonly Breakpoint
   });
 }
 
+/**
+ * The document's and the nodes' rules under the site's forced colour mode: each rule's
+ * `@media` wrappers answered for that mode, and a rule that can never match left out.
+ * Without a forced mode they are returned as they are.
+ */
+function inColorMode(options: BuildResponsiveCssOptions): { rootRules: readonly ParsedRootRule[]; authored: readonly AuthoredRulesInput[] } {
+  const rootRules = options.rootRules ?? [];
+  const authored = options.authored ?? [];
+  const mode = options.colorMode;
+  if (mode !== 'light' && mode !== 'dark') return { rootRules, authored };
+  const warn = options.onColorModeWarning ?? (() => {});
+  const answer = <T extends { at: string[] }>(rule: T): T | null => {
+    if (!Array.isArray(rule.at) || rule.at.length === 0) return rule;
+    const at = wrappersInColorMode(rule.at, mode, warn);
+    return at === null ? null : { ...rule, at };
+  };
+  return {
+    rootRules: rootRules.map(answer).filter((rule): rule is ParsedRootRule => rule !== null),
+    authored: authored.map(({ className, rules }) => ({
+      className,
+      rules: rules.map(answer).filter((rule): rule is ParsedSelectorRule => rule !== null),
+    })),
+  };
+}
+
 /** The sheet of an editor surface. Same order as the published page, with no Normal. */
 function editorSheet(surface: EditorSurface, ordered: readonly BreakpointRef[], options: BuildResponsiveCssOptions): string {
   const onDropRule = options.onDropRule ?? (() => {});
@@ -1254,7 +1290,8 @@ export function buildResponsiveCss(
   const used = options.hoverPresets ?? [];
   const presets = serializeBlocks(HOVER_KINDS.filter(kind => used.includes(kind)).flatMap(kind => hoverPresetRules(kind)));
   if (presets) parts.push(presets);
-  const jobs = [...rootJobs(options.rootRules ?? [], ordered), ...publishedJobs(options.authored ?? [], ordered, options.gated === true)];
+  const { rootRules, authored: authoredRules } = inColorMode(options);
+  const jobs = [...rootJobs(rootRules, ordered), ...publishedJobs(authoredRules, ordered, options.gated === true)];
   const authored = serializeBlocks(authoredBlocks(jobs, onDropRule, spent));
   if (authored) parts.push(authored);
   if (options.fieldGuard) parts.push(FIELD_SIZING_GUARD);

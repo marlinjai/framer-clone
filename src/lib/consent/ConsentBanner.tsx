@@ -17,7 +17,9 @@
 // Styled from the site's look (font, text and background colour, the accent
 // of its first filled button: src/lib/site/notFoundDefault.ts), neutral when
 // the site sets none, or when a colour pair or a font it sets cannot be shown to
-// read (legibleLook).
+// read (legibleLook). A token reference is judged through the site's theme in every
+// colour scheme the site can show, and kept as the reference when it reads in all of
+// them, so the banner flips with the page.
 //
 // A rule on `:root` reaches everything the banner inherits, so BANNER_PINNED sets
 // each of those on its root. An element's own value beats an inherited one, even
@@ -26,6 +28,7 @@
 import React from 'react';
 import { legibleLook, type SiteLook } from '@/lib/site/notFoundDefault';
 import { DEFAULT_PAGE_BASE, type PageBase } from '@/lib/site/pageBase';
+import type { SiteTheme } from '@/lib/site/theme';
 import type { TrackerPayload } from '@/lib/renderer/publish/trackerSnippet';
 import { CONSENT_BANNER_Z_INDEX } from '@/lib/styles/stacking';
 import { CONSENT_BANNER_ID, consentCopy, consentCss, consentRuntimeScript } from './consent';
@@ -73,10 +76,12 @@ export interface ConsentBannerProps {
   privacyHref?: string | null;
   /** The site's page base, which decides what the banner's pins match. */
   pageBase?: PageBase;
+  /** The site's theme, which a token reference in the look is read through. */
+  theme?: SiteTheme;
 }
 
-export function ConsentBanner({ tracker, language, look: siteLook, privacyHref, pageBase = DEFAULT_PAGE_BASE }: ConsentBannerProps) {
-  const look = legibleLook(siteLook);
+export function ConsentBanner({ tracker, language, look: siteLook, privacyHref, pageBase = DEFAULT_PAGE_BASE, theme }: ConsentBannerProps) {
+  const look = legibleLook(siteLook, theme);
   const copy = consentCopy(language);
   const titleId = `${CONSENT_BANNER_ID}-title`;
   const textId = `${CONSENT_BANNER_ID}-text`;

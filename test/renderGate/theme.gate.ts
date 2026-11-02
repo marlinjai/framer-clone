@@ -11,12 +11,14 @@
 //   - every value the grammar accepts must be a colour the browser computes;
 //   - the surface sheet must reach only what sits inside its frame attribute.
 //
-// The layout that places the published sheet is slice T2; this gate proves the emitter.
+// The layout that places the published sheet is slice T2 (test/renderGate/themePublished.gate.ts);
+// this gate proves the emitter, and that the one colour parser the banner's guard reads
+// converts every accepted value to the sRGB numbers the browser computes.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { chromium, webkit, type Browser, type BrowserType, type Page } from 'playwright';
 import { normalizeTheme, parseColorValue, themeCss, type SiteTheme } from '@/lib/site/theme';
-import { parseColor } from '@/lib/color/cssColor';
+import { parseColor, parseCssColor, type ColorComponent } from '@/lib/color/cssColor';
 import { NAMED_COLOR_HEX } from '@/lib/color/namedColors';
 import {
   ACCEPTED_COLORS,
@@ -144,6 +146,55 @@ describe.each(browsers)('the theme sheet in %s', (_name, type) => {
       expect(verdicts.filter(([, ok]) => !ok).map(([v]) => v)).toEqual([]);
       // The sweep is wide enough to mean something: thousands of values, hundreds accepted.
       expect(candidates.length).toBeGreaterThan(10_000);
+      expect(accepted.length).toBeGreaterThan(500);
+    } finally {
+      await tab.close();
+    }
+  });
+
+  // Slice T2: the banner's guard judges a token through parseColor, so its numbers must be
+  // what the browser paints. A 2D canvas in sRGB paints each value and reads the pixel
+  // back, 8 bits a channel; a see-through pixel keeps little of its colour, so below half
+  // opacity only the alpha is compared.
+  it('parseColor gives the sRGB numbers the browser paints, for every value the grammar accepts', async () => {
+    const candidates = [...new Set([...REVIEW_PROBE_VALUES, ...colorSweep(), ...ACCEPTED_COLORS, ...REVIEW_REFUSED])];
+    const accepted = [...new Set(candidates.map((v) => parseColorValue(v)).filter((v): v is string => v !== null))];
+    const tab = await browser.newPage();
+    try {
+      const painted = await tab.evaluate((values: string[]) => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 1;
+        canvas.height = 1;
+        const context = canvas.getContext('2d', { colorSpace: 'srgb', willReadFrequently: true })!;
+        return values.map((value) => {
+          context.clearRect(0, 0, 1, 1);
+          context.fillStyle = '#00000000';
+          context.fillStyle = value;
+          context.fillRect(0, 0, 1, 1);
+          return [value, [...context.getImageData(0, 0, 1, 1).data]] as const;
+        });
+      }, accepted);
+      const misses: string[] = [];
+      for (const [value, [r, g, b, a255]] of painted) {
+        const ours = parseColor(value);
+        if (!ours) {
+          // The two forms parseColor declines to judge, on purpose (cssColorToRgba): the
+          // engines paint them apart, so a guard must not trust either reading.
+          const read = parseCssColor(value);
+          const fraction = (c: ColorComponent) => (c.kind === 'none' ? 0 : c.kind === 'percent' ? c.value / 100 : c.value);
+          const declined =
+            read?.form === 'function' &&
+            ((read.space === 'display-p3' && read.components.some((c) => fraction(c) < 0 || fraction(c) > 1)) ||
+              (read.fn === 'hwb' && read.components.slice(1).some((c) => fraction(c) < 0)));
+          if (!declined) misses.push(`${value}: parseColor read nothing`);
+          continue;
+        }
+        const a = a255 / 255;
+        const rgbClose = Math.abs(r - ours.r) <= 2 && Math.abs(g - ours.g) <= 2 && Math.abs(b - ours.b) <= 2;
+        const close = Math.abs(a - ours.a) <= 1 / 255 + 0.001 && (a < 0.5 || rgbClose);
+        if (!close) misses.push(`${value}: painted ${[r, g, b, a.toFixed(3)].join(' ')}, parseColor ${[ours.r, ours.g, ours.b].map((n) => n.toFixed(1)).join(' ')} ${ours.a.toFixed(3)}`);
+      }
+      expect(misses).toEqual([]);
       expect(accepted.length).toBeGreaterThan(500);
     } finally {
       await tab.close();

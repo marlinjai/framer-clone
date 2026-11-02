@@ -2,7 +2,7 @@
 // families it uses (responsive maps included), served from its own origin,
 // and preloads the face of its first heading's family.
 import React from 'react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { renderToString } from 'react-dom/server';
 import type { ComponentNode, CommerceServerRepository } from '@/lib/renderer/publish/hydrateBindings';
 import type { CmsReadRepository } from '@/server/cms';
@@ -63,11 +63,18 @@ describe('published page fonts', () => {
   });
 });
 
+vi.mock('@/server/sites/requestSite', () => ({
+  resolveSiteForRequest: async () => null,
+  getPrimaryHostForRequest: async () => null,
+}));
+
 describe('the published site base font', () => {
   it('falls back to the system stack, never to the editor chrome face', async () => {
     const { default: SiteLayout } = await import('@/app/(site)/layout');
-    const out = renderToString(<SiteLayout><p>x</p></SiteLayout>);
+    const out = renderToString(await SiteLayout({ children: <p>x</p> }));
     expect(out).toContain('body{font-family:system-ui, -apple-system');
     expect(out).not.toMatch(/geist/i);
+    // A host with no site has no theme, so no theme sheet.
+    expect(out).not.toContain('data-fc-theme-sheet');
   });
 });

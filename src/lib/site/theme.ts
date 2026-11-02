@@ -488,6 +488,33 @@ export function resolveTokenRefs(value: string, theme: SiteTheme, scheme: ColorS
   });
 }
 
+/**
+ * The scheme a site forces, or undefined when it forces none (`system` or no choice).
+ * Only a forced mode decides what a stored `prefers-color-scheme` rule means
+ * (src/lib/rules/colorMode.ts), and only forced `dark` writes `class="dark"` on `html`.
+ */
+export function themeColorMode(theme: SiteTheme | undefined): ColorScheme | undefined {
+  const mode = isRecord(theme) ? theme.mode : undefined;
+  return mode === 'light' || mode === 'dark' ? mode : undefined;
+}
+
+/**
+ * The document background as a literal colour per scheme the page can show, for the
+ * browser's own surfaces (`theme-color`), which take no `var()`. Empty when the document
+ * block sets no background, and a scheme whose value the strict parser cannot read is
+ * left out.
+ */
+export function documentBackgroundColors(theme: SiteTheme | undefined): { scheme: ColorScheme; color: string }[] {
+  if (!isRecord(theme) || !isRecord(theme.document)) return [];
+  const reference = theme.document.backgroundColor;
+  if (parseTokenReference(reference) === null) return [];
+  const normalized = normalizeTheme(theme);
+  return schemesInForce(normalized.mode).flatMap((scheme) => {
+    const color = parseColorValue(resolveTokenRefs(reference as string, normalized, scheme));
+    return color === null ? [] : [{ scheme, color }];
+  });
+}
+
 /** The schemes a page can show under a mode: both with `system`, else the one in force. */
 export function schemesInForce(mode: ThemeMode | undefined): ColorScheme[] {
   if (mode === 'system') return ['light', 'dark'];

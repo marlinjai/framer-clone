@@ -56,10 +56,14 @@ function fontClasses(css: string): string[] {
   return [of('--font-geist-sans'), of('--font-geist-mono')];
 }
 
-/** The constant classes of the root layout, which cannot render outside a request. */
+/**
+ * The constant classes of the root layout, which cannot render outside a request. The
+ * html class is the layout's default, which every page has unless its site forces dark
+ * (test/score/lib/published.ts writes that case).
+ */
 function layoutClasses(): { htmlClass: string; bodyClass: string } {
   const source = fs.readFileSync(path.join(ROOT, 'src/app/layout.tsx'), 'utf8');
-  const html = source.match(/<html\b[^>]*\bclassName="([^"]*)"/);
+  const html = source.match(/\bconst DEFAULT_HTML_CLASS = "([^"]*)";/);
   const body = source.match(/<body\s+className=\{`\$\{geistSans\.variable\} \$\{geistMono\.variable\} ([^`]*)`\}/);
   if (!html || !body) throw new Error('src/app/layout.tsx no longer has the html and body classes this script reads');
   return { htmlClass: html[1], bodyClass: body[1] };

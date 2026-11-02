@@ -31,6 +31,7 @@ import EffectsIsland from './EffectsIsland';
 import { publishedEffectsBootScript } from '@/lib/effects/effects';
 import { LENIS_CSS } from '@/lib/effects/smoothScroll';
 import { DEFAULT_PAGE_BASE, pageBaseSheet, type PageBase } from '@/lib/site/pageBase';
+import { themeColorMode, type SiteTheme } from '@/lib/site/theme';
 import { publishedFontAssets } from './publishedFonts';
 import { applyImageLoading, HeroPreload } from './imageLoading';
 import type { BreakpointRef } from '@/lib/responsive/cascade';
@@ -90,6 +91,13 @@ export interface RenderPublishedPageInput {
    * visitors who ask for reduced motion.
    */
   smoothScroll?: boolean;
+  /**
+   * The site's theme (src/lib/site/theme.ts). Its sheet is the `(site)` layout's; here
+   * a forced `light` or `dark` mode answers `prefers-color-scheme` in the page's rules,
+   * the consent banner reads token references through it, and a heading family behind
+   * a font token can still be preloaded.
+   */
+  theme?: SiteTheme;
   /** The site's page base (src/lib/site/pageBase.ts): `reset` unless the site chose otherwise. */
   pageBase?: PageBase;
   /**
@@ -156,7 +164,7 @@ function resolveTracker(analytics: ResolvedAnalytics | undefined): TrackerPayloa
 export async function renderPublishedPage(
   input: RenderPublishedPageInput,
 ): Promise<RenderedPage> {
-  const { root, budget, pageParams, cmsRepo, commerceRepo, analytics, productPagePath = null, breakpoints = [], smoothScroll = false, pageBase = DEFAULT_PAGE_BASE, consent } = input;
+  const { root, budget, pageParams, cmsRepo, commerceRepo, analytics, productPagePath = null, breakpoints = [], smoothScroll = false, pageBase = DEFAULT_PAGE_BASE, consent, theme } = input;
   const tracker = resolveTracker(analytics);
 
   const hydratedTree = await hydrateBindings(root, pageParams, { cmsRepo, commerceRepo }, productPagePath, budget);
@@ -183,10 +191,10 @@ export async function renderPublishedPage(
   // `style`, which the responsive pass then moves into the stylesheet per
   // breakpoint like any responsive style. The hover presets land in that sheet too.
   const effects = applyEffects(images.root, breakpoints);
-  const responsive = applyResponsiveStyles(effects.root, breakpoints, { gated: behaviour.hasGate });
+  const responsive = applyResponsiveStyles(effects.root, breakpoints, { gated: behaviour.hasGate, colorMode: themeColorMode(theme) });
   // The self-hosted web fonts the page uses, scanned before the responsive
   // rewrite moves styles into classes (src/lib/fonts/registry.ts).
-  const fonts = publishedFontAssets(hydrated);
+  const fonts = publishedFontAssets(hydrated, theme);
 
   // The page frame drives any island re-resolution of {{page.params.*}} and {{product.href}}.
   const scope = pushPageFrame(createScope(), pageParams, productPagePath);
@@ -205,6 +213,7 @@ export async function renderPublishedPage(
             look={consent?.look ?? DEFAULT_LOOK}
             privacyHref={consent?.privacyHref ?? null}
             pageBase={pageBase}
+            theme={theme}
           />
         ) : (
           // Nothing needs consent: a footer "Cookie settings" link would do nothing.

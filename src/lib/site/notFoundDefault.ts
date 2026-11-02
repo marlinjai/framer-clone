@@ -6,11 +6,20 @@
 // button's colour), so a miss still looks like the site. A button inside a
 // reusable component counts, with a colour passed to it as an input. PURE, apart
 // from the expansion memo.
+//
+// A site's theme (src/lib/site/theme.ts) comes first: its document block is the
+// site's background, text colour and font, and a value may refer to one of its
+// tokens. legibleLook reads those references through the theme, in every colour
+// scheme the site can show, so a pair that reads keeps the site's look and flips with
+// the page, and one that does not becomes the neutral pair as literals
+// (docs/plans/2026-11-02-theme-and-head.md, "The consent banner and the default 404").
 
 import type { PublishedPageRow } from '@/server/sites/publicResolver';
 import { literalPage, type ExpandableSite } from '@/lib/components/expandedPages';
-import { colorText, composite, contrastRatio, parseColor } from '@/lib/ai/review/layoutAudit';
+import { colorText, composite, contrastRatio } from '@/lib/ai/review/layoutAudit';
+import { parseColor, type Rgba } from '@/lib/color/cssColor';
 import { platformFontStack } from '@/lib/fonts/registry';
+import { parseTokenReference, resolveTokenRefs, schemesInForce, type SiteTheme } from './theme';
 
 export interface NotFoundCopy {
   eyebrow: string;
@@ -83,32 +92,56 @@ export const DEFAULT_LOOK: SiteLook = {
 /** WCAG 2.2 AA for body text. */
 const MIN_CONTRAST = 4.5;
 
-/**
- * The pair as CSS written from its parsed numbers, or null unless it can be shown to
- * read. It fails closed: a value with no colour to judge, such as var(), color-mix(),
- * currentColor, inherit or a gradient, is not legible, because what cannot be read
- * here can be anything in the browser. So is a see-through ground, because what is
- * behind it is not known. What comes back is the parse, never the stored text, so
- * nothing the parser and the browser read differently reaches the banner.
- */
-function legiblePair(text: string, ground: string): { ink: string; on: string } | null {
+/** The pair's colours when it can be shown to read, or null. */
+function readablePair(text: string, ground: string): { ink: Rgba; on: Rgba } | null {
   const on = parseColor(ground);
   const ink = parseColor(text);
   if (!on || !ink || on.a < 1 || ink.a === 0) return null;
-  return contrastRatio(composite(ink, on), on) >= MIN_CONTRAST ? { ink: colorText(ink), on: colorText(on) } : null;
+  return contrastRatio(composite(ink, on), on) >= MIN_CONTRAST ? { ink, on } : null;
 }
 
 /**
- * The look as the banner writes it: each pair from its parsed numbers, or the neutral
- * pair when it cannot be shown to read, and the font as the registry writes it, or the
- * neutral stack when a family comes from outside it, whose glyphs could be empty. For
- * what has to stay readable whatever a site sets, which is the consent banner.
+ * The pair as the banner writes it, or null unless it can be shown to read in every
+ * colour scheme the site can show. It fails closed: a value with no colour to judge,
+ * such as var() of no token, color-mix(), currentColor, inherit or a gradient, is not
+ * legible, because what cannot be read here can be anything in the browser. So is a
+ * see-through ground, because what is behind it is not known.
+ *
+ * A side that is exactly a token reference stays that reference, so it flips with the
+ * page, which is safe because it read in each scheme. Every other side is written from
+ * its parsed numbers, never as stored text, so nothing the parser and the browser read
+ * differently reaches the banner.
  */
-export function legibleLook(look: SiteLook): SiteLook {
-  const text = legiblePair(look.color, look.background);
-  const button = legiblePair(look.accentText, look.accent);
+function legiblePair(text: string, ground: string, theme: SiteTheme | undefined): { ink: string; on: string } | null {
+  const schemes = schemesInForce(theme?.mode);
+  let first: { ink: Rgba; on: Rgba } | null = null;
+  for (const scheme of schemes) {
+    const read = theme
+      ? readablePair(resolveTokenRefs(text, theme, scheme), resolveTokenRefs(ground, theme, scheme))
+      : readablePair(text, ground);
+    if (!read) return null;
+    first ??= read;
+  }
+  if (!first) return null;
+  const side = (stored: string, parsed: Rgba) => (theme && parseTokenReference(stored) !== null ? stored : colorText(parsed));
+  return { ink: side(text, first.ink), on: side(ground, first.on) };
+}
+
+/**
+ * The look as the banner and the default 404 write it: each pair as legiblePair gives
+ * it, or the neutral pair as literals on both sides when it cannot be shown to read, and
+ * the font as the registry writes it, or the neutral stack when a family comes from
+ * outside it, whose glyphs could be empty. A font token is read through the theme first,
+ * so it counts as the registry stack it stands for. For what has to stay readable
+ * whatever a site sets, which is the consent banner.
+ */
+export function legibleLook(look: SiteLook, theme?: SiteTheme): SiteLook {
+  const text = legiblePair(look.color, look.background, theme);
+  const button = legiblePair(look.accentText, look.accent, theme);
+  // A font has one value in every scheme.
+  const font = theme ? resolveTokenRefs(look.fontFamily, theme, 'light') : look.fontFamily;
   return {
-    fontFamily: platformFontStack(look.fontFamily) ?? DEFAULT_LOOK.fontFamily,
+    fontFamily: platformFontStack(font) ?? DEFAULT_LOOK.fontFamily,
     color: text?.ink ?? DEFAULT_LOOK.color,
     background: text?.on ?? DEFAULT_LOOK.background,
     accent: button?.on ?? DEFAULT_LOOK.accent,
@@ -150,23 +183,38 @@ function* walk(root: NodeLike | undefined, limit = 400): Generator<NodeLike> {
 }
 
 /**
- * The look of a site, read off its home page: the root's font and colours (or
- * the first section's background when the root has none), and the first
- * filled link or button as the accent. Anything missing keeps the default.
+ * The look of a site: its theme's document block first (background, text colour and
+ * font, each a token reference), then its home page: the root's font and colours (or
+ * the first section's background when the root has none), and the first filled link
+ * or button as the accent. Anything missing keeps the default.
  */
-export function siteLookFromPages(site: ExpandableSite & { pages: readonly PublishedPageRow[] }): SiteLook {
+export function siteLookFromPages(
+  site: ExpandableSite & { pages: readonly PublishedPageRow[]; siteSettings?: { theme?: SiteTheme } },
+): SiteLook {
   const { pages } = site;
+  const document = site.siteSettings?.theme?.document ?? {};
+  const fromTheme = {
+    fontFamily: parseTokenReference(document.fontFamily) !== null ? document.fontFamily : undefined,
+    color: parseTokenReference(document.color) !== null ? document.color : undefined,
+    background: parseTokenReference(document.backgroundColor) !== null ? document.backgroundColor : undefined,
+  };
   const home =
     pages.find((p) => p.slug.split('/').filter(Boolean).length === 0) ?? pages[0];
   const root = (home ? literalPage(site, home).root : null) as NodeLike | null;
-  if (!root) return DEFAULT_LOOK;
-  const look: SiteLook = { ...DEFAULT_LOOK };
+  const look: SiteLook = {
+    ...DEFAULT_LOOK,
+    ...(fromTheme.fontFamily ? { fontFamily: fromTheme.fontFamily } : {}),
+    ...(fromTheme.color ? { color: fromTheme.color } : {}),
+    ...(fromTheme.background ? { background: fromTheme.background } : {}),
+  };
+  if (!root) return look;
   const style = root.props?.style ?? {};
-  look.fontFamily = baseValue(style.fontFamily) ?? look.fontFamily;
-  look.color = baseValue(style.color) ?? look.color;
+  if (!fromTheme.fontFamily) look.fontFamily = baseValue(style.fontFamily) ?? look.fontFamily;
+  if (!fromTheme.color) look.color = baseValue(style.color) ?? look.color;
   const firstSection = root.children?.[0]?.props?.style ?? {};
-  look.background =
-    baseValue(style.backgroundColor) ?? baseValue(firstSection.backgroundColor) ?? look.background;
+  if (!fromTheme.background) {
+    look.background = baseValue(style.backgroundColor) ?? baseValue(firstSection.backgroundColor) ?? look.background;
+  }
   for (const node of walk(root)) {
     if (node.type !== 'a' && node.type !== 'button') continue;
     const bg = baseValue(node.props?.style?.backgroundColor);

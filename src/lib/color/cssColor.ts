@@ -1,9 +1,10 @@
 // src/lib/color/cssColor.ts
 //
 // One strict CSS colour parser, shared by everything that has to agree with a browser
-// about what a colour is: the theme's token grammar (src/lib/site/theme.ts) and, once
-// #261 is on main, the consent banner's legibility guard, whose `parseColor` reads the
-// same grammar from here (parseColor below is its drop-in shape).
+// about what a colour is: the theme's token grammar (src/lib/site/theme.ts), the consent
+// banner's and the default 404's legibility guard (src/lib/site/notFoundDefault.ts), and
+// the visual review (src/lib/ai/review/layoutAudit.ts re-exports parseColor). So a colour
+// a token may hold is always one the banner can judge.
 //
 // Strict means: a value is accepted only when Chromium and WebKit both read it as a
 // colour (test/renderGate/theme.gate.ts asserts `CSS.supports('color', v)` for every
@@ -231,56 +232,155 @@ function hslToRgb(h: number, s: number, l: number): [number, number, number] {
   return [f(0), f(8), f(4)];
 }
 
-function oklchToRgb(L: number, C: number, h: number): [number, number, number] {
-  const radians = (h * Math.PI) / 180;
-  const A = C * Math.cos(radians);
-  const B = C * Math.sin(radians);
-  const l = (L + 0.3963377774 * A + 0.2158037573 * B) ** 3;
-  const m = (L - 0.1055613458 * A - 0.0638541728 * B) ** 3;
-  const s = (L - 0.0894841775 * A - 1.291485548 * B) ** 3;
-  const gamma = (linear: number) => {
-    const v = clamp(linear, 1);
-    return (v <= 0.0031308 ? 12.92 * v : 1.055 * v ** (1 / 2.4) - 0.055) * 255;
-  };
+/** Linear light to sRGB's transfer curve, in 0..255, clamped to the gamut. */
+function encodeSrgb(linear: number): number {
+  const v = clamp(linear, 1);
+  return (v <= 0.0031308 ? 12.92 * v : 1.055 * v ** (1 / 2.4) - 0.055) * 255;
+}
+
+/** sRGB's (and Display P3's) transfer curve undone, keeping the sign. */
+function decodeSrgb(encoded: number): number {
+  const abs = Math.abs(encoded);
+  const linear = abs <= 0.04045 ? abs / 12.92 : ((abs + 0.055) / 1.055) ** 2.4;
+  return encoded < 0 ? -linear : linear;
+}
+
+type Triple = [number, number, number];
+
+const fromLinearSrgb = ([r, g, b]: Triple): Triple => [encodeSrgb(r), encodeSrgb(g), encodeSrgb(b)];
+
+/** CIE XYZ relative to D65 to linear sRGB. */
+function xyzD65ToLinearSrgb([x, y, z]: Triple): Triple {
   return [
-    gamma(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s),
-    gamma(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s),
-    gamma(-0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s),
+    3.2409699419045226 * x - 1.537383177570094 * y - 0.4986107602930034 * z,
+    -0.9692436362808796 * x + 1.8759675015077202 * y + 0.04155505740717559 * z,
+    0.05563007969699366 * x - 0.20397695888897652 * y + 1.0569715142428786 * z,
   ];
 }
 
+/** CIE XYZ relative to D50 to D65, by the Bradford transform CSS Color 4 uses. */
+function d50ToD65([x, y, z]: Triple): Triple {
+  return [
+    0.955473421488075 * x - 0.02309845494876471 * y + 0.06325924320057072 * z,
+    -0.0283697093338637 * x + 1.0099953980813041 * y + 0.021041441191917323 * z,
+    0.012314014864481998 * x - 0.020507649298898964 * y + 1.330365926242124 * z,
+  ];
+}
+
+/** CIE Lab (D50) to linear sRGB. */
+function labToLinearSrgb(L: number, a: number, b: number): Triple {
+  const kappa = 24389 / 27;
+  const epsilon = 216 / 24389;
+  const fy = (L + 16) / 116;
+  const fx = a / 500 + fy;
+  const fz = fy - b / 200;
+  const xr = fx ** 3 > epsilon ? fx ** 3 : (116 * fx - 16) / kappa;
+  const yr = L > kappa * epsilon ? ((L + 16) / 116) ** 3 : L / kappa;
+  const zr = fz ** 3 > epsilon ? fz ** 3 : (116 * fz - 16) / kappa;
+  const white: Triple = [0.3457 / 0.3585, 1, (1 - 0.3457 - 0.3585) / 0.3585];
+  return xyzD65ToLinearSrgb(d50ToD65([xr * white[0], yr * white[1], zr * white[2]]));
+}
+
+/** Oklab to linear sRGB. */
+function oklabToLinearSrgb(L: number, A: number, B: number): Triple {
+  const l = (L + 0.3963377774 * A + 0.2158037573 * B) ** 3;
+  const m = (L - 0.1055613458 * A - 0.0638541728 * B) ** 3;
+  const s = (L - 0.0894841775 * A - 1.291485548 * B) ** 3;
+  return [
+    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+    -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
+  ];
+}
+
+/** Display P3 (encoded) to linear sRGB. */
+function displayP3ToLinearSrgb(r: number, g: number, b: number): Triple {
+  const [lr, lg, lb] = [decodeSrgb(r), decodeSrgb(g), decodeSrgb(b)];
+  return xyzD65ToLinearSrgb([
+    0.4865709486482162 * lr + 0.26566769316909306 * lg + 0.1982172852343625 * lb,
+    0.2289745640697488 * lr + 0.6917385218365064 * lg + 0.079286914093745 * lb,
+    0 * lr + 0.04511338185890264 * lg + 1.043944368900976 * lb,
+  ]);
+}
+
+/** Polar to rectangular, for lch and oklch. */
+function polar(chroma: number, hue: number): [number, number] {
+  const radians = (hue * Math.PI) / 180;
+  return [chroma * Math.cos(radians), chroma * Math.sin(radians)];
+}
+
+/** In the modern form a bare number for hsl's or hwb's second and third value means percent. */
+const percentOf = (c: ColorComponent): number => (c.kind === 'number' ? c.value / 100 : value(c, 1));
+
 /**
- * A parsed colour as sRGB numbers, for a contrast check. Covers names, hex, `transparent`,
- * `rgb`, `hsl` and `oklch`, which is what the banner guard reads today. Any other function
- * returns undefined, which the guard treats as a colour it cannot judge (the neutral pair);
- * slice T2 of the theme contract teaches it `lab`, `lch`, `oklab`, `hwb` and `color()`.
+ * A parsed colour as sRGB numbers, for a contrast check: the whole grammar, by the
+ * conversions CSS Color 4 defines, clamped to the sRGB gamut (a contrast check reads what
+ * an sRGB screen shows). `none` reads as zero, as CSS says it does where it is not
+ * carried forward. test/renderGate/theme.gate.ts holds every accepted value to what
+ * Chromium and WebKit paint.
+ *
+ * Undefined where the engines paint a value differently, or in a way the specification
+ * leaves open, so it cannot be judged here and a guard reading it fails closed: a Display
+ * P3 colour with a channel outside 0 to 1 (`color(display-p3 0 0 100)` paints a light
+ * blue, not the clipped blue), and an hwb colour with a negative whiteness or blackness
+ * (Chromium paints `hwb(1 -1% 0)` as green 2, WebKit as green 4).
  */
 export function cssColorToRgba(color: CssColor): Rgba | undefined {
   if (color.form === 'transparent') return { r: 0, g: 0, b: 0, a: 0 };
   if (color.form === 'hex' || color.form === 'named') return hexToRgba(color.hex);
   const [c1, c2, c3] = color.components;
   const a = alphaOf(color.alpha);
+  const rgb = (triple: Triple): Rgba => ({ r: triple[0], g: triple[1], b: triple[2], a });
   switch (color.fn) {
     case 'rgb':
     case 'rgba':
       return { r: clamp(value(c1, 255), 255), g: clamp(value(c2, 255), 255), b: clamp(value(c3, 255), 255), a };
     case 'hsl':
-    case 'hsla': {
-      // In the modern form a bare number for saturation or lightness means percent.
-      const pct = (c: ColorComponent) => (c.kind === 'number' ? c.value / 100 : value(c, 1));
-      const [r, g, b] = hslToRgb(value(c1, 1), pct(c2), pct(c3));
-      return { r, g, b, a };
+    case 'hsla':
+      return rgb(hslToRgb(value(c1, 1), percentOf(c2), percentOf(c3)));
+    case 'hwb': {
+      const white = percentOf(c2);
+      const black = percentOf(c3);
+      if (white < 0 || black < 0) return undefined;
+      if (white + black >= 1) {
+        const gray = clamp((white / (white + black)) * 255, 255);
+        return { r: gray, g: gray, b: gray, a };
+      }
+      const scale = 1 - white - black;
+      const [r, g, b] = hslToRgb(value(c1, 1), 1, 0.5);
+      const channel = (v: number) => clamp(v * scale + white * 255, 255);
+      return { r: channel(r), g: channel(g), b: channel(b), a };
     }
+    case 'lab':
+      return rgb(fromLinearSrgb(labToLinearSrgb(clamp(value(c1, 100), 100), value(c2, 125), value(c3, 125))));
+    case 'lch': {
+      const [labA, labB] = polar(Math.max(0, value(c2, 150)), value(c3, 1));
+      return rgb(fromLinearSrgb(labToLinearSrgb(clamp(value(c1, 100), 100), labA, labB)));
+    }
+    case 'oklab':
+      return rgb(fromLinearSrgb(oklabToLinearSrgb(clamp(value(c1, 1), 1), value(c2, 0.4), value(c3, 0.4))));
     case 'oklch': {
-      const [r, g, b] = oklchToRgb(value(c1, 1), value(c2, 0.4), value(c3, 1));
-      return { r, g, b, a };
+      const [labA, labB] = polar(Math.max(0, value(c2, 0.4)), value(c3, 1));
+      return rgb(fromLinearSrgb(oklabToLinearSrgb(clamp(value(c1, 1), 1), labA, labB)));
     }
-    default:
-      return undefined;
+    case 'color': {
+      const [r, g, b] = [value(c1, 1), value(c2, 1), value(c3, 1)];
+      if (color.space === 'srgb-linear') return rgb(fromLinearSrgb([r, g, b]));
+      if (color.space === 'display-p3') {
+        if ([r, g, b].some((channel) => channel < 0 || channel > 1)) return undefined;
+        return rgb(fromLinearSrgb(displayP3ToLinearSrgb(r, g, b)));
+      }
+      return { r: clamp(r, 1) * 255, g: clamp(g, 1) * 255, b: clamp(b, 1) * 255, a };
+    }
   }
 }
 
-/** The banner guard's shape: a colour as sRGB numbers, or undefined for anything a browser refuses or this cannot convert. */
+/**
+ * A colour as sRGB numbers, or undefined for anything a browser refuses: the one parser
+ * the consent banner's guard, the default 404 and the visual review all read
+ * (src/lib/ai/review/layoutAudit.ts re-exports it). `var()`, `color-mix()`,
+ * `currentColor` and `inherit` have no value here.
+ */
 export function parseColor(input: string): Rgba | undefined {
   const parsed = parseCssColor(input);
   return parsed ? cssColorToRgba(parsed) : undefined;
