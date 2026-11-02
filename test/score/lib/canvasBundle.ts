@@ -98,14 +98,20 @@ export async function openEditor(browser: Browser, bundle: string, contextOption
   // The bundle leaves CSS out, and the real editor sits under the same root layout as a
   // published page. Without this sheet a comparison would hold a page with a reset
   // against one without, and the overlays would take the pointer: their utilities are here.
+  // The viewport line is the one Next writes into the editor's document. Without it a phone
+  // lays the page out at 980 pixels and scales it down, so 390 would not be 390. A desktop
+  // window ignores it.
   const { css, meta } = readPublishedBase();
-  await page.setContent(`<!doctype html><html lang="en" class="${meta.htmlClass}"><head><meta charset="utf-8"><style>${css}</style></head><body class="${meta.bodyClass}"><div id="root"></div></body></html>`);
+  await page.setContent(`<!doctype html><html lang="en" class="${meta.htmlClass}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>${css}</style></head><body class="${meta.bodyClass}"><div id="root"></div></body></html>`);
   await page.addScriptTag({ path: bundle });
   // The frames open under the left sidebar, as they do at this window size. A person
-  // pans them out of it first, and so does a contract that clicks.
+  // pans them out of it first, and so does a contract that clicks. A phone has no
+  // sidebar beside the canvas, and mobile WebKit has no wheel.
   await page.locator('[data-ground]').first().waitFor({ state: 'attached' });
-  await page.mouse.move(1200, 500);
-  await page.mouse.wheel(-280, 0);
+  if (!contextOptions.isMobile) {
+    await page.mouse.move(1200, 500);
+    await page.mouse.wheel(-280, 0);
+  }
   return { page, crashes };
 }
 

@@ -10,6 +10,8 @@ import { isTextNodeType } from '@/lib/renderer/textNode';
 import type { InputDefinition } from '@/lib/components/inputs';
 import { isDefinitionRule, storedRulesOf } from '@/lib/rules/rules';
 import { findRuleIndex, namedState, ruleLabel } from '@/lib/rules/states';
+import { revealFor, surfaceBehaviour, type PreviewValues } from '@/lib/behaviour/surfaceBehaviour';
+import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 // Removed BreakpointModel - breakpoints are now viewport nodes
 
 // Available tools in our design editor (expanded from basic ToolStore)
@@ -48,7 +50,7 @@ export function whilePanelWritesRule<T>(write: () => T): T {
 
 /** 'refused': an action the editor would not carry out, and why. */
 export interface EditorNoticeState {
-  kind: 'changedElsewhere' | 'missingPage' | 'refused';
+  kind: 'changedElsewhere' | 'missingPage' | 'refused' | 'previewState';
   message: string;
 }
 
@@ -160,6 +162,11 @@ const EditorUIStore = types.model('EditorUI', {
   activeRule: null as string | null,
   // Why the last write into that state was refused, for the line under the switch.
   ruleRefusal: null as string | null,
+  // Page state as the canvas shows it in Select, by state id: a value stands in for the
+  // state's first value, so "Menu open" stays visible while it is styled
+  // (src/lib/behaviour/surfaceBehaviour.ts). Replaced whole. Editor session only: never
+  // saved, never in undo, and gone with the page, so a reload opens on the first values.
+  previewState: {} as PreviewValues,
   // The preview shown over the editor (PreviewOverlay), from this store: no
   // navigation and no server round trip. The editor's own keyboard shortcuts
   // stand down while it is open. Editor session only.
@@ -245,6 +252,20 @@ const EditorUIStore = types.model('EditorUI', {
 
   setRuleRefusal(reason: string | null) {
     self.ruleRefusal = reason;
+  },
+
+  /** Shows a state at `value` on the canvas, or at its first value again with undefined. */
+  setPreviewValue(stateId: string, value: string | number | boolean | undefined) {
+    const next: Record<string, string | number | boolean> = { ...self.previewState };
+    if (value === undefined) delete next[stateId];
+    else next[stateId] = value;
+    self.previewState = next;
+  },
+
+  /** Every state back at its first value, and the notice naming a preview gone with it. */
+  clearPreviewState() {
+    if (Object.keys(self.previewState).length > 0) self.previewState = {};
+    if (self.editorNotice?.kind === 'previewState') self.editorNotice = undefined;
   },
 
   /** Shows or hides the preview over the editor (PreviewOverlay). */
@@ -362,6 +383,33 @@ const EditorUIStore = types.model('EditorUI', {
       // Floating element or no viewport context - clear viewport selection
       console.log("🌊 Clearing viewport context - this is a floating element");
       self.selectedViewportNode = undefined;
+    }
+    if (target) this.revealInPreview(target);
+  },
+
+  /**
+   * A node a `showWhen` hides cannot be clicked on the canvas, only picked in Layers.
+   * When what hides it is a plain chain of `eq`, the preview takes the values that show
+   * it, and the notice names them. Otherwise the notice says what hides it. A node
+   * nothing hides changes nothing, so this costs a click on the canvas only a lookup.
+   */
+  revealInPreview(component: ComponentInstance) {
+    const page = self.currentPage;
+    if (!page) return;
+    const roots = [page.expansion.root, ...page.expansion.floating] as ComponentNode[];
+    // A page holding no behaviour has nothing that hides: the pass hands its own tree back.
+    if (roots.every(root => surfaceBehaviour(root).root === root)) return;
+    for (const root of roots) {
+      const reveal = revealFor(root, component.id, self.previewState);
+      if (!reveal) continue;
+      if (reveal.blocked) {
+        self.editorNotice = { kind: 'previewState', message: `This layer is hidden by ${reveal.blocked}. Change its Show when to reach it.` };
+        return;
+      }
+      if (reveal.names.length === 0) return;
+      self.previewState = { ...self.previewState, ...reveal.values };
+      self.editorNotice = { kind: 'previewState', message: `Previewing ${reveal.names.join(', ')} so this layer shows. The page itself is unchanged.` };
+      return;
     }
   },
   
@@ -652,6 +700,16 @@ const EditorUIStore = types.model('EditorUI', {
   // outcome rather than each way there covers the ways nobody listed. Another frame
   // of the same node keeps the state.
   afterCreate() {
+    // A preview names states of one page: another page, or another project, starts from
+    // first values, however the editor got there.
+    addDisposer(
+      self,
+      reaction(
+        () => [self.currentProject?.id, self.currentPage?.id],
+        () => self.clearPreviewState(),
+        { equals: comparer.structural },
+      ),
+    );
     addDisposer(
       self,
       reaction(

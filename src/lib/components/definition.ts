@@ -10,7 +10,8 @@
 // a reason, and placements of it render as missing.
 //
 // A state's no-JavaScript rules compile to rules carrying `gate: 'off'` (see
-// docs/plans/2026-11-02-behaviour-model.md), so nothing here names a selector.
+// docs/plans/2026-11-02-behaviour-model.md). A pointer state is plain CSS relative
+// to a marker on the placement root, named here once for expansion and detach.
 //
 // Contract: docs/plans/2026-11-02-reusable-components.md.
 
@@ -53,6 +54,37 @@ export interface ComponentDefinition {
   /** A state id, for a page without its script. */
   noScriptState?: string;
 }
+
+// ---------- pointer states ----------
+
+export type PointerStateKind = Exclude<StateKind, 'custom'>;
+
+export const isPointerState = (state: Pick<StateDefinition, 'kind'>): state is StateDefinition & { kind: PointerStateKind } =>
+  state.kind !== 'custom';
+
+/** What each pointer state is in CSS, on the element that has it. Focus counts from inside too. */
+export const POINTER_STATE_CSS: Readonly<Record<PointerStateKind, string>> = {
+  hover: ':hover',
+  pressed: ':active',
+  focused: ':is(:focus-visible, :has(:focus-visible))',
+};
+
+/**
+ * The attribute on a placement root that a compiled pointer state reads. The
+ * contract named `data-fc-c`, but the rule parser refuses every `data-fc-` name as
+ * renderer-owned (isPlatformMarker), and `data-u-c-` is the one stored family a rule
+ * may read. Detach writes the same name with an empty value, so a plain copy never
+ * matches a live placement's rules: they read the definition id as the value.
+ */
+export const placementMarker = (definitionId: string): string => `data-u-c-${definitionId.slice(0, 8).toLowerCase()}`;
+
+/** `[data-u-c-xxxxxxxx="<definition id>"]`, what a compiled state is relative to. */
+export const placementMarkerSelector = (definitionId: string): string =>
+  `[${placementMarker(definitionId)}="${definitionId}"]`;
+
+/** True when placements of this definition carry the marker. */
+export const hasPointerState = (definition: Pick<ComponentDefinition, 'states'>): boolean =>
+  (definition.states ?? []).some(isPointerState);
 
 /** A site's definitions by id, as `parseComponents` gives them. */
 export type ComponentDefinitions = Record<string, ComponentDefinition>;

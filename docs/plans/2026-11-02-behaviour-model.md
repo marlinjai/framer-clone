@@ -1239,6 +1239,30 @@ The review (`2026-11-02-behaviour-model-review.md`, "Slice B3 and B4", probes be
 - **A feed's articles are each a Tab stop on the server,** so without a script every article is reachable, and the runtime keeps one.
 - **`radix-accordion` stays as it was:** its selector gap is open.
 
+## Decided in slice B9
+
+**Both editor surfaces run the published page's own pass,** `applyBehaviour`, over the page's expansion, in `src/lib/behaviour/surfaceBehaviour.ts`. So there is no second compile of `when`, `showWhen` or a binding. The renderers draw the live tree, so what the pass wrote reaches them per node id through `surfaceDom.ts`, under the id the expansion gives a node, which inside a placement is its path. The sheets read the applied tree's `compiledRules`. Until now both surfaces refused every `when`, because the sheet read rules with no state in reach and never wrote a `when` into a selector.
+
+**The preview runs the page.** `PreviewFrame` starts the runtime on its frame with the program the pass returns, fetching the same chunks `BehaviourIsland` does, with real pointer and focus. It starts from the real first values, never from the canvas preview, and an edit gives a new program, so it starts again from the first values. Proven with a real press, Enter and Space, and a finger at 390 pixels, in Chromium and WebKit.
+
+**No row in the score:** the slice table says so, and the matrix did not move.
+
+**Also decided while building it, say so if you disagree:**
+
+- **A preview value stands in for the first value,** written into `initial` before the pass, so the bindings follow it with no code of their own. A value the state cannot hold, such as an option that was removed, is not shown, rather than letting the parser refuse the whole state over it.
+- **Neither surface has the gate.** The preview runs a script, and Select previews what a script would set, so a `when` stands with no gate in front and `gate: 'off'` rules, the no-JavaScript look, are left out of both. The canvas also leaves out `gate: 'on'`, the row `showWhen` read through `data-u-on`, since nothing writes that attribute where nothing runs. Visible is the safe side.
+- **A `when` is not made constant on the surfaces,** as an outward condition is: it reads only `data-fcs-*`, which only the surfaces' renderers write.
+- **A Collection's rows are not in the expansion,** since the editor draws the template once per row. So a row's index cannot be previewed, and a `showWhen` comparing with it leaves the node visible, as `applyBehaviour` already does where no clone stands.
+- **An element repeated for a list input** (components slice 10) is drawn on the canvas from its one live node per item, while the expansion names each copy apart. So on the canvas its copies show their stored attributes and no state, the visible side. The preview draws the expansion's own copies and runs them.
+- **The canvas leaves a text binding out.** Its element is what a person types into, and committing the bound text would write state over the stored words. The preview shows it.
+- **Reveal runs on every selection,** not only from Layers, since Layers is the only way to pick a node a `showWhen` hides and a node nothing hides changes nothing. When what hides it is `eq` or `all` of `eq`, the preview takes the values that show it. Otherwise nothing changes and the notice says what hides it.
+- **The badge is the editor notice,** "Previewing Open so this layer shows". Its "Show first values" ends the preview, and so does closing it, so the canvas never differs from the page without saying so. The Page state panel's value controls are B11's.
+- **A preview ends with its page:** a reaction on the open project and page clears it, however the editor got there.
+- **`applyBehaviour` takes a sink for what it leaves out.** The published page still warns once per page. The surfaces rebuild on every edit, so they hand theirs to the sheet's warning, which speaks once per distinct set.
+- **The map of what the pass wrote is kept while it holds the same,** because every node reads it and most edits change nothing the pass wrote.
+
+**Not proven:** Layers rows have no keyboard path in the editor today, so the reveal is proven with a real pointer only. The notice's control is proven by keyboard.
+
 ## Review findings not adopted
 
 Everything in findings 1 to 22 is applied except the following, each decided by code or a test. M1 to M10 are recorded above with the review's defaults.

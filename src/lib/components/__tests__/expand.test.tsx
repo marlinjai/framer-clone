@@ -17,6 +17,8 @@ import { BREAKPOINTS } from '../../../../test/score/lib/published';
 import { parseComponents, type ComponentDefinitions } from '../definition';
 import { createRenderBudget, expandPlacements } from '../expand';
 import { COMPONENT_LIMITS, MISSING_TYPE } from '../placement';
+import { surfaceSheet, type SurfaceNode } from '@/lib/rules/surfaceSheet';
+import { detachedExpansion } from '@/lib/renderer/detachedExpansion';
 
 type Node = Record<string, unknown>;
 
@@ -579,12 +581,106 @@ describe('what stored data may not do', () => {
     expect(html).not.toContain('track.example');
   });
 
-  it('never shows a state rule before it is compiled', async () => {
-    const stored = definition('d', { id: 'r', type: 'div', props: {
-      rules: [{ id: 'state-hover', componentState: 'hover', selector: '&', style: { color: 'red' } }],
-    } }, { states: [{ id: 'hover', name: 'Hover', kind: 'hover' }] });
-    const { css } = await publish(page([placement('p', 'd')]), definitionsOf(stored));
-    expect(css).not.toContain('color:red');
+});
+
+describe('pointer states', () => {
+  const stateRule = (state: string, style: Node, extra: Node = {}) => ({ id: `state-${state}`, componentState: state, selector: '&', style, ...extra });
+  const POINTER = [
+    { id: 'hover', name: 'Hover', kind: 'hover' },
+    { id: 'pressed', name: 'Pressed', kind: 'pressed', implies: ['hover'] },
+    { id: 'focused', name: 'Focused', kind: 'focused' },
+  ];
+  const button = (rules: Node[], children: Node[] = [], states: Node[] = POINTER) =>
+    definition('btn', { id: 'b-root', type: 'button', props: { rules }, children }, { states });
+  const X = '[data-u-c-btn="btn"]';
+
+  it('compiles each kind to a selector relative to the marked root, hover behind its gate', async () => {
+    const stored = button(
+      [stateRule('hover', { color: 'red' })],
+      [{ id: 'b-label', type: 'span', props: { children: 'Go', rules: [stateRule('pressed', { color: 'navy' }), stateRule('focused', { outline: '2px solid gold' })] } }],
+    );
+    const { html, css } = await publish(page([placement('p1', 'btn')]), definitionsOf(stored));
+    expect(html).toContain(`<button data-u-c-btn="btn" class="fc_r-b-root">`);
+    expect(css).toContain(`@media (hover:hover) and (pointer:fine){\n.fc_r-b-root.fc_r-b-root:where(${X}:hover, ${X}:hover *){color:red}\n}`);
+    expect(css).toContain(`.fc_r-b-label.fc_r-b-label:where(${X}:active, ${X}:active *){color:navy}`);
+    expect(css).toContain(`.fc_r-b-label.fc_r-b-label:where(${X}:is(:focus-visible, :has(:focus-visible)), ${X}:is(:focus-visible, :has(:focus-visible)) *){outline:2px solid gold}`);
+  });
+
+  it('shares one block between placements, each root marked', async () => {
+    const { html, css } = await publish(
+      page([placement('p1', 'btn'), placement('p2', 'btn')]),
+      definitionsOf(button([stateRule('hover', { color: 'red' })])),
+    );
+    expect(html.match(/data-u-c-btn="btn"/g)).toHaveLength(2);
+    expect(css.match(/:hover \*\)\{color:red\}/g)).toHaveLength(1);
+  });
+
+  it('comes after authored rules, in the order of the states, whatever the stored order', async () => {
+    const stored = button(
+      [stateRule('hover', { color: 'red' }), stateRule('pressed', { color: 'navy' }), { id: 'own', selector: '& > i', style: { color: 'green' } }],
+      [],
+      [POINTER[1], POINTER[0]],
+    );
+    const { css } = await publish(page([placement('p1', 'btn')]), definitionsOf(stored));
+    const at = (text: string) => css.indexOf(text);
+    expect(at('color:green')).toBeGreaterThan(-1);
+    expect(at('color:green')).toBeLessThan(at('color:navy'));
+    expect(at('color:navy')).toBeLessThan(at('color:red'));
+  });
+
+  it('maps a state\'s breakpoint values to the page\'s', async () => {
+    const stored = button([stateRule('pressed', { color: { base: 'red', 'd-mobile': 'blue' } })]);
+    const { css } = await publish(page([placement('p1', 'btn')]), definitionsOf(stored));
+    expect(css).toContain(':active *){color:red}');
+    expect(css).toMatch(/@media \(max-width:[\d.]+px\)\{\n[^}]*:active \*\)\{color:blue\}/);
+  });
+
+  it('fails closed: a removed state, a custom one or another shape reaches no sheet', async () => {
+    const warn = vi.mocked(console.warn);
+    const stored = button([
+      stateRule('gone', { color: 'red' }),
+      stateRule('open', { color: 'orange' }),
+      stateRule('hover', { color: 'purple' }, { selector: '& > i' }),
+    ], [], [...POINTER, { id: 'open', name: 'Open', kind: 'custom' }]);
+    const { css } = await publish(page([placement('p1', 'btn')]), definitionsOf(stored));
+    expect(css).not.toMatch(/color:(red|orange|purple)/);
+    const messages = warn.mock.calls.map(call => String(call[0]));
+    expect(messages.some(message => message.includes('a state btn does not have: gone'))).toBe(true);
+    expect(messages.some(message => message.includes('not in the stored shape'))).toBe(true);
+  });
+
+  it('marks no root when the definition has no pointer state', async () => {
+    const { html } = await publish(page([placement('p1', 'btn')]), definitionsOf(button([], [], [{ id: 'open', name: 'Open', kind: 'custom' }])));
+    expect(html).not.toContain('data-u-c-');
+  });
+
+  it('keeps an inner placement\'s state to its own definition', async () => {
+    const inner = definition('chip', { id: 'chip-root', type: 'span', props: { rules: [stateRule('hover', { color: 'red' })] } }, { states: [POINTER[0]] });
+    const outer = definition('btn', { id: 'b-root', type: 'div', props: { rules: [stateRule('hover', { color: 'blue' })] }, children: [placement('in', 'chip')] }, { states: [POINTER[0]] });
+    const { html, css } = await publish(page([placement('p1', 'btn')]), definitionsOf(outer, inner));
+    expect(html).toContain('data-u-c-btn="btn"');
+    expect(html).toContain('data-u-c-chip="chip"');
+    expect(css).toContain('.fc_r-chip-root.fc_r-chip-root:where([data-u-c-chip="chip"]:hover, [data-u-c-chip="chip"]:hover *){color:red}');
+  });
+
+  it('reads the same in the preview: the same marker, and the same compiled rule in its sheet', () => {
+    const expanded = expandPlacements(page([placement('p1', 'btn')]), definitionsOf(button([stateRule('hover', { color: 'red' })])), BREAKPOINTS);
+    const drawn = detachedExpansion(expanded.children![0]);
+    expect(drawn.getResolvedProps(BREAKPOINTS[0].id, BREAKPOINTS as never).attributes['data-u-c-btn']).toBe('btn');
+    const sheet = surfaceSheet({
+      kind: 'preview',
+      tree: expanded as SurfaceNode,
+      frames: [{ breakpointId: BREAKPOINTS[0].id, width: 1280, height: 800 }],
+      breakpoints: BREAKPOINTS,
+    });
+    expect(sheet).toContain(`:where(${X}:hover, ${X}:hover *)`);
+    expect(sheet).toContain('color:red');
+  });
+
+  it('a stored marker on a page node is kept, and a forged renderer one is not', async () => {
+    const { html } = await publish(page([{ id: 'n', type: 'div', props: { 'data-u-c-btn': 'btn', 'data-fc-c': 'btn' } }]), {});
+    expect(html).toContain('data-u-c-btn="btn"');
+    expect(html).not.toContain('data-fc-c');
   });
 });
 

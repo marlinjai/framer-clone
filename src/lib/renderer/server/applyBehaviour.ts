@@ -66,6 +66,13 @@ import { TEXT_NODE_TYPE, isTextNodeType } from '@/lib/renderer/textNode';
 import { isRuleList, readRules, type ParsedRule, type ParsedSelectorRule, type ReadRules } from '@/lib/rules/rules';
 import { formKindOf } from '@/lib/forms/definition';
 
+/** An entry left out, with why. A refused entry never blocks a page. */
+export interface BehaviourProblem {
+  node: string;
+  rule?: string;
+  reason: string;
+}
+
 export interface BehaviourResult {
   /** The rewritten tree, or the same tree when there was nothing to do. */
   root: ComponentNode;
@@ -197,11 +204,16 @@ interface Reach {
   insideForm?: boolean;
 }
 
-export function applyBehaviour(root: ComponentNode): BehaviourResult {
+/** One line per page on the published path. The editor surfaces pass their own sink, since they rebuild on every edit. */
+const warnOnce = (problems: readonly BehaviourProblem[]): void => {
+  console.warn(`applyBehaviour: left out ${problems.length} stored behaviour entr${problems.length === 1 ? 'y' : 'ies'}`, problems.slice(0, 10));
+};
+
+export function applyBehaviour(root: ComponentNode, report: (problems: readonly BehaviourProblem[]) => void = warnOnce): BehaviourResult {
   if (!holdsBehaviour(root)) return { root: suffixCloneIds(root), program: null, hasGate: false };
 
   const tree = readBehaviourTree(root);
-  const problems: { node: string; rule?: string; reason: string }[] = tree.refused.map(({ nodeId, reason }) => ({ node: nodeId ?? 'unnamed', reason }));
+  const problems: BehaviourProblem[] = tree.refused.map(({ nodeId, reason }) => ({ node: nodeId ?? 'unnamed', reason }));
   const behaviours = [...tree.behaviours.values()];
   const hasGate = behaviours.some((behaviour) => (behaviour.on?.length ?? 0) > 0);
   const targets = referencedKeys(behaviours);
@@ -321,10 +333,8 @@ export function applyBehaviour(root: ComponentNode): BehaviourResult {
   };
 
   const rewritten = visit(root, { states: new Map() });
-  if (problems.length > 0) {
-    // One line per page: a refused entry shows in the panel and never blocks a page.
-    console.warn(`applyBehaviour: left out ${problems.length} stored behaviour entr${problems.length === 1 ? 'y' : 'ies'}`, problems.slice(0, 10));
-  }
+  // A refused entry shows in the panel and never blocks a page.
+  if (problems.length > 0) report(problems);
 
   const nodes = Object.fromEntries(
     [...entries].filter(([, list]) => list.some(({ entry }) => Object.keys(entry).length > 0)).map(([key, list]) => [key, list.map(({ entry }) => entry)]),

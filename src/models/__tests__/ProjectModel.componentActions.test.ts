@@ -416,6 +416,64 @@ describe('states', () => {
     expect((rootOf(page).children[0] as ComponentInstance).props).toEqual({ component: 'button' });
   });
 
+  describe('a pointer state\'s rule', () => {
+    const definitionRoot = (project: ProjectModelType) => project.components.get('button')!.page.appComponentTree as unknown as ComponentInstance;
+    const rulesOf = (node: ComponentInstance) => (node.props.rules ?? []) as Record<string, unknown>[];
+    const withAuthored = definition(
+      'button',
+      host('b', 'button', { rules: [{ id: 'own', selector: '& > span', style: { color: 'green' } }] }),
+      { states: [{ id: 'pressed', name: 'Pressed', kind: 'pressed' }, { id: 'hover', name: 'Hover', kind: 'hover' }] },
+    );
+
+    it('is written by setRuleStyle in one step, after authored rules, in the order of the states', () => {
+      const { project, history } = setup({ button: withAuthored });
+      const root = definitionRoot(project);
+      expectOneStep(project, history, () => expect(root.setRuleStyle('state-hover', 'color', 'red')).toEqual({ ok: true }));
+      expect(root.setRuleStyle('state-pressed', 'color', 'navy')).toEqual({ ok: true });
+      expect(rulesOf(root).map(rule => rule.id)).toEqual(['own', 'state-pressed', 'state-hover']);
+      expect(rulesOf(root)[2]).toEqual({ id: 'state-hover', componentState: 'hover', selector: '&', style: { color: 'red' } });
+      // The element's own Hover is a different rule, and lands before the component's.
+      expect(root.setRuleStyle('hover', 'color', 'teal')).toEqual({ ok: true });
+      expect(rulesOf(root).map(rule => rule.id)).toEqual(['hover', 'own', 'state-pressed', 'state-hover']);
+      // Neither moves past the other.
+      root.moveRule('own', 99);
+      expect(rulesOf(root).map(rule => rule.id)).toEqual(['hover', 'own', 'state-pressed', 'state-hover']);
+      root.moveRule('state-hover', 0);
+      expect(rulesOf(root).map(rule => rule.id)).toEqual(['hover', 'own', 'state-pressed', 'state-hover']);
+    });
+
+    it('goes when its last value is cleared, and undo brings it back', () => {
+      const { project, history } = setup({ button: withAuthored });
+      const root = definitionRoot(project);
+      root.setRuleStyle('state-hover', 'color', 'red');
+      history.clear();
+      root.setRuleStyle('state-hover', 'color', undefined);
+      expect(rulesOf(root).map(rule => rule.id)).toEqual(['own']);
+      history.undo();
+      expect(rulesOf(root).map(rule => rule.id)).toEqual(['own', 'state-hover']);
+    });
+
+    it('survives a snapshot round trip, and the parser still refuses it raw', () => {
+      const { project } = setup({ button: withAuthored });
+      definitionRoot(project).setRuleStyle('state-hover', 'color', 'red', undefined);
+      const store = ProjectStore.create({});
+      store.ingestProjectSnapshot(JSON.parse(JSON.stringify(getSnapshot(project))));
+      const reloaded = store.getProject('site') as ProjectModelType;
+      const root = definitionRoot(reloaded);
+      expect(rulesOf(root).at(-1)).toMatchObject({ id: 'state-hover', componentState: 'hover' });
+      expect(readRules(root.props).refused.map(refused => refused.reason)).toEqual(['a component state has not been compiled']);
+    });
+
+    it('cannot be written on a page, nor for a state the component no longer has', () => {
+      const { project, page } = setup({ button: withAuthored });
+      expect(rootOf(page).setRuleStyle('state-hover', 'color', 'red')).toMatchObject({ ok: false });
+      const root = definitionRoot(project);
+      expect(project.removeState('button', 'hover').ok).toBe(true);
+      expect(root.setRuleStyle('state-hover', 'color', 'red')).toMatchObject({ ok: false });
+      expect(root.addRule({ selector: '&', componentState: 'pressed', style: { color: 'red' } } as never)).toMatchObject({ ok: false });
+    });
+  });
+
   it('adds up to the limit, and refuses a bad state', () => {
     const { project } = setup({ button: stateful });
     expect(project.addState('button', { id: 'primary', name: 'P', kind: 'custom' })).toMatchObject({ ok: false });

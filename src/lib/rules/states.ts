@@ -6,7 +6,9 @@
 //
 // Their order is the order of the list: named states come first, in this order,
 // and authored rules follow. Pressed is last because pressing also hovers, and a
-// later rule wins a tie.
+// later rule wins a tie. A component's state rules come after both, in the order
+// of the component's states, so a later state wins a tie whatever its kind (see
+// docs/plans/2026-11-02-reusable-components.md, "How it composes").
 
 import { isDefinitionRule, type RuleDraft, type StoredRule } from './rules';
 
@@ -96,28 +98,60 @@ export function previewedBy(rules: readonly StoredRule[], id: string): { ids: Se
   return { ids: new Set(found.map((at) => rules[at].id)), hover: state !== undefined && active.includes('hover') };
 }
 
+/** The stored id of a component state's rule on a node. */
+export const stateRuleId = (stateId: string): string => `state-${stateId}`;
+
+/**
+ * The component state a stored rule belongs to, or undefined. Such a rule is
+ * refused by the parser until expansion compiles it (src/lib/components/expand.ts).
+ */
+export function componentStateOf(rule: unknown): string | undefined {
+  if (!rule || typeof rule !== 'object' || !('componentState' in rule)) return undefined;
+  const { componentState } = rule as { componentState: unknown };
+  return typeof componentState === 'string' ? componentState : '';
+}
+
 const stateRank = (rule: StoredRule): number => {
+  if (componentStateOf(rule) !== undefined) return NAMED_STATES.length + 1;
   const state = namedStateOf(rule);
   return state ? NAMED_STATES.indexOf(state) : NAMED_STATES.length;
 };
 
-/** The list with named states first, in their order, and everything else in its order. */
-export function orderRules(rules: readonly StoredRule[]): StoredRule[] {
+/** Where a component state's rule stands among the others: by the component's states, unknown ones last. */
+const componentRank = (rule: StoredRule, stateOrder: readonly string[]): number => {
+  const state = componentStateOf(rule);
+  if (state === undefined) return 0;
+  const at = stateOrder.indexOf(state);
+  return at === -1 ? stateOrder.length : at;
+};
+
+/**
+ * The list with named states first, in their order, then everything else in its
+ * order, then a component's state rules in `stateOrder`, the component's states.
+ */
+export function orderRules(rules: readonly StoredRule[], stateOrder: readonly string[] = []): StoredRule[] {
   return rules
     .map((rule, index) => ({ rule, index }))
-    .sort((a, b) => stateRank(a.rule) - stateRank(b.rule) || a.index - b.index)
+    .sort(
+      (a, b) =>
+        stateRank(a.rule) - stateRank(b.rule) ||
+        componentRank(a.rule, stateOrder) - componentRank(b.rule, stateOrder) ||
+        a.index - b.index,
+    )
     .map(({ rule }) => rule);
 }
 
 /**
- * The list with the rule at `id` moved to `toIndex`. A named state keeps its place
- * and an authored rule stays behind them, so the order above cannot be broken.
+ * The list with the rule at `id` moved to `toIndex`. A named state keeps its place,
+ * as does a component state's rule, and an authored rule stays between them, so
+ * the order above cannot be broken.
  */
 export function moveRuleTo(rules: readonly StoredRule[], id: string, toIndex: number): StoredRule[] {
   const from = findRuleIndex(rules, id);
-  if (from === -1 || namedStateOf(rules[from])) return [...rules];
+  if (from === -1 || namedStateOf(rules[from]) || componentStateOf(rules[from]) !== undefined) return [...rules];
   const firstAuthored = rules.filter((rule) => namedStateOf(rule)).length;
   const rest = rules.filter((_, index) => index !== from);
-  const to = Math.min(Math.max(toIndex, firstAuthored), rest.length);
+  const lastAuthored = rest.filter((rule) => componentStateOf(rule) === undefined).length;
+  const to = Math.min(Math.max(toIndex, firstAuthored), lastAuthored);
   return [...rest.slice(0, to), rules[from], ...rest.slice(to)];
 }

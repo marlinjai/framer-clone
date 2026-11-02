@@ -1,22 +1,22 @@
 {
-  "generatedAt": "2026-11-02T14:00:18.564Z",
+  "generatedAt": "2026-11-02T14:23:01.207Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 166,
+  "durationSeconds": 314,
   "matrix": {
     "surfaces": {
       "format": {
-        "pass": 1812,
-        "fail": 30,
+        "pass": 1815,
+        "fail": 27,
         "notTested": 0,
         "total": 1842
       },
       "renderer": {
-        "pass": 1785,
-        "fail": 57,
+        "pass": 1788,
+        "fail": 54,
         "notTested": 0,
         "total": 1842
       },
@@ -491,14 +491,14 @@
       },
       "component": {
         "format": {
-          "pass": 22,
-          "fail": 8,
+          "pass": 25,
+          "fail": 5,
           "notTested": 0,
           "total": 30
         },
         "renderer": {
-          "pass": 22,
-          "fail": 8,
+          "pass": 25,
+          "fail": 5,
           "notTested": 0,
           "total": 30
         },
@@ -5129,9 +5129,9 @@
       "component:nested": "pass pass pass pass reusable-components",
       "component:cycle-refused": "pass pass pass pass reusable-components",
       "component:collection-template": "pass pass pass pass reusable-components",
-      "component:state-hover": "reusable-components reusable-components reusable-components reusable-components reusable-components",
-      "component:state-pressed": "reusable-components reusable-components reusable-components reusable-components reusable-components",
-      "component:state-focused": "reusable-components reusable-components reusable-components reusable-components reusable-components",
+      "component:state-hover": "pass pass reusable-components reusable-components reusable-components",
+      "component:state-pressed": "pass pass reusable-components reusable-components reusable-components",
+      "component:state-focused": "pass pass reusable-components reusable-components reusable-components",
       "component:state-custom": "reusable-components reusable-components reusable-components reusable-components reusable-components",
       "component:interaction-click": "reusable-components reusable-components reusable-components reusable-components reusable-components",
       "component:interaction-appear": "reusable-components reusable-components reusable-components reusable-components reusable-components",
@@ -5152,7 +5152,7 @@
     "total": 24,
     "checks": {
       "screenshot": {
-        "pass": 118,
+        "pass": 136,
         "total": 159
       },
       "computed-styles": {
@@ -5164,7 +5164,7 @@
         "total": 159
       },
       "interaction": {
-        "pass": 36,
+        "pass": 54,
         "total": 87
       }
     },
@@ -6494,7 +6494,7 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 3,
+            "pass": 21,
             "total": 27
           },
           "computed-styles": {
@@ -6506,107 +6506,11 @@
             "total": 27
           },
           "interaction": {
-            "pass": 0,
+            "pass": 18,
             "total": 24
           }
         },
         "failures": [
-          {
-            "fixture": "component-states",
-            "viewport": "Desktop",
-            "state": "hover",
-            "check": "screenshot",
-            "gap": "reusable-components",
-            "detail": "0.12 percent of pixels differ"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Desktop",
-            "state": "hover",
-            "check": "interaction",
-            "gap": "reusable-components",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Desktop",
-            "state": "hover, the script failed",
-            "check": "screenshot",
-            "gap": "reusable-components",
-            "detail": "0.12 percent of pixels differ"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Desktop",
-            "state": "hover, the script failed",
-            "check": "interaction",
-            "gap": "reusable-components",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Desktop",
-            "state": "pressed",
-            "check": "screenshot",
-            "gap": "reusable-components",
-            "detail": "0.12 percent of pixels differ"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Desktop",
-            "state": "pressed",
-            "check": "interaction",
-            "gap": "reusable-components",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Desktop",
-            "state": "pressed, the script failed",
-            "check": "screenshot",
-            "gap": "reusable-components",
-            "detail": "0.12 percent of pixels differ"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Desktop",
-            "state": "pressed, the script failed",
-            "check": "interaction",
-            "gap": "reusable-components",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Desktop",
-            "state": "keyboard focus",
-            "check": "screenshot",
-            "gap": "reusable-components",
-            "detail": "0.24 percent of pixels differ"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Desktop",
-            "state": "keyboard focus",
-            "check": "interaction",
-            "gap": "reusable-components",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Desktop",
-            "state": "keyboard focus, the script failed",
-            "check": "screenshot",
-            "gap": "reusable-components",
-            "detail": "0.24 percent of pixels differ"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Desktop",
-            "state": "keyboard focus, the script failed",
-            "check": "interaction",
-            "gap": "reusable-components",
-            "detail": "the replica did not end up where the original did"
-          },
           {
             "fixture": "component-states",
             "viewport": "Desktop",
@@ -6637,7 +6541,7 @@
             "state": "Space selects the tile",
             "check": "screenshot",
             "gap": "reusable-components",
-            "detail": "1.47 percent of pixels differ"
+            "detail": "1.42 percent of pixels differ"
           },
           {
             "fixture": "component-states",
@@ -6658,103 +6562,31 @@
           {
             "fixture": "component-states",
             "viewport": "Tablet",
-            "state": "hover",
+            "state": "click selects the tile",
             "check": "screenshot",
             "gap": "reusable-components",
-            "detail": "0.15 percent of pixels differ"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Tablet",
-            "state": "hover",
-            "check": "interaction",
-            "gap": "reusable-components",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Tablet",
-            "state": "hover, the script failed",
-            "check": "screenshot",
-            "gap": "reusable-components",
-            "detail": "0.15 percent of pixels differ"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Tablet",
-            "state": "hover, the script failed",
-            "check": "interaction",
-            "gap": "reusable-components",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Tablet",
-            "state": "pressed",
-            "check": "screenshot",
-            "gap": "reusable-components",
-            "detail": "0.15 percent of pixels differ"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Tablet",
-            "state": "pressed",
-            "check": "interaction",
-            "gap": "reusable-components",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Tablet",
-            "state": "pressed, the script failed",
-            "check": "screenshot",
-            "gap": "reusable-components",
-            "detail": "0.15 percent of pixels differ"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Tablet",
-            "state": "pressed, the script failed",
-            "check": "interaction",
-            "gap": "reusable-components",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Tablet",
-            "state": "keyboard focus",
-            "check": "screenshot",
-            "gap": "reusable-components",
-            "detail": "0.32 percent of pixels differ"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Tablet",
-            "state": "keyboard focus",
-            "check": "interaction",
-            "gap": "reusable-components",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Tablet",
-            "state": "keyboard focus, the script failed",
-            "check": "screenshot",
-            "gap": "reusable-components",
-            "detail": "0.32 percent of pixels differ"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Tablet",
-            "state": "keyboard focus, the script failed",
-            "check": "interaction",
-            "gap": "reusable-components",
-            "detail": "the replica did not end up where the original did"
+            "detail": "1.84 percent of pixels differ"
           },
           {
             "fixture": "component-states",
             "viewport": "Tablet",
             "state": "click selects the tile",
+            "check": "accessibility-tree",
+            "gap": "reusable-components",
+            "detail": "original \"- list:\\n  - listitem:\\n    - button \\\"Monthly 12 francs a month\\\" [pressed]\\n  - listitem:\\n    - button \\\"Yearly 120 francs a\", replica \"- list:\\n  - listitem:\\n    - button \\\"Monthly 12 francs a month\\\" [pressed]\\n  - listitem:"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Tablet",
+            "state": "click selects the tile",
+            "check": "interaction",
+            "gap": "reusable-components",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Tablet",
+            "state": "Space selects the tile",
             "check": "screenshot",
             "gap": "reusable-components",
             "detail": "1.85 percent of pixels differ"
@@ -6762,30 +6594,6 @@
           {
             "fixture": "component-states",
             "viewport": "Tablet",
-            "state": "click selects the tile",
-            "check": "accessibility-tree",
-            "gap": "reusable-components",
-            "detail": "original \"- list:\\n  - listitem:\\n    - button \\\"Monthly 12 francs a month\\\" [pressed]\\n  - listitem:\\n    - button \\\"Yearly 120 francs a\", replica \"- list:\\n  - listitem:\\n    - button \\\"Monthly 12 francs a month\\\" [pressed]\\n  - listitem:"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Tablet",
-            "state": "click selects the tile",
-            "check": "interaction",
-            "gap": "reusable-components",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Tablet",
-            "state": "Space selects the tile",
-            "check": "screenshot",
-            "gap": "reusable-components",
-            "detail": "1.92 percent of pixels differ"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Tablet",
             "state": "Space selects the tile",
             "check": "accessibility-tree",
             "gap": "reusable-components",
@@ -6802,106 +6610,10 @@
           {
             "fixture": "component-states",
             "viewport": "Mobile",
-            "state": "hover",
-            "check": "screenshot",
-            "gap": "reusable-components",
-            "detail": "0.72 percent of pixels differ"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Mobile",
-            "state": "hover",
-            "check": "interaction",
-            "gap": "reusable-components",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Mobile",
-            "state": "hover, the script failed",
-            "check": "screenshot",
-            "gap": "reusable-components",
-            "detail": "0.72 percent of pixels differ"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Mobile",
-            "state": "hover, the script failed",
-            "check": "interaction",
-            "gap": "reusable-components",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Mobile",
-            "state": "pressed",
-            "check": "screenshot",
-            "gap": "reusable-components",
-            "detail": "0.72 percent of pixels differ"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Mobile",
-            "state": "pressed",
-            "check": "interaction",
-            "gap": "reusable-components",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Mobile",
-            "state": "pressed, the script failed",
-            "check": "screenshot",
-            "gap": "reusable-components",
-            "detail": "0.72 percent of pixels differ"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Mobile",
-            "state": "pressed, the script failed",
-            "check": "interaction",
-            "gap": "reusable-components",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Mobile",
-            "state": "keyboard focus",
-            "check": "screenshot",
-            "gap": "reusable-components",
-            "detail": "1.61 percent of pixels differ"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Mobile",
-            "state": "keyboard focus",
-            "check": "interaction",
-            "gap": "reusable-components",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Mobile",
-            "state": "keyboard focus, the script failed",
-            "check": "screenshot",
-            "gap": "reusable-components",
-            "detail": "1.61 percent of pixels differ"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Mobile",
-            "state": "keyboard focus, the script failed",
-            "check": "interaction",
-            "gap": "reusable-components",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "component-states",
-            "viewport": "Mobile",
             "state": "click selects the tile",
             "check": "screenshot",
             "gap": "reusable-components",
-            "detail": "10.24 percent of pixels differ"
+            "detail": "10.23 percent of pixels differ"
           },
           {
             "fixture": "component-states",
@@ -6925,7 +6637,7 @@
             "state": "Space selects the tile",
             "check": "screenshot",
             "gap": "reusable-components",
-            "detail": "11.22 percent of pixels differ"
+            "detail": "10.25 percent of pixels differ"
           },
           {
             "fixture": "component-states",
@@ -9596,10 +9308,20 @@
       "cost": 316
     },
     {
+      "id": "ai-tag-allowlist",
+      "description": "The AI generator validator refuses this tag on purpose: blocked in every renderer, or a raw form control, which only works through the form presets.",
+      "matrixCells": 116,
+      "corpusChecks": 0,
+      "fixtures": [],
+      "onlyGapOf": [],
+      "roundTripCases": 0,
+      "cost": 116
+    },
+    {
       "id": "reusable-components",
       "description": "A promise of the reusable component format (an input type, a placement, a state or an interaction) that this surface does not keep yet.",
-      "matrixCells": 62,
-      "corpusChecks": 78,
+      "matrixCells": 56,
+      "corpusChecks": 42,
       "fixtures": [
         "component-navbar",
         "component-states"
@@ -9609,17 +9331,7 @@
         "component-states"
       ],
       "roundTripCases": 0,
-      "cost": 140
-    },
-    {
-      "id": "ai-tag-allowlist",
-      "description": "The AI generator validator refuses this tag on purpose: blocked in every renderer, or a raw form control, which only works through the form presets.",
-      "matrixCells": 116,
-      "corpusChecks": 0,
-      "fixtures": [],
-      "onlyGapOf": [],
-      "roundTripCases": 0,
-      "cost": 116
+      "cost": 98
     },
     {
       "id": "panel-no-tag-choice",
