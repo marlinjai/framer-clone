@@ -27,6 +27,7 @@ import { receiptPaidOn } from './024_receipt_paid_on';
 import { commerceJob } from './025_commerce_job';
 import { orderRequestKey } from './026_order_request_key';
 import { receiptTaxCountry } from './027_receipt_tax_country';
+import { checkoutRequest } from './028_checkout_request';
 
 /**
  * CM-04 — `COMMERCE_TENANT_MIGRATIONS`: the per-tenant (`tg_<id>`) commerce
@@ -131,6 +132,8 @@ import { receiptTaxCountry } from './027_receipt_tax_country';
  *   026_order_request_key  : the order key is unique per company, not per schema
  *   027_receipt_tax_country: the country a shop receipt is taxed under (the
  *                            buyer's, not the reused customer row's)
+ *   028_checkout_request   : a hosted checkout's request, fixed once with the
+ *                            buyer it is made out to (BK018)
  */
 export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   enums,
@@ -161,4 +164,5 @@ export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   commerceJob,
   orderRequestKey,
   receiptTaxCountry,
+  checkoutRequest,
 ];

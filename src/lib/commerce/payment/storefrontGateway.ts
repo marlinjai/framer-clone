@@ -8,6 +8,8 @@
 //   200 redirect                -> ok with the hosted checkout page (Stripe) to send the buyer to
 //   402 payment_declined        -> declined (the order is closed: the checkout starts a new one)
 //   409 payment_closed          -> closed (paid or closed elsewhere, or expired: check out again)
+//   409 buyer_fixed             -> refused, with the shop's message: a hosted checkout is made out to other details,
+//                                  the order keeps waiting (pay with those, or go back to the cart)
 //   422 buyer_not_invoiceable   -> refused, with the shop's own message (no money moved, the order keeps waiting)
 //   400 on the country or email -> refused, naming each bad field (Germany typed out instead of the two letters)
 //   503 payments_unavailable    -> unavailable, with the shop's own message (the Books cannot issue the receipt yet:
@@ -70,6 +72,10 @@ export class StorefrontPaymentGateway implements PaymentGateway {
     const error = await errorOf(res);
     if (res.status === 402) {
       return { ok: false, code: 'declined', message: error?.message ?? 'the card was declined' };
+    }
+    if (res.status === 409 && error?.code === 'buyer_fixed') {
+      // A hosted checkout is already made out to other details: the order keeps waiting, nothing to correct here.
+      return { ok: false, code: 'refused', message: error.message ?? 'this order is already waiting for its payment with other details', fields: [] };
     }
     if (res.status === 409) {
       return { ok: false, code: 'closed', message: error?.message ?? 'the order no longer takes a payment' };

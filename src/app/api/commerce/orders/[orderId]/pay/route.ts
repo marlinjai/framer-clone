@@ -15,6 +15,9 @@
 //   402 payment_declined     the (simulated) card was declined: the order is closed and its stock released
 //   404 not_found            no such order on this storefront (another shop's id answers the same)
 //   409 payment_closed       the order is no longer waiting for a payment (paid, failed, expired, ...)
+//   409 buyer_fixed          Stripe: a hosted checkout was already started for this order with other buyer details;
+//                            its session is made out to them, so this click changes nothing and starts nothing
+//                            (checkoutRequest.ts). Pressing Pay again with the same details answers the same page
 //   409 order_outdated       the company's tax status changed since a net-priced order was placed, so its total
 //                            is wrong: no money moves, the order is closed, its stock released, the buyer checks
 //                            out again
@@ -40,6 +43,7 @@ import {
 } from '@/server/commerce/payment/payments';
 import { buyerRefusal } from '@/server/commerce/payment/invoiceable';
 import { demoCheckoutAllowed } from '@/server/commerce/payment/demoCheckout';
+import { fixCheckoutRequest } from '@/server/commerce/payment/checkoutRequest';
 import { PAYMENTS_UNAVAILABLE_MESSAGE, receiptReadiness } from '@/server/commerce/payment/receiptReadiness';
 import { demoProvider, type ProviderId } from '@/server/commerce/payment/provider';
 import { shopTaxProfile } from '@/server/commerce/payment/shopTax';
@@ -145,19 +149,26 @@ export async function POST(req: Request, { params }: { params: Promise<{ orderId
     // refused buyer never replaces the one a hosted checkout that is already open will be invoiced to.
     const refusal = buyerRefusal(stored);
     if (refusal) return jsonError('buyer_not_invoiceable', refusal.message, 422, { field: refusal.field });
-    if (buyer) {
-      await db
-        .updateTable('order_payment')
-        .set({ buyer: toJsonb(buyer), updated_at: new Date() })
-        .where('tenant_id', '=', companyId)
-        .where('order_id', '=', orderId)
-        .where('status', '=', 'pending')
-        .execute();
-    }
 
     if (payment.provider === 'stripe') {
       const host = req.headers.get('host') ?? '';
       const proto = req.headers.get('x-forwarded-proto') ?? 'https';
+      // The first click fixes the request and its buyer (checkoutRequest.ts); every later click sends that request, so
+      // Stripe answers the same session under the same key, and never a second buyer for an open session.
+      const fixed = await fixCheckoutRequest(db, companyId, orderId, stored, {
+        buyerEmail: stored.email,
+        returnUrl: `${proto}://${host}${returnPath ?? '/'}`,
+      });
+      if (!fixed.ok && fixed.reason === 'buyer_fixed') {
+        return jsonError(
+          'buyer_fixed',
+          'This order is already waiting for its payment with other details. Pay it with those, or go back to the cart and check out again. Nothing has been charged.',
+          409,
+        );
+      }
+      if (!fixed.ok) {
+        return jsonError('payment_closed', 'the order no longer takes a payment', 409);
+      }
       const started = await deps.provider('stripe').start(
         {
           tenantId: companyId,
@@ -166,14 +177,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ orderId
           amount: payment.amount,
           currency: payment.currency,
           applicationFeeAmount: payment.fee,
-          buyerEmail: stored.email,
-          returnUrl: `${proto}://${host}${returnPath ?? '/'}`,
+          buyerEmail: fixed.request.buyerEmail,
+          returnUrl: fixed.request.returnUrl,
           expiresAt: new Date(payment.expiresAt),
         },
         async () => {},
       );
       if (!started.redirectUrl) throw new Error(`Stripe answered no checkout page for order ${orderId}`);
       return Response.json({ status: 'redirect', redirectUrl: started.redirectUrl });
+    }
+
+    if (buyer) {
+      await db
+        .updateTable('order_payment')
+        .set({ buyer: toJsonb(buyer), updated_at: new Date() })
+        .where('tenant_id', '=', companyId)
+        .where('order_id', '=', orderId)
+        .where('status', '=', 'pending')
+        .execute();
     }
 
     let outcome: PaymentOutcome | undefined;
