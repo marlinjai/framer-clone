@@ -300,7 +300,7 @@ function colorValues(token: { light?: unknown; dark?: unknown }): { light: strin
  * parseColorValue. A broken colour is left out (references behave as missing). Over a cap,
  * the first tokens up to the cap are emitted, with a warning.
  */
-function emittableTokens(theme: SiteTheme): EmittedToken[] {
+function emittableTokens(theme: SiteTheme, warn = true): EmittedToken[] {
   const out: EmittedToken[] = [];
   let live = 0;
   let dead = 0;
@@ -323,12 +323,32 @@ function emittableTokens(theme: SiteTheme): EmittedToken[] {
       out.push({ token, light: stack, dark: stack });
     }
   }
-  if (overCap) {
+  if (overCap && warn) {
     console.warn(
       `[theme] the stored theme holds more than ${THEME_LIMITS.liveTokens} tokens or ${THEME_LIMITS.tombstones} deleted ones; only the first up to each cap are emitted.`,
     );
   }
   return out;
+}
+
+/**
+ * The ids of the tokens themeCss writes into a sheet: past the id, kind and value checks
+ * and within the caps. Anything that judges a reference against the sheet (the consent
+ * banner's guard) reads this, so a reference the sheet left out is never trusted.
+ */
+export function emittedTokenIds(raw: SiteTheme): Set<string> {
+  const theme = isRecord(raw) ? raw : EMPTY_THEME;
+  return new Set(emittableTokens(theme, false).map(({ token }) => token.id));
+}
+
+/**
+ * The theme with only the tokens its sheet holds, for a reader that resolves references
+ * and must agree with the page: a reference to anything else stays unresolved.
+ */
+export function emittedTheme(raw: SiteTheme): SiteTheme {
+  const ids = emittedTokenIds(raw);
+  const theme = normalizeTheme(raw);
+  return { ...theme, tokens: theme.tokens.filter((token) => ids.has(token.id)) };
 }
 
 /** The document block's declarations, each an exact reference, in a fixed order. */
@@ -485,6 +505,33 @@ export function resolveTokenRefs(value: string, theme: SiteTheme, scheme: ColorS
     if (token.kind === 'font') return fontTokenStack(token.family);
     const { light, dark } = colorValues(token);
     return (scheme === 'dark' ? dark : light) ?? whole;
+  });
+}
+
+/**
+ * The scheme a site forces, or undefined when it forces none (`system` or no choice).
+ * Only a forced mode decides what a stored `prefers-color-scheme` rule means
+ * (src/lib/rules/colorMode.ts), and only forced `dark` writes `class="dark"` on `html`.
+ */
+export function themeColorMode(theme: SiteTheme | undefined): ColorScheme | undefined {
+  const mode = isRecord(theme) ? theme.mode : undefined;
+  return mode === 'light' || mode === 'dark' ? mode : undefined;
+}
+
+/**
+ * The document background as a literal colour per scheme the page can show, for the
+ * browser's own surfaces (`theme-color`), which take no `var()`. Empty when the document
+ * block sets no background, and a scheme whose value the strict parser cannot read is
+ * left out.
+ */
+export function documentBackgroundColors(theme: SiteTheme | undefined): { scheme: ColorScheme; color: string }[] {
+  if (!isRecord(theme) || !isRecord(theme.document)) return [];
+  const reference = theme.document.backgroundColor;
+  if (parseTokenReference(reference) === null) return [];
+  const normalized = emittedTheme(theme);
+  return schemesInForce(normalized.mode).flatMap((scheme) => {
+    const color = parseColorValue(resolveTokenRefs(reference as string, normalized, scheme));
+    return color === null ? [] : [{ scheme, color }];
   });
 }
 

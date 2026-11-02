@@ -17,6 +17,7 @@ import { TEXT_NODE_TYPE } from '@/lib/renderer/textNode';
 import { STICKY_CTA_PROP_KEYS } from '@/lib/stickyCta/stickyCta';
 import { SAFE_PROPERTY, UNSAFE_VALUE, cssValueText, holdsTopLayerValue, isContainedValue } from '@/lib/responsive/responsiveCss';
 import { withCappedZIndex } from '@/lib/styles/stacking';
+import { isPlatformVariable } from '@/lib/rules/rootProperties';
 
 /**
  * Refused by name, whatever the vocabulary says: both renderers and the score's
@@ -200,11 +201,14 @@ export function isBlockedProp(name: string, value: unknown): boolean {
  * React escapes an attribute and a declaration list has no rule to leave, and
  * applyResponsiveStyles leaves here on purpose what the sheet refuses. What counts
  * here is `;`, which starts a second declaration, and a comment outside a string,
- * which hides one from isContainedValue.
+ * which hides one from isContainedValue. And a key naming one of the platform's own
+ * custom properties (isPlatformVariable), which no stored style may set.
  */
 function isUnsafeInline(key: string, value: unknown): boolean {
   if (typeof value === 'object' && value !== null) return true;
   if (!SAFE_PROPERTY.test(key)) return true;
+  // A theme token or another platform variable, set on a node, repaints its subtree.
+  if (isPlatformVariable(key)) return true;
   const text = cssValueText(key, value);
   if (text === undefined) return false;
   return !isContainedValue(text) || UNSAFE_VALUE.test(text.replaceAll('/*', '')) || text.replace(/"[^"]*"|'[^']*'/g, '').includes('/*') || holdsTopLayerValue(text);

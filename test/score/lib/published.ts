@@ -22,7 +22,8 @@ import type { ComponentDefinitions } from '@/lib/components/definition';
 import { renderPublishedPage } from '@/lib/renderer/server/renderPublishedPage';
 import { DEFAULT_PAGE_BASE, pageBaseSheet, type PageBase } from '@/lib/site/pageBase';
 import { snapshotToComponentNode } from '@/lib/renderer/server/snapshotToComponentNode';
-import SiteLayout from '@/app/(site)/layout';
+import { SiteSheets } from '@/lib/site/siteSheets';
+import { themeColorMode, themeCss, type SiteTheme } from '@/lib/site/theme';
 import type { PageSnapshotOut } from '@/models/PageModel';
 import type { CmsReadRepository } from '@/server/cms';
 import { DEFAULT_LANGUAGE, isLanguageTag } from '@/lib/site/siteSettings';
@@ -33,6 +34,8 @@ export { BREAKPOINTS } from './breakpoints';
 export interface PublishedOutput {
   html: string;
   css: string;
+  /** The site's theme, which the layout writes ahead of the page (src/lib/site/siteSheets.tsx). */
+  theme?: SiteTheme;
   /** The program the page runs, where the whole published path made one. */
   behaviour?: BehaviourProgram | null;
 }
@@ -92,17 +95,13 @@ function langAttribute(lang: string): string {
   return lang;
 }
 
-const pageBase = (() => {
-  const built = new Map<string, string[]>();
-  return (lang: string) => {
-    const known = built.get(lang);
-    if (known) return known;
-    const { css, meta } = readPublishedBase();
-    if (/<\/style/i.test(css)) throw new Error('the published base sheet would close its own style element');
-    const head = `<!doctype html><html lang="${langAttribute(lang)}" class="${meta.htmlClass}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style data-fc-published-base="">${css}</style></head>`;
-    const body = `<body class="${meta.bodyClass}">${renderToStaticMarkup(React.createElement(SiteLayout, null, null))}`;
-    built.set(lang, [head, body]);
-    return [head, body];
+const builtBase = (() => {
+  let built: ReturnType<typeof readPublishedBase> | undefined;
+  return () => {
+    if (built) return built;
+    built = readPublishedBase();
+    if (/<\/style/i.test(built.css)) throw new Error('the published base sheet would close its own style element');
+    return built;
   };
 })();
 
@@ -113,20 +112,28 @@ const started = (behaviour: PublishedOutput['behaviour'], runtime: string | unde
 /**
  * A complete page for Chromium, as a visitor gets it: the root layout's sheets in the
  * head (inline, because `page.setContent` has no origin to load a link from), its
- * classes on html and body, and the site layout's style, then the sheet of the site's
- * page base and the page's own sheet, in the body, where the published route puts them.
- * `lang` is the site's language setting, which the root layout writes on html.
+ * classes on html and body, and the site layout's sheets (the base font, then the
+ * site's theme, src/lib/site/siteSheets.tsx), then the sheet of the site's page base and
+ * the page's own sheet, in the body, where the published route puts them. `lang` is the
+ * site's language setting, which the root layout writes on html, and a theme that forces
+ * `dark` puts `dark` there, as the root layout does.
  */
-export function publishedDocument({ html, css, behaviour }: PublishedOutput, base: PageBase = DEFAULT_PAGE_BASE, lang: string = DEFAULT_LANGUAGE, runtime?: string): string {
-  const [head, body] = pageBase(lang);
+export function publishedDocument(output: PublishedOutput, base: PageBase = DEFAULT_PAGE_BASE, lang: string = DEFAULT_LANGUAGE, runtime?: string): string {
+  const { html, css, behaviour, theme } = output;
+  const { css: baseSheet, meta } = builtBase();
+  const htmlClass = themeColorMode(theme) === 'dark' ? meta.htmlClass.replace(/\blight\b/, 'dark') : meta.htmlClass;
+  const head = `<!doctype html><html lang="${langAttribute(lang)}" class="${htmlClass}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style data-fc-published-base="">${baseSheet}</style></head>`;
+  const sheets = renderToStaticMarkup(React.createElement(SiteSheets, { theme }));
   const baseCss = pageBaseSheet(base);
-  return `${head}${body}${baseCss ? `<style data-fc-page-base="">${baseCss}</style>` : ''}${css ? `<style data-fc-responsive="">${css}</style>` : ''}${html}${started(behaviour, runtime)}</body></html>`;
+  return `${head}<body class="${meta.bodyClass}">${sheets}${baseCss ? `<style data-fc-page-base="">${baseCss}</style>` : ''}${css ? `<style data-fc-responsive="">${css}</style>` : ''}${html}${started(behaviour, runtime)}</body></html>`;
 }
 
 /**
  * The same output with no page base, which no visitor ever gets. It exists for one
  * question only: when a check fails on the real page, would it pass without the base?
  */
-export function bareDocument({ html, css, behaviour }: PublishedOutput, lang: string = DEFAULT_LANGUAGE, runtime?: string): string {
-  return `<!doctype html><html lang="${langAttribute(lang)}"><head><meta charset="utf-8"><style>${css}</style></head><body style="margin:0">${html}${started(behaviour, runtime)}</body></html>`;
+export function bareDocument({ html, css, behaviour, theme }: PublishedOutput, lang: string = DEFAULT_LANGUAGE, runtime?: string): string {
+  // The site's theme is the site's, not the base's, so it stays.
+  const sheet = theme ? themeCss(theme) : '';
+  return `<!doctype html><html lang="${langAttribute(lang)}"${themeColorMode(theme) === 'dark' ? ' class="dark"' : ''}><head><meta charset="utf-8">${sheet ? `<style>${sheet}</style>` : ''}<style>${css}</style></head><body style="margin:0">${html}${started(behaviour, runtime)}</body></html>`;
 }
