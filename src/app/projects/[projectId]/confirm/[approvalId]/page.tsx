@@ -6,6 +6,7 @@
 // middleware serves it only on the editor host and bounces a visitor without a
 // session to the login. Here the person's verified session is checked against
 // publishSite on the request's workspace (src/server/mcp/approvalCheck.ts), the
+// person must have signed in within 15 minutes (else they sign in again), the
 // page shows what would go live, and the button approves (ApproveButton posts to
 // /api/projects/<id>/confirmations/<approvalId>, which checks everything again).
 
@@ -13,7 +14,7 @@ import React from 'react';
 import { cookies, headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { AuthUnavailableError, AuthzUnavailableError, verifySessionOrThrowUnavailable } from '@/lib/authBrainAvailability';
-import { checkApprover, approvalView } from '@/server/mcp/approvalCheck';
+import { approvalView, checkApprover, freshSignInUrl, signedInRecently } from '@/server/mcp/approvalCheck';
 import AuthUnavailable from '../../../AuthUnavailable';
 import ApproveButton from './ApproveButton';
 
@@ -38,20 +39,20 @@ export default async function ConfirmAgentActionPage({ params }: Props) {
   const { projectId, approvalId } = await params;
   const here = `/projects/${encodeURIComponent(projectId)}/confirm/${encodeURIComponent(approvalId)}`;
 
+  const h = await headers();
+  const pageUrl = `${h.get('x-forwarded-proto') || 'https'}://${h.get('x-forwarded-host') || h.get('host') || ''}${here}`;
   const cookie = (await cookies()).get('lumitra_session')?.value;
-  let userId: string | undefined;
+  let session: Awaited<ReturnType<typeof verifySessionOrThrowUnavailable>> | null = null;
   try {
-    userId = cookie ? (await verifySessionOrThrowUnavailable(cookie))?.user?.id : undefined;
+    session = cookie ? await verifySessionOrThrowUnavailable(cookie) : null;
   } catch (err) {
     if (err instanceof AuthUnavailableError) return <AuthUnavailable retryHref={here} />;
     throw err;
   }
+  const userId = session?.user?.id;
   if (!userId) {
-    const h = await headers();
-    const proto = h.get('x-forwarded-proto') || 'https';
-    const host = h.get('x-forwarded-host') || h.get('host') || '';
     const login = new URL('/login', process.env.AUTH_BRAIN_URL ?? 'https://auth.lumitra.co');
-    login.searchParams.set('return_to', `${proto}://${host}${here}`);
+    login.searchParams.set('return_to', pageUrl);
     redirect(login.toString());
   }
 
@@ -83,6 +84,25 @@ export default async function ConfirmAgentActionPage({ params }: Props) {
         What you would approve is no longer what the agent would publish. Nothing was approved. Ask the agent to read
         the site again and send a new link.
       </Notice>
+    );
+  }
+
+  // An old sign-in (a browser left signed in) must sign in again before it can
+  // approve; the route refuses it the same way.
+  if (!signedInRecently(session)) {
+    return (
+      <main className="mx-auto w-full max-w-3xl px-6 py-12">
+        <section role="alert" className="rounded-lg border p-10 text-center">
+          <h1 className="text-xl font-semibold tracking-tight">Sign in again to approve</h1>
+          <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
+            An agent asks to publish or roll back a site. Approving needs a sign-in from the last 15 minutes. You are
+            signed out once, sign in again, and come back to this page. Nothing has been approved.
+          </p>
+          <a href={freshSignInUrl(pageUrl)} className="mt-6 inline-flex h-9 items-center rounded-md border px-4 text-sm font-medium hover:bg-accent">
+            Sign in again
+          </a>
+        </section>
+      </main>
     );
   }
 

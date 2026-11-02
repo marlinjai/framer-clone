@@ -187,6 +187,20 @@ async function limited(
 
 const read = (ctx: ToolContext, run: () => Promise<ToolResult>) => limited(ctx.limits.reads, ctx, 'read', run, false);
 
+/**
+ * One read counted against the key's read budget, for the reads a confirming
+ * tool makes before it asks the person (publish, rollback): a loop of calls on a
+ * stale version is throttled like any other read. Null when within budget.
+ */
+function readBudget(ctx: ToolContext): ToolResult | null {
+  const slot = ctx.limits.reads.acquire(`key:${ctx.key.tenantId}:${ctx.key.keyId}`);
+  if (slot.ok) {
+    slot.release();
+    return null;
+  }
+  return errorResult({ code: 'rate_limited', message: `too many reads from this key; retry in ${slot.retryAfterSec} seconds`, retryAfterSec: slot.retryAfterSec });
+}
+
 // ---------- confirmation ----------
 
 /**
@@ -561,6 +575,8 @@ export const TOOLS: ToolDef[] = [
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     confirms: true,
     run: async (ctx, args) => {
+      const throttled = readBudget(ctx);
+      if (throttled) return throttled;
       const site = await getSite(ctx.caller, { siteId: args.siteId }, ctx.deps);
       if (!site.ok) return errorResult(site.error);
       if (site.value.version !== args.expectedVersion) {
@@ -608,10 +624,14 @@ export const TOOLS: ToolDef[] = [
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     confirms: true,
     run: async (ctx, args) => {
+      const throttled = readBudget(ctx);
+      if (throttled) return throttled;
       const site = await getSite(ctx.caller, { siteId: args.siteId }, ctx.deps);
       if (!site.ok) return errorResult(site.error);
       const denied = await allowed(ctx, 'publishSite');
       if (denied) return denied;
+      const throttledHistory = readBudget(ctx);
+      if (throttledHistory) return throttledHistory;
       const history = await listRevisions(ctx.caller, { siteId: args.siteId }, ctx.deps);
       if (!history.ok) return errorResult(history.error);
       const target = history.value.revisions.find((r) => r.number === args.revision);

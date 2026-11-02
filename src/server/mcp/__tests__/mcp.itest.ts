@@ -57,7 +57,7 @@ vi.mock('@/lib/openfgaRead', async (importOriginal) => {
 });
 vi.mock('@/lib/auth-brain', () => ({
   authBrainClient: {
-    verifySession: vi.fn(async (cookie: string) => (cookie === 'sess_owner' ? { user: { id: 'owner-a' }, tenants: [], workspaces: [] } : null)),
+    verifySession: vi.fn(async (cookie: string) => (cookie === 'sess_owner' ? { user: { id: 'owner-a' }, session: { created_at: new Date().toISOString() }, tenants: [], workspaces: [] } : null)),
     can: vi.fn(async () => true),
     verifyApiKey: vi.fn(),
     getCurrentUser: vi.fn(),

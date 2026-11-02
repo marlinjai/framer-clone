@@ -1023,6 +1023,15 @@ describe('hardening', () => {
     expect(error.message.length).toBeLessThan(140);
   });
 
+  it('throttles a loop of publish calls on a stale version through the read budget', async () => {
+    const s = setup({ version: 6, deps: { limits: limitsWith({ reads: createPageGenRateLimiter({ maxPerWindow: 3, windowMs: 60_000 }) }) } });
+    const codes: string[] = [];
+    for (let i = 0; i < 5; i++) codes.push(String(errorOf(await call(s, 'publish', { siteId: 'site-1', expectedVersion: 3 })).code));
+    expect(codes).toEqual(['site_changed', 'site_changed', 'site_changed', 'rate_limited', 'rate_limited']);
+    expect(s.mock.loadProjectWithVersion).toHaveBeenCalledTimes(3);
+    expect(errorOf(await call(s, 'rollback', { siteId: 'site-1', revision: 6 })).code).toBe('rate_limited');
+  });
+
   it('limits reads per key', async () => {
     const s = setup({ deps: { limits: limitsWith({ reads: createPageGenRateLimiter({ maxPerWindow: 2, windowMs: 60_000 }) }) } });
     expect((await call(s, 'list_sites')).isError).toBe(false);

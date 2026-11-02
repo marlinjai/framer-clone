@@ -14,7 +14,7 @@ import 'server-only';
 import { getVerifiedSession } from '@/lib/auth-api';
 import { jsonError } from '@/lib/api/respond';
 import { getApprovalStore, type ApprovalDecision } from './approvals';
-import { approvalView, checkApprover, type ApprovalCheckDeps } from './approvalCheck';
+import { approvalView, checkApprover, freshSignInUrl, signedInRecently, type ApprovalCheckDeps } from './approvalCheck';
 
 /** A write a page on another origin caused (defense in depth behind the middleware's check). */
 function crossSite(req: Request): boolean {
@@ -39,6 +39,12 @@ export async function approveConfirmation(
   const session = await getVerifiedSession(req);
   const userId = session?.user?.id;
   if (!userId) return jsonError('unauthorized', 'authentication required', 401);
+  if (!signedInRecently(session, (deps.now ?? Date.now)())) {
+    const proto = req.headers.get('x-forwarded-proto') || 'https';
+    const host = req.headers.get('x-forwarded-host') || req.headers.get('host') || new URL(req.url).host;
+    const page = `${proto}://${host}/projects/${encodeURIComponent(projectId)}/confirm/${encodeURIComponent(approvalId)}`;
+    return jsonError('reauth_required', 'to approve, sign in again: your sign-in is older than 15 minutes', 403, { reauthUrl: freshSignInUrl(page) });
+  }
 
   let decision: ApprovalDecision;
   try {

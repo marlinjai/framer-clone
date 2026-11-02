@@ -115,10 +115,15 @@ function world(now: () => number = Date.now) {
 
 let infoSpy: { mockRestore: () => void };
 beforeEach(() => {
+  const fresh = { created_at: new Date(Date.now() - 60_000).toISOString() };
   sessions.byCookie = {
-    sess_owner_a: { user: { id: 'owner-a' }, tenants: [], workspaces: [] },
-    sess_member_a: { user: { id: 'member-a' }, tenants: [], workspaces: [] },
-    sess_owner_b: { user: { id: 'owner-b' }, tenants: [], workspaces: [] },
+    sess_owner_a: { user: { id: 'owner-a' }, session: fresh, tenants: [], workspaces: [] },
+    sess_member_a: { user: { id: 'member-a' }, session: fresh, tenants: [], workspaces: [] },
+    sess_owner_b: { user: { id: 'owner-b' }, session: fresh, tenants: [], workspaces: [] },
+    // The owner again, in a browser left signed in for 20 minutes.
+    sess_owner_a_old: { user: { id: 'owner-a' }, session: { created_at: new Date(Date.now() - 20 * 60_000).toISOString() }, tenants: [], workspaces: [] },
+    // An auth-brain answer without a sign-in time.
+    sess_owner_a_untimed: { user: { id: 'owner-a' }, session: {}, tenants: [], workspaces: [] },
   };
   canPublish.mockClear();
   infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
@@ -226,6 +231,24 @@ describe('the approval link', () => {
     );
     expect(otherSite.status).toBe(404);
     expect(w.store.get(String(id))?.decision).toBeNull();
+  });
+
+  it('a sign-in older than 15 minutes, or without a time, must sign in again before approving', async () => {
+    const w = world();
+    const id = (await w.publishCall({ siteId: 'site-1', expectedVersion: 3 })).structuredContent.approvalId;
+    for (const cookie of ['sess_owner_a_old', 'sess_owner_a_untimed']) {
+      const res = await w.decide(id, cookie, { decision: 'approve' }, { host: 'app.lumitra.co' });
+      expect(res.status).toBe(403);
+      const body = (await res.json()) as { error: { code: string; reauthUrl: string } };
+      expect(body.error.code).toBe('reauth_required');
+      const logout = new URL(body.error.reauthUrl);
+      expect(logout.pathname).toBe('/api/auth/logout');
+      const login = new URL(logout.searchParams.get('return_to')!);
+      expect(login.pathname).toBe('/login');
+      expect(login.searchParams.get('return_to')).toBe(`https://app.lumitra.co/projects/site-1/confirm/${String(id)}`);
+    }
+    expect(w.store.get(String(id))?.decision).toBeNull();
+    expect((await w.decide(id, 'sess_owner_a')).status).toBe(200);
   });
 
   it('reading a request, as the page does, never decides it, and the route answers only POST', async () => {

@@ -20,10 +20,43 @@ import { checkWorkspaceAccess } from '@/lib/auth-check';
 import { getSiteRepository, SiteNotFoundError, type SiteRepository } from '@/server/sites';
 import { getApprovalStore, type Approval, type ApprovalStore } from './approvals';
 
+/**
+ * How recently the person must have signed in to approve. A session that has
+ * been open longer (a browser left signed in, possibly driven by an agent) must
+ * sign in again first. auth-brain's own OIDC tokens use the same field as their
+ * `auth_time` (auth-brain src/lib/oidc/claims.ts): a session's created_at is when
+ * that sign-in happened, and it never moves while the session lives.
+ */
+export const APPROVAL_SIGN_IN_MAX_AGE_MS = 15 * 60_000;
+
+/** Whether the session's sign-in is recent enough to approve. A session without a readable time is not. */
+export function signedInRecently(session: { session?: { created_at?: unknown } } | null | undefined, now: number = Date.now()): boolean {
+  const at = typeof session?.session?.created_at === 'string' ? Date.parse(session.session.created_at) : Number.NaN;
+  if (!Number.isFinite(at)) return false;
+  // A sign-in "in the future" beyond a small clock skew is not trusted either.
+  return now - at <= APPROVAL_SIGN_IN_MAX_AGE_MS && at - now <= 60_000;
+}
+
+/**
+ * Where to send a person whose sign-in is too old: auth-brain signs the suite
+ * session out (its logout keeps a suite `return_to`), then its login brings
+ * them back to `returnTo` with a fresh sign-in. Its login alone would not do:
+ * a valid session skips the form and returns at once.
+ */
+export function freshSignInUrl(returnTo: string, authBrainUrl: string = process.env.AUTH_BRAIN_URL ?? 'https://auth.lumitra.co'): string {
+  const login = new URL('/login', authBrainUrl);
+  login.searchParams.set('return_to', returnTo);
+  const logout = new URL('/api/auth/logout', authBrainUrl);
+  logout.searchParams.set('return_to', login.toString());
+  return logout.toString();
+}
+
 export interface ApprovalCheckDeps {
   store?: ApprovalStore;
   repository?: SiteRepository;
   canPublish?: (userId: string, workspaceId: string) => Promise<boolean>;
+  /** The clock the sign-in age is judged by (tests). */
+  now?: () => number;
 }
 
 export type ApprovalCheck =
