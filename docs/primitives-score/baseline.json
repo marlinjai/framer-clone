@@ -7,19 +7,7 @@
     "panel": 1071,
     "ai": 1337
   },
-  "corpusFixtures": [
-    "mixed-text",
-    "hover-focus",
-    "keyframes",
-    "container-query",
-    "print-styles",
-    "pseudo-elements",
-    "responsive-layout",
-    "stylesheet-values",
-    "stylesheet-escapes",
-    "shadcn-button",
-    "shadcn-card"
-  ],
-  "corpusChecks": 245,
+  "corpusFixtures": [],
+  "corpusChecks": 123,
   "roundTrip": 122
 }

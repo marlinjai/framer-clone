@@ -115,7 +115,10 @@ describe('definitions in real Chromium', () => {
       await show(node('page', { rules: [regular] }, [node('other', { rules: [bold] }), line('light', 400), line('heavy', 700)]));
 
       expect(requests.filter((url) => url.endsWith('.ttf')).sort()).toEqual([`${SITE}/bold.ttf`, `${SITE}/regular.ttf`]);
-      const faces = await page.evaluate(() => [...document.fonts].map((face) => `${face.family} ${face.weight} ${face.status}`).sort());
+      // The built base brings Geist on every page: this asks about the page's own faces.
+      const faces = await page.evaluate(() =>
+        [...document.fonts].filter((face) => !face.family.includes('Geist')).map((face) => `${face.family} ${face.weight} ${face.status}`).sort(),
+      );
       expect(faces).toEqual(['u-brand 400 loaded', 'u-brand 700 loaded']);
       // Synthesised bold keeps the Regular's advances, so different widths mean the real Bold drew it.
       const light = await box('light').evaluate((el) => el.getBoundingClientRect().width);
@@ -163,7 +166,7 @@ describe('definitions in real Chromium', () => {
       const rules = Object.entries(samples).map(([syntax, initialValue], index) => ({ id: `s${index}`, define: `@property --u-s${index}`, style: { syntax, inherits: 'false', initialValue } }));
       await show(node('n', { rules }));
       const registered = await page.evaluate(() =>
-        [...document.styleSheets].flatMap((sheet) => [...sheet.cssRules]).filter((rule) => rule instanceof CSSPropertyRule).map((rule) => (rule as CSSPropertyRule).syntax),
+        [...document.styleSheets].filter((sheet) => (sheet.ownerNode as Element).hasAttribute('data-fc-responsive')).flatMap((sheet) => [...sheet.cssRules]).filter((rule) => rule instanceof CSSPropertyRule).map((rule) => (rule as CSSPropertyRule).syntax),
       );
       expect(registered.map((syntax) => `"${syntax}"`).sort()).toEqual(Object.keys(samples).sort());
     });
@@ -203,7 +206,7 @@ describe('definitions in real Chromium', () => {
         }),
       );
       const kept = await page.evaluate(() =>
-        [...document.styleSheets].flatMap((sheet) => [...sheet.cssRules]).map((rule) => rule.constructor.name).sort(),
+        [...document.styleSheets].filter((sheet) => (sheet.ownerNode as Element).hasAttribute('data-fc-responsive')).flatMap((sheet) => [...sheet.cssRules]).map((rule) => rule.constructor.name).sort(),
       );
       expect(kept).toEqual(['CSSFontFeatureValuesRule', 'CSSFontPaletteValuesRule', 'CSSStyleRule']);
       expect(await box('n').evaluate((el) => getComputedStyle(el).fontPalette)).toBe('--u-warm');
@@ -415,7 +418,7 @@ describe('definitions in real Chromium', () => {
       expect(css).toContain('\\3c /style>');
       expect(css).not.toContain('<');
       expect(await box('out').count()).toBe(0);
-      expect(await page.evaluate(() => [...document.styleSheets].flatMap((sheet) => [...sheet.cssRules]).length)).toBe(2);
+      expect(await page.evaluate(() => [...document.styleSheets].filter((sheet) => (sheet.ownerNode as Element).hasAttribute('data-fc-responsive')).flatMap((sheet) => [...sheet.cssRules]).length)).toBe(2);
     });
   });
 });

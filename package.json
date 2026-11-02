@@ -21,6 +21,7 @@
     "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "score:primitives": "tsx test/score/run.ts",
+    "score:refresh-base": "tsx test/score/refreshBase.ts",
     "generate:dom-members": "tsx scripts/generate-dom-members.ts",
     "test:render-gate": "vitest run --config vitest.renderGate.config.ts",
     "generate:web-names": "tsx scripts/generate-web-names.ts",

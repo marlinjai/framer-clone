@@ -2,7 +2,8 @@
 // renderPublishedPage runs after hydrating, applyResponsiveStyles then
 // renderComponentNode. Left out on purpose, because no probe uses them:
 // hydrateBindings, applyEffects, the sticky bar's hoisting, the consent and font
-// wrappers. None of the code under test is copied.
+// wrappers. None of the code under test is copied. The document around the output
+// is a real page's: the built base sheet, and the site layout's own style.
 //
 // A placement needs all of it, because inputs resolve in hydration, so
 // `renderThroughPublishedPage` takes a stored tree through
@@ -18,8 +19,10 @@ import { DEFAULT_VIEWPORTS } from '@/lib/canvas/defaultViewports';
 import type { ComponentDefinitions } from '@/lib/components/definition';
 import { renderPublishedPage } from '@/lib/renderer/server/renderPublishedPage';
 import { snapshotToComponentNode } from '@/lib/renderer/server/snapshotToComponentNode';
+import SiteLayout from '@/app/(site)/layout';
 import type { PageSnapshotOut } from '@/models/PageModel';
 import type { CmsReadRepository } from '@/server/cms';
+import { readPublishedBase } from './publishedBase';
 
 /** The three breakpoints every page starts with (DEFAULT_VIEWPORTS), plus the frame width each is shown at. */
 export const BREAKPOINTS: readonly (BreakpointRef & { label: string; width: number; height: number })[] =
@@ -85,7 +88,34 @@ export async function renderThroughPublishedPage({ tree, definitions, rows }: Pu
   return { html: renderToStaticMarkup(React.createElement(React.Fragment, null, body)), css: '' };
 }
 
-/** A complete page for Chromium. The stylesheet sits where the published route puts it. */
+const pageBase = (() => {
+  let built: string[] | undefined;
+  return () => {
+    if (built) return built;
+    const { css, meta } = readPublishedBase();
+    if (/<\/style/i.test(css)) throw new Error('the published base sheet would close its own style element');
+    const head = `<!doctype html><html lang="en" class="${meta.htmlClass}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style data-fc-published-base="">${css}</style></head>`;
+    const body = `<body class="${meta.bodyClass}">${renderToStaticMarkup(React.createElement(SiteLayout, null, null))}`;
+    built = [head, body];
+    return built;
+  };
+})();
+
+/**
+ * A complete page for Chromium, as a visitor gets it: the root layout's sheets in the
+ * head (inline, because `page.setContent` has no origin to load a link from), its
+ * classes on html and body, and the site layout's style, then the page's own sheet, in
+ * the body, where the published route puts it.
+ */
 export function publishedDocument({ html, css }: PublishedOutput): string {
+  const [head, body] = pageBase();
+  return `${head}${body}${css ? `<style data-fc-responsive="">${css}</style>` : ''}${html}</body></html>`;
+}
+
+/**
+ * The same output with no page base, which no visitor ever gets. It exists for one
+ * question only: when a check fails on the real page, would it pass without the base?
+ */
+export function bareDocument({ html, css }: PublishedOutput): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><style>${css}</style></head><body style="margin:0">${html}</body></html>`;
 }
