@@ -1,22 +1,22 @@
 {
-  "generatedAt": "2026-11-02T13:10:15.417Z",
+  "generatedAt": "2026-11-02T13:40:54.333Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 287,
+  "durationSeconds": 353,
   "matrix": {
     "surfaces": {
       "format": {
-        "pass": 1803,
-        "fail": 30,
+        "pass": 1806,
+        "fail": 27,
         "notTested": 0,
         "total": 1833
       },
       "renderer": {
-        "pass": 1776,
-        "fail": 57,
+        "pass": 1779,
+        "fail": 54,
         "notTested": 0,
         "total": 1833
       },
@@ -491,14 +491,14 @@
       },
       "component": {
         "format": {
-          "pass": 22,
-          "fail": 8,
+          "pass": 25,
+          "fail": 5,
           "notTested": 0,
           "total": 30
         },
         "renderer": {
-          "pass": 22,
-          "fail": 8,
+          "pass": 25,
+          "fail": 5,
           "notTested": 0,
           "total": 30
         },
@@ -5097,9 +5097,9 @@
       "component:nested": "pass pass pass pass reusable-components",
       "component:cycle-refused": "pass pass pass pass reusable-components",
       "component:collection-template": "pass pass pass pass reusable-components",
-      "component:state-hover": "reusable-components reusable-components reusable-components reusable-components reusable-components",
-      "component:state-pressed": "reusable-components reusable-components reusable-components reusable-components reusable-components",
-      "component:state-focused": "reusable-components reusable-components reusable-components reusable-components reusable-components",
+      "component:state-hover": "pass pass reusable-components reusable-components reusable-components",
+      "component:state-pressed": "pass pass reusable-components reusable-components reusable-components",
+      "component:state-focused": "pass pass reusable-components reusable-components reusable-components",
       "component:state-custom": "reusable-components reusable-components reusable-components reusable-components reusable-components",
       "component:interaction-click": "reusable-components reusable-components reusable-components reusable-components reusable-components",
       "component:interaction-appear": "reusable-components reusable-components reusable-components reusable-components reusable-components",
@@ -6466,7 +6466,7 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.000007841907151819322,
             "elementsCompared": 754,
             "elementsDiffering": 0,
             "differences": 0,
@@ -8672,16 +8672,6 @@
       "cost": 66
     },
     {
-      "id": "reusable-components",
-      "description": "A promise of the reusable component format (an input type, a placement, a state or an interaction) that this surface does not keep yet.",
-      "matrixCells": 62,
-      "corpusChecks": 0,
-      "fixtures": [],
-      "onlyGapOf": [],
-      "roundTripCases": 0,
-      "cost": 62
-    },
-    {
       "id": "behaviour-state",
       "description": "Behaviour and state: no way to say that one element changes another.",
       "matrixCells": 0,
@@ -8696,6 +8686,16 @@
       ],
       "roundTripCases": 0,
       "cost": 59
+    },
+    {
+      "id": "reusable-components",
+      "description": "A promise of the reusable component format (an input type, a placement, a state or an interaction) that this surface does not keep yet.",
+      "matrixCells": 56,
+      "corpusChecks": 0,
+      "fixtures": [],
+      "onlyGapOf": [],
+      "roundTripCases": 0,
+      "cost": 56
     },
     {
       "id": "attribute-read-as-style",
