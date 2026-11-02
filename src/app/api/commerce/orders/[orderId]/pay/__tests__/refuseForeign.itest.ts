@@ -4,12 +4,11 @@
 // 2026-11-01). Through the real routes against a provisioned tenant schema, with real Books settings, the real
 // German VAT module and the real issue; only the shared contacts database is a fake.
 //
-//   - every company: a foreign address answers 422, the payment stays pending, the stock stays held, no document
-//     exists, and the same order pays once the buyer corrects the input;
-//   - regular taxation (and a company without Books, priced as a regular one): a VAT id that is not German as well;
-//   - section 19 (small business): a German buyer may give any VAT id the Books would store;
-//   - a blank VAT id is none; a customer row left with another country never taxes this buyer as foreign, and an
-//     invoice already issued to that row stays as it is;
+//   - every company: a foreign address and a VAT id that is not German answer 422, the payment stays pending, the
+//     stock stays held, no document exists, and the same order pays once the buyer corrects the input;
+//   - a blank VAT id is none;
+//   - a customer row with another country is another person's until shown otherwise: checkout never writes it, and
+//     when its country would change the tax outcome the receipt is refused rather than issued wrongly;
 //   - the tax status changed since a net-priced order was placed: 409, the order closed, the buyer checks out again;
 //   - the four paths of a stateful flow: forward, backtrack and revise, resume from the buyer stored with the
 //     order, and re-entry after the order was paid.
@@ -35,7 +34,6 @@ vi.mock('@/server/commerce/payment/stripe/client', async (importOriginal) => ({
 
 import { DEMO_COMPANY_ID } from '@/lib/renderer/server/demoTenant';
 import { FakeContactBook, FakeDirectory, initCompany } from '@/server/books/__tests__/booksFixtures';
-import { issue } from '@/server/books/issue';
 import { createCustomer } from '@/server/books/repository/customers';
 import { createDraft } from '@/server/books/repository/documents';
 import { addLine } from '@/server/books/repository/lines';
@@ -353,7 +351,6 @@ describe('pay under section 19: Germany only, like every company', () => {
   it.each([
     ['no VAT id', {}],
     ['a German VAT id', { kind: 'organization', vatId: 'DE123456789' }],
-    ['a foreign VAT id', { kind: 'organization', vatId: 'ATU12345678' }],
   ])('a German buyer with %s pays and gets a receipt without VAT', async (_label, details) => {
     for (const basis of ['net', 'gross'] as const) {
       const placed = await order(smallBusiness, { basis });
@@ -366,9 +363,9 @@ describe('pay under section 19: Germany only, like every company', () => {
     }
   });
 
-  it('a VAT id the Books would not store is refused, not found out after the payment', async () => {
+  it.each(['ATU12345678', '12/345/67890'])('the VAT id %s is refused at a German address too', async (vatId) => {
     const placed = await order(smallBusiness);
-    const answer = await payOrder(smallBusiness, placed.orderId, { buyer: buyer({ kind: 'organization', vatId: '12/345/67890' }) });
+    const answer = await payOrder(smallBusiness, placed.orderId, { buyer: buyer({ kind: 'organization', vatId }) });
     await expectRefused(smallBusiness, placed, answer, 'vatId');
   });
 });
@@ -394,41 +391,78 @@ describe('pay with a blank VAT id: there is none', () => {
   });
 });
 
-describe('a customer row left with another country', () => {
-  it('a German buyer with the same German VAT id is taxed as German, not as reverse charge', async () => {
-    const details = buyer({ vatId: 'DE123456789' });
-    await staleCustomer(regular, details.name, { countryCode: 'AT', vatId: 'DE123456789' });
-    const placed = await order(regular, { basis: 'gross' });
-    expect(await payOrder(regular, placed.orderId, { buyer: details })).toMatchObject({ status: 200, body: { receiptError: null } });
-    expect(await documentsOf(regular, placed.orderId)).toEqual([
-      { status: 'issued', total: 1000, tax_amount: 160, reverse_charge: false, kleinunternehmer: false, tax_note: null },
+describe('a customer row of the same name with another country', () => {
+  const rowOf = (shop: Shop, id: string) =>
+    shop.tenant.db.selectFrom('customer').selectAll().where('id', '=', id).executeTakeFirstOrThrow();
+  const documentRows = (shop: Shop, id: string) =>
+    Promise.all([
+      shop.tenant.db.selectFrom('sales_document').selectAll().where('id', '=', id).executeTakeFirstOrThrow(),
+      shop.tenant.db.selectFrom('sales_document_line').selectAll().where('document_id', '=', id).execute(),
     ]);
-  });
 
-  it('a row outside the EU no longer costs a German buyer the invoice', async () => {
-    const details = buyer();
-    await staleCustomer(regular, details.name, { countryCode: 'CH' });
-    const placed = await order(regular);
-    expect(await payOrder(regular, placed.orderId, { buyer: details })).toMatchObject({ status: 200, body: { receiptError: null } });
-    expect(await documentsOf(regular, placed.orderId)).toHaveLength(1);
-  });
+  /** A draft a person keeps on their own customer row. */
+  async function draftOn(shop: Shop, customerId: string) {
+    const scope = scopeOf(shop);
+    const draft = await createDraft(scope, { docType: 'invoice', actorUserId: 'test', customerId, netOrGross: 'net', serviceDate: '2026-10-01' });
+    await addLine(scope, draft.document.id, { kind: 'product', title: 'Ring', quantity: 1000, unitLabel: 'Stk', unitPrice: 5000, taxClass: 'standard' });
+    return draft.document.id;
+  }
 
-  it('an invoice already issued to that row stays exactly as it was', async () => {
+  it('reverse charge on the row: the receipt is refused, never issued with no VAT', async () => {
     const details = buyer({ vatId: 'DE123456789' });
     const customer = await staleCustomer(regular, details.name, { countryCode: 'AT', vatId: 'DE123456789' });
-    const scope = scopeOf(regular);
-    const draft = await createDraft(scope, { docType: 'invoice', actorUserId: 'test', customerId: customer.id, netOrGross: 'net', serviceDate: '2026-10-01' });
-    await addLine(scope, draft.document.id, { kind: 'product', title: 'Ring', quantity: 1000, unitLabel: 'Stk', unitPrice: 5000, taxClass: 'standard' });
-    await issue(scope, draft.document.id, { actorUserId: 'test' });
-    const read = () =>
-      regular.tenant.db.selectFrom('sales_document').selectAll().where('id', '=', draft.document.id).executeTakeFirstOrThrow();
-    const before = await read();
-    expect(before).toMatchObject({ status: 'issued', reverse_charge: true });
-
+    const before = await rowOf(regular, customer.id);
     const placed = await order(regular, { basis: 'gross' });
+    expect(await payOrder(regular, placed.orderId, { buyer: details })).toMatchObject({
+      status: 200,
+      body: { status: 'paid', receipt: null, receiptError: 'TAX_IDENTITY_MISMATCH' },
+    });
+    expect(await documentsOf(regular, placed.orderId)).toEqual([]);
+    expect(await rowOf(regular, customer.id)).toEqual(before);
+  });
+
+  it("a German namesake leaves a Swiss customer's row and that customer's draft as they are", async () => {
+    const details = buyer();
+    const customer = await staleCustomer(regular, details.name, { countryCode: 'CH' });
+    const draftId = await draftOn(regular, customer.id);
+    const row = await rowOf(regular, customer.id);
+    const document = await documentRows(regular, draftId);
+
+    const placed = await order(regular);
+    expect(await payOrder(regular, placed.orderId, { buyer: details })).toMatchObject({
+      status: 200,
+      body: { status: 'paid', receipt: null, receiptError: 'TAX_IDENTITY_MISMATCH' },
+    });
+    expect(await documentsOf(regular, placed.orderId)).toEqual([]);
+    expect(await rowOf(regular, customer.id)).toEqual(row);
+    expect(await documentRows(regular, draftId)).toEqual(document);
+    // The row keeps its country, so the draft is still the case the Books refuse, not a German invoice.
+    expect(row.country_code).toBe('CH');
+  });
+
+  it('a country that changes nothing on the invoice is reused, and the row is still not written', async () => {
+    const details = buyer();
+    const customer = await staleCustomer(regular, details.name, { countryCode: 'AT' });
+    const draftId = await draftOn(regular, customer.id);
+    const row = await rowOf(regular, customer.id);
+    const document = await documentRows(regular, draftId);
+
+    const placed = await order(regular);
     expect(await payOrder(regular, placed.orderId, { buyer: details })).toMatchObject({ status: 200, body: { receiptError: null } });
-    expect((await documentsOf(regular, placed.orderId))[0]).toMatchObject({ reverse_charge: false, tax_amount: 160 });
-    expect(await read()).toEqual(before);
+    expect(await documentsOf(regular, placed.orderId)).toEqual([
+      { status: 'issued', total: 1190, tax_amount: 190, reverse_charge: false, kleinunternehmer: false, tax_note: null },
+    ]);
+    expect(await rowOf(regular, customer.id)).toEqual(row);
+    expect(await documentRows(regular, draftId)).toEqual(document);
+  });
+
+  it('under section 19 every country is taxed alike, so the receipt is issued and the row stays', async () => {
+    const details = buyer();
+    const customer = await staleCustomer(smallBusiness, details.name, { countryCode: 'CH' });
+    const row = await rowOf(smallBusiness, customer.id);
+    const placed = await order(smallBusiness);
+    expect(await payOrder(smallBusiness, placed.orderId, { buyer: details })).toMatchObject({ status: 200, body: { receiptError: null } });
+    expect(await rowOf(smallBusiness, customer.id)).toEqual(row);
   });
 });
 
@@ -488,7 +522,19 @@ describe('what the checkout hears from the real route', () => {
       currency: 'EUR',
       buyer: buyer({ country }),
     });
-    expect(result).toMatchObject({ ok: false, code: 'refused', field: 'country', message: expect.stringContaining('two letters') });
+    expect(result).toMatchObject({ ok: false, code: 'refused', fields: ['country'], message: expect.stringContaining('two letters') });
+    expect((await paymentOf(regular, placed.orderId)).status).toBe('pending');
+  });
+
+  it('a bad email and a bad country show together, the order keeps waiting', async () => {
+    const placed = await order(regular);
+    const result = await gatewayFor(regular).authorize({
+      orderId: placed.orderId,
+      amountCents: placed.totalCents,
+      currency: 'EUR',
+      buyer: buyer({ email: 'alex', country: 'Germany' }),
+    });
+    expect(result).toMatchObject({ ok: false, code: 'refused', fields: ['email', 'country'] });
     expect((await paymentOf(regular, placed.orderId)).status).toBe('pending');
   });
 

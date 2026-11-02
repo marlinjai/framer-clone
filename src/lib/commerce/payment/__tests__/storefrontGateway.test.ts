@@ -44,13 +44,21 @@ describe('StorefrontPaymentGateway', () => {
     const message = 'This shop can only invoice addresses in Germany. Nothing has been charged.';
     const body = { error: { code: 'buyer_not_invoiceable', message, field: 'country' } };
     const result = await new StorefrontPaymentGateway(answer(422, body) as unknown as typeof fetch).authorize(request);
-    expect(result).toEqual({ ok: false, code: 'refused', message, field: 'country' });
+    expect(result).toEqual({ ok: false, code: 'refused', message, fields: ['country'] });
   });
 
   it('names the country when that is what the server could not read', async () => {
     const body = { error: { code: 'bad_body', message: 'invalid request body', issues: [{ path: ['buyer', 'country'] }] } };
     const result = await new StorefrontPaymentGateway(answer(400, body) as unknown as typeof fetch).authorize(request);
-    expect(result).toMatchObject({ ok: false, code: 'refused', field: 'country', message: expect.stringContaining('two letters') });
+    expect(result).toMatchObject({ ok: false, code: 'refused', fields: ['country'], message: expect.stringContaining('two letters') });
+  });
+
+  it('names the email and the country together when both are bad', async () => {
+    const issues = [{ path: ['buyer', 'email'] }, { path: ['buyer', 'country'] }];
+    const body = { error: { code: 'bad_body', message: 'invalid request body', issues } };
+    const result = await new StorefrontPaymentGateway(answer(400, body) as unknown as typeof fetch).authorize(request);
+    expect(result).toMatchObject({ ok: false, code: 'refused', fields: ['email', 'country'] });
+    expect((result as { message: string }).message).toMatch(/email address.*two letters/);
   });
 
   it.each([

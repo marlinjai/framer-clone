@@ -126,7 +126,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ orderId
     }
     // Before anything is kept or any provider is asked: the buyer given with the order is checked as well, and a
     // refused buyer never replaces the one a hosted checkout that is already open will be invoiced to.
-    const refusal = buyerRefusal(stored, { kleinunternehmer: tax.kleinunternehmer });
+    const refusal = buyerRefusal(stored);
     if (refusal) return jsonError('buyer_not_invoiceable', refusal.message, 422, { field: refusal.field });
     if (buyer) {
       await db

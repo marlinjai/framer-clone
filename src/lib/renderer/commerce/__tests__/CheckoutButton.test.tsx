@@ -292,7 +292,7 @@ describe('CheckoutButton a buyer the shop cannot invoice', () => {
       .mockResolvedValue(fakeResponse(201, { orderId: 'order_123', orderNumber: 'ORD-123', totalCents: 4760, currency: 'EUR' }));
     const authorize = vi
       .fn<PaymentGateway['authorize']>()
-      .mockResolvedValueOnce({ ok: false, code: 'refused', message: REFUSAL, field: 'country' })
+      .mockResolvedValueOnce({ ok: false, code: 'refused', message: REFUSAL, fields: ['country'] })
       .mockResolvedValueOnce({ ok: true, provider: 'demo', transactionId: 'order_123', receiptNumber: '1000' });
     const { container, getByTestId } = renderCheckout(makeNode(), { id: 'demo', isDemo: true, authorize });
     await waitForHydratedCart(getByTestId);
@@ -334,11 +334,42 @@ describe('CheckoutButton a buyer the shop cannot invoice', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
+  it('marks two refused fields together and clears the refusal once both are changed', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      fakeResponse(201, { orderId: 'order_123', orderNumber: 'ORD-123', totalCents: 4760, currency: 'EUR' }),
+    );
+    const authorize = vi
+      .fn<PaymentGateway['authorize']>()
+      .mockResolvedValue({ ok: false, code: 'refused', message: REFUSAL, fields: ['email', 'country'] });
+    const { container, getByTestId } = renderCheckout(makeNode(), { id: 'demo', isDemo: true, authorize });
+    await waitForHydratedCart(getByTestId);
+    clickCheckout(container);
+    await waitFor(() => expect(container.querySelector('[data-checkout-pay]')).not.toBeNull());
+    fillBuyer(container);
+    await act(async () => {
+      fireEvent.click(container.querySelector('button[data-checkout-pay]')!);
+    });
+    expect(field(container, 'email').getAttribute('aria-invalid')).toBe('true');
+    expect(field(container, 'country').getAttribute('aria-invalid')).toBe('true');
+
+    act(() => {
+      fireEvent.change(field(container, 'email'), { target: { value: 'alex@example.org' } });
+    });
+    expect(field(container, 'email').getAttribute('aria-invalid')).toBeNull();
+    expect(field(container, 'country').getAttribute('aria-invalid')).toBe('true');
+    expect(container.querySelector('[data-checkout-refused]')).not.toBeNull();
+
+    act(() => {
+      fireEvent.change(field(container, 'country'), { target: { value: 'Germany' } });
+    });
+    expect(container.querySelector('[data-checkout-refused]')).toBeNull();
+  });
+
   it('names each refusal by its own id when a page carries two checkouts', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       fakeResponse(201, { orderId: 'order_123', orderNumber: 'ORD-123', totalCents: 4760, currency: 'EUR' }),
     );
-    const authorize = vi.fn<PaymentGateway['authorize']>().mockResolvedValue({ ok: false, code: 'refused', message: REFUSAL, field: 'country' });
+    const authorize = vi.fn<PaymentGateway['authorize']>().mockResolvedValue({ ok: false, code: 'refused', message: REFUSAL, fields: ['country'] });
     const gateway = { id: 'demo', isDemo: true, authorize };
     window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(SEEDED_LINES));
     const { container, getByTestId } = render(
@@ -373,7 +404,7 @@ describe('CheckoutButton a buyer the shop cannot invoice', () => {
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(fakeResponse(201, { orderId: 'order_123', orderNumber: 'ORD-123', totalCents: 4760, currency: 'EUR' }));
-    const authorize = vi.fn<PaymentGateway['authorize']>().mockResolvedValue({ ok: false, code: 'refused', message: REFUSAL, field: 'country' });
+    const authorize = vi.fn<PaymentGateway['authorize']>().mockResolvedValue({ ok: false, code: 'refused', message: REFUSAL, fields: ['country'] });
     const { container, getByTestId } = renderCheckout(makeNode(), { id: 'demo', isDemo: true, authorize });
     await waitForHydratedCart(getByTestId);
     clickCheckout(container);

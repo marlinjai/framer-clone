@@ -39,7 +39,7 @@ import React from 'react';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import type { BindingScope } from '@/lib/bindings/resolver/scope';
 import { useCart, useCheckoutUnavailableReason, type CartLine } from '@/lib/commerce/cart';
-import { getPaymentGateway, type CheckoutBuyer, type PaymentGateway } from '@/lib/commerce/payment';
+import { getPaymentGateway, type CheckoutBuyer, type PaymentGateway, type RefusedBuyerField } from '@/lib/commerce/payment';
 
 /** A single per-line shortage, in the client's variant vocabulary. */
 export interface CheckoutShortage {
@@ -100,7 +100,7 @@ type CheckoutState =
       /** Last decline/fault message for the payment step, or null. */
       paymentError: string | null;
       /** Why the shop cannot invoice this buyer (the server's words), or null. Not a failed payment. */
-      refusal: { message: string; field?: 'country' | 'vatId' } | null;
+      refusal: { message: string; fields: RefusedBuyerField[] } | null;
       /** The buyer the receipt is made out to, as typed so far. */
       buyer: CheckoutBuyer;
     }
@@ -407,7 +407,7 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
       if (result.code === 'refused') {
         setState((prev) =>
           prev.status === 'payment'
-            ? { ...prev, paying: false, refusal: { message: result.message, field: result.field } }
+            ? { ...prev, paying: false, refusal: { message: result.message, fields: result.fields ?? [] } }
             : prev,
         );
         return;
@@ -486,8 +486,10 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
           if (prev.status !== 'payment') return prev;
           const buyer = { ...prev.buyer, [key]: value };
           buyerRef.current = buyer;
-          // The refusal was about this field: it stands only until the visitor changes it.
-          return { ...prev, buyer, refusal: prev.refusal?.field === key ? null : prev.refusal };
+          // A refused field stands only until the visitor changes it; the refusal until none is left.
+          const fields = prev.refusal?.fields.filter((field) => field !== key) ?? [];
+          const answered = prev.refusal !== null && prev.refusal.fields.length > 0 && fields.length === 0;
+          return { ...prev, buyer, refusal: prev.refusal && !answered ? { ...prev.refusal, fields } : null };
         }),
       onBackToCart: () => setState({ status: 'idle' }),
     }),
@@ -502,6 +504,11 @@ interface OutcomeHandlers {
   onToggleDecline: (next: boolean) => void;
   onBuyerChange: (key: keyof CheckoutBuyer, value: string) => void;
   onBackToCart: () => void;
+}
+
+/** Whether the refusal names this buyer field. */
+function refused(refusal: { fields: RefusedBuyerField[] } | null, key: keyof CheckoutBuyer): boolean {
+  return refusal?.fields.some((field) => field === key) ?? false;
 }
 
 /** Render the step/outcome panel (payment / confirmation / shortage / error). */
@@ -532,8 +539,8 @@ function renderOutcome(state: CheckoutState, handlers: OutcomeHandlers): React.R
                 data-checkout-buyer-field={field.key}
                 value={String(buyer[field.key] ?? '')}
                 disabled={paying}
-                aria-invalid={refusal?.field === field.key ? true : undefined}
-                aria-describedby={refusal?.field === field.key ? handlers.refusalId : undefined}
+                aria-invalid={refused(refusal, field.key) ? true : undefined}
+                aria-describedby={refused(refusal, field.key) ? handlers.refusalId : undefined}
                 onChange={(event) => handlers.onBuyerChange(field.key, event.target.value)}
                 style={{
                   padding: '6px 8px',
