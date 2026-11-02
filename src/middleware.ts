@@ -5,6 +5,9 @@ import type { NextRequest } from 'next/server';
 import { HOME_REWRITE_SENTINEL } from '@/server/sites/homeSentinel';
 import { isEditorHost as isEditorHostname } from '@/lib/editorHost';
 import { CSP_REPORT_ONLY_HEADER, MAPS_CONSENT_COOKIE, reportOnlyPolicy } from '@/lib/site/cspReportOnly';
+// The dependency-free bearer test, NOT src/lib/auth-machine.ts: that pulls the
+// auth-brain SDK and `server-only`, which cannot run in the edge middleware.
+import { carriesBearer } from '@/lib/bearer';
 
 /**
  * The coarse edge auth gate for framer-clone.
@@ -30,12 +33,41 @@ import { CSP_REPORT_ONLY_HEADER, MAPS_CONSENT_COOKIE, reportOnlyPolicy } from '@
  * actually reads protected data. A forged-but-present cookie gets past this gate
  * and is rejected by that verify -- it never reaches data.
  */
+/**
+ * The machine door (docs/plans/2026-11-02-lumitra-sites-agent-plugin.md): the
+ * only path a request authenticated by a company API key
+ * (`Authorization: Bearer <key>`) may reach on the authoring plane. The key is
+ * verified in the route (src/lib/auth-machine.ts); this gate only decides which
+ * credential a path accepts.
+ */
+const MACHINE_PATH = '/api/mcp';
+
+function isUnder(pathname: string, prefix: string): boolean {
+  return pathname === prefix || pathname.startsWith(`${prefix}/`);
+}
+
+function isMachinePath(pathname: string): boolean {
+  return isUnder(pathname, MACHINE_PATH);
+}
+
 /** Which editor-plane surface a path belongs to, or null for any other path. */
 function isEditorPlanePath(pathname: string): 'api' | 'page' | null {
-  const under = (prefix: string) => pathname === prefix || pathname.startsWith(`${prefix}/`);
-  if (under('/api/projects') || under('/api/ai') || under('/api/books')) return 'api';
+  const under = (prefix: string) => isUnder(pathname, prefix);
+  if (under('/api/projects') || under('/api/ai') || under('/api/books') || under(MACHINE_PATH)) return 'api';
   if (under('/projects')) return 'page';
   return null;
+}
+
+/**
+ * Pass a bearer request on WITHOUT its cookies. A bearer request is judged by
+ * its key alone, and every session reader downstream (`next/headers` cookies,
+ * src/lib/auth-api.ts) then finds no `lumitra_session` to fall back to, so
+ * "bearer only" holds for every route, not just the ones this gate names.
+ */
+function forwardWithoutCookies(request: NextRequest): NextResponse {
+  const headers = new Headers(request.headers);
+  headers.delete('cookie');
+  return NextResponse.next({ request: { headers } });
 }
 
 /**
@@ -82,10 +114,17 @@ export async function middleware(request: NextRequest) {
   // editor and local dev is unchanged. The rewrite only activates in prod where
   // EDITOR_HOST is set and the request Host differs.
   const isEditorHost = isEditorHostname(request.headers.get('host'));
+  const bearer = carriesBearer(request);
+  const machinePath = isMachinePath(request.nextUrl.pathname);
 
   // Before any routing: nothing on the editor host accepts a write from another
-  // origin, and a published site is another origin.
-  if (isEditorHost && isCrossOriginWrite(request)) {
+  // origin, and a published site is another origin. The one exception is a
+  // bearer request to the machine door: the refusal protects the ambient
+  // session cookie, and a bearer request never uses it (its cookies are
+  // stripped below and the route reads only the key), so an MCP client that
+  // sends an Origin header is not refused. A cookie-only cross-origin write to
+  // the machine door is still refused here.
+  if (isEditorHost && !(bearer && machinePath) && isCrossOriginWrite(request)) {
     return NextResponse.json(
       { error: { code: 'cross_origin_refused', message: 'cross-origin request refused' } },
       { status: 403 },
@@ -118,10 +157,11 @@ export async function middleware(request: NextRequest) {
   // auth-brain cookie-domain change is made; this is an authz decision, not a
   // cookie-transport one.)
   if (!isEditorHost) {
-    // The editor plane (`/projects/*` pages, `/api/projects/*`, `/api/ai/*`)
-    // must not run AT ALL on a published host: every one of them authorizes
-    // with the apex session the browser still sends here, which D2 forbids on
-    // the published plane. So they are refused with a 404 (as if the surface did
+    // The editor plane (`/projects/*` pages, `/api/projects/*`, `/api/ai/*`,
+    // `/api/books/*`, and the machine door `/api/mcp`) must not run AT ALL on a
+    // published host: every one of them authorizes with the apex session the
+    // browser still sends here, which D2 forbids on the published plane (and
+    // the machine door belongs to the editor host only). So they are refused with a 404 (as if the surface did
     // not exist on this host, revealing nothing about the editor), BEFORE any
     // handler or page runs and regardless of any cookie. A 404, NOT a login
     // bounce: anonymous published-site traffic is never sent to the login page.
@@ -151,12 +191,29 @@ export async function middleware(request: NextRequest) {
 
   // The matcher runs this for every API route so the cross-origin check above
   // covers them, and for page paths so a published page gets its policy; only
-  // the editor plane has a session gate.
-  if (!isEditorPlanePath(request.nextUrl.pathname)) return NextResponse.next();
+  // the editor plane has a session gate. A bearer request travels on without
+  // its cookies, wherever it goes.
+  if (!isEditorPlanePath(request.nextUrl.pathname)) {
+    return bearer ? forwardWithoutCookies(request) : NextResponse.next();
+  }
+
+  // The machine door accepts a bearer and nothing else: a browser session is
+  // no credential there (401 with the challenge an MCP client understands).
+  if (machinePath) {
+    if (!bearer) {
+      return NextResponse.json(
+        { error: { code: 'unauthorized', message: 'a company API key is required' } },
+        { status: 401, headers: { 'www-authenticate': 'Bearer realm="lumitra-sites"' } },
+      );
+    }
+    return forwardWithoutCookies(request);
+  }
 
   // Editor host, gated authoring surface (`/projects/*`, `/api/projects/*`,
-  // `/api/ai/*`): coarse cookie-PRESENCE gate.
-  const sessionCookie = request.cookies.get('lumitra_session')?.value;
+  // `/api/ai/*`, `/api/books/*`): coarse cookie-PRESENCE gate. A bearer request
+  // is judged as if it carried no cookie: a key opens only the machine door, so
+  // it gets exactly the 401 (or login bounce) of a request without a session.
+  const sessionCookie = bearer ? undefined : request.cookies.get('lumitra_session')?.value;
 
   if (!sessionCookie) {
     // API requests get a JSON 401 -- a fetch client (PublishButton/SaveButton,
@@ -220,7 +277,8 @@ export const config = {
     // Editor authoring dashboard (MT-09/MT-10) + its per-project sub-routes.
     '/projects/:path*',
     // Every API route, for the cross-origin check. The editor-plane families
-    // (`/api/projects`, `/api/ai`, `/api/books`) also get the session gate.
+    // (`/api/projects`, `/api/ai`, `/api/books`) also get the session gate,
+    // and `/api/mcp` the bearer-only gate of the machine door.
     '/api/:path*',
     // Published pages, for the report-only policy: any path except API routes,
     // build output, what is inside /images and /fonts, and the per-host files.

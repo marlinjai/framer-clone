@@ -12,6 +12,11 @@
  * handlers already use) and read the `lumitra_session` cookie straight off the
  * request headers, so they work in both the Node and edge runtimes without
  * depending on `next/headers`.
+ *
+ * A request carrying a Bearer header is a machine request (src/lib/bearer.ts,
+ * src/lib/auth-machine.ts): it is judged by its key alone, so every guard here
+ * treats it as having no session, even when a `lumitra_session` cookie came
+ * along. The middleware strips that cookie too; this is the second fence.
  */
 
 import type { SessionVerifyResponse } from '@marlinjai/auth-brain-sdk';
@@ -19,6 +24,7 @@ import { checkWorkspaceAccess } from './auth-check';
 import type { FramerAction } from './permissions';
 import { readRequestCookie as readCookie } from './activeCompanyCookie';
 import { verifySessionOrThrowUnavailable } from './authBrainAvailability';
+import { carriesBearer } from './bearer';
 
 type AuthSuccess = {
   authenticated: true;
@@ -41,6 +47,7 @@ const SESSION_COOKIE = 'lumitra_session';
  * AuthUnavailableError when auth-brain cannot answer (never "signed out").
  */
 async function getSessionUserId(req: Request): Promise<string | null> {
+  if (carriesBearer(req)) return null;
   const cookie = readCookie(req, SESSION_COOKIE);
   if (!cookie) return null;
   const session = await verifySessionOrThrowUnavailable(cookie);
@@ -62,6 +69,7 @@ async function getSessionUserId(req: Request): Promise<string | null> {
 export async function getVerifiedSession(
   req: Request,
 ): Promise<SessionVerifyResponse | null> {
+  if (carriesBearer(req)) return null;
   const cookie = readCookie(req, SESSION_COOKIE);
   if (!cookie) return null;
   return verifySessionOrThrowUnavailable(cookie);
