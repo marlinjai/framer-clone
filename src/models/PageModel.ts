@@ -394,18 +394,16 @@ const PageModel = PageWithComponents
 
   // Place a reusable component. The caller, ProjectModel.placeComponent, has the
   // definition and gives the reason for a refusal; this writes the node.
-  insertPlacement(definitionId: string, label: string, target: InsertTarget): ComponentInstance | undefined {
+  insertPlacement(definitionId: string, target: InsertTarget): ComponentInstance | undefined {
     const id = `component-${uuidv4()}`;
     if (target.kind === 'floating') {
       const floating = createFloatingCanvasComponent(id, PLACEMENT_TYPE as never, { component: definitionId }, Math.round(target.x), Math.round(target.y));
-      floating.setLabel(label);
       self.canvasNodes.set(floating.id, floating);
       self.updatedAt = new Date();
       return self.canvasNodes.get(floating.id);
     }
     const { parent, index } = insertPlace(self, target);
     const placement = createIntrinsicComponent(id, PLACEMENT_TYPE as never, { component: definitionId });
-    placement.setLabel(label);
     parent.addChild(placement, index);
     self.updatedAt = new Date();
     return placement;

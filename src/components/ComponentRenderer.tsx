@@ -254,7 +254,13 @@ const NodeRenderer = observer(({ component, breakpointId, allBreakpoints, scope,
       if (!isLocked) (resolvedAttributes as any)?.onClick?.(e);
     },
     onDoubleClick: (e: React.MouseEvent) => {
-      if (isLocked || placement || editorUI.selectedTool !== EditorTool.SELECT) return;
+      if (isLocked || editorUI.selectedTool !== EditorTool.SELECT) return;
+      if (placement) {
+        e.stopPropagation();
+        e.preventDefault();
+        editorUI.enterComponent((placement.props as Partial<PlacementProps>).component ?? '', placement.id);
+        return;
+      }
       if (!isTextEditable) {
         // Mixed with elements: the text node under the pointer opens. A press
         // on an element child is that child's.

@@ -83,6 +83,15 @@ function refuseRules(type: string): RuleWrite | null {
   return isTextNodeType(type) ? { ok: false, reason: 'Text has no element of its own, so it holds no rules.' } : null;
 }
 
+/** The name of the definition a placement names, from the project around it. */
+function definitionNameOf(node: object, id: unknown): string | undefined {
+  for (let up = node; hasMstParent(up); ) {
+    up = getParent(up);
+    if ('components' in up) return typeof id === 'string' ? (up as { components: Map<string, { name: string }> }).components.get(id)?.name : undefined;
+  }
+  return undefined;
+}
+
 /** All a placement binds: its input values and its initial state. */
 const isPlacementSlot = (slot: string) => slot === 'state' || slot.startsWith('input.');
 
@@ -932,6 +941,8 @@ const ComponentModel: any = ComponentBase
         return (shown.length > 40 ? `${shown.slice(0, 40)}...` : shown) || 'Text';
       }
       if (self.label) return self.label;
+      // A placement reads as its definition, so a rename reaches every row.
+      if (isPlacementType(self.type)) return definitionNameOf(self, self.props?.component) ?? 'Missing component';
       
       // Fallback based on component type
       switch (self.type) {

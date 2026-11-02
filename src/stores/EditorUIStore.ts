@@ -51,6 +51,26 @@ export interface EditorNoticeState {
   message: string;
 }
 
+/** The canvas position, read and written through Canvas, which owns it. */
+export interface CameraPosition {
+  zoom: number;
+  panX: number;
+  panY: number;
+}
+
+export interface CanvasCamera {
+  read(): CameraPosition;
+  write(position: CameraPosition): void;
+}
+
+/** Where to go back to from a definition. Ids, so a reloaded project still resolves it. */
+export interface ComponentReturn {
+  pageId: string;
+  placementId?: string;
+  breakpointId?: string;
+  camera?: CameraPosition;
+}
+
 // EditorUI store - manages all UI state and current selections
 const EditorUIStore = types.model('EditorUI', {
   // Current project selection (domain reference)
@@ -130,6 +150,11 @@ const EditorUIStore = types.model('EditorUI', {
   // navigation and no server round trip. The editor's own keyboard shortcuts
   // stand down while it is open. Editor session only.
   previewOpen: false,
+  // The way back out of the definitions open on the canvas, outermost first. A nested
+  // definition adds one. Volatile on purpose: a reload opens on a real page.
+  componentTrail: [] as readonly ComponentReturn[],
+  // Registered by Canvas while it is mounted.
+  canvasCamera: undefined as CanvasCamera | undefined,
   // Phone layout (docs/plans/2026-10-24-editor-on-phones.md, "Quick toolbar"):
   // the long-press context menu, open at a finger point (screen px), and the
   // style its Copy style took (appearance properties as resolved on the frame
@@ -155,6 +180,22 @@ const EditorUIStore = types.model('EditorUI', {
   /** True while the editor shows the browser-only demo project. */
   get isUnsavedDemo(): boolean {
     return self.demoProjectId !== undefined && self.currentProject?.id === self.demoProjectId;
+  },
+
+  /** True while a definition is open on the canvas. */
+  get inComponent(): boolean {
+    return self.componentTrail.length > 0;
+  },
+
+  /** The page the address names: a definition has no address, so a reload opens a real page. */
+  get addressPageId(): string | undefined {
+    return self.componentTrail[0]?.pageId ?? self.currentPage?.id;
+  },
+
+  /** The name of the nearest page or definition to go back to. */
+  get leaveTarget(): string {
+    const pageId = self.componentTrail[self.componentTrail.length - 1]?.pageId;
+    return (pageId && self.currentProject?.pageName(pageId)) || 'the page';
   },
 }))
 .actions(self => ({
@@ -209,12 +250,65 @@ const EditorUIStore = types.model('EditorUI', {
       self.selectedViewportNode = undefined;
       self.selectedComponents.clear();
       self.hoverComponent = undefined;
+      self.componentTrail = [];
     }
     self.currentProject = project;
   },
-  
-  // Page selection  
+
+  setCanvasCamera(camera: CanvasCamera | undefined) {
+    self.canvasCamera = camera;
+  },
+
+  /** Opens a definition on the canvas. Everything that edits a page then edits it. */
+  enterComponent(definitionId: string, placementId?: string) {
+    const definition = self.currentProject?.components.get(definitionId);
+    const from = self.currentPage;
+    if (!definition || !from || definition.page === from) return;
+    self.componentTrail = [...self.componentTrail, {
+      pageId: from.id,
+      placementId,
+      breakpointId: self.selectedViewportNode?.breakpointId,
+      camera: self.canvasCamera?.read(),
+    }];
+    self.currentPage = definition.page as PageModelType;
+    this.selectComponent(definition.page.appComponentTree as ComponentInstance);
+  },
+
+  /** Back to the record at `depth`, the nearest by default, or the nearest further out that still exists. */
+  leaveComponent(depth = self.componentTrail.length - 1): boolean {
+    for (let index = depth; index >= 0; index--) {
+      const back = self.componentTrail[index];
+      const page = self.currentProject?.findPageById(back.pageId) as PageModelType | undefined;
+      if (!page) continue;
+      self.componentTrail = self.componentTrail.slice(0, index);
+      self.currentPage = page;
+      const placement = back.placementId ? page.findComponent(back.placementId) : undefined;
+      this.selectComponent(placement ?? (page.appComponentTree as ComponentInstance), placement ? back.breakpointId : undefined);
+      if (back.camera) self.canvasCamera?.write(back.camera);
+      return true;
+    }
+    self.componentTrail = [];
+    return false;
+  },
+
+  // The definition open on the canvas went away: this tab deleted it, an undo took
+  // it, or another tab's save did. The canvas must not be left empty.
+  returnFromLostComponent() {
+    if (!this.leaveComponent()) return;
+    const name = self.currentProject?.pageName(self.currentPage?.id ?? '') ?? 'the page';
+    self.editorNotice = { kind: 'missingPage', message: `That component no longer exists, so you are back on ${name}.` };
+  },
+
+  // Page selection
   setCurrentPage(page?: PageModelType) {
+    // Leaving a definition from the Pages panel: its own page comes back as it was.
+    if (self.componentTrail.length > 0) {
+      if (page?.id === self.componentTrail[0].pageId) {
+        this.leaveComponent(0);
+        return;
+      }
+      self.componentTrail = [];
+    }
     self.currentPage = page;
     // Auto-select root component when switching pages
     if (page?.appComponentTree) {
@@ -413,6 +507,15 @@ const EditorUIStore = types.model('EditorUI', {
 
   endTextEdit() {
     self.editingComponent = undefined;
+  },
+
+  afterCreate() {
+    addDisposer(self, reaction(
+      () => self.currentPage,
+      page => {
+        if (!page && self.componentTrail.length > 0) (self as unknown as { returnFromLostComponent(): void }).returnFromLostComponent();
+      },
+    ));
   },
 }))
 .views(self => ({

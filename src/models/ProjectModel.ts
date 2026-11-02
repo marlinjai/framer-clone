@@ -559,8 +559,8 @@ export const ProjectModel = types
         inputs: [],
         states: [],
       });
+      // No label of its own: Layers shows the definition's name, which a rename changes.
       const placement = createIntrinsicComponent(`component-${uuidv4()}`, PLACEMENT_TYPE as never, { component: definitionId });
-      placement.setLabel(name);
       parent.addChild(placement, index);
       self.metadata.updatedAt = new Date();
       return { ok: true, definitionId, placement };
@@ -573,7 +573,7 @@ export const ProjectModel = types
       if (!definition) return { ok: false, message: 'That component no longer exists.' };
       const refusal = page.placementRefusal(definitionId, target);
       if (refusal) return { ok: false, message: refusal };
-      const placement = page.insertPlacement(definitionId, definition.name, target);
+      const placement = page.insertPlacement(definitionId, target);
       if (!placement) return { ok: false, message: 'The component could not be placed there.' };
       self.metadata.updatedAt = new Date();
       return { ok: true, placement };
@@ -1200,6 +1200,27 @@ export const ProjectModel = types
     // The reusable components as plain data, for expansion.
     get definitions(): ComponentDefinitions {
       return definitionsOf(self);
+    },
+
+    // The page with this id, among the pages or inside a definition.
+    findPageById(pageId: string): PageModelType | undefined {
+      const page = self.pages.get(pageId);
+      if (page) return page;
+      return Array.from(self.components.values()).find(definition => definition.page.id === pageId)?.page as PageModelType | undefined;
+    },
+
+    // What a person calls this page: a definition's own name, or the page's title.
+    pageName(pageId: string): string | undefined {
+      const definition = Array.from(self.components.values()).find(candidate => candidate.page.id === pageId);
+      return definition?.name ?? self.pages.get(pageId)?.metadata.title;
+    },
+
+    placementCount(definitionId: string): number {
+      let count = 0;
+      for (const page of [...self.pages.values(), ...Array.from(self.components.values(), d => d.page as PageModelType)]) {
+        count += nodesOfPage(page).filter(node => isPlacementType(node.type) && (node.props as Partial<PlacementProps>).component === definitionId).length;
+      }
+      return count;
     },
 
     // How many placements would lose their value to changeInputType.

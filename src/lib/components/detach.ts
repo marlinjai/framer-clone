@@ -235,3 +235,11 @@ function withPlacementBehaviour(root: unknown, placed: NonNullable<PlacementProp
   const on = [...(Array.isArray(own.on) ? own.on : []), ...(placed.on ?? [])];
   return { ...own, ...(on.length > 0 ? { on } : {}), ...(placed.showWhen === undefined ? {} : { showWhen: placed.showWhen }) };
 }
+
+/** True when a plain copy of this definition takes a form to a new id, which leaves past submissions behind. */
+export function detachLosesFormHistory(definition: ComponentDefinition): boolean {
+  return someNode(treeOf(definition), node => {
+    const props = isRecord(node.props) ? node.props : {};
+    return node.type === 'form' || typeof props['data-form-kind'] === 'string';
+  });
+}
