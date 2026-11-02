@@ -28,10 +28,19 @@ export interface Snapshot {
 export interface SnapshotOptions {
   /** Leave custom properties out: on a real page they are the build tool's bookkeeping, and their effect shows in the properties that read them. */
   withoutVariables?: boolean;
+  /**
+   * Compare the document element too, under the key `html`. Its styles only: its text
+   * is the whole document's, head included, and the page's words are compared on the
+   * elements that hold them.
+   */
+  withDocument?: boolean;
 }
 
+/** The key the document element is compared under. No parity id can take it. */
+export const DOCUMENT_KEY = 'html';
+
 export async function takeSnapshot(page: Page, options: SnapshotOptions = {}): Promise<Snapshot> {
-  const computed = await page.evaluate(({ withoutVariables }) => {
+  const computed = await page.evaluate(({ withoutVariables, withDocument, documentKey }) => {
     const dump = (style: CSSStyleDeclaration) => {
       const out: Record<string, string> = {};
       for (let i = 0; i < style.length; i++) {
@@ -53,8 +62,13 @@ export async function takeSnapshot(page: Page, options: SnapshotOptions = {}): P
         after: getComputedStyle(el, '::after').content,
       };
     });
+    if (withDocument) {
+      if (documentKey in facts) throw new Error(`an element's parity id is "${documentKey}", the document's key`);
+      const html = document.documentElement;
+      facts[documentKey] = { text: '', styles: dump(getComputedStyle(html)), before: getComputedStyle(html, '::before').content, after: getComputedStyle(html, '::after').content };
+    }
     return facts;
-  }, { withoutVariables: options.withoutVariables ?? false });
+  }, { withoutVariables: options.withoutVariables ?? false, withDocument: options.withDocument ?? false, documentKey: DOCUMENT_KEY });
   return {
     png: await page.screenshot({ fullPage: true }),
     computed,

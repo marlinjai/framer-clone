@@ -16,7 +16,7 @@ import type { BreakpointRef } from '@/lib/responsive/cascade';
 import type { BehaviourProgram } from '@/lib/behaviour/program';
 import { applyResponsiveStyles } from '@/lib/renderer/server/applyResponsiveStyles';
 import { renderComponentNode } from '@/lib/renderer/server/renderComponentNode';
-import { DEFAULT_VIEWPORTS } from '@/lib/canvas/defaultViewports';
+import { BREAKPOINTS } from './breakpoints';
 import type { ComponentDefinitions } from '@/lib/components/definition';
 import { renderPublishedPage } from '@/lib/renderer/server/renderPublishedPage';
 import { DEFAULT_PAGE_BASE, pageBaseSheet, type PageBase } from '@/lib/site/pageBase';
@@ -24,17 +24,10 @@ import { snapshotToComponentNode } from '@/lib/renderer/server/snapshotToCompone
 import SiteLayout from '@/app/(site)/layout';
 import type { PageSnapshotOut } from '@/models/PageModel';
 import type { CmsReadRepository } from '@/server/cms';
+import { DEFAULT_LANGUAGE, isLanguageTag } from '@/lib/site/siteSettings';
 import { readPublishedBase } from './publishedBase';
 
-/** The three breakpoints every page starts with (DEFAULT_VIEWPORTS), plus the frame width each is shown at. */
-export const BREAKPOINTS: readonly (BreakpointRef & { label: string; width: number; height: number })[] =
-  DEFAULT_VIEWPORTS.map((v) => ({
-    id: v.label.toLowerCase(),
-    minWidth: v.minWidth,
-    label: v.label,
-    width: v.width,
-    height: v.height,
-  }));
+export { BREAKPOINTS } from './breakpoints';
 
 export interface PublishedOutput {
   html: string;
@@ -92,16 +85,23 @@ export async function renderThroughPublishedPage({ tree, definitions, rows }: Pu
   return { html: renderToStaticMarkup(React.createElement(React.Fragment, null, body)), css: '', behaviour };
 }
 
+/** `<html lang>` as the root layout writes it: the site's language setting, refused when it is not a language tag. */
+function langAttribute(lang: string): string {
+  if (!isLanguageTag(lang)) throw new Error(`not a language tag: ${JSON.stringify(lang)}`);
+  return lang;
+}
+
 const pageBase = (() => {
-  let built: string[] | undefined;
-  return () => {
-    if (built) return built;
+  const built = new Map<string, string[]>();
+  return (lang: string) => {
+    const known = built.get(lang);
+    if (known) return known;
     const { css, meta } = readPublishedBase();
     if (/<\/style/i.test(css)) throw new Error('the published base sheet would close its own style element');
-    const head = `<!doctype html><html lang="en" class="${meta.htmlClass}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style data-fc-published-base="">${css}</style></head>`;
+    const head = `<!doctype html><html lang="${langAttribute(lang)}" class="${meta.htmlClass}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style data-fc-published-base="">${css}</style></head>`;
     const body = `<body class="${meta.bodyClass}">${renderToStaticMarkup(React.createElement(SiteLayout, null, null))}`;
-    built = [head, body];
-    return built;
+    built.set(lang, [head, body]);
+    return [head, body];
   };
 })();
 
@@ -110,9 +110,10 @@ const pageBase = (() => {
  * head (inline, because `page.setContent` has no origin to load a link from), its
  * classes on html and body, and the site layout's style, then the sheet of the site's
  * page base and the page's own sheet, in the body, where the published route puts them.
+ * `lang` is the site's language setting, which the root layout writes on html.
  */
-export function publishedDocument({ html, css }: PublishedOutput, base: PageBase = DEFAULT_PAGE_BASE): string {
-  const [head, body] = pageBase();
+export function publishedDocument({ html, css }: PublishedOutput, base: PageBase = DEFAULT_PAGE_BASE, lang: string = DEFAULT_LANGUAGE): string {
+  const [head, body] = pageBase(lang);
   const baseCss = pageBaseSheet(base);
   return `${head}${body}${baseCss ? `<style data-fc-page-base="">${baseCss}</style>` : ''}${css ? `<style data-fc-responsive="">${css}</style>` : ''}${html}</body></html>`;
 }
@@ -121,6 +122,6 @@ export function publishedDocument({ html, css }: PublishedOutput, base: PageBase
  * The same output with no page base, which no visitor ever gets. It exists for one
  * question only: when a check fails on the real page, would it pass without the base?
  */
-export function bareDocument({ html, css }: PublishedOutput): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><style>${css}</style></head><body style="margin:0">${html}</body></html>`;
+export function bareDocument({ html, css }: PublishedOutput, lang: string = DEFAULT_LANGUAGE): string {
+  return `<!doctype html><html lang="${langAttribute(lang)}"><head><meta charset="utf-8"><style>${css}</style></head><body style="margin:0">${html}</body></html>`;
 }

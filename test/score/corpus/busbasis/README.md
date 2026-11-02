@@ -53,6 +53,11 @@ repository root on the Mac: `bash test/score/busbasis/capture.sh`, then
 `pnpm exec tsx test/score/busbasis/freeze.ts`, then `pnpm exec tsx test/score/busbasis/rebuild.ts`.
 The live site changes, so a refresh can move the score without the product changing.
 
+The trees were lifted again on 2026-11-02 from the same capture, as an operator step: what
+the original sets on `html` now lands as rules on `:root` on the page root, which the
+format could not hold when the trees were first lifted, and the manifest records each
+page's `<html lang>`. The frozen pages, the sheet and the captured styles did not change.
+
 ## Held out from whom
 
 Hashes make an edit visible. They do not make it impossible: a worker could regenerate the manifest.
