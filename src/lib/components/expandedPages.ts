@@ -8,8 +8,8 @@
 //
 // The key is `siteId` and `revision`: the id of the frozen revision being served
 // (plan 2026-11-01-immutable-published-copy), which every publish and rollback
-// changes, or for a site with no revision yet the row's `updated_at`, which every
-// save moves. It is not the contract's `projectUpdatedAt`: node edits never touch
+// changes, with the time an erase of personal data last rewrote it in place, or
+// for a site with no revision yet the row's `updated_at`, which every save moves. It is not the contract's `projectUpdatedAt`: node edits never touch
 // `metadata.updatedAt`, so that value stays put when a definition or a page is
 // saved, and the memo would serve the old tree. Object identity is no key either,
 // because the cached site is deserialised afresh per request.
@@ -76,6 +76,31 @@ export function resetExpandedPages(): void {
 
 function revisionKey(site: ExpandableSite): string | null {
   return site.siteId && site.revision ? JSON.stringify([site.siteId, site.revision]) : null;
+}
+
+/**
+ * Drop everything held for one site, every revision of it. An erase of personal
+ * data calls this: the new key already stops the old trees from being served, but
+ * they would stay in memory, holding the erased value, until they aged out.
+ * Returns how many entries went (for tests and logs).
+ */
+export function forgetSite(siteId: string): number {
+  const shared = memo();
+  // revisionKey is JSON of [siteId, revision]: every key of the site starts the same.
+  const prefix = `${JSON.stringify([siteId]).slice(0, -1)},`;
+  let dropped = 0;
+  for (const [key, entry] of shared.entries) {
+    if (!key.startsWith(prefix)) continue;
+    shared.entries.delete(key);
+    shared.bytes -= entry.bytes;
+    dropped++;
+  }
+  for (const key of shared.formIds.keys()) {
+    if (!key.startsWith(prefix)) continue;
+    shared.formIds.delete(key);
+    dropped++;
+  }
+  return dropped;
 }
 
 function pageKey(site: ExpandableSite, pageId: string, kind: Held['kind']): string | null {

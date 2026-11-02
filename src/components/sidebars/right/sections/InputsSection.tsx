@@ -22,8 +22,12 @@ import { ArrowDown, ArrowUp, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { useStore } from '@/hooks/useStore';
 import type { ComponentDefinitionInstance } from '@/models/ComponentDefinitionModel';
 import {
+  fieldsFromText,
+  fieldsToText,
   INPUT_TYPE_LABELS,
   INPUT_TYPES,
+  LIST_FIELD_NOTATION_TYPES,
+  parseInputValue,
   optionsFromText,
   optionsToText,
   retypedInput,
@@ -124,6 +128,28 @@ const InputItem = observer(({
               // A default no longer among the options goes, and the dialog says so.
               const keepsDefault = input.default === undefined || options.some((option) => option.value === input.default);
               const next: InputDefinition = { ...input, options };
+              if (!keepsDefault) delete next.default;
+              requestInputEdit(editorUI, definition.id, next, !keepsDefault);
+            }}
+          />
+        </div>
+      )}
+      {input.type === 'list' && (
+        <div className="flex min-w-0 flex-col gap-1">
+          <span className={FIELD_LABEL}>Fields of each item</span>
+          <CommitField
+            key={editorUI.componentRequest ? 'asking' : 'idle'}
+            label={`Fields of ${input.name}`}
+            shown={fieldsToText(input.fields)}
+            hint={`Separated by commas. Name: type where it is not text (${LIST_FIELD_NOTATION_TYPES.join(', ')}).`}
+            parse={(text) => {
+              const fields = fieldsFromText(text, input.fields);
+              return fields.ok ? fields : { ok: false, reason: `Not stored: ${fields.reason}.` };
+            }}
+            onCommit={(value) => {
+              const next: InputDefinition = { ...input, fields: value as InputDefinition[] };
+              // A default the new fields refuse goes, and the dialog says so.
+              const keepsDefault = input.default === undefined || parseInputValue(next, input.default).ok;
               if (!keepsDefault) delete next.default;
               requestInputEdit(editorUI, definition.id, next, !keepsDefault);
             }}

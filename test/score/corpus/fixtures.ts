@@ -10,6 +10,7 @@
 // to probe. The classifier in compare.ts overrides that when the evidence is more
 // specific (lost text, a pseudo-element).
 
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Page } from 'playwright';
@@ -19,7 +20,8 @@ import { deriveTabs } from '@/lib/behaviour/presets/tabs';
 import type { PresetNode } from '@/lib/behaviour/presets';
 import { n, run, t } from '../patterns';
 import type { GapId } from '../lib/types';
-import { renderThroughPublishedPage, type PublishedOutput } from '../lib/published';
+import { renderPublished, renderThroughPublishedPage, type PublishedOutput } from '../lib/published';
+import type { SiteTheme } from '@/lib/site/theme';
 
 const FIXTURE_DIR = path.resolve(process.cwd(), 'test/score/corpus/fixtures');
 
@@ -118,6 +120,49 @@ const rule = (id: string, selector: string, style: Record<string, unknown>) => (
 const wrapped = (id: string, at: string, style: Record<string, unknown>, selector = '&') => ({ id, selector, at: [at], style });
 
 const WIDE_CARD = '@container (min-width: 600px)';
+
+/** A token reference, as a style value stores it (src/lib/site/theme.ts). */
+const token = (id: string) => `var(--fc-t-${id})`;
+
+/** A fixture's tree and its replica on a site with this theme, which the layout writes ahead of the page. */
+const themed = (theme: SiteTheme, tree: () => ComponentNode): Pick<Fixture, 'tree' | 'published'> => ({
+  tree,
+  published: async () => ({ ...renderPublished(tree()), theme }),
+});
+
+const darkSystem: FixtureState = { id: 'dark system', gap: 'theme', apply: (page) => page.emulateMedia({ colorScheme: 'dark' }) };
+
+const SITE_ORIGIN = 'https://corpus-site.test';
+const FONT_FILES = path.resolve(process.cwd(), 'public/fonts');
+
+/**
+ * Moves a page onto an origin of its own, serving the self-hosted font files, so a face
+ * declared at `/fonts/...` loads on both pages: a page set by content has no origin, so
+ * neither page could load one, and both would pass on the same fallback. A declared face
+ * that does not load is a broken harness, not a result, so it throws; a page that
+ * declares none is left to the comparison.
+ */
+async function onSiteOrigin(page: Page): Promise<void> {
+  if (!fs.existsSync(path.join(FONT_FILES, 'fraunces'))) execFileSync('pnpm', ['fonts:sync'], { stdio: 'ignore' });
+  const html = await page.content();
+  await page.route(`${SITE_ORIGIN}/**`, (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === '/') return route.fulfill({ status: 200, contentType: 'text/html', body: html });
+    const file = path.join(FONT_FILES, url.pathname.replace(/^\/fonts\//, ''));
+    if (url.pathname.startsWith('/fonts/') && file.startsWith(FONT_FILES) && fs.existsSync(file)) {
+      return route.fulfill({ status: 200, contentType: 'font/woff2', body: fs.readFileSync(file) });
+    }
+    return route.fulfill({ status: 404, body: '' });
+  });
+  await page.goto(`${SITE_ORIGIN}/`);
+  const loaded = await page.evaluate(async () => {
+    await document.fonts.ready;
+    const faces = [...document.fonts].filter((face) => /fraunces/i.test(face.family));
+    if (faces.length > 0) await Promise.all(faces.map((face) => face.load().catch(() => face)));
+    return faces.length === 0 || faces.some((face) => face.status === 'loaded');
+  });
+  if (!loaded) throw new Error('a declared Fraunces face did not load: the font files are missing or not served');
+}
 
 export const FIXTURES: Fixture[] = [
   {
@@ -648,6 +693,99 @@ export const FIXTURES: Fixture[] = [
         },
       },
     ],
+  },
+  {
+    id: 'theme-tokens',
+    group: 'edge',
+    source: 'hand-written: a site\'s shared colours on the document, used by reference next to their literal copies',
+    original: { html: 'theme-tokens.html' },
+    initialGap: 'theme',
+    ...themed(
+      {
+        tokens: [
+          { id: 'ac000001', name: 'Accent', kind: 'color', light: '#1d4ed8' },
+          { id: 'in000002', name: 'Ink', kind: 'color', light: '#111827' },
+          { id: 'wa000003', name: 'Warm', kind: 'color', light: 'oklch(0.75 0.15 70 / 0.5)' },
+        ],
+        document: {},
+      },
+      () =>
+        n(
+          'main',
+          parity('page', { style: { margin: 0, padding: '16px', fontFamily: FONT } }),
+          t('p', 'Coloured by reference', parity('by-reference', { style: { color: token('ac000001'), border: `2px solid ${token('in000002')}`, margin: '0 0 8px', padding: '8px' } })),
+          t('p', 'Coloured by its literal copy', parity('literal', { style: { color: '#1d4ed8', border: '2px solid #111827', margin: '0 0 8px', padding: '8px' } })),
+          n('div', parity('gradient', { style: { height: '24px', margin: '0 0 8px', backgroundImage: `linear-gradient(90deg, ${token('ac000001')}, ${token('wa000003')})` } })),
+          n('div', parity('shadow', { style: { width: '120px', height: '40px', boxShadow: `0 4px 12px ${token('in000002')}` } })),
+        ),
+    ),
+    states: [],
+  },
+  {
+    id: 'theme-dark',
+    group: 'edge',
+    source: 'hand-written: a site that follows the visitor\'s system, with its document colours from its tokens',
+    original: { html: 'theme-dark.html' },
+    initialGap: 'theme',
+    ...themed(
+      {
+        mode: 'system',
+        tokens: [
+          { id: 'gr000001', name: 'Ground', kind: 'color', light: '#ffffff', dark: '#030712' },
+          { id: 'in000002', name: 'Ink', kind: 'color', light: '#111827', dark: '#f9fafb' },
+          { id: 'ac000003', name: 'Accent', kind: 'color', light: '#1d4ed8', dark: '#93c5fd' },
+        ],
+        document: { backgroundColor: token('gr000001'), color: token('in000002') },
+      },
+      () =>
+        n(
+          'main',
+          parity('page', { style: { margin: 0, padding: '16px', fontFamily: FONT } }),
+          t('p', 'Text that inherits the document colour', parity('copy', { style: { margin: '0 0 8px' } })),
+          t('p', 'An accent that flips with the system', parity('accent', { style: { margin: 0, padding: '8px 12px', border: `1px solid ${token('ac000003')}`, color: token('ac000003') } })),
+        ),
+    ),
+    states: [darkSystem],
+  },
+  {
+    id: 'theme-font',
+    group: 'edge',
+    source: 'hand-written: a display face from the font library, named by a font token, that must load',
+    original: { html: 'theme-font.html' },
+    initialGap: 'theme',
+    ...themed(
+      { tokens: [{ id: 'fo000001', name: 'Display', kind: 'font', family: 'fraunces' }], document: {} },
+      () =>
+        n(
+          'main',
+          parity('page', { style: { margin: 0, padding: '16px', fontFamily: FONT } }),
+          t('h1', 'A display face that must load', parity('title', { style: { margin: '0 0 8px', fontSize: '40px', fontWeight: 700, fontFamily: token('fo000001') } })),
+          t('p', "Body text in the page's own face", parity('copy', { style: { margin: 0 } })),
+        ),
+    ),
+    prepare: onSiteOrigin,
+    states: [],
+  },
+  {
+    id: 'theme-dark-rule',
+    group: 'edge',
+    source: 'hand-written: a node with a dark look of its own, on a site with no theme',
+    original: { html: 'theme-dark-rule.html' },
+    initialGap: 'media-queries',
+    tree: () =>
+      n(
+        'main',
+        parity('page', { style: { margin: 0, padding: '16px', fontFamily: FONT } }),
+        t(
+          'p',
+          'A card with a dark look of its own',
+          parity('card', {
+            style: { margin: 0, padding: '12px', color: '#111827', backgroundColor: '#f3f4f6', borderRadius: '8px' },
+            rules: [wrapped('dark', '@media (prefers-color-scheme: dark)', { color: '#f9fafb', backgroundColor: '#1f2937' })],
+          }),
+        ),
+      ),
+    states: [darkSystem],
   },
 ];
 

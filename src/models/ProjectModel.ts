@@ -26,6 +26,7 @@ import { remapBehaviourRefs } from '@/lib/behaviour/format';
 import { inputDefinitionRefusal, mayBindToSlot, parseInputValue, type InputDefinition } from '@/lib/components/inputs';
 import { parseExpression } from '@/lib/bindings/resolver/expression';
 import { COMPONENT_LIMITS, PLACEMENT_TYPE, isPlacementType, serializedBytes, type PlacementProps } from '@/lib/components/placement';
+import { isRepeatable, REPEAT_PROP, repeatInputId } from '@/lib/components/repeat';
 import { extractBreakpoints } from '@/lib/renderer/server/componentSnapshot';
 import { isStickyCta } from '@/lib/stickyCta/stickyCta';
 import { literalPageTree } from '@/lib/renderer/server/snapshotToComponentNode';
@@ -204,6 +205,11 @@ const ProjectMetadataModel = types.model('ProjectMetadata', {
   // Timestamps
   createdAt: types.optional(types.Date, () => new Date()),
   updatedAt: types.optional(types.Date, () => new Date()),
+
+  // The site's erasure epoch when this copy was loaded (`sites.erasure_epoch`). Save and
+  // Publish send it, and the server refuses an older one: a tab opened before personal data
+  // was erased could otherwise write the value back. Never changed in the editor.
+  erasureEpoch: types.optional(types.number, 0),
 });
 
 
@@ -277,6 +283,11 @@ function nodesInclude(root: ComponentInstance, test: (node: ComponentInstance) =
 }
 
 /** The input id a binding reads, when it reads one. */
+/** The nodes of a definition repeated for this input. */
+function repeatsOf(page: PageModelType, inputId: string): ComponentInstance[] {
+  return nodesOfPage(page).filter(node => repeatInputId(node.props) === inputId);
+}
+
 function boundInputId(entry: { mode?: string; expression?: string }): string | undefined {
   const path = entry.mode === 'read' ? parseExpression(entry.expression ?? '')?.path : undefined;
   return path?.[0] === 'input' ? path[1] : undefined;
@@ -621,7 +632,43 @@ export const ProjectModel = types
         }
       }
       for (const { node } of placementsOf(definitionId)) inputWithout(node, inputId);
+      // A node repeated for it is a plain node again: a marker naming nothing renders nothing.
+      for (const node of repeatsOf(definition.page as PageModelType, inputId)) node.setProps({ [REPEAT_PROP]: undefined });
       definition.setInputs(definition.inputs.filter(input => input.id !== inputId));
+      self.metadata.updatedAt = new Date();
+      return { ok: true };
+    },
+
+    // A node inside a definition repeated once per item of one of its lists, or (with
+    // null) not repeated. With `newList`, the list is added first, in the same step:
+    // the panel's "New list" makes a repeat from scratch.
+    setRepeat(definitionId: string, nodeId: string, inputId: string | null, newList?: InputDefinition): ComponentActionResult {
+      const definition = self.components.get(definitionId);
+      if (!definition) return { ok: false, message: 'That component no longer exists.' };
+      const page = definition.page as PageModelType;
+      const node = page.findComponent(nodeId);
+      if (!node) return { ok: false, message: 'That element is no longer in the component.' };
+      if (node === page.appComponentTree) return { ok: false, message: 'The component itself cannot repeat. Repeat an element inside it.' };
+      if (node.type === '#text') return { ok: false, message: 'Text repeats with the element around it. Repeat that element.' };
+      if (node.isViewportNode) return { ok: false, message: 'Only an element inside the component can repeat.' };
+      if (inputId === null) {
+        node.setProps({ [REPEAT_PROP]: undefined });
+        self.metadata.updatedAt = new Date();
+        return { ok: true };
+      }
+      if (newList) {
+        if (newList.id !== inputId || !isRepeatable(newList)) return { ok: false, message: 'The new list is not the one to repeat for.' };
+        if (definition.inputs.length >= COMPONENT_LIMITS.inputsPerDefinition) {
+          return { ok: false, message: `A component has at most ${COMPONENT_LIMITS.inputsPerDefinition} inputs.` };
+        }
+        const refusal = inputDefinitionRefusal(newList);
+        if (refusal) return { ok: false, message: refusal };
+        if (definition.inputs.some(other => other.id === newList.id)) return { ok: false, message: 'This component already has that input.' };
+        definition.setInputs([...definition.inputs, newList]);
+      }
+      const list = definition.inputs.find(input => input.id === inputId);
+      if (!list || !isRepeatable(list)) return { ok: false, message: 'Only a List or Gallery input can repeat an element.' };
+      node.setProps({ [REPEAT_PROP]: inputId });
       self.metadata.updatedAt = new Date();
       return { ok: true };
     },
@@ -644,6 +691,10 @@ export const ProjectModel = types
           const reads = boundInputId(entry as { mode?: string; expression?: string }) === next.id;
           if (reads && !mayBindToSlot(next.type, slot)) node.clearBinding(slot);
         }
+      }
+      // An input that no longer holds items repeats nothing.
+      if (!isRepeatable(next)) {
+        for (const node of repeatsOf(definition.page as PageModelType, next.id)) node.setProps({ [REPEAT_PROP]: undefined });
       }
       definition.setInputs(definition.inputs.map(input => (input.id === next.id ? next : input)));
       self.metadata.updatedAt = new Date();
@@ -1380,7 +1431,7 @@ export const ProjectModel = types
           if (boundInputId(entry as { mode?: string; expression?: string }) === inputId) count++;
         }
       }
-      return count;
+      return count + repeatsOf(definition.page as PageModelType, inputId).length;
     },
 
     // How many connections inside the definition changeInputType would take away:
@@ -1395,7 +1446,7 @@ export const ProjectModel = types
           if (reads && !mayBindToSlot(next.type, slot)) count++;
         }
       }
-      return count;
+      return count + (isRepeatable(next) ? 0 : repeatsOf(definition.page as PageModelType, next.id).length);
     },
 
     // How many placements would lose their value to changeInputType.

@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { unstable_rethrow } from "next/navigation";
 import { getRequestLanguage, resolveSiteForRequest } from "@/server/sites/requestSite";
+import { themeColorMode } from "@/lib/site/theme";
 // NOTE (MT-15): the data-table-react CMS-grid stylesheets + cms-grid-theme.css
 // used to be imported HERE, in the root layout, which ships them to EVERY route
 // — including the published storefront under `(site)`, which has no data-table.
@@ -41,6 +42,25 @@ export async function generateMetadata(): Promise<Metadata> {
   return { icons: { icon: "/platform-favicon.ico" } };
 }
 
+// `<html class>`: DEFAULT_HTML_CLASS, except on a published site whose theme forces
+// `dark` (docs/plans/2026-11-02-theme-and-head.md, "Light and dark"), which wakes the
+// base sheet's `.dark` variables and `&:is(.dark *)` rules for that site. A `system`
+// site gets the default, because the server cannot know the visitor's setting. The
+// editor and unknown hosts keep it, and a failure to resolve the site does too.
+// test/score/refreshBase.ts reads the constant, so the score's page carries it.
+const DEFAULT_HTML_CLASS = "light";
+
+async function htmlClass(): Promise<string> {
+  try {
+    const site = await resolveSiteForRequest();
+    return themeColorMode(site?.siteSettings.theme) === "dark" ? "dark" : DEFAULT_HTML_CLASS;
+  } catch (err) {
+    unstable_rethrow(err);
+    console.error("root layout: could not resolve the site for its colour mode.", err);
+    return DEFAULT_HTML_CLASS;
+  }
+}
+
 // `<html lang>`: a published site's language from its Site settings
 // (src/server/sites/requestSite.ts), `en` for the editor and unknown hosts.
 // Only the root layout may render `<html>`, so it reads the request's site
@@ -50,9 +70,9 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const lang = await getRequestLanguage();
+  const [lang, className] = await Promise.all([getRequestLanguage(), htmlClass()]);
   return (
-    <html lang={lang} className="light">
+    <html lang={lang} className={className}>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >

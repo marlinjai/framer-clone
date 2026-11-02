@@ -4,7 +4,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { componentEntries, dataVersions, scoredEntries } from './lib/universe';
+import { componentEntries, dataVersions, pageItemEntries, scoredEntries } from './lib/universe';
 import { floorDrops, floorProblems, raiseFloor, serializeFloor, type Floor } from './lib/floor';
 import { REPORT_DIR, readOut } from './lib/io';
 import { UNCAPTURED_PAGES, type UncapturedPage } from './busbasis/pages';
@@ -62,6 +62,7 @@ const KIND_LABEL: Record<RowKind, string> = {
   'css-media-feature': 'CSS media features',
   'aria-pattern': 'WAI-ARIA patterns',
   component: 'Reusable component promises',
+  'page-item': 'Page-level items: a site theme',
 };
 
 const SURFACE_LABEL: Record<Surface, string> = {
@@ -262,6 +263,15 @@ export function buildScore(durationSeconds?: number): Score {
     const key = rowKey(entry.kind, entry.id);
     for (const surface of SURFACES) {
       results[surface][key] = measured[surface]?.[key] ?? { status: 'fail', gap: 'reusable-components' };
+    }
+  }
+
+  // A page-level item nothing has measured fails, under the theme contract's gap.
+  const pageItemResults = readOut<Partial<Record<Surface, SurfaceResults>>>('page-items');
+  for (const entry of pageItemEntries()) {
+    const key = rowKey(entry.kind, entry.id);
+    for (const surface of SURFACES) {
+      results[surface][key] = pageItemResults[surface]?.[key] ?? { status: 'fail', gap: 'theme', note: 'not built yet' };
     }
   }
 

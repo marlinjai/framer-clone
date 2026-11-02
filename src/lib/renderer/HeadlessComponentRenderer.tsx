@@ -27,6 +27,7 @@ import type { PageExpansion } from '@/lib/components/pageExpansion';
 import { detachedExpansion } from './detachedExpansion';
 import { effectDomForBreakpoint, hoverPresetClass, resolveEffects, storedEffectsOf } from '@/lib/effects/effects';
 import { isStickyCta } from '@/lib/stickyCta/stickyCta';
+import { childrenWithRepeats } from './repeatChildren';
 
 /**
  * True inside HeadlessPageRenderer, which draws the page's sticky call to
@@ -126,9 +127,8 @@ const HeadlessComponentRenderer = observer(({
     />
   );
 
-  const children = component.children.map((ch: ComponentInstance) => (
-    <React.Fragment key={ch.id}>{renderNode(ch, activeScope)}</React.Fragment>
-  ));
+  // A child repeated for a list is drawn once per item (src/lib/components/repeat.ts).
+  const children = childrenWithRepeats(component.children, activeScope, renderNode, false);
 
   return createComponentElement(component, finalProps, children, (resolvedAttributes as any).children, {
     identity: { breakpointId, componentId: component.id },

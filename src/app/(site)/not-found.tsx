@@ -59,6 +59,7 @@ export default async function SiteNotFound() {
       siteName={effectiveSiteName(site.siteSettings, site.name)}
       language={site.siteSettings.language}
       look={siteLookFromPages(site)}
+      theme={site.siteSettings.theme}
     />
   );
 }

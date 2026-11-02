@@ -262,3 +262,34 @@ describe('persistedToProjectSnapshot -> ProjectModel round-trip', () => {
     expect(ProjectModel.create(persistedToProjectSnapshot(oldRow)).site.language).toBe('en');
   });
 });
+
+describe('the erasure epoch (plan 2026-11-01-immutable-published-copy, open editor tabs)', () => {
+  const row = (erasureEpoch?: number): SiteRowData => ({
+    id: 'site_epoch',
+    name: 'Site',
+    description: '',
+    analyticsProjectId: null,
+    ingestionEndpoint: null,
+    apiKeyRef: null,
+    lumitraEnabled: false,
+    projectCreatedAt: new Date(0),
+    projectUpdatedAt: new Date(0),
+    ...(erasureEpoch === undefined ? {} : { erasureEpoch }),
+    pages: [],
+  });
+
+  it('travels from the row into the editor and back out with its Save', () => {
+    const project = ProjectModel.create(persistedToProjectSnapshot(row(3)));
+    expect(project.metadata.erasureEpoch).toBe(3);
+    expect(projectToPersisted(project).erasureEpoch).toBe(3);
+  });
+
+  it('reads as 0 for a row or a tab from before the field, and for anything not a count', () => {
+    expect(ProjectModel.create(persistedToProjectSnapshot(row())).metadata.erasureEpoch).toBe(0);
+    const snap = getSnapshot(makeProjectWithPages()) as unknown as { metadata: Record<string, unknown> };
+    for (const value of [undefined, -1, 1.5, '2', null]) {
+      const body = { ...snap, metadata: { ...snap.metadata, erasureEpoch: value } };
+      expect(projectToPersisted(body as never).erasureEpoch).toBe(0);
+    }
+  });
+});

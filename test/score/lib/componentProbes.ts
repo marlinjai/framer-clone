@@ -50,7 +50,7 @@ export interface InputProbe {
   input: Omit<InputDefinition, 'id' | 'name' | 'type'>;
   value: unknown;
   refused: unknown;
-  node: Pick<Stored, 'type' | 'props' | 'bindings'>;
+  node: Pick<Stored, 'type' | 'props' | 'bindings' | 'children'>;
   expected: string;
   /** What the canvas must hold: it writes attributes of its own between these. */
   canvas: string[];
@@ -163,6 +163,30 @@ export const INPUT_PROBES: Partial<Record<InputType, InputProbe>> = {
     node: { type: 'div', bindings: { 'style.cursor': read('{{input.x}}') } },
     expected: 'style="cursor:pointer"',
     canvas: ['cursor: pointer'],
+  },
+  list: {
+    input: { fields: [{ id: 'label', name: 'Label', type: 'text' }, { id: 'to', name: 'To', type: 'link' }] },
+    value: [{ label: 'One', to: '/one' }, { label: 'Two', to: '/two' }],
+    refused: [{ label: 'Bad', to: 'javascript:alert(1)' }],
+    node: { type: 'ul', children: [
+      { id: 'li', type: 'li', props: { 'data-repeat': 'x' }, children: [
+        { id: 'go', type: 'a', props: { children: 'Stored' }, bindings: { children: read('{{item.label}}'), href: read('{{item.to}}') } },
+      ] },
+    ] },
+    expected: '<ul><li><a href="/one">One</a></li><li><a href="/two">Two</a></li></ul>',
+    canvas: ['href="/one"', '>One</a>', 'href="/two"', '>Two</a>'],
+    absent: 'Stored',
+  },
+  gallery: {
+    input: {},
+    value: [{ src: '/a.jpg', alt: 'First' }, { src: '/b.jpg', alt: 'Second' }],
+    refused: [{ src: 'javascript:alert(1)' }],
+    node: { type: 'div', children: [
+      { id: 'pic', type: 'img', props: { 'data-repeat': 'x' }, bindings: { src: read('{{item.src}}'), alt: read('{{item.alt}}') } },
+    ] },
+    expected: '<div><img src="/a.jpg" alt="First" fetchPriority="high"/><img src="/b.jpg" alt="Second" loading="lazy" decoding="async"/></div>',
+    canvas: ['src="/a.jpg"', 'alt="First"', 'src="/b.jpg"', 'alt="Second"'],
+    absent: 'data-repeat',
   },
   transition: {
     input: {},

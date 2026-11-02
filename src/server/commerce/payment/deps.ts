@@ -3,8 +3,9 @@ import 'server-only';
 // src/server/commerce/payment/deps.ts
 //
 // The payment handler's wiring for one company of one tenant group: its scoped handle, the providers (the
-// demo provider always; Stripe when it is configured), and its receipt in the Books (the shared contacts
-// database for the buyer's contact). Routes build it per request; tests build their own with fakes.
+// demo provider always; Stripe when it is configured), its receipt in the Books (the shared contacts
+// database for the buyer's contact), and the event writer of the job registry. Routes and the job worker build it
+// per request or job; tests build their own with fakes.
 
 import type { Kysely } from 'kysely';
 
@@ -15,6 +16,7 @@ import type { PaymentDeps } from './payments';
 import { demoProvider, type PaymentProvider, type ProviderId } from './provider';
 import { ensureReceipt } from './receipt';
 import { deliverShopMailSoon } from '../mail/runtime';
+import { emitCommerceEvent } from '../jobs/emit';
 import { httpStripeApi, stripeConfig, type StripeApi } from './stripe/client';
 import { stripeProvider } from './stripe/connect';
 
@@ -44,6 +46,7 @@ export function paymentDeps(
       const { recipients, contactBook } = booksDependencies();
       return ensureReceipt(booksScope(db, tgId, companyId, { recipients }), contactBook, orderId);
     },
+    emit: (trx, event) => emitCommerceEvent(trx, event),
     deliverMail: (tenantId, orderId, kind) => deliverShopMailSoon(db, tgId, tenantId, orderId, kind),
   };
 }

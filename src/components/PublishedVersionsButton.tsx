@@ -10,6 +10,9 @@
 //
 // The list mounts only while the dialog is open, so every open loads the
 // server's current list. Every failure is shown, with a retry for the list.
+//
+// The same dialog holds "Erase personal data" (ErasePersonalDataPanel.tsx):
+// these versions are where an old value lives on, so that is where it is erased.
 'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
@@ -27,11 +30,14 @@ import {
 import { useStore } from '@/hooks/useStore';
 import { useControllableOpen, type ControllableOpenProps } from '@/hooks/useControllableOpen';
 import { hasPublishIssues, type PublishCheck } from '@/lib/legal/publishCheck';
+import { ErasePersonalDataPanel } from './ErasePersonalDataPanel';
 
 interface VersionItem {
   number: number;
   kind: 'publish' | 'baseline';
   createdAt: string;
+  /** When an erase of personal data rewrote it; null or absent when none did. */
+  rewrittenAt?: string | null;
 }
 
 interface VersionList {
@@ -211,6 +217,7 @@ function VersionsPanel({ projectId }: { projectId: string }) {
                 <div className="truncate text-xs text-muted-foreground">
                   {formatDate(revision.createdAt)}
                   {revision.kind === 'baseline' && ' · what the site showed before versions were kept'}
+                  {revision.rewrittenAt && ` · personal data erased ${formatDate(revision.rewrittenAt)}`}
                 </div>
               </div>
               {!live && (
@@ -241,6 +248,11 @@ const PublishedVersionsButton = observer(({ open: openProp, onOpenChange, trigge
   const { editorUI } = useStore();
   const project = editorUI.currentProject;
   const [open, setOpen] = useControllableOpen({ open: openProp, onOpenChange });
+  const [view, setView] = useState<'versions' | 'erase'>('versions');
+  // Every open starts on the list.
+  useEffect(() => {
+    if (!open) setView('versions');
+  }, [open]);
   // The demo editor's project exists only in this browser: nothing was published.
   if (!project || editorUI.isUnsavedDemo) return null;
 
@@ -257,13 +269,41 @@ const PublishedVersionsButton = observer(({ open: openProp, onOpenChange, trigge
       </button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent data-editor-ui="true" className="max-w-[480px]">
-          <DialogHeader>
-            <DialogTitle>Published versions</DialogTitle>
-            <DialogDescription>
-              Visitors see the version marked Live; saving never changes it. Making an older version live leaves the editor as it is, so your next Publish replaces it.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogBody>{open && <VersionsPanel projectId={project.id} />}</DialogBody>
+          {view === 'versions' ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>Published versions</DialogTitle>
+                <DialogDescription>
+                  Visitors see the version marked Live; saving never changes it. Making an older version live leaves the editor as it is, so your next Publish replaces it.
+                </DialogDescription>
+              </DialogHeader>
+              <DialogBody>
+                {open && <VersionsPanel projectId={project.id} />}
+                <div className="mt-4 border-t border-border pt-3">
+                  <Button type="button" size="sm" variant="ghost" onClick={() => setView('erase')}>
+                    Erase personal data...
+                  </Button>
+                </div>
+              </DialogBody>
+            </>
+          ) : (
+            <>
+              <DialogHeader>
+                <DialogTitle>Erase personal data</DialogTitle>
+                <DialogDescription>
+                  Find a value, such as a former managing director&apos;s name, in every kept version and in the editor, and erase it. Only the company&apos;s owner can do this.
+                </DialogDescription>
+              </DialogHeader>
+              <DialogBody>
+                {open && <ErasePersonalDataPanel projectId={project.id} />}
+                <div className="mt-4 border-t border-border pt-3">
+                  <Button type="button" size="sm" variant="ghost" onClick={() => setView('versions')}>
+                    Back to the versions
+                  </Button>
+                </div>
+              </DialogBody>
+            </>
+          )}
         </DialogContent>
       </Dialog>
     </>

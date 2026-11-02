@@ -15,6 +15,11 @@ export {
   type DeletedSite,
   type SiteRevisionList,
   type SiteRevisionSummary,
+  type PersonalDataSearch,
+  type PersonalDataErasure,
+  type ErasurePlace,
+  type ErasureLocationSummary,
+  type SiteErasureSummary,
 } from './repository';
 
 export {
@@ -26,6 +31,9 @@ export {
   InvalidTenantScopeError,
   InvalidPageSlugError,
   SiteRevisionNotFoundError,
+  SiteErasedSinceLoadError,
+  ErasePreviewStaleError,
+  NothingToEraseError,
   siteRepositoryErrorResponse,
 } from './errors';
 

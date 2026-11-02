@@ -11,7 +11,7 @@ import { renderPublishedPage } from '@/lib/renderer/server/renderPublishedPage';
 import { BREAKPOINTS } from '../../../../test/score/lib/published';
 import { parseComponents } from '../definition';
 import { COMPONENT_LIMITS } from '../placement';
-import { adaptedPage, literalPage, resetExpandedPages, siteFormIds } from '../expandedPages';
+import { adaptedPage, forgetSite, literalPage, resetExpandedPages, siteFormIds } from '../expandedPages';
 
 type Node = Record<string, unknown>;
 
@@ -110,6 +110,23 @@ describe('adaptedPage', () => {
     const one = site('r1');
     const two = { ...site('r1'), siteId: 'site-2' };
     expect(adaptedPage(two, two.pages[0]).root).not.toBe(adaptedPage(one, one.pages[0]).root);
+  });
+
+  it('forgets every revision of one site after an erase, and only that site', () => {
+    const one = site('r1');
+    const oneLater = site('r2');
+    const other = { ...site('r1'), siteId: 'site-10' };
+    const held = adaptedPage(one, one.pages[0]).root;
+    adaptedPage(oneLater, oneLater.pages[0]);
+    literalPage(one, one.pages[0]);
+    siteFormIds(one);
+    const otherHeld = adaptedPage(other, other.pages[0]).root;
+
+    expect(forgetSite('site-1')).toBe(4);
+    expect(adaptedPage(one, one.pages[0]).root).not.toBe(held);
+    // `site-10` starts with `site-1` but is another site.
+    expect(adaptedPage(other, other.pages[0]).root).toBe(otherHeld);
+    expect(forgetSite('site-unknown')).toBe(0);
   });
 
   it('holds nothing without a revision', () => {

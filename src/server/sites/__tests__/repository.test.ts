@@ -201,7 +201,7 @@ describe('SiteRepository.saveProject', () => {
 
   it('refuses to overwrite a site owned by another workspace', async () => {
     // The id exists but in a different workspace: refuse, do not overwrite.
-    prisma.site.findUnique.mockResolvedValue({
+    prisma.site.findUnique.mockResolvedValue({ erasureEpoch: 0,
       id: 'site_save',
       workspaceId: 'ws_someone_else',
     });
@@ -215,7 +215,7 @@ describe('SiteRepository.saveProject', () => {
     // The id already exists IN the caller's workspace: the save proceeds and
     // upserts by id, so a second publish updates the one row rather than
     // creating a duplicate.
-    prisma.site.findUnique.mockResolvedValue({
+    prisma.site.findUnique.mockResolvedValue({ erasureEpoch: 0,
       id: 'site_save',
       workspaceId: 'ws_marlin',
     });
@@ -241,7 +241,7 @@ describe('SiteRepository.saveProject keeps the theme and the head items a body l
   }
 
   beforeEach(() => {
-    prisma.site.findUnique.mockResolvedValue({
+    prisma.site.findUnique.mockResolvedValue({ erasureEpoch: 0,
       id: 'site_keep',
       workspaceId: 'ws_marlin',
       redirects: [],
@@ -292,7 +292,7 @@ describe('SiteRepository.saveProject slug rules and redirects', () => {
     published: boolean;
     redirects?: unknown;
   }) {
-    prisma.site.findUnique.mockResolvedValue({
+    prisma.site.findUnique.mockResolvedValue({ erasureEpoch: 0,
       id: 'site_1',
       workspaceId: 'ws_marlin',
       redirects: opts.redirects ?? [],
@@ -479,7 +479,7 @@ describe('SiteRepository.getSiteAddress', () => {
 
 describe('SiteRepository.saveProject leaves the name to the rename action', () => {
   it('writes the name on create but never on update', async () => {
-    prisma.site.findUnique.mockResolvedValue({ id: 'site_save', workspaceId: 'ws_marlin' });
+    prisma.site.findUnique.mockResolvedValue({ erasureEpoch: 0, id: 'site_save', workspaceId: 'ws_marlin' });
     prisma.site.upsert.mockResolvedValue({});
     prisma.sitePage.upsert.mockResolvedValue({});
     prisma.sitePage.deleteMany.mockResolvedValue({ count: 0 });
@@ -565,7 +565,7 @@ describe('SiteRepository.publishProject', () => {
 
   /** A stored site in the caller's workspace, as the transaction reads it. */
   function storedSite(over: Record<string, unknown> = {}) {
-    prisma.site.findUnique.mockResolvedValue({
+    prisma.site.findUnique.mockResolvedValue({ erasureEpoch: 0,
       id: 'site_1', workspaceId: 'ws_marlin', redirects: [], status: 'draft', publishedRevisionId: null, ...over,
     });
     prisma.site.findFirst.mockResolvedValue({
@@ -930,7 +930,7 @@ describe('SiteRepository.saveProject with mustExist (editor Save and Publish)', 
   });
 
   it('still updates a site that exists, with an UPDATE (row lock), never an upsert', async () => {
-    prisma.site.findUnique.mockResolvedValue({ id: 'site_gone', workspaceId: 'ws_marlin' });
+    prisma.site.findUnique.mockResolvedValue({ erasureEpoch: 0, id: 'site_gone', workspaceId: 'ws_marlin' });
     prisma.site.updateMany.mockResolvedValue({ count: 1 });
     prisma.sitePage.deleteMany.mockResolvedValue({ count: 0 });
     await expect(repo.saveProject(SCOPE, project(), { mustExist: true })).resolves.toBeUndefined();
@@ -940,7 +940,7 @@ describe('SiteRepository.saveProject with mustExist (editor Save and Publish)', 
   });
 
   it('a delete committed between the existence check and the write: still refused, no re-create', async () => {
-    prisma.site.findUnique.mockResolvedValue({ id: 'site_gone', workspaceId: 'ws_marlin' });
+    prisma.site.findUnique.mockResolvedValue({ erasureEpoch: 0, id: 'site_gone', workspaceId: 'ws_marlin' });
     prisma.site.updateMany.mockResolvedValue({ count: 0 });
     await expect(repo.saveProject(SCOPE, project(), { mustExist: true })).rejects.toBeInstanceOf(SiteGoneError);
     expect(prisma.site.upsert).not.toHaveBeenCalled();

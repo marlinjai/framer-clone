@@ -97,9 +97,13 @@ function backgroundFromInput(value: unknown): unknown {
   return `url("${src.trim().replace(/"/g, '%22')}")`;
 }
 
-/** True when a binding reads the input frame. */
+/**
+ * True when a binding reads what a placement passes its component: the input
+ * frame, or an item of one of its lists (`{{item.*}}`, src/lib/components/repeat.ts).
+ */
 export function readsInput(binding: ReadBinding): boolean {
-  return parseExpression(binding.expression)?.path[0] === 'input';
+  const head = parseExpression(binding.expression)?.path[0];
+  return head === 'input' || head === 'item';
 }
 
 /**
