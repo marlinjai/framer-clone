@@ -5,6 +5,7 @@ import React from 'react';
 import { observer } from 'mobx-react-lite';
 import { useStore } from '@/hooks/useStore';
 import RightSidebarHeader from './right/RightSidebarHeader';
+import StateSwitch from './right/StateSwitch';
 import { getComponentCategory, SECTION_MAP, type SectionId } from './right/sectionConfig';
 import { SizeSection, PositionSection, StylesSection, LayoutSection, TypographySection, ImageSection, DataSourceSection, EffectsSection, FormSection, StickyCtaSection, TextContentSection, LinkSection, CustomSection } from './right/sections';
 import { ComponentInstance } from '@/models/ComponentModel';
@@ -63,6 +64,9 @@ const RightSidebar = observer(({ variant = 'docked' }: RightSidebarProps) => {
     `}>
       {/* Header with collapse toggle (docked only) and dynamic title */}
       <RightSidebarHeader variant={variant} />
+
+      {/* Under the name and outside the scroll: it says what every row below edits. */}
+      {!isCollapsed && <StateSwitch variant={variant} />}
 
       {/* Content - only show when not collapsed */}
       {!isCollapsed && (

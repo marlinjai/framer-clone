@@ -12,7 +12,7 @@ import {
   PropertySwitch,
   ToggleIconGroup,
 } from '../primitives';
-import { styleSource } from '../breakpointSource';
+import { useStyleTarget } from '../useStyleTarget';
 import { uniformBoxValue } from '@/lib/canvas/spacingDrag';
 import { getHistoryStore } from '@/stores/RootStore';
 
@@ -29,10 +29,8 @@ interface LayoutSectionProps {
 export const LayoutSection = observer(({ component, breakpointId }: LayoutSectionProps) => {
   const [showPaddingSides, setShowPaddingSides] = useState(false);
 
-  const getStyleValue = (prop: string) => component.getResponsiveStyleValue(prop, breakpointId);
-  const setStyleValue = (prop: string, value: string) => component.updateResponsiveStyle(prop, value, breakpointId);
-  // Where each row's value comes from on this breakpoint (the dot before the label).
-  const src = (...props: string[]) => styleSource(component, breakpointId, props);
+  // The state being edited, or Normal: values, writes and each row's source.
+  const { getStyleValue, setStyleValue, src } = useStyleTarget(component, breakpointId);
 
   // The single Padding field reflects the four effective sides (the canvas
   // handles write sides one by one), and setting it writes all four, so a

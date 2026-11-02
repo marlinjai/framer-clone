@@ -1,11 +1,11 @@
 {
-  "generatedAt": "2026-11-02T03:28:59.389Z",
+  "generatedAt": "2026-11-02T03:59:14.354Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 118,
+  "durationSeconds": 163,
   "matrix": {
     "surfaces": {
       "format": {
@@ -27,8 +27,8 @@
         "total": 1833
       },
       "panel": {
-        "pass": 1071,
-        "fail": 762,
+        "pass": 1074,
+        "fail": 759,
         "notTested": 0,
         "total": 1833
       },
@@ -380,8 +380,8 @@
           "total": 106
         },
         "panel": {
-          "pass": 0,
-          "fail": 106,
+          "pass": 3,
+          "fail": 103,
           "notTested": 0,
           "total": 106
         },
@@ -4899,7 +4899,7 @@
       "css-selector:Subsequent-sibling combinator": "pass pass pass selector-styles selector-styles",
       "css-selector:Child combinator": "pass pass pass selector-styles selector-styles",
       "css-selector:Descendant combinator": "pass pass pass selector-styles selector-styles",
-      "css-selector::active": "pass pass pass selector-styles selector-styles",
+      "css-selector::active": "pass pass pass pass selector-styles",
       "css-selector::active-view-transition": "page-level-css page-level-css page-level-css selector-styles page-level-css",
       "css-selector::active-view-transition-type()": "page-level-css page-level-css page-level-css selector-styles page-level-css",
       "css-selector::any-link": "pass pass pass selector-styles selector-styles",
@@ -4917,12 +4917,12 @@
       "css-selector::first-child": "pass pass pass selector-styles selector-styles",
       "css-selector::first-of-type": "pass pass pass selector-styles selector-styles",
       "css-selector::focus": "pass pass pass selector-styles selector-styles",
-      "css-selector::focus-visible": "pass pass pass selector-styles selector-styles",
+      "css-selector::focus-visible": "pass pass pass pass selector-styles",
       "css-selector::focus-within": "pass pass pass selector-styles selector-styles",
       "css-selector::fullscreen": "pass pass pass selector-styles selector-styles",
       "css-selector::future": "pass pass pass selector-styles selector-styles",
       "css-selector::has()": "pass pass pass selector-styles selector-styles",
-      "css-selector::hover": "pass pass pass selector-styles selector-styles",
+      "css-selector::hover": "pass pass pass pass selector-styles",
       "css-selector::in-range": "pass pass pass selector-styles selector-styles",
       "css-selector::indeterminate": "pass pass pass selector-styles selector-styles",
       "css-selector::invalid": "pass pass pass selector-styles selector-styles",
@@ -6796,14 +6796,14 @@
     {
       "id": "selector-styles",
       "description": "CSS that needs a selector (states, pseudo-elements, structural selectors): a node only holds inline declarations, so no rule can be written.",
-      "matrixCells": 201,
+      "matrixCells": 198,
       "corpusChecks": 6,
       "fixtures": [
         "radix-accordion"
       ],
       "onlyGapOf": [],
       "roundTripCases": 0,
-      "cost": 207
+      "cost": 204
     },
     {
       "id": "reusable-components",

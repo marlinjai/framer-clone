@@ -2,12 +2,15 @@
 import React, { useId, useState } from 'react';
 import { ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { NormalOnly } from './NormalOnly';
 
 interface CollapsibleSectionProps {
   title: string;
   icon?: React.ReactNode;
   defaultOpen?: boolean;
   badge?: string;
+  /** Holds props rather than styles, so it does not follow a state (NormalOnly). */
+  normalOnly?: boolean;
   children: React.ReactNode;
 }
 
@@ -16,6 +19,7 @@ export function CollapsibleSection({
   icon,
   defaultOpen = true,
   badge,
+  normalOnly = false,
   children
 }: CollapsibleSectionProps) {
   const [isOpen, setIsOpen] = useState(defaultOpen);
@@ -52,7 +56,7 @@ export function CollapsibleSection({
       {/* Section body: one horizontal inset, 8px between rows */}
       {isOpen && (
         <div id={bodyId} className="flex min-w-0 flex-col gap-2 px-3 pb-3">
-          {children}
+          {normalOnly ? <NormalOnly>{children}</NormalOnly> : children}
         </div>
       )}
     </div>

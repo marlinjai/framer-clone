@@ -7,6 +7,9 @@
 // it a value is either set on this breakpoint (an override, which can be
 // reset) or inherited from a larger one.
 import type { ComponentInstance } from '@/models/ComponentModel';
+import { storedRulesOf } from '@/lib/rules/rules';
+import { readInState, type StateRead } from '@/lib/rules/stateValues';
+import { whilePanelWritesRule } from '@/stores/EditorUIStore';
 
 export type BreakpointSourceInfo =
   | {
@@ -20,6 +23,23 @@ export type BreakpointSourceInfo =
   | {
       kind: 'inherited';
       /** The larger breakpoint the value comes from, e.g. "Desktop". */
+      fromLabel: string;
+    }
+  | {
+      /** Set in the state being edited, on this breakpoint. The reset removes it. */
+      kind: 'state-own';
+      stateLabel: string;
+      onReset: () => void;
+    }
+  | {
+      /** Set in the state being edited, on a larger breakpoint. */
+      kind: 'state-larger';
+      stateLabel: string;
+      fromLabel: string;
+    }
+  | {
+      /** Not set in this state: the row shows another layer's value, greyed. "Hover" or "Normal". */
+      kind: 'state-inherited';
       fromLabel: string;
     };
 
@@ -71,6 +91,52 @@ export function styleSource(
   const inherited = sources.find(s => s.kind === 'inherited');
   if (inherited && inherited.kind === 'inherited') return { kind: 'inherited', fromLabel: labelOf(inherited.breakpointId) };
   return undefined;
+}
+
+/** One property read in a state, on what the node stores now. */
+export function readStateValue(component: ComponentInstance, ruleId: string, property: string, breakpointId: string | undefined): StateRead {
+  return readInState({
+    rules: storedRulesOf(component.props),
+    normal: (component.props as { style?: Record<string, unknown> }).style ?? {},
+    ruleId,
+    property,
+    breakpointId,
+    breakpoints: component.cascadeBreakpoints(breakpointId),
+  });
+}
+
+/**
+ * The source of a row while a state is edited, in place of styleSource. Set in the
+ * state wins, and its reset clears every property of the row set here, in one undo
+ * step; a breakpoint below the one that set it says so, as a row does in Normal.
+ * Otherwise the row reads from what the state implies, or from Normal. Nothing set
+ * anywhere has no indicator, the same as styleSource.
+ */
+export function stateSource(
+  component: ComponentInstance,
+  ruleId: string,
+  stateLabel: string,
+  breakpointId: string | undefined,
+  properties: readonly string[],
+): BreakpointSourceInfo | undefined {
+  const reads = properties.map((property) => readStateValue(component, ruleId, property, breakpointId));
+  const inState = reads.filter((read) => read.layer === 'state');
+  const setHere = inState.filter((read) => read.setHere);
+  if (setHere.length > 0) {
+    const keys = [...new Set(setHere.map((read) => read.key))];
+    return {
+      kind: 'state-own',
+      stateLabel,
+      // The panel's own write, so a state emptied here stays the state being edited.
+      onReset: () => whilePanelWritesRule(() => component.clearRuleStyles(ruleId, keys, breakpointId)),
+    };
+  }
+  if (inState.length > 0) {
+    return { kind: 'state-larger', stateLabel, fromLabel: breakpointLabel(component, inState[0].fromBreakpoint) ?? 'a larger breakpoint' };
+  }
+  const implied = reads.find((read) => read.layer === 'implied');
+  if (implied) return { kind: 'state-inherited', fromLabel: implied.fromLabel };
+  return reads.some((read) => read.layer === 'normal') ? { kind: 'state-inherited', fromLabel: 'Normal' } : undefined;
 }
 
 /**

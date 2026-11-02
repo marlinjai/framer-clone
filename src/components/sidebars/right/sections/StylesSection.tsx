@@ -15,7 +15,7 @@ import {
   PropertySwitch,
   TextInput,
 } from '../primitives';
-import { breakpointLabel, styleSource } from '../breakpointSource';
+import { useStyleTarget } from '../useStyleTarget';
 
 const RADIUS_UNITS = ['px', '%'];
 
@@ -36,10 +36,8 @@ export const StylesSection = observer(({ component, breakpointId }: StylesSectio
   const [showBorder, setShowBorder] = useState(false);
   const [hiddenPrevDisplay, setHiddenPrevDisplay] = useState<string | null>(null);
 
-  const getStyleValue = (prop: string) => component.getResponsiveStyleValue(prop, breakpointId);
-  const setStyleValue = (prop: string, value: string | number) => component.updateResponsiveStyle(prop, value, breakpointId);
-  // Where each row's value comes from on this breakpoint (the dot before the label).
-  const src = (...props: string[]) => styleSource(component, breakpointId, props);
+  // The state being edited, or Normal: values, writes and each row's source.
+  const { getStyleValue, setStyleValue, src, badge } = useStyleTarget(component, breakpointId);
 
   const currentDisplay = getStyleValue('display');
   // `|| 1` would read a real opacity of 0 as 1, so only an unparseable value falls back.
@@ -51,7 +49,7 @@ export const StylesSection = observer(({ component, breakpointId }: StylesSectio
     <CollapsibleSection
       title="Styles"
       icon={<Paintbrush size={14} />}
-      badge={breakpointLabel(component, breakpointId)}
+      badge={badge}
     >
       <PropertyRow label="Opacity" source={src('opacity')}>
         <PropertySlider

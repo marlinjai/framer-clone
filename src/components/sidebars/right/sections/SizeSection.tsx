@@ -8,10 +8,11 @@ import {
   DimensionInput,
   DisclosureButton,
   FieldPair,
+  NormalOnly,
   PropertyRow,
   TextInput,
 } from '../primitives';
-import { breakpointLabel, styleSource } from '../breakpointSource';
+import { useStyleTarget } from '../useStyleTarget';
 
 interface SizeSectionProps {
   component: ComponentInstance;
@@ -27,10 +28,8 @@ function toPixels(value: string, fallback: number): number {
 export const SizeSection = observer(({ component, breakpointId }: SizeSectionProps) => {
   const [showMinMax, setShowMinMax] = useState(false);
 
-  const getStyleValue = (prop: string) => component.getResponsiveStyleValue(prop, breakpointId);
-  const setStyleValue = (prop: string, value: string) => component.updateResponsiveStyle(prop, value, breakpointId);
-  // Where each row's value comes from on this breakpoint (the dot before the label).
-  const src = (...props: string[]) => styleSource(component, breakpointId, props);
+  // The state being edited, or Normal: values, writes and each row's source.
+  const { getStyleValue, setStyleValue, src, badge } = useStyleTarget(component, breakpointId);
 
   // Canvas coordinates: shared by viewport frames and floating elements.
   const canvasRow = (
@@ -62,7 +61,7 @@ export const SizeSection = observer(({ component, breakpointId }: SizeSectionPro
     <CollapsibleSection
       title="Size"
       icon={<MoveDiagonal size={14} />}
-      badge={breakpointLabel(component, breakpointId)}
+      badge={badge}
     >
       {/* Viewport-specific controls */}
       {component.isViewportNode && (
@@ -92,7 +91,7 @@ export const SizeSection = observer(({ component, breakpointId }: SizeSectionPro
       )}
 
       {/* Floating element position */}
-      {component.isFloatingElement && canvasRow}
+      {component.isFloatingElement && <NormalOnly>{canvasRow}</NormalOnly>}
 
       {/* Width + Height */}
       <PropertyRow label="Size" source={src('width', 'height')} group>
@@ -173,13 +172,15 @@ export const SizeSection = observer(({ component, breakpointId }: SizeSectionPro
 
       {/* Image URL for img elements */}
       {component.type === 'img' && (
-        <PropertyRow label="Image URL">
-          <TextInput
-            value={component.props?.src as string || ''}
-            onChange={(e) => component.setImageSrc(e.target.value)}
-            placeholder="https://example.com/image.jpg"
-          />
-        </PropertyRow>
+        <NormalOnly>
+          <PropertyRow label="Image URL">
+            <TextInput
+              value={component.props?.src as string || ''}
+              onChange={(e) => component.setImageSrc(e.target.value)}
+              placeholder="https://example.com/image.jpg"
+            />
+          </PropertyRow>
+        </NormalOnly>
       )}
     </CollapsibleSection>
   );
