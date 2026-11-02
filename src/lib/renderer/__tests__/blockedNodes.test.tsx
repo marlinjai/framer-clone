@@ -98,7 +98,7 @@ describe('blocked nodes', () => {
     expect(editor('div', { [name]: value, id: 'keep' })).toBe('<div id="keep"></div>');
   });
 
-  it.each(['red;background:url(https://x/y)', 'red}body{color:blue', 'url(javascript:x)', 'red</style><script>'])('drops the style value %s', (color) => {
+  it.each(['red;background:url(https://x/y)', '/*"*/;background:url(https://x/y);/*"*/', 'url(javascript:x)', 'red</style><script>'])('drops the style value %s', (color) => {
     const props = { style: { color, margin: 0 } };
     expect(published({ type: 'div', props })).toBe('<div style="margin:0"></div>');
     expect(editor('div', props)).toBe('<div style="margin:0"></div>');

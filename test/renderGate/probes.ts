@@ -277,6 +277,7 @@ const STYLE_VALUES: ((id: string) => unknown)[] = [
   (id) => `expression(${run(id)})`,
   (id) => `url(javascript:${run(id)})`,
   (id) => `@import url(${FOREIGN}/${id})`,
+  (id) => `/*"*/;background:url(${FOREIGN}/${id});/*"*/`,
   (id) => ({ base: `red;background:url(${FOREIGN}/${id})` }),
   (id) => ({ desktop: `red}</style><script>${run(id)}</script>`, tablet: 'blue' }),
   () => ({ toString: 'x' }),

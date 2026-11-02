@@ -320,8 +320,9 @@ Rules, in both renderers:
 - **An address** may only be `http`, `https`, `mailto`, `tel`, `sms`, a path, a fragment, or a `data:`
   image, audio, video or font. It is judged the way a browser reads it.
 - **Only `children`, `style` and `ref` hold objects.** An array would otherwise read as its string.
-- **An inline style** passes the same rule as the published stylesheet. An external image in a style
-  stays allowed, as it does in the stylesheet: a style may show a picture.
+- **An inline style** holds one declaration per key: no `;` outside a string or url(), no comment that
+  hides one, no script address. An external image in a style stays allowed, as it does in the
+  stylesheet: a style may show a picture.
 
 `pnpm test:render-gate` (test/renderGate) tries every element and attribute of the data in real
 Chromium and WebKit, through published markup and client rendering, and fails on what it finds.

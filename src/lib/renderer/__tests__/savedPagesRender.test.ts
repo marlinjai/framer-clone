@@ -21,7 +21,7 @@ interface Tree {
 }
 
 /** Read by a renderer and removed before an element exists, so the gate never decides them. */
-const NOT_ATTRIBUTES = new Set([...FORM_CONFIG_PROPS, 'query', 'bindings', 'effects']);
+const NOT_ATTRIBUTES = new Set([...FORM_CONFIG_PROPS, 'query', 'bindings', 'effects', 'rules']);
 
 function losses(tree: Tree, where: string, out: string[] = []): string[] {
   if (typeof tree.type === 'string' && isRefusedTag(tree.type)) out.push(`${where}: <${tree.type}>`);

@@ -11,7 +11,7 @@
 
 import { REVIEWED_ANIMATED_ATTRIBUTES } from '@/lib/ai/pageGen/reviewedVocabulary';
 import { isRenderedAttribute, isRenderedTag } from '@/lib/renderer/renderVocabulary';
-import { cssValueText, unsafeDeclaration } from '@/lib/responsive/responsiveCss';
+import { SAFE_PROPERTY, UNSAFE_VALUE, cssValueText, isContainedValue } from '@/lib/responsive/responsiveCss';
 
 /**
  * Refused by name, whatever the vocabulary says: both renderers and the score's
@@ -111,18 +111,31 @@ export function isBlockedProp(name: string, value: unknown): boolean {
 }
 
 /**
- * An inline style without what the published stylesheet would drop, the same
- * object when nothing goes. A value reaching the `style` attribute needs this as
- * much as one reaching the sheet: `red;background:url(...)` is two declarations
- * there. `https` in a url() stays, as in the sheet: a stored style may show an image.
+ * Whether a declaration could do more than set its property from inside a `style`
+ * attribute. Narrower than the sheet's rule, which also guards `{`, `}` and `<`:
+ * React escapes an attribute and a declaration list has no rule to leave, and
+ * applyResponsiveStyles leaves here on purpose what the sheet refuses. What counts
+ * here is `;`, which starts a second declaration, and a comment outside a string,
+ * which hides one from isContainedValue.
+ */
+function isUnsafeInline(key: string, value: unknown): boolean {
+  if (typeof value === 'object' && value !== null) return true;
+  if (!SAFE_PROPERTY.test(key)) return true;
+  const text = cssValueText(key, value);
+  if (text === undefined) return false;
+  return !isContainedValue(text) || UNSAFE_VALUE.test(text.replaceAll('/*', '')) || text.replace(/"[^"]*"|'[^']*'/g, '').includes('/*');
+}
+
+/**
+ * An inline style without what could act, the same object when nothing goes:
+ * `red;background:url(...)` is two declarations in an attribute. `https` in a url()
+ * stays, as in the sheet: a stored style may show an image.
  */
 export function safeInlineStyle(style: Record<string, unknown>): Record<string, unknown> {
-  const isUnsafe = (key: string, value: unknown) =>
-    (typeof value === 'object' && value !== null) || unsafeDeclaration(key, cssValueText(key, value)) !== null;
   const keys = Object.keys(style);
-  if (!keys.some((key) => isUnsafe(key, style[key]))) return style;
+  if (!keys.some((key) => isUnsafeInline(key, style[key]))) return style;
   warnOnce('an unsafe style declaration');
-  return Object.fromEntries(keys.filter((key) => !isUnsafe(key, style[key])).map((key) => [key, style[key]]));
+  return Object.fromEntries(keys.filter((key) => !isUnsafeInline(key, style[key])).map((key) => [key, style[key]]));
 }
 
 /** `props` without its blocked keys and unsafe style; the same object when there are none. */
