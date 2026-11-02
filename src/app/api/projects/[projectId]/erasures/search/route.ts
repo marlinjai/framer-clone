@@ -1,6 +1,6 @@
 // src/app/api/projects/[projectId]/erasures/search/route.ts
 //
-// POST /api/projects/<projectId>/erasures/search  { value, caseSensitive? }
+// POST /api/projects/<projectId>/erasures/search  { value, caseSensitive?, insideWords? }
 //   -> every match of one personal value in the site's kept revisions and its
 //      working copy, with where it is, a short excerpt, whether it may be
 //      rewritten, and the token the erase must repeat (the erase preview).
@@ -15,7 +15,7 @@
 import { withAuthAvailability } from '@/lib/authBrainAvailability';
 import { parseBody } from '@/lib/api/respond';
 import { getSiteRepository } from '@/server/sites';
-import { authorizeEraser, eraseErrorResponse, searchBodySchema } from '../_shared';
+import { authorizeEraser, eraseErrorResponse, queryOf, searchBodySchema } from '../_shared';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -32,10 +32,7 @@ async function handlePOST(req: Request, { params }: Ctx): Promise<Response> {
 
   const { id, workspaceId, tenantGroupId } = auth.project;
   try {
-    const search = await getSiteRepository().searchPersonalData({ workspaceId, tenantGroupId }, id, {
-      value: body.data.value,
-      caseSensitive: body.data.caseSensitive === true,
-    });
+    const search = await getSiteRepository().searchPersonalData({ workspaceId, tenantGroupId }, id, queryOf(body.data));
     return Response.json(search, { headers: { 'cache-control': 'no-store' } });
   } catch (err) {
     return eraseErrorResponse(err, 'erase_search_failed', 'The search failed. Nothing was changed.');

@@ -78,6 +78,31 @@ function revisionKey(site: ExpandableSite): string | null {
   return site.siteId && site.revision ? JSON.stringify([site.siteId, site.revision]) : null;
 }
 
+/**
+ * Drop everything held for one site, every revision of it. An erase of personal
+ * data calls this: the new key already stops the old trees from being served, but
+ * they would stay in memory, holding the erased value, until they aged out.
+ * Returns how many entries went (for tests and logs).
+ */
+export function forgetSite(siteId: string): number {
+  const shared = memo();
+  // revisionKey is JSON of [siteId, revision]: every key of the site starts the same.
+  const prefix = `${JSON.stringify([siteId]).slice(0, -1)},`;
+  let dropped = 0;
+  for (const [key, entry] of shared.entries) {
+    if (!key.startsWith(prefix)) continue;
+    shared.entries.delete(key);
+    shared.bytes -= entry.bytes;
+    dropped++;
+  }
+  for (const key of shared.formIds.keys()) {
+    if (!key.startsWith(prefix)) continue;
+    shared.formIds.delete(key);
+    dropped++;
+  }
+  return dropped;
+}
+
 function pageKey(site: ExpandableSite, pageId: string, kind: Held['kind']): string | null {
   const revision = revisionKey(site);
   return revision ? `${revision}\n${pageId}\n${kind}` : null;

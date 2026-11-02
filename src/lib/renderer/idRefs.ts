@@ -25,6 +25,11 @@ const REFERENCE_NAMES: ReadonlySet<string> = new Set([
 /** Attributes holding `#<id>`. */
 const FRAGMENT_NAMES: ReadonlySet<string> = new Set(['href', 'usemap']);
 
+/** Every attribute name that holds an `id` or a list of them (lower case), for whoever must not break one. */
+export const ID_REFERENCE_NAMES: ReadonlySet<string> = REFERENCE_NAMES;
+/** Every attribute name whose `#`-prefixed value names an `id`. */
+export const ID_FRAGMENT_NAMES: ReadonlySet<string> = FRAGMENT_NAMES;
+
 /** True for an attribute whose value names an `id`. */
 export const isIdReference = (name: string): boolean => REFERENCE_NAMES.has(name.toLowerCase());
 

@@ -7,10 +7,12 @@
 // personal data from the history"). The company's owner only; the server says
 // so to anyone else, and the panel shows that answer.
 //
-// Nothing changes before the second click: Search shows every match, Erase asks
-// once more with the counts, and the answer shows what a fresh search finds
-// afterwards (the proof). Every failure is shown. A preview that went stale (a
-// publish in between) asks for a new search.
+// Nothing changes before the second click, and nothing the owner did not see and
+// tick: Search lists the matches (whole words by default), none is ticked until
+// the owner ticks it, only listed matches can be ticked, Erase asks once more
+// with the counts, and the answer shows what a fresh search for this exact text
+// finds afterwards (the proof). Every failure is shown. A preview that went stale
+// (a publish in between) asks for a new search.
 //
 // After an erase this tab's copy of the project is older than the server's, and
 // its Save would be refused, so the result offers a reload, and says that other
@@ -69,6 +71,7 @@ type State =
 interface Query {
   value: string;
   caseSensitive: boolean;
+  insideWords: boolean;
 }
 
 const AREA_LABELS: Record<string, string> = {
@@ -83,14 +86,18 @@ const AREA_LABELS: Record<string, string> = {
   theme: 'theme',
   head: 'head item',
   address: 'page address',
+  domain: 'domain',
+  experiment: 'A/B test',
   other: 'other',
 };
 
 const BLOCKED_LABELS: Record<string, string> = {
   key: 'a name in the structure, not a value',
   structural: 'an id, class, selector or form key: changing it would change more than this value',
-  address: 'a page address: changing it would change where visitors land',
+  address: 'a page address or a link to one: changing it would change where visitors land',
+  url: 'an image or file address: cutting it would break the image while the file stays online',
   'binding-reference': 'inside a data binding: changing it would break the binding',
+  separate: 'kept outside the published versions: change it where it is set (domains, A/B tests)',
 };
 
 function locationLabel(location: Location): string {
@@ -110,8 +117,9 @@ async function readError(res: Response, fallback: string): Promise<{ code: strin
 export function ErasePersonalDataPanel({ projectId }: { projectId: string }) {
   const [value, setValue] = useState('');
   const [caseSensitive, setCaseSensitive] = useState(false);
+  const [insideWords, setInsideWords] = useState(false);
   const [replacement, setReplacement] = useState('');
-  const [leaveOut, setLeaveOut] = useState<Set<string>>(new Set());
+  const [chosen, setChosen] = useState<Set<string>>(new Set());
   const [confirming, setConfirming] = useState(false);
   const [state, setState] = useState<State>({ kind: 'idle' });
   const [failure, setFailure] = useState<{ code: string | null; message: string } | null>(null);
@@ -120,7 +128,7 @@ export function ErasePersonalDataPanel({ projectId }: { projectId: string }) {
   const search = async (query: Query) => {
     setFailure(null);
     setConfirming(false);
-    setLeaveOut(new Set());
+    setChosen(new Set());
     setState({ kind: 'searching' });
     try {
       const res = await fetch(`${base}/search`, {
@@ -148,7 +156,7 @@ export function ErasePersonalDataPanel({ projectId }: { projectId: string }) {
       const res = await fetch(base, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ ...query, replacement, token: result.token, leaveOut: [...leaveOut] }),
+        body: JSON.stringify({ ...query, replacement, token: result.token, chosen: [...chosen] }),
       });
       if (!res.ok) {
         setFailure(await readError(res, 'The erase failed'));
@@ -163,7 +171,7 @@ export function ErasePersonalDataPanel({ projectId }: { projectId: string }) {
   };
 
   const toggle = (id: string) =>
-    setLeaveOut((current) => {
+    setChosen((current) => {
       const next = new Set(current);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -181,9 +189,9 @@ export function ErasePersonalDataPanel({ projectId }: { projectId: string }) {
           {remaining === null
             ? 'The check afterwards could not run. Search again to confirm the value is gone.'
             : remaining === 0
-              ? 'A new search finds nothing: the value is gone from every kept version and from the editor.'
-              : `A new search still finds ${remaining} ${remaining === 1 ? 'match' : 'matches'}` +
-                (erasableRemaining ? `, ${erasableRemaining} of them erasable (left out, or added since).` : ', none of them erasable here.')}
+              ? 'No match for this exact text remains in the versions and the editor.'
+              : `A new search for this exact text still finds ${remaining} ${remaining === 1 ? 'match' : 'matches'}` +
+                (erasableRemaining ? `, ${erasableRemaining} of them erasable (not ticked, or added since).` : ', none of them erasable here.')}
         </p>
         <p className="text-sm text-muted-foreground">
           This editor still holds the old copy. Reload it before you go on; every other open tab of this project needs a reload too, and cannot save until then.
@@ -197,8 +205,12 @@ export function ErasePersonalDataPanel({ projectId }: { projectId: string }) {
 
   const busy = state.kind === 'searching' || state.kind === 'erasing';
   const found = state.kind === 'found' || state.kind === 'erasing' ? state : null;
-  const chosen = found ? found.result.erasable - found.result.matches.filter((m) => m.blocked === null && leaveOut.has(m.id)).length : 0;
-  const versions = found ? found.result.locations.filter((l) => l.location.kind === 'revision' && l.erasable > 0).length : 0;
+  const listedErasable = found ? found.result.matches.filter((m) => m.blocked === null) : [];
+  const count = listedErasable.filter((m) => chosen.has(m.id)).length;
+  const versions = new Set(
+    listedErasable.filter((m) => chosen.has(m.id) && m.location.kind === 'revision').map((m) => (m.location as { number: number }).number),
+  ).size;
+  const inEditor = listedErasable.some((m) => chosen.has(m.id) && m.location.kind === 'working');
 
   return (
     <div className="space-y-3">
@@ -206,7 +218,7 @@ export function ErasePersonalDataPanel({ projectId }: { projectId: string }) {
         className="space-y-2"
         onSubmit={(e) => {
           e.preventDefault();
-          void search({ value, caseSensitive });
+          void search({ value, caseSensitive, insideWords });
         }}
       >
         <label className="block text-sm font-medium" htmlFor="erase-value">
@@ -230,6 +242,15 @@ export function ErasePersonalDataPanel({ projectId }: { projectId: string }) {
           <input type="checkbox" checked={caseSensitive} onChange={(e) => setCaseSensitive(e.target.checked)} />
           Match upper and lower case exactly
         </label>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={insideWords} onChange={(e) => setInsideWords(e.target.checked)} />
+          Also find it inside longer words
+        </label>
+        <p className="text-xs text-muted-foreground">
+          Finds whole words unless asked otherwise. Treats non-breaking and repeated spaces and soft hyphens as one space,
+          finds HTML entities such as &amp;uuml; and matches ß with ss. It does not find other spellings, initials, or a
+          name split by formatting: search for each of them too.
+        </p>
       </form>
 
       {failure && (
@@ -272,7 +293,7 @@ export function ErasePersonalDataPanel({ projectId }: { projectId: string }) {
                       type="checkbox"
                       className="mt-1"
                       aria-label={`Erase this match in ${locationLabel(match.location)}`}
-                      checked={!leaveOut.has(match.id)}
+                      checked={chosen.has(match.id)}
                       onChange={() => toggle(match.id)}
                       disabled={busy}
                     />
@@ -295,9 +316,19 @@ export function ErasePersonalDataPanel({ projectId }: { projectId: string }) {
               ))}
             </ul>
           )}
+          {listedErasable.length > 0 && (
+            <div className="flex gap-2">
+              <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => setChosen(new Set(listedErasable.map((m) => m.id)))}>
+                Tick all shown
+              </Button>
+              <Button type="button" size="sm" variant="ghost" disabled={busy || chosen.size === 0} onClick={() => setChosen(new Set())}>
+                Untick all
+              </Button>
+            </div>
+          )}
           {found.result.truncated && (
             <p className="text-xs text-muted-foreground">
-              Showing the first {found.result.matches.length}. Erase covers every erasable match, also the ones not shown.
+              Showing the first {found.result.matches.length} of {found.result.total}. Only matches shown here can be erased: narrow the search to reach the rest.
             </p>
           )}
           {found.result.erasable > 0 && (
@@ -310,16 +341,20 @@ export function ErasePersonalDataPanel({ projectId }: { projectId: string }) {
                 className="h-8 w-full rounded border border-border bg-background px-2 text-sm"
                 value={replacement}
                 onChange={(e) => setReplacement(e.target.value)}
-                placeholder="Leave empty to remove, or for example [entfernt]"
+                placeholder="For example [entfernt]; left empty, the text around it is tidied"
                 autoComplete="off"
                 disabled={busy}
               />
               {confirming ? (
                 <div role="group" aria-label="Confirm the erase" className="space-y-2 rounded border border-border p-3">
                   <p className="text-sm font-medium">
-                    Erase {chosen} {chosen === 1 ? 'match' : 'matches'}
-                    {versions > 0 ? ` from ${versions} published ${versions === 1 ? 'version' : 'versions'}` : ''} and the editor? This
-                    cannot be undone, and the live site changes at once.
+                    Erase {count} ticked {count === 1 ? 'match' : 'matches'}
+                    {versions > 0 ? ` in ${versions} published ${versions === 1 ? 'version' : 'versions'}` : ''}
+                    {inEditor ? (versions > 0 ? ' and the editor' : ' in the editor') : ''}? This cannot be undone, and
+                    the live site changes at once.
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Changes not saved in this tab are lost: after the erase, this tab has to reload. Save first if you need them.
                   </p>
                   <div className="flex gap-2">
                     <Button type="button" size="sm" variant="destructive" onClick={() => void erase(found.query, found.result)}>
@@ -335,10 +370,10 @@ export function ErasePersonalDataPanel({ projectId }: { projectId: string }) {
                   type="button"
                   size="sm"
                   variant="destructive"
-                  disabled={busy || chosen === 0}
+                  disabled={busy || count === 0}
                   onClick={() => setConfirming(true)}
                 >
-                  {state.kind === 'erasing' ? 'Erasing...' : `Erase ${chosen} ${chosen === 1 ? 'match' : 'matches'}...`}
+                  {state.kind === 'erasing' ? 'Erasing...' : `Erase ${count} ticked ${count === 1 ? 'match' : 'matches'}...`}
                 </Button>
               )}
             </div>

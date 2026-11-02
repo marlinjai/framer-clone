@@ -52,14 +52,14 @@ import { generateSubdomain } from './subdomain';
 import { parseRevisionDocument, REVISION_SCHEMA_VERSION, revisionPublishCheck } from './revision';
 import type { PublishCheck } from '@/lib/legal/publishCheck';
 import {
-  assertRevisionShapeKept,
+  assertShapeKept,
   eraseMatcher,
-  EraseQueryError,
-  EraseShapeError,
   ERASE_LIMITS,
   findMatches,
   matchesToken,
-  replacementContainsValue,
+  redactedId,
+  redactedPath,
+  replacementProblem,
   rewriteDocument,
   type EraseArea,
   type EraseLocation,
@@ -217,30 +217,53 @@ export interface SiteErasureSummary {
  */
 const ERASE_TRANSACTION = { maxWait: 5_000, timeout: 120_000 } as const;
 
+/** What the working copy reads for an erase: the `sites` columns, the pages, and what is only reported. */
+const WORKING_COPY_SELECT = {
+  name: true,
+  description: true,
+  siteSettings: true,
+  components: true,
+  redirects: true,
+  pages: { select: { pageId: true, slug: true, snapshot: true } },
+  // Searched and reported (blocked as `separate`), never rewritten: a domain and an A/B test
+  // are changed where they are set.
+  domains: { orderBy: { id: 'asc' }, select: { subdomain: true, hostname: true, customHostname: true } },
+  experiments: { orderBy: { experimentKey: 'asc' }, select: { experimentKey: true, config: true } },
+} as const;
+
 /** The working copy as one document, in the shape the walker reads (pages by id, so the order is stable). */
-function workingDocument(
-  site: { name: string; description: string; siteSettings: unknown; components: unknown; redirects: unknown },
-  pages: Array<{ pageId: string; slug: string; snapshot: unknown }>,
-): Record<string, unknown> {
+function workingDocument(site: {
+  name: string;
+  description: string;
+  siteSettings: unknown;
+  components: unknown;
+  redirects: unknown;
+  pages: Array<{ pageId: string; slug: string; snapshot: unknown }>;
+  domains: unknown[];
+  experiments: unknown[];
+}): Record<string, unknown> {
   return {
     name: site.name,
     description: site.description,
     siteSettings: site.siteSettings,
     components: site.components,
     redirects: site.redirects,
-    pages: [...pages]
+    pages: [...site.pages]
       .sort((a, b) => (a.pageId < b.pageId ? -1 : a.pageId > b.pageId ? 1 : 0))
       .map((p) => ({ pageId: p.pageId, slug: p.slug, snapshot: p.snapshot })),
+    domains: site.domains,
+    experiments: site.experiments,
   };
 }
 
-function placeOf(match: EraseMatch): ErasurePlace {
+/** A place as the audit keeps it: a key or an id that holds the value is replaced by a marker. */
+function placeOf(match: EraseMatch, matcher: () => RegExp): ErasurePlace {
   return {
     location: match.location.kind,
     revision: match.location.kind === 'revision' ? match.location.number : null,
-    pageId: match.pageId,
+    pageId: redactedId(match.pageId, matcher),
     area: match.area,
-    path: match.path,
+    path: redactedPath(match.path, matcher),
   };
 }
 
@@ -432,7 +455,8 @@ export class SiteRepository {
     // A tab loaded before personal data was erased may still hold it: its Save or
     // Publish would write the value back into the working copy, and a publish
     // into a new revision. Refused, before anything is written or frozen.
-    if (existing && persisted.erasureEpoch < existing.erasureEpoch) {
+    // A higher number than the server's cannot come from an honest tab either.
+    if (existing && persisted.erasureEpoch !== existing.erasureEpoch) {
       throw new SiteErasedSinceLoadError();
     }
     // The editor's Save and Publish pass `mustExist`: they update a site, never
@@ -860,13 +884,8 @@ export class SiteRepository {
       const site = await tx.site.findFirst({
         where: { id: siteId, workspaceId: scope.workspaceId, tenantGroupId: scope.tenantGroupId },
         select: {
-          name: true,
-          description: true,
-          siteSettings: true,
-          components: true,
-          redirects: true,
+          ...WORKING_COPY_SELECT,
           publishedRevisionId: true,
-          pages: { select: { pageId: true, slug: true, snapshot: true } },
           revisions: { orderBy: { number: 'desc' }, select: { id: true, number: true, kind: true, createdAt: true } },
         },
       });
@@ -880,7 +899,7 @@ export class SiteRepository {
       };
 
       const working: EraseLocation = { kind: 'working' };
-      record(findMatches(workingDocument(site, site.pages), working, matcher), {
+      record(findMatches(workingDocument(site), working, matcher), {
         location: working,
         createdAt: null,
         kind: null,
@@ -916,8 +935,10 @@ export class SiteRepository {
    * ONE transaction behind the site row's lock (publish and rollback queue behind
    * it). The search is run again under the lock: a token other than the
    * preview's means something changed in between, and nothing is written
-   * (ErasePreviewStaleError). Only the matched strings change; each rewritten
-   * revision must keep its shape, or everything rolls back. The site's erasure
+   * (ErasePreviewStaleError). Only the matches in `chosen` change, and each of
+   * them must be among the ones the preview listed: nothing the owner was not
+   * shown and did not tick is ever rewritten. Every rewritten document, the
+   * working copy included, must keep its shape, or everything rolls back. The site's erasure
    * epoch goes up, so editor tabs loaded before cannot write the value back, and
    * one audit row records the places, never the value.
    *
@@ -930,17 +951,18 @@ export class SiteRepository {
       query: EraseQuery;
       replacement: string;
       token: string;
-      leaveOut: readonly string[];
+      /** The ids of the matches the owner saw and ticked. */
+      chosen: readonly string[];
       erasedBy: string;
     },
   ): Promise<PersonalDataErasure> {
     assertScope(scope);
     const { query, replacement, token, erasedBy } = input;
     const matcher = eraseMatcher(query);
-    if (replacementContainsValue(replacement, query)) {
-      throw new EraseQueryError('replacement_contains_value', 'The replacement may not contain the value being erased.');
-    }
-    const leaveOut = new Set(input.leaveOut);
+    const problem = replacementProblem(replacement, query);
+    if (problem) throw problem;
+    const chosen = new Set(input.chosen);
+    if (chosen.size === 0) throw new NothingToEraseError();
 
     return withSerializationRetry(() => this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${siteId} FOR UPDATE`;
@@ -948,12 +970,7 @@ export class SiteRepository {
       const site = await tx.site.findFirst({
         where,
         select: {
-          name: true,
-          description: true,
-          siteSettings: true,
-          components: true,
-          redirects: true,
-          pages: { select: { pageId: true, slug: true, snapshot: true } },
+          ...WORKING_COPY_SELECT,
           revisions: { orderBy: { number: 'desc' }, select: { id: true, number: true } },
         },
       });
@@ -966,18 +983,17 @@ export class SiteRepository {
 
       // The working copy: the `sites` columns and each changed `site_pages` row.
       const working: EraseLocation = { kind: 'working' };
-      const before = workingDocument(site, site.pages);
+      const before = workingDocument(site);
       found.push(...findMatches(before, working, matcher));
-      const workingRewrite = rewriteDocument(before, working, matcher, replacement, leaveOut);
+      const workingRewrite = rewriteDocument(before, working, matcher, replacement, chosen);
       erased.push(...workingRewrite.erased);
       const after = workingRewrite.document as Record<string, unknown>;
       remaining += findMatches(after, working, matcher).length;
       if (workingRewrite.erased.length > 0) {
+        // The next Publish freezes exactly this copy, so it passes the same checks a revision does.
+        assertShapeKept(before, after, { revision: false });
         const beforePages = before.pages as Array<{ pageId: string; slug: string; snapshot: unknown }>;
         const afterPages = after.pages as Array<{ pageId: string; slug: string; snapshot: unknown }>;
-        // Slugs are never rewritten (blocked as addresses), so this only guards the walker.
-        const keys = (pages: Array<{ pageId: string; slug?: string }>) => JSON.stringify(pages.map((p) => [p.pageId, p.slug]));
-        if (keys(afterPages) !== keys(beforePages)) throw new EraseShapeError('pages or slugs changed');
         for (let i = 0; i < afterPages.length; i++) {
           if (afterPages[i].snapshot === beforePages[i].snapshot) continue;
           await tx.sitePage.update({
@@ -1003,10 +1019,10 @@ export class SiteRepository {
         if (!row) throw new ErasePreviewStaleError();
         const location: EraseLocation = { kind: 'revision', number: revision.number };
         found.push(...findMatches(row.document, location, matcher));
-        const rewrite = rewriteDocument(row.document, location, matcher, replacement, leaveOut);
+        const rewrite = rewriteDocument(row.document, location, matcher, replacement, chosen);
         remaining += findMatches(rewrite.document, location, matcher).length;
         if (rewrite.erased.length === 0) continue;
-        assertRevisionShapeKept(row.document, rewrite.document);
+        assertShapeKept(row.document, rewrite.document, { revision: true });
         await tx.siteRevision.update({
           where: { id: revision.id },
           data: { document: rewrite.document as Prisma.InputJsonValue, rewrittenAt: now },
@@ -1016,13 +1032,17 @@ export class SiteRepository {
 
       // Checked last: throwing here rolls every write above back.
       if (matchesToken(found) !== token) throw new ErasePreviewStaleError();
+      // Only an erasable match the preview listed can have been ticked; anything else
+      // (an id beyond the list, a blocked match, an unknown id) is not the owner's choice.
+      const offered = new Set(found.slice(0, ERASE_LIMITS.listed).filter((m) => m.blocked === null).map((m) => m.id));
+      if ([...chosen].some((id) => !offered.has(id))) throw new ErasePreviewStaleError();
       if (erased.length === 0) throw new NothingToEraseError();
 
       // Every erase moves the epoch, also one that found the value only in old
       // revisions: a tab loaded long ago may hold it even if the working copy does not.
       await tx.site.updateMany({ where, data: { erasureEpoch: { increment: 1 } } });
 
-      const places = erased.map(placeOf);
+      const places = erased.map((match) => placeOf(match, matcher));
       const audit = await tx.siteErasure.create({
         data: {
           siteId,

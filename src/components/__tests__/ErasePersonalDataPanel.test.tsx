@@ -1,6 +1,7 @@
 // Erase personal data, inside the Published versions dialog: search, look at the
-// matches, leave some out, confirm, see the proof; a stale preview asks for a new
-// search; every failure is shown; nothing is erased before the confirmation.
+// matches, tick the ones to erase (none is ticked before the owner does), confirm,
+// see the proof; a stale preview asks for a new search; every failure is shown;
+// nothing is erased before the confirmation, and nothing that was not ticked.
 
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -66,29 +67,34 @@ describe('ErasePersonalDataPanel', () => {
 
     expect(fetchMock.mock.calls[0][0]).toBe('/api/projects/site%201/erasures/search');
     expect(fetchMock.mock.calls[0][1]?.method).toBe('POST');
-    expect(bodyOf(0)).toEqual({ value: 'Max Mustermann', caseSensitive: false });
+    expect(bodyOf(0)).toEqual({ value: 'Max Mustermann', caseSensitive: false, insideWords: false });
     // The value travels in the body, never in the address.
     expect(fetchMock.mock.calls[0][0]).not.toContain('Mustermann');
 
     const list = screen.getByRole('list', { name: 'Matches' });
     expect(within(list).getAllByRole('checkbox')).toHaveLength(2);
+    // Nothing is ticked until the owner ticks it, and the matching rules are stated.
+    expect(within(list).getAllByRole('checkbox').every((box) => !(box as HTMLInputElement).checked)).toBe(true);
+    expect(screen.getByRole('button', { name: 'Erase 0 ticked matches...' })).toHaveProperty('disabled', true);
+    expect(screen.getByText(/Finds whole words unless asked otherwise/)).toBeTruthy();
     expect(within(list).getByText(/Cannot be erased here: a page address/)).toBeTruthy();
     expect(screen.getByText(/Version 4 \(live\): 2/)).toBeTruthy();
     expect(within(list).getByText(/Editor \(working copy\) · site settings/)).toBeTruthy();
   });
 
-  it('erases nothing before the confirmation, then sends the token, the replacement and the matches left out', async () => {
+  it('erases nothing before the confirmation, then sends the token, the replacement and only the ticked matches', async () => {
     fetchMock.mockResolvedValueOnce(json(FOUND));
     render(<ErasePersonalDataPanel projectId="site 1" />);
     await searchFor('Max Mustermann');
 
-    fireEvent.click(screen.getByRole('checkbox', { name: /Erase this match in Editor/ }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /Erase this match in Version 4/ }));
     fireEvent.change(screen.getByLabelText('Replace with (optional)'), { target: { value: '[entfernt]' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Erase 1 match...' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Erase 1 ticked match...' }));
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     const confirm = screen.getByRole('group', { name: 'Confirm the erase' });
-    expect(within(confirm).getByText(/Erase 1 match from 1 published version and the editor\? This\s+cannot be undone/)).toBeTruthy();
+    expect(within(confirm).getByText(/Erase 1 ticked match in 1 published version\? This cannot be undone/)).toBeTruthy();
+    expect(within(confirm).getByText(/Changes not saved in this tab are lost/)).toBeTruthy();
     fetchMock.mockResolvedValueOnce(json({ erasureId: 'er_1', erased: 1, places: [], remaining: 2, erasableRemaining: 1 }));
     fireEvent.click(within(confirm).getByRole('button', { name: 'Erase' }));
 
@@ -97,28 +103,31 @@ describe('ErasePersonalDataPanel', () => {
     expect(bodyOf(1)).toEqual({
       value: 'Max Mustermann',
       caseSensitive: false,
+      insideWords: false,
       replacement: '[entfernt]',
       token: FOUND.token,
-      leaveOut: [M1],
+      chosen: [M2],
     });
     expect(screen.getByText(/still finds 2 matches, 1 of them erasable/)).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Reload the editor' })).toBeTruthy();
     expect(screen.getByText(/every other open tab of this project needs a reload too/)).toBeTruthy();
   });
 
-  it('says the value is gone when the proof finds nothing, and when the proof could not run', async () => {
+  it('says no match for this exact text remains, and when the proof could not run', async () => {
     fetchMock.mockResolvedValueOnce(json(FOUND)).mockResolvedValueOnce(json({ erased: 2, remaining: 0, erasableRemaining: 0 }));
     render(<ErasePersonalDataPanel projectId="site 1" />);
     await searchFor('Max Mustermann');
-    fireEvent.click(screen.getByRole('button', { name: 'Erase 2 matches...' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Tick all shown' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Erase 2 ticked matches...' }));
     fireEvent.click(within(screen.getByRole('group', { name: 'Confirm the erase' })).getByRole('button', { name: 'Erase' }));
-    await screen.findByText(/A new search finds nothing/);
+    await screen.findByText('No match for this exact text remains in the versions and the editor.');
 
     cleanup();
     fetchMock.mockResolvedValueOnce(json(FOUND)).mockResolvedValueOnce(json({ erased: 2, remaining: null, erasableRemaining: null }));
     render(<ErasePersonalDataPanel projectId="site 1" />);
     await searchFor('Max Mustermann');
-    fireEvent.click(screen.getByRole('button', { name: 'Erase 2 matches...' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Tick all shown' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Erase 2 ticked matches...' }));
     fireEvent.click(within(screen.getByRole('group', { name: 'Confirm the erase' })).getByRole('button', { name: 'Erase' }));
     await screen.findByText(/The check afterwards could not run/);
   });
@@ -131,14 +140,15 @@ describe('ErasePersonalDataPanel', () => {
     render(<ErasePersonalDataPanel projectId="site 1" />);
     await searchFor('Max Mustermann');
     fireEvent.click(screen.getByRole('checkbox', { name: /Erase this match in Editor/ }));
-    fireEvent.click(screen.getByRole('button', { name: 'Erase 1 match...' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Erase 1 ticked match...' }));
     fireEvent.click(within(screen.getByRole('group', { name: 'Confirm the erase' })).getByRole('button', { name: 'Erase' }));
 
     expect((await screen.findByRole('alert')).textContent).toMatch(/changed since the search/);
     fireEvent.click(screen.getByRole('button', { name: 'Search again' }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
-    expect(bodyOf(2)).toEqual({ value: 'Max Mustermann', caseSensitive: false });
-    await screen.findByRole('button', { name: 'Erase 2 matches...' });
+    expect(bodyOf(2)).toEqual({ value: 'Max Mustermann', caseSensitive: false, insideWords: false });
+    // The new search starts with nothing ticked.
+    await screen.findByRole('button', { name: 'Erase 0 ticked matches...' });
   });
 
   it('shows the server refusal for someone who is not the owner, and a network failure', async () => {
@@ -160,6 +170,16 @@ describe('ErasePersonalDataPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: /Search/ }));
     await screen.findByText('Nothing found in any kept version or in the editor.');
     expect(screen.queryByRole('button', { name: /^Erase/ })).toBeNull();
+  });
+
+  it('asks for whole words unless told otherwise, and says only shown matches can be erased', async () => {
+    fetchMock.mockResolvedValueOnce(json({ ...FOUND, total: 700, truncated: true }));
+    render(<ErasePersonalDataPanel projectId="site 1" />);
+    fireEvent.click(screen.getByLabelText('Also find it inside longer words'));
+    fireEvent.change(screen.getByLabelText('Value to find'), { target: { value: 'Lena' } });
+    fireEvent.click(screen.getByRole('button', { name: /Search/ }));
+    await screen.findByText(/Only matches shown here can be erased: narrow the search/);
+    expect(bodyOf(0)).toEqual({ value: 'Lena', caseSensitive: false, insideWords: true });
   });
 });
 

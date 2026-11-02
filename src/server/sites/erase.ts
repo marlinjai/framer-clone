@@ -8,15 +8,25 @@
 //
 // One generic walk over the stored JSON, not a list of fields: a field added
 // later is searched without a change here. Only string VALUES are rewritten,
-// and only where rewriting changes nothing but the value: keys, ids, types,
-// addresses, class names, selectors and binding references are reported as
-// blocked, never touched. The raw stored JSON is rewritten, never a normalised
-// shape, so no trimming or default slips into a frozen revision.
+// and only where rewriting changes nothing but the value. Reported as blocked,
+// never touched: keys, ids and everything that points at an id (the attribute
+// list of src/lib/renderer/idRefs.ts, `#fragment` links, behaviour references),
+// types, page addresses and the internal links into them, image and file
+// addresses, class names, selectors, form keys and binding references. The raw
+// stored JSON is rewritten, never a normalised shape, so no trimming or default
+// slips into a frozen revision.
+//
+// Matching is whole words by default and tolerant of how the same text is
+// stored: any run of spaces (non-breaking ones included) and soft hyphens, HTML
+// entities, both Unicode forms of an umlaut, and case (ß matches ss) unless the
+// owner asks for an exact case.
 //
 // Nothing here logs, and no error message carries the searched value.
 
 import { createHash } from 'node:crypto';
 import { parseComponents } from '@/lib/components/definition';
+import { readBehaviourTree, type BehaviourNode } from '@/lib/behaviour/format';
+import { ID_FRAGMENT_NAMES, isIdReference } from '@/lib/renderer/idRefs';
 import { parseRevisionDocument } from './revision';
 
 /** Bounds of a search. */
@@ -24,7 +34,7 @@ export const ERASE_LIMITS = {
   /** Shorter values would match half a site (`a`, `de`). */
   minChars: 3,
   maxChars: 200,
-  /** Matches listed in a preview. The counts and the token always cover all of them. */
+  /** Matches listed in a preview, and so the most one erase can rewrite. The counts and the token cover all. */
   listed: 500,
   /** Characters of context on each side of a match in a preview. */
   excerptContext: 40,
@@ -46,21 +56,27 @@ export type EraseArea =
   | 'theme'
   | 'head'
   | 'address'
+  | 'domain'
+  | 'experiment'
   | 'other';
 
 /** Why a match is reported but never rewritten. */
 export type EraseBlockReason =
   /** An object key: a name in the structure, not a value. */
   | 'key'
-  /** An id, a type, a class name, a selector, a form key: changing it changes more than the value. */
+  /** An id or a reference to one, a type, a class name, a selector, a form key: changing it changes more than the value. */
   | 'structural'
-  /** A page slug or a redirect address: changing it changes where visitors land. */
+  /** A page slug, a redirect address, or an internal link into a page: changing it changes where visitors land. */
   | 'address'
+  /** An image or file address: cutting it breaks the image while the file stays reachable at its old address. */
+  | 'url'
   /** Inside a `{{ }}` binding reference: rewriting it breaks the binding. */
-  | 'binding-reference';
+  | 'binding-reference'
+  /** Kept outside the published versions (a domain, an A/B test): changed where it is set. */
+  | 'separate';
 
 export interface EraseMatch {
-  /** Stable for the same text at the same place: the erase names left-out matches by it. */
+  /** Stable for the same text at the same place: the erase names the chosen matches by it. */
   id: string;
   location: EraseLocation;
   area: EraseArea;
@@ -68,7 +84,7 @@ export interface EraseMatch {
   pageId: string | null;
   /** That page's slug, as stored in this document. */
   pageSlug: string | null;
-  /** JSON pointer of the string inside the document (keys only, never values). */
+  /** JSON pointer of the string inside the document. Personal data when a key holds the value: see redactedPath. */
   path: string;
   /** The match with a little context. Personal data: only ever sent to the owner. */
   excerpt: string;
@@ -78,11 +94,16 @@ export interface EraseMatch {
 export interface EraseQuery {
   value: string;
   caseSensitive: boolean;
+  /** Also find the value inside longer words (`Anna` in `Annahme`). Off by default. */
+  insideWords?: boolean;
 }
 
-/** A query that cannot be searched. */
+/** A query or a replacement that cannot be used. */
 export class EraseQueryError extends Error {
-  constructor(readonly code: 'value_too_short' | 'value_too_long' | 'replacement_contains_value', message: string) {
+  constructor(
+    readonly code: 'value_too_short' | 'value_too_long' | 'replacement_contains_value' | 'replacement_has_binding',
+    message: string,
+  ) {
     super(message);
     this.name = 'EraseQueryError';
   }
@@ -96,9 +117,11 @@ export class EraseShapeError extends Error {
   }
 }
 
+const SOFT_HYPHEN = '­';
+
 /** The searched value, trimmed, checked against the bounds. Throws EraseQueryError. */
 export function normalizeEraseValue(raw: string): string {
-  const value = raw.trim();
+  const value = raw.normalize('NFC').split(SOFT_HYPHEN).join('').replace(/\s+/gu, ' ').trim();
   const length = [...value].length;
   if (length < ERASE_LIMITS.minChars) {
     throw new EraseQueryError('value_too_short', `Search for at least ${ERASE_LIMITS.minChars} characters.`);
@@ -113,25 +136,83 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/** A literal that ignores case only in the parts the regex's own flag cannot reach (entity names stay exact). */
+function anyCase(text: string): string {
+  return [...text].map((c) => (/[a-z]/i.test(c) ? `[${c.toLowerCase()}${c.toUpperCase()}]` : escapeRegExp(c))).join('');
+}
+
+/** The HTML entity names worth knowing for German and Latin text. */
+const NAMED_ENTITIES: Record<string, string> = {
+  ä: 'auml', ö: 'ouml', ü: 'uuml', Ä: 'Auml', Ö: 'Ouml', Ü: 'Uuml', ß: 'szlig',
+  é: 'eacute', è: 'egrave', ê: 'ecirc', á: 'aacute', à: 'agrave', â: 'acirc', ç: 'ccedil', ñ: 'ntilde',
+  ó: 'oacute', ò: 'ograve', ô: 'ocirc', í: 'iacute', ì: 'igrave', ú: 'uacute', ù: 'ugrave',
+  '&': 'amp', '"': 'quot', "'": 'apos', '<': 'lt', '>': 'gt',
+};
+
+/** The ways one character of the value may be stored: itself, decomposed, as an entity. */
+function charPattern(ch: string, caseSensitive: boolean): string {
+  const variants = new Set<string>([escapeRegExp(ch)]);
+  const decomposed = ch.normalize('NFD');
+  if (decomposed !== ch) variants.add(escapeRegExp(decomposed));
+  if (!/[A-Za-z0-9]/.test(ch)) {
+    const cases = caseSensitive ? [ch] : [...new Set([ch, ch.toLowerCase(), ch.toUpperCase()])];
+    for (const c of cases) {
+      const cp = c.codePointAt(0)!;
+      variants.add(`&#0*${cp};`);
+      variants.add(`&#[xX]0*${anyCase(cp.toString(16))};`);
+      if (NAMED_ENTITIES[c]) variants.add(`&${NAMED_ENTITIES[c]};`);
+    }
+  }
+  if (!caseSensitive && (ch === 'ß' || ch === 'ẞ')) variants.add('[sS][sS]');
+  return variants.size === 1 ? [...variants][0] : `(?:${[...variants].join('|')})`;
+}
+
+/** Any run of spaces, non-breaking spaces (also as entities) and soft hyphens. */
+const SPACE_RUN = `(?:[\\s${SOFT_HYPHEN}]|&nbsp;|&#0*160;|&#[xX]0*[aA]0;)+`;
+/** A soft hyphen (or its entity) that may sit between any two letters. */
+const OPTIONAL_SHY = `(?:${SOFT_HYPHEN}|&shy;|&#0*173;|&#[xX]0*[aA][dD];)?`;
+
 /**
- * The matcher for a query: the value in its composed and decomposed Unicode
- * forms (an umlaut typed on one system and stored from another), case-insensitive
- * unless asked otherwise. A fresh RegExp per call: a global one keeps state.
+ * The matcher for a query. A fresh RegExp per call: a global one keeps state.
+ * Throws EraseQueryError for a value outside the bounds.
  */
 export function eraseMatcher(query: EraseQuery): () => RegExp {
   const value = normalizeEraseValue(query.value);
-  const forms = [...new Set([value.normalize('NFC'), value.normalize('NFD'), value])]
-    .sort((a, b) => b.length - a.length)
-    .map(escapeRegExp);
-  const source = forms.join('|');
+  const chars = [...value];
+  const parts: string[] = [];
+  for (let i = 0; i < chars.length; i++) {
+    const ch = chars[i];
+    if (ch === ' ') {
+      parts.push(SPACE_RUN);
+      continue;
+    }
+    if (parts.length > 0 && chars[i - 1] !== ' ') parts.push(OPTIONAL_SHY);
+    // `ss` in the value also finds ß, when case is not exact (Unicode case folding).
+    if (!query.caseSensitive && ch.toLowerCase() === 's' && chars[i + 1]?.toLowerCase() === 's') {
+      parts.push(`(?:[sS]${OPTIONAL_SHY}[sS]|ß|ẞ|&szlig;)`);
+      i++;
+      continue;
+    }
+    parts.push(charPattern(ch, query.caseSensitive));
+  }
+  let source = parts.join('');
+  if (query.insideWords !== true) source = `(?<![\\p{L}\\p{N}])${source}(?![\\p{L}\\p{N}])`;
   const flags = query.caseSensitive ? 'gu' : 'giu';
   return () => new RegExp(source, flags);
 }
 
-/** True when `replacement` would itself be found by the query (an erase that never ends). */
-export function replacementContainsValue(replacement: string, query: EraseQuery): boolean {
-  if (replacement === '') return false;
-  return eraseMatcher(query)().test(replacement);
+/**
+ * Why a replacement cannot be used, or null: it may not hold the value (an erase
+ * that never ends) nor a binding template, which would turn into live data in text.
+ */
+export function replacementProblem(replacement: string, query: EraseQuery): EraseQueryError | null {
+  if (replacement.includes('{{') || replacement.includes('}}')) {
+    return new EraseQueryError('replacement_has_binding', 'The replacement may not contain {{ or }}.');
+  }
+  if (replacement !== '' && eraseMatcher({ ...query, insideWords: true })().test(replacement)) {
+    return new EraseQueryError('replacement_contains_value', 'The replacement may not contain the value being erased.');
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -140,57 +221,31 @@ export function replacementContainsValue(replacement: string, query: EraseQuery)
 /**
  * Keys whose string value is an identifier, a type or a reference, never content.
  * Checked against the stored formats on 2026-11-02: theme tokens are referenced by
- * id (`theme.ts`), so a token's `name` is a label; behaviour rules name a state by
- * id under `state` and an event under `on` (`behaviour/format.ts`); a component
- * definition's `name` and an input's `name` are labels shown in the editor.
+ * id (`theme.ts`), so a token's `name` is a label; behaviour rules name nodes and
+ * states by id under their verbs, and hold enumerations under the rest
+ * (`behaviour/format.ts`, `targetOf` and `stateOf`); a component definition's
+ * `name` and an input's `name` are labels shown in the editor. Every attribute
+ * that holds an id comes from src/lib/renderer/idRefs.ts on top of these.
  */
 const STRUCTURAL_KEYS = new Set([
-  'state',
-  'on',
-  'id',
-  'type',
-  'componentType',
-  'canvasNodeType',
-  'kind',
-  'mode',
-  'scope',
-  'schemaVersion',
-  'key',
-  'field',
-  'className',
-  'class',
-  'selector',
-  'selectors',
-  'target',
-  'targets',
-  'owner',
-  'of',
-  'for',
-  'htmlFor',
-  'list',
-  'form',
-  'headers',
-  'usemap',
-  'useMap',
-  'apiKeyRef',
-  'ingestionEndpoint',
-  'twitterCard',
-  'pageBase',
-  'language',
-  'legalTemplate',
-  'successBehavior',
-  'aria-controls',
-  'aria-labelledby',
-  'aria-describedby',
-  'aria-owns',
-  'aria-activedescendant',
-  'aria-flowto',
-  'aria-details',
-  'aria-errormessage',
-  'ariaControls',
-  'ariaLabelledby',
-  'ariaDescribedby',
+  // behaviour: references to nodes and states, and enumerations
+  'state', 'on', 'keys', 'set', 'step', 'toggle', 'effect', 'filter', 'focus', 'media', 'rove', 'scroll', 'setProp',
+  'op', 'move', 'axis', 'wrap', 'role', 'prop', 'block', 'preset', 'get', 'attr', 'noScript',
+  // node and document structure
+  'id', 'type', 'componentType', 'canvasNodeType', 'kind', 'mode', 'scope', 'schemaVersion', 'key', 'field',
+  'className', 'class', 'selector', 'selectors', 'target', 'targets', 'owner', 'of', 'htmlFor', 'usemap', 'useMap',
+  'apiKeyRef', 'ingestionEndpoint', 'twitterCard', 'pageBase', 'language', 'legalTemplate', 'successBehavior',
+  'ariaControls', 'ariaLabelledby', 'ariaDescribedby',
 ]);
+
+/** Keys whose value is an address of an image or a file, cut never, whatever its shape. */
+const URL_KEYS = new Set([
+  'src', 'srcset', 'srcSet', 'poster', 'faviconUrl', 'ogImageUrl', 'ogImage', 'canonicalUrl', 'imageUrl', 'url',
+  'backgroundImage',
+]);
+
+/** Keys whose value is a link a visitor follows. */
+const LINK_KEYS = new Set(['href', 'navigate', 'action', 'formAction', 'to']);
 
 /** A key naming an id or a list of ids: `pageId`, `parentId`, `redirectPageId`, `stateIds`. */
 function isReferenceKey(key: string): boolean {
@@ -210,31 +265,48 @@ function isAddressPath(path: readonly Segment[]): boolean {
   return (path[0] === 'pages' && path[2] === 'slug' && path.length === 3) || path[0] === 'redirects';
 }
 
-/** Why a string at `path` may not be rewritten, or null when it may. */
-function blockedAt(path: readonly Segment[]): EraseBlockReason | null {
+/** An absolute address (`https:`, `//cdn`, `data:`), except a mail or phone link, which is the personal data itself. */
+function isFileAddress(text: string): boolean {
+  const value = text.trim();
+  if (/^(?:mailto|tel|sms):/i.test(value)) return false;
+  return /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(value);
+}
+
+/** Why a string at `path` may not be rewritten at all, or null when it may. */
+function blockedAt(path: readonly Segment[], text: string): EraseBlockReason | null {
+  if (path[0] === 'domains' || path[0] === 'experiments') return 'separate';
   if (isAddressPath(path)) return 'address';
   const { key, parent } = nearestKey(path);
   if (key === null) return null;
-  if (STRUCTURAL_KEYS.has(key) || isReferenceKey(key) || key.startsWith('data-')) return 'structural';
+  if (STRUCTURAL_KEYS.has(key) || isIdReference(key) || isReferenceKey(key) || key.startsWith('data-')) return 'structural';
   // An element's `name` attribute is the key a form submits; elsewhere `name` is a display name.
   if (key === 'name' && parent === 'props') return 'structural';
+  if (ID_FRAGMENT_NAMES.has(key.toLowerCase()) && text.trim().startsWith('#')) return 'structural';
+  // A whole value that is a `#fragment` points at an id wherever it is stored.
+  if (/^#[^\s#]+$/.test(text.trim())) return 'structural';
+  if (LINK_KEYS.has(key) && /^\/(?!\/)/.test(text.trim())) return 'address';
+  if (URL_KEYS.has(key)) return 'url';
+  if ((LINK_KEYS.has(key) || URL_KEYS.has(key)) && isFileAddress(text)) return 'url';
+  if (isFileAddress(text) && !/\s/.test(text.trim())) return 'url';
   return null;
 }
 
-/** The `{{ ... }}` spans of a string, as [start, end) ranges. */
-function bindingSpans(text: string): Array<[number, number]> {
-  const spans: Array<[number, number]> = [];
-  const re = /\{\{[\s\S]*?\}\}/g;
-  for (let m = re.exec(text); m !== null; m = re.exec(text)) spans.push([m.index, m.index + m[0].length]);
+/** The [start, end) ranges a match may not overlap: `{{ ... }}` templates and CSS `url(...)`. */
+function protectedSpans(text: string): Array<[number, number, EraseBlockReason]> {
+  const spans: Array<[number, number, EraseBlockReason]> = [];
+  for (const [re, reason] of [
+    [/\{\{[\s\S]*?\}\}/g, 'binding-reference'],
+    [/url\([^)]*\)/gi, 'url'],
+  ] as const) {
+    for (let m = re.exec(text); m !== null; m = re.exec(text)) spans.push([m.index, m.index + m[0].length, reason]);
+  }
   return spans;
-}
-
-function overlaps(start: number, end: number, spans: Array<[number, number]>): boolean {
-  return spans.some(([a, b]) => start < b && end > a);
 }
 
 function areaOf(path: readonly Segment[]): EraseArea {
   const [head, , third] = path;
+  if (head === 'domains') return 'domain';
+  if (head === 'experiments') return 'experiment';
   if (isAddressPath(path)) return 'address';
   if (head === 'name') return 'name';
   if (head === 'description') return 'description';
@@ -254,10 +326,38 @@ function areaOf(path: readonly Segment[]): EraseArea {
   return 'other';
 }
 
+function encodeSegment(segment: Segment): string {
+  return String(segment).replace(/~/g, '~0').replace(/\//g, '~1');
+}
+
 function pointer(path: readonly Segment[]): string {
-  return path.length === 0
-    ? ''
-    : `/${path.map((s) => String(s).replace(/~/g, '~0').replace(/\//g, '~1')).join('/')}`;
+  return path.length === 0 ? '' : `/${path.map(encodeSegment).join('/')}`;
+}
+
+/** The marker an audit path holds where a key held the value. */
+export const REDACTED_SEGMENT = '[value]';
+
+/**
+ * A JSON pointer with every segment the query finds replaced by REDACTED_SEGMENT,
+ * so a map keyed by the value (`/people/Max Mustermann/label`) never carries it
+ * into the audit row.
+ */
+export function redactedPath(path: string, matcher: () => RegExp): string {
+  if (path === '') return path;
+  return path
+    .slice(1)
+    .split('/')
+    .map((raw) => {
+      const segment = raw.replace(/~1/g, '/').replace(/~0/g, '~');
+      return matcher().test(segment) ? REDACTED_SEGMENT : raw;
+    })
+    .map((s) => `/${s}`)
+    .join('');
+}
+
+/** An id that may hold the value is redacted like a path segment. */
+export function redactedId(id: string | null, matcher: () => RegExp): string | null {
+  return id !== null && matcher().test(id) ? REDACTED_SEGMENT : id;
 }
 
 function locationKey(location: EraseLocation): string {
@@ -270,11 +370,14 @@ function digest(...parts: string[]): string {
   return hash.digest('hex');
 }
 
+/** Context around a match, cut on code points so an emoji is never split. */
 function excerptOf(text: string, start: number, end: number): string {
   const context = ERASE_LIMITS.excerptContext;
-  const from = Math.max(0, start - context);
-  const to = Math.min(text.length, end + context);
-  return `${from > 0 ? '...' : ''}${text.slice(from, to)}${to < text.length ? '...' : ''}`;
+  const before = [...text.slice(0, start)];
+  const after = [...text.slice(end)];
+  const head = before.slice(Math.max(0, before.length - context)).join('');
+  const tail = after.slice(0, context).join('');
+  return `${before.length > context ? '...' : ''}${head}${text.slice(start, end)}${tail}${after.length > context ? '...' : ''}`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -314,8 +417,9 @@ function occurrencesIn(
 ): Occurrence[] {
   const re = matcher();
   const found: Occurrence[] = [];
-  let spans: Array<[number, number]> | null = null;
+  let spans: Array<[number, number, EraseBlockReason]> | null = null;
   const textHash = digest(text);
+  const whole = asKey ? 'key' : blockedAt(path, text);
   let index = 0;
   for (let m = re.exec(text); m !== null; m = re.exec(text)) {
     if (m[0].length === 0) {
@@ -324,10 +428,10 @@ function occurrencesIn(
     }
     const start = m.index;
     const end = start + m[0].length;
-    let blocked: EraseBlockReason | null = asKey ? 'key' : blockedAt(path);
+    let blocked: EraseBlockReason | null = whole;
     if (blocked === null) {
-      spans ??= bindingSpans(text);
-      if (overlaps(start, end, spans)) blocked = 'binding-reference';
+      spans ??= protectedSpans(text);
+      blocked = spans.find(([a, b]) => start < b && end > a)?.[2] ?? null;
     }
     const where = pointer(path);
     const { pageId, pageSlug } = pageAt(document, path);
@@ -392,8 +496,40 @@ export interface RewriteResult {
   erased: EraseMatch[];
 }
 
+const SPACE_AT_END = /[\s ]+$/u;
+const SPACE_AT_START = /^[\s ]+/u;
+
 /**
- * Replace every erasable match not in `leaveOut` with `replacement`. Strings
+ * Cut one match out. With a replacement, exactly the match is replaced. Without
+ * one, the text around the cut is tidied so no residue is left: a doubled space
+ * becomes one, and a list separator left with nothing to separate goes
+ * (`Geschäftsführer: Max Mustermann, Erika Muster` -> `Geschäftsführer: Erika Muster`).
+ */
+function cut(text: string, start: number, end: number, replacement: string): string {
+  const left = text.slice(0, start);
+  const right = text.slice(end);
+  if (replacement !== '') return left + replacement + right;
+  const leftTrim = left.replace(SPACE_AT_END, '');
+  const rightTrim = right.replace(SPACE_AT_START, '');
+  const leftSpace = leftTrim.length !== left.length;
+  if (/^[,;]/.test(rightTrim) && (leftTrim === '' || /[,;:([]$/.test(leftTrim))) {
+    const rest = rightTrim.slice(1).replace(SPACE_AT_START, '');
+    return leftTrim + (leftTrim !== '' && rest !== '' && leftSpace ? ' ' : '') + rest;
+  }
+  if (/[,;]$/.test(leftTrim) && (rightTrim === '' || /^[)\].!?]/.test(rightTrim))) return leftTrim.slice(0, -1) + rightTrim;
+  if (leftTrim === '') return rightTrim;
+  if (rightTrim === '') return leftTrim;
+  if (leftSpace && rightTrim.length !== right.length) return left + rightTrim;
+  return left + right;
+}
+
+/** Set an own property, `__proto__` included, without touching the prototype. */
+function own(target: Record<string, unknown>, key: string, value: unknown): void {
+  Object.defineProperty(target, key, { value, enumerable: true, writable: true, configurable: true });
+}
+
+/**
+ * Replace exactly the erasable matches in `chosen` with `replacement`. Strings
  * without a chosen match, and every object and array on no changed path, are
  * the very same values as before, so nothing else in the document moves.
  */
@@ -402,20 +538,20 @@ export function rewriteDocument(
   location: EraseLocation,
   matcher: () => RegExp,
   replacement: string,
-  leaveOut: ReadonlySet<string>,
+  chosen: ReadonlySet<string>,
 ): RewriteResult {
   const erased: EraseMatch[] = [];
 
   const rewrite = (value: unknown, path: Segment[]): unknown => {
     if (typeof value === 'string') {
-      const chosen = occurrencesIn(value, path, location, document, matcher, false).filter(
-        (o) => o.match.blocked === null && !leaveOut.has(o.match.id),
+      const picked = occurrencesIn(value, path, location, document, matcher, false).filter(
+        (o) => o.match.blocked === null && chosen.has(o.match.id),
       );
-      if (chosen.length === 0) return value;
+      if (picked.length === 0) return value;
       let out = value;
-      // From the end, so earlier offsets stay valid.
-      for (const o of [...chosen].reverse()) out = out.slice(0, o.start) + replacement + out.slice(o.end);
-      erased.push(...chosen.map((o) => o.match));
+      // From the end, so earlier offsets stay valid (a tidy only touches text after an earlier match).
+      for (const o of [...picked].reverse()) out = cut(out, o.start, o.end, replacement);
+      erased.push(...picked.map((o) => o.match));
       return out;
     }
     if (Array.isArray(value)) {
@@ -433,7 +569,7 @@ export function rewriteDocument(
       for (const [key, item] of Object.entries(value)) {
         const r = rewrite(item, [...path, key]);
         if (r !== item) changed = true;
-        next[key] = r;
+        own(next, key, r);
       }
       return changed ? next : value;
     }
@@ -443,31 +579,69 @@ export function rewriteDocument(
   return { document: rewrite(document, []), erased };
 }
 
+// ---------------------------------------------------------------------------
+// The shape a rewrite must keep
+
 function pageKeys(document: unknown): string {
   if (!isRecord(document) || !Array.isArray(document.pages)) return '[]';
-  return JSON.stringify(
-    document.pages.map((p: unknown) => (isRecord(p) ? [p.pageId, p.slug] : null)),
-  );
+  return JSON.stringify(document.pages.map((p: unknown) => (isRecord(p) ? [p.pageId, p.slug] : null)));
 }
 
 function refusedIds(components: unknown): string[] {
   return parseComponents(components).refused.map((r) => r.id).sort();
 }
 
-/**
- * The checks a rewritten revision must pass, or the whole erase rolls back: it
- * still parses, holds the same pages with the same slugs, and no component
- * definition is refused that was readable before. Throws EraseShapeError.
- */
-export function assertRevisionShapeKept(before: unknown, after: unknown): void {
+/** The trees behaviour runs on: every page's, and every component definition's. */
+function behaviourTrees(document: unknown): Array<[string, BehaviourNode]> {
+  if (!isRecord(document)) return [];
+  const trees: Array<[string, BehaviourNode]> = [];
+  const pages = Array.isArray(document.pages) ? document.pages : [];
+  pages.forEach((page: unknown, i) => {
+    const tree = isRecord(page) && isRecord(page.snapshot) ? page.snapshot.appComponentTree : undefined;
+    if (isRecord(tree)) trees.push([`page ${i}`, tree as BehaviourNode]);
+  });
+  if (isRecord(document.components)) {
+    for (const [id, definition] of Object.entries(document.components)) {
+      const tree = isRecord(definition) && isRecord(definition.page) ? definition.page.appComponentTree : undefined;
+      if (isRecord(tree)) trees.push([`component ${id}`, tree as BehaviourNode]);
+    }
+  }
+  return trees;
+}
+
+function behaviourRefusals(tree: BehaviourNode): number {
   try {
-    parseRevisionDocument(after);
-  } catch (err) {
-    throw new EraseShapeError(err instanceof Error ? err.message : 'unreadable');
+    return readBehaviourTree(tree).refused.length;
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
+}
+
+/**
+ * The checks a rewritten document must pass, or the whole erase rolls back: the
+ * same pages with the same slugs, no component definition refused that was
+ * readable before, no behaviour refused that ran before, and for a revision, a
+ * document that still parses. Throws EraseShapeError.
+ */
+export function assertShapeKept(before: unknown, after: unknown, options: { revision: boolean }): void {
+  if (options.revision) {
+    try {
+      parseRevisionDocument(after);
+    } catch (err) {
+      throw new EraseShapeError(err instanceof Error ? err.message : 'unreadable');
+    }
   }
   if (pageKeys(before) !== pageKeys(after)) throw new EraseShapeError('pages or slugs changed');
   const beforeComponents = isRecord(before) ? before.components : undefined;
   const afterComponents = isRecord(after) ? after.components : undefined;
-  const newlyRefused = refusedIds(afterComponents).filter((id) => !refusedIds(beforeComponents).includes(id));
+  const wasRefused = refusedIds(beforeComponents);
+  const newlyRefused = refusedIds(afterComponents).filter((id) => !wasRefused.includes(id));
   if (newlyRefused.length > 0) throw new EraseShapeError(`component definitions no longer readable: ${newlyRefused.join(', ')}`);
+  const beforeTrees = new Map(behaviourTrees(before));
+  for (const [where, tree] of behaviourTrees(after)) {
+    const previous = beforeTrees.get(where);
+    if (previous && behaviourRefusals(tree) > behaviourRefusals(previous)) {
+      throw new EraseShapeError(`behaviour on ${where} would no longer run`);
+    }
+  }
 }

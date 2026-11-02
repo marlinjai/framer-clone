@@ -1,7 +1,7 @@
 // src/app/api/projects/[projectId]/erasures/route.ts
 //
 // POST /api/projects/<projectId>/erasures
-//      { value, caseSensitive?, replacement?, token, leaveOut? }
+//      { value, caseSensitive?, insideWords?, replacement?, token, chosen }
 //   -> erase one personal value from every kept revision and the working copy,
 //      then search again and answer what is left (the proof).
 // GET  /api/projects/<projectId>/erasures
@@ -22,7 +22,7 @@
 import { withAuthAvailability } from '@/lib/authBrainAvailability';
 import { jsonError, parseBody } from '@/lib/api/respond';
 import { getSiteRepository, NothingToEraseError, type PersonalDataErasure } from '@/server/sites';
-import { authorizeEraser, eraseBodySchema, eraseErrorResponse, revalidateErasedSite } from './_shared';
+import { authorizeEraser, eraseBodySchema, eraseErrorResponse, queryOf, revalidateErasedSite } from './_shared';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -53,7 +53,7 @@ async function handlePOST(req: Request, { params }: Ctx): Promise<Response> {
 
   const { id, workspaceId, tenantGroupId } = auth.project;
   const scope = { workspaceId, tenantGroupId };
-  const query = { value: body.data.value, caseSensitive: body.data.caseSensitive === true };
+  const query = queryOf(body.data);
   const repo = getSiteRepository();
 
   let erasure: PersonalDataErasure | null = null;
@@ -63,7 +63,7 @@ async function handlePOST(req: Request, { params }: Ctx): Promise<Response> {
       query,
       replacement: body.data.replacement,
       token: body.data.token,
-      leaveOut: body.data.leaveOut,
+      chosen: body.data.chosen,
       erasedBy: auth.userId,
     });
   } catch (err) {
@@ -85,8 +85,8 @@ async function handlePOST(req: Request, { params }: Ctx): Promise<Response> {
   }
   if (!erasure) return failure as Response;
 
-  // The proof: a fresh search after the commit. Matches still found are blocked
-  // ones, ones left out, or ones a publish added since.
+  // The proof: a fresh search after the commit, for this exact text only. Matches
+  // still found are blocked ones, ones not ticked, or ones a publish added since.
   let remaining: number | null = null;
   let erasableRemaining: number | null = null;
   try {

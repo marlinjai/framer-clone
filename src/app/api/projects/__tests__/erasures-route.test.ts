@@ -35,7 +35,12 @@ vi.mock('@/server/sites/cachedResolver', () => ({
   resolveSubdomainForSiteId: vi.fn(async () => 'bakery-abc123'),
   revalidateSiteCache: vi.fn(),
   revalidateCustomHostsForSiteId: vi.fn(async () => ['www.bakery.example']),
+  siteCacheTag: (subdomain: string) => `site:${subdomain}`,
+  customHostCacheTag: (host: string) => `site-host:${host}`,
 }));
+
+vi.mock('@/server/sites/originCacheFiles', () => ({ purgeCachedSiteFiles: vi.fn(async () => 1) }));
+vi.mock('@/lib/components/expandedPages', () => ({ forgetSite: vi.fn(() => 2) }));
 
 import {
   ErasePreviewStaleError,
@@ -49,6 +54,8 @@ import {
   revalidateCustomHostsForSiteId,
   revalidateSiteCache,
 } from '@/server/sites/cachedResolver';
+import { purgeCachedSiteFiles } from '@/server/sites/originCacheFiles';
+import { forgetSite } from '@/lib/components/expandedPages';
 import { GET, POST } from '../[projectId]/erasures/route';
 import { POST as SEARCH } from '../[projectId]/erasures/search/route';
 
@@ -58,6 +65,7 @@ const SCOPE = { workspaceId: 'ws_a', tenantGroupId: TG };
 const ctx = { params: Promise.resolve({ projectId: 'site_1' }) };
 const VALUE = 'Max Mustermann';
 const TOKEN = 'a'.repeat(32);
+const PICK = 'b'.repeat(32);
 
 function session(role: string) {
   return {
@@ -135,7 +143,7 @@ describe('the owner gate', () => {
   it('refuses before the owner step when OpenFGA says no', async () => {
     can.mockResolvedValue(false);
     installRepo({ erasePersonalData: vi.fn() });
-    const res = await POST(req('erasures', { value: VALUE, token: TOKEN }), ctx);
+    const res = await POST(req('erasures', { value: VALUE, token: TOKEN, chosen: [PICK] }), ctx);
     expect(res.status).toBe(403);
     expect((await res.json()).error.code).toBe('forbidden');
     expect(can).toHaveBeenCalledWith('user-owner', 'workspace.admin', expect.objectContaining({ id: 'ws_a' }));
@@ -162,7 +170,7 @@ describe('POST .../erasures/search', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('cache-control')).toBe('no-store');
     expect(await res.json()).toEqual(SEARCH_RESULT);
-    expect(searchPersonalData).toHaveBeenCalledWith(SCOPE, 'site_1', { value: VALUE, caseSensitive: true });
+    expect(searchPersonalData).toHaveBeenCalledWith(SCOPE, 'site_1', { value: VALUE, caseSensitive: true, insideWords: false });
   });
 
   it('answers a value outside the bounds with 400 and its code', async () => {
@@ -192,7 +200,7 @@ describe('POST .../erasures', () => {
     installRepo({ erasePersonalData, searchPersonalData });
 
     const res = await POST(
-      req('erasures', { value: VALUE, replacement: '[entfernt]', token: TOKEN, leaveOut: ['b'.repeat(32)] }),
+      req('erasures', { value: VALUE, insideWords: true, replacement: '[entfernt]', token: TOKEN, chosen: [PICK] }),
       ctx,
     );
 
@@ -205,29 +213,34 @@ describe('POST .../erasures', () => {
       erasableRemaining: 0,
     });
     expect(erasePersonalData).toHaveBeenCalledWith(SCOPE, 'site_1', {
-      query: { value: VALUE, caseSensitive: false },
+      query: { value: VALUE, caseSensitive: false, insideWords: true },
       replacement: '[entfernt]',
       token: TOKEN,
-      leaveOut: ['b'.repeat(32)],
+      chosen: [PICK],
       erasedBy: 'user-owner',
     });
     expect(resolveSubdomainForSiteId).toHaveBeenCalledWith('site_1');
     expect(revalidateSiteCache).toHaveBeenCalledWith('bakery-abc123');
     expect(revalidateCustomHostsForSiteId).toHaveBeenCalledWith('site_1');
+    // The copies this container keeps: the page trees in memory and the cache files on disk.
+    expect(forgetSite).toHaveBeenCalledWith('site_1');
+    expect(purgeCachedSiteFiles).toHaveBeenCalledWith(['site:bakery-abc123', 'site-host:www.bakery.example']);
   });
 
   it('allocates no subdomain for a site never published', async () => {
     vi.mocked(resolveSubdomainForSiteId).mockResolvedValueOnce(null);
     installRepo({ erasePersonalData: vi.fn().mockResolvedValue(erasure), searchPersonalData: vi.fn().mockResolvedValue({ ...SEARCH_RESULT, total: 0, erasable: 0 }) });
-    const res = await POST(req('erasures', { value: VALUE, token: TOKEN }), ctx);
+    const res = await POST(req('erasures', { value: VALUE, token: TOKEN, chosen: [PICK] }), ctx);
     expect(res.status).toBe(200);
     expect(revalidateSiteCache).not.toHaveBeenCalled();
     expect(revalidateCustomHostsForSiteId).toHaveBeenCalledWith('site_1');
+    // An offline site's cached file is deleted all the same.
+    expect(purgeCachedSiteFiles).toHaveBeenCalledWith(['site-host:www.bakery.example']);
   });
 
   it('answers a stale preview with 409 and refreshes nothing', async () => {
     installRepo({ erasePersonalData: vi.fn().mockRejectedValue(new ErasePreviewStaleError()) });
-    const res = await POST(req('erasures', { value: VALUE, token: TOKEN }), ctx);
+    const res = await POST(req('erasures', { value: VALUE, token: TOKEN, chosen: [PICK] }), ctx);
     expect(res.status).toBe(409);
     expect((await res.json()).error.code).toBe('erase_preview_stale');
     expect(revalidateCustomHostsForSiteId).not.toHaveBeenCalled();
@@ -235,17 +248,25 @@ describe('POST .../erasures', () => {
 
   it('refreshes the published site on nothing_to_erase, so a repeat recovers a failed refresh', async () => {
     installRepo({ erasePersonalData: vi.fn().mockRejectedValue(new NothingToEraseError()) });
-    const res = await POST(req('erasures', { value: VALUE, token: TOKEN }), ctx);
+    const res = await POST(req('erasures', { value: VALUE, token: TOKEN, chosen: [PICK] }), ctx);
     expect(res.status).toBe(409);
     expect((await res.json()).error.code).toBe('nothing_to_erase');
     expect(revalidateSiteCache).toHaveBeenCalledWith('bakery-abc123');
     expect(revalidateCustomHostsForSiteId).toHaveBeenCalledWith('site_1');
   });
 
+  it('says so when deleting the cache files failed', async () => {
+    vi.mocked(purgeCachedSiteFiles).mockRejectedValueOnce(new Error('EACCES'));
+    installRepo({ erasePersonalData: vi.fn().mockResolvedValue(erasure), searchPersonalData: vi.fn() });
+    const res = await POST(req('erasures', { value: VALUE, token: TOKEN, chosen: [PICK] }), ctx);
+    expect(res.status).toBe(500);
+    expect((await res.json()).error.code).toBe('erase_cache_refresh_failed');
+  });
+
   it('says so when the data was erased but the refresh failed', async () => {
     vi.mocked(revalidateCustomHostsForSiteId).mockRejectedValueOnce(new Error('db down'));
     installRepo({ erasePersonalData: vi.fn().mockResolvedValue(erasure), searchPersonalData: vi.fn() });
-    const res = await POST(req('erasures', { value: VALUE, token: TOKEN }), ctx);
+    const res = await POST(req('erasures', { value: VALUE, token: TOKEN, chosen: [PICK] }), ctx);
     expect(res.status).toBe(500);
     const body = await res.clone().json();
     expect(body.error.code).toBe('erase_cache_refresh_failed');
@@ -255,7 +276,7 @@ describe('POST .../erasures', () => {
 
   it('answers remaining null when the proof search fails, without failing the erase', async () => {
     installRepo({ erasePersonalData: vi.fn().mockResolvedValue(erasure), searchPersonalData: vi.fn().mockRejectedValue(new Error(VALUE)) });
-    const res = await POST(req('erasures', { value: VALUE, token: TOKEN }), ctx);
+    const res = await POST(req('erasures', { value: VALUE, token: TOKEN, chosen: [PICK] }), ctx);
     expect(res.status).toBe(200);
     expect(await res.clone().json()).toMatchObject({ erased: 2, remaining: null, erasableRemaining: null });
     await expectNoValueIn(res);
@@ -264,15 +285,19 @@ describe('POST .../erasures', () => {
   it('refuses a malformed body before anything runs', async () => {
     const erasePersonalData = vi.fn();
     installRepo({ erasePersonalData });
-    expect((await POST(req('erasures', { value: VALUE }), ctx)).status).toBe(400);
-    expect((await POST(req('erasures', { value: VALUE, token: 'not-a-token' }), ctx)).status).toBe(400);
-    expect((await POST(req('erasures', { value: VALUE, token: TOKEN, replacement: 'x'.repeat(201) }), ctx)).status).toBe(400);
+    expect((await POST(req('erasures', { value: VALUE, chosen: [PICK] }), ctx)).status).toBe(400);
+    expect((await POST(req('erasures', { value: VALUE, token: 'not-a-token', chosen: [PICK] }), ctx)).status).toBe(400);
+    expect((await POST(req('erasures', { value: VALUE, token: TOKEN, chosen: [PICK], replacement: 'x'.repeat(201) }), ctx)).status).toBe(400);
+    // Nothing ticked, or more than one preview can list: nothing runs.
+    expect((await POST(req('erasures', { value: VALUE, token: TOKEN }), ctx)).status).toBe(400);
+    expect((await POST(req('erasures', { value: VALUE, token: TOKEN, chosen: [] }), ctx)).status).toBe(400);
+    expect((await POST(req('erasures', { value: VALUE, token: TOKEN, chosen: Array(501).fill(PICK) }), ctx)).status).toBe(400);
     expect(erasePersonalData).not.toHaveBeenCalled();
   });
 
   it('maps other repository errors through their own status', async () => {
     installRepo({ erasePersonalData: vi.fn().mockRejectedValue(new SiteErasedSinceLoadError()) });
-    const res = await POST(req('erasures', { value: VALUE, token: TOKEN }), ctx);
+    const res = await POST(req('erasures', { value: VALUE, token: TOKEN, chosen: [PICK] }), ctx);
     expect(res.status).toBe(409);
     expect((await res.json()).error.code).toBe('erased_since_load');
   });

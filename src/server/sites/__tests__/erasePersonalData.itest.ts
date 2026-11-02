@@ -27,7 +27,7 @@ import {
   SiteNotFoundError,
   type TenantScope,
 } from '@/server/sites';
-import { EraseQueryError } from '@/server/sites/erase';
+import { ERASE_LIMITS, EraseQueryError, REDACTED_SEGMENT } from '@/server/sites/erase';
 import { resolvePublishedSiteByKey, type PublishedSite } from '@/server/sites/publicResolver';
 
 const TENANT_GROUP = '018f9c10-0000-7000-8000-0000000052e1';
@@ -93,14 +93,19 @@ async function everything(): Promise<string> {
   return JSON.stringify([site, (await revisions()).map((r) => r.document)]);
 }
 
-async function erase(over: { replacement?: string; leaveOut?: string[]; token?: string } = {}) {
+/** Every erasable match a preview lists: what an owner ticking everything shown sends. */
+function allShown(preview: { matches: Array<{ id: string; blocked: string | null }> }): string[] {
+  return preview.matches.filter((m) => m.blocked === null).map((m) => m.id);
+}
+
+async function erase(over: { replacement?: string; chosen?: string[]; token?: string } = {}) {
   const repo = getSiteRepository();
   const preview = await repo.searchPersonalData(scope, siteId, QUERY);
   return repo.erasePersonalData(scope, siteId, {
     query: QUERY,
     replacement: over.replacement ?? '[entfernt]',
     token: over.token ?? preview.token,
-    leaveOut: over.leaveOut ?? [],
+    chosen: over.chosen ?? allShown(preview),
     erasedBy: OWNER,
   });
 }
@@ -148,7 +153,7 @@ describe('forward: search, erase, proof', () => {
       query: QUERY,
       replacement: '[entfernt]',
       token: preview.token,
-      leaveOut: [],
+      chosen: allShown(preview),
       erasedBy: OWNER,
     });
     expect(result).toMatchObject({ erased: 21, remaining: 0 });
@@ -235,7 +240,7 @@ describe('forward: search, erase, proof', () => {
       query,
       replacement: '',
       token: preview.token,
-      leaveOut: [keep.id],
+      chosen: allShown(preview).filter((id) => id !== keep.id),
       erasedBy: OWNER,
     });
     expect(result.remaining).toBe(3); // the slug in both documents, and the director left out
@@ -305,7 +310,7 @@ describe('resume: a failed erase changes nothing and is repeated', () => {
     await prisma.$executeRawUnsafe(`CREATE TRIGGER ${fn} BEFORE INSERT ON public.site_erasures FOR EACH ROW EXECUTE FUNCTION ${fn}()`);
     try {
       await expect(
-        repo.erasePersonalData(scope, siteId, { query: QUERY, replacement: '', token: preview.token, leaveOut: [], erasedBy: OWNER }),
+        repo.erasePersonalData(scope, siteId, { query: QUERY, replacement: '', token: preview.token, chosen: allShown(preview), erasedBy: OWNER }),
       ).rejects.toThrow();
     } finally {
       await prisma.$executeRawUnsafe(`DROP TRIGGER ${fn} ON public.site_erasures`);
@@ -318,7 +323,7 @@ describe('resume: a failed erase changes nothing and is repeated', () => {
 
     // The same preview still holds, since nothing changed: the repeat goes through.
     await expect(
-      repo.erasePersonalData(scope, siteId, { query: QUERY, replacement: '', token: preview.token, leaveOut: [], erasedBy: OWNER }),
+      repo.erasePersonalData(scope, siteId, { query: QUERY, replacement: '', token: preview.token, chosen: allShown(preview), erasedBy: OWNER }),
     ).resolves.toMatchObject({ remaining: 0 });
   });
 });
@@ -345,7 +350,7 @@ describe('re-entry: a second erase of the same value', () => {
     await repo.saveProject(scope, project('Erika Muster', { erasureEpoch: 1 }), { mustExist: true });
     const preview = await repo.searchPersonalData(scope, siteId, other);
     expect(preview.total).toBeGreaterThan(0);
-    await repo.erasePersonalData(scope, siteId, { query: other, replacement: '', token: preview.token, leaveOut: [], erasedBy: OWNER });
+    await repo.erasePersonalData(scope, siteId, { query: other, replacement: '', token: preview.token, chosen: allShown(preview), erasedBy: OWNER });
     expect((await prisma.site.findUniqueOrThrow({ where: { id: siteId } })).erasureEpoch).toBe(2);
     expect(await repo.listErasures(scope, siteId)).toHaveLength(2);
   });
@@ -379,7 +384,7 @@ describe('editor tabs loaded before an erase', () => {
       if (preview.erasable === 0) break;
       const epoch = (await prisma.site.findUniqueOrThrow({ where: { id: siteId } })).erasureEpoch;
       const [erased, saved] = await Promise.allSettled([
-        repo.erasePersonalData(scope, siteId, { query: QUERY, replacement: '', token: preview.token, leaveOut: [], erasedBy: OWNER }),
+        repo.erasePersonalData(scope, siteId, { query: QUERY, replacement: '', token: preview.token, chosen: allShown(preview), erasedBy: OWNER }),
         repo.saveProject(scope, project(VALUE, { erasureEpoch: epoch }), { mustExist: true }),
       ]);
       if (saved.status === 'rejected') expect(saved.reason).toBeInstanceOf(SiteErasedSinceLoadError);
@@ -399,7 +404,7 @@ describe('editor tabs loaded before an erase', () => {
     await repo.publishProject(scope, project(VALUE));
     const preview = await repo.searchPersonalData(scope, siteId, QUERY);
     const [erased, published] = await Promise.allSettled([
-      repo.erasePersonalData(scope, siteId, { query: QUERY, replacement: '', token: preview.token, leaveOut: [], erasedBy: OWNER }),
+      repo.erasePersonalData(scope, siteId, { query: QUERY, replacement: '', token: preview.token, chosen: allShown(preview), erasedBy: OWNER }),
       repo.publishProject(scope, project(VALUE, { erasureEpoch: 0 })),
     ]);
     if (erased.status === 'fulfilled') {
@@ -429,8 +434,96 @@ describe('bounds and isolation', () => {
     const preview = await repo.searchPersonalData(scope, siteId, QUERY);
     await expect(repo.searchPersonalData(foreign, siteId, QUERY)).rejects.toBeInstanceOf(SiteNotFoundError);
     await expect(
-      repo.erasePersonalData(foreign, siteId, { query: QUERY, replacement: '', token: preview.token, leaveOut: [], erasedBy: OWNER }),
+      repo.erasePersonalData(foreign, siteId, { query: QUERY, replacement: '', token: preview.token, chosen: allShown(preview), erasedBy: OWNER }),
     ).rejects.toBeInstanceOf(SiteNotFoundError);
     expect(await everything()).toContain(VALUE);
+  });
+});
+
+describe('the review of #283: only what was shown and ticked, protected places, the audit path', () => {
+  it('never erases more than one preview lists, however many matches there are', async () => {
+    const repo = getSiteRepository();
+    const many = Array.from({ length: 350 }, () => VALUE).join(', ');
+    await repo.publishProject(scope, project(many));
+    const preview = await repo.searchPersonalData(scope, siteId, QUERY);
+    expect(preview.truncated).toBe(true);
+    expect(preview.matches).toHaveLength(ERASE_LIMITS.listed);
+
+    const result = await erase({ chosen: allShown(preview), token: preview.token });
+    expect(result.erased).toBe(ERASE_LIMITS.listed);
+    expect((await repo.searchPersonalData(scope, siteId, QUERY)).total).toBe(preview.total - ERASE_LIMITS.listed);
+  });
+
+  it('refuses an id the preview did not offer for erasing, and changes nothing', async () => {
+    const repo = getSiteRepository();
+    await repo.publishProject(scope, project(VALUE, { slug: 'team-mustermann' }));
+    const query = { value: 'Mustermann', caseSensitive: false };
+    const preview = await repo.searchPersonalData(scope, siteId, query);
+    const blocked = preview.matches.find((m) => m.blocked === 'address')!;
+    const before = await everything();
+    for (const chosen of [[blocked.id], ['f'.repeat(32)], [...allShown(preview), blocked.id]]) {
+      await expect(
+        repo.erasePersonalData(scope, siteId, { query, replacement: '', token: preview.token, chosen, erasedBy: OWNER }),
+      ).rejects.toBeInstanceOf(ErasePreviewStaleError);
+    }
+    expect(await everything()).toBe(before);
+  });
+
+  it('keeps a key holding the value out of the audit row', async () => {
+    const repo = getSiteRepository();
+    const withMap = project(VALUE) as unknown as { pages: { home: { appComponentTree: { props: Record<string, unknown> } } } };
+    withMap.pages.home.appComponentTree.props.people = { [VALUE]: { label: VALUE } };
+    await repo.publishProject(scope, withMap as never);
+
+    const preview = await repo.searchPersonalData(scope, siteId, QUERY);
+    expect(preview.matches.some((m) => m.blocked === 'key')).toBe(true);
+    const result = await erase({ chosen: allShown(preview), token: preview.token });
+
+    expect(result.places.map((p) => p.path)).toContainEqual(`/pages/1/snapshot/appComponentTree/props/people/${REDACTED_SEGMENT}/label`);
+    const raw = await prisma.siteErasure.findUniqueOrThrow({ where: { id: result.erasureId } });
+    expect(JSON.stringify(raw)).not.toMatch(/mustermann/i);
+    // The key itself is not rewritten: it is reported, and stays in the remaining count.
+    expect(result.remaining).toBe(2);
+  });
+
+  it('reports a value in a domain or an A/B test, and never rewrites it there', async () => {
+    const repo = getSiteRepository();
+    await repo.publishProject(scope, project('Erika Muster'));
+    await prisma.siteDomain.create({
+      data: { siteId, workspaceId: scope.workspaceId, tenantGroupId: scope.tenantGroupId, hostname: 'max-mustermann.example' },
+    });
+    await prisma.siteExperiment.create({
+      data: { siteId, workspaceId: scope.workspaceId, tenantGroupId: scope.tenantGroupId, experimentKey: 'hero', config: { variant: 'Max Mustermann says hi' } },
+    });
+    const preview = await repo.searchPersonalData(scope, siteId, { value: 'max mustermann', caseSensitive: false, insideWords: true });
+    expect(preview.matches.map((m) => [m.area, m.blocked])).toEqual(
+      expect.arrayContaining([['experiment', 'separate']]),
+    );
+    const domains = await repo.searchPersonalData(scope, siteId, { value: 'max-mustermann', caseSensitive: false });
+    expect(domains.matches.map((m) => [m.area, m.blocked])).toEqual([['domain', 'separate']]);
+    expect(domains.erasable).toBe(0);
+  });
+
+  it('refuses a tab whose counter is ahead of the server', async () => {
+    const repo = getSiteRepository();
+    await repo.publishProject(scope, project(VALUE));
+    await erase();
+    await expect(repo.saveProject(scope, project(VALUE, { erasureEpoch: 99 }), { mustExist: true })).rejects.toBeInstanceOf(
+      SiteErasedSinceLoadError,
+    );
+    expect(await everything()).not.toContain(VALUE);
+  });
+
+  it('leaves no residue around an empty replacement', async () => {
+    const repo = getSiteRepository();
+    await repo.saveProject(scope, project('Erika Muster'), { mustExist: true });
+    await prisma.site.update({
+      where: { id: siteId },
+      data: { siteSettings: { siteName: 'Bakery', business: { legalName: `Geschäftsführer: ${VALUE}, Erika Musterfrau` } } },
+    });
+    const preview = await repo.searchPersonalData(scope, siteId, QUERY);
+    await repo.erasePersonalData(scope, siteId, { query: QUERY, replacement: '', token: preview.token, chosen: allShown(preview), erasedBy: OWNER });
+    const stored = await prisma.site.findUniqueOrThrow({ where: { id: siteId }, select: { siteSettings: true } });
+    expect((stored.siteSettings as { business: { legalName: string } }).business.legalName).toBe('Geschäftsführer: Erika Musterfrau');
   });
 });
