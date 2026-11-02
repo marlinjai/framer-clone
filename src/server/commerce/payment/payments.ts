@@ -26,15 +26,22 @@ import 'server-only';
 // commit (receipt.ts); when that fails the payment stays paid, the reason is kept on it, and the next delivery
 // of any event for the order (a provider retries a webhook that answered an error) tries again.
 
-import type { Kysely, Transaction } from 'kysely';
+import { sql, type Kysely, type Transaction } from 'kysely';
 
 import type { CommerceDB } from '../db-types';
 import { applyInventoryEffect, reserve, RESERVE_ISOLATION_LEVEL } from '../inventory/reserve';
+import { isLockTimeout } from '../provisioning/ownerSql';
 import type { PaymentEvent, PaymentProvider, ProviderId } from './provider';
 import { enqueueShopMail } from '../mail/outbox';
 
 /** How long a pending payment holds its stock (the design: 30 minutes). */
 export const PAYMENT_WINDOW_MS = 30 * 60 * 1000;
+
+/**
+ * How long a close by our own clock (`requireDue`) waits for locks. It can always come back later, so it never waits on
+ * a busy payment for longer than a job's deadline: until slice B6 a late refund holds this row across a Stripe call.
+ */
+export const DUE_LOCK_WAIT_MS = 2 * 60 * 1000;
 
 /**
  * The platform fee: 1% of the charged total, rounded half up, in the currency's minor unit (parent plan,
@@ -71,6 +78,25 @@ class LateStockGoneError extends Error {
   }
 }
 
+/** A close by our own clock gave up waiting for a lock. Nothing changed, and trying again later is the answer. */
+export class PaymentBusyError extends Error {
+  constructor(readonly orderId: string) {
+    super(`the payment of order ${orderId} stayed locked past the wait of a close by our clock`);
+    this.name = 'PaymentBusyError';
+  }
+}
+
+/**
+ * The expiry of a payment is recorded, yet the payment is still pending. The event and the close commit together and
+ * nothing returns a payment to pending, so this cannot happen. Finishing quietly would keep the stock held for good.
+ */
+export class ExpiryRecordedError extends Error {
+  constructor(readonly orderId: string) {
+    super(`the expiry of order ${orderId} is recorded, but its payment is still pending`);
+    this.name = 'ExpiryRecordedError';
+  }
+}
+
 /** A sweep could not close every expired payment. It closed the others; the next sweep tries these again. */
 export class ExpirySweepError extends Error {
   constructor(
@@ -90,6 +116,8 @@ export interface PaymentDeps {
   /** Issue the receipt of a paid order (receipt.ts ensureReceipt, bound to the company). */
   receipt: (orderId: string) => Promise<{ documentId: string }>;
   now?: () => Date;
+  /** Overrides DUE_LOCK_WAIT_MS. */
+  lockWaitMs?: number;
   /** The company's connected account for refunds (Stripe Connect). */
   connectedAccountId?: string;
   /**
@@ -127,6 +155,22 @@ async function lockPayment(trx: Trx, tenantId: string, orderId: string) {
     .executeTakeFirst();
   if (!row) throw new UnknownPaymentError(orderId);
   return row;
+}
+
+/**
+ * Whether a locked payment's window is over, and when it ends. Decided by Postgres and read as an instant, because a
+ * timestamp read back as it is stored is only right when the process runs in UTC.
+ */
+async function readWindow(trx: Trx, tenantId: string, orderId: string, at: Date) {
+  return trx
+    .selectFrom('order_payment')
+    .select((eb) => [
+      eb('expires_at', '<=', at).as('due'),
+      sql<Date>`${sql.ref('expires_at')} AT TIME ZONE 'UTC'`.as('expiresAt'),
+    ])
+    .where('tenant_id', '=', tenantId)
+    .where('order_id', '=', orderId)
+    .executeTakeFirstOrThrow();
 }
 
 /** Record the event; false when it was recorded before (a repeated delivery). */
@@ -214,15 +258,23 @@ export async function handlePaymentEvent(deps: PaymentDeps, event: PaymentEvent)
   let status: PaymentStatus;
   try {
     status = await inTransaction(deps.db, async (trx) => {
+      if (event.requireDue) {
+        const wait = `${deps.lockWaitMs ?? DUE_LOCK_WAIT_MS}ms`;
+        await sql`SELECT set_config('lock_timeout', ${wait}, true)`.execute(trx);
+      }
       const payment = await lockPayment(trx, event.tenantId, event.orderId);
       const at = now();
       const current = payment.status as PaymentStatus;
       // Before the event: the append-only record must never say a payment closed that did not.
-      if (event.requireDue && (current !== 'pending' || payment.expires_at > at)) {
-        notDue = { expiresAt: current === 'pending' ? payment.expires_at : null };
-        return current;
+      if (event.requireDue) {
+        const window = await readWindow(trx, event.tenantId, event.orderId, at);
+        if (current !== 'pending' || !window.due) {
+          notDue = { expiresAt: current === 'pending' ? window.expiresAt : null };
+          return current;
+        }
       }
       if (!(await recordEvent(trx, event))) {
+        if (event.requireDue) throw new ExpiryRecordedError(event.orderId);
         duplicate = true;
         return current;
       }
@@ -281,6 +333,7 @@ export async function handlePaymentEvent(deps: PaymentDeps, event: PaymentEvent)
       }
     });
   } catch (err) {
+    if (event.requireDue && isLockTimeout(err)) throw new PaymentBusyError(event.orderId);
     if (!(err instanceof LateStockGoneError)) throw err;
     status = await refundLatePayment(deps, event, now());
     if (status === 'refunded') deps.deliverMail?.(event.tenantId, event.orderId, 'late_refund');

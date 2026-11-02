@@ -17,6 +17,8 @@ import type {
 import type { ZodType } from 'zod';
 
 import type { CommerceDB, CommerceJobTable } from '../db-types';
+import type { PaymentOutcome } from '../payment/payments';
+import type { PaymentEvent } from '../payment/provider';
 
 /** How long a claim holds a job. `run_at` carries it, so a crashed worker's job simply becomes due again. */
 export const JOB_LEASE_MS = 10 * 60 * 1000;
@@ -137,19 +139,31 @@ export interface CompanyContext {
   transaction<R>(work: (company: CompanyContext, trx: Transaction<CommerceDB>) => Promise<R>): Promise<R>;
 }
 
+/**
+ * A tenant group's handle and id, always together: everything writes through the handle except the raw stock writes,
+ * which address the schema by id, so a mismatched pair would send those to another group.
+ */
+export interface JobTenantGroup {
+  readonly id: string;
+  readonly db: Kysely<CommerceDB>;
+}
+
+/**
+ * What a handler may do to a payment. The dependencies are built by the worker and stay there: a handler never holds
+ * the group's unfiltered handle, and the company comes from the job, so an event cannot name another one.
+ */
+export interface JobPayments {
+  handleEvent(event: Omit<PaymentEvent, 'tenantId'>): Promise<PaymentOutcome>;
+}
+
 export interface JobContext<P> {
   readonly job: Pick<CommerceJob, 'id' | 'kind' | 'attempts'>;
   readonly company: CompanyContext;
   readonly payload: P;
   /** Fires at the kind's deadline. A handler passes it to every network call. */
   readonly signal: AbortSignal;
-  /** The worker's clock, the one that claimed this job. */
-  readonly now: () => Date;
-  /**
-   * The tenant group, for the payment state machine and the stock writes behind it, which need the group's id and take
-   * the company as an argument. A handler's own reads and writes go through `company`.
-   */
-  readonly group: { readonly id: string; readonly db: Kysely<CommerceDB> };
+  /** The payment state machine, bound to this job's company. */
+  readonly payments: JobPayments;
 }
 
 export interface JobKind<P = unknown> {

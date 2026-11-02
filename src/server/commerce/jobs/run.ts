@@ -9,7 +9,8 @@ import 'server-only';
 import type { Kysely } from 'kysely';
 
 import type { CommerceDB } from '../db-types';
-import { receiptFailure } from '../payment/payments';
+import { paymentDeps } from '../payment/deps';
+import { handlePaymentEvent, receiptFailure } from '../payment/payments';
 import { claimJob, finishDead, finishDone, finishRerun, finishRetry, type ClaimOptions } from './claim';
 import { JOB_KINDS } from './consumers';
 import {
@@ -18,10 +19,11 @@ import {
   JobRetryLater,
   type CommerceJob,
   type CompanyContext,
-  type JobContext,
   type JobKind,
   type JobKindRegistry,
+  type JobPayments,
   type JobPolicy,
+  type JobTenantGroup,
 } from './types';
 
 const MINUTE_MS = 60 * 1000;
@@ -49,7 +51,19 @@ export interface JobRunResult {
   outcome: JobRunOutcome;
 }
 
-type TenantGroup = JobContext<unknown>['group'];
+/**
+ * The payment state machine for one job: bound to its company, and the row lock's wait to its deadline, so a job
+ * blocked on a payment ends as an ordinary retry instead of running out its lease as an open claim.
+ */
+function jobPayments(group: JobTenantGroup, tenantId: string, kind: JobKind, now: () => Date): JobPayments {
+  return {
+    handleEvent: (event) =>
+      handlePaymentEvent(
+        { ...paymentDeps(group.db, group.id, tenantId), now, lockWaitMs: kind.policy.deadlineMs },
+        { ...event, tenantId },
+      ),
+  };
+}
 
 /** The handler's end, before it is written. */
 type Ending =
@@ -80,7 +94,7 @@ export function companyContext(db: Kysely<CommerceDB>, tenantId: string): Compan
 
 /** The handler's run as an Ending. Never rejects, so a handler that answers after being abandoned harms nothing. */
 async function invoke(
-  group: TenantGroup,
+  group: JobTenantGroup,
   job: CommerceJob,
   kind: JobKind,
   payload: unknown,
@@ -94,8 +108,7 @@ async function invoke(
       company: companyContext(group.db, job.tenant_id),
       payload,
       signal,
-      now,
-      group,
+      payments: jobPayments(group, job.tenant_id, kind, now),
     });
     if (!answer) return { type: 'done' };
     if (answer.payload === undefined) return { type: 'rerun', rerunAt: answer.rerunAt };
@@ -116,7 +129,7 @@ async function invoke(
 
 /** Run the handler under its deadline. A handler that ignores the signal is given up on when its lease ends. */
 async function attempt(
-  group: TenantGroup,
+  group: JobTenantGroup,
   job: CommerceJob,
   kind: JobKind,
   payload: unknown,
@@ -174,7 +187,7 @@ async function settle(
 
 /** Claim one job and run it. */
 async function claimAndRun(
-  group: TenantGroup,
+  group: JobTenantGroup,
   options: JobRunOptions,
   only?: ClaimOptions['only'],
 ): Promise<JobRunResult | null> {
@@ -197,12 +210,8 @@ async function claimAndRun(
 }
 
 /** Claim the oldest due job of the tenant group and run it. Null when nothing is due. */
-export function runNextJob(
-  db: Kysely<CommerceDB>,
-  tenantGroupId: string,
-  options: JobRunOptions = {},
-): Promise<JobRunResult | null> {
-  return claimAndRun({ id: tenantGroupId, db }, options);
+export function runNextJob(group: JobTenantGroup, options: JobRunOptions = {}): Promise<JobRunResult | null> {
+  return claimAndRun(group, options);
 }
 
 /**
@@ -210,11 +219,10 @@ export function runNextJob(
  * Null when the job is not due, or another worker holds it.
  */
 export function runJobNow(
-  db: Kysely<CommerceDB>,
-  tenantGroupId: string,
+  group: JobTenantGroup,
   tenantId: string,
   jobId: string,
   options: JobRunOptions = {},
 ): Promise<JobRunResult | null> {
-  return claimAndRun({ id: tenantGroupId, db }, options, { tenantId, id: jobId });
+  return claimAndRun(group, options, { tenantId, id: jobId });
 }

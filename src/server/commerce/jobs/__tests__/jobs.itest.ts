@@ -199,7 +199,7 @@ describe('F: forward', () => {
     const ids = await db.transaction().execute((trx) => emitCommerceEvent(trx, PLACED, CONSUMERS));
     expect(ids).toHaveLength(1);
 
-    const result = await runNextJob(db, TG_A, {
+    const result = await runNextJob({ id: TG_A, db }, {
       kinds: testKinds(async (ctx) => {
         ran.push(ctx.payload);
       }),
@@ -218,7 +218,7 @@ describe('F: forward', () => {
       last_error: null,
       finished_at: at(MINUTE),
     });
-    expect(await runNextJob(db, TG_A, { kinds: testKinds(succeed), now: clock(MINUTE) })).toBeNull();
+    expect(await runNextJob({ id: TG_A, db }, { kinds: testKinds(succeed), now: clock(MINUTE) })).toBeNull();
   });
 
   it('the production registries write what they know, and a pass leaves a kind they do not know alone', async () => {
@@ -227,7 +227,7 @@ describe('F: forward', () => {
     const placed = { ...PLACED, payload: { orderId: 'order-1', expiresAt } };
     const [id] = await db.transaction().execute((trx) => emitCommerceEvent(trx, placed));
     expect(await read(id)).toMatchObject({ kind: 'payment_expiry', dedupe_key: 'expiry:order-1', run_at: expiresAt });
-    expect(await runNextJob(db, TG_A, { now: clock(MINUTE) })).toBeNull();
+    expect(await runNextJob({ id: TG_A, db }, { now: clock(MINUTE) })).toBeNull();
     expect(await countJobs()).toBe(2);
   });
 
@@ -242,16 +242,16 @@ describe('F: forward', () => {
     const sooner = await schedule({ runAt: at(5 * MINUTE) });
     const kinds = testKinds(succeed);
 
-    expect(await runNextJob(db, TG_A, { kinds, now: clock(4 * MINUTE) })).toBeNull();
-    expect((await runNextJob(db, TG_A, { kinds, now: clock(20 * MINUTE) }))?.id).toBe(sooner);
-    expect((await runNextJob(db, TG_A, { kinds, now: clock(20 * MINUTE) }))?.id).toBe(later);
+    expect(await runNextJob({ id: TG_A, db }, { kinds, now: clock(4 * MINUTE) })).toBeNull();
+    expect((await runNextJob({ id: TG_A, db }, { kinds, now: clock(20 * MINUTE) }))?.id).toBe(sooner);
+    expect((await runNextJob({ id: TG_A, db }, { kinds, now: clock(20 * MINUTE) }))?.id).toBe(later);
   });
 
   it('{ rerunAt } puts the job back pending with a new payload, a new cycle and counters at zero', async () => {
     const id = await schedule();
     const kinds = testKinds(async () => ({ rerunAt: at(15 * MINUTE), payload: { orderId: 'cursor-2' } }));
 
-    expect((await runNextJob(db, TG_A, { kinds, now: clock(MINUTE) }))?.outcome).toBe('rerun');
+    expect((await runNextJob({ id: TG_A, db }, { kinds, now: clock(MINUTE) }))?.outcome).toBe('rerun');
 
     expect(await read(id)).toMatchObject({
       status: 'pending',
@@ -267,7 +267,7 @@ describe('F: forward', () => {
 
   it('{ rerunAt } without a payload keeps the one the job has', async () => {
     const id = await schedule();
-    await runNextJob(db, TG_A, { kinds: testKinds(async () => ({ rerunAt: at(MINUTE) })), now: clock(0) });
+    await runNextJob({ id: TG_A, db }, { kinds: testKinds(async () => ({ rerunAt: at(MINUTE) })), now: clock(0) });
     expect((await read(id)).payload).toEqual({ orderId: 'order-1' });
   });
 
@@ -302,7 +302,7 @@ describe('F: forward', () => {
       await company.transaction((inner) => inner.deleteFrom('form_submission').where('id', '=', 'mine-too').execute());
       await company.deleteFrom('form_submission').where('id', '=', 'theirs').execute();
     });
-    await runNextJob(db, TG_A, { kinds, now: clock(MINUTE) });
+    await runNextJob({ id: TG_A, db }, { kinds, now: clock(MINUTE) });
 
     expect(seen).toEqual({ [COMPANY]: ['mine', 'mine-too'] });
     const left = await db.selectFrom('form_submission').select(['id', 'read_at']).orderBy('id').execute();
@@ -311,7 +311,7 @@ describe('F: forward', () => {
       { id: 'theirs', read_at: null },
     ]);
 
-    await runNextJob(db, TG_A, { kinds, now: clock(MINUTE) });
+    await runNextJob({ id: TG_A, db }, { kinds, now: clock(MINUTE) });
     expect(seen[OTHER_COMPANY]).toEqual(['theirs']);
   });
 });
@@ -326,7 +326,7 @@ describe('B: backtrack', () => {
     ).rejects.toThrow('the order did not commit');
 
     expect(await countJobs()).toBe(0);
-    expect(await runNextJob(db, TG_A, { kinds: testKinds(succeed), now: clock(MINUTE) })).toBeNull();
+    expect(await runNextJob({ id: TG_A, db }, { kinds: testKinds(succeed), now: clock(MINUTE) })).toBeNull();
   });
 
   it('a job written in an open transaction cannot be claimed until it commits', async () => {
@@ -344,10 +344,10 @@ describe('B: backtrack', () => {
       await open;
     });
     await isWritten;
-    expect(await runNextJob(db, TG_A, { kinds: testKinds(succeed), now: clock(MINUTE) })).toBeNull();
+    expect(await runNextJob({ id: TG_A, db }, { kinds: testKinds(succeed), now: clock(MINUTE) })).toBeNull();
     commit();
     await transaction;
-    expect((await runNextJob(db, TG_A, { kinds: testKinds(succeed), now: clock(MINUTE) }))?.outcome).toBe('done');
+    expect((await runNextJob({ id: TG_A, db }, { kinds: testKinds(succeed), now: clock(MINUTE) }))?.outcome).toBe('done');
   });
 
   it('a repeated dedupe key writes one job, inside one company and kind only', async () => {
@@ -365,7 +365,7 @@ describe('B: backtrack', () => {
 
   it('a finished job keeps its key, so a repeat does not run the work again', async () => {
     await db.transaction().execute((trx) => emitCommerceEvent(trx, PLACED, CONSUMERS));
-    await runNextJob(db, TG_A, { kinds: testKinds(succeed), now: clock(MINUTE) });
+    await runNextJob({ id: TG_A, db }, { kinds: testKinds(succeed), now: clock(MINUTE) });
     expect(await db.transaction().execute((trx) => emitCommerceEvent(trx, PLACED, CONSUMERS))).toEqual([]);
   });
 });
@@ -462,7 +462,7 @@ describe('R: resume after a crash', () => {
     const isStarted = new Promise<void>((resolve) => {
       started = resolve;
     });
-    const stalled = runNextJob(db, TG_A, {
+    const stalled = runNextJob({ id: TG_A, db }, {
       kinds: testKinds(async () => {
         started();
         await asleep;
@@ -472,7 +472,7 @@ describe('R: resume after a crash', () => {
     });
     await isStarted;
 
-    const winner = await runNextJob(db, TG_A, { kinds: testKinds(succeed), now: clock(JOB_LEASE_MS) });
+    const winner = await runNextJob({ id: TG_A, db }, { kinds: testKinds(succeed), now: clock(JOB_LEASE_MS) });
     expect(winner?.outcome).toBe('done');
     wake();
 
@@ -485,7 +485,7 @@ describe('R: resume after a crash', () => {
     const before = await read(newer);
 
     expect(await claimJob(db, { kinds: ['test'], now: at(DAY) })).toBeNull();
-    expect(await runJobNow(db, TG_A, COMPANY, newer, { kinds: testKinds(succeed), now: clock(DAY) })).toBeNull();
+    expect(await runJobNow({ id: TG_A, db }, COMPANY, newer, { kinds: testKinds(succeed), now: clock(DAY) })).toBeNull();
     expect(await read(newer)).toEqual(before);
 
     await claimJob(db, { kinds: ['from_a_newer_build'], now: at(0) });
@@ -502,8 +502,8 @@ describe('R: resume after a crash', () => {
         runs += 1;
       });
       const results = await Promise.all([
-        runJobNow(db, TG_A, COMPANY, id, { kinds, now: clock(MINUTE) }),
-        runNextJob(db, TG_A, { kinds, now: clock(MINUTE) }),
+        runJobNow({ id: TG_A, db }, COMPANY, id, { kinds, now: clock(MINUTE) }),
+        runNextJob({ id: TG_A, db }, { kinds, now: clock(MINUTE) }),
       ]);
       expect(runs).toBe(1);
       expect(results.filter((result) => result?.outcome === 'done')).toHaveLength(1);
@@ -515,11 +515,11 @@ describe('R: resume after a crash', () => {
     const id = await schedule({ runAt: at(MINUTE) });
     const kinds = testKinds(succeed);
 
-    expect(await runJobNow(db, TG_A, COMPANY, id, { kinds, now: clock(0) })).toBeNull();
-    expect(await runJobNow(db, TG_A, OTHER_COMPANY, id, { kinds, now: clock(MINUTE) })).toBeNull();
-    expect((await runJobNow(db, TG_A, COMPANY, id, { kinds, now: clock(MINUTE) }))?.outcome).toBe('done');
+    expect(await runJobNow({ id: TG_A, db }, COMPANY, id, { kinds, now: clock(0) })).toBeNull();
+    expect(await runJobNow({ id: TG_A, db }, OTHER_COMPANY, id, { kinds, now: clock(MINUTE) })).toBeNull();
+    expect((await runJobNow({ id: TG_A, db }, COMPANY, id, { kinds, now: clock(MINUTE) }))?.outcome).toBe('done');
     expect((await read(other)).status).toBe('pending');
-    expect(await runJobNow(db, TG_A, COMPANY, id, { kinds, now: clock(MINUTE) })).toBeNull();
+    expect(await runJobNow({ id: TG_A, db }, COMPANY, id, { kinds, now: clock(MINUTE) })).toBeNull();
   });
 
   it('a claim reads the due index, however many finished jobs the table holds', async () => {
@@ -551,7 +551,7 @@ describe('R: resume after a crash', () => {
     const id = await schedule();
     const hangs = testKinds(() => new Promise<void>(() => undefined), { deadlineMs: 10 });
 
-    const result = await runNextJob(db, TG_A, { kinds: hangs, now: clock(0), leaseMs: 50 });
+    const result = await runNextJob({ id: TG_A, db }, { kinds: hangs, now: clock(0), leaseMs: 50 });
 
     expect(result?.outcome).toBe('abandoned');
     expect(await read(id)).toMatchObject({ status: 'running', open_claims: 1 });
@@ -612,11 +612,11 @@ describe('E: re-entry after completion or failure', () => {
     );
 
     for (let claim = 0; claim < 3; claim += 1) {
-      const result = await runNextJob(db, TG_A, { kinds: hangs, now: clock(claim * MINUTE), leaseMs: 20 });
+      const result = await runNextJob({ id: TG_A, db }, { kinds: hangs, now: clock(claim * MINUTE), leaseMs: 20 });
       expect(result?.outcome).toBe('abandoned');
     }
 
-    const stopped = await runNextJob(db, TG_A, { kinds: hangs, now: clock(4 * MINUTE), leaseMs: 20 });
+    const stopped = await runNextJob({ id: TG_A, db }, { kinds: hangs, now: clock(4 * MINUTE), leaseMs: 20 });
 
     expect(stopped?.outcome).toBe('dead');
     expect(runs).toBe(3);
@@ -633,7 +633,7 @@ describe('E: re-entry after completion or failure', () => {
       throw new JobRetryLater('later', 0);
     });
     for (let run = 2; run < 8; run += 1) {
-      const result = await runNextJob(db, TG_A, { kinds: fails, now: clock(run * JOB_LEASE_MS) });
+      const result = await runNextJob({ id: TG_A, db }, { kinds: fails, now: clock(run * JOB_LEASE_MS) });
       expect(result?.outcome).toBe('retry');
       expect((await read(id)).open_claims).toBe(0);
     }
@@ -645,7 +645,7 @@ describe('E: re-entry after completion or failure', () => {
       throw new Error('could not reach buyer@example.com');
     });
 
-    expect((await runNextJob(db, TG_A, { kinds: fails, now: clock(0) }))?.outcome).toBe('retry');
+    expect((await runNextJob({ id: TG_A, db }, { kinds: fails, now: clock(0) }))?.outcome).toBe('retry');
     expect(await read(id)).toMatchObject({
       status: 'pending',
       run_at: at(MINUTE),
@@ -655,10 +655,10 @@ describe('E: re-entry after completion or failure', () => {
       last_error: 'Error',
     });
 
-    await runNextJob(db, TG_A, { kinds: fails, now: clock(MINUTE) });
+    await runNextJob({ id: TG_A, db }, { kinds: fails, now: clock(MINUTE) });
     expect((await read(id)).run_at).toEqual(at(6 * MINUTE));
 
-    await runNextJob(db, TG_A, { kinds: fails, now: clock(6 * MINUTE) });
+    await runNextJob({ id: TG_A, db }, { kinds: fails, now: clock(6 * MINUTE) });
     expect((await read(id)).run_at).toEqual(at((6 + 360) * MINUTE));
   });
 
@@ -667,13 +667,13 @@ describe('E: re-entry after completion or failure', () => {
     const coded = testKinds(async () => {
       throw Object.assign(new Error('not for the table'), { code: 'BOOKS_NOT_SET_UP' });
     });
-    await runNextJob(db, TG_A, { kinds: coded, now: clock(0) });
+    await runNextJob({ id: TG_A, db }, { kinds: coded, now: clock(0) });
     expect((await read(id)).last_error).toBe('BOOKS_NOT_SET_UP');
 
     const later = testKinds(async () => {
       throw new JobRetryLater('provider_busy', 42 * MINUTE);
     });
-    await runNextJob(db, TG_A, { kinds: later, now: clock(MINUTE) });
+    await runNextJob({ id: TG_A, db }, { kinds: later, now: clock(MINUTE) });
     expect(await read(id)).toMatchObject({ last_error: 'provider_busy', run_at: at(43 * MINUTE) });
   });
 
@@ -683,10 +683,10 @@ describe('E: re-entry after completion or failure', () => {
       throw new JobRetryLater('provider_down');
     });
 
-    expect((await runNextJob(db, TG_A, { kinds: fails, now: clock(3 * DAY - 1) }))?.outcome).toBe('retry');
+    expect((await runNextJob({ id: TG_A, db }, { kinds: fails, now: clock(3 * DAY - 1) }))?.outcome).toBe('retry');
     expect((await read(id)).status).toBe('pending');
 
-    expect((await runNextJob(db, TG_A, { kinds: fails, now: clock(4 * DAY) }))?.outcome).toBe('dead');
+    expect((await runNextJob({ id: TG_A, db }, { kinds: fails, now: clock(4 * DAY) }))?.outcome).toBe('dead');
     expect(await read(id)).toMatchObject({
       status: 'dead',
       last_error: 'provider_down',
@@ -694,19 +694,19 @@ describe('E: re-entry after completion or failure', () => {
       claim_token: null,
       open_claims: 0,
     });
-    expect(await runNextJob(db, TG_A, { kinds: fails, now: clock(40 * DAY) })).toBeNull();
+    expect(await runNextJob({ id: TG_A, db }, { kinds: fails, now: clock(40 * DAY) })).toBeNull();
     expect(errorLog.mock.calls.flat().join(' ')).toContain(`test ${id} of company ${COMPANY} is dead: provider_down`);
   });
 
   it('give-up counts from cycle_started_at: an old recurring job survives one failure', async () => {
     const id = await schedule();
-    await runNextJob(db, TG_A, { kinds: testKinds(async () => ({ rerunAt: at(100 * DAY) })), now: clock(100 * DAY - MINUTE) });
+    await runNextJob({ id: TG_A, db }, { kinds: testKinds(async () => ({ rerunAt: at(100 * DAY) })), now: clock(100 * DAY - MINUTE) });
     expect((await read(id)).created_at.getTime()).toBeLessThan(at(100 * DAY).getTime());
 
     const fails = testKinds(async () => {
       throw new JobRetryLater('provider_down');
     });
-    expect((await runNextJob(db, TG_A, { kinds: fails, now: clock(100 * DAY) }))?.outcome).toBe('retry');
+    expect((await runNextJob({ id: TG_A, db }, { kinds: fails, now: clock(100 * DAY) }))?.outcome).toBe('retry');
     expect((await read(id)).status).toBe('pending');
   });
 
@@ -718,7 +718,7 @@ describe('E: re-entry after completion or failure', () => {
       },
       { giveUpAfterMs: null },
     );
-    expect((await runNextJob(db, TG_A, { kinds: fails, now: clock(1000 * DAY) }))?.outcome).toBe('retry');
+    expect((await runNextJob({ id: TG_A, db }, { kinds: fails, now: clock(1000 * DAY) }))?.outcome).toBe('retry');
   });
 
   it('JobRefused is dead at once, whatever the give-up says', async () => {
@@ -727,7 +727,7 @@ describe('E: re-entry after completion or failure', () => {
       throw new JobRefused('TOTALS_MISMATCH');
     });
 
-    expect((await runNextJob(db, TG_A, { kinds: refuses, now: clock(0) }))?.outcome).toBe('dead');
+    expect((await runNextJob({ id: TG_A, db }, { kinds: refuses, now: clock(0) }))?.outcome).toBe('dead');
     expect(await read(id)).toMatchObject({ status: 'dead', last_error: 'TOTALS_MISMATCH', attempts: 1 });
   });
 
@@ -738,7 +738,7 @@ describe('E: re-entry after completion or failure', () => {
       runs += 1;
     });
 
-    expect((await runNextJob(db, TG_A, { kinds, now: clock(0) }))?.outcome).toBe('dead');
+    expect((await runNextJob({ id: TG_A, db }, { kinds, now: clock(0) }))?.outcome).toBe('dead');
     expect(runs).toBe(0);
     expect(await read(id)).toMatchObject({ status: 'dead', last_error: 'payload_invalid' });
   });
@@ -747,7 +747,7 @@ describe('E: re-entry after completion or failure', () => {
     const id = await schedule();
     const kinds = testKinds(async () => ({ rerunAt: at(MINUTE), payload: { orderId: 7 } as unknown as Payload }));
 
-    expect((await runNextJob(db, TG_A, { kinds, now: clock(0) }))?.outcome).toBe('dead');
+    expect((await runNextJob({ id: TG_A, db }, { kinds, now: clock(0) }))?.outcome).toBe('dead');
     expect(await read(id)).toMatchObject({ last_error: 'payload_invalid', payload: { orderId: 'order-1' } });
   });
 
@@ -761,13 +761,13 @@ describe('E: re-entry after completion or failure', () => {
       { deadlineMs: 10 },
     );
 
-    expect((await runNextJob(db, TG_A, { kinds, now: clock(0) }))?.outcome).toBe('retry');
+    expect((await runNextJob({ id: TG_A, db }, { kinds, now: clock(0) }))?.outcome).toBe('retry');
     expect((await read(id)).last_error).toBe('deadline_exceeded');
   });
 
   it('requeueJob gives a dead job fresh counters and a new cycle, and it runs again', async () => {
     const id = await schedule();
-    await runNextJob(db, TG_A, {
+    await runNextJob({ id: TG_A, db }, {
       kinds: testKinds(async () => {
         throw new JobRefused('NEEDS_A_PERSON');
       }),
@@ -788,7 +788,7 @@ describe('E: re-entry after completion or failure', () => {
       acknowledged_at: null,
       finished_at: null,
     });
-    expect((await runNextJob(db, TG_A, { kinds: testKinds(succeed), now: clock(MINUTE) }))?.outcome).toBe('done');
+    expect((await runNextJob({ id: TG_A, db }, { kinds: testKinds(succeed), now: clock(MINUTE) }))?.outcome).toBe('done');
   });
 
   it('a job stopped by the claim can be requeued too, and is not stopped again at once', async () => {
@@ -798,13 +798,13 @@ describe('E: re-entry after completion or failure', () => {
 
     await requeueJob(db, COMPANY, id, at(5 * JOB_LEASE_MS));
 
-    const again = await runNextJob(db, TG_A, { kinds: testKinds(succeed), now: clock(5 * JOB_LEASE_MS) });
+    const again = await runNextJob({ id: TG_A, db }, { kinds: testKinds(succeed), now: clock(5 * JOB_LEASE_MS) });
     expect(again?.outcome).toBe('done');
   });
 
   it('acknowledgeJob marks a dead job once and keeps it dead', async () => {
     const id = await schedule();
-    await runNextJob(db, TG_A, {
+    await runNextJob({ id: TG_A, db }, {
       kinds: testKinds(async () => {
         throw new JobRefused('NEEDS_A_PERSON');
       }),
@@ -821,7 +821,7 @@ describe('E: re-entry after completion or failure', () => {
     expect(await requeueJob(db, COMPANY, id, at(0))).toBe(false);
     expect(await acknowledgeJob(db, COMPANY, id, at(0))).toBe(false);
 
-    await runNextJob(db, TG_A, {
+    await runNextJob({ id: TG_A, db }, {
       kinds: testKinds(async () => {
         throw new JobRefused('NEEDS_A_PERSON');
       }),

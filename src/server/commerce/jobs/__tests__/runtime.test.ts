@@ -74,6 +74,19 @@ describe('startCommerceWorker', () => {
     expect(process.listenerCount('SIGTERM')).toBe(before);
   });
 
+  it("hands each job its own group's handle and id as one value", async () => {
+    const handles = { a: { of: 'a' }, b: { of: 'b' } };
+    listGroups.mockResolvedValue([group('a'), group('b')]);
+    commerceTenantDbChecked.mockImplementation(async (id: 'a' | 'b') => handles[id]);
+
+    await runCommercePass();
+
+    expect(runNextJob.mock.calls.map(([tenantGroup]) => tenantGroup)).toEqual([
+      { id: 'a', db: handles.a },
+      { id: 'b', db: handles.b },
+    ]);
+  });
+
   it('does nothing at start: the first pass comes one interval later', async () => {
     startCommerceWorker();
     expect(listGroups).not.toHaveBeenCalled();

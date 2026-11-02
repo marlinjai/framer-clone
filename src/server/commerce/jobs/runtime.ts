@@ -21,6 +21,7 @@ import type { CommerceDB } from '../db-types';
 import { isTenantSchemaError } from '../tenant';
 import { JOB_BACKFILLS, runJobBackfills, type JobBackfill } from './backfills';
 import { runNextJob, type JobRunOptions } from './run';
+import type { JobTenantGroup } from './types';
 
 const PASS_EVERY_MS = 30_000;
 /** How many tenant groups a pass works on at a time. */
@@ -91,7 +92,7 @@ function isJobTableMissing(err: unknown): boolean {
  */
 async function forEachTenantGroup(
   label: string,
-  work: (db: Kysely<CommerceDB>, tenantGroupId: string) => Promise<void>,
+  work: (group: JobTenantGroup) => Promise<void>,
 ): Promise<GroupSummary> {
   await ensureCommerceBackstop();
   const groups = await getCommerceBase().selectFrom('public.tenant_groups').select('id').execute();
@@ -102,7 +103,7 @@ async function forEachTenantGroup(
       const tenantGroupId = groups[next].id;
       next += 1;
       try {
-        await work(await commerceTenantDbChecked(tenantGroupId), tenantGroupId);
+        await work({ id: tenantGroupId, db: await commerceTenantDbChecked(tenantGroupId) });
         summary.tenantGroups += 1;
       } catch (err) {
         if (isCommerceTenantNotProvisioned(err) || isTenantSchemaError(err) || isJobTableMissing(err)) {
@@ -158,12 +159,12 @@ export async function runCommercePass(options: CommercePassOptions = {}): Promis
   const { backfills = JOB_BACKFILLS, now = () => new Date() } = options;
   const startedAt = Date.now();
   let ran = 0;
-  const groups = await forEachTenantGroup('the pass', async (db, tenantGroupId) => {
+  const groups = await forEachTenantGroup('the pass', async (group) => {
     if (globalForJobs.__commerceJobsStopping) return;
     // Before the claims, so what a backfill writes can run in this pass. Its failure must not hold up jobs already due.
-    const duties = await Promise.allSettled([runHourlyDuties(db, tenantGroupId, now(), backfills)]);
+    const duties = await Promise.allSettled([runHourlyDuties(group.db, group.id, now(), backfills)]);
     for (let jobs = 0; jobs < JOBS_PER_GROUP && !globalForJobs.__commerceJobsStopping; jobs += 1) {
-      if (!(await runNextJob(db, tenantGroupId, options))) break;
+      if (!(await runNextJob(group, options))) break;
       ran += 1;
     }
     if (duties[0].status === 'rejected') throw duties[0].reason;
@@ -182,7 +183,7 @@ export async function runCommerceWatchdogPass(options: CommercePassOptions = {})
   const at = now();
   let deadUnacknowledged = 0;
   let oldestDueMs = Infinity;
-  const read = await forEachTenantGroup('the watchdog read', async (db) => {
+  const read = await forEachTenantGroup('the watchdog read', async ({ db }) => {
     const dead = await db
       .selectFrom('commerce_job')
       .select((eb) => eb.fn.countAll<string>().as('jobs'))

@@ -13,9 +13,8 @@ import 'server-only';
 import { z } from 'zod';
 
 import { scheduleJob } from '../jobs/schedule';
-import { defineJobKind, JobRefused, type EventConsumer } from '../jobs/types';
-import { paymentDeps } from './deps';
-import { handlePaymentEvent } from './payments';
+import { defineJobKind, JobRefused, JobRetryLater, type EventConsumer } from '../jobs/types';
+import { DUE_LOCK_WAIT_MS, ExpiryRecordedError, PaymentBusyError, type PaymentOutcome } from './payments';
 import type { ProviderId } from './provider';
 
 export const PAYMENT_EXPIRY_KIND = 'payment_expiry';
@@ -44,14 +43,14 @@ export const paymentExpiryConsumer: EventConsumer<'order.placed'> = {
 
 export const paymentExpiryKind = defineJobKind<PaymentExpiryPayload>({
   policy: {
-    // Only database work, on one payment: this is far above it, and the lease above that.
-    deadlineMs: 2 * 60 * 1000,
+    // Only database work on one payment, so all it can wait for is a lock, and the worker bounds that wait by this.
+    deadlineMs: DUE_LOCK_WAIT_MS,
     backoffMinutes: [1, 5, 15, 60],
     laterMinutes: 6 * 60,
     giveUpAfterMs: 3 * DAY_MS,
   },
   payload: z.object({ orderId: z.string().min(1) }).strict(),
-  async run({ company, group, now, payload: { orderId } }) {
+  async run({ company, payments, payload: { orderId } }) {
     const payment = await company
       .selectFrom('order_payment')
       .select('provider')
@@ -59,17 +58,20 @@ export const paymentExpiryKind = defineJobKind<PaymentExpiryPayload>({
       .executeTakeFirst();
     // A payment row is never deleted (BK018) and the job is written with it, so this job names something else.
     if (!payment) throw new JobRefused('unknown_payment');
-    const outcome = await handlePaymentEvent(
-      { ...paymentDeps(group.db, group.id, company.tenantId), now },
-      {
+    let outcome: PaymentOutcome;
+    try {
+      outcome = await payments.handleEvent({
         provider: payment.provider as ProviderId,
         eventId: `${EXPIRY_KEY_PREFIX}${orderId}`,
         type: 'checkout_expired',
-        tenantId: company.tenantId,
         orderId,
         requireDue: true,
-      },
-    );
+      });
+    } catch (err) {
+      if (err instanceof PaymentBusyError) throw new JobRetryLater('payment_busy');
+      if (err instanceof ExpiryRecordedError) throw new JobRefused('expiry_recorded_while_pending');
+      throw err;
+    }
     if (outcome.notDue?.expiresAt) return { rerunAt: outcome.notDue.expiresAt };
   },
 });

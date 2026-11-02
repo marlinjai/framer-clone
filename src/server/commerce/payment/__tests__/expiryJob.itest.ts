@@ -21,12 +21,13 @@ import {
 import { JOB_BACKFILLS, runJobBackfills } from '../../jobs/backfills';
 import { claimJob, requeueJob } from '../../jobs/claim';
 import { runNextJob } from '../../jobs/run';
-import { JOB_LEASE_MS } from '../../jobs/types';
+import { defineJobKind, JOB_LEASE_MS, MAX_OPEN_CLAIMS, type JobContext } from '../../jobs/types';
 import { createOrder } from '../../order/createOrder';
 import { catalogRepository } from '../../repository/catalog';
 import { pricingRepository } from '../../repository/pricing';
 import type { BuyerInput } from '../buyer';
-import { handlePaymentEvent, sweepExpiredPayments, type PaymentDeps } from '../payments';
+import { paymentExpiryKind } from '../expiryJob';
+import { ExpirySweepError, handlePaymentEvent, sweepExpiredPayments, type PaymentDeps } from '../payments';
 import { demoProvider, type PaymentEvent, type PaymentProvider } from '../provider';
 import { ensureReceipt } from '../receipt';
 
@@ -160,7 +161,16 @@ async function placeOrder(ring: Ring, company = shop.company, quantity = 1): Pro
 }
 
 const worker = () => ({ now: () => clock.now });
-const runJob = () => runNextJob(env.appDb, env.tgId, worker());
+const group = () => ({ id: env.tgId, db: env.appDb });
+const runJob = () => runNextJob(group(), worker());
+
+// Never called: compiled by the type check, which is the proof that a handler cannot reach past its company.
+export function aHandlerStaysInItsCompany(ctx: JobContext<unknown>, trigger: PaymentEvent) {
+  // @ts-expect-error the group's unfiltered handle is not on the context
+  void ctx.group;
+  // @ts-expect-error the company comes from the job
+  void ctx.payments.handleEvent({ ...trigger, tenantId: 'another-company' });
+}
 
 function event(orderId: string, type: PaymentEvent['type'], extra: Partial<PaymentEvent> = {}): PaymentEvent {
   return {
@@ -564,6 +574,89 @@ describe('R: resume', () => {
     expect(await ledger(orderId)).toEqual({ expiry: true, releases: 1 });
   });
 
+  it('a row held past the deadline is an ordinary retry each time, never a false dead job, and closes once free', async () => {
+    const ring = await stockedRing(2);
+    const orderId = await placeOrder(ring);
+    const kinds = {
+      payment_expiry: defineJobKind({ ...paymentExpiryKind, policy: { ...paymentExpiryKind.policy, deadlineMs: 100 } }),
+    };
+    const run = () => runNextJob(group(), { ...worker(), kinds, leaseMs: 1500 });
+    clock.now = after(WINDOW);
+
+    await env.ownerDb.transaction().execute(async (trx) => {
+      await trx.selectFrom('order_payment').select('order_id').where('order_id', '=', orderId).forUpdate().execute();
+      for (let round = 0; round <= MAX_OPEN_CLAIMS; round += 1) {
+        const started = Date.now();
+        expect(await run()).toMatchObject({ outcome: 'retry' });
+        expect(Date.now() - started).toBeLessThan(1000);
+        const job = await jobOf(orderId);
+        expect(job).toMatchObject({ status: 'pending', open_claims: 0, last_error: 'payment_busy' });
+        clock.now = job.run_at;
+      }
+    });
+
+    expect((await payment(orderId)).status).toBe('pending');
+    expect(await ledger(orderId)).toEqual({ expiry: false, releases: 0 });
+    expect(await run()).toMatchObject({ outcome: 'done' });
+    expect((await payment(orderId)).status).toBe('expired');
+    expect(await ledger(orderId)).toEqual({ expiry: true, releases: 1 });
+  });
+
+  it('a sweep gives up on a held row the same way, closing the others and writing nothing on that one', async () => {
+    const ring = await stockedRing(3);
+    const held = await placeOrder(ring);
+    const free = await placeOrder(ring);
+    clock.now = after(WINDOW + 1);
+    const deps = { ...shop.deps, lockWaitMs: 100 };
+
+    const failure = await env.ownerDb.transaction().execute(async (trx) => {
+      await trx.selectFrom('order_payment').select('order_id').where('order_id', '=', held).forUpdate().execute();
+      return sweepExpiredPayments(deps, shop.company).catch((err: unknown) => err);
+    });
+
+    expect(failure).toBeInstanceOf(ExpirySweepError);
+    expect(failure).toMatchObject({ closed: [free], failed: [held] });
+    expect(await ledger(held)).toEqual({ expiry: false, releases: 0 });
+  });
+
+  it('the wait is only for a close by our clock: a provider event still queues behind a held row', async () => {
+    const ring = await stockedRing(2);
+    const orderId = await placeOrder(ring);
+    const deps = { ...shop.deps, lockWaitMs: 1 };
+
+    const [outcome] = await queueOnPaymentRow(orderId, [() => handlePaymentEvent(deps, event(orderId, 'payment_succeeded'))]);
+
+    expect(outcome.status).toBe('paid');
+  });
+
+  it('west of UTC the job keeps the date it read and closes on time, whatever zone the process runs in', async () => {
+    const ring = await stockedRing(2);
+    const orderId = await placeOrder(ring);
+    const moved = after(WINDOW + 20 * MINUTE);
+    await env.appDb.updateTable('order_payment').set({ expires_at: moved }).where('order_id', '=', orderId).execute();
+    const stored = async () => {
+      const row = await sql<{ at: string }>`
+        SELECT to_char(run_at, 'YYYY-MM-DD"T"HH24:MI:SS') AS at FROM ${sql.id(env.schema, 'commerce_job')}
+         WHERE dedupe_key = ${`expiry:${orderId}`}
+      `.execute(env.ownerDb);
+      return row.rows[0].at;
+    };
+
+    vi.stubEnv('TZ', 'America/New_York');
+    try {
+      clock.now = after(WINDOW);
+      expect(await runJob()).toMatchObject({ outcome: 'rerun' });
+      expect(await stored()).toBe('2026-10-26T10:20:00');
+
+      clock.now = moved;
+      expect(await runJob()).toMatchObject({ outcome: 'done' });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    expect((await payment(orderId)).status).toBe('expired');
+    expect(await reserved(ring.item)).toBe(0);
+  });
+
   it('a date that moved: the job writes nothing and comes back at the new date', async () => {
     const ring = await stockedRing(2);
     const orderId = await placeOrder(ring);
@@ -708,6 +801,32 @@ describe('E: re-entry', () => {
     expect(await runJob()).toMatchObject({ outcome: 'dead' });
     expect(await jobOf(orderId)).toMatchObject({ status: 'dead', last_error: 'unknown_payment' });
     expect(await reserved(ring.item)).toBe(1);
+  });
+});
+
+describe('what cannot happen stays loud', () => {
+  it('an expiry already recorded on a pending payment is dead for a person, never done with the stock held', async () => {
+    const ring = await stockedRing(2);
+    const orderId = await placeOrder(ring);
+    await env.ownerDb
+      .insertInto('payment_event')
+      .values({ provider: 'demo', event_id: `expiry:${orderId}`, tenant_id: shop.company, order_id: orderId, event_type: 'checkout_expired' })
+      .execute();
+
+    clock.now = after(WINDOW);
+    expect(await runJob()).toMatchObject({ outcome: 'dead' });
+
+    expect(await jobOf(orderId)).toMatchObject({ status: 'dead', last_error: 'expiry_recorded_while_pending' });
+    expect((await payment(orderId)).status).toBe('pending');
+    expect(await reserved(ring.item)).toBe(1);
+  });
+
+  it('a repeated provider event on a settled payment is still a plain duplicate', async () => {
+    const ring = await stockedRing(2);
+    const orderId = await placeOrder(ring);
+    const paid = event(orderId, 'payment_succeeded');
+    await handlePaymentEvent(shop.deps, paid);
+    expect(await handlePaymentEvent(shop.deps, paid)).toMatchObject({ status: 'paid', duplicate: true });
   });
 });
 
