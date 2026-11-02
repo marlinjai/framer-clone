@@ -186,9 +186,13 @@ function probeEntry(kind: RowKind, id: string): Cell {
     case 'mathml-attribute':
       return probeElementAttribute(kind, id);
     case 'html-event-handler': {
+      // A stored string reaching the canvas would be the failure. Whether a stored action on
+      // the event runs there is asked in events.score.ts, on the mounted editor in the
+      // Interact tool, and its cell replaces this one in report.ts.
       const camel = `on${id[2].toUpperCase()}${id.slice(3)}`;
       const reached = [id, camel].some((prop) => openingTag(canvasMarkup('div', { [prop]: 'probe()' }), 'div')?.includes(`${id}=`));
-      return reached ? pass() : fail('blocked-event-handlers');
+      if (reached) throw new Error(`a stored ${id} string reached the canvas`);
+      return fail('blocked-event-handlers', 'no proof ran');
     }
     case 'svg-element':
     case 'mathml-element':

@@ -43,7 +43,11 @@ import {
 } from '@/lib/bindings/resolver/scope';
 import { defaultValuesAt } from '@/lib/components/frameInputs';
 import { useProductPageParams } from '@/lib/commerce/productPreview';
-import { surfaceBehaviour } from '@/lib/behaviour/surfaceBehaviour';
+import { surfaceBehaviour, type PreviewValues } from '@/lib/behaviour/surfaceBehaviour';
+import type { BehaviourProgram } from '@/lib/behaviour/program';
+import { useSurfaceRuntime } from '@/lib/behaviour/useSurfaceRuntime';
+import { startInteractFrame } from '@/lib/canvas/interactShim';
+import { pageForSitePath } from '@/lib/site/sitePath';
 import { SurfaceDomContext, useStableSurfaceDom } from '@/lib/behaviour/surfaceDom';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 
@@ -75,16 +79,77 @@ const FRAME_FALLBACK_HEIGHT = 600;
 
 const CANVAS_ROOTS = [VIEWPORT_ROOT, FLOATING_ROOT];
 
+/**
+ * A frame's content in Interact. The canvas takes text selection away (`select-none` on
+ * the ground), which would leave a field's text and a paragraph unselectable, so the page
+ * gets it back. Touch scrolling needs nothing here: a scroller inside the page is where a
+ * finger's pan stops looking at the canvas's `touch-action: none`.
+ */
+const INTERACT_CONTENT_STYLE: React.CSSProperties = { userSelect: 'text', WebkitUserSelect: 'text' };
+
 // Apart from ResponsivePageRenderer, so an edit redraws these and not every frame:
 // both read the page's expansion, which changes with any node.
 const PageFonts = observer(({ page, theme }: { page: PageModelType; theme: SiteTheme }) => <PageFontFaces roots={page.canvasFontRoots} theme={theme} />);
 
-/** The page's behaviour as Select shows it: the pass over the expansion, a preview standing for first values. */
+/**
+ * The page's behaviour on the canvas: the pass over the expansion. In Select a preview
+ * stands for first values; in Interact the page runs from its real first values.
+ */
 function useCanvasBehaviour(page: PageModelType) {
   const { editorUI } = useStore();
   const { root, floating } = page.expansion;
-  const preview = editorUI.previewState;
+  const preview = editorUI.interactOn ? NO_PREVIEW : editorUI.previewState;
   return { root: surfaceBehaviour(root, preview), floating: floating.map((element: ComponentNode) => surfaceBehaviour(element, preview)) };
+}
+
+const NO_PREVIEW: PreviewValues = {};
+
+/**
+ * The page running in one frame, in the Interact tool: the runtime with the program of the
+ * frame's tree, the page root's or a floating element's, and the frame's own handling of
+ * ids, links and forms (src/lib/canvas/interactShim.ts). Apart from the frame, so an edit
+ * restarts this and draws nothing else again. Each frame holds its own state.
+ */
+const InteractFrame = observer(({ frame, floatingId }: { frame: React.RefObject<HTMLDivElement | null>; floatingId?: string }) => {
+  const { editorUI } = useStore();
+  const page = editorUI.currentPage;
+  const live = editorUI.interactOn && !!page;
+  let program: BehaviourProgram | null = null;
+  if (live && page) {
+    const { root, floating } = page.expansion;
+    const tree = floatingId === undefined ? root : floating.find((element: ComponentNode) => element.id === floatingId);
+    program = tree ? surfaceBehaviour(tree).program : null;
+  }
+  useSurfaceRuntime(frame, program, 'canvas', live);
+  React.useEffect(() => {
+    const element = frame.current;
+    if (!element || !live) return;
+    const stop = startInteractFrame(element, {
+      sitePath: (path) => followSitePath(editorUI, path),
+      refused: (message) => editorUI.setEditorNotice({ kind: 'refused', message }),
+    });
+    return () => {
+      stop();
+      // The frame clips and has no scroller, but focus moving to an element below its
+      // edge scrolls it all the same. Leaving puts the page back at its top.
+      element.scrollTop = 0;
+      element.scrollLeft = 0;
+    };
+  }, [frame, live, editorUI]);
+  return null;
+});
+
+/** A link to a path of the site, followed in Interact: the editor opens that page, still in Interact. */
+function followSitePath(editorUI: ReturnType<typeof useStore>['editorUI'], path: string): void {
+  const project = editorUI.currentProject;
+  const target = project ? pageForSitePath(project, path) : null;
+  const page = target ? project?.getPage(target.pageId) : undefined;
+  if (!target || !page) {
+    editorUI.setEditorNotice({ kind: 'refused', message: `This site has no page at ${path}.` });
+    return;
+  }
+  if (target.product) editorUI.setPreviewProductHandle(target.handle);
+  editorUI.setCurrentPage(page);
 }
 
 // The expanded page, so a rule inside a definition shows on each placement of it, after
@@ -198,11 +263,14 @@ export const ViewportFrame = observer(({
   scope,
 }: ViewportFrameProps) => {
   const { editorUI } = useStore();
+  // In Interact the frame is the page's: nothing on it selects or moves.
+  const interact = editorUI.interactOn;
   const { onPointerDown } = useDragSource(
-    { kind: 'moveNode', nodeId: viewport.id },
+    interact ? null : { kind: 'moveNode', nodeId: viewport.id },
     viewport,
   );
   const frameRef = useRenderedFrameHeight(viewport);
+  const contentRef = React.useRef<HTMLDivElement>(null);
 
   const width = viewport.viewportWidth ?? FRAME_FALLBACK_WIDTH;
   const minHeight = viewport.viewportHeight ?? FRAME_FALLBACK_HEIGHT;
@@ -217,12 +285,12 @@ export const ViewportFrame = observer(({
       width={width}
       height="auto"
       visible={viewport.canvasVisible}
-      className="viewport-node cursor-grab hover:cursor-grab"
-      onClick={(e) => {
+      className={interact ? 'viewport-node' : 'viewport-node cursor-grab hover:cursor-grab'}
+      onClick={interact ? undefined : (e) => {
         e.stopPropagation();
         editorUI.setSelectedViewportNode(viewport);
       }}
-      onPointerDown={onPointerDown}
+      onPointerDown={interact ? undefined : onPointerDown}
     >
       {/*
         Outer box: the frame's chrome (background, shadow, rounded corners),
@@ -268,15 +336,20 @@ export const ViewportFrame = observer(({
           fixed positioned descendants so nothing paints outside the frame.
         */}
         <div
+          ref={contentRef}
           className={editorUI.frameDarkClass ? 'rounded-lg dark' : 'rounded-lg'}
-          style={viewportFrameContentStyle(minHeight)}
+          style={interact ? { ...viewportFrameContentStyle(minHeight), ...INTERACT_CONTENT_STYLE } : viewportFrameContentStyle(minHeight)}
           data-viewport-content-id={viewport.id}
           // The page box stands for the page: the theme's tokens, scheme and document
           // block land here, never on the frame's label or chrome (SurfaceThemeStyles).
           {...surfaceFrameAttributes('frame', editorUI.frameColorScheme)}
         >
+          <InteractFrame frame={contentRef} />
           {appComponentTree && (
             <ComponentRenderer
+              // A new run of Interact, or its end, draws the page afresh: nothing the page
+              // changed natively, such as a `details` opened, outlives it.
+              key={editorUI.interactEpoch}
               component={appComponentTree}
               breakpointId={viewport.breakpointId!}
               allBreakpoints={breakpoints}
@@ -337,10 +410,12 @@ const FloatingElement = observer(({
   scope,
 }: FloatingElementProps) => {
   const { editorUI } = useStore();
+  const interact = editorUI.interactOn;
+  const contentRef = React.useRef<HTMLDivElement>(null);
   // Locked floating elements are not dragged from the canvas (the Layers
-  // panel still moves them).
+  // panel still moves them), and in Interact nothing is.
   const { onPointerDown } = useDragSource(
-    element.canvasLocked ? null : { kind: 'moveNode', nodeId: element.id },
+    element.canvasLocked || interact ? null : { kind: 'moveNode', nodeId: element.id },
     element,
   );
 
@@ -355,14 +430,14 @@ const FloatingElement = observer(({
       width={parsePxDim(element.props?.style?.width) ?? FLOATING_FALLBACK_WIDTH}
       height={parsePxDim(element.props?.style?.height) ?? FLOATING_FALLBACK_HEIGHT}
       visible={element.canvasVisible}
-      locked={element.canvasLocked}
-      className="floating-element cursor-grab hover:cursor-grab"
-      onClick={(e) => {
+      locked={element.canvasLocked && !interact}
+      className={interact ? 'floating-element' : 'floating-element cursor-grab hover:cursor-grab'}
+      onClick={interact ? undefined : (e) => {
         e.stopPropagation();
         if (e.shiftKey) editorUI.toggleInSelection(element);
         else editorUI.selectComponent(element);
       }}
-      onPointerDown={onPointerDown}
+      onPointerDown={interact ? undefined : onPointerDown}
     >
       {/*
         data-floating-root-id marks this subtree as a drop container. The
@@ -371,13 +446,16 @@ const FloatingElement = observer(({
         falls through to the floating root id.
       */}
       <div
+        ref={contentRef}
         data-floating-root-id={element.id}
-        style={{ width: '100%', height: '100%' }}
+        style={interact ? { width: '100%', height: '100%', ...INTERACT_CONTENT_STYLE } : { width: '100%', height: '100%' }}
         // The tokens and the scheme, and never a page background (SurfaceThemeStyles).
         {...surfaceFrameAttributes('floating', editorUI.frameColorScheme)}
         className={editorUI.frameDarkClass ? 'dark' : undefined}
       >
+        <InteractFrame frame={contentRef} floatingId={element.id} />
         <ComponentRenderer
+          key={editorUI.interactEpoch}
           component={element}
           breakpointId=""
           allBreakpoints={breakpoints}

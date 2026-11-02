@@ -19,6 +19,9 @@ import { surfaceColorMode, surfaceColorScheme, surfaceDarkClass, type ColorSchem
 export enum EditorTool {
   GRAB = 'grab',
   SELECT = 'select',
+  // The page runs in each frame, with real pointer and focus, and nothing is selected or
+  // moved on the canvas (docs/plans/2026-11-02-behaviour-model.md, "Interact").
+  INTERACT = 'interact',
 }
 
 /**
@@ -168,6 +171,10 @@ const EditorUIStore = types.model('EditorUI', {
   // (src/lib/behaviour/surfaceBehaviour.ts). Replaced whole. Editor session only: never
   // saved, never in undo, and gone with the page, so a reload opens on the first values.
   previewState: {} as PreviewValues,
+  // Changes each time the Interact tool starts or ends. The canvas keys its frames' content
+  // on it, so whatever the page changed natively (a `details` opened, a dialog shown) is
+  // drawn afresh, and every run starts from first values. Editor session only.
+  interactEpoch: 0,
   // The preview shown over the editor (PreviewOverlay), from this store: no
   // navigation and no server round trip. The editor's own keyboard shortcuts
   // stand down while it is open. Editor session only.
@@ -239,6 +246,14 @@ const EditorUIStore = types.model('EditorUI', {
   /** The page the address names: a definition has no address, so a reload opens a real page. */
   get addressPageId(): string | undefined {
     return self.componentTrail[0]?.pageId ?? self.currentPage?.id;
+  },
+
+  /**
+   * True while the page runs on the canvas: the Interact tool, also while Space held in it
+   * pans for a moment, so the page keeps running under a pan.
+   */
+  get interactOn(): boolean {
+    return self.selectedTool === EditorTool.INTERACT || self.toolBeforeTemporaryGrab === EditorTool.INTERACT;
   },
 
   /** The name of the nearest page or definition to go back to. */
@@ -426,7 +441,8 @@ const EditorUIStore = types.model('EditorUI', {
    */
   revealInPreview(component: ComponentInstance) {
     const page = self.currentPage;
-    if (!page) return;
+    // The page runs in Interact, from its first values: a preview there would say otherwise.
+    if (!page || self.interactOn) return;
     const roots = [page.expansion.root, ...page.expansion.floating] as ComponentNode[];
     // A page holding no behaviour has nothing that hides: the pass hands its own tree back.
     if (roots.every(root => surfaceBehaviour(root).root === root)) return;
@@ -529,9 +545,23 @@ const EditorUIStore = types.model('EditorUI', {
   
   // Tool selection
   setSelectedTool(tool: EditorTool) {
+    const from = self.selectedTool as EditorTool;
+    // Space held in Interact still pans, and comes back to Interact: only a tool picked
+    // on purpose enters or leaves it.
+    const base = self.toolBeforeTemporaryGrab ?? from;
     self.selectedTool = tool;
     // Picking a tool while Space is held makes that tool stick on release.
     self.toolBeforeTemporaryGrab = undefined;
+    if ((tool === EditorTool.INTERACT) === (base === EditorTool.INTERACT)) return;
+    self.interactEpoch += 1;
+    if (tool === EditorTool.INTERACT) {
+      // The page starts from its first values, so a Select preview ends, notice and all.
+      this.clearPreviewState();
+      // Nothing is edited or offered on the canvas while it runs.
+      self.editingComponent = undefined;
+      self.phoneContextMenu = undefined;
+      self.phoneContextMenuHover = undefined;
+    }
   },
   
   // Panel visibility

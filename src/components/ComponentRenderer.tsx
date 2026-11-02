@@ -99,6 +99,8 @@ const NodeRenderer = observer(({ component, breakpointId, allBreakpoints, scope,
   const frameId = host?.frameId ?? breakpointId;
   const owner = placement ?? component;
   const editRef = React.useRef<HTMLElement | null>(null);
+  // In Interact the page runs here and the editor keeps its hands off: no handler, no lock.
+  const interact = editorUI.interactOn;
 
   // Focus + select-all when entering edit mode, as a fallback only: the
   // gesture that starts editing (double-click here, double-tap in Canvas)
@@ -131,12 +133,14 @@ const NodeRenderer = observer(({ component, breakpointId, allBreakpoints, scope,
   // Locked in the Layers panel (itself or an ancestor): not selectable or
   // draggable on the canvas. Pointer events pass through to the nearest
   // unlocked ancestor, which takes the click (src/lib/layers/layerActions.ts).
-  const isLocked = lockedByAncestor || !!owner.canvasLocked;
+  // In Interact the lock is lifted, so `pointer-events: none` does not swallow a button
+  // inside a placement or a locked layer.
+  const isLocked = !interact && (lockedByAncestor || !!owner.canvasLocked);
 
   // Hook must be called unconditionally. Pass null source when the component
   // is not movable; useDragSource returns a no-op handler in that case.
   const { onPointerDown } = useDragSource(
-    canMove && !isEditing && !isLocked ? { kind: 'moveNode', nodeId: owner.id } : null,
+    canMove && !isEditing && !isLocked && !interact ? { kind: 'moveNode', nodeId: owner.id } : null,
     owner,
   );
 
@@ -230,7 +234,8 @@ const NodeRenderer = observer(({ component, breakpointId, allBreakpoints, scope,
   // Page state as Select shows it: the behaviour pass's attributes on this node, under
   // the id the expansion gives it, which inside a placement is its path.
   const expandedId = placement ? host?.path : host ? pathId(host.path, component.id) : component.id;
-  const shown = withSurfaceDom(boundAttributes, (boundStyle ?? {}) as Record<string, any>, expandedId ? surfaceDom?.get(expandedId) : undefined, 'canvas');
+  // In Interact nothing is typed on the canvas, so a text binding shows, as in the preview.
+  const shown = withSurfaceDom(boundAttributes, (boundStyle ?? {}) as Record<string, any>, expandedId ? surfaceDom?.get(expandedId) : undefined, interact ? 'preview' : 'canvas');
   const resolvedAttributes = shown.attributes as Record<string, any>;
   const effectiveStyle = shown.style as Record<string, any>;
 
@@ -256,7 +261,11 @@ const NodeRenderer = observer(({ component, breakpointId, allBreakpoints, scope,
   // by `createComponentElement` (see the `identity` option below) so the
   // editor, headless preview, and static HTML paths share one source of
   // truth.
-  const finalProps: Record<string, unknown> = {
+  const finalProps: Record<string, unknown> = interact ? {
+    // The page as published: its own style, its own pointer, nothing of the editor's.
+    ...resolvedAttributes,
+    style: Object.keys(effectiveStyle).length ? effectiveStyle : undefined,
+  } : {
     ...resolvedAttributes,
     style: editorStyle,
     onClick: (e: React.MouseEvent) => {
@@ -295,14 +304,15 @@ const NodeRenderer = observer(({ component, breakpointId, allBreakpoints, scope,
     },
   };
 
-  if (isEditing && isTextEditable) {
+  // In Interact nothing is attached: the runtime and the browser own every press.
+  if (!interact && isEditing && isTextEditable) {
     // contenteditable host element.
     finalProps.contentEditable = 'true';
     finalProps.suppressContentEditableWarning = true;
     finalProps.ref = (el: HTMLElement | null) => { editRef.current = el; };
     finalProps.style = { ...editorStyle, ...EDITING_TEXT_STYLE };
     Object.assign(finalProps, textBoxProps(rawChildren as string, el => el.textContent ?? ''));
-  } else if (canMove) {
+  } else if (!interact && canMove) {
     // Attach the unified drag manager's pointer handler. Click is not
     // suppressed: below the threshold, the gesture never engages and the
     // native click event still fires to handle selection.
@@ -359,8 +369,9 @@ const NodeRenderer = observer(({ component, breakpointId, allBreakpoints, scope,
 const MissingPlacement = observer(({ component, breakpointId, lockedByAncestor = false }: ComponentRendererProps) => {
   const { editorUI } = useStore();
   const frameId = React.useContext(PlacementHostContext)?.frameId ?? breakpointId;
-  const isLocked = lockedByAncestor || !!component.canvasLocked;
-  const { onPointerDown } = useDragSource(component.hasParent && !isLocked ? { kind: 'moveNode', nodeId: component.id } : null, component);
+  const interact = editorUI.interactOn;
+  const isLocked = !interact && (lockedByAncestor || !!component.canvasLocked);
+  const { onPointerDown } = useDragSource(component.hasParent && !isLocked && !interact ? { kind: 'moveNode', nodeId: component.id } : null, component);
   if (!component.canvasVisible) return null;
   return (
     <div
@@ -368,8 +379,8 @@ const MissingPlacement = observer(({ component, breakpointId, lockedByAncestor =
       data-inner-component-id={component.id}
       {...{ [DATA_PLACEMENT_ROOT]: `${frameId}-${component.id}` }}
       style={{ border: '1px dashed orange', padding: 8, fontSize: 12, color: '#92400e', pointerEvents: isLocked ? 'none' : 'auto' }}
-      onClick={e => selectFromClick(e, editorUI, component, frameId, isLocked)}
-      onPointerDown={onPointerDown}
+      onClick={interact ? undefined : e => selectFromClick(e, editorUI, component, frameId, isLocked)}
+      onPointerDown={interact ? undefined : onPointerDown}
     >
       Missing component
     </div>
