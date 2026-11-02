@@ -24,7 +24,7 @@ import ComponentModel, {
 } from './ComponentModel';
 import { isStickyCta } from '@/lib/stickyCta/stickyCta';
 import { remapBehaviourRefs } from '@/lib/behaviour/format';
-import { PRESETS, type PresetKind, type PresetNode } from '@/lib/behaviour/presets';
+import { PRESETS, type PresetNode } from '@/lib/behaviour/presets';
 import { renewCopyIds } from '@/lib/renderer/idRefs';
 import {
   contentModelRefusal,
@@ -259,8 +259,11 @@ function presetSnapshot(node: PresetNode, parentId?: string): ComponentSnapshotI
   };
 }
 
-/** A fresh use of a preset. The seed is short because it starts every id the preset writes. */
-const presetSeed = (kind: PresetKind): string => `${kind}-${uuidv4().slice(0, 8)}`;
+/**
+ * A fresh use of a preset, named after its palette entry. The seed is short because it
+ * starts every id the preset writes, and lower case because it starts state ids.
+ */
+const presetSeed = (entryId: string): string => `${entryId.toLowerCase()}-${uuidv4().slice(0, 8)}`;
 
 /** The page's sticky call to action bar, if it has one (depth first). */
 function findStickyCta(node: ComponentInstance): ComponentInstance | undefined {
@@ -383,7 +386,7 @@ const PageModel = PageWithComponents
       return bar;
     }
 
-    const preset = entry.preset ? presetSnapshot(PRESETS[entry.preset](presetSeed(entry.preset))) : undefined;
+    const preset = entry.preset ? presetSnapshot(PRESETS[entry.preset](presetSeed(entry.id))) : undefined;
 
     if (preset && target.kind === 'floating') {
       const floating = ComponentModel.create({
