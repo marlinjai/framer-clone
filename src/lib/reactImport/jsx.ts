@@ -16,6 +16,7 @@ import { TEXT_NODE_TYPE, refusesBareText } from '@/lib/renderer/textNode';
 import { isVoidTag } from '@/lib/drag/voidTags';
 import { scanCssValue } from '@/lib/responsive/responsiveCss';
 import type { ParsedFile } from './atoms';
+import { helperImports, readClassValue, type HelperImport, type ReadClasses } from './classes';
 import type { ImportBudget } from './budget';
 import type { Claim, Ledger } from './ledger';
 import type { DetailKey, LineKind } from './report';
@@ -26,15 +27,15 @@ import { UNKNOWN, createEvaluator, fileScope, functionScope, holdsEffect, toPlai
  * reads one in any case, so `ACTION` or `ID` would pass every comparison here and still act on a page. Any
  * other spelling is refused. A stored name is never lower-cased, because SVG needs `viewBox`.
  */
-const KEYED_NAMES: ReadonlyMap<string, string> = new Map([
+export const KEYED_NAMES: ReadonlyMap<string, string> = new Map([
   ['style', 'style'], ['id', 'id'], ['class', 'class'], ['classname', 'className'], ['children', 'children'], ['key', 'key'], ['ref', 'ref'], ['action', 'action'],
 ]);
 
 /** Attributes that make a form of any element, or join one from anywhere. */
-const FORM_LOGIC_NAMES: ReadonlySet<string> = new Set(['formaction', 'formmethod', 'formtarget', 'formenctype', 'form']);
+export const FORM_LOGIC_NAMES: ReadonlySet<string> = new Set(['formaction', 'formmethod', 'formtarget', 'formenctype', 'form']);
 
 /** The name is the tag, and only a plain one can be: `a:b` and `a.b` are not elements. */
-const PLAIN_TAG = /^[a-z][a-zA-Z0-9-]*$/;
+export const PLAIN_TAG = /^[a-z][a-zA-Z0-9-]*$/;
 
 /** A loop, because a pattern anchored at the end retries from every space, and a line of them is quadratic. */
 function withoutTrailingSpaces(line: string): string {
@@ -95,7 +96,7 @@ const hasHost = (address: string): boolean => /^(?:[/\\]{2}|(?!data:)[a-z][a-z0-
  * Attributes whose address the browser fetches with no click. `href` on `a` and `area` only goes anywhere on
  * one. Every other `href` counts, so the next SVG element that loads one, as `feImage` does, is covered unlisted.
  */
-function fetchesElsewhere(name: string, tag: string, value: string): boolean {
+export function fetchesElsewhere(name: string, tag: string, value: string): boolean {
   if (name === 'srcset') return value.split(/[\s,]+/).some(hasHost);
   if (name === 'src' || name === 'poster' || name === 'data') return hasHost(value);
   return (name === 'href' || name === 'xlinkhref') && tag !== 'a' && tag !== 'area' && hasHost(value);
@@ -155,6 +156,29 @@ interface LayerContext {
   evaluator: Evaluator;
   /** Constants already claimed: a table read by every attribute is walked once. */
   claimedReads: Set<ts.VariableDeclaration>;
+  /** The class helpers this file imports, by local name. */
+  imports: ReadonlyMap<string, HelperImport>;
+  /** Class attributes, for layer 2, which claims them once it has converted them. */
+  classes: ClassAttribute[];
+  /** Each element's markup by node key, so a line about a node can name where it stands. */
+  elements: Map<string, ts.Node>;
+}
+
+/** One `className` as layer 2 receives it, with what to claim when it is done. */
+export interface ClassAttribute extends Pick<ReadClasses, 'classes' | 'merged' | 'dynamic' | 'helpers'> {
+  key: string;
+  /** The element around this one. */
+  parent?: string;
+  source: ts.SourceFile;
+  attribute: ts.JsxAttribute;
+}
+
+/** What layer 1 hands on: the tree, and what layer 2 still has to claim. */
+export interface ConvertedFile {
+  root?: ComponentNode;
+  source: ts.SourceFile;
+  classes: ClassAttribute[];
+  elements: ReadonlyMap<string, ts.Node>;
 }
 
 /** Where a piece of markup stands: its node key, its scope, and what the element around it decides. */
@@ -165,6 +189,8 @@ interface Place {
   parentTag: string;
   /** Elements above this one, in the output: inlining multiplies what the source's own depth allows. */
   depth: number;
+  /** The node key of the element around this one. */
+  parentKey?: string;
 }
 
 const childKey = (parent: string, index: number) => `${parent}-${index}`;
@@ -205,7 +231,6 @@ function readAttribute({ evaluator, budget }: LayerContext, attribute: ts.JsxAtt
   if (keyed !== undefined && keyed !== name) return { claim: left('refused-attribute', 'refusedAttribute', key) };
   if (name === 'key') return { claim: converted('attribute', 'key', key) };
   if (name === 'ref') return { claim: left('attribute', 'ref', key) };
-  if (name === 'className' || name === 'class') return { claim: left('class', 'classPending', key) };
   if (/^on[A-Z]/.test(name)) return { claim: left('handler', 'handler', key) };
   if (name === 'children') return { claim: left('attribute', 'childrenAttribute', key) };
   if (isPlatformAttribute(name)) return { claim: left('refused-attribute', 'platformAttribute', key) };
@@ -248,12 +273,62 @@ function claimReads({ file, ledger, claimedReads }: LayerContext, reads: Readonl
   }
 }
 
-function convertAttributes(context: LayerContext, open: ts.JsxOpeningLikeElement, tag: string, key: string, scope: Scope): Record<string, unknown> {
+/** Whether an attribute is the element's classes, in the one spelling React reads, or the HTML one. */
+const isClassAttribute = (attribute: ts.JsxAttribute): boolean =>
+  ts.isIdentifier(attribute.name) && (attribute.name.text === 'className' || attribute.name.text === 'class');
+
+/**
+ * A `className` read as data and handed to layer 2, which claims it once it knows what came of it. A value
+ * with no classes in it renders nothing, and is claimed here.
+ */
+function readClassAttribute(context: LayerContext, attribute: ts.JsxAttribute, place: Place): void {
+  const { file, ledger, evaluator, budget } = context;
+  const { key, scope, parentKey } = place;
+  const init = attribute.initializer;
+  budget.chargeEvaluated(64);
+  let read: ReadClasses;
+  if (!init) {
+    // `<p className>` is `true`, which React does not write.
+    ledger.claimSubtree(file.source, attribute, converted('class', 'emptyValue', key));
+    return;
+  }
+  if (ts.isStringLiteral(init)) {
+    const text = decodeEntities(init.text);
+    if (text === undefined) {
+      ledger.claimSubtree(file.source, attribute, left('class', 'entity', key));
+      return;
+    }
+    read = { classes: text.split(/\s+/).filter(Boolean), merged: false, dynamic: false, reads: new Set(), helpers: new Set() };
+  } else if (ts.isJsxExpression(init) && init.expression) {
+    read = readClassValue(init.expression, scope, evaluator, context.imports);
+  } else {
+    ledger.claimSubtree(file.source, attribute, left('class-unknown', 'classDynamic', key));
+    return;
+  }
+  budget.chargeEvaluated(read.classes.reduce((sum, token) => sum + token.length, 0));
+  if (read.classes.length === 0 && !read.dynamic) {
+    claimReads(context, read.reads);
+    ledger.claimSubtree(file.source, attribute, converted('class', 'emptyValue', key));
+    return;
+  }
+  claimReads(context, read.reads);
+  context.classes.push({ key, ...(parentKey === undefined ? {} : { parent: parentKey }), source: file.source, attribute, classes: read.classes, merged: read.merged, dynamic: read.dynamic, helpers: read.helpers });
+}
+
+function convertAttributes(context: LayerContext, open: ts.JsxOpeningLikeElement, tag: string, place: Place): Record<string, unknown> {
   const { file, ledger } = context;
+  const { key, scope } = place;
   const props: Record<string, unknown> = {};
+  // React keeps the last of two class attributes, so an earlier one changes nothing.
+  const last = open.attributes.properties.filter((each): each is ts.JsxAttribute => ts.isJsxAttribute(each) && isClassAttribute(each)).at(-1);
   for (const attribute of open.attributes.properties) {
     if (!ts.isJsxAttribute(attribute)) {
       ledger.claimSubtree(file.source, attribute, left('spread', 'spread', key));
+      continue;
+    }
+    if (isClassAttribute(attribute)) {
+      if (attribute === last) readClassAttribute(context, attribute, place);
+      else ledger.claimSubtree(file.source, attribute, converted('class', 'classReplaced', key));
       continue;
     }
     const { store, claim, reads } = readAttribute(context, attribute, tag, key, scope);
@@ -361,7 +436,8 @@ function convertElement(context: LayerContext, element: ts.JsxElement | ts.JsxSe
     return;
   }
   ledger.claim(file.source, [element, open.tagName], converted('element', 'element', key));
-  const props = convertAttributes(context, open, tag, key, scope);
+  context.elements.set(key, element);
+  const props = convertAttributes(context, open, tag, place);
   const node: ComponentNode = { id: key, type: tag, props: props as ComponentNode['props'] };
   const contents: Content[] = [];
   if (ts.isJsxElement(element)) {
@@ -370,7 +446,7 @@ function convertElement(context: LayerContext, element: ts.JsxElement | ts.JsxSe
       for (const child of element.children) ledger.claimSubtree(file.source, child, left('expression', 'voidChildren', key));
     } else {
       const lower = tag.toLowerCase();
-      const inner = { key, scope, foreign: contentBelow(lower, foreign), parentTag: tag, depth: depth + 1 };
+      const inner = { key, scope, foreign: contentBelow(lower, foreign), parentTag: tag, depth: depth + 1, parentKey: key };
       convertChildren(context, element.children, inner, contents);
     }
   }
@@ -546,9 +622,17 @@ const ROOT_KEY = 'n';
 /** The key of a result's first node, for a line about the whole of it. */
 export const ROOT_NODE_KEY = childKey(ROOT_KEY, 0);
 
-/** Layer 1 over one file: its markup as nodes, each construct claimed or left in the ledger. */
-export function convertFile(file: ParsedFile, ledger: Ledger, budget: ImportBudget): ComponentNode | undefined {
-  const context: LayerContext = { file, ledger, budget, evaluator: createEvaluator(budget), claimedReads: new Set() };
+/** Layer 1 over one file: its markup as nodes, each construct claimed or left in the ledger, and the classes for layer 2. */
+export function convertFile(file: ParsedFile, ledger: Ledger, budget: ImportBudget): ConvertedFile {
+  const context: LayerContext = {
+    file, ledger, budget, evaluator: createEvaluator(budget), claimedReads: new Set(), imports: helperImports(file.source), classes: [], elements: new Map(),
+  };
+  const root = convertTree(context);
+  return { ...(root ? { root } : {}), source: file.source, classes: context.classes, elements: context.elements };
+}
+
+function convertTree(context: LayerContext): ComponentNode | undefined {
+  const { file, ledger, budget } = context;
   const { source } = file;
   const scope = fileScope(source);
   const contents: Content[] = [];

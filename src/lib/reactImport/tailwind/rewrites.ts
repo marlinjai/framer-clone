@@ -143,6 +143,34 @@ export function encodeClass(text: string): string {
   return out;
 }
 
+/** The source class an encoded name stands for, the inverse of `encodeClass`. A name it cannot read comes back as it is. */
+export function decodeClass(encoded: string): string {
+  let out = '';
+  for (let i = 0; i < encoded.length; i += 1) {
+    const ch = encoded[i];
+    if (ch !== '_') {
+      out += ch;
+      continue;
+    }
+    const next = encoded[i + 1];
+    if (next === '_') {
+      out += '_';
+      i += 1;
+    } else if (next === 's') {
+      out += '/';
+      i += 1;
+    } else if (next === 'x') {
+      const end = encoded.indexOf('_', i + 2);
+      const code = end > i + 2 ? Number.parseInt(encoded.slice(i + 2, end), 16) : Number.NaN;
+      if (Number.isInteger(code) && code >= 0 && code <= 0x10ffff) {
+        out += String.fromCodePoint(code);
+        i = end;
+      } else out += ch;
+    } else out += ch;
+  }
+  return out;
+}
+
 /** A class a selector names, as an element carries it, or null when the name is not one a selector may use. */
 export function keptClassName(name: string): string | null {
   return /^[A-Za-z0-9_/-]+$/.test(name) ? `${KEPT_CLASS_PREFIX}${encodeClass(name)}` : null;

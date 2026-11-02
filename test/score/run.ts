@@ -36,6 +36,8 @@ console.log(`  corpus    ${score.corpus.passed} of ${score.corpus.total} fixture
 console.log(`  busbasis  ${score.busbasis.passed} of ${score.busbasis.total} real page types pass (uncaptured types count as not passing)`);
 const { nodesToJsxToNodes: a, jsxToNodesToRender: b } = score.roundTrip;
 console.log(`  roundtrip ${a.pass} of ${a.total} nodes to nodes, ${b.pass} of ${b.total} JSX to render`);
+const imp = score.import;
+console.log(`  import    ${imp.parityPassing.length} of ${imp.runs.length} runs pass, honesty failures ${imp.honestyFailures}, conservation failures ${imp.conservationFailures}`);
 console.log(`  took ${score.durationSeconds} seconds`);
 
 const drops = checkRatchet(score);
