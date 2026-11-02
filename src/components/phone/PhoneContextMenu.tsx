@@ -174,7 +174,8 @@ const PhoneContextMenu = observer(({ editorUI }: { editorUI: EditorUIType }) => 
   if (!open || !component || !page || !point) return null;
 
   const history = getHistoryStore();
-  const items = contextMenuItemsFor(component, page, !!editorUI.copiedStyle && Object.keys(editorUI.copiedStyle).length > 0);
+  // Paste style writes Normal, so a state does not offer it.
+  const items = contextMenuItemsFor(component, page, !editorUI.activeRule && !!editorUI.copiedStyle && Object.keys(editorUI.copiedStyle).length > 0);
   const rect = screenRectFor(component, breakpointId);
   const w = typeof window !== 'undefined' ? window.innerWidth : 0;
   const h = typeof window !== 'undefined' ? window.innerHeight : 0;

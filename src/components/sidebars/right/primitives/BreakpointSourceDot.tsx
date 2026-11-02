@@ -20,6 +20,23 @@ export function BreakpointSourceDot({ source }: { source?: BreakpointSourceInfo 
   if (!source) return null;
   const position = 'absolute -left-[11px] top-1/2 flex h-3 w-3 -translate-y-1/2 items-center justify-center rounded-full';
 
+  // In a state the caption beside it says this in words, and is the reset.
+  if (source.kind === 'state-own') {
+    return (
+      <span data-testid="breakpoint-source" data-source="state-own" className={position}>
+        <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-brand" />
+      </span>
+    );
+  }
+
+  if (source.kind === 'state-larger' || source.kind === 'state-inherited') {
+    return (
+      <span data-testid="breakpoint-source" data-source={source.kind} className={position}>
+        <span aria-hidden className="h-1.5 w-1.5 rounded-full border border-muted-foreground/60" />
+      </span>
+    );
+  }
+
   if (source.kind === 'own') {
     const tooltip = `Set on ${source.breakpointLabel}, click to reset to ${source.resetToLabel}`;
     return (
@@ -51,4 +68,54 @@ export function BreakpointSourceDot({ source }: { source?: BreakpointSourceInfo 
       <span className="sr-only">from {source.fromLabel}</span>
     </span>
   );
+}
+
+/** Dims a row's field while its value is another layer's, until the person is in it. */
+export const STATE_INHERITED_FIELD = 'opacity-55 transition-opacity duration-100 focus-within:opacity-100';
+
+/**
+ * Where a row's value comes from while a state is edited, in words, because a phone
+ * has no tooltip: "set in Hover" (a button: the reset) or "from Normal". Nothing in
+ * Normal, where the dot alone does this job.
+ */
+export function StateSourceCaption({ source, className }: { source?: BreakpointSourceInfo; className?: string }) {
+  if (!source) return null;
+  const text = 'block max-w-full truncate text-[10px] leading-[12px]';
+  if (source.kind === 'state-own') {
+    const tooltip = `Set in ${source.stateLabel}, click to remove`;
+    return (
+      <button
+        type="button"
+        onClick={source.onReset}
+        title={tooltip}
+        aria-label={tooltip}
+        data-testid="state-source"
+        data-source="own"
+        // The hit area reaches past the 12px line, which is too small for a finger.
+        className={cn(
+          text,
+          'relative cursor-pointer overflow-visible text-brand after:absolute after:-inset-x-1 after:-inset-y-2 hover:underline',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand',
+          className,
+        )}
+      >
+        set in {source.stateLabel}
+      </button>
+    );
+  }
+  if (source.kind === 'state-larger') {
+    return (
+      <span data-testid="state-source" data-source="larger" className={cn(text, 'text-muted-foreground', className)}>
+        {source.stateLabel}, {source.fromLabel}
+      </span>
+    );
+  }
+  if (source.kind === 'state-inherited') {
+    return (
+      <span data-testid="state-source" data-source="inherited" className={cn(text, 'text-muted-foreground', className)}>
+        from {source.fromLabel}
+      </span>
+    );
+  }
+  return null;
 }

@@ -272,7 +272,9 @@ const QuickToolbar = observer(({ editorUI, hidden = false, onMore }: QuickToolba
     !multi &&
     editorUI.selectedTool === EditorTool.SELECT &&
     !editorUI.editingComponent &&
-    !editorUI.phoneContextMenu;
+    !editorUI.phoneContextMenu &&
+    // Its edits write Normal, so a state hides it.
+    !editorUI.activeRule;
 
   const [panel, setPanel] = React.useState<Panel>(null);
   const wrapperRef = React.useRef<HTMLDivElement>(null);

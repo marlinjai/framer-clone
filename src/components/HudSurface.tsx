@@ -946,7 +946,9 @@ const HudSurface = observer(() => {
   // While a text is edited inline, the handles step aside: their touch hit
   // areas (44px, see globals.css) would cover a small text, so a tap meant to
   // move the caret would start a resize instead.
-  const editingText = !!editorUI.editingComponent;
+  // So do they in a state: a handle writes Normal, and a drag must not silently edit
+  // the wrong state. The badge says why they are gone.
+  const handlesAside = !!editorUI.editingComponent || !!editorUI.activeRule;
 
   return (
     <div className="fixed inset-0 pointer-events-none" style={{ zIndex: 10 }}>
@@ -959,7 +961,7 @@ const HudSurface = observer(() => {
       >
         {/* Selection / resize handles. pointer-events: auto so they receive the
             mousedown even though the parent overlay is pointer-events-none. */}
-        <div className="absolute inset-0 pointer-events-none" style={editingText ? { display: 'none' } : undefined}>
+        <div className="absolute inset-0 pointer-events-none" style={handlesAside ? { display: 'none' } : undefined}>
           <div ref={resizeHandlesRef} className="absolute inset-0 pointer-events-none" data-testid="resize-handles">
             {HANDLE_DIRECTIONS.map(({ dir, className, cursor }) => (
               <div
@@ -978,9 +980,20 @@ const HudSurface = observer(() => {
         {/* Effect badge: the canvas shows the final state, this says an effect is set. */}
         <EffectBadge />
 
+        {/* The state shown on the canvas and edited in the panel. */}
+        {editorUI.activeRuleLabel ? (
+          <div
+            data-testid="state-badge"
+            title={`Showing and editing ${editorUI.activeRuleLabel}. The handles come back on Normal.`}
+            className="absolute -top-6 right-0 max-w-[160px] truncate rounded bg-brand px-1.5 py-0.5 text-[10px] font-medium text-white shadow-sm"
+          >
+            {editorUI.activeRuleLabel}
+          </div>
+        ) : null}
+
         {/* Border-radius corner dots. Hidden by default; updateOverlayPosition
             toggles the wrapper's display based on selection kind and overlay size. */}
-        <div className="absolute inset-0 pointer-events-none" style={editingText ? { display: 'none' } : undefined}>
+        <div className="absolute inset-0 pointer-events-none" style={handlesAside ? { display: 'none' } : undefined}>
           <div
             ref={radiusHandlesRef}
             className="absolute inset-0 pointer-events-none"

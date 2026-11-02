@@ -10,7 +10,7 @@ import {
   PropertySelect,
   ToggleIconGroup,
 } from '../primitives';
-import { styleSource } from '../breakpointSource';
+import { useStyleTarget } from '../useStyleTarget';
 import { FontFamilySelect } from '../primitives/FontFamilySelect';
 
 const FONT_WEIGHT_OPTIONS = [
@@ -31,10 +31,8 @@ interface TypographySectionProps {
 }
 
 export const TypographySection = observer(({ component, breakpointId }: TypographySectionProps) => {
-  const getStyleValue = (prop: string) => component.getResponsiveStyleValue(prop, breakpointId);
-  const setStyleValue = (prop: string, value: string) => component.updateResponsiveStyle(prop, value, breakpointId);
-  // Where each row's value comes from on this breakpoint (the dot before the label).
-  const src = (...props: string[]) => styleSource(component, breakpointId, props);
+  // The state being edited, or Normal: values, writes and each row's source.
+  const { getStyleValue, setStyleValue, src } = useStyleTarget(component, breakpointId);
 
   return (
     <CollapsibleSection

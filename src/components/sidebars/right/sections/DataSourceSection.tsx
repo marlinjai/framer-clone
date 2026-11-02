@@ -74,7 +74,7 @@ export const DataSourceSection = observer(({ component }: DataSourceSectionProps
   if (slotEntries.length === 0 && !showQueryBuilder) return null;
 
   return (
-    <CollapsibleSection title="Data" icon={<Database size={14} />}>
+    <CollapsibleSection title="Data" icon={<Database size={14} />} normalOnly>
       {slotEntries.map(([slot, meta]) => (
         <div key={slot} className="flex min-w-0 flex-col gap-1.5">
           {/* Stacked label: the field shares its row with the bind button. */}

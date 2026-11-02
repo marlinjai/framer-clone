@@ -4,7 +4,8 @@
 // The general editor at the end of the properties panel: the element's tag, then
 // any CSS property and any attribute the sections above have no control for, and
 // any value their controls cannot hold (ownedKeys.ts), so nothing a page can hold
-// needs a hand-written control first.
+// needs a hand-written control first. CSS follows the state being edited, through
+// the same hook as every style section; the tag and attributes are Normal's alone.
 // Styles are per breakpoint like every style row, with the same source dot and
 // reset. Fields are native (select, input with a datalist), so they keep the
 // keyboard and screen-reader behaviour of the rest of the panel. Typing only
@@ -38,9 +39,10 @@ import {
   tagRefusal,
 } from '@/lib/styles/customEditor';
 import { cn } from '@/lib/utils';
-import { CollapsibleSection, FIELD_CONTROL, FIELD_LABEL, PropertyRow, TextInput } from '../primitives';
+import { CollapsibleSection, FIELD_CONTROL, FIELD_LABEL, NormalOnly, PropertyRow, TextInput } from '../primitives';
 import { useFieldIdentity } from '../primitives/field';
-import { breakpointLabel, styleSource, type BreakpointSourceInfo } from '../breakpointSource';
+import type { BreakpointSourceInfo } from '../breakpointSource';
+import { useStyleTarget } from '../useStyleTarget';
 import { controlHolds, isPartlyOwned, ownedProps, ownedStyleKeys } from '../ownedKeys';
 import { getComponentCategory, type ComponentCategory } from '../sectionConfig';
 
@@ -144,7 +146,8 @@ interface ValueRowProps {
   source?: BreakpointSourceInfo;
   /** Stores the value, or returns why it was refused. */
   onCommit: (text: string) => string | null;
-  onRemove: () => void;
+  /** Absent where there is nothing here to remove: an inherited value in a state. */
+  onRemove?: () => void;
   removeLabel: string;
 }
 
@@ -180,9 +183,11 @@ function ValueRow({ name, value, placeholder, note, source, onCommit, onRemove, 
             }
           }}
         />
-        <button type="button" aria-label={removeLabel} title={removeLabel} onClick={onRemove} className={ICON_BUTTON}>
-          <X size={12} aria-hidden />
-        </button>
+        {onRemove ? (
+          <button type="button" aria-label={removeLabel} title={removeLabel} onClick={onRemove} className={ICON_BUTTON}>
+            <X size={12} aria-hidden />
+          </button>
+        ) : null}
       </div>
       {error ? (
         <p role="alert" className={cn(ERROR, 'mt-1.5')}>{error}</p>
@@ -205,7 +210,8 @@ interface AddFormProps {
   allowsEmptyValue?: boolean;
   /** The name alone is enough: Enter there adds it without a value. */
   needsNoValue?: (name: string) => boolean;
-  onAdd: (name: string, value: string) => void;
+  /** Stores it. A reason comes back when it was refused after all, and the form keeps what was typed. */
+  onAdd: (name: string, value: string) => string | null | void;
 }
 
 function AddForm({
@@ -233,7 +239,11 @@ function AddForm({
       (value.trim() === '' && !allowsEmptyValue ? 'Type a value.' : valueError(name, value));
     setError(problem);
     if (problem) return;
-    onAdd(name, value);
+    const refusal = onAdd(name, value);
+    if (refusal) {
+      setError(refusal);
+      return;
+    }
     setName('');
     setValue('');
     focusField(nameField.current);
@@ -304,9 +314,13 @@ function AddForm({
 
 const CssEditor = observer(({ component, breakpointId, category }: CustomSectionProps & { category: ComponentCategory }) => {
   const owned = useMemo(() => ownedStyleKeys(category), [category]);
-  const stored = ((component.props as Record<string, unknown>).style ?? {}) as Record<string, unknown>;
-  const valueOf = (key: string) => String(component.getResponsiveStyleValue(key, breakpointId) ?? '');
-  const keys = Object.keys(stored).filter((key) => !owned.has(key) || (isPartlyOwned(key) && !controlHolds(key, valueOf(key))));
+  const target = useStyleTarget(component, breakpointId);
+  const { stateLabel } = target;
+  const stored = target.storedKeys();
+  const normal = Object.keys(((component.props as Record<string, unknown>).style ?? {}) as Record<string, unknown>);
+  const valueOf = (key: string) => String(target.getStyleValue(key) ?? '');
+  // In a state, what Normal holds shows too, greyed, so it can be given a value here.
+  const keys = [...new Set([...normal, ...stored])].filter((key) => !owned.has(key) || (isPartlyOwned(key) && !controlHolds(key, valueOf(key))));
   const suggestions = useMemo(() => cssPropertySuggestions.filter((name) => !owned.has(cssStyleKey(name))), [owned]);
 
   const nameError = (typed: string) => {
@@ -337,14 +351,10 @@ const CssEditor = observer(({ component, breakpointId, category }: CustomSection
             value={value}
             placeholder="Not set here"
             note={isSupportedDeclaration(name, value) ? null : `This browser ignores this value for ${name}.`}
-            source={styleSource(component, breakpointId, [key])}
-            removeLabel={`Remove ${name} on every breakpoint`}
-            onRemove={() => component.removeStyleProperty(key)}
-            onCommit={(text) => {
-              const problem = cssValueError(key, text);
-              if (!problem) component.updateResponsiveStyle(key, text.trim(), breakpointId);
-              return problem;
-            }}
+            source={target.src(key)}
+            removeLabel={stateLabel ? `Remove ${name} from ${stateLabel} on every breakpoint` : `Remove ${name} on every breakpoint`}
+            onRemove={stored.includes(key) ? () => target.removeStyle(key) : undefined}
+            onCommit={(text) => cssValueError(key, text) ?? target.setStyleValue(key, text.trim())}
           />
         );
       })}
@@ -355,9 +365,7 @@ const CssEditor = observer(({ component, breakpointId, category }: CustomSection
         suggestions={suggestions}
         nameError={nameError}
         valueError={valueError}
-        onAdd={(typed, value) => {
-          component.updateResponsiveStyle(cssStyleKey(cssPropertySpelling(typed)), value.trim(), breakpointId);
-        }}
+        onAdd={(typed, value) => target.setStyleValue(cssStyleKey(cssPropertySpelling(typed)), value.trim())}
       />
     </div>
   );
@@ -427,17 +435,23 @@ AttributeEditor.displayName = 'AttributeEditor';
 
 export const CustomSection = observer(({ component, breakpointId }: CustomSectionProps) => {
   const category = getComponentCategory(component);
+  const { badge, stateLabel } = useStyleTarget(component, breakpointId);
   return (
-    <CollapsibleSection title="Custom" icon={<Braces size={14} />} badge={breakpointLabel(component, breakpointId)}>
+    <CollapsibleSection title="Custom" icon={<Braces size={14} />} badge={badge}>
       {/* Keyed by node, so a draft or a refusal never carries over to another element. */}
       <React.Fragment key={component.id}>
         {canChooseTag(component, category) ? (
-          <PropertyRow label="Tag" hint="The HTML element this node renders as">
-            <TagPicker component={component} />
-          </PropertyRow>
+          <NormalOnly>
+            <PropertyRow label="Tag" hint="The HTML element this node renders as">
+              <TagPicker component={component} />
+            </PropertyRow>
+          </NormalOnly>
         ) : null}
-        <CssEditor component={component} breakpointId={breakpointId} category={category} />
-        <AttributeEditor component={component} category={category} />
+        {/* And by state: a half-typed value in Hover is not one for Pressed. */}
+        <CssEditor key={stateLabel ?? 'Normal'} component={component} breakpointId={breakpointId} category={category} />
+        <NormalOnly>
+          <AttributeEditor component={component} category={category} />
+        </NormalOnly>
       </React.Fragment>
     </CollapsibleSection>
   );
