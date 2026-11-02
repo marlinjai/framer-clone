@@ -18,6 +18,9 @@ import 'server-only';
 //   5. issue, with the PDF rendered, checked and stored before the commit (render/store.ts), numbered in the
 //      company's series.
 //
+// Before any of it, a buyer the shop cannot invoice correctly (outside Germany, or a VAT id that is not German) is
+// refused with BUYER_NOT_INVOICEABLE, the rule the pay route applies before money moves (invoiceable.ts).
+//
 // Idempotent: an issued receipt for the order is answered as it is; a draft left by an interrupted attempt is
 // deleted and built again (019_books_draft_delete). Every failure throws (the caller keeps the reason on the
 // payment); nothing is half issued.
@@ -35,6 +38,7 @@ import { requireSettings } from '@/server/books/settings';
 import { lineTitle } from '@/lib/commerce/lineTitle';
 import type { RecipientContact } from '@/server/books/snapshots';
 import { readBuyer, type Buyer } from './buyer';
+import { buyerRefusal } from './invoiceable';
 
 /** The actor recorded on the receipt's events: the shop, not a person. */
 export const SHOP_ACTOR = 'shop-checkout';
@@ -43,7 +47,17 @@ const TAX_CLASSES = new Set(['standard', 'reduced', 'zero']);
 
 /** A receipt that cannot be made from this order (the reason is a stable code, no personal data). */
 export class ReceiptError extends Error {
-  constructor(readonly code: 'ORDER_NOT_FOUND' | 'BUYER_MISSING' | 'NOT_PAID' | 'TOTALS_MISMATCH' | 'CUSTOMER_ARCHIVED' | 'CONTACT_ARCHIVED' | 'TAX_IDENTITY_MISMATCH') {
+  constructor(
+    readonly code:
+      | 'ORDER_NOT_FOUND'
+      | 'BUYER_MISSING'
+      | 'BUYER_NOT_INVOICEABLE'
+      | 'NOT_PAID'
+      | 'TOTALS_MISMATCH'
+      | 'CUSTOMER_ARCHIVED'
+      | 'CONTACT_ARCHIVED'
+      | 'TAX_IDENTITY_MISMATCH',
+  ) {
     super(code);
     this.name = 'ReceiptError';
   }
@@ -177,6 +191,11 @@ export async function ensureReceipt(
 
   const buyer = readBuyer(payment.buyer as Record<string, unknown>);
   if (!buyer) throw new ReceiptError('BUYER_MISSING');
+  // The pay route refuses such a buyer before money moves (invoiceable.ts), but only since 2026-11-01: an order paid
+  // before that, or by any caller that skipped the route, would get a false invoice (an Austrian business: reverse
+  // charge with no VAT on a payment that included German VAT). Refused here, before anything is written, for every
+  // caller.
+  if (buyerRefusal(buyer)) throw new ReceiptError('BUYER_NOT_INVOICEABLE');
   // The Books must be set up for the company before anything is written (SETTINGS_MISSING otherwise).
   await requireSettings(db, scope);
   const { customerId, contactId } = await customerFor(scope, contactBook, buyer);

@@ -1155,3 +1155,12 @@ checked against the code and hold. Findings about Stripe behaviour are adopted a
   `TAX_CASE_UNSUPPORTED`, `BUYER_MISSING`, `ORDER_NOT_FOUND`, `REVERSE_CHARGE_NOT_ALLOWED`, `INVALID_INPUT` and a payment row that does not exist, since a retry can only fail the same way; an archived contact
   or customer retries, because a person restoring it heals it with no button to press. `TAX_PROFILE_MISMATCH` joins the list in B11. A `NOT_PAID` from the Books ends the
   job `done`. Its deadline is 8 minutes: the signal reaches nothing in `ensureReceipt`, so it only has to sit under the lease.
+- 2026-11-02: B4 after the money review (`~/software-dev/decision-pages/2026-11-02-money-review.md`). A paid order without an invoice is no longer silent:
+  `payment/unissuedReceipts.ts` lists the company's own on the payments page (`GET /api/payments/receipts`) with the saved reason and whether the job still retries
+  or has stopped, and the watchdog answer gains `receiptsUnissued` (paid, no receipt, no live job) and `receipts`, which reads `"ok"` or `"unissued"` for an Uptime
+  Kuma keyword monitor on `"receipts":"ok"`. Failures log the stable prefix `[receipt-unissued]`. `ensureReceipt` itself now refuses a buyer the shop cannot invoice
+  (`BUYER_NOT_INVOICEABLE`, the pay route's rule from `invoiceable.ts`), so an order paid before that rule existed gets a dead job, not a false reverse charge
+  invoice; `NO_BILLABLE_LINES`, `INVALID_LINE` and `RECIPIENT_INCOMPLETE` are refused too. **Needs Marlin's install line:** the watchdog timer
+  (`deploy/commerce/framer-clone-commerce-jobs.{service,timer}` on `coolify-shared-host`) is still not installed, and the keyword monitor needs adding in Uptime Kuma;
+  until both exist, the payments page is the only place a stopped receipt shows. The production check of 2026-11-02 found 5 paid orders, all with receipts, none
+  foreign, none demo, so the receipt backfill writes no job on deploy.

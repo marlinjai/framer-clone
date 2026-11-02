@@ -12,7 +12,17 @@ vi.mock('@/server/commerce/jobs/runtime', () => ({ runCommerceWatchdogPass }));
 import { POST } from '../route';
 
 const TOKEN = 'y'.repeat(40);
-const HEALTHY = { tenantGroups: 2, skipped: 1, ran: 3, failed: 0, deadUnacknowledged: 0, findingsOpen: 0, oldestDueSeconds: 0 };
+const HEALTHY = {
+  tenantGroups: 2,
+  skipped: 1,
+  ran: 3,
+  failed: 0,
+  deadUnacknowledged: 0,
+  findingsOpen: 0,
+  oldestDueSeconds: 0,
+  receiptsUnissued: 0,
+  receipts: 'ok',
+};
 
 function req(opts: { host?: string; auth?: string | null } = {}): Request {
   const headers: Record<string, string> = { host: opts.host ?? 'app.lumitra.co' };
@@ -48,6 +58,18 @@ describe('POST /api/internal/commerce/jobs/run', () => {
     vi.stubEnv('CUSTOM_DOMAIN_SYNC_TOKEN', '');
     expect((await POST(req())).status).toBe(503);
     expect(runCommerceWatchdogPass).not.toHaveBeenCalled();
+  });
+
+  it('names paid orders without an invoice in the field its keyword monitor matches, and stays 200', async () => {
+    const healthy = await (await (runCommerceWatchdogPass.mockResolvedValue(HEALTHY), POST(req()))).text();
+    expect(healthy).toContain('"receipts":"ok"');
+    runCommerceWatchdogPass.mockResolvedValue({ ...HEALTHY, deadUnacknowledged: 1, receiptsUnissued: 1, receipts: 'unissued' });
+    const res = await POST(req());
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain('"receipts":"unissued"');
+    expect(body).not.toContain('"receipts":"ok"');
+    expect(JSON.parse(body)).toMatchObject({ receiptsUnissued: 1 });
   });
 
   it('stays 200 with a count when jobs are dead', async () => {

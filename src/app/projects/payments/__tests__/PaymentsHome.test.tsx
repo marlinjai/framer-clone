@@ -11,10 +11,17 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import PaymentsHome from '../PaymentsHome';
 
 /** The receipt email card's status when a test does not script it: not available on this platform. */
+/** No paid order without an invoice, when a test does not script it. */
+const NONE_UNISSUED = { status: 200, body: { count: 0, orders: [] } };
+
 const MAIL_OFF = { status: 200, body: { configured: false, connection: null, workspaces: [], otherCompanies: 0 } };
 
 function respond(routes: Record<string, { status: number; body: unknown }>) {
-  const all: Record<string, { status: number; body: unknown }> = { 'GET /api/payments/mail': MAIL_OFF, ...routes };
+  const all: Record<string, { status: number; body: unknown }> = {
+    'GET /api/payments/mail': MAIL_OFF,
+    'GET /api/payments/receipts': NONE_UNISSUED,
+    ...routes,
+  };
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string, init?: RequestInit) => {
@@ -122,6 +129,42 @@ describe('PaymentsHome', () => {
     respond({ 'GET /api/payments/stripe/account': { status: 200, body: { status: 'pending', demoCheckout: false } } });
     render(<PaymentsHome returned={null} />);
     expect(await screen.findByText(/Stripe still needs details.*takes no orders/)).toBeTruthy();
+  });
+
+  it('paid orders without an invoice are listed with the reason and whether the shop still tries', async () => {
+    respond({
+      'GET /api/payments/stripe/account': { status: 200, body: { status: 'ready' } },
+      'GET /api/payments/receipts': {
+        status: 200,
+        body: {
+          count: 2,
+          orders: [
+            { orderId: 'o1', orderNumber: '1001', paidAt: '2026-11-01T10:00:00.000Z', reason: 'TOTALS_MISMATCH', state: 'stopped' },
+            { orderId: 'o2', orderNumber: '1002', paidAt: '2026-11-02T10:00:00.000Z', reason: 'SETTINGS_MISSING', state: 'retrying' },
+          ],
+        },
+      },
+    });
+    render(<PaymentsHome returned={null} />);
+    expect(await screen.findByText('2 paid orders without an invoice')).toBeTruthy();
+    const rows = Array.from(document.querySelectorAll('[data-payments-unissued-order]')).map((row) => row.textContent);
+    expect(rows[0]).toMatch(/Order 1001.*would not add up.*stopped trying: this needs you/);
+    expect(rows[1]).toMatch(/Order 1002.*Books are not set up yet.*keeps trying on its own/);
+  });
+
+  it('none: no card; a failure to read them is shown, not an empty card', async () => {
+    respond({ 'GET /api/payments/stripe/account': { status: 200, body: { status: 'ready' } } });
+    render(<PaymentsHome returned={null} />);
+    expect(await screen.findByText(/takes real payments/)).toBeTruthy();
+    expect(document.querySelector('[data-payments-unissued]')).toBeNull();
+    cleanup();
+
+    respond({
+      'GET /api/payments/stripe/account': { status: 200, body: { status: 'ready' } },
+      'GET /api/payments/receipts': { status: 500, body: { error: { message: 'the database is down' } } },
+    });
+    render(<PaymentsHome returned={null} />);
+    await waitFor(() => expect(document.querySelector('[data-payments-unissued-error]')?.textContent).toBe('the database is down'));
   });
 
   it('a refusal of the server is shown, never a blank page', async () => {

@@ -31,6 +31,7 @@ import { handlePaymentEvent, issueReceipt, type PaymentDeps } from '../payments'
 import { demoProvider, type PaymentEvent } from '../provider';
 import { berlinDay, ensureReceipt } from '../receipt';
 import { RECEIPT_ISSUE_KIND } from '../receiptJob';
+import { countStoppedReceipts, unissuedReceipts } from '../unissuedReceipts';
 
 const BUYER: BuyerInput = {
   kind: 'person',
@@ -135,7 +136,7 @@ async function stockedRing(s: Shop, priceCents = 4900) {
   return { variantId: v.id, item, location };
 }
 
-async function placeOrder(s: Shop, opts: { netOrGross?: 'net' | 'gross' } = {}) {
+async function placeOrder(s: Shop, opts: { netOrGross?: 'net' | 'gross'; buyer?: BuyerInput } = {}) {
   const ring = await stockedRing(s);
   const result = await createOrder(env.appDb, env.tgId, {
     tenantId: s.company,
@@ -146,7 +147,7 @@ async function placeOrder(s: Shop, opts: { netOrGross?: 'net' | 'gross' } = {}) 
     netOrGross: opts.netOrGross ?? 'gross',
     now: s.clock.now,
     lines: [{ inventoryItemId: ring.item, variantId: ring.variantId, quantity: 1, locationId: ring.location, variantRef: ring.variantId, variantRefSource: 'owned' }],
-    payment: { provider: 'demo', buyer: BUYER as never },
+    payment: { provider: 'demo', buyer: (opts.buyer ?? BUYER) as never },
   });
   if (!result.ok) throw new Error('the order was short');
   return result.orderId;
@@ -336,5 +337,64 @@ describe('the receipt job', () => {
     const [theirReceipt] = await receiptsOf(other, theirs);
     expect(theirReceipt).toMatchObject({ status: 'issued' });
     expect(await receiptsOf(shop, theirs)).toEqual([]);
+  });
+
+  it('E: an Austrian business paid before the pay route refused it gets no false invoice: the job stops and says so', async () => {
+    // The review's case: an order of 2026-10-26, before the refusal at pay existed, paid with German VAT included.
+    const austrian: BuyerInput = {
+      kind: 'organization',
+      name: 'Muster',
+      companyName: 'Muster GmbH',
+      email: 'buero@example.com',
+      addressLine1: 'Ring 1',
+      postalCode: '1010',
+      city: 'Wien',
+      country: 'AT',
+      vatId: 'ATU12345678',
+    };
+    const orderId = await placeOrder(shop, { buyer: austrian });
+    const stoppedBefore = await countStoppedReceipts(env.appDb);
+    await handlePaymentEvent({ ...shop.deps, emit: async () => [] }, paid(shop, orderId));
+    // Paid with no live job: counted at once, before the backfill even ran.
+    expect(await countStoppedReceipts(env.appDb)).toBe(stoppedBefore + 1);
+
+    await runJobBackfills(env.appDb, shop.clock.now);
+    const [job] = await receiptJobs(shop, orderId);
+    expect(await runJobNow(group(), shop.company, job.id, worker(shop))).toMatchObject({ outcome: 'dead' });
+    expect((await receiptJobs(shop, orderId))[0]).toMatchObject({ status: 'dead', last_error: 'BUYER_NOT_INVOICEABLE' });
+    expect(await payment(shop, orderId)).toMatchObject({ status: 'paid', receipt_document_id: null, receipt_error: 'BUYER_NOT_INVOICEABLE' });
+    // Nothing was written in the Books: no draft, no reverse charge invoice.
+    expect(await receiptsOf(shop, orderId)).toEqual([]);
+
+    // Not silent: the owner sees it, and the watchdog still counts it now that its job is dead.
+    expect(await unissuedReceipts(env.appDb, shop.company)).toMatchObject({
+      count: 1,
+      orders: [{ orderId, reason: 'BUYER_NOT_INVOICEABLE', state: 'stopped' }],
+    });
+    expect(await countStoppedReceipts(env.appDb)).toBe(stoppedBefore + 1);
+  });
+
+  it('paid orders without an invoice: retrying while a job is live, stopped without one, gone once issued', async () => {
+    shop = await newShop({ books: false });
+    const retrying = await placeOrder(shop);
+    const { jobIds } = await handlePaymentEvent(shop.deps, paid(shop, retrying));
+    await runJobNow(group(), shop.company, jobIds[0], worker(shop));
+    const legacy = await placeOrder(shop);
+    shop.clock.now = new Date(T0.getTime() + MINUTE);
+    await handlePaymentEvent({ ...shop.deps, emit: async () => [] }, paid(shop, legacy));
+
+    const listed = await unissuedReceipts(env.appDb, shop.company);
+    expect(listed.count).toBe(2);
+    expect(listed.orders.map((o) => [o.orderId, o.reason, o.state])).toEqual([
+      [retrying, 'SETTINGS_MISSING', 'retrying'],
+      [legacy, null, 'stopped'],
+    ]);
+    // Another company sees none of them.
+    expect((await unissuedReceipts(env.appDb, (await newShop()).company)).count).toBe(0);
+
+    await initCompany(scopeOf(shop), { taxStatus: 'regular', invoiceNext: 1000 });
+    shop.clock.now = new Date(T0.getTime() + DAY);
+    await runJobNow(group(), shop.company, jobIds[0], worker(shop));
+    expect((await unissuedReceipts(env.appDb, shop.company)).orders.map((o) => o.orderId)).toEqual([legacy]);
   });
 });

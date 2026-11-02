@@ -43,6 +43,12 @@ export const RECEIPT_REFUSALS: ReadonlySet<string> = new Set([
   'TAX_CASE_UNSUPPORTED',
   'REVERSE_CHARGE_NOT_ALLOWED',
   'INVALID_INPUT',
+  // A buyer outside Germany or with a foreign VAT id: an invoice would be false (receipt.ts).
+  'BUYER_NOT_INVOICEABLE',
+  // An order whose lines cannot become an invoice: they never change.
+  'NO_BILLABLE_LINES',
+  'INVALID_LINE',
+  'RECIPIENT_INCOMPLETE',
   // No payment row for the job's order: a row is never deleted (BK018), so the job names something else, as the expiry
   // job's `unknown_payment`.
   'UnknownPaymentError',
@@ -81,7 +87,11 @@ export const receiptIssueKind = defineJobKind<ReceiptIssuePayload>({
       await payments.issueReceipt(orderId);
     } catch (err) {
       const reason = receiptFailure(err);
-      if (RECEIPT_REFUSALS.has(reason)) throw new JobRefused(reason);
+      if (RECEIPT_REFUSALS.has(reason)) {
+        // A stable line to alert on: paid, and this receipt will not be issued without a person.
+        console.error(`[receipt-unissued] order ${orderId}: stopped, ${reason}`);
+        throw new JobRefused(reason);
+      }
       throw new JobRetryLater(reason);
     }
   },

@@ -433,7 +433,8 @@ export async function issueReceipt(deps: PaymentDeps, tenantId: string, orderId:
     const reason = receiptFailure(err);
     // A refund that overtook this attempt: the receipt is not owed any more, which is no failure.
     if (reason === 'NOT_PAID') return { outcome: 'not_paid' };
-    console.error(`[payments] order ${orderId}: the receipt could not be issued (${reason}):`, err);
+    // `[receipt-unissued]` is the stable prefix to alert on: money taken, no invoice yet.
+    console.error(`[receipt-unissued] order ${orderId} of company ${tenantId}: the receipt could not be issued (${reason}):`, err);
     await deps.db
       .updateTable('order_payment')
       .set({ receipt_error: reason, updated_at: now() })
