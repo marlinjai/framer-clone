@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { cappedZIndex, CONSENT_BANNER_Z_INDEX, STICKY_CTA_Z_INDEX, STORED_Z_INDEX_MAX, withCappedZIndex } from '../stacking';
-import { buildResponsiveCss } from '@/lib/responsive/responsiveCss';
+import { buildResponsiveCss, holdsTopLayerValue, unsafeDeclaration } from '@/lib/responsive/responsiveCss';
+import { parseSelector, refusedRuleValue } from '@/lib/rules/rules';
+import { styleValueProblem } from '@/lib/ai/pageGen/validate';
 import { renderedInlineStyle, safeInlineStyle, withoutBlockedProps } from '@/lib/renderer/blockedNodes';
 import { nodeDomProps } from '@/lib/renderer/server/renderComponentNode';
 import { applyResponsiveStyles } from '@/lib/renderer/server/applyResponsiveStyles';
@@ -84,5 +86,55 @@ describe('every path that writes a stored z-index', () => {
   it('writes a z-index below the ceiling exactly as stored', () => {
     const css = buildResponsiveCss([{ className: 'fc-a', style: { zIndex: 50, position: 'relative' } }], [{ id: 'desktop', minWidth: 1200 }]);
     expect(css).toContain('z-index:50');
+  });
+});
+
+describe('the top layer a stored page cannot reach', () => {
+  it.each(['&::picker(select)', '&::PICKER(select)', '& ::picker(select)', '&:hover::picker(select)', '&::view-transition-old(root)', '&::view-transition'])(
+    'refuses the selector %s',
+    (selector) => {
+      expect(parseSelector(selector).ok).toBe(false);
+    },
+  );
+
+  it('keeps ::backdrop and the select parts that stay in the page', () => {
+    for (const selector of ['&::backdrop', '&::picker-icon', '&::checkmark', '& option']) expect(parseSelector(selector).ok).toBe(true);
+  });
+
+  it.each(['base-select', 'BASE-SELECT', 'base\\2d select', 'var(--a, base-select)'])('refuses the value %s on every path', (value) => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(holdsTopLayerValue(value)).toBe(true);
+    // The rules parser, the sheet and the panel.
+    expect(refusedRuleValue('appearance', value)).not.toBeNull();
+    expect(unsafeDeclaration('appearance', value)).toBe('unsafe-value');
+    expect(unsafeDeclaration('--a', value)).toBe('unsafe-value');
+    // The inline style, which the importer also asks.
+    expect(safeInlineStyle({ appearance: value, color: 'red' })).toEqual({ color: 'red' });
+    // The page generator.
+    expect(styleValueProblem('appearance', value)).toBeDefined();
+  });
+
+  it('leaves the other appearances', () => {
+    for (const value of ['none', 'auto', 'menulist-button', 'textfield']) {
+      expect(holdsTopLayerValue(value)).toBe(false);
+      expect(unsafeDeclaration('appearance', value)).toBeNull();
+    }
+  });
+
+  it('drops a picker rule from the published sheet', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const node = {
+      id: 's',
+      type: 'select',
+      props: {
+        rules: [
+          { id: 'a', selector: '&', style: { appearance: 'base-select' } },
+          { id: 'b', selector: '&::picker(select)', style: { position: 'fixed', inset: '0' } },
+        ],
+      },
+      children: [],
+    } as unknown as ComponentNode;
+    const { css } = applyResponsiveStyles(node, [{ id: 'desktop', minWidth: 1200 }]);
+    expect(css).not.toMatch(/picker|base-select/);
   });
 });

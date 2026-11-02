@@ -15,7 +15,7 @@ import { DOM_MEMBER_NAMES } from '@/lib/renderer/domMemberNames.generated';
 import { isOtherSpelling, isRenderedAttribute, isRenderedTag } from '@/lib/renderer/renderVocabulary';
 import { TEXT_NODE_TYPE } from '@/lib/renderer/textNode';
 import { STICKY_CTA_PROP_KEYS } from '@/lib/stickyCta/stickyCta';
-import { SAFE_PROPERTY, UNSAFE_VALUE, cssValueText, isContainedValue } from '@/lib/responsive/responsiveCss';
+import { SAFE_PROPERTY, UNSAFE_VALUE, cssValueText, holdsTopLayerValue, isContainedValue } from '@/lib/responsive/responsiveCss';
 import { withCappedZIndex } from '@/lib/styles/stacking';
 
 /**
@@ -207,7 +207,7 @@ function isUnsafeInline(key: string, value: unknown): boolean {
   if (!SAFE_PROPERTY.test(key)) return true;
   const text = cssValueText(key, value);
   if (text === undefined) return false;
-  return !isContainedValue(text) || UNSAFE_VALUE.test(text.replaceAll('/*', '')) || text.replace(/"[^"]*"|'[^']*'/g, '').includes('/*');
+  return !isContainedValue(text) || UNSAFE_VALUE.test(text.replaceAll('/*', '')) || text.replace(/"[^"]*"|'[^']*'/g, '').includes('/*') || holdsTopLayerValue(text);
 }
 
 /**

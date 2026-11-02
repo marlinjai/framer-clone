@@ -105,6 +105,45 @@ const PROBES: Probe[] = [
     covers: '[data-fc-sticky-cta]',
   },
   {
+    id: 'select-picker',
+    what: 'a customizable select whose ::picker(select) fills the screen, tapped open',
+    nodes: [
+      node('sel', 'select', {
+        id: 'sel',
+        style: { position: 'absolute', top: 8, left: 8 },
+        rules: [
+          { id: 'a', selector: '&', style: { appearance: 'base-select' } },
+          {
+            id: 'b',
+            selector: '&::picker(select)',
+            style: { appearance: 'base-select', position: 'fixed', top: '0', left: '0', right: '0', bottom: '0', width: '100vw', height: '100vh' },
+          },
+          { id: 'c', selector: '& option', style: { display: 'none' } },
+        ],
+      }, [node('one', 'option', { value: '1', children: 'One' }), node('two', 'option', { value: '2', children: 'Two' })]),
+    ],
+    act: async (page) => {
+      await page.click('#sel');
+    },
+  },
+  {
+    id: 'select-inline',
+    what: 'base-select inline and through a custom property, tapped open',
+    nodes: [
+      node('sel', 'select', { id: 'sel', style: { position: 'absolute', top: 8, left: 8, '--a': 'base-select', appearance: 'var(--a)' } }, [
+        node('one', 'option', { value: '1', children: 'One' }),
+      ]),
+      node('sel2', 'select', { id: 'sel2', style: { position: 'absolute', top: 48, left: 8, appearance: 'base-select' } }, [
+        node('one2', 'option', { value: '1', children: 'One' }),
+      ]),
+    ],
+    act: async (page) => {
+      await page.click('#sel');
+      await page.keyboard.press('Tab');
+      await page.click('#sel2');
+    },
+  },
+  {
     id: 'popover',
     topLayer: true,
     what: 'a full-viewport popover a visitor opens with popovertarget',
@@ -210,6 +249,8 @@ describe('nothing stored covers the consent banner', () => {
           const topLayer = await page.evaluate(() => ({
             full: Boolean(document.fullscreenElement),
             modal: Boolean(document.querySelector('dialog:modal')),
+            // A select keeps the browser's own list: a base-select picker would sit in the top layer.
+            picker: Array.from(document.querySelectorAll('select')).some((select) => getComputedStyle(select).appearance === 'base-select'),
             popover: (() => {
               try {
                 return Boolean(document.querySelector(':popover-open'));
@@ -218,7 +259,7 @@ describe('nothing stored covers the consent banner', () => {
               }
             })(),
           }));
-          expect(topLayer, probe.what).toEqual({ full: false, modal: false, popover: false });
+          expect(topLayer, probe.what).toEqual({ full: false, modal: false, picker: false, popover: false });
         } finally {
           await close();
         }

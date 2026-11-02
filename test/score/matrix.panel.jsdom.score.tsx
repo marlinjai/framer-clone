@@ -42,7 +42,7 @@ import { cssPropertyName } from '@/lib/responsive/responsiveCss';
 import { attributeName, attributeProp } from '@/lib/styles/customEditor';
 import { PATTERNS, treeVocabulary } from './patterns';
 import { allEntries, atRuleSample, attributeSample, cssValueSample, markupAttributeSample, mediaFeatureSample, namespaceOf, selectorSample, styleKeyOf } from './lib/universe';
-import { atRuleProbe, isPageLevelRow, selectorProbe, wrapperProbe, type RuleProbe } from './lib/encodings';
+import { atRuleProbe, isPageLevelRow, isTopLayerRow, selectorProbe, wrapperProbe, type RuleProbe } from './lib/encodings';
 import { writeOut } from './lib/io';
 import { rowKey, type Cell, type GapId, type SurfaceResults } from './lib/types';
 
@@ -481,7 +481,7 @@ describe('coverage matrix: properties panel', () => {
         case 'css-selector':
           if (written.states.has(entry.id)) results[key] = pass('through the state switch');
           else if (written.rawField.has(key)) results[key] = pass('raw field');
-          else results[key] = fail(isPageLevelRow(entry.id) ? 'page-level-css' : 'selector-styles');
+          else results[key] = fail(isPageLevelRow(entry.id) ? 'page-level-css' : isTopLayerRow(entry.id) ? 'top-layer-refused' : 'selector-styles');
           break;
         case 'css-at-rule':
           if (written.rawField.has(key)) results[key] = pass('raw field');

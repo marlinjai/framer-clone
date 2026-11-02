@@ -18,6 +18,8 @@ import { BREAKPOINTS, renderPublished } from './lib/published';
 import {
   atRuleProbe,
   isPageLevelRow,
+  isTopLayerRow,
+  PROBE_COLOR,
   rootProbe,
   ruleNode,
   selectorProbe,
@@ -269,6 +271,21 @@ function probePageLevel(key: string): void {
   results.ai[key] = fail('page-level-css', note);
 }
 
+/**
+ * A row refused on purpose: red in every column, and only while it really is refused.
+ * Should one reach the sheet or the generator, the cell says so instead of the gap.
+ */
+function probeTopLayer(probe: RuleProbe, key: string): void {
+  const { rule } = probe;
+  // Any of the probe's declaration in the sheet, not only the exact rule, counts as reaching it.
+  const reached = stylesheetHasRule(renderPublished(ruleNode(rule)).css, probe) || renderPublished(ruleNode(rule)).css.includes(PROBE_COLOR);
+  const generated = ((generate({ type: 'div', props: { rules: [rule] } }).node?.props.rules ?? []) as unknown[]).length > 0;
+  const refused = (leaked: boolean) => (leaked ? fail('unclassified', 'a top layer rule reached the page') : fail('top-layer-refused', 'refused on purpose'));
+  results.format[key] = refused(reached);
+  results.renderer[key] = refused(reached);
+  results.ai[key] = refused(generated);
+}
+
 /** The width media feature is the one part of @media a node holds: a responsive style map. */
 function probeWidthMediaFeature(key: string): void {
   const style = { color: { base: 'red', tablet: 'blue' } };
@@ -290,6 +307,7 @@ function probe(entry: Entry): void {
   const key = rowKey(entry.kind, entry.id);
   if (entry.id === ':root') return probeRule(rootProbe(), key, 'page-level-css');
   if (isPageLevelRow(entry.id)) return probePageLevel(key);
+  if (entry.kind === 'css-selector' && isTopLayerRow(entry.id)) return probeTopLayer(selectorProbe(entry.id, selectorSample(entry.id)), key);
   switch (entry.kind) {
     case 'html-element':
       return probeElement(entry.id, key);

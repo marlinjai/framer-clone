@@ -284,6 +284,19 @@ export function cssUrlsIn(text: string): string[] {
   return scanCssValue(text).urls;
 }
 
+const TOP_LAYER_VALUE = /base-select/i;
+
+/**
+ * Whether a value would put stored content in the top layer, which is above every
+ * z-index and so above the consent banner (src/lib/styles/stacking.ts):
+ * `appearance: base-select` turns a select's list into a picker there, which a
+ * tap does not close in WebKit. Any property, so a custom property cannot carry
+ * it to `appearance` through var(), and read past escapes.
+ */
+export function holdsTopLayerValue(text: string): boolean {
+  return TOP_LAYER_VALUE.test(text) || TOP_LAYER_VALUE.test(withoutEscapes(text));
+}
+
 /** Script-capable or import-capable CSS, and comments, which hide a `;` from isContainedValue. */
 export const UNSAFE_VALUE = /javascript:|vbscript:|expression\s*\(|<[\s/]*script|@import|behavior\s*:|-moz-binding|\/\*/i;
 
@@ -317,7 +330,7 @@ function sheetStringBody(body: string): string | null {
  * with no tab, newline or `<` comes back unchanged.
  */
 function sheetValueText(text: string): string | null {
-  if (BREAKOUT_CHARS.test(text) || UNSAFE_VALUE.test(text) || UNSAFE_VALUE.test(withoutEscapes(text))) return null;
+  if (BREAKOUT_CHARS.test(text) || UNSAFE_VALUE.test(text) || UNSAFE_VALUE.test(withoutEscapes(text)) || holdsTopLayerValue(text)) return null;
   let out = '';
   let i = 0;
   while (i < text.length) {

@@ -28,11 +28,16 @@ const definition = (define: string, body: Record<string, unknown>) => parseRule(
 
 describe('every sample of the score parses', () => {
   const selectorIds = Object.keys(samples.selectors);
-  const pageLevel = new Set(samples.pageLevelRows);
+  const pageLevel = new Set([...samples.pageLevelRows, ...samples.topLayerRows]);
 
   it.each(selectorIds.filter((id) => !pageLevel.has(id)))('selector %s', (id) => {
     const { rule } = selectorProbe(id, (samples.selectors as Record<string, string>)[id]);
     expect(parseRule(rule)).toMatchObject({ ok: true });
+  });
+
+  it.each(samples.topLayerRows)('top layer selector %s is refused', (id) => {
+    const { rule } = selectorProbe(id, (samples.selectors as Record<string, string>)[id]);
+    expect(parseRule(rule)).toMatchObject({ ok: false });
   });
 
   it.each(samples.webkitOnlySelectors)('WebKit-only selector %s', (id) => {
@@ -78,7 +83,8 @@ describe('parseSelector: what it accepts', () => {
     '&:not(p)',
     '&:nth-child(2n+1)',
     '&:nth-child(2n + 1)',
-    '&::picker(select)',
+    '&::picker-icon',
+    '&::backdrop',
     '& h2 + p',
     '& h2 ~ p',
     '& > * + *',
@@ -126,6 +132,8 @@ describe('parseSelector: its refusals', () => {
     ['DEL', '&\u007f:hover'],
     ['url(', '&:is(url(x))'],
     ['URL( in another case', '&[data-x="URL(x)"]'],
+    ['a picker, which sits in the top layer above the consent banner', '&::picker(select)'],
+    ['a view transition, in the top layer too', '&::view-transition-new(root)'],
   ])('refuses %s', (_, text) => {
     expect(selectorRefused(text)).toBeDefined();
   });
