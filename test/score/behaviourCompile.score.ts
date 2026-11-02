@@ -163,7 +163,9 @@ describe('the behaviour pass in real Chromium', () => {
         node('i2', 'img', { name: 'addEventListener', alt: '' }),
         accordion());
       await open(named);
-      expect(await page.evaluate(() => typeof document.removeEventListener)).toBe('object');
+      // The render gate refuses these names now, so the page keeps its methods. The rest
+      // of this probe stands: bound from data, they meet the same gate at render.
+      expect(await page.evaluate(() => typeof document.removeEventListener)).toBe('function');
       await page.evaluate(() => (window as unknown as { __fcB: { fail(): void } }).__fcB.fail());
       expect(await gate()).toBe(false);
       expect(await shown('panel')).toBe(true);
