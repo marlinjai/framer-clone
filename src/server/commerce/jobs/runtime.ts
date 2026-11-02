@@ -22,7 +22,7 @@ import { isTenantSchemaError } from '../tenant';
 import { JOB_BACKFILLS, runJobBackfills, type JobBackfill } from './backfills';
 import { runNextJob, type JobRunOptions } from './run';
 import type { JobTenantGroup } from './types';
-import { countStoppedReceipts } from '../payment/unissuedReceipts';
+import { countUnissuedReceipts } from '../payment/unissuedReceipts';
 
 const PASS_EVERY_MS = 30_000;
 /** How many tenant groups a pass works on at a time. */
@@ -62,8 +62,9 @@ export interface CommerceJobReport extends CommercePassSummary {
   /** How late the oldest due job is, 0 with nothing due. Includes kinds this build does not know. */
   oldestDueSeconds: number;
   /**
-   * Paid orders without an invoice that no live job will issue (payment/unissuedReceipts.ts): money taken with no
-   * receipt, for a person to look at. A count, like the dead jobs, so the route stays 200 for the other monitors.
+   * Stripe payments without an invoice that no live job will issue, or that were paid over an hour ago whatever their
+   * job does (payment/unissuedReceipts.ts): money taken with no receipt, for a person to look at. A count, like the dead
+   * jobs, so the route stays 200 for the other monitors.
    */
   receiptsUnissued: number;
   /**
@@ -211,7 +212,7 @@ export async function runCommerceWatchdogPass(options: CommercePassOptions = {})
       .limit(1)
       .executeTakeFirst();
     deadUnacknowledged += Number(dead.jobs);
-    receiptsUnissued += await countStoppedReceipts(db);
+    receiptsUnissued += await countUnissuedReceipts(db, at);
     if (due) oldestDueMs = Math.min(oldestDueMs, due.run_at.getTime());
   });
   return {

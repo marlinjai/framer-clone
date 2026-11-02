@@ -185,7 +185,8 @@ async function placeOrder(ring: Awaited<ReturnType<typeof stockedRing>>, quantit
         variantRefSource: 'owned',
       },
     ],
-    payment: { provider: 'demo', buyer: buyer as never },
+    // A Stripe payment: these companies are not the demo company, whose demo payments alone owe an invoice (demoCheckout.ts).
+    payment: { provider: 'stripe', buyer: buyer as never },
   });
   if (!result.ok) throw new Error('the order was short');
   return result.orderId;
@@ -193,7 +194,7 @@ async function placeOrder(ring: Awaited<ReturnType<typeof stockedRing>>, quantit
 
 function event(orderId: string, type: PaymentEvent['type'], extra: Partial<PaymentEvent> = {}): PaymentEvent {
   return {
-    provider: 'demo',
+    provider: 'stripe',
     eventId: `evt-${randomUUID()}`,
     type,
     tenantId: shop.company,

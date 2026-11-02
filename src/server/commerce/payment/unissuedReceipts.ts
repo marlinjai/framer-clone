@@ -7,11 +7,16 @@ import 'server-only';
 // so nothing else would tell anyone. Two readers:
 //   - the owner's payments page lists the company's own, with the reason the payment keeps (`receipt_error`) and
 //     whether the job still retries or has stopped for a person;
-//   - the watchdog route counts the stopped ones across a tenant group, and its `receipts` field turns from "ok" to
-//     "unissued", which an Uptime Kuma keyword monitor matches.
+//   - the watchdog route counts them across a tenant group, and its `receipts` field turns from "ok" to "unissued",
+//     which an Uptime Kuma keyword monitor matches.
 //
-// "Stopped" means no live job will issue it: the job is dead, or there is none. A just-paid order whose job is pending
-// or running is "retrying", so the monitor does not flicker red for the seconds before its first attempt.
+// For the owner, "stopped" means no live job will issue it (the job is dead, or there is none) and "retrying" that one
+// still tries. The monitor does not care which: it counts every such order paid more than RECEIPT_GRACE_MS ago, and a
+// stopped one at once (the money review's second round, R2-1). A receipt that keeps retrying for days is just as much
+// money without an invoice, and only a just-paid order, whose first attempt is seconds away, is left out.
+//
+// Stripe payments only (R2-2): a demo payment moved no money, so it owes no invoice and alarms nobody. The demo company's
+// own demo orders are the shop's showcase, not money; every other company's demo payment is refused one (issueReceipt).
 
 import { sql, type Kysely } from 'kysely';
 
@@ -32,6 +37,9 @@ export interface UnissuedReceipt {
 /** The largest list the payments page shows; `count` says how many there are in all. */
 export const UNISSUED_LIST_LIMIT = 50;
 
+/** How long a paid order may wait for its receipt before the monitor counts it, whatever its job does. */
+export const RECEIPT_GRACE_MS = 60 * 60 * 1000;
+
 function unissuedQuery(db: Kysely<CommerceDB>) {
   return db
     .selectFrom('order_payment')
@@ -45,6 +53,7 @@ function unissuedQuery(db: Kysely<CommerceDB>) {
         .on('commerce_job.dedupe_key', '=', sql<string>`${RECEIPT_KEY_PREFIX} || ${sql.ref('order_payment.order_id')}`),
     )
     .where('order_payment.status', '=', 'paid')
+    .where('order_payment.provider', '=', 'stripe')
     .where('order_payment.receipt_document_id', 'is', null);
 }
 
@@ -83,10 +92,14 @@ export async function unissuedReceipts(
   };
 }
 
-/** Across every company of one tenant group: paid orders without an invoice that no live job will issue. */
-export async function countStoppedReceipts(db: Kysely<CommerceDB>): Promise<number> {
+/**
+ * Across every company of one tenant group, what the monitor counts: paid orders without an invoice that no live job
+ * will issue, and every one paid more than RECEIPT_GRACE_MS before `now`, retrying or not.
+ */
+export async function countUnissuedReceipts(db: Kysely<CommerceDB>, now: Date): Promise<number> {
+  const graceEnd = new Date(now.getTime() - RECEIPT_GRACE_MS);
   const { n } = await unissuedQuery(db)
-    .where(STOPPED)
+    .where((eb) => eb.or([STOPPED, eb('order_payment.paid_at', '<', graceEnd)]))
     .select((eb) => eb.fn.countAll<string>().as('n'))
     .executeTakeFirstOrThrow();
   return Number(n);

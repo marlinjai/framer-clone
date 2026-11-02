@@ -152,7 +152,8 @@ function cart(ring: Ring, company: string, requestId: string, quantity = 1) {
         variantRefSource: 'owned' as const,
       },
     ],
-    payment: { provider: 'demo' as const, buyer: BUYER as never },
+    // A Stripe payment: these companies are not the demo company, whose demo payments alone owe an invoice (demoCheckout.ts).
+    payment: { provider: 'stripe' as const, buyer: BUYER as never },
   };
 }
 
@@ -177,7 +178,7 @@ export function aHandlerStaysInItsCompany(ctx: JobContext<unknown>, trigger: Pay
 
 function event(orderId: string, type: PaymentEvent['type'], extra: Partial<PaymentEvent> = {}): PaymentEvent {
   return {
-    provider: 'demo',
+    provider: 'stripe',
     eventId: `evt-${randomUUID()}`,
     type,
     tenantId: shop.company,
@@ -819,7 +820,7 @@ describe('what cannot happen stays loud', () => {
     const orderId = await placeOrder(ring);
     await env.ownerDb
       .insertInto('payment_event')
-      .values({ provider: 'demo', event_id: `expiry:${orderId}`, tenant_id: shop.company, order_id: orderId, event_type: 'checkout_expired' })
+      .values({ provider: 'stripe', event_id: `expiry:${orderId}`, tenant_id: shop.company, order_id: orderId, event_type: 'checkout_expired' })
       .execute();
 
     clock.now = after(WINDOW);

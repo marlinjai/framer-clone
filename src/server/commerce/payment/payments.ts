@@ -38,6 +38,7 @@ import { applyInventoryEffect, reserve, RESERVE_ISOLATION_LEVEL } from '../inven
 import { isLockTimeout } from '../provisioning/ownerSql';
 import type { PaymentEvent, PaymentProvider, ProviderId } from './provider';
 import { enqueueShopMail } from '../mail/outbox';
+import { demoCheckoutAllowed } from './demoCheckout';
 
 /** How long a pending payment holds its stock (the design: 30 minutes). */
 export const PAYMENT_WINDOW_MS = 30 * 60 * 1000;
@@ -406,7 +407,12 @@ export type ReceiptAttempt =
   /** Linked before, by this job's earlier run or another attempt: nothing to do. */
   | { outcome: 'linked'; documentId: string }
   /** The payment is no longer paid (refunded since): it needs no receipt. */
-  | { outcome: 'not_paid' };
+  | { outcome: 'not_paid' }
+  /**
+   * A demo payment of a company other than the demo company (placed before the demo checkout was the demo company's
+   * alone): no money moved, so a numbered invoice would record a sale that never happened. Nothing is issued.
+   */
+  | { outcome: 'not_owed' };
 
 /**
  * Issue the receipt of a paid order and link it, the work of its `receipt_issue` job (receiptJob.ts). The link, the
@@ -418,13 +424,17 @@ export async function issueReceipt(deps: PaymentDeps, tenantId: string, orderId:
   const now = deps.now ?? (() => new Date());
   const payment = await deps.db
     .selectFrom('order_payment')
-    .select(['status', 'receipt_document_id'])
+    .select(['status', 'provider', 'receipt_document_id'])
     .where('tenant_id', '=', tenantId)
     .where('order_id', '=', orderId)
     .executeTakeFirst();
   if (!payment) throw new UnknownPaymentError(orderId);
   if (payment.receipt_document_id) return { outcome: 'linked', documentId: payment.receipt_document_id };
   if (payment.status !== 'paid') return { outcome: 'not_paid' };
+  if (payment.provider === 'demo' && !demoCheckoutAllowed(tenantId)) {
+    console.warn(`[payments] order ${orderId} of company ${tenantId}: a demo payment owes no invoice; none is issued`);
+    return { outcome: 'not_owed' };
+  }
 
   let documentId: string;
   try {

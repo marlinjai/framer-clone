@@ -1164,3 +1164,7 @@ checked against the code and hold. Findings about Stripe behaviour are adopted a
   (`deploy/commerce/framer-clone-commerce-jobs.{service,timer}` on `coolify-shared-host`) is still not installed, and the keyword monitor needs adding in Uptime Kuma;
   until both exist, the payments page is the only place a stopped receipt shows. The production check of 2026-11-02 found 5 paid orders, all with receipts, none
   foreign, none demo, so the receipt backfill writes no job on deploy.
+- 2026-11-02: B4 after the second money round. The monitor's `receiptsUnissued` now counts every Stripe payment paid over an hour ago without a receipt,
+  whatever its job does, as well as one no live job will issue (R2-1), so a receipt that keeps retrying turns `receipts` to `"unissued"` too; the owner's page keeps
+  the wording "retrying" or "stopped". A demo payment of a company other than the demo company owes no invoice: its receipt job ends `done` with nothing issued, and
+  only Stripe payments count on the owner's list and the monitor (R2-2). The coordinator's production check found 0 demo-paid orders in every company.

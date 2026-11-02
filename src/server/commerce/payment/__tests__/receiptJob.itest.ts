@@ -31,7 +31,8 @@ import { handlePaymentEvent, issueReceipt, type PaymentDeps } from '../payments'
 import { demoProvider, type PaymentEvent } from '../provider';
 import { berlinDay, ensureReceipt } from '../receipt';
 import { RECEIPT_ISSUE_KIND } from '../receiptJob';
-import { countStoppedReceipts, unissuedReceipts } from '../unissuedReceipts';
+import { countUnissuedReceipts, RECEIPT_GRACE_MS, unissuedReceipts } from '../unissuedReceipts';
+import { DEMO_COMPANY_ID } from '@/lib/renderer/server/demoTenant';
 
 const BUYER: BuyerInput = {
   kind: 'person',
@@ -65,8 +66,8 @@ function scopeOf(s: Shop) {
   return booksScope(env.appDb, env.tgId, s.company, { recipients: s.dir });
 }
 
-async function newShop(opts: { books?: boolean } = {}): Promise<Shop> {
-  const company = randomUUID();
+async function newShop(opts: { books?: boolean; company?: string } = {}): Promise<Shop> {
+  const company = opts.company ?? randomUUID();
   const dir = new FakeDirectory();
   const contacts = new FakeContactBook(dir);
   const clock = { now: T0 };
@@ -136,7 +137,7 @@ async function stockedRing(s: Shop, priceCents = 4900) {
   return { variantId: v.id, item, location };
 }
 
-async function placeOrder(s: Shop, opts: { netOrGross?: 'net' | 'gross'; buyer?: BuyerInput } = {}) {
+async function placeOrder(s: Shop, opts: { netOrGross?: 'net' | 'gross'; buyer?: BuyerInput; provider?: 'stripe' | 'demo' } = {}) {
   const ring = await stockedRing(s);
   const result = await createOrder(env.appDb, env.tgId, {
     tenantId: s.company,
@@ -147,14 +148,15 @@ async function placeOrder(s: Shop, opts: { netOrGross?: 'net' | 'gross'; buyer?:
     netOrGross: opts.netOrGross ?? 'gross',
     now: s.clock.now,
     lines: [{ inventoryItemId: ring.item, variantId: ring.variantId, quantity: 1, locationId: ring.location, variantRef: ring.variantId, variantRefSource: 'owned' }],
-    payment: { provider: 'demo', buyer: (opts.buyer ?? BUYER) as never },
+    // A Stripe payment: these companies are not the demo company, whose demo payments alone owe an invoice (demoCheckout.ts).
+    payment: { provider: opts.provider ?? 'stripe', buyer: (opts.buyer ?? BUYER) as never },
   });
   if (!result.ok) throw new Error('the order was short');
   return result.orderId;
 }
 
 function paid(s: Shop, orderId: string, extra: Partial<PaymentEvent> = {}): PaymentEvent {
-  return { provider: 'demo', eventId: `evt-${randomUUID()}`, type: 'payment_succeeded', tenantId: s.company, orderId, providerPaymentId: `demo_pi_${orderId}`, ...extra };
+  return { provider: 'stripe', eventId: `evt-${randomUUID()}`, type: 'payment_succeeded', tenantId: s.company, orderId, providerPaymentId: `demo_pi_${orderId}`, ...extra };
 }
 
 function payment(s: Shop, orderId: string) {
@@ -353,10 +355,10 @@ describe('the receipt job', () => {
       vatId: 'ATU12345678',
     };
     const orderId = await placeOrder(shop, { buyer: austrian });
-    const stoppedBefore = await countStoppedReceipts(env.appDb);
+    const stoppedBefore = await countUnissuedReceipts(env.appDb, shop.clock.now);
     await handlePaymentEvent({ ...shop.deps, emit: async () => [] }, paid(shop, orderId));
     // Paid with no live job: counted at once, before the backfill even ran.
-    expect(await countStoppedReceipts(env.appDb)).toBe(stoppedBefore + 1);
+    expect(await countUnissuedReceipts(env.appDb, shop.clock.now)).toBe(stoppedBefore + 1);
 
     await runJobBackfills(env.appDb, shop.clock.now);
     const [job] = await receiptJobs(shop, orderId);
@@ -371,7 +373,7 @@ describe('the receipt job', () => {
       count: 1,
       orders: [{ orderId, reason: 'BUYER_NOT_INVOICEABLE', state: 'stopped' }],
     });
-    expect(await countStoppedReceipts(env.appDb)).toBe(stoppedBefore + 1);
+    expect(await countUnissuedReceipts(env.appDb, shop.clock.now)).toBe(stoppedBefore + 1);
   });
 
   it('paid orders without an invoice: retrying while a job is live, stopped without one, gone once issued', async () => {
@@ -396,5 +398,49 @@ describe('the receipt job', () => {
     shop.clock.now = new Date(T0.getTime() + DAY);
     await runJobNow(group(), shop.company, jobIds[0], worker(shop));
     expect((await unissuedReceipts(env.appDb, shop.company)).orders.map((o) => o.orderId)).toEqual([legacy]);
+  });
+
+  it('the monitor counts a receipt that keeps retrying once the order was paid over an hour ago', async () => {
+    shop = await newShop({ books: false });
+    const before = await countUnissuedReceipts(env.appDb, T0);
+    const orderId = await placeOrder(shop);
+    const { jobIds } = await handlePaymentEvent(shop.deps, paid(shop, orderId));
+    expect(await runJobNow(group(), shop.company, jobIds[0], worker(shop))).toMatchObject({ outcome: 'retry' });
+
+    // Still trying, and just paid: not yet an alarm.
+    expect(await countUnissuedReceipts(env.appDb, new Date(T0.getTime() + 30 * MINUTE))).toBe(before);
+    // Over the grace period: counted, retrying or not; the owner still reads that the shop keeps trying.
+    expect(await countUnissuedReceipts(env.appDb, new Date(T0.getTime() + RECEIPT_GRACE_MS + MINUTE))).toBe(before + 1);
+    // As in the review's probe: 29 days of daily retries, and it stays counted throughout.
+    for (let day = 1; day <= 29; day += 1) {
+      shop.clock.now = new Date(T0.getTime() + day * DAY);
+      expect(await runJobNow(group(), shop.company, jobIds[0], worker(shop))).toMatchObject({ outcome: 'retry' });
+    }
+    expect(await countUnissuedReceipts(env.appDb, shop.clock.now)).toBe(before + 1);
+    expect((await unissuedReceipts(env.appDb, shop.company)).orders).toMatchObject([{ orderId, state: 'retrying', reason: 'SETTINGS_MISSING' }]);
+  });
+
+  it('a demo payment of a company other than the demo company owes no invoice: done, nothing issued, no alarm', async () => {
+    const before = await countUnissuedReceipts(env.appDb, new Date(T0.getTime() + 2 * DAY));
+    const orderId = await placeOrder(shop, { provider: 'demo' });
+    // Paid before the demo checkout was the demo company's alone, and backfilled as the old build would leave it.
+    await handlePaymentEvent({ ...shop.deps, emit: async () => [] }, { ...paid(shop, orderId), provider: 'demo' });
+    await runJobBackfills(env.appDb, shop.clock.now);
+    const [job] = await receiptJobs(shop, orderId);
+    expect(await runJobNow(group(), shop.company, job.id, worker(shop))).toMatchObject({ outcome: 'done' });
+    expect(await receiptsOf(shop, orderId)).toEqual([]);
+    expect(await payment(shop, orderId)).toMatchObject({ status: 'paid', receipt_document_id: null, receipt_error: null });
+    // Not money: not on the owner's list, not on the monitor, even days later.
+    expect((await unissuedReceipts(env.appDb, shop.company)).count).toBe(0);
+    expect(await countUnissuedReceipts(env.appDb, new Date(T0.getTime() + 2 * DAY))).toBe(before);
+  });
+
+  it("the demo company's demo payment still gets its receipt, and never counts as money without one", async () => {
+    const demo = await newShop({ company: DEMO_COMPANY_ID });
+    const orderId = await placeOrder(demo, { provider: 'demo' });
+    const { jobIds } = await handlePaymentEvent(demo.deps, { ...paid(demo, orderId), provider: 'demo' });
+    expect(await runJobNow(group(), demo.company, jobIds[0], worker(demo))).toMatchObject({ outcome: 'done' });
+    expect(await receiptsOf(demo, orderId)).toMatchObject([{ status: 'issued' }]);
+    expect((await unissuedReceipts(env.appDb, demo.company)).count).toBe(0);
   });
 });

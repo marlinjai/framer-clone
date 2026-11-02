@@ -164,7 +164,8 @@ async function placeOrder(ring: Awaited<ReturnType<typeof stockedRing>>) {
     netOrGross: 'gross',
     now: shop.clock.now,
     lines: [{ inventoryItemId: ring.item, variantId: ring.variantId, quantity: 1, locationId: ring.location, variantRef: ring.variantId, variantRefSource: 'owned' }],
-    payment: { provider: 'demo', buyer: BUYER as never },
+    // A Stripe payment: these companies are not the demo company, whose demo payments alone owe an invoice (demoCheckout.ts).
+    payment: { provider: 'stripe', buyer: BUYER as never },
   });
   if (!result.ok) throw new Error('the order was short');
   return result.orderId;
@@ -191,7 +192,7 @@ async function pay(event: PaymentEvent, deps: PaymentDeps = shop.deps) {
 }
 
 function paid(orderId: string, extra: Partial<PaymentEvent> = {}): PaymentEvent {
-  return { provider: 'demo', eventId: `evt-${randomUUID()}`, type: 'payment_succeeded', tenantId: shop.company, orderId, providerPaymentId: `demo_pi_${orderId}`, ...extra };
+  return { provider: 'stripe', eventId: `evt-${randomUUID()}`, type: 'payment_succeeded', tenantId: shop.company, orderId, providerPaymentId: `demo_pi_${orderId}`, ...extra };
 }
 
 async function mailRow(orderId: string, kind: 'order_confirmation' | 'late_refund' = 'order_confirmation') {
