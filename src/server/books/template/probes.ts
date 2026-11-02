@@ -150,6 +150,7 @@ function baseDocument(overrides: Partial<SalesDocumentWithSnapshots> = {}): Sale
     subject: 'Website-Relaunch, Phase 1',
     currencyCode: 'EUR',
     taxRegion: 'DE',
+    taxCountry: null,
     customerType: 'b2b',
     vatId: null,
     reverseCharge: false,

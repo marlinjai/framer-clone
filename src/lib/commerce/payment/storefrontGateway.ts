@@ -10,6 +10,8 @@
 //   409 payment_closed          -> closed (paid or closed elsewhere, or expired: check out again)
 //   422 buyer_not_invoiceable   -> refused, with the shop's own message (no money moved, the order keeps waiting)
 //   400 on the country or email -> refused, naming each bad field (Germany typed out instead of the two letters)
+//   503 payments_unavailable    -> unavailable, with the shop's own message (the Books cannot issue the receipt yet:
+//                                  no money moved, and neither a correction nor a quick retry helps)
 //   422 buyer_required / 400    -> invalid (the buyer's details are missing or malformed)
 //   anything else, or no answer -> gateway_error (retryable)
 
@@ -78,6 +80,13 @@ export class StorefrontPaymentGateway implements PaymentGateway {
         code: 'refused',
         message: error.message ?? 'this shop cannot invoice these details. Nothing has been charged.',
         fields: error.field ? [error.field] : [],
+      };
+    }
+    if (res.status === 503 && error?.code === 'payments_unavailable') {
+      return {
+        ok: false,
+        code: 'unavailable',
+        message: error.message ?? 'this shop cannot take payments yet. Nothing has been charged.',
       };
     }
     const badFields = FIELD_HINTS.filter(([field]) => error?.issues?.some((issue) => issue.path?.at(-1) === field));

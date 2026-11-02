@@ -58,8 +58,15 @@ export async function selectCustomerRow(
  * draft without a customer is computed as a domestic consumer (German rates
  * under regular taxation) under its own key, so the first customer assignment
  * always changes the key.
+ *
+ * `taxCountry` is the draft's own `tax_country` (027): a shop receipt's buyer's country, which replaces the customer
+ * row's. The row is matched by the buyer's name, so its country may be another person's. Null for every other draft.
  */
-export function profileFor(settings: CompanySettings, customer: CustomerRow | null): TaxProfile {
+export function profileFor(
+  settings: CompanySettings,
+  customer: CustomerRow | null,
+  taxCountry: string | null,
+): TaxProfile {
   if (!customer) {
     const p = resolveTaxProfile({
       companyTaxStatus: settings.taxStatus,
@@ -75,7 +82,7 @@ export function profileFor(settings: CompanySettings, customer: CustomerRow | nu
     exemptionNote: settings.exemptionNote,
     customerType: customer.customer_type,
     vatId: customer.vat_id,
-    countryCode: customer.country_code,
+    countryCode: taxCountry ?? customer.country_code,
   });
 }
 

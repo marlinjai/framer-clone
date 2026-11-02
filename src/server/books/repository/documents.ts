@@ -122,6 +122,8 @@ export interface DraftPatch {
   outro_text?: string | null;
   /** Only ever set to null: a replacement draft becomes an ordinary invoice (the Correct flow). */
   replaces_document_id?: null;
+  /** Only ever set to null: another customer on a shop receipt's draft is taxed under that customer's country. */
+  tax_country?: null;
   print_replaces_reference?: boolean;
 }
 
@@ -148,7 +150,10 @@ export async function finishDraftMutation(
       : customerId
         ? ((await selectCustomerRow(trx, scope, customerId)) ?? null)
         : null;
-  const profile = profileFor(settings, customer);
+  // A shop receipt's country belongs to its buyer: a draft given to another customer is taxed under that one's.
+  if (customerId !== row.customer_id && row.tax_country !== null) patch = { ...patch, tax_country: null };
+  const taxCountry = patch.tax_country === null ? null : row.tax_country;
+  const profile = profileFor(settings, customer, taxCountry);
   const netOrGross = patch.net_or_gross ?? row.net_or_gross;
   const fields = await syncDraftTaxState(trx, scope, row.id, profile, customer, netOrGross, {
     forceAll: Boolean(opts.forceAll) || profile.key !== row.tax_profile_key,
@@ -219,6 +224,11 @@ const createInput = z.object({
   sourceOrderId: z.string().min(1).max(200).optional(),
   /** The day that order was paid, printed on its receipt (sales_document.paid_on, 024). */
   paidOn: isoDate.optional(),
+  /**
+   * The country that order's buyer gave, which the receipt is taxed under in place of the customer row's
+   * (sales_document.tax_country, 027). Only with `sourceOrderId`.
+   */
+  taxCountry: z.string().regex(/^[A-Z]{2}$/).optional(),
 });
 export type CreateDraftInput = z.input<typeof createInput>;
 
@@ -236,12 +246,17 @@ export async function createDraft(scope: BooksScope, input: CreateDraftInput): P
   if (args.docType !== 'invoice') {
     throw new BooksError('DOC_TYPE_NOT_SUPPORTED', `DOC_TYPE_NOT_SUPPORTED: ${args.docType}`, { docType: args.docType });
   }
+  if (args.taxCountry !== undefined && (args.sourceOrderId === undefined || args.customerId === undefined)) {
+    throw invalid('INVALID_INPUT', [
+      { path: ['taxCountry'], message: 'a tax country belongs to the receipt of a shop order, made out to its customer' },
+    ]);
+  }
 
   return inDraftTransaction(scope, async (trx) => {
     const settings = await requireSettings(trx, scope);
     const customer = args.customerId ? await requireUsableCustomer(trx, scope, args.customerId) : null;
     if (args.templateId) await assertTemplate(trx, scope, args.templateId);
-    const profile = profileFor(settings, customer);
+    const profile = profileFor(settings, customer, args.taxCountry ?? null);
 
     const id = randomUUID();
     await trx
@@ -262,6 +277,7 @@ export async function createDraft(scope: BooksScope, input: CreateDraftInput): P
         subject: args.subject ?? null,
         source_order_id: args.sourceOrderId ?? null,
         paid_on: args.paidOn ?? null,
+        tax_country: args.taxCountry ?? null,
         ...texts(args),
         customer_type: customer?.customer_type ?? null,
         vat_id: customer?.vat_id ?? null,

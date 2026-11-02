@@ -80,6 +80,8 @@ export interface SalesDocument {
   subject: string | null;
   currencyCode: string;
   taxRegion: string;
+  /** The country a shop receipt is taxed under (027_receipt_tax_country): the buyer's. Null for every other document. */
+  taxCountry: string | null;
   customerType: CustomerType | null;
   vatId: string | null;
   reverseCharge: boolean;
@@ -216,6 +218,8 @@ export type DocumentRow = {
   subject: string | null;
   currency_code: string;
   tax_region: string;
+  /** 027: the country a shop receipt is taxed under; null for every other document. */
+  tax_country: string | null;
   customer_type: CustomerType | null;
   vat_id: string | null;
   reverse_charge: boolean;
@@ -272,6 +276,7 @@ export function mapDocument(row: DocumentRow): SalesDocument {
     subject: row.subject,
     currencyCode: row.currency_code,
     taxRegion: row.tax_region,
+    taxCountry: row.tax_country,
     customerType: row.customer_type,
     vatId: row.vat_id,
     reverseCharge: row.reverse_charge,
@@ -525,7 +530,7 @@ async function getDocumentIn(db: Db, scope: BooksScope, id: string): Promise<Doc
   const settings = await readSettings(db, scope);
   if (!settings) return { ...view, stale: row.tax_profile_key === null };
   const customer = row.customer_id ? ((await selectCustomerRow(db, scope, row.customer_id)) ?? null) : null;
-  const profile = profileFor(settings, customer);
+  const profile = profileFor(settings, customer, row.tax_country);
   if (profile.key === row.tax_profile_key) return view;
 
   const recomputed = recomputeLines(lineRows, profile, row.net_or_gross);

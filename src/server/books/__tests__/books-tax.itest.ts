@@ -9,7 +9,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { REVERSE_CHARGE_NOTICE } from '../../tax/germanVat';
 import { cancelInvoice } from '../cancel';
-import { createDraft } from '../repository/documents';
+import { startCorrection } from '../correct';
+import { createDraft, setCustomer, updateDraft } from '../repository/documents';
 import { addLine } from '../repository/lines';
 import { getDocument } from '../repository/read';
 import { issue } from '../issue';
@@ -288,5 +289,85 @@ describe('Books tax cases', () => {
     await expect(
       addLine(regular, d2.document.id, { title: 'Large', quantity: 1000, unitPrice: MAX_AMOUNT_CENTS, taxClass: 'standard' }),
     ).rejects.toMatchObject({ code: 'INVALID_LINE' });
+  });
+});
+
+describe('a shop receipt taxed under its own country (027)', () => {
+  /** A Swiss customer row, as a namesake of an earlier sale leaves behind, and a receipt draft for a German buyer. */
+  async function germanReceiptOnSwissRow() {
+    const { dir, scope } = await regularCompany();
+    const { customer } = await newCustomer(scope, dir, { customerType: 'b2c', countryCode: 'CH' });
+    const draft = await createDraft(scope, {
+      docType: 'invoice',
+      actorUserId: ACTOR,
+      customerId: customer.id,
+      serviceDate: '2026-10-01',
+      sourceOrderId: `order-${newTenantId()}`,
+      taxCountry: 'DE',
+    });
+    await addLine(scope, draft.document.id, { title: 'Ring', quantity: 1000, unitPrice: 10000, taxClass: 'standard' });
+    return { dir, scope, customer, draftId: draft.document.id };
+  }
+
+  it('reads, recomputes and issues under the stored country, never the row', async () => {
+    const { scope, draftId } = await germanReceiptOnSwissRow();
+    const read = await getDocument(scope, draftId);
+    expect(read.stale).toBe(false);
+    expect(read.document).toMatchObject({ taxCountry: 'DE', taxAmount: 1900, total: 11900 });
+    // An edit recomputes under the same profile, so nothing flips back to the Swiss case.
+    await updateDraft(scope, draftId, { subject: 'Order' });
+    const { document } = await issue(scope, draftId, { actorUserId: ACTOR });
+    expect(document.document).toMatchObject({ status: 'issued', taxCountry: 'DE', taxAmount: 1900, total: 11900, reverseCharge: false });
+  });
+
+  it('the same row without a stored country is still the third-country case the Books refuse', async () => {
+    const { dir, scope } = await regularCompany();
+    const { customer } = await newCustomer(scope, dir, { customerType: 'b2c', countryCode: 'CH' });
+    const draft = await createDraft(scope, { docType: 'invoice', actorUserId: ACTOR, customerId: customer.id, serviceDate: '2026-10-01' });
+    await addLine(scope, draft.document.id, { title: 'Ring', quantity: 1000, unitPrice: 10000, taxClass: 'standard' });
+    expect((await getDocument(scope, draft.document.id)).document.taxCountry).toBeNull();
+    await expect(issue(scope, draft.document.id, { actorUserId: ACTOR })).rejects.toMatchObject({ code: 'TAX_CASE_UNSUPPORTED' });
+  });
+
+  it('another customer on the draft is taxed under that customer, and the stored country is gone', async () => {
+    const { dir, scope, draftId } = await germanReceiptOnSwissRow();
+    const { customer: french } = await newCustomer(scope, dir, { customerType: 'b2b', vatId: 'FR12345678901', countryCode: 'FR' });
+    const changed = await setCustomer(scope, draftId, { actorUserId: ACTOR, customerId: french.id });
+    expect(changed.document).toMatchObject({ taxCountry: null, reverseCharge: true, taxAmount: 0 });
+  });
+
+  it('a country only with the order receipt it belongs to, in the two-letter form', async () => {
+    const { dir, scope } = await regularCompany();
+    const { customer } = await newCustomer(scope, dir, { customerType: 'b2c', countryCode: 'DE' });
+    const base = { docType: 'invoice' as const, actorUserId: ACTOR, customerId: customer.id, serviceDate: '2026-10-01' };
+    await expect(createDraft(scope, { ...base, taxCountry: 'DE' })).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    await expect(
+      createDraft(scope, { ...base, customerId: undefined, sourceOrderId: `order-${newTenantId()}`, taxCountry: 'DE' }),
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    await expect(
+      createDraft(scope, { ...base, sourceOrderId: `order-${newTenantId()}`, taxCountry: 'de' }),
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+  });
+
+  it('its credit note and its correction keep the country, so neither reads as stale or as the Swiss case', async () => {
+    const { scope, draftId } = await germanReceiptOnSwissRow();
+    await issue(scope, draftId, { actorUserId: ACTOR });
+    const correction = await startCorrection(scope, draftId, { actorUserId: ACTOR });
+    expect(correction.document.document).toMatchObject({ taxCountry: 'DE', taxAmount: 1900, total: 11900 });
+    expect(correction.document.stale).toBe(false);
+  });
+
+  it('a cancelled receipt carries its country onto the credit note', async () => {
+    const { scope, draftId } = await germanReceiptOnSwissRow();
+    await issue(scope, draftId, { actorUserId: ACTOR });
+    const { creditNote } = await cancelInvoice(scope, draftId, { actorUserId: ACTOR, reason: 'Returned' });
+    expect(creditNote.document).toMatchObject({ docType: 'credit_note', taxCountry: 'DE', taxAmount: 1900, total: 11900 });
+  });
+
+  it('the database refuses a country that is not two capital letters', async () => {
+    const { scope, draftId } = await germanReceiptOnSwissRow();
+    await expect(
+      env.ownerDb.updateTable('sales_document').set({ tax_country: 'Deutschland' }).where('tenant_id', '=', scope.tenantId).where('id', '=', draftId).execute(),
+    ).rejects.toThrow(/sales_document_tax_country_check/);
   });
 });

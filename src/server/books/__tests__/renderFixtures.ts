@@ -113,6 +113,7 @@ export function smallBusinessInvoice(): { document: SalesDocumentWithSnapshots; 
     contractReference: null,
     currencyCode: 'EUR',
     taxRegion: 'DE',
+    taxCountry: null,
     customerType: 'b2b',
     vatId: null,
     reverseCharge: false,

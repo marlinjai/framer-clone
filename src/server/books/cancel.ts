@@ -241,6 +241,8 @@ export async function cancelInvoiceIn(
       contract_reference: invoice.contract_reference,
       currency_code: invoice.currency_code,
       tax_region: invoice.tax_region,
+      // The key below was computed under it: a shop receipt's buyer's country (027).
+      tax_country: invoice.tax_country,
       customer_type: invoice.customer_type,
       vat_id: invoice.vat_id,
       reverse_charge: invoice.reverse_charge,

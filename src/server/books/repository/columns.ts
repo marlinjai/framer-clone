@@ -41,6 +41,7 @@ export function documentColumns(eb: DocEb) {
     'sales_document.subject',
     'sales_document.currency_code',
     'sales_document.tax_region',
+    'sales_document.tax_country',
     'sales_document.customer_type',
     'sales_document.vat_id',
     'sales_document.reverse_charge',

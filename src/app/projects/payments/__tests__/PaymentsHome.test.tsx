@@ -75,6 +75,42 @@ describe('PaymentsHome', () => {
     expect(document.body.textContent).not.toMatch(/to take real payments/);
   });
 
+  it('a ready account whose Books cannot issue receipts yet says payments are paused, why, and where to go', async () => {
+    respond({
+      'GET /api/payments/stripe/account': {
+        status: 200,
+        body: { status: 'ready', books: { ready: false, blocker: 'sender_incomplete', missing: ['postalCode', 'taxNumber|vatId'] } },
+      },
+    });
+    render(<PaymentsHome returned={null} />);
+    expect(await screen.findByText(/Connected, payments paused/)).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/takes real payments/);
+    const notice = document.querySelector('[data-payments-books-blocked]');
+    expect(notice?.textContent).toMatch(/lack the postal code, a tax number or VAT id/);
+    expect(notice?.textContent).toMatch(/pnpm books:init-company/);
+    expect(screen.getByRole('link', { name: 'Open the Books' }).getAttribute('href')).toBe('/projects/books');
+  });
+
+  it.each([
+    ['books_not_set_up', /Books are not set up yet/],
+    ['invoice_numbers_missing', /no invoice number series yet/],
+  ])('names %s as the reason', async (blocker, text) => {
+    respond({
+      'GET /api/payments/stripe/account': { status: 200, body: { status: 'pending', books: { ready: false, blocker, missing: [] } } },
+    });
+    render(<PaymentsHome returned={null} />);
+    await waitFor(() => expect(document.querySelector('[data-payments-books-blocked]')?.textContent).toMatch(text));
+    // The next step of the account stays: the Books do not replace finishing the setup with Stripe.
+    expect(screen.getByRole('button', { name: 'Continue the setup with Stripe' })).toBeTruthy();
+  });
+
+  it('ready Books add nothing to the page', async () => {
+    respond({ 'GET /api/payments/stripe/account': { status: 200, body: { status: 'ready', books: { ready: true } } } });
+    render(<PaymentsHome returned={null} />);
+    expect(await screen.findByText(/takes real payments into your own Stripe account/)).toBeTruthy();
+    expect(document.querySelector('[data-payments-books-blocked]')).toBeNull();
+  });
+
   it('a refusal of the server is shown, never a blank page', async () => {
     respond({
       'GET /api/payments/stripe/account': {
