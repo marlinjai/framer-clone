@@ -1,10 +1,17 @@
 // Nodes to JSX and static JSX to nodes, as far as the round-trip test needs and no
 // further: the real import and export are step 7 of the complete primitives plan.
 // The normalised form is the plan's definition under "The round trip".
+//
+// `rules` is a named prop like any other, in its stored form. Import reads it through
+// the one parser, with the state in reach, because a list that only travels as JSON
+// would carry a refused rule through unchanged: what the parser refuses is left out
+// of the node and reported line by line.
 
 import ts from 'typescript';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
+import { readBehaviourTree, type StateValue } from '@/lib/behaviour/format';
 import { FORM_KIND_ATTR } from '@/lib/forms/definition';
+import { isLegacyRulesAttribute, isRuleList, readRules, type RuleContext } from '@/lib/rules/rules';
 import { STICKY_CTA_ATTR, STICKY_CTA_MARKER } from '@/lib/stickyCta/stickyCta';
 import { TEXT_NODE_TYPE, isTextNodeType } from '@/lib/renderer/textNode';
 
@@ -42,13 +49,13 @@ export interface NormalNode {
   children: NormalNode[];
 }
 
-function sortKeys(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortKeys);
+/** Declaration order is meaning, a later longhand beats a shorthand, so a `style` keeps its own. */
+function sortKeys(value: unknown, keepOrder = false): unknown {
+  if (Array.isArray(value)) return value.map((item) => sortKeys(item));
   if (value && typeof value === 'object') {
+    const keys = Object.keys(value as object);
     return Object.fromEntries(
-      Object.keys(value as object)
-        .sort()
-        .map((key) => [key, sortKeys((value as Record<string, unknown>)[key])]),
+      (keepOrder ? keys : keys.sort()).map((key) => [key, sortKeys((value as Record<string, unknown>)[key], key === 'style')]),
     );
   }
   return value;
@@ -159,7 +166,8 @@ function literalValue(expr: ts.Expression, source: ts.SourceFile): { ok: true; v
       if (key === undefined) return { ok: false };
       const value = literalValue(prop.initializer, source);
       if (!value.ok) return { ok: false };
-      out[key] = value.value;
+      // Plain assignment to `__proto__` would drop the key, and hide it from the parser.
+      Object.defineProperty(out, key, { value: value.value, enumerable: true, writable: true, configurable: true });
     }
     return { ok: true, value: out };
   }
@@ -178,6 +186,54 @@ function jsxText(raw: string): string {
     })
     .filter((line) => line.length > 0);
   return kept.join(' ');
+}
+
+/** The tree with ids from each node's place, which JSX does not carry and behaviour needs. */
+export function withPlaceIds(node: ComponentNode, place = 'n'): ComponentNode {
+  const children = node.children?.map((child, index) => withPlaceIds(child, `${place}-${index}`));
+  return { ...node, id: place, ...(children ? { children } : {}) };
+}
+
+/** Leaves one node's `rules` as what a stylesheet could take, and reports the rest. */
+function settleRules(node: ComponentNode, context: RuleContext, leftOver: string[]): void {
+  const props = node.props as Record<string, unknown> | undefined;
+  const stored = props?.rules;
+  if (!props || stored === undefined) return;
+  if (isTextNodeType(node.type)) {
+    leftOver.push(`rules on a text node: ${JSON.stringify(stored).slice(0, 120)}`);
+    delete props.rules;
+    return;
+  }
+  if (isLegacyRulesAttribute(stored)) return;
+  if (!isRuleList(stored)) {
+    leftOver.push(`rules is neither a list nor a table attribute: ${JSON.stringify(stored).slice(0, 120)}`);
+    delete props.rules;
+    return;
+  }
+  const { refused } = readRules({ rules: stored }, context);
+  if (refused.length === 0) return;
+  for (const { index, rule, reason } of refused) {
+    const id = (rule as { id?: unknown } | null)?.id;
+    leftOver.push(`refused rule ${typeof id === 'string' ? id : `#${index}`}: ${reason}`);
+  }
+  const out = new Set(refused.map(({ index }) => index));
+  const kept = stored.filter((_, index) => !out.has(index));
+  if (kept.length > 0) props.rules = kept;
+  else delete props.rules;
+}
+
+/** Every node's rules, against the state on its path, as the behaviour pass reads them. */
+function settleTreeRules(root: ComponentNode, leftOver: string[]): void {
+  const keyed = withPlaceIds(root);
+  const { behaviours } = readBehaviourTree(keyed);
+  const walk = (node: ComponentNode, copy: ComponentNode, outer: ReadonlyMap<string, StateValue>) => {
+    const state = behaviours.get(copy)?.state;
+    const states = state ? new Map([...outer, ...state.map((value): [string, StateValue] => [value.id, value])]) : outer;
+    // A page with no behaviour never reaches that pass, so no state is in reach at all.
+    settleRules(node, behaviours.size > 0 ? { states } : {}, leftOver);
+    node.children?.forEach((child, index) => walk(child, (copy.children as ComponentNode[])[index], states));
+  };
+  walk(root, keyed, new Map());
 }
 
 export function jsxToNodes(jsx: string): ImportResult {
@@ -277,5 +333,7 @@ export function jsxToNodes(jsx: string): ImportResult {
   if (init !== root) {
     return { leftOver: [`logic around the markup: ${textOf(init as ts.Node)}`] };
   }
-  return { node: convert(root), leftOver };
+  const node = convert(root);
+  if (node) settleTreeRules(node, leftOver);
+  return { node, leftOver };
 }

@@ -1,11 +1,11 @@
 {
-  "generatedAt": "2026-11-02T03:15:22.886Z",
+  "generatedAt": "2026-11-02T03:28:59.389Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 73,
+  "durationSeconds": 118,
   "matrix": {
     "surfaces": {
       "format": {
@@ -21,8 +21,8 @@
         "total": 1833
       },
       "canvas": {
-        "pass": 1637,
-        "fail": 196,
+        "pass": 1623,
+        "fail": 210,
         "notTested": 0,
         "total": 1833
       },
@@ -86,8 +86,8 @@
           "total": 36
         },
         "canvas": {
-          "pass": 36,
-          "fail": 0,
+          "pass": 35,
+          "fail": 1,
           "notTested": 0,
           "total": 36
         },
@@ -118,8 +118,8 @@
           "total": 239
         },
         "canvas": {
-          "pass": 208,
-          "fail": 31,
+          "pass": 197,
+          "fail": 42,
           "notTested": 0,
           "total": 239
         },
@@ -470,8 +470,8 @@
           "total": 30
         },
         "canvas": {
-          "pass": 13,
-          "fail": 17,
+          "pass": 11,
+          "fail": 19,
           "notTested": 0,
           "total": 30
         },
@@ -3399,7 +3399,7 @@
       "html-global-attribute:inputmode": "pass pass pass pass pass",
       "html-global-attribute:lang": "pass pass pass pass pass",
       "html-global-attribute:part": "pass pass pass pass pass",
-      "html-global-attribute:popover": "pass pass pass pass ai-attribute-allowlist",
+      "html-global-attribute:popover": "pass pass react-attribute-handling pass ai-attribute-allowlist",
       "html-global-attribute:slot": "pass pass pass pass pass",
       "html-global-attribute:spellcheck": "pass pass pass pass pass",
       "html-global-attribute:style": "pass pass pass pass pass",
@@ -3438,18 +3438,18 @@
       "html-element-attribute:audio.preload": "pass pass pass pass pass",
       "html-element-attribute:audio.src": "pass pass pass pass pass",
       "html-element-attribute:blockquote.cite": "pass pass pass pass pass",
-      "html-element-attribute:button.command": "pass pass pass pass ai-attribute-allowlist",
-      "html-element-attribute:button.commandfor": "pass pass pass pass ai-attribute-allowlist",
+      "html-element-attribute:button.command": "pass pass react-attribute-handling pass ai-attribute-allowlist",
+      "html-element-attribute:button.commandfor": "pass pass react-attribute-handling pass ai-attribute-allowlist",
       "html-element-attribute:button.disabled": "pass pass pass pass pass",
       "html-element-attribute:button.form": "pass pass pass pass ai-attribute-allowlist",
-      "html-element-attribute:button.formaction": "pass pass pass pass ai-attribute-allowlist",
+      "html-element-attribute:button.formaction": "pass pass react-attribute-handling pass ai-attribute-allowlist",
       "html-element-attribute:button.formenctype": "pass pass pass pass ai-attribute-allowlist",
       "html-element-attribute:button.formmethod": "pass pass pass pass ai-attribute-allowlist",
       "html-element-attribute:button.formnovalidate": "pass pass pass pass ai-attribute-allowlist",
-      "html-element-attribute:button.formtarget": "pass pass pass pass ai-attribute-allowlist",
+      "html-element-attribute:button.formtarget": "pass pass react-attribute-handling pass ai-attribute-allowlist",
       "html-element-attribute:button.name": "pass pass pass pass pass",
-      "html-element-attribute:button.popovertarget": "pass pass pass pass ai-attribute-allowlist",
-      "html-element-attribute:button.popovertargetaction": "pass pass pass pass ai-attribute-allowlist",
+      "html-element-attribute:button.popovertarget": "pass pass react-attribute-handling pass ai-attribute-allowlist",
+      "html-element-attribute:button.popovertargetaction": "pass pass react-attribute-handling pass ai-attribute-allowlist",
       "html-element-attribute:button.type": "pass pass pass pass pass",
       "html-element-attribute:button.value": "pass pass pass pass pass",
       "html-element-attribute:canvas.height": "pass pass attribute-read-as-style pass attribute-read-as-style",
@@ -3471,7 +3471,7 @@
       "html-element-attribute:fieldset.form": "pass pass pass pass ai-attribute-allowlist",
       "html-element-attribute:fieldset.name": "pass pass pass pass pass",
       "html-element-attribute:form.accept-charset": "pass pass pass pass ai-tag-allowlist",
-      "html-element-attribute:form.action": "pass pass pass pass ai-tag-allowlist",
+      "html-element-attribute:form.action": "pass pass react-attribute-handling pass ai-tag-allowlist",
       "html-element-attribute:form.autocomplete": "pass pass pass pass ai-tag-allowlist",
       "html-element-attribute:form.enctype": "pass pass pass pass ai-tag-allowlist",
       "html-element-attribute:form.method": "pass pass pass pass ai-tag-allowlist",
@@ -3516,11 +3516,11 @@
       "html-element-attribute:input.dirname": "pass pass pass pass ai-tag-allowlist",
       "html-element-attribute:input.disabled": "pass pass pass pass ai-tag-allowlist",
       "html-element-attribute:input.form": "pass pass pass pass ai-tag-allowlist",
-      "html-element-attribute:input.formaction": "pass pass pass pass ai-tag-allowlist",
+      "html-element-attribute:input.formaction": "pass pass react-attribute-handling pass ai-tag-allowlist",
       "html-element-attribute:input.formenctype": "pass pass pass pass ai-tag-allowlist",
       "html-element-attribute:input.formmethod": "pass pass pass pass ai-tag-allowlist",
       "html-element-attribute:input.formnovalidate": "pass pass pass pass ai-tag-allowlist",
-      "html-element-attribute:input.formtarget": "pass pass pass pass ai-tag-allowlist",
+      "html-element-attribute:input.formtarget": "pass pass react-attribute-handling pass ai-tag-allowlist",
       "html-element-attribute:input.max": "pass pass pass pass ai-tag-allowlist",
       "html-element-attribute:input.maxlength": "pass pass pass pass ai-tag-allowlist",
       "html-element-attribute:input.min": "pass pass pass pass ai-tag-allowlist",
@@ -3529,8 +3529,8 @@
       "html-element-attribute:input.name": "pass pass pass pass ai-tag-allowlist",
       "html-element-attribute:input.pattern": "pass pass pass pass ai-tag-allowlist",
       "html-element-attribute:input.placeholder": "pass pass pass pass ai-tag-allowlist",
-      "html-element-attribute:input.popovertarget": "pass pass pass pass ai-tag-allowlist",
-      "html-element-attribute:input.popovertargetaction": "pass pass pass pass ai-tag-allowlist",
+      "html-element-attribute:input.popovertarget": "pass pass react-attribute-handling pass ai-tag-allowlist",
+      "html-element-attribute:input.popovertargetaction": "pass pass react-attribute-handling pass ai-tag-allowlist",
       "html-element-attribute:input.readonly": "pass pass pass pass ai-tag-allowlist",
       "html-element-attribute:input.required": "pass pass pass pass ai-tag-allowlist",
       "html-element-attribute:input.size": "pass pass pass pass ai-tag-allowlist",
@@ -5045,13 +5045,13 @@
       "css-media-feature:width": "pass pass pass pass pass",
       "aria-pattern:accordion": "pass pass canvas-editor-context pass pass",
       "aria-pattern:alert": "pass pass pass pass pass",
-      "aria-pattern:alertdialog": "pass pass pass pass ai-attribute-allowlist",
+      "aria-pattern:alertdialog": "pass pass canvas-editor-context pass ai-attribute-allowlist",
       "aria-pattern:breadcrumb": "pass pass pass pass pass",
       "aria-pattern:button": "pass pass canvas-editor-context pass pass",
       "aria-pattern:carousel": "pass behaviour-state behaviour-state pass pass",
       "aria-pattern:checkbox": "pass pass pass pass ai-attribute-allowlist",
       "aria-pattern:combobox": "pass behaviour-state behaviour-state pass ai-attribute-allowlist",
-      "aria-pattern:dialog-modal": "pass pass pass pass ai-attribute-allowlist",
+      "aria-pattern:dialog-modal": "pass pass canvas-editor-context pass ai-attribute-allowlist",
       "aria-pattern:disclosure": "pass pass pass pass pass",
       "aria-pattern:feed": "pass behaviour-state behaviour-state pass pass",
       "aria-pattern:grid": "pass behaviour-state behaviour-state pass pass",
@@ -6082,12 +6082,12 @@
   },
   "roundTrip": {
     "nodesToJsxToNodes": {
-      "pass": 89,
-      "total": 89
+      "pass": 111,
+      "total": 111
     },
     "jsxToNodesToRender": {
-      "pass": 6,
-      "total": 12
+      "pass": 11,
+      "total": 18
     },
     "cases": [
       {
@@ -6521,6 +6521,111 @@
         "pass": true
       },
       {
+        "id": "rules: a state with a breakpoint map",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "rules: a wrapper around a breakpoint map",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "rules: a definition and the rule that uses it",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "rules: two faces of one family",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "rules: a custom property syntax in angle brackets",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "rules: the order of rules and of declarations",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "rules: awkward text in a rule",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "rules: a rule reading state above its node",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "rules: rules on an island and on its child",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "rules: the table attribute of the same name",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "rules: an empty list",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "refused rule: a selector outside the node",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "refused rule: a wrapper that is no condition",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "refused rule: an external address",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "refused rule: a breakpoint map in a keyframe",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "refused rule: a breakpoint map in a descriptor",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "refused rule: a definition in a wrapper",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "refused rule: a key that assignment would lose",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "refused rule: a condition with no state in reach",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "refused rule: an uncompiled component state",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "refused rule: a repeated id",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
         "id": "refused: unknown island",
         "direction": "nodes-jsx-nodes",
         "pass": true
@@ -6532,6 +6637,11 @@
       },
       {
         "id": "refused: a style on a text node",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "refused: a rule on a text node",
         "direction": "nodes-jsx-nodes",
         "pass": true
       },
@@ -6624,6 +6734,41 @@
         "leftOver": [
           "dynamic prop className={['a', 'b'].join(' ')}"
         ]
+      },
+      {
+        "id": "a computed value in a rule",
+        "direction": "jsx-nodes-render",
+        "pass": false,
+        "gap": "import-dynamic-logic",
+        "detail": "reported as left over",
+        "leftOver": [
+          "dynamic prop rules={[{ id: 'r', selector: '&:hover', style: { color: brand } }]}"
+        ]
+      },
+      {
+        "id": "reported: a refused rule written in JSX",
+        "direction": "jsx-nodes-render",
+        "pass": true
+      },
+      {
+        "id": "reported: an entry that is no rule",
+        "direction": "jsx-nodes-render",
+        "pass": true
+      },
+      {
+        "id": "reported: rules that are not a list",
+        "direction": "jsx-nodes-render",
+        "pass": true
+      },
+      {
+        "id": "reported: rules with no value",
+        "direction": "jsx-nodes-render",
+        "pass": true
+      },
+      {
+        "id": "reported: rules on a text run",
+        "direction": "jsx-nodes-render",
+        "pass": true
       }
     ]
   },
@@ -6768,24 +6913,34 @@
       "cost": 25
     },
     {
+      "id": "react-attribute-handling",
+      "description": "React drops or rewrites an attribute that is valid HTML.",
+      "matrixCells": 12,
+      "corpusChecks": 0,
+      "fixtures": [],
+      "onlyGapOf": [],
+      "roundTripCases": 0,
+      "cost": 12
+    },
+    {
       "id": "import-dynamic-logic",
       "description": "JSX that is a program, not markup: reported as left over by the static import, as the plan requires.",
       "matrixCells": 0,
       "corpusChecks": 0,
       "fixtures": [],
       "onlyGapOf": [],
-      "roundTripCases": 6,
-      "cost": 6
+      "roundTripCases": 7,
+      "cost": 7
     },
     {
       "id": "canvas-editor-context",
       "description": "The contract passes on the published page, but the mounted editor changes the outcome: Space pans, a link does not navigate, and the editor's own main element stops a header inside it being a banner. Closing it takes an interact mode on the canvas.",
-      "matrixCells": 4,
+      "matrixCells": 6,
       "corpusChecks": 0,
       "fixtures": [],
       "onlyGapOf": [],
       "roundTripCases": 0,
-      "cost": 4
+      "cost": 6
     },
     {
       "id": "renderer-drops-value",

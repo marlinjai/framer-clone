@@ -3,17 +3,26 @@
 // a few synthetic nodes for what those miss. JSX to nodes must render what the JSX
 // renders, or say line by line what it could not convert. A construct that cannot
 // make the trip is a failure and a named gap: this is an expressiveness test too.
+//
+// A list of rules is JSON, so it would survive whether or not it means anything. So a
+// tree with rules must also publish the same page after the trip, a rule case must
+// reach the sheet, and a refused rule must come back reported, not carried. JSX to
+// render has no rule case but the reports: its reference is React, which has no sheet,
+// and the real emission of one CSS block is step 7 of the complete primitives plan.
 
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import ts from 'typescript';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { COMPONENT_REGISTRY } from '@/lib/componentRegistry';
+import { FORM_KIND_ATTR } from '@/lib/forms/definition';
+import { HOVER_GATE } from '@/lib/rules/states';
+import { applyBehaviour } from '@/lib/renderer/server/applyBehaviour';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { FIXTURES } from './corpus/fixtures';
 import { PATTERNS, n, run, t } from './patterns';
 import { renderPublished } from './lib/published';
-import { jsxToNodes, nodesToJsx, normalise } from './roundtrip/jsx';
+import { jsxToNodes, nodesToJsx, normalise, withPlaceIds } from './roundtrip/jsx';
 import { writeOut } from './lib/io';
 import type { GapId, RoundTripCase } from './lib/types';
 
@@ -34,11 +43,120 @@ const SYNTHETIC: Array<{ id: string; node: ComponentNode }> = [
   { id: 'svg child', node: { type: 'svg', props: { viewBox: '0 0 10 10' } as never, children: [{ type: 'circle', props: { r: 5 } as never }] } },
 ];
 
+const FADE_IN = { id: 'fade', define: '@keyframes u-fade', blocks: [{ selector: 'from', style: { opacity: 0 } }, { selector: '50%', style: { opacity: 0.5 } }, { selector: 'to', style: { opacity: 1 } }] };
+
+/** `sheet`: what the published page must hold, written here and not read from the code under test. */
+const RULE_CASES: Array<{ id: string; node: ComponentNode; sheet: RegExp[] }> = [
+  {
+    id: 'a state with a breakpoint map',
+    node: { type: 'button', props: { children: 'Go', rules: [{ id: 'hover', selector: '&:hover', at: [HOVER_GATE], style: { color: { base: '#111111', tablet: '#222222' } } }] } as never },
+    sheet: [/@media \(hover:hover\) and \(pointer:fine\)/, /:hover[^}]*#111111/, /max-width:1279\.98px[^]*:hover[^}]*#222222/],
+  },
+  {
+    id: 'a wrapper around a breakpoint map',
+    node: { type: 'div', props: { rules: [{ id: 'dark', selector: '& > li', at: ['@media (prefers-color-scheme: dark)', '@supports (display: grid)'], style: { padding: { base: '8px', tablet: 0 }, order: -1 } }] } as never },
+    sheet: [/prefers-color-scheme: ?dark/, /@supports/, /padding:8px/, /order:-1/],
+  },
+  {
+    id: 'a definition and the rule that uses it',
+    node: { type: 'div', props: { rules: [FADE_IN, { id: 'run', selector: '&', style: { animation: 'u-fade 1s' } }] } as never },
+    sheet: [/@keyframes u-fade/, /50%\{opacity:0\.5/, /animation:u-fade 1s/],
+  },
+  {
+    id: 'two faces of one family',
+    node: {
+      type: 'div',
+      props: {
+        rules: [
+          { id: 'regular', define: '@font-face', style: { fontFamily: 'u-brand', src: 'url(/regular.woff2)', fontWeight: 400 } },
+          { id: 'bold', define: '@font-face', style: { fontFamily: 'u-brand', src: 'url(/bold.woff2)', fontWeight: 700 } },
+        ],
+      } as never,
+    },
+    sheet: [/regular\.woff2[^]*bold\.woff2/],
+  },
+  {
+    id: 'a custom property syntax in angle brackets',
+    node: { type: 'div', props: { rules: [{ id: 'gap', define: '@property --u-gap', style: { syntax: '"<length>"', inherits: 'false', initialValue: '4px' } }] } as never },
+    sheet: [/@property --u-gap/],
+  },
+  {
+    id: 'the order of rules and of declarations',
+    node: {
+      type: 'div',
+      props: {
+        rules: [
+          { id: 'first', selector: '&:hover', style: { padding: '1px', paddingTop: '2px' } },
+          { id: 'second', selector: '&:hover', style: { paddingTop: '3px', padding: '4px' } },
+        ],
+      } as never,
+    },
+    sheet: [/padding:1px;padding-top:2px[^]*padding-top:3px;padding:4px/],
+  },
+  {
+    id: 'awkward text in a rule',
+    node: {
+      type: 'blockquote',
+      props: {
+        rules: [
+          { id: 'mark', selector: '&::before', style: { content: '"\u201C"' } },
+          { id: 'tag', selector: '&[data-kind="a b"]::after', style: { content: '"</style> & x"' } },
+        ],
+      } as never,
+    },
+    sheet: [/\u201C/, /data-kind="a b"/],
+  },
+  {
+    id: 'a rule reading state above its node',
+    node: {
+      type: 'div',
+      props: { behaviour: { state: [{ id: 'open', name: 'Open', type: 'boolean', initial: false }] } } as never,
+      children: [{ type: 'p', props: { children: 'x', rules: [{ id: 'shown', selector: '&', when: { state: 'open', eq: true }, style: { color: '#123456' } }] } as never }],
+    },
+    sheet: [/data-fcs-open[^}]*#123456/],
+  },
+  {
+    id: 'rules on an island and on its child',
+    node: {
+      type: 'div',
+      props: { [FORM_KIND_ATTR]: 'form', rules: [{ id: 'own', selector: '&:focus-within', style: { outline: '1px solid #123456' } }] } as never,
+      children: [{ type: 'p', props: { children: 'x', rules: [FADE_IN] } as never }],
+    },
+    sheet: [/:focus-within[^}]*#123456/, /@keyframes u-fade/],
+  },
+  { id: 'the table attribute of the same name', node: { type: 'table', props: { rules: 'all' } as never }, sheet: [/<table[^>]* rules="all"/] },
+  { id: 'an empty list', node: { type: 'div', props: { rules: [] } as never }, sheet: [] },
+];
+
+/** Between two good rules, so a pass also proves the rest of the list stands, in order. */
+const REFUSED_RULES: Array<{ id: string; rule: unknown; reason: RegExp }> = [
+  { id: 'a selector outside the node', rule: { id: 'bad', selector: 'body', style: { color: 'red' } }, reason: /every part of a selector starts with &/ },
+  { id: 'a wrapper that is no condition', rule: { id: 'bad', selector: '&', at: ['@layer base'], style: { color: 'red' } }, reason: /@layer/ },
+  { id: 'an external address', rule: { id: 'bad', selector: '&', style: { backgroundImage: 'url(https://example.test/a.png)' } }, reason: /address/ },
+  { id: 'a breakpoint map in a keyframe', rule: { id: 'bad', define: '@keyframes u-map', blocks: [{ selector: 'from', style: { opacity: { base: 0, tablet: 1 } } }] }, reason: /no breakpoints/ },
+  { id: 'a breakpoint map in a descriptor', rule: { id: 'bad', define: '@font-face', style: { fontFamily: 'u-map', src: 'url(/a.woff2)', fontWeight: { base: 400, tablet: 700 } } }, reason: /no breakpoints/ },
+  { id: 'a definition in a wrapper', rule: { id: 'bad', define: '@keyframes u-at', at: ['@media print'], blocks: [{ selector: 'from', style: { opacity: 0 } }] }, reason: /no wrapper/ },
+  { id: 'a key that assignment would lose', rule: JSON.parse('{"id":"bad","selector":"&","style":{"__proto__":"red"}}'), reason: /__proto__ is not a property name/ },
+  { id: 'a condition with no state in reach', rule: { id: 'bad', selector: '&', when: { state: 'open', eq: true }, style: { color: 'red' } }, reason: /no state is in reach/ },
+  { id: 'an uncompiled component state', rule: { id: 'bad', selector: '&', componentState: 'open', style: { color: 'red' } }, reason: /not been compiled/ },
+  { id: 'a repeated id', rule: { id: 'before', selector: '&', style: { color: 'red' } }, reason: /same id/ },
+];
+
+/** JSX with a `rules` the format cannot hold: the report is the pass. */
+const REPORTED_JSX: Array<{ id: string; jsx: string; line: RegExp }> = [
+  { id: 'a refused rule written in JSX', jsx: `<div rules={[{ id: 'bad', selector: 'body', style: { color: 'red' } }]}>x</div>`, line: /refused rule bad: every part of a selector starts with &/ },
+  { id: 'an entry that is no rule', jsx: `<div rules={['&:hover']}>x</div>`, line: /refused rule #0: a rule is an object/ },
+  { id: 'rules that are not a list', jsx: `<div rules={{ id: 'r', selector: '&' }}>x</div>`, line: /neither a list nor a table attribute/ },
+  { id: 'rules with no value', jsx: `<div rules>x</div>`, line: /neither a list nor a table attribute/ },
+  { id: 'rules on a text run', jsx: `<p><TextRun rules={[{ id: 'r', selector: '&', style: {} }]}>{"x"}</TextRun></p>`, line: /rules on a text node/ },
+];
+
 /** Must be refused, not converted: the plan's rule for an island nobody recognises. */
 const MUST_REFUSE: Array<{ id: string; node: ComponentNode }> = [
   { id: 'unknown island', node: { type: 'div', props: { 'data-component-kind': 'not-a-real-kind' } as never } },
   { id: 'a function prop', node: { type: 'div', props: { onClick: () => {} } as never } },
   { id: 'a style on a text node', node: { type: 'p', props: {}, children: [{ type: '#text', props: { children: 'x', style: { color: 'red' } } as never }] } },
+  { id: 'a rule on a text node', node: { type: 'p', props: {}, children: [{ type: '#text', props: { children: 'x', rules: [{ id: 'r', selector: '&', style: { color: 'red' } }] } as never }] } },
 ];
 
 const JSX_CASES: Array<{ id: string; jsx: string }> = [
@@ -54,6 +172,7 @@ const JSX_CASES: Array<{ id: string; jsx: string }> = [
   { id: 'spread props', jsx: `<div {...{ id: 'x' }}>Hi</div>` },
   { id: 'an unknown component', jsx: `<Card title="Hi" />` },
   { id: 'a computed class', jsx: `<div className={['a', 'b'].join(' ')}>Hi</div>` },
+  { id: 'a computed value in a rule', jsx: `<div rules={[{ id: 'r', selector: '&:hover', style: { color: brand } }]}>Hi</div>` },
 ];
 
 /** What React makes of the JSX, as the reference: compiled, not parsed by the importer. */
@@ -84,6 +203,43 @@ function nodesCase(id: string, node: ComponentNode): RoundTripCase {
   return { ...base, pass: false, gap: 'roundtrip-not-representable', detail: `${before.slice(0, 160)} became ${after.slice(0, 160)}` };
 }
 
+/** The whole published page, through the behaviour pass, with ids that do not depend on the side of the trip. */
+function publish(node: ComponentNode): string {
+  const { html, css } = renderPublished(applyBehaviour(withPlaceIds(node)).root);
+  return `${html}\n${css}`;
+}
+
+/** The case and, past the JSON, the same page on both sides, holding what `sheet` names. */
+function publishedCase(id: string, node: ComponentNode, sheet: RegExp[] = []): RoundTripCase {
+  const trip = nodesCase(id, node);
+  if (!trip.pass) return trip;
+  const before = publish(node);
+  const after = publish(jsxToNodes(nodesToJsx(node)).node as ComponentNode);
+  if (before !== after) return { ...trip, pass: false, gap: 'roundtrip-not-representable', detail: `published ${before.slice(0, 160)} became ${after.slice(0, 160)}` };
+  const missing = sheet.filter((expected) => !expected.test(before));
+  if (missing.length > 0) return { ...trip, pass: false, gap: 'unclassified', detail: `the page lacks ${missing.join(', ')}: ${before.slice(0, 160)}` };
+  return trip;
+}
+
+/** The refused rule comes back as one line with the parser's reason, and its neighbours stand. */
+function refusedRuleCase(id: string, rule: unknown, reason: RegExp): RoundTripCase {
+  const base = { id: `refused rule: ${id}`, direction: 'nodes-jsx-nodes' as const };
+  const before = { id: 'before', selector: '&:hover', style: { color: '#111111' } };
+  const after = { id: 'after', selector: '&:focus', style: { color: '#222222' } };
+  const { node, leftOver } = jsxToNodes(nodesToJsx({ type: 'div', props: { rules: [before, rule, after] } as never }));
+  const kept = JSON.stringify((node?.props as { rules?: unknown } | undefined)?.rules);
+  if (leftOver.length === 1 && /^refused rule /.test(leftOver[0]) && reason.test(leftOver[0]) && kept === JSON.stringify([before, after])) return { ...base, pass: true };
+  return { ...base, pass: false, gap: 'unclassified', detail: `kept ${kept?.slice(0, 160)}`, leftOver };
+}
+
+function reportedCase(id: string, jsx: string, line: RegExp): RoundTripCase {
+  const base = { id: `reported: ${id}`, direction: 'jsx-nodes-render' as const };
+  const { node, leftOver } = jsxToNodes(jsx);
+  const held = JSON.stringify(node).includes('"rules"');
+  if (leftOver.length === 1 && line.test(leftOver[0]) && !held) return { ...base, pass: true };
+  return { ...base, pass: false, gap: 'unclassified', detail: `carried: ${held}`, leftOver };
+}
+
 function jsxCase(id: string, jsx: string): RoundTripCase {
   const base = { id, direction: 'jsx-nodes-render' as const };
   const imported = jsxToNodes(jsx);
@@ -103,13 +259,17 @@ describe('round trip', () => {
   it('runs both directions over every case', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
+    // A form stamps the moment it was rendered, and two renders must compare equal.
+    vi.spyOn(Date, 'now').mockReturnValue(0);
     const cases: RoundTripCase[] = [];
-    for (const fixture of FIXTURES) cases.push(nodesCase(`corpus: ${fixture.id}`, fixture.tree()));
+    for (const fixture of FIXTURES) cases.push(publishedCase(`corpus: ${fixture.id}`, fixture.tree()));
     for (const pattern of PATTERNS) cases.push(nodesCase(`pattern: ${pattern.id}`, pattern.tree()));
     for (const entry of Object.values(COMPONENT_REGISTRY)) {
       cases.push(nodesCase(`preset: ${entry.id}`, { type: entry.htmlType, props: entry.defaultProps as never }));
     }
     for (const { id, node } of SYNTHETIC) cases.push(nodesCase(`synthetic: ${id}`, node));
+    for (const { id, node, sheet } of RULE_CASES) cases.push(publishedCase(`rules: ${id}`, node, sheet));
+    for (const { id, rule, reason } of REFUSED_RULES) cases.push(refusedRuleCase(id, rule, reason));
     for (const { id, node } of MUST_REFUSE) {
       let refused = false;
       try {
@@ -120,6 +280,7 @@ describe('round trip', () => {
       cases.push({ id: `refused: ${id}`, direction: 'nodes-jsx-nodes', pass: refused, ...(refused ? {} : { gap: 'unclassified', detail: 'converted without a report' }) });
     }
     for (const { id, jsx } of JSX_CASES) cases.push(jsxCase(id, jsx));
+    for (const { id, jsx, line } of REPORTED_JSX) cases.push(reportedCase(id, jsx, line));
     expect(cases.length).toBeGreaterThan(40);
     writeOut('roundtrip', cases);
   });
