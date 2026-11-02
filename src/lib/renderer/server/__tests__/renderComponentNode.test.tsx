@@ -4,6 +4,7 @@
 //   - void tags emit without children; unknown/empty types degrade (no throw)
 import React from 'react';
 import { describe, it, expect, afterEach, vi } from 'vitest';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { render, cleanup, waitFor } from '@testing-library/react';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import {
@@ -106,11 +107,13 @@ describe('renderComponentNode: primitives', () => {
     expect(img!.childNodes.length).toBe(0);
   });
 
-  it('never reads a stored type as a registry id (image stays image, as on the canvas)', () => {
-    const node: ComponentNode = { type: 'image', id: 'i2', props: { src: '/b.png' } };
-    const { container } = render(<>{renderComponentNode(node)}</>);
-    expect(container.querySelector('img')).toBeNull();
-    expect(container.querySelector('image')).not.toBeNull();
+  it('never reads a stored type as a registry id (image is no img, as on the canvas)', () => {
+    const image: ComponentNode = { type: 'image', id: 'i2', props: { src: '/b.png' } };
+    const bare = render(<>{renderComponentNode(image)}</>);
+    expect(bare.container.querySelector('img, image')).toBeNull();
+    const inSvg = render(<>{renderComponentNode({ type: 'svg', id: 's', props: {}, children: [image] })}</>);
+    expect(inSvg.container.querySelector('img')).toBeNull();
+    expect(inSvg.container.querySelector('image')).not.toBeNull();
   });
 });
 
@@ -244,5 +247,12 @@ describe('renderComponentNode: interactive commerce islands', () => {
       expect(button).not.toBeNull();
       expect(button.disabled).toBe(false);
     });
+  });
+});
+
+describe('an empty custom property inline', () => {
+  it('reaches the attribute React writes, and a stored nothing does not', () => {
+    const html = renderToStaticMarkup(<>{renderComponentNode({ id: 'a', type: 'div', props: { style: { '--tw-blur': ' ', '--gone': '' } } })}</>);
+    expect(html).toContain('style="--tw-blur:"');
   });
 });

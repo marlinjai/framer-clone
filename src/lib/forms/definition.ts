@@ -25,6 +25,8 @@
 //
 // Client-safe: no server imports.
 
+import { FORM_MEMBER_NAMES } from '@/lib/renderer/domMemberNames.generated';
+
 export const FORM_KIND_ATTR = 'data-form-kind';
 
 export const FORM_KINDS = ['form', 'form-field', 'form-submit'] as const;
@@ -68,6 +70,14 @@ export const TYPE_LENGTH: Record<FieldType, { default: number; ceiling: number }
   checkbox: { default: 0, ceiling: 0 },
   consent: { default: 0, ceiling: 0 },
 };
+
+/**
+ * What a control may not be called, by `id` or `name`: a form exposes its controls as
+ * properties, ahead of its own members, so `parentElement` here makes the form its
+ * control's parent and any walk up from it never ends. Not `name`, the one member left
+ * open: the Form's default field is called that, and no code walks `form.name`.
+ */
+export const FORM_SHADOWING_NAMES: ReadonlySet<string> = new Set(FORM_MEMBER_NAMES.filter((name) => name !== 'name'));
 
 /** Names reserved for the transport (hidden inputs); a field may never use them. */
 export const RESERVED_KEY_PREFIX = '_';
@@ -198,8 +208,8 @@ export function readFormSettings(props: Record<string, unknown> | null | undefin
   };
 }
 
-/** Normalize a field name to a safe key (letters, digits, `_` and `-`), or '' when nothing is left. */
-export function normalizeFieldKey(raw: unknown): string {
+/** Letters, digits, `_` and `-` of a field name, or '' when nothing is left. */
+function cleanFieldName(raw: unknown): string {
   if (typeof raw !== 'string') return '';
   let key = raw
     .normalize('NFKD')
@@ -211,6 +221,12 @@ export function normalizeFieldKey(raw: unknown): string {
   // `_form`, `_website` and the like belong to the transport.
   while (key.startsWith(RESERVED_KEY_PREFIX)) key = key.slice(1);
   return key;
+}
+
+/** Normalize a field name to a safe key. The key is the control's `name`, so a form's member gets a suffix. */
+export function normalizeFieldKey(raw: unknown): string {
+  const key = cleanFieldName(raw);
+  return FORM_SHADOWING_NAMES.has(key) ? `${key}_field` : key;
 }
 
 /** Options of a select: an array of strings, or one option per line. Trimmed, de-duplicated, bounded. */
@@ -275,13 +291,14 @@ function defaultLabel(type: FieldType): string {
 
 /**
  * The fields of a form, in tree order (depth first), each with a key unique
- * within the form: a repeated name gets `_2`, `_3`. A form nested inside the
- * form is not descended into (its fields belong to it). At most
- * FORM_LIMITS.maxFields fields.
+ * within the form: a repeated name gets `_2`, `_3`. A field whose key was changed
+ * from a form's member is the last to choose, so a field really called `title_field`
+ * keeps its key beside one called `title`. A form nested inside the form is not
+ * descended into (its fields belong to it). At most FORM_LIMITS.maxFields fields.
  */
 export function collectFormFields(form: FormTreeNode): FieldSpec[] {
   const fields: FieldSpec[] = [];
-  const used = new Set<string>();
+  const renamed = new Set<FieldSpec>();
   const walk = (node: FormTreeNode) => {
     for (const child of node.children ?? []) {
       if (fields.length >= FORM_LIMITS.maxFields) return;
@@ -289,18 +306,25 @@ export function collectFormFields(form: FormTreeNode): FieldSpec[] {
       if (kind === 'form') continue;
       if (kind === 'form-field') {
         const spec = readFieldSpec(child, fields.length);
-        let key = spec.key;
-        let n = 2;
-        while (used.has(key)) key = `${spec.key}_${n++}`;
-        used.add(key);
-        fields.push({ ...spec, key });
+        const named = cleanFieldName(child.props?.name) || cleanFieldName(text(child.props?.label, FORM_LIMITS.maxLabelChars));
+        if (FORM_SHADOWING_NAMES.has(named)) renamed.add(spec);
+        fields.push(spec);
         continue;
       }
       walk(child);
     }
   };
   walk(form);
-  return fields;
+  const used = new Set<string>();
+  const keyed = new Map<FieldSpec, string>();
+  for (const spec of [...fields.filter((f) => !renamed.has(f)), ...renamed]) {
+    let key = spec.key;
+    let n = 2;
+    while (used.has(key)) key = `${spec.key}_${n++}`;
+    used.add(key);
+    keyed.set(spec, key);
+  }
+  return fields.map((spec) => ({ ...spec, key: keyed.get(spec) as string }));
 }
 
 /** Depth-first search for the form container with this id. */

@@ -76,6 +76,11 @@ export function isPageLevelRow(id: string): boolean {
   return samples.pageLevelRows.includes(id);
 }
 
+/** The one document row a page can hold: a rule on the page root, which a probe node is. */
+export function rootProbe(): RuleProbe {
+  return { rule: { id: 'probe', selector: ':root', style: { color: PROBE_COLOR } }, expected: [normalize(`:root{color:${PROBE_COLOR}`)] };
+}
+
 /** The stylesheet text inside rendered markup, for a surface that emits it in the body. */
 export function inlineStylesheets(html: string): string {
   return [...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n');

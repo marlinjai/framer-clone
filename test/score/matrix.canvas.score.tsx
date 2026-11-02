@@ -22,6 +22,7 @@ import {
   atRuleProbe,
   inlineStylesheets,
   isPageLevelRow,
+  rootProbe,
   normalize,
   selectorProbe,
   stylesheetHasRule,
@@ -172,6 +173,7 @@ function probeAtRule(id: string, gap: GapId): Cell {
 }
 
 function probeEntry(kind: RowKind, id: string): Cell {
+  if (id === ':root') return holds(canvasSheet(rootProbe().rule, false), `${COPY}${DECLARED}`) ? pass('on the page root of each frame') : fail('page-level-css');
   if (isPageLevelRow(id)) return fail('page-level-css', 'applies to the document, which the route owns');
   switch (kind) {
     case 'html-element-attribute':

@@ -83,13 +83,14 @@ describe.each(ENGINES)('in %s', (_name, engine) => {
       expect(value === 'true' || value === 'false').toBe(true);
     });
 
-    it('is why the render gate alone is not enough: an id stays on the page, a name does not', async () => {
+    it('keeps both off the page: a field named after a member loses its name and its id', async () => {
       await goTo('shadow-name-parentelement');
       expect(await page.evaluate(() => Document.prototype.querySelector.call(document, '[data-t="in-sheet"]')?.hasAttribute('name'))).toBe(false);
       await goTo('shadow-id-parentelement');
       expect(await page.evaluate(() => {
+        const field = Document.prototype.querySelector.call(document, '[data-t="in-sheet"]');
         const form = Document.prototype.querySelector.call(document, 'form') as HTMLFormElement;
-        return form.parentElement === form.querySelector('input');
+        return field?.hasAttribute('id') === false && form.parentElement !== form.querySelector('input');
       })).toBe(true);
     });
 

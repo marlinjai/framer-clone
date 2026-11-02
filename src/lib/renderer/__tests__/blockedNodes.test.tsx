@@ -159,9 +159,156 @@ describe('blocked nodes', () => {
     expect(editor(type, { name, alt: 'x' })).not.toContain('name=');
   });
 
+  it.each(['ID', 'Id'])('refuses <img %s=createElement>, which would replace a method of document', (name) => {
+    expect(published({ type: 'img', props: { [name]: 'createElement', name: 'kept', alt: 'x' } }).toLowerCase()).not.toContain('createelement');
+    expect(published({ type: 'img', props: { id: 'ok', [name]: 'createElement', alt: 'x' } })).toContain('id="ok"');
+  });
+
   it('keeps a member name as an ordinary id off an img', () => {
     expect(published({ type: 'label', props: { id: 'name' } })).toContain('id="name"');
     expect(published({ type: 'section', props: { id: 'links' } })).toContain('id="links"');
+  });
+
+  it.each([
+    ['button', 'parentElement'], ['input', 'closest'], ['fieldset', 'elements'], ['select', 'submit'],
+    ['textarea', 'matches'], ['output', 'parentNode'], ['INPUT', 'getAttribute'], ['img', 'closest'],
+  ])('refuses <%s id=%s>, which replaces a member of its form', (type, id) => {
+    expect(published({ type, props: { id, alt: 'x' } })).not.toContain('id=');
+    expect(editor(type, { id, alt: 'x' })).not.toContain('id=');
+  });
+
+  it.each(['ACTION', 'Action', 'METHOD', 'CLASS', 'Class', 'CLASSNAME', 'STYLE', 'CHILDREN', 'KEY', 'REF', 'ID', 'NAME', 'HREF', 'TYPE', 'FORM', 'FORMACTION', 'FormMethod', 'FORMTARGET', 'FORMENCTYPE', 'DATA-FORM-KIND', 'DATA-COMPONENT-KIND'])(
+    'refuses %s, another spelling of a name a renderer reads',
+    (name) => {
+      expect(published({ type: 'div', props: { [name]: 'x', id: 'keep' } })).toBe('<div id="keep"></div>');
+      expect(editor('div', { [name]: 'x', id: 'keep' })).toBe('<div id="keep"></div>');
+    },
+  );
+
+  it('keeps stored names as written, in the spellings React and SVG use', () => {
+    const svg = published({ type: 'svg', props: { viewBox: '0 0 9 9', preserveAspectRatio: 'none' } });
+    expect(svg).toContain('viewBox="0 0 9 9"');
+    expect(svg).toContain('preserveAspectRatio="none"');
+    expect(published({ type: 'path', props: { strokeWidth: 2, strokeLinecap: 'round' } })).toBe('<path stroke-width="2" stroke-linecap="round"></path>');
+    expect(published({ type: 'form', props: { noValidate: true, encType: 'text/plain' } })).toContain('encType="text/plain"');
+    expect(published({ type: 'button', props: { formAction: '/x', formMethod: 'post' } })).toContain('formAction="/x"');
+    expect(published({ type: 'div', props: { className: 'a' } })).toBe('<div class="a"></div>');
+    expect(published({ type: 'div', props: { class: 'a' } })).toContain('class="a"');
+  });
+
+  it('keeps a live form on its own address, whatever a stored name spells', () => {
+    const html = published({ type: 'div', props: { 'data-form-kind': 'form', ACTION: 'https://elsewhere.example/', Method: 'get' } });
+    expect(html.toLowerCase()).not.toContain('elsewhere');
+    expect(html.match(/action=/gi)).toHaveLength(1);
+    expect(html.match(/method=/gi)).toHaveLength(1);
+  });
+
+  it.each(['form', 'formAction', 'formaction', 'formMethod', 'formmethod', 'formTarget', 'formEncType', 'formenctype'])('drops %s on the editor surfaces only', (name) => {
+    expect(editor('button', { [name]: 'x' })).toBe('<button></button>');
+    expect(published({ type: 'button', props: { [name]: 'x' } }).toLowerCase()).toContain(name.toLowerCase());
+  });
+
+  it('keeps form on a MathML operator, where it only sets the layout', () => {
+    expect(editor('mo', { form: 'prefix' })).toBe('<mo form="prefix"></mo>');
+  });
+
+  it.each(['ID', 'Id', 'iD'])('refuses the member id in the spelling %s', (name) => {
+    expect(published({ type: 'input', props: { [name]: 'parentElement' } }).toLowerCase()).not.toContain('id=');
+    expect(editor('input', { [name]: 'parentElement' }).toLowerCase()).not.toContain('id=');
+  });
+
+  it('refuses a member id tied to a form from outside it', () => {
+    const html = published({ type: 'button', props: { id: 'closest', form: 'f' } });
+    expect(html).not.toContain('id=');
+    expect(html).toContain('form="f"');
+  });
+
+  it.each(['image', 'IMAGE', 'Image'])('renders no stored <%s> outside svg, where the parser makes it an img', (type) => {
+    expect(published({ type, props: { href: '/x.png' } })).toBe('');
+    expect(editor(type, { href: '/x.png' })).toBe('');
+    const wrap = (...tags: string[]) => tags.reduceRight<Record<string, unknown>>((child, tag, index) => ({ id: `w${index}`, type: tag, children: [child] }), { id: 'i', type, props: { href: '/x.png' } });
+    for (const inner of ['foreignObject', 'desc', 'title', 'p', 'span']) expect(published(wrap('svg', inner)).toLowerCase()).not.toContain('<image');
+    expect(published(wrap('math', 'mi'))).not.toContain('<image');
+    expect(published(wrap('section'))).not.toContain('<image');
+  });
+
+  it('keeps an image in svg, also after an integration point opens svg again', () => {
+    expect(published({ type: 'svg', children: [{ id: 'g', type: 'g', children: [{ id: 'i', type: 'image', props: { href: '/x.png' } }] }] })).toContain('<image');
+    const again = { type: 'svg', children: [{ id: 'f', type: 'foreignObject', children: [{ id: 's', type: 'svg', children: [{ id: 'i', type: 'image', props: {} }] }] }] };
+    expect(published(again)).toContain('<image');
+  });
+
+  it.each(['p', 'div', 'SPAN', 'img', 'table', 'font'])('renders no <%s> directly in svg, which the parser would leave it for', (type) => {
+    const svg = { type: 'svg', children: [{ id: 'g', type: 'g', children: [{ id: 'h', type, props: { children: 'x' } }] }, { id: 'r', type: 'rect', props: {} }] };
+    expect(published(svg)).toBe('<svg><g></g><rect></rect></svg>');
+  });
+
+  it.each(['p', 'img', 'div', 'span'])('renders no <%s> directly in math, which the parser would lift out', (type) => {
+    expect(published({ type: 'math', children: [{ id: 'h', type, props: { children: 'x' } }, { id: 'n', type: 'mn', props: { children: '1' } }] })).toBe('<math><mn>1</mn></math>');
+    const inText = published({ type: 'math', children: [{ id: 't', type: 'mtext', children: [{ id: 'h', type, props: {} }] }] });
+    expect(inText).toContain(`<${type}`);
+  });
+
+  it('keeps a title out of math, which only svg holds', () => {
+    expect(published({ type: 'math', children: [{ id: 't', type: 'title', props: { children: 'x' } }] })).toBe('<math></math>');
+  });
+
+  it.each(['form', 'FORM'])('renders a stored plain <%s> below a live form as a div', (type) => {
+    const plain = { id: 'p', type, props: { action: 'https://example.com/nested', method: 'get' }, children: [{ id: 'b', type: 'button', props: { type: 'submit', children: 'x' } }] };
+    const html = published({ id: 'f', type: 'div', props: { 'data-form-kind': 'form' }, children: [{ id: 'w', type: 'div', children: [plain] }] });
+    expect(html.match(/<form/gi)).toHaveLength(1);
+    expect(html).toContain('action="/api/forms/submit"');
+    expect(published(plain).toLowerCase()).toContain('<form');
+  });
+
+  it('keeps HTML in foreignObject, and what is only a name in svg', () => {
+    const inForeign = { type: 'svg', children: [{ id: 'f', type: 'foreignObject', children: [{ id: 'p', type: 'p', props: { children: 'x' } }] }] };
+    expect(published(inForeign)).toContain('<p>x</p>');
+    expect(published({ type: 'svg', children: [{ id: 'a', type: 'a', children: [{ id: 't', type: 'text', props: { children: 'x' } }] }] })).toContain('<text>x</text>');
+  });
+
+  it.each(['formAction', 'formaction', 'formMethod', 'formTarget', 'formEncType', 'formenctype'])('drops %s on a control of a live form, at any depth', (name) => {
+    const control = { id: 'c', type: 'button', props: { [name]: '/elsewhere', children: 'x' } };
+    const box = { id: 'b', type: 'div', children: [control] };
+    const html = published({ id: 'f', type: 'div', props: { 'data-form-kind': 'form' }, children: [box] }).toLowerCase();
+    expect(html).toContain('<button>x</button>');
+  });
+
+  it.each(['formAction', 'formMethod', 'formTarget', 'formEncType'])('drops %s on a control tied to a form from outside', (name) => {
+    expect(published({ type: 'button', props: { form: 'f', [name]: '/elsewhere' } })).toBe('<button form="f"></button>');
+  });
+
+  it('keeps an owner\'s form logic on a plain form', () => {
+    const html = published({ type: 'form', props: { action: 'https://example.com/x' }, children: [{ id: 'b', type: 'button', props: { formAction: 'https://example.com/y' } }] });
+    expect(html).toContain('action="https://example.com/x"');
+    expect(html).toContain('formAction="https://example.com/y"');
+  });
+
+  it.each(['id', 'ID'])('drops a member %s on an image even inside svg: a sibling can end the svg', (name) => {
+    const image = { id: 'i', type: 'image', props: { [name]: 'parentElement' } };
+    expect(published({ type: 'svg', children: [image] }).toLowerCase()).not.toContain('id=');
+    expect(published({ type: 'svg', children: [{ id: 'i', type: 'image', props: { id: 'hero' } }] })).toContain('id="hero"');
+  });
+
+  it.each(['button', 'div'])('refuses a member id on a stored submit button, stored as <%s>', (type) => {
+    const props = { 'data-form-kind': 'form-submit', id: 'closest', children: 'x' };
+    const html = published({ type: 'div', props: { 'data-form-kind': 'form' }, children: [{ id: 's', type, props }] });
+    expect(html).not.toContain('id="closest"');
+    const canvas = createComponentElement({ type, props, isHostElement: true } as never, props, [], 'x');
+    expect(renderToStaticMarkup(canvas as never)).toBe('<button type="button">x</button>');
+  });
+
+  it('gives a stored field called after a form member a name of its own', () => {
+    const field = { id: 'f', type: 'div', props: { 'data-form-kind': 'form-field', fieldType: 'text', name: 'parentElement', label: 'x' } };
+    const html = published({ type: 'div', props: { 'data-form-kind': 'form' }, children: [field] });
+    expect(html).toContain('name="parentElement_field"');
+    expect(html).not.toContain('name="parentElement"');
+  });
+
+  it('keeps what no form exposes: another tag, or a name that is no member of a form', () => {
+    expect(published({ type: 'form', children: [{ id: 'l', type: 'label', props: { id: 'parentElement' } }] })).toContain('id="parentElement"');
+    expect(published({ type: 'div', props: { id: 'closest' } })).toContain('id="closest"');
+    for (const id of ['email', 'links', 'close', 'name']) expect(published({ type: 'input', props: { id } })).toContain(`id="${id}"`);
   });
 
   it('keeps an ordinary id and name', () => {

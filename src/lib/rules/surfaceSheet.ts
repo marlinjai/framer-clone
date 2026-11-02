@@ -16,6 +16,13 @@
 // reach that address through `var()`, on the signed-in origin, so the sheet clears
 // each such property on a page with a rule, which has the same effect.
 //
+// A rule on `:root` never reaches a surface as written: these share a document with
+// the editor, so it would restyle the editor. What the page reads from its document
+// (custom properties, inherited text) lands on the page root of each copy instead,
+// under the root's own values, which beat `:root` on the published page because they
+// are closer. Scrolling has no meaning on a frame and is left out. A `rem` still reads
+// the editor's own document here: a surface cannot change that.
+//
 // PURE: no React and no MobX. Reading MobX-State-Tree nodes through this inside an
 // observer is what subscribes the caller to them.
 
@@ -31,7 +38,17 @@ import {
 import type { BreakpointRef } from '@/lib/responsive/cascade';
 import { normalizeHover, storedEffectsOf, type HoverKind } from '@/lib/effects/effects';
 import { isTextNodeType } from '@/lib/renderer/textNode';
-import { definitionClaims, hasExternalAddress, isRuleList, readRules, storedRulesOf, type ParsedSelectorRule, type ReadRules } from './rules';
+import {
+  definitionClaims,
+  hasExternalAddress,
+  isRuleList,
+  readRules,
+  showsOnSurface,
+  storedRulesOf,
+  type ParsedRootRule,
+  type ParsedSelectorRule,
+  type ReadRules,
+} from './rules';
 import { previewedBy } from './states';
 import { DATA_PLACEMENT_ROOT } from '@/lib/drag/markers';
 import { FLOATING_ROOT, PREVIEW_ROOT, VIEWPORT_ROOT, type EditorSurfaceKind, type SurfaceFrame } from './surfaces';
@@ -63,6 +80,8 @@ export interface SurfaceSheetInput {
   kind: EditorSurfaceKind;
   /** The page's tree, drawn once per frame. */
   tree: SurfaceNode | null | undefined;
+  /** The tree is a definition's, not a page's, so it holds no rule on the document. */
+  definitionTree?: boolean;
   /** Elements outside any frame. Canvas only. */
   floating?: readonly SurfaceNode[];
   frames: readonly SurfaceFrameInput[];
@@ -77,16 +96,26 @@ const SAFE_ID = /^[A-Za-z0-9_-]+$/;
 
 /** Stored lists are frozen and replaced whole, so a list parses once. */
 const parsed = new WeakMap<object, ReadRules>();
+const parsedOnRoot = new WeakMap<object, ReadRules>();
 
-function parsedRulesOf(node: SurfaceNode): ReadRules | null {
+function parsedRulesOf(node: SurfaceNode, pageRoot: boolean): ReadRules | null {
   const stored = (node.props as { rules?: unknown } | undefined)?.rules;
   if (!isRuleList(stored) || isTextNodeType(node.type)) return null;
-  let read = parsed.get(stored);
+  const cache = pageRoot ? parsedOnRoot : parsed;
+  let read = cache.get(stored);
   if (!read) {
-    read = readRules({ rules: stored });
-    parsed.set(stored, read);
+    read = readRules({ rules: stored }, { pageRoot });
+    cache.set(stored, read);
   }
   return read;
+}
+
+/** A rule on the document as a surface shows it: on the root node, without what that node sets itself. */
+function onRootCopy(rule: ParsedRootRule, node: SurfaceNode): ParsedSelectorRule | null {
+  const own = (node.props as { style?: unknown } | undefined)?.style;
+  const held = isStyleMap(own) ? own : {};
+  const style = Object.fromEntries(Object.entries(rule.style).filter(([key]) => showsOnSurface(key) && !(key in held)));
+  return Object.keys(style).length > 0 ? { kind: 'selector', id: rule.id, parts: ['&'], at: rule.at, style } : null;
 }
 
 /** The custom properties of a node's Normal that could give a rule an external address. */
@@ -146,7 +175,7 @@ export function surfaceSheet(input: SurfaceSheetInput): string {
   const drawn = new Set<string>();
 
   const visit = (node: SurfaceNode, copiesOf: (attribute: string, id: string) => SurfaceCopy[]): void => {
-    const read = parsedRulesOf(node);
+    const read = parsedRulesOf(node, node === tree && !node.placementRoot && !input.definitionTree);
     if (read) {
       for (const { index, rule, reason } of read.refused) {
         const id = (rule as { id?: unknown } | null)?.id;
@@ -159,7 +188,11 @@ export function surfaceSheet(input: SurfaceSheetInput): string {
         else if (result === 'clash') once({ node: node.id, rule: rule.id, reason: 'another definition on this page already has this name' });
       }
     }
-    const rules = (read?.rules ?? []).filter((rule): rule is ParsedSelectorRule => rule.kind === 'selector');
+    const rules = (read?.rules ?? []).flatMap((rule) => {
+      if (rule.kind === 'selector') return [rule];
+      const shown = rule.kind === 'root' ? onRootCopy(rule, node) : null;
+      return shown ? [shown] : [];
+    });
     const preset = presetOf(node);
     if (preset !== 'none') presets.add(preset);
 

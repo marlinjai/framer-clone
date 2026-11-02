@@ -32,14 +32,15 @@ function useSheet(input: Omit<SurfaceSheetInput, 'memo' | 'onProblem'>): string 
 
 export interface CanvasRuleStylesProps {
   tree: SurfaceNode | null | undefined;
+  definitionTree?: boolean;
   floating: readonly SurfaceNode[];
   frames: readonly SurfaceFrameInput[];
   breakpoints: readonly BreakpointRef[];
 }
 
-export const CanvasRuleStyles = observer(({ tree, floating, frames, breakpoints }: CanvasRuleStylesProps) => {
+export const CanvasRuleStyles = observer(({ tree, definitionTree, floating, frames, breakpoints }: CanvasRuleStylesProps) => {
   const { editorUI } = useStore();
-  const css = useSheet({ kind: 'canvas', tree, floating, frames, breakpoints, previewRule: editorUI.previewRule });
+  const css = useSheet({ kind: 'canvas', tree, definitionTree, floating, frames, breakpoints, previewRule: editorUI.previewRule });
   if (!css) return null;
   // The parser and the emitter's guards have read every stored character of this.
   return <style data-fc-rules="canvas" dangerouslySetInnerHTML={{ __html: css }} />;
@@ -47,12 +48,13 @@ export const CanvasRuleStyles = observer(({ tree, floating, frames, breakpoints 
 
 export interface PreviewRuleStylesProps {
   tree: SurfaceNode | null | undefined;
+  definitionTree?: boolean;
   frame: SurfaceFrameInput;
   breakpoints: readonly BreakpointRef[];
 }
 
-export const PreviewRuleStyles = observer(({ tree, frame, breakpoints }: PreviewRuleStylesProps) => {
-  const css = useSheet({ kind: 'preview', tree, frames: [frame], breakpoints });
+export const PreviewRuleStyles = observer(({ tree, definitionTree, frame, breakpoints }: PreviewRuleStylesProps) => {
+  const css = useSheet({ kind: 'preview', tree, definitionTree, frames: [frame], breakpoints });
   if (!css) return null;
   return <style data-fc-rules="preview" dangerouslySetInnerHTML={{ __html: css }} />;
 });

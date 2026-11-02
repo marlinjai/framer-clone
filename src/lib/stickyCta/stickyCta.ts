@@ -64,6 +64,12 @@ export const STICKY_CTA_FALLBACK_MAX_WIDTH = 809.98;
  */
 export const STICKY_CTA_FALLBACK_HEIGHT_PX = 72;
 
+/**
+ * The most of the screen the bar may take, and so the most it can lift the consent
+ * banner. A share of the height, so both stay usable when a phone turns on its side.
+ */
+export const STICKY_CTA_MAX_HEIGHT = '30vh';
+
 /** Stacking: above page content, below the consent banner (z-index 2147483000). */
 export const STICKY_CTA_Z_INDEX = 2147482000;
 
@@ -228,11 +234,18 @@ export function stickyCtaMaxWidth(breakpoints: readonly { minWidth: number }[]):
  * its responsive class must not undo the pinning, and the banner's offset is
  * an inline style. The bar's height comes from the inline measurement
  * (stickyCtaMeasureScript) as `--fc-sticky-cta-h`, with a fallback.
+ *
+ * What a page sets on the bar must not move the banner, so the height is capped. A
+ * stored `!important` beats an `!important` of lower specificity, and a min-height
+ * beats a max-height, so the cap repeats its selector past a rule's two classes and
+ * clears the min-height. Padding cannot be capped, because a box never gets smaller
+ * than its padding, so the lift and the page padding are clamped as well, and a bar
+ * made tall that way still leaves the banner on screen, above it.
  * Constant text apart from numbers.
  */
 export function stickyCtaCss(breakpoints: readonly { minWidth: number }[]): string {
   const max = stickyCtaMaxWidth(breakpoints);
-  const h = `var(--fc-sticky-cta-h,${STICKY_CTA_FALLBACK_HEIGHT_PX}px)`;
+  const h = `min(var(--fc-sticky-cta-h,${STICKY_CTA_FALLBACK_HEIGHT_PX}px),${STICKY_CTA_MAX_HEIGHT})`;
   const sel = `[${STICKY_CTA_PINNED_ATTR}]`;
   return (
     `${sel}{display:none!important}` +
@@ -240,6 +253,7 @@ export function stickyCtaCss(breakpoints: readonly { minWidth: number }[]): stri
     `${sel}{display:block!important;position:fixed!important;left:0!important;right:0!important;bottom:0!important;top:auto!important;` +
     `width:auto!important;margin:0!important;z-index:${STICKY_CTA_Z_INDEX}!important;box-sizing:border-box!important;` +
     `padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))!important}` +
+    `${sel}${sel}${sel}{min-height:0!important;max-height:${STICKY_CTA_MAX_HEIGHT}!important;overflow:hidden!important}` +
     `body{padding-bottom:${h}!important}` +
     `#${CONSENT_BANNER_ID}{bottom:calc(${h} + 12px)!important}` +
     `}`
