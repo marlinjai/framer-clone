@@ -4,6 +4,8 @@
 //                              (confirmationEmail: the shop sends the buyer an order confirmation, being
 //                              connected to Lumitra Mail; the thank-you says so only then)
 //                           -> 409 { ok: false, shortages: { variantId, needed, available }[] }
+//                           -> 503 payments_unavailable: the company takes real payments (Stripe) but its Books
+//                              cannot issue the receipt yet; nothing is ordered or reserved
 //
 // The ONE storefront-side WRITE seam into the server-authoritative commerce
 // engine. The client posts INTENTIONS ONLY: a list of { variantId, quantity }
@@ -66,6 +68,7 @@ import { buyerSchema } from '@/server/commerce/payment/buyer';
 import { shopTaxProfile } from '@/server/commerce/payment/shopTax';
 import { configuredStripeApi, paymentDeps } from '@/server/commerce/payment/deps';
 import { sweepExpiredPayments } from '@/server/commerce/payment/payments';
+import { PAYMENTS_UNAVAILABLE_MESSAGE, receiptReadiness } from '@/server/commerce/payment/receiptReadiness';
 import { readAccount } from '@/server/commerce/payment/stripe/connect';
 import { UnknownVariantError } from '@/server/commerce/repository/errors';
 import { readOrderTotal, resolveOrderLines } from '@/server/commerce/repository/storefront';
@@ -178,6 +181,16 @@ export async function POST(req: Request): Promise<Response> {
     // Stripe once it is configured and the company's account can take payments; the demo provider otherwise.
     const provider =
       configuredStripeApi() && (await readAccount(db, companyId)).status === 'ready' ? ('stripe' as const) : ('demo' as const);
+    // Real money only once the Books can issue its receipt (receiptReadiness.ts): refused here, before anything is
+    // reserved, and never answered with the demo provider instead, which would take orders the owner cannot see are
+    // unpaid. Not a 409 (the checkout reads that as a shortage) and not a 422 (an unknown item).
+    if (provider === 'stripe') {
+      const readiness = await receiptReadiness(db, tenantGroupId, companyId);
+      if (!readiness.ready) {
+        console.warn(`[payments] company ${companyId}: an order was refused, the Books cannot issue receipts (${readiness.blocker})`);
+        return jsonError('payments_unavailable', PAYMENTS_UNAVAILABLE_MESSAGE, 503);
+      }
+    }
 
     const cart: Cart = {
       // The client-owned idempotency key when present (so a re-submit dedupes to

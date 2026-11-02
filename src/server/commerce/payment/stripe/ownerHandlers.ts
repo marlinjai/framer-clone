@@ -5,7 +5,9 @@ import 'server-only';
 // What the owner-facing Stripe routes do (slice 5), kept apart from the route files so tests drive them with
 // a fake StripeApi and a provisioned schema:
 //
-//   GET  /api/payments/stripe/account          -> { status }  not_connected, pending, ready or restricted
+//   GET  /api/payments/stripe/account          -> { status, testMode, books }  status: not_connected, pending, ready or
+//                                                 restricted; books: whether the Books can issue receipts yet, which
+//                                                 Stripe payments wait for (receiptReadiness.ts)
 //   POST /api/payments/stripe/onboarding       -> { url }     Stripe's hosted onboarding for a new account
 //   GET  /api/payments/stripe/oauth/start      -> 302         connect an existing Stripe account (OAuth)
 //   GET  /api/payments/stripe/oauth/callback   -> 302         back to the payments page, connected or not
@@ -14,6 +16,7 @@ import 'server-only';
 import { completeOauth, oauthState, oauthUrl, readAccount, readOauthState, refreshAccount, startOnboarding } from './connect';
 import type { OwnerContext } from './ownerRoute';
 import { isStripeTestMode } from './client';
+import { receiptReadiness } from '../receiptReadiness';
 
 /** Where the owner manages payments in the editor. */
 export const PAYMENTS_PAGE = '/projects/payments';
@@ -31,7 +34,10 @@ function redirect(to: string): Response {
 
 export async function accountStatus(ctx: OwnerContext): Promise<Response> {
   const account = await readAccount(ctx.db, ctx.companyId);
-  return Response.json({ status: account.status, testMode: isStripeTestMode(ctx.config) });
+  // The shop refuses Stripe payments until the Books can issue their receipts (receiptReadiness.ts): the page says
+  // what is missing, so an owner whose account is ready knows why buyers cannot pay.
+  const books = await receiptReadiness(ctx.db, ctx.tenantGroupId, ctx.companyId);
+  return Response.json({ status: account.status, testMode: isStripeTestMode(ctx.config), books });
 }
 
 export async function onboarding(ctx: OwnerContext, req: Request): Promise<Response> {
