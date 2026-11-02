@@ -119,6 +119,20 @@ const CanvasInner = observer(() => {
     }
   }, [notifySubscribers, transformState]);
 
+  // A definition opens and closes on the same canvas, so the store can put the
+  // camera back where the person left the page.
+  useEffect(() => {
+    const ui = rootStore.editorUI;
+    ui.setCanvasCamera({
+      read: () => ({ ...transformState.current }),
+      write: (position) => {
+        Object.assign(transformState.current, position);
+        applyTransform();
+      },
+    });
+    return () => ui.setCanvasCamera(undefined);
+  }, [applyTransform, rootStore.editorUI, transformState]);
+
   // Handle mouse wheel - pan by default, zoom with Command key
   const handleWheel = useCallback((e: WheelEvent) => {
     e.preventDefault();

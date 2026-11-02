@@ -55,6 +55,8 @@ import {
   MAX_DEFINITION_BLOCKS,
   PROPERTY_SYNTAXES,
   SAFE_PROPERTY,
+  cssPropertyName,
+  cssStyleKey,
   UNSAFE_VALUE,
   cssValueText,
   hasExternalAddress,
@@ -689,6 +691,243 @@ export function parseRule(rule: unknown, context: RuleContext = {}): Parsed<Pars
   if (isSelector === isDefinition) return refuse('a rule is either a selector or a definition');
   if (isSelector) return parseSelectorRule(rule, id, context);
   return rule.when !== undefined || rule.gate !== undefined ? refuse('a definition is global, so it holds no condition') : parseDefinition(rule, id);
+}
+
+// --- rules as CSS text ------------------------------------------------------
+
+/** A rule as it was written, before the node gives it an id. */
+export type RuleDraft = Omit<SelectorRule, 'id'> | Omit<DefinitionRule, 'id'>;
+
+export interface ReadCssText {
+  rules: RuleDraft[];
+  /** What could not be read, each with what was typed and why, in order. */
+  refused: { text: string; reason: string }[];
+}
+
+interface CssBlock {
+  /** The text before the block, or a whole statement with no block. */
+  prelude: string;
+  /** The text inside the braces, or undefined for a statement with no block. */
+  body?: string;
+}
+
+const AT_NAME = /^@([a-z-]+)/i;
+const DEFINITION_AT_RULES = new Set(['keyframes', 'font-face', 'font-feature-values', 'font-palette-values', 'counter-style', 'property', 'position-try']);
+
+/** The text without comments. Inside a string a comment is text. */
+function withoutComments(text: string): string {
+  let out = '';
+  let quote = '';
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (quote) {
+      if (char === '\\') {
+        out += char + (text[++i] ?? '');
+        continue;
+      }
+      if (char === quote) quote = '';
+      out += char;
+    } else if (char === '/' && text[i + 1] === '*') {
+      const end = text.indexOf('*/', i + 2);
+      if (end === -1) return out;
+      i = end + 1;
+    } else {
+      if (char === '"' || char === "'") quote = char;
+      out += char;
+    }
+  }
+  return out;
+}
+
+/**
+ * Splits text into top-level statements. Strings and brackets are skipped so a `;`
+ * or a brace inside one does not end anything. `error` says what was left open.
+ */
+function cssBlocks(text: string): { blocks: CssBlock[]; error?: string } {
+  const blocks: CssBlock[] = [];
+  let quote = '';
+  let brackets = 0;
+  let depth = 0;
+  let start = 0;
+  let open = 0;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (quote) {
+      if (char === '\\') i++;
+      else if (char === quote) quote = '';
+    } else if (char === '"' || char === "'") quote = char;
+    else if (char === '(' || char === '[') brackets++;
+    else if (char === ')' || char === ']') brackets--;
+    else if (brackets > 0) continue;
+    else if (char === '{') {
+      if (depth++ === 0) open = i;
+    } else if (char === '}') {
+      if (--depth < 0) return { blocks, error: 'a closing brace has no opening one' };
+      if (depth === 0) {
+        blocks.push({ prelude: text.slice(start, open).trim(), body: text.slice(open + 1, i) });
+        start = i + 1;
+      }
+    } else if (char === ';' && depth === 0) {
+      const prelude = text.slice(start, i).trim();
+      if (prelude) blocks.push({ prelude });
+      start = i + 1;
+    }
+  }
+  if (quote) return { blocks, error: 'a string is left open' };
+  if (depth > 0) return { blocks, error: 'a block is left open' };
+  if (brackets > 0) return { blocks, error: 'a bracket is left open' };
+  const rest = text.slice(start).trim();
+  if (rest) blocks.push({ prelude: rest });
+  return { blocks };
+}
+
+/** `color: red; --x: 1` as a style object, keyed as `props.style` is. */
+function readDeclarations(body: string): Parsed<Record<string, unknown>> {
+  const style: Record<string, unknown> = {};
+  const { blocks, error } = cssBlocks(body);
+  if (error) return refuse(error);
+  for (const { prelude, body: nested } of blocks) {
+    if (nested !== undefined) return refuse(`${prelude || 'a block'} cannot sit among declarations`);
+    const colon = prelude.indexOf(':');
+    if (colon <= 0) return refuse(`"${prelude}" is not a declaration`);
+    const name = prelude.slice(0, colon).trim();
+    const value = prelude.slice(colon + 1).trim();
+    if (!value) return refuse(`${name} has no value`);
+    const key = cssStyleKey(name.startsWith('--') ? name : name.toLowerCase());
+    if (!SAFE_PROPERTY.test(key)) return refuse(`${name} is not a property name`);
+    style[key] = value;
+  }
+  return accept(style);
+}
+
+/**
+ * `:hover` as `&:hover` and `h2` as `& h2`: what a person types into a field that
+ * belongs to one node. A pseudo-class or pseudo-element sits on the node, anything
+ * else is inside it, as in nested CSS. A part already holding `&` stays as it is.
+ */
+function nodeSelector(text: string): string {
+  return splitSelectorList(text)
+    .map((part) => {
+      const trimmed = part.trim();
+      if (trimmed.includes('&')) return trimmed;
+      return trimmed.startsWith(':') ? `&${trimmed}` : `& ${trimmed}`;
+    })
+    .join(', ');
+}
+
+/** Commas outside brackets and strings. */
+function splitSelectorList(text: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let quote = '';
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (quote) {
+      if (char === quote) quote = '';
+    } else if (char === '"' || char === "'") quote = char;
+    else if (char === '(' || char === '[') depth++;
+    else if (char === ')' || char === ']') depth--;
+    else if (char === ',' && depth === 0) {
+      parts.push(text.slice(start, i));
+      start = i + 1;
+    }
+  }
+  return [...parts, text.slice(start)];
+}
+
+function readDefinition(prelude: string, body: string): Parsed<RuleDraft> {
+  const atRule = AT_NAME.exec(prelude)?.[1].toLowerCase();
+  const { blocks, error } = cssBlocks(body);
+  if (error) return refuse(error);
+  if (atRule === 'keyframes' || atRule === 'font-feature-values') {
+    const read: { selector: string; style: Record<string, unknown> }[] = [];
+    for (const block of blocks) {
+      if (block.body === undefined) return refuse(`"${block.prelude}" needs a block`);
+      const style = readDeclarations(block.body);
+      if (!style.ok) return style;
+      read.push({ selector: block.prelude, style: style.value });
+    }
+    return accept({ define: prelude, blocks: read });
+  }
+  const style = readDeclarations(body);
+  return style.ok ? accept({ define: prelude, style: style.value }) : style;
+}
+
+/** The rules a block of text holds under `at`, the wrappers around it so far. */
+function readBlock({ prelude, body }: CssBlock, at: string[], out: ReadCssText): void {
+  const refused = (reason: string) => out.refused.push({ text: prelude, reason });
+  const name = AT_NAME.exec(prelude)?.[1].toLowerCase();
+
+  if (name && DEFINITION_AT_RULES.has(name)) {
+    if (at.length > 0) return void refused('a definition is global, so it cannot sit inside a condition');
+    if (body === undefined) return void refused('a definition needs a body');
+    const definition = readDefinition(prelude, body);
+    if (definition.ok) out.rules.push(definition.value);
+    else refused(definition.reason);
+    return;
+  }
+
+  if (name) {
+    const wrapper = parseWrapper(prelude);
+    if (!wrapper.ok) return void refused(wrapper.reason);
+    if (body === undefined) return void out.rules.push({ selector: '&', at: [...at, prelude], style: {} });
+    const inner = cssBlocks(body);
+    if (inner.error) return void refused(inner.error);
+    const rules = inner.blocks.filter((block) => block.body !== undefined || AT_NAME.test(block.prelude));
+    if (rules.length > 0) {
+      for (const block of rules) readBlock(block, [...at, prelude], out);
+      return;
+    }
+    // Declarations right inside a condition apply to the node, as in nested CSS.
+    const style = readDeclarations(body);
+    if (style.ok) out.rules.push({ selector: '&', at: [...at, prelude], style: style.value });
+    else refused(style.reason);
+    return;
+  }
+
+  const selector = nodeSelector(prelude);
+  const parsed = parseSelector(selector);
+  if (!parsed.ok) return void refused(parsed.reason);
+  const style = readDeclarations(body ?? '');
+  if (!style.ok) return void refused(style.reason);
+  out.rules.push({ selector, ...(at.length > 0 ? { at } : {}), style: style.value });
+}
+
+/**
+ * Text a person typed or pasted, as rules: a selector, a whole CSS rule, a condition
+ * with or without a body, a definition, or several of those. The one entry for the
+ * panel's raw field and the React import. Nothing here decides what is safe: each
+ * rule still goes through `parseRule`, so a reason given for typed text is the reason
+ * a stored rule would have got. Empty text is no rules.
+ */
+export function parseCssText(text: string): ReadCssText {
+  const out: ReadCssText = { rules: [], refused: [] };
+  const { blocks, error } = cssBlocks(withoutComments(text));
+  if (error) return { rules: [], refused: [{ text: text.trim(), reason: error }] };
+  for (const block of blocks) readBlock(block, [], out);
+  out.rules = out.rules.filter((rule) => {
+    const parsed = parseRule({ id: 'draft', ...rule });
+    if (!parsed.ok) out.refused.push({ text: 'selector' in rule ? rule.selector : rule.define, reason: parsed.reason });
+    return parsed.ok;
+  });
+  return out;
+}
+
+const declarationsText = (style: Record<string, unknown> | undefined, indent: string): string =>
+  Object.entries(style ?? {})
+    .map(([key, value]) => `${indent}${cssPropertyName(key)}: ${String(value)};\n`)
+    .join('');
+
+/** A rule as text that `parseCssText` reads back: how a definition opens in the panel. A breakpoint map shows its base. */
+export function ruleCssText(rule: StoredRule): string {
+  if (isDefinitionRule(rule)) {
+    const blocks = (rule.blocks ?? []).map((block) => `  ${block.selector} {\n${declarationsText(block.style, '    ')}  }\n`).join('');
+    return `${rule.define} {\n${declarationsText(rule.style, '  ')}${blocks}}`;
+  }
+  const flat = Object.fromEntries(Object.entries(rule.style).map(([key, value]) => [key, isStyleMap(value) ? value.base : value]));
+  const inner = `${rule.selector} {\n${declarationsText(flat, '  ')}}`;
+  return [...(rule.at ?? [])].reverse().reduce((text, wrapper) => `${wrapper} {\n${text}\n}`, inner);
 }
 
 /** A stored rule that will not reach a stylesheet, and why. */

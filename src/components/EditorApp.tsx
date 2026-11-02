@@ -18,6 +18,8 @@ import { EditorTool } from '@/stores/EditorUIStore';
 import { getUndoManager, getHistoryStore, getDragManager } from '@/stores/RootStore';
 import { changedElsewhereMessage, openProject, pageIdFromLocation, pickPage, restoreStashedDemo } from '@/stores/openProject';
 import EditorNotice from './EditorNotice';
+import ComponentBreadcrumb from './ComponentBreadcrumb';
+import { isPlacementType, type PlacementProps } from '@/lib/components/placement';
 import InlineFormatBar from './InlineFormatBar';
 import LegalTemplateNotice from './site/LegalTemplateNotice';
 import { isEditableTarget, resolveAction } from '@/lib/keyBindings';
@@ -142,7 +144,7 @@ export default function EditorApp({ projectSnapshot }: { projectSnapshot?: Proje
   React.useEffect(
     () =>
       reaction(
-        () => rootStore.editorUI.currentPage?.id,
+        () => rootStore.editorUI.addressPageId,
         (pageId) => syncPageParam(pageId),
         { fireImmediately: true },
       ),
@@ -191,8 +193,27 @@ export default function EditorApp({ projectSnapshot }: { projectSnapshot?: Proje
         // A dialog, menu or gesture that handled Escape itself has the last
         // word; so does an active resize (its own Escape restores the size).
         if (e.defaultPrevented || ui.isResizing) return;
+        // In a definition, Escape first lets go of what was picked, as everywhere,
+        // and then leaves. Opening one selects its root, which counts as nothing
+        // picked, so Escape straight after entering goes back out.
+        const picked = ui.selectedComponentList.some(node => node !== ui.currentPage?.appComponentTree);
+        if (ui.inComponent && !picked) {
+          ui.leaveComponent();
+          return;
+        }
         if (!ui.selectedComponent && !ui.selectedViewportNode && ui.selectedComponentList.length === 0) return;
         ui.clearSelection();
+        return;
+      }
+
+      if (match.action === 'enterComponent') {
+        const ui = rootStore.editorUI;
+        const selected = ui.selectedComponent;
+        // A focused control keeps its own Enter.
+        if (e.defaultPrevented || !selected || !isPlacementType(selected.type) || ui.selectedTool !== EditorTool.SELECT) return;
+        if ((e.target as Element | null)?.closest?.('button, a, [role="menuitem"]')) return;
+        e.preventDefault();
+        ui.enterComponent((selected.props as Partial<PlacementProps>).component ?? '', selected.id);
         return;
       }
 
@@ -284,6 +305,7 @@ export default function EditorApp({ projectSnapshot }: { projectSnapshot?: Proje
       {/* Notices stack under the top bar (48px on a phone, 64px otherwise),
           centred, each at most 640px and never wider than the screen. */}
       <div className="pointer-events-none fixed inset-x-0 top-16 z-90 mt-2 flex flex-col items-center gap-2 px-4 phone:top-12">
+        <ComponentBreadcrumb />
         <EditorNotice />
         <LegalTemplateNotice />
         <ProductPreviewBar />

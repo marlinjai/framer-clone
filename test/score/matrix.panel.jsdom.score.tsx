@@ -14,6 +14,11 @@
 // control writes, so the sweep leaves it alone, and a state counts when a value typed
 // into a real row of the panel ends up in that state's rule on the node.
 //
+// Selectors and at-rules with no control of their own go through the raw field behind
+// the switch's `+`: the row's sample is typed there, and a row counts when that rule is
+// on the node. Such a cell is labelled `raw field`, because a person typing CSS is not
+// a control, and the report counts them apart.
+//
 // The Custom section's add fields take a name, then a value, so typing the same few
 // probes into every field cannot reach them. For those the driver types each name of
 // the universe, as a person would, and only a real write counts.
@@ -31,12 +36,13 @@ import { DataSourceProviderContext } from '@/lib/bindings/dataSource/context';
 import { InMemoryDataSourceProvider } from '@/lib/bindings/dataSource/inMemoryProvider';
 import RightSidebar from '@/components/sidebars/RightSidebar';
 import { BLOCKED_TAGS } from '@/lib/renderer/blockedNodes';
-import { storedRulesOf } from '@/lib/rules/rules';
+import { isDefinitionRule, ruleCssText, storedRulesOf, type StoredRule } from '@/lib/rules/rules';
 import { NAMED_STATES, namedStateOf } from '@/lib/rules/states';
 import { cssPropertyName } from '@/lib/responsive/responsiveCss';
 import { attributeName, attributeProp } from '@/lib/styles/customEditor';
 import { PATTERNS, treeVocabulary } from './patterns';
-import { allEntries, attributeSample, cssValueSample, markupAttributeSample, namespaceOf, styleKeyOf } from './lib/universe';
+import { allEntries, atRuleSample, attributeSample, cssValueSample, markupAttributeSample, mediaFeatureSample, namespaceOf, selectorSample, styleKeyOf } from './lib/universe';
+import { atRuleProbe, isPageLevelRow, selectorProbe, wrapperProbe, type RuleProbe } from './lib/encodings';
 import { writeOut } from './lib/io';
 import { rowKey, type Cell, type GapId, type SurfaceResults } from './lib/types';
 
@@ -61,6 +67,8 @@ const written = {
   breakpointOverride: false,
   /** The pseudo-class of each named state that a row of the panel wrote a value into. */
   states: new Set<string>(),
+  /** The rows the raw field stored, by row key. */
+  rawField: new Set<string>(),
 };
 
 interface Scenario {
@@ -339,6 +347,63 @@ async function driveStates(scenario: Scenario): Promise<void> {
   cleanup();
 }
 
+const RAW_KINDS = new Set(['css-selector', 'css-at-rule', 'css-media-feature']);
+
+/** What a person types for a row, and the rule it has to become. */
+function rawFieldProbe(kind: string, id: string): { text: string; probe: RuleProbe } {
+  if (kind === 'css-selector') {
+    const probe = selectorProbe(id, selectorSample(id));
+    const sample = selectorSample(id);
+    const { at } = probe.rule as { at?: string[] };
+    return { text: at ? `${at[0]} { ${sample} { color: red; } }` : sample, probe };
+  }
+  if (kind === 'css-at-rule') {
+    const probe = atRuleProbe(id, atRuleSample(id));
+    return { text: isDefinitionRule(probe.rule) ? ruleCssText(probe.rule) : atRuleSample(id), probe };
+  }
+  const at = `@media ${mediaFeatureSample(id)}`;
+  return { text: at, probe: wrapperProbe(at) };
+}
+
+const sameRule = (stored: StoredRule, wanted: StoredRule): boolean => {
+  if (isDefinitionRule(wanted)) return isDefinitionRule(stored) && stored.define === wanted.define;
+  return !isDefinitionRule(stored) && stored.selector === wanted.selector && JSON.stringify(stored.at ?? []) === JSON.stringify(wanted.at ?? []);
+};
+
+/** Types every row into the raw field, one at a time, on a fresh node. */
+async function driveRawField(scenario: Scenario): Promise<void> {
+  const node = setUp(scenario);
+  store.editorUI.selectComponent(node);
+  const seed = getSnapshot(node);
+  const view = render(
+    <DataSourceProviderContext.Provider value={new InMemoryDataSourceProvider()}>
+      <RightSidebar />
+    </DataSourceProviderContext.Provider>,
+  );
+  for (const entry of allEntries().filter((e) => !e.excluded && RAW_KINDS.has(e.kind))) {
+    // `&:root` parses and means nothing: a page-level row stays red here as on every surface.
+    if (entry.id === 'width' || written.states.has(entry.id) || isPageLevelRow(entry.id)) continue;
+    const { text, probe } = rawFieldProbe(entry.kind, entry.id);
+    const plus = document.body.querySelector('button[aria-label="Add a custom rule"]');
+    if (!plus) throw new Error('the switch has no add button');
+    await act(async () => fireEvent.click(plus));
+    const field = document.body.querySelector('textarea[aria-label="Selector or CSS rule"]');
+    if (!field) throw new Error('the add button opened no field');
+    await act(async () => fireEvent.change(field, { target: { value: text } }));
+    await act(async () => fireEvent.keyDown(field, { key: 'Enter' }));
+    if (storedRulesOf(node.props).some((rule) => sameRule(rule, probe.rule))) written.rawField.add(rowKey(entry.kind, entry.id));
+    // Refused: the field stays open with its reason, and the next row must start clean.
+    const open = document.body.querySelector('textarea[aria-label="Selector or CSS rule"]');
+    if (open) await act(async () => fireEvent.keyDown(open, { key: 'Escape' }));
+    await act(async () => {
+      store.editorUI.setActiveRule(null);
+      applySnapshot(node, seed);
+    });
+  }
+  view.unmount();
+  cleanup();
+}
+
 /** Every style key the section sources name, whether or not a control for it was reached. */
 function referencedStyleKeys(): Set<string> {
   const dir = path.resolve(process.cwd(), 'src/components/sidebars/right/sections');
@@ -362,6 +427,7 @@ describe('coverage matrix: properties panel', () => {
     for (const scenario of SCENARIOS) await drive(scenario, undefined, ['container', 'generic', 'form control'].includes(scenario.label));
     await drive(SCENARIOS[0], 'tablet-probe');
     await driveStates(SCENARIOS[0]);
+    await driveRawField(SCENARIOS[0]);
 
     const referenced = referencedStyleKeys();
     const paletteTags = new Set(Object.values(COMPONENT_REGISTRY).map((entry) => entry.htmlType as string));
@@ -413,13 +479,17 @@ describe('coverage matrix: properties panel', () => {
           break;
         }
         case 'css-selector':
-          results[key] = written.states.has(entry.id) ? pass('through the state switch') : fail('selector-styles');
+          if (written.states.has(entry.id)) results[key] = pass('through the state switch');
+          else if (written.rawField.has(key)) results[key] = pass('raw field');
+          else results[key] = fail(isPageLevelRow(entry.id) ? 'page-level-css' : 'selector-styles');
           break;
         case 'css-at-rule':
-          results[key] = fail(entry.id === '@media' ? 'media-queries' : 'at-rules');
+          if (written.rawField.has(key)) results[key] = pass('raw field');
+          else results[key] = fail(isPageLevelRow(entry.id) ? 'page-level-css' : entry.id === '@media' ? 'media-queries' : 'at-rules');
           break;
         case 'css-media-feature':
-          results[key] = entry.id === 'width' && written.breakpointOverride ? pass('as breakpoints') : fail('media-queries');
+          if (entry.id === 'width' && written.breakpointOverride) results[key] = pass('as breakpoints');
+          else results[key] = written.rawField.has(key) ? pass('raw field') : fail('media-queries');
           break;
       }
     }
@@ -434,6 +504,7 @@ describe('coverage matrix: properties panel', () => {
       typesWritten: [...written.types].sort(),
       referencedNotDriven: [...referenced].filter((k) => !written.styleKeys.has(k)).sort(),
       paletteTags: [...paletteTags].sort(),
+      rawFieldRows: [...written.rawField].sort(),
     });
   }, 400_000);
 });

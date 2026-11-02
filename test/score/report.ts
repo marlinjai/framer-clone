@@ -35,6 +35,8 @@ interface PanelDetail {
   typesWritten: string[];
   referencedNotDriven: string[];
   paletteTags: string[];
+  /** The rows whose panel cell passes only through the text field for rules. */
+  rawFieldRows: string[];
 }
 
 type Counts = { pass: number; fail: number; notTested: number; total: number };
@@ -76,6 +78,9 @@ function tally(counts: Counts, cell: Cell | undefined): void {
 
 const percent = (part: number, whole: number) => (whole === 0 ? 'none' : `${((part / whole) * 100).toFixed(1)} percent`);
 const ratio = (c: { pass: number; total: number }) => `${c.pass} of ${c.total} (${percent(c.pass, c.total)})`;
+
+/** The panel cells that pass only through the text field for rules. */
+const rawFieldCells = (score: Score): number => score.panel.rawFieldRows.length;
 
 /** A pattern is editable only when every tag and prop it uses is. */
 function patternPanelCells(patterns: PatternsOut, panel: SurfaceResults, detail: PanelDetail): SurfaceResults {
@@ -359,6 +364,8 @@ export function renderReport(score: Score): string {
   );
   push(
     `The panel writes ${score.panel.styleKeysWritten.length} style keys and ${score.panel.propKeysWritten.length} other props across every category. Palette tags: ${score.panel.paletteTags.map((t) => `\`${t}\``).join(', ')}.`,
+    '',
+    `Of the panel's passing cells, ${rawFieldCells(score)} are the \`raw field\`: a person typed the CSS, and no control exists for it. They pass, and they say less than a control would.`,
   );
 
   push('## Parity corpus');
