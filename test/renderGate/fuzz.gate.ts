@@ -40,16 +40,21 @@ describe('render gate', () => {
 
   it.each(BROWSERS)('nothing stored acts on a page in %s', async (name, type) => {
     let browser = await type.launch();
-    // A browser that dies under a long run costs that batch one retry. A second
-    // death is reported: unlike a clean run, it says nothing about the probes.
+    // WebKit can lose a tab to a batch that opens dozens of windows (forms with a
+    // target), and no single value does it. So a batch that dies is halved until
+    // each probe has had a page. One probe that still kills its page is a finding:
+    // that is a stored value stopping a page, not a harness problem.
     const withRestart = async (list: Probe[], surface: Surface, tag: string): Promise<Finding[]> => {
       try {
         return await runBatch(browser, name, surface, list, tag, bundle);
-      } catch {
+      } catch (error) {
         if (!browser.isConnected()) browser = await type.launch();
-        return runBatch(browser, name, surface, list, tag, bundle).catch((error) => [
-          { browser: name, surface, probe: tag, what: 'a batch', detector: 'blind' as const, detail: String(error).slice(0, 160) },
-        ]);
+        if (list.length === 1) {
+          return [{ browser: name, surface, probe: list[0].id, what: list[0].what, detector: 'crash', detail: String(error).slice(0, 160) }];
+        }
+        const half = Math.ceil(list.length / 2);
+        const parts = [await withRestart(list.slice(0, half), surface, `${tag}a`), await withRestart(list.slice(half), surface, `${tag}z`)];
+        return parts.flat();
       }
     };
     const probes = buildProbes(FULL).filter((probe) => !ONLY_PROBES || ONLY_PROBES.test(probe.what));
