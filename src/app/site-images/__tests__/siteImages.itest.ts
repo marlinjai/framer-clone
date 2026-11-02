@@ -97,13 +97,28 @@ function project(id: string, siteSettings: object = {}, aboutImage = '') {
 
 const createdSites: string[] = [];
 
+/** The version the stored site is at now: what a save or publish of it must name (the version lock). */
+async function currentVersion(scope: TenantScope, siteId: string): Promise<number> {
+  return (await getSiteRepository().loadProjectWithVersion(scope, siteId)).version;
+}
+
+async function publishAtCurrentVersion(scope: TenantScope, proj: ReturnType<typeof project>) {
+  const expectedVersion = await currentVersion(scope, proj.id);
+  return getSiteRepository().publishProject(scope, proj, { expectedVersion });
+}
+
+async function saveAtCurrentVersion(scope: TenantScope, proj: ReturnType<typeof project>) {
+  const expectedVersion = await currentVersion(scope, proj.id);
+  return getSiteRepository().saveProject(scope, proj, { mustExist: true, expectedVersion });
+}
+
 async function makeSite(label: string, options: { published?: boolean } = {}): Promise<TestSite> {
   const id = randomUUID();
   const scope: TenantScope = { workspaceId: `ws_img_${label}_${randomUUID().slice(0, 8)}`, tenantGroupId: randomUUID() };
   const repo = getSiteRepository();
-  await repo.saveProject(scope, project(id));
+  const { version } = await repo.saveProject(scope, project(id));
   createdSites.push(id);
-  if (options.published !== false) await repo.publishProject(scope, project(id));
+  if (options.published !== false) await repo.publishProject(scope, project(id), { expectedVersion: version });
   const { subdomain } = await repo.ensureSiteDomain(scope, id);
   return { id, scope, companyId: randomUUID(), host: `${subdomain}.example.com` };
 }
@@ -362,7 +377,7 @@ describe('the published head and the published revision', () => {
     const sharingPath = (await (await upload(siteA.id, sharing, 'sharing')).json()).path as string;
     const aboutPath = (await (await upload(siteA.id, about, 'sharing')).json()).path as string;
 
-    await getSiteRepository().publishProject(siteA.scope, project(siteA.id, { faviconUrl: iconPath, ogImageUrl: sharingPath }, aboutPath));
+    await publishAtCurrentVersion(siteA.scope, project(siteA.id, { faviconUrl: iconPath, ogImageUrl: sharingPath }, aboutPath));
 
     requestHost = siteA.host;
     const base = await layoutMetadata();
@@ -387,8 +402,8 @@ describe('the published head and the published revision', () => {
     const publishedPath = (await (await upload(siteA.id, published)).json()).path as string;
     const laterPath = (await (await upload(siteA.id, later)).json()).path as string;
     const repo = getSiteRepository();
-    await repo.publishProject(siteA.scope, project(siteA.id, { faviconUrl: publishedPath }));
-    await repo.saveProject(siteA.scope, project(siteA.id, { faviconUrl: laterPath }), { mustExist: true });
+    await publishAtCurrentVersion(siteA.scope, project(siteA.id, { faviconUrl: publishedPath }));
+    await saveAtCurrentVersion(siteA.scope, project(siteA.id, { faviconUrl: laterPath }));
 
     requestHost = siteA.host;
     const base = await layoutMetadata();
@@ -471,8 +486,8 @@ describe('listing and deleting', () => {
 
     const repo = getSiteRepository();
     // `old` is in revision 2 only (kept for rollback); `used` is in the working copy and revision 3.
-    await repo.publishProject(site.scope, project(site.id, { faviconUrl: oldPath }));
-    await repo.publishProject(site.scope, project(site.id, { faviconUrl: usedPath }));
+    await publishAtCurrentVersion(site.scope, project(site.id, { faviconUrl: oldPath }));
+    await publishAtCurrentVersion(site.scope, project(site.id, { faviconUrl: usedPath }));
 
     const listed = await (await list(site.id)).json();
     const inUse = Object.fromEntries(listed.items.map((i: { sha256: string; inUse: boolean }) => [i.sha256, i.inUse]));
@@ -563,10 +578,10 @@ describe('a path the site does not store', () => {
     const typed = `/site-images/${'f'.repeat(64)}.png`;
 
     for (const attempt of [
-      () => repo.saveProject(siteA.scope, project(siteA.id, { faviconUrl: theirPath }), { mustExist: true }),
-      () => repo.saveProject(siteA.scope, project(siteA.id, { ogImageUrl: typed }), { mustExist: true }),
-      () => repo.saveProject(siteA.scope, project(siteA.id, {}, theirPath), { mustExist: true }),
-      () => repo.publishProject(siteA.scope, project(siteA.id, { faviconUrl: typed })),
+      () => saveAtCurrentVersion(siteA.scope, project(siteA.id, { faviconUrl: theirPath })),
+      () => saveAtCurrentVersion(siteA.scope, project(siteA.id, { ogImageUrl: typed })),
+      () => saveAtCurrentVersion(siteA.scope, project(siteA.id, {}, theirPath)),
+      () => publishAtCurrentVersion(siteA.scope, project(siteA.id, { faviconUrl: typed })),
     ]) {
       await expect(attempt()).rejects.toMatchObject({ code: 'site_image_missing', status: 422 });
     }
