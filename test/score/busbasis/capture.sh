@@ -9,8 +9,16 @@ script="$(mktemp -d)/capture.js"
 while read -r slug path; do
   [ -z "$slug" ] && continue
   { printf 'const SLUG="%s"; const URL_PATH="%s";\n' "$slug" "$path"; cat "$here/capture.devbrowser.txt"; } > "$script"
-  # The sandbox can fail while it shuts down, after the file is written. freeze.ts reads the file.
+  # Remove any earlier capture first, so a file that exists afterwards was written by this run
+  # and freeze.ts can never seal stale page data.
+  rm -f "$HOME/.dev-browser/tmp/bb-$slug.json"
+  # The sandbox can fail while it shuts down, after the file is written, so the exit status is
+  # ignored and the fresh file is what decides.
   dev-browser-auto --timeout 170 run "$script" | tail -1 | cut -c1-300 || true
+  if [ ! -s "$HOME/.dev-browser/tmp/bb-$slug.json" ]; then
+    echo "capture failed: no fresh bb-$slug.json was written" >&2
+    exit 1
+  fi
   sleep 1
 done <<'EOF'
 home /de

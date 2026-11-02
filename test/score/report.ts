@@ -280,7 +280,8 @@ export function buildScore(durationSeconds?: number): Score {
       rows,
     },
     corpus: { passed: fixtures.filter((f) => f.pass).length, total: fixtures.length, checks: corpusChecks, fixtures },
-    busbasis: { passed: pages.filter((p) => p.pass).length, total: pages.length, pages, gaps: busbasisGaps(pages), uncaptured: UNCAPTURED_PAGES },
+    // The total includes page types not captured yet, so the stop condition cannot read as met while any remain.
+    busbasis: { passed: pages.filter((p) => p.pass).length, total: pages.length + UNCAPTURED_PAGES.length, pages, gaps: busbasisGaps(pages), uncaptured: UNCAPTURED_PAGES },
     roundTrip: { nodesToJsxToNodes: direction('nodes-jsx-nodes'), jsxToNodesToRender: direction('jsx-nodes-render'), cases },
     gaps,
     panel: detail,
