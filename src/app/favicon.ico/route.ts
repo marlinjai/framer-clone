@@ -1,13 +1,14 @@
 // GET /favicon.ico, per host. Browsers ask for /favicon.ico on their own, even
 // when a page links its icon, so it must answer for the right site:
-//   - a published site with a favicon (Site settings): a redirect to it;
+//   - a published site with a favicon (Site settings): a redirect to it (an
+//     uploaded one is a path on this same host, src/app/site-images/[file]);
 //   - a published site without one: 404 (never the platform's icon);
 //   - any other host (the editor): a redirect to the platform icon.
 // This replaces the app-directory `favicon.ico` file, which Next linked on
 // every route, published sites included.
 
 import { resolveSiteAndPrimaryHost } from '@/server/sites/requestSite';
-import { isHttpsUrl } from '@/lib/site/siteSettings';
+import { iconHref } from '@/lib/site/publishedHead';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -29,8 +30,8 @@ export async function GET(request: Request): Promise<Response> {
       headers: { location: PLATFORM_FAVICON_PATH, 'cache-control': 'public, max-age=3600' },
     });
   }
-  const icon = resolved.site.siteSettings.faviconUrl;
-  if (!isHttpsUrl(icon)) {
+  const icon = iconHref(resolved.site.siteSettings.faviconUrl);
+  if (!icon) {
     return new Response(null, { status: 404, headers: { 'cache-control': 'public, max-age=300' } });
   }
   return new Response(null, {

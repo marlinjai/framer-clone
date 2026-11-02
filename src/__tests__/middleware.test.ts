@@ -439,7 +439,7 @@ describe('middleware: the report-only policy of published pages', () => {
     expect(editor.headers.get('location')).toBeNull();
   });
 
-  it('leaves API routes, build output, what is inside /images and /fonts, and the per-host files unmatched', () => {
+  it('leaves API routes, build output, what is inside /images, /fonts and /site-images, and the per-host files unmatched', () => {
     for (const path of [
       '/api/cms/x',
       '/api/commerce/orders',
@@ -450,6 +450,7 @@ describe('middleware: the report-only policy of published pages', () => {
       '/_next/image',
       '/fonts/inter/5/a.woff2',
       '/images/a.png',
+      `/site-images/${'a'.repeat(64)}.png`,
       '/favicon.ico',
       '/robots.txt',
       '/sitemap.xml',

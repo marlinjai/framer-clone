@@ -99,7 +99,8 @@ Decided while building, each reversible:
   brief is written in the site language.
 - **Site name** is an optional public override; blank uses the project title, which the dashboard
   rename flow keeps owning.
-- **Favicon and Open Graph image by https URL.** The only upload path today is the Books logo store
+- **Favicon and Open Graph image by https URL** (uploads added on 2026-11-02, section "Uploaded favicon and
+  sharing image" below). The only upload path then was the Books logo store
   (behind `editBooks`, not publicly servable), so no upload was reused. Every renderer re-checks
   `isHttpsUrl` and leaves a bad value out. `src/app/favicon.ico` became a per-host route (site icon,
   404 for a site without one, platform icon on the editor host); the platform icon moved to
@@ -256,3 +257,37 @@ while building, each reversible:
     used for a generated bar).
 
 Not built here: form notification emails (decision 4) stay open on their own roadmap line.
+
+## Uploaded favicon and sharing image (2026-11-02)
+
+Marlin's request: the favicon and the sharing image must be uploadable from the settings, not only typed as an https
+address. Built beside the address field, which stays.
+
+| Question | Answer |
+|---|---|
+| Where | Site settings (favicon, default sharing image) and Page settings (a page's own sharing image), one control (`src/components/site/SiteImageField.tsx`): Upload or an address, a preview with the file name, type, pixel size and size, warnings, Remove. Every failure names the next step (wrong type, over 2 MB, network, signed out, no permission, the per-site limit) |
+| Accepted | Read from the bytes, never from the name or the request (`src/lib/images/imageHeader.ts`, extracted from the catalogue's header reader, which now uses it too). Favicon: PNG or ICO, at least 16 px. Sharing image: PNG, JPEG or WebP. Both at most 2 MB and 8000 px a side. The browser runs the same check before sending, the server decides |
+| Warnings, never refusals | A non-square favicon, a favicon under 180 px, a sharing image more than 3 percent off 1.91 to 1 (1200 by 630), a sharing image under 600 by 315 |
+| Storage | Table `site_images` in the public schema (migration `20261103000000_site_images`, additive): one row per site and SHA-256, the bytes as `bytea`, CHECKs as the backstop. Not the catalogue's `catalog_image`: that lives in a company's commerce schema, which exists only once the catalogue is provisioned, and is keyed by company, while every site needs an icon and a site's hosts serve only that site's images. At most 500 per site |
+| What the settings hold | The site-relative path `/site-images/<sha256>.<ext>`, never an absolute address: it keeps working when a custom domain is connected later and on every host of the site |
+| Published revisions | The path freezes with the settings into each revision. Rows are never updated and there is no delete route, so a revision shows the image it was published with for as long as it is kept, whatever the settings say later. Deleting the site deletes its images (cascade) |
+| Upload route | `POST /api/projects/<id>/images?kind=favicon\|sharing`, body the file, the per-project guard with `editSite` (`src/server/domains/guard.ts`: editor host, verified session, the site's company with `sites`, OpenFGA; outages as 503). 201 stored, 200 stored before, 400, 409, 413 (also without a Content-Length), 415, 422 |
+| Serving | Visitors: `GET /site-images/<sha256>.<ext>` on the site's own hosts, the site taken from the host, only its own images, 404 for anything else (another site's hash, a wrong extension, the editor host). The editor's preview: `GET /api/projects/<id>/images/<sha256>` behind `viewSite`. Both immutable for a year with the hash as ETag (304), nosniff, `content-security-policy: default-src 'none'; sandbox` |
+| Head | The icon link and the manifest icon keep the path relative (a visitor on any host loads it from that host) with its type; an ICO is not offered as the Apple touch icon. `og:image`, `twitter:image` and the JSON-LD `image` and `logo` are absolute on the primary host. `/favicon.ico` redirects to an uploaded icon on the same host |
+| Routing | `site-images` is a reserved slug, and the middleware's published-page matcher leaves `/site-images/*` out (an image carries its own policy). Open PR #305 (published hosts serve only an allowlist of routes) needs `/site-images/[file]` with `published: ['GET']` and the two editor routes as editor only, whichever of the two lands second |
+
+### Decided here, say so if you disagree
+
+1. **SVG is refused for uploads.** An SVG is a document that can carry script and outside references; served from the
+   site's own origin it would be a place to run code there, and the editor serves the same bytes on its own origin,
+   where the session cookie lives. A restrictive policy helps in current browsers, but no header check can prove an
+   SVG harmless and sanitising one is its own attack surface. A PNG of 512 by 512 covers every browser and home screen;
+   an SVG hosted elsewhere can still be entered by its address.
+2. **ICO is accepted**, because its directory gives the sizes and every entry is checked to lie inside the file and to
+   be a PNG or a bitmap.
+3. **An uploaded image not yet published is reachable** by its address on the site's hosts: the address carries the
+   SHA-256 of the bytes, so only someone who already has it can load it. Restricting serving to the images the live
+   revision names would need a reference index for no gain in what a visitor can learn.
+4. **No delete.** Removing an image from the settings leaves its bytes, which an older revision may still show. Deleting
+   uploaded files belongs to the erase tool's open point C ([immutable published copy](2026-11-01-immutable-published-copy.md)),
+   which now has something to delete.

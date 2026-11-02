@@ -127,4 +127,9 @@ describe('web manifest', () => {
     });
     expect(buildWebManifest(normalizeSiteSettings({ faviconUrl: 'http://x.de/i.png' }), '').icons).toBeUndefined();
   });
+
+  it('lists an uploaded icon by its relative path with its type', () => {
+    const icon = `/site-images/${'d'.repeat(64)}.png`;
+    expect(buildWebManifest(normalizeSiteSettings({ faviconUrl: icon }), 'A').icons).toEqual([{ src: icon, sizes: 'any', type: 'image/png' }]);
+  });
 });

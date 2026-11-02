@@ -36,7 +36,9 @@ export const SLUG_MAX_LENGTH = 80;
  *     (src/server/sites/homeSentinel.ts);
  *   - `home`, `index`: the router treats them as aliases of the home page;
  *   - `favicon`, `robots`, `sitemap`: the well-known files crawlers and
- *     browsers request (`favicon.ico`, `robots.txt`, `sitemap.xml`).
+ *     browsers request (`favicon.ico`, `robots.txt`, `sitemap.xml`);
+ *   - `site-images`: the uploaded favicon and sharing images of the site
+ *     (src/app/site-images/[file]/route.ts).
  * The dotted file names themselves can never be a slug (a dot is not an
  * allowed character); the bare words are reserved so a page cannot shadow or
  * be confused with them.
@@ -54,6 +56,7 @@ export const RESERVED_SLUG_SEGMENTS: readonly string[] = [
   'favicon',
   'robots',
   'sitemap',
+  'site-images',
   'favicon.ico',
   'robots.txt',
   'sitemap.xml',

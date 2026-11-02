@@ -187,6 +187,10 @@ C. **Uploaded files.** A revision references images and files by URL. The erase 
    Storage Brain that also scrubs `original_name`, metadata and tags (today's delete is soft and swallows storage
    errors), and a "delete the file too" option offered only at zero references. A lawyer should say whether an
    unreferenced file at an unguessable address still counts as kept under Art. 17.
+   Since 2026-11-02 the favicon and the sharing images can be uploaded: they are stored in `site_images` (Postgres,
+   one row per site and hash, deleted only with the site) and named by `/site-images/<sha256>.<ext>`, which the erase
+   reports as an image address. The same reference index and a delete with zero references would apply to them
+   ([published site essentials](2026-10-23-published-site-essentials.md), "Uploaded favicon and sharing image").
 
 D. **Backups.** The erased value stays in database backups until they expire. Common practice is to document the
    backup retention and to put the value "beyond use" (never restored into the live system without the erase being

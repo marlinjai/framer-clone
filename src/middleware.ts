@@ -207,7 +207,8 @@ export const config = {
   //     POSTs to /api/commerce/orders must reach their handler too, so bouncing
   //     either prefix to a login page here would break storefront reads and
   //     checkout. Defense in depth lives in the handlers, not here.
-  //   - _next static assets, favicon, robots are never gated
+  //   - _next static assets, favicon, robots and the uploaded site images
+  //     (/site-images/*, served per host) are never gated
   //
   // The removed `/editor`, `/api/sites`, `/api/admin` patterns matched NO route
   // on disk (dead-matcher drift); the live authoring surfaces are `/projects`,
@@ -223,10 +224,11 @@ export const config = {
     // (`/api/projects`, `/api/ai`, `/api/books`) also get the session gate.
     '/api/:path*',
     // Published pages, for the report-only policy: any path except API routes,
-    // build output, what is inside /images and /fonts, and the per-host files.
+    // build output, what is inside /images and /fonts, the per-host files and
+    // the uploaded site images (an image response carries its own policy).
     // Other public files carry the header, where it does nothing. /preview is
     // matched too: the host decides, so the editor's preview stays unmarked on
     // the editor host, and a published host marks whatever document it serves.
-    '/((?!(?:api|_next)(?:/|$)|(?:images|fonts)/.|(?:favicon\\.ico|robots\\.txt|sitemap\\.xml|site\\.webmanifest)$).+)',
+    '/((?!(?:api|_next)(?:/|$)|(?:images|fonts|site-images)/.|(?:favicon\\.ico|robots\\.txt|sitemap\\.xml|site\\.webmanifest)$).+)',
   ],
 };

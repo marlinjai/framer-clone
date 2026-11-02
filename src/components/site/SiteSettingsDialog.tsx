@@ -8,8 +8,9 @@
 // - General: public site name (blank uses the project title), language (the
 //   published `<html lang>` and the AI generator's copy language), browser
 //   title template, and the 404 page.
-// - Sharing: favicon and default Open Graph image (https URLs, previewed), and
-//   the twitter card type.
+// - Sharing: favicon and default Open Graph image (uploaded, or an https
+//   address; previewed, with size warnings, src/components/site/SiteImageField.tsx),
+//   and the twitter card type.
 // - Motion: site-wide smooth scrolling (Lenis), off by default.
 // - Business and contact: legal name, address, phone, email, opening hours as
 //   rows, VAT ID, register entry, managing directors. Shown in search engine
@@ -50,7 +51,6 @@ import {
   applyTitleTemplate,
   effectiveSiteName,
   effectiveTitleTemplate,
-  isHttpsUrl,
   normalizeSiteSettings,
   validateSiteSettings,
   type OpeningHoursRow,
@@ -63,6 +63,7 @@ import { mapsPrivacyCheck } from '@/lib/legal/publishCheck';
 import { literalPageTree } from '@/lib/renderer/server/snapshotToComponentNode';
 import { getSnapshot } from 'mobx-state-tree';
 import { GoogleMapsPrivacyHint } from './GoogleMapsPrivacyHint';
+import { SiteImageField } from './SiteImageField';
 
 const fieldLabel = 'text-[11px] font-semibold uppercase tracking-wide text-muted-foreground';
 const inputBase =
@@ -140,29 +141,6 @@ function TextField({ name, label, value, onChange, error, hintText, placeholder,
         </p>
       ) : null}
     </div>
-  );
-}
-
-/** A small preview of an image URL, with an honest note when it does not load. */
-function ImagePreview({ url, label, square }: { url: string; label: string; square?: boolean }) {
-  const [failed, setFailed] = React.useState(false);
-  React.useEffect(() => setFailed(false), [url]);
-  if (!isHttpsUrl(url)) return null;
-  if (failed) {
-    return (
-      <p className="text-[11px] text-destructive" data-testid={`preview-failed-${label}`}>
-        This image could not be loaded. Check that the address opens the image itself.
-      </p>
-    );
-  }
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={url}
-      alt={`${label} preview`}
-      onError={() => setFailed(true)}
-      className={`rounded border border-border bg-muted object-contain ${square ? 'h-8 w-8' : 'h-16 w-28'}`}
-    />
   );
 }
 
@@ -367,36 +345,29 @@ const SiteSettingsForm = observer(({ project, onClose }: { project: ProjectModel
 
         <section className="flex flex-col gap-4" aria-labelledby="site-settings-sharing">
           <h3 id="site-settings-sharing" className={sectionTitle}>Icon and sharing</h3>
-          <div className="flex items-end gap-3">
-            <div className="min-w-0 flex-1">
-              <TextField
-                name="faviconUrl"
-                label="Favicon"
-                value={draft.faviconUrl}
-                onChange={(v) => update({ faviconUrl: v.trim() })}
-                onBlur={touch('faviconUrl')}
-                error={visible('faviconUrl')}
-                placeholder="https://"
-                hintText="Address of a square PNG or SVG, at least 180 by 180 pixels. Empty: no site icon."
-              />
-            </div>
-            <ImagePreview url={candidate.faviconUrl} label="Favicon" square />
-          </div>
-          <div className="flex items-end gap-3">
-            <div className="min-w-0 flex-1">
-              <TextField
-                name="ogImageUrl"
-                label="Sharing image"
-                value={draft.ogImageUrl}
-                onChange={(v) => update({ ogImageUrl: v.trim() })}
-                onBlur={touch('ogImageUrl')}
-                error={visible('ogImageUrl')}
-                placeholder="https://"
-                hintText="Shown when a page is shared on social media or in chats, unless the page has its own. 1200 by 630 pixels works everywhere."
-              />
-            </div>
-            <ImagePreview url={candidate.ogImageUrl} label="Sharing image" />
-          </div>
+          <SiteImageField
+            projectId={project.id}
+            kind="favicon"
+            inputId={fieldId('faviconUrl')}
+            label="Favicon"
+            value={draft.faviconUrl}
+            onChange={(v) => update({ faviconUrl: v })}
+            onBlur={touch('faviconUrl')}
+            error={visible('faviconUrl')}
+            square
+            hintText="A square image, at least 180 by 180 pixels (512 by 512 works everywhere). Empty: no site icon."
+          />
+          <SiteImageField
+            projectId={project.id}
+            kind="sharing"
+            inputId={fieldId('ogImageUrl')}
+            label="Sharing image"
+            value={draft.ogImageUrl}
+            onChange={(v) => update({ ogImageUrl: v })}
+            onBlur={touch('ogImageUrl')}
+            error={visible('ogImageUrl')}
+            hintText="Shown when a page is shared on social media or in chats, unless the page has its own. 1200 by 630 pixels works everywhere."
+          />
           <div className="flex flex-col gap-1.5">
             <label htmlFor={fieldId('twitterCard')} className={fieldLabel}>Card on X (Twitter)</label>
             <select

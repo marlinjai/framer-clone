@@ -37,7 +37,8 @@ import { takeBackRefusedEdit } from '@/stores/HistoryStore';
 import ComponentModel, { createIntrinsicComponent, createViewportNode, type ComponentInstance, type ComponentSnapshotIn } from './ComponentModel';
 import { isDynamicSegment, productPagePath, suggestSlug, validateSlug, type SlugValidation } from '@/lib/pages/slug';
 import {
-  isHttpsUrl,
+  IMAGE_REFERENCE_ERROR,
+  isImageReference,
   normalizeSiteSettings,
   validateSiteSettings,
   type SiteSettings,
@@ -1228,7 +1229,7 @@ export const ProjectModel = types
         }
       }
       const ogImage = input.ogImage === undefined ? page.metadata.ogImage : input.ogImage.trim();
-      if (ogImage && !isHttpsUrl(ogImage)) errors.ogImage = 'Enter a full https:// address of an image.';
+      if (ogImage && !isImageReference(ogImage)) errors.ogImage = IMAGE_REFERENCE_ERROR;
       // The page that ends up at the site root can never be the 404 page.
       const endsAsHome = slugChanged ? input.slug === '' : page.slug === '';
       if (input.notFoundPage && endsAsHome) {
