@@ -630,3 +630,40 @@ model CspReportCount {
   @@map("csp_report_counts")
   @@schema("public")
 }
+
+/// One write of the site operations library (src/server/siteOps): who wrote
+/// (an editor user or a company API key), to which site, which operations and
+/// the version it moved the site from and to. Ids and operation names only,
+/// never page content, so an erase of personal data has nothing to rewrite
+/// here. No foreign key on purpose: the record of what an agent did outlives
+/// the site it did it to.
+model SiteOperationAudit {
+  id String @id @default(uuid())
+
+  siteId        String @map("site_id")
+  workspaceId   String @map("workspace_id")
+  tenantGroupId String @map("tenant_group_id")
+
+  // `user` (an auth-brain user id) or `key` (an auth-brain API key id).
+  actorKind String @map("actor_kind")
+  actorId   String @map("actor_id")
+  // Extra ids about the actor (a key's service account), never a secret.
+  actorDetail Json? @map("actor_detail")
+
+  // batch, create_site, generate_page, publish, rollback.
+  operation String
+
+  // The batch's operations: [{ op, nodeId?, pageId? }].
+  ops Json?
+
+  versionBefore Int? @map("version_before")
+  versionAfter  Int? @map("version_after")
+  revision      Int?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([siteId, createdAt])
+  @@index([workspaceId])
+  @@map("site_operation_audits")
+  @@schema("public")
+}
