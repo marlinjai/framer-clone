@@ -26,8 +26,14 @@ const stored = (slug: string, tree: StoredNode) => ({
   canvasNodes: frames,
 });
 
-/** The origin of a published site holding every page, one page per slug. With `analytics`, the real consent banner shows. */
-export async function publishPages(port: string, { analytics = false } = {}): Promise<string> {
+/**
+ * The origin of a published site holding every page, one page per slug. With `analytics`,
+ * the real consent banner shows; `siteSettings` is saved and frozen with the publish.
+ */
+export async function publishPages(
+  port: string,
+  { analytics = false, siteSettings }: { analytics?: boolean; siteSettings?: Record<string, unknown> } = {},
+): Promise<string> {
   const repo = getSiteRepository();
   const siteId = randomUUID();
   const pages = { home: stored('', PAGES.plain()), ...Object.fromEntries(Object.entries(PAGES).map(([slug, tree]) => [slug, stored(slug, tree())])) };
@@ -38,6 +44,7 @@ export async function publishPages(port: string, { analytics = false } = {}): Pr
     components: COMPONENTS,
     // Publish freezes the binding with the pages, so it travels in the project.
     ...(analytics ? { lumitra: { enabled: true } } : {}),
+    ...(siteSettings ? { siteSettings } : {}),
   };
   await repo.saveProject(SCOPE, project as never);
   await repo.publishProject(SCOPE, project as never);

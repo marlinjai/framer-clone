@@ -19,7 +19,7 @@ import { literalPage, type ExpandableSite } from '@/lib/components/expandedPages
 import { colorText, composite, contrastRatio } from '@/lib/ai/review/layoutAudit';
 import { parseColor, type Rgba } from '@/lib/color/cssColor';
 import { platformFontStack } from '@/lib/fonts/registry';
-import { parseTokenReference, resolveTokenRefs, schemesInForce, type SiteTheme } from './theme';
+import { emittedTheme, parseTokenReference, resolveTokenRefs, schemesInForce, type SiteTheme } from './theme';
 
 export interface NotFoundCopy {
   eyebrow: string;
@@ -135,7 +135,10 @@ function legiblePair(text: string, ground: string, theme: SiteTheme | undefined)
  * so it counts as the registry stack it stands for. For what has to stay readable
  * whatever a site sets, which is the consent banner.
  */
-export function legibleLook(look: SiteLook, theme?: SiteTheme): SiteLook {
+export function legibleLook(look: SiteLook, siteTheme?: SiteTheme): SiteLook {
+  // Only the tokens the sheet holds: past a cap, or for a broken value, a reference
+  // resolves to nothing on the page, so it must resolve to nothing here.
+  const theme = siteTheme ? emittedTheme(siteTheme) : undefined;
   const text = legiblePair(look.color, look.background, theme);
   const button = legiblePair(look.accentText, look.accent, theme);
   // A font has one value in every scheme.

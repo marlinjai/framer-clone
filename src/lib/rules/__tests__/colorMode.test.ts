@@ -73,10 +73,44 @@ describe('withColorMode', () => {
     expect(withColorMode('(prefers-color-scheme: no-preference)', 'light')).toEqual({ prelude: '(prefers-color-scheme: no-preference)' });
   });
 
-  it('keeps an unread query beside a rewritten one, with the warning', () => {
-    const read = withColorMode('(prefers-color-scheme: dark), screen and (prefers-color-scheme: dark)', 'light');
-    expect(read.prelude).toBe('screen and (prefers-color-scheme: dark)');
+  // T2 code review, finding 1: each of these never matches on a forced light or dark
+  // site in Chromium and WebKit, so a rewrite must never make it live.
+  it('leaves a list with a blank member as stored, since it would otherwise read as always true', () => {
+    for (const prelude of [
+      '(prefers-color-scheme: dark) and (min-width: 600px),',
+      ', (prefers-color-scheme: dark)',
+      '(prefers-color-scheme: dark), ,(min-width: 1px)',
+    ]) {
+      for (const mode of ['light', 'dark'] as const) {
+        const read = withColorMode(prelude, mode);
+        expect(read.prelude, `${prelude} under ${mode}`).toBe(prelude);
+        expect(read.warning).toMatch(/empty query/);
+      }
+    }
+  });
+
+  it('leaves and without white space on both sides as stored, since a browser reads it as not all', () => {
+    for (const prelude of [
+      '(prefers-color-scheme: dark) and(min-width: 600px)',
+      '(prefers-color-scheme: dark)and (min-width: 600px)',
+      '(prefers-color-scheme: dark)(min-width: 600px)',
+      'not(prefers-color-scheme: dark)',
+    ]) {
+      for (const mode of ['light', 'dark'] as const) {
+        const read = withColorMode(prelude, mode);
+        expect(read.prelude, `${prelude} under ${mode}`).toBe(prelude);
+        expect(read.warning).toBeDefined();
+      }
+    }
+  });
+
+  it('leaves a list with an unread member whole as stored, unless another member makes it true', () => {
+    const list = '(prefers-color-scheme: dark), screen and (prefers-color-scheme: dark)';
+    const read = withColorMode(list, 'light');
+    expect(read.prelude).toBe(list);
     expect(read.warning).toBeDefined();
+    // A member the mode makes true makes the whole list true, whatever the others say.
+    expect(withColorMode(list, 'dark').prelude).toBe('');
   });
 });
 

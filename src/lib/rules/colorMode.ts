@@ -17,8 +17,10 @@
 //   - a whole query `not (prefers-color-scheme: x)`.
 // `x` is `light` or `dark`. The boolean `(prefers-color-scheme)` matches in both modes,
 // so it is left as stored, which is already right. A query holding the feature that is
-// not in a recognised form, `or` among them, is left as stored and reported, because no
-// one operand answers it.
+// not in a recognised form (`or`, a media type, `and` without white space on both sides,
+// a blank list member) is left as stored and reported, because no one operand answers
+// it, and so is the whole list around it, unless another member makes the list true.
+// test/renderGate/colorMode.gate.ts holds every answer to what Chromium and WebKit match.
 //
 // PURE: no React, no MST. Read by the published emitter (responsiveCss.ts) and, from
 // slice T3, by the editor surfaces.
@@ -37,16 +39,25 @@ const FEATURE = /^\(\s*([A-Za-z-]+)\s*:\s*([A-Za-z0-9.-]+)\s*\)$/;
 const NEGATED = /^\(\s*not\s+(\([^()]*\))\s*\)$/i;
 const COLOR_FEATURE = 'prefers-color-scheme';
 
-/** The top-level items of a query: bracketed groups and words, in order. Null when the brackets do not balance. */
+/**
+ * The top-level items of a query: bracketed groups and words, in order. Null when the
+ * brackets do not balance, or when two items touch with no white space between them:
+ * CSS reads `and(` as a function and `)and` as one token, so a browser drops the whole
+ * query (it reads `not all`), and taking the items apart would make it live.
+ */
 function items(query: string): string[] | null {
   const out: string[] = [];
   let depth = 0;
   let start = -1;
   for (let i = 0; i < query.length; i++) {
     const char = query[i];
+    // A top-level item that starts right where the previous one ended.
+    const touches = depth === 0 && i > 0 && start === -1 && !/[ \t\n\r\f(]/.test(char) && query[i - 1] === ')';
+    if (touches) return null;
     if (char === '(') {
       if (depth === 0) {
-        if (start !== -1) out.push(query.slice(start, i));
+        // A word running into a bracket, or a bracket right after a bracket.
+        if (start !== -1 || (i > 0 && query[i - 1] === ')')) return null;
         start = i;
       }
       depth++;
@@ -155,6 +166,12 @@ export function withColorMode(prelude: string, mode: ColorScheme): ColorModePrel
   if (!mentionsColorScheme(prelude)) return { prelude };
   const list = queries(prelude);
   if (!list) return { prelude, warning: `@media ${prelude} does not balance, so the site's colour mode cannot answer it` };
+  // A browser reads a blank member as `not all`, but here it would come back as a query
+  // with nothing left to answer, which means always true, and a dark rule would apply to
+  // every visitor of a light site. Leave the list as stored.
+  if (list.some((query) => query === '')) {
+    return { prelude, warning: `@media ${prelude} has an empty query in its list, so the site's colour mode cannot answer it` };
+  }
   const kept: string[] = [];
   let changed = false;
   let unread: string | undefined;
@@ -169,9 +186,12 @@ export function withColorMode(prelude: string, mode: ColorScheme): ColorModePrel
     if (answer.text !== query) changed = true;
     kept.push(answer.text);
   }
-  const warning = unread ? { warning: unreadWarning(unread) } : {};
-  if (!changed) return { prelude, ...warning };
-  return { prelude: kept.length > 0 ? kept.join(', ') : null, ...warning };
+  // A list with a member this cannot answer is left whole as stored: answering the rest
+  // would mix the site's mode with the visitor's setting in one list. Only a member the
+  // mode makes true decides it, above, since then the whole list is true.
+  if (unread) return { prelude, warning: unreadWarning(unread) };
+  if (!changed) return { prelude };
+  return { prelude: kept.length > 0 ? kept.join(', ') : null };
 }
 
 const unreadWarning = (query: string): string =>

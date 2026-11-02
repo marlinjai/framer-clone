@@ -238,6 +238,22 @@ describe("the banner's look, judged through the theme in every scheme the site s
     expect(legibleLook(look({ color: ref(ids.foreground) }), { ...deleted, mode: 'light' }).color).toBe(ref(ids.foreground));
   });
 
+  // T2 code review, finding 2: the sheet stops at 200 live tokens, so the 201st is no
+  // variable on the page, and the guard must not keep a reference to it.
+  it('keeps a reference only when the sheet emits that token, so over the cap the pair goes neutral', () => {
+    const tokens = Array.from({ length: 201 }, (_, i) => ({
+      id: `t${String(i).padStart(7, '0')}`, name: `c${i}`, kind: 'color' as const, light: i === 200 ? '#ffffff' : '#000000',
+    }));
+    const over: SiteTheme = { tokens, document: { backgroundColor: 'var(--fc-t-t0000200)' } };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const read = legibleLook(look({ color: '#111111', background: 'var(--fc-t-t0000200)' }), over);
+    warn.mockRestore();
+    expect({ color: read.color, background: read.background }).toEqual(NEUTRAL_TEXT);
+    // The 200th is emitted, so a reference to it is kept.
+    const within = legibleLook(look({ color: '#ffffff', background: 'var(--fc-t-t0000199)' }), over);
+    expect(within.background).toBe('var(--fc-t-t0000199)');
+  });
+
   it('never hands stored text through: a literal side is written from its numbers', () => {
     const read = legibleLook(look({ color: '#000', background: 'white' }), shadcnTheme('system'));
     expect(read).toMatchObject({ color: 'rgb(0 0 0 / 1)', background: 'rgb(255 255 255 / 1)' });
