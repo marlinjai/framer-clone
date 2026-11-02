@@ -15,6 +15,12 @@
 // rollback, the jobs of a kind the older build does not know count as late on
 // purpose until the newer build is back.
 //
+// Paid orders without an invoice that no live job will issue are counted in
+// `receiptsUnissued`, and `receipts` reads "unissued" while there are any, "ok"
+// otherwise. That field is for its own Uptime Kuma keyword monitor matching
+// `"receipts":"ok"`, so money taken without a receipt turns that monitor red
+// while the status code stays 200 for this one.
+//
 // Running at the same moment as a poller is harmless: the claim hands each job to
 // one of them.
 //

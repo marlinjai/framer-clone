@@ -189,6 +189,8 @@ describe('F: forward', () => {
       deadUnacknowledged: 0,
       findingsOpen: 0,
       oldestDueSeconds: 0,
+      receiptsUnissued: 0,
+      receipts: 'ok',
     });
   });
 

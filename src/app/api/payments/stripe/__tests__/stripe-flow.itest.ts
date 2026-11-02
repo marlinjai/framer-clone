@@ -5,11 +5,14 @@
 //   - onboarding stores the company's account (pending), the return asks Stripe and marks it ready;
 //   - an order of a ready company is paid through a hosted checkout: a direct charge on the company's own
 //     account with the 1% fee, the session living at least Stripe's minimum;
-//   - forward: payment_intent.succeeded pays and issues the receipt; delivered twice changes nothing;
+//   - forward: payment_intent.succeeded pays, and the receipt's job (started by the route, not awaited) issues the
+//     receipt; delivered twice changes nothing;
 //   - a declined card closes the order and releases its stock;
 //   - late with the stock gone: refunded on the company's account (the fee returned), the order closed;
 //   - refused: a bad signature (400), an event from another connected account (ignored), an amount that
-//     differs (ignored); a receipt that cannot be issued yet answers 500 so Stripe delivers again.
+//     differs (ignored);
+//   - a receipt that cannot be issued yet no longer answers 500: the payment stands, the delivery answers 200, and the
+//     receipt's job issues it once the Books can, dated the day the buyer paid (slice B4).
 // All data is synthetic; secrets are built at run time.
 
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -45,6 +48,7 @@ import { oauthCallback, onboardingReturn } from '@/server/commerce/payment/strip
 import { oauthState } from '@/server/commerce/payment/stripe/connect';
 import type { OwnerContext } from '@/server/commerce/payment/stripe/ownerRoute';
 import { booksScope } from '@/server/books/scope';
+import { runJobNow } from '@/server/commerce/jobs/run';
 import { FakeContactBook, FakeDirectory, initCompany, openBooksEnv, type BooksEnv } from '@/server/books/__tests__/booksFixtures';
 
 const fake = (prefix: string) => `${prefix}_${randomBytes(12).toString('hex')}`;
@@ -236,9 +240,9 @@ describe('Stripe Connect through the webhook (fake Stripe)', () => {
     const first = await deliver('payment_intent.succeeded', succeeded(orderId), { eventId: 'evt_same' });
     expect(first.status).toBe(200);
     expect(await first.json()).toEqual({ received: true, status: 'paid', duplicate: false });
-    const paid = await paymentOf(orderId);
-    expect(paid).toMatchObject({ status: 'paid', provider_payment_id: `pi_${orderId}` });
-    expect(paid.receipt_document_id).not.toBeNull();
+    expect(await paymentOf(orderId)).toMatchObject({ status: 'paid', provider_payment_id: `pi_${orderId}` });
+    // The route started the receipt's first attempt and answered without waiting for it.
+    await vi.waitFor(async () => expect((await paymentOf(orderId)).receipt_document_id).not.toBeNull(), { timeout: 30_000, interval: 100 });
     const again = await deliver('payment_intent.succeeded', succeeded(orderId), { eventId: 'evt_same' });
     expect(await again.json()).toEqual({ received: true, status: 'paid', duplicate: true });
     const receipts = await env.ownerDb.selectFrom('sales_document').select('id').where('source_order_id', '=', orderId).execute();
@@ -283,14 +287,41 @@ describe('Stripe Connect through the webhook (fake Stripe)', () => {
     expect((await paymentOf(orderId)).status).toBe('pending');
   });
 
-  it('a receipt that cannot be issued yet answers 500 so Stripe delivers again; the payment stands', async () => {
+  it('a receipt that cannot be issued yet answers 200 all the same; its job issues it once the Books can', async () => {
     await readyCompany({ books: false });
+    const dir = state.directory as FakeDirectory;
     const ring = await stockedRing(2);
     const orderId = await stripeOrder(ring);
     const res = await deliver('payment_intent.succeeded', succeeded(orderId));
-    expect(res.status).toBe(500);
-    expect(((await res.json()) as { error: { code: string } }).error.code).toBe('receipt_pending');
-    expect((await paymentOf(orderId)).status).toBe('paid');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ received: true, status: 'paid', duplicate: false });
+    // The first attempt failed on the missing Books: kept on the payment and on the job, which retries it.
+    await vi.waitFor(async () => expect((await paymentOf(orderId)).receipt_error).toBe('SETTINGS_MISSING'), { timeout: 30_000, interval: 100 });
+    const [job] = await env.ownerDb
+      .selectFrom('commerce_job')
+      .select(['id', 'status', 'last_error'])
+      .where('tenant_id', '=', company)
+      .where('dedupe_key', '=', `receipt:${orderId}`)
+      .execute();
+    await vi.waitFor(async () => {
+      const row = await env.ownerDb.selectFrom('commerce_job').select(['status', 'last_error']).where('id', '=', job.id).executeTakeFirstOrThrow();
+      expect(row).toEqual({ status: 'pending', last_error: 'SETTINGS_MISSING' });
+    }, { timeout: 30_000, interval: 100 });
+    // Stripe delivering again is a repeat now, not the retry: it writes nothing.
+    expect(await (await deliver('payment_intent.succeeded', succeeded(orderId))).json()).toMatchObject({ status: 'paid' });
+
+    await initCompany(booksScope(env.appDb, env.tgId, company, { recipients: dir }), { taxStatus: 'regular', invoiceNext: 500 });
+    const later = new Date(Date.now() + 2 * 60 * 1000);
+    expect(await runJobNow({ id: env.tgId, db: env.appDb }, company, job.id, { now: () => later })).toMatchObject({ outcome: 'done' });
+    const paid = await paymentOf(orderId);
+    expect(paid).toMatchObject({ status: 'paid', receipt_error: null });
+    const [receipt] = await env.ownerDb
+      .selectFrom('sales_document')
+      .select(['status', (eb) => eb.cast<string>('paid_on', 'text').as('paid_on')])
+      .where('source_order_id', '=', orderId)
+      .execute();
+    expect(receipt.status).toBe('issued');
+    expect(receipt.paid_on).toBe(new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Berlin' }).format(paid.paid_at!));
   });
 });
 

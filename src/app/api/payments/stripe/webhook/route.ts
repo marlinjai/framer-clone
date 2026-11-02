@@ -10,9 +10,10 @@
 //      so a connected account can never settle another company's order.
 //   3. The event goes through the one payment handler (payments.ts): recorded once, the order's state
 //      moved, the stock released or re-reserved, a late payment without stock refunded.
-//   4. Answers: 200 when handled, repeated, ignored or not ours to apply (Stripe stops retrying); 500 when
-//      the payment stands but its receipt could not be issued yet, or on a fault, so Stripe delivers again
-//      and the receipt is retried.
+//   4. Answers: 200 when handled, repeated, ignored or not ours to apply (Stripe stops retrying), once the payment's
+//      change committed; 500 on a fault, so Stripe delivers again. The receipt is not Stripe's concern any more: a
+//      payment that became paid wrote its receipt's job (receiptJob.ts) with the change, this route starts the
+//      first attempt without waiting for a PDF render, and the job retries a failure on its own schedule.
 //
 // No session and no company cookie: the platform's signature is the only authority here. UNPROVEN against
 // Stripe itself (no Stripe account yet); tested against signed fixtures.
@@ -22,6 +23,7 @@ import { assertTenantGroupId } from '@marlinjai/tenant-db';
 import { jsonError } from '@/lib/api/respond';
 import { commerceTenantDbChecked, isCommerceTenantNotProvisioned } from '@/server/commerce/db';
 import { configuredStripeApi, paymentDeps } from '@/server/commerce/payment/deps';
+import { runJobNow } from '@/server/commerce/jobs/run';
 import { handlePaymentEvent, PaymentMismatchError, UnknownPaymentError } from '@/server/commerce/payment/payments';
 import { stripeConfig } from '@/server/commerce/payment/stripe/client';
 import { readAccount } from '@/server/commerce/payment/stripe/connect';
@@ -67,9 +69,11 @@ export async function POST(req: Request): Promise<Response> {
     }
     const deps = { ...paymentDeps(db, tenantGroupId, event.tenantId, { stripe: api }), connectedAccountId: account.accountId };
     const outcome = await handlePaymentEvent(deps, event);
-    if (outcome.status === 'paid' && !outcome.receiptDocumentId) {
-      // The payment stands; the receipt is retried on Stripe's next delivery.
-      return jsonError('receipt_pending', `the receipt could not be issued yet (${outcome.receiptError})`, 500);
+    // Started, not awaited: the job exists already, and the worker runs whatever this attempt does not finish.
+    for (const jobId of outcome.jobIds) {
+      void runJobNow({ id: tenantGroupId, db }, event.tenantId, jobId).catch((err: unknown) => {
+        console.error(`[stripe] event ${event.eventId}: the first attempt at job ${jobId} failed to run; the worker retries it:`, err);
+      });
     }
     return Response.json({ received: true, status: outcome.status, duplicate: outcome.duplicate });
   } catch (err) {

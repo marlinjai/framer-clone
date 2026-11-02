@@ -10,7 +10,7 @@ import type { Kysely } from 'kysely';
 
 import type { CommerceDB } from '../db-types';
 import { paymentDeps } from '../payment/deps';
-import { handlePaymentEvent, receiptFailure } from '../payment/payments';
+import { handlePaymentEvent, issueReceipt, receiptFailure, type PaymentDeps } from '../payment/payments';
 import { claimJob, finishDead, finishDone, finishRerun, finishRetry, type ClaimOptions } from './claim';
 import { JOB_KINDS } from './consumers';
 import {
@@ -36,7 +36,14 @@ export interface JobRunOptions {
   kinds?: JobKindRegistry;
   now?: () => Date;
   leaseMs?: number;
+  /**
+   * The payment wiring of one company (payment/deps.ts paymentDeps). Tests hand in fakes for the Books' contacts and
+   * the providers; the worker and the routes use the default.
+   */
+  paymentDeps?: (group: JobTenantGroup, tenantId: string) => PaymentDeps;
 }
+
+const defaultPaymentDeps = (group: JobTenantGroup, tenantId: string) => paymentDeps(group.db, group.id, tenantId);
 
 /**
  * How one run ended. `fenced`: the lease ran out first, so another worker owns the job and nothing was written.
@@ -55,13 +62,17 @@ export interface JobRunResult {
  * The payment state machine for one job: bound to its company, and the row lock's wait to its deadline, so a job
  * blocked on a payment ends as an ordinary retry instead of running out its lease as an open claim.
  */
-function jobPayments(group: JobTenantGroup, tenantId: string, kind: JobKind, now: () => Date): JobPayments {
+function jobPayments(
+  group: JobTenantGroup,
+  tenantId: string,
+  kind: JobKind,
+  now: () => Date,
+  wiring: NonNullable<JobRunOptions['paymentDeps']>,
+): JobPayments {
+  const deps = { ...wiring(group, tenantId), now, lockWaitMs: kind.policy.deadlineMs };
   return {
-    handleEvent: (event) =>
-      handlePaymentEvent(
-        { ...paymentDeps(group.db, group.id, tenantId), now, lockWaitMs: kind.policy.deadlineMs },
-        { ...event, tenantId },
-      ),
+    handleEvent: (event) => handlePaymentEvent(deps, { ...event, tenantId }),
+    issueReceipt: (orderId) => issueReceipt(deps, tenantId, orderId),
   };
 }
 
@@ -100,6 +111,7 @@ async function invoke(
   payload: unknown,
   signal: AbortSignal,
   now: () => Date,
+  wiring: NonNullable<JobRunOptions['paymentDeps']>,
 ): Promise<Ending> {
   const where = `${job.kind} ${job.id} of company ${job.tenant_id}`;
   try {
@@ -108,7 +120,7 @@ async function invoke(
       company: companyContext(group.db, job.tenant_id),
       payload,
       signal,
-      payments: jobPayments(group, job.tenant_id, kind, now),
+      payments: jobPayments(group, job.tenant_id, kind, now, wiring),
     });
     if (!answer) return { type: 'done' };
     if (answer.payload === undefined) return { type: 'rerun', rerunAt: answer.rerunAt };
@@ -135,6 +147,7 @@ async function attempt(
   payload: unknown,
   leaseMs: number,
   now: () => Date,
+  wiring: NonNullable<JobRunOptions['paymentDeps']>,
 ): Promise<Ending> {
   const deadline = new AbortController();
   const deadlineTimer = setTimeout(() => deadline.abort(new JobRetryLater(DEADLINE_EXCEEDED)), kind.policy.deadlineMs);
@@ -143,7 +156,7 @@ async function attempt(
     leaseTimer = setTimeout(() => resolve({ type: 'abandoned' }), leaseMs);
   });
   try {
-    return await Promise.race([invoke(group, job, kind, payload, deadline.signal, now), leaseOver]);
+    return await Promise.race([invoke(group, job, kind, payload, deadline.signal, now, wiring), leaseOver]);
   } finally {
     clearTimeout(deadlineTimer);
     clearTimeout(leaseTimer);
@@ -191,7 +204,7 @@ async function claimAndRun(
   options: JobRunOptions,
   only?: ClaimOptions['only'],
 ): Promise<JobRunResult | null> {
-  const { kinds = JOB_KINDS, now = () => new Date(), leaseMs = JOB_LEASE_MS } = options;
+  const { kinds = JOB_KINDS, now = () => new Date(), leaseMs = JOB_LEASE_MS, paymentDeps: wiring = defaultPaymentDeps } = options;
   const { db } = group;
   const job = await claimJob(db, { kinds: Object.keys(kinds), now: now(), leaseMs, only });
   if (!job) return null;
@@ -204,7 +217,7 @@ async function claimAndRun(
   const kind = kinds[job.kind];
   const payload = kind.payload.safeParse(job.payload);
   const ending = payload.success
-    ? await attempt(group, job, kind, payload.data, leaseMs, now)
+    ? await attempt(group, job, kind, payload.data, leaseMs, now, wiring)
     : ({ type: 'refused', reason: PAYLOAD_INVALID } as const);
   return { ...result, outcome: await settle(db, job, kind.policy, ending, now()) };
 }

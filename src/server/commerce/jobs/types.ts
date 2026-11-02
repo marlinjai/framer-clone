@@ -17,7 +17,7 @@ import type {
 import type { ZodType } from 'zod';
 
 import type { CommerceDB, CommerceJobTable } from '../db-types';
-import type { PaymentOutcome } from '../payment/payments';
+import type { PaymentOutcome, ReceiptAttempt } from '../payment/payments';
 import type { PaymentEvent } from '../payment/provider';
 
 /** How long a claim holds a job. `run_at` carries it, so a crashed worker's job simply becomes due again. */
@@ -154,6 +154,8 @@ export interface JobTenantGroup {
  */
 export interface JobPayments {
   handleEvent(event: Omit<PaymentEvent, 'tenantId'>): Promise<PaymentOutcome>;
+  /** Issue and link a paid order's receipt (payments.ts issueReceipt); throws what the Books refused. */
+  issueReceipt(orderId: string): Promise<ReceiptAttempt>;
 }
 
 export interface JobContext<P> {

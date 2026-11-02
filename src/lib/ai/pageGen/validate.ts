@@ -59,6 +59,7 @@
 // in the browser.
 
 import { v4 as uuidv4 } from 'uuid';
+import { isPlatformVariable } from '@/lib/rules/rootProperties';
 import { STOCK_CREDIT_ATTRS, stockCreditAttrs, stockCreditProps } from './stockCredit';
 import { parseAspectRatio, photoUrlOf, withPhotoUrl } from '@/lib/images/imageStyle';
 import { normalizeFontFamily } from '@/lib/fonts/registry';
@@ -249,9 +250,12 @@ export function clampedZIndex(value: string | number): string | number | undefin
  *   - a custom property holding an address: read through var(), it would pass every
  *     check on the property that uses it;
  *   - a var() in a font or in image-set(): the value that counts is not this one;
- *   - motion that never ends, or a stored keyframes outside a rule (./promptSections/rules.ts).
+ *   - motion that never ends, or a stored keyframes outside a rule (./promptSections/rules.ts);
+ *   - a key naming one of the platform's own custom properties (`--fc-`, isPlatformVariable),
+ *     such as a theme token, which a page must never redefine.
  */
 export function styleValueProblem(property: string, value: string, inRule = false): string | undefined {
+  if (isPlatformVariable(property)) return "one of the platform's own custom properties";
   if (UNSAFE_VALUE.test(value) || STRING_URL_FUNCTION.test(value)) return 'unsafe value';
   if (holdsTopLayerValue(value)) return 'base-select puts the list in the top layer, above the consent banner';
   const motion = motionValueProblem(property, value);
@@ -626,6 +630,11 @@ class Validator {
     place: StylePlace,
   ): string | number | undefined {
     const key = mapKey === undefined ? property : `${property}.${mapKey}`;
+    // Before any value is read: a number or an empty value names the key just the same.
+    if (isPlatformVariable(property)) {
+      this.warn(path, `style.${key}: one of the platform's own custom properties dropped`);
+      return undefined;
+    }
     if (typeof raw === 'number') {
       if (!Number.isFinite(raw)) {
         this.warn(path, `style.${key}: non-finite number dropped`);

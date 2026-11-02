@@ -22,17 +22,23 @@ import 'server-only';
 // close; the payment_event rows keep that history.
 //
 // Each provider event is recorded once (payment_event); a repeated delivery changes nothing. The state change,
-// the event record and the stock movements commit together. A paid order without a receipt gets one after the
-// commit (receipt.ts); when that fails the payment stays paid, the reason is kept on it, and the next delivery
-// of any event for the order (a provider retries a webhook that answered an error) tries again.
+// the event record, the stock movements and the work the change starts commit together: a payment that becomes paid
+// writes `payment.paid`, whose job issues the receipt (receiptJob.ts, slice B4 of
+// docs/plans/2026-11-02-shop-backbone.md). So a receipt can no longer be forgotten: the job retries a failure on its
+// own schedule, and the caller only starts its first attempt (`jobIds`). issueReceipt is that attempt.
+//
+// The registry of what an event starts (jobs/consumers.ts) loads this module, so this module never imports it: the
+// caller hands the event writer in as `deps.emit`.
 
 import { sql, type Kysely, type Transaction } from 'kysely';
 
 import type { CommerceDB } from '../db-types';
+import type { CommerceEvent } from '../jobs/types';
 import { applyInventoryEffect, reserve, RESERVE_ISOLATION_LEVEL } from '../inventory/reserve';
 import { isLockTimeout } from '../provisioning/ownerSql';
 import type { PaymentEvent, PaymentProvider, ProviderId } from './provider';
 import { enqueueShopMail } from '../mail/outbox';
+import { demoCheckoutAllowed } from './demoCheckout';
 
 /** How long a pending payment holds its stock (the design: 30 minutes). */
 export const PAYMENT_WINDOW_MS = 30 * 60 * 1000;
@@ -115,6 +121,11 @@ export interface PaymentDeps {
   provider: (id: ProviderId) => PaymentProvider;
   /** Issue the receipt of a paid order (receipt.ts ensureReceipt, bound to the company). */
   receipt: (orderId: string) => Promise<{ documentId: string }>;
+  /**
+   * Write an event's jobs in the caller's transaction (jobs/emit.ts emitCommerceEvent). Handed in rather than imported:
+   * the registry it reads loads this module. Answers the ids of the jobs written.
+   */
+  emit: (trx: Transaction<CommerceDB>, event: CommerceEvent) => Promise<string[]>;
   now?: () => Date;
   /** Overrides DUE_LOCK_WAIT_MS. */
   lockWaitMs?: number;
@@ -123,8 +134,8 @@ export interface PaymentDeps {
   /**
    * Start sending the buyer's letter (the shop's receipt email, mail/runtime.ts) once it is written: the letter
    * itself is written in the transaction that links the receipt or records the refund, so it can never be lost,
-   * and this only starts the first attempt without waiting for it (the payment never waits for mail; the sweep
-   * sends whatever this attempt could not). Absent in tests that send no mail.
+   * and this only starts the first attempt without waiting for it (nothing waits for mail; the sweep sends
+   * whatever this attempt could not). Absent in tests that send no mail.
    */
   deliverMail?: (tenantId: string, orderId: string, kind: 'order_confirmation' | 'late_refund') => void;
 }
@@ -133,9 +144,11 @@ export interface PaymentOutcome {
   status: PaymentStatus;
   /** The event was a repeat: nothing changed. */
   duplicate: boolean;
-  receiptDocumentId: string | null;
-  /** Why the receipt could not be issued (the payment stands). */
-  receiptError: string | null;
+  /**
+   * The jobs this event wrote (the receipt of a payment that became paid). They exist once the event committed and a
+   * worker runs them in any case; the caller starts the first attempt (jobs/run.ts runJobNow) so nobody waits on it.
+   */
+  jobIds: string[];
   /**
    * `requireDue` found the payment not due and nothing was written. `expiresAt`: when its window now ends, for a
    * payment still pending; null for one that closed or was paid.
@@ -247,16 +260,19 @@ function inTransaction<T>(db: Kysely<CommerceDB>, fn: (trx: Trx) => Promise<T>):
 }
 
 /**
- * Apply one provider event to its order's payment (the state machine above), then make sure a paid order has
- * its receipt. Throws UnknownPaymentError (no such payment for the company) and PaymentMismatchError (another
- * amount or currency) with nothing changed; a database or provider failure propagates and changes nothing.
+ * Apply one provider event to its order's payment (the state machine above). A payment that becomes paid writes its
+ * receipt's job in the same transaction (`jobIds`). Throws UnknownPaymentError (no such payment for the company) and
+ * PaymentMismatchError (another amount or currency) with nothing changed; a database or provider failure propagates
+ * and changes nothing.
  */
 export async function handlePaymentEvent(deps: PaymentDeps, event: PaymentEvent): Promise<PaymentOutcome> {
   const now = deps.now ?? (() => new Date());
   let duplicate = false;
   let notDue: PaymentOutcome['notDue'];
   let status: PaymentStatus;
+  let jobIds: string[] = [];
   try {
+    let written: string[] = [];
     status = await inTransaction(deps.db, async (trx) => {
       if (event.requireDue) {
         const wait = `${deps.lockWaitMs ?? DUE_LOCK_WAIT_MS}ms`;
@@ -328,30 +344,25 @@ export async function handlePaymentEvent(deps: PaymentDeps, event: PaymentEvent)
             .where('tenant_id', '=', event.tenantId)
             .where('order_id', '=', event.orderId)
             .execute();
+          // Only here, where the payment really became paid: a repeat or a paid payment returned above.
+          written = await deps.emit(trx, {
+            tenantId: event.tenantId,
+            type: 'payment.paid',
+            payload: { orderId: event.orderId },
+            at,
+          });
           return 'paid';
         }
       }
     });
+    jobIds = written;
   } catch (err) {
     if (event.requireDue && isLockTimeout(err)) throw new PaymentBusyError(event.orderId);
     if (!(err instanceof LateStockGoneError)) throw err;
     status = await refundLatePayment(deps, event, now());
     if (status === 'refunded') deps.deliverMail?.(event.tenantId, event.orderId, 'late_refund');
   }
-
-  const after = await deps.db
-    .selectFrom('order_payment')
-    .select(['receipt_document_id', 'receipt_error'])
-    .where('tenant_id', '=', event.tenantId)
-    .where('order_id', '=', event.orderId)
-    .executeTakeFirstOrThrow();
-  if (notDue || status !== 'paid' || after.receipt_document_id) {
-    return { status, duplicate, receiptDocumentId: after.receipt_document_id, receiptError: after.receipt_error, notDue };
-  }
-  const receipt = await issueReceipt(deps, event.tenantId, event.orderId, now());
-  // The buyer hears once the receipt exists (the letter links it); a retried receipt mails then.
-  if (receipt.receiptDocumentId) deps.deliverMail?.(event.tenantId, event.orderId, 'order_confirmation');
-  return { status, duplicate, ...receipt };
+  return { status, duplicate, jobIds, ...(notDue ? { notDue } : {}) };
 }
 
 /** The late success whose stock is gone: refund in full, the order stays closed. */
@@ -390,38 +401,78 @@ async function refundLatePayment(deps: PaymentDeps, event: PaymentEvent, at: Dat
   });
 }
 
-/** Issue the receipt; on failure keep the reason on the payment (the payment stands) and answer it. */
-async function issueReceipt(
-  deps: PaymentDeps,
-  tenantId: string,
-  orderId: string,
-  at: Date,
-): Promise<{ receiptDocumentId: string | null; receiptError: string | null }> {
+/** How an attempt at a receipt ended without a failure. */
+export type ReceiptAttempt =
+  | { outcome: 'issued'; documentId: string }
+  /** Linked before, by this job's earlier run or another attempt: nothing to do. */
+  | { outcome: 'linked'; documentId: string }
+  /** The payment is no longer paid (refunded since): it needs no receipt. */
+  | { outcome: 'not_paid' }
+  /**
+   * A demo payment of a company other than the demo company (placed before the demo checkout was the demo company's
+   * alone): no money moved, so a numbered invoice would record a sale that never happened. Nothing is issued.
+   */
+  | { outcome: 'not_owed' };
+
+/**
+ * Issue the receipt of a paid order and link it, the work of its `receipt_issue` job (receiptJob.ts). The link, the
+ * buyer's letter (when the shop sends mail) and `receipt.issued` commit together, and only when the link filled an
+ * empty column, so a concurrent attempt that linked first writes nothing twice. On a failure the reason is kept on the
+ * payment, where the owner sees it, and the error is thrown for the job to retry or refuse.
+ */
+export async function issueReceipt(deps: PaymentDeps, tenantId: string, orderId: string): Promise<ReceiptAttempt> {
+  const now = deps.now ?? (() => new Date());
+  const payment = await deps.db
+    .selectFrom('order_payment')
+    .select(['status', 'provider', 'receipt_document_id'])
+    .where('tenant_id', '=', tenantId)
+    .where('order_id', '=', orderId)
+    .executeTakeFirst();
+  if (!payment) throw new UnknownPaymentError(orderId);
+  if (payment.receipt_document_id) return { outcome: 'linked', documentId: payment.receipt_document_id };
+  if (payment.status !== 'paid') return { outcome: 'not_paid' };
+  if (payment.provider === 'demo' && !demoCheckoutAllowed(tenantId)) {
+    console.warn(`[payments] order ${orderId} of company ${tenantId}: a demo payment owes no invoice; none is issued`);
+    return { outcome: 'not_owed' };
+  }
+
+  let documentId: string;
   try {
-    const { documentId } = await deps.receipt(orderId);
-    // The receipt link and the buyer's letter (when the shop sends mail) commit together.
-    await deps.db.transaction().execute(async (trx) => {
-      await trx
-        .updateTable('order_payment')
-        .set({ receipt_document_id: documentId, receipt_error: null, updated_at: at })
-        .where('tenant_id', '=', tenantId)
-        .where('order_id', '=', orderId)
-        .where('receipt_document_id', 'is', null)
-        .execute();
-      await enqueueShopMail(trx, tenantId, orderId, 'order_confirmation', at);
-    });
-    return { receiptDocumentId: documentId, receiptError: null };
+    ({ documentId } = await deps.receipt(orderId));
   } catch (err) {
     const reason = receiptFailure(err);
-    console.error(`[payments] order ${orderId}: the receipt could not be issued (${reason}):`, err);
+    // A refund that overtook this attempt: the receipt is not owed any more, which is no failure.
+    if (reason === 'NOT_PAID') return { outcome: 'not_paid' };
+    // `[receipt-unissued]` is the stable prefix to alert on: money taken, no invoice yet.
+    console.error(`[receipt-unissued] order ${orderId} of company ${tenantId}: the receipt could not be issued (${reason}):`, err);
     await deps.db
       .updateTable('order_payment')
-      .set({ receipt_error: reason, updated_at: at })
+      .set({ receipt_error: reason, updated_at: now() })
       .where('tenant_id', '=', tenantId)
       .where('order_id', '=', orderId)
       .execute();
-    return { receiptDocumentId: null, receiptError: reason };
+    throw err;
   }
+
+  const at = now();
+  const linked = await deps.db.transaction().execute(async (trx) => {
+    const update = await trx
+      .updateTable('order_payment')
+      .set({ receipt_document_id: documentId, receipt_error: null, updated_at: at })
+      .where('tenant_id', '=', tenantId)
+      .where('order_id', '=', orderId)
+      .where('receipt_document_id', 'is', null)
+      .executeTakeFirst();
+    // Zero rows: another attempt linked it first and wrote the rest with it.
+    if (update.numUpdatedRows === BigInt(0)) return false;
+    await enqueueShopMail(trx, tenantId, orderId, 'order_confirmation', at);
+    await deps.emit(trx, { tenantId, type: 'receipt.issued', payload: { orderId }, at });
+    return true;
+  });
+  if (!linked) return { outcome: 'linked', documentId };
+  // The buyer hears once the receipt exists (the letter links it).
+  deps.deliverMail?.(tenantId, orderId, 'order_confirmation');
+  return { outcome: 'issued', documentId };
 }
 
 /** A short, personal-data-free reason: the Books error code when there is one. */

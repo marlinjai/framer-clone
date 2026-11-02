@@ -204,5 +204,7 @@ describe('parity corpus', () => {
     }
 
     writeOut('corpus', results);
-  });
+    // One test walks every fixture, breakpoint and state in turn, about 110 seconds alone
+    // with the four theme fixtures and well past the default under the score's other probes.
+  }, 600_000);
 });

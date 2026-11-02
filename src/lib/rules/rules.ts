@@ -58,7 +58,7 @@
 //
 // PURE and client-safe: no React, no MST, no new dependency.
 
-import { isRootStyleKey } from './rootProperties';
+import { isPlatformVariable, isRootStyleKey } from './rootProperties';
 import { conditionSelector } from '@/lib/behaviour/behaviourDom';
 import { parseCondition, type Condition, type StateValue } from '@/lib/behaviour/format';
 import { isPlatformMarker } from '@/lib/renderer/platformAttributes';
@@ -684,6 +684,7 @@ function refusedBody(style: unknown, options: { maps: boolean; skip?: string }):
   if (!isPlainObject(style)) return 'a rule needs a style';
   for (const [key, stored] of Object.entries(style)) {
     if (!SAFE_PROPERTY.test(key)) return `${key} is not a property name`;
+    if (isPlatformVariable(key)) return `${key} is one of the platform's own custom properties, which a stored style cannot set`;
     if (key === options.skip) continue;
     // A rule can outrank the sheet's guard, so this one cannot be left to it.
     if (key === 'fieldSizing') return 'fieldSizing would let a control grow with what a visitor types, which a rule could read';
@@ -728,11 +729,12 @@ function parseRootRule(rule: Record<string, unknown>, id: string): Parsed<Parsed
     if (!ROOT_WRAPPERS.test(wrapper.value)) return refuse('only @media and @supports can wrap a rule on the document');
     at.push(wrapper.value);
   }
+  // The document's own list first, so a key it does not hold is named as such.
+  const outside = isPlainObject(rule.style) ? Object.keys(rule.style).find((key) => !isRootStyleKey(key)) : undefined;
+  if (outside !== undefined) return refuse(`${outside} cannot be set on the document`);
   const reason = refusedBody(rule.style, { maps: true });
   if (reason) return refuse(reason);
-  const style = rule.style as Record<string, unknown>;
-  const outside = Object.keys(style).find((key) => !isRootStyleKey(key));
-  return outside ? refuse(`${outside} cannot be set on the document`) : accept({ kind: 'root', id, at, style });
+  return accept({ kind: 'root', id, at, style: rule.style as Record<string, unknown> });
 }
 
 // --- whole rules ----------------------------------------------------------

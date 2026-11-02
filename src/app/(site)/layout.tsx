@@ -15,13 +15,22 @@
 // twitter card. A matched page's own `generateMetadata` in
 // `(site)/[...slug]/page.tsx` adds its title, canonical and sharing data. A
 // host that names no published site gets a neutral default.
+//
+// The site's theme (src/lib/site/theme.ts, docs/plans/2026-11-02-theme-and-head.md)
+// is written here, once, as one sheet on `:root`, right after the base: here and not
+// in the page renderer, because the consent banner and the default 404 sit outside
+// the page tree and read the same tokens. It stands before the page's own sheet
+// (`data-fc-responsive`), at equal specificity, so a page's rule on `:root` beats the
+// theme. `generateViewport` gives the browser's own surfaces the chosen mode
+// (`color-scheme`) and, when the document has a background, `theme-color`.
 
 import React from 'react';
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
+import { unstable_rethrow } from 'next/navigation';
 import { getPrimaryHostForRequest, resolveSiteForRequest } from '@/server/sites/requestSite';
 import { effectiveSiteName } from '@/lib/site/siteSettings';
 import { siteLayoutMetadata } from '@/lib/site/publishedHead';
-import { SYSTEM_FONT_STACK } from '@/lib/fonts/registry';
+import { SiteSheets, themeViewport } from '@/lib/site/siteSheets';
 
 /** The neutral default for a host with no published site (never editor scaffolding). */
 const NEUTRAL_METADATA: Metadata = {
@@ -40,18 +49,31 @@ export async function generateMetadata(): Promise<Metadata> {
   });
 }
 
-export default function SiteLayout({
+export async function generateViewport(): Promise<Viewport> {
+  const site = await siteForLayout();
+  return themeViewport(site?.siteSettings.theme);
+}
+
+/** The request's site, or null; a failure is logged and the page gets no theme, as the 404 does. */
+async function siteForLayout() {
+  try {
+    return await resolveSiteForRequest();
+  } catch (err) {
+    unstable_rethrow(err);
+    console.error('(site)/layout: could not resolve the site; the page gets no theme sheet.', err);
+    return null;
+  }
+}
+
+export default async function SiteLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const site = await siteForLayout();
   return (
     <>
-      {/* The root layout puts the editor's Geist on <html> (Tailwind preflight).
-          A published page that sets no font family of its own falls back to the
-          system stack instead, never to a face the editor chrome happens to use.
-          Constant text from the font registry, never site data. */}
-      <style data-fc-site-base="" dangerouslySetInnerHTML={{ __html: `body{font-family:${SYSTEM_FONT_STACK}}` }} />
+      <SiteSheets theme={site?.siteSettings.theme} />
       {children}
     </>
   );
