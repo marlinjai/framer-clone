@@ -10,6 +10,9 @@ import { deriveMenuButton } from '@/lib/behaviour/presets/menu';
 import { deriveMenubar, menubar } from '@/lib/behaviour/presets/menubar';
 import { deriveMultithumb } from '@/lib/behaviour/presets/slider';
 import { deriveSplitter } from '@/lib/behaviour/presets/splitter';
+import { deriveFeed, feed } from '@/lib/behaviour/presets/feed';
+import { deriveGrid } from '@/lib/behaviour/presets/grid';
+import { deriveTree, deriveTreegrid, treegrid, treeview } from '@/lib/behaviour/presets/tree';
 import { withProps, propsOf, behaviourOf } from '@/lib/behaviour/presets/nodes';
 
 const kinds = Object.keys(PRESETS) as PresetKind[];
@@ -61,6 +64,10 @@ describe('presets', () => {
     ['combobox', deriveCombobox],
     ['slider-multithumb', deriveMultithumb],
     ['windowsplitter', deriveSplitter],
+    ['feed', deriveFeed],
+    ['grid', deriveGrid],
+    ['treeview', deriveTree],
+    ['treegrid', deriveTreegrid],
   ] as const)('%s derives to the same thing twice', (kind, derive) => {
     const root = PRESETS[kind]('a1');
     expect(derive(root)).toEqual(root);
@@ -225,5 +232,47 @@ describe('menubar', () => {
     for (const menu of byRole(menubar({ seed: 'a1' }), 'menu')) {
       expect(propsOf(menu).rules).toEqual([expect.objectContaining({ gate: 'off', style: expect.objectContaining({ position: 'static' }) })]);
     }
+  });
+});
+
+describe('feed', () => {
+  it('gives every article its place, and each a Tab stop without a script', () => {
+    const articles = byRole(feed({ seed: 'a1' }), 'article');
+    expect(articles.map((article) => [propsOf(article)['aria-posinset'], propsOf(article)['aria-setsize'], propsOf(article).tabIndex])).toEqual([[1, 3, 0], [2, 3, 0], [3, 3, 0]]);
+  });
+});
+
+describe('treeview', () => {
+  it('gives every branch its own state and leaves the leaves without one', () => {
+    const root = treeview({ seed: 'a1' });
+    const items = byRole(root, 'treeitem');
+    const states = items.map((item) => behaviourOf(item).state?.map((state) => state.id) ?? []);
+    expect(states.filter((ids) => ids.length > 0)).toEqual([['a1-0-open'], ['a1-0-1-open'], ['a1-1-open']]);
+    for (const group of byRole(root, 'group')) expect(behaviourOf(group).showWhen).toMatchObject({ eq: true });
+  });
+
+  it('marks a key handled where it acts, and the root clears it last', () => {
+    const root = treeview({ seed: 'a1' });
+    const clear = behaviourOf(root).on?.at(-1);
+    expect(clear).toMatchObject({ id: 'clear', do: [{ set: 'a1-handled', value: false }] });
+    for (const item of byRole(root, 'treeitem')) {
+      for (const trigger of behaviourOf(item).on ?? []) {
+        expect(JSON.stringify(trigger.if)).toContain('"a1-handled"');
+        expect(trigger.do.at(-1)).toEqual({ set: 'a1-handled', value: true });
+      }
+    }
+  });
+});
+
+describe('treegrid', () => {
+  it('keeps every row\'s state on the table, and shows a child row while each row above it is open', () => {
+    const root = treegrid({ seed: 'a1', rows: [{ cells: ['A'], children: [{ cells: ['B'], children: [{ cells: ['C'] }] }] }] });
+    expect(behaviourOf(root).state?.map((state) => state.id)).toEqual(['a1-row-0-open', 'a1-row-0-0-open']);
+    const rows = nodes(root).filter((node) => propsOf(node)['aria-level'] !== undefined);
+    expect(rows.map((row) => behaviourOf(row).showWhen)).toEqual([
+      undefined,
+      { state: 'a1-row-0-open', eq: true },
+      { all: [{ state: 'a1-row-0-0-open', eq: true }, { state: 'a1-row-0-open', eq: true }] },
+    ]);
   });
 });

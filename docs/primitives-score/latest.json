@@ -1,11 +1,11 @@
 {
-  "generatedAt": "2026-11-02T12:46:11.826Z",
+  "generatedAt": "2026-11-02T13:10:15.417Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 249,
+  "durationSeconds": 287,
   "matrix": {
     "surfaces": {
       "format": {
@@ -15,8 +15,8 @@
         "total": 1833
       },
       "renderer": {
-        "pass": 1772,
-        "fail": 61,
+        "pass": 1776,
+        "fail": 57,
         "notTested": 0,
         "total": 1833
       },
@@ -465,8 +465,8 @@
           "total": 30
         },
         "renderer": {
-          "pass": 26,
-          "fail": 4,
+          "pass": 30,
+          "fail": 0,
           "notTested": 0,
           "total": 30
         },
@@ -5054,8 +5054,8 @@
       "aria-pattern:combobox": "pass pass canvas-editor-context pass ai-attribute-allowlist",
       "aria-pattern:dialog-modal": "pass pass canvas-editor-context pass ai-attribute-allowlist",
       "aria-pattern:disclosure": "pass pass pass pass pass",
-      "aria-pattern:feed": "pass behaviour-state behaviour-state pass pass",
-      "aria-pattern:grid": "pass behaviour-state behaviour-state pass pass",
+      "aria-pattern:feed": "pass pass canvas-editor-context pass pass",
+      "aria-pattern:grid": "pass pass canvas-editor-context pass pass",
       "aria-pattern:landmarks": "pass pass canvas-editor-context pass pass",
       "aria-pattern:link": "pass pass canvas-editor-context pass pass",
       "aria-pattern:listbox": "pass pass pass pass ai-attribute-allowlist",
@@ -5071,8 +5071,8 @@
       "aria-pattern:tabs": "pass pass canvas-editor-context pass pass",
       "aria-pattern:toolbar": "pass pass canvas-editor-context pass pass",
       "aria-pattern:tooltip": "pass pass canvas-editor-context pass pass",
-      "aria-pattern:treeview": "pass behaviour-state behaviour-state pass pass",
-      "aria-pattern:treegrid": "pass behaviour-state behaviour-state pass pass",
+      "aria-pattern:treeview": "pass pass canvas-editor-context pass pass",
+      "aria-pattern:treegrid": "pass pass canvas-editor-context pass pass",
       "aria-pattern:windowsplitter": "pass pass canvas-editor-context pass pass",
       "component:text": "pass pass pass pass reusable-components",
       "component:number": "pass pass pass pass reusable-components",
@@ -7843,8 +7843,8 @@
   },
   "roundTrip": {
     "nodesToJsxToNodes": {
-      "pass": 122,
-      "total": 122
+      "pass": 126,
+      "total": 126
     },
     "jsxToNodesToRender": {
       "pass": 11,
@@ -8267,6 +8267,26 @@
         "pass": true
       },
       {
+        "id": "preset: feed",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "preset: dataGrid",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "preset: treeview",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "preset: treegrid",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
         "id": "synthetic: responsive style map",
         "direction": "nodes-jsx-nodes",
         "pass": true
@@ -8642,22 +8662,6 @@
       "cost": 87
     },
     {
-      "id": "behaviour-state",
-      "description": "Behaviour and state: no way to say that one element changes another.",
-      "matrixCells": 8,
-      "corpusChecks": 59,
-      "fixtures": [
-        "radix-accordion",
-        "radix-tabs",
-        "radix-dialog"
-      ],
-      "onlyGapOf": [
-        "radix-dialog"
-      ],
-      "roundTripCases": 0,
-      "cost": 67
-    },
-    {
       "id": "page-level-css",
       "description": "CSS that applies to the document rather than a node (view transitions, `@page`, `@layer`): the route owns `html`. A rule on `:root` on the page root is the one form held today.",
       "matrixCells": 66,
@@ -8676,6 +8680,22 @@
       "onlyGapOf": [],
       "roundTripCases": 0,
       "cost": 62
+    },
+    {
+      "id": "behaviour-state",
+      "description": "Behaviour and state: no way to say that one element changes another.",
+      "matrixCells": 0,
+      "corpusChecks": 59,
+      "fixtures": [
+        "radix-accordion",
+        "radix-tabs",
+        "radix-dialog"
+      ],
+      "onlyGapOf": [
+        "radix-dialog"
+      ],
+      "roundTripCases": 0,
+      "cost": 59
     },
     {
       "id": "attribute-read-as-style",
@@ -8720,12 +8740,12 @@
     {
       "id": "canvas-editor-context",
       "description": "The contract passes on the published page, but the mounted editor changes the outcome: Space pans, a link does not navigate, and the editor's own main element stops a header inside it being a banner. Closing it takes an interact mode on the canvas.",
-      "matrixCells": 15,
+      "matrixCells": 19,
       "corpusChecks": 0,
       "fixtures": [],
       "onlyGapOf": [],
       "roundTripCases": 0,
-      "cost": 15
+      "cost": 19
     },
     {
       "id": "import-dynamic-logic",
@@ -9348,10 +9368,10 @@
       "alt",
       "anchor",
       "aria-autocomplete",
+      "aria-busy",
       "aria-controls",
       "aria-current",
       "aria-describedby",
-      "aria-expanded",
       "aria-haspopup",
       "aria-label",
       "aria-labelledby",
@@ -9615,7 +9635,11 @@
       "menubar",
       "combobox",
       "slider-multithumb",
-      "windowsplitter"
+      "windowsplitter",
+      "feed",
+      "grid",
+      "treeview",
+      "treegrid"
     ],
     "rawFieldRows": [
       "css-at-rule:@container",

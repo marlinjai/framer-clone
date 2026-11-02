@@ -17,6 +17,9 @@ import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { TEXT_NODE_TYPE } from '@/lib/renderer/textNode';
 import { carousel } from '@/lib/behaviour/presets/carousel';
 import { combobox } from '@/lib/behaviour/presets/combobox';
+import { feed } from '@/lib/behaviour/presets/feed';
+import { grid } from '@/lib/behaviour/presets/grid';
+import { treegrid, treeview } from '@/lib/behaviour/presets/tree';
 import { menuButton } from '@/lib/behaviour/presets/menu';
 import { menubar } from '@/lib/behaviour/presets/menubar';
 import { multithumbSlider } from '@/lib/behaviour/presets/slider';
@@ -78,7 +81,7 @@ async function walkKeys(page: Page, steps: [string, string][]): Promise<void> {
 }
 
 /** One Tab stop in a group: Tab from inside leaves it. */
-async function leavesWithTab(page: Page, root: Scope, role: 'tab' | 'button'): Promise<void> {
+async function leavesWithTab(page: Page, root: Scope, role: 'tab' | 'button' | 'gridcell'): Promise<void> {
   await pressed(page, 'Tab');
   const inside = await root.getByRole(role).evaluateAll((items) => items.includes(document.activeElement as HTMLElement));
   assert(!inside, 'Tab stayed inside the group: it holds more than one Tab stop');
@@ -278,35 +281,42 @@ export const PATTERNS: Pattern[] = [
   },
   {
     id: 'feed',
-    built: 'aria-only',
+    built: 'behaviour',
+    preset: 'feed',
     tree: () =>
       n(
         'div',
-        { role: 'feed', 'aria-label': 'News' },
-        t('article', 'One', { tabIndex: 0, 'aria-posinset': 1, 'aria-setsize': 2 }),
-        t('article', 'Two', { tabIndex: 0, 'aria-posinset': 2, 'aria-setsize': 2 }),
+        {},
+        t('a', 'Before', { href: '#before' }),
+        feed({ seed: 'pattern-feed', label: 'News', articles: [{ title: 'One', body: 'First' }, { title: 'Two', body: 'Second' }, { title: 'Three', body: 'Third' }] }) as ComponentNode,
+        t('a', 'After', { href: '#after' }),
       ),
     contract: async (page, root) => {
+      const heading = () => page.evaluate(() => document.activeElement?.querySelector('h3')?.textContent ?? document.activeElement?.textContent);
       await root.getByRole('article').nth(0).focus();
-      await pressed(page, 'PageDown');
-      const focused = await page.evaluate(() => document.activeElement?.textContent);
-      assert(focused === 'Two', 'Page Down did not move to the next article');
+      for (const [key, want] of [['PageDown', 'Two'], ['PageDown', 'Three'], ['PageUp', 'Two']] as const) {
+        await pressed(page, key);
+        assert((await heading()) === want, `${key} put the focus on ${await heading()}, not ${want}`);
+      }
+      await pressed(page, 'Control+End');
+      assert((await focusedText(page)) === 'After', 'Ctrl+End did not leave the feed for what follows it');
+      await root.getByRole('article').nth(1).focus();
+      await pressed(page, 'Control+Home');
+      assert((await focusedText(page)) === 'Before', 'Ctrl+Home did not leave the feed for what comes before it');
     },
   },
   {
     id: 'grid',
-    built: 'aria-only',
-    tree: () =>
-      n(
-        'table',
-        { role: 'grid', 'aria-label': 'Prices' },
-        n('tbody', {}, n('tr', {}, t('td', 'A1', { tabIndex: 0 }), t('td', 'A2', { tabIndex: -1 }))),
-      ),
+    built: 'behaviour',
+    preset: 'grid',
+    tree: () => grid({ seed: 'pattern-grid', label: 'Prices', columns: ['A', 'B', 'C'], rows: [['A1', 'B1', 'C1'], ['A2', 'B2', 'C2'], ['A3', 'B3', 'C3']] }) as ComponentNode,
     contract: async (page, root) => {
       await root.getByRole('gridcell', { name: 'A1' }).focus();
-      await pressed(page, 'ArrowRight');
-      const focused = await page.evaluate(() => document.activeElement?.textContent);
-      assert(focused === 'A2', 'ArrowRight did not move to the next cell');
+      await walkKeys(page, [
+        ['ArrowRight', 'B1'], ['ArrowDown', 'B2'], ['End', 'C2'], ['Home', 'A2'], ['ArrowUp', 'A1'],
+        ['Control+End', 'C3'], ['Control+Home', 'A1'], ['PageDown', 'A3'], ['PageUp', 'A1'],
+      ]);
+      await leavesWithTab(page, root, 'gridcell');
     },
   },
   {
@@ -559,42 +569,44 @@ export const PATTERNS: Pattern[] = [
   },
   {
     id: 'treeview',
-    built: 'aria-only',
-    tree: () =>
-      n(
-        'ul',
-        { role: 'tree', 'aria-label': 'Files' },
-        n(
-          'li',
-          { role: 'treeitem', 'aria-expanded': 'false', tabIndex: 0 },
-          t('span', 'src'),
-          n('ul', { role: 'group', hidden: true }, t('li', 'app.ts', { role: 'treeitem', tabIndex: -1 })),
-        ),
-      ),
+    built: 'behaviour',
+    preset: 'treeview',
+    tree: () => treeview({ seed: 'pattern-tree', label: 'Files', items: [{ title: 'src', children: [{ title: 'app.ts' }, { title: 'lib.ts' }] }, { title: 'docs' }] }) as ComponentNode,
     contract: async (page, root) => {
-      await root.getByRole('treeitem').first().focus();
+      const name = () => page.evaluate(() => document.activeElement?.firstChild?.textContent ?? document.activeElement?.textContent);
+      const src = root.getByRole('treeitem').first();
+      await src.focus();
+      assert(!(await root.getByText('app.ts').isVisible()), 'a closed branch shows its items');
       await pressed(page, 'ArrowRight');
       assert(await root.getByText('app.ts').isVisible(), 'ArrowRight did not expand the node');
+      assert((await src.getAttribute('aria-expanded')) === 'true', 'aria-expanded did not follow');
+      for (const [key, want] of [['ArrowRight', 'app.ts'], ['ArrowDown', 'lib.ts'], ['ArrowLeft', 'src'], ['End', 'docs'], ['Home', 'src']] as const) {
+        await pressed(page, key);
+        assert((await name()) === want, `${key} put the focus on ${await name()}, not ${want}`);
+      }
+      await pressed(page, 'ArrowLeft');
+      assert(!(await root.getByText('app.ts').isVisible()), 'ArrowLeft did not close the open branch');
+      await pressed(page, 'Enter');
+      assert(await root.getByText('app.ts').isVisible(), 'Enter did not open the branch');
+      await pressed(page, 'd');
+      assert((await name()) === 'docs', 'a printable key did not move to the item starting with it');
     },
   },
   {
     id: 'treegrid',
-    built: 'aria-only',
-    tree: () =>
-      n(
-        'table',
-        { role: 'treegrid', 'aria-label': 'Mail' },
-        n(
-          'tbody',
-          {},
-          n('tr', { 'aria-expanded': 'false', 'aria-level': 1, tabIndex: 0 }, t('td', 'Thread')),
-          n('tr', { 'aria-level': 2, hidden: true, tabIndex: -1 }, t('td', 'Reply')),
-        ),
-      ),
+    built: 'behaviour',
+    preset: 'treegrid',
+    tree: () => treegrid({ seed: 'pattern-treegrid', label: 'Mail', columns: ['Subject'], rows: [{ cells: ['Thread'], children: [{ cells: ['Reply'] }] }, { cells: ['Other'] }] }) as ComponentNode,
     contract: async (page, root) => {
-      await root.getByRole('row').first().focus();
+      const thread = root.getByRole('row', { name: 'Thread' });
+      await thread.focus();
+      assert(!(await root.getByText('Reply').isVisible()), 'a closed row shows its children');
       await pressed(page, 'ArrowRight');
       assert(await root.getByText('Reply').isVisible(), 'ArrowRight did not expand the row');
+      assert((await thread.getAttribute('aria-expanded')) === 'true', 'aria-expanded did not follow');
+      await walkKeys(page, [['ArrowRight', 'Reply'], ['ArrowLeft', 'Thread'], ['ArrowDown', 'Reply'], ['ArrowDown', 'Other'], ['Home', 'Thread']]);
+      await pressed(page, 'ArrowLeft');
+      assert(!(await root.getByText('Reply').isVisible()), 'ArrowLeft did not collapse the row');
     },
   },
   {

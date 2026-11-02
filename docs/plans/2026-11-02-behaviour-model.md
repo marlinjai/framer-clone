@@ -1224,6 +1224,21 @@ The review (`2026-11-02-behaviour-model-review.md`, "Slice B3 and B4", probes be
 - **`radix-dialog` is not built from a preset,** deviating from the slice table. Built as a native modal with its opener's `aria-expanded` kept by the dialog's `toggle`, it opened on both states and gained no check: Radix renders its content in a portal at the end of the page, so the page's text and styles differ while it is open, and a native modal leaves the page behind it inert rather than hidden, which the accessibility tree still shows. Measured both ways on the same run, 268 corpus checks each. So the fixture stays as it was, and no dialog preset was added, since no slice owns one.
 - **A preset's node ids start with its kind** (`tabs-1a2b3c4d-tab-0`), which `getRegistryIdForNode` read as that registry entry, so a text in a preset found no bindable slots. It now skips a preset's entry and falls back to what the node is. This was a B6 bug.
 
+## Decided in slice B8
+
+**Feed, data grid, tree view and tree grid are presets,** in the palette beside the rest, and the score's four patterns take their trees from them. With B6 and B7, all 30 patterns pass on the published page. No verb, field, axis or byte of the runtime was added: the `grid` and `tree` axes B4 built held without a change.
+
+**The score's run:** the four pattern rows pass on the published page, so all 30 do, and `roundTrip` rises by the four preset trees, 133 to 137. `baseline.json` also takes up what `main` had measured but not recorded (format 1,801, `renderer` 1,774, canvas 1,633, panel 1,230), since the floor is set from the run. Two runs before it crashed on a BusBasis screenshot timing out at a machine load of 47 to 81, which this slice does not touch; that file passed alone, and the full runs then passed.
+
+**Also decided while building it, say so if you disagree:**
+
+- **A tree view marks a key handled where it acts.** Every branch above the focused item hears its key, so Left on a leaf would also close the branch around it. The item that acts writes `handled`, every item above it reads that and does nothing, and the root, the last to hear it, clears it. One boolean on the root, so a tree costs one state for this whatever its size.
+- **A tree grid keeps its rows' open state on the table,** since a child row is a sibling of its parent in a table, not inside it. A child row shows while every row above it is open, and Left reaches its parent row by name. No row hears another's keys, so it needs no `handled`.
+- **The tree grid moves by row only.** Its cells are not a second focus group: an item belongs to the nearest group, so cells in a grid group would take the rows out of theirs. The Authoring Practices allow a row-only tree grid; cell arrows are the one thing missing from the contract's key list, stated rather than faked.
+- **The data grid's palette entry is `dataGrid`,** since `grid` is the layout grid's, and a preset's seed now comes from its palette entry's id, lower case, so a data grid's nodes do not read as the layout grid's.
+- **A feed's articles are each a Tab stop on the server,** so without a script every article is reachable, and the runtime keeps one.
+- **`radix-accordion` stays as it was:** its selector gap is open.
+
 ## Review findings not adopted
 
 Everything in findings 1 to 22 is applied except the following, each decided by code or a test. M1 to M10 are recorded above with the review's defaults.
@@ -1252,6 +1267,6 @@ Everything in findings 1 to 22 is applied except the following, each decided by 
 ## Open questions
 
 1. **For the review agent:** whether core 5 kilobytes and `rove` 3 hold once all three axes exist. The budget is a judgement, and raising it needs a reason in the pull request.
-2. **For B8:** the `grid` and `tree` axes were not prototyped.
+2. **For B8:** the `grid` and `tree` axes were not prototyped. Answered in B8: they held without a change.
 3. **For the components contract:** slice 12 writes `gate: 'off'` rather than the selector form, and its open questions 1 and 2 are answered by the action table and the one page above.
 4. **Unproven and listed so nobody assumes otherwise:** HTTPS, real Safari, phones, a frame on a real custom domain, the real published and save routes, Firefox's site isolation in a real build, and the broker's focus watch.

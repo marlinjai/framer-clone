@@ -49,6 +49,10 @@ import {
   PanelsTopLeft as MenubarIcon,
   TextSearch as ComboboxIcon,
   Columns2 as SplitterIcon,
+  Newspaper as FeedIcon,
+  Table2 as GridDataIcon,
+  FolderTree as TreeIcon,
+  ListTree as TreegridIcon,
 } from 'lucide-react';
 import type { IntrinsicElementType, PropsRecord } from '@/models/ComponentModel';
 import type { PresetKind } from '@/lib/behaviour/presets';
@@ -118,11 +122,11 @@ export interface ComponentRegistryEntry {
 // else. Accordion, dialog and the other patterns plain HTML already brings stay out of
 // here until a palette slice offers them.
 
-const presetEntry = (id: PresetKind, label: string, icon: LucideIcon): ComponentRegistryEntry => ({
+const presetEntry = (id: string, preset: PresetKind, label: string, icon: LucideIcon): ComponentRegistryEntry => ({
   id,
   label,
   category: 'interactive',
-  preset: id,
+  preset,
   icon,
   iconClassName: 'bg-amber-100 text-amber-700',
   htmlType: 'div',
@@ -131,15 +135,19 @@ const presetEntry = (id: PresetKind, label: string, icon: LucideIcon): Component
 });
 
 const INTERACTIVE_COMPONENTS: Record<string, ComponentRegistryEntry> = {
-  tabs: presetEntry('tabs', 'Tabs', TabsIcon),
-  toolbar: presetEntry('toolbar', 'Toolbar', ToolbarIcon),
-  tooltip: presetEntry('tooltip', 'Tooltip', TooltipIcon),
-  carousel: presetEntry('carousel', 'Carousel', CarouselIcon),
-  'menu-button': presetEntry('menu-button', 'Menu button', MenuIcon),
-  menubar: presetEntry('menubar', 'Menu bar', MenubarIcon),
-  combobox: presetEntry('combobox', 'Combobox', ComboboxIcon),
-  'slider-multithumb': presetEntry('slider-multithumb', 'Range slider', SlidersIcon),
-  windowsplitter: presetEntry('windowsplitter', 'Split view', SplitterIcon),
+  tabs: presetEntry('tabs', 'tabs', 'Tabs', TabsIcon),
+  toolbar: presetEntry('toolbar', 'toolbar', 'Toolbar', ToolbarIcon),
+  tooltip: presetEntry('tooltip', 'tooltip', 'Tooltip', TooltipIcon),
+  carousel: presetEntry('carousel', 'carousel', 'Carousel', CarouselIcon),
+  'menu-button': presetEntry('menu-button', 'menu-button', 'Menu button', MenuIcon),
+  menubar: presetEntry('menubar', 'menubar', 'Menu bar', MenubarIcon),
+  combobox: presetEntry('combobox', 'combobox', 'Combobox', ComboboxIcon),
+  'slider-multithumb': presetEntry('slider-multithumb', 'slider-multithumb', 'Range slider', SlidersIcon),
+  windowsplitter: presetEntry('windowsplitter', 'windowsplitter', 'Split view', SplitterIcon),
+  feed: presetEntry('feed', 'feed', 'Feed', FeedIcon),
+  dataGrid: presetEntry('dataGrid', 'grid', 'Data grid', GridDataIcon),
+  treeview: presetEntry('treeview', 'treeview', 'Tree', TreeIcon),
+  treegrid: presetEntry('treegrid', 'treegrid', 'Tree grid', TreegridIcon),
 };
 
 // ---------- form components (published site essentials, decision 4) ----------
