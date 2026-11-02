@@ -19,11 +19,14 @@ import { observer } from 'mobx-react-lite';
 import { isAlive } from 'mobx-state-tree';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import type { PageModelType } from '@/models/PageModel';
+import type { SiteTheme } from '@/lib/site/theme';
 import ComponentRenderer from './ComponentRenderer';
 import PageFontFaces from '@/lib/fonts/PageFontFaces';
 import { CanvasRuleStyles, type CanvasRuleStylesProps } from '@/lib/rules/CanvasRuleStyles';
 import { FLOATING_ROOT, VIEWPORT_ROOT } from '@/lib/rules/surfaces';
 import { PageBaseStyles } from '@/lib/site/PageBaseStyles';
+import { SurfaceThemeStyles } from '@/lib/site/SurfaceThemeStyles';
+import { surfaceFrameAttributes } from '@/lib/site/surfaceTheme';
 import type { SurfaceNode } from '@/lib/rules/surfaceSheet';
 import GroundWrapper from './GroundWrapper';
 import { useStore } from '@/hooks/useStore';
@@ -74,7 +77,7 @@ const CANVAS_ROOTS = [VIEWPORT_ROOT, FLOATING_ROOT];
 
 // Apart from ResponsivePageRenderer, so an edit redraws these and not every frame:
 // both read the page's expansion, which changes with any node.
-const PageFonts = observer(({ page }: { page: PageModelType }) => <PageFontFaces roots={page.canvasFontRoots} />);
+const PageFonts = observer(({ page, theme }: { page: PageModelType; theme: SiteTheme }) => <PageFontFaces roots={page.canvasFontRoots} theme={theme} />);
 
 /** The page's behaviour as Select shows it: the pass over the expansion, a preview standing for first values. */
 function useCanvasBehaviour(page: PageModelType) {
@@ -138,9 +141,11 @@ const ResponsivePageRenderer = observer(() => {
   return (
     <>
       {/* The self-hosted web fonts the page uses (src/lib/fonts/registry.ts). */}
-      <PageFonts page={page} />
+      <PageFonts page={page} theme={project.site.theme} />
       {/* The site's page base, as the published page has it. */}
       <PageBaseStyles base={project.site.pageBase} roots={CANVAS_ROOTS} />
+      {/* The site's theme on each frame, after the base and before the rules, as published. */}
+      <SurfaceThemeStyles theme={project.site.theme} base={project.site.pageBase} />
       {/* props.rules, for every frame. Here and not beside a node: see the component. */}
       <PageRuleStyles
         page={page}
@@ -263,9 +268,12 @@ export const ViewportFrame = observer(({
           fixed positioned descendants so nothing paints outside the frame.
         */}
         <div
-          className="rounded-lg"
+          className={editorUI.frameDarkClass ? 'rounded-lg dark' : 'rounded-lg'}
           style={viewportFrameContentStyle(minHeight)}
           data-viewport-content-id={viewport.id}
+          // The page box stands for the page: the theme's tokens, scheme and document
+          // block land here, never on the frame's label or chrome (SurfaceThemeStyles).
+          {...surfaceFrameAttributes('frame', editorUI.frameColorScheme)}
         >
           {appComponentTree && (
             <ComponentRenderer
@@ -365,6 +373,9 @@ const FloatingElement = observer(({
       <div
         data-floating-root-id={element.id}
         style={{ width: '100%', height: '100%' }}
+        // The tokens and the scheme, and never a page background (SurfaceThemeStyles).
+        {...surfaceFrameAttributes('floating', editorUI.frameColorScheme)}
+        className={editorUI.frameDarkClass ? 'dark' : undefined}
       >
         <ComponentRenderer
           component={element}

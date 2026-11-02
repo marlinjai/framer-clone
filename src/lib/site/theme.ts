@@ -416,6 +416,27 @@ export function exportReferences(value: string, names: ReadonlyMap<string, strin
   });
 }
 
+/** The library families of the font tokens a sheet holds, each once, in token order. */
+function fontFamiliesOf(tokens: readonly EmittedToken[]): string[] {
+  const ids: string[] = [];
+  for (const { token } of tokens) {
+    if (token.kind !== 'font' || ids.includes(token.family)) continue;
+    if (FONT_LIBRARY.some((f) => f.id === token.family)) ids.push(token.family);
+  }
+  return ids;
+}
+
+/**
+ * The library families whose faces a page needs for the theme's font tokens: those of
+ * every token the sheet holds, tombstones included, since a tombstone still resolves. The
+ * editor surfaces declare these with the page's own, because their theme sheet holds no
+ * `@font-face` (it shares one font element with the page), and no tree scan finds a
+ * family behind a reference.
+ */
+export function themeFontFamilies(raw: SiteTheme): string[] {
+  return fontFamiliesOf(emittableTokens(isRecord(raw) ? raw : EMPTY_THEME, false));
+}
+
 export interface ThemeCssOptions {
   /**
    * `published`: on `:root`, with the font faces and the document block on `body`, for the
@@ -480,10 +501,7 @@ export function themeCss(raw: SiteTheme, options: ThemeCssOptions = {}): string 
 
   // Published. A declared face costs nothing until text needs it, and no tree scan finds a
   // family behind a reference, so every font token's faces travel with the sheet.
-  const fontIds = tokens
-    .filter((t) => t.token.kind === 'font')
-    .map((t) => (t.token as FontToken).family)
-    .filter((family) => FONT_LIBRARY.some((f) => f.id === family));
+  const fontIds = fontFamiliesOf(tokens);
   return [
     fontIds.length > 0 ? fontFaceCss(fontIds) : '',
     block(':root', scheme ? [...base, `color-scheme:${scheme}`] : base),
@@ -533,6 +551,32 @@ export function documentBackgroundColors(theme: SiteTheme | undefined): { scheme
     const color = parseColorValue(resolveTokenRefs(reference as string, normalized, scheme));
     return color === null ? [] : [{ scheme, color }];
   });
+}
+
+/**
+ * The scheme an editor surface (canvas or preview) shows: a forced site's own mode, the
+ * previewed one on a `system` site, and light on a site with no choice, which is what
+ * its published page shows with no system setting.
+ */
+export function surfaceColorScheme(theme: SiteTheme | undefined, previewed: ColorScheme): ColorScheme {
+  const mode = isRecord(theme) ? theme.mode : undefined;
+  if (mode === 'light' || mode === 'dark') return mode;
+  return mode === 'system' && previewed === 'dark' ? 'dark' : 'light';
+}
+
+/**
+ * The mode an editor surface answers a stored `prefers-color-scheme` rule with, or
+ * undefined on a site with no choice: there the rule stays as stored, as it does on the
+ * published page, so a surface never answers it from the editor's machine.
+ */
+export function surfaceColorMode(theme: SiteTheme | undefined, previewed: ColorScheme): ColorScheme | undefined {
+  const mode = isRecord(theme) ? theme.mode : undefined;
+  return THEME_MODES.includes(mode as ThemeMode) ? surfaceColorScheme(theme, previewed) : undefined;
+}
+
+/** True when a surface frame carries `class="dark"`: only a site that forces `dark`, as only its published page does. */
+export function surfaceDarkClass(theme: SiteTheme | undefined): boolean {
+  return themeColorMode(theme) === 'dark';
 }
 
 /** The schemes a page can show under a mode: both with `system`, else the one in force. */

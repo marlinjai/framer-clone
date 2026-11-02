@@ -37,6 +37,7 @@ import {
   Globe,
   Settings,
   Inbox,
+  Moon,
 } from 'lucide-react';
 import Link from 'next/link';
 import { useStore } from '@/hooks/useStore';
@@ -65,6 +66,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import EditableProjectTitle from './EditableProjectTitle';
+import ColorModeSwitch, { useHasColorModeSwitch } from './ColorModeSwitch';
 
 function relativeTime(ts: number, now: number): string {
   const s = Math.max(0, Math.round((now - ts) / 1000));
@@ -233,6 +235,9 @@ const MoreMenu = observer(({ onOpen, className = '' }: { onOpen: (dialog: Exclud
   // Safari knows the switch control, and the desktop editor has no haptics.
   const isPhone = useIsPhone();
   const hapticsAvailable = isPhone && hapticsSupportedHere;
+  // A `system` site's Light and Dark switch (ColorModeSwitch), as one checkbox here.
+  const hasColorMode = useHasColorModeSwitch();
+  const showsDark = editorUI.previewColorMode === 'dark';
   return (
     <DropdownMenu modal={false}>
       <DropdownMenuTrigger
@@ -263,6 +268,23 @@ const MoreMenu = observer(({ onOpen, className = '' }: { onOpen: (dialog: Exclud
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => onOpen('forms')}>
               <Inbox /> Form submissions
+            </DropdownMenuItem>
+          </>
+        )}
+        {hasColorMode && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              role="menuitemcheckbox"
+              aria-checked={showsDark}
+              // Keep the menu open: the frames change behind it, the state is shown in place.
+              onSelect={(e) => {
+                e.preventDefault();
+                editorUI.setPreviewColorMode(showsDark ? 'light' : 'dark');
+              }}
+            >
+              <Moon /> Show dark mode
+              <span className="ml-auto text-xs text-muted-foreground">{showsDark ? 'On' : 'Off'}</span>
             </DropdownMenuItem>
           </>
         )}
@@ -353,6 +375,10 @@ const TopBar = observer(() => {
           Vector / CMS) in a future iteration. Left empty rather than with
           placeholder boxes so the bar reads as intentional, not unfinished. */}
       <div className="flex-1 max-lg:hidden" />
+
+      {/* Light and Dark for a site that follows each visitor's system: which one the
+          canvas and the preview show. Nothing is saved. The compact bar has it in More. */}
+      <ColorModeSwitch className={`mr-2 ${wideOnly}`} />
 
       {/* Generate: AI page / section generation (plan ai-driven-page-generation).
           Applies as one undoable action; Save persists it like any other edit. */}

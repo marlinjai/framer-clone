@@ -74,6 +74,9 @@ export const LIVE_STATE = ':is(*, :hover)';
 /** Never matches, with the same specificity. */
 export const DEAD_STATE = ':not(*, :hover)';
 
+/** The argument of the one form of Tailwind's dark variant a forced `dark` frame answers: `:is(.dark *)`. */
+const DARK_CLASS_ARGUMENT = '.dark *';
+
 const isNameCharacter = (ch: string | undefined): boolean => ch !== undefined && (/[A-Za-z0-9_-]/.test(ch) || ch >= '\u0080');
 
 /** The index just past the quoted string opening at `start`. One left open, which only hand-built text can hold, ends the text. */
@@ -163,11 +166,18 @@ function looksOutward(name: string, inner: string): boolean {
  *   - A pointer state on the canvas only, wherever it stands and in any case. The
  *     preview has a real pointer.
  *
+ *   - `:is(.dark *)`, exactly, on a frame of a site that forces `dark`, is live: the
+ *     published page of that site carries `class="dark"` on `html`, so the selector
+ *     matches every node there, and the frame says so from the site's mode rather than
+ *     from what the editor's document holds. Anywhere else it is dead, as any outward
+ *     condition is, including a `system` site previewing dark, whose published page
+ *     writes no class.
+ *
  * A string or an attribute selector is not read, and neither is a pseudo-element's
  * name or a longer name. The parser has read this text, so a quote closes at its next
  * match. One left open stops the read.
  */
-export function constantConditions(text: string, kind: EditorSurfaceKind, live: boolean): string {
+export function constantConditions(text: string, kind: EditorSurfaceKind, live: boolean, darkClass = false): string {
   let out = '';
   let brackets = 0;
   let i = 0;
@@ -194,7 +204,8 @@ export function constantConditions(text: string, kind: EditorSurfaceKind, live: 
     if (!isElement && text[end] === '(') {
       const close = closingParen(text, end);
       if (close !== -1 && looksOutward(name, text.slice(end + 1, close))) {
-        out += `${live ? ':is' : ':not'}(*, ${text.slice(i, close + 1)})`;
+        const isDarkClass = darkClass && name.toLowerCase() === 'is' && text.slice(end + 1, close) === DARK_CLASS_ARGUMENT;
+        out += `${live || isDarkClass ? ':is' : ':not'}(*, ${text.slice(i, close + 1)})`;
         i = close + 1;
         continue;
       }

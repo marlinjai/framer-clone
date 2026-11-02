@@ -62,6 +62,7 @@ import {
 import { previewedBy } from './states';
 import { DATA_PLACEMENT_ROOT } from '@/lib/drag/markers';
 import { FLOATING_ROOT, PREVIEW_ROOT, VIEWPORT_ROOT, type EditorSurfaceKind, type SurfaceFrame } from './surfaces';
+import type { ColorScheme } from '@/lib/site/theme';
 
 /** A node on either surface: a plain tree or a MobX-State-Tree instance. */
 export interface SurfaceNode {
@@ -99,6 +100,13 @@ export interface SurfaceSheetInput {
   frames: readonly SurfaceFrameInput[];
   breakpoints: readonly BreakpointRef[];
   previewRule?: { componentId: string; ruleId: string } | null;
+  /**
+   * The scheme every frame of this surface shows, set only on a site with a colour mode
+   * (EditorUIStore.frameColorMode): it answers a stored `prefers-color-scheme` rule.
+   */
+  colorMode?: ColorScheme;
+  /** The frames carry `class="dark"`, on a site that forces `dark`. */
+  darkClass?: boolean;
   memo?: SurfaceMemo;
   onProblem?: (problem: SurfaceProblem) => void;
 }
@@ -269,6 +277,9 @@ export function surfaceSheet(input: SurfaceSheetInput): string {
       animated,
       // Only a rule can read one, and a page with none stays as it is.
       clearedVariables: nodes.length + definitions.length > 0 ? clearedVariables : [],
+      ...(input.colorMode ? { colorMode: input.colorMode } : {}),
+      ...(input.darkClass ? { darkClass: true } : {}),
+      onWarning: (reason) => once({ node: 'page', reason }),
       memo,
     },
   });
