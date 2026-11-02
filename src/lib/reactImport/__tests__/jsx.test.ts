@@ -458,6 +458,24 @@ describe('values with no stored form', () => {
   });
 });
 
+describe('a fragment in a style (review of slice 4, U4)', () => {
+  it('is no external address: it names an element, which the bundle reader decides on', async () => {
+    const { report } = await run(`<svg><clipPath id="c" /><rect style={{ clipPath: 'url(#c)' }} /></svg>`);
+    expect(report.lines.some((line) => line.kind === 'external-address')).toBe(false);
+  });
+});
+
+describe('options a host could not read (review of slice 4, U5)', () => {
+  it('answers with a report for null options, and for options whose getters throw', async () => {
+    expect((await importSource([{ name: 'a.tsx', text: '<p>x</p>' }], null)).report.verdict).toBe('imported');
+    const hostile = { get excerpts(): boolean { throw new Error('boom'); } };
+    const outcome = await importSource([{ name: 'a.tsx', text: '<p title="x">x</p>' }], hostile as never);
+    expect(outcome.report.verdict).toBe('imported');
+    // Options it could not read leave excerpts out, since they may have been asked to.
+    expect(outcome.report.lines.some((line) => line.excerpt !== undefined)).toBe(false);
+  });
+});
+
 describe('a stylesheet beside the component', () => {
   it('reads a sheet for tokens, and blocks on a plain rule it does not read yet', async () => {
     const { report, root } = await importSource([{ name: 'a.tsx', text: '<div />' }, { name: 'a.css', text: ':root { --x: 1px; }\ndiv{display:none}' }]);

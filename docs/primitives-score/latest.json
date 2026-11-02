@@ -1,11 +1,11 @@
 {
-  "generatedAt": "2026-11-02T10:00:34.735Z",
+  "generatedAt": "2026-11-02T10:35:34.426Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 297,
+  "durationSeconds": 345,
   "matrix": {
     "surfaces": {
       "format": {
@@ -6168,7 +6168,7 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 4,
+            "pass": 0,
             "total": 4
           },
           "computed-styles": {
@@ -6189,9 +6189,17 @@
             "fixture": "busbasis-home",
             "viewport": "Desktop",
             "state": "initial",
+            "check": "screenshot",
+            "gap": "published-base",
+            "detail": "0.44 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-home",
+            "viewport": "Desktop",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "blocked-embedded-content",
-            "detail": "1 differences on 1 elements, first: e405: not in the replica"
+            "gap": "published-base",
+            "detail": "10 differences on 10 elements, first: e168: background-image linear-gradient(to right, rgb(255, 255, 255), rgb(163, 163, 163)) became linear-gradient(to right, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0))"
           },
           {
             "fixture": "busbasis-home",
@@ -6205,9 +6213,17 @@
             "fixture": "busbasis-home",
             "viewport": "Desktop",
             "state": "hover e41",
+            "check": "screenshot",
+            "gap": "published-base",
+            "detail": "0.44 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-home",
+            "viewport": "Desktop",
+            "state": "hover e41",
             "check": "computed-styles",
-            "gap": "blocked-embedded-content",
-            "detail": "1 differences on 1 elements, first: e405: not in the replica"
+            "gap": "published-base",
+            "detail": "10 differences on 10 elements, first: e168: background-image linear-gradient(to right, rgb(255, 255, 255), rgb(163, 163, 163)) became linear-gradient(to right, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0))"
           },
           {
             "fixture": "busbasis-home",
@@ -6222,16 +6238,24 @@
             "viewport": "Desktop",
             "state": "hover e41",
             "check": "interaction",
-            "gap": "blocked-embedded-content",
+            "gap": "published-base",
             "detail": "the replica did not end up where the original did"
           },
           {
             "fixture": "busbasis-home",
             "viewport": "Tablet",
             "state": "initial",
+            "check": "screenshot",
+            "gap": "published-base",
+            "detail": "0.57 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-home",
+            "viewport": "Tablet",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "blocked-embedded-content",
-            "detail": "1 differences on 1 elements, first: e405: not in the replica"
+            "gap": "published-base",
+            "detail": "10 differences on 10 elements, first: e168: background-image linear-gradient(to right, rgb(255, 255, 255), rgb(163, 163, 163)) became linear-gradient(to right, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0))"
           },
           {
             "fixture": "busbasis-home",
@@ -6245,9 +6269,17 @@
             "fixture": "busbasis-home",
             "viewport": "Mobile",
             "state": "initial",
+            "check": "screenshot",
+            "gap": "published-base",
+            "detail": "0.85 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-home",
+            "viewport": "Mobile",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "blocked-embedded-content",
-            "detail": "1 differences on 1 elements, first: e405: not in the replica"
+            "gap": "published-base",
+            "detail": "10 differences on 10 elements, first: e168: background-image linear-gradient(to right, rgb(255, 255, 255), rgb(163, 163, 163)) became linear-gradient(to right, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0))"
           },
           {
             "fixture": "busbasis-home",
@@ -6324,14 +6356,19 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.004407319568452381,
             "elementsCompared": 531,
-            "elementsDiffering": 1,
-            "differences": 1,
+            "elementsDiffering": 10,
+            "differences": 10,
             "byGap": {
+              "published-base": 9,
               "blocked-embedded-content": 1
             },
             "byProperty": [
+              [
+                "background-image",
+                9
+              ],
               [
                 "missing",
                 1
@@ -6341,14 +6378,19 @@
           {
             "viewport": "Desktop",
             "state": "hover e41",
-            "ratio": 0,
+            "ratio": 0.004407319568452381,
             "elementsCompared": 531,
-            "elementsDiffering": 1,
-            "differences": 1,
+            "elementsDiffering": 10,
+            "differences": 10,
             "byGap": {
+              "published-base": 9,
               "blocked-embedded-content": 1
             },
             "byProperty": [
+              [
+                "background-image",
+                9
+              ],
               [
                 "missing",
                 1
@@ -6358,14 +6400,19 @@
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.005712011681348142,
             "elementsCompared": 531,
-            "elementsDiffering": 1,
-            "differences": 1,
+            "elementsDiffering": 10,
+            "differences": 10,
             "byGap": {
+              "published-base": 9,
               "blocked-embedded-content": 1
             },
             "byProperty": [
+              [
+                "background-image",
+                9
+              ],
               [
                 "missing",
                 1
@@ -6375,14 +6422,19 @@
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.008511234630284656,
             "elementsCompared": 531,
-            "elementsDiffering": 1,
-            "differences": 1,
+            "elementsDiffering": 10,
+            "differences": 10,
             "byGap": {
+              "published-base": 9,
               "blocked-embedded-content": 1
             },
             "byProperty": [
+              [
+                "background-image",
+                9
+              ],
               [
                 "missing",
                 1
@@ -7911,6 +7963,14 @@
         "styleDifferences": 0
       },
       {
+        "id": "published-base",
+        "pages": [
+          "busbasis-home"
+        ],
+        "needs": 0,
+        "styleDifferences": 36
+      },
+      {
         "id": "blocked-embedded-content",
         "pages": [
           "busbasis-home"
@@ -8752,13 +8812,13 @@
       "id": "blocked-embedded-content",
       "description": "What the render gate refuses (blockedNodes.ts and renderVocabulary.ts): embedded content (iframe, object, embed, ...), although these are ordinary content elements, and attributes that act by themselves (ping, the shadow root ones).",
       "matrixCells": 78,
-      "corpusChecks": 9,
+      "corpusChecks": 4,
       "fixtures": [
         "busbasis-home"
       ],
       "onlyGapOf": [],
       "roundTripCases": 0,
-      "cost": 87
+      "cost": 82
     },
     {
       "id": "behaviour-state",
@@ -8835,6 +8895,18 @@
       "onlyGapOf": [],
       "roundTripCases": 0,
       "cost": 10
+    },
+    {
+      "id": "published-base",
+      "description": "The published route ships the root layout's sheet to every visitor (Tailwind's reset, the theme, the base layer), and the page base of a site takes that out again. A check here fails with that sheet in place and passes on a page without it, so the page base left something behind. Measured, not guessed: the same replica matches its original on a page without the base.",
+      "matrixCells": 0,
+      "corpusChecks": 9,
+      "fixtures": [
+        "busbasis-home"
+      ],
+      "onlyGapOf": [],
+      "roundTripCases": 0,
+      "cost": 9
     },
     {
       "id": "import-dynamic-logic",
@@ -9850,6 +9922,1601 @@
       "css-selector:Subsequent-sibling combinator",
       "css-selector:Type selectors",
       "css-selector:Universal selectors"
+    ]
+  },
+  "import": {
+    "honestyFailures": 0,
+    "conservationFailures": 0,
+    "parityPassing": [
+      "static-badge/repo",
+      "static-badge/foreign",
+      "static-card/repo",
+      "static-card/foreign"
+    ],
+    "coverage": {
+      "button/repo": 0.0336,
+      "button/foreign": 0.0336,
+      "input/repo": 0.3091,
+      "input/foreign": 0.3091,
+      "label/repo": 0.0862,
+      "label/foreign": 0.0862,
+      "separator/repo": 0.0694,
+      "separator/foreign": 0.0694,
+      "static-badge/repo": 1,
+      "static-badge/foreign": 1,
+      "static-card/repo": 1,
+      "static-card/foreign": 1,
+      "refusals/repo": 0.234,
+      "refusals/foreign": 0.234
+    },
+    "forged": {
+      "pass": 48,
+      "total": 48
+    },
+    "mutation": {
+      "named": 61,
+      "conserved": 61,
+      "total": 61
+    },
+    "foreignThemeDistinct": true,
+    "honestySees": true,
+    "runs": [
+      {
+        "fixture": "button",
+        "group": "repo-component",
+        "theme": "repo",
+        "verdict": "not-imported",
+        "readVerdict": "not-imported",
+        "lines": {
+          "converted": 2,
+          "adapted": 0,
+          "rebuilt": 0,
+          "left": 11
+        },
+        "atoms": {
+          "converted": 5,
+          "adapted": 0,
+          "rebuilt": 0,
+          "left": 144,
+          "total": 149
+        },
+        "coverage": 0.03355704697986577,
+        "blocking": [
+          "Not converted, and it can change what this component renders.",
+          "An unknown component: it is not local, and its package is not read yet."
+        ],
+        "conservation": {
+          "pass": true,
+          "constructs": 149,
+          "problems": []
+        },
+        "parity": {
+          "pass": false,
+          "checks": {
+            "screenshot": {
+              "pass": 0,
+              "total": 9
+            },
+            "computed-styles": {
+              "pass": 0,
+              "total": 9
+            },
+            "accessibility-tree": {
+              "pass": 0,
+              "total": 9
+            },
+            "interaction": {
+              "pass": 0,
+              "total": 6
+            }
+          },
+          "failures": [
+            {
+              "viewport": "Desktop",
+              "state": "initial",
+              "check": "screenshot",
+              "detail": "0.34 percent of pixels differ"
+            },
+            {
+              "viewport": "Desktop",
+              "state": "initial",
+              "check": "computed-styles",
+              "detail": "3 differences, first: r missing, r.0 missing, r.0.0 missing"
+            },
+            {
+              "viewport": "Desktop",
+              "state": "initial",
+              "check": "accessibility-tree",
+              "detail": "original \"- button \\\"Continue\\\"\", replica \"\""
+            },
+            {
+              "viewport": "Desktop",
+              "state": "hover",
+              "check": "screenshot",
+              "detail": "0.34 percent of pixels differ"
+            },
+            {
+              "viewport": "Desktop",
+              "state": "hover",
+              "check": "computed-styles",
+              "detail": "3 differences, first: r missing, r.0 missing, r.0.0 missing"
+            },
+            {
+              "viewport": "Desktop",
+              "state": "hover",
+              "check": "accessibility-tree",
+              "detail": "original \"- button \\\"Continue\\\"\", replica \"\""
+            },
+            {
+              "viewport": "Desktop",
+              "state": "hover",
+              "check": "interaction",
+              "detail": "locator.hover: Timeout 3000ms exceeded."
+            },
+            {
+              "viewport": "Desktop",
+              "state": "keyboard focus",
+              "check": "screenshot",
+              "detail": "0.36 percent of pixels differ"
+            },
+            {
+              "viewport": "Desktop",
+              "state": "keyboard focus",
+              "check": "computed-styles",
+              "detail": "3 differences, first: r missing, r.0 missing, r.0.0 missing"
+            },
+            {
+              "viewport": "Desktop",
+              "state": "keyboard focus",
+              "check": "accessibility-tree",
+              "detail": "original \"- button \\\"Continue\\\"\", replica \"\""
+            },
+            {
+              "viewport": "Desktop",
+              "state": "keyboard focus",
+              "check": "interaction",
+              "detail": "the replica did not end up where the original did"
+            },
+            {
+              "viewport": "Tablet",
+              "state": "initial",
+              "check": "screenshot",
+              "detail": "0.45 percent of pixels differ"
+            },
+            {
+              "viewport": "Tablet",
+              "state": "initial",
+              "check": "computed-styles",
+              "detail": "3 differences, first: r missing, r.0 missing, r.0.0 missing"
+            },
+            {
+              "viewport": "Tablet",
+              "state": "initial",
+              "check": "accessibility-tree",
+              "detail": "original \"- button \\\"Continue\\\"\", replica \"\""
+            },
+            {
+              "viewport": "Tablet",
+              "state": "hover",
+              "check": "screenshot",
+              "detail": "0.45 percent of pixels differ"
+            },
+            {
+              "viewport": "Tablet",
+              "state": "hover",
+              "check": "computed-styles",
+              "detail": "3 differences, first: r missing, r.0 missing, r.0.0 missing"
+            },
+            {
+              "viewport": "Tablet",
+              "state": "hover",
+              "check": "accessibility-tree",
+              "detail": "original \"- button \\\"Continue\\\"\", replica \"\""
+            },
+            {
+              "viewport": "Tablet",
+              "state": "hover",
+              "check": "interaction",
+              "detail": "locator.hover: Timeout 3000ms exceeded."
+            },
+            {
+              "viewport": "Tablet",
+              "state": "keyboard focus",
+              "check": "screenshot",
+              "detail": "0.47 percent of pixels differ"
+            },
+            {
+              "viewport": "Tablet",
+              "state": "keyboard focus",
+              "check": "computed-styles",
+              "detail": "3 differences, first: r missing, r.0 missing, r.0.0 missing"
+            },
+            {
+              "viewport": "Tablet",
+              "state": "keyboard focus",
+              "check": "accessibility-tree",
+              "detail": "original \"- button \\\"Continue\\\"\", replica \"\""
+            },
+            {
+              "viewport": "Tablet",
+              "state": "keyboard focus",
+              "check": "interaction",
+              "detail": "the replica did not end up where the original did"
+            },
+            {
+              "viewport": "Mobile",
+              "state": "initial",
+              "check": "screenshot",
+              "detail": "1.41 percent of pixels differ"
+            },
+            {
+              "viewport": "Mobile",
+              "state": "initial",
+              "check": "computed-styles",
+              "detail": "3 differences, first: r missing, r.0 missing, r.0.0 missing"
+            },
+            {
+              "viewport": "Mobile",
+              "state": "initial",
+              "check": "accessibility-tree",
+              "detail": "original \"- button \\\"Continue\\\"\", replica \"\""
+            },
+            {
+              "viewport": "Mobile",
+              "state": "hover",
+              "check": "screenshot",
+              "detail": "1.41 percent of pixels differ"
+            },
+            {
+              "viewport": "Mobile",
+              "state": "hover",
+              "check": "computed-styles",
+              "detail": "3 differences, first: r missing, r.0 missing, r.0.0 missing"
+            },
+            {
+              "viewport": "Mobile",
+              "state": "hover",
+              "check": "accessibility-tree",
+              "detail": "original \"- button \\\"Continue\\\"\", replica \"\""
+            },
+            {
+              "viewport": "Mobile",
+              "state": "hover",
+              "check": "interaction",
+              "detail": "locator.hover: Timeout 3000ms exceeded."
+            },
+            {
+              "viewport": "Mobile",
+              "state": "keyboard focus",
+              "check": "screenshot",
+              "detail": "1.49 percent of pixels differ"
+            },
+            {
+              "viewport": "Mobile",
+              "state": "keyboard focus",
+              "check": "computed-styles",
+              "detail": "3 differences, first: r missing, r.0 missing, r.0.0 missing"
+            },
+            {
+              "viewport": "Mobile",
+              "state": "keyboard focus",
+              "check": "accessibility-tree",
+              "detail": "original \"- button \\\"Continue\\\"\", replica \"\""
+            },
+            {
+              "viewport": "Mobile",
+              "state": "keyboard focus",
+              "check": "interaction",
+              "detail": "the replica did not end up where the original did"
+            }
+          ]
+        },
+        "honesty": {
+          "pass": true,
+          "unnamed": [],
+          "excused": []
+        },
+        "waitsOn": "cva tables and props (import-props), Slot and asChild, and children through the entry (import-entries)"
+      },
+      {
+        "fixture": "button",
+        "group": "repo-component",
+        "theme": "foreign",
+        "verdict": "not-imported",
+        "readVerdict": "not-imported",
+        "lines": {
+          "converted": 2,
+          "adapted": 0,
+          "rebuilt": 0,
+          "left": 11
+        },
+        "atoms": {
+          "converted": 5,
+          "adapted": 0,
+          "rebuilt": 0,
+          "left": 144,
+          "total": 149
+        },
+        "coverage": 0.03355704697986577,
+        "blocking": [
+          "Not converted, and it can change what this component renders.",
+          "An unknown component: it is not local, and its package is not read yet."
+        ],
+        "conservation": {
+          "pass": true,
+          "constructs": 149,
+          "problems": []
+        },
+        "parity": {
+          "pass": false,
+          "checks": {
+            "screenshot": {
+              "pass": 0,
+              "total": 9
+            },
+            "computed-styles": {
+              "pass": 0,
+              "total": 9
+            },
+            "accessibility-tree": {
+              "pass": 0,
+              "total": 9
+            },
+            "interaction": {
+              "pass": 0,
+              "total": 6
+            }
+          },
+          "failures": [
+            {
+              "viewport": "Desktop",
+              "state": "initial",
+              "check": "screenshot",
+              "detail": "0.35 percent of pixels differ"
+            },
+            {
+              "viewport": "Desktop",
+              "state": "initial",
+              "check": "computed-styles",
+              "detail": "3 differences, first: r missing, r.0 missing, r.0.0 missing"
+            },
+            {
+              "viewport": "Desktop",
+              "state": "initial",
+              "check": "accessibility-tree",
+              "detail": "original \"- button \\\"Continue\\\"\", replica \"\""
+            },
+            {
+              "viewport": "Desktop",
+              "state": "hover",
+              "check": "screenshot",
+              "detail": "0.35 percent of pixels differ"
+            },
+            {
+              "viewport": "Desktop",
+              "state": "hover",
+              "check": "computed-styles",
+              "detail": "3 differences, first: r missing, r.0 missing, r.0.0 missing"
+            },
+            {
+              "viewport": "Desktop",
+              "state": "hover",
+              "check": "accessibility-tree",
+              "detail": "original \"- button \\\"Continue\\\"\", replica \"\""
+            },
+            {
+              "viewport": "Desktop",
+              "state": "hover",
+              "check": "interaction",
+              "detail": "locator.hover: Timeout 3000ms exceeded."
+            },
+            {
+              "viewport": "Desktop",
+              "state": "keyboard focus",
+              "check": "screenshot",
+              "detail": "0.37 percent of pixels differ"
+            },
+            {
+              "viewport": "Desktop",
+              "state": "keyboard focus",
+              "check": "computed-styles",
+              "detail": "3 differences, first: r missing, r.0 missing, r.0.0 missing"
+            },
+            {
+              "viewport": "Desktop",
+              "state": "keyboard focus",
+              "check": "accessibility-tree",
+              "detail": "original \"- button \\\"Continue\\\"\", replica \"\""
+            },
+            {
+              "viewport": "Desktop",
+              "state": "keyboard focus",
+              "check": "interaction",
+              "detail": "the replica did not end up where the original did"
+            },
+            {
+              "viewport": "Tablet",
+              "state": "initial",
+              "check": "screenshot",
+              "detail": "0.46 percent of pixels differ"
+            },
+            {
+              "viewport": "Tablet",
+              "state": "initial",
+              "check": "computed-styles",
+              "detail": "3 differences, first: r missing, r.0 missing, r.0.0 missing"
+            },
+            {
+              "viewport": "Tablet",
+              "state": "initial",
+              "check": "accessibility-tree",
+              "detail": "original \"- button \\\"Continue\\\"\", replica \"\""
+            },
+            {
+              "viewport": "Tablet",
+              "state": "hover",
+              "check": "screenshot",
+              "detail": "0.46 percent of pixels differ"
+            },
+            {
+              "viewport": "Tablet",
+              "state": "hover",
+              "check": "computed-styles",
+              "detail": "3 differences, first: r missing, r.0 missing, r.0.0 missing"
+            },
+            {
+              "viewport": "Tablet",
+              "state": "hover",
+              "check": "accessibility-tree",
+              "detail": "original \"- button \\\"Continue\\\"\", replica \"\""
+            },
+            {
+              "viewport": "Tablet",
+              "state": "hover",
+              "check": "interaction",
+              "detail": "locator.hover: Timeout 3000ms exceeded."
+            },
+            {
+              "viewport": "Tablet",
+              "state": "keyboard focus",
+              "check": "screenshot",
+              "detail": "0.48 percent of pixels differ"
+            },
+            {
+              "viewport": "Tablet",
+              "state": "keyboard focus",
+              "check": "computed-styles",
+              "detail": "3 differences, first: r missing, r.0 missing, r.0.0 missing"
+            },
+            {
+              "viewport": "Tablet",
+              "state": "keyboard focus",
+              "check": "accessibility-tree",
+              "detail": "original \"- button \\\"Continue\\\"\", replica \"\""
+            },
+            {
+              "viewport": "Tablet",
+              "state": "keyboard focus",
+              "check": "interaction",
+              "detail": "the replica did not end up where the original did"
+            },
+            {
+              "viewport": "Mobile",
+              "state": "initial",
+              "check": "screenshot",
+              "detail": "1.43 percent of pixels differ"
+            },
+            {
+              "viewport": "Mobile",
+              "state": "initial",
+              "check": "computed-styles",
+              "detail": "3 differences, first: r missing, r.0 missing, r.0.0 missing"
+            },
+            {
+              "viewport": "Mobile",
+              "state": "initial",
+              "check": "accessibility-tree",
+              "detail": "original \"- button \\\"Continue\\\"\", replica \"\""
+            },
+            {
+              "viewport": "Mobile",
+              "state": "hover",
+              "check": "screenshot",
+              "detail": "1.43 percent of pixels differ"
+            },
+            {
+              "viewport": "Mobile",
+              "state": "hover",
+              "check": "computed-styles",
+              "detail": "3 differences, first: r missing, r.0 missing, r.0.0 missing"
+            },
+            {
+              "viewport": "Mobile",
+              "state": "hover",
+              "check": "accessibility-tree",
+              "detail": "original \"- button \\\"Continue\\\"\", replica \"\""
+            },
+            {
+              "viewport": "Mobile",
+              "state": "hover",
+              "check": "interaction",
+              "detail": "locator.hover: Timeout 3000ms exceeded."
+            },
+            {
+              "viewport": "Mobile",
+              "state": "keyboard focus",
+              "check": "screenshot",
+              "detail": "1.51 percent of pixels differ"
+            },
+            {
+              "viewport": "Mobile",
+              "state": "keyboard focus",
+              "check": "computed-styles",
+              "detail": "3 differences, first: r missing, r.0 missing, r.0.0 missing"
+            },
+            {
+              "viewport": "Mobile",
+              "state": "keyboard focus",
+              "check": "accessibility-tree",
+              "detail": "original \"- button \\\"Continue\\\"\", replica \"\""
+            },
+            {
+              "viewport": "Mobile",
+              "state": "keyboard focus",
+              "check": "interaction",
+              "detail": "the replica did not end up where the original did"
+            }
+          ]
+        },
+        "honesty": {
+          "pass": true,
+          "unnamed": [],
+          "excused": []
+        },
+        "waitsOn": "cva tables and props (import-props), Slot and asChild, and children through the entry (import-entries)"
+      },
+      {
+        "fixture": "input",
+        "group": "repo-component",
+        "theme": "repo",
+        "verdict": "not-imported",
+        "readVerdict": "not-imported",
+        "lines": {
+          "converted": 5,
+          "adapted": 3,
+          "rebuilt": 0,
+          "left": 7
+        },
+        "atoms": {
+          "converted": 11,
+          "adapted": 6,
+          "rebuilt": 0,
+          "left": 38,
+          "total": 55
+        },
+        "coverage": 0.3090909090909091,
+        "blocking": [
+          "This value is only known when the component runs.",
+          "Spread props are not converted yet.",
+          "Part of this class string is only known when the component runs.",
+          "Some of these classes are not converted: the lines for this element say which.",
+          "The rule parser refuses this output."
+        ],
+        "conservation": {
+          "pass": true,
+          "constructs": 55,
+          "problems": []
+        },
+        "parity": {
+          "pass": false,
+          "checks": {
+            "screenshot": {
+              "pass": 6,
+              "total": 6
+            },
+            "computed-styles": {
+              "pass": 6,
+              "total": 6
+            },
+            "accessibility-tree": {
+              "pass": 0,
+              "total": 6
+            },
+            "interaction": {
+              "pass": 0,
+              "total": 3
+            }
+          },
+          "failures": [
+            {
+              "viewport": "Desktop",
+              "state": "initial",
+              "check": "accessibility-tree",
+              "detail": "original \"- textbox \\\"Email\\\"\", replica \"- textbox\""
+            },
+            {
+              "viewport": "Desktop",
+              "state": "keyboard focus",
+              "check": "accessibility-tree",
+              "detail": "original \"- textbox \\\"Email\\\"\", replica \"- textbox\""
+            },
+            {
+              "viewport": "Desktop",
+              "state": "keyboard focus",
+              "check": "interaction",
+              "detail": "the replica did not end up where the original did"
+            },
+            {
+              "viewport": "Tablet",
+              "state": "initial",
+              "check": "accessibility-tree",
+              "detail": "original \"- textbox \\\"Email\\\"\", replica \"- textbox\""
+            },
+            {
+              "viewport": "Tablet",
+              "state": "keyboard focus",
+              "check": "accessibility-tree",
+              "detail": "original \"- textbox \\\"Email\\\"\", replica \"- textbox\""
+            },
+            {
+              "viewport": "Tablet",
+              "state": "keyboard focus",
+              "check": "interaction",
+              "detail": "the replica did not end up where the original did"
+            },
+            {
+              "viewport": "Mobile",
+              "state": "initial",
+              "check": "accessibility-tree",
+              "detail": "original \"- textbox \\\"Email\\\"\", replica \"- textbox\""
+            },
+            {
+              "viewport": "Mobile",
+              "state": "keyboard focus",
+              "check": "accessibility-tree",
+              "detail": "original \"- textbox \\\"Email\\\"\", replica \"- textbox\""
+            },
+            {
+              "viewport": "Mobile",
+              "state": "keyboard focus",
+              "check": "interaction",
+              "detail": "the replica did not end up where the original did"
+            }
+          ]
+        },
+        "honesty": {
+          "pass": true,
+          "unnamed": [],
+          "excused": []
+        },
+        "waitsOn": "props and the rest spread (import-props), and the placeholder through the entry (import-entries)"
+      },
+      {
+        "fixture": "input",
+        "group": "repo-component",
+        "theme": "foreign",
+        "verdict": "not-imported",
+        "readVerdict": "not-imported",
+        "lines": {
+          "converted": 5,
+          "adapted": 3,
+          "rebuilt": 0,
+          "left": 7
+        },
+        "atoms": {
+          "converted": 11,
+          "adapted": 6,
+          "rebuilt": 0,
+          "left": 38,
+          "total": 55
+        },
+        "coverage": 0.3090909090909091,
+        "blocking": [
+          "This value is only known when the component runs.",
+          "Spread props are not converted yet.",
+          "Part of this class string is only known when the component runs.",
+          "Some of these classes are not converted: the lines for this element say which.",
+          "The rule parser refuses this output."
+        ],
+        "conservation": {
+          "pass": true,
+          "constructs": 55,
+          "problems": []
+        },
+        "parity": {
+          "pass": false,
+          "checks": {
+            "screenshot": {
+              "pass": 6,
+              "total": 6
+            },
+            "computed-styles": {
+              "pass": 0,
+              "total": 6
+            },
+            "accessibility-tree": {
+              "pass": 0,
+              "total": 6
+            },
+            "interaction": {
+              "pass": 0,
+              "total": 3
+            }
+          },
+          "failures": [
+            {
+              "viewport": "Desktop",
+              "state": "initial",
+              "check": "computed-styles",
+              "detail": "8 differences, first: r caret-color, r color, r column-rule-color, r row-rule-color"
+            },
+            {
+              "viewport": "Desktop",
+              "state": "initial",
+              "check": "accessibility-tree",
+              "detail": "original \"- textbox \\\"Email\\\"\", replica \"- textbox\""
+            },
+            {
+              "viewport": "Desktop",
+              "state": "keyboard focus",
+              "check": "computed-styles",
+              "detail": "8 differences, first: r caret-color, r color, r column-rule-color, r row-rule-color"
+            },
+            {
+              "viewport": "Desktop",
+              "state": "keyboard focus",
+              "check": "accessibility-tree",
+              "detail": "original \"- textbox \\\"Email\\\"\", replica \"- textbox\""
+            },
+            {
+              "viewport": "Desktop",
+              "state": "keyboard focus",
+              "check": "interaction",
+              "detail": "the replica did not end up where the original did"
+            },
+            {
+              "viewport": "Tablet",
+              "state": "initial",
+              "check": "computed-styles",
+              "detail": "8 differences, first: r caret-color, r color, r column-rule-color, r row-rule-color"
+            },
+            {
+              "viewport": "Tablet",
+              "state": "initial",
+              "check": "accessibility-tree",
+              "detail": "original \"- textbox \\\"Email\\\"\", replica \"- textbox\""
+            },
+            {
+              "viewport": "Tablet",
+              "state": "keyboard focus",
+              "check": "computed-styles",
+              "detail": "8 differences, first: r caret-color, r color, r column-rule-color, r row-rule-color"
+            },
+            {
+              "viewport": "Tablet",
+              "state": "keyboard focus",
+              "check": "accessibility-tree",
+              "detail": "original \"- textbox \\\"Email\\\"\", replica \"- textbox\""
+            },
+            {
+              "viewport": "Tablet",
+              "state": "keyboard focus",
+              "check": "interaction",
+              "detail": "the replica did not end up where the original did"
+            },
+            {
+              "viewport": "Mobile",
+              "state": "initial",
+              "check": "computed-styles",
+              "detail": "8 differences, first: r caret-color, r color, r column-rule-color, r row-rule-color"
+            },
+            {
+              "viewport": "Mobile",
+              "state": "initial",
+              "check": "accessibility-tree",
+              "detail": "original \"- textbox \\\"Email\\\"\", replica \"- textbox\""
+            },
+            {
+              "viewport": "Mobile",
+              "state": "keyboard focus",
+              "check": "computed-styles",
+              "detail": "8 differences, first: r caret-color, r color, r column-rule-color, r row-rule-color"
+            },
+            {
+              "viewport": "Mobile",
+              "state": "keyboard focus",
+              "check": "accessibility-tree",
+              "detail": "original \"- textbox \\\"Email\\\"\", replica \"- textbox\""
+            },
+            {
+              "viewport": "Mobile",
+              "state": "keyboard focus",
+              "check": "interaction",
+              "detail": "the replica did not end up where the original did"
+            }
+          ]
+        },
+        "honesty": {
+          "pass": true,
+          "unnamed": [],
+          "excused": []
+        },
+        "waitsOn": "props and the rest spread (import-props), and the placeholder through the entry (import-entries)"
+      },
+      {
+        "fixture": "label",
+        "group": "repo-component",
+        "theme": "repo",
+        "verdict": "not-imported",
+        "readVerdict": "not-imported",
+        "lines": {
+          "converted": 2,
+          "adapted": 0,
+          "rebuilt": 0,
+          "left": 9
+        },
+        "atoms": {
+          "converted": 5,
+          "adapted": 0,
+          "rebuilt": 0,
+          "left": 53,
+          "total": 58
+        },
+        "coverage": 0.08620689655172414,
+        "blocking": [
+          "An unknown component: it is not local, and its package is not read yet."
+        ],
+        "conservation": {
+          "pass": true,
+          "constructs": 58,
+          "problems": []
+        },
+        "parity": {
+          "pass": false,
+          "checks": {
+            "screenshot": {
+              "pass": 3,
+              "total": 3
+            },
+            "computed-styles": {
+              "pass": 0,
+              "total": 3
+            },
+            "accessibility-tree": {
+              "pass": 0,
+              "total": 3
+            },
+            "interaction": {
+              "pass": 0,
+              "total": 0
+            }
+          },
+          "failures": [
+            {
+              "viewport": "Desktop",
+              "state": "initial",
+              "check": "computed-styles",
+              "detail": "1 differences, first: r missing"
+            },
+            {
+              "viewport": "Desktop",
+              "state": "initial",
+              "check": "accessibility-tree",
+              "detail": "original \"- text: Email\", replica \"\""
+            },
+            {
+              "viewport": "Tablet",
+              "state": "initial",
+              "check": "computed-styles",
+              "detail": "1 differences, first: r missing"
+            },
+            {
+              "viewport": "Tablet",
+              "state": "initial",
+              "check": "accessibility-tree",
+              "detail": "original \"- text: Email\", replica \"\""
+            },
+            {
+              "viewport": "Mobile",
+              "state": "initial",
+              "check": "computed-styles",
+              "detail": "1 differences, first: r missing"
+            },
+            {
+              "viewport": "Mobile",
+              "state": "initial",
+              "check": "accessibility-tree",
+              "detail": "original \"- text: Email\", replica \"\""
+            }
+          ]
+        },
+        "honesty": {
+          "pass": true,
+          "unnamed": [],
+          "excused": []
+        },
+        "waitsOn": "the Radix label (import-radix) and props (import-props)"
+      },
+      {
+        "fixture": "label",
+        "group": "repo-component",
+        "theme": "foreign",
+        "verdict": "not-imported",
+        "readVerdict": "not-imported",
+        "lines": {
+          "converted": 2,
+          "adapted": 0,
+          "rebuilt": 0,
+          "left": 9
+        },
+        "atoms": {
+          "converted": 5,
+          "adapted": 0,
+          "rebuilt": 0,
+          "left": 53,
+          "total": 58
+        },
+        "coverage": 0.08620689655172414,
+        "blocking": [
+          "An unknown component: it is not local, and its package is not read yet."
+        ],
+        "conservation": {
+          "pass": true,
+          "constructs": 58,
+          "problems": []
+        },
+        "parity": {
+          "pass": false,
+          "checks": {
+            "screenshot": {
+              "pass": 3,
+              "total": 3
+            },
+            "computed-styles": {
+              "pass": 0,
+              "total": 3
+            },
+            "accessibility-tree": {
+              "pass": 0,
+              "total": 3
+            },
+            "interaction": {
+              "pass": 0,
+              "total": 0
+            }
+          },
+          "failures": [
+            {
+              "viewport": "Desktop",
+              "state": "initial",
+              "check": "computed-styles",
+              "detail": "1 differences, first: r missing"
+            },
+            {
+              "viewport": "Desktop",
+              "state": "initial",
+              "check": "accessibility-tree",
+              "detail": "original \"- text: Email\", replica \"\""
+            },
+            {
+              "viewport": "Tablet",
+              "state": "initial",
+              "check": "computed-styles",
+              "detail": "1 differences, first: r missing"
+            },
+            {
+              "viewport": "Tablet",
+              "state": "initial",
+              "check": "accessibility-tree",
+              "detail": "original \"- text: Email\", replica \"\""
+            },
+            {
+              "viewport": "Mobile",
+              "state": "initial",
+              "check": "computed-styles",
+              "detail": "1 differences, first: r missing"
+            },
+            {
+              "viewport": "Mobile",
+              "state": "initial",
+              "check": "accessibility-tree",
+              "detail": "original \"- text: Email\", replica \"\""
+            }
+          ]
+        },
+        "honesty": {
+          "pass": true,
+          "unnamed": [],
+          "excused": []
+        },
+        "waitsOn": "the Radix label (import-radix) and props (import-props)"
+      },
+      {
+        "fixture": "separator",
+        "group": "repo-component",
+        "theme": "repo",
+        "verdict": "not-imported",
+        "readVerdict": "not-imported",
+        "lines": {
+          "converted": 2,
+          "adapted": 0,
+          "rebuilt": 0,
+          "left": 9
+        },
+        "atoms": {
+          "converted": 5,
+          "adapted": 0,
+          "rebuilt": 0,
+          "left": 67,
+          "total": 72
+        },
+        "coverage": 0.06944444444444445,
+        "blocking": [
+          "An unknown component: it is not local, and its package is not read yet."
+        ],
+        "conservation": {
+          "pass": true,
+          "constructs": 72,
+          "problems": []
+        },
+        "parity": {
+          "pass": false,
+          "checks": {
+            "screenshot": {
+              "pass": 1,
+              "total": 3
+            },
+            "computed-styles": {
+              "pass": 0,
+              "total": 3
+            },
+            "accessibility-tree": {
+              "pass": 3,
+              "total": 3
+            },
+            "interaction": {
+              "pass": 0,
+              "total": 0
+            }
+          },
+          "failures": [
+            {
+              "viewport": "Desktop",
+              "state": "initial",
+              "check": "screenshot",
+              "detail": "0.13 percent of pixels differ"
+            },
+            {
+              "viewport": "Desktop",
+              "state": "initial",
+              "check": "computed-styles",
+              "detail": "1 differences, first: r missing"
+            },
+            {
+              "viewport": "Tablet",
+              "state": "initial",
+              "check": "computed-styles",
+              "detail": "1 differences, first: r missing"
+            },
+            {
+              "viewport": "Mobile",
+              "state": "initial",
+              "check": "screenshot",
+              "detail": "0.15 percent of pixels differ"
+            },
+            {
+              "viewport": "Mobile",
+              "state": "initial",
+              "check": "computed-styles",
+              "detail": "1 differences, first: r missing"
+            }
+          ]
+        },
+        "honesty": {
+          "pass": true,
+          "unnamed": [],
+          "excused": []
+        },
+        "waitsOn": "the Radix separator (import-radix) and props with defaults (import-props)"
+      },
+      {
+        "fixture": "separator",
+        "group": "repo-component",
+        "theme": "foreign",
+        "verdict": "not-imported",
+        "readVerdict": "not-imported",
+        "lines": {
+          "converted": 2,
+          "adapted": 0,
+          "rebuilt": 0,
+          "left": 9
+        },
+        "atoms": {
+          "converted": 5,
+          "adapted": 0,
+          "rebuilt": 0,
+          "left": 67,
+          "total": 72
+        },
+        "coverage": 0.06944444444444445,
+        "blocking": [
+          "An unknown component: it is not local, and its package is not read yet."
+        ],
+        "conservation": {
+          "pass": true,
+          "constructs": 72,
+          "problems": []
+        },
+        "parity": {
+          "pass": false,
+          "checks": {
+            "screenshot": {
+              "pass": 1,
+              "total": 3
+            },
+            "computed-styles": {
+              "pass": 0,
+              "total": 3
+            },
+            "accessibility-tree": {
+              "pass": 3,
+              "total": 3
+            },
+            "interaction": {
+              "pass": 0,
+              "total": 0
+            }
+          },
+          "failures": [
+            {
+              "viewport": "Desktop",
+              "state": "initial",
+              "check": "screenshot",
+              "detail": "0.13 percent of pixels differ"
+            },
+            {
+              "viewport": "Desktop",
+              "state": "initial",
+              "check": "computed-styles",
+              "detail": "1 differences, first: r missing"
+            },
+            {
+              "viewport": "Tablet",
+              "state": "initial",
+              "check": "computed-styles",
+              "detail": "1 differences, first: r missing"
+            },
+            {
+              "viewport": "Mobile",
+              "state": "initial",
+              "check": "screenshot",
+              "detail": "0.15 percent of pixels differ"
+            },
+            {
+              "viewport": "Mobile",
+              "state": "initial",
+              "check": "computed-styles",
+              "detail": "1 differences, first: r missing"
+            }
+          ]
+        },
+        "honesty": {
+          "pass": true,
+          "unnamed": [],
+          "excused": []
+        },
+        "waitsOn": "the Radix separator (import-radix) and props with defaults (import-props)"
+      },
+      {
+        "fixture": "static-badge",
+        "group": "hand-written",
+        "theme": "repo",
+        "verdict": "imported-with-differences",
+        "readVerdict": "not-imported",
+        "lines": {
+          "converted": 13,
+          "adapted": 3,
+          "rebuilt": 0,
+          "left": 0
+        },
+        "atoms": {
+          "converted": 31,
+          "adapted": 3,
+          "rebuilt": 0,
+          "left": 0,
+          "total": 34
+        },
+        "coverage": 1,
+        "blocking": [
+          "The rule parser refuses this output."
+        ],
+        "conservation": {
+          "pass": true,
+          "constructs": 34,
+          "problems": []
+        },
+        "parity": {
+          "pass": true,
+          "checks": {
+            "screenshot": {
+              "pass": 3,
+              "total": 3
+            },
+            "computed-styles": {
+              "pass": 3,
+              "total": 3
+            },
+            "accessibility-tree": {
+              "pass": 3,
+              "total": 3
+            },
+            "interaction": {
+              "pass": 0,
+              "total": 0
+            }
+          },
+          "failures": []
+        },
+        "honesty": {
+          "pass": true,
+          "unnamed": [],
+          "excused": []
+        }
+      },
+      {
+        "fixture": "static-badge",
+        "group": "hand-written",
+        "theme": "foreign",
+        "verdict": "imported-with-differences",
+        "readVerdict": "not-imported",
+        "lines": {
+          "converted": 13,
+          "adapted": 3,
+          "rebuilt": 0,
+          "left": 0
+        },
+        "atoms": {
+          "converted": 31,
+          "adapted": 3,
+          "rebuilt": 0,
+          "left": 0,
+          "total": 34
+        },
+        "coverage": 1,
+        "blocking": [
+          "The rule parser refuses this output."
+        ],
+        "conservation": {
+          "pass": true,
+          "constructs": 34,
+          "problems": []
+        },
+        "parity": {
+          "pass": true,
+          "checks": {
+            "screenshot": {
+              "pass": 3,
+              "total": 3
+            },
+            "computed-styles": {
+              "pass": 3,
+              "total": 3
+            },
+            "accessibility-tree": {
+              "pass": 3,
+              "total": 3
+            },
+            "interaction": {
+              "pass": 0,
+              "total": 0
+            }
+          },
+          "failures": []
+        },
+        "honesty": {
+          "pass": true,
+          "unnamed": [],
+          "excused": []
+        }
+      },
+      {
+        "fixture": "static-card",
+        "group": "hand-written",
+        "theme": "repo",
+        "verdict": "imported-with-differences",
+        "readVerdict": "not-imported",
+        "lines": {
+          "converted": 19,
+          "adapted": 6,
+          "rebuilt": 0,
+          "left": 0
+        },
+        "atoms": {
+          "converted": 37,
+          "adapted": 6,
+          "rebuilt": 0,
+          "left": 0,
+          "total": 43
+        },
+        "coverage": 1,
+        "blocking": [
+          "The rule parser refuses this output."
+        ],
+        "conservation": {
+          "pass": true,
+          "constructs": 43,
+          "problems": []
+        },
+        "parity": {
+          "pass": true,
+          "checks": {
+            "screenshot": {
+              "pass": 9,
+              "total": 9
+            },
+            "computed-styles": {
+              "pass": 9,
+              "total": 9
+            },
+            "accessibility-tree": {
+              "pass": 9,
+              "total": 9
+            },
+            "interaction": {
+              "pass": 6,
+              "total": 6
+            }
+          },
+          "failures": []
+        },
+        "honesty": {
+          "pass": true,
+          "unnamed": [],
+          "excused": []
+        }
+      },
+      {
+        "fixture": "static-card",
+        "group": "hand-written",
+        "theme": "foreign",
+        "verdict": "imported-with-differences",
+        "readVerdict": "not-imported",
+        "lines": {
+          "converted": 19,
+          "adapted": 6,
+          "rebuilt": 0,
+          "left": 0
+        },
+        "atoms": {
+          "converted": 37,
+          "adapted": 6,
+          "rebuilt": 0,
+          "left": 0,
+          "total": 43
+        },
+        "coverage": 1,
+        "blocking": [
+          "The rule parser refuses this output."
+        ],
+        "conservation": {
+          "pass": true,
+          "constructs": 43,
+          "problems": []
+        },
+        "parity": {
+          "pass": true,
+          "checks": {
+            "screenshot": {
+              "pass": 9,
+              "total": 9
+            },
+            "computed-styles": {
+              "pass": 9,
+              "total": 9
+            },
+            "accessibility-tree": {
+              "pass": 9,
+              "total": 9
+            },
+            "interaction": {
+              "pass": 6,
+              "total": 6
+            }
+          },
+          "failures": []
+        },
+        "honesty": {
+          "pass": true,
+          "unnamed": [],
+          "excused": []
+        }
+      },
+      {
+        "fixture": "refusals",
+        "group": "hand-written",
+        "theme": "repo",
+        "verdict": "not-imported",
+        "readVerdict": "not-imported",
+        "lines": {
+          "converted": 6,
+          "adapted": 2,
+          "rebuilt": 0,
+          "left": 9
+        },
+        "atoms": {
+          "converted": 11,
+          "adapted": 0,
+          "rebuilt": 0,
+          "left": 36,
+          "total": 47
+        },
+        "coverage": 0.23404255319148937,
+        "blocking": [
+          "An event handler is not converted yet.",
+          "An unknown component: it is not local, and its package is not read yet.",
+          "Part of this class string is only known when the component runs.",
+          "Tailwind produced nothing for this class.",
+          "Some of these classes are not converted: the lines for this element say which.",
+          "The rule parser refuses this output."
+        ],
+        "conservation": {
+          "pass": true,
+          "constructs": 47,
+          "problems": []
+        },
+        "parity": {
+          "pass": false,
+          "checks": {
+            "screenshot": {
+              "pass": 3,
+              "total": 3
+            },
+            "computed-styles": {
+              "pass": 0,
+              "total": 3
+            },
+            "accessibility-tree": {
+              "pass": 3,
+              "total": 3
+            },
+            "interaction": {
+              "pass": 0,
+              "total": 0
+            }
+          },
+          "failures": [
+            {
+              "viewport": "Desktop",
+              "state": "initial",
+              "check": "computed-styles",
+              "detail": "27 differences, first: r background-color, r block-size, r border-bottom-left-radius, r border-bottom-right-radius"
+            },
+            {
+              "viewport": "Tablet",
+              "state": "initial",
+              "check": "computed-styles",
+              "detail": "27 differences, first: r background-color, r block-size, r border-bottom-left-radius, r border-bottom-right-radius"
+            },
+            {
+              "viewport": "Mobile",
+              "state": "initial",
+              "check": "computed-styles",
+              "detail": "27 differences, first: r background-color, r block-size, r border-bottom-left-radius, r border-bottom-right-radius"
+            }
+          ]
+        },
+        "honesty": {
+          "pass": true,
+          "unnamed": [],
+          "excused": []
+        },
+        "waitsOn": "nothing: it exists to be refused, with a line for each refusal"
+      },
+      {
+        "fixture": "refusals",
+        "group": "hand-written",
+        "theme": "foreign",
+        "verdict": "not-imported",
+        "readVerdict": "not-imported",
+        "lines": {
+          "converted": 6,
+          "adapted": 2,
+          "rebuilt": 0,
+          "left": 9
+        },
+        "atoms": {
+          "converted": 11,
+          "adapted": 0,
+          "rebuilt": 0,
+          "left": 36,
+          "total": 47
+        },
+        "coverage": 0.23404255319148937,
+        "blocking": [
+          "An event handler is not converted yet.",
+          "An unknown component: it is not local, and its package is not read yet.",
+          "Part of this class string is only known when the component runs.",
+          "Tailwind produced nothing for this class.",
+          "Some of these classes are not converted: the lines for this element say which.",
+          "The rule parser refuses this output."
+        ],
+        "conservation": {
+          "pass": true,
+          "constructs": 47,
+          "problems": []
+        },
+        "parity": {
+          "pass": false,
+          "checks": {
+            "screenshot": {
+              "pass": 0,
+              "total": 3
+            },
+            "computed-styles": {
+              "pass": 0,
+              "total": 3
+            },
+            "accessibility-tree": {
+              "pass": 3,
+              "total": 3
+            },
+            "interaction": {
+              "pass": 0,
+              "total": 0
+            }
+          },
+          "failures": [
+            {
+              "viewport": "Desktop",
+              "state": "initial",
+              "check": "screenshot",
+              "detail": "8.47 percent of pixels differ"
+            },
+            {
+              "viewport": "Desktop",
+              "state": "initial",
+              "check": "computed-styles",
+              "detail": "43 differences, first: r background-color, r block-size, r border-bottom-left-radius, r border-bottom-right-radius"
+            },
+            {
+              "viewport": "Tablet",
+              "state": "initial",
+              "check": "screenshot",
+              "detail": "6.60 percent of pixels differ"
+            },
+            {
+              "viewport": "Tablet",
+              "state": "initial",
+              "check": "computed-styles",
+              "detail": "43 differences, first: r background-color, r block-size, r border-bottom-left-radius, r border-bottom-right-radius"
+            },
+            {
+              "viewport": "Mobile",
+              "state": "initial",
+              "check": "screenshot",
+              "detail": "10.06 percent of pixels differ"
+            },
+            {
+              "viewport": "Mobile",
+              "state": "initial",
+              "check": "computed-styles",
+              "detail": "43 differences, first: r background-color, r block-size, r border-bottom-left-radius, r border-bottom-right-radius"
+            }
+          ]
+        },
+        "honesty": {
+          "pass": true,
+          "unnamed": [],
+          "excused": []
+        },
+        "waitsOn": "nothing: it exists to be refused, with a line for each refusal"
+      }
+    ],
+    "excuses": [
+      {
+        "detail": "Base styles stay with the page, such as the text colour.",
+        "reason": "The source's base gives `body` its text colour and font, which stay with the page: what the import inherits from the page without writing it itself."
+      }
     ]
   }
 }

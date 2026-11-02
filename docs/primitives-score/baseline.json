@@ -23,5 +23,33 @@
     "shadcn-card"
   ],
   "corpusChecks": 268,
-  "roundTrip": 128
+  "roundTrip": 128,
+  "import": {
+    "honestyFailures": 0,
+    "conservationFailures": 0,
+    "parityPassing": [
+      "static-badge/repo",
+      "static-badge/foreign",
+      "static-card/repo",
+      "static-card/foreign"
+    ],
+    "coverage": {
+      "button/repo": 0.0336,
+      "button/foreign": 0.0336,
+      "input/repo": 0.3091,
+      "input/foreign": 0.3091,
+      "label/repo": 0.0862,
+      "label/foreign": 0.0862,
+      "separator/repo": 0.0694,
+      "separator/foreign": 0.0694,
+      "static-badge/repo": 1,
+      "static-badge/foreign": 1,
+      "static-card/repo": 1,
+      "static-card/foreign": 1,
+      "refusals/repo": 0.234,
+      "refusals/foreign": 0.234
+    },
+    "forged": 48,
+    "mutationNamed": 61
+  }
 }

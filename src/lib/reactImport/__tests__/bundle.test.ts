@@ -37,7 +37,11 @@ describe('a bundle from the importer', () => {
     expect(read.nodes?.type).toBe('section');
     expect(read.nodes?.id).not.toBe(bundle.nodes?.id);
     expect(PROJECT.ids.has(read.nodes?.id as string)).toBe(false);
-    expect(read.nodes?.children?.[0]).toMatchObject({ type: 'h2', props: { id: 't', className: 'u-c-group', style: { paddingInline: 'calc(var(--spacing) * 4)' } } });
+    expect(read.nodes?.children?.[0]).toMatchObject({ type: 'h2', props: { className: 'u-c-group', style: { paddingInline: 'calc(var(--spacing) * 4)' } } });
+    // The heading's id moved under the bundle's prefix, and the label reference followed it.
+    const heading = read.nodes?.children?.[0]?.props?.id as string;
+    expect(heading).toMatch(/^imp-[0-9a-f]+-t$/);
+    expect(read.nodes?.props).toMatchObject({ 'aria-labelledby': heading });
     // A line names the node by its new id.
     const classLine = read.stated.lines.find((line) => line.detail === DETAILS.classConverted);
     expect(classLine?.nodeKey).toBe(read.ids.get('n-0-0'));
@@ -115,10 +119,86 @@ describe('a forged bundle', () => {
     expect(JSON.stringify(read.nodes ?? null)).not.toMatch(/script|iframe|#component|canvasX|evil/);
   });
 
-  it('keeps a reference that points inside the import', () => {
-    const read = readBundle(forged({ id: 'a', type: 'div', children: [{ id: 'b', type: 'p', props: { id: 'p1', children: 'x' } }, { id: 'c', type: 'button', props: { 'aria-describedby': 'p1', children: 'y' } }] }), PROJECT);
+  it('keeps a reference that points inside the import, and both move to ids of the import', () => {
+    const read = readBundle(forged({ id: 'a', type: 'div', children: [
+      { id: 'b', type: 'p', props: { id: 'p1', children: 'x' } },
+      { id: 'c', type: 'button', props: { 'aria-describedby': 'p1', children: 'y' } },
+      { id: 'd', type: 'a', props: { href: '#p1', children: 'z' } },
+      { id: 'e', type: 'svg', children: [{ id: 'f', type: 'clipPath', props: { id: 'clip' } }, { id: 'g', type: 'rect', props: { clipPath: 'url(#clip)', style: { filter: 'url("#clip")' } } }] },
+    ] }), PROJECT);
     expect(read.found).toEqual([]);
-    expect(read.nodes?.children?.[1]?.props).toMatchObject({ 'aria-describedby': 'p1' });
+    const [p, button, link, svg] = read.nodes?.children ?? [];
+    const moved = p?.props?.id as string;
+    expect(moved).toMatch(/^imp-[0-9a-f]+-p1$/);
+    expect(button?.props).toMatchObject({ 'aria-describedby': moved });
+    expect(link?.props).toMatchObject({ href: `#${moved}` });
+    const clip = svg?.children?.[0]?.props?.id as string;
+    expect(svg?.children?.[1]?.props).toMatchObject({ clipPath: `url(#${clip})`, style: { filter: `url(#${clip})` } });
+  });
+
+  // Review of slice 4, U4: each of these named an element of the page, and stayed.
+  it.each<[string, Record<string, unknown>]>([
+    ['a link with a leading space', { href: ' #contact' }],
+    ['a link with a leading tab', { href: '\t#contact' }],
+    ['a paint server of the page', { fill: 'url(#page-gradient)' }],
+    ['a clip path of the page', { clipPath: 'url(#page-clip)' }],
+    ['a mask of the page', { mask: 'url(#m)' }],
+    ['a filter of the page', { filter: 'url(#f)' }],
+    ['microdata items of the page', { itemref: 'page-a' }],
+    ['an anchor of the page', { anchor: 'page-b' }],
+    ['a command target of the page', { commandfor: 'page-dialog' }],
+  ])('removes %s', (_name, props) => {
+    const read = readBundle(forged({ id: 's', type: 'svg', children: [{ id: 'r', type: 'rect', props }] }), PROJECT);
+    expect(read.found.map((line) => line.detail)).toContain(DETAILS.bundleReference);
+    for (const name of Object.keys(props)) expect(read.nodes?.children?.[0]?.props ?? {}).not.toHaveProperty(name);
+  });
+
+  it('removes an escaped fragment, which a browser decodes to one', () => {
+    const read = readBundle(forged({ id: 's', type: 'svg', children: [{ id: 'r', type: 'rect', props: { fill: 'url(\\23 page)' } }] }), PROJECT);
+    expect(read.found.length).toBeGreaterThan(0);
+    expect(read.nodes?.children?.[0]?.props ?? {}).not.toHaveProperty('fill');
+  });
+
+  it('removes a style reference into the page, and does not call it an external address', () => {
+    const read = readBundle(forged({ id: 'a', type: 'div', props: { style: { clipPath: 'url(#page-clip)', color: 'red' } } }), PROJECT);
+    expect(read.nodes?.props?.style).toEqual({ color: 'red' });
+    expect(read.found.map((line) => line.detail)).toEqual([DETAILS.bundleReference]);
+  });
+
+  it('renames an imported id, so it cannot capture the page\'s own label or link', () => {
+    const read = readBundle(forged({ id: 'a', type: 'input', props: { id: 'email' } }), PROJECT);
+    expect(read.nodes?.props?.id).not.toBe('email');
+    expect(String(read.nodes?.props?.id)).toMatch(/-email$/);
+  });
+
+  // Review of slice 4, U2. #268 closed the attribute routes in the rule parser; a class or an id of the page stays
+  // open to an author's rule there, so the door refuses it for a stranger's.
+  it.each([
+    '&:is(.ground-wrapper *)', '&:is([class*="ground-wrap"] *)', '&:is([id^="ground-wrapper"] *)', '&:is(#page-header *)',
+    '&:has(.fc-n1)', '&:is(:root:has(.ground-wrapper) *)',
+  ])('refuses a rule reading the page, %s', (selector) => {
+    const read = readBundle(forged({ id: 'a', type: 'div', props: { rules: [{ id: 'r', selector, style: { display: 'none' } }] } }), PROJECT);
+    expect(read.found.map((line) => line.detail)).toContain(DETAILS.refusedRule);
+    expect(read.nodes?.props ?? {}).not.toHaveProperty('rules');
+    expect(read.verdict).toBe('not-imported');
+  });
+
+  it('keeps a rule reading the import\'s own kept class', () => {
+    const read = readBundle(forged({ id: 'a', type: 'div', props: { rules: [{ id: 'r', selector: '&:is(:where(.u-c-group):hover *)', style: { color: 'red' } }] } }), PROJECT);
+    expect(read.found).toEqual([]);
+    expect(read.nodes?.props?.rules).toHaveLength(1);
+  });
+
+  it('keeps the stated verdict apart from what it found (review of slice 4, U3)', () => {
+    const honest = readBundle(forged({ id: 'a', type: 'div', props: { title: 'x' } }, [{ disposition: 'left', detail: DETAILS.left, nodeKey: 'a' }]), PROJECT);
+    expect(honest.stated.verdict).toBe('not-imported');
+    expect(honest.foundVerdict).toBe('imported');
+    // Leaving the line out raises what the file states, and what was found says only what was found.
+    const silent = readBundle(forged({ id: 'a', type: 'div', props: { title: 'x' } }), PROJECT);
+    expect(silent.stated.verdict).toBe('imported');
+    const refused = readBundle(forged({ id: 'a', type: 'div', props: { onclick: 'x' } }), PROJECT);
+    expect(refused.stated.verdict).toBe('imported');
+    expect(refused.foundVerdict).toBe('not-imported');
   });
 
   it('gives ids that collide with the project new ones', () => {
@@ -142,6 +222,38 @@ describe('a forged bundle', () => {
       expect(read.verdict).toBe('not-imported');
       expect(JSON.stringify(read.nodes ?? null)).not.toContain(key);
     }
+  });
+
+  // Review of slice 4, U1: each of these reached a page as "imported".
+  it.each<[string, (key: string) => Record<string, unknown>]>([
+    ['a key after a word', (key) => ({ title: `token-${key}` })],
+    ['a key after an underscore', (key) => ({ title: `api_${key}` })],
+    ['a key after a letter', (key) => ({ title: `K${key}` })],
+    ['a key kept as a class', (key) => ({ className: `u-c-${key.replace(/_/g, '__')}` })],
+    ['a key as an attribute name', (key) => ({ [`data-${key}`]: 'x' })],
+  ])('removes %s', (_name, props) => {
+    const key = fakeKey();
+    const read = readBundle(forged({ id: 'a', type: 'p', props: { ...props(key), children: 'x' } }), PROJECT);
+    expect(read.found.map((line) => line.kind)).toContain('secret');
+    expect(read.verdict).toBe('not-imported');
+    expect(JSON.stringify(read.nodes ?? null)).not.toContain(key.slice(8));
+  });
+
+  it('drops a stated excerpt that holds a key', () => {
+    const key = fakeKey();
+    const read = readBundle(forged({ id: 'a', type: 'p', props: { children: 'x' } }, [{ excerpt: `const K = "${key}"` }]), PROJECT);
+    expect(JSON.stringify(read)).not.toContain(key);
+  });
+
+  it('removes a key glued to a word and one kept as a class, through the real importer, and keeps neither in an excerpt', async () => {
+    const key = fakeKey();
+    const files = [{ name: 'a.tsx', text: `<div><p title="token-${key}">a</p><p className="${key} [&_[class*=sk]]:p-1">b</p></div>` }];
+    const outcome = await importSource(files);
+    const bundle = await createBundle(files, outcome);
+    expect(JSON.stringify(bundle.report)).not.toContain(key);
+    const read = readBundle(JSON.stringify(bundle), PROJECT);
+    expect(read.verdict).toBe('not-imported');
+    expect(JSON.stringify(read)).not.toContain(key.slice(8));
   });
 
   it('removes a secret an import read from a constant, through the real importer', async () => {

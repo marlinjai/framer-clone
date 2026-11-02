@@ -2,8 +2,9 @@
 // both come through `readBundle`, because a bundle can be forged and no layer is trusted
 // for having run. It takes nothing on the bundle's word: every node goes through the
 // checks a stored page meets, ids are rewritten so nothing collides with the project or
-// points into it, secret-shaped text is removed, and the verdict is recomputed from what
-// is left. The bundle's own report is a claim, kept apart from what this found.
+// points into it, secret-shaped text is removed, and what this reader found is a verdict
+// of its own. The bundle's report is a claim, kept apart: a file can always leave a line
+// out, so its stated verdict is shown beside the found one and never merged into it.
 //
 // Format 1 holds nodes to place. Components, bindings and behaviour arrive with the
 // slices that produce them (`import-props`, `import-entries`, `import-hooks`), and until
@@ -25,6 +26,7 @@ import { DETAILS, verdictOf, type DetailKey, type Disposition, type ImportLine, 
 import { findSecret } from './secrets';
 import type { ImportOptions, ImportOutcome, SourceInput } from './source';
 import { checkNormal } from './tailwind';
+import { KEPT_CLASS_PREFIX, decodeClass } from './tailwind/rewrites';
 
 export const BUNDLE_FORMAT = 1;
 
@@ -61,7 +63,13 @@ export interface ReadBundle {
   stated: ImportReport;
   /** What this reader found itself. These are facts. */
   found: ImportLine[];
-  /** From the stated lines and the found ones together, so a bundle can make its verdict worse and never better. */
+  /** The verdict from what this reader found alone, over the nodes it kept. */
+  foundVerdict: Verdict;
+  /**
+   * The stated lines and the found ones together. A stated line can only add to what blocks, but a file can leave
+   * lines out, so this is no better than `stated` is complete: an uploaded file shows `stated.verdict` and
+   * `foundVerdict` side by side, labelled, and never this alone.
+   */
   verdict: Verdict;
   /** A bundle node id to the id it now has. */
   ids: Map<string, string>;
@@ -99,7 +107,8 @@ export async function sourceHashOf(files: readonly SourceInput[], options: Impor
 export async function createBundle(files: readonly SourceInput[], outcome: ImportOutcome, options: ImportOptions = {}): Promise<ImportBundle> {
   const keepExcerpts = options.excerpts ?? true;
   const lines = outcome.report.lines.map((line) => {
-    if (keepExcerpts || line.excerpt === undefined) return line;
+    // An excerpt is source, and a source can hold a key in a place no node carries it.
+    if (line.excerpt === undefined || (keepExcerpts && findSecret(line.excerpt) === undefined)) return line;
     const without: ImportLine = { ...line };
     delete without.excerpt;
     return without;
@@ -183,7 +192,8 @@ function readLine(raw: unknown, ids: ReadonlyMap<string, string>): ImportLine | 
     line: line as number,
     column: column as number,
     endLine: endLine as number,
-    ...(typeof excerpt === 'string' ? { excerpt: excerpt.slice(0, BUNDLE_LIMITS.excerpt) } : {}),
+    // A stated excerpt is a stranger's text: one holding a secret is dropped, not shown.
+    ...(typeof excerpt === 'string' && findSecret(excerpt) === undefined ? { excerpt: excerpt.slice(0, BUNDLE_LIMITS.excerpt) } : {}),
     atoms: atoms as string[],
     kind: kind as LineKind,
     disposition: disposition as Disposition,
@@ -259,7 +269,8 @@ function readStyle(raw: unknown, key: string, reader: Reader): Record<string, un
       finding(reader, 'secret', 'secret', key);
       continue;
     }
-    external ||= checks.some((check) => check.ok && check.external);
+    // `url(#clip)` names an element of the page, which `followReferences` decides on. It loads nothing from elsewhere.
+    external ||= checks.some((check) => check.ok && check.external) && !values.every(([, each]) => typeof each !== 'string' || fragmentUrlsOnly(each));
     style[property] = value;
   }
   if (external) finding(reader, 'styleExternal', 'external-address', key, 'adapted', ['accept']);
@@ -274,7 +285,32 @@ function readClassName(raw: unknown, key: string, reader: Reader): string | unde
   const tokens = raw.split(/\s+/).filter(Boolean);
   const kept = tokens.filter((token) => KEPT_CLASS.test(token));
   if (kept.length < tokens.length) finding(reader, 'bundleClass', 'refused-attribute', key);
-  return kept.length > 0 ? kept.join(' ') : undefined;
+  // A kept class is encoded (`_` written twice), so a key in a source class is read in the source's spelling too.
+  const clean = kept.filter((token) => findSecret(token) === undefined && findSecret(decodeClass(token.slice(KEPT_CLASS_PREFIX.length))) === undefined);
+  if (clean.length < kept.length) finding(reader, 'secret', 'secret', key);
+  return clean.length > 0 ? clean.join(' ') : undefined;
+}
+
+const QUOTED = /"[^"]*"|'[^']*'/g;
+const CLASS_NAME = /\.(-?[A-Za-z_][\w-]*)/g;
+
+/**
+ * Whether a rule reads something of the page rather than of the import. The rule parser lets an author's rule
+ * name any class and any id, but a bundle is a stranger's: the canvas's `.ground-wrapper` and the page's ids are
+ * on the editor and not on the published page, so a rule reading them shows one thing on the canvas and another
+ * to visitors. A bundle's rule names only the classes the import keeps (`u-c-`), and no id, since the import's
+ * ids are renamed anyway. Review of slice 4, U2.
+ */
+function readsThePage(rule: unknown): boolean {
+  if (rule === null || typeof rule !== 'object') return false;
+  const { selector, at } = rule as { selector?: unknown; at?: unknown };
+  const texts = [selector, ...(Array.isArray(at) ? at.filter((each) => typeof each === 'string' && /^@scope\b/i.test(each)) : [])];
+  return texts.some((text) => {
+    if (typeof text !== 'string') return false;
+    const bare = text.replace(QUOTED, '""');
+    if (bare.includes('#')) return true;
+    return [...bare.matchAll(CLASS_NAME)].some((match) => !match[1].startsWith(KEPT_CLASS_PREFIX));
+  });
 }
 
 function readRuleList(raw: unknown, key: string, reader: Reader): unknown[] | undefined {
@@ -287,6 +323,10 @@ function readRuleList(raw: unknown, key: string, reader: Reader): unknown[] | un
   if (refused.length > 0) finding(reader, 'refusedRule', 'refused-rule', key);
   const kept = raw.filter((rule, index) => {
     if (refusedAt.has(index)) return false;
+    if (readsThePage(rule)) {
+      finding(reader, 'refusedRule', 'refused-rule', key);
+      return false;
+    }
     if (!holdsSecret(rule)) return true;
     finding(reader, 'secret', 'secret', key);
     return false;
@@ -326,6 +366,10 @@ function readProps(raw: unknown, type: string, key: string, reader: Reader): Rec
     return props;
   }
   for (const [name, value] of Object.entries(raw)) {
+    if (findSecret(name) !== undefined) {
+      finding(reader, 'secret', 'secret', key);
+      continue;
+    }
     if (name === 'children') {
       if (typeof value !== 'string' && !(typeof value === 'number' && Number.isFinite(value))) finding(reader, 'bundleNode', 'expression', key);
       else if (holdsSecret(value)) finding(reader, 'secret', 'secret', key);
@@ -417,16 +461,96 @@ function readTree(raw: unknown, reader: Reader): ComponentNode | undefined {
   return root;
 }
 
-/** Ids a reference names, inside the import. One naming anything else would point into the page, so it goes. */
+/** `url(...)` in a value. One class inside, so a failed match never retries inside a run: linear. */
+const CSS_URL = /url\(([^)]*)\)/gi;
+
+/** The fragment a `url(...)` body names, or null when it names an address. */
+function urlFragment(body: string): string | null {
+  const inner = body.trim().replace(/^(['"])([\s\S]*)\1$/, '$2').trim();
+  return inner.startsWith('#') && inner.length > 1 ? inner.slice(1) : null;
+}
+
+/** Whether every `url()` in a value is a fragment, so the value names elements and loads no file. */
+function fragmentUrlsOnly(value: string): boolean {
+  const bodies = [...value.matchAll(CSS_URL)].map((match) => match[1]);
+  return bodies.length > 0 && bodies.every((body) => urlFragment(body) !== null);
+}
+
+/** An address as a browser reads it: tabs and line breaks removed anywhere, and spaces and controls trimmed from both ends. */
+const addressAsRead = (value: string): string => value.replace(/[\t\n\r]/g, '').replace(/^[\u0000- ]+|[\u0000- ]+$/g, '');
+
+/** Attributes holding a space-separated list of ids, beyond those the renderer's own table knows. */
+const MORE_ID_LISTS: ReadonlySet<string> = new Set(['itemref', 'anchor']);
+const FRAGMENT_LINK = /^(?:href|xlink:href|xlinkhref|usemap)$/i;
+
+type Followed = { value: string } | { refused: true };
+
+/**
+ * A value with every id it names moved to the import's own, a refusal when it names one outside the import or hides
+ * one behind an escape a browser would decode, or null when it names none.
+ */
+function followValue(name: string, value: string, ids: ReadonlyMap<string, string>): Followed | null {
+  const lower = name.toLowerCase();
+  if (isIdReference(lower) || MORE_ID_LISTS.has(lower)) {
+    const named = value.split(/\s+/).filter(Boolean);
+    if (named.length === 0) return null;
+    return named.every((each) => ids.has(each)) ? { value: named.map((each) => ids.get(each)).join(' ') } : { refused: true };
+  }
+  if (FRAGMENT_LINK.test(name)) {
+    const read = addressAsRead(value);
+    if (!read.startsWith('#')) return null;
+    const target = ids.get(read.slice(1));
+    return target === undefined ? { refused: true } : { value: `#${target}` };
+  }
+  if (!/url\(/i.test(value)) return null;
+  let refused = false;
+  const moved = value.replace(CSS_URL, (whole, body: string) => {
+    if (body.includes('\\')) {
+      refused = true;
+      return whole;
+    }
+    const fragment = urlFragment(body);
+    if (fragment === null) return whole;
+    const target = ids.get(fragment);
+    if (target === undefined) refused = true;
+    return target === undefined ? whole : `url(#${target})`;
+  });
+  if (refused) return { refused: true };
+  return moved === value ? null : { value: moved };
+}
+
+/** The same for a style, where `clipPath: url(#clip)` names an element too. */
+function followStyle(style: Record<string, unknown>, ids: ReadonlyMap<string, string>, reader: Reader, key: string | undefined): void {
+  for (const [property, value] of Object.entries(style)) {
+    const entries: [string, unknown][] = isStyleMap(value) ? Object.entries(value) : [['', value]];
+    let refused = false;
+    const moved = entries.map(([mapKey, each]): [string, unknown] => {
+      if (typeof each !== 'string') return [mapKey, each];
+      const followed = followValue(property, each, ids);
+      if (followed && 'refused' in followed) refused = true;
+      return [mapKey, followed && 'value' in followed ? followed.value : each];
+    });
+    if (refused) {
+      delete style[property];
+      finding(reader, 'bundleReference', 'refused-attribute', key);
+    } else style[property] = isStyleMap(value) ? Object.fromEntries(moved) : moved[0][1];
+  }
+}
+
+/**
+ * Ids, both ways. Every HTML id of the import moves under the bundle's prefix, so an imported `id="email"` cannot
+ * capture the page's own `<label for="email">` or `#contact` link. A reference to an id of the import follows it;
+ * one naming anything else would point into the page, so it goes, with a line.
+ */
 function followReferences(root: ComponentNode, reader: Reader): void {
-  const htmlIds = new Set<string>();
+  const ids = new Map<string, string>();
   const all: ComponentNode[] = [];
   const stack = [root];
   while (stack.length > 0) {
     const node = stack.pop() as ComponentNode;
     all.push(node);
     const id = (node.props as Record<string, unknown> | undefined)?.id;
-    if (typeof id === 'string') htmlIds.add(id);
+    if (typeof id === 'string' && id.length > 0 && !ids.has(id)) ids.set(id, `${reader.prefix}-${id}`);
     for (const child of node.children ?? []) if (typeof child === 'object' && child !== null) stack.push(child);
     if (node.children?.length === 0) delete node.children;
   }
@@ -434,9 +558,19 @@ function followReferences(root: ComponentNode, reader: Reader): void {
     const props = node.props as Record<string, unknown> | undefined;
     if (!props) continue;
     for (const [name, value] of Object.entries(props)) {
+      if (name === 'id' && typeof value === 'string') {
+        props.id = ids.get(value) ?? value;
+        continue;
+      }
+      if (name === 'style' && value !== null && typeof value === 'object') {
+        followStyle(value as Record<string, unknown>, ids, reader, node.id);
+        continue;
+      }
       if (typeof value !== 'string') continue;
-      const named = isIdReference(name) ? value.split(/\s+/).filter(Boolean) : /^(?:href|usemap)$/i.test(name) && value.startsWith('#') && value.length > 1 ? [value.slice(1)] : [];
-      if (named.length > 0 && !named.every((each) => htmlIds.has(each))) {
+      const followed = followValue(name, value, ids);
+      if (!followed) continue;
+      if ('value' in followed) props[name] = followed.value;
+      else {
         delete props[name];
         finding(reader, 'bundleReference', 'refused-attribute', node.id);
       }
@@ -446,7 +580,7 @@ function followReferences(root: ComponentNode, reader: Reader): void {
 
 const unreadable = (detail: DetailKey): ReadBundle => {
   const found: ImportLine[] = [{ file: '', line: 1, column: 1, endLine: 1, atoms: [], kind: 'cap', disposition: 'left', detail: DETAILS[detail], next: ['rewrite'] }];
-  return { stated: { lines: [], counts: { converted: 0, adapted: 0, rebuilt: 0, left: 0 }, verdict: 'not-imported' }, found, verdict: 'not-imported', ids: new Map() };
+  return { stated: { lines: [], counts: { converted: 0, adapted: 0, rebuilt: 0, left: 0 }, verdict: 'not-imported' }, found, foundVerdict: 'not-imported', verdict: 'not-imported', ids: new Map() };
 };
 
 /**
@@ -479,7 +613,14 @@ export function readBundle(raw: unknown, project: ProjectContext): ReadBundle {
     const counts: Record<Disposition, number> = { converted: 0, adapted: 0, rebuilt: 0, left: 0 };
     for (const line of lines) counts[line.disposition] += 1;
     const stated: ImportReport = { lines, counts, verdict: verdictOf(lines, nodes !== undefined) };
-    return { ...(nodes ? { nodes } : {}), stated, found: reader.found, verdict: verdictOf([...lines, ...reader.found], nodes !== undefined), ids: reader.ids };
+    return {
+      ...(nodes ? { nodes } : {}),
+      stated,
+      found: reader.found,
+      foundVerdict: verdictOf(reader.found, nodes !== undefined),
+      verdict: verdictOf([...lines, ...reader.found], nodes !== undefined),
+      ids: reader.ids,
+    };
   } catch (error) {
     if (error instanceof Unreadable) return unreadable(error.detail);
     // A stack that ran out, or anything else: the file is refused, never the reader.

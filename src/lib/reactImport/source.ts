@@ -135,8 +135,30 @@ const failedReport = (): ImportReport => ({
   verdict: 'not-imported',
 });
 
+/**
+ * Options as plain values, read once. A host passes what it was posted, which can be `null` or an object whose
+ * getters throw, and that must cost this import its options, never the promise a file never breaks. Excerpts stay
+ * off when the options cannot be read, since a developer may have asked for them to be left out.
+ */
+function readOptions(given: unknown): ImportOptions {
+  if (given === null || given === undefined) return {};
+  try {
+    const { excerpts, breakpoints, systemDark, atomTable } = given as ImportOptions;
+    const ids = breakpoints && typeof breakpoints.tablet === 'string' && typeof breakpoints.mobile === 'string' ? { tablet: breakpoints.tablet, mobile: breakpoints.mobile } : undefined;
+    return {
+      ...(typeof excerpts === 'boolean' ? { excerpts } : {}),
+      ...(ids ? { breakpoints: ids } : {}),
+      ...(systemDark === true ? { systemDark: true } : {}),
+      ...(atomTable === true ? { atomTable: true } : {}),
+    };
+  } catch {
+    return { excerpts: false };
+  }
+}
+
 /** The conversion, unless a host's deadline ends it first. See the head of this file. */
-export async function importSource(files: readonly SourceInput[], options: ImportOptions = {}): Promise<ImportOutcome> {
+export async function importSource(files: readonly SourceInput[], given: ImportOptions | null = {}): Promise<ImportOutcome> {
+  const options = readOptions(given);
   const ledger = new Ledger(options.excerpts ?? true);
   const atoms = () => (options.atomTable ? { atoms: ledger.atomTable() } : {});
   try {

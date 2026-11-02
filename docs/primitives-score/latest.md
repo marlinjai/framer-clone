@@ -83,6 +83,43 @@ Each fixture is a page written against the browser's own defaults, so its replic
 | radix-tabs | @radix-ui/react-tabs | fail | 9/9 | 0/9 | 9/9 | 0/6 | 0/3 | mixed-text, behaviour-state |
 | radix-dialog | @radix-ui/react-dialog | fail | 3/9 | 3/9 | 3/9 | 0/6 | 0/3 | behaviour-state |
 
+## React import
+
+Real components through the importer (`src/lib/reactImport`) and the one door a person uses, `readBundle`, rendered as a visitor gets them, next to the real component running in a real Tailwind page, in Chromium, at the three default breakpoints and in each scripted state. Every fixture runs twice: under the repo's theme, read from `src/app/globals.css`, and under `test/score/import/foreign-theme.css`, where every token differs, so a token the importer forgot cannot hide behind the editor's own value. The importer is given the component's own file and the theme, never the usage: entries are a later slice. **Conservation:** an independent walker lists every construct with its range, and each must be on exactly one line that holds it. **Honesty:** a run whose verdict claims an import must differ in nothing no line of its report names, by the excuse table below. **Coverage:** atoms converted or adapted, without AI. **Parity:** every check passes. A component that reads "not imported" is honest by definition, and its parity says how far it is.
+
+| Measure | Result |
+|---|---|
+| Honesty: runs that claim an import with a difference no line names | 0 of 14 |
+| Conservation: runs with a construct not on exactly one line | 0 of 14 |
+| Parity: runs passing every check | 4 of 14 |
+| Forged bundles read as what they are | 48 of 48 |
+| Mutation run: inserted constructs named at their own line, and conserved | 61 and 61 of 61 |
+| The foreign theme differs from the repo's in every token | yes |
+| Honesty sees tokens removed from a real import | yes |
+
+| Fixture | Theme | Verdict | Coverage | Atoms left | Conservation | Honesty | Parity | Screenshots | Computed styles | Accessibility tree | Interactions | Waits on |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| button | repo | not-imported | 3.4 percent | 144 of 149 | pass | pass | fail | 0/9 | 0/9 | 0/9 | 0/6 | cva tables and props (import-props), Slot and asChild, and children through the entry (import-entries) |
+| button | foreign | not-imported | 3.4 percent | 144 of 149 | pass | pass | fail | 0/9 | 0/9 | 0/9 | 0/6 | cva tables and props (import-props), Slot and asChild, and children through the entry (import-entries) |
+| input | repo | not-imported | 30.9 percent | 38 of 55 | pass | pass | fail | 6/6 | 6/6 | 0/6 | 0/3 | props and the rest spread (import-props), and the placeholder through the entry (import-entries) |
+| input | foreign | not-imported | 30.9 percent | 38 of 55 | pass | pass | fail | 6/6 | 0/6 | 0/6 | 0/3 | props and the rest spread (import-props), and the placeholder through the entry (import-entries) |
+| label | repo | not-imported | 8.6 percent | 53 of 58 | pass | pass | fail | 3/3 | 0/3 | 0/3 | 0/0 | the Radix label (import-radix) and props (import-props) |
+| label | foreign | not-imported | 8.6 percent | 53 of 58 | pass | pass | fail | 3/3 | 0/3 | 0/3 | 0/0 | the Radix label (import-radix) and props (import-props) |
+| separator | repo | not-imported | 6.9 percent | 67 of 72 | pass | pass | fail | 1/3 | 0/3 | 3/3 | 0/0 | the Radix separator (import-radix) and props with defaults (import-props) |
+| separator | foreign | not-imported | 6.9 percent | 67 of 72 | pass | pass | fail | 1/3 | 0/3 | 3/3 | 0/0 | the Radix separator (import-radix) and props with defaults (import-props) |
+| static-badge | repo | not-imported | 100.0 percent | 0 of 34 | pass | pass | pass | 3/3 | 3/3 | 3/3 | 0/0 |  |
+| static-badge | foreign | not-imported | 100.0 percent | 0 of 34 | pass | pass | pass | 3/3 | 3/3 | 3/3 | 0/0 |  |
+| static-card | repo | not-imported | 100.0 percent | 0 of 43 | pass | pass | pass | 9/9 | 9/9 | 9/9 | 6/6 |  |
+| static-card | foreign | not-imported | 100.0 percent | 0 of 43 | pass | pass | pass | 9/9 | 9/9 | 9/9 | 6/6 |  |
+| refusals | repo | not-imported | 23.4 percent | 36 of 47 | pass | pass | fail | 3/3 | 0/3 | 3/3 | 0/0 | nothing: it exists to be refused, with a line for each refusal |
+| refusals | foreign | not-imported | 23.4 percent | 36 of 47 | pass | pass | fail | 0/3 | 0/3 | 3/3 | 0/0 | nothing: it exists to be refused, with a line for each refusal |
+
+What a line of the report excuses, for Honesty. Anything else that differs is a Honesty failure.
+
+| Line | Why it names these differences |
+|---|---|
+| Base styles stay with the page, such as the text colour. | The source's base gives `body` its text colour and font, which stay with the page: what the import inherits from the page without writing it itself. |
+
 ## BusBasis pages (held out)
 
 The stop condition of the primitive stream is that every BusBasis page passes, so these are real pages of basiscampberlin.de frozen from the live site, not small fixtures, and 9 more page types are listed below as not captured. Each tree is lifted mechanically by `test/score/busbasis/lift.ts`, one rule set for all pages, with no page-specific code. The checks are the corpus checks, except that custom properties are not compared (their effect shows in what reads them) and images and video are same-size placeholders, so image content is not compared. A page also fails on everything under "needs": a page that matches pixel for pixel is not that page while what it exists for does not work. The files are held out: nothing in `test/score/corpus/busbasis` changes without a new capture, and the run stops when a hash does not match.
@@ -91,7 +128,7 @@ A BusBasis page brings its own base: the storefront's Tailwind reset is in its s
 
 | Page type | Source | Result | Screenshots | Computed styles | Accessibility tree | Hover | Worst pixels differing | Worst elements differing | Default base | Blocked by |
 |---|---|---|---|---|---|---|---|---|---|---|
-| home | https://basiscampberlin.de/de, captured 2026-11-02, answered 200 | fail | 4/4 | 0/4 | 0/4 | 0/1 | 0.0 percent | 1 of 531 | 0/3 | mobile menu opens; cart count and dropdown; legal modals open from the footer; styles on html; contact form sends; map embed; hero video |
+| home | https://basiscampberlin.de/de, captured 2026-11-02, answered 200 | fail | 0/4 | 0/4 | 0/4 | 0/1 | 0.9 percent | 10 of 531 | 0/3 | mobile menu opens; cart count and dropdown; legal modals open from the footer; styles on html; contact form sends; map embed; hero video |
 | product list | https://basiscampberlin.de/de/store, captured 2026-11-02, answered 200 | fail | 4/4 | 4/4 | 4/4 | 1/1 | 0.0 percent | 0 of 753 | 0/3 | mobile menu opens; cart count and dropdown; legal modals open from the footer; styles on html; faceted search; nested categories; live product list |
 | search | https://basiscampberlin.de/de/store?q=bremse, captured 2026-11-02, answered 200 | fail | 4/4 | 4/4 | 4/4 | 1/1 | 0.0 percent | 0 of 760 | 0/3 | mobile menu opens; cart count and dropdown; legal modals open from the footer; styles on html; faceted search; live product list |
 | category | https://basiscampberlin.de/de/categories/mercedes-benz-baumuster-309-310-313-duedos-motor, captured 2026-11-02, answered 200 | fail | 4/4 | 4/4 | 4/4 | 1/1 | 0.0 percent | 0 of 278 | 0/3 | mobile menu opens; cart count and dropdown; legal modals open from the footer; styles on html; nested categories; live product list |
@@ -113,6 +150,7 @@ Gaps on these pages, most pages first. "Needs" counts pages a missing feature st
 | `page-level-css` | 14 | 14 | 0 | CSS that applies to the document rather than a node (view transitions, `@page`, `@layer`): the route owns `html`. A rule on `:root` on the page root is the one form held today. |
 | `behaviour-state` | 13 | 28 | 0 | Behaviour and state: no way to say that one element changes another. |
 | `shop-feature-missing` | 13 | 26 | 0 | A real BusBasis page depends on a shop feature that is not built: the page stays failed however close its pixels are. |
+| `published-base` | 1 | 0 | 36 | The published route ships the root layout's sheet to every visitor (Tailwind's reset, the theme, the base layer), and the page base of a site takes that out again. A check here fails with that sheet in place and passes on a page without it, so the page base left something behind. Measured, not guessed: the same replica matches its original on a page without the base. |
 | `blocked-embedded-content` | 1 | 1 | 4 | What the render gate refuses (blockedNodes.ts and renderVocabulary.ts): embedded content (iframe, object, embed, ...), although these are ordinary content elements, and attributes that act by themselves (ping, the shadow root ones). |
 | `harness-limit` | 1 | 1 | 0 | Not a product gap: the harness cannot yet decide this cell, so it is not counted as a pass. |
 
@@ -155,7 +193,7 @@ Cost is matrix cells, failed corpus checks and failed round-trip cases added up,
 | `ai-tag-allowlist` | 116 | 116 | 0 | 0 | 0 | none | The AI generator validator refuses this tag on purpose: blocked in every renderer, or a raw form control, which only works through the form presets. |
 | `reusable-components` | 111 | 111 | 0 | 0 | 0 | none | A promise of the reusable component format (an input type, a placement, a state or an interaction) that this surface does not keep yet. |
 | `panel-no-tag-choice` | 92 | 92 | 0 | 0 | 0 | none | The tag picker of the Custom section does not offer SVG and MathML elements. |
-| `blocked-embedded-content` | 87 | 78 | 9 | 0 | 1 | none | What the render gate refuses (blockedNodes.ts and renderVocabulary.ts): embedded content (iframe, object, embed, ...), although these are ordinary content elements, and attributes that act by themselves (ping, the shadow root ones). |
+| `blocked-embedded-content` | 82 | 78 | 4 | 0 | 1 | none | What the render gate refuses (blockedNodes.ts and renderVocabulary.ts): embedded content (iframe, object, embed, ...), although these are ordinary content elements, and attributes that act by themselves (ping, the shadow root ones). |
 | `behaviour-state` | 77 | 18 | 59 | 0 | 3 | radix-dialog | Behaviour and state: no way to say that one element changes another. |
 | `page-level-css` | 66 | 66 | 0 | 0 | 0 | none | CSS that applies to the document rather than a node (view transitions, `@page`, `@layer`): the route owns `html`. A rule on `:root` on the page root is the one form held today. |
 | `attribute-read-as-style` | 52 | 52 | 0 | 0 | 0 | none | An HTML attribute whose name is also a CSS property (width, height) is read as a style, so the editor loses the attribute: a canvas bitmap size or an image size hint is not the same as a declaration. |
@@ -163,6 +201,7 @@ Cost is matrix cells, failed corpus checks and failed round-trip cases added up,
 | `ai-rule-refused` | 44 | 44 | 0 | 0 | 0 | none | A rule that reads what a visitor does or looks beyond its node: stored and rendered, but refused to the generator on purpose, because a generation must not be able to report a visitor. See "AI output" in the selector styling plan. |
 | `react-attribute-handling` | 22 | 22 | 0 | 0 | 0 | none | React drops or rewrites an attribute that is valid HTML. |
 | `canvas-editor-context` | 10 | 10 | 0 | 0 | 0 | none | The contract passes on the published page, but the mounted editor changes the outcome: Space pans, a link does not navigate, and the editor's own main element stops a header inside it being a banner. Closing it takes an interact mode on the canvas. |
+| `published-base` | 9 | 0 | 9 | 0 | 1 | none | The published route ships the root layout's sheet to every visitor (Tailwind's reset, the theme, the base layer), and the page base of a site takes that out again. A check here fails with that sheet in place and passes on a page without it, so the page base left something behind. Measured, not guessed: the same replica matches its original on a page without the base. |
 | `import-dynamic-logic` | 7 | 0 | 0 | 7 | 0 | none | JSX that is a program, not markup: reported as left over by the static import, as the plan requires. |
 | `selector-styles` | 6 | 0 | 6 | 0 | 1 | none | CSS that needs a selector (states, pseudo-elements, structural selectors): a node only holds inline declarations, so no rule can be written. |
 | `mixed-text` | 3 | 0 | 3 | 0 | 1 | none | Text mixed with elements: text beside an element is lost or lands out of order. |
@@ -180,7 +219,7 @@ Cost is matrix cells, failed corpus checks and failed round-trip cases added up,
 - **WAI-ARIA conformance.** A contract is the primary keyboard path of a pattern, not its whole page in the Guide.
 - **Page-level items:** head tags, design tokens and page-wide scripts (gap 5 of the plan) have no rows, and script and style elements are excluded with a reason.
 - **Script on the BusBasis pages.** A frozen page holds no script, so menus, modals, filters and the gallery cannot run on the original. They stand under "needs" as failures rather than as compared states. A page is frozen in one state: logged out, no cart, the first visit.
-- **React import beyond static JSX.** Tailwind classes, props as inputs and the AI rebuild step of the plan are not built.
+- **React import beyond static JSX and Tailwind.** Props as inputs, `cva` tables, entries, hooks, Radix and the AI rebuild step of the plan are not built, so the real components read "not imported", honestly. The import score runs in Chromium only, on the default frames, and with no dark mode state.
 
 ## Excluded entries
 

@@ -52,6 +52,41 @@ describe('what it finds', () => {
   });
 });
 
+describe('a key that touches another word (review of slice 4, U1)', () => {
+  const live = () => fake(['sk', 'live'].join('_'), '_');
+  it.each<[string, (key: string) => string]>([
+    ['after a dash', (key) => `token-${key}`],
+    ['after an underscore', (key) => `api_${key}`],
+    ['after a letter', (key) => `K${key}`],
+    ['as part of an attribute name', (key) => `data-${key}`],
+    ['between words', (key) => `my-${key}-end`],
+  ])('%s', (_name, wrap) => {
+    expect(findSecret(wrap(live()))).toBe('vendor-key');
+  });
+
+  it.each<[string, () => string]>([
+    ['a map service secret token', () => `${'s'}k.${encoded({ u: hex(4), a: hex(6) })}.${hex(12)}`],
+    ['an OAuth client secret', () => `${'GOC'}SPX-${hex(14)}`],
+    ['a messaging API key', () => `${'S'}K${hex(16)}`],
+    ['a cloud secret access key, which has a slash', () => `${Buffer.from(randomBytes(30)).toString('base64').slice(0, 19)}/${'Ab3'}${hex(9)}`.padEnd(40, 'Q').slice(0, 40)],
+    ['a cloud secret access key beside its name', () => `aws_secret_access_key = ${`Ab3${upper(20)}${hex(10)}`.slice(0, 40)}`],
+    ['a token as the user of an address', () => `https://${hex(16)}@code.example.test/repo.git`],
+  ])('%s', (_name, make) => {
+    expect(findSecret(make())).toBeDefined();
+  });
+
+  it.each([
+    'store_customer_identifier_value_kept',
+    'risk-assessment-for-the-quarterly-review-meeting',
+    'TASK0123456789abcdef0123456789abcdef',
+    `sha1 ${'a1b2c3d4e5'.repeat(4)}`,
+    `data:image/png;base64,${Buffer.from(randomBytes(300)).toString('base64')}`,
+    'https://username@example.test/',
+  ])('leaves alone %s', (text) => {
+    expect(findSecret(text)).toBeUndefined();
+  });
+});
+
 describe('what it leaves alone', () => {
   it.each([
     'inline-flex items-center gap-2 rounded-md bg-primary text-primary-foreground [&_svg]:size-4',
