@@ -14,8 +14,8 @@ import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Every run is one bash plus dozens of short processes, and the drop tests run the script up to six
-// times, so a test costs what process creation costs at that moment: 3.9 s for the slowest at load 35
-// on 14 cores, about 0.65 s a run, and above the 5 s default whenever the machine is busier.
+// times, so a test costs what process creation costs at that moment: 4.9 s for the slowest in a full
+// run at load 40 on 14 cores, with the script already trimmed, against the 5 s default.
 vi.setConfig({ testTimeout: 30_000 });
 
 const SCRIPT = resolve(__dirname, '../../../../deploy/custom-domains/sync-traefik.sh');
