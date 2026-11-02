@@ -279,7 +279,9 @@ describe.each(ENGINES)('in %s', (name, engine) => {
           .poll(
             async () => {
               if ((await el('city-field', target).inputValue()) !== 'Zurich' && (await shown('city-option-1', target))) {
-                await el('city-option-1', target).tap({ timeout: 1000 }).catch(() => undefined);
+                // A touch at the option's current centre, so no actionability wait can swallow the tap.
+                const box = await el('city-option-1', target).boundingBox();
+                if (box) await target.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
               }
               return el('city-field', target).inputValue();
             },
