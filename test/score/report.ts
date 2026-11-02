@@ -341,7 +341,8 @@ export function renderReport(score: Score): string {
       ['Instrument', 'Score'],
       [
         ...SURFACES.map((s) => [`Matrix: ${SURFACE_LABEL[s]}`, ratio(matrix.surfaces[s])]),
-        ['Parity corpus: fixtures that pass entirely', ratio({ pass: corpus.passed, total: corpus.total })],
+        ['Parity corpus: fixtures that pass entirely, on a site with the browser page base', ratio({ pass: corpus.passed, total: corpus.total })],
+        ['Parity corpus: fixtures whose untouched page matches on the default page base', ratio({ pass: corpus.fixtures.filter((f) => f.defaultBase && f.defaultBase.pass === f.defaultBase.total).length, total: corpus.total })],
         ['BusBasis pages: held-out real pages that pass entirely', ratio({ pass: busbasis.passed, total: busbasis.total })],
         ['Round trip: all cases', ratio({ pass: rtPass, total: rtTotal })],
       ],
@@ -382,11 +383,11 @@ export function renderReport(score: Score): string {
 
   push('## Parity corpus');
   push(
-    'Each fixture is an original next to the closest node tree, rendered through the published path, in Playwright\'s Chromium, at the three default breakpoints and in each scripted state. A check fails on more than 0.1 percent of pixels differing (per-pixel threshold 0.1), any computed style difference on matched elements including `::before` and `::after` content, or any difference in the accessibility tree. A fixture passes only when every check passes. The interaction check is not independent: it passes when the other three pass in that scripted state, so one failed state counts up to four times in the check totals and in a gap\'s cost. A check that fails on the published page but passes on the same output without the page base goes to `published-base`. Any other difference goes to a gap that comes from the state it appeared in or from the fixture\'s declared purpose, except that text missing from an untouched page is `mixed-text` and a differing `::before` or `::after` is `selector-styles`.',
+    'Each fixture is a page written against the browser\'s own defaults, so its replica sits on a site that chose that base (Page base in Site settings, `src/lib/site/pageBase.ts`), on the same sheets a visitor of that site gets. "Default base" is the same replica on the default page base, where the reset stands: its untouched page at each breakpoint, all three checks at once. No author could close that column on the nodes, because most of what differs is `tab-size`, font smoothing and the border style and colour of every borderless element. It is reported and not ratcheted. Each fixture is an original next to the closest node tree, rendered through the published path, in Playwright\'s Chromium, at the three default breakpoints and in each scripted state. A check fails on more than 0.1 percent of pixels differing (per-pixel threshold 0.1), any computed style difference on matched elements including `::before` and `::after` content, or any difference in the accessibility tree. A fixture passes only when every check passes. The interaction check is not independent: it passes when the other three pass in that scripted state, so one failed state counts up to four times in the check totals and in a gap\'s cost. A check that fails on the published page but passes on the same output with no root layout sheet at all goes to `published-base`. Any other difference goes to a gap that comes from the state it appeared in or from the fixture\'s declared purpose, except that text missing from an untouched page is `mixed-text` and a differing `::before` or `::after` is `selector-styles`.',
   );
   push(
     table(
-      ['Fixture', 'Source', 'Result', 'Screenshots', 'Computed styles', 'Accessibility tree', 'Interactions', 'Gaps'],
+      ['Fixture', 'Source', 'Result', 'Screenshots', 'Computed styles', 'Accessibility tree', 'Interactions', 'Default base', 'Gaps'],
       corpus.fixtures.map((f) => [
         f.fixture,
         escapeCell(f.source),
@@ -395,6 +396,7 @@ export function renderReport(score: Score): string {
         `${f.checks['computed-styles'].pass}/${f.checks['computed-styles'].total}`,
         `${f.checks['accessibility-tree'].pass}/${f.checks['accessibility-tree'].total}`,
         `${f.checks.interaction.pass}/${f.checks.interaction.total}`,
+        f.defaultBase ? `${f.defaultBase.pass}/${f.defaultBase.total}` : 'not measured',
         [...new Set(f.failures.map((x) => x.gap))].join(', ') || 'none',
       ]),
     ),
@@ -478,7 +480,7 @@ export function renderReport(score: Score): string {
     '- **Handlers on `body` and `window`** (`onbeforeunload`, `onhashchange`, ...), because `body` is excluded. An event row is one stored action run once from one real cause, in Chromium, on the published path with the runtime bundled in. On the canvas and in the panel it still asks the old question until slices B10 and B11.',
     '- **Canvas markup beyond the patterns.** Only the WAI-ARIA rows run on the mounted editor, and only by keyboard: their contracts never click, so a click that selects shows up through Enter and Space. Everything else in the canvas column is rendered to markup. `canvasRules.score.ts` runs stored rules on the mounted editor with a real pointer, as a gate that counts for no row, so a canvas cell for a rule says the text is in the sheet and that gate says what the text does. Dragging under a rule is not tested.',
     '- **Whether a panel control is any good.** A key counts as editable when a control changed it, whatever range or units that control offers. Only the properties panel and the palette are covered: the quick toolbar, context menus and the Layers panel were searched for tag changes and none found, not driven.',
-    '- **The whole published page.** The corpus uses `applyResponsiveStyles` and `renderComponentNode`, without `hydrateBindings`, effects, the sticky bar, or the consent and font wrappers, and only in Chromium. The page around it is real: the sheet of a production build (`test/score/data/published-base.css`, refreshed by `pnpm score:refresh-base`). Its utilities also follow classes in `test` and `docs`, which the deployed image does not scan, so it can hold a few the live sheet lacks.',
+    '- **The whole published page.** The corpus uses `applyResponsiveStyles` and `renderComponentNode`, without `hydrateBindings`, effects, the sticky bar, or the consent and font wrappers, and only in Chromium. The page around it is real: the sheet of a production build (`test/score/data/published-base.css`, refreshed by `pnpm score:refresh-base`), and the mounted editor sits on the same sheet. Its utilities also follow classes in `test` and `docs`, which the deployed image does not scan, so it can hold a few the live sheet lacks.',
     '- **WAI-ARIA conformance.** A contract is the primary keyboard path of a pattern, not its whole page in the Guide.',
     '- **Page-level items:** head tags, design tokens and page-wide scripts (gap 5 of the plan) have no rows, and script and style elements are excluded with a reason.',
     '- **Script on the BusBasis pages.** A frozen page holds no script, so menus, modals, filters and the gallery cannot run on the original. They stand under "needs" as failures rather than as compared states. A page is frozen in one state: logged out, no cart, the first visit.',

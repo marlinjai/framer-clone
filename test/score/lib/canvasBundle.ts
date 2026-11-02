@@ -10,6 +10,7 @@ import type { Browser, Page } from 'playwright';
 import { ComponentTypeEnum } from '@/models/ComponentModel';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { OUT_DIR } from './io';
+import { readPublishedBase } from './publishedBase';
 
 const ROOT = process.cwd();
 
@@ -94,10 +95,17 @@ export async function openEditor(browser: Browser, bundle: string, contextOption
   page.on('pageerror', (error) => crashes.push(error.message));
   await page.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
   await page.goto('http://canvas-probe.local/');
-  // The bundle leaves Tailwind out. This one utility decides what the pointer hits: the
-  // selection overlay carries it, and without it a second click would land on the overlay.
-  await page.setContent('<!doctype html><html><head><meta charset="utf-8"><style>.pointer-events-none{pointer-events:none}</style></head><body><div id="root"></div></body></html>');
+  // The bundle leaves CSS out, and the real editor sits under the same root layout as a
+  // published page. Without this sheet a comparison would hold a page with a reset
+  // against one without, and the overlays would take the pointer: their utilities are here.
+  const { css, meta } = readPublishedBase();
+  await page.setContent(`<!doctype html><html lang="en" class="${meta.htmlClass}"><head><meta charset="utf-8"><style>${css}</style></head><body class="${meta.bodyClass}"><div id="root"></div></body></html>`);
   await page.addScriptTag({ path: bundle });
+  // The frames open under the left sidebar, as they do at this window size. A person
+  // pans them out of it first, and so does a contract that clicks.
+  await page.locator('[data-ground]').first().waitFor({ state: 'attached' });
+  await page.mouse.move(1200, 500);
+  await page.mouse.wheel(-280, 0);
   return { page, crashes };
 }
 

@@ -24,6 +24,12 @@ describe('normalizeSiteSettings', () => {
     }
   });
 
+  it('keeps every stored site on the reset base, and reads only a known base', () => {
+    expect(normalizeSiteSettings({}).pageBase).toBe('reset');
+    expect(normalizeSiteSettings({ pageBase: 'browser' }).pageBase).toBe('browser');
+    for (const pageBase of ['none', '', 1, null]) expect(normalizeSiteSettings({ pageBase }).pageBase).toBe('reset');
+  });
+
   it('defaults the language to en (existing projects keep what they always declared)', () => {
     expect(normalizeSiteSettings({}).language).toBe('en');
     expect(normalizeSiteSettings({ language: '   ' }).language).toBe('en');

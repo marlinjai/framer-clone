@@ -330,6 +330,7 @@ const PreviewShell = observer(({ missingPageId, onClose }: PreviewShellProps = {
             height={0}
             fill
             smoothScroll={project?.site.smoothScroll ?? false}
+            pageBase={project?.site.pageBase}
             onSitePath={onSitePath}
           />
         </div>
@@ -350,6 +351,7 @@ const PreviewShell = observer(({ missingPageId, onClose }: PreviewShellProps = {
                 width={width}
                 height={height}
                 smoothScroll={project?.site.smoothScroll ?? false}
+                pageBase={project?.site.pageBase}
                 onSitePath={onSitePath}
               />
               <ResizeGutter

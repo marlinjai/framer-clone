@@ -1,11 +1,11 @@
 {
-  "generatedAt": "2026-11-02T06:16:25.247Z",
+  "generatedAt": "2026-11-02T06:43:42.627Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 284,
+  "durationSeconds": 275,
   "matrix": {
     "surfaces": {
       "format": {
@@ -5107,15 +5107,15 @@
     }
   },
   "corpus": {
-    "passed": 0,
+    "passed": 11,
     "total": 14,
     "checks": {
       "screenshot": {
-        "pass": 51,
+        "pass": 77,
         "total": 90
       },
       "computed-styles": {
-        "pass": 0,
+        "pass": 69,
         "total": 90
       },
       "accessibility-tree": {
@@ -5123,7 +5123,7 @@
         "total": 90
       },
       "interaction": {
-        "pass": 0,
+        "pass": 27,
         "total": 48
       }
     },
@@ -5132,14 +5132,14 @@
         "fixture": "mixed-text",
         "group": "edge",
         "source": "hand-written",
-        "pass": false,
+        "pass": true,
         "checks": {
           "screenshot": {
-            "pass": 0,
+            "pass": 3,
             "total": 3
           },
           "computed-styles": {
-            "pass": 0,
+            "pass": 3,
             "total": 3
           },
           "accessibility-tree": {
@@ -5151,70 +5151,25 @@
             "total": 0
           }
         },
-        "failures": [
-          {
-            "fixture": "mixed-text",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "published-base",
-            "detail": "0.46 percent of pixels differ"
-          },
-          {
-            "fixture": "mixed-text",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "274 differences, first: page: block-size 194.875px became 144px"
-          },
-          {
-            "fixture": "mixed-text",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "published-base",
-            "detail": "0.59 percent of pixels differ"
-          },
-          {
-            "fixture": "mixed-text",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "274 differences, first: page: block-size 194.875px became 144px"
-          },
-          {
-            "fixture": "mixed-text",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "published-base",
-            "detail": "1.87 percent of pixels differ"
-          },
-          {
-            "fixture": "mixed-text",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "268 differences, first: page: block-size 218.875px became 168px"
-          }
-        ],
-        "notMeasured": []
+        "failures": [],
+        "notMeasured": [],
+        "defaultBase": {
+          "pass": 0,
+          "total": 3
+        }
       },
       {
         "fixture": "hover-focus",
         "group": "edge",
         "source": "hand-written",
-        "pass": false,
+        "pass": true,
         "checks": {
           "screenshot": {
             "pass": 15,
             "total": 15
           },
           "computed-styles": {
-            "pass": 0,
+            "pass": 15,
             "total": 15
           },
           "accessibility-tree": {
@@ -5222,242 +5177,29 @@
             "total": 15
           },
           "interaction": {
-            "pass": 0,
+            "pass": 12,
             "total": 12
           }
         },
-        "failures": [
-          {
-            "fixture": "hover-focus",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "51 differences, first: page: block-size 48px became 96px"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Desktop",
-            "state": "hover button",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "51 differences, first: page: block-size 48px became 96px"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Desktop",
-            "state": "hover button",
-            "check": "interaction",
-            "gap": "published-base",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Desktop",
-            "state": "pressed button",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "51 differences, first: page: block-size 48px became 96px"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Desktop",
-            "state": "pressed button",
-            "check": "interaction",
-            "gap": "published-base",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Desktop",
-            "state": "keyboard focus button",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "50 differences, first: page: block-size 48px became 96px"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Desktop",
-            "state": "keyboard focus button",
-            "check": "interaction",
-            "gap": "published-base",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Desktop",
-            "state": "focus field",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "51 differences, first: page: block-size 48px became 96px"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Desktop",
-            "state": "focus field",
-            "check": "interaction",
-            "gap": "published-base",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "51 differences, first: page: block-size 48px became 96px"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Tablet",
-            "state": "hover button",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "51 differences, first: page: block-size 48px became 96px"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Tablet",
-            "state": "hover button",
-            "check": "interaction",
-            "gap": "published-base",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Tablet",
-            "state": "pressed button",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "51 differences, first: page: block-size 48px became 96px"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Tablet",
-            "state": "pressed button",
-            "check": "interaction",
-            "gap": "published-base",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Tablet",
-            "state": "keyboard focus button",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "50 differences, first: page: block-size 48px became 96px"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Tablet",
-            "state": "keyboard focus button",
-            "check": "interaction",
-            "gap": "published-base",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Tablet",
-            "state": "focus field",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "51 differences, first: page: block-size 48px became 96px"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Tablet",
-            "state": "focus field",
-            "check": "interaction",
-            "gap": "published-base",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "51 differences, first: page: block-size 48px became 96px"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Mobile",
-            "state": "hover button",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "51 differences, first: page: block-size 48px became 96px"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Mobile",
-            "state": "hover button",
-            "check": "interaction",
-            "gap": "published-base",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Mobile",
-            "state": "pressed button",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "51 differences, first: page: block-size 48px became 96px"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Mobile",
-            "state": "pressed button",
-            "check": "interaction",
-            "gap": "published-base",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Mobile",
-            "state": "keyboard focus button",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "50 differences, first: page: block-size 48px became 96px"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Mobile",
-            "state": "keyboard focus button",
-            "check": "interaction",
-            "gap": "published-base",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Mobile",
-            "state": "focus field",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "51 differences, first: page: block-size 48px became 96px"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Mobile",
-            "state": "focus field",
-            "check": "interaction",
-            "gap": "published-base",
-            "detail": "the replica did not end up where the original did"
-          }
-        ],
-        "notMeasured": []
+        "failures": [],
+        "notMeasured": [],
+        "defaultBase": {
+          "pass": 0,
+          "total": 3
+        }
       },
       {
         "fixture": "keyframes",
         "group": "edge",
         "source": "hand-written",
-        "pass": false,
+        "pass": true,
         "checks": {
           "screenshot": {
             "pass": 6,
             "total": 6
           },
           "computed-styles": {
-            "pass": 0,
+            "pass": 6,
             "total": 6
           },
           "accessibility-tree": {
@@ -5465,98 +5207,29 @@
             "total": 6
           },
           "interaction": {
-            "pass": 0,
+            "pass": 3,
             "total": 3
           }
         },
-        "failures": [
-          {
-            "fixture": "keyframes",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "64 differences, first: page: block-size 80px became 128px"
-          },
-          {
-            "fixture": "keyframes",
-            "viewport": "Desktop",
-            "state": "half way through the animation",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "64 differences, first: page: block-size 80px became 128px"
-          },
-          {
-            "fixture": "keyframes",
-            "viewport": "Desktop",
-            "state": "half way through the animation",
-            "check": "interaction",
-            "gap": "published-base",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "keyframes",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "64 differences, first: page: block-size 80px became 128px"
-          },
-          {
-            "fixture": "keyframes",
-            "viewport": "Tablet",
-            "state": "half way through the animation",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "64 differences, first: page: block-size 80px became 128px"
-          },
-          {
-            "fixture": "keyframes",
-            "viewport": "Tablet",
-            "state": "half way through the animation",
-            "check": "interaction",
-            "gap": "published-base",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "keyframes",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "64 differences, first: page: block-size 80px became 128px"
-          },
-          {
-            "fixture": "keyframes",
-            "viewport": "Mobile",
-            "state": "half way through the animation",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "64 differences, first: page: block-size 80px became 128px"
-          },
-          {
-            "fixture": "keyframes",
-            "viewport": "Mobile",
-            "state": "half way through the animation",
-            "check": "interaction",
-            "gap": "published-base",
-            "detail": "the replica did not end up where the original did"
-          }
-        ],
-        "notMeasured": []
+        "failures": [],
+        "notMeasured": [],
+        "defaultBase": {
+          "pass": 0,
+          "total": 3
+        }
       },
       {
         "fixture": "container-query",
         "group": "edge",
         "source": "hand-written",
-        "pass": false,
+        "pass": true,
         "checks": {
           "screenshot": {
-            "pass": 0,
+            "pass": 3,
             "total": 3
           },
           "computed-styles": {
-            "pass": 0,
+            "pass": 3,
             "total": 3
           },
           "accessibility-tree": {
@@ -5568,70 +5241,25 @@
             "total": 0
           }
         },
-        "failures": [
-          {
-            "fixture": "container-query",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "published-base",
-            "detail": "0.16 percent of pixels differ"
-          },
-          {
-            "fixture": "container-query",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "163 differences, first: page: block-size 62px became 110px"
-          },
-          {
-            "fixture": "container-query",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "published-base",
-            "detail": "0.21 percent of pixels differ"
-          },
-          {
-            "fixture": "container-query",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "163 differences, first: page: block-size 62px became 110px"
-          },
-          {
-            "fixture": "container-query",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "published-base",
-            "detail": "0.22 percent of pixels differ"
-          },
-          {
-            "fixture": "container-query",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "159 differences, first: page: block-size 94px became 142px"
-          }
-        ],
-        "notMeasured": []
+        "failures": [],
+        "notMeasured": [],
+        "defaultBase": {
+          "pass": 0,
+          "total": 3
+        }
       },
       {
         "fixture": "print-styles",
         "group": "edge",
         "source": "hand-written",
-        "pass": false,
+        "pass": true,
         "checks": {
           "screenshot": {
-            "pass": 5,
+            "pass": 6,
             "total": 6
           },
           "computed-styles": {
-            "pass": 0,
+            "pass": 6,
             "total": 6
           },
           "accessibility-tree": {
@@ -5639,106 +5267,29 @@
             "total": 6
           },
           "interaction": {
-            "pass": 0,
+            "pass": 3,
             "total": 3
           }
         },
-        "failures": [
-          {
-            "fixture": "print-styles",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "74 differences, first: page: block-size 88px became 136px"
-          },
-          {
-            "fixture": "print-styles",
-            "viewport": "Desktop",
-            "state": "print",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "66 differences, first: page: border-block-end-color rgb(0, 0, 0) became oklch(0.92 0.004 286.32)"
-          },
-          {
-            "fixture": "print-styles",
-            "viewport": "Desktop",
-            "state": "print",
-            "check": "interaction",
-            "gap": "published-base",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "print-styles",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "74 differences, first: page: block-size 88px became 136px"
-          },
-          {
-            "fixture": "print-styles",
-            "viewport": "Tablet",
-            "state": "print",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "66 differences, first: page: border-block-end-color rgb(0, 0, 0) became oklch(0.92 0.004 286.32)"
-          },
-          {
-            "fixture": "print-styles",
-            "viewport": "Tablet",
-            "state": "print",
-            "check": "interaction",
-            "gap": "published-base",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "print-styles",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "published-base",
-            "detail": "0.11 percent of pixels differ"
-          },
-          {
-            "fixture": "print-styles",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "74 differences, first: page: block-size 88px became 136px"
-          },
-          {
-            "fixture": "print-styles",
-            "viewport": "Mobile",
-            "state": "print",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "66 differences, first: page: border-block-end-color rgb(0, 0, 0) became oklch(0.92 0.004 286.32)"
-          },
-          {
-            "fixture": "print-styles",
-            "viewport": "Mobile",
-            "state": "print",
-            "check": "interaction",
-            "gap": "published-base",
-            "detail": "the replica did not end up where the original did"
-          }
-        ],
-        "notMeasured": []
+        "failures": [],
+        "notMeasured": [],
+        "defaultBase": {
+          "pass": 0,
+          "total": 3
+        }
       },
       {
         "fixture": "pseudo-elements",
         "group": "edge",
         "source": "hand-written",
-        "pass": false,
+        "pass": true,
         "checks": {
           "screenshot": {
-            "pass": 0,
+            "pass": 3,
             "total": 3
           },
           "computed-styles": {
-            "pass": 0,
+            "pass": 3,
             "total": 3
           },
           "accessibility-tree": {
@@ -5750,70 +5301,25 @@
             "total": 0
           }
         },
-        "failures": [
-          {
-            "fixture": "pseudo-elements",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "published-base",
-            "detail": "0.13 percent of pixels differ"
-          },
-          {
-            "fixture": "pseudo-elements",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "158 differences, first: page: block-size 192px became 208px"
-          },
-          {
-            "fixture": "pseudo-elements",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "published-base",
-            "detail": "0.17 percent of pixels differ"
-          },
-          {
-            "fixture": "pseudo-elements",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "158 differences, first: page: block-size 192px became 208px"
-          },
-          {
-            "fixture": "pseudo-elements",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "published-base",
-            "detail": "0.52 percent of pixels differ"
-          },
-          {
-            "fixture": "pseudo-elements",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "158 differences, first: page: block-size 192px became 208px"
-          }
-        ],
-        "notMeasured": []
+        "failures": [],
+        "notMeasured": [],
+        "defaultBase": {
+          "pass": 0,
+          "total": 3
+        }
       },
       {
         "fixture": "responsive-layout",
         "group": "edge",
         "source": "hand-written: what the format claims to hold, so a passing control for the harness",
-        "pass": false,
+        "pass": true,
         "checks": {
           "screenshot": {
-            "pass": 0,
+            "pass": 3,
             "total": 3
           },
           "computed-styles": {
-            "pass": 0,
+            "pass": 3,
             "total": 3
           },
           "accessibility-tree": {
@@ -5825,70 +5331,25 @@
             "total": 0
           }
         },
-        "failures": [
-          {
-            "fixture": "responsive-layout",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "published-base",
-            "detail": "0.23 percent of pixels differ"
-          },
-          {
-            "fixture": "responsive-layout",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "284 differences, first: page: block-size 182px became 278px"
-          },
-          {
-            "fixture": "responsive-layout",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "published-base",
-            "detail": "0.30 percent of pixels differ"
-          },
-          {
-            "fixture": "responsive-layout",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "284 differences, first: page: block-size 316px became 380px"
-          },
-          {
-            "fixture": "responsive-layout",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "published-base",
-            "detail": "0.66 percent of pixels differ"
-          },
-          {
-            "fixture": "responsive-layout",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "284 differences, first: page: block-size 411.594px became 443.594px"
-          }
-        ],
-        "notMeasured": []
+        "failures": [],
+        "notMeasured": [],
+        "defaultBase": {
+          "pass": 0,
+          "total": 3
+        }
       },
       {
         "fixture": "stylesheet-values",
         "group": "edge",
         "source": "hand-written: ordinary CSS values on a node whose other styles are responsive",
-        "pass": false,
+        "pass": true,
         "checks": {
           "screenshot": {
-            "pass": 0,
+            "pass": 3,
             "total": 3
           },
           "computed-styles": {
-            "pass": 0,
+            "pass": 3,
             "total": 3
           },
           "accessibility-tree": {
@@ -5900,70 +5361,25 @@
             "total": 0
           }
         },
-        "failures": [
-          {
-            "fixture": "stylesheet-values",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "published-base",
-            "detail": "1.93 percent of pixels differ"
-          },
-          {
-            "fixture": "stylesheet-values",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "64 differences, first: hero: border-block-end-color rgb(0, 0, 0) became oklch(0.92 0.004 286.32)"
-          },
-          {
-            "fixture": "stylesheet-values",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "published-base",
-            "detail": "1.52 percent of pixels differ"
-          },
-          {
-            "fixture": "stylesheet-values",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "64 differences, first: hero: border-block-end-color rgb(0, 0, 0) became oklch(0.92 0.004 286.32)"
-          },
-          {
-            "fixture": "stylesheet-values",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "published-base",
-            "detail": "0.84 percent of pixels differ"
-          },
-          {
-            "fixture": "stylesheet-values",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "64 differences, first: hero: border-block-end-color rgb(0, 0, 0) became oklch(0.92 0.004 286.32)"
-          }
-        ],
-        "notMeasured": []
+        "failures": [],
+        "notMeasured": [],
+        "defaultBase": {
+          "pass": 0,
+          "total": 3
+        }
       },
       {
         "fixture": "stylesheet-escapes",
         "group": "edge",
         "source": "hand-written: CSS escapes, angle brackets, a raw SVG and a multi-line grid on nodes in the sheet",
-        "pass": false,
+        "pass": true,
         "checks": {
           "screenshot": {
-            "pass": 0,
+            "pass": 3,
             "total": 3
           },
           "computed-styles": {
-            "pass": 0,
+            "pass": 3,
             "total": 3
           },
           "accessibility-tree": {
@@ -5975,70 +5391,25 @@
             "total": 0
           }
         },
-        "failures": [
-          {
-            "fixture": "stylesheet-escapes",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "published-base",
-            "detail": "1.01 percent of pixels differ"
-          },
-          {
-            "fixture": "stylesheet-escapes",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "145 differences, first: hero: block-size 120px became 176px"
-          },
-          {
-            "fixture": "stylesheet-escapes",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "published-base",
-            "detail": "0.82 percent of pixels differ"
-          },
-          {
-            "fixture": "stylesheet-escapes",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "145 differences, first: hero: block-size 120px became 176px"
-          },
-          {
-            "fixture": "stylesheet-escapes",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "published-base",
-            "detail": "1.00 percent of pixels differ"
-          },
-          {
-            "fixture": "stylesheet-escapes",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "143 differences, first: hero: border-block-end-color rgb(0, 0, 0) became oklch(0.92 0.004 286.32)"
-          }
-        ],
-        "notMeasured": []
+        "failures": [],
+        "notMeasured": [],
+        "defaultBase": {
+          "pass": 0,
+          "total": 3
+        }
       },
       {
         "fixture": "shadcn-button",
         "group": "component",
         "source": "shadcn/ui Button (src/components/ui/button.tsx)",
-        "pass": false,
+        "pass": true,
         "checks": {
           "screenshot": {
-            "pass": 8,
+            "pass": 12,
             "total": 12
           },
           "computed-styles": {
-            "pass": 0,
+            "pass": 12,
             "total": 12
           },
           "accessibility-tree": {
@@ -6046,226 +5417,29 @@
             "total": 12
           },
           "interaction": {
-            "pass": 0,
+            "pass": 9,
             "total": 9
           }
         },
-        "failures": [
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "54 differences, first: page: block-size 36px became 84px"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Desktop",
-            "state": "hover default",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "54 differences, first: page: block-size 36px became 84px"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Desktop",
-            "state": "hover default",
-            "check": "interaction",
-            "gap": "published-base",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Desktop",
-            "state": "hover outline",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "54 differences, first: page: block-size 36px became 84px"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Desktop",
-            "state": "hover outline",
-            "check": "interaction",
-            "gap": "published-base",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Desktop",
-            "state": "keyboard focus",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "54 differences, first: page: block-size 36px became 84px"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Desktop",
-            "state": "keyboard focus",
-            "check": "interaction",
-            "gap": "published-base",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "54 differences, first: page: block-size 36px became 84px"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Tablet",
-            "state": "hover default",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "54 differences, first: page: block-size 36px became 84px"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Tablet",
-            "state": "hover default",
-            "check": "interaction",
-            "gap": "published-base",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Tablet",
-            "state": "hover outline",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "54 differences, first: page: block-size 36px became 84px"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Tablet",
-            "state": "hover outline",
-            "check": "interaction",
-            "gap": "published-base",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Tablet",
-            "state": "keyboard focus",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "54 differences, first: page: block-size 36px became 84px"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Tablet",
-            "state": "keyboard focus",
-            "check": "interaction",
-            "gap": "published-base",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "published-base",
-            "detail": "0.12 percent of pixels differ"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "54 differences, first: page: block-size 84px became 132px"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Mobile",
-            "state": "hover default",
-            "check": "screenshot",
-            "gap": "published-base",
-            "detail": "0.12 percent of pixels differ"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Mobile",
-            "state": "hover default",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "54 differences, first: page: block-size 84px became 132px"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Mobile",
-            "state": "hover default",
-            "check": "interaction",
-            "gap": "published-base",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Mobile",
-            "state": "hover outline",
-            "check": "screenshot",
-            "gap": "published-base",
-            "detail": "0.12 percent of pixels differ"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Mobile",
-            "state": "hover outline",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "54 differences, first: page: block-size 84px became 132px"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Mobile",
-            "state": "hover outline",
-            "check": "interaction",
-            "gap": "published-base",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Mobile",
-            "state": "keyboard focus",
-            "check": "screenshot",
-            "gap": "published-base",
-            "detail": "0.12 percent of pixels differ"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Mobile",
-            "state": "keyboard focus",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "54 differences, first: page: block-size 84px became 132px"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Mobile",
-            "state": "keyboard focus",
-            "check": "interaction",
-            "gap": "published-base",
-            "detail": "the replica did not end up where the original did"
-          }
-        ],
-        "notMeasured": []
+        "failures": [],
+        "notMeasured": [],
+        "defaultBase": {
+          "pass": 0,
+          "total": 3
+        }
       },
       {
         "fixture": "shadcn-card",
         "group": "component",
         "source": "shadcn/ui Card",
-        "pass": false,
+        "pass": true,
         "checks": {
           "screenshot": {
             "pass": 3,
             "total": 3
           },
           "computed-styles": {
-            "pass": 0,
+            "pass": 3,
             "total": 3
           },
           "accessibility-tree": {
@@ -6277,33 +5451,12 @@
             "total": 0
           }
         },
-        "failures": [
-          {
-            "fixture": "shadcn-card",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "223 differences, first: page: block-size 178px became 226px"
-          },
-          {
-            "fixture": "shadcn-card",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "223 differences, first: page: block-size 178px became 226px"
-          },
-          {
-            "fixture": "shadcn-card",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "204 differences, first: page: block-size 178px became 226px"
-          }
-        ],
-        "notMeasured": []
+        "failures": [],
+        "notMeasured": [],
+        "defaultBase": {
+          "pass": 0,
+          "total": 3
+        }
       },
       {
         "fixture": "radix-accordion",
@@ -6312,11 +5465,11 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 5,
+            "pass": 7,
             "total": 12
           },
           "computed-styles": {
-            "pass": 0,
+            "pass": 3,
             "total": 12
           },
           "accessibility-tree": {
@@ -6332,26 +5485,10 @@
           {
             "fixture": "radix-accordion",
             "viewport": "Desktop",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "248 differences, first: page: block-size 106px became 154px"
-          },
-          {
-            "fixture": "radix-accordion",
-            "viewport": "Desktop",
-            "state": "click opens the first item",
-            "check": "screenshot",
-            "gap": "published-base",
-            "detail": "0.11 percent of pixels differ"
-          },
-          {
-            "fixture": "radix-accordion",
-            "viewport": "Desktop",
             "state": "click opens the first item",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "264 differences, first: page: text \"Isitaccessible?Yes.Itfollowsthepattern.I\" became \"Isitaccessible?Isitstyled?\""
+            "detail": "26 differences, first: page: text \"Isitaccessible?Yes.Itfollowsthepattern.I\" became \"Isitaccessible?Isitstyled?\""
           },
           {
             "fixture": "radix-accordion",
@@ -6375,7 +5512,7 @@
             "state": "arrow key moves to the next trigger",
             "check": "screenshot",
             "gap": "behaviour-state",
-            "detail": "0.41 percent of pixels differ"
+            "detail": "0.36 percent of pixels differ"
           },
           {
             "fixture": "radix-accordion",
@@ -6383,7 +5520,7 @@
             "state": "arrow key moves to the next trigger",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "265 differences, first: page: text \"Isitaccessible?Isitstyled?Yes.WithplainC\" became \"Isitaccessible?Isitstyled?\""
+            "detail": "29 differences, first: page: text \"Isitaccessible?Isitstyled?Yes.WithplainC\" became \"Isitaccessible?Isitstyled?\""
           },
           {
             "fixture": "radix-accordion",
@@ -6407,7 +5544,7 @@
             "state": "hover trigger-one",
             "check": "computed-styles",
             "gap": "selector-styles",
-            "detail": "251 differences, first: page: block-size 106px became 154px"
+            "detail": "3 differences, first: trigger-one: text-decoration underline became none"
           },
           {
             "fixture": "radix-accordion",
@@ -6420,178 +5557,154 @@
           {
             "fixture": "radix-accordion",
             "viewport": "Tablet",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "248 differences, first: page: block-size 106px became 154px"
-          },
-          {
-            "fixture": "radix-accordion",
-            "viewport": "Tablet",
             "state": "click opens the first item",
             "check": "screenshot",
             "gap": "behaviour-state",
-            "detail": "0.14 percent of pixels differ"
-          },
-          {
-            "fixture": "radix-accordion",
-            "viewport": "Tablet",
-            "state": "click opens the first item",
-            "check": "computed-styles",
-            "gap": "behaviour-state",
-            "detail": "264 differences, first: page: text \"Isitaccessible?Yes.Itfollowsthepattern.I\" became \"Isitaccessible?Isitstyled?\""
-          },
-          {
-            "fixture": "radix-accordion",
-            "viewport": "Tablet",
-            "state": "click opens the first item",
-            "check": "accessibility-tree",
-            "gap": "behaviour-state",
-            "detail": "original \"- heading \\\"Is it accessible?\\\" [level=3]:\\n  - button \\\"Is it accessible?\\\" [expanded]\\n- region \\\"Is it accessible?\\\": Yes. It\", replica \"- heading \\\"Is it accessible?\\\" [level=3]:\\n  - button \\\"Is it accessible?\\\"\\n- heading \\\""
-          },
-          {
-            "fixture": "radix-accordion",
-            "viewport": "Tablet",
-            "state": "click opens the first item",
-            "check": "interaction",
-            "gap": "behaviour-state",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "radix-accordion",
-            "viewport": "Tablet",
-            "state": "arrow key moves to the next trigger",
-            "check": "screenshot",
-            "gap": "behaviour-state",
-            "detail": "0.54 percent of pixels differ"
-          },
-          {
-            "fixture": "radix-accordion",
-            "viewport": "Tablet",
-            "state": "arrow key moves to the next trigger",
-            "check": "computed-styles",
-            "gap": "behaviour-state",
-            "detail": "265 differences, first: page: text \"Isitaccessible?Isitstyled?Yes.WithplainC\" became \"Isitaccessible?Isitstyled?\""
-          },
-          {
-            "fixture": "radix-accordion",
-            "viewport": "Tablet",
-            "state": "arrow key moves to the next trigger",
-            "check": "accessibility-tree",
-            "gap": "behaviour-state",
-            "detail": "original \"- heading \\\"Is it accessible?\\\" [level=3]:\\n  - button \\\"Is it accessible?\\\"\\n- heading \\\"Is it styled?\\\" [level=3]:\\n  - button \", replica \"- heading \\\"Is it accessible?\\\" [level=3]:\\n  - button \\\"Is it accessible?\\\"\\n- heading \\"
-          },
-          {
-            "fixture": "radix-accordion",
-            "viewport": "Tablet",
-            "state": "arrow key moves to the next trigger",
-            "check": "interaction",
-            "gap": "behaviour-state",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "radix-accordion",
-            "viewport": "Tablet",
-            "state": "hover trigger-one",
-            "check": "computed-styles",
-            "gap": "selector-styles",
-            "detail": "251 differences, first: page: block-size 106px became 154px"
-          },
-          {
-            "fixture": "radix-accordion",
-            "viewport": "Tablet",
-            "state": "hover trigger-one",
-            "check": "interaction",
-            "gap": "selector-styles",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "radix-accordion",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "220 differences, first: page: block-size 106px became 154px"
-          },
-          {
-            "fixture": "radix-accordion",
-            "viewport": "Mobile",
-            "state": "click opens the first item",
-            "check": "screenshot",
-            "gap": "behaviour-state",
-            "detail": "0.44 percent of pixels differ"
-          },
-          {
-            "fixture": "radix-accordion",
-            "viewport": "Mobile",
-            "state": "click opens the first item",
-            "check": "computed-styles",
-            "gap": "behaviour-state",
-            "detail": "242 differences, first: page: text \"Isitaccessible?Yes.Itfollowsthepattern.I\" became \"Isitaccessible?Isitstyled?\""
-          },
-          {
-            "fixture": "radix-accordion",
-            "viewport": "Mobile",
-            "state": "click opens the first item",
-            "check": "accessibility-tree",
-            "gap": "behaviour-state",
-            "detail": "original \"- heading \\\"Is it accessible?\\\" [level=3]:\\n  - button \\\"Is it accessible?\\\" [expanded]\\n- region \\\"Is it accessible?\\\": Yes. It\", replica \"- heading \\\"Is it accessible?\\\" [level=3]:\\n  - button \\\"Is it accessible?\\\"\\n- heading \\\""
-          },
-          {
-            "fixture": "radix-accordion",
-            "viewport": "Mobile",
-            "state": "click opens the first item",
-            "check": "interaction",
-            "gap": "behaviour-state",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "radix-accordion",
-            "viewport": "Mobile",
-            "state": "arrow key moves to the next trigger",
-            "check": "screenshot",
-            "gap": "behaviour-state",
-            "detail": "1.31 percent of pixels differ"
-          },
-          {
-            "fixture": "radix-accordion",
-            "viewport": "Mobile",
-            "state": "arrow key moves to the next trigger",
-            "check": "computed-styles",
-            "gap": "behaviour-state",
-            "detail": "243 differences, first: page: text \"Isitaccessible?Isitstyled?Yes.WithplainC\" became \"Isitaccessible?Isitstyled?\""
-          },
-          {
-            "fixture": "radix-accordion",
-            "viewport": "Mobile",
-            "state": "arrow key moves to the next trigger",
-            "check": "accessibility-tree",
-            "gap": "behaviour-state",
-            "detail": "original \"- heading \\\"Is it accessible?\\\" [level=3]:\\n  - button \\\"Is it accessible?\\\"\\n- heading \\\"Is it styled?\\\" [level=3]:\\n  - button \", replica \"- heading \\\"Is it accessible?\\\" [level=3]:\\n  - button \\\"Is it accessible?\\\"\\n- heading \\"
-          },
-          {
-            "fixture": "radix-accordion",
-            "viewport": "Mobile",
-            "state": "arrow key moves to the next trigger",
-            "check": "interaction",
-            "gap": "behaviour-state",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "radix-accordion",
-            "viewport": "Mobile",
-            "state": "hover trigger-one",
-            "check": "screenshot",
-            "gap": "published-base",
             "detail": "0.12 percent of pixels differ"
           },
           {
             "fixture": "radix-accordion",
+            "viewport": "Tablet",
+            "state": "click opens the first item",
+            "check": "computed-styles",
+            "gap": "behaviour-state",
+            "detail": "26 differences, first: page: text \"Isitaccessible?Yes.Itfollowsthepattern.I\" became \"Isitaccessible?Isitstyled?\""
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Tablet",
+            "state": "click opens the first item",
+            "check": "accessibility-tree",
+            "gap": "behaviour-state",
+            "detail": "original \"- heading \\\"Is it accessible?\\\" [level=3]:\\n  - button \\\"Is it accessible?\\\" [expanded]\\n- region \\\"Is it accessible?\\\": Yes. It\", replica \"- heading \\\"Is it accessible?\\\" [level=3]:\\n  - button \\\"Is it accessible?\\\"\\n- heading \\\""
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Tablet",
+            "state": "click opens the first item",
+            "check": "interaction",
+            "gap": "behaviour-state",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Tablet",
+            "state": "arrow key moves to the next trigger",
+            "check": "screenshot",
+            "gap": "behaviour-state",
+            "detail": "0.47 percent of pixels differ"
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Tablet",
+            "state": "arrow key moves to the next trigger",
+            "check": "computed-styles",
+            "gap": "behaviour-state",
+            "detail": "29 differences, first: page: text \"Isitaccessible?Isitstyled?Yes.WithplainC\" became \"Isitaccessible?Isitstyled?\""
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Tablet",
+            "state": "arrow key moves to the next trigger",
+            "check": "accessibility-tree",
+            "gap": "behaviour-state",
+            "detail": "original \"- heading \\\"Is it accessible?\\\" [level=3]:\\n  - button \\\"Is it accessible?\\\"\\n- heading \\\"Is it styled?\\\" [level=3]:\\n  - button \", replica \"- heading \\\"Is it accessible?\\\" [level=3]:\\n  - button \\\"Is it accessible?\\\"\\n- heading \\"
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Tablet",
+            "state": "arrow key moves to the next trigger",
+            "check": "interaction",
+            "gap": "behaviour-state",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Tablet",
+            "state": "hover trigger-one",
+            "check": "computed-styles",
+            "gap": "selector-styles",
+            "detail": "3 differences, first: trigger-one: text-decoration underline became none"
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Tablet",
+            "state": "hover trigger-one",
+            "check": "interaction",
+            "gap": "selector-styles",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Mobile",
+            "state": "click opens the first item",
+            "check": "screenshot",
+            "gap": "behaviour-state",
+            "detail": "0.39 percent of pixels differ"
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Mobile",
+            "state": "click opens the first item",
+            "check": "computed-styles",
+            "gap": "behaviour-state",
+            "detail": "26 differences, first: page: text \"Isitaccessible?Yes.Itfollowsthepattern.I\" became \"Isitaccessible?Isitstyled?\""
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Mobile",
+            "state": "click opens the first item",
+            "check": "accessibility-tree",
+            "gap": "behaviour-state",
+            "detail": "original \"- heading \\\"Is it accessible?\\\" [level=3]:\\n  - button \\\"Is it accessible?\\\" [expanded]\\n- region \\\"Is it accessible?\\\": Yes. It\", replica \"- heading \\\"Is it accessible?\\\" [level=3]:\\n  - button \\\"Is it accessible?\\\"\\n- heading \\\""
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Mobile",
+            "state": "click opens the first item",
+            "check": "interaction",
+            "gap": "behaviour-state",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Mobile",
+            "state": "arrow key moves to the next trigger",
+            "check": "screenshot",
+            "gap": "behaviour-state",
+            "detail": "1.11 percent of pixels differ"
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Mobile",
+            "state": "arrow key moves to the next trigger",
+            "check": "computed-styles",
+            "gap": "behaviour-state",
+            "detail": "29 differences, first: page: text \"Isitaccessible?Isitstyled?Yes.WithplainC\" became \"Isitaccessible?Isitstyled?\""
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Mobile",
+            "state": "arrow key moves to the next trigger",
+            "check": "accessibility-tree",
+            "gap": "behaviour-state",
+            "detail": "original \"- heading \\\"Is it accessible?\\\" [level=3]:\\n  - button \\\"Is it accessible?\\\"\\n- heading \\\"Is it styled?\\\" [level=3]:\\n  - button \", replica \"- heading \\\"Is it accessible?\\\" [level=3]:\\n  - button \\\"Is it accessible?\\\"\\n- heading \\"
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Mobile",
+            "state": "arrow key moves to the next trigger",
+            "check": "interaction",
+            "gap": "behaviour-state",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "radix-accordion",
             "viewport": "Mobile",
             "state": "hover trigger-one",
             "check": "computed-styles",
             "gap": "selector-styles",
-            "detail": "223 differences, first: page: block-size 106px became 154px"
+            "detail": "3 differences, first: trigger-one: text-decoration underline became none"
           },
           {
             "fixture": "radix-accordion",
@@ -6602,7 +5715,11 @@
             "detail": "the replica did not end up where the original did"
           }
         ],
-        "notMeasured": []
+        "notMeasured": [],
+        "defaultBase": {
+          "pass": 0,
+          "total": 3
+        }
       },
       {
         "fixture": "radix-tabs",
@@ -6611,11 +5728,11 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 6,
+            "pass": 7,
             "total": 9
           },
           "computed-styles": {
-            "pass": 0,
+            "pass": 3,
             "total": 9
           },
           "accessibility-tree": {
@@ -6631,18 +5748,10 @@
           {
             "fixture": "radix-tabs",
             "viewport": "Desktop",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "171 differences, first: page: block-size 62px became 110px"
-          },
-          {
-            "fixture": "radix-tabs",
-            "viewport": "Desktop",
             "state": "arrow key changes the tab",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "191 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.\""
+            "detail": "28 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.\""
           },
           {
             "fixture": "radix-tabs",
@@ -6666,7 +5775,7 @@
             "state": "click changes the tab",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "187 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.\""
+            "detail": "22 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.\""
           },
           {
             "fixture": "radix-tabs",
@@ -6683,14 +5792,6 @@
             "check": "interaction",
             "gap": "behaviour-state",
             "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "radix-tabs",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "171 differences, first: page: block-size 62px became 110px"
           },
           {
             "fixture": "radix-tabs",
@@ -6698,7 +5799,7 @@
             "state": "arrow key changes the tab",
             "check": "screenshot",
             "gap": "behaviour-state",
-            "detail": "0.12 percent of pixels differ"
+            "detail": "0.11 percent of pixels differ"
           },
           {
             "fixture": "radix-tabs",
@@ -6706,7 +5807,7 @@
             "state": "arrow key changes the tab",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "191 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.\""
+            "detail": "28 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.\""
           },
           {
             "fixture": "radix-tabs",
@@ -6730,7 +5831,7 @@
             "state": "click changes the tab",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "187 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.\""
+            "detail": "22 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.\""
           },
           {
             "fixture": "radix-tabs",
@@ -6747,14 +5848,6 @@
             "check": "interaction",
             "gap": "behaviour-state",
             "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "radix-tabs",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "163 differences, first: page: block-size 62px became 110px"
           },
           {
             "fixture": "radix-tabs",
@@ -6762,7 +5855,7 @@
             "state": "arrow key changes the tab",
             "check": "screenshot",
             "gap": "behaviour-state",
-            "detail": "0.39 percent of pixels differ"
+            "detail": "0.33 percent of pixels differ"
           },
           {
             "fixture": "radix-tabs",
@@ -6770,7 +5863,7 @@
             "state": "arrow key changes the tab",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "187 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.\""
+            "detail": "28 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.\""
           },
           {
             "fixture": "radix-tabs",
@@ -6792,17 +5885,9 @@
             "fixture": "radix-tabs",
             "viewport": "Mobile",
             "state": "click changes the tab",
-            "check": "screenshot",
-            "gap": "published-base",
-            "detail": "0.12 percent of pixels differ"
-          },
-          {
-            "fixture": "radix-tabs",
-            "viewport": "Mobile",
-            "state": "click changes the tab",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "183 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.\""
+            "detail": "22 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.\""
           },
           {
             "fixture": "radix-tabs",
@@ -6821,7 +5906,11 @@
             "detail": "the replica did not end up where the original did"
           }
         ],
-        "notMeasured": []
+        "notMeasured": [],
+        "defaultBase": {
+          "pass": 0,
+          "total": 3
+        }
       },
       {
         "fixture": "radix-dialog",
@@ -6834,7 +5923,7 @@
             "total": 9
           },
           "computed-styles": {
-            "pass": 0,
+            "pass": 3,
             "total": 9
           },
           "accessibility-tree": {
@@ -6850,15 +5939,39 @@
           {
             "fixture": "radix-dialog",
             "viewport": "Desktop",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "40 differences, first: page: block-size 38px became 86px"
+            "state": "click opens the dialog",
+            "check": "screenshot",
+            "gap": "behaviour-state",
+            "detail": "94.68 percent of pixels differ"
           },
           {
             "fixture": "radix-dialog",
             "viewport": "Desktop",
             "state": "click opens the dialog",
+            "check": "computed-styles",
+            "gap": "behaviour-state",
+            "detail": "9 differences, first: page: pointer-events none became auto"
+          },
+          {
+            "fixture": "radix-dialog",
+            "viewport": "Desktop",
+            "state": "click opens the dialog",
+            "check": "accessibility-tree",
+            "gap": "behaviour-state",
+            "detail": "original \"- dialog \\\"Edit profile\\\":\\n  - heading \\\"Edit profile\\\" [level=2]\\n  - paragraph: Make changes here.\\n  - button \\\"Save\\\"\", replica \"- button \\\"Edit profile\\\"\""
+          },
+          {
+            "fixture": "radix-dialog",
+            "viewport": "Desktop",
+            "state": "click opens the dialog",
+            "check": "interaction",
+            "gap": "behaviour-state",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "radix-dialog",
+            "viewport": "Desktop",
+            "state": "Enter opens the dialog",
             "check": "screenshot",
             "gap": "behaviour-state",
             "detail": "94.69 percent of pixels differ"
@@ -6866,42 +5979,10 @@
           {
             "fixture": "radix-dialog",
             "viewport": "Desktop",
-            "state": "click opens the dialog",
-            "check": "computed-styles",
-            "gap": "behaviour-state",
-            "detail": "49 differences, first: page: block-size 38px became 86px"
-          },
-          {
-            "fixture": "radix-dialog",
-            "viewport": "Desktop",
-            "state": "click opens the dialog",
-            "check": "accessibility-tree",
-            "gap": "behaviour-state",
-            "detail": "original \"- dialog \\\"Edit profile\\\":\\n  - heading \\\"Edit profile\\\" [level=2]\\n  - paragraph: Make changes here.\\n  - button \\\"Save\\\"\", replica \"- button \\\"Edit profile\\\"\""
-          },
-          {
-            "fixture": "radix-dialog",
-            "viewport": "Desktop",
-            "state": "click opens the dialog",
-            "check": "interaction",
-            "gap": "behaviour-state",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "radix-dialog",
-            "viewport": "Desktop",
-            "state": "Enter opens the dialog",
-            "check": "screenshot",
-            "gap": "behaviour-state",
-            "detail": "94.70 percent of pixels differ"
-          },
-          {
-            "fixture": "radix-dialog",
-            "viewport": "Desktop",
             "state": "Enter opens the dialog",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "51 differences, first: page: block-size 38px became 86px"
+            "detail": "12 differences, first: page: pointer-events none became auto"
           },
           {
             "fixture": "radix-dialog",
@@ -6918,14 +5999,6 @@
             "check": "interaction",
             "gap": "behaviour-state",
             "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "radix-dialog",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "40 differences, first: page: block-size 38px became 86px"
           },
           {
             "fixture": "radix-dialog",
@@ -6941,7 +6014,7 @@
             "state": "click opens the dialog",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "49 differences, first: page: block-size 38px became 86px"
+            "detail": "9 differences, first: page: pointer-events none became auto"
           },
           {
             "fixture": "radix-dialog",
@@ -6973,7 +6046,7 @@
             "state": "Enter opens the dialog",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "51 differences, first: page: block-size 38px became 86px"
+            "detail": "12 differences, first: page: pointer-events none became auto"
           },
           {
             "fixture": "radix-dialog",
@@ -6994,18 +6067,10 @@
           {
             "fixture": "radix-dialog",
             "viewport": "Mobile",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "published-base",
-            "detail": "40 differences, first: page: block-size 38px became 86px"
-          },
-          {
-            "fixture": "radix-dialog",
-            "viewport": "Mobile",
             "state": "click opens the dialog",
             "check": "screenshot",
             "gap": "behaviour-state",
-            "detail": "78.25 percent of pixels differ"
+            "detail": "78.24 percent of pixels differ"
           },
           {
             "fixture": "radix-dialog",
@@ -7013,7 +6078,7 @@
             "state": "click opens the dialog",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "49 differences, first: page: block-size 38px became 86px"
+            "detail": "9 differences, first: page: pointer-events none became auto"
           },
           {
             "fixture": "radix-dialog",
@@ -7037,7 +6102,7 @@
             "state": "Enter opens the dialog",
             "check": "screenshot",
             "gap": "behaviour-state",
-            "detail": "78.30 percent of pixels differ"
+            "detail": "78.29 percent of pixels differ"
           },
           {
             "fixture": "radix-dialog",
@@ -7045,7 +6110,7 @@
             "state": "Enter opens the dialog",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "51 differences, first: page: block-size 38px became 86px"
+            "detail": "12 differences, first: page: pointer-events none became auto"
           },
           {
             "fixture": "radix-dialog",
@@ -7064,7 +6129,11 @@
             "detail": "the replica did not end up where the original did"
           }
         ],
-        "notMeasured": []
+        "notMeasured": [],
+        "defaultBase": {
+          "pass": 0,
+          "total": 3
+        }
       }
     ]
   },
@@ -11527,43 +10596,6 @@
       "cost": 123
     },
     {
-      "id": "published-base",
-      "description": "The published route ships the root layout's sheet to every visitor (Tailwind's reset, the theme, the base layer), so a page written for browser defaults does not get them: box sizing, heading sizes, list markers, border and outline colours, form controls. Measured, not guessed: the same replica matches its original on a page without the base.",
-      "matrixCells": 0,
-      "corpusChecks": 122,
-      "fixtures": [
-        "mixed-text",
-        "hover-focus",
-        "keyframes",
-        "container-query",
-        "print-styles",
-        "pseudo-elements",
-        "responsive-layout",
-        "stylesheet-values",
-        "stylesheet-escapes",
-        "shadcn-button",
-        "shadcn-card",
-        "radix-accordion",
-        "radix-tabs",
-        "radix-dialog"
-      ],
-      "onlyGapOf": [
-        "mixed-text",
-        "hover-focus",
-        "keyframes",
-        "container-query",
-        "print-styles",
-        "pseudo-elements",
-        "responsive-layout",
-        "stylesheet-values",
-        "stylesheet-escapes",
-        "shadcn-button",
-        "shadcn-card"
-      ],
-      "roundTripCases": 0,
-      "cost": 122
-    },
-    {
       "id": "ai-tag-allowlist",
       "description": "The AI generator validator refuses this tag on purpose: blocked in every renderer, or a raw form control, which only works through the form presets.",
       "matrixCells": 116,
@@ -11593,7 +10625,10 @@
         "radix-tabs",
         "radix-dialog"
       ],
-      "onlyGapOf": [],
+      "onlyGapOf": [
+        "radix-tabs",
+        "radix-dialog"
+      ],
       "roundTripCases": 0,
       "cost": 93
     },

@@ -19,6 +19,9 @@ import HeadlessPageRenderer from '@/lib/renderer/HeadlessPageRenderer';
 import { FX_ATTR } from '@/lib/effects/effects';
 import { EffectsStyles } from '@/lib/effects/EffectsStyles';
 import { PreviewRuleStyles } from '@/lib/rules/CanvasRuleStyles';
+import { PREVIEW_ROOT } from '@/lib/rules/surfaces';
+import { PageBaseStyles } from '@/lib/site/PageBaseStyles';
+import { DEFAULT_PAGE_BASE, type PageBase } from '@/lib/site/pageBase';
 import { prefersReducedMotion, startEffects } from '@/lib/effects/runtime';
 import { startSmoothScroll } from '@/lib/effects/smoothScroll';
 import { pickBreakpointForWidth } from '@/lib/renderer/pickBreakpoint';
@@ -34,6 +37,8 @@ export interface PreviewFrameProps {
   fill?: boolean;
   /** The site's smooth scrolling setting: Lenis scrolls the frame. */
   smoothScroll?: boolean;
+  /** The site's page base, as the published page has it. */
+  pageBase?: PageBase;
   /** A click on a link to a path of the site (`/contact`), with that path. */
   onSitePath?: (path: string) => void;
 }
@@ -50,7 +55,9 @@ export function sitePathOfClick(target: EventTarget | null): string | null {
 // the browser (PreviewShell is loaded without SSR), but stay safe.
 const useBeforePaint = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
-const PreviewFrame = observer(({ page, width, height, fill = false, smoothScroll = false, onSitePath }: PreviewFrameProps) => {
+const PREVIEW_ROOTS = [PREVIEW_ROOT];
+
+const PreviewFrame = observer(({ page, width, height, fill = false, smoothScroll = false, pageBase = DEFAULT_PAGE_BASE, onSitePath }: PreviewFrameProps) => {
   const frameRef = useRef<HTMLDivElement>(null);
 
   const viewportNodes = page.sortedViewportNodes;
@@ -124,6 +131,7 @@ const PreviewFrame = observer(({ page, width, height, fill = false, smoothScroll
       }}
     >
       <EffectsStyles startScope={`[${FX_ATTR.scope}] `} smoothScroll={smoothScroll} />
+      <PageBaseStyles base={pageBase} roots={PREVIEW_ROOTS} />
       <PreviewRuleStyles
         tree={page.expansion.root as SurfaceNode}
         frame={{ breakpointId, width, height }}

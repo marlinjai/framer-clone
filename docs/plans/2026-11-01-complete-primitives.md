@@ -369,6 +369,38 @@ These props and nodes get dropped by both renderers in a separate change, so exi
 write path are covered. The custom code
 primitive below is the designed replacement, so nothing intended is taken away.
 
+## The page base (2026-11-02)
+
+Once the corpus compared against the page a visitor really gets, all 14 fixtures failed on the root
+layout's sheet: Tailwind's reset and the editor's base layer ship to every route. What a person would
+write decided the answer, measured on the untouched pages. Of 54 differing properties, the largest
+were `tab-size`, `text-size-adjust`, font smoothing and the tap highlight on every element, then the
+border colour and style of every borderless element, `outline-color` and `box-sizing`. Heading sizes,
+list markers and margins were a small share. A person can set those on a node, but nobody writes
+`tab-size` or `border-style: none` on 80 elements, so rebuilding the trees could only pass by faking.
+
+So a site gets a real option: **Page base** in Site settings, `reset` (Clean slate) or `browser`
+(Browser defaults), in `src/lib/site/pageBase.ts`. CSS links are decided per route, so the sheet
+cannot be left out for one site. Instead `browser` adds a rule in the `base` layer with
+`all:revert-layer`, which rolls that layer back and keeps utilities, the page's own sheet and what the
+markup says through presentational hints. `all:revert` was tried first and lost an SVG `fill`, an
+`<img width>` and a `<td bgcolor>`. The canvas and the preview get the same rule, scoped to their
+frames, so the editor never shows something else than the visitor gets.
+
+Decided, say so if you disagree:
+
+- **`reset` stays the default, for stored sites and for new ones.** The palette, the AI generator and
+  every live page are written against it, and BusBasis, a Tailwind site, needs a reset. The corpus
+  opts in, because its fixtures are written against browser defaults.
+- **`body` keeps margin 0 and the site's font on both bases.** A node cannot style the document shell,
+  and a frame fills the window.
+
+What stays different on `browser`: the reset's `[hidden]{display:none!important}` cannot be rolled
+back, so `hidden` hides a node that also sets a `display`, where a plain browser shows it. The rule
+needs `revert-layer`: Chrome 99, Firefox 97, Safari 15.4. Only Chromium is proven. `test/score/pageBase.score.ts`
+holds the wider proof as a gate: every control and element the reset touches against a plain document,
+the canvas and preview against the published page, and the editor's own chrome unchanged.
+
 ## Decisions (Marlin, 2026-11-01)
 
 1. **Custom code on customer sites: allowed, sandboxed and off by default.** It runs isolated from

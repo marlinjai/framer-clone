@@ -402,6 +402,30 @@ const SiteSettingsForm = observer(({ project, onClose }: { project: ProjectModel
           </div>
         </section>
 
+        {/* The page base (src/lib/site/pageBase.ts): what elements look like before
+            anyone styles them, on the published page, the preview and the canvas. */}
+        <section className="flex flex-col gap-4" aria-labelledby="site-settings-appearance">
+          <h3 id="site-settings-appearance" className={sectionTitle}>Appearance</h3>
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor={fieldId('pageBase')} className={fieldLabel}>Page base</label>
+            <select
+              id={fieldId('pageBase')}
+              aria-describedby={`${fieldId('pageBase')}-hint`}
+              value={draft.pageBase}
+              onChange={(e) => update({ pageBase: e.target.value as SiteSettings['pageBase'] })}
+              className={`${inputBase} ${inputOk}`}
+            >
+              <option value="reset">Clean slate</option>
+              <option value="browser">Browser defaults</option>
+            </select>
+            <p id={`${fieldId('pageBase')}-hint`} className={hint}>
+              What elements look like before you style them. Clean slate removes heading sizes, margins, list markers
+              and form styling, so a page shows only what you set. Browser defaults keeps them, which suits a page
+              written as plain HTML and CSS. Changing this changes every page that relies on it.
+            </p>
+          </div>
+        </section>
+
         {/* Motion (docs/plans/2026-10-23-motion-effects.md): site-wide
             smooth scrolling with Lenis, in the preview and on published pages,
             never on the editor canvas, always off under reduced motion. */}

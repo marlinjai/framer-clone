@@ -160,6 +160,16 @@ describe('saving', () => {
   });
 });
 
+describe('page base', () => {
+  it('starts on the clean slate and saves browser defaults', () => {
+    const dialog = open();
+    expect(field(dialog, 'Page base').value).toBe('reset');
+    fireEvent.change(field(dialog, 'Page base'), { target: { value: 'browser' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    expect(project!.site.pageBase).toBe('browser');
+  });
+});
+
 describe('cancel and reopen', () => {
   it('discards the draft on Cancel and starts from the stored values next time', () => {
     let dialog = open();
