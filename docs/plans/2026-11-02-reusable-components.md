@@ -551,7 +551,7 @@ already covers the site.
 
 **How slice 3 and the published copy (#226) join.** Either can land first. Slice 3 writes the column in `saveProject`,
 `PersistedSite.components` is the same optional field on both sides, and `SiteRevisionDocument.components` stays opaque.
-Whichever lands second makes these four edits:
+Whichever lands second makes these five edits, which a trial merge with #226 ran against its Postgres suites:
 
 1. `freezeRevision` selects `components: true` and writes `site.components` into the document, so a baseline and a
    publish both freeze the column. Its `components` argument goes, and so does `components: persisted.components` in
@@ -563,6 +563,13 @@ Whichever lands second makes these four edits:
 4. `PublishedSite.components` stays `ComponentDefinitions`, and the resolver returns
    `{ ...frozen, components: parseComponents(frozen.components).definitions }`: parsed once there, so the cached value
    is ready and no request parses it again.
+5. Two of #226's fixtures use a real definition, because parsing drops `{ nav: { title: 'Nav two' } }` in
+   `publishedCopy.itest.ts` and `{ nav: {} }` in `publicResolver.test.ts`. `revision.test.ts` keeps its value, because
+   the revision document stays opaque.
+
+The join also adds two Postgres tests, each of which passed in the trial: a publish from a tab older than the column
+freezes the definitions the column holds, and a later save does not reach visitors; and a site from before revisions
+serves its column, and its first save freezes that as the baseline.
 
 ## Component states
 

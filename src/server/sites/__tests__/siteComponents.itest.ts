@@ -211,8 +211,6 @@ describe('sites.components on a real database', () => {
     const repo = getSiteRepository();
     const siteId = newSiteId();
     await repo.saveProject(SCOPE, project(siteId, { children: [placement('p1'), placement('p2', {})] }));
-    await repo.publishProject(SCOPE, siteId);
-    const { subdomain } = await repo.ensureSiteDomain(SCOPE, siteId);
     await prisma.site.update({
       where: { id: siteId },
       data: {
@@ -224,6 +222,8 @@ describe('sites.components on a real database', () => {
     });
 
     expect((await repo.loadProject(SCOPE, siteId)).components.size).toBe(0);
+    await repo.publishProject(SCOPE, siteId);
+    const { subdomain } = await repo.ensureSiteDomain(SCOPE, siteId);
     const site = await resolvePublishedSiteByKey({ kind: 'subdomain', value: subdomain }, prisma);
     expect(site).not.toBeNull();
     expect(Object.keys(site!.components)).toEqual(['broken']);
