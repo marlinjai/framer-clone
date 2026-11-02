@@ -311,11 +311,11 @@ token"). A deleted token stays behind as a tombstone in that plan, so a logo nev
 
 ## React importer and export
 
-- **Importer** (`src/lib/reactImport`). Inline `<svg>` JSX already imports through `jsx.ts` and the render gate. What it reports as
+- **Importer** (`src/lib/reactImport`). Inline `<svg>` written as JSX (JavaScript XML, the markup syntax of React) already imports through `jsx.ts` and the render gate. What it reports as
   `import-dynamic-logic` today is `<House />` imported from `lucide-react`. V10 maps an import from `lucide-react` to `iconNodes`, with the
   component's `size`, `color`, `strokeWidth` and `absoluteStrokeWidth` props as root styles, and `className` through the existing class layer.
   Any other icon library stays an unknown component, reported as today.
-- **Export and the JavaScript XML (JSX) round trip.** SVG nodes leave as inline JSX with React spellings, through the round trip the score
+- **Export and the JSX round trip.** SVG nodes leave as inline JSX with React spellings, through the round trip the score
   already runs (`test/score/roundtrip/jsx.ts`); an icon exports as its inline `svg`, not as a `lucide-react` import, because the node is the
   source of truth once a person has edited it. The four new corpus fixtures join the round trip cases.
 
