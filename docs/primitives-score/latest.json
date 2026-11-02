@@ -1,22 +1,22 @@
 {
-  "generatedAt": "2026-11-02T15:24:54.627Z",
+  "generatedAt": "2026-11-02T15:58:26.562Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 557,
+  "durationSeconds": 385,
   "matrix": {
     "surfaces": {
       "format": {
-        "pass": 1816,
-        "fail": 26,
+        "pass": 1820,
+        "fail": 22,
         "notTested": 0,
         "total": 1842
       },
       "renderer": {
-        "pass": 1789,
-        "fail": 53,
+        "pass": 1793,
+        "fail": 49,
         "notTested": 0,
         "total": 1842
       },
@@ -491,14 +491,14 @@
       },
       "component": {
         "format": {
-          "pass": 26,
-          "fail": 4,
+          "pass": 30,
+          "fail": 0,
           "notTested": 0,
           "total": 30
         },
         "renderer": {
-          "pass": 26,
-          "fail": 4,
+          "pass": 30,
+          "fail": 0,
           "notTested": 0,
           "total": 30
         },
@@ -5122,7 +5122,7 @@
       "component:transition": "pass pass pass pass reusable-components",
       "component:list": "pass pass pass pass reusable-components",
       "component:gallery": "pass pass pass pass reusable-components",
-      "component:event": "reusable-components reusable-components reusable-components reusable-components reusable-components",
+      "component:event": "pass pass reusable-components reusable-components reusable-components",
       "component:definition": "pass pass pass pass reusable-components",
       "component:placement": "pass pass pass pass reusable-components",
       "component:placement-style": "pass pass pass pass reusable-components",
@@ -5133,9 +5133,9 @@
       "component:state-pressed": "pass pass reusable-components reusable-components reusable-components",
       "component:state-focused": "pass pass reusable-components reusable-components reusable-components",
       "component:state-custom": "pass pass reusable-components reusable-components reusable-components",
-      "component:interaction-click": "reusable-components reusable-components reusable-components reusable-components reusable-components",
-      "component:interaction-appear": "reusable-components reusable-components reusable-components reusable-components reusable-components",
-      "component:placement-trigger": "reusable-components reusable-components reusable-components reusable-components reusable-components",
+      "component:interaction-click": "pass pass reusable-components reusable-components reusable-components",
+      "component:interaction-appear": "pass pass reusable-components reusable-components reusable-components",
+      "component:placement-trigger": "pass pass reusable-components reusable-components reusable-components",
       "page-item:theme:color-token": "pass pass pass theme theme",
       "page-item:theme:font-token": "pass pass pass theme theme",
       "page-item:theme:dark-value": "pass pass pass theme theme",
@@ -6565,7 +6565,7 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 4,
+            "pass": 0,
             "total": 4
           },
           "computed-styles": {
@@ -6586,32 +6586,48 @@
             "fixture": "busbasis-home",
             "viewport": "Desktop",
             "state": "initial",
+            "check": "screenshot",
+            "gap": "mixed-text",
+            "detail": "2.18 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-home",
+            "viewport": "Desktop",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "blocked-embedded-content",
-            "detail": "1 differences on 1 elements, first: e405: not in the replica"
+            "gap": "mixed-text",
+            "detail": "34 differences on 14 elements, first: e0: text \"ShopÜberunsKontaktVerein0Wirhabennochnic\" became \"ShopÜberunsKontaktVerein0Wirhabennochnic\""
           },
           {
             "fixture": "busbasis-home",
             "viewport": "Desktop",
             "state": "initial",
             "check": "accessibility-tree",
-            "gap": "blocked-embedded-content",
+            "gap": "mixed-text",
             "detail": "original \"- main:\\n  - navigation:\\n    - link \\\"BusBasis Berlin\\\":\\n      - /url: /de\\n      - img \\\"BusBasis Berlin\\\"\\n    - link \\\"Shop\\\":\", replica \"- main:\\n  - navigation:\\n    - link \\\"BusBasis Berlin\\\":\\n      - /url: /de\\n      - i"
           },
           {
             "fixture": "busbasis-home",
             "viewport": "Desktop",
             "state": "hover e41",
+            "check": "screenshot",
+            "gap": "mixed-text",
+            "detail": "2.18 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-home",
+            "viewport": "Desktop",
+            "state": "hover e41",
             "check": "computed-styles",
-            "gap": "blocked-embedded-content",
-            "detail": "1 differences on 1 elements, first: e405: not in the replica"
+            "gap": "mixed-text",
+            "detail": "34 differences on 14 elements, first: e0: text \"ShopÜberunsKontaktVerein0Wirhabennochnic\" became \"ShopÜberunsKontaktVerein0Wirhabennochnic\""
           },
           {
             "fixture": "busbasis-home",
             "viewport": "Desktop",
             "state": "hover e41",
             "check": "accessibility-tree",
-            "gap": "blocked-embedded-content",
+            "gap": "mixed-text",
             "detail": "original \"- main:\\n  - navigation:\\n    - link \\\"BusBasis Berlin\\\":\\n      - /url: /de\\n      - img \\\"BusBasis Berlin\\\"\\n    - link \\\"Shop\\\":\", replica \"- main:\\n  - navigation:\\n    - link \\\"BusBasis Berlin\\\":\\n      - /url: /de\\n      - i"
           },
           {
@@ -6619,39 +6635,55 @@
             "viewport": "Desktop",
             "state": "hover e41",
             "check": "interaction",
-            "gap": "blocked-embedded-content",
+            "gap": "mixed-text",
             "detail": "the replica did not end up where the original did"
           },
           {
             "fixture": "busbasis-home",
             "viewport": "Tablet",
             "state": "initial",
+            "check": "screenshot",
+            "gap": "mixed-text",
+            "detail": "3.74 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-home",
+            "viewport": "Tablet",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "blocked-embedded-content",
-            "detail": "1 differences on 1 elements, first: e405: not in the replica"
+            "gap": "mixed-text",
+            "detail": "34 differences on 14 elements, first: e0: text \"ShopÜberunsKontaktVerein0Wirhabennochnic\" became \"ShopÜberunsKontaktVerein0Wirhabennochnic\""
           },
           {
             "fixture": "busbasis-home",
             "viewport": "Tablet",
             "state": "initial",
             "check": "accessibility-tree",
-            "gap": "blocked-embedded-content",
+            "gap": "mixed-text",
             "detail": "original \"- main:\\n  - navigation:\\n    - link \\\"BusBasis Berlin\\\":\\n      - /url: /de\\n      - img \\\"BusBasis Berlin\\\"\\n    - link \\\"Konto\\\"\", replica \"- main:\\n  - navigation:\\n    - link \\\"BusBasis Berlin\\\":\\n      - /url: /de\\n      - i"
           },
           {
             "fixture": "busbasis-home",
             "viewport": "Mobile",
             "state": "initial",
+            "check": "screenshot",
+            "gap": "mixed-text",
+            "detail": "1.97 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-home",
+            "viewport": "Mobile",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "blocked-embedded-content",
-            "detail": "1 differences on 1 elements, first: e405: not in the replica"
+            "gap": "mixed-text",
+            "detail": "34 differences on 14 elements, first: e0: text \"ShopÜberunsKontaktVerein0Wirhabennochnic\" became \"ShopÜberunsKontaktVerein0Wirhabennochnic\""
           },
           {
             "fixture": "busbasis-home",
             "viewport": "Mobile",
             "state": "initial",
             "check": "accessibility-tree",
-            "gap": "blocked-embedded-content",
+            "gap": "mixed-text",
             "detail": "original \"- main:\\n  - navigation:\\n    - link \\\"BusBasis Berlin\\\":\\n      - /url: /de\\n      - img \\\"BusBasis Berlin\\\"\\n    - link \\\"Konto\\\"\", replica \"- main:\\n  - navigation:\\n    - link \\\"BusBasis Berlin\\\":\\n      - /url: /de\\n      - i"
           },
           {
@@ -6713,16 +6745,44 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.021778635499338624,
             "elementsCompared": 532,
-            "elementsDiffering": 1,
-            "differences": 1,
+            "elementsDiffering": 14,
+            "differences": 34,
             "byGap": {
-              "blocked-embedded-content": 1
+              "unclassified": 34
             },
             "byProperty": [
               [
-                "missing",
+                "text",
+                14
+              ],
+              [
+                "rendered text",
+                14
+              ],
+              [
+                "overflow-block",
+                1
+              ],
+              [
+                "overflow-clip-margin",
+                1
+              ],
+              [
+                "overflow-inline",
+                1
+              ],
+              [
+                "overflow-x",
+                1
+              ],
+              [
+                "overflow-y",
+                1
+              ],
+              [
+                "unicode-bidi",
                 1
               ]
             ]
@@ -6730,16 +6790,44 @@
           {
             "viewport": "Desktop",
             "state": "hover e41",
-            "ratio": 0,
+            "ratio": 0.021778635499338624,
             "elementsCompared": 532,
-            "elementsDiffering": 1,
-            "differences": 1,
+            "elementsDiffering": 14,
+            "differences": 34,
             "byGap": {
-              "blocked-embedded-content": 1
+              "unclassified": 34
             },
             "byProperty": [
               [
-                "missing",
+                "text",
+                14
+              ],
+              [
+                "rendered text",
+                14
+              ],
+              [
+                "overflow-block",
+                1
+              ],
+              [
+                "overflow-clip-margin",
+                1
+              ],
+              [
+                "overflow-inline",
+                1
+              ],
+              [
+                "overflow-x",
+                1
+              ],
+              [
+                "overflow-y",
+                1
+              ],
+              [
+                "unicode-bidi",
                 1
               ]
             ]
@@ -6747,16 +6835,44 @@
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.037387536755305546,
             "elementsCompared": 532,
-            "elementsDiffering": 1,
-            "differences": 1,
+            "elementsDiffering": 14,
+            "differences": 34,
             "byGap": {
-              "blocked-embedded-content": 1
+              "unclassified": 34
             },
             "byProperty": [
               [
-                "missing",
+                "text",
+                14
+              ],
+              [
+                "rendered text",
+                14
+              ],
+              [
+                "overflow-block",
+                1
+              ],
+              [
+                "overflow-clip-margin",
+                1
+              ],
+              [
+                "overflow-inline",
+                1
+              ],
+              [
+                "overflow-x",
+                1
+              ],
+              [
+                "overflow-y",
+                1
+              ],
+              [
+                "unicode-bidi",
                 1
               ]
             ]
@@ -6764,16 +6880,44 @@
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.019743916843845973,
             "elementsCompared": 532,
-            "elementsDiffering": 1,
-            "differences": 1,
+            "elementsDiffering": 14,
+            "differences": 34,
             "byGap": {
-              "blocked-embedded-content": 1
+              "unclassified": 34
             },
             "byProperty": [
               [
-                "missing",
+                "text",
+                14
+              ],
+              [
+                "rendered text",
+                14
+              ],
+              [
+                "overflow-block",
+                1
+              ],
+              [
+                "overflow-clip-margin",
+                1
+              ],
+              [
+                "overflow-inline",
+                1
+              ],
+              [
+                "overflow-x",
+                1
+              ],
+              [
+                "overflow-y",
+                1
+              ],
+              [
+                "unicode-bidi",
                 1
               ]
             ]
@@ -6863,7 +7007,7 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.000058487557507319116,
+            "ratio": 0,
             "elementsCompared": 754,
             "elementsDiffering": 0,
             "differences": 0,
@@ -8174,12 +8318,28 @@
         "styleDifferences": 0
       },
       {
+        "id": "unclassified",
+        "pages": [
+          "busbasis-home"
+        ],
+        "needs": 0,
+        "styleDifferences": 136
+      },
+      {
+        "id": "mixed-text",
+        "pages": [
+          "busbasis-home"
+        ],
+        "needs": 0,
+        "styleDifferences": 0
+      },
+      {
         "id": "blocked-embedded-content",
         "pages": [
           "busbasis-home"
         ],
         "needs": 1,
-        "styleDifferences": 4
+        "styleDifferences": 0
       },
       {
         "id": "harness-limit",
@@ -9218,13 +9378,11 @@
       "id": "blocked-embedded-content",
       "description": "What the render gate refuses (blockedNodes.ts and renderVocabulary.ts): embedded content (iframe, object, embed, ...), although these are ordinary content elements, and attributes that act by themselves (ping, the shadow root ones).",
       "matrixCells": 78,
-      "corpusChecks": 9,
-      "fixtures": [
-        "busbasis-home"
-      ],
+      "corpusChecks": 0,
+      "fixtures": [],
       "onlyGapOf": [],
       "roundTripCases": 0,
-      "cost": 87
+      "cost": 78
     },
     {
       "id": "page-level-css",
@@ -9233,20 +9391,6 @@
       "corpusChecks": 0,
       "fixtures": [],
       "onlyGapOf": [],
-      "roundTripCases": 0,
-      "cost": 66
-    },
-    {
-      "id": "reusable-components",
-      "description": "A promise of the reusable component format (an input type, a placement, a state or an interaction) that this surface does not keep yet.",
-      "matrixCells": 54,
-      "corpusChecks": 12,
-      "fixtures": [
-        "component-states"
-      ],
-      "onlyGapOf": [
-        "component-states"
-      ],
       "roundTripCases": 0,
       "cost": 66
     },
@@ -9265,6 +9409,20 @@
       ],
       "roundTripCases": 0,
       "cost": 60
+    },
+    {
+      "id": "reusable-components",
+      "description": "A promise of the reusable component format (an input type, a placement, a state or an interaction) that this surface does not keep yet.",
+      "matrixCells": 46,
+      "corpusChecks": 12,
+      "fixtures": [
+        "component-states"
+      ],
+      "onlyGapOf": [
+        "component-states"
+      ],
+      "roundTripCases": 0,
+      "cost": 58
     },
     {
       "id": "attribute-read-as-style",
@@ -9327,6 +9485,19 @@
       "cost": 18
     },
     {
+      "id": "mixed-text",
+      "description": "Text mixed with elements: text beside an element is lost or lands out of order.",
+      "matrixCells": 0,
+      "corpusChecks": 16,
+      "fixtures": [
+        "radix-tabs",
+        "busbasis-home"
+      ],
+      "onlyGapOf": [],
+      "roundTripCases": 0,
+      "cost": 16
+    },
+    {
       "id": "import-dynamic-logic",
       "description": "JSX that is a program, not markup: reported as left over by the static import, as the plan requires.",
       "matrixCells": 0,
@@ -9367,18 +9538,6 @@
       "onlyGapOf": [],
       "roundTripCases": 4,
       "cost": 4
-    },
-    {
-      "id": "mixed-text",
-      "description": "Text mixed with elements: text beside an element is lost or lands out of order.",
-      "matrixCells": 0,
-      "corpusChecks": 3,
-      "fixtures": [
-        "radix-tabs"
-      ],
-      "onlyGapOf": [],
-      "roundTripCases": 0,
-      "cost": 3
     },
     {
       "id": "renderer-drops-value",
