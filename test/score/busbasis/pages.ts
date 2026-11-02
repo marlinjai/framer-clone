@@ -38,8 +38,10 @@ const CATEGORIES = need('nested categories', 'shop-feature-missing', 'Categories
 const FACETED_SEARCH = need('faceted search', 'shop-feature-missing', 'Meilisearch with facets, sort and pagination. framer-clone has search only in the admin.');
 const LIVE_LIST = need('live product list', 'shop-feature-missing', 'The tree is a frozen copy of the rows. A real page binds them to the catalogue through the product list island, which was not rebuilt here.');
 
-const DOCUMENT_STYLES = need('styles on html', 'page-level-css', 'The original sets smooth scrolling and hides sideways overflow on html. The page root can hold that now, as a rule on :root, but the frozen trees were lifted before it could, so they do not, and the computed styles of html are not compared. This closes with a new lift and an html comparison.');
-const CHROME = [MOBILE_MENU, CART_BADGE, LEGAL_MODALS, DOCUMENT_STYLES];
+// What the original sets on html is no longer a need: the lift writes it as rules on
+// `:root` on the page root, and the score compares the html element of both. Measured
+// on 2026-11-02, html matched on all 14 pages at every breakpoint and state.
+const CHROME = [MOBILE_MENU, CART_BADGE, LEGAL_MODALS];
 
 export const BUSBASIS_PAGES: BusbasisPage[] = [
   {
@@ -84,7 +86,7 @@ export const BUSBASIS_PAGES: BusbasisPage[] = [
   { slug: 'login', pageType: 'account: login', path: '/de/account', needs: [...CHROME, SHOPPER_ACCOUNTS] },
   { slug: 'request-reset', pageType: 'account: password reset', path: '/de/request-reset', needs: [...CHROME, SHOPPER_ACCOUNTS] },
   { slug: 'shop-unavailable', pageType: 'shop kill switch', path: '/de/shop-unavailable', needs: CHROME },
-  { slug: 'not-found', pageType: 'not found', path: '/de/search', needs: [DOCUMENT_STYLES] },
+  { slug: 'not-found', pageType: 'not found', path: '/de/search', needs: [] },
 ];
 
 export const UNCAPTURED_PAGES: UncapturedPage[] = [

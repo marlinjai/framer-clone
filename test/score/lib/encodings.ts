@@ -10,7 +10,7 @@ import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import type { StoredRule } from '@/lib/rules/rules';
 import samples from '../data/samples.json';
 
-const PROBE_COLOR = 'rgb(1, 2, 3)';
+export const PROBE_COLOR = 'rgb(1, 2, 3)';
 /** What `&` becomes for the probe node: it is resolved in the sheet, never emitted. */
 const NODE = '.fc_r-probe.fc_r-probe';
 
@@ -74,6 +74,11 @@ export function stylesheetHasRule(css: string, probe: RuleProbe): boolean {
 /** Rows that apply to the document, which a node cannot reach: see `page-level-css`. */
 export function isPageLevelRow(id: string): boolean {
   return samples.pageLevelRows.includes(id);
+}
+
+/** Rows refused on purpose because they draw in the top layer, above the consent banner: see `top-layer-refused`. */
+export function isTopLayerRow(id: string): boolean {
+  return samples.topLayerRows.includes(id);
 }
 
 /** The one document row a page can hold: a rule on the page root, which a probe node is. */

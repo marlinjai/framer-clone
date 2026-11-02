@@ -111,6 +111,7 @@
     "@position-try": { "style": { "top": "anchor(bottom)" }, "marker": "top:anchor(bottom)" },
     "@property": { "style": { "syntax": "\"<color>\"", "inherits": "false", "initialValue": "red" }, "marker": "syntax:\"\\3c color>\"" }
   },
+  "topLayerRows": ["::picker()"],
   "pageLevelRows": [":root", "::view-transition", "::view-transition-group()", "::view-transition-image-pair()", "::view-transition-new()", "::view-transition-old()", ":active-view-transition", ":active-view-transition-type()", ":first", ":left", ":right", "@page", "@view-transition", "@layer"],
   "mediaFeatures": {
     "any-hover": "(any-hover: hover)",

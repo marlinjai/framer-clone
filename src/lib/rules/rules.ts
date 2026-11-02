@@ -71,6 +71,7 @@ import {
   UNSAFE_VALUE,
   cssValueText,
   hasExternalAddress,
+  holdsTopLayerValue,
   isStyleMap,
   rawFunctionName,
   scanValue,
@@ -347,6 +348,15 @@ export function reachesInsideNode(part: string): boolean {
   return part.slice(endOfFirstCompound(part)).trim().length > 0;
 }
 
+/**
+ * Pseudo-elements that live in the top layer, above every z-index and so above the
+ * consent banner (src/lib/styles/stacking.ts). A styled `::picker(select)` covers the
+ * screen, and in WebKit no tap closes it. `::view-transition` is drawn there too.
+ * `::backdrop` stays: it exists only under a popover or modal dialog, which the
+ * consent runtime closes while the banner waits.
+ */
+const TOP_LAYER_PSEUDO = /::(?:picker\(|view-transition)/i;
+
 /** Why one part of a selector list is refused, or null. */
 function refusedPart(part: string): string | null {
   if (part[0] !== '&') return 'every part of a selector starts with &';
@@ -355,6 +365,7 @@ function refusedPart(part: string): string | null {
   if (!/^&(?:$|[:[.# >+~]|\|\|)/.test(part)) return '& must be followed by a pseudo-class, an attribute, a class, an id or a combinator';
   if (part.includes('&', 1)) return 'a selector holds & once, at its start';
   if (/^&\s*:root(?![\w-])/i.test(part)) return 'a rule on the document is written :root, alone';
+  if (TOP_LAYER_PSEUDO.test(part)) return 'a picker or a view transition sits in the top layer, above the consent banner';
   const next = part.slice(endOfFirstCompound(part)).trimStart();
   if (next[0] === '+' || next[0] === '~' || next.startsWith('||')) {
     return 'a sibling of the node is outside the node, so a selector cannot step to one from it';
@@ -657,6 +668,7 @@ export function definitionClaims(): (rule: ParsedDefinitionRule) => { claim: 'fi
 /** Why a value's text is refused, or null. A tab or newline is left to the emitter to normalise. */
 function refusedValueText(text: string): string | null {
   if (UNSAFE_VALUE.test(text)) return 'the value holds script-capable or import-capable CSS';
+  if (holdsTopLayerValue(text)) return 'base-select puts the list in the top layer, above the consent banner';
   if (/[{}\\\u0000-\u0008\u000b\u000e-\u001f\u007f]/.test(text)) return 'the value holds a brace, a backslash or a control character';
   return scanValue(text)?.reason ?? null;
 }

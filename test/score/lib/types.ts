@@ -65,6 +65,7 @@ export const GAPS = {
   'at-rules': 'At-rules: no way to store @keyframes, @container, @supports, @font-face and the rest.',
   'media-queries': 'Media queries beyond width: print, dark mode and reduced motion have no home.',
   'page-level-css': 'CSS that applies to the document rather than a node (view transitions, `@page`, `@layer`): the route owns `html`. A rule on `:root` on the page root is the one form held today.',
+  'top-layer-refused': 'A pseudo-element drawn in the top layer, above every z-index and so above the consent banner (src/lib/styles/stacking.ts): a styled `::picker(select)` covers the screen, and in WebKit no tap closes it. Every path refuses it on purpose.',
   'mixed-text': 'Text mixed with elements: text beside an element is lost or lands out of order.',
   'behaviour-state': 'Behaviour and state: no way to say that one element changes another.',
   'blocked-embedded-content': 'What the render gate refuses (blockedNodes.ts and renderVocabulary.ts): embedded content (iframe, object, embed, ...), although these are ordinary content elements, and attributes that act by themselves (ping, the shadow root ones).',

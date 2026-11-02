@@ -81,7 +81,7 @@ describe('site settings on a real database', () => {
     await repo.saveProject(SCOPE, project(settings), { mustExist: true });
     expect((await repo.loadProject(SCOPE, SITE_ID)).site).toEqual(settings);
 
-    await repo.publishProject(SCOPE, SITE_ID);
+    await repo.publishProject(SCOPE, project(settings));
     const { subdomain } = await repo.ensureSiteDomain(SCOPE, SITE_ID);
     const site = await resolvePublishedSiteByKey({ kind: 'subdomain', value: subdomain }, prisma);
     expect(site?.siteSettings).toEqual(settings);

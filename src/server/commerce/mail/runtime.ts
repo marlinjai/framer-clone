@@ -9,6 +9,7 @@ import 'server-only';
 import type { Kysely } from 'kysely';
 
 import { getPrismaClient } from '@/server/db';
+import { parseRevisionDocument } from '@/server/sites/revision';
 import { normalizeSiteSettings, effectiveSiteName } from '@/lib/site/siteSettings';
 import { commerceTenantDb, isCommerceTenantNotProvisioned } from '../db';
 import type { CommerceDB } from '../db-types';
@@ -32,10 +33,15 @@ export function platformLumitraMail(): LumitraMail | null {
 
 /** The published site's name and language, for the letter. */
 export async function siteInfo(siteId: string): Promise<SiteInfo | null> {
-  const site = await getPrismaClient().site.findUnique({ where: { id: siteId }, select: { name: true, siteSettings: true } });
+  const site = await getPrismaClient().site.findUnique({
+    where: { id: siteId },
+    select: { name: true, siteSettings: true, publishedRevision: { select: { document: true } } },
+  });
   if (!site) return null;
-  const settings = normalizeSiteSettings(site.siteSettings);
-  return { name: effectiveSiteName(settings, site.name), language: settings.language };
+  // What visitors see, never a saved setting that was not published. A site with no revision yet serves its rows.
+  const frozen = site.publishedRevision ? parseRevisionDocument(site.publishedRevision.document) : null;
+  const settings = frozen?.siteSettings ?? normalizeSiteSettings(site.siteSettings);
+  return { name: effectiveSiteName(settings, frozen?.name ?? site.name), language: settings.language };
 }
 
 export function outboxDeps(db: Kysely<CommerceDB>, tenantGroupId: string): OutboxDeps {
