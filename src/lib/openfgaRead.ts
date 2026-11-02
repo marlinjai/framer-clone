@@ -18,6 +18,15 @@
 // with the same URL, store and pre-shared key (src/lib/auth-brain.ts). There
 // is no auth-brain route a service account could ask instead.
 //
+// The edges arrive through auth-brain's ASYNCHRONOUS sync worker, so right
+// after a company is created, or while a move is still in the worker's queue,
+// they can lag behind auth-brain's database. Reads ask OpenFGA for
+// HIGHER_CONSISTENCY (no cached answers); the lag of the sync worker itself
+// remains and is written down as an accepted risk in
+// docs/plans/2026-11-02-lumitra-sites-agent-plugin.md. The proper fix is a
+// read-only auth-brain route a service account can ask for its own company's
+// tenant group and workspaces.
+//
 // Failure is never an answer: a missing configuration, a network error, a
 // non-OK status or an unreadable body THROWS OpenFgaReadError, which the
 // caller turns into "unavailable" (a 503), never into "no such company".
@@ -77,6 +86,9 @@ export async function readTuples(tupleKey: TupleKey, options: ReadOptions = {}):
         body: JSON.stringify({
           tuple_key: tupleKey,
           page_size: PAGE_SIZE,
+          // Skip OpenFGA's query cache: a company or workspace that was just moved
+          // must not be answered from a stale cached read.
+          consistency: 'HIGHER_CONSISTENCY',
           ...(continuation ? { continuation_token: continuation } : {}),
         }),
         signal: AbortSignal.timeout(TIMEOUT_MS),

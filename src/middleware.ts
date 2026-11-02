@@ -36,38 +36,61 @@ import { carriesBearer } from '@/lib/bearer';
 /**
  * The machine door (docs/plans/2026-11-02-lumitra-sites-agent-plugin.md): the
  * only path a request authenticated by a company API key
- * (`Authorization: Bearer <key>`) may reach on the authoring plane. The key is
- * verified in the route (src/lib/auth-machine.ts); this gate only decides which
- * credential a path accepts.
+ * (`Authorization: Bearer <key>`) may reach on the authoring plane.
+ *
+ * THIS GATE NEVER VERIFIES A KEY. It only decides which credential a path
+ * accepts: any string after `Bearer` passes it. Every handler behind
+ * `/api/mcp` (step 4 of the plan) MUST call `verifyCompanyKey`
+ * (src/lib/auth-machine.ts) itself and refuse anything but a verified key;
+ * the middleware is never the gate.
  */
 const MACHINE_PATH = '/api/mcp';
+
+/**
+ * The path as the gates compare it: percent-decoded, lowercased, with repeated
+ * slashes collapsed, so `/api/MCP`, `/api/%6Dcp` and `//api/mcp` fall under the
+ * same rule as `/api/mcp` (and `/api/%70rojects` under `/api/projects`). A path
+ * that does not decode is compared as it came.
+ */
+function normalizedPath(pathname: string): string {
+  let decoded = pathname;
+  try {
+    decoded = decodeURIComponent(pathname);
+  } catch {
+    // Malformed percent-encoding: keep the raw path.
+  }
+  return decoded.toLowerCase().replace(/\/{2,}/g, '/');
+}
 
 function isUnder(pathname: string, prefix: string): boolean {
   return pathname === prefix || pathname.startsWith(`${prefix}/`);
 }
 
 function isMachinePath(pathname: string): boolean {
-  return isUnder(pathname, MACHINE_PATH);
+  return isUnder(normalizedPath(pathname), MACHINE_PATH);
 }
 
 /** Which editor-plane surface a path belongs to, or null for any other path. */
 function isEditorPlanePath(pathname: string): 'api' | 'page' | null {
-  const under = (prefix: string) => isUnder(pathname, prefix);
+  const path = normalizedPath(pathname);
+  const under = (prefix: string) => isUnder(path, prefix);
   if (under('/api/projects') || under('/api/ai') || under('/api/books') || under(MACHINE_PATH)) return 'api';
   if (under('/projects')) return 'page';
   return null;
 }
 
 /**
- * Pass a bearer request on WITHOUT its cookies. A bearer request is judged by
- * its key alone, and every session reader downstream (`next/headers` cookies,
- * src/lib/auth-api.ts) then finds no `lumitra_session` to fall back to, so
- * "bearer only" holds for every route, not just the ones this gate names.
+ * How a request is passed on. A bearer request goes on WITHOUT its cookies, on
+ * every path and every host: it is judged by its key alone, and every session
+ * reader downstream (`next/headers` cookies, src/lib/auth-api.ts) then finds
+ * no `lumitra_session` to fall back to, so "bearer only" holds for every
+ * route, not just the ones this gate names.
  */
-function forwardWithoutCookies(request: NextRequest): NextResponse {
+function passInit(request: NextRequest, bearer: boolean): { request: { headers: Headers } } | undefined {
+  if (!bearer) return undefined;
   const headers = new Headers(request.headers);
   headers.delete('cookie');
-  return NextResponse.next({ request: { headers } });
+  return { request: { headers } };
 }
 
 /**
@@ -116,6 +139,7 @@ export async function middleware(request: NextRequest) {
   const isEditorHost = isEditorHostname(request.headers.get('host'));
   const bearer = carriesBearer(request);
   const machinePath = isMachinePath(request.nextUrl.pathname);
+  const pass = passInit(request, bearer);
 
   // Before any routing: nothing on the editor host accepts a write from another
   // origin, and a published site is another origin. The one exception is a
@@ -138,12 +162,12 @@ export async function middleware(request: NextRequest) {
       // auth-brain login). A rewrite (NOT redirect): the visitor's URL stays `/`,
       // the required catch-all `(site)/[...slug]` route receives the sentinel
       // segment and resolves it as the home request.
-      return withReportOnlyPolicy(request, NextResponse.rewrite(new URL(`/${HOME_REWRITE_SENTINEL}`, request.url)));
+      return withReportOnlyPolicy(request, NextResponse.rewrite(new URL(`/${HOME_REWRITE_SENTINEL}`, request.url), pass));
     }
     // Editor host root: preserve EXACTLY today's behavior. The editor `/` is NOT
     // auth-bounced here; it loads client-only and owns its own auth. Do NOT start
     // gating `/`.
-    return NextResponse.next();
+    return NextResponse.next(pass);
   }
 
   // D2 (resolved 2026-06-26): the `.lumitra.co` apex `lumitra_session` cookie is
@@ -185,16 +209,16 @@ export async function middleware(request: NextRequest) {
     // The matcher also brings every API route here (for the check above, which
     // only runs on the editor host): those are not pages, so they pass unmarked.
     const { pathname } = request.nextUrl;
-    if (pathname === '/api' || pathname.startsWith('/api/')) return NextResponse.next();
-    return withReportOnlyPolicy(request, NextResponse.next());
+    if (pathname === '/api' || pathname.startsWith('/api/')) return NextResponse.next(pass);
+    return withReportOnlyPolicy(request, NextResponse.next(pass));
   }
 
   // The matcher runs this for every API route so the cross-origin check above
   // covers them, and for page paths so a published page gets its policy; only
   // the editor plane has a session gate. A bearer request travels on without
-  // its cookies, wherever it goes.
+  // its cookies (`pass`), wherever it goes.
   if (!isEditorPlanePath(request.nextUrl.pathname)) {
-    return bearer ? forwardWithoutCookies(request) : NextResponse.next();
+    return NextResponse.next(pass);
   }
 
   // The machine door accepts a bearer and nothing else: a browser session is
@@ -206,7 +230,7 @@ export async function middleware(request: NextRequest) {
         { status: 401, headers: { 'www-authenticate': 'Bearer realm="lumitra-sites"' } },
       );
     }
-    return forwardWithoutCookies(request);
+    return NextResponse.next(pass);
   }
 
   // Editor host, gated authoring surface (`/projects/*`, `/api/projects/*`,
@@ -243,7 +267,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  return NextResponse.next();
+  return NextResponse.next(pass);
 }
 
 export const config = {

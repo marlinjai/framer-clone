@@ -28,8 +28,17 @@ vi.mock('@/lib/openfgaRead', async (importOriginal) => {
   return { ...actual, readCompanyStructure: (...args: unknown[]) => mockReadCompanyStructure(...args) };
 });
 
+const mockFindMany = vi.fn();
+vi.mock('@/server/db', () => ({
+  getPrismaClient: () => ({ site: { findMany: (...args: unknown[]) => mockFindMany(...args) } }),
+}));
+
 import {
   KEY_CACHE_MAX,
+  KEY_VERIFY_TIMEOUT_MS,
+  REFUSALS_GLOBAL,
+  REFUSALS_PER_CLIENT,
+  REFUSAL_WINDOW_MS,
   KEY_CACHE_TTL_MS,
   MACHINE_ACTIONS,
   authorizeKeyAction,
@@ -97,6 +106,8 @@ beforeEach(() => {
   mockVerifyApiKey.mockReset();
   mockReadCompanyStructure.mockReset();
   mockReadCompanyStructure.mockResolvedValue({ groupIds: [GROUP], workspaceIds: [WORKSPACE] });
+  mockFindMany.mockReset();
+  mockFindMany.mockResolvedValue([]);
   infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
   errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -416,11 +427,18 @@ describe('authorizeKeyAction', () => {
   it('denies a target in another workspace or tenant group (a foreign company)', () => {
     expect(authorizeKeyAction(key('admin'), 'editSite', { workspaceId: 'ws-b' })).toBe(false);
     expect(authorizeKeyAction(key('admin'), 'editSite', { workspaceId: WORKSPACE, tenantGroupId: 'group-b' })).toBe(false);
-    expect(authorizeKeyAction(key('admin'), 'editSite', { workspaceId: WORKSPACE, tenantGroupId: GROUP, siteId: 's1' })).toBe(true);
+    expect(authorizeKeyAction(key('admin'), 'editSite', { workspaceId: WORKSPACE, tenantGroupId: GROUP })).toBe(true);
+  });
+
+  it('takes no site id: a site target alone does not compile, and is never a grant on its own', () => {
+    // @ts-expect-error siteId is not part of the target: site isolation comes from the scoped repository.
+    const bySiteOnly: Parameters<typeof authorizeKeyAction>[2] = { siteId: 's1' };
+    // Whatever a caller smuggles in, only workspace and tenant group are checked, and they must match.
+    expect(authorizeKeyAction(key('admin'), 'editSite', { ...bySiteOnly, workspaceId: 'ws-b' })).toBe(false);
   });
 
   it('audits every decision with key id, service account, company and workspace', () => {
-    authorizeKeyAction(key('admin'), 'publishSite', { siteId: 's1' });
+    authorizeKeyAction(key('admin'), 'publishSite', { workspaceId: WORKSPACE });
     authorizeKeyAction(key('viewer'), 'editSite');
     expect(auditLines()).toEqual([
       expect.objectContaining({
@@ -431,7 +449,7 @@ describe('authorizeKeyAction', () => {
         tenantGroupId: GROUP,
         action: 'publishSite',
         outcome: 'allowed',
-        target: { siteId: 's1' },
+        target: { workspaceId: WORKSPACE },
       }),
       expect.objectContaining({ action: 'editSite', outcome: 'denied', reason: 'insufficient_role' }),
     ]);
@@ -455,5 +473,162 @@ describe('machineAuthDenial', () => {
     const r503 = machineAuthDenial({ kind: 'unavailable' });
     expect(r503.status).toBe(503);
     expect(r503.headers.get('retry-after')).toBe('5');
+  });
+});
+
+describe('verifyCompanyKey: hardening', () => {
+  it('answers unavailable when auth-brain never answers within the deadline', async () => {
+    vi.useFakeTimers();
+    try {
+      mockVerifyApiKey.mockReturnValue(new Promise(() => {}));
+      const pending = verifyCompanyKey(bearerRequest(fakeKey()));
+      await vi.advanceTimersByTimeAsync(KEY_VERIFY_TIMEOUT_MS);
+      expect(await pending).toEqual({ kind: 'unavailable' });
+      expect(keyCacheSize()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('refuses a principal that is not a service account', async () => {
+    const v = verifyResponse();
+    mockVerifyApiKey.mockResolvedValue({ ...v, principal: { ...v.principal, type: 'user' } });
+    expect(await verifyCompanyKey(bearerRequest(fakeKey()))).toEqual({ kind: 'refused' });
+  });
+
+  it('forbids a workspace whose site rows carry another tenant group or another company', async () => {
+    for (const rows of [
+      [{ tenantGroupId: 'group-b', companyId: null }],
+      [{ tenantGroupId: GROUP, companyId: OTHER_TENANT }],
+    ]) {
+      mockVerifyApiKey.mockResolvedValueOnce(verifyResponse());
+      mockFindMany.mockResolvedValueOnce(rows);
+      expect(await verifyCompanyKey(bearerRequest(fakeKey()))).toMatchObject({ kind: 'forbidden', reason: 'workspace_mismatch' });
+    }
+    expect(keyCacheSize()).toBe(0);
+  });
+
+  it('accepts a workspace whose site rows agree, and checks the rows of that workspace', async () => {
+    mockVerifyApiKey.mockResolvedValue(verifyResponse());
+    mockFindMany.mockResolvedValue([
+      { tenantGroupId: GROUP, companyId: TENANT },
+      { tenantGroupId: GROUP, companyId: null },
+    ]);
+    expect((await verifyCompanyKey(bearerRequest(fakeKey()))).kind).toBe('key');
+    expect(mockFindMany.mock.calls[0][0]).toMatchObject({ where: { workspaceId: WORKSPACE } });
+  });
+
+  it('is unavailable when the database cannot answer the site-row check', async () => {
+    mockVerifyApiKey.mockResolvedValue(verifyResponse());
+    mockFindMany.mockRejectedValue(new Error('connection refused'));
+    expect(await verifyCompanyKey(bearerRequest(fakeKey()))).toEqual({ kind: 'unavailable' });
+  });
+
+  it('caches no longer than the key itself is valid', async () => {
+    let now = Date.parse('2026-11-02T12:00:00Z');
+    const clock = () => now;
+    const key = fakeKey();
+    const v = verifyResponse();
+    mockVerifyApiKey.mockResolvedValue({ ...v, key: { ...v.key, expires_at: new Date(now + 2_000).toISOString() } });
+    await verifyCompanyKey(bearerRequest(key), clock);
+    now += 2_000;
+    mockVerifyApiKey.mockResolvedValue(null);
+    expect(await verifyCompanyKey(bearerRequest(key), clock)).toEqual({ kind: 'refused' });
+    expect(mockVerifyApiKey).toHaveBeenCalledTimes(2);
+  });
+
+  it('hands out frozen results', async () => {
+    mockVerifyApiKey.mockResolvedValue(verifyResponse());
+    const res = await verifyCompanyKey(bearerRequest(fakeKey()));
+    if (res.kind !== 'key') throw new Error('expected a key');
+    expect(Object.isFrozen(res)).toBe(true);
+    expect(Object.isFrozen(res.scope)).toBe(true);
+    expect(() => {
+      (res.scope as { workspaceId: string }).workspaceId = 'ws-b';
+    }).toThrow();
+  });
+
+  it('shares one auth-brain round trip between concurrent verifications of the same key', async () => {
+    let release: (v: unknown) => void = () => {};
+    mockVerifyApiKey.mockReturnValue(new Promise((r) => (release = r)));
+    const key = fakeKey();
+    const all = Promise.all([1, 2, 3].map(() => verifyCompanyKey(bearerRequest(key))));
+    await Promise.resolve();
+    release(verifyResponse());
+    const results = await all;
+    expect(results.every((r) => r.kind === 'key')).toBe(true);
+    expect(mockVerifyApiKey).toHaveBeenCalledTimes(1);
+    expect(auditLines().filter((l) => l.action === 'authenticate')).toHaveLength(1);
+  });
+
+  it('throttles a client that keeps presenting refused keys, without asking auth-brain, then lets it retry', async () => {
+    let now = 5_000_000;
+    const clock = () => now;
+    const from = (ip: string) => bearerRequest(fakeKey(), { 'x-forwarded-for': `203.0.113.9, ${ip}` });
+    mockVerifyApiKey.mockResolvedValue(null);
+    for (let i = 0; i < REFUSALS_PER_CLIENT; i++) {
+      expect(await verifyCompanyKey(from('198.51.100.1'), clock)).toEqual({ kind: 'refused' });
+    }
+    const calls = mockVerifyApiKey.mock.calls.length;
+    const throttled = await verifyCompanyKey(from('198.51.100.1'), clock);
+    expect(throttled).toMatchObject({ kind: 'throttled' });
+    expect(mockVerifyApiKey.mock.calls.length).toBe(calls);
+    // Another client is not affected.
+    expect(await verifyCompanyKey(from('198.51.100.2'), clock)).toEqual({ kind: 'refused' });
+    // Malformed keys count too, and the window ends.
+    now += REFUSAL_WINDOW_MS;
+    expect(await verifyCompanyKey(from('198.51.100.1'), clock)).toEqual({ kind: 'refused' });
+  });
+
+  it('counts malformed keys against the client', async () => {
+    const bad = () => request({ authorization: 'Bearer short', 'x-real-ip': '198.51.100.7' });
+    for (let i = 0; i < REFUSALS_PER_CLIENT; i++) expect(await verifyCompanyKey(bad())).toEqual({ kind: 'refused' });
+    expect(await verifyCompanyKey(bad())).toMatchObject({ kind: 'throttled' });
+  });
+
+  it('throttles new keys globally under a flood from many addresses, while a cached good key still passes', async () => {
+    const good = fakeKey();
+    mockVerifyApiKey.mockResolvedValueOnce(verifyResponse());
+    expect((await verifyCompanyKey(bearerRequest(good))).kind).toBe('key');
+    mockVerifyApiKey.mockResolvedValue(null);
+    for (let i = 0; i < REFUSALS_GLOBAL; i++) {
+      await verifyCompanyKey(request({ authorization: 'Bearer short', 'x-real-ip': `10.0.${Math.floor(i / 250)}.${i % 250}` }));
+    }
+    expect(await verifyCompanyKey(bearerRequest(fakeKey(), { 'x-real-ip': '192.0.2.1' }))).toMatchObject({ kind: 'throttled' });
+    expect((await verifyCompanyKey(bearerRequest(good, { 'x-real-ip': '192.0.2.1' }))).kind).toBe('key');
+  });
+
+  it('answers 429 with retry-after for a throttled client', () => {
+    const res = machineAuthDenial({ kind: 'throttled', retryAfterSeconds: 42 });
+    expect(res.status).toBe(429);
+    expect(res.headers.get('retry-after')).toBe('42');
+  });
+
+  it('says a missing workspace may be temporary right after a company is created', async () => {
+    const res = machineAuthDenial({ kind: 'forbidden', reason: 'no_sites_workspace', keyId: 'k', tenantId: 't' });
+    expect((await res.json()).error.message).toMatch(/right after a company is created/);
+  });
+});
+
+describe('verifyCompanyKey: header edge cases', () => {
+  it('refuses two Authorization headers (they join into one value with a comma)', async () => {
+    const headers = new Headers();
+    headers.append('authorization', `Bearer ${fakeKey()}`);
+    headers.append('authorization', `Bearer ${fakeKey()}`);
+    const res = await verifyCompanyKey(new Request('https://app.lumitra.co/api/mcp', { method: 'POST', headers }));
+    expect(res).toEqual({ kind: 'refused' });
+    expect(mockVerifyApiKey).not.toHaveBeenCalled();
+  });
+
+  it('accepts the scheme in capitals and a tab after it', async () => {
+    mockVerifyApiKey.mockResolvedValue(verifyResponse());
+    expect((await verifyCompanyKey(request({ authorization: `BEARER ${fakeKey()}` }))).kind).toBe('key');
+    expect((await verifyCompanyKey(request({ authorization: `Bearer\t${fakeKey()}` }))).kind).toBe('key');
+  });
+
+  it('refuses a token longer than 512 characters without asking auth-brain', async () => {
+    const long = fakeKey() + 'a'.repeat(520);
+    expect(await verifyCompanyKey(bearerRequest(long))).toEqual({ kind: 'refused' });
+    expect(mockVerifyApiKey).not.toHaveBeenCalled();
   });
 });

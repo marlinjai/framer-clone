@@ -564,3 +564,61 @@ describe('middleware: the machine door (a company API key reaches /api/mcp only)
     expect((await middleware(call('/api/projects/save', { 'sec-fetch-site': 'same-origin' }))).status).toBe(401);
   });
 });
+
+describe('middleware: machine door hardening', () => {
+  const BEARER = 'Bearer not-a-real-key';
+  const call = (path: string, headers: Record<string, string> = {}, init: { method?: string; host?: string } = {}) => {
+    const host = init.host ?? EDITOR;
+    return new NextRequest(`https://${host}${path}`, { method: init.method ?? 'POST', headers: { host, ...headers } });
+  };
+  const forwarded = (res: Response) => (res.headers.get('x-middleware-override-headers') ?? '').split(',').filter(Boolean);
+
+  it('treats case and percent-encoded variants of /api/mcp exactly like /api/mcp', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    for (const path of ['/api/MCP', '/api/%6Dcp', '/api/%6dcp/stream', '/API/Mcp']) {
+      const withKey = await middleware(call(path, { authorization: BEARER, 'sec-fetch-site': 'cross-site' }));
+      expect(isNext(withKey)).toBe(true);
+      expect(forwarded(withKey)).not.toContain('cookie');
+      const cookieOnly = await middleware(call(path, { cookie: 'lumitra_session=valid', 'sec-fetch-site': 'same-origin' }));
+      expect(cookieOnly.status).toBe(401);
+    }
+  });
+
+  it('applies the cookie gate to percent-encoded authoring paths too', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    const res = await middleware(call('/api/%70rojects/save', { authorization: BEARER, 'sec-fetch-site': 'same-origin' }));
+    expect(res.status).toBe(401);
+  });
+
+  it('keeps a malformed percent-encoding on the raw path (no crash)', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    const res = await middleware(call('/api/%E0%A4%A', { authorization: BEARER }, { method: 'GET' }));
+    expect(isNext(res)).toBe(true);
+  });
+
+  it('strips the cookies of a bearer request on the editor root and on published hosts too', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    const both = { authorization: BEARER, cookie: 'lumitra_session=valid' };
+    const root = await middleware(call('/', both, { method: 'GET' }));
+    expect(isNext(root)).toBe(true);
+    expect(forwarded(root)).not.toContain('cookie');
+
+    const publishedRoot = await middleware(call('/', both, { method: 'GET', host: PUBLISHED }));
+    expect(rewriteTarget(publishedRoot)).not.toBeNull();
+    expect(forwarded(publishedRoot)).toContain('authorization');
+    expect(forwarded(publishedRoot)).not.toContain('cookie');
+
+    for (const path of ['/about', '/api/commerce/products']) {
+      const res = await middleware(call(path, both, { method: 'GET', host: PUBLISHED }));
+      expect(isNext(res)).toBe(true);
+      expect(forwarded(res)).toContain('authorization');
+      expect(forwarded(res)).not.toContain('cookie');
+    }
+  });
+
+  it('forwards a cookie request on those paths untouched', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    const res = await middleware(call('/about', { cookie: 'lumitra_session=valid' }, { method: 'GET', host: PUBLISHED }));
+    expect(res.headers.get('x-middleware-override-headers')).toBeNull();
+  });
+});

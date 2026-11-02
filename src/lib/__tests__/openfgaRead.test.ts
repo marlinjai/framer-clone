@@ -26,7 +26,10 @@ describe('readTuples', () => {
     const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('http://fga.test/stores/store-1/read');
     expect((init.headers as Record<string, string>).authorization).toBe('Bearer test-preshared-key');
-    expect(JSON.parse(String(init.body))).toMatchObject({ tuple_key: { object: 'tenant:t1', relation: 'group' } });
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      tuple_key: { object: 'tenant:t1', relation: 'group' },
+      consistency: 'HIGHER_CONSISTENCY',
+    });
   });
 
   it('sends no authorization header for a local OpenFGA without a key', async () => {
