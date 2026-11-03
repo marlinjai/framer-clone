@@ -670,7 +670,8 @@ function checkoutPart(role: string, view: CheckoutView): ShopPartRender {
         id: fieldId(key),
         'aria-labelledby': `${fieldId(key)}-label`,
         type: input.type,
-        name: key,
+        // No name: the order is sent from the island's state, never by a form, so a
+        // form the page wraps around the checkout has no buyer details to post.
         required: true,
         autoComplete: input.autoComplete,
         'data-checkout-buyer-field': key,
@@ -811,7 +812,13 @@ export function sampleCheckoutState(id: CheckoutPreviewStateId | string, locale:
       return { state: { status: 'returned', outcome: 'cancelled', orderNumber: SAMPLE_ORDER.orderNumber, confirmationTo: null }, cartEmpty: false };
     case 'shortage':
       return {
-        state: { status: 'shortage', shortages: [{ variantId: locale === 'de' ? 'T-Shirt, Größe M' : 'T-shirt, size M', needed: 3, available: 1 }] },
+        state: {
+          status: 'shortage',
+          shortages: [
+            { variantId: locale === 'de' ? 'T-Shirt, Größe M' : 'T-shirt, size M', needed: 3, available: 1 },
+            { variantId: locale === 'de' ? 'Emaille-Becher' : 'Enamel mug', needed: 2, available: 0 },
+          ],
+        },
         cartEmpty: false,
       };
     case 'items-unavailable':

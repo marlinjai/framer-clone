@@ -20,6 +20,7 @@ import { renderOwnText, runLinksAllowedIn } from '@/lib/renderer/textNode';
 import {
   fillShopTokensIn,
   shopPartControl,
+  shopPartRoleOf,
   shopPartSpec,
   shopPartTag,
   shopPartText,
@@ -114,14 +115,21 @@ const MIN_KEPT_FONT_PX = 11;
  * total, the pay button's wording) visible as it renders, whatever a stylesheet,
  * a rule on a wrapper or an inherited value says: on the part and on every
  * wrapper up to the control, a computed value that hides is overridden inline
- * with `!important`, which beats any stylesheet. Covered: display, visibility,
- * opacity and content visibility on the way up; clip path, transform, filter and
- * a font size under 11 pixels on the part itself.
+ * with `!important`, which beats any stylesheet. Covered on the part and on the
+ * way up: display, visibility, opacity, content visibility, paint containment, a
+ * scale, translation, transform, clip path, mask or filter, and a wrapper's overflow
+ * that crops; on the part itself a font size under 11 pixels.
  */
 function keepInSight(element: HTMLElement): void {
   const view = element.ownerDocument.defaultView;
   if (!view) return;
   const force = (target: HTMLElement, property: string, value: string) => target.style.setProperty(property, value, 'important');
+  // The part itself is pinned visible whatever its stylesheet says now or later (a
+  // hover rule on an ancestor): inline `!important` outweighs every rule.
+  const own = view.getComputedStyle(element);
+  force(element, 'display', own.display && own.display !== 'none' ? own.display : 'block');
+  force(element, 'visibility', 'visible');
+  force(element, 'opacity', '1');
   for (let node: HTMLElement | null = element; node; node = node.parentElement) {
     if (node !== element && node.hasAttribute('data-component-kind')) break;
     const computed = view.getComputedStyle(node);
@@ -129,12 +137,20 @@ function keepInSight(element: HTMLElement): void {
     if (computed.visibility !== 'visible') force(node, 'visibility', 'visible');
     if (computed.opacity !== '' && Number(computed.opacity) < 1) force(node, 'opacity', '1');
     if (computed.getPropertyValue('content-visibility') === 'hidden') force(node, 'content-visibility', 'visible');
+    // A wrapper that crops what it holds (a 1px box with overflow hidden, or paint
+    // containment) lets it out.
+    if (node !== element && computed.overflow !== 'visible' && node.scrollHeight > node.clientHeight + 1) force(node, 'overflow', 'visible');
+    const contain = computed.getPropertyValue('contain');
+    if (contain.split(/\s+/).some((token) => token === 'paint' || token === 'strict' || token === 'content' || token === 'size')) force(node, 'contain', 'none');
+    // A scale, a translation, a transform or a mask on the way up shrinks, moves or
+    // masks the part with its wrapper.
+    for (const property of ['scale', 'translate', 'transform', 'clip-path', 'mask-image', '-webkit-mask-image', 'filter']) {
+      const value = computed.getPropertyValue(property);
+      if (value && value !== 'none') force(node, property, 'none');
+    }
     if (node.hidden) node.hidden = false;
   }
   const computed = view.getComputedStyle(element);
-  if (computed.clipPath && computed.clipPath !== 'none') force(element, 'clip-path', 'none');
-  if (computed.transform && computed.transform !== 'none') force(element, 'transform', 'none');
-  if (computed.filter && computed.filter !== 'none') force(element, 'filter', 'none');
   const size = Number.parseFloat(computed.fontSize);
   if (Number.isFinite(size) && size < MIN_KEPT_FONT_PX) force(element, 'font-size', `${MIN_KEPT_FONT_PX}px`);
 }
@@ -156,6 +172,29 @@ function useKeptInSight(enabled: boolean, outer: unknown): React.RefCallback<HTM
   return enabled ? ref : undefined;
 }
 
+/**
+ * The rendered children that are shop parts, and nothing else. Each surface keys a
+ * child's element by its node id, and a part's id ends with its role
+ * (src/lib/commerce/parts.ts), so the check reads the element itself: a
+ * ShopPartElement, or a wrapper keyed by a node whose props name a role. A part
+ * inside anything else is lifted out of it, and the rest (the wrapper, its text)
+ * is left out, so no extra words join a fixed wording.
+ */
+function onlyPartElements(content: React.ReactNode): React.ReactNode {
+  const parts: React.ReactNode[] = [];
+  const collect = (child: React.ReactNode) => {
+    if (!React.isValidElement(child)) return;
+    const props = child.props as { component?: { props?: unknown }; children?: React.ReactNode };
+    if (child.type === ShopPartElement || (props.component && shopPartRoleOf(props.component.props))) {
+      parts.push(child);
+      return;
+    }
+    React.Children.toArray(props.children).forEach(collect);
+  };
+  React.Children.toArray(content).forEach(collect);
+  return parts;
+}
+
 /** One shop part, drawn as its control's runtime says. */
 export function ShopPartElement({ role, tag, domProps, storedText, content, surface, linksAllowed = true }: ShopPartElementProps): React.ReactElement | null {
   const runtime = useContext(ShopRuntimeContext);
@@ -168,6 +207,9 @@ export function ShopPartElement({ role, tag, domProps, storedText, content, surf
   // The designer's props, without anything that could send or (for a part kept in sight) hide.
   const ownProps: Record<string, unknown> = { ...domProps };
   for (const key of SENDING_ATTRIBUTES) delete ownProps[key];
+  // An input part has no name: its value lives in the island's state, so a form the
+  // page wraps around the control has nothing of the visitor's to post.
+  if (elementTag === 'input' || elementTag === 'select' || elementTag === 'textarea') delete ownProps.name;
   if (keep) {
     for (const key of HIDING_ATTRIBUTES) delete ownProps[key];
     ownProps.ref = keptRef;
@@ -188,6 +230,8 @@ export function ShopPartElement({ role, tag, domProps, storedText, content, surf
 
   const render = runtime.part(role);
   if (!render.visible) return null;
+  // A button whose wording is fixed draws only its own parts, whatever it was handed.
+  if (spec?.onlyParts) content = onlyPartElements(content);
   const editing = ownProps.contentEditable === 'true';
   // While the designer types, the box holds the stored text as typed, tokens and all.
   const raw = spec?.dynamicText || render.text !== undefined ? render.text : editing ? storedText : shopPartText(role, storedText, runtime.locale);
@@ -212,7 +256,9 @@ export function ShopPartElement({ role, tag, domProps, storedText, content, surf
 
   if (render.items) {
     if (render.items.length === 0) return null;
-    // A repeated part's copies are siblings; the first keeps the designer's identity.
+    // A repeated part's copies are siblings. Each keeps the node's style hook (its
+    // states and rules reach every copy on the canvas), only the first its
+    // selection identity, so a click on any copy selects the one node.
     return (
       <>
         {render.items.map((item, index) =>

@@ -166,6 +166,8 @@ export const MAX_TRACKED_CLIENTS = 1024;
 export interface VerifiedKey {
   readonly kind: 'key';
   readonly tenantId: string;
+  /** The company's auth-brain slug (its shop schema is named after it when a first site is created). */
+  readonly companySlug: string;
   readonly keyId: string;
   readonly serviceAccountId: string;
   /** The company's sites workspace and tenant group, resolved by the server. */
@@ -555,6 +557,14 @@ async function verifyFresh(presented: string): Promise<FreshResult> {
     return refusedResult;
   }
   const tenantId = scope.id;
+  // The slug names the company's shop schema when its first site is created
+  // (createSite, like the editor's create route). A key without one is not a
+  // well-formed company key.
+  const companySlug = (scope as { slug?: unknown }).slug;
+  if (typeof companySlug !== 'string' || !companySlug.trim()) {
+    console.warn('[machine-auth] refused a company key whose verify answer names no company slug', JSON.stringify({ keyId }));
+    return refusedResult;
+  }
   const forbidden = (reason: ForbiddenReason): FreshResult => {
     auditMachineAction({ keyId, serviceAccountId, tenantId }, { action: 'authenticate', outcome: 'denied', reason });
     return { result: { kind: 'forbidden', reason, keyId, tenantId }, keyExpiresAt: null };
@@ -597,6 +607,7 @@ async function verifyFresh(presented: string): Promise<FreshResult> {
   const key: VerifiedKey = Object.freeze({
     kind: 'key' as const,
     tenantId,
+    companySlug,
     keyId,
     serviceAccountId,
     scope: Object.freeze({ ...resolved.scope }),
