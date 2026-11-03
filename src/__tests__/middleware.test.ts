@@ -683,6 +683,34 @@ describe('middleware: machine door hardening', () => {
   });
 });
 
+describe('framing: no editor page may be framed', () => {
+  const EDITOR_HOST = 'app.lumitra.co';
+  afterEach(() => {
+    delete process.env.EDITOR_HOST;
+  });
+
+  it("sends frame-ancestors 'none' and X-Frame-Options DENY on the agent approval page and on every editor page", async () => {
+    process.env.EDITOR_HOST = EDITOR_HOST;
+    for (const path of ['/projects/site-1/confirm/abc', '/projects', '/projects/site-1', '/']) {
+      const res = await middleware(req(`https://${EDITOR_HOST}${path}`, { host: EDITOR_HOST, cookie: 'lumitra_session=s1' }));
+      expect(res.headers.get('content-security-policy')).toBe("frame-ancestors 'none'");
+      expect(res.headers.get('x-frame-options')).toBe('DENY');
+    }
+    // A signed-out visit bounced to the login carries it too.
+    const bounced = await middleware(req(`https://${EDITOR_HOST}/projects/site-1/confirm/abc`, { host: EDITOR_HOST }));
+    expect(bounced.headers.get('x-frame-options')).toBe('DENY');
+  });
+
+  it('leaves API responses and published hosts alone', async () => {
+    process.env.EDITOR_HOST = EDITOR_HOST;
+    const api = await middleware(req(`https://${EDITOR_HOST}/api/projects/list`, { host: EDITOR_HOST, cookie: 'lumitra_session=s1' }));
+    expect(api.headers.get('x-frame-options')).toBeNull();
+    const published = await middleware(req('https://bakery.sites.lumitra.co/menu', { host: 'bakery.sites.lumitra.co' }));
+    expect(published.headers.get('x-frame-options')).toBeNull();
+    expect(published.headers.get('content-security-policy')).toBeNull();
+  });
+});
+
 describe('middleware: a forwarded server action (Host: localhost) fails closed in production', () => {
   // Next forwards a server action its own bundle lacks to the worker holding
   // it; Node 22's fetch drops the caller's Host, so that hop arrives as

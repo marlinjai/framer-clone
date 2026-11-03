@@ -171,6 +171,25 @@ function withReportOnlyPolicy(request: NextRequest, response: NextResponse): Nex
 }
 
 /**
+ * No page of the editor host may be framed by another page. Same-site
+ * `*.lumitra.co` pages (published sites, artifacts that serve author HTML) are
+ * another origin but carry the same session cookie, so a frame could put a
+ * signed-in editor page (above all the agent approval page under
+ * `/projects/<id>/confirm/<approvalId>`) under a click it did not show. Nothing
+ * frames an editor page: the editor's only same-origin frame is the Books
+ * invoice PDF, an API route that sends its own `frame-ancestors 'self'`. API
+ * responses are left as they are; published hosts keep their own policy.
+ */
+function withFrameGuard(request: NextRequest, response: NextResponse | Response): NextResponse | Response {
+  if (!isEditorHostname(request.headers.get('host'))) return response;
+  const path = normalizedPath(request.nextUrl.pathname);
+  if (path === '/api' || path.startsWith('/api/')) return response;
+  if (!response.headers.has('content-security-policy')) response.headers.set('content-security-policy', "frame-ancestors 'none'");
+  response.headers.set('x-frame-options', 'DENY');
+  return response;
+}
+
+/**
  * The 404 a published host answers for anything its allowlist
  * (src/lib/hostRoutes.ts) does not name, or null when the request may pass.
  * `routePath` is the path Next will route: the home sentinel for `/`. A server
@@ -210,6 +229,10 @@ function refuseOnPublishedHost(request: NextRequest, routePath: string): NextRes
 }
 
 export async function middleware(request: NextRequest) {
+  return withFrameGuard(request, await route(request));
+}
+
+async function route(request: NextRequest) {
   // Host-aware root routing. Next is host-agnostic, so without this `/` is the
   // editor (`app/page.tsx`) on EVERY host. The discriminator is the request Host:
   // the editor is ALWAYS served on the fixed lumitra-owned EDITOR_HOST; any other

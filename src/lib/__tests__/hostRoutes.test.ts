@@ -218,7 +218,10 @@ describe('host routes: the middleware answers each route by its class', () => {
     }
 
     // The editor host is unchanged: signed in and same origin, everything passes.
-    const editor = await middleware(request(EDITOR, pathname, method, { 'sec-fetch-site': 'same-origin' }));
+    // The machine door is the one route a session never opens: it takes a
+    // company API key (a bearer) and nothing else, so it is sent one here.
+    const credential: Record<string, string> = route === '/api/mcp' ? { authorization: 'Bearer not-a-real-key' } : {};
+    const editor = await middleware(request(EDITOR, pathname, method, { 'sec-fetch-site': 'same-origin', ...credential }));
     expect(isNext(editor), `${EDITOR} ${method} ${pathname}`).toBe(true);
   });
 
