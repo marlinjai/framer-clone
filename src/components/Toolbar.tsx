@@ -4,7 +4,7 @@
 'use client';
 import React from 'react';
 import { observer } from 'mobx-react-lite';
-import { PiCursorLight, PiHandGrabbingBold, PiPlus, PiMinus, PiHouse, PiArrowUUpLeft, PiArrowUUpRight } from "react-icons/pi";
+import { PiCursorLight, PiCursorClickLight, PiHandGrabbingBold, PiPlus, PiMinus, PiHouse, PiArrowUUpLeft, PiArrowUUpRight } from "react-icons/pi";
 import { EditorTool, EditorUIType } from '../stores/EditorUIStore';
 import { getUndoManager } from '@/stores/RootStore';
 import { useCameraControls } from '@/lib/canvas/cameraControls';
@@ -20,6 +20,11 @@ const TOOLS = {
     name: 'Select (V)',
     icon: PiCursorLight,
     description: 'Select and move components. Drag on empty canvas to select several, Shift+click to add'
+  },
+  [EditorTool.INTERACT]: {
+    name: 'Interact',
+    icon: PiCursorClickLight,
+    description: 'Use the page in its frames as a visitor would. Shift+Escape returns to Select from anywhere'
   }
 };
 
@@ -95,6 +100,8 @@ const Toolbar = observer(({ editorUI }: ToolbarProps) => {
               <button
                 key={toolType}
                 onClick={() => editorUI.setSelectedTool(toolType as EditorTool)}
+                aria-label={toolInfo.name}
+                aria-pressed={isActive}
                 className={`
                   flex items-center justify-center w-10 h-10 rounded-lg 
                   transition-all duration-200 group relative

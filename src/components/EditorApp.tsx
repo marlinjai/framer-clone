@@ -26,6 +26,7 @@ import InlineFormatBar from './InlineFormatBar';
 import LegalTemplateNotice from './site/LegalTemplateNotice';
 import { resolveAction } from '@/lib/keyBindings';
 import { bindSpacePan, isActivatableControl } from '@/lib/canvas/spacePan';
+import { pageContentOf } from '@/lib/canvas/interactShim';
 import { deleteSelection } from '@/lib/canvas/deleteSelection';
 import { duplicateLayer } from '@/lib/layers/layerActions';
 import { DataSourceProviderContext } from '@/lib/bindings/dataSource/context';
@@ -163,6 +164,20 @@ export default function EditorApp({ projectSnapshot, projectVersion }: EditorApp
     [rootStore],
   );
 
+  // Shift+Escape leaves Interact from anywhere: at the window, in capture, before the page
+  // or a modal it opened hears it, also with focus held in a frame. It never yields.
+  React.useEffect(() => {
+    const ui = rootStore.editorUI;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || !e.shiftKey || e.metaKey || e.ctrlKey || e.altKey || !ui.interactOn) return;
+      e.preventDefault();
+      e.stopPropagation();
+      ui.setSelectedTool(EditorTool.SELECT);
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [rootStore.editorUI]);
+
   // Single keydown listener dispatching through the keybindings registry. The
   // registry (src/lib/keyBindings.ts) owns the key → action mapping so a future
   // settings page can rebind without touching this file.
@@ -175,6 +190,8 @@ export default function EditorApp({ projectSnapshot, projectVersion }: EditorApp
       if (getDragManager()?.isActive) return;
       // The preview over the editor has its own keys (PreviewOverlay).
       if (rootStore.editorUI.previewOpen) return;
+      // In Interact a key in a frame is the page's: Escape closes its dialog, a letter is typed.
+      if (rootStore.editorUI.interactOn && pageContentOf(e.target)) return;
 
       const match = resolveAction(e);
       if (!match) return;
@@ -205,6 +222,11 @@ export default function EditorApp({ projectSnapshot, projectVersion }: EditorApp
         // A dialog, menu or gesture that handled Escape itself has the last
         // word; so does an active resize (its own Escape restores the size).
         if (e.defaultPrevented || ui.isResizing) return;
+        // With focus outside every frame, Escape ends Interact.
+        if (ui.interactOn) {
+          ui.setSelectedTool(EditorTool.SELECT);
+          return;
+        }
         // In a definition, Escape first lets go of what was picked, as everywhere,
         // and then leaves. Opening one selects its root, which counts as nothing
         // picked, so Escape straight after entering goes back out.

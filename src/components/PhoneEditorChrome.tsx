@@ -31,7 +31,7 @@ import React from 'react';
 import { observer } from 'mobx-react-lite';
 import { reaction } from 'mobx';
 import { Layers, SlidersHorizontal, PencilLine } from 'lucide-react';
-import { PiCursorLight, PiHandGrabbingBold, PiArrowUUpLeft, PiArrowUUpRight } from 'react-icons/pi';
+import { PiCursorLight, PiCursorClickLight, PiHandGrabbingBold, PiArrowUUpLeft, PiArrowUUpRight } from 'react-icons/pi';
 import { EditorTool, type EditorUIType } from '@/stores/EditorUIStore';
 import { getUndoManager } from '@/stores/RootStore';
 import { revealOffset, useCameraControls, type CameraTransform, type CanvasInsets, type Edges, type Rect } from '@/lib/canvas/cameraControls';
@@ -264,6 +264,7 @@ const PhoneEditorChrome = observer(({ editorUI }: { editorUI: EditorUIType }) =>
 
   const isSelect = editorUI.isToolSelected(EditorTool.SELECT);
   const isGrab = editorUI.isToolSelected(EditorTool.GRAB);
+  const isInteract = editorUI.isToolSelected(EditorTool.INTERACT);
 
   return (
     <>
@@ -293,6 +294,9 @@ const PhoneEditorChrome = observer(({ editorUI }: { editorUI: EditorUIType }) =>
           </BarButton>
           <BarButton label="Hand" ariaLabel="Hand tool, pan the canvas" onClick={() => editorUI.setSelectedTool(EditorTool.GRAB)} pressed={isGrab}>
             <PiHandGrabbingBold size={20} />
+          </BarButton>
+          <BarButton label="Interact" ariaLabel="Interact, use the page as a visitor" onClick={() => editorUI.setSelectedTool(EditorTool.INTERACT)} pressed={isInteract}>
+            <PiCursorClickLight size={20} />
           </BarButton>
           <BarButton
             label={`${zoomPercentage}%`}

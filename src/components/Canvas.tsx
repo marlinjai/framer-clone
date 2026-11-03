@@ -38,6 +38,7 @@ import {
 } from '@/lib/canvas/touchGestures';
 import { DATA_PLACEMENT_ROOT } from '@/lib/drag/markers';
 import { isEditingText, placeCaret, startInlineTextEdit } from '@/lib/canvas/inlineTextEdit';
+import { pageContentOf, wheelScrollsPage } from '@/lib/canvas/interactShim';
 
 /**
  * HUD elements a finger may press while it means the canvas under them: the
@@ -133,14 +134,29 @@ const CanvasInner = observer(() => {
     return () => ui.setCanvasCamera(undefined);
   }, [applyTransform, rootStore.editorUI, transformState]);
 
+  /**
+   * True when a press or key in Interact is the page's: on the page in a frame, with the
+   * Interact tool itself (Space held pans there too). Outside a frame the canvas is as ever.
+   */
+  const pageOwns = useCallback((target: EventTarget | null): boolean => {
+    const ui = rootStore.editorUI;
+    if (ui.selectedTool !== EditorTool.INTERACT) return false;
+    const content = pageContentOf(target);
+    return !!content && !!groundRef.current?.contains(content);
+  }, [rootStore.editorUI]);
+
   // Handle mouse wheel - pan by default, zoom with Command key
   const handleWheel = useCallback((e: WheelEvent) => {
+    // Check if Command key is pressed (metaKey on Mac, ctrlKey on Windows/Linux)
+    const isZoomModifier = e.metaKey || e.ctrlKey;
+
+    // In Interact a wheel over the page scrolls what in it can still scroll. A frame has no
+    // scroller of its own, so anywhere else the wheel pans the camera, as in every tool.
+    if (!isZoomModifier && rootStore.editorUI.interactOn && wheelScrollsPage(e.target, e.deltaX, e.deltaY)) return;
+
     e.preventDefault();
 
     if (!groundRef.current) return;
-
-    // Check if Command key is pressed (metaKey on Mac, ctrlKey on Windows/Linux)
-    const isZoomModifier = e.metaKey || e.ctrlKey;
 
     if (isZoomModifier) {
       // ZOOM MODE: Stack Overflow proven cursor-centered zoom algorithm
@@ -183,7 +199,7 @@ const CanvasInner = observer(() => {
 
     // Apply transform immediately
     applyTransform();
-  }, [applyTransform, transformState]);
+  }, [applyTransform, rootStore.editorUI, transformState]);
 
   // ===== Pan =====
   //
@@ -917,20 +933,23 @@ const CanvasInner = observer(() => {
   // double-tap and gives a long-press no meaning, so both are dropped when
   // they follow a touch or pen press. Synthetic events (ours) are untrusted.
   const handleDoubleClickCapture = useCallback((e: React.MouseEvent) => {
-    if (!e.nativeEvent.isTrusted) return;
+    if (!e.nativeEvent.isTrusted || pageOwns(e.target)) return;
     if (performance.now() - lastTouchPressAtRef.current > 1000) return;
     e.stopPropagation();
     e.preventDefault();
-  }, []);
+  }, [pageOwns]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
-    if (performance.now() - lastTouchPressAtRef.current > 1500) return;
+    if (performance.now() - lastTouchPressAtRef.current > 1500 || pageOwns(e.target)) return;
     e.preventDefault();
-  }, []);
+  }, [pageOwns]);
 
   // ===== Ground pointer handlers =====
   const handlePointerDownCapture = useCallback((e: React.PointerEvent) => {
     suppressClickRef.current = false;
+    // Interact: a press on the page is the page's, whatever the button or the finger. Not
+    // tracked, so neither a pinch, a long press nor a double-tap can start from it.
+    if (pageOwns(e.target)) return;
     if (isTouchLike(e.pointerType)) {
       handleTouchPointerDown(e);
       return;
@@ -954,7 +973,7 @@ const CanvasInner = observer(() => {
     if (getDragManager()?.isActive) return;
     const scope = marqueeScopeFor(e.target);
     if (scope) startMarquee(e, scope);
-  }, [handleTouchPointerDown, marqueeScopeFor, rootStore.editorUI, startMarquee, startPan]);
+  }, [handleTouchPointerDown, marqueeScopeFor, pageOwns, rootStore.editorUI, startMarquee, startPan]);
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
     const pan = panRef.current;
@@ -977,10 +996,12 @@ const CanvasInner = observer(() => {
   // Middle press: no autoscroll, no paste (Linux), and a link under the
   // pointer does not open in a new tab.
   const preventMiddleDefault = useCallback((e: React.MouseEvent) => {
-    if (e.button === 1) e.preventDefault();
-  }, []);
+    if (e.button === 1 && !pageOwns(e.target)) e.preventDefault();
+  }, [pageOwns]);
 
   const handleClickCapture = useCallback((e: React.MouseEvent) => {
+    // Interact selects nothing and has no gesture to end, so no click is the canvas's.
+    if (rootStore.editorUI.selectedTool === EditorTool.INTERACT) return;
     if (performance.now() < blockTouchClicksUntilRef.current) {
       e.stopPropagation();
       e.preventDefault();
@@ -990,7 +1011,7 @@ const CanvasInner = observer(() => {
     suppressClickRef.current = false;
     e.stopPropagation();
     e.preventDefault();
-  }, []);
+  }, [rootStore.editorUI]);
 
   // Handle canvas click - deselect when clicking empty space
   const handleCanvasClick = useCallback((e: React.MouseEvent) => {
@@ -1011,9 +1032,10 @@ const CanvasInner = observer(() => {
     }
   }, [rootStore.editorUI]);
 
+  // In Interact a drag inside the page is the page's, as on any page.
   const preventNativeDrag = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-  }, []);
+    if (!pageOwns(e.target)) e.preventDefault();
+  }, [pageOwns]);
 
   // Add native wheel event listener with non-passive option
   useEffect(() => {
@@ -1047,8 +1069,16 @@ const CanvasInner = observer(() => {
     );
   }
 
+  // The editor's landmark, except in Interact: a `main` around the page would stop a
+  // `header` in it being a banner. Same element either way, so nothing remounts. No role
+  // at all there, rather than `region`: Chromium's own tree keeps a header under a region
+  // a banner, but the HTML accessibility mappings, and Playwright with them, do not.
+  const interact = rootStore.editorUI.interactOn;
   return (
-    <main className="w-screen h-screen bg-gray-100 relative">
+    <div
+      role={interact ? undefined : 'main'}
+      className="w-screen h-screen bg-gray-100 relative"
+    >
       <div className="w-full h-full bg-gray-100 overflow-hidden relative">
         {/* Canvas viewport. data-ground marks this as the drop region that
             resolves to `{kind:'floating', x, y}` for the new DragManager when
@@ -1060,7 +1090,10 @@ const CanvasInner = observer(() => {
           // gestures above (no browser scroll, pinch or double-tap zoom here);
           // the rest of the editor keeps native panel scrolling. No iOS
           // long-press callout on images in the page.
-          className={`w-full h-full select-none touch-none ${selectedTool === EditorTool.GRAB ? 'cursor-grab' : 'cursor-default'} relative overflow-hidden`}
+          // In Interact the ground leaves touch-action alone, so a finger scrolls a scroller
+          // in the page: Chromium on Linux applies an ancestor's `none` to it. The grid below
+          // takes the empty canvas's fingers there, with `none` of its own.
+          className={`w-full h-full select-none ${interact ? '' : 'touch-none '}${selectedTool === EditorTool.GRAB ? 'cursor-grab' : 'cursor-default'} relative overflow-hidden`}
           style={{ WebkitTouchCallout: 'none' }}
           onPointerDownCapture={handlePointerDownCapture}
           onPointerMove={handlePointerMove}
@@ -1080,7 +1113,7 @@ const CanvasInner = observer(() => {
         >
           {/* Fixed grid background - stays in viewport, doesn't transform */}
           <div
-            className="absolute inset-0 opacity-40 pointer-events-none"
+            className={`absolute inset-0 opacity-40 ${interact ? 'touch-none' : 'pointer-events-none'}`}
             style={{
               backgroundImage: `
                 linear-gradient(to right, #e5e7eb 1px, transparent 1px),
@@ -1112,7 +1145,7 @@ const CanvasInner = observer(() => {
           />
         </div>
       </div>
-    </main>
+    </div>
   );
 });
 

@@ -1,4 +1,5 @@
 import { isEditableTarget } from '@/lib/keyBindings';
+import { pageContentOf } from './interactShim';
 
 // Hold Space to pan the canvas. Space is also how a keyboard presses a
 // focused button, ticks a checkbox or switch, picks a menu item or option
@@ -66,6 +67,8 @@ export function isActivatableControl(target: EventTarget | null): boolean {
 
 export interface SpacePanUI {
   readonly previewOpen: boolean;
+  /** The page runs on the canvas (the Interact tool): Space in a frame is the page's. */
+  readonly interactOn?: boolean;
   readonly toolBeforeTemporaryGrab: unknown;
   beginTemporaryGrab(): void;
   endTemporaryGrab(): void;
@@ -85,6 +88,8 @@ export function bindSpacePan(
   const onKeyDown = (e: KeyboardEvent) => {
     if (!isSpace(e) || e.defaultPrevented) return;
     if (spaceBelongsToTarget(e.target)) return;
+    // In Interact, Space in a frame presses a button or scrolls, as on the page.
+    if (ui.interactOn && pageContentOf(e.target)) return;
     // Space scrolls the preview over the editor; it is not a pan there.
     if (ui.previewOpen) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
