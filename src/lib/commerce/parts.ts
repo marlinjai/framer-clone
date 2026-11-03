@@ -18,7 +18,7 @@
 // controls (src/lib/renderer/commerce/*) and src/lib/commerce/shopRuntime.tsx.
 
 import { localeOf } from '@/lib/forms/validation';
-import { isFormattedText } from '@/lib/renderer/textNode';
+import { formattedPlainText, isFormattedText } from '@/lib/renderer/textNode';
 import type { StoredRule } from '@/lib/rules/rules';
 import { HOVER_GATE } from '@/lib/rules/states';
 
@@ -69,6 +69,16 @@ export interface ShopPartSpec {
   /** Plain attributes stored on the node, for its look (never behaviour). */
   attributes?: Record<string, unknown>;
   children?: readonly ShopPartSpec[];
+  /**
+   * Kept in sight: nothing stored can hide it or a wrapper around it, its tag is
+   * its spec's, and the island forces it visible as it renders (the demo notice,
+   * the simulated payment line, the total, the pay button's wording).
+   */
+  keepVisible?: true;
+  /** Tokens the text must hold; text without one falls back to the default (the total, the order number). */
+  requiredTokens?: readonly string[];
+  /** Why the text is fixed, said in the properties panel. */
+  fixedReason?: string;
 }
 
 /** One state a control can be previewed in on the canvas. */
@@ -177,6 +187,8 @@ const CHECKOUT_PARTS: readonly ShopPartSpec[] = [
         label: 'Demo notice',
         tag: 'div',
         required: true,
+        keepVisible: true,
+        fixedReason: 'Fixed text: a demo payment must say that no money is charged, so no visitor takes it for a real payment.',
         fixedText: { en: 'Demo payment. No real charge will be made.', de: 'Demo-Zahlung. Es wird kein echtes Geld abgebucht.' },
         style: {
           padding: '6px 10px',
@@ -194,6 +206,8 @@ const CHECKOUT_PARTS: readonly ShopPartSpec[] = [
         label: 'Total',
         tag: 'div',
         required: true,
+        keepVisible: true,
+        requiredTokens: ['total'],
         text: { en: 'Total to pay: {total}', de: 'Zu zahlen: {total}' },
         style: { fontWeight: 600 },
       },
@@ -260,7 +274,18 @@ const CHECKOUT_PARTS: readonly ShopPartSpec[] = [
             style: { ...PRIMARY_BUTTON, border: '1px solid #065f46', backgroundColor: '#065f46' },
             rules: BUTTON_RULES(),
             children: [
-              { role: 'checkout.pay-label', label: 'Label', tag: 'span', required: true, text: { en: 'Pay {total}', de: '{total} bezahlen' } },
+              {
+                role: 'checkout.pay-label',
+                label: 'Label',
+                tag: 'span',
+                required: true,
+                keepVisible: true,
+                // The button solution (section 312j (3) of the German Civil Code): the button that
+                // places a paid order says so in fixed words; the amount may follow.
+                fixedText: { en: 'Buy now ({total})', de: 'Zahlungspflichtig bestellen ({total})' },
+                fixedReason:
+                  'Fixed text: German law (the button solution, section 312j of the Civil Code) requires the button that places a paid order to say so plainly, as "Zahlungspflichtig bestellen". Style it freely.',
+              },
               {
                 role: 'checkout.pay-loading',
                 label: 'Loading label',
@@ -303,6 +328,7 @@ const CHECKOUT_PARTS: readonly ShopPartSpec[] = [
         label: 'Thank you',
         tag: 'span',
         required: true,
+        requiredTokens: ['orderNumber'],
         text: { en: 'Thank you: the payment for order {orderNumber} went through.', de: 'Danke: Die Zahlung für Bestellung {orderNumber} ist eingegangen.' },
       },
       {
@@ -344,6 +370,7 @@ const CHECKOUT_PARTS: readonly ShopPartSpec[] = [
         label: 'Confirmed',
         tag: 'div',
         required: true,
+        requiredTokens: ['orderNumber'],
         text: { en: 'Order {orderNumber} confirmed. Total: {total}.', de: 'Bestellung {orderNumber} bestätigt. Gesamt: {total}.' },
       },
       {
@@ -351,6 +378,8 @@ const CHECKOUT_PARTS: readonly ShopPartSpec[] = [
         label: 'Payment reference (demo)',
         tag: 'div',
         required: true,
+        keepVisible: true,
+        fixedReason: 'Fixed text: the reference of a demo payment must say that the payment was simulated and nothing was charged.',
         fixedText: {
           en: 'Payment reference: {transactionId} (simulated payment, no real charge).',
           de: 'Zahlungsreferenz: {transactionId} (simulierte Zahlung, keine echte Abbuchung).',
@@ -531,8 +560,10 @@ export function shopPartText(role: string, stored: unknown, locale: ShopLocale):
   const spec = shopPartSpec(role);
   if (!spec || spec.dynamicText) return undefined;
   if (spec.fixedText) return spec.fixedText[locale];
-  if (typeof stored === 'string' && stored.trim().length > 0) return stored;
-  if (isFormattedText(stored)) return stored;
+  const plain = typeof stored === 'string' ? stored : isFormattedText(stored) ? formattedPlainText(stored) : '';
+  // A text that drops a required token (the total, the order number) is not shown: the default is.
+  const keepsTokens = (spec.requiredTokens ?? []).every((token) => plain.includes(`{${token}}`));
+  if (plain.trim().length > 0 && keepsTokens) return stored;
   return spec.text?.[locale];
 }
 
@@ -591,6 +622,15 @@ function partProps(spec: ShopPartSpec, locale: ShopLocale, textOverride?: string
   return props;
 }
 
+/** An id not yet taken on the page: the deterministic one, or it with the first free suffix. */
+function freeId(base: string, taken: Set<string> | undefined): string {
+  if (!taken) return base;
+  let id = base;
+  for (let n = 2; taken.has(id); n++) id = `${base}-${n}`;
+  taken.add(id);
+  return id;
+}
+
 function newPartNode(
   spec: ShopPartSpec,
   controlId: string,
@@ -598,9 +638,10 @@ function newPartNode(
   locale: ShopLocale,
   shape: ShopNodeShape,
   textOverride?: string,
+  taken?: Set<string>,
 ): ShopTreeNode {
   const node: ShopTreeNode = {
-    id: shopPartId(controlId, spec.role),
+    id: freeId(shopPartId(controlId, spec.role), taken),
     type: spec.tag,
     props: partProps(spec, locale, textOverride),
     children: [],
@@ -619,13 +660,11 @@ function legacyTexts(kind: ShopControlKind, props: Record<string, unknown> | und
   if (kind === 'checkout-button') {
     const label = props?.label;
     if (typeof label === 'string' && label.trim()) out['checkout.button-label'] = label;
-    const pay = props?.payLabel;
-    if (typeof pay === 'string' && pay.trim()) out['checkout.pay-label'] = `${pay} {total}`;
   }
   return out;
 }
 
-/** The control props the parts replace. */
+/** The control props the parts replace (the old pay label goes: the pay button's wording is fixed). */
 const LEGACY_CONTROL_PROPS: Readonly<Record<ShopControlKind, readonly string[]>> = {
   'checkout-button': ['label', 'payLabel'],
 };
@@ -637,10 +676,11 @@ export function buildShopParts(
   locale: ShopLocale,
   shape: ShopNodeShape = 'snapshot',
   texts: Readonly<Record<string, string>> = {},
+  taken?: Set<string>,
 ): ShopTreeNode[] {
   const build = (specs: readonly ShopPartSpec[], parentId: string): ShopTreeNode[] =>
     specs.map((spec) => {
-      const node = newPartNode(spec, controlId, parentId, locale, shape, texts[spec.role]);
+      const node = newPartNode(spec, controlId, parentId, locale, shape, texts[spec.role], taken);
       node.children = spec.children ? build(spec.children, node.id as string) : [];
       return node;
     });
@@ -662,11 +702,67 @@ function partsByRole(control: ShopTreeNode): Map<string, ShopTreeNode> {
   return found;
 }
 
+// ---------------------------------------------------------------------------
+// What a part may be and show
+// ---------------------------------------------------------------------------
+
+/** Tags a part keeps exactly as its spec says: behaviour, form structure and lists. */
+const FIXED_TAGS: ReadonlySet<string> = new Set(['button', 'input', 'label', 'fieldset', 'legend', 'ul', 'ol', 'li']);
+
+/**
+ * Tags a text or layout part may be retyped to. Nothing void, nothing that hides
+ * its content (template, noscript, dialog), and nothing that navigates or sends
+ * (a, form, iframe).
+ */
+const TEXT_TAGS: ReadonlySet<string> = new Set([
+  'div', 'span', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'strong', 'em', 'b', 'i', 'small', 'section', 'article', 'header', 'footer', 'aside',
+]);
+
+/**
+ * The tag a part renders as: its spec's for a behaviour, form or list part and for
+ * a part kept in sight, else the stored tag when it is on the text allowlist.
+ */
+export function shopPartTag(role: string, stored: unknown): string {
+  const spec = shopPartSpec(role);
+  if (!spec) return 'div';
+  if (FIXED_TAGS.has(spec.tag) || spec.keepVisible) return spec.tag;
+  const tag = typeof stored === 'string' ? stored.toLowerCase() : '';
+  return TEXT_TAGS.has(tag) ? tag : spec.tag;
+}
+
+/** Attributes no node inside a shop control keeps: they could send what a visitor typed elsewhere. */
+const SENDING_PROPS: readonly string[] = ['action', 'formAction', 'formaction', 'method', 'formMethod', 'formmethod', 'target', 'formTarget', 'formtarget', 'enctype', 'formEncType', 'formenctype'];
+
+/** Attributes that take a part kept in sight out of sight. */
+const HIDING_PROPS: readonly string[] = ['hidden', 'aria-hidden', 'popover', 'inert'];
+
+const VISIBLE_DISPLAY = /^(block|inline|inline-block|flex|inline-flex|grid|inline-grid|flow-root|list-item|table|contents)$/;
+const PLAIN_NUMBER = /^-?\d*\.?\d+$/;
+
+/**
+ * Style values that hide, on a part kept in sight or a wrapper around one. A value
+ * the check cannot read (a `var()`, a percent, a calc) counts as hiding: only what
+ * is plainly visible stays.
+ */
 const HIDING_VALUES: Readonly<Record<string, (value: string) => boolean>> = {
-  display: (value) => value.trim().toLowerCase() === 'none',
-  visibility: (value) => value.trim().toLowerCase() !== 'visible',
-  opacity: (value) => Number.parseFloat(value) < 0.5,
-  contentVisibility: (value) => value.trim().toLowerCase() === 'hidden',
+  display: (value) => !VISIBLE_DISPLAY.test(value),
+  visibility: (value) => value !== 'visible',
+  opacity: (value) => !PLAIN_NUMBER.test(value) || Number(value) < 0.5,
+  contentVisibility: (value) => value !== 'visible' && value !== 'auto',
+  clipPath: (value) => value !== 'none',
+  clip: (value) => value !== 'auto',
+  transform: (value) => value !== 'none',
+  filter: (value) => value !== 'none',
+  fontSize: (value) => {
+    const px = /^(\d*\.?\d+)px$/.exec(value);
+    if (px) return Number(px[1]) < 10;
+    const relative = /^(\d*\.?\d+)(r?em)$/.exec(value);
+    return relative ? Number(relative[1]) < 0.65 : true;
+  },
+  height: (value) => /^0(\.0+)?(px|r?em|%)?$/.test(value),
+  maxHeight: (value) => /^0(\.0+)?(px|r?em|%)?$/.test(value),
+  width: (value) => /^0(\.0+)?(px|r?em|%)?$/.test(value),
+  maxWidth: (value) => /^0(\.0+)?(px|r?em|%)?$/.test(value),
 };
 
 /** Whether a stored style value hides (scalar, or any breakpoint of a responsive map). */
@@ -674,7 +770,7 @@ function hides(key: string, value: unknown): boolean {
   const test = HIDING_VALUES[key];
   if (!test) return false;
   if (isRecord(value)) return Object.values(value).some((entry) => hides(key, entry));
-  return (typeof value === 'string' || typeof value === 'number') && test(String(value));
+  return (typeof value === 'string' || typeof value === 'number') && test(String(value).trim().toLowerCase());
 }
 
 function withoutHidingStyle(style: unknown): Record<string, unknown> | undefined {
@@ -683,15 +779,13 @@ function withoutHidingStyle(style: unknown): Record<string, unknown> | undefined
 }
 
 /**
- * A fixed-text part as it must reach a page: no stored text (the island writes the
- * platform's), and nothing that hides it, in its style or any of its rules, nor a
- * `hidden` or `aria-hidden` attribute. It can be styled, never removed from sight.
+ * A node kept in sight: nothing that hides it, in its style, in any of its rules
+ * (whatever their selector, so a rule reaching into its children cannot hide them
+ * either), nor a hiding attribute.
  */
-function enforcedFixedPart(node: ShopTreeNode): ShopTreeNode {
+function inSight(node: ShopTreeNode): ShopTreeNode {
   const props = { ...(node.props ?? {}) };
-  delete props.children;
-  delete props.hidden;
-  delete props['aria-hidden'];
+  for (const key of HIDING_PROPS) delete props[key];
   const style = withoutHidingStyle(props.style);
   if (style) props.style = style;
   if (Array.isArray(props.rules)) {
@@ -702,7 +796,66 @@ function enforcedFixedPart(node: ShopTreeNode): ShopTreeNode {
   return { ...node, props };
 }
 
-/** A dynamic part stores no text: what it shows is the island's. */
+/** A node inside a shop control that cannot send anything: never a form, never a form override. */
+function notSending(node: ShopTreeNode): ShopTreeNode {
+  const props = node.props ?? {};
+  const isForm = typeof node.type === 'string' && node.type.toLowerCase() === 'form';
+  if (!isForm && !SENDING_PROPS.some((key) => key in props)) return node;
+  const next = { ...props };
+  for (const key of SENDING_PROPS) delete next[key];
+  return { ...node, ...(isForm ? { type: 'div' } : {}), props: next };
+}
+
+/** Whether any part of a subtree is kept in sight (outside nested controls). */
+function holdsKeptPart(node: ShopTreeNode): boolean {
+  return (node.children ?? []).some((child) => {
+    if (shopControlKindOf(child.props)) return false;
+    const role = shopPartRoleOf(child.props);
+    return (role !== undefined && !!shopPartSpec(role)?.keepVisible) || holdsKeptPart(child);
+  });
+}
+
+/**
+ * Every part of a control's subtree as it must reach a page: its tag on the
+ * allowlist, fixed text stored nowhere, a run time message's text stored nowhere,
+ * a part kept in sight (and every wrapper between it and the control) with
+ * nothing that hides it, a role used twice kept only by its first part, and no
+ * node able to send anything. The same object when nothing changes.
+ */
+function enforceParts(control: ShopTreeNode): ShopTreeNode {
+  const seen = new Set<string>();
+  const visit = (node: ShopTreeNode): ShopTreeNode => {
+    let changed = false;
+    const children = node.children?.map((child) => {
+      if (shopControlKindOf(child.props)) return child;
+      let next = notSending(child);
+      let role = shopPartRoleOf(next.props);
+      if (role && seen.has(role)) {
+        // A second copy of a role (a paste, a duplicate, an outside write) is a plain node.
+        const props = { ...(next.props ?? {}) };
+        delete props[SHOP_PART_ATTR];
+        next = { ...next, props };
+        role = undefined;
+      }
+      if (role) seen.add(role);
+      next = visit(next);
+      const spec = role ? shopPartSpec(role) : undefined;
+      if (spec && role) {
+        const tag = shopPartTag(role, next.type);
+        if (tag !== next.type) next = { ...next, type: tag };
+        if (spec.fixedText || spec.dynamicText) next = withoutStoredText(next);
+      }
+      if (spec?.keepVisible || holdsKeptPart(next)) next = inSight(next);
+      if (next !== child && !sameJson(next, child)) changed = true;
+      else next = child;
+      return next;
+    });
+    return changed ? { ...node, children } : node;
+  };
+  return visit(control);
+}
+
+/** A part whose text is the platform's stores none. */
 function withoutStoredText(node: ShopTreeNode): ShopTreeNode {
   if (!node.props || !('children' in node.props)) return node;
   const props = { ...node.props };
@@ -719,7 +872,14 @@ function withoutStoredText(node: ShopTreeNode): ShopTreeNode {
  * text parts are enforced. Pure and repeatable: the same input gives the same
  * output, and a complete control comes back as the same object.
  */
-export function normalizeShopControl<N extends object>(input: N, locale: ShopLocale, shape: ShopNodeShape, asKind?: ShopControlKind): N {
+export function normalizeShopControl<N extends object>(
+  input: N,
+  locale: ShopLocale,
+  shape: ShopNodeShape,
+  asKind?: ShopControlKind,
+  /** Every id on the page: a new part never takes one (a part moved out kept its id). Collected here when absent. */
+  taken: Set<string> = idsIn(input as ShopTreeNode),
+): N {
   const control = input as ShopTreeNode;
   // The island knows what it is even when the node it was handed lacks the marker.
   const kind = asKind ?? shopControlKindOf(control.props);
@@ -730,7 +890,7 @@ export function normalizeShopControl<N extends object>(input: N, locale: ShopLoc
   let root: ShopTreeNode = control;
 
   if (existing.size === 0) {
-    root = { ...control, children: [...(control.children ?? []), ...buildShopParts(kind, controlId, locale, shape, legacyTexts(kind, control.props))] };
+    root = { ...control, children: [...(control.children ?? []), ...buildShopParts(kind, controlId, locale, shape, legacyTexts(kind, control.props), taken)] };
     changed = true;
   } else {
     // Missing required parts, top down, so a part comes back before the parts inside it.
@@ -749,7 +909,7 @@ export function normalizeShopControl<N extends object>(input: N, locale: ShopLoc
         const parent = parentRole ? byRole.get(parentRole) : root;
         // A required part's parent is required too, so it exists by now.
         if (!parent) continue;
-        const node = newPartNode(spec, controlId, String(parent.id ?? controlId), locale, shape);
+        const node = newPartNode(spec, controlId, String(parent.id ?? controlId), locale, shape, undefined, taken);
         const siblings = parent.children ?? [];
         const at = insertIndex(siblings, spec, parentRole, kind);
         parent.children = [...siblings.slice(0, at), node, ...siblings.slice(at)];
@@ -788,34 +948,17 @@ function insertIndex(siblings: readonly ShopTreeNode[], spec: ShopPartSpec, pare
   return index;
 }
 
-/** Fixed and dynamic text enforced on every part of a control's subtree; the same object when nothing changes. */
-function enforceParts(node: ShopTreeNode): ShopTreeNode {
-  let changed = false;
-  const children = node.children?.map((child) => {
-    if (shopControlKindOf(child.props)) return child;
-    let next = enforceParts(child);
-    const role = shopPartRoleOf(child.props);
-    const spec = role ? shopPartSpec(role) : undefined;
-    if (spec?.fixedText) next = enforcedFixedPart(next);
-    else if (spec?.dynamicText) next = withoutStoredText(next);
-    if (next !== child && !sameJson(next, child)) changed = true;
-    else next = child;
-    return next;
-  });
-  return changed ? { ...node, children } : node;
-}
-
 /**
  * Every shop control in a tree normalised (normalizeShopControl). Unchanged trees
  * come back as the same object, so a caller can tell nothing was rewritten.
  */
-export function withShopParts<N extends object>(root: N, locale: ShopLocale, shape: ShopNodeShape): N {
+export function withShopParts<N extends object>(root: N, locale: ShopLocale, shape: ShopNodeShape, taken: Set<string> = idsIn(root as ShopTreeNode)): N {
   const walk = (node: ShopTreeNode): ShopTreeNode => {
     const children = Array.isArray(node.children) ? node.children : null;
     const nextChildren = children ? children.map(walk) : null;
     const changedChildren = !!children && nextChildren!.some((child, i) => child !== children[i]);
     const withChildren = changedChildren ? { ...node, children: nextChildren! } : node;
-    return shopControlKindOf(withChildren.props) ? normalizeShopControl(withChildren, locale, shape) : withChildren;
+    return shopControlKindOf(withChildren.props) ? normalizeShopControl(withChildren, locale, shape, undefined, taken) : withChildren;
   };
   return walk(root as ShopTreeNode) as N;
 }
@@ -823,9 +966,13 @@ export function withShopParts<N extends object>(root: N, locale: ShopLocale, sha
 /** A stored page snapshot with every shop control normalised: its tree and its floating canvas nodes. */
 export function pageWithShopParts<P extends { appComponentTree?: unknown; canvasNodes?: unknown }>(page: P, language: string | null | undefined): P {
   const locale = shopLocaleOf(language);
+  // Ids are unique across the whole page: its tree and its floating nodes.
+  const taken = new Set<string>();
+  if (isRecord(page.appComponentTree)) idsIn(page.appComponentTree as ShopTreeNode, taken);
+  if (isRecord(page.canvasNodes)) for (const node of Object.values(page.canvasNodes)) if (isRecord(node)) idsIn(node as ShopTreeNode, taken);
   let next = page;
   if (isRecord(page.appComponentTree)) {
-    const tree = withShopParts(page.appComponentTree as ShopTreeNode, locale, 'snapshot');
+    const tree = withShopParts(page.appComponentTree as ShopTreeNode, locale, 'snapshot', taken);
     if (tree !== page.appComponentTree) next = { ...next, appComponentTree: tree };
   }
   if (isRecord(page.canvasNodes)) {
@@ -833,7 +980,7 @@ export function pageWithShopParts<P extends { appComponentTree?: unknown; canvas
     let changed = false;
     const out: Record<string, ShopTreeNode> = {};
     for (const [id, node] of Object.entries(nodes)) {
-      out[id] = isRecord(node) ? withShopParts(node, locale, 'snapshot') : node;
+      out[id] = isRecord(node) ? withShopParts(node, locale, 'snapshot', taken) : node;
       if (out[id] !== node) changed = true;
     }
     if (changed) next = { ...next, canvasNodes: out };
@@ -912,6 +1059,53 @@ export function holdsRequiredShopPart(node: { props?: unknown; children?: readon
     return (candidate.children ?? []).some((child) => isRecord(child) && required(child as { props?: unknown; children?: readonly unknown[] }));
   };
   return required(node);
+}
+
+/** Every id in a tree, added to `into`. */
+function idsIn(node: ShopTreeNode, into: Set<string> = new Set()): Set<string> {
+  if (typeof node.id === 'string') into.add(node.id);
+  for (const child of node.children ?? []) if (isRecord(child)) idsIn(child, into);
+  return into;
+}
+
+/**
+ * The id of the nearest shop control among `ancestors` (nearest first), or
+ * undefined: which control a part belongs to.
+ */
+export function nearestShopControlId(ancestors: readonly { id?: unknown; props?: unknown }[]): string | undefined {
+  const control = ancestors.find((ancestor) => shopControlKindOf(ancestor.props));
+  return control && typeof control.id === 'string' ? control.id : undefined;
+}
+
+/** Whether a subtree holds a part that belongs to a control outside it (not under a control inside it). */
+export function holdsOutsidePart(node: { props?: unknown; children?: readonly unknown[] | Iterable<unknown> }): boolean {
+  if (shopControlKindOf(node.props)) return false;
+  if (shopPartRoleOf(node.props)) return true;
+  return childrenOf(node as ReadableNode).some((child) => holdsOutsidePart(child as { props?: unknown }));
+}
+
+/**
+ * A copy of a subtree in which every part that belongs to a control outside it is a
+ * plain node with a fresh id: what a duplicated part, or a part moved to another
+ * control or out of any, becomes. Parts under a control inside the subtree keep
+ * their role (a duplicated control is a control). `freshId` names the new ids.
+ */
+export function withoutOutsideRoles<N extends { id?: string; props?: Record<string, unknown>; children?: N[]; parentId?: string }>(
+  node: N,
+  freshId: (oldId: string) => string,
+  parentId?: string,
+): N {
+  if (shopControlKindOf(node.props)) return parentId === undefined ? node : { ...node, parentId };
+  const role = shopPartRoleOf(node.props);
+  const id = role && typeof node.id === 'string' ? freshId(node.id) : node.id;
+  const props = role ? Object.fromEntries(Object.entries(node.props ?? {}).filter(([key]) => key !== SHOP_PART_ATTR)) : node.props;
+  return {
+    ...node,
+    id,
+    props,
+    ...(parentId !== undefined ? { parentId } : {}),
+    ...(node.children ? { children: node.children.map((child) => withoutOutsideRoles(child, freshId, id)) } : {}),
+  } as N;
 }
 
 function cloneTree(node: ShopTreeNode): ShopTreeNode {

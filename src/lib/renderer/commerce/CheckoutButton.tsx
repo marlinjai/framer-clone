@@ -673,6 +673,15 @@ function checkoutPart(role: string, view: CheckoutView): ShopPartRender {
   const { order, simulateDecline, paying, paymentError, refusal, buyer } = state;
   const total = formatCents(order.totalCents, order.currency, locale);
 
+  // Each field's label names its input whatever the designer does with the layout:
+  // the label points at the input, the input at the label's text.
+  const fieldId = (key: string) => `${view.refusalId}-field-${key}`;
+  if (role.startsWith('checkout.field.')) {
+    return shown(true, { props: { htmlFor: fieldId(role.slice('checkout.field.'.length)) } });
+  }
+  if (role.startsWith('checkout.field-text.')) {
+    return shown(true, { props: { id: `${fieldId(role.slice('checkout.field-text.'.length))}-label` } });
+  }
   if (role.startsWith('checkout.input.')) {
     const key = role.slice('checkout.input.'.length) as keyof typeof BUYER_INPUTS;
     const input = BUYER_INPUTS[key];
@@ -680,6 +689,8 @@ function checkoutPart(role: string, view: CheckoutView): ShopPartRender {
     const invalid = refused(refusal, key);
     return shown(true, {
       props: {
+        id: fieldId(key),
+        'aria-labelledby': `${fieldId(key)}-label`,
         type: input.type,
         name: key,
         required: true,
@@ -706,11 +717,14 @@ function checkoutPart(role: string, view: CheckoutView): ShopPartRender {
     case 'checkout.buyer':
       return shown(true, { props: { 'data-checkout-buyer': '' } });
     case 'checkout.decline':
+      return shown(view.isDemo, { props: { htmlFor: fieldId('decline') } });
     case 'checkout.decline-text':
-      return shown(view.isDemo);
+      return shown(view.isDemo, { props: { id: `${fieldId('decline')}-label` } });
     case 'checkout.decline-input':
       return shown(view.isDemo, {
         props: {
+          id: fieldId('decline'),
+          'aria-labelledby': `${fieldId('decline')}-label`,
           type: 'checkbox',
           'data-checkout-decline-toggle': '',
           checked: simulateDecline,

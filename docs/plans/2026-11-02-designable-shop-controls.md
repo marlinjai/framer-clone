@@ -42,24 +42,60 @@ assistive technology what an element is), AI (the page generator).
    gateway seam, Stripe, the demo company restriction, the receipt rules, the German VAT checks and "refuse
    Stripe until Books are ready" are untouched: they live in the island's controller and the server, which
    this change does not touch.
-4. **Required parts cannot be lost.** Three layers: the editor refuses to delete a required part or a
-   wrapper holding one (`PageModel.deleteComponent`, the Layers menu), with a notice saying why; the load
-   path and the published render put back a missing required part in its default place; and the island draws
-   any required part its tree still lacks (a part dragged out of the control) from its default. Optional
-   parts (the demo "simulate a declined payment" toggle) can be deleted and stay deleted.
-5. **Honesty notices are styled only.** The demo notice ("Demo payment. No real charge will be made.") and
-   the simulated payment reference keep the platform's text in the site language whatever is stored, and the
-   normaliser strips anything that hides them (`display: none`, `visibility` other than visible, opacity under
-   0.5, `content-visibility: hidden`, `hidden`, `aria-hidden`) from their style, their rules and their
-   attributes, at every breakpoint. A designer can still make one hard to read with colours; what the code
-   guarantees is that it is present and not hidden. The checkout has no consent checkbox today (the only
-   checkbox is the demo decline toggle), so there is no consent wording to protect yet.
+4. **Required parts cannot be lost, and roles and ids stay unique.** The editor refuses to delete a required
+   part or a wrapper holding one (`PageModel.deleteComponent`, the Layers menu), with a notice saying why, and
+   the generator cannot replace one (`applyGeneratedNodes`). The load path and the published render put back
+   a missing required part in its default place, under an id nothing on the page uses yet (the deterministic
+   `<control id>-<role>`, or it with the first free suffix). The island draws any required part its tree
+   still lacks from its default. A part that leaves its control (moved out of any control or into another
+   one, by drag, the Layers panel or a site operation) becomes a plain node with a fresh id, and a duplicated
+   part is a plain node too (a duplicated control keeps its parts). A role used twice inside a control (a
+   paste, an outside write) stays only on its first part. The role marker cannot be set or removed through
+   site operations. Optional parts (the demo "simulate a declined payment" toggle) can be deleted and stay
+   deleted.
+5. **Parts kept in sight.** The demo notice, the simulated payment reference, the total and the pay button's
+   wording are kept in sight, in three layers:
+   - The normaliser (load path, published render) removes from each of them, and from every wrapper between
+     it and its control, the attributes `hidden`, `aria-hidden`, `popover` and `inert`, and from their style
+     and from every rule they hold (whatever its selector, at every breakpoint) any of these declarations
+     unless plainly visible: `display` other than a visible keyword (block, inline, inline-block, flex,
+     inline-flex, grid, inline-grid, flow-root, list-item, table, contents), `visibility` other than visible,
+     `opacity` that is not a plain number of at least 0.5 (a percent or a `var()` counts as hiding),
+     `content-visibility` other than visible or auto, any `clip-path`, `clip`, `transform` or `filter`, a
+     `font-size` under 10 pixels (or 0.65 em) or not in pixels or em, and a zero `height`, `max-height`,
+     `width` or `max-width`.
+   - Their tag is their spec's (a `div`, or a `span` inside the pay button), never a void tag, a template or
+     anything else.
+   - As it renders, the island forces each one visible against anything left (a site head item, an inherited
+     value): on the part and every wrapper up to the control, a computed `display: none`, a `visibility`
+     other than visible, an `opacity` under 1 or `content-visibility: hidden` is overridden inline with
+     `!important`, and on the part itself a `clip-path`, `transform` or `filter` and a font size under 11
+     pixels.
+   What stays possible: a designer can make one hard to read with colours, or place it off screen with
+   positioning. The demo notice and the payment reference keep the platform's text in the site language
+   whatever is stored. The checkout has no consent checkbox today (the only checkbox is the demo decline
+   toggle), so there is no consent wording to protect yet.
 6. **All visible strings are part text, with tokens.** Part text may hold `{total}`, `{orderNumber}`,
    `{email}`, `{message}` and the like, which the island fills. The canvas shows them filled with sample
    values and shows the raw text while it is typed. An emptied required label falls back to its default, so
-   an input always has a name. Messages the server or the browser writes (a refusal, a decline reason, a
-   network error) arrive as they are inside `{message}`; the checkout's own wrappers around them are in the
-   site language.
+   an input always has a name, and a text that drops a token it must keep falls back to its default too:
+   `{total}` on the total, `{orderNumber}` on the confirmation and the paid thank-you. Messages the server or
+   the browser writes (a refusal, a decline reason, a network error) arrive as they are inside `{message}`;
+   the checkout's own wrappers around them are in the site language.
+   **The pay button's wording is fixed** (decided by the coordinator on 2026-11-03 as the conservative
+   default, Marlin can loosen it): the button solution of section 312j (3) of the German Civil Code wants
+   the button that places a paid order to say so plainly, so its label is "Zahlungspflichtig bestellen" on a
+   German site and "Buy now" on an English one, followed by the amount. It can be styled, not reworded, and
+   the properties panel says why in place of the Text field (as it does for the other fixed texts).
+6a. **Nothing inside a shop control sends.** Each part keeps a tag from an allowlist: behaviour, form and
+   list parts keep their spec's tag (button, input, label, fieldset, legend, list and item), text and layout
+   parts may be div, span, p, h1 to h6, strong, em, b, i, small, section, article, header, footer or aside,
+   never a void tag, template, noscript, dialog, a link, a form or a frame. Any node inside a control that is
+   a `form` renders as a `div`, and no node there keeps `action`, `formaction`, `method`, `target` or
+   `enctype`, so a retyped part cannot post the buyer's name, email and address anywhere.
+6b. **Labelled fields.** Each buyer input gets an id from the island and points at its label text
+   (`aria-labelledby`); the field's `label` points at the input (`for`). Label, fieldset and legend tags are
+   fixed.
 7. **The canvas shows the design, not a greyed control.** It never runs the checkout. A bar in the editor's
    notice stack (`ShopPreviewBar`, next to the product picker) picks the state the canvas shows, from the
    island's real states: ready, empty cart (disabled), placing (loading), the payment step and its sub
@@ -114,9 +150,9 @@ excluded list). No row is added; the round trip and every other score case stay 
 
 ## Limits, stated
 
-- A required part dragged out of its control still works where it is meant to: the control draws its
-  default copy, and the stray part shows on the canvas marked and on the page not at all. Moving it back is
-  the designer's to do.
+- A required part dragged out of its control becomes a plain node, and the control draws (and on the next
+  load stores) a default copy where it belongs. The designer's styling of the moved part does not come back
+  with it.
 - On the canvas, a button previewed as Disabled may not take a click (browsers do not deliver clicks to a
   disabled button); select it from Layers in that state.
 - Formatted text in a part keeps its marks; tokens inside it are filled run by run.

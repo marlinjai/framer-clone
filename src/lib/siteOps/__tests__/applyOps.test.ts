@@ -194,6 +194,11 @@ describe('applyOperations: refusals write nothing', () => {
     expect((await refused([{ op: 'setProps', nodeId: 'link', props: { style: 'color:red' } }]))[0].reason).toMatch(/style is not set/);
   });
 
+  it("refuses setting or removing a shop part's role marker", async () => {
+    expect((await refused([{ op: 'setProps', nodeId: 'link', props: { 'data-shop-part': 'checkout.pay' } }]))[0].reason).toMatch(/data-shop-part is not set/);
+    expect((await refused([{ op: 'setProps', nodeId: 'link', props: { 'data-shop-part': null } }]))[0].reason).toMatch(/data-shop-part is not set/);
+  });
+
   it('rejects an unsafe style value and a style key the editor does not know', async () => {
     expect((await refused([{ op: 'updateStyle', nodeId: 'hero', property: 'color', value: 'red; background:url(x)' }]))[0].reason).toBeTruthy();
     expect((await refused([{ op: 'updateStyle', nodeId: 'hero', property: 'behavior', value: 'x' }]))[0].reason).toMatch(/not supported/);

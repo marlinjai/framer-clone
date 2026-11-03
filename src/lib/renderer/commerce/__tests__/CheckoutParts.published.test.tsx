@@ -109,6 +109,55 @@ describe('a designed checkout, published', () => {
     expect(sheet).not.toMatch(/demo-badge[^{]*\{[^}]*display:\s*none/);
     expect(badge.hidden).toBe(false);
   });
+
+  it('forces the demo notice and its wrappers visible against a stylesheet the normaliser never saw', async () => {
+    window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify([{ variantId: 'var_a', quantity: 1 }]));
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(fakeResponse(201, { orderId: 'o1', orderNumber: 'ORD-1', totalCents: 4760, currency: 'EUR' }));
+    // A site head item, say: nothing in the stored page, so only the island can answer it.
+    const sheet = document.createElement('style');
+    sheet.textContent = '[data-checkout-payment] { visibility: hidden !important; } [data-checkout-demo-badge] { display: none !important; }';
+    document.head.appendChild(sheet);
+    try {
+      const { container } = await publish(page(tree), 'de');
+      const button = await waitFor(() => {
+        const found = container.querySelector<HTMLButtonElement>('button[data-checkout]');
+        expect(found?.disabled).toBe(false);
+        return found!;
+      });
+      await act(async () => {
+        fireEvent.click(button);
+      });
+      const badge = await waitFor(() => {
+        const found = container.querySelector<HTMLElement>('[data-checkout-demo-badge]');
+        expect(found).not.toBeNull();
+        return found!;
+      });
+      expect(badge.style.getPropertyValue('display')).toBe('block');
+      expect(badge.style.getPropertyPriority('display')).toBe('important');
+      expect(getComputedStyle(badge).display).toBe('block');
+      const payment = container.querySelector<HTMLElement>('[data-checkout-payment]')!;
+      expect(payment.style.getPropertyPriority('visibility')).toBe('important');
+      expect(getComputedStyle(badge).visibility).toBe('visible');
+    } finally {
+      sheet.remove();
+    }
+  });
+
+  it("speaks the button solution's words on the pay button, whatever was stored", async () => {
+    window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify([{ variantId: 'var_a', quantity: 1 }]));
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(fakeResponse(201, { orderId: 'o1', orderNumber: 'ORD-1', totalCents: 4760, currency: 'EUR' }));
+    const retyped = designed(tree, { 'checkout.pay-label': (props) => ({ ...props, children: 'Weiter' }) });
+    const { container } = await publish(page(retyped), 'de');
+    const button = await waitFor(() => {
+      const found = container.querySelector<HTMLButtonElement>('button[data-checkout]');
+      expect(found?.disabled).toBe(false);
+      return found!;
+    });
+    await act(async () => {
+      fireEvent.click(button);
+    });
+    await waitFor(() => expect(container.querySelector('button[data-checkout-pay]')?.textContent).toBe('Zahlungspflichtig bestellen (47,60 EUR)'));
+  });
 });
 
 describe('formatted text in a message part', () => {

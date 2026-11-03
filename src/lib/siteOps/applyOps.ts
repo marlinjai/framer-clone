@@ -28,6 +28,7 @@
 //
 // Pure apart from the injected photo resolver; client-safe.
 
+import { SHOP_PART_ATTR } from '@/lib/commerce/parts';
 import { getSnapshot, recordPatches } from 'mobx-state-tree';
 import ProjectModel, { type ProjectModelType } from '@/models/ProjectModel';
 import type { PageModelType, InsertTarget } from '@/models/PageModel';
@@ -57,6 +58,9 @@ const SHAPE_KEEPING_WARNING = 'node had text and children, text moved into a lea
 /** Props setProps leaves to their own operations (or to nobody). */
 const PROPS_NOT_SET_HERE: ReadonlySet<string> = new Set([
   'style', 'children', 'rules', 'behaviour', 'effects', 'query', 'bindings', 'instance', 'component',
+  // A shop part's role is the platform's (src/lib/commerce/parts.ts): set by the
+  // control, never added, changed or removed by hand.
+  SHOP_PART_ATTR,
 ]);
 
 export interface ApplyDeps {
@@ -555,8 +559,9 @@ export async function applyOperations(
         if (refusal) throw new OpRefused(refusal);
         const moved = page.moveTreeComponent(node.id, target);
         if (!moved) throw new OpRefused('the node cannot move there (the page root, a frame, or into itself)');
-        touched.push({ page, nodeId: node.id });
-        return `moved ${node.id}`;
+        // A shop part leaving its control lands renewed, under a new id.
+        touched.push({ page, nodeId: moved.id });
+        return moved.id === node.id ? `moved ${node.id}` : `moved ${node.id}, now a plain node ${moved.id} outside its shop control`;
       }
 
       case 'removeNode': {

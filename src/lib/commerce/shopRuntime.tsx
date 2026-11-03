@@ -21,6 +21,7 @@ import {
   fillShopTokensIn,
   shopPartControl,
   shopPartSpec,
+  shopPartTag,
   shopPartText,
   type ShopControlKind,
   type ShopLocale,
@@ -64,16 +65,6 @@ export interface ShopDesignState {
 export const ShopDesignContext = createContext<ShopDesignState | null>(null);
 ShopDesignContext.displayName = 'ShopDesignContext';
 
-/** The tag a behaviour role always renders as, whatever the node's stored type. */
-const FORCED_TAGS: ReadonlyArray<[RegExp, string]> = [
-  [/^checkout\.(button|pay|back)$/, 'button'],
-  [/^checkout\.(input\.[A-Za-z0-9]+|decline-input)$/, 'input'],
-];
-
-export function shopPartTag(role: string, stored: string): string {
-  return FORCED_TAGS.find(([pattern]) => pattern.test(role))?.[1] ?? stored;
-}
-
 export interface ShopPartElementProps {
   role: string;
   /** The node's stored tag. */
@@ -99,34 +90,99 @@ function textChildren(text: unknown, linksAllowed: boolean): React.ReactNode[] {
 
 const STRAY_STYLE = { opacity: 0.5, outline: '1px dashed #f59e0b' };
 
+/** Attributes a part never carries onto the page: none of them can send what a visitor typed elsewhere. */
+const SENDING_ATTRIBUTES = ['action', 'formAction', 'formaction', 'method', 'formMethod', 'formmethod', 'target', 'formTarget', 'formtarget', 'enctype', 'formEncType', 'formenctype'];
+/** Attributes a part kept in sight never carries. */
+const HIDING_ATTRIBUTES = ['hidden', 'aria-hidden', 'popover', 'inert'];
+
+/** The smallest text a part kept in sight is drawn at, in pixels. */
+const MIN_KEPT_FONT_PX = 11;
+
+/**
+ * Forces a part kept in sight (the demo notice, the simulated payment line, the
+ * total, the pay button's wording) visible as it renders, whatever a stylesheet,
+ * a rule on a wrapper or an inherited value says: on the part and on every
+ * wrapper up to the control, a computed value that hides is overridden inline
+ * with `!important`, which beats any stylesheet. Covered: display, visibility,
+ * opacity and content visibility on the way up; clip path, transform, filter and
+ * a font size under 11 pixels on the part itself.
+ */
+function keepInSight(element: HTMLElement): void {
+  const view = element.ownerDocument.defaultView;
+  if (!view) return;
+  const force = (target: HTMLElement, property: string, value: string) => target.style.setProperty(property, value, 'important');
+  for (let node: HTMLElement | null = element; node; node = node.parentElement) {
+    if (node !== element && node.hasAttribute('data-component-kind')) break;
+    const computed = view.getComputedStyle(node);
+    if (computed.display === 'none') force(node, 'display', 'block');
+    if (computed.visibility !== 'visible') force(node, 'visibility', 'visible');
+    if (computed.opacity !== '' && Number(computed.opacity) < 1) force(node, 'opacity', '1');
+    if (computed.getPropertyValue('content-visibility') === 'hidden') force(node, 'content-visibility', 'visible');
+    if (node.hidden) node.hidden = false;
+  }
+  const computed = view.getComputedStyle(element);
+  if (computed.clipPath && computed.clipPath !== 'none') force(element, 'clip-path', 'none');
+  if (computed.transform && computed.transform !== 'none') force(element, 'transform', 'none');
+  if (computed.filter && computed.filter !== 'none') force(element, 'filter', 'none');
+  const size = Number.parseFloat(computed.fontSize);
+  if (Number.isFinite(size) && size < MIN_KEPT_FONT_PX) force(element, 'font-size', `${MIN_KEPT_FONT_PX}px`);
+}
+
+/** A ref that keeps the element in sight after every render, chained to the ref the surface passed, if any. */
+function useKeptInSight(enabled: boolean, outer: unknown): React.RefCallback<HTMLElement> | undefined {
+  const element = React.useRef<HTMLElement | null>(null);
+  React.useLayoutEffect(() => {
+    if (enabled && element.current) keepInSight(element.current);
+  });
+  const ref = React.useCallback(
+    (node: HTMLElement | null) => {
+      element.current = node;
+      if (typeof outer === 'function') (outer as (node: HTMLElement | null) => void)(node);
+      else if (outer && typeof outer === 'object' && 'current' in outer) (outer as { current: HTMLElement | null }).current = node;
+    },
+    [outer],
+  );
+  return enabled ? ref : undefined;
+}
+
 /** One shop part, drawn as its control's runtime says. */
 export function ShopPartElement({ role, tag, domProps, storedText, content, surface, linksAllowed = true }: ShopPartElementProps): React.ReactElement | null {
   const runtime = useContext(ShopRuntimeContext);
   const locale = useContext(ShopLocaleContext);
+  const spec = shopPartSpec(role);
+  const keep = !!spec?.keepVisible;
+  const keptRef = useKeptInSight(keep, domProps.ref);
+  const elementTag = shopPartTag(role, tag);
+
+  // The designer's props, without anything that could send or (for a part kept in sight) hide.
+  const ownProps: Record<string, unknown> = { ...domProps };
+  for (const key of SENDING_ATTRIBUTES) delete ownProps[key];
+  if (keep) {
+    for (const key of HIDING_ATTRIBUTES) delete ownProps[key];
+    ownProps.ref = keptRef;
+  }
 
   if (!runtime || runtime.kind !== shopPartControl(role)) {
     // Outside its control it has nothing to do. The canvas still shows it, marked,
     // so the designer can move it back; a page leaves it out (the control draws its
     // own copy of a required part).
     if (surface !== 'editor') return null;
-    const style = { ...((domProps.style as Record<string, unknown> | undefined) ?? {}), ...STRAY_STYLE };
+    const style = { ...((ownProps.style as Record<string, unknown> | undefined) ?? {}), ...STRAY_STYLE };
     return React.createElement(
-      tag,
-      { ...domProps, style, title: 'This shop part works only inside its shop control.' },
-      ...(isVoidTag(tag) ? [] : [...textChildren(shopPartText(role, storedText, locale), linksAllowed && runLinksAllowedIn(tag)), content]),
+      elementTag,
+      { ...ownProps, style, title: 'This shop part works only inside its shop control.' },
+      ...(isVoidTag(elementTag) ? [] : [...textChildren(shopPartText(role, storedText, locale), linksAllowed && runLinksAllowedIn(elementTag)), content]),
     );
   }
 
   const render = runtime.part(role);
   if (!render.visible) return null;
-  const spec = shopPartSpec(role);
-  const elementTag = shopPartTag(role, tag);
-  const editing = domProps.contentEditable === 'true';
+  const editing = ownProps.contentEditable === 'true';
   // While the designer types, the box holds the stored text as typed, tokens and all.
   const raw = spec?.dynamicText ? render.text : editing ? storedText : shopPartText(role, storedText, runtime.locale);
 
   const draw = (key: React.Key | undefined, tokens: Readonly<Record<string, string>> | undefined, extra?: Record<string, unknown>) => {
-    const props: Record<string, unknown> = { ...domProps, ...(render.props ?? {}), ...(extra ?? {}) };
+    const props: Record<string, unknown> = { ...ownProps, ...(render.props ?? {}), ...(extra ?? {}) };
     if (key !== undefined) props.key = key;
     if (isVoidTag(elementTag)) {
       delete props.children;

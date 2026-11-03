@@ -11,6 +11,7 @@ import { SizeSection, PositionSection, StylesSection, LayoutSection, TypographyS
 import { ComponentInstance } from '@/models/ComponentModel';
 import { InputsSection } from './right/sections/InputsSection';
 import { RepeatSection } from './right/sections/RepeatSection';
+import { ShopPartNote, isLockedShopText } from './right/sections/ShopPartNote';
 
 const SECTION_COMPONENTS: Record<SectionId, React.ComponentType<{ component: ComponentInstance; breakpointId?: string }>> = {
   component: ComponentSection,
@@ -97,7 +98,11 @@ const RightSidebar = observer(({ variant = 'docked' }: RightSidebarProps) => {
                 {/* Text first for every element that holds its own text: on a
                     phone this field is the dependable way to change text (a
                     form field always opens the keyboard). Null otherwise. */}
-                {category !== 'placement' && <TextContentSection component={target} breakpointId={breakpointId} />}
+                {isLockedShopText(target) ? (
+                  <ShopPartNote component={target} />
+                ) : (
+                  category !== 'placement' && <TextContentSection component={target} breakpointId={breakpointId} />
+                )}
                 {sections.map((sectionId) => {
                   const SectionComponent = SECTION_COMPONENTS[sectionId];
                   return (

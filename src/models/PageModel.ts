@@ -38,7 +38,7 @@ import { expandPage, literalPageRoots, type PageExpansion } from '@/lib/componen
 import { extractBreakpoints, type ComponentSnapshotLike } from '@/lib/renderer/server/componentSnapshot';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { getComponentEntry } from '@/lib/componentRegistry';
-import { REQUIRED_SHOP_PART_MESSAGE, buildShopParts, holdsRequiredShopPart, shopControlKindOf, shopLocaleOf, withShopParts, type ShopTreeNode } from '@/lib/commerce/parts';
+import { REQUIRED_SHOP_PART_MESSAGE, buildShopParts, holdsOutsidePart, holdsRequiredShopPart, nearestShopControlId, shopControlKindOf, withoutOutsideRoles, shopLocaleOf, withShopParts, type ShopTreeNode } from '@/lib/commerce/parts';
 import type { ApplyOutcome, GenerationUndoRecord } from '@/lib/ai/pageGen/apply';
 import { isVoidTag } from '@/lib/drag/voidTags';
 import { bareTextRefusal, isTextNodeType } from '@/lib/renderer/textNode';
@@ -126,6 +126,52 @@ function addShopParts(page: object, control: ComponentInstance): void {
   for (const part of buildShopParts(kind, control.id, shopLocaleOf(siteLanguageOf(page)), 'snapshot')) {
     control.addChild(ComponentModel.create(part as ComponentSnapshotIn) as ComponentInstance);
   }
+}
+
+/**
+ * moveTreeComponent's path for a node that has to be renewed as it moves (a shop
+ * part leaving its control): the old node goes, its renewed snapshot lands at the
+ * target. Returns the new node.
+ */
+function replaceAndMove(
+  page: PageLike & { canvasNodes: { has(id: string): boolean; delete(id: string): boolean; set(id: string, node: ComponentInstance): unknown; get(id: string): ComponentInstance | undefined }; appComponentTree: unknown; updatedAt: Date },
+  component: ComponentInstance,
+  snapshot: ComponentSnapshotIn,
+  target: InsertTarget,
+  resolvedParentId: string | undefined,
+  resolvedIndex: number | undefined,
+): ComponentInstance | undefined {
+  const appTree = page.appComponentTree as ComponentInstance;
+  const previousParentId = component.parentId as string | undefined;
+  const newParent = target.kind === 'appTree' ? appTree : resolvedParentId ? findComponentInPage(page, resolvedParentId) : undefined;
+  if (target.kind !== 'floating' && !newParent) return undefined;
+  // Within the same parent, the index was already adjusted for the node leaving.
+  let index = resolvedIndex;
+  if (newParent && typeof index === 'number' && previousParentId === newParent.id) {
+    const at = newParent.children.findIndex((c: ComponentInstance) => c.id === component.id);
+    if (at !== -1 && at < index) index -= 1;
+  }
+  const previousParent = previousParentId ? findComponentInPage(page, previousParentId) : undefined;
+  if (previousParent) previousParent.removeChild(component.id);
+  else if (page.canvasNodes.has(component.id)) page.canvasNodes.delete(component.id);
+  if (target.kind === 'floating') {
+    const floating = ComponentModel.create({
+      ...snapshot,
+      parentId: undefined,
+      canvasNodeType: CanvasNodeType.FLOATING_ELEMENT,
+      canvasX: Math.round(target.x),
+      canvasY: Math.round(target.y),
+    } as ComponentSnapshotIn);
+    page.canvasNodes.set(floating.id, floating);
+    previousParent?.collapseTextChild();
+    page.updatedAt = new Date();
+    return page.canvasNodes.get(floating.id);
+  }
+  const node = ComponentModel.create({ ...snapshot, parentId: newParent!.id, canvasNodeType: CanvasNodeType.COMPONENT } as ComponentSnapshotIn);
+  newParent!.addChild(node as ComponentInstance, index);
+  if (previousParent && previousParent.id !== newParent!.id) previousParent.collapseTextChild();
+  page.updatedAt = new Date();
+  return node as ComponentInstance;
 }
 
 /** The id of the definition this page belongs to, when it is one's. */
@@ -539,6 +585,15 @@ const PageModel = PageWithComponents
     if (!parent) {
       return { ok: false, reason: 'Only components inside the page can be replaced; select one in a breakpoint frame.' };
     }
+    // Replacing a required shop part (or a wrapper holding one) would remove it.
+    const targetAncestors: ComponentInstance[] = [];
+    for (let id: string | undefined = parent.id; id; ) {
+      const node = findComponentInPage(self, id);
+      if (!node || targetAncestors.includes(node)) break;
+      targetAncestors.push(node);
+      id = node.parentId as string | undefined;
+    }
+    if (holdsRequiredShopPart(target, targetAncestors)) return { ok: false, reason: REQUIRED_SHOP_PART_MESSAGE };
     const index = parent.children.findIndex((c: ComponentInstance) => c.id === target.id);
     const previous = getSnapshot(target) as ComponentSnapshotIn;
     parent.removeChild(target.id);
@@ -621,8 +676,14 @@ const PageModel = PageWithComponents
     };
     // A second pass, because a reference can point at a node later in the walk. An
     // element `id` something in the copy points at moves too: it would repeat otherwise.
+    // A copied part is a plain node: a second pay button that also pays, under the
+    // first one's role, would be two parts with one role (src/lib/commerce/parts.ts).
+    // A copied control keeps its parts.
     const withFreshIds = (snap: ComponentSnapshotIn, parentId: string | undefined): ComponentSnapshotIn =>
-      renewCopyIds(remapBehaviourRefs(renewIds(snap, parentId), freshIds), uuidv4().slice(0, 8));
+      withoutOutsideRoles(
+        renewCopyIds(remapBehaviourRefs(renewIds(snap, parentId), freshIds), uuidv4().slice(0, 8)) as ShopTreeNode,
+        (id) => id,
+      ) as ComponentSnapshotIn;
 
     if (component.hasParent && component.parentId) {
       const parent = findComponentInPage(self, component.parentId);
@@ -779,6 +840,30 @@ const PageModel = PageWithComponents
         if (currentIdx !== -1 && currentIdx < resolvedIndex) {
           resolvedIndex -= 1;
         }
+      }
+    }
+
+    // A part that lands outside the control it belongs to (out of any control, or in
+    // another one) becomes a plain node with a fresh id: its role would mean nothing
+    // there, and its id is the one its control gives the part it puts back on the
+    // next load (src/lib/commerce/parts.ts).
+    if (holdsOutsidePart(component)) {
+      const ancestorsOf = (startId: string | undefined): ComponentInstance[] => {
+        const out: ComponentInstance[] = [];
+        for (let id = startId; id; ) {
+          const node = findComponentInPage(self, id);
+          if (!node || out.includes(node)) break;
+          out.push(node);
+          id = node.parentId as string | undefined;
+        }
+        return out;
+      };
+      const newParentId = target.kind === 'appTree' ? appTree.id : target.kind === 'floating' ? undefined : resolvedParentId;
+      const from = nearestShopControlId(ancestorsOf(component.parentId as string | undefined));
+      const to = nearestShopControlId(ancestorsOf(newParentId));
+      if (from !== to) {
+        const fresh = withoutOutsideRoles(getSnapshot(component) as unknown as ShopTreeNode, (id) => `${id}-${uuidv4().slice(0, 8)}`);
+        return replaceAndMove(self, component, fresh as unknown as ComponentSnapshotIn, target, resolvedParentId, resolvedIndex);
       }
     }
 

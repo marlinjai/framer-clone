@@ -107,7 +107,7 @@ describe('the checkout on the canvas', () => {
     act(() => store.editorUI.setShopPreviewState(checkout.id, 'payment'));
     expect(el(part('checkout.button'))).toBeNull();
     expect(el(part('checkout.total'))?.textContent).toBe('Zu zahlen: 49,90 EUR');
-    expect(el(part('checkout.pay-label'))?.textContent).toBe('49,90 EUR bezahlen');
+    expect(el(part('checkout.pay-label'))?.textContent).toBe('Zahlungspflichtig bestellen (49,90 EUR)');
     expect(el(part('checkout.demo-badge'))?.textContent).toBe('Demo-Zahlung. Es wird kein echtes Geld abgebucht.');
     const input = el(part('checkout.input.email')) as HTMLInputElement;
     expect(input.type).toBe('email');

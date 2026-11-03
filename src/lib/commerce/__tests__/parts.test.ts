@@ -62,7 +62,8 @@ describe('buildShopParts', () => {
     expect(byRole(parts, 'checkout.field-text.postalCode')?.props?.children).toBe('Postleitzahl');
     const english = buildShopParts('checkout-button', 'co', 'en');
     expect(byRole(english, 'checkout.button-label')?.props?.children).toBe('Checkout');
-    expect(byRole(english, 'checkout.pay-label')?.props?.children).toBe('Pay {total}');
+    // The pay button's wording is fixed (the button solution): nothing stored.
+    expect(byRole(english, 'checkout.pay-label')?.props).not.toHaveProperty('children');
   });
 
   it('stores no text on a fixed or a dynamic part', () => {
@@ -88,7 +89,7 @@ describe('normalizeShopControl', () => {
     expect(next.props).not.toHaveProperty('label');
     expect(next.props).not.toHaveProperty('payLabel');
     expect(byRole(next.children!, 'checkout.button-label')?.props?.children).toBe('Jetzt kaufen');
-    expect(byRole(next.children!, 'checkout.pay-label')?.props?.children).toBe('Zahlen {total}');
+    expect(byRole(next.children!, 'checkout.pay-label')?.props).not.toHaveProperty('children');
     // A published node needs no editor fields.
     expect(byRole(next.children!, 'checkout.button')).not.toHaveProperty('componentType');
   });
