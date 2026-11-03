@@ -41,6 +41,12 @@ export interface ShopPartRender {
    */
   text?: string;
   /**
+   * Kept in sight in this state only, as a part whose spec keeps it in sight always
+   * is: the remove button of a cart line that is no longer sold or failed to load,
+   * so a visitor is never stuck with that line.
+   */
+  keepInSight?: true;
+  /**
    * A repeated part: one element per item, each with its tokens and attributes, and
    * the runtime its own parts read (a cart line's title, price and quantity).
    */
@@ -200,7 +206,9 @@ export function ShopPartElement({ role, tag, domProps, storedText, content, surf
   const runtime = useContext(ShopRuntimeContext);
   const locale = useContext(ShopLocaleContext);
   const spec = shopPartSpec(role);
-  const keep = !!spec?.keepVisible;
+  const inControl = !!runtime && runtime.kind === shopPartControl(role);
+  const render = inControl ? runtime.part(role) : undefined;
+  const keep = !!spec?.keepVisible || (!!render?.visible && !!render.keepInSight);
   const keptRef = useKeptInSight(keep, domProps.ref);
   const elementTag = shopPartTag(role, tag);
 
@@ -215,7 +223,7 @@ export function ShopPartElement({ role, tag, domProps, storedText, content, surf
     ownProps.ref = keptRef;
   }
 
-  if (!runtime || runtime.kind !== shopPartControl(role)) {
+  if (!runtime || !render) {
     // Outside its control it has nothing to do. The canvas still shows it, marked,
     // so the designer can move it back; a page leaves it out (the control draws its
     // own copy of a required part).
@@ -228,7 +236,6 @@ export function ShopPartElement({ role, tag, domProps, storedText, content, surf
     );
   }
 
-  const render = runtime.part(role);
   if (!render.visible) return null;
   // A button whose wording is fixed draws only its own parts, whatever it was handed.
   if (spec?.onlyParts) content = onlyPartElements(content);
@@ -265,7 +272,7 @@ export function ShopPartElement({ role, tag, domProps, storedText, content, surf
           draw(
             item.key,
             { ...(render.tokens ?? {}), ...item.tokens },
-            index === 0 ? item.props : { ...item.props, 'data-component-id': undefined, 'data-inner-component-id': undefined },
+            index === 0 ? item.props : { ...item.props, 'data-inner-component-id': undefined },
             item.runtime,
           ),
         )}

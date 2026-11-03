@@ -364,10 +364,13 @@ function linePart(role: string, line: CartViewModel['lines'][number], model: Car
         },
       };
     case 'cart.line-remove':
-      // Every settled line can be removed, so a visitor is never stuck with one.
+      // Every settled line can be removed, so a visitor is never stuck with one; a
+      // line no longer sold or failed to load keeps its remove button in sight
+      // whatever the design says, since its quantity cannot go below one.
       if (view.kind === 'loading') return { visible: false };
       return {
         visible: true,
+        ...(view.kind === 'unavailable' || view.kind === 'error' ? { keepInSight: true as const } : {}),
         props: { type: 'button', 'data-cart-remove': variantId, ...(handlers ? { onClick: () => handlers.remove(variantId) } : {}) },
       };
     case 'cart.line-warning':

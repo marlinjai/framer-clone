@@ -1392,6 +1392,17 @@ export function normalizeShopControl<N extends object>(
   }
   const legacyBound = Object.keys(LEGACY[kind].bindings).filter((key) => root.bindings && key in root.bindings);
   if (legacyBound.length > 0) {
+    // A control built just now carried its bindings into the new parts. One that
+    // already had parts (an outside write, a page saved between versions) moves each
+    // to its part, unless the part is bound already: the binding is never lost.
+    if (existing.size > 0) {
+      root = cloneTree(root);
+      const byRole = partsByRole(root);
+      for (const key of legacyBound) {
+        const part = byRole.get(LEGACY[kind].bindings[key]);
+        if (part && part.bindings?.children === undefined) part.bindings = { ...(part.bindings ?? {}), children: root.bindings![key] };
+      }
+    }
     const bindings = { ...(root.bindings ?? {}) };
     for (const key of legacyBound) delete bindings[key];
     root = { ...root, bindings };
