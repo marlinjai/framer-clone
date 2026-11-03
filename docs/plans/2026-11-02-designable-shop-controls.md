@@ -70,8 +70,8 @@ assistive technology what an element is), AI (the page generator).
      (colour, font, letter and word spacing, alignment, decoration), box (padding, margin, border, radius,
      background colour and image, shadow), flex and grid layout, sizes, display, visibility and opacity.
      A transform, scale, translate, rotate or filter stays when it is small (a hover lift or press: moves of
-     at most 8 pixels, scales between 0.9 and 1.1, turns of at most 5 degrees, brightness, contrast or
-     saturation between 0.7 and 1.3). Anything else (a mask, containment, a clip, a position or inset, a
+     at most 8 pixels, in `translate`, `translate3d` or `translateZ` as well, scales between 0.9 and 1.1,
+     turns of at most 5 degrees, brightness, contrast or saturation between 0.7 and 1.3, and drop shadows). Anything else (a mask, containment, a clip, a position or inset, a
      text indent, a background clipped to the text, z-index, an outline wider than a focus ring, which
      paints over what is around it) goes whether or not it could hide, so a new way to hide is closed by
      default. A rule the filter empties goes with it.
@@ -91,8 +91,8 @@ assistive technology what an element is), AI (the page generator).
      than a focus ring (4 pixels, offset at most 4). Grid placement stays. The control's other steps are
      never on screen with a kept part, so they keep all of it.
    - Nothing goes inside them: a part kept in sight or with fixed text holds no nodes, and a button whose
-     wording is fixed holds its own parts and no text of its own. The editor refuses a drop or a palette
-     insert there with a notice, and the normaliser removes what an outside write put there. None of them
+     wording is fixed holds its own parts and no text of its own. The editor refuses a drop, a palette
+     insert, a generated insert or a duplicate there with a notice, and the normaliser removes what an outside write put there. None of them
      keeps an `aria-label`, `aria-labelledby`, `aria-description` or `title`, so assistive technology reads
      the fixed wording too.
    - Their tag is their spec's (a `div`, or a `span` inside the pay button), never a void tag, a template or
@@ -106,8 +106,10 @@ assistive technology what an element is), AI (the page generator).
      opaque, the text filled with its colour, no transform, clip, mask, filter or animation, no indent or
      outline, letter and word spacing not below normal and a font size of at least 11 pixels, and its
      colour only when the computed one is see-through (then a dark default), so the label follows its
-     button's colour. On the part and every wrapper up to the control, only where it would hide: a display
-     of none (then block), a visibility other than visible, an opacity under 0.5, `content-visibility:
+     button's colour; it is lifted above its siblings (position relative, z-index 1), which carry no
+     positioning or z-index, so a sibling placed in the same grid cell cannot cover it. On the part and every
+     wrapper up to the control, only where it would hide: a display of none (then block), a visibility other
+     than visible, an opacity under 0.5 (or every faded wrapper, when their opacities multiply under 0.5), `content-visibility:
      hidden`, paint, size or strict containment, a clip path or mask, and an overflow that crops; each
      wrapper also gets the marker the platform rule blanks the generated content of.
    - The checkout button and the pay button hold their own parts only (the roles their spec lists): a part
@@ -115,6 +117,9 @@ assistive technology what an element is), AI (the page generator).
      lifted out of it, and anything else (the wrapper, its text, a nested control) is dropped by the
      normaliser and ignored by the island, so no extra text joins the fixed wording and a required label is
      never lost with its wrapper.
+   - The properties panel says, on a part kept in sight, a wrapper around one, or a node beside one, which
+     styles the published page leaves out there, so a designer is not surprised that an effect seen on the
+     canvas does not publish.
    - **What the guarantee covers** (decided by Marlin on 2026-11-03): these layers protect against
      accidents, a designer or an AI agent hiding the total, shrinking the wording or adding words to the
      pay button by mistake through ordinary styles, placement or pasted nodes. They do not try to stop a

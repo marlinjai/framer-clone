@@ -12,7 +12,7 @@ import type { ComponentInstance } from '@/models/ComponentModel';
 import type { PageModelType } from '@/models/PageModel';
 import ComponentRenderer from '../ComponentRenderer';
 import EditorCommerceProvider from '../EditorCommerceProvider';
-import { ShopPartNote } from '../sidebars/right/sections/ShopPartNote';
+import { ShopPartNote, ShopStyleNote } from '../sidebars/right/sections/ShopPartNote';
 import { CLOSED_SHOP_PART_MESSAGE, MISPLACED_SHOP_PART_MESSAGE, REQUIRED_SHOP_PART_MESSAGE, SHOP_PART_ATTR, pageWithShopParts } from '@/lib/commerce/parts';
 
 let store: RootStoreType;
@@ -133,6 +133,28 @@ describe('the panel', () => {
   it('says why the pay wording is fixed', () => {
     const { getByTestId } = render(<ShopPartNote component={part('checkout.pay-label')!} />);
     expect(getByTestId('shop-part-note').textContent).toMatch(/Zahlungspflichtig bestellen/);
+  });
+
+  it('says which styles the published page leaves out around the parts a buyer must see, and only there', () => {
+    const kept = render(<ShopStyleNote component={part('checkout.pay')!} />);
+    expect(kept.getByTestId('shop-style-note').textContent).toMatch(/leave out positioning/);
+    kept.unmount();
+    const box = page.insertRegistryComponent('container', { kind: 'parent', parentId: part('checkout.actions')!.id })!;
+    const beside = render(<ShopStyleNote component={box} />);
+    expect(beside.getByTestId('shop-style-note').textContent).toMatch(/never covers them/);
+    beside.unmount();
+    const elsewhere = render(<ShopStyleNote component={part('checkout.button')!} />);
+    expect(elsewhere.queryByTestId('shop-style-note')).toBeNull();
+  });
+});
+
+describe('duplicating inside a part that holds its own words only', () => {
+  it('is refused with a notice, and the pay button keeps its two parts', () => {
+    const pay = part('checkout.pay')!;
+    const before = pay.children.length;
+    expect(page.duplicateComponent(part('checkout.pay-label')!.id)).toBeUndefined();
+    expect(store.editorUI.editorNotice).toEqual({ kind: 'refused', message: CLOSED_SHOP_PART_MESSAGE });
+    expect(page.findComponent(pay.id)!.children.length).toBe(before);
   });
 });
 

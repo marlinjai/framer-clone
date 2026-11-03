@@ -721,7 +721,14 @@ const PageModel = PageWithComponents
       const parent = findComponentInPage(self, component.parentId);
       if (!parent) return undefined;
       const index = parent.children.findIndex((c: ComponentInstance) => c.id === component.id);
-      const copy = ComponentModel.create(withFreshIds(getSnapshot(component) as ComponentSnapshotIn, parent.id));
+      const copySnapshot = withFreshIds(getSnapshot(component) as ComponentSnapshotIn, parent.id);
+      // A copy inside the pay button or a notice would be dropped on the next load: say so now.
+      const refusal = shopPartRefusal(copySnapshot as never, ancestorChain(self, parent));
+      if (refusal) {
+        refuseShopEdit(self, refusal);
+        return undefined;
+      }
+      const copy = ComponentModel.create(copySnapshot);
       parent.addChild(copy, index + 1);
       self.updatedAt = new Date();
       return copy;

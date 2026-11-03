@@ -308,3 +308,48 @@ describe('the accident-scope review', () => {
     expect(button.textContent).toBe(PAY_WORDING);
   });
 });
+
+describe('the approving review', () => {
+  const edit = (tree: ShopTreeNode, role: string, change: (node: ShopTreeNode) => ShopTreeNode): ShopTreeNode => {
+    const next = { ...tree, children: tree.children?.map((child) => edit(child, role, change)) };
+    return shopPartRoleOf(tree.props) === role ? change(next) : next;
+  };
+  const faded = (node: ShopTreeNode) => ({ ...node, props: { ...node.props, style: { ...(node.props?.style as object), opacity: 0.6 } } });
+
+  it('pins faded wrappers opaque when their opacities multiply under one half', async () => {
+    let tree = edit(base(), 'checkout.payment', faded);
+    tree = edit(tree, 'checkout.actions', faded);
+    tree = edit(tree, 'checkout.pay', faded);
+    const container = await toPayment(settled(tree));
+    for (const selector of ['[data-checkout-payment]', '[data-shop-part="checkout.actions"]', 'button[data-checkout-pay]']) {
+      const node = container.querySelector<HTMLElement>(selector)!;
+      expect(node.style.getPropertyValue('opacity'), selector).toBe('1');
+      expect(node.style.getPropertyPriority('opacity'), selector).toBe('important');
+    }
+  });
+
+  it('leaves one gentle fade alone', async () => {
+    const container = await toPayment(settled(edit(base(), 'checkout.payment', faded)));
+    const payment = container.querySelector<HTMLElement>('[data-checkout-payment]')!;
+    // The designer's fade, not pinned.
+    expect(payment.style.getPropertyPriority('opacity')).toBe('');
+    expect(getComputedStyle(payment).opacity).toBe('0.6');
+  });
+
+  it('keeps the usual spellings of a hover lift and a drop shadow', () => {
+    const tree = edit(base(), 'checkout.pay', (node) => ({
+      ...node,
+      props: { ...node.props, rules: [{ id: 'h', selector: '&:hover', style: { transform: 'translate3d(0, -2px, 0)', filter: 'drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2)) brightness(0.95)' } }] },
+    }));
+    expect(find(settled(tree), 'checkout.pay').props?.rules).toEqual([
+      { id: 'h', selector: '&:hover', style: { transform: 'translate3d(0, -2px, 0)', filter: 'drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2)) brightness(0.95)' } },
+    ]);
+  });
+
+  it('lifts a kept part above its siblings, so one placed in the same grid cell cannot cover it', async () => {
+    const container = await toPayment(base());
+    const total = container.querySelector<HTMLElement>('[data-checkout-payment-total]')!;
+    expect(total.style.getPropertyValue('position')).toBe('relative');
+    expect(total.style.getPropertyValue('z-index')).toBe('1');
+  });
+});

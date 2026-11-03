@@ -135,11 +135,12 @@ function seeThrough(color: string): boolean {
  * - On the part itself, always: visible and opaque, the text filled with its
  *   colour, no transform, clip, mask, filter or animation, no indent or outline,
  *   letter and word spacing not below normal, and a font size of at least 11
- *   pixels. Its colour only when the computed one is see-through (then a dark
- *   default), so it still follows its button's colour on hover.
+ *   pixels, and lifted above its siblings (position relative, z-index 1). Its
+ *   colour only when the computed one is see-through (then a dark default), so it
+ *   still follows its button's colour on hover.
  * - On the part and every wrapper up to the control, only where it would hide: a
  *   display of none (then block), a visibility other than visible, an opacity
- *   under 0.5, `content-visibility: hidden`, paint, size or strict containment, a
+ *   under 0.5 (or any fade, when the wrappers' opacities multiply under 0.5), `content-visibility: hidden`, paint, size or strict containment, a
  *   clip path or mask, and an overflow that crops what it holds. Each wrapper
  *   also gets a marker the guard rule uses to blank its `::before` and `::after`
  *   (src/lib/commerce/parts.ts, shopGuardCss).
@@ -161,10 +162,15 @@ function keepInSight(element: HTMLElement): void {
   const letterSpacing = Number.parseFloat(own.letterSpacing);
   const wordSpacing = Number.parseFloat(own.wordSpacing);
 
+  // Opacity multiplies down the tree: three wrappers at 0.6 draw the part at about 0.2,
+  // though each is fine on its own. When the product falls under 0.5, every faded
+  // wrapper is pinned opaque.
+  const opacityOf = (computed: CSSStyleDeclaration) => (computed.opacity === '' ? 1 : Number(computed.opacity));
+  const fadedTogether = chain.slice(1).reduce((product, { computed }) => product * opacityOf(computed), 1) < 0.5;
   for (const { node, computed, crops } of chain) {
     if (computed.display === 'none') force(node, 'display', 'block');
     if (computed.visibility !== 'visible') force(node, 'visibility', 'visible');
-    if (computed.opacity !== '' && Number(computed.opacity) < 0.5) force(node, 'opacity', '1');
+    if (opacityOf(computed) < 0.5 || (fadedTogether && opacityOf(computed) < 1)) force(node, 'opacity', '1');
     if (computed.getPropertyValue('content-visibility') === 'hidden') force(node, 'content-visibility', 'visible');
     const contain = computed.getPropertyValue('contain');
     if (contain.split(/\s+/).some((token) => token === 'paint' || token === 'strict' || token === 'content' || token === 'size')) force(node, 'contain', 'none');
@@ -178,6 +184,10 @@ function keepInSight(element: HTMLElement): void {
   }
   force(element, 'visibility', 'visible');
   force(element, 'opacity', '1');
+  // Above its siblings: they carry no z-index or positioning (the normaliser strips
+  // both beside it), so nothing placed in the same grid cell paints over it.
+  force(element, 'position', 'relative');
+  force(element, 'z-index', '1');
   for (const property of PART_NONE) force(element, property, 'none');
   if (seeThrough(ownColor)) force(element, 'color', KEPT_FALLBACK_COLOR);
   force(element, '-webkit-text-fill-color', 'currentcolor');

@@ -824,6 +824,8 @@ function smallTransform(value: string): boolean {
       case 'translate':
       case 'translatex':
       case 'translatey':
+      case 'translatez':
+      case 'translate3d':
         return values.every(smallOffset);
       case 'scale':
       case 'scalex':
@@ -836,12 +838,13 @@ function smallTransform(value: string): boolean {
     }
   });
 }
-/** A filter made only of brightness, contrast and saturation between 0.7 and 1.3. */
+/** A filter made only of brightness, contrast and saturation between 0.7 and 1.3, and drop shadows (which hide nothing). */
 function gentleFilter(value: string): boolean {
   if (value === 'none') return true;
-  const steps = [...value.matchAll(/([a-z-]+)\(([^)]*)\)/gi)];
+  const steps = [...value.matchAll(/([a-z-]+)\(((?:[^()]|\([^()]*\))*)\)/gi)];
   if (steps.length === 0 || steps.map((step) => step[0]).join('').replace(/\s+/g, '') !== value.replace(/\s+/g, '')) return false;
   return steps.every(([, name, arg]) => {
+    if (/^drop-shadow$/i.test(name)) return true;
     if (!/^(brightness|contrast|saturate)$/i.test(name)) return false;
     const number = arg.trim().endsWith('%') ? Number(arg.trim().slice(0, -1)) / 100 : Number(arg.trim());
     return inRange(number, 0.7, 1.3);
@@ -1353,6 +1356,23 @@ export function shopPartRefusal(node: { props?: unknown; children?: readonly unk
 /** Whether the editor refuses to put `node` under `ancestors` inside a shop control (shopPartRefusal). */
 export function misplacesShopPart(node: { props?: unknown; children?: readonly unknown[] }, ancestors: readonly { props?: unknown }[]): boolean {
   return shopPartRefusal(node, ancestors) !== undefined;
+}
+
+/**
+ * How the published page limits a node's styles, for the properties panel's note
+ * (`ancestors` nearest first): 'kept' for a part kept in sight or a wrapper around
+ * one (an allowlist of styles, section 5 of the plan), 'beside' for a node next to
+ * one inside the part that holds it (no positioning, stacking or large transforms),
+ * undefined for anything else.
+ */
+export function shopStyleLimit(node: { props?: unknown; children?: readonly unknown[] }, ancestors: readonly { props?: unknown; children?: readonly unknown[] }[]): 'kept' | 'beside' | undefined {
+  const at = ancestors.findIndex((ancestor) => shopControlKindOf(ancestor.props));
+  if (at < 0 || shopControlKindOf(node.props)) return undefined;
+  const role = shopPartRoleOf(node.props);
+  if ((role && shopPartSpec(role)?.keepVisible) || holdsKeptPart(node as ShopTreeNode)) return 'kept';
+  const parent = ancestors[0];
+  if (at > 0 && parent && holdsKeptPart(parent as ShopTreeNode)) return 'beside';
+  return undefined;
 }
 
 /** Form field tags: their value lives in the island's state, so they carry no stored `name`. */
