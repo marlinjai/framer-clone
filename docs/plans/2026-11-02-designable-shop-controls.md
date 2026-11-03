@@ -49,55 +49,72 @@ assistive technology what an element is), AI (the page generator).
    `<control id>-<role>`, or it with the first free suffix). The island draws any required part its tree
    still lacks from its default. A part that leaves its control (moved out of any control or into another
    one, by drag, the Layers panel or a site operation) becomes a plain node with a fresh id, and a duplicated
-   part is a plain node too (a duplicated control keeps its parts). A role used twice inside a control (a
-   paste, an outside write) stays only on its first part. The role marker cannot be set or removed through
+   part is a plain node too (a duplicated control keeps its parts). Inside its own control a part has its
+   place: under its spec parent (the part it belongs in, through any wrappers without a role, or the control
+   itself for a top part). The editor refuses a move that would take it elsewhere, with a notice, and the
+   normaliser takes the role from a part found elsewhere (an outside write), so the default comes back in its
+   own place; a demo notice moved under the confirmation, which the payment step hides, cannot hide it. A
+   role used twice inside a control (a paste, an outside write) stays only on its first part. Placement and
+   copies are settled before anything is re-added, so one pass settles the tree (normalising twice gives the
+   same object as normalising once). The role marker cannot be set or removed through
    site operations. Optional parts (the demo "simulate a declined payment" toggle) can be deleted and stay
    deleted.
 5. **Parts kept in sight.** The demo notice, the simulated payment reference, the total and the pay button's
-   wording are kept in sight, in three layers:
+   wording are kept in sight, in four layers. The model: the stored design may style them within an
+   allowlist, and the island pins at render, inline with `!important`, every property that could hide them,
+   always (not only when it hides at render time), so no stored rule, no rule on any other node of the page,
+   no animation and no inherited value can take them out of sight later.
    - The normaliser (load path, published render) removes from each of them, and from every wrapper between
      it and its control, the attributes `hidden`, `aria-hidden`, `popover` and `inert`. Their style and every
      rule they hold (whatever its selector, at every breakpoint) keep only an allowlist of style keys: type
-     (colour, font, spacing, alignment, decoration), box (padding, margin, border, radius, outline, background
-     colour and image, shadow), flex and grid layout, sizes, display, visibility and opacity. Anything else (a
-     mask, containment, a scale, translate or rotate, a transform, a filter, a clip, a position or inset, a
-     text indent, a background clipped to the text, z-index) goes whether or not it could hide, so a new way
-     to hide is closed by default. The listed keys are also checked by value: a `display` other than a
-     visible keyword, a `visibility` other than visible, an `opacity` that is not a plain number of at least
-     0.5, a `font-size` under 10 pixels (or 0.65 em) or not in pixels or em, a zero `height`, `max-height`,
-     `width` or `max-width`, a colour that is transparent or has an alpha under 0.5, and a negative margin
-     all go (a value the check cannot read, a `var()` or a calc, counts as hiding). The control's own rules
-     that reach inside it (a descendant, child or sibling step, such as `&:hover [data-checkout-demo-badge]`)
-     lose every declaration that hides by the same value checks (plus `overflow`, `contain`, masks, scale,
-     translate, rotate, an absolute or fixed position and negative offsets) but keep the rest, since they
-     also style parts that are not kept in sight. No style or rule inside a shop control, or on it, keeps
-     `!important`.
+     (colour, font, letter and word spacing, alignment, decoration), box (padding, margin, border, radius,
+     background colour and image, shadow), flex and grid layout, sizes, display, visibility and opacity.
+     Anything else (a mask, containment, a scale, translate or rotate, a transform, a filter, a clip, a
+     position or inset, a text indent, a background clipped to the text, z-index, an outline, which paints
+     over what is around it) goes whether or not it could hide, so a new way to hide is closed by default.
+     The listed keys are also checked by value: a `display` other than a visible keyword, a `visibility`
+     other than visible, an `opacity` that is not a plain number of at least 0.5, a `font-size` under 10
+     pixels (or 0.65 em) or not in pixels or em, a zero `height`, `max-height`, `width` or `max-width`, a
+     colour that is transparent or has an alpha under 0.5, a negative margin, letter or word spacing, and a
+     padding over 200 pixels or 12 em all go (a value the check cannot read, a `var()` or a calc, counts as
+     hiding). The control's own rules that reach inside it (a descendant, child or sibling step, such as
+     `&:hover [data-checkout-demo-badge]`) lose every declaration that hides by the same value checks (plus
+     `overflow`, `contain`, masks, scale, translate, rotate, an absolute or fixed position and negative
+     offsets) but keep the rest, since they also style parts that are not kept in sight. No style or rule
+     inside a shop control, or on it, keeps `!important`, generated `content` or an animation.
+   - Nothing is laid over them: a node beside a part kept in sight (in the same wrapper, or in any wrapper
+     around it) loses its positioning and offsets, z-index, `pointer-events`, transforms, a grid placement,
+     float, a negative margin and an outline wider than a focus ring (4 pixels, offset at most 4).
    - Their tag is their spec's (a `div`, or a `span` inside the pay button), never a void tag, a template or
      anything else.
-   - Each control draws one platform rule for these parts: visible and opaque, with `!important`, which no
-     stored rule can outweigh since none carries it. It does not pin a display, so the designer's flex or
-     grid stays; no stored style keeps a display that hides, and the island pins one where it computes to none.
-   - As it renders, the island pins each part visible inline with `!important`: its display (as computed,
-     or block), visibility and opacity, which outweighs any rule on the page, also one that only applies
-     later, such as a hover rule on an outer wrapper. On the part and every wrapper up to the control, a
-     computed `display: none`, a `visibility` other than visible, an `opacity` under 1,
-     `content-visibility: hidden`, paint, size or strict containment, any scale, translate, transform,
-     clip path, mask or filter, and an overflow that crops the part are overridden the same way, and on the
-     part itself a font size under 11 pixels.
-   - What stays open, by design: rules on nodes outside the control (an ancestor section of the page with
-     `height: 0` and `overflow: hidden`, or one positioned off screen), a colour that only matches its
-     background, and a colour or size given through a `var()` the page defines. The control's own style is
-     the designer's (fading the whole checkout is allowed), and the island never walks above the control.
-     Each of these hides the whole checkout, not only the wording, so a visitor cannot place a paid order
-     without seeing it.
-   - The checkout button and the pay button hold their own parts only: a part put inside a wrapper there is
+   - Each control draws one platform rule: these parts visible and opaque with `!important` (no stored rule
+     carries it, so none outweighs it); no generated content (`::before`, `::after`) on them, on any wrapper
+     between them and their control, nor on a button whose wording is fixed, from any rule on the page; and
+     their first letter and first line look like the rest of them. It does not pin a display, so the
+     designer's flex or grid stays.
+   - As it renders, the island pins inline with `!important`, always: on the part and on every wrapper up to
+     the control, its display (as computed, or block), visible, opaque, `content-visibility` visible,
+     overflow visible, position static (no offset moves it), and no transform, scale, translate, rotate,
+     clip path, mask, filter, backdrop filter, animation or containment; each wrapper also gets the marker
+     the platform rule blanks the generated content of. On the part itself: its colour as computed (a dark
+     default when that is see-through), the text filled with that colour, no indent, no outline, letter and
+     word spacing not below normal, and a font size of at least 11 pixels. Inline `!important` outweighs every
+     rule and every animation, now and later (a hover rule that applies while the visitor points at the
+     button).
+   - The checkout button and the pay button hold their own parts only (the roles their spec lists): a part
+     of somewhere else moved in loses its role (and with it its text), a part of theirs inside a wrapper is
      lifted out of it, and anything else (the wrapper, its text, a nested control) is dropped by the
-     normaliser and ignored by the island, so no extra text joins the fixed wording, a required label is
-     never lost with its wrapper, and normalising twice gives what normalising once does.
-   What stays possible: a designer can make one hard to read with colours, or place it off screen with
-   positioning. The demo notice and the payment reference keep the platform's text in the site language
-   whatever is stored. The checkout has no consent checkbox today (the only checkbox is the demo decline
-   toggle), so there is no consent wording to protect yet.
+     normaliser and ignored by the island, so no extra text joins the fixed wording and a required label is
+     never lost with its wrapper.
+   - What stays open, by design: a node anywhere else on the page positioned over the checkout (the site's
+     author drawing a fake button over the real one), a colour that only matches its background, and a colour
+     given through a `var()` the page defines. These are deliberate deception by the site's author, not an
+     accident of design, and the platform cannot rule them out on a page the author designs freely; the top
+     layer (a modal for the final pay step) would close the first one. The control's own style is the
+     designer's (fading the whole checkout is allowed), and the island never walks above the control.
+   The demo notice and the payment reference keep the platform's text in the site language whatever is
+   stored. The checkout has no consent checkbox today (the only checkbox is the demo decline toggle), so
+   there is no consent wording to protect yet.
 6. **All visible strings are part text, with tokens.** Part text may hold `{total}`, `{orderNumber}`,
    `{email}`, `{message}` and the like, which the island fills. The canvas shows them filled with sample
    values and shows the raw text while it is typed. An emptied required label falls back to its default, so

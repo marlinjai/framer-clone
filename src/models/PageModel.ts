@@ -38,7 +38,7 @@ import { expandPage, literalPageRoots, type PageExpansion } from '@/lib/componen
 import { extractBreakpoints, type ComponentSnapshotLike } from '@/lib/renderer/server/componentSnapshot';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { getComponentEntry } from '@/lib/componentRegistry';
-import { REQUIRED_SHOP_PART_MESSAGE, buildShopParts, holdsOutsidePart, holdsRequiredShopPart, nearestShopControlId, shopControlKindOf, withoutOutsideRoles, shopLocaleOf, withShopParts, type ShopTreeNode } from '@/lib/commerce/parts';
+import { MISPLACED_SHOP_PART_MESSAGE, REQUIRED_SHOP_PART_MESSAGE, buildShopParts, misplacesShopPart, holdsOutsidePart, holdsRequiredShopPart, nearestShopControlId, shopControlKindOf, withoutOutsideRoles, shopLocaleOf, withShopParts, type ShopTreeNode } from '@/lib/commerce/parts';
 import type { ApplyOutcome, GenerationUndoRecord } from '@/lib/ai/pageGen/apply';
 import { isVoidTag } from '@/lib/drag/voidTags';
 import { bareTextRefusal, isTextNodeType } from '@/lib/renderer/textNode';
@@ -840,6 +840,36 @@ const PageModel = PageWithComponents
         if (currentIdx !== -1 && currentIdx < resolvedIndex) {
           resolvedIndex -= 1;
         }
+      }
+    }
+
+    // A part moved inside its own control stays in the place its spec gives it (among
+    // its siblings, never into another part): the normaliser would take its role away
+    // there and put the default back, so the editor refuses the move and says why.
+    {
+      const chain = (startId: string | undefined): ComponentInstance[] => {
+        const out: ComponentInstance[] = [];
+        for (let id = startId; id; ) {
+          const node = findComponentInPage(self, id);
+          if (!node || out.includes(node)) break;
+          out.push(node);
+          id = node.parentId as string | undefined;
+        }
+        return out;
+      };
+      const newParentId = target.kind === 'appTree' ? appTree.id : target.kind === 'floating' ? undefined : resolvedParentId;
+      const toAncestors = chain(newParentId);
+      const sameControl = nearestShopControlId(chain(component.parentId as string | undefined)) === nearestShopControlId(toAncestors);
+      if (sameControl && nearestShopControlId(toAncestors) !== undefined && misplacesShopPart(component, toAncestors)) {
+        try {
+          getRoot<{ editorUI?: { setEditorNotice?: (notice: { kind: 'refused'; message: string }) => void } }>(self).editorUI?.setEditorNotice?.({
+            kind: 'refused',
+            message: MISPLACED_SHOP_PART_MESSAGE,
+          });
+        } catch {
+          // No editor around this tree: the refusal is the answer.
+        }
+        return undefined;
       }
     }
 

@@ -13,7 +13,7 @@ import type { PageModelType } from '@/models/PageModel';
 import ComponentRenderer from '../ComponentRenderer';
 import EditorCommerceProvider from '../EditorCommerceProvider';
 import { ShopPartNote } from '../sidebars/right/sections/ShopPartNote';
-import { REQUIRED_SHOP_PART_MESSAGE, SHOP_PART_ATTR, pageWithShopParts } from '@/lib/commerce/parts';
+import { MISPLACED_SHOP_PART_MESSAGE, REQUIRED_SHOP_PART_MESSAGE, SHOP_PART_ATTR, pageWithShopParts } from '@/lib/commerce/parts';
 
 let store: RootStoreType;
 
@@ -77,11 +77,23 @@ describe('a part moved out of its control', () => {
     expect(fresh.editorUI.selectedComponent?.id).toBe(oldId);
   });
 
-  it('keeps its role while it moves inside its own control', () => {
+  it('keeps its role while it moves within its own place in its control', () => {
     const pay = part('checkout.pay')!;
-    const moved = page.moveTreeComponent(pay.id, { kind: 'parent', parentId: checkout.id })!;
+    const actions = part('checkout.actions')!;
+    const moved = page.moveTreeComponent(pay.id, { kind: 'parent', parentId: actions.id, index: 0 })!;
     expect(moved.id).toBe(pay.id);
     expect(moved.props[SHOP_PART_ATTR]).toBe('checkout.pay');
+  });
+
+  it('is refused, with a notice, when it would leave its place inside its own control', () => {
+    const pay = part('checkout.pay')!;
+    const parentBefore = pay.parentId;
+    expect(page.moveTreeComponent(pay.id, { kind: 'parent', parentId: checkout.id })).toBeUndefined();
+    expect(page.findComponent(pay.id)?.parentId).toBe(parentBefore);
+    expect(store.editorUI.editorNotice).toEqual({ kind: 'refused', message: MISPLACED_SHOP_PART_MESSAGE });
+    // The demo notice cannot go under the confirmation either.
+    const badge = part('checkout.demo-badge')!;
+    expect(page.moveTreeComponent(badge.id, { kind: 'parent', parentId: part('checkout.confirmation')!.id })).toBeUndefined();
   });
 });
 
