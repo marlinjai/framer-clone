@@ -6,7 +6,9 @@
 // for a business site), legal pages that still hold [placeholders], a Google Maps
 // embed the privacy policy does not name (it loads only after consent, but Google
 // still receives data then, so the policy must say so), and reusable
-// components that will not show. A footer can be a component, and the Impressum
+// components that will not show, and site colours or fonts a page refers to that
+// the theme does not hold or cannot show (docs/plans/2026-11-02-theme-and-head.md,
+// slice T4). A footer can be a component, and the Impressum
 // link goes with it, so what expansion leaves out has to reach the owner. A
 // warning, never a gate: the owner can publish anyway. PURE.
 //
@@ -20,6 +22,7 @@ import { literalPageTree, type LiteralPageSource } from '@/lib/renderer/server/s
 import { LEGAL_KINDS, findLegalPage, type LegalKind, type LegalPageLike } from './legalPages';
 import { findPlaceholders } from './templates';
 import { treesHoldMapEmbed } from '@/lib/mapEmbed/mapEmbed';
+import { findToken, referenceState, tokenUsage, type SiteTheme } from '@/lib/site/theme';
 
 interface NodeLike {
   props?: { children?: unknown } | null;
@@ -78,6 +81,11 @@ export interface PublishCheck {
   placeholders: LegalPlaceholderIssue[];
   /** Placements that render nothing, and definitions that could not be read. */
   components: ComponentIssue[];
+  /**
+   * Site colours and fonts that will not show: a reference to a token the theme does not
+   * hold, or to a colour whose value no longer parses. Absent on a check from before themes.
+   */
+  tokens?: ComponentIssue[];
 }
 
 const FAILURE_COPY: Record<ExpansionFailureKind, string> = {
@@ -145,10 +153,26 @@ function countPlaceholders(root: NodeLike | null | undefined): number {
   return count;
 }
 
+/** The references in `value` that will not show under `theme`, as one message, or null. */
+function tokenProblem(value: unknown, theme: SiteTheme): string | null {
+  let missing = 0;
+  const broken: string[] = [];
+  for (const id of tokenUsage(value).keys()) {
+    const state = referenceState(theme, id);
+    if (state === 'missing') missing += 1;
+    else if (state === 'broken') broken.push(findToken(theme, id)?.name || 'unnamed');
+  }
+  const parts: string[] = [];
+  if (missing > 0) parts.push(`${missing === 1 ? 'a site colour or font it uses no longer exists' : `${missing} site colours or fonts it uses no longer exist`}, so ${missing === 1 ? 'it shows' : 'they show'} nothing`);
+  if (broken.length > 0) parts.push(`the colour ${broken.join(', ')} has a value that cannot be read, so it shows nothing`);
+  return parts.length > 0 ? parts.join('; ') : null;
+}
+
 export function checkBeforePublish(
   business: BusinessInfo,
   pages: PublishCheckPage[],
   { definitions, refused }: PublishCheckComponents,
+  theme?: SiteTheme,
 ): PublishCheck {
   const trees = new Map(pages.map((page) => [page.id, literalPageTree(page.snapshot, definitions)]));
 
@@ -174,7 +198,19 @@ export function checkBeforePublish(
     }
   }
 
+  const tokens: ComponentIssue[] = [];
+  if (theme) {
+    // The expanded tree: a reference inside a component counts on every page that places it.
+    for (const page of pages) {
+      const message = tokenProblem(trees.get(page.id)?.root, theme);
+      if (message) tokens.push({ pageId: page.id, title: page.metadata.title, message });
+    }
+    const documentMessage = tokenProblem(theme.document, theme);
+    if (documentMessage) tokens.push({ title: 'Page defaults in Theme', message: documentMessage });
+  }
+
   return {
+    tokens,
     missingImpressum: hasBusinessData(business) && !findLegalPage(pages, 'impressum'),
     maps: mapsPrivacyCheck(pages, (id) => trees.get(id)?.root as NodeLike | null | undefined),
     placeholders,
@@ -189,6 +225,7 @@ export function hasPublishIssues(check: PublishCheck): boolean {
     // A check from before maps were checked (a stored revision's, an older server's) has none.
     (check.maps != null && check.maps.status !== 'named') ||
     check.placeholders.length > 0 ||
-    check.components.length > 0
+    check.components.length > 0 ||
+    (check.tokens?.length ?? 0) > 0
   );
 }

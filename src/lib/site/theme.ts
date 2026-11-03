@@ -864,3 +864,100 @@ export function validateThemeWrite(next: SiteTheme, current: SiteTheme): string[
   }
   return [...new Set(errors)];
 }
+
+// ---------------------------------------------------------------------------
+// Replace, reference states and what the panel warns about (slice T4)
+// ---------------------------------------------------------------------------
+
+/**
+ * `value` with every reference to `fromId` pointing at `toId` instead, at any depth:
+ * the same walk as tokenUsage, so whatever the count found, Replace rewrites. A string
+ * without the reference, and every object holding none, is returned as it is.
+ */
+export function replaceTokenReferences<T>(value: T, fromId: string, toId: string): T {
+  const from = tokenReference(fromId);
+  const to = tokenReference(toId);
+  const walk = (item: unknown): unknown => {
+    if (typeof item === 'string') return item.includes(from) ? item.split(from).join(to) : item;
+    if (Array.isArray(item)) {
+      const next = item.map(walk);
+      return next.some((v, i) => v !== item[i]) ? next : item;
+    }
+    if (item && typeof item === 'object') {
+      let changed = false;
+      const next: Record<string, unknown> = {};
+      for (const [key, v] of Object.entries(item as Record<string, unknown>)) {
+        const w = walk(v);
+        if (w !== v) changed = true;
+        // Defined, never assigned: a stored `__proto__` key stays an own data key.
+        Object.defineProperty(next, key, { value: w, enumerable: true, writable: true, configurable: true });
+      }
+      return changed ? next : item;
+    }
+    return item;
+  };
+  return walk(value) as T;
+}
+
+/** A reference's state: a live token, a tombstone, a colour that no longer parses, or nothing at all. */
+export type ReferenceState = 'live' | 'deleted' | 'broken' | 'missing';
+
+export function referenceState(theme: SiteTheme, id: string): ReferenceState {
+  const token = findToken(theme, id);
+  if (!token) return 'missing';
+  if (token.kind === 'color' && token.broken) return 'broken';
+  // Over a cap the sheet leaves a token out, so its references behave as missing.
+  if (!emittedTokenIds(theme).has(id)) return 'missing';
+  return token.deleted ? 'deleted' : 'live';
+}
+
+/** True when a stored value holds a `prefers-color-scheme` condition anywhere. */
+export function holdsColorSchemeRule(value: unknown): boolean {
+  const stack: unknown[] = [value];
+  const seen = new Set<object>();
+  while (stack.length > 0) {
+    const item = stack.pop();
+    if (typeof item === 'string') {
+      if (item.includes('prefers-color-scheme')) return true;
+    } else if (item && typeof item === 'object' && !seen.has(item)) {
+      seen.add(item);
+      stack.push(...(Array.isArray(item) ? item : Object.values(item as Record<string, unknown>)));
+    }
+  }
+  return false;
+}
+
+/** A page as the warnings read it: its title and its root's stored rules. */
+export interface ThemeWarningPage {
+  title: string;
+  rootRules: unknown;
+}
+
+/**
+ * What the Theme panel warns about, in plain language: dark styles on a site that has not
+ * chosen a mode (they follow each visitor's system while the colours stay light), a dark or
+ * system site with no page background (the page shows the editor's own palette), and a page
+ * whose own colour scheme disagrees with a forced mode (the page's rule wins there).
+ */
+export function themeWarnings(theme: SiteTheme, site: { holdsDarkRules: boolean; pages: readonly ThemeWarningPage[] }): string[] {
+  const out: string[] = [];
+  if (theme.mode === undefined && site.holdsDarkRules) {
+    out.push("Some elements have dark mode styles, but no mode is chosen: they follow each visitor's system while your colours stay light. Choose System, Light or Dark.");
+  }
+  if ((theme.mode === 'system' || theme.mode === 'dark') && !theme.document.backgroundColor) {
+    out.push("Pick a page background: without one, a dark page shows the editor's own dark palette rather than your colours.");
+  }
+  const forced = theme.mode === 'light' || theme.mode === 'dark' ? theme.mode : undefined;
+  if (!forced) return out;
+  for (const page of site.pages) {
+    const rules = Array.isArray(page.rootRules) ? (page.rootRules as unknown[]) : [];
+    const disagrees = rules.some((rule) => {
+      if (!isRecord(rule) || rule.selector !== ':root' || !isRecord(rule.style)) return false;
+      const stored = rule.style.colorScheme;
+      const values = isRecord(stored) ? Object.values(stored) : [stored];
+      return values.some((v) => typeof v === 'string' && v.trim() !== '' && v.trim().split(/\s+/).some((word) => word !== forced && word !== 'only'));
+    });
+    if (disagrees) out.push(`The page ${page.title || 'Untitled'} sets its own colour scheme, which wins over the site's ${forced} mode on that page.`);
+  }
+  return out;
+}

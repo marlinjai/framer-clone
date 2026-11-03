@@ -8,7 +8,10 @@
 // is loaded by the page's own @font-face rules (PageFontFaces), because the
 // selected component already uses it.
 import React from 'react';
+import { observer } from 'mobx-react-lite';
 import { ChevronDown } from 'lucide-react';
+import { useStore } from '@/hooks/useStore';
+import { EMPTY_THEME, findToken, fontTokenStack, liveTokens, parseTokenReference, referenceState, tokenReference } from '@/lib/site/theme';
 import { cn } from '@/lib/utils';
 import {
   FONT_CATEGORIES,
@@ -26,6 +29,8 @@ export const INHERIT_FONT = 'inherit';
 export function fontOptionValue(stored: string | undefined): string {
   const value = (stored ?? '').trim();
   if (!value || value === INHERIT_FONT) return INHERIT_FONT;
+  // A site font (a theme token) is its own option.
+  if (parseTokenReference(value)) return value;
   if (value === SYSTEM_FONT_STACK) return SYSTEM_FONT_STACK;
   const first = parseFontFamilyList(value)[0];
   // Any stack that leads with the platform UI font is the System UI option
@@ -39,16 +44,33 @@ interface FontFamilySelectProps {
   value: string | undefined;
   onChange: (value: string) => void;
   'aria-label'?: string;
+  /**
+   * Offer the site's font tokens (docs/plans/2026-11-02-theme-and-head.md, slice T4): the
+   * value is then a reference to one, as the whole of `fontFamily`.
+   */
+  tokens?: boolean;
 }
 
-export function FontFamilySelect({ value, onChange, 'aria-label': ariaLabelProp }: FontFamilySelectProps) {
+export const FontFamilySelect = observer(function FontFamilySelect({ value, onChange, 'aria-label': ariaLabelProp, tokens = false }: FontFamilySelectProps) {
   const { id, ariaLabel } = useFieldIdentity('', ariaLabelProp);
+  const { editorUI } = useStore();
+  const theme = editorUI.currentProject?.site?.theme ?? EMPTY_THEME;
   const selected = fontOptionValue(value);
+  const tokenId = parseTokenReference(selected);
+  const siteFonts = tokens ? liveTokens(theme).filter((t) => t.kind === 'font') : [];
+  const token = tokenId ? findToken(theme, tokenId) : undefined;
+  const state = tokenId ? referenceState(theme, tokenId) : undefined;
+  // A reference whose token is not offered as a live site font still needs its own option.
+  const listed = tokenId !== null && siteFonts.some((t) => t.id === tokenId);
+  const tokenLabel =
+    tokenId && !listed ? (state === 'deleted' ? `Deleted font: ${token?.name || 'unnamed'}` : state === 'missing' ? 'Missing font' : `Site font: ${token?.name || 'unnamed'}`) : null;
   const known =
-    selected === INHERIT_FONT || selected === SYSTEM_FONT_STACK || FONT_LIBRARY.some((f) => fontStack(f) === selected);
+    tokenId !== null || selected === INHERIT_FONT || selected === SYSTEM_FONT_STACK || FONT_LIBRARY.some((f) => fontStack(f) === selected);
   const customName = known ? undefined : parseFontFamilyList(selected)[0] ?? selected;
-  const library = parseFontFamilyList(selected)[0];
-  const previewFamily = selected === INHERIT_FONT ? undefined : selected;
+  // A site font previews in its registry stack: the panel holds no theme sheet.
+  const shown = token?.kind === 'font' ? fontTokenStack(token.family) : selected;
+  const library = parseFontFamilyList(shown)[0];
+  const previewFamily = selected === INHERIT_FONT || (tokenId && state === 'missing') ? undefined : shown;
 
   return (
     <div className="flex min-w-0 flex-col gap-1">
@@ -63,6 +85,16 @@ export function FontFamilySelect({ value, onChange, 'aria-label': ariaLabelProp 
           <option value={INHERIT_FONT}>Inherit</option>
           <option value={SYSTEM_FONT_STACK}>System UI</option>
           {customName ? <option value={selected}>{`Custom: ${customName}`}</option> : null}
+          {tokenLabel ? <option value={selected}>{tokenLabel}</option> : null}
+          {siteFonts.length > 0 ? (
+            <optgroup label="Site fonts">
+              {siteFonts.map((t) => (
+                <option key={t.id} value={tokenReference(t.id)}>
+                  {t.name}
+                </option>
+              ))}
+            </optgroup>
+          ) : null}
           {FONT_CATEGORIES.map((cat) => {
             const families = FONT_LIBRARY.filter((f) => f.category === cat.id);
             if (families.length === 0) return null;
@@ -83,6 +115,21 @@ export function FontFamilySelect({ value, onChange, 'aria-label': ariaLabelProp 
           className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground"
         />
       </div>
+      {tokenId && state !== 'live' ? (
+        <div className="flex items-center gap-1 px-0.5 text-[11px] text-destructive" data-token-state={state}>
+          <span className="truncate">{tokenLabel}</span>
+          {token?.kind === 'font' ? (
+            <button
+              type="button"
+              className="ml-auto flex-none rounded px-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+              onClick={() => onChange(fontTokenStack(token.family))}
+              title="Write this font here, so it no longer follows the site font"
+            >
+              Detach
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       {previewFamily ? (
         <div
           aria-hidden
@@ -96,4 +143,4 @@ export function FontFamilySelect({ value, onChange, 'aria-label': ariaLabelProp 
       ) : null}
     </div>
   );
-}
+});

@@ -46,7 +46,7 @@ import {
   type SiteSettingsInput,
 } from '@/lib/site/siteSettings';
 import { effectiveSiteName } from '@/lib/site/siteSettings';
-import { normalizeTheme, validateThemeWrite, type SiteTheme } from '@/lib/site/theme';
+import { normalizeTheme, replaceTokenReferences, validateThemeWrite, type SiteTheme } from '@/lib/site/theme';
 import {
   COOKIE_SETTINGS_HASH,
   COOKIE_SETTINGS_LABELS,
@@ -1296,6 +1296,38 @@ export const ProjectModel = types
       if (errors.length > 0) return { ok: false, errors };
       if (JSON.stringify(settings.theme) === JSON.stringify(next)) return { ok: true };
       self.siteSettings = { ...settings, theme: next };
+      self.metadata.updatedAt = new Date();
+      return { ok: true };
+    },
+
+    // The Theme panel's Replace: every reference to `fromId`, on every page, floating
+    // element, definition (its nodes and its input defaults) and in the theme's document
+    // block, points at `toId`, a live token of the same kind. ONE action, so one undo
+    // step restores every reference. The token replaced stays as it is (a tombstone
+    // stays a tombstone), so Clean up can remove it once nothing uses it.
+    replaceToken(fromId: string, toId: string): ThemeResult {
+      const settings = normalizeSiteSettings(self.siteSettings);
+      const theme = settings.theme;
+      const from = theme.tokens.find((t) => t.id === fromId);
+      const to = theme.tokens.find((t) => t.id === toId);
+      if (fromId === toId) return { ok: false, errors: ['Pick another token to replace it with.'] };
+      if (!to || to.deleted) return { ok: false, errors: ['Pick a token that exists to replace it with.'] };
+      if (from && from.kind !== to.kind) return { ok: false, errors: [`A ${from.kind === 'font' ? 'font' : 'colour'} can only be replaced by another ${from.kind === 'font' ? 'font' : 'colour'}.`] };
+      const pages = [...self.pages.values(), ...[...self.components.values()].map((definition) => definition.page)];
+      const seen = new Set<ComponentInstance>();
+      for (const page of pages) {
+        for (const node of nodesOfPage(page as PageModelType)) {
+          if (seen.has(node)) continue;
+          seen.add(node);
+          node.replaceTokenReference(fromId, toId);
+        }
+      }
+      for (const definition of self.components.values()) {
+        const inputs = replaceTokenReferences(definition.inputs, fromId, toId);
+        if (inputs !== definition.inputs) definition.setInputs(inputs as never);
+      }
+      const document = replaceTokenReferences(theme.document, fromId, toId);
+      if (document !== theme.document) self.siteSettings = { ...settings, theme: { ...theme, document } };
       self.metadata.updatedAt = new Date();
       return { ok: true };
     },

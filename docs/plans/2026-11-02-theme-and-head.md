@@ -657,6 +657,15 @@ T6 cannot come earlier: before T2 no sheet exists, so every alias dangles, which
 - R: the app has no `beforeunload` warning and this adds none. Reload brings back the tab's working copy, and `changedElsewhere` names the theme if it moved meanwhile. A published copy keeps the old theme while the draft moves on.
 - E: delete, then re-create the name: a new id, and the tombstone untouched. Delete the last token. Publish, then republish, is the same sheet. A forged dangling reference shows Missing, and `checkBeforePublish` names it. Clean up says what it did not scan.
 
+**T4 as built, decided while building, say so if you disagree.**
+
+- **The panel is a dialog from the top bar,** beside Site settings (a palette button on the wide bar, Theme in the compact bar's More menu), `src/components/site/ThemePanel.tsx`. Unlike Site settings it edits live: every control is one `updateTheme` call, so the canvas repaints behind it and each edit is its own undo step. A refusal changes nothing and is said in the dialog's live region.
+- **A colour gesture is one undo step everywhere,** not only in the panel: `ColorInput`'s native picker opens a history batch on focus and writes it on blur, so a drag through many values is one step on any colour field.
+- **Picking a token on a node** is a small "Site colour" select beside the colour field, on Fill, Text and Border in Styles, and a "Site fonts" group in Typography's font select. A reference shows as the token's chip, with its value resolved in the frame's mode, and Detach writes that literal. The other colour fields (forms, the sticky bar, component inputs) do not offer tokens: their values pass their own checks, which a reference is not written for.
+- **Replace is one project action,** `ProjectModel.replaceToken`, which rewrites the reference in every node's props (pages, floating elements, definitions), every definition's input defaults and the theme's document block, using the same walk as the usage count, so whatever was counted is replaced. The token replaced is left as it is, so Clean up can then remove a tombstone.
+- **The publish warning** is `tokens` on `checkBeforePublish`: a page whose expanded tree refers to a token the theme does not hold (or that the sheet leaves out over a cap) or to a colour that no longer parses, and the same for the document block. The server's check of a frozen revision reads that revision's theme.
+- **What was not proven here:** "publish, and the live page shows it, only after publishing" needs a signed-in project and the server, which this run did not have; the demo editor cannot publish. The rest was proven in the browser on the demo editor and by the unit and score tests.
+
 **T5, the AI.** As specified above.
 
 - F: a generation on a site with tokens uses them; one on an empty site adds a few, in one undo step. The prompt's dark line follows the mode.
