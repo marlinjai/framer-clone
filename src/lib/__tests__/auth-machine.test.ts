@@ -230,6 +230,7 @@ describe('verifyCompanyKey: auth-brain answers', () => {
     expect(res).toEqual({
       kind: 'key',
       tenantId: TENANT,
+      companySlug: 'acme',
       keyId: 'key-1',
       serviceAccountId: 'sa-1',
       scope: { workspaceId: WORKSPACE, tenantGroupId: GROUP },
@@ -398,6 +399,7 @@ describe('authorizeKeyAction', () => {
   const key = (workspaceRole: VerifiedKey['workspaceRole']): VerifiedKey => ({
     kind: 'key',
     tenantId: TENANT,
+    companySlug: 'acme',
     keyId: 'key-1',
     serviceAccountId: 'sa-1',
     scope: { workspaceId: WORKSPACE, tenantGroupId: GROUP },
@@ -520,6 +522,18 @@ describe('verifyCompanyKey: hardening', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('refuses a company key whose verify answer names no company slug, so a first site never gets a wrongly named shop', async () => {
+    for (const slug of [undefined, '', '   ', 42]) {
+      const v = verifyResponse();
+      const scope: Record<string, unknown> = { ...v.principal.scope };
+      if (slug === undefined) delete scope.slug;
+      else scope.slug = slug;
+      mockVerifyApiKey.mockResolvedValueOnce({ ...v, principal: { ...v.principal, scope } });
+      expect(await verifyCompanyKey(bearerRequest(fakeKey()))).toEqual({ kind: 'refused' });
+    }
+    expect(keyCacheSize()).toBe(0);
   });
 
   it('refuses a principal that is not a service account', async () => {
