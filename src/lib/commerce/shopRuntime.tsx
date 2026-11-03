@@ -149,11 +149,13 @@ function releaseKept(owner: HTMLElement): void {
 /** Whether a computed colour is see-through (transparent, or an alpha under 0.5). */
 function seeThrough(color: string): boolean {
   if (!color || color === 'transparent') return true;
-  const match = /rgba?\(([^)]*)\)/.exec(color);
+  // rgb(r, g, b, a), rgb(r g b / a), and the forms a browser serializes the rest in: color(srgb r g b / a), oklch(l c h / a), lab(...).
+  const match = /^(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\(([^)]*)\)$/.exec(color.trim());
   if (!match) return false;
-  const parts = match[1].split(/[\s,/]+/).filter(Boolean);
-  if (parts.length < 4) return false;
-  const alpha = parts[3].endsWith('%') ? Number(parts[3].slice(0, -1)) / 100 : Number(parts[3]);
+  const slash = match[1].split('/');
+  const raw = slash.length > 1 ? slash[1].trim() : /^rgba?\(|^hsla?\(/.test(color.trim()) ? match[1].split(/[\s,]+/).filter(Boolean)[3] : undefined;
+  if (raw === undefined) return false;
+  const alpha = raw.endsWith('%') ? Number(raw.slice(0, -1)) / 100 : Number(raw);
   return Number.isFinite(alpha) && alpha < 0.5;
 }
 
@@ -347,7 +349,9 @@ export function ShopPartElement({ role, tag, domProps, storedText, content, surf
   if (spec?.keepVisible || spec?.fixedText) content = undefined;
   // A button whose wording is fixed draws only its own parts, whatever it was handed.
   if (spec?.onlyParts) content = onlyPartElements(content, new Set((spec.children ?? []).map((child) => child.role)));
-  const editing = ownProps.contentEditable === 'true';
+  // A part with fixed text (or a run time message) is never typed into: a stored contentEditable
+  // must not make it draw stored text, which the published page strips.
+  const editing = ownProps.contentEditable === 'true' && !spec?.fixedText && !spec?.dynamicText;
   // While the designer types, the box holds the stored text as typed, tokens and all.
   // A button whose wording is fixed holds no text of its own: its parts are the words.
   const raw = spec?.onlyParts ? undefined : spec?.dynamicText ? render.text : editing ? storedText : shopPartText(role, storedText, runtime.locale);

@@ -41,7 +41,7 @@ import { getHistoryStore } from '@/stores/RootStore';
 import { takeStashedDemoProject } from '@/lib/projects/demoStash';
 import { withDefaultViewports } from '@/lib/canvas/defaultViewports';
 import { normalizeSiteSettings } from '@/lib/site/siteSettings';
-import { pageWithShopParts } from '@/lib/commerce/parts';
+import { componentsWithShopParts, pageWithShopParts } from '@/lib/commerce/parts';
 
 export interface OpenedProject {
   project: ProjectModelType | undefined;
@@ -114,7 +114,7 @@ interface VersionContent {
 }
 
 function versionContent({ pages, components, siteSettings }: ProjectContent): VersionContent {
-  const definitions = Object.entries((components ?? {}) as Record<string, unknown>);
+  const definitions = Object.entries(componentsWithShopParts((components ?? {}) as Record<string, unknown>, normalizeSiteSettings(siteSettings).language));
   // Normalized, as the server stores it, so a database round trip compares equal.
   const settings = normalizeSiteSettings(siteSettings);
   return {
