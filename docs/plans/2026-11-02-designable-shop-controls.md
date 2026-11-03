@@ -167,7 +167,10 @@ assistive technology what an element is), AI (the page generator).
    messages) drawn once per cart line with each copy reading its own line, the estimated subtotal (it must
    keep `{subtotal}`) and the estimate notice (fixed text, kept in sight). The old `label` and `emptyContent`
    props and their bindings move to the label and empty message parts, where a binding resolves against the
-   frames the island sits in. Canvas states: ready, no option chosen, checking (loading), sold out and a failed
+   frames the island sits in (also on a control that already has parts, unless the part is bound already). A
+   line no longer sold or failed to load keeps its remove button in sight whatever the design says (the
+   island pins it as it does a part kept in sight), since its quantity cannot go below one. A designer's id
+   on a part inside the repeated line goes, so it never repeats on the page. Canvas states: ready, no option chosen, checking (loading), sold out and a failed
    check for the add to cart; items, empty, loading, low stock, an item no longer sold and an item that failed
    for the cart.
 3. **Variant selector:** the option groups, option labels and the choice buttons as a template drawn per
