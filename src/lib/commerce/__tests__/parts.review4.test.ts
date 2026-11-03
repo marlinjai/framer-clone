@@ -84,7 +84,7 @@ describe('the control root', () => {
 describe('a reusable component page', () => {
   it('gets the parts of a legacy control, and passes anything else through', () => {
     const definition = { id: 'c1', name: 'Pay', page: { appComponentTree: { id: 'root', type: 'div', props: {}, children: [control()] } } };
-    const out = componentsWithShopParts({ c1: definition, odd: 'x' }, 'en') as Record<string, typeof definition>;
+    const out = componentsWithShopParts({ c1: definition, odd: 'x' }, 'en') as unknown as Record<string, typeof definition>;
     const tree = out.c1.page.appComponentTree as ShopTreeNode;
     expect(byRole(tree.children!, 'checkout.pay')).toBeDefined();
     expect((out as Record<string, unknown>).odd).toBe('x');
