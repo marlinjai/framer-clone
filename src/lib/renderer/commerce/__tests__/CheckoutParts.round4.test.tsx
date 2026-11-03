@@ -351,5 +351,34 @@ describe('the approving review', () => {
     const total = container.querySelector<HTMLElement>('[data-checkout-payment-total]')!;
     expect(total.style.getPropertyValue('position')).toBe('relative');
     expect(total.style.getPropertyValue('z-index')).toBe('1');
+    // Contained in the control, so it never paints over the site's own sticky header.
+    expect(total.closest<HTMLElement>('[data-component-kind="checkout-button"]')!.style.getPropertyValue('isolation')).toBe('isolate');
+  });
+});
+
+describe('the island across renders', () => {
+  it("puts the design's own value back once a pin is no longer needed, and keeps a pin another kept part still holds", async () => {
+    const { container } = render(
+      <div data-component-kind="checkout-button">
+        <div data-testid="step" style={{ opacity: 0.6 }}>
+          <div data-testid="row" style={{ opacity: 0.6 }}>
+            <span data-shop-part="checkout.total">Total</span>
+          </div>
+        </div>
+      </div>,
+    );
+    const step = container.querySelector<HTMLElement>('[data-testid="step"]')!;
+    const row = container.querySelector<HTMLElement>('[data-testid="row"]')!;
+    const total = container.querySelector<HTMLElement>('[data-shop-part="checkout.total"]')!;
+    const { keepInSightForTest } = await import('@/lib/commerce/shopRuntime');
+    // 0.6 x 0.6 is under one half: both wrappers are pinned opaque.
+    keepInSightForTest(total);
+    expect(step.style.getPropertyPriority('opacity')).toBe('important');
+    expect(row.style.getPropertyValue('opacity')).toBe('1');
+    // The designer lifts the row's fade; the next render puts the step's own 0.6 back.
+    row.style.setProperty('opacity', '1');
+    keepInSightForTest(total);
+    expect(step.style.getPropertyValue('opacity')).toBe('0.6');
+    expect(step.style.getPropertyPriority('opacity')).toBe('');
   });
 });

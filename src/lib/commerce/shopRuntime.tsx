@@ -112,6 +112,16 @@ const PART_NONE = ['transform', 'scale', 'translate', 'rotate', 'clip-path', 'ma
 /** Properties a wrapper keeps unless they hide what it holds: then they are pinned to `none`. */
 const WRAPPER_NONE_WHEN_SET = ['clip-path', 'mask-image', '-webkit-mask-image'];
 
+/** One pinned property: the design's own inline value under it, and the kept parts holding it. */
+interface Pin {
+  value: string;
+  priority: string;
+  owners: Set<HTMLElement>;
+}
+
+/** What the kept parts pinned on each element, so each part's next render starts from the design. */
+const PINNED = new WeakMap<HTMLElement, Map<string, Pin>>();
+
 /** Whether a computed colour is see-through (transparent, or an alpha under 0.5). */
 function seeThrough(color: string): boolean {
   if (!color || color === 'transparent') return true;
@@ -148,11 +158,45 @@ function seeThrough(color: string): boolean {
 function keepInSight(element: HTMLElement): void {
   const view = element.ownerDocument.defaultView;
   if (!view) return;
-  const force = (target: HTMLElement, property: string, value: string) => target.style.setProperty(property, value, 'important');
+  const force = (target: HTMLElement, property: string, value: string) => {
+    const pins = PINNED.get(target) ?? new Map<string, Pin>();
+    let pin = pins.get(property);
+    if (!pin) {
+      // The design's own inline value, put back when no part holds the pin any more.
+      pin = { value: target.style.getPropertyValue(property), priority: target.style.getPropertyPriority(property), owners: new Set() };
+      pins.set(property, pin);
+    }
+    pin.owners.add(element);
+    PINNED.set(target, pins);
+    target.style.setProperty(property, value, 'important');
+  };
+  // Each render starts from the design: what this part pinned at its last render
+  // comes off first, so a fade or a colour the designer changed since shows (the
+  // canvas). A wrapper several kept parts share keeps a pin another part still holds.
+  const release = (target: HTMLElement) => {
+    const pins = PINNED.get(target);
+    if (!pins) return;
+    for (const [property, pin] of pins) {
+      if (!pin.owners.delete(element) || pin.owners.size > 0) continue;
+      pins.delete(property);
+      // React wrote the design's new value over the pin since (it sets no priority): that value stands.
+      if (target.style.getPropertyPriority(property) !== 'important') continue;
+      if (pin.value) target.style.setProperty(property, pin.value, pin.priority);
+      else target.style.removeProperty(property);
+    }
+  };
   // Read everything first: pinning one node changes what its children compute.
   const chain: { node: HTMLElement; computed: CSSStyleDeclaration; crops: boolean }[] = [];
+  let control: HTMLElement | null = null;
   for (let node: HTMLElement | null = element; node; node = node.parentElement) {
+    release(node);
     if (node !== element && node.hasAttribute('data-component-kind')) break;
+  }
+  for (let node: HTMLElement | null = element; node; node = node.parentElement) {
+    if (node !== element && node.hasAttribute('data-component-kind')) {
+      control = node;
+      break;
+    }
     const computed = view.getComputedStyle(node);
     chain.push({ node, computed, crops: node !== element && computed.overflow !== 'visible' && node.scrollHeight > node.clientHeight + 1 });
   }
@@ -188,6 +232,8 @@ function keepInSight(element: HTMLElement): void {
   // both beside it), so nothing placed in the same grid cell paints over it.
   force(element, 'position', 'relative');
   force(element, 'z-index', '1');
+  // The lift stays inside the control: it never paints over the site's own sticky header.
+  if (control && view.getComputedStyle(control).isolation !== 'isolate') force(control, 'isolation', 'isolate');
   for (const property of PART_NONE) force(element, property, 'none');
   if (seeThrough(ownColor)) force(element, 'color', KEPT_FALLBACK_COLOR);
   force(element, '-webkit-text-fill-color', 'currentcolor');
@@ -197,6 +243,9 @@ function keepInSight(element: HTMLElement): void {
   if (!Number.isFinite(wordSpacing) || wordSpacing < 0) force(element, 'word-spacing', 'normal');
   if (!Number.isFinite(size) || size < MIN_KEPT_FONT_PX) force(element, 'font-size', `${MIN_KEPT_FONT_PX}px`);
 }
+
+/** keepInSight, for tests of the pins across renders. */
+export const keepInSightForTest = keepInSight;
 
 /** A ref that keeps the element in sight after every render, chained to the ref the surface passed, if any. */
 function useKeptInSight(enabled: boolean, outer: unknown): React.RefCallback<HTMLElement> | undefined {
