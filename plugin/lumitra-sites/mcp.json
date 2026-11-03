@@ -1,0 +1,12 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "lumitra-sites": {
+      "type": "streamable-http",
+      "url": "https://app.lumitra.co/api/mcp",
+      "headers": {
+        "Authorization": "Bearer ${LUMITRA_SITES_API_KEY}"
+      }
+    }
+  }
+}

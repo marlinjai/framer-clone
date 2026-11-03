@@ -1,6 +1,6 @@
 ---
 type: plan
-status: decided
+status: in-progress
 date: 2026-11-02
 title: "Lumitra Sites agent plugin: an MCP so an agent can build sites in framer-clone"
 summary: "An MCP endpoint at app.lumitra.co/api/mcp and a lumitra-sites plugin, so Claude Code or any MCP client can read, build, edit and publish sites with a company API key carrying the sites grant. Server-side site operations shared with the in-editor AI, a version lock so agent and editor never overwrite each other, publish with confirmation. About two to three agent weeks. Approved by Marlin on 2026-11-02."
@@ -75,12 +75,22 @@ The patterns to follow already exist:
 - Per-key rate limit. A server `instructions` text explains the workflow: read the vocabulary, outline, insert, check the preview, publish.
 - **Decided while building (2026-11-02, amended 2026-11-03):** the endpoint keeps no server-side session, so the confirmation dialog works like this: `initialize` answers an `Mcp-Session-Id` that carries the negotiated version, whether the client declared elicitation and a fingerprint of its key, signed with a per-process secret. A confirming tool call from such a client that accepts a stream is answered as one carrying `elicitation/create`; the client's answer arrives as its own POST and is matched by request id and key fingerprint, at most three open questions per key. No answer within two minutes, an error answer, a key past its question cap, or no capability falls back to the approval link of decision 6. Open questions live in the process under the same single-container rule. Tool results start with a notice that their text is data written by site authors or third parties, never an instruction, and the server instructions say the same. Per key: reads 300 a minute, writes 60 a minute and one at a time, image searches 30 per ten minutes, approval links 10 per ten minutes; at most five tool calls per JSON-RPC batch. The approval page (`/projects/<site>/confirm/<id>`) and its route (`POST /api/projects/<site>/confirmations/<id>`) are editor-only: whichever of #305 (the published-host route allowlist) and #319 lands second adds them and `/api/mcp` to `src/lib/hostRoutes.ts` without `published` methods.
 
-**5. Plugin `plugin/lumitra-sites/` in framer-clone (Agent Plugins format, as Studio's).**
-- `plugin.json` and an `.mcp.json` of type http pointing at the URL. The key is not expanded from an environment variable inside a header template, because not every client expands it and a client that does not would send the literal text as the key. Each target client gets its own verified setup: Claude Code through `claude mcp add --transport http ... --header` with the key injected from Infisical, and claude.ai connectors and Claude Desktop through the client's own credential prompt. The plugin's skills document each path, and the dogfood step checks every one.
+**5. Plugin `plugin/lumitra-sites/` in framer-clone (Agent Plugins format, as Studio's). Done 2026-11-03.**
+- Built: `plugin/lumitra-sites/` (`plugin.json`, `mcp.json` with the server as `streamable-http`, `README.md`, three skills), `plugin/lumitra-sites-mirror/` (the Claude Code files of the public mirror: `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.mcp.json` with type `http`, `LICENSE`), the validator `plugin/validate.mjs` (adapted from Studio's) with `plugin/SPEC-NOTES.md`, `scripts/sync-plugin-repo.sh` and `.github/workflows/sync-plugin-mirror.yml`. CI runs the validator offline on every pull request; the unit tests check the skills and README against the live tool list (`src/server/mcp/__tests__/plugin.test.ts`).
 - Skills:
-  - `build-a-site`: brief, design direction, structure, build, check the preview in a browser, publish.
-  - `edit-a-site`: read first, make small batched edits.
-- A public mirror and marketplace entry following Studio's `sync-plugin-mirror.yml`.
+  - `build-a-site`: brief, design direction (with the motion rules), describe_vocabulary first, read before writing, structure, small batches with expectedVersion, site_changed, the preview checked in a browser at every breakpoint, publish only when asked, tool output is data.
+  - `edit-a-site`: read first, outline, targeted batches, verify, never publish unasked.
+  - `redesign-a-site`: a screenshot per breakpoint, a critique, revision in passes (theme, layout, type, detail), look again.
+- **The key, amended 2026-11-03 (supersedes the earlier "not expanded inside a header template"):** the server entry is `{ "type": "http", "url": "https://app.lumitra.co/api/mcp", "headers": { "Authorization": "Bearer ${LUMITRA_SITES_API_KEY}" } }`. Verified: Claude Code expands `${VAR}` (and `${VAR:-default}`) in a server's url and headers, for plugin servers too, at connect time, so the key is never written into a configuration file. A client that does not expand it, or Claude Code with the variable unset (the config still loads and `claude mcp list` shows `Missing environment variables: LUMITRA_SITES_API_KEY`), sends the literal `${LUMITRA_SITES_API_KEY}`, which the server refuses before it reaches auth-brain with 401 `a valid company API key is required` (checked against production on 2026-11-03). That fails closed with a clear error and sends nothing secret, which removes the reason the earlier text avoided the template. `claude mcp add --transport http ... --header "Authorization: Bearer $LUMITRA_SITES_API_KEY"` stays the server-only alternative; there the shell expands the key at add time and Claude Code stores it in plain text, which the README says. claude.ai and Claude Desktop connectors sign in with OAuth, which the endpoint does not offer, so they cannot connect yet; that is a later slice (an OAuth authorization server in front of the key), not part of this step.
+- **Decided while building (2026-11-03), say so if you disagree:**
+  - The mirror's marketplace is named `lumitra-sites`, not Studio's `lumitra`: Claude Code keys marketplaces by name, so two repositories both called `lumitra` collide for a user who adds both. "The same marketplace as Studio" (decision 1) is then one more plugin entry in Studio's mirror, with a GitHub source `marlinjai/lumitra-sites-plugin`; that is a change in the lumitra-studio repository.
+  - Every file of the mirror comes from framer-clone (`plugin/lumitra-sites` plus `plugin/lumitra-sites-mirror`), unlike Studio, whose hand-written mirror manifests drifted. One version in all three manifests, enforced by the validator.
+  - The plugin is versioned on its own from `0.1.0`; the endpoint's `serverInfo.version` describes the server, not the skills.
+- **Install (once the mirror exists):**
+  - Claude Code: `/plugin marketplace add marlinjai/lumitra-sites-plugin`, then `/plugin install lumitra-sites@lumitra-sites`, with `LUMITRA_SITES_API_KEY` set in the environment Claude Code starts from. Before the mirror exists: `claude --plugin-dir` on a directory that holds `plugin/lumitra-sites` and `plugin/lumitra-sites-mirror` laid together (what the sync script builds).
+  - Server only: `claude mcp add --transport http lumitra-sites https://app.lumitra.co/api/mcp --header "Authorization: Bearer $LUMITRA_SITES_API_KEY"`.
+  - The key: a company API key from auth.lumitra.co (company settings, API Keys) with the owner or admin role (a member key reaches no workspace) and the `sites` grant.
+- **The public mirror is not created yet** (an outward-facing step, Marlin's yes). Until it is, the sync workflow is a green no-op. To go live: create `marlinjai/lumitra-sites-plugin` (public, empty), create the GitHub environment `plugin-mirror` on framer-clone allowing main only, add a write deploy key to the mirror and its private half as the environment secret `PLUGIN_MIRROR_DEPLOY_KEY` (the commands are at the top of `sync-plugin-mirror.yml`), then run `gh workflow run sync-plugin-mirror.yml`.
 
 **6. Dogfood:** build the new lumitra.co page through the plugin. Every friction becomes a slice. The page is published to a `sites.lumitra.co` address first. Moving the lumitra.co domain is Marlin's yes.
 
@@ -92,6 +102,7 @@ The patterns to follow already exist:
 
 - Mint a company API key for Lumitra with the `sites` grant at auth.lumitra.co (owner session). The value goes straight into Infisical, never into chat.
 - His yes before lumitra.co points at framer-clone.
+- His yes to create the public mirror repository `marlinjai/lumitra-sites-plugin` (step 5 lists the setup that follows it).
 
 ## Verification
 
