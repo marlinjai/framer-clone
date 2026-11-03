@@ -69,7 +69,10 @@ pass a few `apply_batch` calls on the `expectedVersion` you last saw:
    states as rules, motion within the rules above, copy edits.
 
 For a section beyond saving, `generate_page` with a `replace` target drafts a new one from a brief
-(it runs a minute or more; read its warnings), then refine it with `apply_batch`.
+(it runs a minute or more; read its warnings), then refine it with `apply_batch`. Put every fact,
+price, date, opening hour and offer from the old section into the brief. Afterwards, compare the
+new section's text with the old section's text and restore any missing information with
+`apply_batch`; screenshots alone cannot verify that the content was preserved.
 
 Handle refusals as the tools say: `rejected` lists each refused operation, fix and resend the
 batch; `site_changed` means someone else changed the site, so read again, compare, and redo the

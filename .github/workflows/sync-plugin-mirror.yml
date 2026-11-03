@@ -7,8 +7,8 @@ name: Sync plugin mirror
 # lumitra-studio #433 on 2026-10-22). Pull requests run only the offline
 # `--check-payload` in ci.yml.
 #
-# Until the mirror exists this job is a green no-op: it skips with a notice when
-# the deploy key secret is not set, and when the repository does not exist yet.
+# Before setup this job is a green no-op: it skips with a notice when the deploy
+# key secret is not set. After setup, every clone or network error fails the job.
 #
 # GITHUB_TOKEN cannot push to another repository, so the push goes through a
 # deploy key with write access on the mirror. The private half is the secret
@@ -55,9 +55,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PLUGIN_MIRROR_URL: git@github.com:marlinjai/lumitra-sites-plugin.git
-      # Exit code 3 (repository missing) instead of a failure while the mirror
-      # has not been created yet.
-      PLUGIN_MIRROR_ALLOW_MISSING: '1'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -93,21 +90,10 @@ jobs:
       - name: Push the payload to the mirror
         id: push
         if: steps.key.outputs.ready == 'true'
-        run: |
-          set +e
-          ./scripts/sync-plugin-repo.sh
-          code=$?
-          set -e
-          if [ "$code" -eq 3 ]; then
-            echo "::notice::marlinjai/lumitra-sites-plugin does not exist yet; the mirror is not synced."
-            echo "synced=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "synced=true" >> "$GITHUB_OUTPUT"
-          exit "$code"
+        run: ./scripts/sync-plugin-repo.sh
 
       - name: The mirror matches main
-        if: steps.push.outputs.synced == 'true'
+        if: steps.push.outcome == 'success'
         run: ./scripts/sync-plugin-repo.sh --check
 
       - name: Remove the deploy key file

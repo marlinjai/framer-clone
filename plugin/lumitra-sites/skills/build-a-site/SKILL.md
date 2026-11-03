@@ -78,8 +78,10 @@ Motion follows these rules, without exception:
 
 ## 4. Structure first, then sections
 
-- Set the theme first with one `setTheme` operation: color, type and spacing tokens, and the
+- On a new site, set the theme first with one `setTheme` operation: color, type and spacing tokens, and the
   document defaults. Refer to a token in a style as `var(--fc-t-<id>)`.
+- For a new page on an existing site, do not call `setTheme`: it replaces the shared theme of
+  every page. Reuse the existing tokens returned by `get_site`.
 - Build the page section by section, one `apply_batch` per section or a handful of edits, in the
   order a visitor reads. Use real semantic structure: a header with the navigation, a main with
   sections, a footer; one h1; headings in order.

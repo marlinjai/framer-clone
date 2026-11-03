@@ -120,6 +120,39 @@ describe('validate.mjs catches spec violations', () => {
     expect(errors.some((e) => e.includes('declares LUMITRA_SITES_API_KEY but no MCP server uses it'))).toBe(true);
   });
 
+  it.each(['prefix', 'suffix', 'second-reference', 'fallback'])('rejects a credential reference mixed with %s', (kind) => {
+    const { plugin } = scratch();
+    const p = join(plugin, 'mcp.json');
+    const c = readJson(p);
+    const literal = randomBytes(24).toString('hex');
+    const reference = '${LUMITRA_SITES_API_KEY}';
+    const values = {
+      prefix: `Bearer ${literal}-${reference}`,
+      suffix: `Bearer ${reference}-${literal}`,
+      'second-reference': `${reference}${reference}`,
+      fallback: `Bearer \${LUMITRA_SITES_API_KEY:-${literal}}`,
+    };
+    c.mcpServers['lumitra-sites'].headers.Authorization = values[kind as keyof typeof values];
+    writeJson(p, c);
+    expect(validatePlugin(plugin).errors.some((e) => e.includes('must take its credential from a ${NAME} reference'))).toBe(true);
+  });
+
+  it.each(['${LUMITRA_SITES_API_KEY}', 'Bearer ${LUMITRA_SITES_API_KEY}'])('accepts a complete credential reference: %s', (value) => {
+    const { plugin } = scratch();
+    const p = join(plugin, 'mcp.json');
+    const c = readJson(p);
+    c.mcpServers['lumitra-sites'].headers.Authorization = value;
+    writeJson(p, c);
+    expect(validatePlugin(plugin).errors).toEqual([]);
+  });
+
+  it('accepts a skill name with an inline comment before validating its directory', () => {
+    const { plugin } = scratch();
+    const p = join(plugin, 'skills/build-a-site/SKILL.md');
+    writeFileSync(p, readFileSync(p, 'utf8').replace('name: build-a-site', 'name: build-a-site # site creation'));
+    expect(validatePlugin(plugin)).toEqual({ errors: [], warnings: [] });
+  });
+
   it('rejects a url with userinfo or a fragment', () => {
     const { plugin } = scratch();
     const p = join(plugin, 'mcp.json');
@@ -162,6 +195,45 @@ describe('validate.mjs catches spec violations', () => {
 });
 
 describe('validateMirror catches drift between the payload and the mirror files', () => {
+  it('compares header maps without depending on key order, but rejects changed values', () => {
+    const { plugin, mirror } = scratch();
+    const p = join(plugin, 'mcp.json');
+    const m = join(mirror, '.mcp.json');
+    const payload = readJson(p);
+    const mirrored = readJson(m);
+    payload.mcpServers['lumitra-sites'].headers.Accept = 'application/json';
+    mirrored.mcpServers['lumitra-sites'].headers = {
+      Accept: 'application/json',
+      ...mirrored.mcpServers['lumitra-sites'].headers,
+    };
+    writeJson(p, payload);
+    writeJson(m, mirrored);
+    expect(validateMirror(plugin, mirror).errors).toEqual([]);
+    mirrored.mcpServers['lumitra-sites'].headers.Accept = 'text/event-stream';
+    writeJson(m, mirrored);
+    expect(validateMirror(plugin, mirror).errors).toEqual(['mirror .mcp.json: server "lumitra-sites" headers must equal mcp.json\'s']);
+  });
+
+  it('treats omitted headers as an empty map and rejects malformed maps', () => {
+    const { plugin, mirror } = scratch();
+    const p = join(plugin, 'mcp.json');
+    const m = join(mirror, '.mcp.json');
+    const payload = readJson(p);
+    const mirrored = readJson(m);
+    delete payload.mcpServers['lumitra-sites'].headers;
+    writeJson(p, payload);
+    for (const headers of [undefined, {}]) {
+      mirrored.mcpServers['lumitra-sites'].headers = headers;
+      writeJson(m, mirrored);
+      expect(validateMirror(plugin, mirror).errors).toEqual([]);
+    }
+    for (const headers of [[], '', 123]) {
+      mirrored.mcpServers['lumitra-sites'].headers = headers;
+      writeJson(m, mirrored);
+      expect(validateMirror(plugin, mirror).errors.some((e) => e.includes('headers must equal'))).toBe(true);
+    }
+  });
+
   it('a version that moved in one place only', () => {
     const { plugin, mirror } = scratch();
     const p = join(plugin, 'plugin.json');
@@ -217,6 +289,17 @@ describe('parseFrontmatter (carried over from Studio, pinned on the forms the sk
   it('reports a line it cannot read and an unterminated quote', () => {
     expect(read('name: a\nnot a key at all').errors).toEqual(['t/SKILL.md: cannot parse frontmatter line "not a key at all"']);
     expect(read('name: a\ndescription: "never closed').errors).toEqual(['t/SKILL.md: unterminated quoted value']);
+  });
+
+  it('strips plain scalar comments while keeping literal hashes in URLs, quotes and blocks', () => {
+    expect(read('name: build-a-site # site creation\ndescription: Visit https://example.com/#section # comment\n  then read # another comment\n  # comment-only line\n  more').fm).toEqual({
+      name: 'build-a-site', description: 'Visit https://example.com/#section then read more',
+    });
+    expect(read('description: "keep # this" # discard').fm.description).toBe('keep # this');
+    expect(read("description: 'keep # this' # discard").fm.description).toBe('keep # this');
+    expect(read('description: |- # discard\n  keep # this').fm.description).toBe('keep # this');
+    expect(read('metadata: # comment\n  kind: site # comment').fm.metadata).toEqual({ kind: 'site' });
+    expect(read('allowed-tools:\n  - Read # comment\n  - "Bash(# literal)" # comment').fm['allowed-tools']).toEqual(['Read', 'Bash(# literal)']);
   });
 
   it('reads every shipped skill with no error and a description within the limit', () => {

@@ -117,7 +117,7 @@ function checkMcp(dir, errors, warnings) {
       if ("headers" in s) {
         if (!isStrMap(s.headers)) errors.push(`${p}: headers must be a string-to-string map`);
         else for (const [h, v] of Object.entries(s.headers)) {
-          if (CREDENTIAL_HEADER_RE.test(h) && !/\$\{[A-Za-z_][A-Za-z0-9_]*\}/.test(v)) errors.push(`${p}: header "${h}" must take its credential from a \${NAME} reference, never a literal value`);
+          if (CREDENTIAL_HEADER_RE.test(h) && !/^(?:Bearer[ \t]+)?\$\{[A-Za-z_][A-Za-z0-9_]*\}$/.test(v)) errors.push(`${p}: header "${h}" must take its credential from a \${NAME} reference, never a literal value`);
         }
       }
     } else {
@@ -144,6 +144,8 @@ const ENTRY_RE = /^([A-Za-z0-9_-]+):[ \t]*(.*)$/;
 const ITEM_RE = /^-(?:[ \t]+(.*))?$/;
 const indentOf = (line) => line.length - line.trimStart().length;
 const isBlank = (line) => !line.trim() || line.trimStart().startsWith("#");
+// Only a whitespace-separated hash starts a comment in a plain scalar.
+const stripPlainComment = (line) => line.replace(/(?:^|[ \t]+)#.*$/, "").trim();
 
 // Folds a block scalar body the way ">" does: one line break between two lines
 // at the block indent becomes a space, a run of N empty lines becomes N
@@ -240,12 +242,13 @@ function readQuoted(lines, i, parentIndent, rest, fail) {
 // follow, folded onto one line. A blank line ends it, so blank separators before
 // the next key are never swallowed.
 function readPlain(lines, start, parentIndent, first) {
-  let value = first.trim();
+  let value = stripPlainComment(first);
   let j = start;
   for (; j < lines.length; j++) {
     const line = lines[j];
     if (line.trim() === "" || indentOf(line) <= parentIndent) break;
-    value += " " + line.trim();
+    const part = stripPlainComment(line);
+    if (part) value += (value ? " " : "") + part;
   }
   return { value, next: j };
 }
@@ -278,13 +281,14 @@ function readSequence(lines, start, parentIndent) {
     if (!item) break;
     const rest = (item[1] ?? "").trim();
     if (rest === "" || ENTRY_RE.test(rest)) return { value: null, next: skipBlock(lines, start, parentIndent) };
-    items.push(unquoteInline(rest));
+    items.push(rest[0] === '"' || rest[0] === "'" ? unquoteInline(rest) : stripPlainComment(rest));
     j++;
   }
   return { value: items, next: j };
 }
 
 function readValue(lines, i, parentIndent, rest, fail, allowNested) {
+  if (rest.startsWith("#")) rest = "";
   const header = BLOCK_HEADER_RE.exec(rest);
   if (header) return readBlockScalar(lines, i + 1, parentIndent, header[1], header[2] ?? header[5] ?? "", Number(header[3] ?? header[4] ?? 0));
   if (rest !== "") {
@@ -412,6 +416,11 @@ function envRefs(server) {
 
 const MIRROR_FILES = [".claude-plugin/plugin.json", ".claude-plugin/marketplace.json", ".mcp.json", "LICENSE"];
 
+// Header maps have no ordering; malformed maps still fail validation.
+const sameHeaders = (a, b) => isStrMap(a) && isStrMap(b)
+  && Object.keys(a).length === Object.keys(b).length
+  && Object.keys(a).every((key) => Object.hasOwn(b, key) && a[key] === b[key]);
+
 export function validateMirror(pluginDir, mirrorDir) {
   const errors = [];
   const warnings = [];
@@ -453,7 +462,7 @@ export function validateMirror(pluginDir, mirrorDir) {
     const expectedType = a.type === "streamable-http" ? "http" : a.type;
     if (b.type !== expectedType) errors.push(`mirror .mcp.json: server "${id}" type "${b.type}" must be "${expectedType}" (Claude Code's name for mcp.json's "${a.type}")`);
     if (b.url !== a.url) errors.push(`mirror .mcp.json: server "${id}" url must equal mcp.json's`);
-    if (JSON.stringify(b.headers ?? {}) !== JSON.stringify(a.headers ?? {})) errors.push(`mirror .mcp.json: server "${id}" headers must equal mcp.json's`);
+    if (!sameHeaders(b.headers ?? {}, a.headers ?? {})) errors.push(`mirror .mcp.json: server "${id}" headers must equal mcp.json's`);
     for (const k of Object.keys(b)) if (!["type", "url", "headers"].includes(k)) errors.push(`mirror .mcp.json: server "${id}" has an unexpected field "${k}"`);
   }
 

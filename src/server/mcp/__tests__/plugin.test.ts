@@ -23,6 +23,9 @@ const README = read('README.md');
 const skillText = Object.fromEntries(SKILLS.map((s) => [s, read(`skills/${s}/SKILL.md`)]));
 // The prose with its line wrapping folded, for checks on sentences.
 const flat = (text: string) => text.replace(/\s+/g, ' ');
+const affirmativeApprovalActions = (text: string) => flat(text).split(/(?<=[.!?;])\s+/)
+  .filter((sentence) => /\b(?:open|click)\b[^.!?]*\bapprov/i.test(sentence)
+    && !/\b(?:never|not|cannot|don't|do not)\b/i.test(sentence));
 const docs: Array<[string, string]> = [['README.md', README], ...SKILLS.map((s): [string, string] => [s, skillText[s]])];
 
 // What the endpoint answers a missing, wrong or unexpanded key; the README quotes it.
@@ -115,6 +118,16 @@ describe('the plugin describes approvals as the server enforces them', () => {
       expect(text, file).not.toMatch(/\bbypass\b/i);
       expect(text, file).not.toMatch(/\bskip (?:the )?(?:approval|confirmation)\b/i);
     }
+    // Skills address the agent; the README addresses the person who may approve.
+    for (const s of SKILLS) expect(affirmativeApprovalActions(skillText[s]), s).toEqual([]);
+  });
+
+  it('detects affirmative approval actions while allowing prohibitions', () => {
+    expect(affirmativeApprovalActions('Open the approval link and click Approve.')).toHaveLength(1);
+    expect(affirmativeApprovalActions('Click Approve on the page.')).toHaveLength(1);
+    expect(affirmativeApprovalActions('Never open an approval link yourself.')).toEqual([]);
+    expect(affirmativeApprovalActions('Do not click Approve.')).toEqual([]);
+    expect(affirmativeApprovalActions('Never publish unasked. Open the approval link.')).toHaveLength(1);
   });
 });
 

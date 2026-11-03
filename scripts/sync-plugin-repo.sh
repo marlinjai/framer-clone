@@ -14,9 +14,9 @@
 #   scripts/sync-plugin-repo.sh                  # push this repo's payload to the mirror
 #
 # Exit codes: 0 in sync (or pushed), 1 drift or an invalid payload, 2 the mirror
-# cannot be cloned, 3 the mirror repository does not exist yet (only with
-# PLUGIN_MIRROR_ALLOW_MISSING=1, which the sync workflow sets so it stays green
-# until the repository is created), 64 bad usage.
+# cannot be read or cloned, 64 bad usage. Missing repositories, authorization
+# failures and network failures all fail; a Git transport error cannot prove
+# that a repository is absent. The workflow skips only before a key is set up.
 #
 # The mirror is synced from `main` after every merge that touches the payload
 # (.github/workflows/sync-plugin-mirror.yml), never from a pull request: Studio
@@ -74,16 +74,47 @@ cp -R "$MIRROR_FILES_DIR/." "$work/expected/"
 # git's own error is kept: it says whether the address, the key, the host key
 # or the network failed. It carries no secret (a deploy key is read from a file
 # and never echoed; the default address is plain HTTPS without credentials).
-if ! git clone --quiet --depth 1 "$MIRROR_URL" "$work/mirror"; then
-  if [[ "${PLUGIN_MIRROR_ALLOW_MISSING:-}" == 1 ]] && ! git ls-remote --exit-code "https://github.com/${REPO}.git" >/dev/null 2>&1; then
-    echo "sync-plugin-repo: ${REPO} does not exist yet; nothing to sync" >&2
-    exit 3
+clone_args=(--quiet --depth 1)
+main_missing=0
+# Always base the sync on the branch we push, even when remote HEAD is stale.
+if git ls-remote --exit-code --heads "$MIRROR_URL" main >/dev/null; then
+  clone_args+=(--branch main)
+else
+  probe_status=$?
+  if [[ "$probe_status" -ne 2 ]]; then
+    echo "sync-plugin-repo: cannot read branches of ${REPO}" >&2
+    exit 2
   fi
+  # Exit 2 means no matching branch. An empty mirror can bootstrap main from
+  # remote HEAD; set its default branch to main before the first sync.
+  main_missing=1
+fi
+if ! git clone "${clone_args[@]}" "$MIRROR_URL" "$work/mirror"; then
   echo "sync-plugin-repo: cannot clone ${REPO} from ${MIRROR_URL} (private, renamed, no access, or no network; git's error is above)" >&2
   exit 2
 fi
 
-drift=0
+drift=$main_missing
+if [[ "$main_missing" -eq 1 ]]; then
+  echo "drift: main does not exist in the mirror"
+fi
+# Clean mirror-only files first, including dangling and directory symlinks.
+# The payload contains regular files. Unlink every mirror symlink in the
+# temporary clone even in check mode, so comparison and copying never follow
+# one outside that clone. Neither mode changes the remote until the push.
+while IFS= read -r -d '' file; do
+  rel="${file#"$work/mirror"/}"
+  if [[ -L "$file" ]]; then
+    echo "drift: $rel is a symlink in the mirror"
+    drift=1
+    rm "$file"
+  elif [[ ! -f "$work/expected/$rel" ]]; then
+    echo "drift: $rel exists in the mirror but not here"
+    drift=1
+    [[ "$mode" == sync ]] && rm "$file"
+  fi
+done < <(find "$work/mirror" -path "$work/mirror/.git" -prune -o \( -type f -o -type l \) -print0)
+
 while IFS= read -r -d '' file; do
   rel="${file#"$work/expected"/}"
   if ! diff -q "$file" "$work/mirror/$rel" >/dev/null 2>&1; then
@@ -95,17 +126,6 @@ while IFS= read -r -d '' file; do
     fi
   fi
 done < <(find "$work/expected" -type f -print0)
-
-# A file deleted here must disappear there too, or the mirror keeps shipping it.
-while IFS= read -r -d '' file; do
-  rel="${file#"$work/mirror"/}"
-  [[ "$rel" == .git/* ]] && continue
-  if [[ ! -f "$work/expected/$rel" ]]; then
-    echo "drift: $rel exists in the mirror but not here"
-    drift=1
-    [[ "$mode" == sync ]] && rm "$file"
-  fi
-done < <(find "$work/mirror" -type f -print0)
 
 if [[ $drift -eq 0 ]]; then
   echo "sync-plugin-repo: ${REPO} matches plugin/lumitra-sites and plugin/lumitra-sites-mirror (version ${version})"
@@ -126,6 +146,8 @@ if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
   export GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
 fi
 git add -A
-git commit -q -m "sync plugin payload ${version} from framer-clone${source_commit:+ ${source_commit}}"
+if ! git diff --cached --quiet; then
+  git commit -q -m "sync plugin payload ${version} from framer-clone${source_commit:+ ${source_commit}}"
+fi
 git push -q origin HEAD:main
 echo "sync-plugin-repo: pushed version ${version} to ${REPO}"

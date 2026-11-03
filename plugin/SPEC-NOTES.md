@@ -38,7 +38,7 @@ Top-level fields are CLOSED (`additionalProperties: false`). Permitted: `$schema
 | Field | Required | Rule |
 |---|---|---|
 | `$schema` | yes | const `https://agent-plugins.org/schemas/1.0.0/plugin.schema.json` |
-| `name` | yes | 1-64 chars, pattern `^(?!.*(?:--|\.\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$` (lowercase a-z, 0-9, `-`, `.`; alphanumeric start and end; no `--` or `..`) |
+| `name` | yes | 1-64 chars, pattern `^(?!.*(?:--\|\.\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$` (lowercase a-z, 0-9, `-`, `.`; alphanumeric start and end; no `--` or `..`) |
 | `version` | no | string; SHOULD be Semantic Versioning (10.2) |
 | `description` | no | string |
 | `author` | no | object with optional `name`, `email`, `url` strings; no other keys |
@@ -54,7 +54,7 @@ Top level: exactly `$schema` (const `https://agent-plugins.org/schemas/1.0.0/mcp
 
 | `type` | Required | Optional | Notes |
 |---|---|---|---|
-| `stdio` | `command` | `args` (string[]), `env` (string map), `cwd` | `command` is ONE executable token: a bare name (`npx`) or a plugin-relative `./path`; never a shell string. `cwd` must match `^(?:\./|\$\{PLUGIN_ROOT\}(?:/|$)|\$\{PLUGIN_DATA\}(?:/|$))`; omitted cwd = plugin root. |
+| `stdio` | `command` | `args` (string[]), `env` (string map), `cwd` | `command` is ONE executable token: a bare name (`npx`) or a plugin-relative `./path`; never a shell string. `cwd` must match `^(?:\./\|\$\{PLUGIN_ROOT\}(?:/\|$)\|\$\{PLUGIN_DATA\}(?:/\|$))`; omitted cwd = plugin root. |
 | `streamable-http` | `url` | `headers` (string map) | absolute http(s) URL, no userinfo, no fragment |
 | `sse` | `url` | `headers` | legacy HTTP+SSE |
 
