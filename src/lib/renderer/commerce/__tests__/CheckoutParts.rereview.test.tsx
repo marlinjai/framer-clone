@@ -73,8 +73,8 @@ describe('rules that would hide the demo notice', () => {
     const sheet = [...container.querySelectorAll('style')].map((style) => style.textContent).join('\n');
     // The control's own rule reached inside: its display went.
     expect(sheet).not.toMatch(/fc_r-co[^{]*:hover \[data-checkout-demo-badge\]\{display:none/);
-    // The platform's guard rule is on the page.
-    expect(container.querySelector('style[data-shop-guard]')?.textContent).toContain('[data-shop-part="checkout.demo-badge"]{display:block!important');
+    // The platform's guard rule is on the page; it leaves the display to the island's pin.
+    expect(container.querySelector('style[data-shop-guard]')?.textContent).toContain('[data-shop-part="checkout.demo-badge"]{visibility:visible!important');
     // The outer wrapper's rule stays, and loses to the inline pin.
     const badge = container.querySelector<HTMLElement>('[data-checkout-demo-badge]')!;
     expect(getComputedStyle(badge).display).toBe('block');

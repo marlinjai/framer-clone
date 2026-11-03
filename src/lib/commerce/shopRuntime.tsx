@@ -104,9 +104,10 @@ const MIN_KEPT_FONT_PX = 11;
  * total, the pay button's wording) visible as it renders, whatever a stylesheet,
  * a rule on a wrapper or an inherited value says: on the part and on every
  * wrapper up to the control, a computed value that hides is overridden inline
- * with `!important`, which beats any stylesheet. Covered: display, visibility,
- * opacity and content visibility on the way up; clip path, transform, filter and
- * a font size under 11 pixels on the part itself.
+ * with `!important`, which beats any stylesheet. Covered on the part and on the
+ * way up: display, visibility, opacity, content visibility, paint containment, a
+ * scale, translation, transform, clip path, mask or filter, and a wrapper's overflow
+ * that crops; on the part itself a font size under 11 pixels.
  */
 function keepInSight(element: HTMLElement): void {
   const view = element.ownerDocument.defaultView;
@@ -125,14 +126,20 @@ function keepInSight(element: HTMLElement): void {
     if (computed.visibility !== 'visible') force(node, 'visibility', 'visible');
     if (computed.opacity !== '' && Number(computed.opacity) < 1) force(node, 'opacity', '1');
     if (computed.getPropertyValue('content-visibility') === 'hidden') force(node, 'content-visibility', 'visible');
-    // A wrapper that crops what it holds (a 1px box with overflow hidden) lets it out.
+    // A wrapper that crops what it holds (a 1px box with overflow hidden, or paint
+    // containment) lets it out.
     if (node !== element && computed.overflow !== 'visible' && node.scrollHeight > node.clientHeight + 1) force(node, 'overflow', 'visible');
+    const contain = computed.getPropertyValue('contain');
+    if (contain.split(/\s+/).some((token) => token === 'paint' || token === 'strict' || token === 'content' || token === 'size')) force(node, 'contain', 'none');
+    // A scale, a translation, a transform or a mask on the way up shrinks, moves or
+    // masks the part with its wrapper.
+    for (const property of ['scale', 'translate', 'transform', 'clip-path', 'mask-image', '-webkit-mask-image', 'filter']) {
+      const value = computed.getPropertyValue(property);
+      if (value && value !== 'none') force(node, property, 'none');
+    }
     if (node.hidden) node.hidden = false;
   }
   const computed = view.getComputedStyle(element);
-  if (computed.clipPath && computed.clipPath !== 'none') force(element, 'clip-path', 'none');
-  if (computed.transform && computed.transform !== 'none') force(element, 'transform', 'none');
-  if (computed.filter && computed.filter !== 'none') force(element, 'filter', 'none');
   const size = Number.parseFloat(computed.fontSize);
   if (Number.isFinite(size) && size < MIN_KEPT_FONT_PX) force(element, 'font-size', `${MIN_KEPT_FONT_PX}px`);
 }
@@ -155,20 +162,26 @@ function useKeptInSight(enabled: boolean, outer: unknown): React.RefCallback<HTM
 }
 
 /**
- * The rendered children that are shop parts. Each surface keys a child's element by
- * its node id, and a part's id ends with its role (src/lib/commerce/parts.ts), so the
- * check reads the element itself: a ShopPartElement, or a wrapper keyed by a node
- * whose props name a role.
+ * The rendered children that are shop parts, and nothing else. Each surface keys a
+ * child's element by its node id, and a part's id ends with its role
+ * (src/lib/commerce/parts.ts), so the check reads the element itself: a
+ * ShopPartElement, or a wrapper keyed by a node whose props name a role. A part
+ * inside anything else is lifted out of it, and the rest (the wrapper, its text)
+ * is left out, so no extra words join a fixed wording.
  */
 function onlyPartElements(content: React.ReactNode): React.ReactNode {
-  const isPart = (child: React.ReactNode): boolean => {
-    if (!React.isValidElement(child)) return false;
-    if (child.type === ShopPartElement) return true;
+  const parts: React.ReactNode[] = [];
+  const collect = (child: React.ReactNode) => {
+    if (!React.isValidElement(child)) return;
     const props = child.props as { component?: { props?: unknown }; children?: React.ReactNode };
-    if (props.component && shopPartRoleOf(props.component.props)) return true;
-    return React.Children.toArray(props.children).some(isPart);
+    if (child.type === ShopPartElement || (props.component && shopPartRoleOf(props.component.props))) {
+      parts.push(child);
+      return;
+    }
+    React.Children.toArray(props.children).forEach(collect);
   };
-  return React.Children.toArray(content).filter(isPart);
+  React.Children.toArray(content).forEach(collect);
+  return parts;
 }
 
 /** One shop part, drawn as its control's runtime says. */

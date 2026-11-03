@@ -51,8 +51,10 @@ describe("the control's own rules", () => {
 
   it('are backed by a platform rule for every part kept in sight', () => {
     const css = shopGuardCss();
-    expect(css).toContain('[data-shop-part="checkout.demo-badge"]{display:block!important;visibility:visible!important;opacity:1!important}');
-    expect(css).toContain('[data-shop-part="checkout.pay-label"]{display:inline!important');
+    expect(css).toContain('[data-shop-part="checkout.demo-badge"]{visibility:visible!important;opacity:1!important}');
+    expect(css).toContain('[data-shop-part="checkout.pay-label"]{visibility:visible!important');
+    // The designer's flex or grid stays: the guard never pins a display.
+    expect(css).not.toContain('display');
     expect(css).not.toContain('<');
   });
 });

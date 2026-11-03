@@ -514,9 +514,11 @@ export const CHECKOUT_CONTROL_STYLE: Readonly<Record<string, unknown>> = {
 
 /**
  * The platform's own rule for every part kept in sight, which each control draws
- * once: shown, visible and opaque, with `!important`. No designer rule can carry
+ * once: visible and opaque, with `!important`. No designer rule can carry
  * `!important` (the normaliser strips it), so none outweighs this, wherever it
- * sits on the page. A span stays inline; anything else is a block.
+ * sits on the page. Display is not pinned here, so the designer's flex or grid
+ * stays: no stored style keeps a display that hides, and the island pins the
+ * display only where it computes to none.
  */
 export function shopGuardCss(): string {
   const kept: ShopPartSpec[] = [];
@@ -528,7 +530,7 @@ export function shopGuardCss(): string {
   };
   for (const kind of SHOP_CONTROL_KINDS) visit(SHOP_CONTROLS[kind].parts);
   return kept
-    .map((spec) => `[${SHOP_PART_ATTR}="${spec.role}"]{display:${spec.tag === 'span' ? 'inline' : 'block'}!important;visibility:visible!important;opacity:1!important}`)
+    .map((spec) => `[${SHOP_PART_ATTR}="${spec.role}"]{visibility:visible!important;opacity:1!important}`)
     .join('');
 }
 
@@ -764,21 +766,60 @@ const HIDING_PROPS: readonly string[] = ['hidden', 'aria-hidden', 'popover', 'in
 
 const VISIBLE_DISPLAY = /^(block|inline|inline-block|flex|inline-flex|grid|inline-grid|flow-root|list-item|table|contents)$/;
 const PLAIN_NUMBER = /^-?\d*\.?\d+$/;
+const ZERO_LENGTH = /^0(\.0+)?(px|r?em|%)?$/;
+const NOT_NONE = (value: string) => value !== 'none';
+/** A length that pulls a box out of the way: any negative value. */
+const NEGATIVE = (value: string) => /(^|[\s(,])-\s*\d*\.?\d/.test(value);
+
+/** Whether a colour is plainly see-through: `transparent`, or an alpha under 0.5. */
+function seeThrough(value: string): boolean {
+  if (value === 'transparent') return true;
+  const hex = /^#([0-9a-f]{4}|[0-9a-f]{8})$/.exec(value);
+  if (hex) {
+    const alpha = hex[1].length === 4 ? parseInt(hex[1][3] + hex[1][3], 16) : parseInt(hex[1].slice(6), 16);
+    return alpha / 255 < 0.5;
+  }
+  const fn = /^(rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\((.*)\)$/.exec(value);
+  if (!fn) return false;
+  const body = fn[2];
+  const slash = body.split('/');
+  const alpha = slash.length > 1 ? slash[1].trim() : /^(rgba|hsla)$/.test(fn[1]) ? body.split(',')[3]?.trim() : undefined;
+  if (alpha === undefined) return false;
+  const number = alpha.endsWith('%') ? Number(alpha.slice(0, -1)) / 100 : Number(alpha);
+  return !Number.isFinite(number) || number < 0.5;
+}
 
 /**
- * Style values that hide, on a part kept in sight or a wrapper around one. A value
- * the check cannot read (a `var()`, a percent, a calc) counts as hiding: only what
- * is plainly visible stays.
+ * Style values that hide, on a part kept in sight or a wrapper around one, and in
+ * the control's rules that reach inside it. A value the check cannot read (a
+ * `var()`, a percent, a calc) counts as hiding: only what is plainly visible stays.
  */
 const HIDING_VALUES: Readonly<Record<string, (value: string) => boolean>> = {
   display: (value) => !VISIBLE_DISPLAY.test(value),
   visibility: (value) => value !== 'visible',
   opacity: (value) => !PLAIN_NUMBER.test(value) || Number(value) < 0.5,
   contentVisibility: (value) => value !== 'visible' && value !== 'auto',
-  clipPath: (value) => value !== 'none',
+  clipPath: NOT_NONE,
   clip: (value) => value !== 'auto',
-  transform: (value) => value !== 'none',
-  filter: (value) => value !== 'none',
+  transform: NOT_NONE,
+  scale: NOT_NONE,
+  translate: NOT_NONE,
+  rotate: NOT_NONE,
+  zoom: (value) => value !== '1' && value !== 'normal' && value !== '100%',
+  filter: NOT_NONE,
+  backdropFilter: NOT_NONE,
+  mask: NOT_NONE,
+  maskImage: NOT_NONE,
+  maskSize: () => true,
+  WebkitMask: NOT_NONE,
+  WebkitMaskImage: NOT_NONE,
+  // Paint containment crops like an overflow that hides; size containment collapses the box.
+  contain: (value) => value !== 'none' && !/^(layout|style|inline-size)(\s+(layout|style|inline-size))*$/.test(value),
+  backgroundClip: (value) => value.includes('text'),
+  WebkitBackgroundClip: (value) => value.includes('text'),
+  WebkitTextFillColor: seeThrough,
+  color: seeThrough,
+  textIndent: NEGATIVE,
   fontSize: (value) => {
     const px = /^(\d*\.?\d+)px$/.exec(value);
     if (px) return Number(px[1]) < 10;
@@ -789,11 +830,55 @@ const HIDING_VALUES: Readonly<Record<string, (value: string) => boolean>> = {
   overflow: (value) => value !== 'visible',
   overflowX: (value) => value !== 'visible',
   overflowY: (value) => value !== 'visible',
-  height: (value) => /^0(\.0+)?(px|r?em|%)?$/.test(value),
-  maxHeight: (value) => /^0(\.0+)?(px|r?em|%)?$/.test(value),
-  width: (value) => /^0(\.0+)?(px|r?em|%)?$/.test(value),
-  maxWidth: (value) => /^0(\.0+)?(px|r?em|%)?$/.test(value),
+  height: (value) => ZERO_LENGTH.test(value),
+  maxHeight: (value) => ZERO_LENGTH.test(value),
+  width: (value) => ZERO_LENGTH.test(value),
+  maxWidth: (value) => ZERO_LENGTH.test(value),
+  // Positioned off screen.
+  position: (value) => value === 'absolute' || value === 'fixed',
+  top: NEGATIVE,
+  right: NEGATIVE,
+  bottom: NEGATIVE,
+  left: NEGATIVE,
+  inset: NEGATIVE,
+  margin: NEGATIVE,
+  marginTop: NEGATIVE,
+  marginRight: NEGATIVE,
+  marginBottom: NEGATIVE,
+  marginLeft: NEGATIVE,
+  marginInline: NEGATIVE,
+  marginBlock: NEGATIVE,
 };
+
+/**
+ * The only style keys a part kept in sight, or a wrapper between it and its
+ * control, keeps (in its style and in every rule it holds): type, colour, box,
+ * border and flex or grid layout. Anything else (a mask, containment, a scale, a
+ * position, an indent) goes whether or not the check above could read it, so a
+ * new way to hide is closed by default. The keys that can still hide here are
+ * checked by value as well.
+ */
+const KEPT_STYLE_KEYS: ReadonlySet<string> = new Set([
+  'color', 'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'fontVariant', 'letterSpacing', 'lineHeight',
+  'textAlign', 'textTransform', 'textDecoration', 'textDecorationLine', 'textDecorationColor', 'textDecorationStyle',
+  'textDecorationThickness', 'textUnderlineOffset', 'textShadow', 'whiteSpace', 'wordBreak', 'overflowWrap',
+  'padding', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'paddingInline', 'paddingBlock',
+  'margin', 'marginTop', 'marginRight', 'marginBottom', 'marginLeft', 'marginInline', 'marginBlock',
+  'border', 'borderWidth', 'borderStyle', 'borderColor', 'borderTop', 'borderRight', 'borderBottom', 'borderLeft',
+  'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth', 'borderTopColor', 'borderRightColor',
+  'borderBottomColor', 'borderLeftColor', 'borderTopStyle', 'borderRightStyle', 'borderBottomStyle', 'borderLeftStyle',
+  'borderRadius', 'borderTopLeftRadius', 'borderTopRightRadius', 'borderBottomLeftRadius', 'borderBottomRightRadius',
+  'outline', 'outlineColor', 'outlineStyle', 'outlineWidth', 'outlineOffset',
+  'background', 'backgroundColor', 'backgroundImage', 'backgroundSize', 'backgroundPosition', 'backgroundRepeat',
+  'boxShadow', 'boxSizing', 'cursor', 'transition', 'verticalAlign',
+  'display', 'visibility', 'opacity',
+  'flex', 'flexDirection', 'flexWrap', 'flexFlow', 'flexGrow', 'flexShrink', 'flexBasis', 'order',
+  'alignItems', 'alignSelf', 'alignContent', 'justifyContent', 'justifyItems', 'justifySelf',
+  'placeItems', 'placeContent', 'placeSelf', 'gap', 'rowGap', 'columnGap',
+  'gridTemplateColumns', 'gridTemplateRows', 'gridTemplateAreas', 'gridAutoFlow', 'gridAutoColumns', 'gridAutoRows',
+  'gridColumn', 'gridRow', 'gridArea',
+  'width', 'height', 'minWidth', 'minHeight', 'maxWidth', 'maxHeight',
+]);
 
 /** Whether a stored style value hides (scalar, or any breakpoint of a responsive map). */
 function hides(key: string, value: unknown): boolean {
@@ -803,24 +888,31 @@ function hides(key: string, value: unknown): boolean {
   return (typeof value === 'string' || typeof value === 'number') && test(String(value).trim().toLowerCase());
 }
 
+/** A style without what hides, for the control's rules that reach inside it. */
 function withoutHidingStyle(style: unknown): Record<string, unknown> | undefined {
   if (!isRecord(style)) return undefined;
   return Object.fromEntries(Object.entries(style).filter(([key, value]) => !hides(key, value)));
 }
 
+/** A style of a part kept in sight or a wrapper around one: listed keys only, none that hides. */
+function keptStyle(style: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(style)) return undefined;
+  return Object.fromEntries(Object.entries(style).filter(([key, value]) => KEPT_STYLE_KEYS.has(key) && !hides(key, value)));
+}
+
 /**
- * A node kept in sight: nothing that hides it, in its style, in any of its rules
- * (whatever their selector, so a rule reaching into its children cannot hide them
- * either), nor a hiding attribute.
+ * A node kept in sight: only listed style keys, none that hides, in its style and
+ * in any of its rules (whatever their selector, so a rule reaching into its
+ * children cannot hide them either), and no hiding attribute.
  */
 function inSight(node: ShopTreeNode): ShopTreeNode {
   const props = { ...(node.props ?? {}) };
   for (const key of HIDING_PROPS) delete props[key];
-  const style = withoutHidingStyle(props.style);
+  const style = keptStyle(props.style);
   if (style) props.style = style;
   if (Array.isArray(props.rules)) {
     props.rules = (props.rules as unknown[]).map((rule) =>
-      isRecord(rule) && isRecord(rule.style) ? { ...rule, style: withoutHidingStyle(rule.style) } : rule,
+      isRecord(rule) && isRecord(rule.style) ? { ...rule, style: keptStyle(rule.style) } : rule,
     );
   }
   return { ...node, props };
@@ -909,11 +1001,11 @@ function enforceParts(input: ShopTreeNode): ShopTreeNode {
     // A button whose words are fixed holds its own parts only: a stray text beside
     // them would undo the wording (the button solution).
     const onlyParts = !!(nodeRole && shopPartSpec(nodeRole)?.onlyParts);
-    const kept = onlyParts ? node.children?.filter((child) => shopPartRoleOf(child.props) !== undefined) : node.children;
-    if (kept !== node.children && kept?.length !== node.children?.length) changed = true;
+    const kept = onlyParts && node.children ? liftParts(node.children, node.id) : node.children;
+    if (kept !== node.children) changed = true;
     const children = kept?.map((child) => {
       if (shopControlKindOf(child.props)) return child;
-      let next = notImportant(notSending(child));
+      let next = notImportant(notSending(nameless(child)));
       let role = shopPartRoleOf(next.props);
       if (role && seen.has(role)) {
         // A second copy of a role (a paste, a duplicate, an outside write) is a plain node.
@@ -946,6 +1038,40 @@ function enforceParts(input: ShopTreeNode): ShopTreeNode {
     return changed ? { ...node, children } : node;
   };
   return visit(control, false);
+}
+
+/**
+ * The children of a button whose wording is fixed, parts only: a part stays, a part
+ * inside a wrapper without a role is lifted out of it (so a required label is never
+ * lost with its wrapper), and everything else (the wrapper, its text, a nested
+ * control) goes. The same array when every child is a part already, so a second
+ * pass changes nothing.
+ */
+function liftParts(children: ShopTreeNode[], parentId: string | undefined): ShopTreeNode[] {
+  if (children.every((child) => shopPartRoleOf(child.props) !== undefined)) return children;
+  const lifted: ShopTreeNode[] = [];
+  const collect = (node: ShopTreeNode, top: boolean) => {
+    if (shopPartRoleOf(node.props) !== undefined) {
+      lifted.push(!top && 'parentId' in node && parentId !== undefined ? { ...node, parentId } : node);
+      return;
+    }
+    if (shopControlKindOf(node.props)) return;
+    for (const child of node.children ?? []) collect(child, false);
+  };
+  for (const child of children) collect(child, true);
+  return lifted;
+}
+
+/** Form field tags: their value lives in the island's state, so they carry no stored `name`. */
+const FIELD_TAGS: ReadonlySet<string> = new Set(['input', 'select', 'textarea']);
+
+/** A form field inside a shop control without a stored `name`: a form the page wraps around it has nothing to post. */
+function nameless(node: ShopTreeNode): ShopTreeNode {
+  const tag = typeof node.type === 'string' ? node.type.toLowerCase() : '';
+  if (!FIELD_TAGS.has(tag) || !node.props || !('name' in node.props)) return node;
+  const props = { ...node.props };
+  delete props.name;
+  return { ...node, props };
 }
 
 /** A part whose text is the platform's stores none. */
