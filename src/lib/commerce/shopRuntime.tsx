@@ -18,6 +18,7 @@ import { isVoidTag } from '@/lib/drag/voidTags';
 import { createRunElement } from '@/lib/renderer/runElements';
 import { renderOwnText, runLinksAllowedIn } from '@/lib/renderer/textNode';
 import {
+  SHOP_KEPT_WRAPPER_ATTR,
   fillShopTokensIn,
   shopPartControl,
   shopPartRoleOf,
@@ -109,63 +110,182 @@ function textChildren(text: unknown, linksAllowed: boolean): React.ReactNode[] {
 const STRAY_STYLE = { opacity: 0.5, outline: '1px dashed #f59e0b' };
 
 /** Attributes a part never carries onto the page: none of them can send what a visitor typed elsewhere. */
-const SENDING_ATTRIBUTES = ['action', 'formAction', 'formaction', 'method', 'formMethod', 'formmethod', 'target', 'formTarget', 'formtarget', 'enctype', 'formEncType', 'formenctype'];
+const SENDING_ATTRIBUTES = ['form', 'action', 'formAction', 'formaction', 'method', 'formMethod', 'formmethod', 'target', 'formTarget', 'formtarget', 'enctype', 'formEncType', 'formenctype'];
 /** Attributes a part kept in sight never carries. */
 const HIDING_ATTRIBUTES = ['hidden', 'aria-hidden', 'popover', 'inert'];
+/** Attributes that would give a fixed wording another accessible name or tooltip. */
+const RENAMING_ATTRIBUTES = ['aria-label', 'aria-labelledby', 'aria-description', 'title'];
 
 /** The smallest text a part kept in sight is drawn at, in pixels. */
 const MIN_KEPT_FONT_PX = 11;
 
+/** The colour a part kept in sight falls back to when its own would not be read. */
+const KEPT_FALLBACK_COLOR = '#111827';
+
+
+/** Properties pinned to `none` on a part kept in sight itself, always (it is a run of text, so none is designed). */
+const PART_NONE = ['transform', 'scale', 'translate', 'rotate', 'clip-path', 'mask-image', '-webkit-mask-image', 'filter', 'animation'];
+
+/** Properties a wrapper keeps unless they hide what it holds: then they are pinned to `none`. */
+const WRAPPER_NONE_WHEN_SET = ['clip-path', 'mask-image', '-webkit-mask-image'];
+
+/** One pinned property: the design's own inline value under it, and the kept parts holding it. */
+interface Pin {
+  value: string;
+  priority: string;
+  owners: Set<HTMLElement>;
+}
+
+/** What the kept parts pinned on each element, so each part's next render starts from the design. */
+const PINNED = new WeakMap<HTMLElement, Map<string, Pin>>();
+/** The elements each kept part pinned something on. */
+const PINNED_BY = new WeakMap<HTMLElement, Set<HTMLElement>>();
+
 /**
- * Forces a part kept in sight (the demo notice, the simulated payment line, the
- * total, the pay button's wording) visible as it renders, whatever a stylesheet,
- * a rule on a wrapper or an inherited value says: on the part and on every
- * wrapper up to the control, a computed value that hides is overridden inline
- * with `!important`, which beats any stylesheet. Covered on the part and on the
- * way up: display, visibility, opacity, content visibility, paint containment, a
- * scale, translation, transform, clip path, mask or filter, and a wrapper's overflow
- * that crops; on the part itself a font size under 11 pixels.
+ * Takes off what a kept part pinned, putting the design's own inline value back
+ * (unless React wrote a new one since, which then stands). A pin another kept part
+ * still holds on a shared wrapper stays. Runs before each render's pins and when
+ * the part unmounts (the pay label while a payment is processing).
+ */
+function releaseKept(owner: HTMLElement): void {
+  for (const target of PINNED_BY.get(owner) ?? []) {
+    const pins = PINNED.get(target);
+    if (!pins) continue;
+    for (const [property, pin] of pins) {
+      if (!pin.owners.delete(owner) || pin.owners.size > 0) continue;
+      pins.delete(property);
+      // React wrote the design's new value over the pin since (it sets no priority): that value stands.
+      if (target.style.getPropertyPriority(property) !== 'important') continue;
+      if (pin.value) target.style.setProperty(property, pin.value, pin.priority);
+      else target.style.removeProperty(property);
+    }
+  }
+  PINNED_BY.delete(owner);
+}
+
+/** Whether a computed colour is see-through (transparent, or an alpha under 0.5). */
+function seeThrough(color: string): boolean {
+  if (!color || color === 'transparent') return true;
+  const match = /rgba?\(([^)]*)\)/.exec(color);
+  if (!match) return false;
+  const parts = match[1].split(/[\s,/]+/).filter(Boolean);
+  if (parts.length < 4) return false;
+  const alpha = parts[3].endsWith('%') ? Number(parts[3].slice(0, -1)) / 100 : Number(parts[3]);
+  return Number.isFinite(alpha) && alpha < 0.5;
+}
+
+/**
+ * Keeps a part kept in sight (the demo notice, the simulated payment line, the
+ * total, the pay button's wording) readable as it renders, against accidents: a
+ * stylesheet, an inherited value or a wrapper that would hide it. The guarantee
+ * covers what a designer or an agent does by mistake (section 5 of
+ * docs/plans/2026-11-02-designable-shop-controls.md); the stored design is already
+ * held to an allowlist by the normaliser, so the island pins only what would hide,
+ * inline with `!important`, and leaves the design's own changes alone (a hover
+ * that inverts the pay button's colours, a display that changes at a breakpoint).
+ * - On the part itself, always: visible and opaque, the text filled with its
+ *   colour, no transform, clip, mask, filter or animation, no indent or outline,
+ *   letter and word spacing not below normal, and a font size of at least 11
+ *   pixels, and lifted above its siblings (position relative, z-index 1). Its
+ *   colour only when the computed one is see-through (then a dark default), so it
+ *   still follows its button's colour on hover.
+ * - On the part and every wrapper up to the control, only where it would hide: a
+ *   display of none (then block), a visibility other than visible, an opacity
+ *   under 0.5 (or any fade, when the wrappers' opacities multiply under 0.5), `content-visibility: hidden`, paint, size or strict containment, a
+ *   clip path or mask, and an overflow that crops what it holds. Each wrapper
+ *   also gets a marker the guard rule uses to blank its `::before` and `::after`
+ *   (src/lib/commerce/parts.ts, shopGuardCss).
  */
 function keepInSight(element: HTMLElement): void {
   const view = element.ownerDocument.defaultView;
   if (!view) return;
-  const force = (target: HTMLElement, property: string, value: string) => target.style.setProperty(property, value, 'important');
-  // The part itself is pinned visible whatever its stylesheet says now or later (a
-  // hover rule on an ancestor): inline `!important` outweighs every rule.
-  const own = view.getComputedStyle(element);
-  force(element, 'display', own.display && own.display !== 'none' ? own.display : 'block');
-  force(element, 'visibility', 'visible');
-  force(element, 'opacity', '1');
+  const force = (target: HTMLElement, property: string, value: string) => {
+    const pins = PINNED.get(target) ?? new Map<string, Pin>();
+    let pin = pins.get(property);
+    if (!pin) {
+      // The design's own inline value, put back when no part holds the pin any more.
+      pin = { value: target.style.getPropertyValue(property), priority: target.style.getPropertyPriority(property), owners: new Set() };
+      pins.set(property, pin);
+    }
+    pin.owners.add(element);
+    PINNED.set(target, pins);
+    const targets = PINNED_BY.get(element) ?? new Set<HTMLElement>();
+    targets.add(target);
+    PINNED_BY.set(element, targets);
+    target.style.setProperty(property, value, 'important');
+  };
+  // Each render starts from the design: what this part pinned at its last render
+  // comes off first (releaseKept), so a fade or a colour the designer changed since
+  // shows on the canvas.
+  releaseKept(element);
+  // Read everything first: pinning one node changes what its children compute.
+  const chain: { node: HTMLElement; computed: CSSStyleDeclaration; crops: boolean }[] = [];
+  let control: HTMLElement | null = null;
   for (let node: HTMLElement | null = element; node; node = node.parentElement) {
-    if (node !== element && node.hasAttribute('data-component-kind')) break;
+    if (node !== element && node.hasAttribute('data-component-kind')) {
+      control = node;
+      break;
+    }
     const computed = view.getComputedStyle(node);
+    chain.push({ node, computed, crops: node !== element && computed.overflow !== 'visible' && node.scrollHeight > node.clientHeight + 1 });
+  }
+  const own = view.getComputedStyle(element);
+  const ownColor = own.color;
+  const size = Number.parseFloat(own.fontSize);
+  const letterSpacing = Number.parseFloat(own.letterSpacing);
+  const wordSpacing = Number.parseFloat(own.wordSpacing);
+
+  // Opacity multiplies down the tree: three wrappers at 0.6 draw the part at about 0.2,
+  // though each is fine on its own. When the product falls under 0.5, every faded
+  // wrapper is pinned opaque.
+  const opacityOf = (computed: CSSStyleDeclaration) => (computed.opacity === '' ? 1 : Number(computed.opacity));
+  const fadedTogether = chain.slice(1).reduce((product, { computed }) => product * opacityOf(computed), 1) < 0.5;
+  for (const { node, computed, crops } of chain) {
     if (computed.display === 'none') force(node, 'display', 'block');
     if (computed.visibility !== 'visible') force(node, 'visibility', 'visible');
-    if (computed.opacity !== '' && Number(computed.opacity) < 1) force(node, 'opacity', '1');
+    if (opacityOf(computed) < 0.5 || (fadedTogether && opacityOf(computed) < 1)) force(node, 'opacity', '1');
     if (computed.getPropertyValue('content-visibility') === 'hidden') force(node, 'content-visibility', 'visible');
-    // A wrapper that crops what it holds (a 1px box with overflow hidden, or paint
-    // containment) lets it out.
-    if (node !== element && computed.overflow !== 'visible' && node.scrollHeight > node.clientHeight + 1) force(node, 'overflow', 'visible');
     const contain = computed.getPropertyValue('contain');
     if (contain.split(/\s+/).some((token) => token === 'paint' || token === 'strict' || token === 'content' || token === 'size')) force(node, 'contain', 'none');
-    // A scale, a translation, a transform or a mask on the way up shrinks, moves or
-    // masks the part with its wrapper.
-    for (const property of ['scale', 'translate', 'transform', 'clip-path', 'mask-image', '-webkit-mask-image', 'filter']) {
+    for (const property of WRAPPER_NONE_WHEN_SET) {
       const value = computed.getPropertyValue(property);
       if (value && value !== 'none') force(node, property, 'none');
     }
+    if (crops) force(node, 'overflow', 'visible');
+    if (node !== element && !node.hasAttribute(SHOP_KEPT_WRAPPER_ATTR)) node.setAttribute(SHOP_KEPT_WRAPPER_ATTR, '');
     if (node.hidden) node.hidden = false;
   }
-  const computed = view.getComputedStyle(element);
-  const size = Number.parseFloat(computed.fontSize);
-  if (Number.isFinite(size) && size < MIN_KEPT_FONT_PX) force(element, 'font-size', `${MIN_KEPT_FONT_PX}px`);
+  force(element, 'visibility', 'visible');
+  force(element, 'opacity', '1');
+  // Above its siblings: they carry no z-index or positioning (the normaliser strips
+  // both beside it), so nothing placed in the same grid cell paints over it.
+  force(element, 'position', 'relative');
+  force(element, 'z-index', '1');
+  // The lift stays inside the control: it never paints over the site's own sticky header.
+  if (control && view.getComputedStyle(control).isolation !== 'isolate') force(control, 'isolation', 'isolate');
+  for (const property of PART_NONE) force(element, property, 'none');
+  if (seeThrough(ownColor)) force(element, 'color', KEPT_FALLBACK_COLOR);
+  force(element, '-webkit-text-fill-color', 'currentcolor');
+  force(element, 'text-indent', '0');
+  // A button kept in sight (a cart line's remove button) keeps its focus ring.
+  if (!/^(BUTTON|INPUT|SELECT|TEXTAREA|A)$/.test(element.tagName)) force(element, 'outline', 'none');
+  if (!Number.isFinite(letterSpacing) || letterSpacing < 0) force(element, 'letter-spacing', 'normal');
+  if (!Number.isFinite(wordSpacing) || wordSpacing < 0) force(element, 'word-spacing', 'normal');
+  if (!Number.isFinite(size) || size < MIN_KEPT_FONT_PX) force(element, 'font-size', `${MIN_KEPT_FONT_PX}px`);
 }
+
+/** keepInSight, for tests of the pins across renders. */
+export const keepInSightForTest = keepInSight;
 
 /** A ref that keeps the element in sight after every render, chained to the ref the surface passed, if any. */
 function useKeptInSight(enabled: boolean, outer: unknown): React.RefCallback<HTMLElement> | undefined {
   const element = React.useRef<HTMLElement | null>(null);
   React.useLayoutEffect(() => {
-    if (enabled && element.current) keepInSight(element.current);
+    const current = element.current;
+    if (!enabled || !current) return undefined;
+    keepInSight(current);
+    // Before the next render's pins, and when the part leaves the page.
+    return () => releaseKept(current);
   });
   const ref = React.useCallback(
     (node: HTMLElement | null) => {
@@ -184,15 +304,18 @@ function useKeptInSight(enabled: boolean, outer: unknown): React.RefCallback<HTM
  * (src/lib/commerce/parts.ts), so the check reads the element itself: a
  * ShopPartElement, or a wrapper keyed by a node whose props name a role. A part
  * inside anything else is lifted out of it, and the rest (the wrapper, its text)
- * is left out, so no extra words join a fixed wording.
+ * is left out, and so is a part that is not one of the button's own (its spec's
+ * children), so no extra words join a fixed wording.
  */
-function onlyPartElements(content: React.ReactNode): React.ReactNode {
+function onlyPartElements(content: React.ReactNode, own: ReadonlySet<string>): React.ReactNode {
   const parts: React.ReactNode[] = [];
   const collect = (child: React.ReactNode) => {
     if (!React.isValidElement(child)) return;
-    const props = child.props as { component?: { props?: unknown }; children?: React.ReactNode };
-    if (child.type === ShopPartElement || (props.component && shopPartRoleOf(props.component.props))) {
-      parts.push(child);
+    const props = child.props as { role?: unknown; component?: { props?: unknown }; children?: React.ReactNode };
+    const role = child.type === ShopPartElement ? props.role : props.component ? shopPartRoleOf(props.component.props) : undefined;
+    if (typeof role === 'string') {
+      // A part of somewhere else (a label moved in) is left out with its text.
+      if (own.has(role)) parts.push(child);
       return;
     }
     React.Children.toArray(props.children).forEach(collect);
@@ -218,6 +341,8 @@ export function ShopPartElement({ role, tag, domProps, storedText, content, surf
   // An input part has no name: its value lives in the island's state, so a form the
   // page wraps around the control has nothing of the visitor's to post.
   if (elementTag === 'input' || elementTag === 'select' || elementTag === 'textarea') delete ownProps.name;
+  // Nothing renames a fixed wording for assistive technology (a label or tooltip of the designer's).
+  if (keep || spec?.fixedText || spec?.onlyParts) for (const key of RENAMING_ATTRIBUTES) delete ownProps[key];
   if (keep) {
     for (const key of HIDING_ATTRIBUTES) delete ownProps[key];
     ownProps.ref = keptRef;
@@ -237,11 +362,14 @@ export function ShopPartElement({ role, tag, domProps, storedText, content, surf
   }
 
   if (!render.visible) return null;
+  // A part kept in sight, or one whose text is the platform's, draws its text only.
+  if (spec?.keepVisible || spec?.fixedText) content = undefined;
   // A button whose wording is fixed draws only its own parts, whatever it was handed.
-  if (spec?.onlyParts) content = onlyPartElements(content);
+  if (spec?.onlyParts) content = onlyPartElements(content, new Set((spec.children ?? []).map((child) => child.role)));
   const editing = ownProps.contentEditable === 'true';
   // While the designer types, the box holds the stored text as typed, tokens and all.
-  const raw = spec?.dynamicText || render.text !== undefined ? render.text : editing ? storedText : shopPartText(role, storedText, runtime.locale);
+  // A button whose wording is fixed holds no text of its own: its parts are the words.
+  const raw = spec?.onlyParts ? undefined : spec?.dynamicText || render.text !== undefined ? render.text : editing ? storedText : shopPartText(role, storedText, runtime.locale);
 
   const draw = (
     key: React.Key | undefined,

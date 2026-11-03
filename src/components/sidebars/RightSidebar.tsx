@@ -11,7 +11,7 @@ import { SizeSection, PositionSection, StylesSection, LayoutSection, TypographyS
 import { ComponentInstance } from '@/models/ComponentModel';
 import { InputsSection } from './right/sections/InputsSection';
 import { RepeatSection } from './right/sections/RepeatSection';
-import { ShopPartNote, isLockedShopText } from './right/sections/ShopPartNote';
+import { ShopPartNote, ShopStyleNote, isLockedShopText } from './right/sections/ShopPartNote';
 
 const SECTION_COMPONENTS: Record<SectionId, React.ComponentType<{ component: ComponentInstance; breakpointId?: string }>> = {
   component: ComponentSection,
@@ -103,6 +103,7 @@ const RightSidebar = observer(({ variant = 'docked' }: RightSidebarProps) => {
                 ) : (
                   category !== 'placement' && <TextContentSection component={target} breakpointId={breakpointId} />
                 )}
+                <ShopStyleNote component={target} />
                 {sections.map((sectionId) => {
                   const SectionComponent = SECTION_COMPONENTS[sectionId];
                   return (

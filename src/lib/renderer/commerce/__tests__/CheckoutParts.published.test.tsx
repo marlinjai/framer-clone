@@ -106,9 +106,9 @@ describe('a designed checkout, published', () => {
     expect(badge.textContent).toBe('Demo-Zahlung. Es wird kein echtes Geld abgebucht.');
     // Its colour is the designer's; nothing hides it, inline or in the page sheet.
     expect(badge.style.color).toBe('rgb(9, 9, 9)');
-    // Pinned shown inline, with the display it computes to (never none).
-    expect(badge.style.getPropertyValue('display')).toBe('block');
-    expect(badge.style.getPropertyPriority('display')).toBe('important');
+    // Shown, with the designer's display: the island pins a display only where it computes to none.
+    expect(getComputedStyle(badge).display).not.toBe('none');
+    expect(badge.style.getPropertyValue('display')).toBe('');
     const sheet = [...container.querySelectorAll('style')].map((style) => style.textContent).join('\n');
     expect(sheet).not.toMatch(/demo-badge[^{]*\{[^}]*display:\s*none/);
     expect(badge.hidden).toBe(false);

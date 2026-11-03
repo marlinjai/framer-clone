@@ -127,3 +127,13 @@ describe('K: a designer id on a part inside a repeated line', () => {
     expect(container.querySelectorAll('#title').length).toBe(0);
   });
 });
+
+describe('G: the pinned remove button', () => {
+  it('keeps its keyboard focus ring', async () => {
+    const { container } = renderCart(normalizeShopControl(cart(), 'de', 'node'), [{ variantId: 'var_gone', quantity: 1 }]);
+    await waitFor(() => expect(container.querySelector('[data-cart-line-unavailable]')).not.toBeNull());
+    const remove = container.querySelector<HTMLButtonElement>('button[data-cart-remove="var_gone"]')!;
+    expect(remove.style.getPropertyValue('outline')).toBe('');
+    expect(remove.style.getPropertyPriority('visibility')).toBe('important');
+  });
+});
