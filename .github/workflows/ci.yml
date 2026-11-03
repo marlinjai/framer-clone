@@ -78,6 +78,15 @@ jobs:
       - name: Tenant isolation guards
         run: pnpm lint:guards
 
+      # The lumitra-sites agent plugin (plugin/lumitra-sites) is a valid Agent
+      # Plugin and the public mirror's Claude Code files (plugin/lumitra-sites-mirror)
+      # carry its version, address and headers. Dependency free and offline: a pull
+      # request is never compared with the mirror repository itself, which is synced
+      # from main (sync-plugin-mirror.yml). That the skills name only real tools is
+      # checked by the unit tests (src/server/mcp/__tests__/plugin.test.ts).
+      - name: Agent plugin is valid
+        run: ./scripts/sync-plugin-repo.sh --check-payload
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
