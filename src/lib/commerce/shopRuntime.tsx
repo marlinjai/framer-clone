@@ -212,14 +212,16 @@ export function ShopPartElement({ role, tag, domProps, storedText, content, surf
 
   if (render.items) {
     if (render.items.length === 0) return null;
-    // A repeated part's copies are siblings; the first keeps the designer's identity.
+    // A repeated part's copies are siblings. Each keeps the node's style hook (its
+    // states and rules reach every copy on the canvas), only the first its
+    // selection identity, so a click on any copy selects the one node.
     return (
       <>
         {render.items.map((item, index) =>
           draw(
             item.key,
             { ...(render.tokens ?? {}), ...item.tokens },
-            index === 0 ? item.props : { ...item.props, 'data-component-id': undefined, 'data-inner-component-id': undefined },
+            index === 0 ? item.props : { ...item.props, 'data-inner-component-id': undefined },
             item.runtime,
           ),
         )}

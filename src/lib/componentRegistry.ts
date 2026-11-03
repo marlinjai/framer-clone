@@ -61,7 +61,7 @@ import type { BindableSlotMeta } from '@/lib/bindings/types';
 import { FORM_KIND_ATTR, DEFAULT_FORM_NAME, DEFAULT_SUCCESS_MESSAGE, type FieldType } from '@/lib/forms/definition';
 import { DEFAULT_STICKY_CTA, STICKY_CTA_ATTR, STICKY_CTA_MARKER } from '@/lib/stickyCta/stickyCta';
 import { MAP_EMBED_ATTR, MAP_EMBED_MARKER } from '@/lib/mapEmbed/mapEmbed';
-import { ADD_TO_CART_CONTROL_STYLE, CART_CONTROL_STYLE, CHECKOUT_CONTROL_STYLE } from '@/lib/commerce/parts';
+import { ADD_TO_CART_CONTROL_STYLE, CART_CONTROL_STYLE, CHECKOUT_CONTROL_STYLE, VARIANT_CONTROL_STYLE } from '@/lib/commerce/parts';
 
 export type ComponentCategory = 'basic' | 'layout' | 'data' | 'commerce' | 'form' | 'interactive';
 
@@ -760,23 +760,16 @@ export const COMPONENT_REGISTRY: Record<string, ComponentRegistryEntry> = {
     icon: SlidersIcon,
     iconClassName: 'bg-indigo-100 text-indigo-600',
     htmlType: 'div',
+    // Its option template, choice buttons and availability messages arrive as part
+    // nodes in the site language (src/lib/commerce/parts.ts). No data-source slot:
+    // the selector reads its product from the surrounding product frame (pushed by
+    // an enclosing product-detail) and re-pushes the SELECTED variant so descendant
+    // `{{variant.*}}` re-resolve to the choice.
     defaultProps: {
       'data-component-kind': 'variant-selector',
-      style: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '8px',
-        padding: '12px',
-        minHeight: '60px',
-        border: '1px dashed #d1d5db',
-        borderRadius: '8px',
-        backgroundColor: '#f9fafb',
-      },
+      style: { ...VARIANT_CONTROL_STYLE },
     },
-    defaultSize: { width: 280, height: 120 },
-    // No data-source slot: the selector reads its product from the surrounding
-    // product frame (pushed by an enclosing product-detail) and re-pushes the
-    // SELECTED variant so descendant `{{variant.*}}` re-resolve to the choice.
+    defaultSize: { width: 320, height: 140 },
   },
   addToCart: {
     id: 'addToCart',

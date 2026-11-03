@@ -9,6 +9,7 @@ import type { ShopControlKind, ShopLocale } from '@/lib/commerce/parts';
 import { checkoutStateShowing, checkoutStateShows } from './CheckoutButton';
 import { addToCartStateShowing, addToCartStateShows } from './AddToCartButton';
 import { cartStateShowing, cartStateShows } from './CartView';
+import { variantStateShowing, variantStateShows } from './VariantSelector';
 
 interface StateLookup {
   shows(id: string, roles: readonly string[], locale: ShopLocale): boolean;
@@ -19,4 +20,5 @@ export const SHOP_STATE_LOOKUP: Readonly<Record<ShopControlKind, StateLookup>> =
   'checkout-button': { shows: checkoutStateShows, showing: checkoutStateShowing },
   'add-to-cart': { shows: addToCartStateShows, showing: addToCartStateShowing },
   'cart-view': { shows: cartStateShows, showing: cartStateShowing },
+  'variant-selector': { shows: variantStateShows, showing: variantStateShowing },
 };

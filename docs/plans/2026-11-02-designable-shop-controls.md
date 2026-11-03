@@ -144,8 +144,14 @@ assistive technology what an element is), AI (the page generator).
    frames the island sits in. Canvas states: ready, no option chosen, checking (loading), sold out and a failed
    check for the add to cart; items, empty, loading, low stock, an item no longer sold and an item that failed
    for the cart.
-3. **Variant selector:** the option groups, option labels and the choice buttons as a template drawn per
-   option value, with the selected and sold-out looks as stored rules.
+3. **Variant selector** (built, held until slices 1 and 2 land): an option template drawn once per product
+   option (its name, which must keep `{option}`) holding a choice button drawn once per value (its text must
+   keep `{value}`), with Hover, Selected (`aria-pressed`) and Disabled (a choice with no variant) as stored
+   rules; the availability messages (checking, in stock, only `{count}` left, out of stock, available with no
+   stock limit, a failed check) and the no-product note. A selector given its parts puts them before the
+   designer's own children (an add to cart, a price bound to the variant), which keep their place and scope.
+   Canvas states use a sample product: a choice made, nothing chosen, checking, few left, out of stock with a
+   choice unavailable, no stock limit, a failed check, no product.
 
 ## Score
 

@@ -19,6 +19,15 @@
 // (an editor chip / a visible note); they are NEVER swallowed into a silent
 // "looks-available" state. READ-ONLY: this component never writes stock, money,
 // or any commerce mutation.
+//
+// What the visitor sees is designed in the editor (docs/plans/2026-11-02-designable-shop-controls.md):
+// an option template (its name and a choice button drawn once per value, with
+// the selected and unavailable looks as stored rules), the availability messages
+// and the no-product note are child nodes of the control with a role marker
+// (src/lib/commerce/parts.ts), beside whatever the designer adds (an add to cart,
+// a price bound to the variant). This file owns the data and the selection;
+// `variantPart` answers what each part does, for the live control and for the
+// canvas, which previews each state with a sample product.
 'use client';
 import React from 'react';
 import { observer } from 'mobx-react-lite';
@@ -42,33 +51,10 @@ import {
 } from '@/lib/commerce/selection';
 import type { RenderNode } from '@/lib/renderer/data/CollectionRenderer';
 import type { DataStateMode } from '@/lib/renderer/data/resolveDataState';
-
-const NOTE_STYLE: React.CSSProperties = {
-  color: '#9ca3af',
-  fontSize: '12px',
-  fontFamily: 'inherit',
-};
-
-// Editor-only error chip carrying the REAL error message (the contract: errors
-// surface, never swallow). Notably an availability fetch failure shows here and
-// is NEVER collapsed into a silent "in stock".
-const ERROR_CHIP_STYLE: React.CSSProperties = {
-  display: 'inline-block',
-  color: '#b91c1c',
-  background: '#fef2f2',
-  border: '1px solid #fecaca',
-  borderRadius: '4px',
-  padding: '2px 6px',
-  fontSize: '12px',
-  fontFamily: 'inherit',
-};
-
-const OPTION_GROUP_STYLE: React.CSSProperties = {
-  display: 'flex',
-  flexWrap: 'wrap',
-  gap: '6px',
-  alignItems: 'center',
-};
+import { VARIANT_PREVIEW_STATES, missingShopParts, type ShopLocale } from '@/lib/commerce/parts';
+import { ShopDesignContext, ShopLocaleContext, ShopRuntimeContext, type ShopPartRender, type ShopRuntime } from '@/lib/commerce/shopRuntime';
+import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
+import { renderNodeChildren } from '@/lib/renderer/server/renderComponentNode';
 
 /** Low-stock threshold (advisory only) below which the text names the count. */
 export const LOW_STOCK_THRESHOLD = 5;
@@ -105,11 +91,15 @@ export interface VariantSelectorProps {
   hostProps: Record<string, unknown>;
   /** Rendering surface: editor surfaces error chips, preview renders nothing. */
   mode?: DataStateMode;
+  /** `canvas`: the design surface, the parts in a picked state with a sample product. */
+  surface?: 'live' | 'canvas';
 }
 
 const VariantSelector = observer(
-  ({ node, scope, renderNode, hostType, hostProps, mode = 'preview' }: VariantSelectorProps) => {
+  ({ node, scope, renderNode, hostType, hostProps, mode = 'preview', surface = 'live' }: VariantSelectorProps) => {
     const dataSource = useCommerceDataSource();
+    const locale = React.useContext(ShopLocaleContext);
+    const design = React.useContext(ShopDesignContext);
 
     // The product comes from the surrounding product frame (pushed by the
     // ProductDetailRenderer this lives inside). No product frame in scope (e.g.
@@ -191,84 +181,36 @@ const VariantSelector = observer(
     const wrapperProps = { ...hostProps };
     delete (wrapperProps as any).children;
 
-    // Configuration guard: no product in scope (not a fetch state).
-    if (!product) {
-      return React.createElement(
-        hostType as any,
-        wrapperProps,
-        React.createElement('span', { style: NOTE_STYLE }, 'Variant selector: no product in scope'),
-      );
-    }
-
-    // One control per option axis. Each value is a button; a value whose
-    // combination resolves to no variant is disabled (greyed-out, unselectable).
-    const optionControls = product.options.map((option) => (
-      <div
-        key={option.id}
-        role="group"
-        aria-label={option.title}
-        data-variant-option={option.id}
-        style={OPTION_GROUP_STYLE}
-      >
-        <span style={NOTE_STYLE}>{option.title}</span>
-        {option.values.map((value) => {
-          const selectable = isValueSelectable(variants, selection, option.id, value.id);
-          const selected = selection[option.id] === value.id;
-          return (
-            <button
-              key={value.id}
-              type="button"
-              data-variant-value={value.id}
-              aria-pressed={selected}
-              disabled={!selectable}
-              onClick={() => setOptionValue(option.id, value.id)}
-              style={{
-                padding: '4px 10px',
-                border: selected ? '1px solid #111827' : '1px solid #d1d5db',
-                borderRadius: '4px',
-                background: selected ? '#111827' : '#ffffff',
-                color: selected ? '#ffffff' : '#111827',
-                cursor: selectable ? 'pointer' : 'not-allowed',
-                opacity: selectable ? 1 : 0.4,
-              }}
-            >
-              {value.label}
-            </button>
-          );
-        })}
-      </div>
-    ));
-
-    // Advisory availability text for the selected variant. ADVISORY ONLY: this
-    // is the poll result, NOT permission to sell (reserve-at-checkout is the
-    // gate). An error surfaces the real message; it is never a silent "in stock".
-    let availabilityNode: React.ReactNode = null;
-    if (availability.status === 'loading') {
-      availabilityNode = (
-        <span data-variant-availability="loading" style={NOTE_STYLE}>
-          Checking availability...
-        </span>
-      );
-    } else if (availability.status === 'error') {
-      availabilityNode =
-        mode === 'editor' ? (
-          <span data-variant-availability="error" style={ERROR_CHIP_STYLE}>
-            Availability check failed: {availability.message}
-          </span>
-        ) : (
-          // Preview / published: never a fake availability, and never silence:
-          // the visitor reads a plain sentence (not the internal message).
-          <span data-variant-availability="error" role="status" style={{ ...NOTE_STYLE, color: '#b91c1c' }}>
-            Availability could not be checked right now. Please try again later.
-          </span>
-        );
-    } else if (availability.status === 'ready') {
-      availabilityNode = (
-        <span data-variant-availability="ready" style={NOTE_STYLE}>
-          {advisoryAvailabilityText(availability.availability.availableQuantity, availability.availability.limited)}
-        </span>
-      );
-    }
+    // What the parts show. A value whose combination resolves to no variant is
+    // disabled (unselectable). The availability text is ADVISORY ONLY: the poll
+    // result, NOT permission to sell (reserve-at-checkout is the gate). An error
+    // surfaces (the real message in the editor, a plain sentence for a visitor);
+    // it is never a silent "in stock".
+    const liveView: VariantView = {
+      locale,
+      product: product
+        ? product.options.map((option) => ({
+            id: option.id,
+            title: option.title,
+            values: option.values.map((value) => ({
+              id: value.id,
+              label: value.label,
+              selected: selection[option.id] === value.id,
+              selectable: isValueSelectable(variants, selection, option.id, value.id),
+            })),
+          }))
+        : null,
+      availability:
+        availability.status === 'ready'
+          ? { status: 'ready', quantity: availability.availability.availableQuantity, limited: availability.availability.limited }
+          : availability.status === 'error'
+            ? { status: 'error', message: mode === 'editor' ? availability.message : null }
+            : { status: availability.status },
+      onSelect: setOptionValue,
+    };
+    const id = typeof node.id === 'string' ? node.id : '';
+    const view = surface === 'canvas' ? sampleVariantView(design?.stateOf(id) ?? 'in-stock', locale) : liveView;
+    const runtime = variantRuntime(view);
 
     // Re-push the SELECTED variant (and its advisory availability) so descendant
     // `{{variant.*}}` / `{{availability.*}}` re-resolve to the chosen variant.
@@ -280,9 +222,13 @@ const VariantSelector = observer(
       }
     }
 
-    const children = node.children.map((child: ComponentInstance) => (
+    // The control's children (its parts and whatever the designer put beside them,
+    // such as an add to cart) through the surface's renderer, then a default copy
+    // of any required part the tree lacks.
+    const children = Array.from(node.children ?? []).map((child: ComponentInstance) => (
       <React.Fragment key={child.id}>{renderNode(child, childScope)}</React.Fragment>
     ));
+    const missing = missingShopParts(node, locale, 'variant-selector');
 
     // The selection state is published through context so the add-to-cart spec
     // can read the current variant. This is client-only state, never persisted.
@@ -292,9 +238,10 @@ const VariantSelector = observer(
       hostType as any,
       wrapperProps,
       <SelectedVariantContext.Provider value={selectionState}>
-        {optionControls}
-        {availabilityNode}
-        {children}
+        <ShopRuntimeContext.Provider value={runtime}>
+          {missing.length > 0 ? renderNodeChildren({ type: 'div', children: missing } as ComponentNode, childScope) : null}
+          {children}
+        </ShopRuntimeContext.Provider>
       </SelectedVariantContext.Provider>,
     );
   },
@@ -302,3 +249,164 @@ const VariantSelector = observer(
 
 VariantSelector.displayName = 'VariantSelector';
 export default VariantSelector;
+
+// ---------------------------------------------------------------------------
+// What each part does
+// ---------------------------------------------------------------------------
+
+interface VariantValueView {
+  id: string;
+  label: string;
+  selected: boolean;
+  selectable: boolean;
+}
+
+interface VariantView {
+  locale: ShopLocale;
+  /** The product's options, or null when no product is in scope. */
+  product: { id: string; title: string; values: VariantValueView[] }[] | null;
+  availability:
+    | { status: 'idle' | 'loading' }
+    | { status: 'ready'; quantity: number; limited: boolean }
+    /** `message` is the real one in the editor, null for a visitor. */
+    | { status: 'error'; message: string | null };
+  /** Null on the canvas, where nothing does anything. */
+  onSelect: ((optionId: string, valueId: string) => void) | null;
+}
+
+function variantRuntime(view: VariantView): ShopRuntime {
+  return {
+    kind: 'variant-selector',
+    locale: view.locale,
+    surface: view.onSelect ? 'live' : 'canvas',
+    part: (role) => variantPart(role, view),
+  };
+}
+
+function variantPart(role: string, view: VariantView): ShopPartRender {
+  const { availability } = view;
+  const ready = availability.status === 'ready' ? availability : null;
+  switch (role) {
+    case 'variant.no-product':
+      return { visible: view.product === null };
+    case 'variant.options':
+      return { visible: view.product !== null };
+    case 'variant.option':
+      if (!view.product) return { visible: false };
+      return {
+        visible: true,
+        items: view.product.map((option) => ({
+          key: option.id,
+          tokens: { option: option.title },
+          props: { role: 'group', 'aria-label': option.title, 'data-variant-option': option.id },
+          runtime: optionRuntime(option, view),
+        })),
+      };
+    case 'variant.checking':
+      return availability.status === 'loading' ? { visible: true, props: { 'data-variant-availability': 'loading', role: 'status' } } : { visible: false };
+    case 'variant.in-stock':
+      return { visible: !!ready && ready.limited && ready.quantity > LOW_STOCK_THRESHOLD, props: { 'data-variant-availability': 'ready' } };
+    case 'variant.low-stock':
+      return ready && ready.limited && ready.quantity > 0 && ready.quantity <= LOW_STOCK_THRESHOLD
+        ? { visible: true, tokens: { count: String(ready.quantity) }, props: { 'data-variant-availability': 'ready' } }
+        : { visible: false };
+    case 'variant.out-of-stock':
+      return { visible: !!ready && ready.limited && ready.quantity <= 0, props: { 'data-variant-availability': 'ready' } };
+    case 'variant.available':
+      // Untracked stock (a service) or an allowed back-order: the quantity is no limit.
+      return { visible: !!ready && !ready.limited, props: { 'data-variant-availability': 'ready' } };
+    case 'variant.availability-error':
+      if (availability.status !== 'error') return { visible: false };
+      return {
+        visible: true,
+        props: { 'data-variant-availability': 'error', role: 'status' },
+        ...(availability.message ? { text: `Availability check failed: ${availability.message}` } : {}),
+      };
+    default:
+      // An option's own parts outside an option have nothing to show.
+      return { visible: false };
+  }
+}
+
+/** The runtime one copy of the option template reads: its name and its choices. */
+function optionRuntime(option: NonNullable<VariantView['product']>[number], view: VariantView): ShopRuntime {
+  return {
+    kind: 'variant-selector',
+    locale: view.locale,
+    surface: view.onSelect ? 'live' : 'canvas',
+    part: (role) => {
+      if (role === 'variant.option-label') return { visible: true, tokens: { option: option.title } };
+      if (role !== 'variant.value') return { visible: false };
+      return {
+        visible: true,
+        items: option.values.map((value) => ({
+          key: value.id,
+          tokens: { value: value.label },
+          props: {
+            type: 'button',
+            'data-variant-value': value.id,
+            'aria-pressed': value.selected,
+            disabled: !value.selectable,
+            ...(view.onSelect ? { onClick: () => view.onSelect!(option.id, value.id) } : {}),
+          },
+        })),
+      };
+    },
+  };
+}
+
+const SAMPLE_OPTIONS = {
+  en: [
+    { id: 'size', title: 'Size', values: ['S', 'M', 'L'] },
+    { id: 'color', title: 'Color', values: ['Red', 'Blue'] },
+  ],
+  de: [
+    { id: 'size', title: 'Größe', values: ['S', 'M', 'L'] },
+    { id: 'color', title: 'Farbe', values: ['Rot', 'Blau'] },
+  ],
+} as const;
+
+/** The view the canvas shows for a preview state id, with a sample product. */
+export function sampleVariantView(id: string, locale: ShopLocale): VariantView {
+  const chosen = id !== 'nothing-chosen' && id !== 'no-product';
+  const product = SAMPLE_OPTIONS[locale].map((option) => ({
+    id: option.id,
+    title: option.title,
+    values: option.values.map((label, index) => ({
+      id: `${option.id}-${index}`,
+      label,
+      selected: chosen && index === (option.id === 'size' ? 1 : 0),
+      // Out of stock shows a choice that has no variant, greyed out.
+      selectable: !(id === 'out-of-stock' && option.id === 'size' && index === 2),
+    })),
+  }));
+  const availability: VariantView['availability'] =
+    id === 'checking'
+      ? { status: 'loading' }
+      : id === 'low-stock'
+        ? { status: 'ready', quantity: 3, limited: true }
+        : id === 'out-of-stock'
+          ? { status: 'ready', quantity: 0, limited: true }
+          : id === 'available'
+            ? { status: 'ready', quantity: 0, limited: false }
+            : id === 'error'
+              ? { status: 'error', message: null }
+              : chosen
+                ? { status: 'ready', quantity: 24, limited: true }
+                : { status: 'idle' };
+  return { locale, product: id === 'no-product' ? null : product, availability, onSelect: null };
+}
+
+/** Whether a preview state shows a part and every part around it; an option's part shows in any option. */
+export function variantStateShows(id: string, roles: readonly string[], locale: ShopLocale): boolean {
+  const view = sampleVariantView(id, locale);
+  return roles.every((role) => {
+    if (variantPart(role, view).visible) return true;
+    return (view.product ?? []).some((option) => optionRuntime(option, view).part(role).visible);
+  });
+}
+
+/** The first preview state that shows a part. */
+export function variantStateShowing(roles: readonly string[], locale: ShopLocale): string | undefined {
+  return VARIANT_PREVIEW_STATES.find(({ id }) => variantStateShows(id, roles, locale))?.id;
+}

@@ -35,9 +35,9 @@ export function shopLocaleOf(language: string | null | undefined): ShopLocale {
 type Localized = Readonly<Record<ShopLocale, string>>;
 
 /** The shop controls whose visible parts are nodes. */
-export type ShopControlKind = 'checkout-button' | 'add-to-cart' | 'cart-view';
+export type ShopControlKind = 'checkout-button' | 'add-to-cart' | 'cart-view' | 'variant-selector';
 
-export const SHOP_CONTROL_KINDS: readonly ShopControlKind[] = ['checkout-button', 'add-to-cart', 'cart-view'];
+export const SHOP_CONTROL_KINDS: readonly ShopControlKind[] = ['checkout-button', 'add-to-cart', 'cart-view', 'variant-selector'];
 
 export function isShopControlKind(kind: unknown): kind is ShopControlKind {
   return typeof kind === 'string' && (SHOP_CONTROL_KINDS as readonly string[]).includes(kind);
@@ -92,6 +92,8 @@ export interface ShopControlSpec {
   /** The preview states, in the picker's order; the first is the default. */
   states: readonly ShopPreviewState[];
   parts: readonly ShopPartSpec[];
+  /** A control given its parts for the first time puts them before its existing children. */
+  partsFirst?: true;
 }
 
 // ---------------------------------------------------------------------------
@@ -700,10 +702,117 @@ export const ADD_TO_CART_CONTROL_STYLE: Readonly<Record<string, unknown>> = {
   padding: '4px',
 };
 
+// ---------------------------------------------------------------------------
+// Variant selector
+// ---------------------------------------------------------------------------
+
+const VARIANT_VALUE_STYLE = {
+  padding: '4px 10px',
+  border: '1px solid #d1d5db',
+  borderRadius: '4px',
+  backgroundColor: '#ffffff',
+  color: '#111827',
+  cursor: 'pointer',
+  fontFamily: 'inherit',
+  fontSize: '14px',
+};
+
+const VARIANT_PARTS: readonly ShopPartSpec[] = [
+  {
+    role: 'variant.no-product',
+    label: 'No product here',
+    tag: 'span',
+    required: true,
+    text: { en: 'Variant selector: no product in scope', de: 'Variantenauswahl: hier ist kein Produkt' },
+    style: NOTE,
+  },
+  {
+    role: 'variant.options',
+    label: 'Options',
+    tag: 'div',
+    required: true,
+    style: { display: 'flex', flexDirection: 'column', gap: '8px' },
+    children: [
+      {
+        role: 'variant.option',
+        label: 'Option (repeated per option)',
+        tag: 'div',
+        required: true,
+        repeat: true,
+        style: { display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' },
+        children: [
+          { role: 'variant.option-label', label: 'Option name', tag: 'span', required: true, requiredTokens: ['option'], text: { en: '{option}', de: '{option}' }, style: NOTE },
+          {
+            role: 'variant.value',
+            label: 'Choice (repeated per value)',
+            tag: 'button',
+            required: true,
+            repeat: true,
+            requiredTokens: ['value'],
+            text: { en: '{value}', de: '{value}' },
+            style: VARIANT_VALUE_STYLE,
+            rules: [
+              { id: 'hover', selector: '&:hover', at: [HOVER_GATE], style: { borderColor: '#111827' } },
+              { id: 'selected', selector: '&[aria-pressed="true"]', style: { backgroundColor: '#111827', borderColor: '#111827', color: '#ffffff' } },
+              { id: 'disabled', selector: '&:disabled', style: { opacity: 0.4, cursor: 'not-allowed' } },
+            ],
+          },
+        ],
+      },
+    ],
+  },
+  { role: 'variant.checking', label: 'Checking availability', tag: 'span', required: true, text: { en: 'Checking availability...', de: 'Verfügbarkeit wird geprüft...' }, style: NOTE },
+  { role: 'variant.in-stock', label: 'In stock', tag: 'span', required: true, text: { en: 'In stock', de: 'Auf Lager' }, style: NOTE },
+  {
+    role: 'variant.low-stock',
+    label: 'Only a few left',
+    tag: 'span',
+    required: true,
+    requiredTokens: ['count'],
+    text: { en: 'Only {count} left', de: 'Nur noch {count} verfügbar' },
+    style: { ...NOTE, color: '#b45309' },
+  },
+  { role: 'variant.out-of-stock', label: 'Out of stock', tag: 'span', required: true, text: { en: 'Out of stock', de: 'Nicht vorrätig' }, style: { ...NOTE, color: '#b91c1c' } },
+  { role: 'variant.available', label: 'Available (no stock limit)', tag: 'span', required: true, text: { en: 'Available', de: 'Verfügbar' }, style: NOTE },
+  {
+    role: 'variant.availability-error',
+    label: 'Availability check failed',
+    tag: 'span',
+    required: true,
+    text: {
+      en: 'Availability could not be checked right now. Please try again later.',
+      de: 'Die Verfügbarkeit kann gerade nicht geprüft werden. Bitte versuchen Sie es später erneut.',
+    },
+    style: { ...NOTE, color: '#b91c1c' },
+  },
+];
+
+/** The variant selector's preview states: real states of the island, with a sample product on the canvas. */
+export const VARIANT_PREVIEW_STATES = [
+  { id: 'in-stock', label: 'A choice made, in stock' },
+  { id: 'nothing-chosen', label: 'Nothing chosen yet' },
+  { id: 'checking', label: 'Checking availability (loading)' },
+  { id: 'low-stock', label: 'Only a few left' },
+  { id: 'out-of-stock', label: 'Out of stock, a choice unavailable' },
+  { id: 'available', label: 'Available (no stock limit)' },
+  { id: 'error', label: 'Availability check failed' },
+  { id: 'no-product', label: 'No product on this page' },
+] as const satisfies readonly ShopPreviewState[];
+
+/** The default style of a variant selector. */
+export const VARIANT_CONTROL_STYLE: Readonly<Record<string, unknown>> = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '8px',
+  padding: '12px',
+};
+
 export const SHOP_CONTROLS: Readonly<Record<ShopControlKind, ShopControlSpec>> = {
   'checkout-button': { kind: 'checkout-button', states: CHECKOUT_PREVIEW_STATES, parts: CHECKOUT_PARTS },
   'add-to-cart': { kind: 'add-to-cart', states: ADD_TO_CART_PREVIEW_STATES, parts: ADD_TO_CART_PARTS },
   'cart-view': { kind: 'cart-view', states: CART_PREVIEW_STATES, parts: CART_PARTS },
+  // Its parts come before the designer's own children (an add to cart, a price bound to the variant).
+  'variant-selector': { kind: 'variant-selector', states: VARIANT_PREVIEW_STATES, parts: VARIANT_PARTS, partsFirst: true },
 };
 
 /** The default style of a checkout control: a column, so its steps stack. */
@@ -884,6 +993,7 @@ const LEGACY: Readonly<Record<ShopControlKind, { props: Record<string, { role: s
     props: { emptyContent: { role: 'cart.empty', text: (value) => value } },
     bindings: { emptyContent: 'cart.empty' },
   },
+  'variant-selector': { props: {}, bindings: {} },
 };
 
 /** Legacy props of a control that become part text. */
@@ -1128,13 +1238,9 @@ export function normalizeShopControl<N extends object>(
   let root: ShopTreeNode = control;
 
   if (existing.size === 0) {
-    root = {
-      ...control,
-      children: [
-        ...(control.children ?? []),
-        ...buildShopParts(kind, controlId, locale, shape, legacyTexts(kind, control.props), legacyBindings(kind, control.bindings), taken),
-      ],
-    };
+    const parts = buildShopParts(kind, controlId, locale, shape, legacyTexts(kind, control.props), legacyBindings(kind, control.bindings), taken);
+    const own = control.children ?? [];
+    root = { ...control, children: SHOP_CONTROLS[kind].partsFirst ? [...parts, ...own] : [...own, ...parts] };
     changed = true;
   } else {
     // Missing required parts, top down, so a part comes back before the parts inside it.

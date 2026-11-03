@@ -243,8 +243,8 @@ library default of its kind; a plain system stack (system-ui, Georgia, ...) is k
 - defaults: {"children":"Text","style":{"color":"#111827","fontFamily":"inherit","fontSize":"16px","margin":0,"padding":"8px"}}
 ### preset "variantSelector" (Variant selector, category commerce)
 - type: div
-- data component "variant-selector": renders a placeholder until the user binds it in the properties panel. Use it only when the brief clearly asks for this kind of content; never add children to it.
-- defaults: {"data-component-kind":"variant-selector","style":{"backgroundColor":"#f9fafb","border":"1px dashed #d1d5db","borderRadius":"8px","display":"flex","flexDirection":"column","gap":"8px","minHeight":"60px","padding":"12px"}}
+- shop control "variant-selector": the page adds its parts (buttons, fields, messages) as child nodes in the site language, which the user then styles. Use it only when the brief clearly asks for it; never add children to it.
+- defaults: {"data-component-kind":"variant-selector","style":{"display":"flex","flexDirection":"column","gap":"8px","padding":"12px"}}
 
 ## Style keys
 
