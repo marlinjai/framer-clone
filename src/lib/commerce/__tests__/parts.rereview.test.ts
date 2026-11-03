@@ -32,7 +32,7 @@ describe("the control's own rules", () => {
     const next = normalizeShopControl(control(rules), 'en', 'node');
     expect(next.props?.rules).toEqual([
       { id: 'a', selector: '&:hover [data-checkout-demo-badge]', style: { color: 'red' } },
-      { id: 'b', selector: '& > div', style: {} },
+      // A rule emptied by the filter goes (rule b only hid).
       // On the control itself: the designer may fade the whole checkout.
       { id: 'c', selector: '&:hover', style: { opacity: 0.2, color: 'blue' } },
     ]);

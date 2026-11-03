@@ -96,6 +96,8 @@ const STRAY_STYLE = { opacity: 0.5, outline: '1px dashed #f59e0b' };
 const SENDING_ATTRIBUTES = ['form', 'action', 'formAction', 'formaction', 'method', 'formMethod', 'formmethod', 'target', 'formTarget', 'formtarget', 'enctype', 'formEncType', 'formenctype'];
 /** Attributes a part kept in sight never carries. */
 const HIDING_ATTRIBUTES = ['hidden', 'aria-hidden', 'popover', 'inert'];
+/** Attributes that would give a fixed wording another accessible name or tooltip. */
+const RENAMING_ATTRIBUTES = ['aria-label', 'aria-labelledby', 'aria-description', 'title'];
 
 /** The smallest text a part kept in sight is drawn at, in pixels. */
 const MIN_KEPT_FONT_PX = 11;
@@ -104,8 +106,11 @@ const MIN_KEPT_FONT_PX = 11;
 const KEPT_FALLBACK_COLOR = '#111827';
 
 
-/** Properties pinned to `none` on a part kept in sight and on every wrapper up to its control, always. */
-const PINNED_NONE = ['transform', 'scale', 'translate', 'rotate', 'clip-path', 'mask-image', '-webkit-mask-image', 'filter', 'backdrop-filter', 'animation', 'contain'];
+/** Properties pinned to `none` on a part kept in sight itself, always (it is a run of text, so none is designed). */
+const PART_NONE = ['transform', 'scale', 'translate', 'rotate', 'clip-path', 'mask-image', '-webkit-mask-image', 'filter', 'animation'];
+
+/** Properties a wrapper keeps unless they hide what it holds: then they are pinned to `none`. */
+const WRAPPER_NONE_WHEN_SET = ['clip-path', 'mask-image', '-webkit-mask-image'];
 
 /** Whether a computed colour is see-through (transparent, or an alpha under 0.5). */
 function seeThrough(color: string): boolean {
@@ -119,53 +124,62 @@ function seeThrough(color: string): boolean {
 }
 
 /**
- * Pins a part kept in sight (the demo notice, the simulated payment line, the
- * total, the pay button's wording) readable as it renders, whatever a stylesheet,
- * a rule on any node of the page, an animation or an inherited value says. The
- * values are set inline with `!important`, which outweighs every rule and every
- * animation, now and later (a hover rule that only applies while the visitor
- * points at the button), so they are set always, not only when something hides
- * at render time:
- * - on the part and on every wrapper up to the control: no transform, scale,
- *   translation, rotation, clip, mask, filter, animation or containment, overflow
- *   visible, in the flow (static, so no offset moves it), visible and opaque, and
- *   shown (its display as computed, or block);
- *   each wrapper also gets a marker the guard rule uses to blank its `::before`
- *   and `::after` (src/lib/commerce/parts.ts, shopGuardCss);
- * - on the part: its colour as computed (or a dark default when that is
- *   see-through), the text filled with that colour, no indent, letter and word
- *   spacing not below normal, no outline, and a font
- *   size of at least 11 pixels.
+ * Keeps a part kept in sight (the demo notice, the simulated payment line, the
+ * total, the pay button's wording) readable as it renders, against accidents: a
+ * stylesheet, an inherited value or a wrapper that would hide it. The guarantee
+ * covers what a designer or an agent does by mistake (section 5 of
+ * docs/plans/2026-11-02-designable-shop-controls.md); the stored design is already
+ * held to an allowlist by the normaliser, so the island pins only what would hide,
+ * inline with `!important`, and leaves the design's own changes alone (a hover
+ * that inverts the pay button's colours, a display that changes at a breakpoint).
+ * - On the part itself, always: visible and opaque, the text filled with its
+ *   colour, no transform, clip, mask, filter or animation, no indent or outline,
+ *   letter and word spacing not below normal, and a font size of at least 11
+ *   pixels. Its colour only when the computed one is see-through (then a dark
+ *   default), so it still follows its button's colour on hover.
+ * - On the part and every wrapper up to the control, only where it would hide: a
+ *   display of none (then block), a visibility other than visible, an opacity
+ *   under 0.5, `content-visibility: hidden`, paint, size or strict containment, a
+ *   clip path or mask, and an overflow that crops what it holds. Each wrapper
+ *   also gets a marker the guard rule uses to blank its `::before` and `::after`
+ *   (src/lib/commerce/parts.ts, shopGuardCss).
  */
 function keepInSight(element: HTMLElement): void {
   const view = element.ownerDocument.defaultView;
   if (!view) return;
   const force = (target: HTMLElement, property: string, value: string) => target.style.setProperty(property, value, 'important');
   // Read everything first: pinning one node changes what its children compute.
-  const chain: { node: HTMLElement; display: string }[] = [];
+  const chain: { node: HTMLElement; computed: CSSStyleDeclaration; crops: boolean }[] = [];
   for (let node: HTMLElement | null = element; node; node = node.parentElement) {
     if (node !== element && node.hasAttribute('data-component-kind')) break;
-    chain.push({ node, display: view.getComputedStyle(node).display });
+    const computed = view.getComputedStyle(node);
+    chain.push({ node, computed, crops: node !== element && computed.overflow !== 'visible' && node.scrollHeight > node.clientHeight + 1 });
   }
   const own = view.getComputedStyle(element);
-  const color = seeThrough(own.color) ? KEPT_FALLBACK_COLOR : own.color;
+  const ownColor = own.color;
   const size = Number.parseFloat(own.fontSize);
   const letterSpacing = Number.parseFloat(own.letterSpacing);
   const wordSpacing = Number.parseFloat(own.wordSpacing);
 
-  for (const { node, display } of chain) {
-    force(node, 'display', display && display !== 'none' ? display : 'block');
-    force(node, 'visibility', 'visible');
-    force(node, 'opacity', '1');
-    force(node, 'content-visibility', 'visible');
-    force(node, 'overflow', 'visible');
-    // In the flow where the design put it: no offset moves it off screen or under something else.
-    force(node, 'position', 'static');
-    for (const property of PINNED_NONE) force(node, property, 'none');
+  for (const { node, computed, crops } of chain) {
+    if (computed.display === 'none') force(node, 'display', 'block');
+    if (computed.visibility !== 'visible') force(node, 'visibility', 'visible');
+    if (computed.opacity !== '' && Number(computed.opacity) < 0.5) force(node, 'opacity', '1');
+    if (computed.getPropertyValue('content-visibility') === 'hidden') force(node, 'content-visibility', 'visible');
+    const contain = computed.getPropertyValue('contain');
+    if (contain.split(/\s+/).some((token) => token === 'paint' || token === 'strict' || token === 'content' || token === 'size')) force(node, 'contain', 'none');
+    for (const property of WRAPPER_NONE_WHEN_SET) {
+      const value = computed.getPropertyValue(property);
+      if (value && value !== 'none') force(node, property, 'none');
+    }
+    if (crops) force(node, 'overflow', 'visible');
     if (node !== element && !node.hasAttribute(SHOP_KEPT_WRAPPER_ATTR)) node.setAttribute(SHOP_KEPT_WRAPPER_ATTR, '');
     if (node.hidden) node.hidden = false;
   }
-  force(element, 'color', color);
+  force(element, 'visibility', 'visible');
+  force(element, 'opacity', '1');
+  for (const property of PART_NONE) force(element, property, 'none');
+  if (seeThrough(ownColor)) force(element, 'color', KEPT_FALLBACK_COLOR);
   force(element, '-webkit-text-fill-color', 'currentcolor');
   force(element, 'text-indent', '0');
   force(element, 'outline', 'none');
@@ -232,6 +246,8 @@ export function ShopPartElement({ role, tag, domProps, storedText, content, surf
   // An input part has no name: its value lives in the island's state, so a form the
   // page wraps around the control has nothing of the visitor's to post.
   if (elementTag === 'input' || elementTag === 'select' || elementTag === 'textarea') delete ownProps.name;
+  // Nothing renames a fixed wording for assistive technology (a label or tooltip of the designer's).
+  if (keep || spec?.fixedText || spec?.onlyParts) for (const key of RENAMING_ATTRIBUTES) delete ownProps[key];
   if (keep) {
     for (const key of HIDING_ATTRIBUTES) delete ownProps[key];
     ownProps.ref = keptRef;
@@ -258,7 +274,8 @@ export function ShopPartElement({ role, tag, domProps, storedText, content, surf
   if (spec?.onlyParts) content = onlyPartElements(content, new Set((spec.children ?? []).map((child) => child.role)));
   const editing = ownProps.contentEditable === 'true';
   // While the designer types, the box holds the stored text as typed, tokens and all.
-  const raw = spec?.dynamicText ? render.text : editing ? storedText : shopPartText(role, storedText, runtime.locale);
+  // A button whose wording is fixed holds no text of its own: its parts are the words.
+  const raw = spec?.onlyParts ? undefined : spec?.dynamicText ? render.text : editing ? storedText : shopPartText(role, storedText, runtime.locale);
 
   const draw = (key: React.Key | undefined, tokens: Readonly<Record<string, string>> | undefined, extra?: Record<string, unknown>) => {
     const props: Record<string, unknown> = { ...ownProps, ...(render.props ?? {}), ...(extra ?? {}) };

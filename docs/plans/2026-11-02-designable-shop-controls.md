@@ -61,20 +61,23 @@ assistive technology what an element is), AI (the page generator).
    deleted.
 5. **Parts kept in sight.** The demo notice, the simulated payment reference, the total and the pay button's
    wording are kept in sight, in four layers. The model: the stored design may style them within an
-   allowlist, and the island pins at render, inline with `!important`, every property that could hide them,
-   always (not only when it hides at render time), so no stored rule, no rule on any other node of the page,
-   no animation and no inherited value can take them out of sight later.
+   allowlist, and the island pins at render, inline with `!important`, what would hide them, leaving the
+   design's own changes alone (a hover that inverts the pay button's colours, a display that changes at a
+   breakpoint). The guarantee covers accidents (see the last item).
    - The normaliser (load path, published render) removes from each of them, and from every wrapper between
      it and its control, the attributes `hidden`, `aria-hidden`, `popover` and `inert`. Their style and every
      rule they hold (whatever its selector, at every breakpoint) keep only an allowlist of style keys: type
      (colour, font, letter and word spacing, alignment, decoration), box (padding, margin, border, radius,
      background colour and image, shadow), flex and grid layout, sizes, display, visibility and opacity.
-     Anything else (a mask, containment, a scale, translate or rotate, a transform, a filter, a clip, a
-     position or inset, a text indent, a background clipped to the text, z-index, an outline, which paints
-     over what is around it) goes whether or not it could hide, so a new way to hide is closed by default.
+     A transform, scale, translate, rotate or filter stays when it is small (a hover lift or press: moves of
+     at most 8 pixels, scales between 0.9 and 1.1, turns of at most 5 degrees, brightness, contrast or
+     saturation between 0.7 and 1.3). Anything else (a mask, containment, a clip, a position or inset, a
+     text indent, a background clipped to the text, z-index, an outline wider than a focus ring, which
+     paints over what is around it) goes whether or not it could hide, so a new way to hide is closed by
+     default. A rule the filter empties goes with it.
      The listed keys are also checked by value: a `display` other than a visible keyword, a `visibility`
      other than visible, an `opacity` that is not a plain number of at least 0.5, a `font-size` under 10
-     pixels (or 0.65 em) or not in pixels or em, a zero `height`, `max-height`, `width` or `max-width`, a
+     pixels (or 0.65 em) or not in pixels or em (a `clamp()` whose smallest size is readable stays), a zero `height`, `max-height`, `width` or `max-width`, a
      colour that is transparent or has an alpha under 0.5, a negative margin, letter or word spacing, and a
      padding over 200 pixels or 12 em all go (a value the check cannot read, a `var()` or a calc, counts as
      hiding). The control's own rules that reach inside it (a descendant, child or sibling step, such as
@@ -82,9 +85,16 @@ assistive technology what an element is), AI (the page generator).
      `overflow`, `contain`, masks, scale, translate, rotate, an absolute or fixed position and negative
      offsets) but keep the rest, since they also style parts that are not kept in sight. No style or rule
      inside a shop control, or on it, keeps `!important`, generated `content` or an animation.
-   - Nothing is laid over them: a node beside a part kept in sight (in the same wrapper, or in any wrapper
-     around it) loses its positioning and offsets, z-index, `pointer-events`, transforms, a grid placement,
-     float, a negative margin and an outline wider than a focus ring (4 pixels, offset at most 4).
+   - Nothing is laid over them: a node beside a part kept in sight, inside a part that holds one (the
+     payment step, its actions row, the confirmation), loses its positioning and offsets, z-index,
+     `pointer-events`, a transform beyond the small bounds above, a negative margin and an outline wider
+     than a focus ring (4 pixels, offset at most 4). Grid placement stays. The control's other steps are
+     never on screen with a kept part, so they keep all of it.
+   - Nothing goes inside them: a part kept in sight or with fixed text holds no nodes, and a button whose
+     wording is fixed holds its own parts and no text of its own. The editor refuses a drop or a palette
+     insert there with a notice, and the normaliser removes what an outside write put there. None of them
+     keeps an `aria-label`, `aria-labelledby`, `aria-description` or `title`, so assistive technology reads
+     the fixed wording too.
    - Their tag is their spec's (a `div`, or a `span` inside the pay button), never a void tag, a template or
      anything else.
    - Each control draws one platform rule: these parts visible and opaque with `!important` (no stored rule
@@ -92,15 +102,14 @@ assistive technology what an element is), AI (the page generator).
      between them and their control, nor on a button whose wording is fixed, from any rule on the page; and
      their first letter and first line look like the rest of them. It does not pin a display, so the
      designer's flex or grid stays.
-   - As it renders, the island pins inline with `!important`, always: on the part and on every wrapper up to
-     the control, its display (as computed, or block), visible, opaque, `content-visibility` visible,
-     overflow visible, position static (no offset moves it), and no transform, scale, translate, rotate,
-     clip path, mask, filter, backdrop filter, animation or containment; each wrapper also gets the marker
-     the platform rule blanks the generated content of. On the part itself: its colour as computed (a dark
-     default when that is see-through), the text filled with that colour, no indent, no outline, letter and
-     word spacing not below normal, and a font size of at least 11 pixels. Inline `!important` outweighs every
-     rule and every animation, now and later (a hover rule that applies while the visitor points at the
-     button).
+   - As it renders, the island pins inline with `!important`: on the part itself, always, visible and
+     opaque, the text filled with its colour, no transform, clip, mask, filter or animation, no indent or
+     outline, letter and word spacing not below normal and a font size of at least 11 pixels, and its
+     colour only when the computed one is see-through (then a dark default), so the label follows its
+     button's colour. On the part and every wrapper up to the control, only where it would hide: a display
+     of none (then block), a visibility other than visible, an opacity under 0.5, `content-visibility:
+     hidden`, paint, size or strict containment, a clip path or mask, and an overflow that crops; each
+     wrapper also gets the marker the platform rule blanks the generated content of.
    - The checkout button and the pay button hold their own parts only (the roles their spec lists): a part
      of somewhere else moved in loses its role (and with it its text), a part of theirs inside a wrapper is
      lifted out of it, and anything else (the wrapper, its text, a nested control) is dropped by the

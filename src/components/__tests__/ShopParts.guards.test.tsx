@@ -13,7 +13,7 @@ import type { PageModelType } from '@/models/PageModel';
 import ComponentRenderer from '../ComponentRenderer';
 import EditorCommerceProvider from '../EditorCommerceProvider';
 import { ShopPartNote } from '../sidebars/right/sections/ShopPartNote';
-import { MISPLACED_SHOP_PART_MESSAGE, REQUIRED_SHOP_PART_MESSAGE, SHOP_PART_ATTR, pageWithShopParts } from '@/lib/commerce/parts';
+import { CLOSED_SHOP_PART_MESSAGE, MISPLACED_SHOP_PART_MESSAGE, REQUIRED_SHOP_PART_MESSAGE, SHOP_PART_ATTR, pageWithShopParts } from '@/lib/commerce/parts';
 
 let store: RootStoreType;
 
@@ -83,6 +83,20 @@ describe('a part moved out of its control', () => {
     const moved = page.moveTreeComponent(pay.id, { kind: 'parent', parentId: actions.id, index: 0 })!;
     expect(moved.id).toBe(pay.id);
     expect(moved.props[SHOP_PART_ATTR]).toBe('checkout.pay');
+  });
+
+  it('refuses a plain node dropped into the pay button or a notice, from the palette or by a move', () => {
+    const pay = part('checkout.pay')!;
+    const badge = part('checkout.demo-badge')!;
+    expect(page.insertRegistryComponent('text', { kind: 'parent', parentId: pay.id })).toBeUndefined();
+    expect(store.editorUI.editorNotice).toEqual({ kind: 'refused', message: CLOSED_SHOP_PART_MESSAGE });
+    expect(page.insertRegistryComponent('container', { kind: 'parent', parentId: badge.id })).toBeUndefined();
+    const before = pay.children.length;
+    const box = page.insertRegistryComponent('container', { kind: 'parent', parentId: root.id })!;
+    expect(page.moveTreeComponent(box.id, { kind: 'parent', parentId: pay.id })).toBeUndefined();
+    expect(page.findComponent(pay.id)!.children.length).toBe(before);
+    // Beside the pay button is fine.
+    expect(page.moveTreeComponent(box.id, { kind: 'parent', parentId: part('checkout.actions')!.id })).toBeDefined();
   });
 
   it('is refused, with a notice, when it would leave its place inside its own control', () => {

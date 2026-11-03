@@ -788,6 +788,66 @@ const NOT_NONE = (value: string) => value !== 'none';
 /** A length that pulls a box out of the way: any negative value. */
 const NEGATIVE = (value: string) => /(^|[\s(,])-\s*\d*\.?\d/.test(value);
 
+/** A font size under 10 pixels (or 0.65 em), or one the check cannot read. */
+function tooSmallFont(value: string): boolean {
+  const px = /^(\d*\.?\d+)px$/.exec(value);
+  if (px) return Number(px[1]) < 10;
+  const relative = /^(\d*\.?\d+)(r?em)$/.exec(value);
+  return relative ? Number(relative[1]) < 0.65 : true;
+}
+
+function inRange(value: number, low: number, high: number): boolean {
+  return Number.isFinite(value) && value >= low && value <= high;
+}
+/** An offset of at most 8 pixels (or 0.5 em) either way. */
+function smallOffset(value: string): boolean {
+  const px = /^(-?\d*\.?\d+)px$/.exec(value);
+  if (px) return Math.abs(Number(px[1])) <= 8;
+  const relative = /^(-?\d*\.?\d+)(r?em)$/.exec(value);
+  if (relative) return Math.abs(Number(relative[1])) <= 0.5;
+  return /^0(\.0+)?$/.test(value);
+}
+/** An angle of at most 5 degrees either way. */
+function smallAngle(value: string): boolean {
+  if (value === 'none') return true;
+  const deg = /^(-?\d*\.?\d+)deg$/.exec(value);
+  return deg ? Math.abs(Number(deg[1])) <= 5 : /^0(\.0+)?$/.test(value);
+}
+/** A transform made only of small translations, scales near one and small rotations. */
+function smallTransform(value: string): boolean {
+  if (value === 'none') return true;
+  const steps = [...value.matchAll(/([a-z0-9]+)\(([^)]*)\)/gi)];
+  if (steps.length === 0 || steps.map((step) => step[0]).join('').replace(/\s+/g, '') !== value.replace(/\s+/g, '')) return false;
+  return steps.every(([, name, args]) => {
+    const values = args.split(',').map((entry) => entry.trim());
+    switch (name.toLowerCase()) {
+      case 'translate':
+      case 'translatex':
+      case 'translatey':
+        return values.every(smallOffset);
+      case 'scale':
+      case 'scalex':
+      case 'scaley':
+        return values.every((entry) => inRange(Number(entry), 0.9, 1.1));
+      case 'rotate':
+        return values.every(smallAngle);
+      default:
+        return false;
+    }
+  });
+}
+/** A filter made only of brightness, contrast and saturation between 0.7 and 1.3. */
+function gentleFilter(value: string): boolean {
+  if (value === 'none') return true;
+  const steps = [...value.matchAll(/([a-z-]+)\(([^)]*)\)/gi)];
+  if (steps.length === 0 || steps.map((step) => step[0]).join('').replace(/\s+/g, '') !== value.replace(/\s+/g, '')) return false;
+  return steps.every(([, name, arg]) => {
+    if (!/^(brightness|contrast|saturate)$/i.test(name)) return false;
+    const number = arg.trim().endsWith('%') ? Number(arg.trim().slice(0, -1)) / 100 : Number(arg.trim());
+    return inRange(number, 0.7, 1.3);
+  });
+}
+
 /** A padding that pushes the text far away: over 200 pixels or 12 em, or a value the check cannot read. */
 const TOO_FAR = (value: string) =>
   value.split(/\s+/).some((entry) => {
@@ -828,12 +888,14 @@ const HIDING_VALUES: Readonly<Record<string, (value: string) => boolean>> = {
   contentVisibility: (value) => value !== 'visible' && value !== 'auto',
   clipPath: NOT_NONE,
   clip: (value) => value !== 'auto',
-  transform: NOT_NONE,
-  scale: NOT_NONE,
-  translate: NOT_NONE,
-  rotate: NOT_NONE,
+  // A small hover lift, press or tilt stays; anything that shrinks, moves or turns it away goes.
+  transform: (value) => !smallTransform(value),
+  scale: (value) => !value.split(/\s+/).every((entry) => inRange(Number(entry), 0.9, 1.1)),
+  translate: (value) => !value.split(/\s+/).every(smallOffset),
+  rotate: (value) => !smallAngle(value),
   zoom: (value) => value !== '1' && value !== 'normal' && value !== '100%',
-  filter: NOT_NONE,
+  // A hover that darkens or lightens a little stays.
+  filter: (value) => !gentleFilter(value),
   backdropFilter: NOT_NONE,
   mask: NOT_NONE,
   maskImage: NOT_NONE,
@@ -848,10 +910,10 @@ const HIDING_VALUES: Readonly<Record<string, (value: string) => boolean>> = {
   color: seeThrough,
   textIndent: NEGATIVE,
   fontSize: (value) => {
-    const px = /^(\d*\.?\d+)px$/.exec(value);
-    if (px) return Number(px[1]) < 10;
-    const relative = /^(\d*\.?\d+)(r?em)$/.exec(value);
-    return relative ? Number(relative[1]) < 0.65 : true;
+    // Responsive type: a clamp() whose smallest size is readable stays.
+    const clamped = /^clamp\(([^,]+),/.exec(value);
+    if (clamped) return tooSmallFont(clamped[1].trim());
+    return tooSmallFont(value);
   },
   // A wrapper that crops (a 1px box with its overflow hidden) hides as surely as display: none.
   overflow: (value) => value !== 'visible',
@@ -908,7 +970,7 @@ const KEPT_STYLE_KEYS: ReadonlySet<string> = new Set([
   'borderRadius', 'borderTopLeftRadius', 'borderTopRightRadius', 'borderBottomLeftRadius', 'borderBottomRightRadius',
   'background', 'backgroundColor', 'backgroundImage', 'backgroundSize', 'backgroundPosition', 'backgroundRepeat',
   'boxShadow', 'boxSizing', 'cursor', 'transition', 'verticalAlign',
-  'display', 'visibility', 'opacity',
+  'display', 'visibility', 'opacity', 'transform', 'translate', 'scale', 'rotate', 'filter',
   'flex', 'flexDirection', 'flexWrap', 'flexFlow', 'flexGrow', 'flexShrink', 'flexBasis', 'order',
   'alignItems', 'alignSelf', 'alignContent', 'justifyContent', 'justifyItems', 'justifySelf',
   'placeItems', 'placeContent', 'placeSelf', 'gap', 'rowGap', 'columnGap',
@@ -945,9 +1007,9 @@ function keptStyle(style: unknown): Record<string, unknown> | undefined {
 /** Style keys a node beside a part kept in sight never keeps: none can lift it over the part, or let a click through it. */
 const OVERLAY_KEYS: ReadonlySet<string> = new Set([
   'position', 'zIndex', 'pointerEvents', 'top', 'right', 'bottom', 'left', 'inset', 'insetInline', 'insetBlock',
-  'transform', 'translate', 'scale', 'rotate', 'gridArea', 'gridRow', 'gridColumn', 'gridRowStart', 'gridRowEnd',
-  'gridColumnStart', 'gridColumnEnd', 'float',
 ]);
+/** Keys a node beside a part kept in sight keeps within the same bounds as the part's own wrappers. */
+const BOUNDED_BESIDE_KEYS: ReadonlySet<string> = new Set(['transform', 'translate', 'scale', 'rotate']);
 const NEGATIVE_MARGIN_KEYS: ReadonlySet<string> = new Set(['margin', 'marginTop', 'marginRight', 'marginBottom', 'marginLeft', 'marginInline', 'marginBlock']);
 
 /**
@@ -980,7 +1042,11 @@ function withoutOverlayStyle(style: unknown): unknown {
   if (!isRecord(style)) return style;
   return Object.fromEntries(
     Object.entries(style).filter(
-      ([key, value]) => !OVERLAY_KEYS.has(key) && !(NEGATIVE_MARGIN_KEYS.has(key) && hides(key, value)) && !(OUTLINE_KEYS.has(key) && wideOutline(value)),
+      ([key, value]) =>
+        !OVERLAY_KEYS.has(key) &&
+        !(NEGATIVE_MARGIN_KEYS.has(key) && hides(key, value)) &&
+        !(BOUNDED_BESIDE_KEYS.has(key) && hides(key, value)) &&
+        !(OUTLINE_KEYS.has(key) && wideOutline(value)),
     ),
   );
 }
@@ -994,9 +1060,7 @@ function besideKept(node: ShopTreeNode): ShopTreeNode {
   const props = node.props;
   if (!props) return node;
   const style = withoutOverlayStyle(props.style);
-  const rules = Array.isArray(props.rules)
-    ? (props.rules as unknown[]).map((rule) => (isRecord(rule) && isRecord(rule.style) ? { ...rule, style: withoutOverlayStyle(rule.style) } : rule))
-    : props.rules;
+  const rules = filteredRules(props.rules, withoutOverlayStyle);
   const next = { ...node, props: { ...props, ...(props.style !== undefined ? { style } : {}), ...(props.rules !== undefined ? { rules } : {}) } };
   return sameJson(next, node) ? node : next;
 }
@@ -1011,12 +1075,32 @@ function inSight(node: ShopTreeNode): ShopTreeNode {
   for (const key of HIDING_PROPS) delete props[key];
   const style = keptStyle(props.style);
   if (style) props.style = style;
-  if (Array.isArray(props.rules)) {
-    props.rules = (props.rules as unknown[]).map((rule) =>
-      isRecord(rule) && isRecord(rule.style) ? { ...rule, style: keptStyle(rule.style) } : rule,
-    );
-  }
+  if (Array.isArray(props.rules)) props.rules = filteredRules(props.rules, keptStyle);
   return { ...node, props };
+}
+
+/** Attributes that give a node another accessible name or tooltip than its text. */
+const RENAMING_PROPS: readonly string[] = ['aria-label', 'aria-labelledby', 'aria-description', 'title'];
+
+function withoutProps(node: ShopTreeNode, keys: readonly string[]): ShopTreeNode {
+  if (!node.props || !keys.some((key) => key in node.props!)) return node;
+  const props = { ...node.props };
+  for (const key of keys) delete props[key];
+  return { ...node, props };
+}
+
+/**
+ * Rules with each style filtered; a rule the filter empties goes, so the panel is
+ * not left with an empty state (a hover with nothing in it).
+ */
+function filteredRules(rules: unknown, filter: (style: unknown) => unknown, applies: (rule: Record<string, unknown>) => boolean = () => true): unknown {
+  if (!Array.isArray(rules)) return rules;
+  return (rules as unknown[]).flatMap((rule) => {
+    if (!isRecord(rule) || !isRecord(rule.style) || !applies(rule)) return [rule];
+    const style = filter(rule.style);
+    const emptied = isRecord(style) && Object.keys(style).length === 0 && Object.keys(rule.style).length > 0;
+    return emptied ? [] : [{ ...rule, style }];
+  });
 }
 
 /** Style keys no node inside a shop control, nor the control itself, keeps. */
@@ -1070,9 +1154,7 @@ function reachesInside(rule: Record<string, unknown>): boolean {
 function controlInSight(control: ShopTreeNode): ShopTreeNode {
   const props = control.props;
   if (!props || !Array.isArray(props.rules) || !holdsKeptPart(control)) return control;
-  const rules = (props.rules as unknown[]).map((rule) =>
-    isRecord(rule) && isRecord(rule.style) && reachesInside(rule) ? { ...rule, style: withoutHidingStyle(rule.style) } : rule,
-  );
+  const rules = filteredRules(props.rules, withoutHidingStyle, reachesInside);
   return sameJson(rules, props.rules) ? control : { ...control, props: { ...props, rules } };
 }
 
@@ -1112,7 +1194,10 @@ function enforceParts(input: ShopTreeNode): ShopTreeNode {
     const onlyParts = !!(nodeRole && shopPartSpec(nodeRole)?.onlyParts);
     const kept = onlyParts && node.children ? liftParts(node.children, node.id, ownRoles(nodeRole!)) : node.children;
     // Inside a node that holds a part kept in sight, nothing else may be laid over it.
-    const besideKeptPart = holdsKeptPart(node);
+    // Scoped to the parts that hold one (the payment step, its actions row, the
+    // confirmation): the control's other steps are never on screen with it, so they
+    // keep their positioning and grid placement.
+    const besideKeptPart = node !== control && holdsKeptPart(node);
     if (kept !== node.children) changed = true;
     const children = kept?.map((child) => {
       if (shopControlKindOf(child.props)) return child;
@@ -1131,7 +1216,9 @@ function enforceParts(input: ShopTreeNode): ShopTreeNode {
       if (spec && role) {
         const tag = shopPartTag(role, next.type);
         if (tag !== next.type) next = { ...next, type: tag };
-        if (spec.fixedText || spec.dynamicText) next = withoutStoredText(next);
+        if (spec.fixedText || spec.dynamicText || spec.onlyParts) next = withoutStoredText(next);
+        // Nothing renames a fixed wording for assistive technology either.
+        if (spec.keepVisible || spec.fixedText || spec.onlyParts) next = withoutProps(next, RENAMING_PROPS);
         // A part kept in sight, or one whose text is the platform's, is its text only:
         // a node put inside it would add words to it or lay a cover over it.
         if ((spec.keepVisible || spec.fixedText) && next.children && next.children.length > 0) next = { ...next, children: [] };
@@ -1222,12 +1309,23 @@ function placedParts(control: ShopTreeNode, kind: ShopControlKind): ShopTreeNode
   return visit(control, undefined);
 }
 
+/** What the editor says when a move would take a part out of its place in its control. */
+export const MISPLACED_SHOP_PART_MESSAGE =
+  'This part of the shop control has its own place in it: it can move among its siblings, not into another part.';
+
+/** What the editor says when something would go inside a part that holds its own words only. */
+export const CLOSED_SHOP_PART_MESSAGE =
+  'This part of the shop control holds its own words only (the pay button, the total and the notices a buyer must see): nothing else can go inside it. Put it beside the part instead.';
+
 /**
- * Whether moving `node` under `ancestors` (nearest first, the new parent first)
- * inside the same control would put one of its parts outside the place its spec
- * gives it: the editor refuses such a move, as the normaliser would undo it.
+ * Why the editor refuses to put `node` under `ancestors` (nearest first, the new
+ * parent first) inside a shop control, or undefined when it may: a part going
+ * anywhere but the place its spec gives it, or anything going inside a part that
+ * holds its own words only (a button whose wording is fixed takes its own parts
+ * only; a part kept in sight or with fixed text takes nothing). The normaliser
+ * would undo either on the next load, so the editor says so now.
  */
-export function misplacesShopPart(node: { props?: unknown; children?: readonly unknown[] }, ancestors: readonly { props?: unknown }[]): boolean {
+export function shopPartRefusal(node: { props?: unknown; children?: readonly unknown[] }, ancestors: readonly { props?: unknown }[]): string | undefined {
   let nearest: string | undefined;
   let kind: ShopControlKind | undefined;
   for (const ancestor of ancestors) {
@@ -1235,22 +1333,27 @@ export function misplacesShopPart(node: { props?: unknown; children?: readonly u
     if (kind) break;
     if (nearest === undefined) nearest = shopPartRoleOf(ancestor.props);
   }
-  if (!kind) return false;
+  if (!kind || shopControlKindOf(node.props)) return undefined;
+  const closed = nearest ? shopPartSpec(nearest) : undefined;
+  const role = shopPartRoleOf(node.props);
+  if (closed && (closed.keepVisible || closed.fixedText)) return CLOSED_SHOP_PART_MESSAGE;
+  if (closed?.onlyParts && !(role && ownRoles(nearest!).has(role))) return CLOSED_SHOP_PART_MESSAGE;
   const misplaced = (candidate: { props?: unknown; children?: readonly unknown[] }): boolean => {
     if (shopControlKindOf(candidate.props)) return false;
-    const role = shopPartRoleOf(candidate.props);
-    if (role) {
-      const indexed = PART_INDEX.get(role);
+    const own = shopPartRoleOf(candidate.props);
+    if (own) {
+      const indexed = PART_INDEX.get(own);
       return !indexed || indexed.kind !== kind || indexed.parentRole !== nearest;
     }
     return (candidate.children ?? []).some((child) => isRecord(child) && misplaced(child as { props?: unknown; children?: readonly unknown[] }));
   };
-  return misplaced(node);
+  return misplaced(node) ? MISPLACED_SHOP_PART_MESSAGE : undefined;
 }
 
-/** What the editor says when a move would take a part out of its place in its control. */
-export const MISPLACED_SHOP_PART_MESSAGE =
-  'This part of the shop control has its own place in it: it can move among its siblings, not into another part.';
+/** Whether the editor refuses to put `node` under `ancestors` inside a shop control (shopPartRefusal). */
+export function misplacesShopPart(node: { props?: unknown; children?: readonly unknown[] }, ancestors: readonly { props?: unknown }[]): boolean {
+  return shopPartRefusal(node, ancestors) !== undefined;
+}
 
 /** Form field tags: their value lives in the island's state, so they carry no stored `name`. */
 const FIELD_TAGS: ReadonlySet<string> = new Set(['input', 'select', 'textarea']);

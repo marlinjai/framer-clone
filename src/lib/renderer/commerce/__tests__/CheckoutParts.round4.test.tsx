@@ -152,7 +152,8 @@ describe('styles and rules inside a control', () => {
     };
     const next = settled(attach(base(), 'checkout.actions', overlay));
     const sibling = flat([next]).find((node) => node.id === 'ov')!;
-    expect(sibling.props?.style).toEqual({ width: '220px', backgroundColor: '#065f46' });
+    // Grid placement stays: a layout with the form beside the total is ordinary design.
+    expect(sibling.props?.style).toEqual({ width: '220px', gridArea: '1 / 1', backgroundColor: '#065f46' });
     // A focus ring stays.
     expect(sibling.props?.rules).toEqual([{ id: 'f', selector: '&:focus-visible', style: { outline: '2px solid #111827', outlineOffset: '2px' } }]);
   });
@@ -171,7 +172,7 @@ describe('the guard rule', () => {
 });
 
 describe('the island', () => {
-  it('pins a kept part and every wrapper up to the control always, also against a rule from the page root', async () => {
+  it('pins a kept part readable, also against a rule from the page root, and leaves its wrappers to the design', async () => {
     const container = await toPayment(base(), {
       rules: [
         { id: 'r', selector: '& [data-shop-part="checkout.pay-label"]::before', style: { content: '"Kostenlos "' } },
@@ -186,10 +187,7 @@ describe('the island', () => {
       ['clip-path', 'none'],
       ['mask-image', 'none'],
       ['filter', 'none'],
-      ['contain', 'none'],
       ['animation', 'none'],
-      ['position', 'static'],
-      ['overflow', 'visible'],
       ['text-indent', '0px'],
       ['letter-spacing', 'normal'],
       ['visibility', 'visible'],
@@ -198,12 +196,13 @@ describe('the island', () => {
       expect(badge.style.getPropertyValue(property), property).toBe(value);
       expect(badge.style.getPropertyPriority(property), property).toBe('important');
     }
-    expect(badge.style.getPropertyValue('color')).not.toBe('transparent');
-    // Every wrapper up to the control is pinned and marked for the guard rule.
+    // A see-through colour gets the dark default.
+    expect(badge.style.getPropertyValue('color')).toBe('rgb(17, 24, 39)');
+    // Every wrapper up to the control is marked for the guard rule, and keeps its own design.
     const pay = container.querySelector<HTMLElement>('button[data-checkout-pay]')!;
     expect(pay.hasAttribute(SHOP_KEPT_WRAPPER_ATTR)).toBe(true);
-    expect(pay.style.getPropertyValue('transform')).toBe('none');
-    expect(pay.style.getPropertyPriority('transform')).toBe('important');
+    expect(pay.style.getPropertyValue('transform')).toBe('');
+    expect(pay.style.getPropertyValue('display')).toBe('');
     expect(pay.textContent).toBe(PAY_WORDING);
   });
 });
@@ -239,12 +238,73 @@ describe('the fifth review round', () => {
     const pay = find(settled(withRing), 'checkout.pay');
     expect(pay.props?.rules).toEqual([
       { id: 'f', selector: '&:focus-visible', style: { outline: '2px solid #2563eb', outlineOffset: '2px' } },
-      { id: 'w', selector: '&:hover', style: {} },
     ]);
   });
 
   it('strips a stored form attribute inside the control', () => {
     const tree = attach(base(), 'checkout.actions', { id: 'f', type: 'input', props: { form: 'evil' }, children: [] });
     expect(flat([settled(tree)]).find((node) => node.id === 'f')?.props).not.toHaveProperty('form');
+  });
+});
+
+describe('the accident-scope review', () => {
+  const edit = (tree: ShopTreeNode, role: string, change: (node: ShopTreeNode) => ShopTreeNode): ShopTreeNode => {
+    const next = { ...tree, children: tree.children?.map((child) => edit(child, role, change)) };
+    return shopPartRoleOf(tree.props) === role ? change(next) : next;
+  };
+
+  it("leaves the pay label's colour to its button, so an inverted hover keeps the wording readable", async () => {
+    const tree = edit(base(), 'checkout.pay', (node) => ({
+      ...node,
+      props: { ...node.props, rules: [{ id: 'h', selector: '&:hover', style: { backgroundColor: '#ffffff', color: '#065f46' } }] },
+    }));
+    const next = settled(tree);
+    expect(find(next, 'checkout.pay').props?.rules).toEqual([{ id: 'h', selector: '&:hover', style: { backgroundColor: '#ffffff', color: '#065f46' } }]);
+    const container = await toPayment(next);
+    const label = container.querySelector<HTMLElement>('[data-shop-part="checkout.pay-label"]')!;
+    // Not frozen: the label inherits whatever colour the button has now.
+    expect(label.style.getPropertyValue('color')).toBe('');
+    expect(label.style.getPropertyValue('-webkit-text-fill-color')).toBe('currentcolor');
+  });
+
+  it('keeps ordinary design: a hover lift and press, a gentle hover filter, grid placement of the steps, responsive type', () => {
+    let tree = edit(base(), 'checkout.button', (node) => ({
+      ...node,
+      props: {
+        ...node.props,
+        style: { ...(node.props?.style as object), gridArea: 'cta', position: 'relative' },
+        rules: [{ id: 'h', selector: '&:hover', style: { transform: 'translateY(-2px)' } }, { id: 'p', selector: '&:active', style: { transform: 'scale(0.98)' } }],
+      },
+    }));
+    tree = edit(tree, 'checkout.pay', (node) => ({ ...node, props: { ...node.props, rules: [{ id: 'f', selector: '&:hover', style: { filter: 'brightness(0.9)', transform: 'translateY(-1px)' } }] } }));
+    tree = edit(tree, 'checkout.buyer', (node) => ({ ...node, props: { ...node.props, style: { ...(node.props?.style as object), gridColumn: '1', gridRow: '1 / 3' } } }));
+    tree = edit(tree, 'checkout.total', (node) => ({ ...node, props: { ...node.props, style: { ...(node.props?.style as object), fontSize: 'clamp(1rem, 2vw, 1.5rem)' } } }));
+    const next = settled(tree);
+    const button = find(next, 'checkout.button');
+    expect(button.props?.style).toMatchObject({ gridArea: 'cta', position: 'relative' });
+    expect(button.props?.rules).toEqual([{ id: 'h', selector: '&:hover', style: { transform: 'translateY(-2px)' } }, { id: 'p', selector: '&:active', style: { transform: 'scale(0.98)' } }]);
+    expect(find(next, 'checkout.pay').props?.rules).toEqual([{ id: 'f', selector: '&:hover', style: { filter: 'brightness(0.9)', transform: 'translateY(-1px)' } }]);
+    expect(find(next, 'checkout.buyer').props?.style).toMatchObject({ gridColumn: '1', gridRow: '1 / 3' });
+    expect(find(next, 'checkout.total').props?.style).toMatchObject({ fontSize: 'clamp(1rem, 2vw, 1.5rem)' });
+  });
+
+  it('still takes away what shrinks, moves or hides: a large scale, a far translation, a strong filter', () => {
+    const tree = edit(base(), 'checkout.pay', (node) => ({
+      ...node,
+      props: { ...node.props, rules: [{ id: 'x', selector: '&:hover', style: { transform: 'scale(0)', filter: 'brightness(0)', translate: '9999px', color: '#fff' } }] },
+    }));
+    expect(find(settled(tree), 'checkout.pay').props?.rules).toEqual([{ id: 'x', selector: '&:hover', style: { color: '#fff' } }]);
+  });
+
+  it('gives the pay button no other accessible name or tooltip, and no text of its own', async () => {
+    const tree = edit(base(), 'checkout.pay', (node) => ({ ...node, props: { ...node.props, 'aria-label': 'Jetzt kaufen', title: 'Gratis', children: 'Jetzt kaufen' } }));
+    const next = settled(tree);
+    const pay = find(next, 'checkout.pay');
+    for (const key of ['aria-label', 'title', 'children']) expect(pay.props, key).not.toHaveProperty(key);
+    const container = await toPayment(next);
+    const button = container.querySelector<HTMLElement>('button[data-checkout-pay]')!;
+    expect(button.getAttribute('aria-label')).toBeNull();
+    expect(button.getAttribute('title')).toBeNull();
+    expect(button.textContent).toBe(PAY_WORDING);
   });
 });
