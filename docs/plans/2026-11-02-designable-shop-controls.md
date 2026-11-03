@@ -106,12 +106,18 @@ assistive technology what an element is), AI (the page generator).
      lifted out of it, and anything else (the wrapper, its text, a nested control) is dropped by the
      normaliser and ignored by the island, so no extra text joins the fixed wording and a required label is
      never lost with its wrapper.
-   - What stays open, by design: a node anywhere else on the page positioned over the checkout (the site's
-     author drawing a fake button over the real one), a colour that only matches its background, and a colour
-     given through a `var()` the page defines. These are deliberate deception by the site's author, not an
-     accident of design, and the platform cannot rule them out on a page the author designs freely; the top
-     layer (a modal for the final pay step) would close the first one. The control's own style is the
-     designer's (fading the whole checkout is allowed), and the island never walks above the control.
+   - **What the guarantee covers** (decided by Marlin on 2026-11-03): these layers protect against
+     accidents, a designer or an AI agent hiding the total, shrinking the wording or adding words to the
+     pay button by mistake through ordinary styles, placement or pasted nodes. They do not try to stop a
+     site's author who sets out to deceive (exotic CSS such as blend modes or extreme spacing, a node drawn
+     over the button from elsewhere on the page, a colour matching its background, a colour or font
+     through a page `var()`). That is the trader's own duty under section 312j of the German Civil Code,
+     as on Medusa or WooCommerce; the platform, as a hosting provider, acts once it is told (notice and
+     takedown). Reviews of this section judge it against accidents, not against a determined author. The
+     locked alternative, the Shopify model (the platform draws the final pay step as a modal in the top
+     layer, styled only through a few design tokens), is the ROADMAP line "Locked final pay step", due
+     with live payments. The control's own style is the designer's (fading the whole checkout is
+     allowed), and the island never walks above the control.
    The demo notice and the payment reference keep the platform's text in the site language whatever is
    stored. The checkout has no consent checkbox today (the only checkbox is the demo decline toggle), so
    there is no consent wording to protect yet.
