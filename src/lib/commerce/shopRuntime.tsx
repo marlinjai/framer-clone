@@ -93,7 +93,7 @@ function textChildren(text: unknown, linksAllowed: boolean): React.ReactNode[] {
 const STRAY_STYLE = { opacity: 0.5, outline: '1px dashed #f59e0b' };
 
 /** Attributes a part never carries onto the page: none of them can send what a visitor typed elsewhere. */
-const SENDING_ATTRIBUTES = ['action', 'formAction', 'formaction', 'method', 'formMethod', 'formmethod', 'target', 'formTarget', 'formtarget', 'enctype', 'formEncType', 'formenctype'];
+const SENDING_ATTRIBUTES = ['form', 'action', 'formAction', 'formaction', 'method', 'formMethod', 'formmethod', 'target', 'formTarget', 'formtarget', 'enctype', 'formEncType', 'formenctype'];
 /** Attributes a part kept in sight never carries. */
 const HIDING_ATTRIBUTES = ['hidden', 'aria-hidden', 'popover', 'inert'];
 
@@ -252,6 +252,8 @@ export function ShopPartElement({ role, tag, domProps, storedText, content, surf
 
   const render = runtime.part(role);
   if (!render.visible) return null;
+  // A part kept in sight, or one whose text is the platform's, draws its text only.
+  if (spec?.keepVisible || spec?.fixedText) content = undefined;
   // A button whose wording is fixed draws only its own parts, whatever it was handed.
   if (spec?.onlyParts) content = onlyPartElements(content, new Set((spec.children ?? []).map((child) => child.role)));
   const editing = ownProps.contentEditable === 'true';

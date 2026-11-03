@@ -776,7 +776,7 @@ export function shopPartTag(role: string, stored: unknown): string {
 }
 
 /** Attributes no node inside a shop control keeps: they could send what a visitor typed elsewhere. */
-const SENDING_PROPS: readonly string[] = ['action', 'formAction', 'formaction', 'method', 'formMethod', 'formmethod', 'target', 'formTarget', 'formtarget', 'enctype', 'formEncType', 'formenctype'];
+const SENDING_PROPS: readonly string[] = ['form', 'action', 'formAction', 'formaction', 'method', 'formMethod', 'formmethod', 'target', 'formTarget', 'formtarget', 'enctype', 'formEncType', 'formenctype'];
 
 /** Attributes that take a part kept in sight out of sight. */
 const HIDING_PROPS: readonly string[] = ['hidden', 'aria-hidden', 'popover', 'inert'];
@@ -934,7 +934,12 @@ function withoutHidingStyle(style: unknown): Record<string, unknown> | undefined
 /** A style of a part kept in sight or a wrapper around one: listed keys only, none that hides. */
 function keptStyle(style: unknown): Record<string, unknown> | undefined {
   if (!isRecord(style)) return undefined;
-  return Object.fromEntries(Object.entries(style).filter(([key, value]) => KEPT_STYLE_KEYS.has(key) && !hides(key, value)));
+  return Object.fromEntries(
+    Object.entries(style).filter(
+      // A focus ring (an outline up to 4 pixels, offset at most 4) stays: a dark button needs a designed one.
+      ([key, value]) => (KEPT_STYLE_KEYS.has(key) && !hides(key, value)) || (FOCUS_RING_KEYS.has(key) && !wideOutline(value)),
+    ),
+  );
 }
 
 /** Style keys a node beside a part kept in sight never keeps: none can lift it over the part, or let a click through it. */
@@ -951,6 +956,7 @@ const NEGATIVE_MARGIN_KEYS: ReadonlySet<string> = new Set(['margin', 'marginTop'
  * most 4) stays.
  */
 const OUTLINE_KEYS: ReadonlySet<string> = new Set(['outline', 'outlineWidth', 'outlineOffset']);
+const FOCUS_RING_KEYS: ReadonlySet<string> = new Set(['outline', 'outlineWidth', 'outlineOffset', 'outlineColor', 'outlineStyle']);
 function wideOutline(value: unknown): boolean {
   if (isRecord(value)) return Object.values(value).some(wideOutline);
   if (typeof value === 'number') return Math.abs(value) > 4;
@@ -1126,6 +1132,9 @@ function enforceParts(input: ShopTreeNode): ShopTreeNode {
         const tag = shopPartTag(role, next.type);
         if (tag !== next.type) next = { ...next, type: tag };
         if (spec.fixedText || spec.dynamicText) next = withoutStoredText(next);
+        // A part kept in sight, or one whose text is the platform's, is its text only:
+        // a node put inside it would add words to it or lay a cover over it.
+        if ((spec.keepVisible || spec.fixedText) && next.children && next.children.length > 0) next = { ...next, children: [] };
       }
       if (spec?.keepVisible || holdsKeptPart(next)) next = inSight(next);
       else if (besideKeptPart) next = besideKept(next);

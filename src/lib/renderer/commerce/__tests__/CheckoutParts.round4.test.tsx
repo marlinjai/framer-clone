@@ -207,3 +207,44 @@ describe('the island', () => {
     expect(pay.textContent).toBe(PAY_WORDING);
   });
 });
+
+describe('the fifth review round', () => {
+  it('a part kept in sight holds no nodes: no words join the pay wording and no cover sits inside the notice', async () => {
+    let tree = attach(base(), 'checkout.pay-label', { id: 'more', type: 'span', props: { children: ' GRATIS, keine Kosten' }, children: [] });
+    tree = attach(tree, 'checkout.demo-badge', {
+      id: 'cover',
+      type: 'div',
+      props: { children: 'Echte Zahlung.', style: { position: 'absolute', inset: '0', backgroundColor: '#fffbeb', zIndex: 5 } },
+      children: [],
+    });
+    const next = settled(tree);
+    expect(find(next, 'checkout.pay-label').children).toEqual([]);
+    expect(find(next, 'checkout.demo-badge').children).toEqual([]);
+    const container = await toPayment(next);
+    expect(container.querySelector('button[data-checkout-pay]')?.textContent).toBe(PAY_WORDING);
+    expect(container.querySelector('[data-checkout-demo-badge]')?.textContent).not.toContain('Echte Zahlung');
+  });
+
+  it('keeps a designed focus ring on the pay button, and only a focus ring', () => {
+    const tree = attach(base(), 'checkout.actions', { id: 'x', type: 'span', props: {}, children: [] });
+    const withRing = {
+      ...tree,
+      children: tree.children!.map(function ring(child: ShopTreeNode): ShopTreeNode {
+        const next = { ...child, children: child.children?.map(ring) };
+        return shopPartRoleOf(child.props) === 'checkout.pay'
+          ? { ...next, props: { ...next.props, rules: [{ id: 'f', selector: '&:focus-visible', style: { outline: '2px solid #2563eb', outlineOffset: '2px' } }, { id: 'w', selector: '&:hover', style: { outline: '60px solid #fff' } }] } }
+          : next;
+      }),
+    };
+    const pay = find(settled(withRing), 'checkout.pay');
+    expect(pay.props?.rules).toEqual([
+      { id: 'f', selector: '&:focus-visible', style: { outline: '2px solid #2563eb', outlineOffset: '2px' } },
+      { id: 'w', selector: '&:hover', style: {} },
+    ]);
+  });
+
+  it('strips a stored form attribute inside the control', () => {
+    const tree = attach(base(), 'checkout.actions', { id: 'f', type: 'input', props: { form: 'evil' }, children: [] });
+    expect(flat([settled(tree)]).find((node) => node.id === 'f')?.props).not.toHaveProperty('form');
+  });
+});
