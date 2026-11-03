@@ -11,7 +11,11 @@
 // worker's own time). The result is written as JSON into #result and
 // `window.__booksEngineHarness`. Run it with `pnpm harness:books-engine` and
 // open http://localhost:3917/dev/books-engine with any `lumitra_session`
-// cookie (the edge middleware checks only that one is there). Exists only in a build with
+// cookie (the edge middleware checks only that one is there). Use the name
+// `localhost`, NOT 127.0.0.1: the script runs `next start` (production) with
+// EDITOR_HOST=localhost, and in production only the configured EDITOR_HOST is
+// the editor host (src/lib/editorHost.ts), so http://127.0.0.1:3917 is a
+// published host there and answers this page with a 404. Exists only in a build with
 // BOOKS_ENGINE_HARNESS=1 (next.config.ts); never shipped.
 
 import { useEffect, useState } from 'react';
