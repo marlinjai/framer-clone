@@ -382,3 +382,27 @@ describe('the island across renders', () => {
     expect(step.style.getPropertyPriority('opacity')).toBe('');
   });
 });
+
+describe('a kept part that leaves the page', () => {
+  it("releases its pins, so the wrappers get the design's own fade back", async () => {
+    const { ShopPartElement, ShopRuntimeContext } = await import('@/lib/commerce/shopRuntime');
+    const runtime = { kind: 'checkout-button', locale: 'en', surface: 'live', part: () => ({ visible: true, tokens: { total: '1 EUR' } }) };
+    const Tree = ({ show }: { show: boolean }) => (
+      <ShopRuntimeContext.Provider value={runtime as never}>
+        <div data-component-kind="checkout-button">
+          <div data-testid="step" style={{ opacity: 0.6 }}>
+            <div data-testid="row" style={{ opacity: 0.6 }}>
+              {show ? <ShopPartElement role="checkout.total" tag="div" domProps={{}} storedText={undefined} surface="preview" /> : null}
+            </div>
+          </div>
+        </div>
+      </ShopRuntimeContext.Provider>
+    );
+    const view = render(<Tree show />);
+    const step = view.getByTestId('step');
+    expect(step.style.getPropertyPriority('opacity')).toBe('important');
+    view.rerender(<Tree show={false} />);
+    expect(step.style.getPropertyValue('opacity')).toBe('0.6');
+    expect(step.style.getPropertyPriority('opacity')).toBe('');
+  });
+});

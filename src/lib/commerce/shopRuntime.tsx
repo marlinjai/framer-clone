@@ -121,6 +121,30 @@ interface Pin {
 
 /** What the kept parts pinned on each element, so each part's next render starts from the design. */
 const PINNED = new WeakMap<HTMLElement, Map<string, Pin>>();
+/** The elements each kept part pinned something on. */
+const PINNED_BY = new WeakMap<HTMLElement, Set<HTMLElement>>();
+
+/**
+ * Takes off what a kept part pinned, putting the design's own inline value back
+ * (unless React wrote a new one since, which then stands). A pin another kept part
+ * still holds on a shared wrapper stays. Runs before each render's pins and when
+ * the part unmounts (the pay label while a payment is processing).
+ */
+function releaseKept(owner: HTMLElement): void {
+  for (const target of PINNED_BY.get(owner) ?? []) {
+    const pins = PINNED.get(target);
+    if (!pins) continue;
+    for (const [property, pin] of pins) {
+      if (!pin.owners.delete(owner) || pin.owners.size > 0) continue;
+      pins.delete(property);
+      // React wrote the design's new value over the pin since (it sets no priority): that value stands.
+      if (target.style.getPropertyPriority(property) !== 'important') continue;
+      if (pin.value) target.style.setProperty(property, pin.value, pin.priority);
+      else target.style.removeProperty(property);
+    }
+  }
+  PINNED_BY.delete(owner);
+}
 
 /** Whether a computed colour is see-through (transparent, or an alpha under 0.5). */
 function seeThrough(color: string): boolean {
@@ -168,30 +192,18 @@ function keepInSight(element: HTMLElement): void {
     }
     pin.owners.add(element);
     PINNED.set(target, pins);
+    const targets = PINNED_BY.get(element) ?? new Set<HTMLElement>();
+    targets.add(target);
+    PINNED_BY.set(element, targets);
     target.style.setProperty(property, value, 'important');
   };
   // Each render starts from the design: what this part pinned at its last render
-  // comes off first, so a fade or a colour the designer changed since shows (the
-  // canvas). A wrapper several kept parts share keeps a pin another part still holds.
-  const release = (target: HTMLElement) => {
-    const pins = PINNED.get(target);
-    if (!pins) return;
-    for (const [property, pin] of pins) {
-      if (!pin.owners.delete(element) || pin.owners.size > 0) continue;
-      pins.delete(property);
-      // React wrote the design's new value over the pin since (it sets no priority): that value stands.
-      if (target.style.getPropertyPriority(property) !== 'important') continue;
-      if (pin.value) target.style.setProperty(property, pin.value, pin.priority);
-      else target.style.removeProperty(property);
-    }
-  };
+  // comes off first (releaseKept), so a fade or a colour the designer changed since
+  // shows on the canvas.
+  releaseKept(element);
   // Read everything first: pinning one node changes what its children compute.
   const chain: { node: HTMLElement; computed: CSSStyleDeclaration; crops: boolean }[] = [];
   let control: HTMLElement | null = null;
-  for (let node: HTMLElement | null = element; node; node = node.parentElement) {
-    release(node);
-    if (node !== element && node.hasAttribute('data-component-kind')) break;
-  }
   for (let node: HTMLElement | null = element; node; node = node.parentElement) {
     if (node !== element && node.hasAttribute('data-component-kind')) {
       control = node;
@@ -251,7 +263,11 @@ export const keepInSightForTest = keepInSight;
 function useKeptInSight(enabled: boolean, outer: unknown): React.RefCallback<HTMLElement> | undefined {
   const element = React.useRef<HTMLElement | null>(null);
   React.useLayoutEffect(() => {
-    if (enabled && element.current) keepInSight(element.current);
+    const current = element.current;
+    if (!enabled || !current) return undefined;
+    keepInSight(current);
+    // Before the next render's pins, and when the part leaves the page.
+    return () => releaseKept(current);
   });
   const ref = React.useCallback(
     (node: HTMLElement | null) => {
