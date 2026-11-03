@@ -52,7 +52,10 @@ import type { ComponentInstance } from '@/models/ComponentModel';
 import type { BindingScope } from '@/lib/bindings/resolver/scope';
 import { useCart, useCheckoutUnavailableReason, type CartLine } from '@/lib/commerce/cart';
 import { getPaymentGateway, type CheckoutBuyer, type PaymentGateway, type RefusedBuyerField } from '@/lib/commerce/payment';
-import { CHECKOUT_BUYER_FIELDS, CHECKOUT_PREVIEW_STATES, missingShopParts, normalizeShopControl, type CheckoutPreviewStateId, type ShopLocale, type ShopTreeNode } from '@/lib/commerce/parts';
+import { CHECKOUT_BUYER_FIELDS, CHECKOUT_PREVIEW_STATES, missingShopParts, normalizeShopControl, shopGuardCss, type CheckoutPreviewStateId, type ShopLocale, type ShopTreeNode } from '@/lib/commerce/parts';
+
+/** Constant text: built from the spec, never from stored data, and never holding a `<`. */
+const SHOP_GUARD_CSS = shopGuardCss();
 import { ShopDesignContext, ShopLocaleContext, ShopRuntimeContext, type ShopPartRender, type ShopRuntime } from '@/lib/commerce/shopRuntime';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { renderNodeChildren } from '@/lib/renderer/server/renderComponentNode';
@@ -524,9 +527,12 @@ function CheckoutContent({ node, locale, drawn }: { node: ComponentInstance; loc
     () => (drawn === undefined ? normalizeShopControl(node as unknown as ShopTreeNode, locale, 'node', 'checkout-button') : null),
     [node, drawn, locale],
   );
-  if (own) return <>{renderNodeChildren(own as unknown as ComponentNode, createScope())}</>;
+  // The platform's guard rule for the parts kept in sight comes first (shopGuardCss).
+  const guard = <style data-shop-guard="" dangerouslySetInnerHTML={{ __html: SHOP_GUARD_CSS }} />;
+  if (own) return <>{guard}{renderNodeChildren(own as unknown as ComponentNode, createScope())}</>;
   return (
     <>
+      {guard}
       {drawn}
       {fallback && fallback.length > 0 ? renderNodeChildren({ type: 'div', children: fallback } as ComponentNode, createScope()) : null}
     </>
@@ -692,7 +698,8 @@ function checkoutPart(role: string, view: CheckoutView): ShopPartRender {
         id: fieldId(key),
         'aria-labelledby': `${fieldId(key)}-label`,
         type: input.type,
-        name: key,
+        // No name: the order is sent from the island's state, never by a form, so a
+        // form the page wraps around the checkout has no buyer details to post.
         required: true,
         autoComplete: input.autoComplete,
         'data-checkout-buyer-field': key,
@@ -833,7 +840,13 @@ export function sampleCheckoutState(id: CheckoutPreviewStateId | string, locale:
       return { state: { status: 'returned', outcome: 'cancelled', orderNumber: SAMPLE_ORDER.orderNumber, confirmationTo: null }, cartEmpty: false };
     case 'shortage':
       return {
-        state: { status: 'shortage', shortages: [{ variantId: locale === 'de' ? 'T-Shirt, Größe M' : 'T-shirt, size M', needed: 3, available: 1 }] },
+        state: {
+          status: 'shortage',
+          shortages: [
+            { variantId: locale === 'de' ? 'T-Shirt, Größe M' : 'T-shirt, size M', needed: 3, available: 1 },
+            { variantId: locale === 'de' ? 'Emaille-Becher' : 'Enamel mug', needed: 2, available: 0 },
+          ],
+        },
         cartEmpty: false,
       };
     case 'items-unavailable':

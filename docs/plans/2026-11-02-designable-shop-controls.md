@@ -62,15 +62,22 @@ assistive technology what an element is), AI (the page generator).
      inline-flex, grid, inline-grid, flow-root, list-item, table, contents), `visibility` other than visible,
      `opacity` that is not a plain number of at least 0.5 (a percent or a `var()` counts as hiding),
      `content-visibility` other than visible or auto, any `clip-path`, `clip`, `transform` or `filter`, a
-     `font-size` under 10 pixels (or 0.65 em) or not in pixels or em, and a zero `height`, `max-height`,
-     `width` or `max-width`.
+     `font-size` under 10 pixels (or 0.65 em) or not in pixels or em, an `overflow` other than visible (a
+     wrapper that crops), and a zero `height`, `max-height`, `width` or `max-width`. The control's own rules
+     that reach inside it (a descendant, child or sibling step, such as `&:hover [data-checkout-demo-badge]`)
+     lose the same declarations, and no style or rule inside a shop control, or on it, keeps `!important`.
    - Their tag is their spec's (a `div`, or a `span` inside the pay button), never a void tag, a template or
      anything else.
-   - As it renders, the island forces each one visible against anything left (a site head item, an inherited
-     value): on the part and every wrapper up to the control, a computed `display: none`, a `visibility`
-     other than visible, an `opacity` under 1 or `content-visibility: hidden` is overridden inline with
-     `!important`, and on the part itself a `clip-path`, `transform` or `filter` and a font size under 11
-     pixels.
+   - Each control draws one platform rule for these parts: shown (a block, or inline for the pay wording),
+     visible and opaque, with `!important`, which no stored rule can outweigh since none carries it.
+   - As it renders, the island pins each part visible inline with `!important`: its display (as computed,
+     or block), visibility and opacity, which outweighs any rule on the page, also one that only applies
+     later, such as a hover rule on an outer wrapper. On every wrapper up to the control, a computed
+     `display: none`, a `visibility` other than visible, an `opacity` under 1, `content-visibility: hidden`
+     or an overflow that crops the part is overridden the same way, and on the part itself a `clip-path`,
+     `transform` or `filter` and a font size under 11 pixels.
+   - The checkout button and the pay button hold their own parts only: anything else put inside them is
+     dropped by the normaliser and ignored by the island, so no extra text joins the fixed wording.
    What stays possible: a designer can make one hard to read with colours, or place it off screen with
    positioning. The demo notice and the payment reference keep the platform's text in the site language
    whatever is stored. The checkout has no consent checkbox today (the only checkbox is the demo decline
@@ -78,7 +85,8 @@ assistive technology what an element is), AI (the page generator).
 6. **All visible strings are part text, with tokens.** Part text may hold `{total}`, `{orderNumber}`,
    `{email}`, `{message}` and the like, which the island fills. The canvas shows them filled with sample
    values and shows the raw text while it is typed. An emptied required label falls back to its default, so
-   an input always has a name, and a text that drops a token it must keep falls back to its default too:
+   an input always has a label, and a text that drops a token it must keep (in formatted text, a token must
+   sit whole in one run, as tokens are filled run by run) falls back to its default too:
    `{total}` on the total, `{orderNumber}` on the confirmation and the paid thank-you. Messages the server or
    the browser writes (a refusal, a decline reason, a network error) arrive as they are inside `{message}`;
    the checkout's own wrappers around them are in the site language.
@@ -92,7 +100,9 @@ assistive technology what an element is), AI (the page generator).
    parts may be div, span, p, h1 to h6, strong, em, b, i, small, section, article, header, footer or aside,
    never a void tag, template, noscript, dialog, a link, a form or a frame. Any node inside a control that is
    a `form` renders as a `div`, and no node there keeps `action`, `formaction`, `method`, `target` or
-   `enctype`, so a retyped part cannot post the buyer's name, email and address anywhere.
+   `enctype`, so a retyped part cannot post the buyer's name, email and address anywhere. Input parts carry
+   no `name` (the island sends the order from its own state), so even a form the page wraps around the
+   control has nothing of the buyer's to post.
 6b. **Labelled fields.** Each buyer input gets an id from the island and points at its label text
    (`aria-labelledby`); the field's `label` points at the input (`for`). Label, fieldset and legend tags are
    fixed.

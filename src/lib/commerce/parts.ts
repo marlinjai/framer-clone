@@ -79,6 +79,8 @@ export interface ShopPartSpec {
   requiredTokens?: readonly string[];
   /** Why the text is fixed, said in the properties panel. */
   fixedReason?: string;
+  /** Holds its own parts only: anything else put inside it is dropped (a button whose wording is fixed). */
+  onlyParts?: true;
 }
 
 /** One state a control can be previewed in on the canvas. */
@@ -162,6 +164,7 @@ const CHECKOUT_PARTS: readonly ShopPartSpec[] = [
     label: 'Checkout button',
     tag: 'button',
     required: true,
+    onlyParts: true,
     style: PRIMARY_BUTTON,
     rules: BUTTON_RULES(),
     children: [
@@ -271,6 +274,7 @@ const CHECKOUT_PARTS: readonly ShopPartSpec[] = [
             label: 'Pay button',
             tag: 'button',
             required: true,
+            onlyParts: true,
             style: { ...PRIMARY_BUTTON, border: '1px solid #065f46', backgroundColor: '#065f46' },
             rules: BUTTON_RULES(),
             children: [
@@ -508,6 +512,26 @@ export const CHECKOUT_CONTROL_STYLE: Readonly<Record<string, unknown>> = {
   padding: '4px',
 };
 
+/**
+ * The platform's own rule for every part kept in sight, which each control draws
+ * once: shown, visible and opaque, with `!important`. No designer rule can carry
+ * `!important` (the normaliser strips it), so none outweighs this, wherever it
+ * sits on the page. A span stays inline; anything else is a block.
+ */
+export function shopGuardCss(): string {
+  const kept: ShopPartSpec[] = [];
+  const visit = (specs: readonly ShopPartSpec[]) => {
+    for (const spec of specs) {
+      if (spec.keepVisible) kept.push(spec);
+      if (spec.children) visit(spec.children);
+    }
+  };
+  for (const kind of SHOP_CONTROL_KINDS) visit(SHOP_CONTROLS[kind].parts);
+  return kept
+    .map((spec) => `[${SHOP_PART_ATTR}="${spec.role}"]{display:${spec.tag === 'span' ? 'inline' : 'block'}!important;visibility:visible!important;opacity:1!important}`)
+    .join('');
+}
+
 // ---------------------------------------------------------------------------
 // Lookups
 // ---------------------------------------------------------------------------
@@ -562,7 +586,9 @@ export function shopPartText(role: string, stored: unknown, locale: ShopLocale):
   if (spec.fixedText) return spec.fixedText[locale];
   const plain = typeof stored === 'string' ? stored : isFormattedText(stored) ? formattedPlainText(stored) : '';
   // A text that drops a required token (the total, the order number) is not shown: the default is.
-  const keepsTokens = (spec.requiredTokens ?? []).every((token) => plain.includes(`{${token}}`));
+  // In formatted text a token must sit whole in one run, since tokens are filled run by run.
+  const pieces = typeof stored === 'string' ? [stored] : isFormattedText(stored) ? (stored as { runs: { text: string }[] }).runs.map((run) => run.text) : [];
+  const keepsTokens = (spec.requiredTokens ?? []).every((token) => pieces.some((piece) => piece.includes(`{${token}}`)));
   if (plain.trim().length > 0 && keepsTokens) return stored;
   return spec.text?.[locale];
 }
@@ -759,6 +785,10 @@ const HIDING_VALUES: Readonly<Record<string, (value: string) => boolean>> = {
     const relative = /^(\d*\.?\d+)(r?em)$/.exec(value);
     return relative ? Number(relative[1]) < 0.65 : true;
   },
+  // A wrapper that crops (a 1px box with its overflow hidden) hides as surely as display: none.
+  overflow: (value) => value !== 'visible',
+  overflowX: (value) => value !== 'visible',
+  overflowY: (value) => value !== 'visible',
   height: (value) => /^0(\.0+)?(px|r?em|%)?$/.test(value),
   maxHeight: (value) => /^0(\.0+)?(px|r?em|%)?$/.test(value),
   width: (value) => /^0(\.0+)?(px|r?em|%)?$/.test(value),
@@ -796,6 +826,54 @@ function inSight(node: ShopTreeNode): ShopTreeNode {
   return { ...node, props };
 }
 
+/** A style value with `!important` removed: nothing a designer stores outweighs the platform's own guard rule. */
+function withoutImportant(style: unknown): unknown {
+  if (!isRecord(style)) return style;
+  let changed = false;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(style)) {
+    const next = typeof value === 'string' && /!\s*important/i.test(value)
+      ? value.replace(/\s*!\s*important\s*/gi, '').trim()
+      : isRecord(value)
+        ? withoutImportant(value)
+        : value;
+    if (next !== value) changed = true;
+    out[key] = next;
+  }
+  return changed ? out : style;
+}
+
+/** A node's style and rules with no `!important` anywhere. */
+function notImportant(node: ShopTreeNode): ShopTreeNode {
+  const props = node.props;
+  if (!props) return node;
+  const style = withoutImportant(props.style);
+  const rules = Array.isArray(props.rules)
+    ? (props.rules as unknown[]).map((rule) => (isRecord(rule) && isRecord(rule.style) ? { ...rule, style: withoutImportant(rule.style) } : rule))
+    : props.rules;
+  const rulesChanged = Array.isArray(props.rules) && (rules as unknown[]).some((rule, index) => rule !== (props.rules as unknown[])[index] && !sameJson(rule, (props.rules as unknown[])[index]));
+  if (style === props.style && !rulesChanged) return node;
+  return { ...node, props: { ...props, style, ...(rulesChanged ? { rules } : {}) } };
+}
+
+/** Whether a rule's selector reaches past its node (a descendant, child or sibling step). */
+function reachesInside(rule: Record<string, unknown>): boolean {
+  return typeof rule.selector === 'string' && /[\s>~+]/.test(rule.selector.replace(/^&/, '').replace(/\([^)]*\)/g, ''));
+}
+
+/**
+ * The control's own rules that reach inside it lose their hiding declarations when
+ * it holds a part kept in sight: a hover rule on the control that reaches the demo notice and hides it.
+ */
+function controlInSight(control: ShopTreeNode): ShopTreeNode {
+  const props = control.props;
+  if (!props || !Array.isArray(props.rules) || !holdsKeptPart(control)) return control;
+  const rules = (props.rules as unknown[]).map((rule) =>
+    isRecord(rule) && isRecord(rule.style) && reachesInside(rule) ? { ...rule, style: withoutHidingStyle(rule.style) } : rule,
+  );
+  return sameJson(rules, props.rules) ? control : { ...control, props: { ...props, rules } };
+}
+
 /** A node inside a shop control that cannot send anything: never a form, never a form override. */
 function notSending(node: ShopTreeNode): ShopTreeNode {
   const props = node.props ?? {};
@@ -822,13 +900,20 @@ function holdsKeptPart(node: ShopTreeNode): boolean {
  * nothing that hides it, a role used twice kept only by its first part, and no
  * node able to send anything. The same object when nothing changes.
  */
-function enforceParts(control: ShopTreeNode): ShopTreeNode {
+function enforceParts(input: ShopTreeNode): ShopTreeNode {
+  const control = notImportant(controlInSight(input));
   const seen = new Set<string>();
-  const visit = (node: ShopTreeNode): ShopTreeNode => {
+  const visit = (node: ShopTreeNode, inRepeat: boolean): ShopTreeNode => {
     let changed = false;
-    const children = node.children?.map((child) => {
+    const nodeRole = shopPartRoleOf(node.props);
+    // A button whose words are fixed holds its own parts only: a stray text beside
+    // them would undo the wording (the button solution).
+    const onlyParts = !!(nodeRole && shopPartSpec(nodeRole)?.onlyParts);
+    const kept = onlyParts ? node.children?.filter((child) => shopPartRoleOf(child.props) !== undefined) : node.children;
+    if (kept !== node.children && kept?.length !== node.children?.length) changed = true;
+    const children = kept?.map((child) => {
       if (shopControlKindOf(child.props)) return child;
-      let next = notSending(child);
+      let next = notImportant(notSending(child));
       let role = shopPartRoleOf(next.props);
       if (role && seen.has(role)) {
         // A second copy of a role (a paste, a duplicate, an outside write) is a plain node.
@@ -838,8 +923,16 @@ function enforceParts(control: ShopTreeNode): ShopTreeNode {
         role = undefined;
       }
       if (role) seen.add(role);
-      next = visit(next);
       const spec = role ? shopPartSpec(role) : undefined;
+      // Inside a repeated part every copy carries the same nodes: an id of the
+      // designer's would repeat on the page, so it goes.
+      const repeated = inRepeat || !!spec?.repeat;
+      if (repeated && next.props && 'id' in next.props) {
+        const props = { ...next.props };
+        delete props.id;
+        next = { ...next, props };
+      }
+      next = visit(next, repeated);
       if (spec && role) {
         const tag = shopPartTag(role, next.type);
         if (tag !== next.type) next = { ...next, type: tag };
@@ -852,7 +945,7 @@ function enforceParts(control: ShopTreeNode): ShopTreeNode {
     });
     return changed ? { ...node, children } : node;
   };
-  return visit(control);
+  return visit(control, false);
 }
 
 /** A part whose text is the platform's stores none. */
