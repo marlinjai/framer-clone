@@ -16,6 +16,7 @@
 // the component schema (which evolves independently in ComponentModel).
 
 import { withDefaultViewports } from '@/lib/canvas/defaultViewports';
+import { componentsWithShopParts, pageWithShopParts } from '@/lib/commerce/parts';
 import { getSnapshot, isStateTreeNode } from 'mobx-state-tree';
 import type {
   ProjectModelType,
@@ -224,6 +225,7 @@ export interface SiteRowData {
  */
 export function persistedToProjectSnapshot(row: SiteRowData): ProjectSnapshotIn {
   const pages: Record<string, PageSnapshotIn> = {};
+  const siteSettings = normalizeSiteSettings(row.siteSettings);
   for (const page of row.pages) {
     // The stored snapshot IS a PageModel SnapshotOut, which is structurally a
     // valid SnapshotIn. Cast at this single boundary; the round-trip test
@@ -232,7 +234,10 @@ export function persistedToProjectSnapshot(row: SiteRowData): ProjectSnapshotIn 
     // dashboard before the create route gave the home page any) gets the
     // three default frames on load, so the editor canvas and Preview can show
     // it; the next Save stores them.
-    pages[page.pageId] = withDefaultViewports(page.snapshot as PageSnapshotIn);
+    // A shop control saved before its parts were nodes gets them here, in the site
+    // language (src/lib/commerce/parts.ts), so the editor can design them; the next
+    // Save stores them. Deterministic ids keep a reload comparing equal.
+    pages[page.pageId] = pageWithShopParts(withDefaultViewports(page.snapshot as PageSnapshotIn), siteSettings.language);
   }
 
   const hasBinding =
@@ -254,8 +259,9 @@ export function persistedToProjectSnapshot(row: SiteRowData): ProjectSnapshotIn 
       erasureEpoch: row.erasureEpoch ?? 0,
     },
     pages,
-    siteSettings: normalizeSiteSettings(row.siteSettings),
-    components: (row.components ?? {}) as ProjectSnapshotIn['components'],
+    siteSettings,
+    // A reusable component's page gets its shop parts the same way a page does.
+    components: componentsWithShopParts(row.components ?? {}, siteSettings.language) as ProjectSnapshotIn['components'],
   };
 
   if (hasBinding) {

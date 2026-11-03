@@ -38,6 +38,8 @@ import { isStickyCta } from '@/lib/stickyCta/stickyCta';
 import { createStickyCtaElement } from '../stickyCta/stickyCtaElement';
 import { isMapEmbed, MAP_EMBED_PROP_KEYS, stripMapEmbedProps } from '@/lib/mapEmbed/mapEmbed';
 import MapEmbedIsland from '../mapEmbed/MapEmbedIsland';
+import { shopPartRoleOf } from '@/lib/commerce/parts';
+import { ShopPartElement } from '@/lib/commerce/shopRuntime';
 
 /** The four interactive commerce kinds emitted as client islands (never baked
  *  server-side). Mirrors INTERACTIVE_COMMERCE_KINDS in hydrateBindings. */
@@ -158,6 +160,13 @@ export function renderNodeChildren(
   return ownTextThenChildren((node.props as any)?.children, rendered, createRunElement, !inLink) as React.ReactNode;
 }
 
+/** A node's child nodes without its own text (a shop part draws its text itself). */
+function renderNodeChildrenOnly(node: ComponentNode, scope: BindingScope, foreign: ForeignContent, inLink: boolean): React.ReactNode {
+  const children = node.children ?? [];
+  if (children.length === 0) return undefined;
+  return children.map((child, index) => renderComponentNode(child, scope, child.id ?? index, foreign, inLink));
+}
+
 /**
  * Render one hydrated ComponentNode to a React element. `scope` is threaded to
  * any interactive island so its descendants re-resolve `{{variant.*}}` /
@@ -202,6 +211,25 @@ export function renderComponentNode(
     const source = (node.props ?? {}) as Record<string, unknown>;
     const config = Object.fromEntries(MAP_EMBED_PROP_KEYS.filter((name) => name in source).map((name) => [name, source[name]]));
     return <MapEmbedIsland key={key} domProps={stripMapEmbedProps(nodeDomProps(node))} config={config} />;
+  }
+
+  // A shop part (src/lib/commerce/parts.ts): drawn as its control's island says
+  // (shown or not, its text, its behaviour). Outside its control it draws nothing.
+  const shopRole = shopPartRoleOf(node.props);
+  if (shopRole) {
+    const partTag = resolveHtmlTag(node.type) ?? 'div';
+    return (
+      <ShopPartElement
+        key={key}
+        role={shopRole}
+        tag={partTag}
+        domProps={nodeDomProps(node)}
+        storedText={(node.props as any)?.children}
+        content={isVoidTag(partTag) ? undefined : renderNodeChildrenOnly(node, scope, contentBelow(partTag, foreign), inLink || !runLinksAllowedIn(partTag))}
+        surface="preview"
+        linksAllowed={!inLink}
+      />
+    );
   }
 
   const dataKind = (node.props as any)?.['data-component-kind'];

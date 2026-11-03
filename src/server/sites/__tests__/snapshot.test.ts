@@ -191,6 +191,47 @@ describe('persistedToProjectSnapshot -> ProjectModel round-trip', () => {
     expect(page.sortedViewportNodes.map((v) => v.label)).toEqual(['Desktop', 'Tablet', 'Mobile']);
   });
 
+  it('gives a checkout stored before shop parts its parts on load, in the site language', () => {
+    const rowData: SiteRowData = {
+      id: 'site_shop',
+      name: 'Shop',
+      description: '',
+      analyticsProjectId: null,
+      ingestionEndpoint: null,
+      apiKeyRef: null,
+      lumitraEnabled: false,
+      projectCreatedAt: new Date(0),
+      projectUpdatedAt: new Date(0),
+      siteSettings: { language: 'de' },
+      pages: [
+        {
+          pageId: 'home',
+          snapshot: {
+            id: 'home',
+            slug: '',
+            metadata: { title: 'Shop', description: '' },
+            appComponentTree: {
+              id: 'root',
+              type: 'div',
+              componentType: 'host',
+              props: {},
+              children: [{ id: 'co', type: 'div', componentType: 'host', props: { 'data-component-kind': 'checkout-button', label: 'Kaufen' } }],
+            },
+            canvasNodes: {},
+          },
+        },
+      ],
+    };
+    const first = persistedToProjectSnapshot(rowData);
+    const checkout = ProjectModel.create(first).getPage('home')!.findComponent('co')!;
+    expect(checkout.props.label).toBeUndefined();
+    const label = checkout.children[0].children.find((c: { props: Record<string, unknown> }) => c.props['data-shop-part'] === 'checkout.button-label');
+    expect(label.props.children).toBe('Kaufen');
+    expect(checkout.children.find((c: { props: Record<string, unknown> }) => c.props['data-shop-part'] === 'checkout.payment').label).toBe('Payment step');
+    // The same row loads to the same ids, so a reload compares equal.
+    expect(persistedToProjectSnapshot(rowData).pages).toEqual(first.pages);
+  });
+
   it('loads a site with no analytics binding with the default empty block', () => {
     const original = makeProjectWithPages(); // no lumitra calls
     const persisted = projectToPersisted(original);

@@ -38,6 +38,7 @@ import { expandPage, literalPageRoots, type PageExpansion } from '@/lib/componen
 import { extractBreakpoints, type ComponentSnapshotLike } from '@/lib/renderer/server/componentSnapshot';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { getComponentEntry } from '@/lib/componentRegistry';
+import { CLOSED_SHOP_PART_MESSAGE, REQUIRED_SHOP_PART_MESSAGE, buildShopParts, shopPartRefusal, holdsOutsidePart, holdsRequiredShopPart, nearestShopControlId, shopControlKindOf, withoutOutsideRoles, shopLocaleOf, withShopParts, type ShopTreeNode } from '@/lib/commerce/parts';
 import type { ApplyOutcome, GenerationUndoRecord } from '@/lib/ai/pageGen/apply';
 import { isVoidTag } from '@/lib/drag/voidTags';
 import { bareTextRefusal, isTextNodeType } from '@/lib/renderer/textNode';
@@ -102,6 +103,75 @@ function projectOf(page: object): { definitions: ComponentDefinitions } | undefi
     if ('definitions' in node) return node as { definitions: ComponentDefinitions };
   }
   return undefined;
+}
+
+/** The site language of the project around a page ('en' when it has none, such as a page on its own). */
+function siteLanguageOf(page: object): string | undefined {
+  let node: object = page;
+  while (hasParent(node)) {
+    node = getParent(node);
+    if ('siteSettings' in node) return (node as { siteSettings?: { language?: string } }).siteSettings?.language;
+  }
+  return undefined;
+}
+
+/**
+ * A shop control's parts (src/lib/commerce/parts.ts) as child nodes, in the site
+ * language: a checkout arrives with its button, payment step and messages, every
+ * one of them a node the designer styles. Nothing for any other node.
+ */
+function addShopParts(page: object, control: ComponentInstance): void {
+  const kind = shopControlKindOf(control.props);
+  if (!kind) return;
+  for (const part of buildShopParts(kind, control.id, shopLocaleOf(siteLanguageOf(page)), 'snapshot')) {
+    control.addChild(ComponentModel.create(part as ComponentSnapshotIn) as ComponentInstance);
+  }
+}
+
+/**
+ * moveTreeComponent's path for a node that has to be renewed as it moves (a shop
+ * part leaving its control): the old node goes, its renewed snapshot lands at the
+ * target. Returns the new node.
+ */
+function replaceAndMove(
+  page: PageLike & { canvasNodes: { has(id: string): boolean; delete(id: string): boolean; set(id: string, node: ComponentInstance): unknown; get(id: string): ComponentInstance | undefined }; appComponentTree: unknown; updatedAt: Date },
+  component: ComponentInstance,
+  snapshot: ComponentSnapshotIn,
+  target: InsertTarget,
+  resolvedParentId: string | undefined,
+  resolvedIndex: number | undefined,
+): ComponentInstance | undefined {
+  const appTree = page.appComponentTree as ComponentInstance;
+  const previousParentId = component.parentId as string | undefined;
+  const newParent = target.kind === 'appTree' ? appTree : resolvedParentId ? findComponentInPage(page, resolvedParentId) : undefined;
+  if (target.kind !== 'floating' && !newParent) return undefined;
+  // Within the same parent, the index was already adjusted for the node leaving.
+  let index = resolvedIndex;
+  if (newParent && typeof index === 'number' && previousParentId === newParent.id) {
+    const at = newParent.children.findIndex((c: ComponentInstance) => c.id === component.id);
+    if (at !== -1 && at < index) index -= 1;
+  }
+  const previousParent = previousParentId ? findComponentInPage(page, previousParentId) : undefined;
+  if (previousParent) previousParent.removeChild(component.id);
+  else if (page.canvasNodes.has(component.id)) page.canvasNodes.delete(component.id);
+  if (target.kind === 'floating') {
+    const floating = ComponentModel.create({
+      ...snapshot,
+      parentId: undefined,
+      canvasNodeType: CanvasNodeType.FLOATING_ELEMENT,
+      canvasX: Math.round(target.x),
+      canvasY: Math.round(target.y),
+    } as ComponentSnapshotIn);
+    page.canvasNodes.set(floating.id, floating);
+    previousParent?.collapseTextChild();
+    page.updatedAt = new Date();
+    return page.canvasNodes.get(floating.id);
+  }
+  const node = ComponentModel.create({ ...snapshot, parentId: newParent!.id, canvasNodeType: CanvasNodeType.COMPONENT } as ComponentSnapshotIn);
+  newParent!.addChild(node as ComponentInstance, index);
+  if (previousParent && previousParent.id !== newParent!.id) previousParent.collapseTextChild();
+  page.updatedAt = new Date();
+  return node as ComponentInstance;
 }
 
 /** The id of the definition this page belongs to, when it is one's. */
@@ -228,6 +298,26 @@ const PageWithComponents = PageBase.props({
   canvasNodes: types.optional(types.map(ComponentModel), {}),
 });
 
+
+/** Tells the editor, when there is one, why a shop edit was refused. */
+function refuseShopEdit(self: unknown, message: string): void {
+  try {
+    getRoot<{ editorUI?: { setEditorNotice?: (notice: { kind: 'refused'; message: string }) => void } }>(self as never).editorUI?.setEditorNotice?.({ kind: 'refused', message });
+  } catch {
+    // No editor around this tree: the refusal is the answer.
+  }
+}
+
+/** The node and its ancestors, nearest first. */
+function ancestorChain(self: unknown, start: ComponentInstance | undefined): ComponentInstance[] {
+  const out: ComponentInstance[] = [];
+  for (let node = start; node && !out.includes(node); ) {
+    out.push(node);
+    const parentId = node.parentId as string | undefined;
+    node = parentId ? findComponentInPage(self as never, parentId) : undefined;
+  }
+  return out;
+}
 
 /**
  * The registry entry's default children (a Form arrives with its fields and
@@ -412,6 +502,7 @@ const PageModel = PageWithComponents
       );
       floating.setLabel(entry.label);
       addRegistryDefaultChildren(floating, entry.defaultChildren);
+      addShopParts(self, floating);
       self.canvasNodes.set(floating.id, floating);
       self.updatedAt = new Date();
       return self.canvasNodes.get(floating.id);
@@ -423,11 +514,17 @@ const PageModel = PageWithComponents
     if (!preset) {
       child.setLabel(entry.label);
       addRegistryDefaultChildren(child, entry.defaultChildren);
+      addShopParts(self, child);
     }
 
     const { parent, index } = insertPlace(self, target);
     if (isTextNodeType(parent.type) || isPlacementType(parent.type)) {
       console.warn('[PageModel] Insert target is a text node or a placement, which hold no children');
+      return undefined;
+    }
+    const refusal = shopPartRefusal(getSnapshot(child) as never, ancestorChain(self, parent));
+    if (refusal) {
+      refuseShopEdit(self, refusal);
       return undefined;
     }
 
@@ -448,6 +545,11 @@ const PageModel = PageWithComponents
     }
     const { parent, index } = insertPlace(self, target);
     const placement = createIntrinsicComponent(id, PLACEMENT_TYPE as never, { component: definitionId });
+    const refusal = shopPartRefusal(getSnapshot(placement) as never, ancestorChain(self, parent));
+    if (refusal) {
+      refuseShopEdit(self, refusal);
+      return undefined;
+    }
     parent.addChild(placement, index);
     self.updatedAt = new Date();
     return placement;
@@ -479,8 +581,10 @@ const PageModel = PageWithComponents
     const appTree = self.appComponentTree as ComponentInstance;
     const insertedIds = snapshots.map(s => s.id as string);
 
+    // A generated shop control gets its parts like a dropped one (src/lib/commerce/parts.ts).
+    const locale = shopLocaleOf(siteLanguageOf(self));
     const createAll = (parentId: string) =>
-      snapshots.map(s => ComponentModel.create({ ...s, parentId }) as ComponentInstance);
+      snapshots.map(s => ComponentModel.create(withShopParts({ ...s, parentId } as ShopTreeNode, locale, 'snapshot') as ComponentSnapshotIn) as ComponentInstance);
 
     if (mode === 'insert') {
       if (isVoidTag(target.type) || isTextNodeType(target.type) || target.props?.['data-component-kind']) {
@@ -489,6 +593,8 @@ const PageModel = PageWithComponents
       if (typeof target.props?.children === 'string') {
         return { ok: false, reason: 'The selected component holds text; select a container instead.' };
       }
+      const closed = snapshots.map((snapshot) => shopPartRefusal(snapshot as never, ancestorChain(self, target))).find(Boolean);
+      if (closed) return { ok: false, reason: closed };
       createAll(target.id).forEach(child => target.addChild(child));
       self.updatedAt = new Date();
       return { ok: true, value: { kind: 'insert', generationId, pageId: self.id, parentId: target.id, insertedIds } };
@@ -511,6 +617,18 @@ const PageModel = PageWithComponents
     if (!parent) {
       return { ok: false, reason: 'Only components inside the page can be replaced; select one in a breakpoint frame.' };
     }
+    // Replacing a required shop part (or a wrapper holding one) would remove it.
+    const targetAncestors: ComponentInstance[] = [];
+    for (let id: string | undefined = parent.id; id; ) {
+      const node = findComponentInPage(self, id);
+      if (!node || targetAncestors.includes(node)) break;
+      targetAncestors.push(node);
+      id = node.parentId as string | undefined;
+    }
+    if (holdsRequiredShopPart(target, targetAncestors)) return { ok: false, reason: REQUIRED_SHOP_PART_MESSAGE };
+    // The same placement check insert mode runs, against the parent the replacement lands in.
+    const misplaced = snapshots.map((snapshot) => shopPartRefusal(snapshot as never, targetAncestors)).find(Boolean);
+    if (misplaced) return { ok: false, reason: misplaced };
     const index = parent.children.findIndex((c: ComponentInstance) => c.id === target.id);
     const previous = getSnapshot(target) as ComponentSnapshotIn;
     parent.removeChild(target.id);
@@ -593,14 +711,27 @@ const PageModel = PageWithComponents
     };
     // A second pass, because a reference can point at a node later in the walk. An
     // element `id` something in the copy points at moves too: it would repeat otherwise.
+    // A copied part is a plain node: a second pay button that also pays, under the
+    // first one's role, would be two parts with one role (src/lib/commerce/parts.ts).
+    // A copied control keeps its parts.
     const withFreshIds = (snap: ComponentSnapshotIn, parentId: string | undefined): ComponentSnapshotIn =>
-      renewCopyIds(remapBehaviourRefs(renewIds(snap, parentId), freshIds), uuidv4().slice(0, 8));
+      withoutOutsideRoles(
+        renewCopyIds(remapBehaviourRefs(renewIds(snap, parentId), freshIds), uuidv4().slice(0, 8)) as ShopTreeNode,
+        (id) => id,
+      ) as ComponentSnapshotIn;
 
     if (component.hasParent && component.parentId) {
       const parent = findComponentInPage(self, component.parentId);
       if (!parent) return undefined;
       const index = parent.children.findIndex((c: ComponentInstance) => c.id === component.id);
-      const copy = ComponentModel.create(withFreshIds(getSnapshot(component) as ComponentSnapshotIn, parent.id));
+      const copySnapshot = withFreshIds(getSnapshot(component) as ComponentSnapshotIn, parent.id);
+      // A copy inside the pay button or a notice would be dropped on the next load: say so now.
+      const refusal = shopPartRefusal(copySnapshot as never, ancestorChain(self, parent));
+      if (refusal) {
+        refuseShopEdit(self, refusal);
+        return undefined;
+      }
+      const copy = ComponentModel.create(copySnapshot);
       parent.addChild(copy, index + 1);
       self.updatedAt = new Date();
       return copy;
@@ -632,6 +763,27 @@ const PageModel = PageWithComponents
     // Never destroy the app tree root or a viewport node via this action.
     const appTree = self.appComponentTree as ComponentInstance;
     if (component.id === appTree.id || component.isViewportNode) {
+      return false;
+    }
+
+    // A required part of a shop control (or a wrapper holding one) stays: the
+    // control cannot work without it. It can be restyled, or the whole control deleted.
+    const ancestors: ComponentInstance[] = [];
+    for (let parentId = component.parentId as string | undefined; parentId; ) {
+      const ancestor = findComponentInPage(self, parentId);
+      if (!ancestor || ancestors.includes(ancestor)) break;
+      ancestors.push(ancestor);
+      parentId = ancestor.parentId as string | undefined;
+    }
+    if (holdsRequiredShopPart(component, ancestors)) {
+      try {
+        getRoot<{ editorUI?: { setEditorNotice?: (notice: { kind: 'refused'; message: string }) => void } }>(self).editorUI?.setEditorNotice?.({
+          kind: 'refused',
+          message: REQUIRED_SHOP_PART_MESSAGE,
+        });
+      } catch {
+        // No editor around this tree: the refusal is the answer.
+      }
       return false;
     }
 
@@ -730,6 +882,62 @@ const PageModel = PageWithComponents
         if (currentIdx !== -1 && currentIdx < resolvedIndex) {
           resolvedIndex -= 1;
         }
+      }
+    }
+
+    // A part moved inside its own control stays in the place its spec gives it (among
+    // its siblings, never into another part): the normaliser would take its role away
+    // there and put the default back, so the editor refuses the move and says why.
+    {
+      const chain = (startId: string | undefined): ComponentInstance[] => {
+        const out: ComponentInstance[] = [];
+        for (let id = startId; id; ) {
+          const node = findComponentInPage(self, id);
+          if (!node || out.includes(node)) break;
+          out.push(node);
+          id = node.parentId as string | undefined;
+        }
+        return out;
+      };
+      const newParentId = target.kind === 'appTree' ? appTree.id : target.kind === 'floating' ? undefined : resolvedParentId;
+      const toAncestors = chain(newParentId);
+      const sameControl = nearestShopControlId(chain(component.parentId as string | undefined)) === nearestShopControlId(toAncestors);
+      // A plain node dropped into the pay button or a notice is refused the same way.
+      const refusal = shopPartRefusal(component, toAncestors);
+      if (refusal && (sameControl || refusal === CLOSED_SHOP_PART_MESSAGE)) {
+        refuseShopEdit(self, refusal);
+        return undefined;
+      }
+    }
+
+    // A part that lands outside the control it belongs to (out of any control, or in
+    // another one) becomes a plain node with a fresh id: its role would mean nothing
+    // there, and its id is the one its control gives the part it puts back on the
+    // next load (src/lib/commerce/parts.ts).
+    if (holdsOutsidePart(component)) {
+      const ancestorsOf = (startId: string | undefined): ComponentInstance[] => {
+        const out: ComponentInstance[] = [];
+        for (let id = startId; id; ) {
+          const node = findComponentInPage(self, id);
+          if (!node || out.includes(node)) break;
+          out.push(node);
+          id = node.parentId as string | undefined;
+        }
+        return out;
+      };
+      const newParentId = target.kind === 'appTree' ? appTree.id : target.kind === 'floating' ? undefined : resolvedParentId;
+      const from = nearestShopControlId(ancestorsOf(component.parentId as string | undefined));
+      const to = nearestShopControlId(ancestorsOf(newParentId));
+      if (from !== to) {
+        const fresh = withoutOutsideRoles(getSnapshot(component) as unknown as ShopTreeNode, (id) => `${id}-${uuidv4().slice(0, 8)}`);
+        // The refusal ran above on the node with its roles; what lands is the stripped node, which a
+        // part that takes its own parts only (the pay button) refuses like any other plain node.
+        const landing = shopPartRefusal(fresh, ancestorsOf(newParentId));
+        if (landing === CLOSED_SHOP_PART_MESSAGE) {
+          refuseShopEdit(self, landing);
+          return undefined;
+        }
+        return replaceAndMove(self, component, fresh as unknown as ComponentSnapshotIn, target, resolvedParentId, resolvedIndex);
       }
     }
 

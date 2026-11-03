@@ -28,6 +28,7 @@
 //
 // Pure apart from the injected photo resolver; client-safe.
 
+import { SHOP_PART_ATTR } from '@/lib/commerce/parts';
 import { getSnapshot, recordPatches } from 'mobx-state-tree';
 import ProjectModel, { type ProjectModelType } from '@/models/ProjectModel';
 import type { PageModelType, InsertTarget } from '@/models/PageModel';
@@ -57,6 +58,9 @@ const SHAPE_KEEPING_WARNING = 'node had text and children, text moved into a lea
 /** Props setProps leaves to their own operations (or to nobody). */
 const PROPS_NOT_SET_HERE: ReadonlySet<string> = new Set([
   'style', 'children', 'rules', 'behaviour', 'effects', 'query', 'bindings', 'instance', 'component',
+  // A shop part's role is the platform's (src/lib/commerce/parts.ts): set by the
+  // control, never added, changed or removed by hand.
+  SHOP_PART_ATTR,
 ]);
 
 export interface ApplyDeps {
@@ -307,12 +311,15 @@ export async function applyOperations(
     recorder.undo();
   };
 
+  // A shop part that leaves its control lands under a new id; the id it had stays good for
+  // the rest of the batch, so a later operation need not know the new one.
+  const renewed: Record<string, string> = {};
   const resolveId = (raw: string): string => {
-    if (!raw.startsWith(REF_PREFIX)) return raw;
+    if (!raw.startsWith(REF_PREFIX)) return renewed[raw] ?? raw;
     const name = raw.slice(REF_PREFIX.length);
     const id = created[name];
     if (!id) throw new OpRefused(`${JSON.stringify(raw)} names no ref an earlier operation of this batch created`);
-    return id;
+    return renewed[id] ?? id;
   };
   const claimRef = (ref: string | undefined, id: string): void => {
     if (ref === undefined) return;
@@ -555,8 +562,13 @@ export async function applyOperations(
         if (refusal) throw new OpRefused(refusal);
         const moved = page.moveTreeComponent(node.id, target);
         if (!moved) throw new OpRefused('the node cannot move there (the page root, a frame, or into itself)');
-        touched.push({ page, nodeId: node.id });
-        return `moved ${node.id}`;
+        // A shop part leaving its control lands renewed, under a new id: the old id (and every id that led to it) now names the new node.
+        if (moved.id !== node.id) {
+          for (const [from, to] of Object.entries(renewed)) if (to === node.id) renewed[from] = moved.id;
+          renewed[node.id] = moved.id;
+        }
+        touched.push({ page, nodeId: moved.id });
+        return moved.id === node.id ? `moved ${node.id}` : `moved ${node.id}, now a plain node ${moved.id} outside its shop control`;
       }
 
       case 'removeNode': {

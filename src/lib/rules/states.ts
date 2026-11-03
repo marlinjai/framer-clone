@@ -33,11 +33,23 @@ export const NAMED_STATES: readonly NamedState[] = [
   { id: 'pressed', label: 'Pressed', selector: '&:active', implies: ['hover'] },
 ];
 
+/**
+ * Control states a page sets on an element (a shop control's button while it is
+ * disabled or working), named in the panel when stored as a plain rule. They are
+ * not named states: nothing previews them on the canvas but the control's own
+ * state picker (src/lib/commerce/parts.ts).
+ */
+const CONTROL_STATE_LABELS: Readonly<Record<string, string>> = {
+  '&:disabled': 'Disabled',
+  '&[aria-busy="true"]': 'Loading',
+};
+
 /** The name a rule goes by in the panel: its state, its selector, or its condition when it applies to the node itself. */
 export function ruleLabel(rule: StoredRule): string {
   if (isDefinitionRule(rule)) return rule.define;
   const state = namedStateOf(rule);
   if (state) return state.label;
+  if ((rule.at ?? []).length === 0 && Object.hasOwn(CONTROL_STATE_LABELS, rule.selector)) return CONTROL_STATE_LABELS[rule.selector];
   const condition = (rule.at ?? []).join(' ');
   if (rule.selector === '&' && condition) return condition;
   return condition ? `${condition} ${rule.selector}` : rule.selector;

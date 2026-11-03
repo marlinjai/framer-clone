@@ -13,6 +13,7 @@ import type { PageModelType } from '@/models/PageModel';
 import { defaultViewportSnapshots } from '@/lib/canvas/defaultViewports';
 import { applyOperations } from '../applyOps';
 import { keyedBreakpoints } from '../breakpoints';
+import { pageWithShopParts, shopPartRoleOf } from '@/lib/commerce/parts';
 
 function makeProject(): ProjectModelType {
   return ProjectModel.create({
@@ -194,6 +195,11 @@ describe('applyOperations: refusals write nothing', () => {
     expect((await refused([{ op: 'setProps', nodeId: 'link', props: { style: 'color:red' } }]))[0].reason).toMatch(/style is not set/);
   });
 
+  it("refuses setting or removing a shop part's role marker", async () => {
+    expect((await refused([{ op: 'setProps', nodeId: 'link', props: { 'data-shop-part': 'checkout.pay' } }]))[0].reason).toMatch(/data-shop-part is not set/);
+    expect((await refused([{ op: 'setProps', nodeId: 'link', props: { 'data-shop-part': null } }]))[0].reason).toMatch(/data-shop-part is not set/);
+  });
+
   it('rejects an unsafe style value and a style key the editor does not know', async () => {
     expect((await refused([{ op: 'updateStyle', nodeId: 'hero', property: 'color', value: 'red; background:url(x)' }]))[0].reason).toBeTruthy();
     expect((await refused([{ op: 'updateStyle', nodeId: 'hero', property: 'behavior', value: 'x' }]))[0].reason).toMatch(/not supported/);
@@ -257,3 +263,36 @@ describe('applyOperations: refusals write nothing', () => {
     expect(rejected[0].index).toBe(1);
   });
 });
+
+describe('applyOperations: a shop part moved out of its control', () => {
+  it('keeps answering to the id it had, for the rest of the batch', async () => {
+    const project = makeProject();
+    const page = home(project);
+    const snapshot = JSON.parse(JSON.stringify(getSnapshot(page)));
+    snapshot.appComponentTree.children.push({
+      id: 'shop',
+      type: 'div',
+      componentType: 'host',
+      parentId: 'root',
+      props: { 'data-component-kind': 'checkout-button' },
+      children: [],
+    });
+    const repaired = pageWithShopParts(snapshot, 'en');
+    const withParts = ProjectModel.create({
+      id: 'site-2',
+      metadata: { title: 'Shop', description: '', createdAt: 1, updatedAt: 1 },
+      pages: { home: repaired },
+    });
+    const shop = home(withParts).findComponent('shop') as ComponentInstance;
+    const decline = flatten(shop).find((node) => shopPartRoleOf(node.props) === 'checkout.decline')!;
+    const outcome = await run(withParts, [
+      { op: 'moveNode', nodeId: decline.id, to: { parentId: 'root' } },
+      { op: 'setProps', nodeId: decline.id, props: { title: 'Moved' } },
+    ]);
+    expect(outcome.ok).toBe(true);
+  });
+});
+
+function flatten(node: ComponentInstance): ComponentInstance[] {
+  return [node, ...node.children.flatMap((child: ComponentInstance) => flatten(child))];
+}

@@ -41,6 +41,7 @@ import { getHistoryStore } from '@/stores/RootStore';
 import { takeStashedDemoProject } from '@/lib/projects/demoStash';
 import { withDefaultViewports } from '@/lib/canvas/defaultViewports';
 import { normalizeSiteSettings } from '@/lib/site/siteSettings';
+import { componentsWithShopParts, pageWithShopParts } from '@/lib/commerce/parts';
 
 export interface OpenedProject {
   project: ProjectModelType | undefined;
@@ -96,11 +97,11 @@ function stableJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
-/** The content compared: every page, as the server would store it. */
-function pagesContent(pages: unknown): string {
+/** The content compared: every page, as the server's load path repairs it (frames, shop parts). */
+function pagesContent(pages: unknown, language: string): string {
   const repaired: Record<string, unknown> = {};
   for (const [id, page] of Object.entries((pages ?? {}) as Record<string, object>)) {
-    repaired[id] = withDefaultViewports(page as { id?: unknown; canvasNodes?: unknown });
+    repaired[id] = pageWithShopParts(withDefaultViewports(page as { id?: unknown; canvasNodes?: unknown }), language);
   }
   return stableJson(repaired);
 }
@@ -113,11 +114,11 @@ interface VersionContent {
 }
 
 function versionContent({ pages, components, siteSettings }: ProjectContent): VersionContent {
-  const definitions = Object.entries((components ?? {}) as Record<string, unknown>);
+  const definitions = Object.entries(componentsWithShopParts((components ?? {}) as Record<string, unknown>, normalizeSiteSettings(siteSettings).language));
   // Normalized, as the server stores it, so a database round trip compares equal.
   const settings = normalizeSiteSettings(siteSettings);
   return {
-    pages: pagesContent(pages),
+    pages: pagesContent(pages, settings.language),
     components: Object.fromEntries(definitions.map(([id, definition]) => [id, stableJson(definition)])),
     site: { theme: stableJson(settings.theme), head: stableJson(settings.head) },
   };

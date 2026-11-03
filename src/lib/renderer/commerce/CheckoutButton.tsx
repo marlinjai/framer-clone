@@ -35,6 +35,15 @@
 //   - a shop that cannot take payments yet (a 503 payments_unavailable, at PLACE or from the pay route: its
 //     Books cannot issue the receipt): the shop's message, that nothing was charged, and no retry offered as
 //     the fix. At PLACE nothing was ordered; at pay the order keeps waiting.
+//
+// What the visitor sees is designed in the editor (docs/plans/2026-11-02-designable-shop-controls.md):
+// every button, label, input and message is a child node of the control with a
+// role marker (src/lib/commerce/parts.ts). This file owns the behaviour; the
+// parts only look and read. `checkoutPart` answers, for one state, what each part
+// does, and serves both the live control and the canvas, which previews any state
+// with sample data (CheckoutCanvas). A part missing from the tree (a page saved
+// before parts, a part moved out of the control) is drawn from its default, so
+// the buyer fields, the pay button and the demo notice are always there.
 'use client';
 
 import React from 'react';
@@ -43,6 +52,14 @@ import type { ComponentInstance } from '@/models/ComponentModel';
 import type { BindingScope } from '@/lib/bindings/resolver/scope';
 import { useCart, useCheckoutUnavailableReason, type CartLine } from '@/lib/commerce/cart';
 import { getPaymentGateway, type CheckoutBuyer, type PaymentGateway, type RefusedBuyerField } from '@/lib/commerce/payment';
+import { CHECKOUT_BUYER_FIELDS, CHECKOUT_PREVIEW_STATES, missingShopParts, normalizeShopControl, shopGuardCss, type CheckoutPreviewStateId, type ShopLocale, type ShopTreeNode } from '@/lib/commerce/parts';
+
+/** Constant text: built from the spec, never from stored data, and never holding a `<`. */
+const SHOP_GUARD_CSS = shopGuardCss();
+import { ShopDesignContext, ShopLocaleContext, ShopRuntimeContext, type ShopPartRender, type ShopRuntime } from '@/lib/commerce/shopRuntime';
+import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
+import { renderNodeChildren } from '@/lib/renderer/server/renderComponentNode';
+import { createScope } from '@/lib/bindings/resolver/scope';
 
 /** A single per-line shortage, in the client's variant vocabulary. */
 export interface CheckoutShortage {
@@ -94,12 +111,15 @@ type CheckoutState =
   | { status: 'idle' }
   | { status: 'placing' }
   | { status: 'shortage'; shortages: CheckoutShortage[] }
-  | { status: 'order_error'; message: string }
+  /** `items_unavailable`: the cart names an item no longer sold (its own part); `failed`: anything else. */
+  | { status: 'order_error'; reason: 'items_unavailable' | 'failed'; message: string }
   | {
       status: 'payment';
       order: PlacedOrder;
       simulateDecline: boolean;
       paying: boolean;
+      /** Pay was pressed before the receipt's fields were filled in. Not a failed payment. */
+      buyerMissing: boolean;
       /** Last decline/fault message for the payment step, or null. */
       paymentError: string | null;
       /** Why the shop cannot invoice this buyer (the server's words), or null. Not a failed payment. */
@@ -120,19 +140,19 @@ const EMPTY_BUYER: CheckoutBuyer = {
   country: 'DE',
 };
 
-/** The buyer fields the receipt needs, with their labels, in form order. */
-const BUYER_FIELDS: Array<{ key: keyof CheckoutBuyer; label: string; type?: string; autoComplete: string }> = [
-  { key: 'name', label: 'Full name', autoComplete: 'name' },
-  { key: 'email', label: 'Email', type: 'email', autoComplete: 'email' },
-  { key: 'addressLine1', label: 'Street and number', autoComplete: 'address-line1' },
-  { key: 'postalCode', label: 'Postal code', autoComplete: 'postal-code' },
-  { key: 'city', label: 'City', autoComplete: 'address-level2' },
-  { key: 'country', label: 'Country (two letters, e.g. DE)', autoComplete: 'country' },
-];
+/** How each buyer field behaves (never the designer's to change): its input type and autocomplete token. */
+const BUYER_INPUTS: Record<(typeof CHECKOUT_BUYER_FIELDS)[number]['key'], { type: string; autoComplete: string }> = {
+  name: { type: 'text', autoComplete: 'name' },
+  email: { type: 'email', autoComplete: 'email' },
+  addressLine1: { type: 'text', autoComplete: 'address-line1' },
+  postalCode: { type: 'text', autoComplete: 'postal-code' },
+  city: { type: 'text', autoComplete: 'address-level2' },
+  country: { type: 'text', autoComplete: 'country' },
+};
 
 /** Every field the receipt needs is filled in. */
 function buyerComplete(buyer: CheckoutBuyer): boolean {
-  return BUYER_FIELDS.every(({ key }) => String(buyer[key] ?? '').trim().length > 0);
+  return CHECKOUT_BUYER_FIELDS.every(({ key }) => String(buyer[key] ?? '').trim().length > 0);
 }
 
 export interface CheckoutButtonProps {
@@ -148,21 +168,20 @@ export interface CheckoutButtonProps {
    * (getPaymentGateway()), which today is the demo FakePaymentGateway.
    */
   gateway?: PaymentGateway;
-}
-
-/** Read a string node prop, falling back when absent or empty. */
-function stringProp(
-  props: Record<string, unknown> | undefined,
-  key: string,
-  fallback: string,
-): string {
-  const raw = props?.[key];
-  return typeof raw === 'string' && raw.length > 0 ? raw : fallback;
+  /**
+   * The control's child nodes, already drawn by the surface's renderer (the
+   * canvas and the editor's Preview). Absent on a published page, where the
+   * control draws its own children from `node`.
+   */
+  children?: React.ReactNode;
+  /** `canvas`: the design surface, a preview state with sample data and no behaviour. */
+  surface?: 'live' | 'canvas';
 }
 
 /** Format integer cents for DISPLAY only (the server-computed total is authoritative). */
-function formatCents(totalCents: number, currency: string): string {
-  return `${(totalCents / 100).toFixed(2)} ${currency}`;
+function formatCents(totalCents: number, currency: string, locale: ShopLocale = 'en'): string {
+  const amount = (totalCents / 100).toFixed(2);
+  return `${locale === 'de' ? amount.replace('.', ',') : amount} ${currency}`;
 }
 
 /** A stable signature for the current cart, so the idempotency key is reused for
@@ -183,31 +202,36 @@ function newIdempotencyKey(): string {
   return `order_${rand}`;
 }
 
-const DEMO_BANNER_STYLE: React.CSSProperties = {
-  marginTop: '8px',
-  padding: '6px 10px',
-  borderRadius: '6px',
-  background: '#fffbeb',
-  border: '1px solid #fde68a',
-  color: '#92400e',
-  fontFamily: 'inherit',
-  fontSize: '12px',
-  fontWeight: 600,
-};
+/** The checkout's own words inside a `{message}`: the server's and the browser's arrive as they are. */
+const MESSAGES = {
+  en: {
+    paymentsUnavailable: 'this shop cannot take payments yet. Nothing has been charged.',
+    orderFailed: (status: number) => `order failed (${status})`,
+    declined: (message: string) => `${message}. Your cart is kept: check out again to try once more.`,
+  },
+  de: {
+    paymentsUnavailable: 'dieser Shop kann noch keine Zahlungen annehmen. Es wurde nichts abgebucht.',
+    orderFailed: (status: number) => `Serverfehler (${status})`,
+    declined: (message: string) => `${message}. Ihr Warenkorb bleibt erhalten: Gehen Sie erneut zur Kasse, um es noch einmal zu versuchen.`,
+  },
+} as const;
 
-const PANEL_STYLE: React.CSSProperties = {
-  marginTop: '8px',
-  fontFamily: 'inherit',
-  fontSize: '13px',
-  color: '#111827',
-};
+const UNAVAILABLE_NOTE_STYLE: React.CSSProperties = { margin: 0, fontFamily: 'inherit', fontSize: '12px', opacity: 0.75 };
 
-function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: CheckoutButtonProps) {
+export default function CheckoutButton(props: CheckoutButtonProps) {
+  return props.surface === 'canvas' ? <CheckoutCanvas {...props} /> : <CheckoutLive {...props} />;
+}
+
+function CheckoutLive({ node, hostType = 'div', hostProps = {}, gateway, children }: CheckoutButtonProps) {
   const cart = useCart();
+  const locale = React.useContext(ShopLocaleContext);
   const unavailableReason = useCheckoutUnavailableReason();
   const [state, setState] = React.useState<CheckoutState>({ status: 'idle' });
+  // Where checkout cannot work (the editor's Preview), a press says why instead of greying the design.
+  const [noteShown, setNoteShown] = React.useState(false);
   // A page can carry several checkout buttons; each refusal is named by its own field.
   const refusalId = React.useId();
+  const messages = MESSAGES[locale];
 
   // The payment gateway is resolved once (the seam). Tests inject a fake.
   const gatewayRef = React.useRef<PaymentGateway | null>(gateway ?? null);
@@ -242,9 +266,6 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const label = stringProp(node.props as Record<string, unknown> | undefined, 'label', 'Checkout');
-  const payLabel = stringProp(node.props as Record<string, unknown> | undefined, 'payLabel', 'Pay');
-
   const idempotencyKeyFor = (signature: string): string => {
     if (attemptSignatureRef.current !== signature || !attemptKeyRef.current) {
       attemptKeyRef.current = newIdempotencyKey();
@@ -259,6 +280,7 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
       order,
       simulateDecline: false,
       paying: false,
+      buyerMissing: false,
       paymentError: null,
       refusal: null,
       // Keep what was typed when coming back to the same order.
@@ -269,7 +291,12 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
   // STEP 1: place the order (server authors money + stock). Out-of-stock and
   // faults are handled HERE, before any payment is attempted.
   const placeOrder = async () => {
-    if (cart.lines.length === 0 || unavailableReason !== null) return;
+    if (unavailableReason !== null) {
+      // No order can be placed here: say so, post nothing.
+      setNoteShown(true);
+      return;
+    }
+    if (cart.lines.length === 0) return;
     if (state.status === 'placing') return;
 
     const signature = cartSignature(cart.lines);
@@ -327,22 +354,18 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
         // ordered or reserved; the shop's own message says so. Any other 503 is a fault like the rest below.
         const error = ((await res.json().catch(() => null)) as { error?: { code?: string; message?: string } } | null)?.error;
         if (error?.code === 'payments_unavailable') {
-          setState({ status: 'order_error', message: error.message ?? 'this shop cannot take payments yet. Nothing has been charged.' });
+          setState({ status: 'order_error', reason: 'failed', message: error.message ?? messages.paymentsUnavailable });
           return;
         }
-        setState({ status: 'order_error', message: `order failed (${res.status})` });
+        setState({ status: 'order_error', reason: 'failed', message: messages.orderFailed(res.status) });
         return;
       }
 
       if (res.status === 422) {
         // An item the storefront no longer sells (unknown_variant): NOT a stock
         // shortage and NOT a server fault. Keep the cart and tell the visitor
-        // what to do next.
-        setState({
-          status: 'order_error',
-          message:
-            'some items in your cart are no longer available. Remove them and try again.',
-        });
+        // what to do next (its own part, in the shop's words).
+        setState({ status: 'order_error', reason: 'items_unavailable', message: '' });
         return;
       }
 
@@ -350,11 +373,13 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
       const text = await res.text();
       setState({
         status: 'order_error',
-        message: `order failed (${res.status})${text ? `: ${text}` : ''}`,
+        reason: 'failed',
+        message: `${messages.orderFailed(res.status)}${text ? `: ${text}` : ''}`,
       });
     } catch (err) {
       setState({
         status: 'order_error',
+        reason: 'failed',
         message: err instanceof Error ? err.message : String(err),
       });
     }
@@ -365,10 +390,10 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
     if (state.status !== 'payment' || state.paying) return;
     const { order, simulateDecline, buyer } = state;
     if (!buyerComplete(buyer)) {
-      setState({ ...state, paymentError: 'fill in your name, email and address: the receipt is made out to them' });
+      setState({ ...state, buyerMissing: true, paymentError: null });
       return;
     }
-    setState({ ...state, paying: true, paymentError: null, refusal: null });
+    setState({ ...state, paying: true, buyerMissing: false, paymentError: null, refusal: null });
 
     try {
       const result = await activeGateway.authorize({
@@ -412,10 +437,7 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
         attemptKeyRef.current = null;
         attemptSignatureRef.current = null;
         placedRef.current = null;
-        setState({
-          status: 'order_error',
-          message: `${result.message}. Your cart is kept: check out again to try once more.`,
-        });
+        setState({ status: 'order_error', reason: 'failed', message: messages.declined(result.message) });
         return;
       }
 
@@ -450,77 +472,93 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
     }
   };
 
+  const handlers: CheckoutHandlers = {
+    onPlaceOrder: placeOrder,
+    onPay: pay,
+    onToggleDecline: (next) =>
+      setState((prev) => (prev.status === 'payment' ? { ...prev, simulateDecline: next } : prev)),
+    onBuyerChange: (key, value) =>
+      setState((prev) => {
+        if (prev.status !== 'payment') return prev;
+        const buyer = { ...prev.buyer, [key]: value };
+        buyerRef.current = buyer;
+        // A refused field stands only until the visitor changes it; the refusal until none is left.
+        const fields = prev.refusal?.fields.filter((field) => field !== key) ?? [];
+        const answered = prev.refusal !== null && prev.refusal.fields.length > 0 && fields.length === 0;
+        return { ...prev, buyer, refusal: prev.refusal && !answered ? { ...prev.refusal, fields } : null };
+      }),
+    onBackToCart: () => setState({ status: 'idle' }),
+  };
+
+  const runtime = checkoutRuntime({
+    state,
+    locale,
+    cartEmpty: cart.lines.length === 0,
+    isDemo: activeGateway.isDemo && !(state.status === 'payment' && state.order.provider === 'stripe'),
+    refusalId,
+    handlers,
+  });
+
   const wrapperProps: Record<string, unknown> = { ...hostProps };
   delete wrapperProps.children;
-
-  const placing = state.status === 'placing';
-  const inPayment = state.status === 'payment';
-  const idleDisabled = placing || cart.lines.length === 0 || unavailableReason !== null;
-
-  // The primary checkout button is hidden once the payment step / confirmation is
-  // shown (the flow has moved on); the shortage/error states keep it for retry.
-  const showCheckoutButton =
-    !inPayment && state.status !== 'confirmed' && state.status !== 'redirecting' && !(state.status === 'returned' && state.outcome === 'paid');
 
   return React.createElement(
     hostType,
     wrapperProps,
-    showCheckoutButton ? (
-      <button
-        type="button"
-        data-checkout
-        disabled={idleDisabled}
-        aria-disabled={idleDisabled}
-        onClick={placeOrder}
-        style={{
-          padding: '8px 16px',
-          border: '1px solid #111827',
-          borderRadius: '6px',
-          background: idleDisabled ? '#9ca3af' : '#111827',
-          color: '#ffffff',
-          cursor: idleDisabled ? 'not-allowed' : 'pointer',
-          fontFamily: 'inherit',
-          fontSize: '14px',
-        }}
-      >
-        {placing ? 'Placing order...' : label}
-      </button>
-    ) : null,
-    unavailableReason ? (
-      <div data-checkout-unavailable style={PANEL_STYLE}>
+    <ShopRuntimeContext.Provider value={runtime}>
+      <CheckoutContent node={node} locale={locale} drawn={children} />
+    </ShopRuntimeContext.Provider>,
+    unavailableReason && noteShown ? (
+      <p data-checkout-unavailable role="status" style={UNAVAILABLE_NOTE_STYLE}>
         {unavailableReason}
-      </div>
+      </p>
     ) : null,
-    renderOutcome(state, {
-      payLabel,
-      refusalId,
-      isDemo: activeGateway.isDemo && !(state.status === 'payment' && state.order.provider === 'stripe'),
-      onPay: pay,
-      onToggleDecline: (next) =>
-        setState((prev) => (prev.status === 'payment' ? { ...prev, simulateDecline: next } : prev)),
-      onBuyerChange: (key, value) =>
-        setState((prev) => {
-          if (prev.status !== 'payment') return prev;
-          const buyer = { ...prev.buyer, [key]: value };
-          buyerRef.current = buyer;
-          // A refused field stands only until the visitor changes it; the refusal until none is left.
-          const fields = prev.refusal?.fields.filter((field) => field !== key) ?? [];
-          const answered = prev.refusal !== null && prev.refusal.fields.length > 0 && fields.length === 0;
-          return { ...prev, buyer, refusal: prev.refusal && !answered ? { ...prev.refusal, fields } : null };
-        }),
-      onBackToCart: () => setState({ status: 'idle' }),
-    }),
   );
 }
 
-interface OutcomeHandlers {
-  payLabel: string;
-  refusalId: string;
-  isDemo: boolean;
+/**
+ * The control's parts: those the surface already drew plus any required part the
+ * tree lacks, or on a published page the control's own children (completed the
+ * same way). Either way every required part is on the page.
+ */
+function CheckoutContent({ node, locale, drawn }: { node: ComponentInstance; locale: ShopLocale; drawn: React.ReactNode }) {
+  const fallback = React.useMemo(() => (drawn === undefined ? null : missingShopParts(node, locale, 'checkout-button')), [node, drawn, locale]);
+  const own = React.useMemo(
+    () => (drawn === undefined ? normalizeShopControl(node as unknown as ShopTreeNode, locale, 'node', 'checkout-button') : null),
+    [node, drawn, locale],
+  );
+  // The platform's guard rule for the parts kept in sight comes first (shopGuardCss).
+  const guard = <style data-shop-guard="" dangerouslySetInnerHTML={{ __html: SHOP_GUARD_CSS }} />;
+  if (own) return <>{guard}{renderNodeChildren(own as unknown as ComponentNode, createScope())}</>;
+  return (
+    <>
+      {guard}
+      {drawn}
+      {fallback && fallback.length > 0 ? renderNodeChildren({ type: 'div', children: fallback } as ComponentNode, createScope()) : null}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// What each part does
+// ---------------------------------------------------------------------------
+
+interface CheckoutHandlers {
+  onPlaceOrder: () => void;
   onPay: () => void;
   onToggleDecline: (next: boolean) => void;
   onBuyerChange: (key: keyof CheckoutBuyer, value: string) => void;
   onBackToCart: () => void;
+}
+
+interface CheckoutView {
+  state: CheckoutState;
+  locale: ShopLocale;
+  cartEmpty: boolean;
+  isDemo: boolean;
+  refusalId: string;
+  /** Null on the canvas: nothing there does anything, and inputs are read only. */
+  handlers: CheckoutHandlers | null;
 }
 
 /** Whether the refusal names this buyer field. */
@@ -528,196 +566,334 @@ function refused(refusal: { fields: RefusedBuyerField[] } | null, key: keyof Che
   return refusal?.fields.some((field) => field === key) ?? false;
 }
 
-/** Render the step/outcome panel (payment / confirmation / shortage / error). */
-function renderOutcome(state: CheckoutState, handlers: OutcomeHandlers): React.ReactNode {
-  if (state.status === 'payment') {
-    const { order, simulateDecline, paying, paymentError, refusal, buyer } = state;
-    const total = formatCents(order.totalCents, order.currency);
-    return (
-      <div data-checkout-payment style={PANEL_STYLE}>
-        {handlers.isDemo ? (
-          <div data-checkout-demo-badge style={DEMO_BANNER_STYLE}>
-            Demo payment. No real charge will be made.
-          </div>
-        ) : null}
-        <div data-checkout-payment-total style={{ marginTop: '8px', fontWeight: 600 }}>
-          Total to pay: {total}
-        </div>
-        <fieldset data-checkout-buyer style={{ border: 'none', margin: '8px 0 0', padding: 0, display: 'grid', gap: '6px' }}>
-          <legend style={{ fontWeight: 600, padding: 0 }}>Your receipt is made out to</legend>
-          {BUYER_FIELDS.map((field) => (
-            <label key={field.key} style={{ display: 'grid', gap: '2px', color: '#374151' }}>
-              {field.label}
-              <input
-                type={field.type ?? 'text'}
-                name={field.key}
-                required
-                autoComplete={field.autoComplete}
-                data-checkout-buyer-field={field.key}
-                value={String(buyer[field.key] ?? '')}
-                disabled={paying}
-                aria-invalid={refused(refusal, field.key) ? true : undefined}
-                aria-describedby={refused(refusal, field.key) ? handlers.refusalId : undefined}
-                onChange={(event) => handlers.onBuyerChange(field.key, event.target.value)}
-                style={{
-                  padding: '6px 8px',
-                  border: '1px solid #d1d5db',
-                  borderRadius: '6px',
-                  fontFamily: 'inherit',
-                  fontSize: '13px',
-                }}
-              />
-            </label>
-          ))}
-        </fieldset>
-        {handlers.isDemo ? (
-          <label
-            style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '8px', color: '#6b7280' }}
-          >
-            <input
-              type="checkbox"
-              data-checkout-decline-toggle
-              checked={simulateDecline}
-              disabled={paying}
-              onChange={(event) => handlers.onToggleDecline(event.target.checked)}
-            />
-            Simulate a declined payment
-          </label>
-        ) : null}
-        {refusal ? (
-          <div id={handlers.refusalId} role="alert" data-checkout-refused style={{ marginTop: '8px', color: '#b91c1c' }}>
-            {refusal.message}
-          </div>
-        ) : null}
-        {paymentError ? (
-          <div
-            data-checkout-payment-declined
-            style={{ marginTop: '8px', color: '#b91c1c' }}
-          >
-            Payment failed: {paymentError}
-          </div>
-        ) : null}
-        <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
-          <button
-            type="button"
-            data-checkout-pay
-            disabled={paying}
-            aria-disabled={paying}
-            onClick={handlers.onPay}
-            style={{
-              padding: '8px 16px',
-              border: '1px solid #065f46',
-              borderRadius: '6px',
-              background: paying ? '#9ca3af' : '#065f46',
-              color: '#ffffff',
-              cursor: paying ? 'not-allowed' : 'pointer',
-              fontFamily: 'inherit',
-              fontSize: '14px',
-            }}
-          >
-            {paying ? 'Processing payment...' : `${handlers.payLabel} ${total}`}
-          </button>
-          <button
-            type="button"
-            data-checkout-cancel
-            disabled={paying}
-            onClick={handlers.onBackToCart}
-            style={{
-              padding: '8px 16px',
-              border: '1px solid #d1d5db',
-              borderRadius: '6px',
-              background: '#ffffff',
-              color: '#111827',
-              cursor: paying ? 'not-allowed' : 'pointer',
-              fontFamily: 'inherit',
-              fontSize: '14px',
-            }}
-          >
-            Back to cart
-          </button>
-        </div>
-      </div>
-    );
-  }
+const HIDDEN: ShopPartRender = { visible: false };
+const SHOWN: ShopPartRender = { visible: true };
 
-  if (state.status === 'redirecting') {
-    return (
-      <div data-checkout-redirecting style={PANEL_STYLE}>
-        Taking you to the secure payment page...
-      </div>
-    );
-  }
-
-  if (state.status === 'returned') {
-    return (
-      <div data-checkout-returned={state.outcome} style={{ ...PANEL_STYLE, color: state.outcome === 'paid' ? '#065f46' : '#b45309' }}>
-        {state.outcome === 'paid'
-          ? `Thank you: the payment for order ${state.orderNumber} went through. ${
-              state.confirmationTo
-                ? `A confirmation with your receipt is on its way to ${state.confirmationTo}.`
-                : 'Keep the order number for any question about your order.'
-            }`
-          : 'The payment was cancelled. Your cart is kept: check out again whenever you are ready.'}
-      </div>
-    );
-  }
-
-  if (state.status === 'confirmed') {
-    return (
-      <div
-        data-checkout-confirmation
-        style={{ marginTop: '8px', color: '#065f46', fontFamily: 'inherit', fontSize: '13px' }}
-      >
-        <div>
-          Order {state.order.orderNumber} confirmed. Total: {formatCents(state.order.totalCents, state.order.currency)}.
-        </div>
-        <div data-checkout-payment-ref style={{ marginTop: '4px', color: '#6b7280' }}>
-          Payment reference: {state.transactionId} (simulated payment, no real charge).
-        </div>
-        {state.receiptNumber ? (
-          <div data-checkout-receipt style={{ marginTop: '4px', color: '#6b7280' }}>
-            {state.order.confirmationEmail
-              ? `A confirmation with receipt ${state.receiptNumber} is on its way to ${state.email}.`
-              : `Receipt ${state.receiptNumber} is issued.`}
-          </div>
-        ) : null}
-      </div>
-    );
-  }
-
-  if (state.status === 'shortage') {
-    return (
-      <div
-        data-checkout-shortage
-        style={{ marginTop: '8px', color: '#b45309', fontFamily: 'inherit', fontSize: '13px' }}
-      >
-        <div>Some items are no longer fully available:</div>
-        <ul style={{ margin: '4px 0', paddingLeft: '18px' }}>
-          {state.shortages.map((shortage) => (
-            <li key={shortage.variantId} data-checkout-shortage-line data-variant-id={shortage.variantId}>
-              {shortage.variantId}: wanted {shortage.needed}, available {shortage.available}
-            </li>
-          ))}
-        </ul>
-        <div data-checkout-next-action>
-          Reduce the quantity of these items (or remove them), then try checkout again.
-        </div>
-      </div>
-    );
-  }
-
-  if (state.status === 'order_error') {
-    return (
-      <div
-        data-checkout-error
-        style={{ marginTop: '8px', color: '#b91c1c', fontFamily: 'inherit', fontSize: '13px' }}
-      >
-        Checkout failed: {state.message}
-      </div>
-    );
-  }
-
-  return null;
+/** The checkout's runtime for its parts, from one state. The live control and the canvas both use it. */
+function checkoutRuntime(view: CheckoutView): ShopRuntime {
+  return {
+    kind: 'checkout-button',
+    locale: view.locale,
+    surface: view.handlers ? 'live' : 'canvas',
+    part: (role) => checkoutPart(role, view),
+  };
 }
 
-export default CheckoutButton;
+function checkoutPart(role: string, view: CheckoutView): ShopPartRender {
+  const { state, locale, handlers } = view;
+  const live = handlers !== null;
+  const shown = (visible: boolean, render: Omit<ShopPartRender, 'visible'> = {}): ShopPartRender =>
+    visible ? { visible: true, ...render } : HIDDEN;
+
+  const placing = state.status === 'placing';
+  // The primary checkout button is hidden once the payment step / confirmation is
+  // shown (the flow has moved on); the shortage/error states keep it for retry.
+  const showCheckoutButton =
+    state.status !== 'payment' &&
+    state.status !== 'confirmed' &&
+    state.status !== 'redirecting' &&
+    !(state.status === 'returned' && state.outcome === 'paid');
+  const idleDisabled = placing || view.cartEmpty;
+
+  switch (role) {
+    case 'checkout.button':
+      return shown(showCheckoutButton, {
+        props: {
+          type: 'button',
+          'data-checkout': '',
+          disabled: idleDisabled,
+          'aria-disabled': idleDisabled,
+          'aria-busy': placing || undefined,
+          ...(live ? { onClick: handlers.onPlaceOrder } : {}),
+        },
+      });
+    case 'checkout.button-label':
+      return shown(!placing);
+    case 'checkout.button-loading':
+      return shown(placing);
+    case 'checkout.redirecting':
+      return shown(state.status === 'redirecting', { props: { 'data-checkout-redirecting': '', role: 'status' } });
+    case 'checkout.returned-cancelled':
+      return shown(state.status === 'returned' && state.outcome === 'cancelled', {
+        props: { 'data-checkout-returned': 'cancelled', role: 'status' },
+      });
+    case 'checkout.items-unavailable':
+      return shown(state.status === 'order_error' && state.reason === 'items_unavailable', {
+        props: { 'data-checkout-error': '', role: 'alert' },
+      });
+    case 'checkout.error':
+      return shown(state.status === 'order_error' && state.reason === 'failed', {
+        props: { 'data-checkout-error': '', role: 'alert' },
+        tokens: { message: state.status === 'order_error' ? state.message : '' },
+      });
+  }
+
+  if (role.startsWith('checkout.returned-')) {
+    if (state.status !== 'returned' || state.outcome !== 'paid') return HIDDEN;
+    if (role === 'checkout.returned-paid') return shown(true, { props: { 'data-checkout-returned': 'paid', role: 'status' } });
+    if (role === 'checkout.returned-paid-text') return shown(true, { tokens: { orderNumber: state.orderNumber } });
+    if (role === 'checkout.returned-email') return shown(state.confirmationTo !== null, { tokens: { email: state.confirmationTo ?? '' } });
+    if (role === 'checkout.returned-keep') return shown(state.confirmationTo === null);
+    return HIDDEN;
+  }
+
+  if (role === 'checkout.confirmation' || role === 'checkout.confirmed' || role === 'checkout.payment-ref' || role.startsWith('checkout.receipt')) {
+    if (state.status !== 'confirmed') return HIDDEN;
+    const tokens = {
+      orderNumber: state.order.orderNumber,
+      total: formatCents(state.order.totalCents, state.order.currency, locale),
+      transactionId: state.transactionId,
+      receiptNumber: state.receiptNumber ?? '',
+      email: state.email,
+    };
+    if (role === 'checkout.confirmation') return shown(true, { props: { 'data-checkout-confirmation': '', role: 'status' } });
+    if (role === 'checkout.confirmed') return shown(true, { tokens });
+    if (role === 'checkout.payment-ref') return shown(true, { tokens, props: { 'data-checkout-payment-ref': '' } });
+    if (role === 'checkout.receipt-email') {
+      return shown(state.receiptNumber !== null && state.order.confirmationEmail, { tokens, props: { 'data-checkout-receipt': '' } });
+    }
+    if (role === 'checkout.receipt') {
+      return shown(state.receiptNumber !== null && !state.order.confirmationEmail, { tokens, props: { 'data-checkout-receipt': '' } });
+    }
+    return HIDDEN;
+  }
+
+  if (role.startsWith('checkout.shortage')) {
+    if (state.status !== 'shortage') return HIDDEN;
+    if (role === 'checkout.shortage') return shown(true, { props: { 'data-checkout-shortage': '', role: 'alert' } });
+    if (role === 'checkout.shortage-next') return shown(true, { props: { 'data-checkout-next-action': '' } });
+    if (role === 'checkout.shortage-line') {
+      return shown(true, {
+        items: state.shortages.map((shortage) => ({
+          key: shortage.variantId,
+          tokens: { item: shortage.variantId, needed: String(shortage.needed), available: String(shortage.available) },
+          props: { 'data-checkout-shortage-line': '', 'data-variant-id': shortage.variantId },
+        })),
+      });
+    }
+    return SHOWN;
+  }
+
+  // Everything else belongs to the payment step.
+  if (state.status !== 'payment') return HIDDEN;
+  const { order, simulateDecline, paying, paymentError, refusal, buyer } = state;
+  const total = formatCents(order.totalCents, order.currency, locale);
+
+  // Each field's label names its input whatever the designer does with the layout:
+  // the label points at the input, the input at the label's text.
+  const fieldId = (key: string) => `${view.refusalId}-field-${key}`;
+  if (role.startsWith('checkout.field.')) {
+    return shown(true, { props: { htmlFor: fieldId(role.slice('checkout.field.'.length)) } });
+  }
+  if (role.startsWith('checkout.field-text.')) {
+    return shown(true, { props: { id: `${fieldId(role.slice('checkout.field-text.'.length))}-label` } });
+  }
+  if (role.startsWith('checkout.input.')) {
+    const key = role.slice('checkout.input.'.length) as keyof typeof BUYER_INPUTS;
+    const input = BUYER_INPUTS[key];
+    if (!input) return HIDDEN;
+    const invalid = refused(refusal, key);
+    return shown(true, {
+      props: {
+        id: fieldId(key),
+        'aria-labelledby': `${fieldId(key)}-label`,
+        type: input.type,
+        // No name: the order is sent from the island's state, never by a form, so a
+        // form the page wraps around the checkout has no buyer details to post.
+        required: true,
+        autoComplete: input.autoComplete,
+        'data-checkout-buyer-field': key,
+        value: String(buyer[key] ?? ''),
+        disabled: paying,
+        'aria-invalid': invalid ? true : undefined,
+        'aria-describedby': invalid ? view.refusalId : undefined,
+        ...(live
+          ? { onChange: (event: React.ChangeEvent<HTMLInputElement>) => handlers.onBuyerChange(key, event.target.value), readOnly: undefined }
+          : { readOnly: true, tabIndex: -1 }),
+      },
+    });
+  }
+
+  switch (role) {
+    case 'checkout.payment':
+      return shown(true, { props: { 'data-checkout-payment': '' } });
+    case 'checkout.demo-badge':
+      return shown(view.isDemo, { props: { 'data-checkout-demo-badge': '' } });
+    case 'checkout.total':
+      return shown(true, { tokens: { total }, props: { 'data-checkout-payment-total': '' } });
+    case 'checkout.buyer':
+      return shown(true, { props: { 'data-checkout-buyer': '' } });
+    case 'checkout.decline':
+      return shown(view.isDemo, { props: { htmlFor: fieldId('decline') } });
+    case 'checkout.decline-text':
+      return shown(view.isDemo, { props: { id: `${fieldId('decline')}-label` } });
+    case 'checkout.decline-input':
+      return shown(view.isDemo, {
+        props: {
+          id: fieldId('decline'),
+          'aria-labelledby': `${fieldId('decline')}-label`,
+          type: 'checkbox',
+          'data-checkout-decline-toggle': '',
+          checked: simulateDecline,
+          disabled: paying,
+          ...(live
+            ? { onChange: (event: React.ChangeEvent<HTMLInputElement>) => handlers.onToggleDecline(event.target.checked) }
+            : { readOnly: true, tabIndex: -1, onChange: noop }),
+        },
+      });
+    case 'checkout.refusal':
+      return shown(refusal !== null, {
+        text: refusal?.message ?? '',
+        props: { id: view.refusalId, role: 'alert', 'data-checkout-refused': '' },
+      });
+    case 'checkout.buyer-missing':
+      return shown(state.buyerMissing, { props: { role: 'alert', 'data-checkout-buyer-missing': '' } });
+    case 'checkout.payment-error':
+      return shown(paymentError !== null, {
+        tokens: { message: paymentError ?? '' },
+        props: { role: 'alert', 'data-checkout-payment-declined': '' },
+      });
+    case 'checkout.pay':
+      return shown(true, {
+        props: {
+          type: 'button',
+          'data-checkout-pay': '',
+          disabled: paying,
+          'aria-disabled': paying,
+          'aria-busy': paying || undefined,
+          ...(live ? { onClick: handlers.onPay } : {}),
+        },
+      });
+    case 'checkout.pay-label':
+      return shown(!paying, { tokens: { total } });
+    case 'checkout.pay-loading':
+      return shown(paying);
+    case 'checkout.back':
+      return shown(true, {
+        props: { type: 'button', 'data-checkout-cancel': '', disabled: paying, ...(live ? { onClick: handlers.onBackToCart } : {}) },
+      });
+    default:
+      // The step's layout parts (the legend, the fields and their labels, the actions row) always show with it.
+      return SHOWN;
+  }
+}
+
+function noop(): void {}
+
+// ---------------------------------------------------------------------------
+// The canvas
+// ---------------------------------------------------------------------------
+
+const SAMPLE_ORDER: PlacedOrder = {
+  orderId: 'sample-order',
+  orderNumber: 'ORD-000123',
+  confirmationEmail: true,
+  totalCents: 4990,
+  currency: 'EUR',
+  provider: 'demo',
+};
+
+const SAMPLE_TEXT = {
+  en: { email: 'buyer@example.com', declined: 'the card was declined', refusal: 'This shop sells to addresses in Germany only. Enter a German address.', failed: 'order failed (500)' },
+  de: { email: 'kundin@example.com', declined: 'die Karte wurde abgelehnt', refusal: 'Dieser Shop liefert nur an Adressen in Deutschland. Bitte eine deutsche Adresse eingeben.', failed: 'Serverfehler (500)' },
+} as const;
+
+/** The state the canvas shows for a preview state id, with sample data. */
+export function sampleCheckoutState(id: CheckoutPreviewStateId | string, locale: ShopLocale): { state: CheckoutState; cartEmpty: boolean } {
+  const text = SAMPLE_TEXT[locale];
+  const payment = (extra: Partial<Extract<CheckoutState, { status: 'payment' }>> = {}): CheckoutState => ({
+    status: 'payment',
+    order: SAMPLE_ORDER,
+    simulateDecline: false,
+    paying: false,
+    buyerMissing: false,
+    paymentError: null,
+    refusal: null,
+    buyer: EMPTY_BUYER,
+    ...extra,
+  });
+  switch (id) {
+    case 'empty':
+      return { state: { status: 'idle' }, cartEmpty: true };
+    case 'placing':
+      return { state: { status: 'placing' }, cartEmpty: false };
+    case 'payment':
+      return { state: payment(), cartEmpty: false };
+    case 'paying':
+      return { state: payment({ paying: true }), cartEmpty: false };
+    case 'buyer-missing':
+      return { state: payment({ buyerMissing: true }), cartEmpty: false };
+    case 'refused':
+      return { state: payment({ refusal: { message: text.refusal, fields: ['country'] } }), cartEmpty: false };
+    case 'payment-failed':
+      return { state: payment({ paymentError: text.declined }), cartEmpty: false };
+    case 'redirecting':
+      return { state: { status: 'redirecting' }, cartEmpty: false };
+    case 'confirmed':
+      return {
+        state: { status: 'confirmed', order: SAMPLE_ORDER, transactionId: 'demo_txn_sample', receiptNumber: 'RE-2026-0042', email: text.email },
+        cartEmpty: true,
+      };
+    case 'returned-paid':
+      return { state: { status: 'returned', outcome: 'paid', orderNumber: SAMPLE_ORDER.orderNumber, confirmationTo: text.email }, cartEmpty: true };
+    case 'returned-cancelled':
+      return { state: { status: 'returned', outcome: 'cancelled', orderNumber: SAMPLE_ORDER.orderNumber, confirmationTo: null }, cartEmpty: false };
+    case 'shortage':
+      return {
+        state: {
+          status: 'shortage',
+          shortages: [
+            { variantId: locale === 'de' ? 'T-Shirt, Größe M' : 'T-shirt, size M', needed: 3, available: 1 },
+            { variantId: locale === 'de' ? 'Emaille-Becher' : 'Enamel mug', needed: 2, available: 0 },
+          ],
+        },
+        cartEmpty: false,
+      };
+    case 'items-unavailable':
+      return { state: { status: 'order_error', reason: 'items_unavailable', message: '' }, cartEmpty: false };
+    case 'error':
+      return { state: { status: 'order_error', reason: 'failed', message: text.failed }, cartEmpty: false };
+    default:
+      return { state: { status: 'idle' }, cartEmpty: false };
+  }
+}
+
+/**
+ * The control on the canvas: its children drawn by the canvas renderer (so every
+ * part selects, edits and styles like any node) in the preview state the editor
+ * picked, with sample data. It never places an order and nothing in it is live;
+ * the editor says so next to the state picker instead of greying the design.
+ */
+function CheckoutCanvas({ node, hostType = 'div', hostProps = {}, children }: CheckoutButtonProps) {
+  const locale = React.useContext(ShopLocaleContext);
+  const design = React.useContext(ShopDesignContext);
+  const id = typeof node.id === 'string' ? node.id : '';
+  const { state, cartEmpty } = sampleCheckoutState(design?.stateOf(id) ?? 'ready', locale);
+  const runtime = checkoutRuntime({ state, locale, cartEmpty, isDemo: true, refusalId: `${id}-refusal`, handlers: null });
+  const wrapperProps: Record<string, unknown> = { ...hostProps };
+  delete wrapperProps.children;
+  return React.createElement(
+    hostType,
+    wrapperProps,
+    <ShopRuntimeContext.Provider value={runtime}>
+      <CheckoutContent node={node} locale={locale} drawn={children ?? null} />
+    </ShopRuntimeContext.Provider>,
+  );
+}
+
+/**
+ * The first preview state in which a part shows, given its role and the roles of
+ * the parts around it (outermost first): selecting a part the current state
+ * hides switches the canvas to one that shows it, instead of a dead end.
+ * Undefined when no state shows it.
+ */
+export function checkoutStateShowing(roles: readonly string[], locale: ShopLocale): CheckoutPreviewStateId | undefined {
+  return CHECKOUT_PREVIEW_STATES.find(({ id }) => checkoutStateShows(id, roles, locale))?.id;
+}
+
+/** Whether a preview state shows a part and every part around it. */
+export function checkoutStateShows(id: string, roles: readonly string[], locale: ShopLocale): boolean {
+  const { state, cartEmpty } = sampleCheckoutState(id, locale);
+  const view: CheckoutView = { state, locale, cartEmpty, isDemo: true, refusalId: 'refusal', handlers: null };
+  return roles.every((role) => checkoutPart(role, view).visible);
+}

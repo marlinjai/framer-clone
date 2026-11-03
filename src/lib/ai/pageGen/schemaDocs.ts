@@ -9,6 +9,7 @@
 // The breakpoints are NOT in here (they vary per page and sit after the cache
 // breakpoint); see ./prompt.ts.
 
+import { isShopControlKind } from '@/lib/commerce/parts';
 import { stableStringify } from '@/lib/ai/serializers/normalize';
 import {
   BASE_KEY,
@@ -47,7 +48,14 @@ export function buildSchemaDocs(): string {
       `### preset "${p.id}" (${p.label}, category ${p.category})`,
       `- type: ${p.htmlType}${p.acceptsChildren ? '' : ' (void: no children)'}`,
     ];
-    if (p.dataComponentKind) {
+    if (p.dataComponentKind && isShopControlKind(p.dataComponentKind)) {
+      // Its button, steps and messages arrive as part nodes when it lands on the page
+      // (src/lib/commerce/parts.ts): the generator writes the control alone.
+      header.push(
+        `- shop control "${p.dataComponentKind}": the page adds its parts (buttons, fields, messages) as child nodes in the site language, which the user then styles. ` +
+          'Use it only when the brief clearly asks for it; never add children to it.',
+      );
+    } else if (p.dataComponentKind) {
       header.push(
         `- data component "${p.dataComponentKind}": renders a placeholder until the user binds it in the properties panel` +
           (p.bindableSlots.length > 0 ? ` (bindable: ${p.bindableSlots.join(', ')})` : '') +
