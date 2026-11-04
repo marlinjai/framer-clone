@@ -120,6 +120,13 @@ Folded in from the re-review of 86b2d472 (decided while building, say so if you 
   ticks once a second (also in the left-behind notice); the ellipsis character throughout.
 - **One serialisation per save cycle:** the comparison key is computed when the debounce fires
   and passed on to `isSaved` and `markServerVersion`.
+- **The attempt key is bound to content and version.** An edit during the backoff after a lost
+  answer is a new attempt; if the lost one had committed, that retry meets a 409 resolved with
+  "Save mine over it". Reusing the key for new content would mark it saved while the server
+  holds the old content.
+- **Hiding the tab while editing text on the canvas** commits the text and ends the inline edit
+  (the panel field keeps its focus).
+- **No router refresh on a stale read:** nothing is adopted, so there is nothing to refresh.
 
 Decided by Marlin on 2026-11-04 (the brief of the first version):
 
