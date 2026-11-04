@@ -10,7 +10,9 @@
 //
 // The designer's props come first and the runtime's last: a designer can change
 // how a part looks and reads, never what it does (its type, name, value,
-// disabled state, handlers and ARIA wiring are the runtime's).
+// disabled state, keyboard reach, handlers and ARIA wiring are the runtime's;
+// on a button or an input the designer's copies of these never reach the page,
+// SHOP_RUNTIME_OWNED_PROPS).
 'use client';
 
 import React, { createContext, useContext } from 'react';
@@ -19,6 +21,7 @@ import { createRunElement } from '@/lib/renderer/runElements';
 import { renderOwnText, runLinksAllowedIn } from '@/lib/renderer/textNode';
 import {
   SHOP_KEPT_WRAPPER_ATTR,
+  SHOP_RUNTIME_OWNED_PROPS,
   fillShopTokensIn,
   shopPartControl,
   shopPartRoleOf,
@@ -36,10 +39,38 @@ export interface ShopPartRender {
   props?: Record<string, unknown>;
   /** The values of the part's `{token}` placeholders. */
   tokens?: Readonly<Record<string, string>>;
-  /** The text of a part whose text is the runtime's (a message from the server). */
+  /**
+   * The text of a part whose text is the runtime's (a message from the server), or
+   * the runtime's own words in place of the designer's (an error chip in the editor).
+   */
   text?: string;
-  /** A repeated part: one element per item, each with its tokens and attributes. */
-  items?: readonly { key: string; tokens: Readonly<Record<string, string>>; props?: Record<string, unknown> }[];
+  /**
+   * Kept in sight in this state only, as a part whose spec keeps it in sight always
+   * is: the remove button of a cart line that is no longer sold or failed to load,
+   * so a visitor is never stuck with that line.
+   */
+  keepInSight?: true;
+  /**
+   * A message the control shows later (a failed check): on a live surface the part
+   * itself is a status region that is on the page before the message and stays
+   * after it, so a screen reader announces the text when it arrives. A region
+   * mounted with its text already in it may never be announced. Given in every
+   * state, the hidden one too: while hidden the part is drawn empty and visually
+   * hidden (EMPTY_LIVE_REGION_STYLE), never wrapped, so the designed element stays
+   * the flex or grid item its rules address. One element carries the role, so
+   * nothing is announced twice.
+   */
+  live?: true;
+  /**
+   * A repeated part: one element per item, each with its tokens and attributes, and
+   * the runtime its own parts read (a cart line's title, price and quantity).
+   */
+  items?: readonly {
+    key: string;
+    tokens: Readonly<Record<string, string>>;
+    props?: Record<string, unknown>;
+    runtime?: ShopRuntime;
+  }[];
 }
 
 export interface ShopRuntime {
@@ -52,6 +83,14 @@ export interface ShopRuntime {
 /** The runtime of the control a part sits in; null outside any control. */
 export const ShopRuntimeContext = createContext<ShopRuntime | null>(null);
 ShopRuntimeContext.displayName = 'ShopRuntimeContext';
+
+/**
+ * True inside the second or a later copy of a repeated part (a cart line): every
+ * node drawn there keeps its style hook but not its selection identity, which only
+ * the first copy carries, so an id never repeats on the canvas or in the Preview.
+ */
+export const ShopRepeatCopyContext = createContext(false);
+ShopRepeatCopyContext.displayName = 'ShopRepeatCopyContext';
 
 /** The site language the shop controls speak, set by the page (published) or the editor. */
 export const ShopLocaleContext = createContext<ShopLocale>('en');
@@ -109,6 +148,9 @@ const KEPT_FALLBACK_COLOR = '#111827';
 /** Properties pinned to `none` on a part kept in sight itself, always (it is a run of text, so none is designed). */
 const PART_NONE = ['transform', 'scale', 'translate', 'rotate', 'clip-path', 'mask-image', '-webkit-mask-image', 'filter', 'animation'];
 
+/** The tags of a part kept in sight that a visitor presses or types into (a cart line's remove button). */
+const INTERACTIVE_TAG = /^(BUTTON|INPUT|SELECT|TEXTAREA|A)$/;
+
 /** Properties a wrapper keeps unless they hide what it holds: then they are pinned to `none`. */
 const WRAPPER_NONE_WHEN_SET = ['clip-path', 'mask-image', '-webkit-mask-image'];
 
@@ -116,8 +158,15 @@ const WRAPPER_NONE_WHEN_SET = ['clip-path', 'mask-image', '-webkit-mask-image'];
 interface Pin {
   value: string;
   priority: string;
+  /** What the pin wrote, to tell it from a value React wrote over it since. */
+  forced?: string;
   owners: Set<HTMLElement>;
+  /** A hiding attribute taken off (`hidden`, `inert`, `aria-hidden`) rather than a style: `value` is the attribute's. */
+  attribute?: true;
 }
+
+/** The key a hiding attribute's pin is filed under, beside the style properties. */
+const ATTRIBUTE_PIN = 'attr:';
 
 /** What the kept parts pinned on each element, so each part's next render starts from the design. */
 const PINNED = new WeakMap<HTMLElement, Map<string, Pin>>();
@@ -137,8 +186,15 @@ function releaseKept(owner: HTMLElement): void {
     for (const [property, pin] of pins) {
       if (!pin.owners.delete(owner) || pin.owners.size > 0) continue;
       pins.delete(property);
-      // React wrote the design's new value over the pin since (it sets no priority): that value stands.
-      if (target.style.getPropertyPriority(property) !== 'important') continue;
+      if (pin.attribute) {
+        const name = property.slice(ATTRIBUTE_PIN.length);
+        // Written again since (React or the design): that value stands.
+        if (!target.hasAttribute(name)) target.setAttribute(name, pin.value);
+        continue;
+      }
+      // React wrote the design's new value over the pin since (it sets no priority, and some
+      // engines keep the old priority on a write, so the value is compared too): that value stands.
+      if (target.style.getPropertyPriority(property) !== 'important' || target.style.getPropertyValue(property) !== pin.forced) continue;
       if (pin.value) target.style.setProperty(property, pin.value, pin.priority);
       else target.style.removeProperty(property);
     }
@@ -180,6 +236,12 @@ function seeThrough(color: string): boolean {
  *   clip path or mask, and an overflow that crops what it holds. Each wrapper
  *   also gets a marker the guard rule uses to blank its `::before` and `::after`
  *   (src/lib/commerce/parts.ts, shopGuardCss).
+ * - On the part and every wrapper up to the control: a `hidden`, `inert` or
+ *   `aria-hidden` attribute comes off, so the part is seen, pressed and announced;
+ *   each goes back when the part lets go (releaseKept), as the pinned styles do.
+ * - On a part a visitor presses (a cart line's remove button): `pointer-events:
+ *   auto` on the part, and on every wrapper up to the control whose computed value
+ *   is `none`, so a press is never let through to the page behind.
  */
 function keepInSight(element: HTMLElement): void {
   const view = element.ownerDocument.defaultView;
@@ -198,6 +260,23 @@ function keepInSight(element: HTMLElement): void {
     targets.add(target);
     PINNED_BY.set(element, targets);
     target.style.setProperty(property, value, 'important');
+    pin.forced = target.style.getPropertyValue(property);
+  };
+  // A wrapper's hiding attribute comes off while the part holds it, and goes back on release.
+  const lift = (target: HTMLElement, name: string) => {
+    const key = `${ATTRIBUTE_PIN}${name}`;
+    const pins = PINNED.get(target) ?? new Map<string, Pin>();
+    let pin = pins.get(key);
+    if (!pin) {
+      pin = { value: target.getAttribute(name) ?? '', priority: '', owners: new Set(), attribute: true };
+      pins.set(key, pin);
+    }
+    pin.owners.add(element);
+    PINNED.set(target, pins);
+    const targets = PINNED_BY.get(element) ?? new Set<HTMLElement>();
+    targets.add(target);
+    PINNED_BY.set(element, targets);
+    target.removeAttribute(name);
   };
   // Each render starts from the design: what this part pinned at its last render
   // comes off first (releaseKept), so a fade or a colour the designer changed since
@@ -225,8 +304,11 @@ function keepInSight(element: HTMLElement): void {
   // wrapper is pinned opaque.
   const opacityOf = (computed: CSSStyleDeclaration) => (computed.opacity === '' ? 1 : Number(computed.opacity));
   const fadedTogether = chain.slice(1).reduce((product, { computed }) => product * opacityOf(computed), 1) < 0.5;
+  const interactive = INTERACTIVE_TAG.test(element.tagName);
   for (const { node, computed, crops } of chain) {
     if (computed.display === 'none') force(node, 'display', 'block');
+    // A part a visitor presses takes the press: no wrapper lets it fall through.
+    if (interactive && computed.getPropertyValue('pointer-events') === 'none') force(node, 'pointer-events', 'auto');
     if (computed.visibility !== 'visible') force(node, 'visibility', 'visible');
     if (opacityOf(computed) < 0.5 || (fadedTogether && opacityOf(computed) < 1)) force(node, 'opacity', '1');
     if (computed.getPropertyValue('content-visibility') === 'hidden') force(node, 'content-visibility', 'visible');
@@ -238,7 +320,11 @@ function keepInSight(element: HTMLElement): void {
     }
     if (crops) force(node, 'overflow', 'visible');
     if (node !== element && !node.hasAttribute(SHOP_KEPT_WRAPPER_ATTR)) node.setAttribute(SHOP_KEPT_WRAPPER_ATTR, '');
-    if (node.hidden) node.hidden = false;
+    // Hidden, taken out of interaction (inert) or out of the accessibility tree
+    // (aria-hidden): neither a visitor nor assistive technology could reach the part.
+    if (node.hasAttribute('hidden')) lift(node, 'hidden');
+    if (node.hasAttribute('inert')) lift(node, 'inert');
+    if (node.hasAttribute('aria-hidden') && node.getAttribute('aria-hidden') !== 'false') lift(node, 'aria-hidden');
   }
   force(element, 'visibility', 'visible');
   force(element, 'opacity', '1');
@@ -252,7 +338,9 @@ function keepInSight(element: HTMLElement): void {
   if (seeThrough(ownColor)) force(element, 'color', KEPT_FALLBACK_COLOR);
   force(element, '-webkit-text-fill-color', 'currentcolor');
   force(element, 'text-indent', '0');
-  force(element, 'outline', 'none');
+  // A button kept in sight (a cart line's remove button) keeps its focus ring and takes a press.
+  if (interactive) force(element, 'pointer-events', 'auto');
+  else force(element, 'outline', 'none');
   if (!Number.isFinite(letterSpacing) || letterSpacing < 0) force(element, 'letter-spacing', 'normal');
   if (!Number.isFinite(wordSpacing) || wordSpacing < 0) force(element, 'word-spacing', 'normal');
   if (!Number.isFinite(size) || size < MIN_KEPT_FONT_PX) force(element, 'font-size', `${MIN_KEPT_FONT_PX}px`);
@@ -260,6 +348,8 @@ function keepInSight(element: HTMLElement): void {
 
 /** keepInSight, for tests of the pins across renders. */
 export const keepInSightForTest = keepInSight;
+/** releaseKept, for tests of what a part gives back when it lets go. */
+export const releaseKeptForTest = releaseKept;
 
 /** A ref that keeps the element in sight after every render, chained to the ref the surface passed, if any. */
 function useKeptInSight(enabled: boolean, outer: unknown): React.RefCallback<HTMLElement> | undefined {
@@ -308,12 +398,51 @@ function onlyPartElements(content: React.ReactNode, own: ReadonlySet<string>): R
   return parts;
 }
 
+/**
+ * The attributes that make a part whose message comes later (ShopPartRender.live)
+ * its own status region, applied after the designer's and the state's props. The
+ * part itself is the region, not a wrapper around it: a wrapper would become the
+ * flex or grid item in its place, and the design's order, alignment, grid placement
+ * and child-combinator rules would stop reaching it on a published page while they
+ * still work on the canvas. It names its role, for tests and the page's own rules.
+ */
+function liveRegionProps(role: string): Record<string, unknown> {
+  return { role: 'status', 'data-shop-live': role };
+}
+
+/**
+ * An empty status region is visually hidden: taken out of the layout (absolute, so
+ * it adds no gap to a flex or grid control, and 1 pixel, clipped, with no padding,
+ * border or margin) but kept in the accessibility tree, which `display: none` or
+ * `visibility: hidden` would not. The same element holds the message once it
+ * shows, drawn in the flow again with the design's own style. Inline, so it wins
+ * over the design's rules for the part.
+ */
+export const EMPTY_LIVE_REGION_STYLE: Readonly<React.CSSProperties> = {
+  position: 'absolute',
+  width: '1px',
+  height: '1px',
+  padding: 0,
+  border: 0,
+  margin: 0,
+  overflow: 'hidden',
+  clip: 'rect(0 0 0 0)',
+  clipPath: 'inset(50%)',
+  whiteSpace: 'nowrap',
+};
+
 /** One shop part, drawn as its control's runtime says. */
 export function ShopPartElement({ role, tag, domProps, storedText, content, surface, linksAllowed = true }: ShopPartElementProps): React.ReactElement | null {
   const runtime = useContext(ShopRuntimeContext);
   const locale = useContext(ShopLocaleContext);
   const spec = shopPartSpec(role);
-  const keep = !!spec?.keepVisible;
+  const inControl = !!runtime && runtime.kind === shopPartControl(role);
+  const render = inControl ? runtime.part(role) : undefined;
+  // A message that comes later is its own status region, drawn before it (live surfaces only).
+  const announce = !!render?.live && runtime?.surface === 'live';
+  // While that region waits empty and visually hidden, nothing pins it into sight.
+  const waiting = announce && !render?.visible;
+  const keep = !waiting && (!!spec?.keepVisible || (!!render?.visible && !!render.keepInSight));
   const keptRef = useKeptInSight(keep, domProps.ref);
   const elementTag = shopPartTag(role, tag);
 
@@ -323,6 +452,9 @@ export function ShopPartElement({ role, tag, domProps, storedText, content, surf
   // An input part has no name: its value lives in the island's state, so a form the
   // page wraps around the control has nothing of the visitor's to post.
   if (elementTag === 'input' || elementTag === 'select' || elementTag === 'textarea') delete ownProps.name;
+  // Whether it can be pressed, typed into or reached by the keyboard is the runtime's,
+  // in any spelling (a stored `tabindex` as well as `tabIndex`).
+  for (const key of SHOP_RUNTIME_OWNED_PROPS[elementTag] ?? []) delete ownProps[key];
   // Nothing renames a fixed wording for assistive technology (a label or tooltip of the designer's).
   if (keep || spec?.fixedText || spec?.onlyParts) for (const key of RENAMING_ATTRIBUTES) delete ownProps[key];
   if (keep) {
@@ -330,7 +462,7 @@ export function ShopPartElement({ role, tag, domProps, storedText, content, surf
     ownProps.ref = keptRef;
   }
 
-  if (!runtime || runtime.kind !== shopPartControl(role)) {
+  if (!runtime || !render) {
     // Outside its control it has nothing to do. The canvas still shows it, marked,
     // so the designer can move it back; a page leaves it out (the control draws its
     // own copy of a required part).
@@ -343,7 +475,13 @@ export function ShopPartElement({ role, tag, domProps, storedText, content, surf
     );
   }
 
-  const render = runtime.part(role);
+  if (waiting) {
+    // The same element the message will fill, empty and out of sight until then.
+    const style = { ...((ownProps.style as Record<string, unknown> | undefined) ?? {}), ...EMPTY_LIVE_REGION_STYLE };
+    const waitingProps: Record<string, unknown> = { ...ownProps, ...liveRegionProps(role), style };
+    delete waitingProps.children;
+    return React.createElement(elementTag, waitingProps);
+  }
   if (!render.visible) return null;
   // A part kept in sight, or one whose text is the platform's, draws its text only.
   if (spec?.keepVisible || spec?.fixedText) content = undefined;
@@ -354,9 +492,16 @@ export function ShopPartElement({ role, tag, domProps, storedText, content, surf
   const editing = ownProps.contentEditable === 'true' && !spec?.fixedText && !spec?.dynamicText;
   // While the designer types, the box holds the stored text as typed, tokens and all.
   // A button whose wording is fixed holds no text of its own: its parts are the words.
-  const raw = spec?.onlyParts ? undefined : spec?.dynamicText ? render.text : editing ? storedText : shopPartText(role, storedText, runtime.locale);
+  const raw = spec?.onlyParts ? undefined : spec?.dynamicText || render.text !== undefined ? render.text : editing ? storedText : shopPartText(role, storedText, runtime.locale);
 
-  const draw = (key: React.Key | undefined, tokens: Readonly<Record<string, string>> | undefined, extra?: Record<string, unknown>) => {
+  const draw = (
+    key: React.Key | undefined,
+    tokens: Readonly<Record<string, string>> | undefined,
+    extra?: Record<string, unknown>,
+    itemRuntime?: ShopRuntime,
+    /** For a copy of a repeated part: whether it is the second or a later one. */
+    copy?: boolean,
+  ) => {
     const props: Record<string, unknown> = { ...ownProps, ...(render.props ?? {}), ...(extra ?? {}) };
     if (key !== undefined) props.key = key;
     if (isVoidTag(elementTag)) {
@@ -364,21 +509,34 @@ export function ShopPartElement({ role, tag, domProps, storedText, content, surf
       return React.createElement(elementTag, props);
     }
     const text = editing ? raw : fillShopTokensIn(raw, tokens ?? {});
-    return React.createElement(elementTag, props, ...textChildren(text, linksAllowed && runLinksAllowedIn(elementTag)), content);
+    // A repeated part's own parts read their item (a cart line's title reads that line).
+    let inner = itemRuntime && content !== undefined ? <ShopRuntimeContext.Provider value={itemRuntime}>{content}</ShopRuntimeContext.Provider> : content;
+    // Inside a later copy, nothing carries the selection identity again. Every copy
+    // has the provider, so a copy that becomes the first (the line above it removed)
+    // keeps its elements and the focus in them.
+    if (copy !== undefined && inner !== undefined) inner = <ShopRepeatCopyContext.Provider value={copy}>{inner}</ShopRepeatCopyContext.Provider>;
+    return React.createElement(elementTag, props, ...textChildren(text, linksAllowed && runLinksAllowedIn(elementTag)), inner);
   };
 
   if (render.items) {
     if (render.items.length === 0) return null;
     // A repeated part's copies are siblings. Each keeps the node's style hook (its
     // states and rules reach every copy on the canvas), only the first its
-    // selection identity, so a click on any copy selects the one node.
+    // selection identity, so a click on any copy selects the one node; the nodes
+    // inside a later copy lose theirs too (ShopRepeatCopyContext).
     return (
       <>
         {render.items.map((item, index) =>
-          draw(item.key, { ...(render.tokens ?? {}), ...item.tokens }, index === 0 ? item.props : { ...item.props, 'data-inner-component-id': undefined }),
+          draw(
+            item.key,
+            { ...(render.tokens ?? {}), ...item.tokens },
+            index === 0 ? item.props : { ...item.props, 'data-inner-component-id': undefined },
+            item.runtime,
+            index > 0,
+          ),
         )}
       </>
     );
   }
-  return draw(undefined, render.tokens);
+  return draw(undefined, render.tokens, announce ? liveRegionProps(role) : undefined);
 }

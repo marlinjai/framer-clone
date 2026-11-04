@@ -42,7 +42,7 @@ import postgres from 'postgres';
 
 import type { CommerceDB } from '../../db-types';
 import { commerceProvisionOptions } from '../../provisioning/provision';
-import { reserveWithRetry } from '../reserve';
+import { ReservationOverflowError, reserveWithRetry } from '../reserve';
 import { DEMO_COMPANY_ID } from '@/lib/renderer/server/demoTenant';
 
 const DB_NAME = 'framer_clone_test';
@@ -236,6 +236,41 @@ describe('CM-08 reserve policy branch (Dockerized Postgres)', () => {
     const after2 = await readLevel(db, inventoryItemId, locationId);
     expect(after2.reserved).toBe(8);
     expect(after2.available).toBe(-7);
+  });
+
+  it('Case B stops at the reserved quantity column: past it a typed ReservationOverflowError (never 22003), nothing written; up to it succeeds', async () => {
+    const MAX = 2_147_483_647;
+    const db = tenantDb(ownerBase!, TG);
+    const { variantId, sku } = await seedVariant(db, { manageInventory: true, allowBackorder: true });
+    const { inventoryItemId, locationId } = await seedLevel(db, sku, 0);
+    // A depth one short of the column, as two huge orders before this one would leave it.
+    await db
+      .updateTable('inventory_level')
+      .set({ reserved_quantity: MAX - 1 })
+      .where('inventory_item_id', '=', inventoryItemId)
+      .where('location_id', '=', locationId)
+      .execute();
+
+    const requestId = `backorder-overflow-${randomUUID()}`;
+    const caught = await reserveWithRetry(db, TG, { inventoryItemId, variantId, locationId, needed: 2, requestId }).catch(
+      (e: unknown) => e,
+    );
+    expect(caught).toBeInstanceOf(ReservationOverflowError);
+    expect((caught as { code?: string }).code).toBe('RESERVATION_OVERFLOW');
+    expect((await readLevel(db, inventoryItemId, locationId)).reserved).toBe(MAX - 1);
+    expect(await countRows(db, 'reservation', requestId)).toBe(0);
+    expect(await countRows(db, 'stock_movement', requestId)).toBe(0);
+
+    // Exactly to the column still reserves.
+    const fits = await reserveWithRetry(db, TG, {
+      inventoryItemId,
+      variantId,
+      locationId,
+      needed: 1,
+      requestId: `backorder-fits-${randomUUID()}`,
+    });
+    expect(fits.ok).toBe(true);
+    expect((await readLevel(db, inventoryItemId, locationId)).reserved).toBe(MAX);
   });
 
   it('Case C — managed variant: stocked 1, reserve 5 returns ok:false shortages; reserved unchanged; no rows', async () => {

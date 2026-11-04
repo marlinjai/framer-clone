@@ -18,13 +18,13 @@ import { getParent, hasParent } from 'mobx-state-tree';
 import { useStore } from '@/hooks/useStore';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import { SHOP_CONTROLS, shopControlKindOf, shopLocaleOf, shopPartRoleOf } from '@/lib/commerce/parts';
-import { checkoutStateShowing, checkoutStateShows } from '@/lib/renderer/commerce/CheckoutButton';
+import { SHOP_STATE_LOOKUP } from '@/lib/renderer/commerce/shopControlStates';
 
 /** The shop control a node is or sits in, with the part roles from the control down to the node. */
 export function shopControlAround(node: ComponentInstance | undefined): { control: ComponentInstance; roles: string[] } | undefined {
   const roles: string[] = [];
   let current: unknown = node;
-  for (let i = 0; i < 256 && current; i++) {
+  while (current) {
     const candidate = current as ComponentInstance;
     if (shopControlKindOf(candidate.props)) return { control: candidate, roles: roles.reverse() };
     const role = shopPartRoleOf(candidate.props);
@@ -55,15 +55,16 @@ const ShopPreviewBar = observer(() => {
   const rolesKey = found?.roles.join('|') ?? '';
 
   useEffect(() => {
-    if (!found || !controlId || !current || found.roles.length === 0) return;
-    if (checkoutStateShows(current, found.roles, locale)) return;
-    const showing = checkoutStateShowing(found.roles, locale);
+    if (!found || !controlId || !current || !kind || found.roles.length === 0) return;
+    const lookup = SHOP_STATE_LOOKUP[kind];
+    if (lookup.shows(current, found.roles, locale)) return;
+    const showing = lookup.showing(found.roles, locale);
     if (showing) editorUI.setShopPreviewState(controlId, showing);
     // Runs when the selection (or the locale) changes, never when the designer picks a state:
     // an explicit pick stays even if the selected part is hidden in it. The roles stand for the
     // selection; `found` is a new object each render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [controlId, rolesKey, locale, editorUI]);
+  }, [controlId, kind, rolesKey, locale, editorUI]);
 
   if (!found || !spec || !controlId) return null;
   return (

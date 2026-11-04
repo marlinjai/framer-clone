@@ -26,6 +26,7 @@ import { isTextBound } from '@/lib/renderer/textContent';
 import { isTextNodeType } from '@/lib/renderer/textNode';
 import { childrenWithRepeats } from '@/lib/renderer/repeatChildren';
 import { SurfaceDomContext, withSurfaceDom } from '@/lib/behaviour/surfaceDom';
+import { ShopRepeatCopyContext } from '@/lib/commerce/shopRuntime';
 import { DraftSections, useDraftHook } from '@/components/ai/PageGenDraftLayer';
 
 interface ComponentRendererProps {
@@ -97,6 +98,8 @@ const NodeRenderer = observer(({ component, breakpointId, allBreakpoints, scope,
   // Inside a link or a button, formatted text holds no links (createComponentElement).
   const runLinksAllowed = React.useContext(RunLinksContext);
   const surfaceDom = React.useContext(SurfaceDomContext);
+  // Inside a later copy of a repeated shop part, only the first copy is selectable.
+  const inRepeatCopy = React.useContext(ShopRepeatCopyContext);
   const frameId = host?.frameId ?? breakpointId;
   const owner = placement ?? component;
   const editRef = React.useRef<HTMLElement | null>(null);
@@ -347,7 +350,7 @@ const NodeRenderer = observer(({ component, breakpointId, allBreakpoints, scope,
     children,
     (resolvedAttributes as any).children,
     {
-      identity: { breakpointId: frameId, componentId: owner.id },
+      identity: { breakpointId: frameId, componentId: owner.id, copy: inRepeatCopy },
       scope: activeScope,
       renderNode,
       // Editor surface: data renderers surface an inline error chip with the

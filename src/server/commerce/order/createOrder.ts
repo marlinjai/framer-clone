@@ -45,19 +45,27 @@ import 'server-only';
 //
 // Errors surface, never swallowed: a missing price, a non-positive quantity, or
 // any non-idempotency error propagates (the transaction rolls back). A short-stock
-// is the explicit { ok:false, shortages } contract, never a silent success.
+// is the explicit { ok:false, shortages } contract, never a silent success. A
+// quantity (also one variant's quantities added up over its lines), line amount or
+// total over what the INTEGER columns store is the typed OrderTooLargeError, thrown
+// before any write (the route answers 422), and so is a total over what the
+// order's payment provider takes in one charge; so is a backorder whose reserved
+// stock would pass its column, raised by the reserve and rolled back with the order.
+// A paid total below the provider's minimum charge is the typed OrderTooSmallError,
+// also thrown before any write (a 422 order_too_small); a free order (total 0) is not.
 
 import type { Kysely } from 'kysely';
 
-import { RESERVE_ISOLATION_LEVEL, reserve, type Shortage } from '../inventory/reserve';
+import { RESERVE_ISOLATION_LEVEL, ReservationOverflowError, reserve, type Shortage } from '../inventory/reserve';
 import { pricingRepository } from '../repository/pricing';
 import { orderRepository } from '../repository/order';
-import { UnknownVariantError } from '../repository/errors';
+import { OrderTooLargeError, OrderTooSmallError, UnknownVariantError } from '../repository/errors';
+import { MAX_ORDER_INTEGER, oversizedVariant } from '@/lib/commerce/dto';
 import { toJsonb } from '../../books/snapshots';
 import { emitCommerceEvent } from '../jobs/emit';
 import type { Buyer } from '../payment/buyer';
 import { PAYMENT_WINDOW_MS, platformFee } from '../payment/payments';
-import type { ProviderId } from '../payment/provider';
+import { maxChargeAmount, minChargeAmount, type ProviderId } from '../payment/provider';
 import type { CreateOrderLineItemInput } from '../repository/types';
 import type { CommerceDB } from '../db-types';
 import {
@@ -173,6 +181,15 @@ function assertNonNegativeIntCents(value: number, label: string): void {
   }
 }
 
+/**
+ * A quantity or cents amount the order's INTEGER columns can hold. Over it, the
+ * cart asked for more than one order stores: a typed OrderTooLargeError (a 422 at
+ * the route), never the database's out-of-range error (a 500).
+ */
+function assertStorable(value: number, label: string, variantId: string | null): void {
+  if (value > MAX_ORDER_INTEGER) throw new OrderTooLargeError(variantId, label, value);
+}
+
 /** True iff the error is the b3 inner-reserve concurrent-duplicate sentinel. */
 export function isReserveDuplicate(error: unknown): boolean {
   // DuplicateRequestError is not exported from reserve.ts (it never escapes the
@@ -201,6 +218,13 @@ export function validateCart(cart: Cart): void {
   for (const line of cart.lines) {
     if (!line.variantId) throw new Error('createOrder: line.variantId is required');
     assertPositiveInt(line.quantity, 'line.quantity');
+    assertStorable(line.quantity, 'line.quantity', line.variantId);
+  }
+  // A variant named on several lines is reserved for their sum: the sum must fit the reserved quantity too.
+  const oversized = oversizedVariant(cart.lines);
+  if (oversized) {
+    const sum = cart.lines.filter((line) => line.variantId === oversized).reduce((total, line) => total + line.quantity, 0);
+    throw new OrderTooLargeError(oversized, 'quantity across lines', sum);
   }
 }
 
@@ -342,6 +366,8 @@ function runOrderTransaction(
           line.taxClass ?? variant?.variantTaxClass ?? variant?.productTaxClass ?? null;
 
         const base = unitPrice * line.quantity;
+        // Checked before the integer check: a product past 2^53 is no longer an exact integer.
+        assertStorable(base, 'line base amount', line.variantId);
         assertNonNegativeIntCents(base, 'line base amount');
 
         const lineTax = computeLineTax(base, {
@@ -368,15 +394,32 @@ function runOrderTransaction(
           variantRefSource: line.variantRefSource ?? 'none',
         });
 
+        // Net VAT adds to the base: the line's gross can go over where its base did not.
+        assertStorable(lineTax.gross, 'line gross amount', line.variantId);
+
         subtotal += lineTax.net;
         taxAmount += lineTax.tax;
         total += lineTax.gross;
+        // Lines that each fit can still add up to more than the order stores.
+        assertStorable(total, 'order total', null);
       }
 
       // (4) server-computed totals (any cart.clientTotal is ignored entirely).
       assertNonNegativeIntCents(subtotal, 'order subtotal');
       assertNonNegativeIntCents(taxAmount, 'order tax amount');
       assertNonNegativeIntCents(total, 'order total');
+      // More than the payment provider takes in one charge (Stripe: 999,999.99 EUR) would be
+      // ordered and hold its stock, then fail when the payment starts: refused here, before any write.
+      if (cart.payment && total > maxChargeAmount(cart.payment.provider, cart.currency)) {
+        throw new OrderTooLargeError(null, 'order total over the payment maximum', total);
+      }
+      // Less than the provider takes in one charge (Stripe: 0.50 EUR) would hold its stock, then fail
+      // when the payment starts: refused here too. A free order (total 0) opens no payment (step 7) and
+      // stays allowed; the demo provider has no minimum.
+      if (cart.payment && total > 0) {
+        const minimum = minChargeAmount(cart.payment.provider, cart.currency);
+        if (total < minimum) throw new OrderTooSmallError(total, minimum);
+      }
 
       const taxNote = kleinunternehmer
         ? KLEINUNTERNEHMER_NOTICE
@@ -416,15 +459,26 @@ function runOrderTransaction(
         });
 
         const cartLine = cart.lines[i];
-        const result = await reserve(trx, tgId, {
-          inventoryItemId: cartLine.inventoryItemId,
-          variantId: cartLine.variantId,
-          locationId: cartLine.locationId,
-          needed: cartLine.quantity,
-          requestId: orderLineRequestId(cart.tenantId, cart.requestId, i),
-          refType: 'order_line',
-          refId: lineItem.id,
-        });
+        let result: Awaited<ReturnType<typeof reserve>>;
+        try {
+          result = await reserve(trx, tgId, {
+            inventoryItemId: cartLine.inventoryItemId,
+            variantId: cartLine.variantId,
+            locationId: cartLine.locationId,
+            needed: cartLine.quantity,
+            requestId: orderLineRequestId(cart.tenantId, cart.requestId, i),
+            refType: 'order_line',
+            refId: lineItem.id,
+          });
+        } catch (error) {
+          // A backorder whose reserved stock would pass its column (with the stock other
+          // orders hold): the cart asked for more than the shop can record. Thrown out of
+          // the transaction, so the order and every earlier reservation roll back.
+          if (error instanceof ReservationOverflowError) {
+            throw new OrderTooLargeError(cartLine.variantId, 'reserved quantity', error.reserved + error.needed);
+          }
+          throw error;
+        }
 
         if (!result.ok) {
           // Abort: throwing rolls back the order, every line, and every prior

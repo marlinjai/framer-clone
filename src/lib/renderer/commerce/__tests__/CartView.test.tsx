@@ -27,7 +27,7 @@ function renderCart(ds: CommerceDataSource) {
   return render(
     <CommerceDataSourceContext.Provider value={ds}>
       <CartProvider>
-        <CartView node={makeNode()} scope={createScope()} hostType="div" hostProps={{}} mode="preview" />
+        <CartView node={makeNode()} scope={createScope()} hostType="div" hostProps={{}} />
       </CartProvider>
     </CommerceDataSourceContext.Provider>,
   );

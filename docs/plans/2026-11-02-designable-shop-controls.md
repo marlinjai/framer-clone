@@ -38,7 +38,11 @@ assistive technology what an element is), AI (the page generator).
 3. **Behaviour stays in the island.** The island passes the designer's props first and its own last, so a
    designer changes how a part looks and reads, never what it does: a button's `type`, its `disabled` and
    `aria-busy`, an input's `name`, `type`, `value`, `required`, `autocomplete`, ARIA wiring and every handler
-   are the island's. Order placement, the idempotency key, money and stock (server authored), the payment
+   are the island's. On a part's button or input, whether it can be pressed, typed into or reached by the
+   keyboard (`disabled`, `aria-disabled`, `tabindex`, and on an input `readonly` and `max`, in any spelling)
+   is never stored: the normaliser drops a stored copy and the island draws none of the designer's, setting
+   its own where it means something (a remove button that cannot be pressed would strand a visitor with a
+   line). Order placement, the idempotency key, money and stock (server authored), the payment
    gateway seam, Stripe, the demo company restriction, the receipt rules, the German VAT checks and "refuse
    Stripe until Books are ready" are untouched: they live in the island's controller and the server, which
    this change does not touch.
@@ -198,9 +202,43 @@ assistive technology what an element is), AI (the page generator).
 
 1. **Plan, shared parts, the checkout** (built, held for review because it touches the checkout): the spec,
    builder, normaliser, runtime, canvas state preview, delete guard, Layers icons, generator schema, tests.
-2. **Add to cart and the cart:** the button, its label, the availability error; the cart's empty message, a
-   line item template (title, variant, quantity control, line price, remove button) drawn once per line,
-   subtotal and the display-only notice. The cart's `emptyContent` binding moves to the empty message part.
+2. **Add to cart and the cart** (built, held until slice 1 lands): the add to cart's button with its label
+   and a sold out label, and the availability error; the cart's empty message, a line template (name, price,
+   quantity with its label, remove button, the low stock warning, and the loading, no longer sold and failed
+   messages) drawn once per cart line with each copy reading its own line, the estimated subtotal (it must
+   keep `{subtotal}`) and the estimate notice (fixed text, kept in sight). The old `label` and `emptyContent`
+   props and their bindings move to the label and empty message parts, where a binding resolves against the
+   frames the island sits in. On a control that already has parts, a binding moves unless the part is bound
+   already, and a prop moves only into a part the normaliser rebuilds because it was missing; a part already
+   there keeps its own text and the prop is dropped. Normalising twice gives what normalising once gave. A
+   line no longer sold or failed to load keeps its remove button in sight whatever the design says (the
+   island pins it as it does a part kept in sight), since its quantity cannot go below one. A designer's id
+   on a part inside the repeated line goes, so it never repeats on the page. The pinned remove button also
+   takes a press through a `pointer-events: none` of its own or of a wrapper (pinned `auto`, the design's
+   value back when the pin lets go). On the canvas and in the Preview only the first copy of the line, and
+   of every node inside it, carries the selection identity; every copy keeps the style hook. The quantity
+   input never removes a line (zero or less is one, a blank keeps the quantity: removing is the remove
+   button's), and after a removal the focus moves to the next line's remove button, else the previous one's,
+   else the empty message. While a line is not counted in the subtotal (loading, failed, no longer sold or
+   without a price), the estimate notice says so in the site language, and before any price is known the
+   subtotal shows a placeholder (a hyphen), never a bare 0.00 without its currency. The line price and the
+   subtotal are not kept in sight, by decision: they are display-only estimates, and the estimate notice
+   beside them, fixed and kept in sight, already tells the visitor the final total is the checkout's. The
+   checkout's total is kept in sight because it is the figure the buyer commits to when paying. A message that
+   comes later (the add to cart's failed check, a cart line's failure, and the checkout's going to payment, back
+   from payment and confirmation messages) is announced through a status region, and on a published page or in
+   the Preview that region is the designed part itself, never a wrapper: the part stays mounted in every state
+   with `role="status"`, and while it has nothing to say it is drawn empty and visually hidden (absolute, 1
+   pixel, clipped, no padding, border or margin, so it adds no gap to its control), in the accessibility tree
+   but out of the layout. When the message arrives the same element receives it, drawn in the flow with the
+   design's style alone, so a screen reader announces it, and the design's order, alignment, grid placement and
+   child-combinator rules reach it on the page exactly as on the canvas (a wrapper would have become the flex or
+   grid item in its place). Only that element carries the role, whatever a state adds, so nothing is announced
+   twice. A part kept in sight is not pinned into view while its region waits empty: the island's pins apply
+   only once it shows and come off when it hides again. The canvas draws no empty region (nothing is announced
+   there). Canvas states: ready, no option chosen, checking (loading), sold out and a failed
+   check for the add to cart; items, empty, loading, low stock, an item no longer sold and an item that failed
+   for the cart.
 3. **Variant selector:** the option groups, option labels and the choice buttons as a template drawn per
    option value, with the selected and sold-out looks as stored rules.
 

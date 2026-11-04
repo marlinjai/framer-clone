@@ -108,9 +108,11 @@ describe('component registry commerce entries', () => {
     // none: its label is a part node (src/lib/commerce/parts.ts), bound like any text.
     expect(Object.keys(getBindableSlotsFor('productList'))).toContain('products');
     expect(Object.keys(getBindableSlotsFor('productDetail'))).toContain('product');
-    expect(Object.keys(getBindableSlotsFor('addToCart'))).toContain('label');
+    // The add to cart's label and the cart's empty message are part nodes now (src/lib/commerce/parts.ts):
+    // their text binds on the part, like any text.
+    expect(getBindableSlotsFor('addToCart')).toEqual({});
     expect(getBindableSlotsFor('checkoutButton')).toEqual({});
-    expect(Object.keys(getBindableSlotsFor('cartView'))).toContain('emptyContent');
+    expect(getBindableSlotsFor('cartView')).toEqual({});
     // variant-selector has no data-source slot: getBindableSlotsFor stays graceful.
     expect(getBindableSlotsFor('variantSelector')).toEqual({});
   });
