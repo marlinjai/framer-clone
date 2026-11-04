@@ -102,7 +102,9 @@ Folded in from the re-review of 86b2d472 (decided while building, say so if you 
   it counts for the unload warning, and Cmd+S and leaving the page commit it first. In the
   canvas this ends the inline edit, as Enter does (one undo step); the panel field keeps focus.
 - **A reload on purpose that the person cancels** (Stay, when the browser asks about another
-  project's unsaved work) leaves autosave and the warning working again after 1.5 s.
+  project's unsaved work) leaves autosave and the warning working again, re-armed by a real sign
+  the page stayed (the person pressing a key or the pointer on it, or the page shown again from
+  the back-forward cache), never by time alone and never after `pagehide` (third review).
 - **Coming back to a paused project** whose copy meanwhile equals the server's clears the pause.
 - **Leaving or hiding the page** commits open drafts and sends what is unsaved at once, as a
   `keepalive` request when the body fits the browser's 64 KB limit (otherwise a normal request
@@ -121,12 +123,39 @@ Folded in from the re-review of 86b2d472 (decided while building, say so if you 
 - **One serialisation per save cycle:** the comparison key is computed when the debounce fires
   and passed on to `isSaved` and `markServerVersion`.
 - **The attempt key is bound to content and version.** An edit during the backoff after a lost
-  answer is a new attempt; if the lost one had committed, that retry meets a 409 resolved with
-  "Save mine over it". Reusing the key for new content would mark it saved while the server
-  holds the old content.
+  answer is a new attempt with a new key, and it names the lost attempt (`previousRequestKey`):
+  when the stored write is that one (its key, the version just after `expectedVersion`), the
+  server writes the new content on top of it instead of a false 409 (third review). Someone
+  else's write, or more than one write ahead, stays a 409. Reusing the key for new content would
+  mark it saved while the server holds the old content.
 - **Hiding the tab while editing text on the canvas** commits the text and ends the inline edit
   (the panel field keeps its focus).
 - **No router refresh on a stale read:** nothing is adopted, so there is nothing to refresh.
+
+Folded in from the third review of 8bcce7b1 (decided while building, say so if you disagree):
+
+- **Typing survives the editor closing without a blur** (browser Back, Cmd+[, a mouse back
+  button). React unmounts the canvas before the top bar and the top bar before the right panel,
+  so no single order works: `useAutosave` commits open drafts before it detaches, `detach` saves
+  whatever the server does not hold (also with no timer pending), the inline canvas editor
+  writes its text on unmount while its edit is still open, and every panel field commits its
+  own draft on unmount.
+- **Every blur-committing panel field is an open draft** (`src/hooks/useOpenDraft.ts`): the
+  component input fields, custom properties and attributes, form options, colour, dimension and
+  slider value inputs, besides the text field. A field counts only once the person typed in it,
+  never for a value merely shown in another format.
+- **The left-behind notice is not a live region**; its own polite region announces an item when
+  it first appears or changes kind, so the ticking countdown is never read out.
+- **"Save mine as a new project" gives up the original's working copy** (from the status and
+  from Publish): its pause, warning and notice end, and coming back to the original opens the
+  server copy (`discardWorkingCopy`).
+- **Recovery:** back online, or when the tab is visible again, a failure whose automatic retries
+  stopped and a sign-out (401) are tried once more; still refused, they stay failed.
+- **Publish's body is strict** and refuses the save's attempt keys; the save has its own schema.
+- **The migration gives up after 5 s** waiting for its lock on `sites` (`SET lock_timeout`),
+  instead of queueing every read behind it.
+- **Cmd/Ctrl+S on the standalone preview** only keeps the browser dialog away (nothing to save
+  there).
 
 Decided by Marlin on 2026-11-04 (the brief of the first version):
 
@@ -175,9 +204,10 @@ Decided while building (say so if you disagree):
 - **"Load the newer version" switches autosave off for the rest of that page**, because the page
   reloads (no other `beforeunload` handler in the editor can cancel it).
 - **Leaving the editor in the same tab saves a pending change at once** (the controller lives on
-  per project, so coming back finds the same state). No save is attempted during unload itself:
-  `fetch` with `keepalive` caps the body at 64 KB and a project can be megabytes; the warning
-  covers that case.
+  per project, so coming back finds the same state). On `pagehide` or a hidden tab the unsaved
+  copy is sent at once (re-review): as a `keepalive` request when the body fits the browser's
+  64 KB limit, otherwise as a normal request that may not outlive the page, which the unload
+  warning covers.
 - **The name is not part of what autosave compares.** The rename route
   (`PATCH /api/projects/<id>`) owns it and the editor mirrors it outside undo history, so a
   rename never triggers a save.
@@ -262,6 +292,13 @@ The four paths of the stateful flow standard (knowledge-base `standards/stateful
   generator's line in the top bar's words.
 - `src/components/__tests__/SiteVersionLock.test.tsx` keeps the version lock's cases, driven by
   an edit and Cmd+S; `DemoProjectSaving.test.tsx` the demo versus a real project.
+- Third review: unmounting the editor with a dirty panel draft and with an open inline edit
+  saves the text; ColorInput and DimensionInput as open drafts (Cmd+S and unmount), a field
+  nobody typed in is none; the notice's countdown outside the live region; "Save mine as a new
+  project" ending the warning and the notice; `previousRequestKey` in the controller (an edit
+  during the backoff, a new version, a refusal settling it), the repository and the route;
+  Publish refusing the key; recovery of 401 and stopped failures; the reload re-armed by a sign
+  and not by time or after pagehide; the preview's Cmd+S block.
 - Re-review: `src/stores/__tests__/openProject.test.ts` (stale read with and without unsaved
   work, legal details and description kept); `SaveShortcutInFields.test.tsx` (Cmd+S through the
   inline editor and the panel field: prevented, typed text saved, counted as unsaved);
