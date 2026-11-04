@@ -25,6 +25,7 @@ import { isPlacementType, type PlacementProps } from '@/lib/components/placement
 import InlineFormatBar from './InlineFormatBar';
 import LegalTemplateNotice from './site/LegalTemplateNotice';
 import { resolveAction } from '@/lib/keyBindings';
+import { handleSaveShortcut } from '@/lib/projects/saveShortcut';
 import { bindSpacePan, isActivatableControl } from '@/lib/canvas/spacePan';
 import { deleteSelection } from '@/lib/canvas/deleteSelection';
 import { duplicateLayer } from '@/lib/layers/layerActions';
@@ -133,7 +134,7 @@ export default function EditorApp({ projectSnapshot, projectVersion }: EditorApp
         const demo = projectStore.findProjectByTitle('Framer Clone Demo');
         editorUI.setCurrentProject(demo);
         editorUI.setCurrentPage(demo?.findPageBySlug(''));
-        // It exists only in this browser: Save offers "Save as a new project".
+        // It exists only in this browser: the top bar offers "Keep as project".
         if (demo) editorUI.markUnsavedDemo(demo.id);
       }
       // Undo history belongs to one project: a different one (or a seeded
@@ -168,6 +169,11 @@ export default function EditorApp({ projectSnapshot, projectVersion }: EditorApp
   // settings page can rebind without touching this file.
   React.useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      // Cmd/Ctrl+S, before every guard below: the browser's "save page" dialog
+      // must never open over the editor (also mid-drag, in the preview or in a
+      // field). It saves at once (src/lib/projects/saveShortcut.ts).
+      if (handleSaveShortcut(e, rootStore.editorUI)) return;
+      const match = resolveAction(e);
       // Suppress editor shortcuts while a drag gesture is active so the user
       // can't accidentally delete the source mid-drag or undo into inconsistent
       // state. DragManager's own Escape handler still fires (it listens with
@@ -176,7 +182,6 @@ export default function EditorApp({ projectSnapshot, projectVersion }: EditorApp
       // The preview over the editor has its own keys (PreviewOverlay).
       if (rootStore.editorUI.previewOpen) return;
 
-      const match = resolveAction(e);
       if (!match) return;
 
       if (match.action === 'delete') {

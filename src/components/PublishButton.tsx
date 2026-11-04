@@ -30,7 +30,7 @@ import { Button } from '@/components/ui/button';
 import { useStore } from '@/hooks/useStore';
 import { knownServerVersion, markServerVersion, type ProjectContent } from '@/stores/openProject';
 import { postProjectWrite } from '@/lib/projects/projectWrite';
-import { existingAutosave } from '@/lib/projects/autosave';
+import { existingAutosave, reloadDiscarding } from '@/lib/projects/autosave';
 import SiteChangedDialog from './SiteChangedDialog';
 import SaveAsNewProjectDialog from './SaveAsNewProjectDialog';
 import { useSiteAddress } from '@/contexts/SiteAddressContext';
@@ -78,7 +78,7 @@ const PublishButton = observer(() => {
     if (isUnsavedDemo) {
       setState({
         kind: 'error',
-        message: 'This demo project exists only in this browser. Save it as a project first (Save), then publish it from there.',
+        message: 'This demo project exists only in this browser. Keep it as a project first (Keep as project), then publish it from there.',
       });
       return;
     }
@@ -240,7 +240,7 @@ const PublishButton = observer(() => {
         action="publish"
         busy={state.kind === 'conflict' && state.retrying}
         onKeepEditing={() => setState({ kind: 'idle' })}
-        onLoadNewer={() => window.location.reload()}
+        onLoadNewer={() => reloadDiscarding(project?.id)}
         onKeepMine={() => {
           if (state.kind === 'conflict') void publish(true, state.currentVersion);
         }}

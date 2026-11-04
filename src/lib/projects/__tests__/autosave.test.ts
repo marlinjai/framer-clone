@@ -9,12 +9,13 @@
 //   resume:    unsaved or in-flight work is reported for the unload warning,
 //              and a later load of what was saved opens clean;
 //   re-entry:  a 409 pauses until a write of this tab succeeds; a passing
-//              failure retries with backoff; a refusal never retries by itself.
+//              failure retries with backoff; a refusal never retries by itself,
+//              Retry (or Cmd+S) tries again.
 // Plus: opening is not a change, a generated page saves at once, Publish holds
 // autosave, and a load that kept unsaved work over a newer copy pauses it.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { getSnapshot } from 'mobx-state-tree';
-import { createRootStore, type RootStoreType } from '@/stores/RootStore';
+import { createRootStore, getUndoManager, type RootStoreType } from '@/stores/RootStore';
 import ProjectModel, { type ProjectModelType, type ProjectSnapshotOut } from '@/models/ProjectModel';
 import { knownServerVersion, markServerVersion, openProject, type ProjectContent } from '@/stores/openProject';
 import type { ProjectWriteResult } from '../projectWrite';
@@ -22,7 +23,9 @@ import {
   AUTOSAVE_BACKOFF_MS,
   AUTOSAVE_DEBOUNCE_MS,
   AUTOSAVE_MAX_WAIT_MS,
+  anyUnsavedWork,
   autosaveFor,
+  existingAutosave,
   isPassingFailure,
   resetAutosaveForTests,
   type AutosaveController,
@@ -66,7 +69,7 @@ function serverSnapshot(id: string, description = ''): ProjectSnapshotOut {
   return getSnapshot(p) as ProjectSnapshotOut;
 }
 
-/** What /projects/<id> does, then the Save button watching the project. */
+/** What /projects/<id> does, then the top bar's save status watching the project. */
 function openAndWatch(version = 3, id = `site_auto_${++seq}`): { project: ProjectModelType; autosave: AutosaveController } {
   const project = openProject(store, serverSnapshot(id), null, version).project!;
   const autosave = autosaveFor(project.id);
@@ -138,6 +141,41 @@ describe('forward', () => {
     await advance(60_000);
     expect(calls).toHaveLength(2);
     expect(autosave.getState().phase).toBe('saved');
+  });
+});
+
+describe('Cmd+S (flush)', () => {
+  it('saves at once instead of waiting for the debounce, and the debounce sends nothing more', async () => {
+    const { project, autosave } = openAndWatch(3);
+    edit(project, 'right now');
+    expect(autosave.getState().phase).toBe('unsaved');
+    void autosave.flush();
+    expect(calls).toHaveLength(1);
+    expect(calls[0].snapshot.metadata.description).toBe('right now');
+    await calls[0].answer(ok(4));
+    expect(autosave.getState().phase).toBe('saved');
+    await advance(AUTOSAVE_MAX_WAIT_MS);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('a clean copy sends nothing', async () => {
+    const { autosave } = openAndWatch(3);
+    await autosave.flush();
+    expect(calls).toHaveLength(0);
+    expect(autosave.getState().phase).toBe('saved');
+  });
+
+  it('during a request, it makes one trailing save at once (no second debounce)', async () => {
+    const { project, autosave } = openAndWatch(3);
+    edit(project, 'one');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    edit(project, 'two');
+    void autosave.flush();
+    expect(calls).toHaveLength(1);
+    await calls[0].answer(ok(4));
+    expect(calls).toHaveLength(2);
+    expect(calls[1].snapshot.metadata.description).toBe('two');
+    expect(calls[1].expectedVersion).toBe(4);
   });
 });
 
@@ -243,11 +281,14 @@ describe('re-entry after a 409 site_changed', () => {
     expect(calls).toHaveLength(1); // a refusal never loops
     expect(autosave.hasUnsavedWork()).toBe(true);
 
-    void autosave.saveManually(9);
+    void autosave.saveOver(9);
     expect(calls).toHaveLength(2);
     expect(calls[1].expectedVersion).toBe(9);
+    expect(calls[1].snapshot.metadata.description).toBe('even more');
     await calls[1].answer(ok(10));
-    expect(autosave.getState().phase).toBe('savedNow');
+    expect(autosave.getState().phase).toBe('saved');
+    expect(knownServerVersion(project.id)).toBe(10);
+    expect(autosave.hasUnsavedWork()).toBe(false);
 
     edit(project, 'autosaving again');
     await advance(AUTOSAVE_DEBOUNCE_MS);
@@ -255,16 +296,44 @@ describe('re-entry after a 409 site_changed', () => {
     expect(calls[2].expectedVersion).toBe(10);
   });
 
-  it('a manual Save while paused sends the old version and asks again', async () => {
+  it('Cmd+S while paused reopens the dialog without a request; Retry sends nothing either', async () => {
     const { project, autosave } = openAndWatch(3);
     edit(project, 'mine');
     await advance(AUTOSAVE_DEBOUNCE_MS);
     await calls[0].answer(conflict(9));
     autosave.dismissConflict();
-    void autosave.saveManually();
-    expect(calls[1].expectedVersion).toBe(3);
-    await calls[1].answer(conflict(9));
-    expect(autosave.getState()).toMatchObject({ phase: 'conflict', dialogOpen: true });
+    expect(autosave.getState()).toMatchObject({ phase: 'conflict', dialogOpen: false });
+    await autosave.flush();
+    expect(autosave.getState()).toMatchObject({ phase: 'conflict', currentVersion: 9, dialogOpen: true });
+    await autosave.retry();
+    expect(calls).toHaveLength(1);
+    expect(knownServerVersion(project.id)).toBe(3);
+  });
+
+  it('"Save mine over it" meets yet another write: refused again, the dialog asks with the newer number', async () => {
+    const { project, autosave } = openAndWatch(1);
+    edit(project, 'mine');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    await calls[0].answer(conflict(2));
+    void autosave.saveOver(2);
+    expect(autosave.getState()).toMatchObject({ phase: 'conflict', retrying: true });
+    await calls[1].answer(conflict(3));
+    expect(autosave.getState()).toMatchObject({ phase: 'conflict', currentVersion: 3, dialogOpen: true, retrying: false });
+    void autosave.saveOver(3);
+    await calls[2].answer(ok(4));
+    expect([calls[0].expectedVersion, calls[1].expectedVersion, calls[2].expectedVersion]).toEqual([1, 2, 3]);
+    expect(knownServerVersion(project.id)).toBe(4);
+  });
+
+  it('"Save mine over it" sends even a copy equal to the one this tab loaded (a refused Publish)', async () => {
+    const { project, autosave } = openAndWatch(3);
+    autosave.noteConflict(7);
+    void autosave.saveOver(7);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].expectedVersion).toBe(7);
+    await calls[0].answer(ok(8));
+    expect(knownServerVersion(project.id)).toBe(8);
+    expect(autosave.getState().phase).toBe('saved');
   });
 
   it('a generated page does not bypass the pause', async () => {
@@ -344,19 +413,59 @@ describe('re-entry after a failure', () => {
     }
   });
 
-  it.each([400, 401, 403, 404, 413])('a %i refusal is shown and never retried by itself; a click tries again', async (status) => {
+  it.each([400, 401, 403, 404, 413])('a %i refusal is shown with its status and never retried by itself; Retry tries again', async (status) => {
     const { project, autosave } = openAndWatch(3);
     edit(project, 'mine');
     await advance(AUTOSAVE_DEBOUNCE_MS);
     await calls[0].answer(failure(status, 'Refused.'));
-    expect(autosave.getState()).toMatchObject({ phase: 'failed' });
+    expect(autosave.getState()).toEqual({ phase: 'failed', message: 'Refused.', status });
     edit(project, 'more');
     await advance(120_000);
     expect(calls).toHaveLength(1);
-    void autosave.saveManually();
+    void autosave.retry();
+    expect(calls).toHaveLength(2);
+    expect(calls[1].snapshot.metadata.description).toBe('more');
+    await calls[1].answer(ok(4));
+    expect(autosave.getState().phase).toBe('saved');
+    // Autosave runs again after the retry succeeded.
+    edit(project, 'after the retry');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    expect(calls).toHaveLength(3);
+  });
+
+  it('Cmd+S after a refusal tries again, like Retry', async () => {
+    const { project, autosave } = openAndWatch(3);
+    edit(project, 'mine');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    await calls[0].answer(failure(413, 'Too large.'));
+    void autosave.flush();
     expect(calls).toHaveLength(2);
     await calls[1].answer(ok(4));
-    expect(autosave.getState().phase).toBe('savedNow');
+    expect(autosave.getState().phase).toBe('saved');
+  });
+
+  it('Retry while a passing failure waits sends at once and drops the pending timer', async () => {
+    const { project, autosave } = openAndWatch(3);
+    edit(project, 'mine');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    await calls[0].answer(failure(500));
+    expect(autosave.getState().phase).toBe('retrying');
+    void autosave.retry();
+    expect(calls).toHaveLength(2);
+    await calls[1].answer(ok(4));
+    await advance(120_000);
+    expect(calls).toHaveLength(2);
+  });
+
+  it('Retry after an undo back to the saved copy sends nothing and resolves the failure', async () => {
+    const { project, autosave } = openAndWatch(3);
+    edit(project, 'too big');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    await calls[0].answer(failure(413, 'Too large.'));
+    edit(project, '');
+    await autosave.retry();
+    expect(calls).toHaveLength(1);
+    expect(autosave.getState().phase).toBe('saved');
   });
 
   it('classifies statuses', () => {
@@ -442,5 +551,240 @@ describe('opening, generation and Publish', () => {
     expect(autosave.getState()).toMatchObject({ phase: 'conflict', currentVersion: 8, dialogOpen: false });
     await advance(60_000);
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe('the review of 2026-11-04', () => {
+  it('a project without a server version in this tab (a demo just kept as a project) is never saved automatically', async () => {
+    const project = ProjectModel.create({ id: `site_auto_${++seq}`, metadata: { title: 'Demo', description: '' }, pages: {} });
+    const autosave = autosaveFor(project.id);
+    autosave.attach(project);
+    edit(project, 'demo work');
+    await advance(AUTOSAVE_MAX_WAIT_MS);
+    await autosave.saveNow();
+    await autosave.flush();
+    autosave.detach(project);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('passing failures stop retrying by themselves after 10 minutes and become a refusal with Retry', async () => {
+    const { project, autosave } = openAndWatch(3);
+    edit(project, 'mine');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    let answered = 0;
+    while (autosave.getState().phase !== 'failed' && answered < 40) {
+      await calls[answered].answer(failure(503, 'Unavailable.'));
+      answered++;
+      const state = autosave.getState();
+      if (state.phase === 'retrying') await advance(state.retryAt - Date.now());
+    }
+    expect(autosave.getState()).toMatchObject({ phase: 'failed', status: 503, retriesStopped: true });
+    // About ten minutes of tries: the backoff steps, then once a minute.
+    expect(answered).toBeGreaterThan(8);
+    expect(answered).toBeLessThanOrEqual(16);
+    const sent = calls.length;
+    await advance(30 * 60_000);
+    expect(calls).toHaveLength(sent);
+    void autosave.retry();
+    expect(calls).toHaveLength(sent + 1);
+    await calls[sent].answer(ok(4));
+    expect(autosave.getState().phase).toBe('saved');
+  });
+
+  it('while Publish writes, the state says publishing and Cmd+S sends nothing of its own', async () => {
+    const { project, autosave } = openAndWatch(3);
+    edit(project, 'publish me');
+    let finish: () => void = () => {};
+    const publishing = autosave.exclusive(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = () => {
+            markServerVersion(project.id, getSnapshot(project) as ProjectContent, 4);
+            resolve();
+          };
+        }),
+    );
+    await advance(0);
+    expect(autosave.getState().phase).toBe('publishing');
+    await autosave.flush();
+    expect(calls).toHaveLength(0);
+    finish();
+    await publishing;
+    expect(autosave.getState().phase).toBe('saved');
+    await advance(AUTOSAVE_MAX_WAIT_MS);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('a Publish that fails without writing shows the earlier state again, and autosave goes on', async () => {
+    const { project, autosave } = openAndWatch(3);
+    edit(project, 'mine');
+    await autosave.exclusive(async () => undefined);
+    expect(autosave.getState().phase).toBe('unsaved');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('after Cmd+S, changes made during the request show as unsaved, not saved', async () => {
+    const { project, autosave } = openAndWatch(3);
+    edit(project, 'one');
+    void autosave.flush();
+    edit(project, 'two');
+    await calls[0].answer(ok(4));
+    expect(autosave.getState().phase).toBe('unsaved');
+    expect(autosave.hasUnsavedWork()).toBe(true);
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    expect(calls[1].snapshot.metadata.description).toBe('two');
+  });
+
+  it('switching projects mid-debounce saves the left one at once, with its own version, and leaves the new one alone', async () => {
+    const a = openAndWatch(3);
+    edit(a.project, 'A work');
+    // What the editor does on opening another project: the status detaches A, attaches B.
+    const b = openProject(store, serverSnapshot(`site_auto_${++seq}`), null, 7).project!;
+    a.autosave.detach(a.project);
+    const bAutosave = autosaveFor(b.id);
+    bAutosave.attach(b);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].snapshot.id).toBe(a.project.id);
+    expect(calls[0].snapshot.metadata.description).toBe('A work');
+    expect(calls[0].expectedVersion).toBe(3);
+    await calls[0].answer(ok(4));
+    await advance(AUTOSAVE_MAX_WAIT_MS);
+    expect(calls).toHaveLength(1);
+    expect(knownServerVersion(a.project.id)).toBe(4);
+  });
+
+  it('a left project leaves the registry once saved; one that failed stays and counts for the unload warning', async () => {
+    const saved = openAndWatch(3);
+    saved.autosave.detach(saved.project);
+    expect(existingAutosave(saved.project.id)).toBeUndefined();
+
+    const pending = openAndWatch(3);
+    edit(pending.project, 'leaving');
+    pending.autosave.detach(pending.project);
+    expect(existingAutosave(pending.project.id)).toBe(pending.autosave);
+    await calls[0].answer(ok(4));
+    expect(existingAutosave(pending.project.id)).toBeUndefined();
+
+    const failing = openAndWatch(3);
+    edit(failing.project, 'not on the server');
+    failing.autosave.detach(failing.project);
+    await calls[1].answer(failure(401, 'authentication required'));
+    expect(existingAutosave(failing.project.id)).toBe(failing.autosave);
+    expect(failing.autosave.isAttached()).toBe(false);
+    expect(anyUnsavedWork()).toBe(true);
+  });
+
+  it('a network failure of a left project keeps retrying in the background and saves', async () => {
+    const left = openAndWatch(3);
+    edit(left.project, 'retry me');
+    left.autosave.detach(left.project);
+    await calls[0].answer(failure(undefined, 'Failed to fetch'));
+    expect(anyUnsavedWork()).toBe(true);
+    await advance(AUTOSAVE_BACKOFF_MS[0]);
+    expect(calls).toHaveLength(2);
+    await calls[1].answer(ok(4));
+    expect(anyUnsavedWork()).toBe(false);
+    expect(existingAutosave(left.project.id)).toBeUndefined();
+  });
+
+  it('opening the project again during its own save is not "saved somewhere else" (the version moved by this save)', async () => {
+    const id = `site_auto_${++seq}`;
+    const project = openProject(store, serverSnapshot(id), null, 3).project!;
+    const autosave = autosaveFor(id);
+    autosave.attach(project);
+    edit(project, 'in flight');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    expect(calls).toHaveLength(1);
+    // Preview mounting (or coming back) reads the server after the save committed.
+    const server = getSnapshot(project) as ProjectSnapshotOut;
+    const reopened = openProject(store, server, null, 4);
+    expect(reopened.changedElsewhere).toBe(false);
+    expect(reopened.keptWorkingCopy).toBe(true);
+    await calls[0].answer(ok(4));
+    expect(knownServerVersion(id)).toBe(4);
+    expect(autosave.getState().phase).toBe('saved');
+  });
+
+  it('a write by someone else during this save is still caught: the save is refused and asks', async () => {
+    const id = `site_auto_${++seq}`;
+    const project = openProject(store, serverSnapshot(id), null, 3).project!;
+    const autosave = autosaveFor(id);
+    autosave.attach(project);
+    edit(project, 'in flight');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    openProject(store, serverSnapshot(id, 'theirs'), null, 4);
+    // The version this tab is based on did not move with the load.
+    expect(knownServerVersion(id)).toBe(3);
+    await calls[0].answer(conflict(4));
+    expect(autosave.getState()).toMatchObject({ phase: 'conflict', currentVersion: 4, dialogOpen: true });
+  });
+});
+
+describe('real content edits (through the repairs isSaved applies)', () => {
+  it('a style edit on a page node saves, and an undo and a redo are saved too', async () => {
+    const { project } = openAndWatch(3);
+    const tree = project.findPageBySlug('')!.appComponentTree;
+    tree.updateResponsiveStyle('color', 'rgb(200, 0, 0)');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    expect(calls).toHaveLength(1);
+    await calls[0].answer(ok(4));
+
+    getUndoManager()!.undo();
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    expect(calls).toHaveLength(2);
+    expect(JSON.stringify(calls[1].snapshot.pages)).not.toContain('rgb(200, 0, 0)');
+    await calls[1].answer(ok(5));
+
+    getUndoManager()!.redo();
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    expect(calls).toHaveLength(3);
+    expect(JSON.stringify(calls[2].snapshot.pages)).toContain('rgb(200, 0, 0)');
+  });
+
+  it('a new page saves; undoing it back to the loaded copy sends nothing more', async () => {
+    const { project } = openAndWatch(3);
+    project.createPage('About');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    expect(calls).toHaveLength(1);
+    expect(Object.keys(calls[0].snapshot.pages)).toHaveLength(2);
+    await calls[0].answer(ok(4));
+    getUndoManager()!.undo();
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    expect(calls).toHaveLength(2);
+    expect(Object.keys(calls[1].snapshot.pages)).toHaveLength(1);
+  });
+
+  it('site settings and a component definition are saved', async () => {
+    const { project } = openAndWatch(3);
+    project.updateSiteSettings({ language: 'de' });
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    expect(calls).toHaveLength(1);
+    expect((calls[0].snapshot as { siteSettings?: { language?: string } }).siteSettings?.language).toBe('de');
+    await calls[0].answer(ok(4));
+
+    expect(calls).toHaveLength(1);
+  });
+
+  it('a change to a component definition is saved, and the load of it opens clean', async () => {
+    const host = (id: string, type: string, children: unknown[] = []) => ({ id, type, componentType: 'host', props: {}, children });
+    const card = {
+      id: 'card',
+      name: 'Card',
+      page: { id: 'page-card', metadata: { title: 'Card' }, appComponentTree: host('c-root', 'article', [host('c-title', 'h3')]), canvasNodes: {} },
+      inputs: [],
+      states: [],
+    };
+    const id = `site_auto_${++seq}`;
+    const withCard = { ...serverSnapshot(id), components: { card } } as unknown as ProjectSnapshotOut;
+    const project = openProject(store, withCard, null, 3).project!;
+    const autosave = autosaveFor(id);
+    autosave.attach(project);
+    await advance(AUTOSAVE_MAX_WAIT_MS);
+    expect(calls).toHaveLength(0);
+    expect(project.renameDefinition('card', 'Tile').ok).toBe(true);
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    expect(calls).toHaveLength(1);
+    expect((calls[0].snapshot.components as Record<string, { name: string }>).card.name).toBe('Tile');
   });
 });

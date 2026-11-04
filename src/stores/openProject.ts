@@ -166,6 +166,17 @@ const savedKeys = new Map<string, string>();
 const openedChangedElsewhere = new Map<string, number>();
 // Above zero while a load puts the server copy into the store.
 let applyingServerCopy = 0;
+// project id -> writes of this tab (autosave, Publish) out right now. A load
+// meanwhile (Preview mounting, coming back to the editor) may already see the
+// version that write produces: that is no change made elsewhere.
+const writesInFlight = new Map<string, number>();
+
+/** Autosave and Publish report a write of this tab starting (true) and ending (false). */
+export function noteWriteInFlight(projectId: string, inFlight: boolean): void {
+  const count = (writesInFlight.get(projectId) ?? 0) + (inFlight ? 1 : -1);
+  if (count > 0) writesInFlight.set(projectId, count);
+  else writesInFlight.delete(projectId);
+}
 
 /**
  * Every part of a project a Save writes, except the name (the rename route
@@ -282,6 +293,7 @@ export function openProject(
   const baseline = baselines.get(snapshot.id);
 
   let keep = false;
+  let ownWrite = false;
   let changedElsewhere = false;
   let changedDefinitions: string[] = [];
   let changedSite: SitePart[] = [];
@@ -300,7 +312,11 @@ export function openProject(
     const serverChanged =
       erasedSince || versionMoved || (baseline !== undefined && !sameVersion(serverContent, baseline));
     const workingChanged = baseline === undefined || !sameVersion(workingContent, baseline);
-    if (!serverChanged) keep = true; // nothing new on the server: keep this tab's work
+    // This tab's own write is out: what the load read may be that write. Keep
+    // the work and the version as they are; the write's answer sets the new
+    // version, and if someone else wrote instead, that answer is the 409.
+    ownWrite = (writesInFlight.get(snapshot.id) ?? 0) > 0 && !erasedSince;
+    if (ownWrite || !serverChanged) keep = true; // nothing new on the server: keep this tab's work
     else if (workingChanged) {
       keep = true; // both changed: keep the work here, warn before a Save
       changedElsewhere = true;
@@ -325,7 +341,9 @@ export function openProject(
     }
     // Nothing new on the server: this copy is based on the server's version. When
     // the server DID change, the old number stays, so a Save gets the 409.
-    if (!changedElsewhere) knownVersions.set(snapshot.id, serverVersion);
+    if (ownWrite) {
+      // Neither adopted nor flagged: the write in flight decides.
+    } else if (!changedElsewhere) knownVersions.set(snapshot.id, serverVersion);
     else openedChangedElsewhere.set(snapshot.id, serverVersion);
   } else {
     let id = snapshot.id;

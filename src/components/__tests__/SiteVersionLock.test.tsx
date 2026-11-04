@@ -1,24 +1,26 @@
 // The version lock in the editor (src/stores/openProject.ts, SiteChangedDialog),
-// on a REAL root store: Save and Publish send the version this tab's copy is
-// based on, take the new one from the answer, and a 409 `site_changed` asks the
-// person instead of overwriting. The four stateful-flow paths: forward (save,
+// on a REAL root store: a save (autosave, here made at once with Cmd+S; there
+// is no Save button) and Publish send the version this tab's copy is based on,
+// take the new one from the answer, and a 409 `site_changed` asks the person
+// instead of overwriting. The four stateful-flow paths: forward (save,
 // save again), a conflicting write in between (the dialog and each choice),
 // resume after a reload (a fresh load adopts the server's version), and
-// re-entry after a refused save (keep editing, then Save again asks again).
+// re-entry after a refused save (keep editing, then Cmd+S asks again).
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, render, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { getSnapshot } from 'mobx-state-tree';
 import { createRootStore, type RootStoreType } from '@/stores/RootStore';
 import { knownServerVersion, openProject } from '@/stores/openProject';
 import ProjectModel, { type ProjectSnapshotOut } from '@/models/ProjectModel';
 import { resetAutosaveForTests } from '@/lib/projects/autosave';
+import { handleSaveShortcut } from '@/lib/projects/saveShortcut';
 
 let store: RootStoreType;
 vi.mock('@/hooks/useStore', () => ({ useStore: () => store }));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn(), replace: vi.fn() }) }));
 
-import SaveButton from '../SaveButton';
+import SaveStatus from '../SaveStatus';
 import PublishButton from '../PublishButton';
 
 const fetchMock = vi.fn();
@@ -53,6 +55,21 @@ function conflict(currentVersion: number) {
     { status: 409 },
   );
 }
+/** Change the working copy and press Cmd+S: the save goes out at once. */
+let editSeq = 0;
+async function editAndSave(project: { updateMetadata: (m: { description: string }) => void }) {
+  // The status attaches autosave in an effect: wait for it, as a person would.
+  await waitFor(() => expect(screen.getByTestId('save-status')).toBeTruthy());
+  act(() => project.updateMetadata({ description: `edit ${++editSeq}` }));
+  act(() => {
+    handleSaveShortcut(new KeyboardEvent('keydown', { key: 's', metaKey: true, cancelable: true }), store.editorUI);
+  });
+}
+function pressSave() {
+  act(() => {
+    handleSaveShortcut(new KeyboardEvent('keydown', { key: 's', metaKey: true, cancelable: true }), store.editorUI);
+  });
+}
 function sentVersion(call: number): unknown {
   return JSON.parse(fetchMock.mock.calls[call][1].body).expectedVersion;
 }
@@ -75,14 +92,13 @@ describe('Save and the version lock', () => {
     fetchMock
       .mockResolvedValueOnce(ok({ siteId: project.id, savedPages: [''], version: 4 }))
       .mockResolvedValueOnce(ok({ siteId: project.id, savedPages: [''], version: 5 }));
-    render(<SaveButton />);
-    const button = screen.getByRole('button', { name: /save/i });
+    render(<SaveStatus />);
 
-    fireEvent.click(button);
+    await editAndSave(project);
     await waitFor(() => expect(knownServerVersion(project.id)).toBe(4));
     expect(sentVersion(0)).toBe(3);
 
-    fireEvent.click(button);
+    await editAndSave(project);
     await waitFor(() => expect(knownServerVersion(project.id)).toBe(5));
     expect(sentVersion(1)).toBe(4);
     expect(screen.queryByRole('dialog')).toBeNull();
@@ -93,9 +109,9 @@ describe('Save and the version lock', () => {
     fetchMock
       .mockResolvedValueOnce(conflict(9))
       .mockResolvedValueOnce(ok({ siteId: project.id, savedPages: [''], version: 10 }));
-    render(<SaveButton />);
+    render(<SaveStatus />);
 
-    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+    await editAndSave(project);
     const dialog = await screen.findByRole('dialog', { name: 'This project was changed somewhere else' });
     // Nothing adopted from a refusal: the tab is still based on version 3.
     expect(knownServerVersion(project.id)).toBe(3);
@@ -104,7 +120,8 @@ describe('Save and the version lock', () => {
     await waitFor(() => expect(knownServerVersion(project.id)).toBe(10));
     expect(sentVersion(1)).toBe(9);
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expect(screen.getByRole('status').textContent).toContain('Saved 1 page');
+    expect(screen.getByTestId('save-status').textContent).toBe('Saved');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('save over it meets yet another write: refused again, the dialog stays with the newer number', async () => {
@@ -113,8 +130,8 @@ describe('Save and the version lock', () => {
       .mockResolvedValueOnce(conflict(2))
       .mockResolvedValueOnce(conflict(3))
       .mockResolvedValueOnce(ok({ siteId: project.id, savedPages: [''], version: 4 }));
-    render(<SaveButton />);
-    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+    render(<SaveStatus />);
+    await editAndSave(project);
     fireEvent.click(await screen.findByRole('button', { name: 'Save mine over it' }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     fireEvent.click(await screen.findByRole('button', { name: 'Save mine over it' }));
@@ -122,40 +139,44 @@ describe('Save and the version lock', () => {
     expect([sentVersion(0), sentVersion(1), sentVersion(2)]).toEqual([1, 2, 3]);
   });
 
-  it('re-entry after a refused save: Keep editing closes without a request, and the next Save asks again', async () => {
+  it('re-entry after a refused save: Keep editing closes without a request, and Cmd+S asks again', async () => {
     const project = openServerProject(3);
-    fetchMock.mockResolvedValueOnce(conflict(9)).mockResolvedValueOnce(conflict(9));
-    render(<SaveButton />);
+    fetchMock.mockResolvedValueOnce(conflict(9)).mockResolvedValueOnce(ok({ siteId: project.id, savedPages: [''], version: 10 }));
+    render(<SaveStatus />);
 
-    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+    await editAndSave(project);
     fireEvent.click(await screen.findByRole('button', { name: 'Keep editing' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
-    // Still based on version 3: a later Save never silently wins.
-    fireEvent.click(screen.getByRole('button', { name: /save/i }));
-    expect(await screen.findByRole('dialog', { name: 'This project was changed somewhere else' })).toBeTruthy();
-    expect(sentVersion(1)).toBe(3);
+    // Still based on version 3: a later save never silently wins. Cmd+S asks
+    // again without a request the server would only refuse.
+    pressSave();
+    const again = await screen.findByRole('dialog', { name: 'This project was changed somewhere else' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(knownServerVersion(project.id)).toBe(3);
+    fireEvent.click(within(again).getByRole('button', { name: 'Save mine over it' }));
+    await waitFor(() => expect(knownServerVersion(project.id)).toBe(10));
+    expect(sentVersion(1)).toBe(9);
   });
 
   it('"Load the newer version" reloads the page (the server copy opens, unsaved changes go)', async () => {
-    openServerProject(3);
+    const project = openServerProject(3);
     const reload = vi.fn();
     vi.spyOn(window, 'location', 'get').mockReturnValue({ ...window.location, reload } as Location);
     fetchMock.mockResolvedValueOnce(conflict(9));
-    render(<SaveButton />);
-    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+    render(<SaveStatus />);
+    await editAndSave(project);
     fireEvent.click(await screen.findByRole('button', { name: 'Load the newer version' }));
     expect(reload).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('"Save mine as a new project" keeps both: it opens the save-as dialog with the copy wording', async () => {
-    openServerProject(3);
+    const project = openServerProject(3);
     fetchMock.mockResolvedValueOnce(conflict(9));
-    render(<SaveButton />);
-    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+    render(<SaveStatus />);
+    await editAndSave(project);
     fireEvent.click(await screen.findByRole('button', { name: 'Save mine as a new project' }));
     const saveAs = await screen.findByRole('dialog', { name: 'Save as a new project' });
     expect(saveAs.textContent).toMatch(/Keeps both versions/);
@@ -164,15 +185,16 @@ describe('Save and the version lock', () => {
   });
 
   it('another 409 (erased since load) is an error to read, never the "save over" choice', async () => {
-    openServerProject(3);
+    const project = openServerProject(3);
     fetchMock.mockResolvedValueOnce(
       new Response(JSON.stringify({ error: { code: 'erased_since_load', message: 'Personal data was erased.' } }), {
         status: 409,
       }),
     );
-    render(<SaveButton />);
-    fireEvent.click(screen.getByRole('button', { name: /save/i }));
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Personal data was erased.'));
+    render(<SaveStatus />);
+    await editAndSave(project);
+    await waitFor(() => expect(screen.getByTestId('save-status-reason').textContent).toContain('Personal data was erased.'));
+    expect(screen.getByTestId('save-status').textContent).toContain('Not saved');
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 });
@@ -202,12 +224,12 @@ describe('Publish and the version lock', () => {
     render(
       <>
         <PublishButton />
-        <SaveButton />
+        <SaveStatus />
       </>,
     );
     fireEvent.click(screen.getByRole('button', { name: /^publish$/i }));
     await waitFor(() => expect(knownServerVersion(project.id)).toBe(3));
-    fireEvent.click(screen.getByRole('button', { name: /^saved$/i }));
+    await editAndSave(project);
     await waitFor(() => expect(knownServerVersion(project.id)).toBe(4));
     expect(sentVersion(1)).toBe(3);
   });
@@ -227,13 +249,13 @@ describe('a publish that committed before a later step failed', () => {
     render(
       <>
         <PublishButton />
-        <SaveButton />
+        <SaveStatus />
       </>,
     );
     fireEvent.click(screen.getByRole('button', { name: /^publish$/i }));
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('No address.'));
     expect(knownServerVersion(project.id)).toBe(3);
-    fireEvent.click(screen.getByRole('button', { name: /^saved$/i }));
+    await editAndSave(project);
     await waitFor(() => expect(knownServerVersion(project.id)).toBe(4));
     expect(sentVersion(1)).toBe(3);
   });

@@ -4,7 +4,7 @@
 // "Save as a new project" for the browser-only demo editor (`/`), and for an
 // editor tab whose Save met a newer version on the server (SiteChangedDialog:
 // keep both by making this tab's copy a project of its own). The demo
-// project belongs to no company, so Save offers to create a dashboard project
+// project belongs to no company, so "Keep as project" creates a dashboard project
 // in the active company from its pages (name prefilled from the project
 // title), then opens it at /projects/<newId> on the same page. When that is
 // not possible (no company with Lumitra Sites, none chosen, session ended)
@@ -38,6 +38,8 @@ export interface SaveAsNewProjectDialogProps {
   onSaved?: () => void;
   /** Overrides the demo wording, for a copy of a project that already exists. */
   description?: string;
+  /** The dialog's title ("Keep as project" in the demo). */
+  title?: string;
 }
 
 export default function SaveAsNewProjectDialog({
@@ -48,6 +50,7 @@ export default function SaveAsNewProjectDialog({
   currentPageId,
   onSaved,
   description,
+  title = 'Save as a new project',
 }: SaveAsNewProjectDialogProps) {
   const router = useRouter();
   const [name, setName] = useState(defaultName);
@@ -107,7 +110,7 @@ export default function SaveAsNewProjectDialog({
         }}
       >
         <DialogHeader>
-          <DialogTitle>Save as a new project</DialogTitle>
+          <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
             {description ??
               'This demo project exists only in this browser tab. Saving creates a project in your company with all of its pages, and opens it in the editor.'}

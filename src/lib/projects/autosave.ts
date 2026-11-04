@@ -2,12 +2,16 @@
 //
 // The editor saves by itself (plan docs/plans/2026-11-04-editor-autosave.md).
 // One controller per project id, shared by everything that writes the working
-// copy from this tab: the autosave itself, the Save button ("save now"), the
-// generator (a generated page or section is saved at once) and Publish (which
-// waits for a save in flight and holds autosave while it runs).
+// copy from this tab: the autosave itself, Cmd/Ctrl+S and the status's Retry
+// (save now), the generator (a generated page or section is saved at once) and
+// Publish (which waits for a save in flight and holds autosave while it runs).
+// There is no Save button (decided by the owner on 2026-11-04: "Everything
+// should autosave all the time"); the top bar shows the state (SaveStatus).
 //
 // How it behaves:
-//   - A change to the project tree (an MST onSnapshot on the current project)
+//   - A change to the project tree (an MST onPatch on the current project: a
+//     patch costs nothing to observe, the snapshot is only taken and compared
+//     when the debounce fires, never per change)
 //     schedules a save 1.5 s after the last change, and at most 10 s after the
 //     first unsaved one, so a long drag or a long typing burst is still saved.
 //     A change made while a load puts the server copy in place is not a change
@@ -20,20 +24,29 @@
 //     `markServerVersion`). Saving never publishes.
 //   - 409 `site_changed`: autosave stops for that project and SiteChangedDialog
 //     asks (load newer, save mine over it, keep both). It resumes only after a
-//     write of this tab succeeds (Save mine over it, a manual Save, a Publish)
-//     or the page reloads. "Keep editing" is not a resolution, so a refusal
-//     never loops.
+//     write of this tab succeeds (Save mine over it, a Publish) or the page
+//     reloads. "Keep editing" is not a resolution, so a refusal never loops;
+//     the status's "Changed elsewhere" (and Cmd+S) reopens the dialog.
 //   - A passing failure (network, 5xx, 408, 429) is shown and retried with
 //     backoff (2 s, 5 s, 15 s, 30 s, then every 60 s). A refusal (any other
-//     4xx: signed out, no permission, too large, malformed) is shown and never
-//     retried by itself; the next click on Save tries again.
-//   - `hasUnsavedWork` feeds the beforeunload warning: true while a save is in
-//     flight or the working copy differs from what the server holds.
+//     4xx: signed out, no permission, too large, malformed) is shown with its
+//     status and never retried by itself; the status's Retry (or Cmd+S) tries
+//     again.
+//   - A passing failure that lasts 10 minutes stops retrying by itself and
+//     becomes a refusal: shown with Retry, never once a minute forever.
+//   - `anyUnsavedWork` feeds the one beforeunload warning (UnsavedWorkGuard,
+//     on every editor route): true while any project of this tab has a save in
+//     flight or a working copy that differs from what the server holds, also a
+//     project the person has left (to the overview, Preview or another project).
+//   - A project without a server version in this tab (the demo, or a demo just
+//     kept as a project before its page opens) is never saved automatically.
+//   - A controller whose project was left with everything saved leaves the
+//     registry, so no model is held after it is closed.
 //
 // The demo editor at `/` never gets a controller: it has no server copy and
-// keeps its Save-as flow (SaveButton).
+// offers "Keep as project" instead (SaveStatus).
 
-import { getSnapshot, isAlive, isStateTreeNode, onSnapshot } from 'mobx-state-tree';
+import { getSnapshot, isAlive, isStateTreeNode, onPatch } from 'mobx-state-tree';
 import type { ProjectModelType } from '@/models/ProjectModel';
 import { postProjectWrite, type ProjectWriteResult } from './projectWrite';
 import {
@@ -42,6 +55,7 @@ import {
   isSaved,
   knownServerVersion,
   markServerVersion,
+  noteWriteInFlight,
   type ProjectContent,
 } from '@/stores/openProject';
 
@@ -49,18 +63,27 @@ export const AUTOSAVE_DEBOUNCE_MS = 1500;
 export const AUTOSAVE_MAX_WAIT_MS = 10_000;
 /** Waits before each retry of a passing failure; the last one repeats. */
 export const AUTOSAVE_BACKOFF_MS = [2000, 5000, 15_000, 30_000, 60_000] as const;
+/** After this long of passing failures in a row, automatic retries stop (Retry still works). */
+export const AUTOSAVE_RETRY_LIMIT_MS = 10 * 60_000;
 
-/** What the Save button and the generator show. */
+/** What the top bar's save status and the generator show. */
 export type AutosaveState =
   | { phase: 'saved' }
   | { phase: 'unsaved' }
   | { phase: 'saving' }
-  /** A manual save just succeeded: the brief confirmation Save always showed. */
-  | { phase: 'savedNow'; message: string }
-  /** A passing failure, retried at `retryAt` (epoch ms). `hidden`: the message was dismissed. */
-  | { phase: 'retrying'; message: string; retryAt: number; hidden?: boolean }
-  /** A refusal: autosave stopped until the next manual Save. */
-  | { phase: 'failed'; message: string; hidden?: boolean }
+  /**
+   * A passing failure, retried at `retryAt` (epoch ms). `message` is the
+   * server's reason, `status` the HTTP status (absent for a network failure).
+   * `hidden`: the reason was dismissed on the compact top bar.
+   */
+  | { phase: 'retrying'; message: string; status?: number; retryAt: number; hidden?: boolean }
+  /**
+   * A refusal: autosave stopped until Retry (or Cmd+S). `retriesStopped`: a
+   * passing failure that lasted AUTOSAVE_RETRY_LIMIT_MS.
+   */
+  | { phase: 'failed'; message: string; status?: number; retriesStopped?: boolean; hidden?: boolean }
+  /** Publish is writing this copy: autosave waits, and Cmd+S has nothing to add. */
+  | { phase: 'publishing' }
   /** The version lock refused: the server is at `currentVersion`. */
   | { phase: 'conflict'; currentVersion: number; dialogOpen: boolean; retrying: boolean };
 
@@ -82,12 +105,22 @@ export function isPassingFailure(status: number | undefined): boolean {
   return status === 408 || status === 429 || status >= 500;
 }
 
-type Mode = 'auto' | 'now' | 'manual';
+/**
+ * auto: the debounce; skipped while paused or when the copy equals the server's.
+ * now: a generated page, a retry timer, leaving the editor; skipped when equal.
+ * retry: Retry or Cmd+S after a failure; also while paused, skipped when equal.
+ * over: "Save mine over it"; always sends, naming the version the refusal reported.
+ */
+type Mode = 'auto' | 'now' | 'retry' | 'over';
 
 export class AutosaveController {
   readonly projectId: string;
   private project: AutosaveProject | undefined;
   private disposeSnapshot: (() => void) | undefined;
+  /** The state before Publish held the controller, shown again afterwards. */
+  private beforeHold: AutosaveState | undefined;
+  /** When the current run of passing failures began (epoch ms). */
+  private failingSince: number | undefined;
   private deps: AutosaveDeps;
   private state: AutosaveState = { phase: 'saved' };
   private listeners = new Set<() => void>();
@@ -128,6 +161,32 @@ export class AutosaveController {
   private setState(next: AutosaveState) {
     this.state = next;
     for (const listener of [...this.listeners]) listener();
+    notifyRegistry();
+  }
+
+  /** True while the editor shows this project (between attach and detach). */
+  isAttached(): boolean {
+    return this.disposeSnapshot !== undefined;
+  }
+
+  /** The project's name, for a notice about a project not on screen. */
+  projectTitle(): string {
+    const project = this.project;
+    return project && isAlive(project) ? project.metadata.title : '';
+  }
+
+  /**
+   * Leave the registry once the project was left with everything on the
+   * server: no request out, no timer, nothing paused. Coming back creates a
+   * fresh controller; what the server holds is remembered by openProject.
+   */
+  private maybeRelease() {
+    if (this.isAttached() || this.inFlight || this.held > 0) return;
+    if (this.debounceTimer || this.maxWaitTimer || this.retryTimer) return;
+    if (this.state.phase !== 'saved' && !this.discarding) return;
+    this.project = undefined;
+    this.listeners.clear();
+    releaseController(this);
   }
 
   private paused(): boolean {
@@ -147,7 +206,8 @@ export class AutosaveController {
     if (!isStateTreeNode(project) || !isAlive(project)) return;
     this.disposeSnapshot?.();
     this.project = project;
-    this.disposeSnapshot = onSnapshot(project, () => this.notifyChange());
+    this.disposeSnapshot = onPatch(project, () => this.notifyChange());
+    notifyRegistry();
     if (this.inFlight || this.paused() || this.state.phase === 'retrying') return;
     // A load kept this tab's work over a newer server copy: wait for a choice.
     const elsewhere = changedElsewhereVersion(this.projectId);
@@ -170,10 +230,18 @@ export class AutosaveController {
     if (project && project !== this.project) return;
     this.disposeSnapshot?.();
     this.disposeSnapshot = undefined;
+    notifyRegistry();
     if (this.debounceTimer || this.maxWaitTimer) {
       this.clearDebounce();
       void this.run('now');
+      return;
     }
+    // Opened and left without a change (or nothing waiting): the server holds it.
+    const left = this.project;
+    if (this.state.phase === 'unsaved' && !this.inFlight && left && isAlive(left) && isSaved(this.projectId, getSnapshot(left) as ProjectContent)) {
+      this.setState({ phase: 'saved' });
+    }
+    this.maybeRelease();
   }
 
   // ---- changes ---------------------------------------------------------------
@@ -228,13 +296,40 @@ export class AutosaveController {
   }
 
   /**
-   * The Save button: always sends (also an unchanged copy, as Save always did),
-   * also while paused: a refusal comes back as the dialog again, a success
-   * resumes autosave. `overVersion` saves over the server's copy on purpose
-   * ("Save mine over it"), naming the version the refusal reported.
+   * Cmd/Ctrl+S: save at once instead of waiting for the debounce. After a
+   * failure it tries again (as Retry does); while the version lock's refusal
+   * stands it reopens the dialog instead of sending (the server would only
+   * refuse again: this tab's version is still the old one). A copy equal to
+   * the server's sends nothing.
    */
-  saveManually(overVersion?: number): Promise<void> {
-    return this.run('manual', overVersion);
+  flush(): Promise<void> {
+    const phase = this.state.phase;
+    // Publish writes this very copy; the status already says so.
+    if (phase === 'publishing') return Promise.resolve();
+    if (phase === 'conflict') {
+      this.openConflict();
+      return Promise.resolve();
+    }
+    if (phase === 'failed' || phase === 'retrying') return this.retry();
+    return this.run('now');
+  }
+
+  /**
+   * The status's Retry: try a failed save again now, also while paused by a
+   * refusal (signed out, too large). Nothing is sent when the copy meanwhile
+   * equals the server's (an undo back), which resolves the failure.
+   */
+  retry(): Promise<void> {
+    return this.run('retry');
+  }
+
+  /**
+   * "Save mine over it": write this tab's copy over the server's on purpose,
+   * naming the version the refusal reported. Always sends. Refused again, the
+   * dialog comes back with the newer number; a success resumes autosave.
+   */
+  saveOver(currentVersion: number): Promise<void> {
+    return this.run('over', currentVersion);
   }
 
   private async run(mode: Mode, overVersion?: number): Promise<void> {
@@ -250,14 +345,21 @@ export class AutosaveController {
     }
     const project = this.project;
     if (!project || !isAlive(project)) return;
-    // A refusal pauses autosave: only a click, or the dialog's choice, writes.
+    // No server copy known to this tab (a demo, or a demo just kept as a
+    // project before its page loads): nothing to save over automatically.
+    if ((mode === 'auto' || mode === 'now') && knownServerVersion(this.projectId) === undefined) return;
+    // A refusal pauses autosave: only Retry, or the dialog's choice, writes.
     if (mode === 'auto' && this.paused()) return;
+    // The version lock's refusal is resolved only by a choice in its dialog.
+    if (mode === 'retry' && this.state.phase === 'conflict') return;
     this.clearTimers();
     const snapshot = getSnapshot(project);
-    if (mode !== 'manual' && isSaved(this.projectId, snapshot as ProjectContent)) {
+    if (mode !== 'over' && isSaved(this.projectId, snapshot as ProjectContent)) {
       this.dirtyHint = false;
       this.attempts = 0;
+      this.failingSince = undefined;
       if (this.state.phase !== 'saved') this.setState({ phase: 'saved' });
+      this.maybeRelease();
       return;
     }
     const prev = this.state;
@@ -268,17 +370,21 @@ export class AutosaveController {
     );
     this.changedDuringFlight = false;
     this.nowAfterFlight = false;
-    const request = this.send(snapshot, overVersion ?? knownServerVersion(this.projectId), mode);
+    // Tells a load meanwhile (Preview, coming back) that a version move may be this save's.
+    noteWriteInFlight(this.projectId, true);
+    const request = this.send(snapshot, overVersion ?? knownServerVersion(this.projectId));
     this.inFlight = request;
     try {
       await request;
     } finally {
       this.inFlight = undefined;
+      noteWriteInFlight(this.projectId, false);
     }
     this.afterFlight();
+    this.maybeRelease();
   }
 
-  private async send(snapshot: unknown, expectedVersion: number | undefined, mode: Mode): Promise<void> {
+  private async send(snapshot: unknown, expectedVersion: number | undefined): Promise<void> {
     let result: ProjectWriteResult;
     try {
       result = await this.deps.write(snapshot, expectedVersion);
@@ -288,36 +394,38 @@ export class AutosaveController {
     if (result.kind === 'conflict') {
       this.clearTimers();
       this.attempts = 0;
+      this.failingSince = undefined;
       this.dirtyHint = true;
       this.setState({ phase: 'conflict', currentVersion: result.currentVersion, dialogOpen: true, retrying: false });
       return;
     }
     if (result.kind === 'error') {
       this.dirtyHint = true;
-      if (isPassingFailure(result.status)) {
+      const now = Date.now();
+      if (isPassingFailure(result.status)) this.failingSince ??= now;
+      const stillTrying = this.failingSince !== undefined && now - this.failingSince < AUTOSAVE_RETRY_LIMIT_MS;
+      if (isPassingFailure(result.status) && stillTrying) {
         const wait = this.armRetry();
-        this.setState({
-          phase: 'retrying',
-          message: `Not saved: ${result.message} Trying again in ${Math.round(wait / 1000)} s.`,
-          retryAt: Date.now() + wait,
-        });
+        this.setState({ phase: 'retrying', message: result.message, status: result.status, retryAt: now + wait });
       } else {
+        const retriesStopped = isPassingFailure(result.status);
         this.attempts = 0;
-        this.setState({ phase: 'failed', message: `Not saved: ${result.message} Click Save to try again.` });
+        this.failingSince = undefined;
+        this.setState({
+          phase: 'failed',
+          message: result.message,
+          status: result.status,
+          ...(retriesStopped ? { retriesStopped: true } : {}),
+        });
       }
       return;
     }
     // The server now holds exactly this snapshot, at this version.
     markServerVersion(this.projectId, snapshot as ProjectContent, result.version);
     this.attempts = 0;
+    this.failingSince = undefined;
     this.dirtyHint = this.changedDuringFlight;
-    if (mode === 'manual') {
-      const saved = result.payload.savedPages;
-      const count = Array.isArray(saved) ? saved.length : 0;
-      this.setState({ phase: 'savedNow', message: `Saved ${count} ${count === 1 ? 'page' : 'pages'}.` });
-    } else {
-      this.setState({ phase: this.dirtyHint ? 'unsaved' : 'saved' });
-    }
+    this.setState({ phase: this.dirtyHint ? 'unsaved' : 'saved' });
   }
 
   /** Schedule the next retry of a passing failure; answers the wait. */
@@ -345,7 +453,7 @@ export class AutosaveController {
       void this.run('now');
     } else if (this.changedDuringFlight) {
       this.changedDuringFlight = false;
-      if (this.state.phase !== 'savedNow') this.setState({ phase: 'unsaved' });
+      this.setState({ phase: 'unsaved' });
       this.schedule();
     }
   }
@@ -357,7 +465,7 @@ export class AutosaveController {
     if (this.state.phase === 'conflict' && !this.state.retrying) this.setState({ ...this.state, dialogOpen: false });
   }
 
-  /** Reopen the dialog (the status line's "Choose"). */
+  /** Reopen the dialog (the status's "Changed elsewhere", or Cmd+S). */
   openConflict(): void {
     if (this.state.phase === 'conflict') this.setState({ ...this.state, dialogOpen: true });
   }
@@ -368,12 +476,10 @@ export class AutosaveController {
     this.clearTimers();
   }
 
-  /** Close the "Saved n pages" confirmation, or a refusal's message. */
+  /** Hide a failure's reason on the compact top bar; the failure stays what it is. */
   dismissMessage(): void {
     const state = this.state;
-    if (state.phase === 'savedNow') this.setState({ phase: this.dirtyHint ? 'unsaved' : 'saved' });
-    // A failure stays what it is (paused, or retrying): only its message goes.
-    else if (state.phase === 'failed' || state.phase === 'retrying') this.setState({ ...state, hidden: true });
+    if (state.phase === 'failed' || state.phase === 'retrying') this.setState({ ...state, hidden: true });
   }
 
   // ---- other writers of this tab (Publish) -----------------------------------
@@ -382,16 +488,32 @@ export class AutosaveController {
    * Run another write of the working copy (Publish) with autosave held: a save
    * in flight finishes first, none starts meanwhile, and the version lock sees
    * one writer. Afterwards autosave picks up whatever is still unsaved.
+   * Publish counts as a save: a success resolves a pause or a pending retry.
    */
   async exclusive<T>(write: () => Promise<T>): Promise<T> {
+    if (this.held === 0) this.beforeHold = this.state;
     this.held++;
     this.clearDebounce();
     try {
       while (this.inFlight) await this.inFlight;
-      return await write();
+      if (this.state.phase !== 'publishing') {
+        this.beforeHold = this.state;
+        this.setState({ phase: 'publishing' });
+      }
+      noteWriteInFlight(this.projectId, true);
+      try {
+        return await write();
+      } finally {
+        noteWriteInFlight(this.projectId, false);
+      }
     } finally {
       this.held--;
-      if (this.held === 0) this.afterOtherWrite();
+      if (this.held === 0) {
+        if (this.state.phase === 'publishing') this.setState(this.beforeHold ?? { phase: 'unsaved' });
+        this.beforeHold = undefined;
+        this.afterOtherWrite();
+        this.maybeRelease();
+      }
     }
   }
 
@@ -411,6 +533,7 @@ export class AutosaveController {
       // The other write stored this copy: whatever paused or waited is resolved.
       this.clearTimers();
       this.attempts = 0;
+      this.failingSince = undefined;
       this.dirtyHint = false;
       this.setState({ phase: 'saved' });
     } else if (this.state.phase === 'retrying') {
@@ -439,6 +562,7 @@ export class AutosaveController {
 
   /** Tests only: drop timers and listeners. */
   disposeForTests(): void {
+    this.held = 0;
     this.clearTimers();
     this.disposeSnapshot?.();
     this.disposeSnapshot = undefined;
@@ -450,6 +574,50 @@ export class AutosaveController {
 
 const controllers = new Map<string, AutosaveController>();
 let depsOverride: AutosaveDeps | undefined;
+const registryListeners = new Set<() => void>();
+let registryVersion = 0;
+
+function notifyRegistry() {
+  registryVersion++;
+  for (const listener of [...registryListeners]) listener();
+}
+
+function releaseController(controller: AutosaveController) {
+  if (controllers.get(controller.projectId) === controller) {
+    controllers.delete(controller.projectId);
+    notifyRegistry();
+  }
+}
+
+/** Any change to any controller (its state, attached or not, added or released). */
+export function subscribeAutosaveRegistry(listener: () => void): () => void {
+  registryListeners.add(listener);
+  return () => {
+    registryListeners.delete(listener);
+  };
+}
+
+/** Moves on every change the registry subscription reports (for useSyncExternalStore). */
+export function autosaveRegistryVersion(): number {
+  return registryVersion;
+}
+
+/** Every controller of this tab. */
+export function allAutosaves(): AutosaveController[] {
+  return [...controllers.values()];
+}
+
+/** True while leaving the page would lose work in ANY project of this tab. */
+export function anyUnsavedWork(): boolean {
+  for (const controller of controllers.values()) if (controller.hasUnsavedWork()) return true;
+  return false;
+}
+
+/** Reload on purpose, discarding this project's unsaved work without the unload warning. */
+export function reloadDiscarding(projectId: string | undefined): void {
+  existingAutosave(projectId)?.discardForReload();
+  window.location.reload();
+}
 
 /** The controller of a project, created on first use. */
 export function autosaveFor(projectId: string): AutosaveController {
@@ -457,6 +625,7 @@ export function autosaveFor(projectId: string): AutosaveController {
   if (!controller) {
     controller = new AutosaveController(projectId, depsOverride ?? defaultDeps);
     controllers.set(projectId, controller);
+    notifyRegistry();
   }
   return controller;
 }
@@ -470,5 +639,6 @@ export function existingAutosave(projectId: string | undefined): AutosaveControl
 export function resetAutosaveForTests(deps?: AutosaveDeps): void {
   for (const controller of controllers.values()) controller.disposeForTests();
   controllers.clear();
+  registryListeners.clear();
   depsOverride = deps;
 }
