@@ -54,30 +54,35 @@ export const projectSnapshotSchema = z
 // before the lock existed) is refused with 400 `version_required` and writes
 // nothing, so no client of these routes ever gets a silent "newest wins" save.
 //
-// Publish takes exactly these two (strict: an attempt key there is refused,
-// publishing has no replay).
+const attemptKey = z.string().regex(/^[A-Za-z0-9_-]{8,100}$/);
+/** The editor's lost save attempts on the same base; a short list (the client caps it too). */
+const lostAttemptKeys = z.array(attemptKey).min(1).max(8);
+
+// Publish takes these (strict: its own attempt key is refused, publishing has
+// no replay). `previousRequestKeys` names this tab's saves whose answers were
+// lost: when the latest stored write is one of them, Publish builds on it
+// instead of meeting it as someone else's change.
 export const projectBodySchema = z
   .object({
     project: projectSnapshotSchema,
     expectedVersion: z.number().int().positive().optional(),
+    previousRequestKeys: lostAttemptKeys.optional(),
   })
   .strict();
-
-const attemptKey = z.string().regex(/^[A-Za-z0-9_-]{8,100}$/);
 
 // The save route's body adds the attempt keys of the editor's autosave:
 //   - `requestKey` names this attempt: a retry of the same content after a lost
 //     answer reuses it, and the route answers the stored result instead of a
 //     409 against the write itself;
-//   - `previousRequestKey` names the earlier attempt whose answer was lost when
-//     this one carries newer content: if that write is the stored one (the
-//     version just after `expectedVersion`), this save goes on top of it
-//     instead of a false 409.
+//   - `previousRequestKeys` names the earlier attempts on the same base whose
+//     answers were lost (one or several in a row): if the latest stored write is
+//     one of them (its key still bound to the current version), this save goes
+//     on top of it instead of a false 409.
 export const saveBodySchema = z
   .object({
     project: projectSnapshotSchema,
     expectedVersion: z.number().int().positive().optional(),
     requestKey: attemptKey.optional(),
-    previousRequestKey: attemptKey.optional(),
+    previousRequestKeys: lostAttemptKeys.optional(),
   })
   .strict();

@@ -83,7 +83,7 @@ async function handlePOST(req: Request): Promise<Response> {
   if (!body.ok) return body.response;
   // The version lock (_schema.ts): checked here rather than in the schema so a
   // tab that predates it gets a message it can act on, not a generic 400.
-  const { expectedVersion, requestKey, previousRequestKey } = body.data;
+  const { expectedVersion, requestKey, previousRequestKeys } = body.data;
   if (expectedVersion === undefined) return siteRepositoryErrorResponse(new SiteVersionRequiredError());
 
   // 5. Persist the snapshot — and ONLY that. saveProject preserves the site's
@@ -100,8 +100,8 @@ async function handlePOST(req: Request): Promise<Response> {
       expectedVersion,
       // A repeat of an attempt whose answer was lost gets that attempt's result.
       ...(requestKey ? { requestKey } : {}),
-      // The earlier attempt whose answer was lost, when this one carries newer content.
-      ...(previousRequestKey ? { previousRequestKey } : {}),
+      // This tab's earlier attempts whose answers were lost, on the same base.
+      ...(previousRequestKeys ? { previousRequestKeys } : {}),
     }));
   } catch (err) {
     if (err instanceof SiteRepositoryError) return siteRepositoryErrorResponse(err);

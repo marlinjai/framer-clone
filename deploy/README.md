@@ -407,11 +407,11 @@ path (it serves its rows until its next save or publish freezes them). Which sit
 ## Migration rollbacks
 
 `20261104000000_site_last_write_key` (the editor autosave's attempt keys, plan
-`docs/plans/2026-11-04-editor-autosave.md`) adds one nullable column, `sites.last_write_key`. Older code ignores it, so a
-code rollback needs nothing. To take the column out as well, after the application runs the previous image:
+`docs/plans/2026-11-04-editor-autosave.md`) adds two nullable columns, `sites.last_write_key` and `sites.last_write_version`. Older code ignores them, so a
+code rollback needs nothing. To take the columns out as well, after the application runs the previous image:
 
 ```sql
-ALTER TABLE "sites" DROP COLUMN "last_write_key";
+ALTER TABLE "sites" DROP COLUMN "last_write_key", DROP COLUMN "last_write_version";
 ```
 
 then tell Prisma the migration is no longer applied, so the next deploy applies it again:

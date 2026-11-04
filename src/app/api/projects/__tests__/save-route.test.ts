@@ -181,18 +181,22 @@ describe('POST /api/projects/save (authorized)', () => {
     expect(save).toHaveBeenCalledTimes(1);
   });
 
-  it('passes the lost attempt\'s key through with the new one', async () => {
-    const save = vi.fn().mockResolvedValue({ version: 6 });
+  it('passes the lost attempts\' keys through with the new one, and refuses a list too long', async () => {
+    const save = vi.fn().mockResolvedValue({ version: 7 });
     installRepo({ saveProject: save, publishProject: vi.fn() });
-    const res = await POST(saveReq({ project: PROJECT, expectedVersion: 4, requestKey: 'k_new_attempt', previousRequestKey: 'k_lost_attempt' }));
+    const res = await POST(saveReq({ project: PROJECT, expectedVersion: 4, requestKey: 'k_new_attempt', previousRequestKeys: ['k_lost_one_a', 'k_lost_one_b'] }));
     expect(res.status).toBe(200);
     expect(save.mock.calls[0][2]).toEqual({
       mustExist: true,
       companyId: 'tenant-1',
       expectedVersion: 4,
       requestKey: 'k_new_attempt',
-      previousRequestKey: 'k_lost_attempt',
+      previousRequestKeys: ['k_lost_one_a', 'k_lost_one_b'],
     });
+    const tooMany = Array.from({ length: 9 }, (_, i) => `k_lost_${i}_attempt`);
+    const bad = await POST(saveReq({ project: PROJECT, expectedVersion: 4, requestKey: 'k_new_attempt', previousRequestKeys: tooMany }));
+    expect(bad.status).toBe(400);
+    expect(save).toHaveBeenCalledTimes(1);
   });
 
   it('does not claim a status in the success envelope (save leaves it untouched)', async () => {

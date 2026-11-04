@@ -309,6 +309,10 @@ model Site {
   // before it, gets this write's version back instead of a false 409 `site_changed`. Lives exactly
   // until the next write of the site.
   lastWriteKey String? @map("last_write_key")
+  // The version the write named by `lastWriteKey` produced. The key counts only while this equals
+  // `version`: a writer that does not know the key (an older container during a rolling deploy)
+  // moves the version and leaves the key, and that unbinds it.
+  lastWriteVersion Int? @map("last_write_version")
 
   // Persistence-layer timestamps (when the ROW was written), set by the DB.
   createdAt DateTime @default(now()) @map("created_at")

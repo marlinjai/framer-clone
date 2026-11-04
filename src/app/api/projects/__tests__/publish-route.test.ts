@@ -225,6 +225,14 @@ describe('POST /api/projects/publish (authorized)', () => {
     expect(publish).not.toHaveBeenCalled();
   });
 
+  it('passes this tab\'s lost save keys through, so Publish can build on a landed one', async () => {
+    const publish = vi.fn().mockResolvedValue({ revision: 7, version: 6 });
+    installRepo({ publishProject: publish, ensureSiteDomain: vi.fn().mockResolvedValue({ subdomain: 'demo-abc123' }) });
+    const res = await POST(publishReq({ project: PROJECT, expectedVersion: 4, previousRequestKeys: ['k_lost_save_1'] }));
+    expect(res.status).toBe(200);
+    expect(publish.mock.calls[0][2]).toMatchObject({ expectedVersion: 4, previousRequestKeys: ['k_lost_save_1'] });
+  });
+
   it('invalidates the origin render cache for the published subdomain (MT-17)', async () => {
     const ensure = vi.fn().mockResolvedValue({ subdomain: 'demo-abc123' });
     installRepo({
