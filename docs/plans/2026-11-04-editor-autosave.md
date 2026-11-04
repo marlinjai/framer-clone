@@ -88,6 +88,39 @@ Folded in from the review of 978fd768 (decided while building, say so if you dis
   and compared only when the debounce fires (at most one per 1.5 s of pauses), on leaving, on
   unload and after Publish, never per change.
 
+Folded in from the re-review of 86b2d472 (decided while building, say so if you disagree):
+
+- **A lower server version is a stale read**, never news: versions only go up
+  (`writeWorkingCopy`), so an older payload (the client router cache replaying the editor's
+  page on Back after Preview) adopts neither content nor number. Without this, "Save mine over
+  it" after the following 409 could have overwritten newer saves.
+- **A load counts every saved part as this tab's work** (legal details, sharing texts, the
+  language, the analytics binding, the description), not only the compared ones.
+- **Cmd/Ctrl+S listens in the capture phase.** The inline canvas editor, the panel text field
+  and the component dialogs stop every keydown, so a bubbling listener let the browser dialog
+  through. Text being typed there registers as an open draft (`src/lib/projects/openDrafts.ts`):
+  it counts for the unload warning, and Cmd+S and leaving the page commit it first. In the
+  canvas this ends the inline edit, as Enter does (one undo step); the panel field keeps focus.
+- **A reload on purpose that the person cancels** (Stay, when the browser asks about another
+  project's unsaved work) leaves autosave and the warning working again after 1.5 s.
+- **Coming back to a paused project** whose copy meanwhile equals the server's clears the pause.
+- **Leaving or hiding the page** commits open drafts and sends what is unsaved at once, as a
+  `keepalive` request when the body fits the browser's 64 KB limit (otherwise a normal request
+  and the warning). Never over a refusal waiting for a choice. Back online, a waiting retry goes
+  at once.
+- **A save attempt is idempotent.** The client names each attempt (`requestKey`, new for new
+  content or a new version, reused on retry); the site row keeps the key of its last write
+  (`sites.last_write_key`, an additive nullable column, migration
+  `20261104000000_site_last_write_key`). A repeat of that write, still based on the version
+  just before it, gets the stored version back and writes nothing, instead of a false 409 after
+  a lost answer. It lives until the next write of the site; publish and erase clear it. A 2xx
+  without a version is a 502 server error (retried with the same key), never a refusal.
+- **Calmer status:** only failures, the conflict and the first "Saved" after one are announced
+  to screen readers (a separate polite region); only a problem fades in; the retry countdown
+  ticks once a second (also in the left-behind notice); the ellipsis character throughout.
+- **One serialisation per save cycle:** the comparison key is computed when the debounce fires
+  and passed on to `isSaved` and `markServerVersion`.
+
 Decided by Marlin on 2026-11-04 (the brief of the first version):
 
 1. The editor saves by itself: debounced, about 1.5 s after the last change, through the same
@@ -164,7 +197,10 @@ Decided while building (say so if you disagree):
 - `src/lib/projects/projectWrite.ts`: an error carries the HTTP `status` (absent for a network
   failure), which is how a passing failure is told from a refusal.
 - `src/lib/projects/saveShortcut.ts` and the `save` binding in `src/lib/keyBindings.ts`:
-  Cmd/Ctrl+S, handled first by EditorApp's single keydown dispatcher.
+  Cmd/Ctrl+S, a capture-phase window listener (`installSaveShortcut`, mounted by EditorApp).
+- `src/lib/projects/openDrafts.ts`: text typed but not committed yet (inline editor, panel
+  field), for the warning, Cmd+S and the leave save.
+- `src/app/api/projects/save/route.ts` and `SiteRepository.saveProject`: the attempt key.
 - `src/hooks/useAutosave.ts`: `useAutosave` attaches the current project (never the demo) in an
   effect; `useAutosaveState` is the read-only view; `useSaveStatusLabel` is the one wording
   with the 300 ms threshold; `saveFailureReason` says what to do.
@@ -219,10 +255,20 @@ The four paths of the stateful flow standard (knowledge-base `standards/stateful
   generator's line in the top bar's words.
 - `src/components/__tests__/SiteVersionLock.test.tsx` keeps the version lock's cases, driven by
   an edit and Cmd+S; `DemoProjectSaving.test.tsx` the demo versus a real project.
+- Re-review: `src/stores/__tests__/openProject.test.ts` (stale read with and without unsaved
+  work, legal details and description kept); `SaveShortcutInFields.test.tsx` (Cmd+S through the
+  inline editor and the panel field: prevented, typed text saved, counted as unsaved);
+  `projectWrite.test.ts` (key, keepalive limit, 2xx without version); controller and UI tests for
+  the key reuse, the cancelled reload, the cleared pause, pagehide and hidden tab, online, the
+  countdown and the announcements; `repository.test.ts` and `save-route.test.ts` for the
+  stored-result replay.
 
 ## Open
 
 - Pending, not done: a check in the browser on app.lumitra.co after the deploy: edit, wait,
   reload, the change is there; generate a page, reload, it is there; reload while saving, the
-  browser warns; Cmd+S shows no browser dialog; signed out in another tab, the status offers
-  "Sign in again", Retry saves.
+  browser warns; Cmd+S shows no browser dialog (also while typing on the canvas and in the
+  panel); signed out in another tab, the status offers "Sign in again", Retry saves; Back from
+  Preview after a few saves keeps the newest copy.
+- The migration `20261104000000_site_last_write_key` runs with the deploy (additive, one
+  nullable column).
