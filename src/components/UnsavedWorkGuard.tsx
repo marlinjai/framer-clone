@@ -60,7 +60,7 @@ function leftBehind(controller: AutosaveController, now: number): LeftBehind | u
   const state = controller.getState();
   const reason =
     state.phase === 'conflict'
-      ? 'It was changed somewhere else, so this tab stopped saving it until you choose what to keep.'
+      ? 'Changed elsewhere: go back to it to choose what to keep. Saving waits until then.'
       : saveFailureReason(state, now);
   if (!reason || !controller.hasUnsavedWork()) return undefined;
   const kind = state.phase === 'conflict' ? 'conflict' : `failed:${state.phase === 'failed' || state.phase === 'retrying' ? (state.status ?? 'network') : ''}`;
@@ -78,7 +78,11 @@ export default function UnsavedWorkGuard({ saveShortcut = false }: { saveShortcu
     const onKeyDown = (event: KeyboardEvent) => {
       if (resolveAction(event)?.action !== 'save') return;
       event.preventDefault();
-      for (const controller of allAutosaves()) if (!controller.isAttached()) void controller.flush();
+      // A project changed elsewhere waits for a choice made in its editor: its
+      // dialog is never opened here, with no status on screen to go with it.
+      for (const controller of allAutosaves()) {
+        if (!controller.isAttached() && controller.getState().phase !== 'conflict') void controller.flush();
+      }
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);

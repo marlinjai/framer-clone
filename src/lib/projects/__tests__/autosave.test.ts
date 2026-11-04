@@ -30,6 +30,7 @@ import {
   resetAutosaveForTests,
   reloadDiscarding,
   abandonWorkingCopy,
+  MAX_LOST_ATTEMPTS,
   type AutosaveController,
   type AutosaveWriteOptions,
 } from '../autosave';
@@ -418,7 +419,7 @@ describe('re-entry after a failure', () => {
     }
   });
 
-  it.each([400, 401, 403, 404, 413])('a %i refusal is shown with its status and never retried by itself; Retry tries again', async (status) => {
+  it.each([401, 403, 404, 413])('a %i refusal is shown with its status and never retried by itself; Retry tries again', async (status) => {
     const { project, autosave } = openAndWatch(3);
     edit(project, 'mine');
     await advance(AUTOSAVE_DEBOUNCE_MS);
@@ -946,14 +947,14 @@ describe('the third review of 2026-11-04', () => {
     expect(calls).toHaveLength(2);
     expect(calls[1].snapshot.metadata.description).toBe('second');
     expect(calls[1].options.requestKey).not.toBe(calls[0].options.requestKey);
-    expect(calls[1].options.previousRequestKey).toBe(calls[0].options.requestKey);
+    expect(calls[1].options.previousRequestKeys).toEqual([calls[0].options.requestKey]);
     expect(calls[1].expectedVersion).toBe(3);
     await calls[1].answer(ok(5)); // the server built on the lost write (4)
     expect(knownServerVersion(project.id)).toBe(5);
     edit(project, 'third');
     await advance(AUTOSAVE_DEBOUNCE_MS);
     // Confirmed: no lost attempt is named any more.
-    expect(calls[2].options.previousRequestKey).toBeUndefined();
+    expect(calls[2].options.previousRequestKeys).toBeUndefined();
   });
 
   it('a new version gets a new key; a refusal does NOT settle a lost attempt (it was not this write)', async () => {
@@ -964,19 +965,19 @@ describe('the third review of 2026-11-04', () => {
     edit(project, 'two');
     await advance(AUTOSAVE_DEBOUNCE_MS);
     expect(calls[1].options.requestKey).not.toBe(calls[0].options.requestKey);
-    expect(calls[1].options.previousRequestKey).toBeUndefined();
+    expect(calls[1].options.previousRequestKeys).toBeUndefined();
     await calls[1].answer(failure(500));
     await advance(AUTOSAVE_BACKOFF_MS[0]);
     await calls[2].answer(failure(403, 'No.'));
     edit(project, 'three');
     void autosaveFor(project.id).retry();
     // The 500 left 'two' possibly written: the next attempt still names it.
-    expect(calls[3].options.previousRequestKey).toBe(calls[1].options.requestKey);
+    expect(calls[3].options.previousRequestKeys).toEqual([calls[1].options.requestKey]);
     await calls[3].answer(ok(6));
     edit(project, 'four');
     await advance(AUTOSAVE_DEBOUNCE_MS);
     // Confirmed by the ok: nothing is named any more.
-    expect(calls[4].options.previousRequestKey).toBeUndefined();
+    expect(calls[4].options.previousRequestKeys).toBeUndefined();
   });
 
   it('recovering: a stopped failure and a sign-out are tried once more; still refused, they stay failed', async () => {
@@ -1052,7 +1053,7 @@ describe('the fourth review of 2026-11-05', () => {
     await advance(AUTOSAVE_BACKOFF_MS[0]);
     expect(calls).toHaveLength(2);
     expect(calls[1].snapshot.metadata.description).toBe('');
-    expect(calls[1].options.previousRequestKey).toBe(calls[0].options.requestKey);
+    expect(calls[1].options.previousRequestKeys).toEqual([calls[0].options.requestKey]);
     expect(calls[1].expectedVersion).toBe(3);
     await calls[1].answer(ok(5));
     expect(autosave.getState().phase).toBe('saved');
@@ -1066,12 +1067,12 @@ describe('the fourth review of 2026-11-05', () => {
     await calls[0].answer(failure(502)); // A maybe committed as 4
     edit(project, 'B');
     await advance(AUTOSAVE_BACKOFF_MS[0]);
-    expect(calls[1].options.previousRequestKey).toBe(calls[0].options.requestKey);
+    expect(calls[1].options.previousRequestKeys).toEqual([calls[0].options.requestKey]);
     await calls[1].answer(failure(401, 'authentication required'));
     edit(project, 'C');
     void autosaveFor(project.id).retry();
     expect(calls[2].expectedVersion).toBe(3);
-    expect(calls[2].options.previousRequestKey).toBe(calls[0].options.requestKey);
+    expect(calls[2].options.previousRequestKeys).toEqual([calls[0].options.requestKey]);
   });
 
   it('P3: recovering after retries stopped is one attempt; still 503, it stays failed', async () => {
@@ -1135,5 +1136,124 @@ describe('the fourth review of 2026-11-05', () => {
     await publishing;
     expect(publishedWith).toBe(4);
     expect(autosave.getState().phase).not.toBe('conflict');
+  });
+});
+
+
+describe('the fifth review of 2026-11-05', () => {
+  it('two lost answers in a row: the next attempt names both, so the server recognises the latest', async () => {
+    const { project } = openAndWatch(4);
+    edit(project, 'A');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    await calls[0].answer(failure(502)); // A wrote 5, answer lost
+    edit(project, 'B');
+    await advance(AUTOSAVE_BACKOFF_MS[0]);
+    expect(calls[1].options.previousRequestKeys).toEqual([calls[0].options.requestKey]);
+    await calls[1].answer(failure(504)); // B wrote 6 on top, answer lost
+    await advance(AUTOSAVE_BACKOFF_MS[1]);
+    // B's retry: its own key, naming A; the server replays B.
+    expect(calls[2].options.requestKey).toBe(calls[1].options.requestKey);
+    expect(calls[2].options.previousRequestKeys).toEqual([calls[0].options.requestKey]);
+    await calls[2].answer(failure(503));
+    edit(project, 'C');
+    await advance(AUTOSAVE_BACKOFF_MS[2]);
+    expect(calls[3].options.previousRequestKeys).toEqual([calls[0].options.requestKey, calls[1].options.requestKey]);
+    expect(calls[3].expectedVersion).toBe(4);
+  });
+
+  it('the list of lost attempts is capped', async () => {
+    const { project, autosave } = openAndWatch(4);
+    for (let i = 0; i < 12; i++) {
+      edit(project, `edit ${i}`);
+      void autosave.retry();
+      await calls[i].answer(failure(503));
+    }
+    expect(autosave.lostAttemptKeys(4)).toHaveLength(MAX_LOST_ATTEMPTS);
+    expect(autosave.lostAttemptKeys(4).at(-1)).toBe(calls[11].options.requestKey);
+    expect(autosave.lostAttemptKeys(5)).toEqual([]);
+  });
+
+  it('"Save mine over it" whose answer is lost retries over the version the conflict reported', async () => {
+    const { project, autosave } = openAndWatch(3);
+    edit(project, 'mine');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    await calls[0].answer(conflict(9));
+    void autosave.saveOver(9);
+    expect(calls[1].expectedVersion).toBe(9);
+    await calls[1].answer(failure(502));
+    await advance(AUTOSAVE_BACKOFF_MS[0]);
+    expect(calls[2].expectedVersion).toBe(9);
+    expect(calls[2].options.requestKey).toBe(calls[1].options.requestKey);
+    await calls[2].answer(failure(503));
+    void autosave.retry(); // Retry too
+    expect(calls[3].expectedVersion).toBe(9);
+    await calls[3].answer(ok(10));
+    expect(knownServerVersion(project.id)).toBe(10);
+    edit(project, 'after');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    expect(calls[4].expectedVersion).toBe(10);
+  });
+
+  it('a lost save then a successful Publish on the same base: no false leave warning', async () => {
+    const { project, autosave } = openAndWatch(3);
+    edit(project, 'A');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    await calls[0].answer(failure(502));
+    expect(anyUnsavedWork()).toBe(true);
+    const publishing = autosave.exclusive(async () => {
+      markServerVersion(project.id, getSnapshot(project) as ProjectContent, 5);
+    });
+    await advance(0);
+    await calls[1].answer(failure(503)); // the settling retry fails again
+    await publishing;
+    expect(autosave.lostAttemptKeys(3)).toEqual([]);
+    expect(anyUnsavedWork()).toBe(false);
+    expect(autosave.getState().phase).toBe('saved');
+  });
+
+  it('Publish after an unsettled lost save gets the lost keys to name', async () => {
+    const { project, autosave } = openAndWatch(3);
+    edit(project, 'A');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    await calls[0].answer(failure(502));
+    let named: string[] = [];
+    const publishing = autosave.exclusive(async () => {
+      named = autosave.lostAttemptKeys(knownServerVersion(project.id));
+    });
+    await advance(0);
+    await calls[1].answer(failure(503));
+    await publishing;
+    expect(named).toEqual([calls[0].options.requestKey]);
+  });
+
+  it('after a 400, the next change gets one attempt; refused again, it stays failed', async () => {
+    const { project, autosave } = openAndWatch(3);
+    edit(project, 'bad slug');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    await calls[0].answer(failure(400, 'Invalid slug.'));
+    expect(autosave.getState()).toMatchObject({ phase: 'failed', status: 400 });
+    await advance(120_000);
+    expect(calls).toHaveLength(1);
+    edit(project, 'still bad');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    expect(calls).toHaveLength(2);
+    await calls[1].answer(failure(400, 'Invalid slug.'));
+    expect(autosave.getState()).toMatchObject({ phase: 'failed', status: 400 });
+    edit(project, 'fixed');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    expect(calls).toHaveLength(3);
+    await calls[2].answer(ok(4));
+    expect(autosave.getState().phase).toBe('saved');
+  });
+
+  it('a 403 does not get that attempt (it waits for Retry)', async () => {
+    const { project, autosave } = openAndWatch(3);
+    edit(project, 'mine');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    await calls[0].answer(failure(403, 'No.'));
+    edit(project, 'more');
+    await advance(AUTOSAVE_MAX_WAIT_MS);
+    expect(calls).toHaveLength(1);
+    expect(autosave.getState().phase).toBe('failed');
   });
 });

@@ -22,8 +22,8 @@ export const KEEPALIVE_BODY_MAX_BYTES = 60 * 1024;
 export interface ProjectWriteOptions {
   /** Names this attempt (save only): a retry of the same content reuses it. */
   requestKey?: string;
-  /** The earlier attempt whose answer was lost, when this one carries newer content (save only). */
-  previousRequestKey?: string;
+  /** This tab's earlier attempts on the same base whose answers were lost (save and publish). */
+  previousRequestKeys?: readonly string[];
   /**
    * Leaving the page: ask the browser to finish the request when the body fits
    * what is left of the page's keepalive budget (the browser caps all keepalive
@@ -46,7 +46,7 @@ export async function postProjectWrite(
       project,
       expectedVersion,
       ...(options.requestKey ? { requestKey: options.requestKey } : {}),
-      ...(options.previousRequestKey ? { previousRequestKey: options.previousRequestKey } : {}),
+      ...(options.previousRequestKeys?.length ? { previousRequestKeys: options.previousRequestKeys } : {}),
     });
     // A larger body goes as a normal request: it may not outlive the page,
     // which the unload warning covers.

@@ -105,7 +105,7 @@ export interface AutosaveWriteOptions {
   /** Names this attempt; a retry of the same content on the same version reuses it. */
   requestKey: string;
   /** An earlier attempt on the same version whose answer was lost (it may have been written). */
-  previousRequestKey?: string;
+  previousRequestKeys?: readonly string[];
   /**
    * The page is going away: the browser should finish the request. Shared by
    * every save of that moment, because the browser caps the keepalive bodies
@@ -123,6 +123,9 @@ const defaultDeps: AutosaveDeps = {
   write: (snapshot, expectedVersion, options) =>
     postProjectWrite('/api/projects/save', snapshot, expectedVersion, 'Save failed', options),
 };
+
+/** How many lost attempts on one base are named at most (the server takes 8). */
+export const MAX_LOST_ATTEMPTS = 8;
 
 /** A failure worth trying again by itself: the request may well pass next time. */
 export function isPassingFailure(status: number | undefined): boolean {
@@ -163,7 +166,13 @@ export class AutosaveController {
    * Only an ok or a conflict settles it; a refusal of a later attempt says
    * nothing about this one.
    */
-  private unconfirmed: { key: string; expectedVersion: number | undefined } | undefined;
+  private unconfirmed: { keys: string[]; expectedVersion: number | undefined } | undefined;
+  /** "Save mine over it" whose answer was lost: its retries keep the version the refusal reported. */
+  private overPending: number | undefined;
+  /** A 400 refusal: the next change gets one (debounced) attempt, the cause may be fixed. */
+  private retryOnceOnChange = false;
+  /** The armed debounce is that one attempt, not an ordinary autosave. */
+  private debounceIsRetryOnce = false;
   /** The page is going away while a request is out: send the rest at once after it. */
   private leaveAfterFlight: { remaining: number } | undefined;
   /** Moves on every change and every state; keys the cached unsaved check. */
@@ -343,6 +352,13 @@ export class AutosaveController {
       this.changedDuringFlight = true;
       return;
     }
+    // After a 400 the next change gets one attempt (debounced like any change).
+    if (this.retryOnceOnChange && this.state.phase === 'failed') {
+      this.retryOnceOnChange = false;
+      this.debounceIsRetryOnce = true;
+      this.schedule();
+      return;
+    }
     // Paused by a refusal, or waiting for a retry that carries this change too.
     if (this.paused() || this.state.phase === 'retrying') return;
     if (this.state.phase !== 'unsaved') this.setState({ phase: 'unsaved' });
@@ -356,8 +372,10 @@ export class AutosaveController {
   }
 
   private fire() {
+    const once = this.debounceIsRetryOnce;
+    this.debounceIsRetryOnce = false;
     this.clearDebounce();
-    void this.run('auto');
+    void (once ? this.run('retry', undefined, { once: true }) : this.run('auto'));
   }
 
   private clearDebounce() {
@@ -409,6 +427,7 @@ export class AutosaveController {
    * equals the server's (an undo back), which resolves the failure.
    */
   retry(): Promise<void> {
+    if (this.overPending !== undefined) return this.run('over', this.overPending);
     return this.run('retry');
   }
 
@@ -475,13 +494,11 @@ export class AutosaveController {
     }
     // Newer content after a lost answer: name the lost attempt, so the server
     // can tell its own write from someone else's.
-    const previous =
-      this.unconfirmed && this.unconfirmed.key !== this.attempt.key && this.unconfirmed.expectedVersion === expectedVersion
-        ? this.unconfirmed.key
-        : undefined;
+    const previous = this.lostAttemptKeys(expectedVersion).filter((key) => key !== this.attempt!.key);
+    if (mode === 'over') this.overPending = overVersion;
     const options: AutosaveWriteOptions = {
       requestKey: this.attempt.key,
-      ...(previous ? { previousRequestKey: previous } : {}),
+      ...(previous.length > 0 ? { previousRequestKeys: previous } : {}),
       ...(mode === 'leave' ? { keepaliveBudget: opts.keepaliveBudget ?? { remaining: KEEPALIVE_BODY_MAX_BYTES } } : {}),
     };
     const request = this.send(snapshot, expectedVersion, options, content, opts.once === true);
@@ -512,12 +529,20 @@ export class AutosaveController {
     // A passing failure leaves the outcome open; only an ok or a conflict
     // settles it (a refusal of this attempt says nothing about a lost one).
     if (result.kind === 'error' && isPassingFailure(result.status)) {
+      // Every lost attempt on this base is kept (a short list): two lost answers
+      // in a row leave the second one as the latest write.
       if (!this.unconfirmed || this.unconfirmed.expectedVersion !== expectedVersion) {
-        this.unconfirmed = { key: options.requestKey, expectedVersion };
+        this.unconfirmed = { keys: [options.requestKey], expectedVersion };
+      } else if (!this.unconfirmed.keys.includes(options.requestKey)) {
+        this.unconfirmed.keys = [...this.unconfirmed.keys, options.requestKey].slice(-MAX_LOST_ATTEMPTS);
       }
     } else if (result.kind === 'ok' || result.kind === 'conflict') {
       this.unconfirmed = undefined;
     }
+    // A lost "Save mine over it" retries over the same reported version; any answer ends that.
+    if (!(result.kind === 'error' && isPassingFailure(result.status))) this.overPending = undefined;
+    // A 400 may be fixed by the next change: that change gets one attempt.
+    this.retryOnceOnChange = result.kind === 'error' && result.status === 400;
     if (result.kind === 'conflict') {
       this.clearTimers();
       this.attempts = 0;
@@ -563,7 +588,7 @@ export class AutosaveController {
     if (this.retryTimer) clearTimeout(this.retryTimer);
     this.retryTimer = setTimeout(() => {
       this.retryTimer = undefined;
-      void this.run('now');
+      void (this.overPending !== undefined ? this.run('over', this.overPending) : this.run('now'));
     }, wait);
     return wait;
   }
@@ -646,6 +671,15 @@ export class AutosaveController {
   }
 
   /**
+   * This tab's save attempts on `expectedVersion` whose answers were lost (the
+   * server may hold the latest of them). Publish names them too, so it builds
+   * on a landed one instead of meeting it as someone else's change.
+   */
+  lostAttemptKeys(expectedVersion: number | undefined): string[] {
+    return this.unconfirmed && this.unconfirmed.expectedVersion === expectedVersion ? [...this.unconfirmed.keys] : [];
+  }
+
+  /**
    * Back online, or the tab is visible again: a waiting retry goes now; a
    * failure whose automatic retries stopped, or a sign-out (401: the person may
    * have signed in again in another tab), gets exactly one more attempt. Still
@@ -707,10 +741,14 @@ export class AutosaveController {
         this.setState({ phase: 'publishing' });
       }
       noteWriteInFlight(this.projectId, true);
+      const versionBefore = knownServerVersion(this.projectId);
       try {
         return await write();
       } finally {
         noteWriteInFlight(this.projectId, false);
+        // The other write landed (it moved the known version): it settles any
+        // lost save on the old base, which it built on or replaced.
+        if (knownServerVersion(this.projectId) !== versionBefore) this.unconfirmed = undefined;
       }
     } finally {
       this.held--;
@@ -735,7 +773,7 @@ export class AutosaveController {
     if (!project || !isAlive(project)) return;
     const saved = isSaved(this.projectId, getSnapshot(project) as ProjectContent);
     this.changedDuringFlight = false;
-    if (saved) {
+    if (saved && !this.unconfirmed) {
       // The other write stored this copy: whatever paused or waited is resolved.
       this.clearTimers();
       this.attempts = 0;

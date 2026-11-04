@@ -72,6 +72,18 @@ const SaveStatus = observer(() => {
   // whole in its notice): a disclosure the keyboard reaches, not only a tooltip.
   const [detailsOpen, setDetailsOpen] = React.useState(false);
   const detailsId = React.useId();
+  const detailsButton = React.useRef<HTMLButtonElement>(null);
+  // Escape closes the reason and puts the focus back on Details.
+  React.useEffect(() => {
+    if (!detailsOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      setDetailsOpen(false);
+      detailsButton.current?.focus();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [detailsOpen]);
 
   if (!project) return null;
   const projectTitle = project.metadata.title || 'Untitled Project';
@@ -172,6 +184,7 @@ const SaveStatus = observer(() => {
       )}
       {failed && reason && (
         <button
+          ref={detailsButton}
           type="button"
           aria-expanded={detailsOpen}
           aria-controls={detailsId}

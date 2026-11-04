@@ -14,7 +14,7 @@ import { getSnapshot } from 'mobx-state-tree';
 import { createRootStore, type RootStoreType } from '@/stores/RootStore';
 import { knownServerVersion, openProject } from '@/stores/openProject';
 import ProjectModel, { type ProjectModelType, type ProjectSnapshotOut } from '@/models/ProjectModel';
-import { AUTOSAVE_DEBOUNCE_MS, resetAutosaveForTests } from '@/lib/projects/autosave';
+import { AUTOSAVE_DEBOUNCE_MS, existingAutosave, resetAutosaveForTests } from '@/lib/projects/autosave';
 import { handleSaveShortcut } from '@/lib/projects/saveShortcut';
 import type { PageGenHandlers, PageGenTransport } from '@/lib/ai/pageGen/client';
 import type { PageGenRequest, PageGenResultPayload } from '@/lib/ai/pageGen/protocol';
@@ -254,6 +254,12 @@ describe('the full reason on the wide bar', () => {
     const panel = screen.getByTestId('save-status-details');
     expect(details.getAttribute('aria-controls')).toBe(panel.id);
     expect(panel.textContent).toContain('larger than the 10 MB a save can take');
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    expect(screen.queryByTestId('save-status-details')).toBeNull();
+    expect(details.getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(details);
   });
 });
 
@@ -275,6 +281,28 @@ describe('Cmd+S on the projects overview', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     await advance(0);
     expect(unloadWarns()).toBe(false);
+  });
+});
+
+describe('Cmd+S on the overview with a project changed elsewhere', () => {
+  it('opens no dialog and sends nothing; the notice says to go back to resolve it', async () => {
+    const project = openServerProject(3);
+    fetchMock.mockResolvedValueOnce(conflict(9));
+    const { rerender } = render(<Editor />);
+    edit(project, 'mine');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Keep editing' }));
+    await advance(0);
+    rerender(<UnsavedWorkGuard saveShortcut />);
+    await advance(0);
+    const event = new KeyboardEvent('keydown', { key: 's', metaKey: true, bubbles: true, cancelable: true });
+    act(() => {
+      window.dispatchEvent(event);
+    });
+    expect(event.defaultPrevented).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(existingAutosave(project.id)?.getState()).toMatchObject({ phase: 'conflict', dialogOpen: false });
+    expect(screen.getByTestId('unsaved-work-notice').textContent).toContain('Changed elsewhere: go back to it to choose what to keep.');
   });
 });
 
