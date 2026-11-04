@@ -304,6 +304,12 @@ model Site {
   // unseen. Rename, rollback and unpublish leave it alone: none of them writes what a save writes.
   version Int @default(1)
 
+  // The key the editor named its last write of the working copy with (save only; publish and
+  // erase clear it). A retry of that attempt after a lost answer, still based on the version just
+  // before it, gets this write's version back instead of a false 409 `site_changed`. Lives exactly
+  // until the next write of the site.
+  lastWriteKey String? @map("last_write_key")
+
   // Persistence-layer timestamps (when the ROW was written), set by the DB.
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")

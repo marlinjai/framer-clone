@@ -168,6 +168,19 @@ describe('POST /api/projects/save (authorized)', () => {
     expect(publish).not.toHaveBeenCalled();
   });
 
+  it('passes the attempt key through, and refuses a malformed one without saving', async () => {
+    const save = vi.fn().mockResolvedValue({ version: 2 });
+    installRepo({ saveProject: save, publishProject: vi.fn() });
+
+    const res = await POST(saveReq({ project: PROJECT, expectedVersion: 1, requestKey: 'k_0123456789' }));
+    expect(res.status).toBe(200);
+    expect(save.mock.calls[0][2]).toEqual({ mustExist: true, companyId: 'tenant-1', expectedVersion: 1, requestKey: 'k_0123456789' });
+
+    const bad = await POST(saveReq({ project: PROJECT, expectedVersion: 1, requestKey: 'no spaces allowed' }));
+    expect(bad.status).toBe(400);
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+
   it('does not claim a status in the success envelope (save leaves it untouched)', async () => {
     const save = vi.fn().mockResolvedValue({ version: 2 });
     installRepo({ saveProject: save, publishProject: vi.fn() });

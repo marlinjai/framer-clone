@@ -83,7 +83,7 @@ async function handlePOST(req: Request): Promise<Response> {
   if (!body.ok) return body.response;
   // The version lock (_schema.ts): checked here rather than in the schema so a
   // tab that predates it gets a message it can act on, not a generic 400.
-  const { expectedVersion } = body.data;
+  const { expectedVersion, requestKey } = body.data;
   if (expectedVersion === undefined) return siteRepositoryErrorResponse(new SiteVersionRequiredError());
 
   // 5. Persist the snapshot — and ONLY that. saveProject preserves the site's
@@ -94,7 +94,13 @@ async function handlePOST(req: Request): Promise<Response> {
   let version: number;
   try {
     const repo = getSiteRepository();
-    ({ version } = await repo.saveProject(scope, project, { mustExist: true, companyId, expectedVersion }));
+    ({ version } = await repo.saveProject(scope, project, {
+      mustExist: true,
+      companyId,
+      expectedVersion,
+      // A repeat of an attempt whose answer was lost gets that attempt's result.
+      ...(requestKey ? { requestKey } : {}),
+    }));
   } catch (err) {
     if (err instanceof SiteRepositoryError) return siteRepositoryErrorResponse(err);
     return jsonError(

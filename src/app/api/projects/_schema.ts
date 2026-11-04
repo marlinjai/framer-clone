@@ -53,7 +53,12 @@ export const projectSnapshotSchema = z
 // `currentVersion`. It is REQUIRED: a body without it (an editor tab built
 // before the lock existed) is refused with 400 `version_required` and writes
 // nothing, so no client of these routes ever gets a silent "newest wins" save.
+//
+// `requestKey` (save only) names one attempt of the editor's save: a retry of
+// the same content after a lost answer reuses it, and the save route answers
+// the stored result instead of a 409 against the write itself.
 export const projectBodySchema = z.object({
   project: projectSnapshotSchema,
   expectedVersion: z.number().int().positive().optional(),
+  requestKey: z.string().regex(/^[A-Za-z0-9_-]{8,100}$/).optional(),
 });

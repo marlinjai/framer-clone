@@ -299,6 +299,12 @@ export interface WorkingCopyWriteOptions {
    * already exists; only creating a new site goes without.
    */
   expectedVersion?: number;
+  /**
+   * The editor's key for this attempt (save only). A repeat of the site's last
+   * write (same key, based on the version just before it) returns that write's
+   * version and writes nothing: its first answer was lost on the way back.
+   */
+  requestKey?: string;
 }
 
 export class SiteRepository {
@@ -487,6 +493,7 @@ export class SiteRepository {
         publishedRevisionId: true,
         erasureEpoch: true,
         version: true,
+        lastWriteKey: true,
       },
     });
     if (existing && existing.workspaceId !== scope.workspaceId) {
@@ -510,6 +517,18 @@ export class SiteRepository {
     // caller that names the version it was based on, and only while that is
     // still the stored one. Below, the UPDATE repeats the comparison in its
     // WHERE, so the check holds even without the isolation level around it.
+    // A retry of the last write whose answer was lost: that write is what is
+    // stored (nothing wrote since, the version is the one it produced), so its
+    // result is answered again instead of a 409 against itself.
+    if (
+      existing &&
+      options.requestKey &&
+      existing.lastWriteKey === options.requestKey &&
+      options.expectedVersion !== undefined &&
+      existing.version === options.expectedVersion + 1
+    ) {
+      return existing.version;
+    }
     if (existing) {
       if (options.expectedVersion === undefined) throw new SiteVersionRequiredError();
       if (options.expectedVersion !== existing.version) throw new SiteChangedError(existing.version);
@@ -612,6 +631,8 @@ export class SiteRepository {
       projectUpdatedAt: new Date(persisted.projectUpdatedAt),
       redirects: redirects as unknown as Prisma.InputJsonValue,
       version: nextVersion,
+      // Only a save names its attempt; any other write ends the old key's life.
+      lastWriteKey: options.requestKey ?? null,
       ...componentsColumn,
     };
 
@@ -654,6 +675,7 @@ export class SiteRepository {
           redirects: redirects as unknown as Prisma.InputJsonValue,
           companyId: options.companyId ?? null,
           version: nextVersion,
+          lastWriteKey: options.requestKey ?? null,
           ...componentsColumn,
         },
         // `name` is written on create only. After that the rename action
@@ -1134,7 +1156,7 @@ export class SiteRepository {
       // revisions: a tab loaded long ago may hold it even if the working copy does not.
       // The version moves too: the working copy may have been rewritten, and an
       // agent holding the old version must load again before it writes.
-      await tx.site.updateMany({ where, data: { erasureEpoch: { increment: 1 }, version: { increment: 1 } } });
+      await tx.site.updateMany({ where, data: { erasureEpoch: { increment: 1 }, version: { increment: 1 }, lastWriteKey: null } });
 
       const holdsValue = redactionMatcher(query);
       const places = erased.map((match) => placeOf(match, holdsValue));

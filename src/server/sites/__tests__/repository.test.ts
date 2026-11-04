@@ -987,3 +987,38 @@ describe('SiteRepository.saveProject with mustExist (editor Save and Publish)', 
     expect(prisma.sitePage.upsert).not.toHaveBeenCalled();
   });
 });
+
+describe('SiteRepository.saveProject: a repeated attempt (requestKey)', () => {
+  function makeProject() {
+    const p = ProjectModel.create({ id: 'site_key', metadata: { title: 'Key', description: '' }, pages: {} });
+    p.createPage('Home');
+    return p;
+  }
+  const stored = (over: Record<string, unknown>) => ({ erasureEpoch: 0, version: 1, id: 'site_key', workspaceId: 'ws_marlin', lastWriteKey: null, ...over });
+
+  it('stores the key with the write, and a write without one clears it', async () => {
+    prisma.site.findUnique.mockResolvedValue(stored({ version: 4 }));
+    prisma.site.updateMany.mockResolvedValue({ count: 1 });
+    prisma.sitePage.upsert.mockResolvedValue({});
+    prisma.sitePage.deleteMany.mockResolvedValue({ count: 0 });
+    await expect(repo.saveProject(SCOPE, makeProject(), { mustExist: true, expectedVersion: 4, requestKey: 'attempt-0001' })).resolves.toEqual({ version: 5 });
+    expect(prisma.site.updateMany.mock.calls[0][0].data).toMatchObject({ version: 5, lastWriteKey: 'attempt-0001' });
+    await repo.saveProject(SCOPE, makeProject(), { mustExist: true, expectedVersion: 4 });
+    expect(prisma.site.updateMany.mock.calls.at(-1)![0].data).toMatchObject({ lastWriteKey: null });
+  });
+
+  it('answers the stored version for a repeat of the last write, and writes nothing', async () => {
+    // The first attempt committed (4 -> 5) but its answer was lost; the retry still names 4.
+    prisma.site.findUnique.mockResolvedValue(stored({ version: 5, lastWriteKey: 'attempt-0001' }));
+    await expect(repo.saveProject(SCOPE, makeProject(), { mustExist: true, expectedVersion: 4, requestKey: 'attempt-0001' })).resolves.toEqual({ version: 5 });
+    expect(prisma.site.updateMany).not.toHaveBeenCalled();
+    expect(prisma.sitePage.upsert).not.toHaveBeenCalled();
+  });
+
+  it('is still a 409 when someone else wrote since, or for another key', async () => {
+    prisma.site.findUnique.mockResolvedValue(stored({ version: 6, lastWriteKey: 'attempt-0001' }));
+    await expect(repo.saveProject(SCOPE, makeProject(), { mustExist: true, expectedVersion: 4, requestKey: 'attempt-0001' })).rejects.toBeInstanceOf(SiteChangedError);
+    prisma.site.findUnique.mockResolvedValue(stored({ version: 5, lastWriteKey: 'someone-else' }));
+    await expect(repo.saveProject(SCOPE, makeProject(), { mustExist: true, expectedVersion: 4, requestKey: 'attempt-0001' })).rejects.toBeInstanceOf(SiteChangedError);
+  });
+});
