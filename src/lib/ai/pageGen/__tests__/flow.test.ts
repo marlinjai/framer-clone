@@ -62,6 +62,23 @@ describe('forward', () => {
   });
 });
 
+describe('preview sections while running', () => {
+  it('counts the drawn sections of the current run, drops a late one of another, and starts each run at 0', () => {
+    const key = makeRequestKey(inputs, TARGET);
+    let s = run(initialFlow(inputs), key);
+    expect(s).toMatchObject({ phase: 'running', sections: 0 });
+    s = flowReducer(s, { type: 'section', requestKey: key, count: 1 });
+    s = flowReducer(s, { type: 'section', requestKey: key, count: 2 });
+    expect(s).toMatchObject({ sections: 2 });
+    expect(flowReducer(s, { type: 'section', requestKey: 'other', count: 5 })).toBe(s);
+    // Cancel, then a new run: no count carried over.
+    s = flowReducer(s, { type: 'cancel' });
+    expect(flowReducer(s, { type: 'section', requestKey: key, count: 3 })).toBe(s);
+    s = run(s, key);
+    expect(s).toMatchObject({ sections: 0 });
+  });
+});
+
 describe('backtrack and revise', () => {
   it('changing the brief after a result drops the result and offers a fresh generation', () => {
     const s = flowReducer(applied(), { type: 'edit', inputs: { brief: 'A florist page' }, targetKey: TARGET });

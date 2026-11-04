@@ -206,6 +206,12 @@ describe('forward: pick an idea, generate', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /^Generate$/ }));
     expect(calls[0].req.brief).toMatch(/^A pricing page/);
+    // While it runs the dialog gives way to the floating progress panel: the
+    // brief, the idea row and Enhance are not on screen, so none can change the run.
+    expect(screen.getByTestId('pagegen-progress-panel')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Brief')).not.toBeInTheDocument();
+    expect(screen.queryByRole('toolbar')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Enhance/ })).not.toBeInTheDocument();
   });
 
   it('never overwrites typed text without an undo', () => {
@@ -396,10 +402,15 @@ describe('re-entry: generate another', () => {
     await act(async () => ideaCalls[0].resolve({ ok: true, value: TAILORED }));
     fireEvent.click(chip('Wholesale'));
     fireEvent.click(screen.getByRole('button', { name: /^Generate$/ }));
+    expect(screen.getByTestId('pagegen-progress-panel')).toBeInTheDocument();
+    expect(screen.queryByRole('toolbar')).not.toBeInTheDocument();
     await act(async () => {
       calls[0].handlers.onResult?.(resultFor(calls[0].req));
       calls[0].finish();
     });
+    // The full dialog returns for the result, without the idea row.
+    expect(screen.queryByTestId('pagegen-progress-panel')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Generate another' })).toBeInTheDocument();
     expect(screen.queryByRole('toolbar')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Generate another' }));

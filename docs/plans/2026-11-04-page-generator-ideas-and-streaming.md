@@ -94,6 +94,10 @@ The goal: ideas to start from, a fast rewrite of a brief typed by hand, and a pa
 - Neither pull request touches money, checkout or security beyond the existing auth chain, so both land through land-pr without the `hold` label.
 - Per-section validation calls `validateGeneration({ nodes: [section] }, { allowStickyCta: false, ... })`. The page-level checks (essentials, tells) run on the final result only.
 
+## Progress
+
+- 2026-11-04: pull request 1 (the idea row and the streamed Enhance) merged as #327. Pull request 2 (the page that builds itself as a draft, branch `feat/pagegen-streaming`) is open; while it runs, the dialog gives way to a floating progress panel, so the idea row and Enhance live in the editing phase only, and the full dialog returns for the result.
+
 ## Verification
 
 - `pnpm vitest run src/lib/ai src/components/ai`, then the full suite, lint and typecheck.

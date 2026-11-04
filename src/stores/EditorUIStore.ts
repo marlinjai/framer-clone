@@ -13,6 +13,7 @@ import { findRuleIndex, namedState, ruleLabel } from '@/lib/rules/states';
 import { revealFor, surfaceBehaviour, type PreviewValues } from '@/lib/behaviour/surfaceBehaviour';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { surfaceColorMode, surfaceColorScheme, surfaceDarkClass, type ColorScheme } from '@/lib/site/theme';
+import { PageGenDraftStore } from '@/lib/ai/pageGen/draft';
 // Removed BreakpointModel - breakpoints are now viewport nodes
 
 // Available tools in our design editor (expanded from basic ToolStore)
@@ -188,6 +189,10 @@ const EditorUIStore = types.model('EditorUI', {
   componentRequest: null as ComponentRequest | null,
   // Registered by Canvas while it is mounted.
   canvasCamera: undefined as CanvasCamera | undefined,
+  // The page generator's draft (src/lib/ai/pageGen/draft.ts): the sections of a
+  // running generation, drawn on the canvas and never part of the project, so
+  // never saved, published or in undo history. Its own observable store.
+  pageGenDraft: new PageGenDraftStore(),
   // Phone layout (docs/plans/2026-10-24-editor-on-phones.md, "Quick toolbar"):
   // the long-press context menu, open at a finger point (screen px), and the
   // style its Copy style took (appearance properties as resolved on the frame

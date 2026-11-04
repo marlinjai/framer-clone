@@ -49,7 +49,7 @@ build wave and stays outside this file's scope (`type: roadmap`, exempt from the
   and screenshot loop stay open. See [plan](docs/plans/ai-driven-page-generation.md). (2026-11-01)
 - [ ] AI page generation, ideas and streaming: an idea row in the Generate dialog (static ideas at
   once, then six tailored to the site by Haiku) and an Enhance button that streams a structured
-  rewrite of the brief with one-step undo (pull request 1, built 2026-11-04, browser check pending),
+  rewrite of the brief with one-step undo (pull request 1, merged 2026-11-04 as #327),
   then a page that builds itself section by section on the canvas as a detached draft that never
   enters the project tree, still one undo step (pull request 2). See
   [plan](docs/plans/2026-11-04-page-generator-ideas-and-streaming.md). (2026-11-04)

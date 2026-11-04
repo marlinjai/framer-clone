@@ -66,6 +66,7 @@ import {
   type FooterLink,
   type LegalPageLook,
 } from '@/lib/legal/legalPageTree';
+import { GENERATED_PAGE_ROOT_STYLE } from '@/lib/ai/pageGen/apply';
 
 /** A style value's base (responsive maps carry `base`), when it is a plain safe string. */
 function baseStyle(value: unknown): string | undefined {
@@ -1151,7 +1152,7 @@ export const ProjectModel = types
           type: 'div',
           componentType: 'host',
           label: 'Page',
-          props: { style: { display: 'flex', flexDirection: 'column', width: '100%', fontFamily: 'system-ui, sans-serif' } },
+          props: { style: { ...GENERATED_PAGE_ROOT_STYLE } },
           children: input.sections.map(s => ({ ...s, parentId: rootId })),
         },
         canvasNodes,

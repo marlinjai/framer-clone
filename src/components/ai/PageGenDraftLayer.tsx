@@ -1,0 +1,248 @@
+// src/components/ai/PageGenDraftLayer.tsx
+//
+// The canvas side of the page that builds itself (src/lib/ai/pageGen/draft.ts):
+// the preview sections of a running generation, drawn where the result will
+// land, and never part of the project.
+//
+//   - Replace: the target's place shows the draft sections instead (the page
+//     root keeps itself and shows them as its children, as the apply does).
+//   - Insert: the sections show after the target's existing children.
+//   - New page: a set of draft frames beside the page's own frames, titled
+//     after the requested page, which is not a real page yet.
+//
+// The draft is visual only: drawn by HeadlessComponentRenderer (no selection,
+// no drag, no text editing), with pointer events off and hidden from assistive
+// technology (the progress panel speaks for it), and absent from the Layers
+// panel, which reads the project. It is drawn only while the page the run
+// started on is on screen.
+//
+// Motion (Emil Kowalski's rules): each section enters with a 200ms ease-out
+// fade and an 8px rise; nothing moves with reduced motion. The band for the
+// section still being written has a static tint, no shimmer. The camera follows
+// a new section only while the user has not moved it since the run started.
+'use client';
+
+import React from 'react';
+import { computed } from 'mobx';
+import { observer } from 'mobx-react-lite';
+import { useStore } from '@/hooks/useStore';
+import HeadlessComponentRenderer from '@/lib/renderer/HeadlessComponentRenderer';
+import type { BindingScope } from '@/lib/bindings/resolver/scope';
+import { GENERATED_PAGE_ROOT_STYLE } from '@/lib/ai/pageGen/apply';
+import type { PageGenDraftStore, PageGenDraftTarget } from '@/lib/ai/pageGen/draft';
+import { viewportFrameContentStyle } from '@/lib/canvas/viewportFrame';
+import { surfaceFrameAttributes } from '@/lib/site/surfaceTheme';
+import { PageBaseStyles } from '@/lib/site/PageBaseStyles';
+import { revealOffset, useCameraControls, type CameraTransform } from '@/lib/canvas/cameraControls';
+import GroundWrapper from '@/components/GroundWrapper';
+
+/** Marks a drawn draft section (its index); the wrapper has no box of its own. */
+export const DRAFT_SECTION_ATTR = 'data-pagegen-draft-section';
+/** Marks a draft frame of a new page. */
+export const DRAFT_FRAME_ATTR = 'data-pagegen-draft-frame';
+/** Marks the band of the section still being written. */
+export const DRAFT_BAND_ATTR = 'data-pagegen-draft-band';
+
+/** Space between the page's own frames and the draft frames of a new page. */
+const DRAFT_FRAME_GAP = 160;
+
+// Fade and rise on the section's own element (the wrapper is display: contents).
+// `backwards` holds the start values only until the animation runs, so the
+// section's own styles (a transform of its own) win once it has entered.
+const DRAFT_CSS = `
+@keyframes fc-pagegen-section-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+[${DRAFT_SECTION_ATTR}] > * { animation: fc-pagegen-section-in 200ms ease-out backwards; }
+@media (prefers-reduced-motion: reduce) { [${DRAFT_SECTION_ATTR}] > * { animation: none; } }
+[${DRAFT_SECTION_ATTR}], [${DRAFT_SECTION_ATTR}] *, [${DRAFT_FRAME_ATTR}], [${DRAFT_FRAME_ATTR}] * { pointer-events: none !important; }
+`;
+
+/** How the draft meets a canvas node: nothing, in its place, as its children, or after its children. */
+export type DraftHook = 'replace' | 'replaceChildren' | 'insert' | null;
+
+/** What the draft does at the node `componentId` of the page `pageId`. Pure. */
+export function draftHookFor(target: PageGenDraftTarget | undefined, pageId: string | undefined, componentId: string): DraftHook {
+  if (!target || !pageId || target.pageId !== pageId || target.componentId !== componentId) return null;
+  if (target.kind === 'insert') return 'insert';
+  if (target.kind === 'replace') return target.targetIsRoot ? 'replaceChildren' : 'replace';
+  return null;
+}
+
+/**
+ * The draft hook of one canvas node, as a computed per node: the draft's target
+ * changes only when a run starts or ends, and only the node it names redraws.
+ * `skip` for nodes the draft never meets (inside a placement's definition).
+ */
+export function useDraftHook(componentId: string, skip: boolean): DraftHook {
+  const { editorUI } = useStore();
+  const draft = editorUI.pageGenDraft as PageGenDraftStore | undefined;
+  const hook = React.useMemo(
+    () => computed(() => (skip || !draft ? null : draftHookFor(draft.target, editorUI.currentPage?.id, componentId))),
+    [draft, editorUI, componentId, skip],
+  );
+  return hook.get();
+}
+
+/** The band where the next section will appear. Static, no shimmer. */
+function DraftBand({ text }: { text: string }) {
+  return (
+    <div
+      {...{ [DRAFT_BAND_ATTR]: '' }}
+      aria-hidden="true"
+      style={{
+        minHeight: 120,
+        margin: 16,
+        borderRadius: 12,
+        border: '1px dashed rgba(120, 120, 120, 0.35)',
+        background: 'rgba(120, 120, 120, 0.08)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        font: '500 13px/1.4 system-ui, sans-serif',
+        color: 'rgba(90, 90, 90, 0.9)',
+        pointerEvents: 'none',
+      }}
+    >
+      {text}
+    </div>
+  );
+}
+
+/** The band's words, or null when no band shows (the result is on its way and sections are drawn). */
+export function draftBandText(phase: PageGenDraftStore['phase'], drawn: number): string | null {
+  if (phase === 'writing') return `Writing section ${drawn + 1}...`;
+  if (drawn > 0) return null;
+  return phase === 'polishing' ? 'Polishing the page...' : 'Checking the page...';
+}
+
+/**
+ * The draft's motion and pointer rules. Mounted once beside the canvas frames,
+ * never inside the page tree (a style element there would count as a child for
+ * the page's own selectors). Static text.
+ */
+export function DraftStyles() {
+  return <style data-pagegen-draft-styles="">{DRAFT_CSS}</style>;
+}
+
+export interface DraftSectionsProps {
+  breakpointId: string;
+  allBreakpoints: { id: string; minWidth: number; label?: string }[];
+  scope?: BindingScope;
+}
+
+/** The draft's sections in page order, then the band of the one being written. */
+export const DraftSections = observer(function DraftSections({ breakpointId, allBreakpoints, scope }: DraftSectionsProps) {
+  const { editorUI } = useStore();
+  const draft = editorUI.pageGenDraft as PageGenDraftStore | undefined;
+  if (!draft?.target) return null;
+  const band = draftBandText(draft.phase, draft.sections.length);
+  return (
+    <>
+      {draft.sections.map((s) => (
+        <div key={s.index} {...{ [DRAFT_SECTION_ATTR]: String(s.index) }} aria-hidden="true" style={{ display: 'contents' }}>
+          <HeadlessComponentRenderer component={s.tree} breakpointId={breakpointId} allBreakpoints={allBreakpoints} scope={scope} />
+        </div>
+      ))}
+      {band && <DraftBand text={band} />}
+    </>
+  );
+});
+
+export interface DraftPageFramesProps {
+  /** Where the page's own frames end on the canvas (the largest canvasX + width). */
+  framesRight: number;
+  scope?: BindingScope;
+}
+
+/** A new page's draft: its frames beside the page's own, titled after the requested page. */
+export const DraftPageFrames = observer(function DraftPageFrames({ framesRight, scope }: DraftPageFramesProps) {
+  const { editorUI } = useStore();
+  const draft = editorUI.pageGenDraft as PageGenDraftStore | undefined;
+  const project = editorUI.currentProject;
+  const target = draft?.targetOn(editorUI.currentPage?.id);
+  if (!target || target.kind !== 'newPage' || !project) return null;
+  const left = Math.min(...target.viewports.map((v) => v.x));
+  const dx = (Number.isFinite(framesRight) ? framesRight : 0) + DRAFT_FRAME_GAP - (Number.isFinite(left) ? left : 0);
+  const breakpoints = target.breakpoints;
+  return (
+    <>
+      <PageBaseStyles base={project.site.pageBase} roots={[`[${DRAFT_FRAME_ATTR}] > [data-fc-theme]`]} />
+      {target.viewports.map((v) => (
+        <GroundWrapper key={v.breakpointId} id={`pagegen-draft-${v.breakpointId}`} x={v.x + dx} y={v.y} width={v.width} height="auto">
+          <div
+            {...{ [DRAFT_FRAME_ATTR]: v.breakpointId }}
+            aria-hidden="true"
+            className="relative rounded-lg bg-white shadow-lg ring-2 ring-brand/40"
+            style={{ width: `${v.width}px` }}
+          >
+            <div className="absolute -top-8 left-0 flex items-center gap-2 whitespace-nowrap text-sm font-medium text-gray-600">
+              <span>{target.title}</span>
+              <span className="rounded bg-brand/15 px-2 py-0.5 text-xs text-brand">Draft</span>
+              <span className="rounded bg-gray-200 px-2 py-0.5 text-xs">{v.label}</span>
+            </div>
+            <div
+              className={editorUI.frameDarkClass ? 'rounded-lg dark' : 'rounded-lg'}
+              style={viewportFrameContentStyle(v.height)}
+              {...surfaceFrameAttributes('frame', editorUI.frameColorScheme)}
+            >
+              <div style={GENERATED_PAGE_ROOT_STYLE}>
+                <DraftSections breakpointId={v.breakpointId} allBreakpoints={breakpoints} scope={scope} />
+              </div>
+            </div>
+          </div>
+        </GroundWrapper>
+      ))}
+    </>
+  );
+});
+
+/** Whether two camera positions are the same (a user pan or zoom changes one of them). */
+function sameCamera(a: CameraTransform, b: CameraTransform): boolean {
+  return Math.abs(a.zoom - b.zoom) < 1e-6 && Math.abs(a.panX - b.panX) < 0.5 && Math.abs(a.panY - b.panY) < 0.5;
+}
+
+/**
+ * Brings each new draft section into view, until the user moves the camera
+ * themselves: from then on this run leaves the camera alone. Mounted inside
+ * the canvas (it needs the camera's context); renders nothing.
+ */
+export const DraftCameraFollow = observer(function DraftCameraFollow() {
+  const { editorUI } = useStore();
+  const draft = editorUI.pageGenDraft as PageGenDraftStore | undefined;
+  const { read, panBy } = useCameraControls();
+  const requestKey = draft?.targetOn(editorUI.currentPage?.id)?.requestKey;
+  const newest = draft?.sections.at(-1)?.index;
+  // Per run: where this follower last left the camera, and whether the user took over.
+  const follow = React.useRef<{ requestKey?: string; last?: CameraTransform; userMoved: boolean }>({ userMoved: false });
+
+  React.useEffect(() => {
+    if (!requestKey) {
+      follow.current = { userMoved: false };
+      return;
+    }
+    if (follow.current.requestKey !== requestKey) follow.current = { requestKey, last: read(), userMoved: false };
+  }, [requestKey, read]);
+
+  React.useEffect(() => {
+    if (!requestKey || newest === undefined) return;
+    const state = follow.current;
+    if (state.requestKey !== requestKey || state.userMoved) return;
+    const now = read();
+    if (state.last && !sameCamera(state.last, now)) {
+      state.userMoved = true;
+      return;
+    }
+    // The newest section in the first frame it is drawn in; its wrapper has no box, its element has.
+    const wrapper = document.querySelector(`[${DRAFT_SECTION_ATTR}="${newest}"]`);
+    const element = wrapper?.firstElementChild as HTMLElement | null | undefined;
+    const ground = document.querySelector<HTMLElement>('[data-ground]');
+    if (!element || !ground || typeof element.getBoundingClientRect !== 'function') return;
+    const box = element.getBoundingClientRect();
+    const visible = ground.getBoundingClientRect();
+    if (box.width === 0 && box.height === 0) return;
+    const { dx, dy } = revealOffset(box, visible, 48);
+    if (dx !== 0 || dy !== 0) panBy(dx, dy);
+    state.last = read();
+  }, [requestKey, newest, read, panBy]);
+
+  return null;
+});
