@@ -48,7 +48,7 @@
 
 import { getSnapshot, isAlive, isStateTreeNode, onPatch } from 'mobx-state-tree';
 import type { ProjectModelType } from '@/models/ProjectModel';
-import { postProjectWrite, type ProjectWriteResult } from './projectWrite';
+import { KEEPALIVE_BODY_MAX_BYTES, postProjectWrite, type ProjectWriteResult } from './projectWrite';
 import {
   changedElsewhereVersion,
   isApplyingServerCopy,
@@ -106,8 +106,12 @@ export interface AutosaveWriteOptions {
   requestKey: string;
   /** An earlier attempt on the same version whose answer was lost (it may have been written). */
   previousRequestKey?: string;
-  /** The page is going away: the browser should finish the request (when the body allows). */
-  keepalive?: boolean;
+  /**
+   * The page is going away: the browser should finish the request. Shared by
+   * every save of that moment, because the browser caps the keepalive bodies
+   * of one page at 64 KB together; a body that does not fit goes normally.
+   */
+  keepaliveBudget?: { remaining: number };
 }
 
 export interface AutosaveDeps {
@@ -134,6 +138,14 @@ export function isPassingFailure(status: number | undefined): boolean {
  * leave: the page is hidden or left; like now, as a keepalive request, never
  *   over a refusal or while a reload on purpose discards the copy.
  */
+
+/** Per run: Publish's settling save goes past the hold; a recovery tries once. */
+interface RunOptions {
+  bypassHold?: boolean;
+  /** One attempt: a passing failure does not start the backoff, it stays failed. */
+  once?: boolean;
+  keepaliveBudget?: { remaining: number };
+}
 type Mode = 'auto' | 'now' | 'retry' | 'over' | 'leave';
 
 export class AutosaveController {
@@ -146,8 +158,20 @@ export class AutosaveController {
   private failingSince: number | undefined;
   /** The key of the last attempt, for the content and version it carried. */
   private attempt: { key: string; content: string; expectedVersion: number | undefined } | undefined;
-  /** An attempt whose answer never came (network, 5xx): the server may hold it. */
+  /**
+   * An attempt whose answer never came (network, 5xx): the server may hold it.
+   * Only an ok or a conflict settles it; a refusal of a later attempt says
+   * nothing about this one.
+   */
   private unconfirmed: { key: string; expectedVersion: number | undefined } | undefined;
+  /** The page is going away while a request is out: send the rest at once after it. */
+  private leaveAfterFlight: { remaining: number } | undefined;
+  /** Moves on every change and every state; keys the cached unsaved check. */
+  private stamp = 0;
+  /** Bumps the stamp on any change of the held project, also while not watched. */
+  private disposeStamp: (() => void) | undefined;
+  private stampedProject: AutosaveProject | undefined;
+  private unsavedCache: { stamp: number; value: boolean } | undefined;
   private deps: AutosaveDeps;
   private state: AutosaveState = { phase: 'saved' };
   private listeners = new Set<() => void>();
@@ -186,6 +210,7 @@ export class AutosaveController {
   };
 
   private setState(next: AutosaveState) {
+    this.stamp++;
     this.state = next;
     for (const listener of [...this.listeners]) listener();
     notifyRegistry();
@@ -211,6 +236,9 @@ export class AutosaveController {
     if (this.isAttached() || this.inFlight || this.held > 0) return;
     if (this.debounceTimer || this.maxWaitTimer || this.retryTimer) return;
     if (this.state.phase !== 'saved' && !this.discarding) return;
+    this.disposeStamp?.();
+    this.disposeStamp = undefined;
+    this.stampedProject = undefined;
     this.project = undefined;
     this.listeners.clear();
     releaseController(this);
@@ -237,6 +265,13 @@ export class AutosaveController {
     this.disposeSnapshot?.();
     this.project = project;
     this.disposeSnapshot = onPatch(project, () => this.notifyChange());
+    if (this.stampedProject !== project) {
+      this.disposeStamp?.();
+      this.stampedProject = project;
+      this.disposeStamp = onPatch(project, () => {
+        this.stamp++;
+      });
+    }
     notifyRegistry();
     if (this.inFlight) return;
     if (this.paused() || this.state.phase === 'retrying') {
@@ -301,6 +336,7 @@ export class AutosaveController {
 
   /** A change to the project tree. */
   notifyChange(): void {
+    this.stamp++;
     if (isApplyingServerCopy() || this.discarding) return;
     this.dirtyHint = true;
     if (this.inFlight || this.held > 0) {
@@ -385,14 +421,14 @@ export class AutosaveController {
     return this.run('over', currentVersion);
   }
 
-  private async run(mode: Mode, overVersion?: number): Promise<void> {
+  private async run(mode: Mode, overVersion?: number, opts: RunOptions = {}): Promise<void> {
     if (this.inFlight) {
       if (mode === 'auto') this.changedDuringFlight = true;
       else this.nowAfterFlight = true;
       return this.inFlight;
     }
     // Publish is writing this copy: it is picked up once Publish is done.
-    if (this.held > 0) {
+    if (this.held > 0 && !opts.bypassHold) {
       this.changedDuringFlight = true;
       return;
     }
@@ -411,7 +447,9 @@ export class AutosaveController {
     const snapshot = getSnapshot(project);
     // Serialised once for this save: compared now, recorded after the answer.
     const content = savedContentOf(snapshot as ProjectContent);
-    if (mode !== 'over' && isSaved(this.projectId, content)) {
+    // Equal to the server's copy is no reason to skip while an earlier attempt's
+    // answer was lost: the server may hold that attempt instead (an undo back).
+    if (mode !== 'over' && !this.unconfirmed && isSaved(this.projectId, content)) {
       this.dirtyHint = false;
       this.attempts = 0;
       this.failingSince = undefined;
@@ -444,9 +482,9 @@ export class AutosaveController {
     const options: AutosaveWriteOptions = {
       requestKey: this.attempt.key,
       ...(previous ? { previousRequestKey: previous } : {}),
-      ...(mode === 'leave' ? { keepalive: true } : {}),
+      ...(mode === 'leave' ? { keepaliveBudget: opts.keepaliveBudget ?? { remaining: KEEPALIVE_BODY_MAX_BYTES } } : {}),
     };
-    const request = this.send(snapshot, expectedVersion, options, content);
+    const request = this.send(snapshot, expectedVersion, options, content, opts.once === true);
     this.inFlight = request;
     try {
       await request;
@@ -463,6 +501,7 @@ export class AutosaveController {
     expectedVersion: number | undefined,
     options: AutosaveWriteOptions,
     content: SavedContent,
+    once = false,
   ): Promise<void> {
     let result: ProjectWriteResult;
     try {
@@ -470,12 +509,13 @@ export class AutosaveController {
     } catch (err) {
       result = { kind: 'error', message: err instanceof Error ? err.message : 'Network error: Save failed.' };
     }
-    // A passing failure leaves the outcome open; any answer of the server settles it.
+    // A passing failure leaves the outcome open; only an ok or a conflict
+    // settles it (a refusal of this attempt says nothing about a lost one).
     if (result.kind === 'error' && isPassingFailure(result.status)) {
       if (!this.unconfirmed || this.unconfirmed.expectedVersion !== expectedVersion) {
         this.unconfirmed = { key: options.requestKey, expectedVersion };
       }
-    } else {
+    } else if (result.kind === 'ok' || result.kind === 'conflict') {
       this.unconfirmed = undefined;
     }
     if (result.kind === 'conflict') {
@@ -490,7 +530,8 @@ export class AutosaveController {
       this.dirtyHint = true;
       const now = Date.now();
       if (isPassingFailure(result.status)) this.failingSince ??= now;
-      const stillTrying = this.failingSince !== undefined && now - this.failingSince < AUTOSAVE_RETRY_LIMIT_MS;
+      // A recovery is one attempt: still failing, it stays failed.
+      const stillTrying = !once && this.failingSince !== undefined && now - this.failingSince < AUTOSAVE_RETRY_LIMIT_MS;
       if (isPassingFailure(result.status) && stillTrying) {
         const wait = this.armRetry();
         this.setState({ phase: 'retrying', message: result.message, status: result.status, retryAt: now + wait });
@@ -529,6 +570,15 @@ export class AutosaveController {
 
   /** One trailing save for the changes made while the request was out. */
   private afterFlight() {
+    // The page is going: what changed during the request goes at once, not after a debounce.
+    const leaving = this.leaveAfterFlight;
+    if (leaving) {
+      this.leaveAfterFlight = undefined;
+      this.changedDuringFlight = false;
+      this.nowAfterFlight = false;
+      if (!this.paused()) void this.run('leave', undefined, { keepaliveBudget: leaving });
+      return;
+    }
     if (this.paused() || this.state.phase === 'retrying') {
       this.changedDuringFlight = false;
       this.nowAfterFlight = false;
@@ -585,21 +635,29 @@ export class AutosaveController {
    * the body fits its 64 KB limit. A larger project relies on the normal
    * request and the unload warning. Never while a refusal waits for a choice.
    */
-  saveOnLeave(): Promise<void> {
-    if (!this.hasUnsavedWork() || this.inFlight) return Promise.resolve();
-    return this.run('leave');
+  saveOnLeave(keepaliveBudget: { remaining: number } = { remaining: KEEPALIVE_BODY_MAX_BYTES }): Promise<void> {
+    // A request is out: what changes during it goes as soon as it is answered.
+    if (this.inFlight) {
+      this.leaveAfterFlight = keepaliveBudget;
+      return this.inFlight;
+    }
+    if (!this.hasUnsavedWork()) return Promise.resolve();
+    return this.run('leave', undefined, { keepaliveBudget });
   }
 
   /**
    * Back online, or the tab is visible again: a waiting retry goes now; a
    * failure whose automatic retries stopped, or a sign-out (401: the person may
-   * have signed in again in another tab), is tried once more. Still refused, it
-   * stays failed until the next such moment or Retry.
+   * have signed in again in another tab), gets exactly one more attempt. Still
+   * failing (also with a 5xx), it stays failed, without a new 10 minutes of
+   * retries, until the next such moment or Retry.
    */
   recover(): Promise<void> {
     const state = this.state;
     if (state.phase === 'retrying') return this.retry();
-    if (state.phase === 'failed' && (state.retriesStopped || state.status === 401)) return this.retry();
+    if (state.phase === 'failed' && (state.retriesStopped || state.status === 401)) {
+      return this.run('retry', undefined, { once: true });
+    }
     return Promise.resolve();
   }
 
@@ -637,6 +695,13 @@ export class AutosaveController {
     this.clearDebounce();
     try {
       while (this.inFlight) await this.inFlight;
+      // A save whose answer was lost, or one waiting for its retry, is settled
+      // first (past the hold): Publish then writes on the version it produced,
+      // instead of meeting it as someone else's change.
+      if (this.unconfirmed || this.state.phase === 'retrying') {
+        await this.run('retry', undefined, { bypassHold: true });
+        while (this.inFlight) await this.inFlight;
+      }
       if (this.state.phase !== 'publishing') {
         this.beforeHold = this.state;
         this.setState({ phase: 'publishing' });
@@ -696,15 +761,24 @@ export class AutosaveController {
     if (this.discarding) return false;
     if (knownServerVersion(this.projectId) === undefined) return false;
     if (this.inFlight) return true;
+    // An attempt whose answer was lost: the server may not hold what this tab shows.
+    if (this.unconfirmed) return true;
     const project = this.project;
     if (!project || !isAlive(project)) return false;
     if (!this.dirtyHint && !this.paused() && this.state.phase !== 'retrying') return false;
-    return !isSaved(this.projectId, getSnapshot(project) as ProjectContent);
+    // Serialising a large project is the costly part: once per change, not per ask
+    // (the left-behind notice asks every second while its countdown ticks).
+    if (this.unsavedCache?.stamp !== this.stamp) {
+      this.unsavedCache = { stamp: this.stamp, value: !isSaved(this.projectId, getSnapshot(project) as ProjectContent) };
+    }
+    return this.unsavedCache.value;
   }
 
   /** Tests only: drop timers and listeners. */
   disposeForTests(): void {
     this.held = 0;
+    this.disposeStamp?.();
+    this.disposeStamp = undefined;
     this.clearTimers();
     this.disposeSnapshot?.();
     this.disposeSnapshot = undefined;

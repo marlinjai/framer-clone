@@ -18,6 +18,8 @@ import { installSaveShortcut } from '@/lib/projects/saveShortcut';
 import { hasOpenDrafts } from '@/lib/projects/openDrafts';
 import ComponentRenderer from '../ComponentRenderer';
 import SaveStatus from '../SaveStatus';
+import UnsavedWorkGuard from '../UnsavedWorkGuard';
+import EditorAutosave from '../EditorAutosave';
 import { TextContentField } from '../sidebars/right/sections/TextContentSection';
 import { ColorInput } from '../sidebars/right/primitives/ColorInput';
 import { DimensionInput } from '../sidebars/right/primitives/DimensionInput';
@@ -124,6 +126,7 @@ describe('closing the editor without a blur (browser Back) keeps what was typed'
     return (
       <>
         <ComponentRenderer component={page.appComponentTree as ComponentInstance} breakpointId={breakpoints[0].id} allBreakpoints={breakpoints} />
+        <EditorAutosave />
         <SaveStatus />
         {withPanel && <TextContentField node={heading} />}
       </>
@@ -183,5 +186,35 @@ describe('every blur-committing panel field is an open draft', () => {
   it('a field nobody typed in is no draft (no warning for a value merely shown)', () => {
     render(<DimensionInput label="Width" value="10px" onChange={vi.fn()} />);
     expect(hasOpenDrafts()).toBe(false);
+  });
+});
+
+
+describe('hiding the tab while editing text on the canvas', () => {
+  it('commits and saves the text, and the edit stays open with the focus where it was', async () => {
+    const page = store.editorUI.currentPage!;
+    const breakpoints = page.sortedViewportNodes.map((v) => ({ id: v.breakpointId!, minWidth: v.breakpointMinWidth ?? 0 }));
+    render(
+      <>
+        <ComponentRenderer component={page.appComponentTree as ComponentInstance} breakpointId={breakpoints[0].id} allBreakpoints={breakpoints} />
+        <UnsavedWorkGuard />
+      </>,
+    );
+    act(() => store.editorUI.beginTextEdit(heading));
+    const box = document.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    box.focus();
+    box.textContent = 'Typed, then switched tabs';
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    visibility.mockRestore();
+    await act(async () => {});
+    expect(heading.props.children).toBe('Typed, then switched tabs');
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(sentText()).toContain('Typed, then switched tabs');
+    // Still editing: the person comes back to the same caret.
+    expect(store.editorUI.editingComponent?.id).toBe(heading.id);
+    expect(document.querySelector('[contenteditable="true"]')).toBeTruthy();
   });
 });

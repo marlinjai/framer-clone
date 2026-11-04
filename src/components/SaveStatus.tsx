@@ -31,8 +31,8 @@ import { getSnapshot } from 'mobx-state-tree';
 import { CircleDot, CloudAlert, CloudCheck, CloudOff, CloudUpload, FolderPlus, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useStore } from '@/hooks/useStore';
-import { isSaving, saveFailureReason, useAutosave, useNow, useSaveAnnouncement, useSaveStatusLabel } from '@/hooks/useAutosave';
-import { abandonWorkingCopy, reloadDiscarding, type AutosaveState } from '@/lib/projects/autosave';
+import { isSaving, saveFailureReason, useAutosaveState, useNow, useSaveAnnouncement, useSaveStatusLabel } from '@/hooks/useAutosave';
+import { abandonWorkingCopy, existingAutosave, reloadDiscarding, type AutosaveState } from '@/lib/projects/autosave';
 import SaveAsNewProjectDialog from './SaveAsNewProjectDialog';
 import SiteChangedDialog from './SiteChangedDialog';
 
@@ -60,12 +60,18 @@ const SaveStatus = observer(() => {
   const rootStore = useStore();
   const project = rootStore.editorUI.currentProject;
   const isUnsavedDemo = rootStore.editorUI.isUnsavedDemo === true;
-  const { controller, state } = useAutosave(project, !isUnsavedDemo);
+  // The editor shell owns the autosave lifetime (EditorAutosave); this only shows it.
+  const state = useAutosaveState(isUnsavedDemo ? undefined : project?.id);
+  const controller = isUnsavedDemo ? undefined : existingAutosave(project?.id);
   const label = useSaveStatusLabel(state);
   const announcement = useSaveAnnouncement(state);
   // "Trying again in N s" counts down while it is shown.
   const now = useNow(state.phase === 'retrying');
   const [saveAsOpen, setSaveAsOpen] = React.useState(false);
+  // The full reason on the wide bar, which truncates it (the compact bar shows it
+  // whole in its notice): a disclosure the keyboard reaches, not only a tooltip.
+  const [detailsOpen, setDetailsOpen] = React.useState(false);
+  const detailsId = React.useId();
 
   if (!project) return null;
   const projectTitle = project.metadata.title || 'Untitled Project';
@@ -163,6 +169,26 @@ const SaveStatus = observer(() => {
         >
           Sign in again<span className="sr-only"> (opens a new tab)</span>
         </a>
+      )}
+      {failed && reason && (
+        <button
+          type="button"
+          aria-expanded={detailsOpen}
+          aria-controls={detailsId}
+          onClick={() => setDetailsOpen((open) => !open)}
+          className="max-lg:hidden whitespace-nowrap rounded px-1 text-xs font-medium text-foreground underline underline-offset-2 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+        >
+          Details
+        </button>
+      )}
+      {failed && reason && detailsOpen && (
+        <div
+          id={detailsId}
+          data-testid="save-status-details"
+          className="max-lg:hidden fixed inset-x-4 top-[4.5rem] z-[96] mx-auto max-w-[560px] whitespace-normal rounded-md border border-border bg-background px-3 py-2 text-xs text-foreground shadow-lg phone:top-14"
+        >
+          {reason}
+        </div>
       )}
       {failed && (
         <Button type="button" variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={() => void controller?.retry()}>

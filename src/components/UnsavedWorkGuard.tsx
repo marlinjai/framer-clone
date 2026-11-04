@@ -30,6 +30,8 @@ import {
 } from '@/lib/projects/autosave';
 import { saveFailureReason, useNow } from '@/hooks/useAutosave';
 import { commitOpenDrafts, hasOpenDrafts } from '@/lib/projects/openDrafts';
+import { KEEPALIVE_BODY_MAX_BYTES } from '@/lib/projects/projectWrite';
+import { resolveAction } from '@/lib/keyBindings';
 
 /** A project left with work that is not on the server, and why. */
 export interface LeftBehind {
@@ -40,10 +42,17 @@ export interface LeftBehind {
   kind: string;
 }
 
-/** Commit typed text and send what is not saved, before the page goes. */
+/**
+ * Commit typed text (without ending an edit in progress) and send what is not
+ * saved, before the page goes. The browser caps all keepalive bodies of a page
+ * at 64 KB together: the project on screen goes first, the others take what is
+ * left, and a body that does not fit goes as a normal request.
+ */
 export function saveBeforeLeaving(): void {
-  commitOpenDrafts();
-  for (const controller of allAutosaves()) void controller.saveOnLeave();
+  commitOpenDrafts('keep');
+  const budget = { remaining: KEEPALIVE_BODY_MAX_BYTES };
+  const controllers = allAutosaves().sort((a, b) => Number(b.isAttached()) - Number(a.isAttached()));
+  for (const controller of controllers) void controller.saveOnLeave(budget);
 }
 
 function leftBehind(controller: AutosaveController, now: number): LeftBehind | undefined {
@@ -58,7 +67,23 @@ function leftBehind(controller: AutosaveController, now: number): LeftBehind | u
   return { projectId: controller.projectId, title: controller.projectTitle() || 'A project', reason, kind };
 }
 
-export default function UnsavedWorkGuard() {
+/**
+ * `saveShortcut` (the /projects routes): Cmd/Ctrl+S never opens the browser's
+ * "save page" dialog, and saves the projects left behind at once. On an editor
+ * page the editor's own shortcut saves the project on screen.
+ */
+export default function UnsavedWorkGuard({ saveShortcut = false }: { saveShortcut?: boolean }) {
+  React.useEffect(() => {
+    if (!saveShortcut) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (resolveAction(event)?.action !== 'save') return;
+      event.preventDefault();
+      for (const controller of allAutosaves()) if (!controller.isAttached()) void controller.flush();
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [saveShortcut]);
+
   React.useEffect(() => {
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
       if (!anyUnsavedWork() && !hasOpenDrafts()) return;

@@ -26,6 +26,7 @@ vi.mock('@/hooks/useStore', () => ({ useStore: () => store }));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn(), replace: vi.fn() }) }));
 
 import SaveStatus from '../SaveStatus';
+import EditorAutosave from '../EditorAutosave';
 import UnsavedWorkGuard from '../UnsavedWorkGuard';
 import PublishButton from '../PublishButton';
 import EditorNotice from '../EditorNotice';
@@ -62,6 +63,7 @@ const edit = (project: ProjectModelType, description: string) => act(() => proje
 function Editor() {
   return (
     <>
+      <EditorAutosave />
       <SaveStatus />
       <UnsavedWorkGuard />
     </>
@@ -234,6 +236,71 @@ describe('the top bar has a save status, not a Save button', () => {
     const reason = screen.getByTestId('save-status-reason').textContent ?? '';
     expect(reason).toContain('larger than the 10 MB a save can take');
     expect(reason).toContain('Remove large embedded content');
+  });
+});
+
+describe('the full reason on the wide bar', () => {
+  it('a Details disclosure the keyboard reaches shows the whole reason', async () => {
+    const project = openServerProject(3);
+    fetchMock.mockResolvedValueOnce(failure(413, 'body too large'));
+    render(<Editor />);
+    edit(project, 'huge');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    await advance(0);
+    const details = screen.getByRole('button', { name: 'Details' });
+    expect(details.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(details);
+    expect(details.getAttribute('aria-expanded')).toBe('true');
+    const panel = screen.getByTestId('save-status-details');
+    expect(details.getAttribute('aria-controls')).toBe(panel.id);
+    expect(panel.textContent).toContain('larger than the 10 MB a save can take');
+  });
+});
+
+describe('Cmd+S on the projects overview', () => {
+  it('keeps the browser dialog away and saves a project left behind at once', async () => {
+    const project = openServerProject(3);
+    fetchMock.mockResolvedValueOnce(failure(403, 'Not an admin.')).mockResolvedValueOnce(ok(4));
+    const { rerender } = render(<Editor />);
+    await advance(0);
+    edit(project, 'left behind');
+    rerender(<UnsavedWorkGuard saveShortcut />); // the overview
+    await advance(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const event = new KeyboardEvent('keydown', { key: 's', metaKey: true, bubbles: true, cancelable: true });
+    act(() => {
+      window.dispatchEvent(event);
+    });
+    expect(event.defaultPrevented).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await advance(0);
+    expect(unloadWarns()).toBe(false);
+  });
+});
+
+describe('leaving with two projects unsaved', () => {
+  it('the project on screen takes the keepalive budget first; the other goes as a normal request when it does not fit', async () => {
+    const left = openServerProject(3);
+    const { rerender } = render(<Editor />);
+    await advance(0);
+    fetchMock.mockResolvedValueOnce(failure(503, 'Busy.'));
+    act(() => left.updateMetadata({ description: 'x'.repeat(40 * 1024) }));
+    rerender(<UnsavedWorkGuard />);
+    await advance(0);
+    const shown = openServerProject(3);
+    rerender(<Editor />);
+    await advance(0);
+    edit(shown, 'y'.repeat(30 * 1024));
+    fetchMock.mockResolvedValue(ok(4));
+    fetchMock.mockClear();
+    act(() => {
+      window.dispatchEvent(new Event('pagehide'));
+    });
+    const sentFor = (id: string) => fetchMock.mock.calls.find((c) => JSON.parse(c[1].body).project.id === id)![1];
+    expect(fetchMock.mock.calls).toHaveLength(2);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).project.id).toBe(shown.id);
+    expect(sentFor(shown.id).keepalive).toBe(true);
+    expect(sentFor(left.id).keepalive).toBeUndefined();
   });
 });
 

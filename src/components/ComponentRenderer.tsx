@@ -151,8 +151,10 @@ const NodeRenderer = observer(({ component, breakpointId, allBreakpoints, scope,
     };
     const unregister = registerOpenDraft({
       isDirty,
-      // On the page: as Enter does (blur commits, one undo step, the edit ends).
-      commit: () => (el && el.isConnected && document.activeElement === el ? el.blur() : writeDirectly()),
+      // Cmd+S on the page: as Enter does (blur commits, one undo step, the edit
+      // ends). A hidden tab or a page on its way out: write the text and leave
+      // the edit open, the person is in the middle of it.
+      commit: (how) => (how === 'end' && el && el.isConnected && document.activeElement === el ? el.blur() : writeDirectly()),
     });
     return () => {
       unregister();

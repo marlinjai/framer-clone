@@ -27,7 +27,8 @@ export default function ProjectsLayout({
   return (
     <>
       {children}
-      <UnsavedWorkGuard />
+      {/* Also Cmd/Ctrl+S on the overview: no browser dialog, left-behind projects save at once. */}
+      <UnsavedWorkGuard saveShortcut />
     </>
   );
 }

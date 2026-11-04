@@ -2,7 +2,7 @@
 //
 // React access to the editor's autosave (src/lib/projects/autosave.ts, plan
 // docs/plans/2026-11-04-editor-autosave.md):
-//   - useAutosave: the top bar's save status (SaveStatus). Watches the current
+//   - useAutosave: the editor shell's autosave lifetime (EditorAutosave). Watches the current
 //     project (never the demo at `/`) and returns the controller and its state.
 //     The controller is created in an effect, never during a render.
 //   - useAutosaveState: the state only, for anything else that shows it (the

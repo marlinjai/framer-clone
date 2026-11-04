@@ -19,6 +19,7 @@ vi.mock('@/hooks/useStore', () => ({ useStore: () => store }));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn(), replace: vi.fn() }) }));
 
 import SaveStatus from '../SaveStatus';
+import EditorAutosave from '../EditorAutosave';
 import { resetAutosaveForTests } from '@/lib/projects/autosave';
 import { handleSaveShortcut } from '@/lib/projects/saveShortcut';
 import PublishButton from '../PublishButton';
@@ -64,7 +65,7 @@ describe('demo state belongs to the demo project', () => {
     visitDemo();
     const project = openServerProject();
     expect(store.editorUI.isUnsavedDemo).toBe(false);
-    render(<SaveStatus />);
+    render(<><EditorAutosave /><SaveStatus /></>);
     expect(screen.queryByRole('button', { name: 'Keep as project' })).toBeNull();
     await waitFor(() => expect(screen.getByTestId('save-status').textContent).toBe('Saved'));
     act(() => project.updateMetadata({ description: 'real work' }));
@@ -77,7 +78,7 @@ describe('demo state belongs to the demo project', () => {
     openServerProject();
     const demo = visitDemo();
     expect(store.editorUI.isUnsavedDemo).toBe(true);
-    render(<SaveStatus />);
+    render(<><EditorAutosave /><SaveStatus /></>);
     act(() => demo.updateMetadata({ description: 'demo work' }));
     pressSave();
     fireEvent.click(screen.getByRole('button', { name: 'Keep as project' }));

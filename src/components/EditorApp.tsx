@@ -18,6 +18,7 @@ import { EditorTool } from '@/stores/EditorUIStore';
 import { getUndoManager, getHistoryStore, getDragManager } from '@/stores/RootStore';
 import { changedElsewhereMessage, openProject, pageIdFromLocation, pickPage, restoreStashedDemo } from '@/stores/openProject';
 import EditorNotice from './EditorNotice';
+import EditorAutosave from './EditorAutosave';
 import ComponentBreadcrumb from './ComponentBreadcrumb';
 import ComponentDialogs from './ComponentDialogs';
 import { requestCreateComponent } from '@/lib/components/editorCommands';
@@ -283,6 +284,9 @@ export default function EditorApp({ projectSnapshot, projectVersion }: EditorApp
     <DataSourceProviderContext.Provider value={getSharedPrismaDataSourceProvider()}>
     <EditorCommerceProvider>
     <TransformProvider>
+      {/* First in the shell: the autosave lifetime (watching the project,
+          committing typed text and saving when the editor closes). */}
+      <EditorAutosave />
       <DragManagerBinding />
       <ComponentDialogs />
 

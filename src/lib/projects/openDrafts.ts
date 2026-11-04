@@ -9,11 +9,18 @@
 //   - Cmd/Ctrl+S commits it before saving (saveShortcut.ts),
 //   - the save on leaving the page commits it first.
 
+export type CommitHow = 'end' | 'keep';
+
 export interface OpenDraft {
   /** True while the typed text differs from the node's. */
   isDirty(): boolean;
-  /** Write the typed text into the node (one undo step, as blur or Enter would). */
-  commit(): void;
+  /**
+   * Write the typed text into the node (one undo step, as blur or Enter would).
+   * `end`: the edit may end with it (Cmd+S). `keep`: the person is still in the
+   * middle of it (the tab is hidden, the page saves on its way out): commit
+   * without ending the edit or moving the focus.
+   */
+  commit(how: CommitHow): void;
 }
 
 const drafts = new Set<OpenDraft>();
@@ -33,11 +40,11 @@ export function hasOpenDrafts(): boolean {
 }
 
 /** Commit every dirty draft. One that fails is logged; the others still commit. */
-export function commitOpenDrafts(): void {
+export function commitOpenDrafts(how: CommitHow = 'end'): void {
   for (const draft of [...drafts]) {
     if (!draft.isDirty()) continue;
     try {
-      draft.commit();
+      draft.commit(how);
     } catch (err) {
       console.error('[editor] an open text draft could not be committed:', err);
     }

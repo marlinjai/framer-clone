@@ -24,8 +24,13 @@ export interface ProjectWriteOptions {
   requestKey?: string;
   /** The earlier attempt whose answer was lost, when this one carries newer content (save only). */
   previousRequestKey?: string;
-  /** Leaving the page: ask the browser to finish the request, when the body allows it. */
-  keepalive?: boolean;
+  /**
+   * Leaving the page: ask the browser to finish the request when the body fits
+   * what is left of the page's keepalive budget (the browser caps all keepalive
+   * bodies of a page at 64 KB together); the size is taken from it. A body
+   * that does not fit goes as a normal request, covered by the unload warning.
+   */
+  keepaliveBudget?: { remaining: number };
 }
 
 export async function postProjectWrite(
@@ -45,7 +50,10 @@ export async function postProjectWrite(
     });
     // A larger body goes as a normal request: it may not outlive the page,
     // which the unload warning covers.
-    const keepalive = options.keepalive === true && new Blob([body]).size <= KEEPALIVE_BODY_MAX_BYTES;
+    const budget = options.keepaliveBudget;
+    const size = budget ? new Blob([body]).size : 0;
+    const keepalive = !!budget && size <= Math.min(budget.remaining, KEEPALIVE_BODY_MAX_BYTES);
+    if (budget && keepalive) budget.remaining -= size;
     res = await fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

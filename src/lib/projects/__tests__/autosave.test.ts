@@ -531,21 +531,30 @@ describe('opening, generation and Publish', () => {
     expect(autosave.getState().phase).toBe('saved');
   });
 
-  it('a retry that came due during a failed Publish is armed again, not stranded', async () => {
+  it('Publish during a waiting retry settles that save first; failing again, the retry stays armed, not stranded', async () => {
     const { project, autosave } = openAndWatch(3);
     edit(project, 'mine');
     await advance(AUTOSAVE_DEBOUNCE_MS);
     await calls[0].answer(failure(500));
     expect(autosave.getState().phase).toBe('retrying');
-    // Publish runs across the retry's due time and fails (nothing marked saved).
-    await autosave.exclusive(async () => {
-      await advance(AUTOSAVE_BACKOFF_MS[0] * 2);
+    let published = false;
+    const publishing = autosave.exclusive(async () => {
+      published = true;
+      // Publish runs across the retry's next due time and fails (nothing marked saved).
+      await advance(AUTOSAVE_BACKOFF_MS[1] * 2);
     });
-    expect(calls).toHaveLength(1);
-    expect(autosave.getState().phase).toBe('retrying');
-    await advance(AUTOSAVE_BACKOFF_MS[1]);
+    await advance(0);
+    // The waiting save goes first, past the hold.
     expect(calls).toHaveLength(2);
-    await calls[1].answer(ok(4));
+    expect(published).toBe(false);
+    await calls[1].answer(failure(500));
+    await publishing;
+    expect(published).toBe(true);
+    expect(calls).toHaveLength(2); // nothing went out during Publish
+    expect(autosave.getState().phase).toBe('retrying');
+    await advance(AUTOSAVE_BACKOFF_MS[AUTOSAVE_BACKOFF_MS.length - 1]);
+    expect(calls).toHaveLength(3);
+    await calls[2].answer(ok(4));
     expect(autosave.getState().phase).toBe('saved');
   });
 
@@ -907,7 +916,7 @@ describe('the re-review of 2026-11-04', () => {
     edit(project, 'last words');
     void autosave.saveOnLeave();
     expect(calls).toHaveLength(1);
-    expect(calls[0].options.keepalive).toBe(true);
+    expect(calls[0].options.keepaliveBudget).toBeDefined();
     expect(calls[0].snapshot.metadata.description).toBe('last words');
     await calls[0].answer(conflict(9));
     edit(project, 'more');
@@ -947,7 +956,7 @@ describe('the third review of 2026-11-04', () => {
     expect(calls[2].options.previousRequestKey).toBeUndefined();
   });
 
-  it('a new version gets a new key, and a refusal settles a lost attempt', async () => {
+  it('a new version gets a new key; a refusal does NOT settle a lost attempt (it was not this write)', async () => {
     const { project } = openAndWatch(3);
     edit(project, 'one');
     await advance(AUTOSAVE_DEBOUNCE_MS);
@@ -961,7 +970,13 @@ describe('the third review of 2026-11-04', () => {
     await calls[2].answer(failure(403, 'No.'));
     edit(project, 'three');
     void autosaveFor(project.id).retry();
-    expect(calls[3].options.previousRequestKey).toBeUndefined();
+    // The 500 left 'two' possibly written: the next attempt still names it.
+    expect(calls[3].options.previousRequestKey).toBe(calls[1].options.requestKey);
+    await calls[3].answer(ok(6));
+    edit(project, 'four');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    // Confirmed by the ok: nothing is named any more.
+    expect(calls[4].options.previousRequestKey).toBeUndefined();
   });
 
   it('recovering: a stopped failure and a sign-out are tried once more; still refused, they stay failed', async () => {
@@ -1021,5 +1036,104 @@ describe('the third review of 2026-11-04', () => {
     expect(reopened.changedElsewhere).toBe(false);
     expect(reopened.project?.metadata.description).toBe('theirs');
     expect(knownServerVersion(id)).toBe(9);
+  });
+});
+
+
+// Ported from the fourth review's probes (P1 to P5), asserting the corrected behaviour.
+describe('the fourth review of 2026-11-05', () => {
+  it('P1: an undo back to the loaded copy after a lost answer is still sent, naming the lost attempt', async () => {
+    const { project, autosave } = openAndWatch(3);
+    edit(project, 'A');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    await calls[0].answer(failure(502, 'Bad gateway.')); // maybe committed on the server as 4
+    edit(project, ''); // undo back to the loaded copy
+    expect(anyUnsavedWork()).toBe(true);
+    await advance(AUTOSAVE_BACKOFF_MS[0]);
+    expect(calls).toHaveLength(2);
+    expect(calls[1].snapshot.metadata.description).toBe('');
+    expect(calls[1].options.previousRequestKey).toBe(calls[0].options.requestKey);
+    expect(calls[1].expectedVersion).toBe(3);
+    await calls[1].answer(ok(5));
+    expect(autosave.getState().phase).toBe('saved');
+    expect(anyUnsavedWork()).toBe(false);
+  });
+
+  it('P2: a 401 between lost answers keeps the lost key, so the next save names it', async () => {
+    const { project } = openAndWatch(3);
+    edit(project, 'A');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    await calls[0].answer(failure(502)); // A maybe committed as 4
+    edit(project, 'B');
+    await advance(AUTOSAVE_BACKOFF_MS[0]);
+    expect(calls[1].options.previousRequestKey).toBe(calls[0].options.requestKey);
+    await calls[1].answer(failure(401, 'authentication required'));
+    edit(project, 'C');
+    void autosaveFor(project.id).retry();
+    expect(calls[2].expectedVersion).toBe(3);
+    expect(calls[2].options.previousRequestKey).toBe(calls[0].options.requestKey);
+  });
+
+  it('P3: recovering after retries stopped is one attempt; still 503, it stays failed', async () => {
+    const { project, autosave } = openAndWatch(3);
+    edit(project, 'mine');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    let i = 0;
+    while (autosave.getState().phase !== 'failed' && i < 40) {
+      await calls[i].answer(failure(503));
+      i++;
+      const s = autosave.getState();
+      if (s.phase === 'retrying') await advance(s.retryAt - Date.now());
+    }
+    void autosave.recover();
+    await calls[i].answer(failure(503));
+    expect(autosave.getState()).toMatchObject({ phase: 'failed', retriesStopped: true });
+    await advance(30 * 60_000);
+    expect(calls).toHaveLength(i + 1);
+  });
+
+  it('P3b: recovering a 401 is one attempt; a 503 answer then also stays failed', async () => {
+    const { project, autosave } = openAndWatch(3);
+    edit(project, 'mine');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    await calls[0].answer(failure(401, 'authentication required'));
+    void autosave.recover();
+    await calls[1].answer(failure(503, 'Busy.'));
+    expect(autosave.getState()).toMatchObject({ phase: 'failed', status: 503 });
+    await advance(30 * 60_000);
+    expect(calls).toHaveLength(2);
+  });
+
+  it('P4: leaving while a request is out sends the changes made during it, at once, as keepalive', async () => {
+    const { project, autosave } = openAndWatch(3);
+    edit(project, 'one');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    edit(project, 'two');
+    void autosave.saveOnLeave();
+    expect(calls).toHaveLength(1);
+    await calls[0].answer(ok(4));
+    expect(calls).toHaveLength(2);
+    expect(calls[1].options.keepaliveBudget).toBeDefined();
+    expect(calls[1].snapshot.metadata.description).toBe('two');
+  });
+
+  it('P5: Publish during the backoff after a lost answer settles that save first, then publishes on its version', async () => {
+    const { project, autosave } = openAndWatch(3);
+    edit(project, 'A');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    await calls[0].answer(failure(502)); // A committed as 4 on the server
+    let publishedWith: number | undefined;
+    const publishing = autosave.exclusive(async () => {
+      publishedWith = knownServerVersion(project.id);
+      return undefined;
+    });
+    await advance(0);
+    // The save is retried first, with the same attempt key (the server replays it).
+    expect(calls).toHaveLength(2);
+    expect(calls[1].options.requestKey).toBe(calls[0].options.requestKey);
+    await calls[1].answer(ok(4));
+    await publishing;
+    expect(publishedWith).toBe(4);
+    expect(autosave.getState().phase).not.toBe('conflict');
   });
 });

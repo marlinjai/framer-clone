@@ -21,6 +21,7 @@ vi.mock('@/hooks/useStore', () => ({ useStore: () => store }));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn(), replace: vi.fn() }) }));
 
 import SaveStatus from '../SaveStatus';
+import EditorAutosave from '../EditorAutosave';
 import PublishButton from '../PublishButton';
 
 const fetchMock = vi.fn();
@@ -92,7 +93,7 @@ describe('Save and the version lock', () => {
     fetchMock
       .mockResolvedValueOnce(ok({ siteId: project.id, savedPages: [''], version: 4 }))
       .mockResolvedValueOnce(ok({ siteId: project.id, savedPages: [''], version: 5 }));
-    render(<SaveStatus />);
+    render(<><EditorAutosave /><SaveStatus /></>);
 
     await editAndSave(project);
     await waitFor(() => expect(knownServerVersion(project.id)).toBe(4));
@@ -109,7 +110,7 @@ describe('Save and the version lock', () => {
     fetchMock
       .mockResolvedValueOnce(conflict(9))
       .mockResolvedValueOnce(ok({ siteId: project.id, savedPages: [''], version: 10 }));
-    render(<SaveStatus />);
+    render(<><EditorAutosave /><SaveStatus /></>);
 
     await editAndSave(project);
     const dialog = await screen.findByRole('dialog', { name: 'This project was changed somewhere else' });
@@ -130,7 +131,7 @@ describe('Save and the version lock', () => {
       .mockResolvedValueOnce(conflict(2))
       .mockResolvedValueOnce(conflict(3))
       .mockResolvedValueOnce(ok({ siteId: project.id, savedPages: [''], version: 4 }));
-    render(<SaveStatus />);
+    render(<><EditorAutosave /><SaveStatus /></>);
     await editAndSave(project);
     fireEvent.click(await screen.findByRole('button', { name: 'Save mine over it' }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
@@ -142,7 +143,7 @@ describe('Save and the version lock', () => {
   it('re-entry after a refused save: Keep editing closes without a request, and Cmd+S asks again', async () => {
     const project = openServerProject(3);
     fetchMock.mockResolvedValueOnce(conflict(9)).mockResolvedValueOnce(ok({ siteId: project.id, savedPages: [''], version: 10 }));
-    render(<SaveStatus />);
+    render(<><EditorAutosave /><SaveStatus /></>);
 
     await editAndSave(project);
     fireEvent.click(await screen.findByRole('button', { name: 'Keep editing' }));
@@ -165,7 +166,7 @@ describe('Save and the version lock', () => {
     const reload = vi.fn();
     vi.spyOn(window, 'location', 'get').mockReturnValue({ ...window.location, reload } as Location);
     fetchMock.mockResolvedValueOnce(conflict(9));
-    render(<SaveStatus />);
+    render(<><EditorAutosave /><SaveStatus /></>);
     await editAndSave(project);
     fireEvent.click(await screen.findByRole('button', { name: 'Load the newer version' }));
     expect(reload).toHaveBeenCalledTimes(1);
@@ -175,7 +176,7 @@ describe('Save and the version lock', () => {
   it('"Save mine as a new project" keeps both: it opens the save-as dialog with the copy wording', async () => {
     const project = openServerProject(3);
     fetchMock.mockResolvedValueOnce(conflict(9));
-    render(<SaveStatus />);
+    render(<><EditorAutosave /><SaveStatus /></>);
     await editAndSave(project);
     fireEvent.click(await screen.findByRole('button', { name: 'Save mine as a new project' }));
     const saveAs = await screen.findByRole('dialog', { name: 'Save as a new project' });
@@ -191,7 +192,7 @@ describe('Save and the version lock', () => {
         status: 409,
       }),
     );
-    render(<SaveStatus />);
+    render(<><EditorAutosave /><SaveStatus /></>);
     await editAndSave(project);
     await waitFor(() => expect(screen.getByTestId('save-status-reason').textContent).toContain('Personal data was erased.'));
     expect(screen.getByTestId('save-status').textContent).toContain('Not saved');
@@ -224,6 +225,7 @@ describe('Publish and the version lock', () => {
     render(
       <>
         <PublishButton />
+        <EditorAutosave />
         <SaveStatus />
       </>,
     );
@@ -249,6 +251,7 @@ describe('a publish that committed before a later step failed', () => {
     render(
       <>
         <PublishButton />
+        <EditorAutosave />
         <SaveStatus />
       </>,
     );
