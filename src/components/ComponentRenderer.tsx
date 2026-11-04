@@ -5,7 +5,7 @@ import { haptic } from '@/lib/haptics';
 import { lastPointerIsTouch } from '@/hooks/useEditorGestureGuard';
 import { computed } from 'mobx';
 import { observer } from 'mobx-react-lite';
-import { getSnapshot } from 'mobx-state-tree';
+import { getSnapshot, isAlive } from 'mobx-state-tree';
 import { ComponentInstance } from '../models/ComponentModel';
 import { EditorTool } from '../stores/EditorUIStore';
 import { useStore } from '@/hooks/useStore';
@@ -127,18 +127,38 @@ const NodeRenderer = observer(({ component, breakpointId, allBreakpoints, scope,
   // The text being typed is not in the project until blur or Enter: it counts
   // as unsaved work for the unload warning, and Cmd+S (or leaving the page)
   // commits it the way Enter does, so the save carries it (src/lib/projects/openDrafts.ts).
+  // The box going away mid-edit (the editor closed by browser Back) writes the
+  // text straight into the node: there is no blur then.
   const draftText = React.useRef<{ initial: string; read: (el: HTMLElement) => string } | null>(null);
   React.useEffect(() => {
     if (editingId !== component.id) return;
-    return registerOpenDraft({
-      isDirty: () => {
-        const el = editRef.current;
-        const draft = draftText.current;
-        return !!el && !!draft && draft.read(el) !== draft.initial;
-      },
-      commit: () => editRef.current?.blur(),
+    // The element of this edit, held for the unmount (the ref is cleared by then).
+    const el = editRef.current;
+    const typed = () => {
+      const draft = draftText.current;
+      return el && draft ? draft.read(el) : undefined;
+    };
+    const isDirty = () => {
+      const text = typed();
+      return text !== undefined && text !== draftText.current?.initial;
+    };
+    const writeDirectly = () => {
+      const text = typed();
+      // Only while this edit is still open: a blur, Enter or Escape has already
+      // committed or reverted it and ended the edit.
+      if (editorUI.editingComponent?.id !== component.id) return;
+      if (text !== undefined && isDirty() && isAlive(component)) component.setTextContent(text);
+    };
+    const unregister = registerOpenDraft({
+      isDirty,
+      // On the page: as Enter does (blur commits, one undo step, the edit ends).
+      commit: () => (el && el.isConnected && document.activeElement === el ? el.blur() : writeDirectly()),
     });
-  }, [editingId, component.id]);
+    return () => {
+      unregister();
+      if (el && !el.isConnected) writeDirectly();
+    };
+  }, [editingId, component, editorUI]);
 
   // Only non-root tree components can be moved. The root of the app tree must
   // stay put. Text-editing suppresses drag until the user exits edit mode. A

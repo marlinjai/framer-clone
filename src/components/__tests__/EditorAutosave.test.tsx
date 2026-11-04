@@ -335,8 +335,13 @@ describe('leaving the page', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Load the newer version' }));
     expect(reload).toHaveBeenCalledTimes(1);
     expect(unloadWarns()).toBe(false);
-    await advance(2000);
-    // Still on the page: the conflict stands, and so does the warning.
+    // Time alone re-arms nothing (a slow reload is still a reload).
+    await advance(5000);
+    expect(unloadWarns()).toBe(false);
+    // The person stayed and uses the page: the conflict stands, and so does the warning.
+    act(() => {
+      window.dispatchEvent(new Event('pointerdown'));
+    });
     expect(unloadWarns()).toBe(true);
   });
 });
@@ -380,10 +385,33 @@ describe('beforeunload, for every project of the tab', () => {
     await advance(0);
     expect(unloadWarns()).toBe(true);
     const notice = screen.getByTestId('unsaved-work-notice');
-    expect(notice.getAttribute('role')).toBe('status');
+    // The visible notice is no live region; its own polite region announced it once.
+    expect(notice.getAttribute('role')).toBeNull();
+    expect(screen.getByTestId('unsaved-work-announcement').textContent).toContain('Site is not saved. You are signed out.');
     expect(notice.textContent).toContain('Site is not saved.');
     expect(notice.textContent).toContain('You are signed out.');
     expect(within(notice).getByRole('link', { name: 'Go back to it' }).getAttribute('href')).toBe(`/projects/${project.id}`);
+  });
+
+  it('the countdown in the notice ticks outside the live region; the announcement does not repeat', async () => {
+    vi.useRealTimers();
+    vi.useFakeTimers();
+    const project = openServerProject(3);
+    fetchMock.mockResolvedValue(failure(503, 'Busy.'));
+    const { rerender } = render(<Editor />);
+    await advance(0);
+    edit(project, 'left behind');
+    rerender(<UnsavedWorkGuard />);
+    await advance(0);
+    const notice = screen.getByTestId('unsaved-work-notice');
+    const region = screen.getByTestId('unsaved-work-announcement');
+    expect(notice.textContent).toContain('Trying again in 2 s');
+    const said = region.textContent;
+    expect(said).toContain('Site is not saved.');
+    await advance(1000);
+    expect(notice.textContent).toContain('Trying again in 1 s');
+    expect(region.textContent).toBe(said);
+    expect(region.contains(notice)).toBe(false);
   });
 
   it('the project on screen is not named in the notice (its status says it)', async () => {
@@ -479,6 +507,31 @@ describe('the version lock', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Load the newer version' }));
     }
     expect(reload).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('"Save mine as a new project"', () => {
+  it('on success, the original project stops warning and leaves no notice', async () => {
+    const project = openServerProject(3);
+    fetchMock
+      .mockResolvedValueOnce(conflict(9))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ siteId: 'site_copy' }), { status: 201 }));
+    const { rerender } = render(<Editor />);
+    edit(project, 'mine');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    fireEvent.click(await screen.findByRole('button', { name: 'Save mine as a new project' }));
+    const saveAs = await screen.findByRole('dialog', { name: 'Save as a new project' });
+    expect(unloadWarns()).toBe(true);
+    fireEvent.click(within(saveAs).getByRole('button', { name: 'Save project' }));
+    await advance(0);
+    await advance(0);
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/projects');
+    expect(unloadWarns()).toBe(false);
+    // The new project's page replaces the editor: nothing is left behind.
+    rerender(<UnsavedWorkGuard />);
+    await advance(60_000);
+    expect(screen.queryByTestId('unsaved-work-notice')).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
 

@@ -169,7 +169,6 @@ export default function EditorApp({ projectSnapshot, projectVersion }: EditorApp
   // settings page can rebind without touching this file.
   React.useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      const match = resolveAction(e);
       // Suppress editor shortcuts while a drag gesture is active so the user
       // can't accidentally delete the source mid-drag or undo into inconsistent
       // state. DragManager's own Escape handler still fires (it listens with
@@ -178,6 +177,7 @@ export default function EditorApp({ projectSnapshot, projectVersion }: EditorApp
       // The preview over the editor has its own keys (PreviewOverlay).
       if (rootStore.editorUI.previewOpen) return;
 
+      const match = resolveAction(e);
       if (!match) return;
 
       if (match.action === 'delete') {

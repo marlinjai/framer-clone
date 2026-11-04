@@ -22,6 +22,8 @@ export const KEEPALIVE_BODY_MAX_BYTES = 60 * 1024;
 export interface ProjectWriteOptions {
   /** Names this attempt (save only): a retry of the same content reuses it. */
   requestKey?: string;
+  /** The earlier attempt whose answer was lost, when this one carries newer content (save only). */
+  previousRequestKey?: string;
   /** Leaving the page: ask the browser to finish the request, when the body allows it. */
   keepalive?: boolean;
 }
@@ -35,7 +37,12 @@ export async function postProjectWrite(
 ): Promise<ProjectWriteResult> {
   let res: Response;
   try {
-    const body = JSON.stringify({ project, expectedVersion, ...(options.requestKey ? { requestKey: options.requestKey } : {}) });
+    const body = JSON.stringify({
+      project,
+      expectedVersion,
+      ...(options.requestKey ? { requestKey: options.requestKey } : {}),
+      ...(options.previousRequestKey ? { previousRequestKey: options.previousRequestKey } : {}),
+    });
     // A larger body goes as a normal request: it may not outlive the page,
     // which the unload warning covers.
     const keepalive = options.keepalive === true && new Blob([body]).size <= KEEPALIVE_BODY_MAX_BYTES;

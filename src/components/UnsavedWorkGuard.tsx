@@ -36,6 +36,8 @@ export interface LeftBehind {
   projectId: string;
   title: string;
   reason: string;
+  /** What kind of trouble, for the announcement: it is made only when this changes. */
+  kind: string;
 }
 
 /** Commit typed text and send what is not saved, before the page goes. */
@@ -52,7 +54,8 @@ function leftBehind(controller: AutosaveController, now: number): LeftBehind | u
       ? 'It was changed somewhere else, so this tab stopped saving it until you choose what to keep.'
       : saveFailureReason(state, now);
   if (!reason || !controller.hasUnsavedWork()) return undefined;
-  return { projectId: controller.projectId, title: controller.projectTitle() || 'A project', reason };
+  const kind = state.phase === 'conflict' ? 'conflict' : `failed:${state.phase === 'failed' || state.phase === 'retrying' ? (state.status ?? 'network') : ''}`;
+  return { projectId: controller.projectId, title: controller.projectTitle() || 'A project', reason, kind };
 }
 
 export default function UnsavedWorkGuard() {
@@ -64,12 +67,14 @@ export default function UnsavedWorkGuard() {
       event.returnValue = '';
     };
     const onPageHide = () => saveBeforeLeaving();
+    const recover = () => {
+      for (const controller of allAutosaves()) void controller.recover();
+    };
     const onVisibility = () => {
       if (document.visibilityState === 'hidden') saveBeforeLeaving();
+      else recover();
     };
-    const onOnline = () => {
-      for (const controller of allAutosaves()) void controller.retryIfWaiting();
-    };
+    const onOnline = recover;
     window.addEventListener('beforeunload', onBeforeUnload);
     window.addEventListener('pagehide', onPageHide);
     document.addEventListener('visibilitychange', onVisibility);
@@ -90,12 +95,29 @@ export default function UnsavedWorkGuard() {
   const left = allAutosaves()
     .map((c) => leftBehind(c, now))
     .filter((x): x is LeftBehind => !!x);
-  if (left.length === 0) return <div role="status" aria-live="polite" className="sr-only" />;
+  // A screen reader hears an item when it first appears or changes kind, never
+  // the countdown ticking in the visible notice (which is not a live region).
+  const signature = left.map((item) => `${item.projectId}:${item.kind}`).join('|');
+  const [announced, setAnnounced] = React.useState({ signature: '', text: '' });
+  if (signature !== announced.signature) {
+    const before = new Set(announced.signature.split('|'));
+    const fresh = left.filter((item) => !before.has(`${item.projectId}:${item.kind}`));
+    setAnnounced({
+      signature,
+      text: fresh.length > 0 ? fresh.map((item) => `${item.title} is not saved. ${item.reason}`).join(' ') : announced.text,
+    });
+  }
+  const region = (
+    <div role="status" aria-live="polite" data-testid="unsaved-work-announcement" className="sr-only">
+      {announced.text}
+    </div>
+  );
+  if (left.length === 0) return region;
 
   return (
+    <>
+    {region}
     <div
-      role="status"
-      aria-live="polite"
       data-editor-ui="true"
       data-testid="unsaved-work-notice"
       className="fixed inset-x-4 bottom-4 z-[1200] mx-auto flex max-w-[560px] flex-col gap-1.5 rounded-md border border-destructive/40 bg-background px-3 py-2 text-xs text-foreground shadow-lg"
@@ -114,5 +136,6 @@ export default function UnsavedWorkGuard() {
         </p>
       ))}
     </div>
+    </>
   );
 }

@@ -28,6 +28,7 @@ import {
 } from '@/lib/projects/autosave';
 import { PROJECT_BODY_MAX_BYTES } from '@/lib/api/respond';
 import { knownServerVersion } from '@/stores/openProject';
+import { commitOpenDrafts } from '@/lib/projects/openDrafts';
 
 /** A save quicker than this never shows "Saving…". */
 export const SAVING_LABEL_DELAY_MS = 300;
@@ -61,7 +62,12 @@ export function useAutosave(
     const next = autosaveFor(projectId);
     next.attach(project);
     setController(next);
-    return () => next.detach(project);
+    return () => {
+      // Typing still in a field (the editor closed by browser Back, without a
+      // blur) goes into the project first, so the detach below saves it.
+      commitOpenDrafts();
+      next.detach(project);
+    };
   }, [projectId, project]);
 
   const current = controller && controller.projectId === projectId ? controller : undefined;

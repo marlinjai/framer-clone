@@ -32,7 +32,7 @@ import { CircleDot, CloudAlert, CloudCheck, CloudOff, CloudUpload, FolderPlus, X
 import { Button } from '@/components/ui/button';
 import { useStore } from '@/hooks/useStore';
 import { isSaving, saveFailureReason, useAutosave, useNow, useSaveAnnouncement, useSaveStatusLabel } from '@/hooks/useAutosave';
-import { reloadDiscarding, type AutosaveState } from '@/lib/projects/autosave';
+import { abandonWorkingCopy, reloadDiscarding, type AutosaveState } from '@/lib/projects/autosave';
 import SaveAsNewProjectDialog from './SaveAsNewProjectDialog';
 import SiteChangedDialog from './SiteChangedDialog';
 
@@ -77,7 +77,8 @@ const SaveStatus = observer(() => {
       defaultName={isUnsavedDemo ? projectTitle : `${projectTitle} (copy)`}
       getSnapshot={() => getSnapshot(project) as unknown as { pages: Record<string, unknown>; components: Record<string, unknown> }}
       currentPageId={rootStore.editorUI.currentPage?.id}
-      onSaved={isUnsavedDemo ? () => rootStore.editorUI.consumeDemo() : undefined}
+      // The demo is consumed; a copy kept as a new project gives up the original's working copy.
+      onSaved={isUnsavedDemo ? () => rootStore.editorUI.consumeDemo() : () => abandonWorkingCopy(project.id)}
       description={
         isUnsavedDemo
           ? undefined

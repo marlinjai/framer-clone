@@ -11,6 +11,8 @@ import '../cms-grid-theme.css';
 // Unsaved work of any project in this tab warns before the page unloads, and a
 // project left behind unsaved is named with a way back (plan 2026-11-04-editor-autosave).
 import UnsavedWorkGuard from '@/components/UnsavedWorkGuard';
+// Cmd/Ctrl+S never opens the browser's dialog over the preview; nothing to save here.
+import BlockSaveShortcut from '@/components/preview/BlockSaveShortcut';
 
 export default function PreviewLayout({
   children,
@@ -21,6 +23,7 @@ export default function PreviewLayout({
     <>
       {children}
       <UnsavedWorkGuard />
+      <BlockSaveShortcut />
     </>
   );
 }

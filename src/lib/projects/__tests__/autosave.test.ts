@@ -29,7 +29,7 @@ import {
   isPassingFailure,
   resetAutosaveForTests,
   reloadDiscarding,
-  RELOAD_CANCELLED_AFTER_MS,
+  abandonWorkingCopy,
   type AutosaveController,
   type AutosaveWriteOptions,
 } from '../autosave';
@@ -840,7 +840,7 @@ describe('the re-review of 2026-11-04', () => {
     expect(calls[1].options.requestKey).toBe(calls[0].options.requestKey);
   });
 
-  it('a reload that did not happen (Stay) lets the project save and warn again', async () => {
+  it('a reload that did not happen (Stay) re-arms only on a real sign: the person using the page again', async () => {
     const { project, autosave } = openAndWatch(3);
     const reload = vi.fn();
     vi.spyOn(window, 'location', 'get').mockReturnValue({ ...window.location, reload } as Location);
@@ -848,13 +848,42 @@ describe('the re-review of 2026-11-04', () => {
     reloadDiscarding(project.id);
     expect(reload).toHaveBeenCalledTimes(1);
     expect(autosave.hasUnsavedWork()).toBe(false);
-    edit(project, 'typed while the browser asked');
-    await advance(RELOAD_CANCELLED_AFTER_MS);
+    // Time alone is no sign: a slow reload is still a reload.
+    await advance(60_000);
+    expect(autosave.hasUnsavedWork()).toBe(false);
+    expect(calls).toHaveLength(0);
+    // The person stayed and types again.
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' }));
+    edit(project, 'typed after staying');
     expect(autosave.hasUnsavedWork()).toBe(true);
-    expect(autosave.getState().phase).toBe('unsaved');
     await advance(AUTOSAVE_DEBOUNCE_MS);
     expect(calls).toHaveLength(1);
-    expect(calls[0].snapshot.metadata.description).toBe('typed while the browser asked');
+    expect(calls[0].snapshot.metadata.description).toBe('typed after staying');
+    vi.restoreAllMocks();
+  });
+
+  it('never re-arms once the page is going (pagehide)', async () => {
+    const { project, autosave } = openAndWatch(3);
+    vi.spyOn(window, 'location', 'get').mockReturnValue({ ...window.location, reload: vi.fn() } as Location);
+    edit(project, 'mine');
+    reloadDiscarding(project.id);
+    window.dispatchEvent(new Event('pagehide'));
+    window.dispatchEvent(new Event('pointerdown'));
+    expect(autosave.hasUnsavedWork()).toBe(false);
+    await advance(AUTOSAVE_MAX_WAIT_MS);
+    expect(calls).toHaveLength(0);
+    vi.restoreAllMocks();
+  });
+
+  it('re-arms when the page is shown again from the back-forward cache', () => {
+    const { project, autosave } = openAndWatch(3);
+    vi.spyOn(window, 'location', 'get').mockReturnValue({ ...window.location, reload: vi.fn() } as Location);
+    edit(project, 'mine');
+    reloadDiscarding(project.id);
+    const shown = new Event('pageshow') as PageTransitionEvent;
+    Object.defineProperty(shown, 'persisted', { value: true });
+    window.dispatchEvent(shown);
+    expect(autosave.hasUnsavedWork()).toBe(true);
     vi.restoreAllMocks();
   });
 
@@ -891,7 +920,106 @@ describe('the re-review of 2026-11-04', () => {
     edit(project, 'mine');
     await advance(AUTOSAVE_DEBOUNCE_MS);
     await calls[0].answer(failure(undefined, 'Failed to fetch'));
-    void autosave.retryIfWaiting();
+    void autosave.recover();
     expect(calls).toHaveLength(2);
+  });
+});
+
+
+describe('the third review of 2026-11-04', () => {
+  it('an edit during the backoff after a lost answer gets a new key, naming the lost one', async () => {
+    const { project } = openAndWatch(3);
+    edit(project, 'first');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    await calls[0].answer(failure(504, 'Gateway timeout.'));
+    edit(project, 'second'); // waits for the retry, which carries it
+    await advance(AUTOSAVE_BACKOFF_MS[0]);
+    expect(calls).toHaveLength(2);
+    expect(calls[1].snapshot.metadata.description).toBe('second');
+    expect(calls[1].options.requestKey).not.toBe(calls[0].options.requestKey);
+    expect(calls[1].options.previousRequestKey).toBe(calls[0].options.requestKey);
+    expect(calls[1].expectedVersion).toBe(3);
+    await calls[1].answer(ok(5)); // the server built on the lost write (4)
+    expect(knownServerVersion(project.id)).toBe(5);
+    edit(project, 'third');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    // Confirmed: no lost attempt is named any more.
+    expect(calls[2].options.previousRequestKey).toBeUndefined();
+  });
+
+  it('a new version gets a new key, and a refusal settles a lost attempt', async () => {
+    const { project } = openAndWatch(3);
+    edit(project, 'one');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    await calls[0].answer(ok(4));
+    edit(project, 'two');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    expect(calls[1].options.requestKey).not.toBe(calls[0].options.requestKey);
+    expect(calls[1].options.previousRequestKey).toBeUndefined();
+    await calls[1].answer(failure(500));
+    await advance(AUTOSAVE_BACKOFF_MS[0]);
+    await calls[2].answer(failure(403, 'No.'));
+    edit(project, 'three');
+    void autosaveFor(project.id).retry();
+    expect(calls[3].options.previousRequestKey).toBeUndefined();
+  });
+
+  it('recovering: a stopped failure and a sign-out are tried once more; still refused, they stay failed', async () => {
+    const { project, autosave } = openAndWatch(3);
+    edit(project, 'mine');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    await calls[0].answer(failure(401, 'authentication required'));
+    expect(autosave.getState()).toMatchObject({ phase: 'failed', status: 401 });
+    void autosave.recover();
+    expect(calls).toHaveLength(2);
+    await calls[1].answer(failure(401, 'authentication required'));
+    expect(autosave.getState()).toMatchObject({ phase: 'failed', status: 401 });
+    void autosave.recover();
+    await calls[2].answer(ok(4));
+    expect(autosave.getState().phase).toBe('saved');
+  });
+
+  it('recovering leaves other refusals alone (a 413 needs the person)', async () => {
+    const { project, autosave } = openAndWatch(3);
+    edit(project, 'huge');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    await calls[0].answer(failure(413, 'too large'));
+    await autosave.recover();
+    expect(calls).toHaveLength(1);
+  });
+
+  it('leaving with a change that has no timer pending (a field committed as the editor closed) still saves it', async () => {
+    const { project, autosave } = openAndWatch(3);
+    // The patch listener goes first, then the field commits: no debounce was armed.
+    autosave.detach(project);
+    autosave.attach(project);
+    project.updateMetadata({ description: 'committed on the way out' });
+    // A detach whose timer was cleared by a save in flight meanwhile is the same case:
+    (autosave as unknown as { clearDebounce(): void }).clearDebounce();
+    autosave.detach(project);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].snapshot.metadata.description).toBe('committed on the way out');
+  });
+
+  it('"Save mine as a new project": the original gives up its copy, no warning, and opens the server copy next time', async () => {
+    const id = `site_auto_${++seq}`;
+    const project = openProject(store, serverSnapshot(id), null, 3).project!;
+    const autosave = autosaveFor(id);
+    autosave.attach(project);
+    edit(project, 'mine');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    await calls[0].answer(conflict(9));
+    expect(anyUnsavedWork()).toBe(true);
+    abandonWorkingCopy(id);
+    expect(anyUnsavedWork()).toBe(false);
+    autosave.detach(project);
+    expect(existingAutosave(id)).toBeUndefined();
+    await advance(60_000);
+    expect(calls).toHaveLength(1);
+    const reopened = openProject(store, serverSnapshot(id, 'theirs'), null, 9);
+    expect(reopened.keptWorkingCopy).toBe(false);
+    expect(reopened.changedElsewhere).toBe(false);
+    expect(reopened.project?.metadata.description).toBe('theirs');
+    expect(knownServerVersion(id)).toBe(9);
   });
 });

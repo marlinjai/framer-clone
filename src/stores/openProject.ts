@@ -174,6 +174,19 @@ let applyingServerCopy = 0;
 // version that write produces: that is no change made elsewhere.
 const writesInFlight = new Map<string, number>();
 
+// project ids whose working copy this tab gave up on purpose ("Save mine as a
+// new project" kept it elsewhere): the next load takes the server copy.
+const discardedCopies = new Set<string>();
+
+/**
+ * Forget this tab's working copy of a project: it now lives on as another
+ * project, so coming back opens the server's copy, without a warning.
+ */
+export function discardWorkingCopy(projectId: string): void {
+  discardedCopies.add(projectId);
+  openedChangedElsewhere.delete(projectId);
+}
+
 /** Autosave and Publish report a write of this tab starting (true) and ending (false). */
 export function noteWriteInFlight(projectId: string, inFlight: boolean): void {
   const count = (writesInFlight.get(projectId) ?? 0) + (inFlight ? 1 : -1);
@@ -319,12 +332,14 @@ export function openProject(
   const baseline = baselines.get(snapshot.id);
 
   let keep = false;
+  // A working copy given up on purpose is never kept.
+  const discarded = discardedCopies.delete(snapshot.id);
   let ownWrite = false;
   let staleRead = false;
   let changedElsewhere = false;
   let changedDefinitions: string[] = [];
   let changedSite: SitePart[] = [];
-  if (existing) {
+  if (existing && !discarded) {
     const working = getSnapshot(existing);
     const workingContent = versionContent(working);
     // An erase of personal data moves the epoch, and this tab's copy may still

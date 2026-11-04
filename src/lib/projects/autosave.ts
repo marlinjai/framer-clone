@@ -57,12 +57,11 @@ import {
   markServerVersion,
   noteWriteInFlight,
   savedContentOf,
+  discardWorkingCopy,
   type ProjectContent,
   type SavedContent,
 } from '@/stores/openProject';
 
-/** How long a reload on purpose may take before it counts as cancelled (Stay on the browser's question). */
-export const RELOAD_CANCELLED_AFTER_MS = 1500;
 
 function newRequestKey(): string {
   const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
@@ -105,6 +104,8 @@ export type AutosaveProject = ProjectModelType;
 export interface AutosaveWriteOptions {
   /** Names this attempt; a retry of the same content on the same version reuses it. */
   requestKey: string;
+  /** An earlier attempt on the same version whose answer was lost (it may have been written). */
+  previousRequestKey?: string;
   /** The page is going away: the browser should finish the request (when the body allows). */
   keepalive?: boolean;
 }
@@ -130,6 +131,8 @@ export function isPassingFailure(status: number | undefined): boolean {
  * now: a generated page, a retry timer, leaving the editor; skipped when equal.
  * retry: Retry or Cmd+S after a failure; also while paused, skipped when equal.
  * over: "Save mine over it"; always sends, naming the version the refusal reported.
+ * leave: the page is hidden or left; like now, as a keepalive request, never
+ *   over a refusal or while a reload on purpose discards the copy.
  */
 type Mode = 'auto' | 'now' | 'retry' | 'over' | 'leave';
 
@@ -143,6 +146,8 @@ export class AutosaveController {
   private failingSince: number | undefined;
   /** The key of the last attempt, for the content and version it carried. */
   private attempt: { key: string; content: string; expectedVersion: number | undefined } | undefined;
+  /** An attempt whose answer never came (network, 5xx): the server may hold it. */
+  private unconfirmed: { key: string; expectedVersion: number | undefined } | undefined;
   private deps: AutosaveDeps;
   private state: AutosaveState = { phase: 'saved' };
   private listeners = new Set<() => void>();
@@ -276,9 +281,17 @@ export class AutosaveController {
       void this.run('now');
       return;
     }
-    // Opened and left without a change (or nothing waiting): the server holds it.
     const left = this.project;
-    if (this.state.phase === 'unsaved' && !this.inFlight && left && isAlive(left) && isSaved(this.projectId, getSnapshot(left) as ProjectContent)) {
+    const saved = !!left && isAlive(left) && isSaved(this.projectId, getSnapshot(left) as ProjectContent);
+    // Anything not on the server goes now, also a change that came without a
+    // pending timer (a field committed while the editor closed). Not over a
+    // refusal or a waiting retry, and never while a request is out.
+    if (!saved && left && !this.inFlight && !this.paused() && this.state.phase !== 'retrying' && !this.discarding) {
+      void this.run('now');
+      return;
+    }
+    // Opened and left without a change (or nothing waiting): the server holds it.
+    if (this.state.phase === 'unsaved' && !this.inFlight && saved) {
       this.setState({ phase: 'saved' });
     }
     this.maybeRelease();
@@ -422,7 +435,17 @@ export class AutosaveController {
     if (!this.attempt || this.attempt.content !== content.key || this.attempt.expectedVersion !== expectedVersion) {
       this.attempt = { key: newRequestKey(), content: content.key, expectedVersion };
     }
-    const options: AutosaveWriteOptions = { requestKey: this.attempt.key, ...(mode === 'leave' ? { keepalive: true } : {}) };
+    // Newer content after a lost answer: name the lost attempt, so the server
+    // can tell its own write from someone else's.
+    const previous =
+      this.unconfirmed && this.unconfirmed.key !== this.attempt.key && this.unconfirmed.expectedVersion === expectedVersion
+        ? this.unconfirmed.key
+        : undefined;
+    const options: AutosaveWriteOptions = {
+      requestKey: this.attempt.key,
+      ...(previous ? { previousRequestKey: previous } : {}),
+      ...(mode === 'leave' ? { keepalive: true } : {}),
+    };
     const request = this.send(snapshot, expectedVersion, options, content);
     this.inFlight = request;
     try {
@@ -446,6 +469,14 @@ export class AutosaveController {
       result = await this.deps.write(snapshot, expectedVersion, options);
     } catch (err) {
       result = { kind: 'error', message: err instanceof Error ? err.message : 'Network error: Save failed.' };
+    }
+    // A passing failure leaves the outcome open; any answer of the server settles it.
+    if (result.kind === 'error' && isPassingFailure(result.status)) {
+      if (!this.unconfirmed || this.unconfirmed.expectedVersion !== expectedVersion) {
+        this.unconfirmed = { key: options.requestKey, expectedVersion };
+      }
+    } else {
+      this.unconfirmed = undefined;
     }
     if (result.kind === 'conflict') {
       this.clearTimers();
@@ -559,9 +590,31 @@ export class AutosaveController {
     return this.run('leave');
   }
 
-  /** Back online: a waiting retry goes now instead of at its timer. */
-  retryIfWaiting(): Promise<void> {
-    return this.state.phase === 'retrying' ? this.retry() : Promise.resolve();
+  /**
+   * Back online, or the tab is visible again: a waiting retry goes now; a
+   * failure whose automatic retries stopped, or a sign-out (401: the person may
+   * have signed in again in another tab), is tried once more. Still refused, it
+   * stays failed until the next such moment or Retry.
+   */
+  recover(): Promise<void> {
+    const state = this.state;
+    if (state.phase === 'retrying') return this.retry();
+    if (state.phase === 'failed' && (state.retriesStopped || state.status === 401)) return this.retry();
+    return Promise.resolve();
+  }
+
+  /**
+   * This tab's copy now lives on as another project ("Save mine as a new
+   * project"): nothing of it is saved here, warned about or named in a notice.
+   */
+  abandon(): void {
+    this.discarding = true;
+    this.clearTimers();
+    this.attempts = 0;
+    this.failingSince = undefined;
+    this.dirtyHint = false;
+    this.setState({ phase: 'saved' });
+    this.maybeRelease();
   }
 
   /** Hide a failure's reason on the compact top bar; the failure stays what it is. */
@@ -706,10 +759,40 @@ export function anyUnsavedWork(): boolean {
 export function reloadDiscarding(projectId: string | undefined): void {
   const controller = existingAutosave(projectId);
   controller?.discardForReload();
+  if (controller) {
+    // The reload may not happen: the browser asks about other unsaved work and
+    // the person stays. Only a real sign of that re-arms this project: the
+    // person using the page again, or the page shown again from the back-forward
+    // cache. A time alone is no sign (a slow reload is still a reload), and
+    // nothing re-arms once the page is going (pagehide).
+    const signs = ['pointerdown', 'keydown'] as const;
+    const stop = () => {
+      for (const type of signs) window.removeEventListener(type, stayed, true);
+      window.removeEventListener('pageshow', shownAgain);
+      window.removeEventListener('pagehide', stop);
+    };
+    const stayed = () => {
+      stop();
+      controller.cancelDiscard();
+    };
+    const shownAgain = (event: PageTransitionEvent) => {
+      if (event.persisted) stayed();
+    };
+    for (const type of signs) window.addEventListener(type, stayed, true);
+    window.addEventListener('pageshow', shownAgain);
+    window.addEventListener('pagehide', stop);
+  }
   window.location.reload();
-  // Still here after a while: the browser asked about other unsaved work and
-  // the person stayed. JavaScript is paused while that question is open.
-  if (controller) window.setTimeout(() => controller.cancelDiscard(), RELOAD_CANCELLED_AFTER_MS);
+}
+
+/**
+ * "Save mine as a new project" succeeded: the original project's working copy
+ * is given up (its pause, warning and notice end), and coming back to the
+ * original opens the server's copy.
+ */
+export function abandonWorkingCopy(projectId: string): void {
+  existingAutosave(projectId)?.abandon();
+  discardWorkingCopy(projectId);
 }
 
 /** The controller of a project, created on first use. */

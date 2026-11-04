@@ -30,7 +30,7 @@ import { Button } from '@/components/ui/button';
 import { useStore } from '@/hooks/useStore';
 import { knownServerVersion, markServerVersion, type ProjectContent } from '@/stores/openProject';
 import { postProjectWrite } from '@/lib/projects/projectWrite';
-import { existingAutosave, reloadDiscarding } from '@/lib/projects/autosave';
+import { abandonWorkingCopy, existingAutosave, reloadDiscarding } from '@/lib/projects/autosave';
 import SiteChangedDialog from './SiteChangedDialog';
 import SaveAsNewProjectDialog from './SaveAsNewProjectDialog';
 import { useSiteAddress } from '@/contexts/SiteAddressContext';
@@ -258,6 +258,8 @@ const PublishButton = observer(() => {
           getSnapshot={() => getSnapshot(project) as unknown as { pages: Record<string, unknown>; components: Record<string, unknown> }}
           currentPageId={rootStore.editorUI.currentPage?.id}
           description="Keeps both versions: this tab's pages and components become a new project in your company, and it opens in the editor. Nothing is published; the project changed elsewhere stays as it is."
+          // The original's working copy now lives on as the new project: give it up here.
+          onSaved={() => abandonWorkingCopy(project.id)}
         />
       ) : null}
       <Button
