@@ -324,9 +324,9 @@ describe('the live states', () => {
       return found!;
     });
     expect(error.textContent).toBe('Dieser Artikel kann gerade nicht geladen werden.');
-    // Announced through the status region around it, which was on the page before it (not on the part, so not twice).
-    expect(error.parentElement?.getAttribute('role')).toBe('status');
-    expect(error.getAttribute('role')).toBeNull();
+    // Announced through its own status region, which was on the page before it (no wrapper, so not twice).
+    expect(error.getAttribute('role')).toBe('status');
+    expect(error.parentElement?.closest('[role="status"]')).toBeNull();
     expect(container.textContent).not.toContain('database is down');
     expect(container.querySelector('button[data-cart-remove="var_s_red"]')).not.toBeNull();
     expect(logged).toHaveBeenCalledWith(expect.stringContaining('could not be loaded'), expect.any(Error));

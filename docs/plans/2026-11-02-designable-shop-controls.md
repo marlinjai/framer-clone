@@ -224,7 +224,19 @@ assistive technology what an element is), AI (the page generator).
    subtotal shows a placeholder (a hyphen), never a bare 0.00 without its currency. The line price and the
    subtotal are not kept in sight, by decision: they are display-only estimates, and the estimate notice
    beside them, fixed and kept in sight, already tells the visitor the final total is the checkout's. The
-   checkout's total is kept in sight because it is the figure the buyer commits to when paying. Canvas states: ready, no option chosen, checking (loading), sold out and a failed
+   checkout's total is kept in sight because it is the figure the buyer commits to when paying. A message that
+   comes later (the add to cart's failed check, a cart line's failure, and the checkout's going to payment, back
+   from payment and confirmation messages) is announced through a status region, and on a published page or in
+   the Preview that region is the designed part itself, never a wrapper: the part stays mounted in every state
+   with `role="status"`, and while it has nothing to say it is drawn empty and visually hidden (absolute, 1
+   pixel, clipped, no padding, border or margin, so it adds no gap to its control), in the accessibility tree
+   but out of the layout. When the message arrives the same element receives it, drawn in the flow with the
+   design's style alone, so a screen reader announces it, and the design's order, alignment, grid placement and
+   child-combinator rules reach it on the page exactly as on the canvas (a wrapper would have become the flex or
+   grid item in its place). Only that element carries the role, whatever a state adds, so nothing is announced
+   twice. A part kept in sight is not pinned into view while its region waits empty: the island's pins apply
+   only once it shows and come off when it hides again. The canvas draws no empty region (nothing is announced
+   there). Canvas states: ready, no option chosen, checking (loading), sold out and a failed
    check for the add to cart; items, empty, loading, low stock, an item no longer sold and an item that failed
    for the cart.
 3. **Variant selector:** the option groups, option labels and the choice buttons as a template drawn per

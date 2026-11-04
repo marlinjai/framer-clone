@@ -52,11 +52,13 @@ export interface ShopPartRender {
   keepInSight?: true;
   /**
    * A message the control shows later (a failed check): on a live surface the part
-   * sits in a status region that is on the page before the message and stays after
-   * it, so a screen reader announces the text when it arrives. A region mounted
-   * with its text already in it may never be announced. Given in every state, the
-   * hidden one too, since the region is drawn either way. The part itself carries
-   * no role, so nothing is announced twice.
+   * itself is a status region that is on the page before the message and stays
+   * after it, so a screen reader announces the text when it arrives. A region
+   * mounted with its text already in it may never be announced. Given in every
+   * state, the hidden one too: while hidden the part is drawn empty and visually
+   * hidden (EMPTY_LIVE_REGION_STYLE), never wrapped, so the designed element stays
+   * the flex or grid item its rules address. One element carries the role, so
+   * nothing is announced twice.
    */
   live?: true;
   /**
@@ -156,6 +158,8 @@ const WRAPPER_NONE_WHEN_SET = ['clip-path', 'mask-image', '-webkit-mask-image'];
 interface Pin {
   value: string;
   priority: string;
+  /** What the pin wrote, to tell it from a value React wrote over it since. */
+  forced?: string;
   owners: Set<HTMLElement>;
   /** A hiding attribute taken off (`hidden`, `inert`, `aria-hidden`) rather than a style: `value` is the attribute's. */
   attribute?: true;
@@ -188,8 +192,9 @@ function releaseKept(owner: HTMLElement): void {
         if (!target.hasAttribute(name)) target.setAttribute(name, pin.value);
         continue;
       }
-      // React wrote the design's new value over the pin since (it sets no priority): that value stands.
-      if (target.style.getPropertyPriority(property) !== 'important') continue;
+      // React wrote the design's new value over the pin since (it sets no priority, and some
+      // engines keep the old priority on a write, so the value is compared too): that value stands.
+      if (target.style.getPropertyPriority(property) !== 'important' || target.style.getPropertyValue(property) !== pin.forced) continue;
       if (pin.value) target.style.setProperty(property, pin.value, pin.priority);
       else target.style.removeProperty(property);
     }
@@ -255,6 +260,7 @@ function keepInSight(element: HTMLElement): void {
     targets.add(target);
     PINNED_BY.set(element, targets);
     target.style.setProperty(property, value, 'important');
+    pin.forced = target.style.getPropertyValue(property);
   };
   // A wrapper's hiding attribute comes off while the part holds it, and goes back on release.
   const lift = (target: HTMLElement, name: string) => {
@@ -393,26 +399,37 @@ function onlyPartElements(content: React.ReactNode, own: ReadonlySet<string>): R
 }
 
 /**
- * The status region around a part whose message comes later (ShopPartRender.live).
- * A plain inline span, not `display: contents`: some browsers leave an element
- * drawn that way out of the accessibility tree, and a span is valid wherever a
- * text part is. It names the part it holds, for tests and the page's own rules.
+ * The attributes that make a part whose message comes later (ShopPartRender.live)
+ * its own status region, applied after the designer's and the state's props. The
+ * part itself is the region, not a wrapper around it: a wrapper would become the
+ * flex or grid item in its place, and the design's order, alignment, grid placement
+ * and child-combinator rules would stop reaching it on a published page while they
+ * still work on the canvas. It names its role, for tests and the page's own rules.
  */
-function liveRegion(role: string, part: React.ReactNode): React.ReactElement {
-  return (
-    <span role="status" data-shop-live={role} style={part == null ? EMPTY_LIVE_REGION_STYLE : undefined}>
-      {part}
-    </span>
-  );
+function liveRegionProps(role: string): Record<string, unknown> {
+  return { role: 'status', 'data-shop-live': role };
 }
 
 /**
- * An empty status region is taken out of the layout (an empty flex or grid item
- * would still add the control's gap) but stays in the accessibility tree, which
- * `display: none` or `visibility: hidden` would not. The same element holds the
- * message once it shows, drawn in the flow again.
+ * An empty status region is visually hidden: taken out of the layout (absolute, so
+ * it adds no gap to a flex or grid control, and 1 pixel, clipped, with no padding,
+ * border or margin) but kept in the accessibility tree, which `display: none` or
+ * `visibility: hidden` would not. The same element holds the message once it
+ * shows, drawn in the flow again with the design's own style. Inline, so it wins
+ * over the design's rules for the part.
  */
-export const EMPTY_LIVE_REGION_STYLE: Readonly<React.CSSProperties> = { position: 'absolute' };
+export const EMPTY_LIVE_REGION_STYLE: Readonly<React.CSSProperties> = {
+  position: 'absolute',
+  width: '1px',
+  height: '1px',
+  padding: 0,
+  border: 0,
+  margin: 0,
+  overflow: 'hidden',
+  clip: 'rect(0 0 0 0)',
+  clipPath: 'inset(50%)',
+  whiteSpace: 'nowrap',
+};
 
 /** One shop part, drawn as its control's runtime says. */
 export function ShopPartElement({ role, tag, domProps, storedText, content, surface, linksAllowed = true }: ShopPartElementProps): React.ReactElement | null {
@@ -421,7 +438,11 @@ export function ShopPartElement({ role, tag, domProps, storedText, content, surf
   const spec = shopPartSpec(role);
   const inControl = !!runtime && runtime.kind === shopPartControl(role);
   const render = inControl ? runtime.part(role) : undefined;
-  const keep = !!spec?.keepVisible || (!!render?.visible && !!render.keepInSight);
+  // A message that comes later is its own status region, drawn before it (live surfaces only).
+  const announce = !!render?.live && runtime?.surface === 'live';
+  // While that region waits empty and visually hidden, nothing pins it into sight.
+  const waiting = announce && !render?.visible;
+  const keep = !waiting && (!!spec?.keepVisible || (!!render?.visible && !!render.keepInSight));
   const keptRef = useKeptInSight(keep, domProps.ref);
   const elementTag = shopPartTag(role, tag);
 
@@ -454,9 +475,14 @@ export function ShopPartElement({ role, tag, domProps, storedText, content, surf
     );
   }
 
-  // A message that comes later sits in a status region drawn before it (live surfaces only).
-  const announce = !!render.live && runtime.surface === 'live';
-  if (!render.visible) return announce ? liveRegion(role, null) : null;
+  if (waiting) {
+    // The same element the message will fill, empty and out of sight until then.
+    const style = { ...((ownProps.style as Record<string, unknown> | undefined) ?? {}), ...EMPTY_LIVE_REGION_STYLE };
+    const waitingProps: Record<string, unknown> = { ...ownProps, ...liveRegionProps(role), style };
+    delete waitingProps.children;
+    return React.createElement(elementTag, waitingProps);
+  }
+  if (!render.visible) return null;
   // A part kept in sight, or one whose text is the platform's, draws its text only.
   if (spec?.keepVisible || spec?.fixedText) content = undefined;
   // A button whose wording is fixed draws only its own parts, whatever it was handed.
@@ -512,6 +538,5 @@ export function ShopPartElement({ role, tag, domProps, storedText, content, surf
       </>
     );
   }
-  const drawn = draw(undefined, render.tokens);
-  return announce ? liveRegion(role, drawn) : drawn;
+  return draw(undefined, render.tokens, announce ? liveRegionProps(role) : undefined);
 }

@@ -744,7 +744,13 @@ describe('CheckoutButton a message shown later is announced', () => {
       expect(region!.textContent).toBe('');
       // An empty region adds no gap to the control's column, and stays in the accessibility tree.
       expect(region!.style.position).toBe('absolute');
-      expect(region!.style.display).toBe('');
+      expect(region!.style.height).toBe('1px');
+      expect(region!.style.padding).toBe('0px');
+      // Never display none or visibility hidden, which would take it out of the accessibility tree.
+      expect(region!.style.display).not.toBe('none');
+      expect(region!.style.visibility).not.toBe('hidden');
+      // It is the designed part itself, not a wrapper standing in its place as the column's item.
+      expect(region!.getAttribute('data-shop-part')).toBe(role);
     }
   });
 
@@ -768,22 +774,22 @@ describe('CheckoutButton a message shown later is announced', () => {
     await waitFor(() => expect(region!.textContent).toContain('ORD-123'));
     expect(container.querySelector('[data-shop-live="checkout.confirmation"]')).toBe(region);
     const confirmation = container.querySelector('[data-checkout-confirmation]')!;
-    expect(confirmation.parentElement).toBe(region);
-    expect(confirmation.getAttribute('role')).toBeNull();
+    expect(confirmation).toBe(region);
+    expect(confirmation.querySelector('[role="status"]')).toBeNull();
     // Drawn in the flow again once it holds the message.
     expect(region!.style.position).toBe('');
     expect(container.querySelectorAll('[role="status"]')).toHaveLength(LATER.length);
   });
 
-  it('back from a hosted checkout: the message sits in its region, and the part carries no role', async () => {
+  it('back from a hosted checkout: the part is its own region, with no wrapper around it', async () => {
     window.history.replaceState(null, '', '/cart?checkout=cancelled&order=ORD-000006');
     try {
       const { container } = renderCheckout();
       await waitFor(() => expect(container.querySelector('[data-checkout-returned="cancelled"]')).not.toBeNull());
       const part = container.querySelector('[data-checkout-returned="cancelled"]')!;
-      expect(part.getAttribute('role')).toBeNull();
-      expect(part.parentElement?.getAttribute('data-shop-live')).toBe('checkout.returned-cancelled');
-      expect(part.parentElement?.getAttribute('role')).toBe('status');
+      expect(part.getAttribute('role')).toBe('status');
+      expect(part.getAttribute('data-shop-live')).toBe('checkout.returned-cancelled');
+      expect(part.parentElement?.closest('[role="status"]')).toBeNull();
     } finally {
       window.history.replaceState(null, '', '/');
     }

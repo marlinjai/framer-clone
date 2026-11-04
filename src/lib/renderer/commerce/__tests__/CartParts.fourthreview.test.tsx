@@ -228,6 +228,12 @@ describe('a message a control shows later is announced', () => {
     expect(region!.getAttribute('role')).toBe('status');
     expect(region!.textContent).toBe('');
     expect(container.querySelector('[data-add-to-cart-error]')).toBeNull();
+    // The region is the designed part itself (no wrapper takes its place as the
+    // control's flex or grid item), visually hidden while it waits.
+    expect(region!.getAttribute('data-shop-part')).toBe('addToCart.error');
+    expect(region!.style.position).toBe('absolute');
+    expect(region!.style.width).toBe('1px');
+    expect(region!.style.overflow).toBe('hidden');
 
     const errors = console.error;
     console.error = () => {};
@@ -239,12 +245,13 @@ describe('a message a control shows later is announced', () => {
     } finally {
       console.error = errors;
     }
-    // The same region (not a new one) now holds the message; the part carries no role of its own.
+    // The same element (not a new one) now holds the message, drawn in the flow again; one role, announced once.
     await waitFor(() => expect(container.querySelector('[data-add-to-cart-error]')).not.toBeNull());
     expect(container.querySelector('[data-shop-live="addToCart.error"]')).toBe(region);
     expect(region!.textContent).toBe('Availability could not be checked right now. Please try again later.');
-    expect(container.querySelector('[data-add-to-cart-error]')!.parentElement).toBe(region);
-    expect(container.querySelector('[data-add-to-cart-error]')!.getAttribute('role')).toBeNull();
+    expect(container.querySelector('[data-add-to-cart-error]')).toBe(region);
+    expect(region!.style.position).toBe('');
+    expect(region!.style.width).toBe('');
     expect(container.querySelectorAll('[role="status"]')).toHaveLength(1);
   });
 
@@ -272,6 +279,9 @@ describe('a message a control shows later is announced', () => {
     }
     await waitFor(() => expect(region.textContent).toBe('This item could not be loaded right now.'));
     expect(container.querySelector('[data-shop-live="cart.line-error"]')).toBe(region);
-    expect(region.querySelector('[data-cart-line-error]')!.getAttribute('role')).toBeNull();
+    // The part itself is the region: nothing inside it announces a second time.
+    expect(region.hasAttribute('data-cart-line-error')).toBe(true);
+    expect(region.querySelector('[role="status"]')).toBeNull();
+    expect(region.style.position).toBe('');
   });
 });
