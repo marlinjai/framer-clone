@@ -172,17 +172,21 @@ say so if you disagree):
   the server accepts when the latest write is one of them. The guard is the key's binding to
   the version it wrote (`last_write_version`), not `expectedVersion + 1`: during a rolling
   deploy an older container moves the version without clearing the key, and the binding stops
-  that stale key from matching.
-- **A lost "Save mine over it" retries over the version the conflict reported**, by timer and by
-  Retry, never on the old known version.
+  that stale key from matching. The list is capped: nine or more lost answers in a row on one
+  version can end in a false "changed elsewhere", never in an overwrite, and "Save mine over it"
+  resolves it.
+- **A lost "Save mine over it" retries over the version the conflict reported**, by timer, by
+  Retry and when Publish settles it first (delta review), never on the old known version; if that
+  settling save fails again, Publish sends the same base with the lost keys, and a successful
+  Publish clears both.
 - **A successful Publish settles a lost save on the same base**: no false leave warning after it.
 - **Publish names the lost save keys too** when its settling retry failed again: the publish
   route accepts `previousRequestKeys` (never a key of its own, publishing has no replay), and
   the same binding guard applies, so a landed lost save is built on instead of being a conflict.
 - **Cmd+S on the overview never opens a conflict's dialog** (there is no status on screen for
   it); the notice says "Changed elsewhere: go back to it to choose what to keep".
-- **After a 400** the next change gets one debounced attempt; refused again, it stays failed. Other
-  refusals (401, 403, 404, 413) still wait for Retry.
+- **After each 400** the next change gets one debounced attempt; refused again, it stays failed
+  until the next change. Other refusals (401, 403, 404, 413) still wait for Retry.
 - **The Details panel closes on Escape**, and the focus goes back to Details.
 
 Folded in from the fourth review of d38f636e (each reviewer probe ported as a failing test
@@ -255,7 +259,8 @@ Decided while building (say so if you disagree):
   60 s, for at most 10 minutes. Every other failure is a refusal that cannot pass by itself (401
   signed out, 403 no permission, 400 malformed or `version_required`, 404, 413 too large, another
   409 such as `erased_since_load`): shown, and tried again only on Retry (or Cmd+S); after a 400
-  the next change gets one attempt as well (fifth review: the change may fix it). For 401 this
+  the next change after each 400 gets one debounced attempt as well (fifth review: the change may
+  fix it). For 401 this
   differs slightly from decision 4 ("auth retried"): repeating a request every minute while
   signed out achieves nothing until the person signs in, and the message stays visible until
   then.
@@ -395,5 +400,6 @@ The four paths of the stateful flow standard (knowledge-base `standards/stateful
   panel); signed out in another tab, the status offers "Sign in again", Retry saves; Back from
   Preview after a few saves keeps the newest copy.
 - The migration `20261104000000_site_last_write_key` runs with the deploy (additive, two
-  nullable columns: `last_write_key` and, since the fifth review, `last_write_version`; it was
-  never applied anywhere, so it was extended rather than followed by a second migration).
+  nullable columns: `last_write_key` and, since the fifth review, `last_write_version`). It was
+  extended in place rather than followed by a second migration because it has only ever run on
+  continuous integration's throwaway databases, never on a database that is kept.
