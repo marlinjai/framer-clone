@@ -2,9 +2,9 @@
 // slice 3): each option is a radio group (one tab stop, the arrows, Home and End
 // choose), a stored name on the choice or option name template never reaches the
 // copies, a page saved with the toggle button's Selected rule is rewritten once,
-// the wait for the options and a product with nothing to sell are said, a
-// previous choice's availability never shows for the next one (here and in the
-// add to cart), and a price bound to the variant follows the choice.
+// the wait for the options and a product with nothing to sell are said, and a
+// price bound to the variant follows the choice (keyed availability:
+// VariantParts.keyed.test.tsx).
 import React from 'react';
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { render, cleanup, waitFor, act, fireEvent } from '@testing-library/react';
@@ -16,7 +16,7 @@ import { InMemoryCommerceDataSource } from '@/lib/commerce/inMemoryCommerceDataS
 import { createScope, pushProductFrame, type BindingScope } from '@/lib/bindings/resolver/scope';
 import { VARIANT_SELECTED_SELECTOR, buildShopParts, normalizeShopControl, shopPartRoleOf, type ShopTreeNode } from '@/lib/commerce/parts';
 import { ruleLabel } from '@/lib/rules/states';
-import type { AvailabilityDTO, ProductDTO, ProductVariantDTO } from '@/lib/commerce/types';
+import type { ProductDTO, ProductVariantDTO } from '@/lib/commerce/types';
 import type { RenderNode } from '@/lib/renderer/data/CollectionRenderer';
 import VariantSelector from '../VariantSelector';
 
@@ -219,49 +219,6 @@ describe('the options load after the page', () => {
     await waitFor(() => expect(region.textContent).toBe('This product is not available right now.'));
     expect(region.getAttribute('role')).toBe('status');
     expect(container.querySelector('button[data-variant-value]')).toBeNull();
-  });
-});
-
-describe('a choice changed while its check runs', () => {
-  async function switching() {
-    const ds = new InMemoryCommerceDataSource();
-    const real = ds.getAvailability.bind(ds);
-    let release!: (dto: AvailabilityDTO) => void;
-    vi.spyOn(ds, 'getAvailability').mockImplementation((variantId: string) =>
-      variantId === 'var_m_red' ? new Promise<AvailabilityDTO>((resolve) => (release = resolve)) : real(variantId),
-    );
-    const addToCart = buildShopParts('add-to-cart', 'atc', 'en');
-    const container = await mount(buildShopParts('variant-selector', 'vs', 'en'), ds, [
-      { id: 'atc', type: 'div', componentType: 'host', props: { 'data-component-kind': 'add-to-cart' }, children: addToCart },
-    ]);
-    await ready(container);
-    act(() => {
-      fireEvent.click(choice(container, 'ov_size_s'));
-    });
-    act(() => {
-      fireEvent.click(choice(container, 'ov_color_red'));
-    });
-    await waitFor(() => expect(container.querySelector('[data-shop-live="variant.in-stock"]')?.textContent).toBe('In stock'));
-    await waitFor(() => expect(container.querySelector<HTMLButtonElement>('button[data-add-to-cart]')?.disabled).toBe(false));
-    act(() => {
-      fireEvent.click(choice(container, 'ov_size_m'));
-    });
-    return { container, release };
-  }
-
-  it('never shows the previous variant’s answer in the selector', async () => {
-    const { container, release } = await switching();
-    expect(container.querySelector('[data-shop-live="variant.in-stock"]')?.textContent).toBe('');
-    expect(container.querySelector('[data-shop-live="variant.checking"]')?.textContent).toBe('Checking availability...');
-    await act(async () => release({ variantId: 'var_m_red', locationId: 'all', availableQuantity: 0, limited: true, stale: false }));
-    await waitFor(() => expect(container.querySelector('[data-shop-live="variant.out-of-stock"]')?.textContent).toBe('Out of stock'));
-  });
-
-  it('keeps the add to cart checking, never enabled on the previous variant’s answer', async () => {
-    const { container } = await switching();
-    const button = container.querySelector<HTMLButtonElement>('button[data-add-to-cart]')!;
-    expect(button.disabled).toBe(true);
-    expect(button.getAttribute('aria-busy')).toBe('true');
   });
 });
 

@@ -11,6 +11,7 @@ import {
   pushProductFrame,
   pushVariantFrame,
   pushAvailabilityFrame,
+  pushPendingAvailabilityFrame,
   pushRowFrame,
   pushPageFrame,
   lookup,
@@ -194,5 +195,19 @@ describe('commerce frames resolve through evaluateExpression', () => {
     expect(
       evaluateExpression(parseExpression('{{variant.sku}}')!, scope),
     ).toBeUndefined();
+  });
+});
+
+describe('a pending availability frame (a chosen variant whose check runs)', () => {
+  it('resolves every availability path to nothing, never to an outer frame for another variant', () => {
+    const outer = pushAvailabilityFrame(pushProductFrame(createScope(), product), availability);
+    expect(lookup(outer, ['availability', 'availableQuantity'])).toBe(availability.availableQuantity);
+    const pending = pushPendingAvailabilityFrame(outer);
+    expect(lookup(pending, ['availability', 'availableQuantity'])).toBeUndefined();
+    expect(lookup(pending, ['availability'])).toBeNull();
+    expect(evaluateExpression(parseExpression('{{availability.availableQuantity}}')!, pending)).toBeUndefined();
+    // The answer for the chosen variant, once in, stands over it.
+    const answered = pushAvailabilityFrame(pending, { ...availability, availableQuantity: 2 });
+    expect(lookup(answered, ['availability', 'availableQuantity'])).toBe(2);
   });
 });

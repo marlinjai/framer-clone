@@ -36,6 +36,7 @@ import type { BindingScope } from '@/lib/bindings/resolver/scope';
 import {
   lookup,
   pushAvailabilityFrame,
+  pushPendingAvailabilityFrame,
   pushVariantFrame,
 } from '@/lib/bindings/resolver/scope';
 import { useCommerceDataSource } from '@/lib/commerce/context';
@@ -233,9 +234,13 @@ const VariantSelector = observer(
       }
     } else if (variant) {
       childScope = pushVariantFrame(childScope, variant, price);
-      if (availability?.status === 'ready') {
-        childScope = pushAvailabilityFrame(childScope, availability.availability);
-      }
+      // The chosen variant's own answer, keyed by it; while its check runs (or after
+      // it failed) a frame that knows nothing, so the product's default variant's
+      // availability never shows for this choice.
+      childScope =
+        availability?.status === 'ready'
+          ? pushAvailabilityFrame(childScope, availability.availability)
+          : pushPendingAvailabilityFrame(childScope);
     }
 
     // The control's children (its parts and whatever the designer put beside them,
