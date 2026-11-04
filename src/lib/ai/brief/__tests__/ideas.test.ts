@@ -45,6 +45,12 @@ describe('parseIdeas', () => {
     expect(out).toHaveLength(BRIEF_LIMITS.ideasPerSet);
   });
 
+  it('drops an idea whose untruncated title equals an existing page title longer than the cap', () => {
+    const long = 'A'.repeat(BRIEF_LIMITS.maxIdeaTitleChars + 20);
+    const out = parseIdeas({ ideas: [{ title: long, brief: 'x' }, { title: 'Fresh', brief: 'y' }] }, { existingPageTitles: [long] });
+    expect(out.map((i) => i.title)).toEqual(['Fresh']);
+  });
+
   it('caps an overlong title and brief, and reads garbage as no ideas', () => {
     const [idea] = parseIdeas({ ideas: [{ title: 'x'.repeat(200), brief: 'y'.repeat(2000) }] }, {});
     expect(idea.title.length).toBeLessThanOrEqual(BRIEF_LIMITS.maxIdeaTitleChars);

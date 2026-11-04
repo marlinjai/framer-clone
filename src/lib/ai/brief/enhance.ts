@@ -38,7 +38,7 @@ export function enhanceSystemPrompt(input: Omit<EnhanceInput, 'brief'>): string 
     'Keep everything the person wrote: every fact, name, number, product, place, constraint and style word, and leave nothing out. Never add prices, addresses, phone numbers, opening hours, awards, customer numbers, testimonials or other claims they did not give. Where such a fact is needed, say what kind of fact goes there without making one up.',
     'Add structure only: the sections in order, who the page is for, the tone, the main call to action, and what each section says.',
     `Write in the same language as the brief${language ? ` (when the brief is too short to tell, write in ${language}, the site language)` : ''}.`,
-    `Answer with the rewritten brief only, as plain text of at most about ${ENHANCE_TARGET_WORDS} words: no preamble, no title, no quotes, no markdown, no headings, no bullet symbols, no explanation.`,
+    `Answer with the rewritten brief only, as plain text: no preamble, no title, no quotes, no markdown, no headings, no bullet symbols, no explanation. Aim for about ${ENHANCE_TARGET_WORDS} words, but keep every fact even when that takes more words.`,
   ].join('\n');
 }
 

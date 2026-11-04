@@ -90,5 +90,10 @@ export interface EnhanceDone {
 /** True when the serialized context fits the budget (the routes refuse more). */
 export function contextFits(context: unknown): boolean {
   if (context === undefined || context === null) return true;
-  return JSON.stringify(context).length <= BRIEF_LIMITS.maxContextChars;
+  try {
+    return JSON.stringify(context).length <= BRIEF_LIMITS.maxContextChars;
+  } catch {
+    // Too deeply nested to serialize (RangeError), or a cycle: refused like an oversized context.
+    return false;
+  }
 }

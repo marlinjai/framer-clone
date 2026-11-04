@@ -114,7 +114,9 @@ export function parseIdeas(raw: unknown, input: Pick<IdeasInput, 'existingPageTi
     if (typeof title !== 'string' || typeof brief !== 'string') continue;
     const t = cap(title, BRIEF_LIMITS.maxIdeaTitleChars);
     const b = cap(brief, BRIEF_LIMITS.maxIdeaBriefChars);
-    if (!t || !b || taken.has(norm(t))) continue;
+    // Both the title as sent and its capped form: an existing title longer than the cap must still match.
+    if (!t || !b || taken.has(norm(title)) || taken.has(norm(t))) continue;
+    taken.add(norm(title));
     taken.add(norm(t));
     out.push({ title: t, brief: b });
     if (out.length >= BRIEF_LIMITS.ideasPerSet) break;

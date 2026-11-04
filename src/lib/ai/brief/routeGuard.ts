@@ -20,6 +20,10 @@ import { getAnthropicClient, MissingAnthropicKeyError } from '@/lib/ai/anthropic
 import type { PageGenRateLimiter } from '@/lib/ai/pageGen/rateLimit';
 import { rateLimitMessage } from './rateLimit';
 import { contextFits } from './schema';
+import { boundedText } from '@/server/books/http/boundedBody';
+
+/** Largest brief request body. A valid one (brief, context and titles at their caps) is well under 128 KB. */
+const BRIEF_BODY_MAX_BYTES = 256 * 1024;
 
 export interface BriefGuardPass<T> {
   ok: true;
@@ -40,9 +44,12 @@ export async function guardBriefRequest<S extends z.ZodType<{ targetKind: string
   const deny = (response: Response) => ({ ok: false as const, response });
 
   // ---- 1. Parse + validate body ------------------------------------------
+  // Read as a stream with a limit: request.json() would buffer a body of any size.
+  const text = await boundedText(request, BRIEF_BODY_MAX_BYTES);
+  if (text === null) return deny(jsonError('body_too_large', 'the request body is too large', 413));
   let raw: unknown;
   try {
-    raw = await request.json();
+    raw = JSON.parse(text);
   } catch {
     return deny(jsonError('bad_json', 'invalid JSON body', 400));
   }

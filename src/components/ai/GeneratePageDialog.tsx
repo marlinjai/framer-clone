@@ -184,15 +184,21 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
   // on the server and is resumed from savePendingRun next time.
   React.useEffect(() => () => abortRef.current?.abort(DETACH), []);
 
+  // The brief as it was before an Enhance started streaming, or null when none
+  // streams: the draft never holds the partial rewrite.
+  const settledBriefRef = React.useRef<string | null>(null);
+
   const edit = (patch: Partial<FlowInputs>) => {
     dispatch({ type: 'edit', inputs: patch, targetKey });
-    if (projectId) saveDraft(projectId, { ...inputs, ...patch });
+    if (projectId) saveDraft(projectId, { ...inputs, brief: settledBriefRef.current ?? inputs.brief, ...patch });
     if (patch.model) saveModelChoice('page-gen', patch.model);
   };
 
   // The idea row and Enhance (./IdeaBar.tsx, ./useBriefAssist.ts). A streaming
   // rewrite is not persisted until it finished (the draft keeps the original).
   const setBrief = (brief: string, opts: { persist: boolean }) => {
+    if (opts.persist) settledBriefRef.current = null;
+    else if (settledBriefRef.current === null) settledBriefRef.current = stateRef.current.inputs.brief;
     dispatch({ type: 'edit', inputs: { brief }, targetKey });
     if (opts.persist && projectId) saveDraft(projectId, { ...stateRef.current.inputs, brief });
   };
@@ -208,7 +214,8 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
   });
   const ideas = usePageIdeas({
     open: open && state.phase === 'editing',
-    cacheKey: projectId ? `${projectId}|${inputs.targetKind}|${briefSelection?.id ?? ''}` : '',
+    // The raw project id: every unsaved demo shares the storage key 'unsaved-demo' but not its ideas.
+    cacheKey: project ? `${project.id}|${inputs.targetKind}|${briefSelection?.id ?? ''}` : '',
     targetKind: inputs.targetKind,
     request: briefSiteInput,
     api: briefApi,

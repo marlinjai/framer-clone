@@ -244,6 +244,10 @@ describe('backtrack: enhance, undo, edit, enhance again', () => {
     expect(brief().value).toBe('A landing page for a bakery');
     expect(savedBrief()).toBe('bakery page'); // the partial text is never persisted
 
+    // Editing another field mid-stream saves the settled brief, not the partial text.
+    fireEvent.change(screen.getByLabelText(/Page title/), { target: { value: 'Bakery' } });
+    expect(savedBrief()).toBe('bakery page');
+
     await act(async () => enhanceCalls[0].resolve({ ok: true, value: 'A landing page for a bakery.' }));
     expect(brief().value).toBe('A landing page for a bakery.');
     expect(brief()).not.toHaveAttribute('readonly');
@@ -358,6 +362,27 @@ describe('resume: reload with a saved draft', () => {
     setup(api);
     expect(chip('Sourdough class')).toBeInTheDocument();
     expect(ideaCalls).toHaveLength(1);
+  });
+
+  it('a cached set never shows a title that became a page since it was cached', async () => {
+    const { api, ideaCalls } = manualBriefApi();
+    const view = setup(api);
+    await act(async () => ideaCalls[0].resolve({ ok: true, value: TAILORED }));
+    view.unmount();
+    store.editorUI.currentProject!.createPage('Wholesale');
+    setup(api);
+    expect(chip('Sourdough class')).toBeInTheDocument();
+    expect(within(toolbar()).queryByRole('button', { name: 'Wholesale' })).not.toBeInTheDocument();
+  });
+
+  it('More ideas excludes the titles of every set shown, not only the one on screen', async () => {
+    const { api, ideaCalls } = manualBriefApi();
+    setup(api);
+    await act(async () => ideaCalls[0].resolve({ ok: true, value: TAILORED }));
+    fireEvent.click(screen.getByRole('button', { name: /More ideas/ }));
+    await act(async () => ideaCalls[1].resolve({ ok: true, value: MORE }));
+    fireEvent.click(screen.getByRole('button', { name: /More ideas/ }));
+    expect(ideaCalls[2].req.exclude).toEqual([...TAILORED, ...MORE].map((i) => i.title));
   });
 });
 

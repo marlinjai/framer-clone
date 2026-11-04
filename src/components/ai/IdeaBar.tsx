@@ -26,11 +26,13 @@ import { Lightbulb, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { describeBriefError, type BriefApi } from '@/lib/ai/brief/client';
 import { pickStaticIdeas } from '@/lib/ai/brief/staticIdeas';
-import type { BriefTargetKind, IdeasRequest, PageIdea } from '@/lib/ai/brief/schema';
+import { BRIEF_LIMITS, type BriefTargetKind, type IdeasRequest, type PageIdea } from '@/lib/ai/brief/schema';
 
 // ---------- the session cache ----------
 
 const ideaCache = new Map<string, PageIdea[]>();
+
+const normTitle = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
 
 /** Test-only: forget every cached tailored set. */
 export function __resetIdeaCacheForTests(): void {
@@ -67,6 +69,15 @@ export interface PageIdeas extends IdeasState {
   touch: () => void;
 }
 
+/** The most recent titles shown for `key`, plus the set on screen: the "More ideas" exclusion. */
+function shownTitles(shown: { key: string; titles: string[] }, key: string, current: PageIdea[]): string[] {
+  const titles = shown.key === key ? [...shown.titles] : [];
+  for (const idea of current) {
+    if (!titles.includes(idea.title)) titles.push(idea.title);
+  }
+  return titles.slice(-BRIEF_LIMITS.maxExclude);
+}
+
 function staticState(key: string, kind: BriefTargetKind): IdeasState {
   return { key, ideas: pickStaticIdeas(kind), source: 'static', pending: null, loading: false, note: null, error: null };
 }
@@ -79,13 +90,29 @@ export function usePageIdeas({ open, cacheKey, targetKind, request, api }: UsePa
   requestRef.current = request;
   const stateRef = React.useRef(state);
   stateRef.current = state;
+  // Every title shown for the current key, oldest first: "More ideas" excludes
+  // them all, not only the set on screen, so a second refresh cannot bring the
+  // first set back.
+  const shownRef = React.useRef<{ key: string; titles: string[] }>({ key: state.key, titles: [] });
+  React.useEffect(() => {
+    const shown = shownRef.current;
+    if (shown.key !== state.key) {
+      shown.key = state.key;
+      shown.titles = [];
+    }
+    // Only tailored sets: the static starters are not what the provider repeats.
+    if (state.source !== 'ai') return;
+    for (const idea of state.ideas) {
+      if (!shown.titles.includes(idea.title)) shown.titles.push(idea.title);
+    }
+  }, [state.key, state.source, state.ideas]);
 
   const load = React.useCallback(
     async (key: string, initial: boolean) => {
       controllerRef.current?.abort();
       const controller = new AbortController();
       controllerRef.current = controller;
-      const exclude = initial ? undefined : stateRef.current.ideas.map((i) => i.title);
+      const exclude = initial ? undefined : shownTitles(shownRef.current, key, stateRef.current.ideas);
       setState((s) => (s.key === key ? { ...s, loading: true, error: null } : s));
       const result = await api.fetchIdeas({ ...requestRef.current(), ...(exclude ? { exclude } : {}) }, controller.signal);
       if (controllerRef.current !== controller) return; // superseded, closed or another key
@@ -121,8 +148,10 @@ export function usePageIdeas({ open, cacheKey, targetKind, request, api }: UsePa
       return;
     }
     touchedRef.current = false;
-    const cached = cacheKey ? ideaCache.get(cacheKey) : undefined;
-    if (cached) {
+    // A page created since the set was cached must not come back as a chip.
+    const taken = new Set((requestRef.current().existingPageTitles ?? []).map(normTitle));
+    const cached = (cacheKey ? ideaCache.get(cacheKey) : undefined)?.filter((i) => !taken.has(normTitle(i.title)));
+    if (cached && cached.length > 0) {
       setState({ ...staticState(cacheKey, targetKind), ideas: cached, source: 'ai' });
       return;
     }

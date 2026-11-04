@@ -196,6 +196,14 @@ describe.each([
     expect(modelCalls()).toBe(0);
   });
 
+  it('413 on a body past the limit, read as a stream, and never calls the model', async () => {
+    const huge = JSON.stringify({ targetKind: 'newPage', brief: 'x', pad: 'y'.repeat(300 * 1024) });
+    const res = await handler(req(undefined, { raw: huge }));
+    expect(res.status).toBe(413);
+    expect((await res.json()).error.code).toBe('body_too_large');
+    expect(modelCalls()).toBe(0);
+  });
+
   it(`429 with retry-after after ${BRIEF_RATE.maxPerWindow} calls in the window`, async () => {
     for (let i = 0; i < BRIEF_RATE.maxPerWindow; i++) {
       const res = await handler(req());
