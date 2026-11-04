@@ -1,7 +1,7 @@
 // Autosave in the editor UI (SaveStatus, UnsavedWorkGuard, useAutosave, the
 // generator dialog) on a REAL root store, with fake timers and a mocked fetch.
 // There is no Save button (owner, 2026-11-04): the top bar's status shows the
-// state (Saving... only past 300 ms), a failure has Retry, a 409 shows "Changed
+// state (Saving… only past 300 ms), a failure has Retry, a 409 shows "Changed
 // elsewhere" that reopens the version lock dialog, the page warns before
 // unloading unsaved work of any project of the tab (also one left behind,
 // which a notice names), a reload on purpose never warns, a generated page is
@@ -97,19 +97,20 @@ afterEach(() => {
 });
 
 describe('the top bar has a save status, not a Save button', () => {
-  it('renders no Save button, and an always-present polite status', async () => {
+  it('renders no Save button, and an always-present polite announcement region', async () => {
     openServerProject(3);
     render(<Editor />);
     await advance(0);
     expect(screen.queryByRole('button', { name: /save/i })).toBeNull();
-    expect(status().getAttribute('role')).toBe('status');
-    expect(status().getAttribute('aria-live')).toBe('polite');
+    const region = screen.getByTestId('save-announcement');
+    expect(region.getAttribute('role')).toBe('status');
+    expect(region.getAttribute('aria-live')).toBe('polite');
     expect(label()).toBe('Saved');
     // Nothing to act on: the status itself is not a stop for the keyboard.
     expect(status().querySelectorAll('button, a, [tabindex]')).toHaveLength(0);
   });
 
-  it('Saved, Unsaved changes, then straight to Saved for a quick save: no request on open, never "Saving..."', async () => {
+  it('Saved, Unsaved changes, then straight to Saved for a quick save: no request on open, never "Saving…"', async () => {
     // Strict fake time: real time on a loaded machine must not leak into the 300 ms window.
     vi.useRealTimers();
     vi.useFakeTimers();
@@ -137,7 +138,7 @@ describe('the top bar has a save status, not a Save button', () => {
     expect(knownServerVersion(project.id)).toBe(4);
   });
 
-  it('a save slower than 300 ms says "Saving..." from 300 ms on, then Saved', async () => {
+  it('a save slower than 300 ms says "Saving…" from 300 ms on, then Saved', async () => {
     // Strict fake time: real time on a loaded machine must not leak into the 300 ms window.
     vi.useRealTimers();
     vi.useFakeTimers();
@@ -149,7 +150,7 @@ describe('the top bar has a save status, not a Save button', () => {
     await advance(SAVING_LABEL_DELAY_MS - 1);
     expect(label()).toBe('Unsaved changes');
     await advance(1);
-    expect(label()).toBe('Saving...');
+    expect(label()).toBe('Saving…');
     await answer(ok(4));
     await advance(0);
     expect(label()).toBe('Saved');
@@ -233,6 +234,110 @@ describe('the top bar has a save status, not a Save button', () => {
     const reason = screen.getByTestId('save-status-reason').textContent ?? '';
     expect(reason).toContain('larger than the 10 MB a save can take');
     expect(reason).toContain('Remove large embedded content');
+  });
+});
+
+describe('what a screen reader hears', () => {
+  const announced = () => screen.getByTestId('save-announcement').textContent ?? '';
+
+  it('nothing for ordinary typing and saving; the failure; then Saved once', async () => {
+    const project = openServerProject(3);
+    fetchMock.mockResolvedValueOnce(ok(4)).mockResolvedValueOnce(failure(500, 'Database down.')).mockResolvedValueOnce(ok(5));
+    render(<Editor />);
+    edit(project, 'one');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    await advance(0);
+    expect(label()).toBe('Saved');
+    expect(announced()).toBe('');
+    edit(project, 'two');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    await advance(0);
+    expect(announced()).toContain('Not saved. Database down.');
+    await advance(2000);
+    await advance(0);
+    expect(label()).toBe('Saved');
+    expect(announced()).toBe('Saved.');
+  });
+
+  it('the conflict is announced', async () => {
+    const project = openServerProject(3);
+    fetchMock.mockResolvedValueOnce(conflict(9));
+    render(<Editor />);
+    edit(project, 'mine');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    await advance(0);
+    expect(announced()).toContain('changed somewhere else');
+  });
+});
+
+describe('the retry countdown', () => {
+  it('ticks once a second while shown', async () => {
+    vi.useRealTimers();
+    vi.useFakeTimers();
+    const project = openServerProject(3);
+    fetchMock.mockResolvedValueOnce(failure(503, 'Busy.')).mockResolvedValueOnce(failure(503, 'Busy.'));
+    render(<Editor />);
+    edit(project, 'mine');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    await advance(0);
+    const reason = () => screen.getByTestId('save-status-reason').textContent ?? '';
+    expect(reason()).toContain('Trying again in 2 s');
+    await advance(1000);
+    expect(reason()).toContain('Trying again in 1 s');
+  });
+});
+
+describe('leaving the page', () => {
+  it('pagehide commits and sends the unsaved copy as a keepalive request', async () => {
+    const project = openServerProject(3);
+    fetchMock.mockResolvedValueOnce(ok(4));
+    render(<Editor />);
+    await advance(0);
+    edit(project, 'last words');
+    act(() => {
+      window.dispatchEvent(new Event('pagehide'));
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][1].keepalive).toBe(true);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).project.metadata.description).toBe('last words');
+  });
+
+  it('a hidden tab sends it too; back online, a waiting retry goes at once', async () => {
+    const project = openServerProject(3);
+    fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch')).mockResolvedValueOnce(ok(4));
+    render(<Editor />);
+    await advance(0);
+    edit(project, 'hidden');
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    visibility.mockRestore();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await advance(0);
+    expect(label()).toContain('Not saved');
+    act(() => {
+      window.dispatchEvent(new Event('online'));
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await advance(0);
+    expect(label()).toBe('Saved');
+  });
+
+  it('a "Load the newer version" the person cancels (Stay) leaves autosave and the warning working', async () => {
+    const project = openServerProject(3);
+    const reload = vi.fn();
+    vi.spyOn(window, 'location', 'get').mockReturnValue({ ...window.location, reload } as Location);
+    fetchMock.mockResolvedValueOnce(conflict(9));
+    render(<Editor />);
+    edit(project, 'mine');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    fireEvent.click(await screen.findByRole('button', { name: 'Load the newer version' }));
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(unloadWarns()).toBe(false);
+    await advance(2000);
+    // Still on the page: the conflict stands, and so does the warning.
+    expect(unloadWarns()).toBe(true);
   });
 });
 
@@ -378,7 +483,7 @@ describe('the version lock', () => {
 });
 
 describe('Publish and the status', () => {
-  it('while Publish writes, the status says Publishing... and Cmd+S sends nothing', async () => {
+  it('while Publish writes, the status says Publishing… and Cmd+S sends nothing', async () => {
     const project = openServerProject(3);
     let answer: (r: Response) => void = () => {};
     fetchMock.mockImplementationOnce(() => new Promise<Response>((resolve) => (answer = resolve)));
@@ -391,7 +496,7 @@ describe('Publish and the status', () => {
     edit(project, 'publish me');
     fireEvent.click(screen.getByRole('button', { name: /^publish$/i }));
     await advance(0);
-    expect(label()).toBe('Publishing...');
+    expect(label()).toBe('Publishing…');
     act(() => {
       handleSaveShortcut(new KeyboardEvent('keydown', { key: 's', metaKey: true, cancelable: true }), store.editorUI);
     });

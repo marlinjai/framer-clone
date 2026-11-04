@@ -390,7 +390,7 @@ const TopBar = observer(() => {
       <PolishPageButton {...control('polish')} triggerClassName={wideOnly} />
 
       {/* The save status: the editor saves by itself and has no Save button
-          (owner, 2026-11-04); this says Saved, Unsaved changes, Saving..., or
+          (owner, 2026-11-04); this says Saved, Unsaved changes, Saving…, or
           why not, with Retry. Cmd/Ctrl+S saves at once. Saving never publishes. */}
       <SaveStatus />
 

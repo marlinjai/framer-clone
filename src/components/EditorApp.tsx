@@ -25,7 +25,7 @@ import { isPlacementType, type PlacementProps } from '@/lib/components/placement
 import InlineFormatBar from './InlineFormatBar';
 import LegalTemplateNotice from './site/LegalTemplateNotice';
 import { resolveAction } from '@/lib/keyBindings';
-import { handleSaveShortcut } from '@/lib/projects/saveShortcut';
+import { installSaveShortcut } from '@/lib/projects/saveShortcut';
 import { bindSpacePan, isActivatableControl } from '@/lib/canvas/spacePan';
 import { deleteSelection } from '@/lib/canvas/deleteSelection';
 import { duplicateLayer } from '@/lib/layers/layerActions';
@@ -169,10 +169,6 @@ export default function EditorApp({ projectSnapshot, projectVersion }: EditorApp
   // settings page can rebind without touching this file.
   React.useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      // Cmd/Ctrl+S, before every guard below: the browser's "save page" dialog
-      // must never open over the editor (also mid-drag, in the preview or in a
-      // field). It saves at once (src/lib/projects/saveShortcut.ts).
-      if (handleSaveShortcut(e, rootStore.editorUI)) return;
       const match = resolveAction(e);
       // Suppress editor shortcuts while a drag gesture is active so the user
       // can't accidentally delete the source mid-drag or undo into inconsistent
@@ -269,6 +265,12 @@ export default function EditorApp({ projectSnapshot, projectVersion }: EditorApp
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [rootStore.editorUI]);
+
+  // Cmd/Ctrl+S in the capture phase, before any field can stop the key: the
+  // browser's "save page" dialog must never open over the editor (also
+  // mid-drag, in the preview or while typing). It saves at once
+  // (src/lib/projects/saveShortcut.ts).
+  React.useEffect(() => installSaveShortcut(window, rootStore.editorUI), [rootStore.editorUI]);
 
   // Hold Space to pan; a focused control, a field, a dialog or a menu keeps
   // its own Space (src/lib/canvas/spacePan.ts).

@@ -56,8 +56,19 @@ import {
   knownServerVersion,
   markServerVersion,
   noteWriteInFlight,
+  savedContentOf,
   type ProjectContent,
+  type SavedContent,
 } from '@/stores/openProject';
+
+/** How long a reload on purpose may take before it counts as cancelled (Stay on the browser's question). */
+export const RELOAD_CANCELLED_AFTER_MS = 1500;
+
+function newRequestKey(): string {
+  const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+  if (c?.randomUUID) return c.randomUUID();
+  return `k${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`;
+}
 
 export const AUTOSAVE_DEBOUNCE_MS = 1500;
 export const AUTOSAVE_MAX_WAIT_MS = 10_000;
@@ -90,13 +101,22 @@ export type AutosaveState =
 /** The project the controller watches: the editor's live ProjectModel. */
 export type AutosaveProject = ProjectModelType;
 
+/** How one save request goes out. */
+export interface AutosaveWriteOptions {
+  /** Names this attempt; a retry of the same content on the same version reuses it. */
+  requestKey: string;
+  /** The page is going away: the browser should finish the request (when the body allows). */
+  keepalive?: boolean;
+}
+
 export interface AutosaveDeps {
   /** The save request. Defaults to POST /api/projects/save. */
-  write: (snapshot: unknown, expectedVersion: number | undefined) => Promise<ProjectWriteResult>;
+  write: (snapshot: unknown, expectedVersion: number | undefined, options: AutosaveWriteOptions) => Promise<ProjectWriteResult>;
 }
 
 const defaultDeps: AutosaveDeps = {
-  write: (snapshot, expectedVersion) => postProjectWrite('/api/projects/save', snapshot, expectedVersion, 'Save failed'),
+  write: (snapshot, expectedVersion, options) =>
+    postProjectWrite('/api/projects/save', snapshot, expectedVersion, 'Save failed', options),
 };
 
 /** A failure worth trying again by itself: the request may well pass next time. */
@@ -111,7 +131,7 @@ export function isPassingFailure(status: number | undefined): boolean {
  * retry: Retry or Cmd+S after a failure; also while paused, skipped when equal.
  * over: "Save mine over it"; always sends, naming the version the refusal reported.
  */
-type Mode = 'auto' | 'now' | 'retry' | 'over';
+type Mode = 'auto' | 'now' | 'retry' | 'over' | 'leave';
 
 export class AutosaveController {
   readonly projectId: string;
@@ -121,6 +141,8 @@ export class AutosaveController {
   private beforeHold: AutosaveState | undefined;
   /** When the current run of passing failures began (epoch ms). */
   private failingSince: number | undefined;
+  /** The key of the last attempt, for the content and version it carried. */
+  private attempt: { key: string; content: string; expectedVersion: number | undefined } | undefined;
   private deps: AutosaveDeps;
   private state: AutosaveState = { phase: 'saved' };
   private listeners = new Set<() => void>();
@@ -211,7 +233,19 @@ export class AutosaveController {
     this.project = project;
     this.disposeSnapshot = onPatch(project, () => this.notifyChange());
     notifyRegistry();
-    if (this.inFlight || this.paused() || this.state.phase === 'retrying') return;
+    if (this.inFlight) return;
+    if (this.paused() || this.state.phase === 'retrying') {
+      // A load meanwhile put the server's copy in place (nothing changed
+      // elsewhere is pending): the pause is about a copy that is gone.
+      if (changedElsewhereVersion(this.projectId) === undefined && isSaved(this.projectId, getSnapshot(project) as ProjectContent)) {
+        this.clearTimers();
+        this.attempts = 0;
+        this.failingSince = undefined;
+        this.dirtyHint = false;
+        this.setState({ phase: 'saved' });
+      }
+      return;
+    }
     // A load kept this tab's work over a newer server copy: wait for a choice.
     const elsewhere = changedElsewhereVersion(this.projectId);
     if (elsewhere !== undefined) {
@@ -353,14 +387,18 @@ export class AutosaveController {
     if (!project || !isAlive(project)) return;
     // No server copy known to this tab (a demo, or a demo just kept as a
     // project before its page loads): nothing to save over automatically.
-    if ((mode === 'auto' || mode === 'now') && knownServerVersion(this.projectId) === undefined) return;
+    if ((mode === 'auto' || mode === 'now' || mode === 'leave') && knownServerVersion(this.projectId) === undefined) return;
+    // Leaving the page never decides a refusal for the person.
+    if (mode === 'leave' && (this.paused() || this.discarding)) return;
     // A refusal pauses autosave: only Retry, or the dialog's choice, writes.
     if (mode === 'auto' && this.paused()) return;
     // The version lock's refusal is resolved only by a choice in its dialog.
     if (mode === 'retry' && this.state.phase === 'conflict') return;
     this.clearTimers();
     const snapshot = getSnapshot(project);
-    if (mode !== 'over' && isSaved(this.projectId, snapshot as ProjectContent)) {
+    // Serialised once for this save: compared now, recorded after the answer.
+    const content = savedContentOf(snapshot as ProjectContent);
+    if (mode !== 'over' && isSaved(this.projectId, content)) {
       this.dirtyHint = false;
       this.attempts = 0;
       this.failingSince = undefined;
@@ -378,7 +416,14 @@ export class AutosaveController {
     this.nowAfterFlight = false;
     // Tells a load meanwhile (Preview, coming back) that a version move may be this save's.
     noteWriteInFlight(this.projectId, true);
-    const request = this.send(snapshot, overVersion ?? knownServerVersion(this.projectId));
+    const expectedVersion = overVersion ?? knownServerVersion(this.projectId);
+    // The same content on the same version is the same attempt: a retry after
+    // a lost answer gets the stored result instead of a 409 against itself.
+    if (!this.attempt || this.attempt.content !== content.key || this.attempt.expectedVersion !== expectedVersion) {
+      this.attempt = { key: newRequestKey(), content: content.key, expectedVersion };
+    }
+    const options: AutosaveWriteOptions = { requestKey: this.attempt.key, ...(mode === 'leave' ? { keepalive: true } : {}) };
+    const request = this.send(snapshot, expectedVersion, options, content);
     this.inFlight = request;
     try {
       await request;
@@ -390,10 +435,15 @@ export class AutosaveController {
     this.maybeRelease();
   }
 
-  private async send(snapshot: unknown, expectedVersion: number | undefined): Promise<void> {
+  private async send(
+    snapshot: unknown,
+    expectedVersion: number | undefined,
+    options: AutosaveWriteOptions,
+    content: SavedContent,
+  ): Promise<void> {
     let result: ProjectWriteResult;
     try {
-      result = await this.deps.write(snapshot, expectedVersion);
+      result = await this.deps.write(snapshot, expectedVersion, options);
     } catch (err) {
       result = { kind: 'error', message: err instanceof Error ? err.message : 'Network error: Save failed.' };
     }
@@ -427,7 +477,7 @@ export class AutosaveController {
       return;
     }
     // The server now holds exactly this snapshot, at this version.
-    markServerVersion(this.projectId, snapshot as ProjectContent, result.version);
+    markServerVersion(this.projectId, snapshot as ProjectContent, result.version, content);
     this.attempts = 0;
     this.failingSince = undefined;
     this.dirtyHint = this.changedDuringFlight;
@@ -480,6 +530,38 @@ export class AutosaveController {
   discardForReload(): void {
     this.discarding = true;
     this.clearTimers();
+  }
+
+  /**
+   * The reload did not happen (the person chose Stay when the browser asked
+   * about another project's unsaved work): this project saves and warns again.
+   */
+  cancelDiscard(): void {
+    if (!this.discarding) return;
+    this.discarding = false;
+    const project = this.project;
+    if (!project || !isAlive(project) || this.paused() || this.state.phase === 'retrying') return;
+    if (!isSaved(this.projectId, getSnapshot(project) as ProjectContent)) {
+      this.dirtyHint = true;
+      this.setState({ phase: 'unsaved' });
+      this.schedule();
+    }
+  }
+
+  /**
+   * The page is being hidden or left (pagehide, a hidden tab): send what is not
+   * saved now, as a request the browser finishes after the page is gone when
+   * the body fits its 64 KB limit. A larger project relies on the normal
+   * request and the unload warning. Never while a refusal waits for a choice.
+   */
+  saveOnLeave(): Promise<void> {
+    if (!this.hasUnsavedWork() || this.inFlight) return Promise.resolve();
+    return this.run('leave');
+  }
+
+  /** Back online: a waiting retry goes now instead of at its timer. */
+  retryIfWaiting(): Promise<void> {
+    return this.state.phase === 'retrying' ? this.retry() : Promise.resolve();
   }
 
   /** Hide a failure's reason on the compact top bar; the failure stays what it is. */
@@ -622,8 +704,12 @@ export function anyUnsavedWork(): boolean {
 
 /** Reload on purpose, discarding this project's unsaved work without the unload warning. */
 export function reloadDiscarding(projectId: string | undefined): void {
-  existingAutosave(projectId)?.discardForReload();
+  const controller = existingAutosave(projectId);
+  controller?.discardForReload();
   window.location.reload();
+  // Still here after a while: the browser asked about other unsaved work and
+  // the person stayed. JavaScript is paused while that question is open.
+  if (controller) window.setTimeout(() => controller.cancelDiscard(), RELOAD_CANCELLED_AFTER_MS);
 }
 
 /** The controller of a project, created on first use. */

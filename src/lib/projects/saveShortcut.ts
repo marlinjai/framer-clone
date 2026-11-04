@@ -9,11 +9,15 @@
 // save status says what happens. The demo at `/` has no server copy, so
 // there it only swallows the key (its status offers "Keep as project").
 //
-// EditorApp's single keydown dispatcher calls this first, before its drag and
-// preview guards.
+// It listens in the CAPTURE phase on the window (installSaveShortcut): the
+// canvas's inline text editor, the panel's text field and the component
+// dialogs stop every keydown from bubbling, and the browser's dialog would
+// open there. Text still being typed in those fields is committed first
+// (openDrafts.ts), so the save carries it.
 
 import { resolveAction } from '@/lib/keyBindings';
 import { existingAutosave } from './autosave';
+import { commitOpenDrafts } from './openDrafts';
 
 export interface SaveShortcutUI {
   readonly isUnsavedDemo?: boolean;
@@ -24,6 +28,16 @@ export interface SaveShortcutUI {
 export function handleSaveShortcut(event: KeyboardEvent, ui: SaveShortcutUI): boolean {
   if (resolveAction(event)?.action !== 'save') return false;
   event.preventDefault();
+  commitOpenDrafts();
   if (!ui.isUnsavedDemo) void existingAutosave(ui.currentProject?.id)?.flush();
   return true;
+}
+
+/** Listen for Cmd/Ctrl+S before any field can stop the key; answers the removal. */
+export function installSaveShortcut(target: Window, ui: SaveShortcutUI): () => void {
+  const onKeyDown = (event: KeyboardEvent) => {
+    handleSaveShortcut(event, ui);
+  };
+  target.addEventListener('keydown', onKeyDown, true);
+  return () => target.removeEventListener('keydown', onKeyDown, true);
 }

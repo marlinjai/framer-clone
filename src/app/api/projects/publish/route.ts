@@ -133,7 +133,7 @@ async function handlePOST(req: Request): Promise<Response> {
     // The publish committed and a later step (the address, the cache) failed:
     // the working copy IS this snapshot now, at `written`. The error carries it
     // as `writtenVersion`, so the editor adopts it instead of meeting its own
-    // change as a conflict on the next Save.
+    // change as a conflict on its next save.
     if (written === undefined) return failure;
     const body = (await failure.json()) as { error: Record<string, unknown> };
     return Response.json({ error: { ...body.error, writtenVersion: written } }, { status: failure.status });

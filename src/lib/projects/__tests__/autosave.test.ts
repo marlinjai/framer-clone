@@ -28,7 +28,10 @@ import {
   existingAutosave,
   isPassingFailure,
   resetAutosaveForTests,
+  reloadDiscarding,
+  RELOAD_CANCELLED_AFTER_MS,
   type AutosaveController,
+  type AutosaveWriteOptions,
 } from '../autosave';
 
 let store: RootStoreType;
@@ -37,16 +40,18 @@ let seq = 0;
 interface Call {
   snapshot: ProjectSnapshotOut;
   expectedVersion: number | undefined;
+  options: AutosaveWriteOptions;
   answer: (result: ProjectWriteResult) => Promise<void>;
 }
 let calls: Call[] = [];
 
 /** The request: every call waits for the test's answer. */
-function write(snapshot: unknown, expectedVersion: number | undefined): Promise<ProjectWriteResult> {
+function write(snapshot: unknown, expectedVersion: number | undefined, options: AutosaveWriteOptions): Promise<ProjectWriteResult> {
   return new Promise((resolve) => {
     calls.push({
       snapshot: snapshot as ProjectSnapshotOut,
       expectedVersion,
+      options,
       answer: async (result) => {
         resolve(result);
         await vi.advanceTimersByTimeAsync(0);
@@ -804,5 +809,89 @@ describe('real content edits (through the repairs isSaved applies)', () => {
     await advance(AUTOSAVE_DEBOUNCE_MS);
     expect(calls).toHaveLength(1);
     expect((calls[0].snapshot.components as Record<string, { name: string }>).card.name).toBe('Tile');
+  });
+});
+
+
+describe('the re-review of 2026-11-04', () => {
+  it('a retry of the same content on the same version reuses the attempt key; new content gets a new one', async () => {
+    const { project } = openAndWatch(3);
+    edit(project, 'mine');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    await calls[0].answer(failure(504, 'Gateway timeout.'));
+    await advance(AUTOSAVE_BACKOFF_MS[0]);
+    expect(calls).toHaveLength(2);
+    expect(calls[1].options.requestKey).toBe(calls[0].options.requestKey);
+    // The server committed the first attempt: the repeat is answered with its version.
+    await calls[1].answer(ok(4));
+    edit(project, 'more');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    expect(calls[2].options.requestKey).not.toBe(calls[0].options.requestKey);
+    expect(calls[2].expectedVersion).toBe(4);
+  });
+
+  it('a 2xx without a version is a server error that retries (with the same key), never a refusal', async () => {
+    const { project, autosave } = openAndWatch(3);
+    edit(project, 'mine');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    await calls[0].answer({ kind: 'error', status: 502, message: 'The server did not confirm the save (its answer had no project version).' });
+    expect(autosave.getState()).toMatchObject({ phase: 'retrying', status: 502 });
+    await advance(AUTOSAVE_BACKOFF_MS[0]);
+    expect(calls[1].options.requestKey).toBe(calls[0].options.requestKey);
+  });
+
+  it('a reload that did not happen (Stay) lets the project save and warn again', async () => {
+    const { project, autosave } = openAndWatch(3);
+    const reload = vi.fn();
+    vi.spyOn(window, 'location', 'get').mockReturnValue({ ...window.location, reload } as Location);
+    edit(project, 'mine');
+    reloadDiscarding(project.id);
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(autosave.hasUnsavedWork()).toBe(false);
+    edit(project, 'typed while the browser asked');
+    await advance(RELOAD_CANCELLED_AFTER_MS);
+    expect(autosave.hasUnsavedWork()).toBe(true);
+    expect(autosave.getState().phase).toBe('unsaved');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].snapshot.metadata.description).toBe('typed while the browser asked');
+    vi.restoreAllMocks();
+  });
+
+  it('coming back to a paused project whose copy now equals the server clears the pause', async () => {
+    const { project, autosave } = openAndWatch(3);
+    edit(project, 'refused');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    await calls[0].answer(failure(403, 'Not an admin.'));
+    autosave.detach(project);
+    // Meanwhile the copy went back to what the server holds (an undo, a load of the server copy).
+    edit(project, '');
+    autosave.attach(project);
+    expect(autosave.getState().phase).toBe('saved');
+    edit(project, 'new work');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    expect(calls).toHaveLength(2);
+  });
+
+  it('leaving the page sends the unsaved copy at once, as a keepalive request; never over a refusal', async () => {
+    const { project, autosave } = openAndWatch(3);
+    edit(project, 'last words');
+    void autosave.saveOnLeave();
+    expect(calls).toHaveLength(1);
+    expect(calls[0].options.keepalive).toBe(true);
+    expect(calls[0].snapshot.metadata.description).toBe('last words');
+    await calls[0].answer(conflict(9));
+    edit(project, 'more');
+    await autosave.saveOnLeave();
+    expect(calls).toHaveLength(1);
+  });
+
+  it('back online, a waiting retry goes at once', async () => {
+    const { project, autosave } = openAndWatch(3);
+    edit(project, 'mine');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    await calls[0].answer(failure(undefined, 'Failed to fetch'));
+    void autosave.retryIfWaiting();
+    expect(calls).toHaveLength(2);
   });
 });

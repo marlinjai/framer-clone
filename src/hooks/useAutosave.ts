@@ -8,7 +8,7 @@
 //   - useAutosaveState: the state only, for anything else that shows it (the
 //     generator's "Saved" line). Never watches the project itself.
 //   - useSaveStatusLabel: the one wording of a state, shared by the top bar and
-//     the generator so the two always agree. It is calm: "Saving..." appears
+//     the generator so the two always agree. It is calm: "Saving…" appears
 //     only when a save takes longer than SAVING_LABEL_DELAY_MS; a quicker one
 //     goes straight from the previous word to "Saved".
 // The unload warning is not here: UnsavedWorkGuard asks every project of the
@@ -29,7 +29,7 @@ import {
 import { PROJECT_BODY_MAX_BYTES } from '@/lib/api/respond';
 import { knownServerVersion } from '@/stores/openProject';
 
-/** A save quicker than this never shows "Saving...". */
+/** A save quicker than this never shows "Saving…". */
 export const SAVING_LABEL_DELAY_MS = 300;
 
 const SAVED: AutosaveState = { phase: 'saved' };
@@ -80,6 +80,44 @@ export function isSaving(state: AutosaveState): boolean {
   return state.phase === 'saving' || (state.phase === 'conflict' && state.retrying);
 }
 
+/** Re-render once a second while `active` (a retry countdown on screen); answers the time. */
+export function useNow(active: boolean): number {
+  const [now, setNow] = React.useState(() => Date.now());
+  React.useEffect(() => {
+    if (!active) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [active]);
+  return now;
+}
+
+/**
+ * What a screen reader is told: only a failure, the version lock's refusal,
+ * and the first "Saved" after one of them. Not every Unsaved and Saved of
+ * ordinary typing, which would talk over the person at each pause.
+ */
+export function useSaveAnnouncement(state: AutosaveState): string {
+  const kind =
+    state.phase === 'failed' || state.phase === 'retrying'
+      ? 'failure'
+      : state.phase === 'conflict'
+        ? 'conflict'
+        : state.phase === 'saved'
+          ? 'saved'
+          : 'other';
+  const [announced, setAnnounced] = React.useState<{ kind: string; text: string }>({ kind: 'saved', text: '' });
+  // Derived from the previous announcement (React's "state from the previous render" pattern).
+  if (kind === 'failure' && announced.kind !== 'failure') {
+    setAnnounced({ kind, text: `Not saved. ${saveFailureReason(state) ?? ''}`.trim() });
+  } else if (kind === 'conflict' && announced.kind !== 'conflict') {
+    setAnnounced({ kind, text: 'Not saved: this project was changed somewhere else. Choose what to keep.' });
+  } else if (kind === 'saved' && (announced.kind === 'failure' || announced.kind === 'conflict')) {
+    setAnnounced({ kind, text: 'Saved.' });
+  }
+  return announced.text;
+}
+
 /** The word for a settled state (none while a request is out). */
 function settledLabel(state: AutosaveState): string | undefined {
   switch (state.phase) {
@@ -88,7 +126,7 @@ function settledLabel(state: AutosaveState): string | undefined {
     case 'unsaved':
       return 'Unsaved changes';
     case 'publishing':
-      return 'Publishing...';
+      return 'Publishing…';
     case 'retrying':
     case 'failed':
       return 'Not saved';
@@ -99,7 +137,7 @@ function settledLabel(state: AutosaveState): string | undefined {
   }
 }
 
-/** The status word, with "Saving..." held back for SAVING_LABEL_DELAY_MS. */
+/** The status word, with "Saving…" held back for SAVING_LABEL_DELAY_MS. */
 export function useSaveStatusLabel(state: AutosaveState): string {
   const saving = isSaving(state);
   const [late, setLate] = React.useState(false);
@@ -117,7 +155,7 @@ export function useSaveStatusLabel(state: AutosaveState): string {
   const [before, setBefore] = React.useState(settled ?? 'Unsaved changes');
   if (settled !== undefined && settled !== before) setBefore(settled);
   if (settled !== undefined) return settled;
-  return late ? 'Saving...' : before;
+  return late ? 'Saving…' : before;
 }
 
 const MEGABYTES = Math.round(PROJECT_BODY_MAX_BYTES / (1024 * 1024));
@@ -126,7 +164,7 @@ const MEGABYTES = Math.round(PROJECT_BODY_MAX_BYTES / (1024 * 1024));
  * Why a save failed, as something to act on: the server's reason, with what
  * to do for the refusals a person can fix. Undefined when nothing failed.
  */
-export function saveFailureReason(state: AutosaveState): string | undefined {
+export function saveFailureReason(state: AutosaveState, now: number = Date.now()): string | undefined {
   if (state.phase !== 'failed' && state.phase !== 'retrying') return undefined;
   const reason = /[.!?]$/.test(state.message.trim()) ? state.message.trim() : `${state.message.trim()}.`;
   if (state.status === 401) return 'You are signed out. Sign in again in a new tab, then Retry.';
@@ -135,7 +173,7 @@ export function saveFailureReason(state: AutosaveState): string | undefined {
     return `This project is larger than the ${MEGABYTES} MB a save can take. Remove large embedded content (pasted images, long embedded code or videos), then Retry.`;
   }
   if (state.phase === 'retrying') {
-    const seconds = Math.max(1, Math.round((state.retryAt - Date.now()) / 1000));
+    const seconds = Math.max(1, Math.ceil((state.retryAt - now) / 1000));
     return `${reason} Trying again in ${seconds} s.`;
   }
   if (state.retriesStopped) return `${reason} Automatic retries stopped after ${Math.round(AUTOSAVE_RETRY_LIMIT_MS / 60_000)} minutes. Retry when the connection is back.`;

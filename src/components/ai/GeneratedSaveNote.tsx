@@ -3,7 +3,7 @@
 // The generator dialog's line on whether a generated page or section is kept.
 // The editor saves it right away (src/lib/projects/autosave.ts), so the line
 // follows the save in the same words as the top bar's save status (one
-// wording, useSaveStatusLabel): Saved, Saving... (only when it takes longer
+// wording, useSaveStatusLabel): Saved, Saving… (only when it takes longer
 // than 300 ms), or Not saved with a pointer to the top bar, which holds the
 // reason and Retry. The demo editor at `/` has no autosave: there it points at
 // "Keep as project".

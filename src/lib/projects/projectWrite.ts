@@ -16,18 +16,34 @@ export type ProjectWriteResult =
   | { kind: 'conflict'; currentVersion: number }
   | { kind: 'error'; message: string; status?: number; writtenVersion?: number };
 
+/** Browsers refuse a `keepalive` request whose body is larger than 64 KB; stay under it. */
+export const KEEPALIVE_BODY_MAX_BYTES = 60 * 1024;
+
+export interface ProjectWriteOptions {
+  /** Names this attempt (save only): a retry of the same content reuses it. */
+  requestKey?: string;
+  /** Leaving the page: ask the browser to finish the request, when the body allows it. */
+  keepalive?: boolean;
+}
+
 export async function postProjectWrite(
   url: '/api/projects/save' | '/api/projects/publish',
   project: unknown,
   expectedVersion: number | undefined,
   failedLabel: string,
+  options: ProjectWriteOptions = {},
 ): Promise<ProjectWriteResult> {
   let res: Response;
   try {
+    const body = JSON.stringify({ project, expectedVersion, ...(options.requestKey ? { requestKey: options.requestKey } : {}) });
+    // A larger body goes as a normal request: it may not outlive the page,
+    // which the unload warning covers.
+    const keepalive = options.keepalive === true && new Blob([body]).size <= KEEPALIVE_BODY_MAX_BYTES;
     res = await fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ project, expectedVersion }),
+      body,
+      ...(keepalive ? { keepalive: true } : {}),
     });
   } catch (err) {
     return { kind: 'error', message: err instanceof Error ? err.message : `Network error: ${failedLabel}.` };
@@ -48,13 +64,14 @@ export async function postProjectWrite(
     };
   }
   const body = (payload ?? {}) as Record<string, unknown>;
-  // A success without the new version cannot be built on: the next write would
-  // be refused anyway. Said now, instead of a confusing conflict later.
+  // A success without the new version cannot be built on. It is a server
+  // error (502, retried like one), never a refusal or a conflict: a retry with
+  // the same attempt key gets the stored result.
   if (typeof body.version !== 'number') {
     return {
       kind: 'error',
-      status: res.status,
-      message: 'The server took the changes but did not return the project version. Reload the page before making more changes.',
+      status: 502,
+      message: 'The server did not confirm the save (its answer had no project version).',
     };
   }
   return { kind: 'ok', payload: body, version: body.version };

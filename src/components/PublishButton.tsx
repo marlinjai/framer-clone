@@ -5,7 +5,7 @@
 // which persists it and flips the site to `published`.
 //
 // Outcomes surface LOUDLY and never silently no-op:
-//   - in-flight: the button shows "Publishing..." and is disabled,
+//   - in-flight: the button shows "Publishing…" and is disabled,
 //   - success: a brief confirmation (how many pages went live),
 //   - conflict: the project was saved somewhere else since this tab loaded it
 //     (409 `site_changed`, the version lock): SiteChangedDialog asks whether to
@@ -132,7 +132,7 @@ const PublishButton = observer(() => {
       }
       if (result.kind === 'error') {
         // Published, but a later step failed: this snapshot is what the server
-        // holds (marked inside `write`), so the next Save must not meet it as
+        // holds (marked inside `write`), so the next save (autosave) must not meet it as
         // someone else's change.
         setState({ kind: 'error', message: result.message });
         return;
@@ -269,7 +269,7 @@ const PublishButton = observer(() => {
         title="Publish this site"
       >
         <UploadCloud size={16} />
-        {publishing ? 'Publishing...' : 'Publish'}
+        {publishing ? 'Publishing…' : 'Publish'}
       </Button>
     </div>
   );

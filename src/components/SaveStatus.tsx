@@ -6,16 +6,19 @@
 // it." So there is no Save button: the editor saves by itself
 // (src/lib/projects/autosave.ts), Cmd/Ctrl+S saves at once
 // (src/lib/projects/saveShortcut.ts), and this says what is going on:
-//   - Saved; Unsaved changes (while the debounce runs); Saving... only when a
+//   - Saved; Unsaved changes (while the debounce runs); Saving… only when a
 //     save takes longer than 300 ms (useSaveStatusLabel), so typing never
-//     flashes; Publishing... while Publish writes the same copy;
+//     flashes; Publishing… while Publish writes the same copy;
 //   - Not saved, with the reason and Retry (and "Sign in again" in a new tab
 //     when signed out: navigating this tab would lose the very work at stake);
 //   - Changed elsewhere (the version lock refused, 409 `site_changed`): a
 //     button that reopens SiteChangedDialog.
-// The words sit in one polite live region that is always present, so each
-// change is announced. The text itself is never focusable; only an action is.
-// A word changes with a fade under 300 ms, ease-out, and none with reduced motion.
+// A screen reader hears only what matters (useSaveAnnouncement, one polite
+// live region that is always present): a failure, the version lock's refusal,
+// and the first "Saved" after one of them, never each Unsaved and Saved of
+// ordinary typing. The text itself is never focusable; only an action is.
+// Only a problem appearing fades in (under 300 ms, ease-out, none with reduced
+// motion); the ordinary words just change.
 //
 // The demo editor at `/` (isUnsavedDemo) has no server copy and never
 // autosaves: the status says it is not saved, and "Keep as project" makes it
@@ -28,7 +31,7 @@ import { getSnapshot } from 'mobx-state-tree';
 import { CircleDot, CloudAlert, CloudCheck, CloudOff, CloudUpload, FolderPlus, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useStore } from '@/hooks/useStore';
-import { isSaving, saveFailureReason, useAutosave, useSaveStatusLabel } from '@/hooks/useAutosave';
+import { isSaving, saveFailureReason, useAutosave, useNow, useSaveAnnouncement, useSaveStatusLabel } from '@/hooks/useAutosave';
 import { reloadDiscarding, type AutosaveState } from '@/lib/projects/autosave';
 import SaveAsNewProjectDialog from './SaveAsNewProjectDialog';
 import SiteChangedDialog from './SiteChangedDialog';
@@ -59,6 +62,9 @@ const SaveStatus = observer(() => {
   const isUnsavedDemo = rootStore.editorUI.isUnsavedDemo === true;
   const { controller, state } = useAutosave(project, !isUnsavedDemo);
   const label = useSaveStatusLabel(state);
+  const announcement = useSaveAnnouncement(state);
+  // "Trying again in N s" counts down while it is shown.
+  const now = useNow(state.phase === 'retrying');
   const [saveAsOpen, setSaveAsOpen] = React.useState(false);
 
   if (!project) return null;
@@ -97,7 +103,7 @@ const SaveStatus = observer(() => {
   }
 
   const saving = isSaving(state);
-  const reason = saveFailureReason(state);
+  const reason = saveFailureReason(state, now);
   const failed = state.phase === 'failed' || state.phase === 'retrying';
   const conflict = state.phase === 'conflict';
   const tone = failed ? 'text-destructive' : conflict ? 'text-amber-700 dark:text-amber-400' : 'text-muted-foreground';
@@ -105,10 +111,10 @@ const SaveStatus = observer(() => {
 
   return (
     <div className="mr-1 flex min-w-0 items-center gap-1.5 lg:mr-2" data-autosave-phase={state.phase}>
+      <span role="status" aria-live="polite" aria-atomic="true" data-testid="save-announcement" className="sr-only">
+        {announcement}
+      </span>
       <span
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
         data-testid="save-status"
         title={reason ?? (conflict ? 'This project was saved somewhere else. Choose what to keep.' : 'Changes are saved automatically. Cmd+S (Ctrl+S) saves at once.')}
         className={`flex min-w-0 items-center gap-1.5 text-xs ${tone}`}
@@ -124,7 +130,8 @@ const SaveStatus = observer(() => {
             Changed elsewhere
           </button>
         ) : (
-          <span key={label} className={`whitespace-nowrap ${failed ? '' : 'max-sm:sr-only'} ${FADE}`}>
+          // A problem appearing fades in once; the ordinary words just change.
+          <span key={failed ? 'failed' : 'ok'} className={`whitespace-nowrap ${failed ? FADE : 'max-sm:sr-only'}`}>
             {label}
           </span>
         )}
@@ -138,7 +145,7 @@ const SaveStatus = observer(() => {
             <button
               type="button"
               onClick={() => controller?.dismissMessage()}
-              aria-label="Put the reason away"
+              aria-label="Dismiss"
               className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground lg:hidden"
             >
               <X size={14} aria-hidden />
