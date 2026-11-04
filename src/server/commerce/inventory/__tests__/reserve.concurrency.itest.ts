@@ -371,15 +371,18 @@ describe('CM-08 reserve concurrency (Dockerized Postgres)', () => {
     expect((await readLevel(db, hi, locationId)).reserved).toBe(2);
   });
 
-  it('two orders racing for a BACKORDER variant near the ceiling, only one fits: the loser re-evaluates the bounded UPDATE and is refused with ReservationOverflowError', async () => {
-    const db = tenantDb(ownerBase!, TG);
-    // 10 below the ceiling: one order of 6 fits, a second of 6 on top would pass it.
-    const { variantId, inventoryItemId, locationId } = await seedBackorder(db, MAX_ORDER_INTEGER - 10);
-    const requestA = `ceiling-a-${randomUUID()}`;
-    const requestB = `ceiling-b-${randomUUID()}`;
-
-    // Order A reserves on its own connection and holds its transaction (and the row lock) open,
-    // so order B on a second connection is guaranteed to queue behind it rather than run first.
+  /**
+   * Order A reserves on its own connection and holds its transaction (and the row lock) open
+   * until order B, on a second connection, is seen waiting on that lock; only then A commits.
+   * So B always re-evaluates its bounded UPDATE against A's committed row: a forced race, not
+   * two calls that may happen to run one after the other. A failure on either side ends the
+   * test with its own error instead of a hung lock and a timeout.
+   */
+  async function raceBehindHeldOrder(
+    db: Kysely<CommerceDB>,
+    first: Parameters<typeof reserve>[2],
+    second: Parameters<typeof reserve>[2],
+  ) {
     let releaseA!: () => void;
     const aHolds = new Promise<void>((resolve) => {
       releaseA = resolve;
@@ -389,22 +392,38 @@ describe('CM-08 reserve concurrency (Dockerized Postgres)', () => {
       aReserved = resolve;
     });
     const orderA = reserveTransaction(db, async (trx) => {
-      const result = await reserve(trx, TG, { inventoryItemId, variantId, locationId, needed: 6, requestId: requestA });
+      const result = await reserve(trx, TG, first);
       aReserved();
       await aHolds;
       return result;
     });
-    await aHasReserved;
+    // A failing before it reserved must end the wait for it, with A's own error.
+    await Promise.race([aHasReserved, orderA.then(() => undefined)]);
 
-    const orderB = reserveWithRetry(db, TG, { inventoryItemId, variantId, locationId, needed: 6, requestId: requestB }).then(
+    const orderB = reserveWithRetry(db, TG, second).then(
       (result) => ({ result, error: null as unknown }),
       (error: unknown) => ({ result: null, error }),
     );
-    await waitForLockWaiter();
-    releaseA();
+    try {
+      await waitForLockWaiter();
+    } finally {
+      releaseA();
+    }
+    return { a: await orderA, b: await orderB };
+  }
 
-    const a = await orderA;
-    const b = await orderB;
+  it('two orders racing for a BACKORDER variant near the ceiling, only one fits: the loser re-evaluates the bounded UPDATE and is refused with ReservationOverflowError', async () => {
+    const db = tenantDb(ownerBase!, TG);
+    // 10 below the ceiling: one order of 6 fits, a second of 6 on top would pass it.
+    const { variantId, inventoryItemId, locationId } = await seedBackorder(db, MAX_ORDER_INTEGER - 10);
+    const requestA = `ceiling-a-${randomUUID()}`;
+    const requestB = `ceiling-b-${randomUUID()}`;
+
+    const { a, b } = await raceBehindHeldOrder(
+      db,
+      { inventoryItemId, variantId, locationId, needed: 6, requestId: requestA },
+      { inventoryItemId, variantId, locationId, needed: 6, requestId: requestB },
+    );
     expect(a.ok).toBe(true);
     expect(b.result).toBeNull();
     expect(b.error).toBeInstanceOf(ReservationOverflowError);
@@ -429,13 +448,14 @@ describe('CM-08 reserve concurrency (Dockerized Postgres)', () => {
     const requestA = `ceiling-fit-a-${randomUUID()}`;
     const requestB = `ceiling-fit-b-${randomUUID()}`;
 
-    const [a, b] = await Promise.all([
-      reserveWithRetry(db, TG, { inventoryItemId, variantId, locationId, needed: 4, requestId: requestA }),
-      reserveWithRetry(db, TG, { inventoryItemId, variantId, locationId, needed: 6, requestId: requestB }),
-    ]);
-
+    const { a, b } = await raceBehindHeldOrder(
+      db,
+      { inventoryItemId, variantId, locationId, needed: 4, requestId: requestA },
+      { inventoryItemId, variantId, locationId, needed: 6, requestId: requestB },
+    );
     expect(a.ok).toBe(true);
-    expect(b.ok).toBe(true);
+    expect(b.error).toBeNull();
+    expect(b.result?.ok).toBe(true);
     const after = await readLevel(db, inventoryItemId, locationId);
     expect(after.reserved).toBe(MAX_ORDER_INTEGER);
     expect(await countRows(db, 'reservation', requestA)).toBe(1);
