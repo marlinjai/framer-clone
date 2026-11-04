@@ -38,7 +38,7 @@ import { expandPage, literalPageRoots, type PageExpansion } from '@/lib/componen
 import { extractBreakpoints, type ComponentSnapshotLike } from '@/lib/renderer/server/componentSnapshot';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { getComponentEntry } from '@/lib/componentRegistry';
-import { REQUIRED_SHOP_PART_MESSAGE, buildShopParts, holdsOutsidePart, holdsRequiredShopPart, nearestShopControlId, shopControlKindOf, withoutOutsideRoles, shopLocaleOf, withShopParts, type ShopTreeNode } from '@/lib/commerce/parts';
+import { CLOSED_SHOP_PART_MESSAGE, REQUIRED_SHOP_PART_MESSAGE, buildShopParts, shopPartRefusal, holdsOutsidePart, holdsRequiredShopPart, nearestShopControlId, shopControlKindOf, withoutOutsideRoles, shopLocaleOf, withShopParts, type ShopTreeNode } from '@/lib/commerce/parts';
 import type { ApplyOutcome, GenerationUndoRecord } from '@/lib/ai/pageGen/apply';
 import { isVoidTag } from '@/lib/drag/voidTags';
 import { bareTextRefusal, isTextNodeType } from '@/lib/renderer/textNode';
@@ -299,6 +299,26 @@ const PageWithComponents = PageBase.props({
 });
 
 
+/** Tells the editor, when there is one, why a shop edit was refused. */
+function refuseShopEdit(self: unknown, message: string): void {
+  try {
+    getRoot<{ editorUI?: { setEditorNotice?: (notice: { kind: 'refused'; message: string }) => void } }>(self as never).editorUI?.setEditorNotice?.({ kind: 'refused', message });
+  } catch {
+    // No editor around this tree: the refusal is the answer.
+  }
+}
+
+/** The node and its ancestors, nearest first. */
+function ancestorChain(self: unknown, start: ComponentInstance | undefined): ComponentInstance[] {
+  const out: ComponentInstance[] = [];
+  for (let node = start; node && !out.includes(node); ) {
+    out.push(node);
+    const parentId = node.parentId as string | undefined;
+    node = parentId ? findComponentInPage(self as never, parentId) : undefined;
+  }
+  return out;
+}
+
 /**
  * The registry entry's default children (a Form arrives with its fields and
  * submit button), created fresh with their own ids, one level deep per entry
@@ -502,6 +522,11 @@ const PageModel = PageWithComponents
       console.warn('[PageModel] Insert target is a text node or a placement, which hold no children');
       return undefined;
     }
+    const refusal = shopPartRefusal(getSnapshot(child) as never, ancestorChain(self, parent));
+    if (refusal) {
+      refuseShopEdit(self, refusal);
+      return undefined;
+    }
 
     parent.addChild(child, index);
     self.updatedAt = new Date();
@@ -520,6 +545,11 @@ const PageModel = PageWithComponents
     }
     const { parent, index } = insertPlace(self, target);
     const placement = createIntrinsicComponent(id, PLACEMENT_TYPE as never, { component: definitionId });
+    const refusal = shopPartRefusal(getSnapshot(placement) as never, ancestorChain(self, parent));
+    if (refusal) {
+      refuseShopEdit(self, refusal);
+      return undefined;
+    }
     parent.addChild(placement, index);
     self.updatedAt = new Date();
     return placement;
@@ -563,6 +593,8 @@ const PageModel = PageWithComponents
       if (typeof target.props?.children === 'string') {
         return { ok: false, reason: 'The selected component holds text; select a container instead.' };
       }
+      const closed = snapshots.map((snapshot) => shopPartRefusal(snapshot as never, ancestorChain(self, target))).find(Boolean);
+      if (closed) return { ok: false, reason: closed };
       createAll(target.id).forEach(child => target.addChild(child));
       self.updatedAt = new Date();
       return { ok: true, value: { kind: 'insert', generationId, pageId: self.id, parentId: target.id, insertedIds } };
@@ -594,6 +626,9 @@ const PageModel = PageWithComponents
       id = node.parentId as string | undefined;
     }
     if (holdsRequiredShopPart(target, targetAncestors)) return { ok: false, reason: REQUIRED_SHOP_PART_MESSAGE };
+    // The same placement check insert mode runs, against the parent the replacement lands in.
+    const misplaced = snapshots.map((snapshot) => shopPartRefusal(snapshot as never, targetAncestors)).find(Boolean);
+    if (misplaced) return { ok: false, reason: misplaced };
     const index = parent.children.findIndex((c: ComponentInstance) => c.id === target.id);
     const previous = getSnapshot(target) as ComponentSnapshotIn;
     parent.removeChild(target.id);
@@ -689,7 +724,14 @@ const PageModel = PageWithComponents
       const parent = findComponentInPage(self, component.parentId);
       if (!parent) return undefined;
       const index = parent.children.findIndex((c: ComponentInstance) => c.id === component.id);
-      const copy = ComponentModel.create(withFreshIds(getSnapshot(component) as ComponentSnapshotIn, parent.id));
+      const copySnapshot = withFreshIds(getSnapshot(component) as ComponentSnapshotIn, parent.id);
+      // A copy inside the pay button or a notice would be dropped on the next load: say so now.
+      const refusal = shopPartRefusal(copySnapshot as never, ancestorChain(self, parent));
+      if (refusal) {
+        refuseShopEdit(self, refusal);
+        return undefined;
+      }
+      const copy = ComponentModel.create(copySnapshot);
       parent.addChild(copy, index + 1);
       self.updatedAt = new Date();
       return copy;
@@ -843,6 +885,31 @@ const PageModel = PageWithComponents
       }
     }
 
+    // A part moved inside its own control stays in the place its spec gives it (among
+    // its siblings, never into another part): the normaliser would take its role away
+    // there and put the default back, so the editor refuses the move and says why.
+    {
+      const chain = (startId: string | undefined): ComponentInstance[] => {
+        const out: ComponentInstance[] = [];
+        for (let id = startId; id; ) {
+          const node = findComponentInPage(self, id);
+          if (!node || out.includes(node)) break;
+          out.push(node);
+          id = node.parentId as string | undefined;
+        }
+        return out;
+      };
+      const newParentId = target.kind === 'appTree' ? appTree.id : target.kind === 'floating' ? undefined : resolvedParentId;
+      const toAncestors = chain(newParentId);
+      const sameControl = nearestShopControlId(chain(component.parentId as string | undefined)) === nearestShopControlId(toAncestors);
+      // A plain node dropped into the pay button or a notice is refused the same way.
+      const refusal = shopPartRefusal(component, toAncestors);
+      if (refusal && (sameControl || refusal === CLOSED_SHOP_PART_MESSAGE)) {
+        refuseShopEdit(self, refusal);
+        return undefined;
+      }
+    }
+
     // A part that lands outside the control it belongs to (out of any control, or in
     // another one) becomes a plain node with a fresh id: its role would mean nothing
     // there, and its id is the one its control gives the part it puts back on the
@@ -863,6 +930,13 @@ const PageModel = PageWithComponents
       const to = nearestShopControlId(ancestorsOf(newParentId));
       if (from !== to) {
         const fresh = withoutOutsideRoles(getSnapshot(component) as unknown as ShopTreeNode, (id) => `${id}-${uuidv4().slice(0, 8)}`);
+        // The refusal ran above on the node with its roles; what lands is the stripped node, which a
+        // part that takes its own parts only (the pay button) refuses like any other plain node.
+        const landing = shopPartRefusal(fresh, ancestorsOf(newParentId));
+        if (landing === CLOSED_SHOP_PART_MESSAGE) {
+          refuseShopEdit(self, landing);
+          return undefined;
+        }
         return replaceAndMove(self, component, fresh as unknown as ComponentSnapshotIn, target, resolvedParentId, resolvedIndex);
       }
     }

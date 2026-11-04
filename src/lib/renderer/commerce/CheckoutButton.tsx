@@ -52,8 +52,9 @@ import type { ComponentInstance } from '@/models/ComponentModel';
 import type { BindingScope } from '@/lib/bindings/resolver/scope';
 import { useCart, useCheckoutUnavailableReason, type CartLine } from '@/lib/commerce/cart';
 import { getPaymentGateway, type CheckoutBuyer, type PaymentGateway, type RefusedBuyerField } from '@/lib/commerce/payment';
+import { ORDER_TOO_LARGE_CODE, ORDER_TOO_SMALL_CODE } from '@/lib/commerce/dto';
 import { CHECKOUT_BUYER_FIELDS, CHECKOUT_PREVIEW_STATES, type CheckoutPreviewStateId, type ShopLocale } from '@/lib/commerce/parts';
-import { ShopDesignContext, ShopLocaleContext, ShopRuntimeContext, type ShopPartRender, type ShopRuntime } from '@/lib/commerce/shopRuntime';
+import { EMPTY_LIVE_REGION_STYLE, ShopDesignContext, ShopLocaleContext, ShopRuntimeContext, type ShopPartRender, type ShopRuntime } from '@/lib/commerce/shopRuntime';
 import { ShopControlContent } from './ShopControlContent';
 
 /** A single per-line shortage, in the client's variant vocabulary. */
@@ -201,15 +202,24 @@ function newIdempotencyKey(): string {
 const MESSAGES = {
   en: {
     paymentsUnavailable: 'this shop cannot take payments yet. Nothing has been charged.',
+    orderTooLarge: 'the order is larger than one order can hold. Lower a quantity in your cart and check out again.',
+    orderTooSmall: 'the order total is below the minimum the payment provider accepts. Add items to your cart and check out again. Nothing has been charged.',
+    mixedPriceBasis: 'some items in your cart cannot be ordered together yet. Order them separately, or try again later. Nothing has been charged.',
     orderFailed: (status: number) => `order failed (${status})`,
     declined: (message: string) => `${message}. Your cart is kept: check out again to try once more.`,
   },
   de: {
     paymentsUnavailable: 'dieser Shop kann noch keine Zahlungen annehmen. Es wurde nichts abgebucht.',
+    orderTooLarge: 'die Bestellung ist größer, als eine Bestellung fassen kann. Verringern Sie eine Menge im Warenkorb und gehen Sie erneut zur Kasse.',
+    orderTooSmall: 'der Bestellwert liegt unter dem Mindestbetrag, den der Zahlungsanbieter annimmt. Legen Sie weitere Artikel in den Warenkorb und gehen Sie erneut zur Kasse. Es wurde nichts abgebucht.',
+    mixedPriceBasis: 'einige Artikel im Warenkorb können noch nicht zusammen bestellt werden. Bestellen Sie sie einzeln oder versuchen Sie es später erneut. Es wurde nichts abgebucht.',
     orderFailed: (status: number) => `Serverfehler (${status})`,
     declined: (message: string) => `${message}. Ihr Warenkorb bleibt erhalten: Gehen Sie erneut zur Kasse, um es noch einmal zu versuchen.`,
   },
 } as const;
+
+/** The order route's refusal of a cart that mixes prices with and without VAT. */
+const MIXED_PRICE_BASIS_CODE = 'mixed_price_basis';
 
 const UNAVAILABLE_NOTE_STYLE: React.CSSProperties = { margin: 0, fontFamily: 'inherit', fontSize: '12px', opacity: 0.75 };
 
@@ -217,7 +227,7 @@ export default function CheckoutButton(props: CheckoutButtonProps) {
   return props.surface === 'canvas' ? <CheckoutCanvas {...props} /> : <CheckoutLive {...props} />;
 }
 
-function CheckoutLive({ node, hostType = 'div', hostProps = {}, gateway, children }: CheckoutButtonProps) {
+function CheckoutLive({ node, scope, hostType = 'div', hostProps = {}, gateway, children }: CheckoutButtonProps) {
   const cart = useCart();
   const locale = React.useContext(ShopLocaleContext);
   const unavailableReason = useCheckoutUnavailableReason();
@@ -357,6 +367,26 @@ function CheckoutLive({ node, hostType = 'div', hostProps = {}, gateway, childre
       }
 
       if (res.status === 422) {
+        const error = ((await res.json().catch(() => null)) as { error?: { code?: string; message?: string } } | null)?.error;
+        // An order larger than one order stores (order_too_large: a huge quantity times its
+        // price): nothing was ordered. Keep the cart and say what to change, in the checkout's words.
+        if (error?.code === ORDER_TOO_LARGE_CODE) {
+          setState({ status: 'order_error', reason: 'failed', message: messages.orderTooLarge });
+          return;
+        }
+        // A paid total below the payment provider's minimum charge (order_too_small): nothing was
+        // ordered. Keep the cart and say what to change, in the checkout's words and the site language.
+        if (error?.code === ORDER_TOO_SMALL_CODE) {
+          setState({ status: 'order_error', reason: 'failed', message: messages.orderTooSmall });
+          return;
+        }
+        // Items priced with and without VAT in one cart (mixed_price_basis): the shop owner has
+        // to align them. The server's wording is for the owner and in English, so the buyer gets
+        // the checkout's own words in the site language.
+        if (error?.code === MIXED_PRICE_BASIS_CODE) {
+          setState({ status: 'order_error', reason: 'failed', message: messages.mixedPriceBasis });
+          return;
+        }
         // An item the storefront no longer sells (unknown_variant): NOT a stock
         // shortage and NOT a server fault. Keep the cart and tell the visitor
         // what to do next (its own part, in the shop's words).
@@ -501,12 +531,18 @@ function CheckoutLive({ node, hostType = 'div', hostProps = {}, gateway, childre
     hostType,
     wrapperProps,
     <ShopRuntimeContext.Provider value={runtime}>
-      <ShopControlContent node={node} kind="checkout-button" locale={locale} drawn={children} />
+      <ShopControlContent node={node} kind="checkout-button" locale={locale} drawn={children} scope={scope} />
     </ShopRuntimeContext.Provider>,
-    unavailableReason && noteShown ? (
-      <p data-checkout-unavailable role="status" style={UNAVAILABLE_NOTE_STYLE}>
-        {unavailableReason}
-      </p>
+    // Where no order can be placed, the note's status region is on the page before a
+    // press and receives the reason with it, so a screen reader announces it.
+    unavailableReason ? (
+      <div role="status" data-checkout-unavailable-region="" style={noteShown ? undefined : EMPTY_LIVE_REGION_STYLE}>
+        {noteShown ? (
+          <p data-checkout-unavailable style={UNAVAILABLE_NOTE_STYLE}>
+            {unavailableReason}
+          </p>
+        ) : null}
+      </div>
     ) : null,
   );
 }
@@ -540,6 +576,12 @@ function refused(refusal: { fields: RefusedBuyerField[] } | null, key: keyof Che
 
 const HIDDEN: ShopPartRender = { visible: false };
 const SHOWN: ShopPartRender = { visible: true };
+/**
+ * A message the checkout shows later (going to payment, back from payment, the
+ * confirmation): announced through a status region on the page in every state
+ * (ShopPartRender.live), so the part itself carries no role.
+ */
+const LIVE_HIDDEN: ShopPartRender = { visible: false, live: true };
 
 /** The checkout's runtime for its parts, from one state. The live control and the canvas both use it. */
 function checkoutRuntime(view: CheckoutView): ShopRuntime {
@@ -555,7 +597,7 @@ function checkoutPart(role: string, view: CheckoutView): ShopPartRender {
   const { state, locale, handlers } = view;
   const live = handlers !== null;
   const shown = (visible: boolean, render: Omit<ShopPartRender, 'visible'> = {}): ShopPartRender =>
-    visible ? { visible: true, ...render } : HIDDEN;
+    visible ? { visible: true, ...render } : render.live ? LIVE_HIDDEN : HIDDEN;
 
   const placing = state.status === 'placing';
   // The primary checkout button is hidden once the payment step / confirmation is
@@ -584,10 +626,11 @@ function checkoutPart(role: string, view: CheckoutView): ShopPartRender {
     case 'checkout.button-loading':
       return shown(placing);
     case 'checkout.redirecting':
-      return shown(state.status === 'redirecting', { props: { 'data-checkout-redirecting': '', role: 'status' } });
+      return shown(state.status === 'redirecting', { live: true, props: { 'data-checkout-redirecting': '' } });
     case 'checkout.returned-cancelled':
       return shown(state.status === 'returned' && state.outcome === 'cancelled', {
-        props: { 'data-checkout-returned': 'cancelled', role: 'status' },
+        live: true,
+        props: { 'data-checkout-returned': 'cancelled' },
       });
     case 'checkout.items-unavailable':
       return shown(state.status === 'order_error' && state.reason === 'items_unavailable', {
@@ -601,8 +644,8 @@ function checkoutPart(role: string, view: CheckoutView): ShopPartRender {
   }
 
   if (role.startsWith('checkout.returned-')) {
-    if (state.status !== 'returned' || state.outcome !== 'paid') return HIDDEN;
-    if (role === 'checkout.returned-paid') return shown(true, { props: { 'data-checkout-returned': 'paid', role: 'status' } });
+    if (state.status !== 'returned' || state.outcome !== 'paid') return role === 'checkout.returned-paid' ? LIVE_HIDDEN : HIDDEN;
+    if (role === 'checkout.returned-paid') return shown(true, { live: true, props: { 'data-checkout-returned': 'paid' } });
     if (role === 'checkout.returned-paid-text') return shown(true, { tokens: { orderNumber: state.orderNumber } });
     if (role === 'checkout.returned-email') return shown(state.confirmationTo !== null, { tokens: { email: state.confirmationTo ?? '' } });
     if (role === 'checkout.returned-keep') return shown(state.confirmationTo === null);
@@ -610,7 +653,7 @@ function checkoutPart(role: string, view: CheckoutView): ShopPartRender {
   }
 
   if (role === 'checkout.confirmation' || role === 'checkout.confirmed' || role === 'checkout.payment-ref' || role.startsWith('checkout.receipt')) {
-    if (state.status !== 'confirmed') return HIDDEN;
+    if (state.status !== 'confirmed') return role === 'checkout.confirmation' ? LIVE_HIDDEN : HIDDEN;
     const tokens = {
       orderNumber: state.order.orderNumber,
       total: formatCents(state.order.totalCents, state.order.currency, locale),
@@ -618,7 +661,7 @@ function checkoutPart(role: string, view: CheckoutView): ShopPartRender {
       receiptNumber: state.receiptNumber ?? '',
       email: state.email,
     };
-    if (role === 'checkout.confirmation') return shown(true, { props: { 'data-checkout-confirmation': '', role: 'status' } });
+    if (role === 'checkout.confirmation') return shown(true, { live: true, props: { 'data-checkout-confirmation': '' } });
     if (role === 'checkout.confirmed') return shown(true, { tokens });
     if (role === 'checkout.payment-ref') return shown(true, { tokens, props: { 'data-checkout-payment-ref': '' } });
     if (role === 'checkout.receipt-email') {
@@ -670,7 +713,8 @@ function checkoutPart(role: string, view: CheckoutView): ShopPartRender {
         id: fieldId(key),
         'aria-labelledby': `${fieldId(key)}-label`,
         type: input.type,
-        name: key,
+        // No name: the order is sent from the island's state, never by a form, so a
+        // form the page wraps around the checkout has no buyer details to post.
         required: true,
         autoComplete: input.autoComplete,
         'data-checkout-buyer-field': key,
@@ -805,13 +849,26 @@ export function sampleCheckoutState(id: CheckoutPreviewStateId | string, locale:
         state: { status: 'confirmed', order: SAMPLE_ORDER, transactionId: 'demo_txn_sample', receiptNumber: 'RE-2026-0042', email: text.email },
         cartEmpty: true,
       };
+    case 'confirmed-no-email':
+      return {
+        state: { status: 'confirmed', order: { ...SAMPLE_ORDER, confirmationEmail: false }, transactionId: 'demo_txn_sample', receiptNumber: 'RE-2026-0042', email: text.email },
+        cartEmpty: true,
+      };
+    case 'returned-paid-no-email':
+      return { state: { status: 'returned', outcome: 'paid', orderNumber: SAMPLE_ORDER.orderNumber, confirmationTo: null }, cartEmpty: true };
     case 'returned-paid':
       return { state: { status: 'returned', outcome: 'paid', orderNumber: SAMPLE_ORDER.orderNumber, confirmationTo: text.email }, cartEmpty: true };
     case 'returned-cancelled':
       return { state: { status: 'returned', outcome: 'cancelled', orderNumber: SAMPLE_ORDER.orderNumber, confirmationTo: null }, cartEmpty: false };
     case 'shortage':
       return {
-        state: { status: 'shortage', shortages: [{ variantId: locale === 'de' ? 'T-Shirt, Größe M' : 'T-shirt, size M', needed: 3, available: 1 }] },
+        state: {
+          status: 'shortage',
+          shortages: [
+            { variantId: locale === 'de' ? 'T-Shirt, Größe M' : 'T-shirt, size M', needed: 3, available: 1 },
+            { variantId: locale === 'de' ? 'Emaille-Becher' : 'Enamel mug', needed: 2, available: 0 },
+          ],
+        },
         cartEmpty: false,
       };
     case 'items-unavailable':

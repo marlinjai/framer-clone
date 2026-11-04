@@ -1,0 +1,101 @@
+name: Sync plugin mirror
+
+# Pushes plugin/lumitra-sites plus plugin/lumitra-sites-mirror to the PUBLIC
+# mirror marlinjai/lumitra-sites-plugin after a merge to main, then proves the
+# mirror matches. Synced from main only: a mirror synced from an open pull
+# request makes main and every other pull request fail a comparison (it held
+# lumitra-studio #433 on 2026-10-22). Pull requests run only the offline
+# `--check-payload` in ci.yml.
+#
+# Before setup this job is a green no-op: it skips with a notice when the deploy
+# key secret is not set. After setup, every clone or network error fails the job.
+#
+# GITHUB_TOKEN cannot push to another repository, so the push goes through a
+# deploy key with write access on the mirror. The private half is the secret
+# PLUGIN_MIRROR_DEPLOY_KEY of the GitHub environment `plugin-mirror` (allow
+# deployments from main only); the public half is the mirror's deploy key
+# "framer-clone main sync". Setting it up, or rotating it: generate an ed25519
+# pair in a temporary directory, `gh repo deploy-key add <pub> -R
+# marlinjai/lumitra-sites-plugin --allow-write --title "framer-clone main sync"`,
+# `gh secret set PLUGIN_MIRROR_DEPLOY_KEY --env plugin-mirror -R
+# marlinjai/framer-clone < <private file>`, then delete both local files (and,
+# on a rotation, the old deploy key).
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'plugin/**'
+      - 'scripts/sync-plugin-repo.sh'
+      - '.github/workflows/sync-plugin-mirror.yml'
+  # A failed or skipped post-merge run is never retried by GitHub, and an edit
+  # made on the mirror itself triggers nothing here. The daily run finds that
+  # drift and pushes main's payload over it.
+  schedule:
+    - cron: '23 4 * * *'
+  # A hand-run re-sync: `gh workflow run sync-plugin-mirror.yml`.
+  workflow_dispatch: {}
+
+# One sync at a time, never cancelled: two quick merges must not race on the
+# mirror's main. A waiting run checks out the newest main, so the last one to
+# finish pushes the newest payload.
+concurrency:
+  group: sync-plugin-mirror
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    name: Sync the public plugin mirror
+    # Only main ever pushes to the public mirror; the environment refuses other
+    # branches again once its deployment rule allows main only.
+    if: github.ref == 'refs/heads/main'
+    environment: plugin-mirror
+    runs-on: ubuntu-latest
+    env:
+      PLUGIN_MIRROR_URL: git@github.com:marlinjai/lumitra-sites-plugin.git
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # A newer run may have pushed since this commit; sync from the tip of
+          # main so a queued older run cannot roll the mirror back.
+          ref: main
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      # The key goes to a file only the runner user can read; it is never
+      # printed. GitHub's published host key is pinned instead of trusting
+      # whatever answers first. Without the secret the job ends here, green.
+      - name: Load the mirror deploy key
+        id: key
+        env:
+          DEPLOY_KEY: ${{ secrets.PLUGIN_MIRROR_DEPLOY_KEY }}
+        run: |
+          if [ -z "$DEPLOY_KEY" ]; then
+            echo "::notice::PLUGIN_MIRROR_DEPLOY_KEY is not set in the plugin-mirror environment; the mirror is not synced (see the setup notes at the top of this workflow)."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          install -d -m 700 "$HOME/.ssh"
+          umask 077
+          printf '%s\n' "$DEPLOY_KEY" > "$RUNNER_TEMP/plugin-mirror-key"
+          echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" >> "$HOME/.ssh/known_hosts"
+          echo "GIT_SSH_COMMAND=ssh -i $RUNNER_TEMP/plugin-mirror-key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes" >> "$GITHUB_ENV"
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+      - name: Push the payload to the mirror
+        id: push
+        if: steps.key.outputs.ready == 'true'
+        run: ./scripts/sync-plugin-repo.sh
+
+      - name: The mirror matches main
+        if: steps.push.outcome == 'success'
+        run: ./scripts/sync-plugin-repo.sh --check
+
+      - name: Remove the deploy key file
+        if: always()
+        run: rm -f "$RUNNER_TEMP/plugin-mirror-key"

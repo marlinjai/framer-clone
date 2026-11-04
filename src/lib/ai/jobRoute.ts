@@ -3,7 +3,7 @@
 // GET and DELETE handlers for a resumable AI run (./jobRegistry.ts), shared by
 // /api/ai/generate-page/[id] and /api/ai/review-page/[id]:
 //
-//   GET    -> 200 { status: 'running', progress? } | { status: 'done', result }
+//   GET    -> 200 { status: 'running', progress?, sections? } | { status: 'done', result }
 //                | { status: 'failed', error } | { status: 'cancelled' }
 //   DELETE -> 204, the run is stopped (or had already finished)
 //   404    -> unknown, expired, or another user's or company's run (one answer
@@ -39,7 +39,7 @@ async function owner(request: Request): Promise<{ userId: string; workspaceId: s
 
 const notFound = () => jsonError('not_found', 'this run is unknown or no longer available', 404);
 
-export function jobRouteHandlers<P, R, E>(registry: () => JobRegistry<P, R, E>) {
+export function jobRouteHandlers<P, R, E, S = never>(registry: () => JobRegistry<P, R, E, S>) {
   const GET = withAuthAvailability(async (request: Request, { params }: RouteContext): Promise<Response> => {
     const { id } = await params;
     const who = await owner(request);

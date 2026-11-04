@@ -95,7 +95,10 @@ export interface CreateComponentElementOptions {
   // receive these as props and must spread them onto their root element to
   // make the attributes visible in the DOM (an unwritten contract for entries
   // in `window.__componentRegistry`).
-  identity?: { breakpointId: string; componentId: string };
+  // `copy`: the node is drawn inside the second or a later copy of a repeated shop
+  // part (a cart line), so it keeps its style hook but not its selection identity,
+  // which only the first copy carries (ShopRepeatCopyContext).
+  identity?: { breakpointId: string; componentId: string; copy?: boolean };
 
   // Binding scope active for this node. Threaded by both host renderers so
   // BOUND data components (Collection / RecordView) can resolve their source
@@ -213,7 +216,7 @@ export function createComponentElement(
     ? {
         ...safeProps,
         'data-component-id': `${identity.breakpointId}-${identity.componentId}`,
-        'data-inner-component-id': identity.componentId,
+        ...(identity.copy ? {} : { 'data-inner-component-id': identity.componentId }),
       }
     : safeProps;
 
@@ -299,7 +302,6 @@ export function createComponentElement(
             scope={scope}
             hostType={hostType}
             hostProps={propsWithIdentity}
-            mode={mode}
             surface={mode === 'editor' ? 'canvas' : 'live'}
           >
             {children}
@@ -330,7 +332,6 @@ export function createComponentElement(
             scope={scope}
             hostType={hostType}
             hostProps={propsWithIdentity}
-            mode={mode}
             surface={mode === 'editor' ? 'canvas' : 'live'}
           >
             {children}

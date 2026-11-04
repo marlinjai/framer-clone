@@ -13,6 +13,11 @@
 // one Coolify container, and a run that outlives a restart is lost anyway (the
 // client then gets a 404 and says the run is gone). Finished runs are kept
 // FINISHED_TTL_MS for collection, then swept.
+//
+// A run may also keep a list of partial results while it is running (the page
+// generator's preview sections), so a client that lost the stream rebuilds what
+// it had already drawn: the running snapshot carries them, in the order sent.
+// The list is dropped when the run finishes, the outcome replaces it.
 
 export const JOB_LIMITS = {
   /** How long a finished run's outcome stays collectable. */
@@ -23,43 +28,47 @@ export const JOB_LIMITS = {
   maxPerUser: 5,
 } as const;
 
-export type JobSnapshot<P, R, E> =
-  | { status: 'running'; progress?: P }
+export type JobSnapshot<P, R, E, S = never> =
+  | { status: 'running'; progress?: P; sections?: S[] }
   | { status: 'done'; result: R }
   | { status: 'failed'; error: E }
   | { status: 'cancelled' };
 
-interface Job<P, R, E> {
+interface Job<P, R, E, S> {
   id: string;
   userId: string;
   workspaceId: string;
   createdAt: number;
   finishedAt?: number;
-  state: JobSnapshot<P, R, E>;
+  state: JobSnapshot<P, R, E, S>;
+  /** The partial results sent while running; emptied when the run finishes. */
+  sections: S[];
   controller: AbortController;
 }
 
-export interface JobHandle<P, R, E> {
+export interface JobHandle<P, R, E, S = never> {
   id: string;
   /** Aborts when the run was cancelled explicitly (never on a disconnect). */
   signal: AbortSignal;
   progress(p: P): void;
+  /** Keep one partial result for a client that collects the run (ignored once it finished). */
+  section(s: S): void;
   succeed(result: R): void;
   fail(error: E): void;
 }
 
-export interface JobRegistry<P, R, E> {
+export interface JobRegistry<P, R, E, S = never> {
   /** Whether any run (anyone's) holds this id: a client-chosen id must be new. */
   has(id: string, now?: number): boolean;
-  create(owner: { id: string; userId: string; workspaceId: string }, now?: number): JobHandle<P, R, E>;
+  create(owner: { id: string; userId: string; workspaceId: string }, now?: number): JobHandle<P, R, E, S>;
   /** The run's state, or undefined when it is unknown, expired or someone else's. */
-  get(id: string, owner: { userId: string; workspaceId: string }, now?: number): JobSnapshot<P, R, E> | undefined;
+  get(id: string, owner: { userId: string; workspaceId: string }, now?: number): JobSnapshot<P, R, E, S> | undefined;
   /** Stops a running run. False when it is unknown, expired or someone else's. */
   cancel(id: string, owner: { userId: string; workspaceId: string }, now?: number): boolean;
 }
 
-export function createJobRegistry<P, R, E>(limits: typeof JOB_LIMITS = JOB_LIMITS): JobRegistry<P, R, E> {
-  const jobs = new Map<string, Job<P, R, E>>();
+export function createJobRegistry<P, R, E, S = never>(limits: typeof JOB_LIMITS = JOB_LIMITS): JobRegistry<P, R, E, S> {
+  const jobs = new Map<string, Job<P, R, E, S>>();
 
   const sweep = (now: number) => {
     for (const [id, job] of jobs) {
@@ -77,12 +86,17 @@ export function createJobRegistry<P, R, E>(limits: typeof JOB_LIMITS = JOB_LIMIT
     return job && job.userId === owner.userId && job.workspaceId === owner.workspaceId ? job : undefined;
   };
 
-  const finish = (job: Job<P, R, E>, state: JobSnapshot<P, R, E>) => {
+  const finish = (job: Job<P, R, E, S>, state: JobSnapshot<P, R, E, S>) => {
     // The first outcome wins: a result after a cancel is not collectable.
     if (job.state.status !== 'running') return;
     job.state = state;
+    job.sections = [];
     job.finishedAt = Date.now();
   };
+
+  /** What a client sees: a running run with the partial results kept so far. */
+  const snapshotOf = (job: Job<P, R, E, S>): JobSnapshot<P, R, E, S> =>
+    job.state.status === 'running' && job.sections.length > 0 ? { ...job.state, sections: [...job.sections] } : job.state;
 
   return {
     has(id, now = Date.now()) {
@@ -96,12 +110,13 @@ export function createJobRegistry<P, R, E>(limits: typeof JOB_LIMITS = JOB_LIMIT
         .sort((a, b) => (a.finishedAt ?? 0) - (b.finishedAt ?? 0));
       const total = [...jobs.values()].filter((j) => j.userId === userId).length;
       for (let i = 0; i < total + 1 - limits.maxPerUser && i < mine.length; i += 1) jobs.delete(mine[i].id);
-      const job: Job<P, R, E> = {
+      const job: Job<P, R, E, S> = {
         id,
         userId,
         workspaceId,
         createdAt: now,
         state: { status: 'running' },
+        sections: [],
         controller: new AbortController(),
       };
       jobs.set(id, job);
@@ -111,13 +126,17 @@ export function createJobRegistry<P, R, E>(limits: typeof JOB_LIMITS = JOB_LIMIT
         progress: (p) => {
           if (job.state.status === 'running') job.state = { status: 'running', progress: p };
         },
+        section: (s) => {
+          if (job.state.status === 'running') job.sections.push(s);
+        },
         succeed: (result) => finish(job, { status: 'done', result }),
         fail: (error) => finish(job, { status: 'failed', error }),
       };
     },
     get(id, owner, now = Date.now()) {
       sweep(now);
-      return owned(id, owner)?.state;
+      const job = owned(id, owner);
+      return job ? snapshotOf(job) : undefined;
     },
     cancel(id, owner, now = Date.now()) {
       sweep(now);

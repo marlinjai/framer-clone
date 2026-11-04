@@ -26,6 +26,8 @@ import { isTextBound } from '@/lib/renderer/textContent';
 import { isTextNodeType } from '@/lib/renderer/textNode';
 import { childrenWithRepeats } from '@/lib/renderer/repeatChildren';
 import { SurfaceDomContext, withSurfaceDom } from '@/lib/behaviour/surfaceDom';
+import { ShopRepeatCopyContext } from '@/lib/commerce/shopRuntime';
+import { DraftSections, useDraftHook } from '@/components/ai/PageGenDraftLayer';
 
 interface ComponentRendererProps {
   component: ComponentInstance;
@@ -96,6 +98,8 @@ const NodeRenderer = observer(({ component, breakpointId, allBreakpoints, scope,
   // Inside a link or a button, formatted text holds no links (createComponentElement).
   const runLinksAllowed = React.useContext(RunLinksContext);
   const surfaceDom = React.useContext(SurfaceDomContext);
+  // Inside a later copy of a repeated shop part, only the first copy is selectable.
+  const inRepeatCopy = React.useContext(ShopRepeatCopyContext);
   const frameId = host?.frameId ?? breakpointId;
   const owner = placement ?? component;
   const editRef = React.useRef<HTMLElement | null>(null);
@@ -139,11 +143,20 @@ const NodeRenderer = observer(({ component, breakpointId, allBreakpoints, scope,
     canMove && !isEditing && !isLocked ? { kind: 'moveNode', nodeId: owner.id } : null,
     owner,
   );
+  // A running generation's draft meets this node (src/components/ai/PageGenDraftLayer.tsx):
+  // never inside a placement's definition, which a generation does not target.
+  const draftHook = useDraftHook(component.id, !!host || !!placement);
 
   // LayersPanel eye toggle writes to canvasVisible; honour it here so hidden
   // tree children disappear from the viewport. Floating elements and viewport
   // nodes get the same treatment via GroundWrapper's `visible` prop.
   if (!component.canvasVisible || !owner.canvasVisible) return null;
+
+  // Replaced by a generation that is still being written: its draft sections
+  // stand where this node will go, until the result replaces it for real.
+  if (draftHook === 'replace') {
+    return <DraftSections breakpointId={breakpointId} allBreakpoints={allBreakpoints} scope={activeScope} />;
+  }
 
   // What makes an element a text box, for an element and for a text node's span.
   // Commits on blur; Enter commits, ESC cancels.
@@ -321,7 +334,13 @@ const NodeRenderer = observer(({ component, breakpointId, allBreakpoints, scope,
   );
 
   // A child repeated for a list is drawn once per item (src/lib/components/repeat.ts), and once, empty, on the component's own canvas when there is none.
-  const children = childrenWithRepeats(component.children, activeScope, renderNode, !host);
+  const ownChildren = childrenWithRepeats(component.children, activeScope, renderNode, !host);
+  // A generation being written into this node: its draft after the children
+  // (insert) or in their place (the page root replaced).
+  const draft = draftHook ? (
+    <DraftSections key="pagegen-draft" breakpointId={breakpointId} allBreakpoints={allBreakpoints} scope={activeScope} />
+  ) : null;
+  const children = draftHook === 'replaceChildren' ? [draft] : draftHook === 'insert' ? [...ownChildren, draft] : ownChildren;
 
   if (placement) finalProps[DATA_PLACEMENT_ROOT] = `${frameId}-${component.id}`;
 
@@ -331,7 +350,7 @@ const NodeRenderer = observer(({ component, breakpointId, allBreakpoints, scope,
     children,
     (resolvedAttributes as any).children,
     {
-      identity: { breakpointId: frameId, componentId: owner.id },
+      identity: { breakpointId: frameId, componentId: owner.id, copy: inRepeatCopy },
       scope: activeScope,
       renderNode,
       // Editor surface: data renderers surface an inline error chip with the

@@ -16,7 +16,7 @@
 // the component schema (which evolves independently in ComponentModel).
 
 import { withDefaultViewports } from '@/lib/canvas/defaultViewports';
-import { pageWithShopParts } from '@/lib/commerce/parts';
+import { componentsWithShopParts, pageWithShopParts } from '@/lib/commerce/parts';
 import { getSnapshot, isStateTreeNode } from 'mobx-state-tree';
 import type {
   ProjectModelType,
@@ -260,7 +260,8 @@ export function persistedToProjectSnapshot(row: SiteRowData): ProjectSnapshotIn 
     },
     pages,
     siteSettings,
-    components: (row.components ?? {}) as ProjectSnapshotIn['components'],
+    // A reusable component's page gets its shop parts the same way a page does.
+    components: componentsWithShopParts(row.components ?? {}, siteSettings.language) as ProjectSnapshotIn['components'],
   };
 
   if (hasBinding) {

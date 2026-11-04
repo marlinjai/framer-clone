@@ -34,7 +34,7 @@ import { sql, type Kysely, type Transaction } from 'kysely';
 
 import type { CommerceDB } from '../db-types';
 import type { CommerceEvent } from '../jobs/types';
-import { applyInventoryEffect, reserve, RESERVE_ISOLATION_LEVEL } from '../inventory/reserve';
+import { applyInventoryEffect, ReservationOverflowError, reserve, RESERVE_ISOLATION_LEVEL } from '../inventory/reserve';
 import { isLockTimeout } from '../provisioning/ownerSql';
 import type { PaymentEvent, PaymentProvider, ProviderId } from './provider';
 import { enqueueShopMail } from '../mail/outbox';
@@ -239,18 +239,28 @@ async function releaseStock(trx: Trx, tgId: string, tenantId: string, orderId: s
   }
 }
 
-/** Reserve the order's stock again after a late success; throws LateStockGoneError on a shortage. */
+/**
+ * Reserve the order's stock again after a late success; throws LateStockGoneError on a shortage, and when a
+ * backorder's reserved stock (with what other orders took meanwhile) would pass its column: the stock cannot be
+ * held again either way, so the payment is refunded rather than the provider's event failing on every retry.
+ */
 async function reserveAgain(trx: Trx, tgId: string, tenantId: string, orderId: string): Promise<void> {
   for (const m of await reservedStock(trx, tenantId, orderId)) {
-    const result = await reserve(trx, tgId, {
-      inventoryItemId: m.inventoryItemId,
-      variantId: m.variantRefSource === 'owned' && m.variantRef ? m.variantRef : undefined,
-      locationId: m.locationId,
-      needed: m.quantity,
-      requestId: `${m.requestId}:again`,
-      refType: 'order_payment',
-      refId: orderId,
-    });
+    let result: Awaited<ReturnType<typeof reserve>>;
+    try {
+      result = await reserve(trx, tgId, {
+        inventoryItemId: m.inventoryItemId,
+        variantId: m.variantRefSource === 'owned' && m.variantRef ? m.variantRef : undefined,
+        locationId: m.locationId,
+        needed: m.quantity,
+        requestId: `${m.requestId}:again`,
+        refType: 'order_payment',
+        refId: orderId,
+      });
+    } catch (error) {
+      if (error instanceof ReservationOverflowError) throw new LateStockGoneError();
+      throw error;
+    }
     if (!result.ok) throw new LateStockGoneError();
   }
 }

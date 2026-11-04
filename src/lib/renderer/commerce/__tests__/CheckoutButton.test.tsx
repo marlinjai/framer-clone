@@ -22,6 +22,7 @@ import { createScope } from '@/lib/bindings/resolver/scope';
 import { CartProvider, CheckoutUnavailableContext, useCart, CART_STORAGE_KEY } from '@/lib/commerce/cart';
 import { FakePaymentGateway } from '@/lib/commerce/payment';
 import type { PaymentGateway, PaymentResult } from '@/lib/commerce/payment';
+import { ShopLocaleContext } from '@/lib/commerce/shopRuntime';
 import CheckoutButton, { RETURN_NOTE_KEY } from '../CheckoutButton';
 
 function makeNode(props: Record<string, unknown> = {}): ComponentInstance {
@@ -713,13 +714,208 @@ describe('CheckoutButton where checkout is unavailable (the editor preview)', ()
     // The design is shown as it publishes, not greyed; nothing is said before a press.
     await waitFor(() => expect(button.disabled).toBe(false));
     expect(container.querySelector('[data-checkout-unavailable]')).toBeNull();
+    // The note's status region is on the page before the press, empty, so the reason is announced when it arrives.
+    const region = container.querySelector<HTMLElement>('[data-checkout-unavailable-region]');
+    expect(region?.getAttribute('role')).toBe('status');
+    expect(region?.textContent).toBe('');
     act(() => fireEvent.click(button));
     const note = container.querySelector('[data-checkout-unavailable]');
     expect(note?.textContent).toContain('editor preview');
-    expect(note?.getAttribute('role')).toBe('status');
+    // The same region holds it; the note carries no role of its own, so nothing is announced twice.
+    expect(container.querySelector('[data-checkout-unavailable-region]')).toBe(region);
+    expect(note?.parentElement).toBe(region);
+    expect(note?.getAttribute('role')).toBeNull();
     expect(container.querySelector('[data-checkout-payment]')).toBeNull();
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
     window.localStorage.clear();
+  });
+});
+
+describe('CheckoutButton a message shown later is announced', () => {
+  const LATER = ['checkout.redirecting', 'checkout.returned-paid', 'checkout.returned-cancelled', 'checkout.confirmation'];
+
+  it('draws the status region of each later message before it, empty and out of the layout', async () => {
+    const { container, getByTestId } = renderCheckout();
+    await waitForHydratedCart(getByTestId);
+    for (const role of LATER) {
+      const region = container.querySelector<HTMLElement>(`[data-shop-live="${role}"]`);
+      expect(region, role).not.toBeNull();
+      expect(region!.getAttribute('role')).toBe('status');
+      expect(region!.textContent).toBe('');
+      // An empty region adds no gap to the control's column, and stays in the accessibility tree.
+      expect(region!.style.position).toBe('absolute');
+      expect(region!.style.height).toBe('1px');
+      expect(region!.style.padding).toBe('0px');
+      // Never display none or visibility hidden, which would take it out of the accessibility tree.
+      expect(region!.style.display).not.toBe('none');
+      expect(region!.style.visibility).not.toBe('hidden');
+      // It is the designed part itself, not a wrapper standing in its place as the column's item.
+      expect(region!.getAttribute('data-shop-part')).toBe(role);
+    }
+  });
+
+  it('the confirmation arrives in the region that was there during the payment step', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      fakeResponse(201, { orderId: 'order_123', orderNumber: 'ORD-123', totalCents: 4760, currency: 'EUR' }),
+    );
+    const { container, getByTestId } = renderCheckout();
+    await waitForHydratedCart(getByTestId);
+    clickCheckout(container);
+    await waitFor(() => expect(container.querySelector('[data-checkout-pay]')).not.toBeNull());
+    const region = container.querySelector<HTMLElement>('[data-shop-live="checkout.confirmation"]');
+    expect(region).not.toBeNull();
+    expect(region!.textContent).toBe('');
+    fillBuyer(container);
+
+    await act(async () => {
+      fireEvent.click(container.querySelector('button[data-checkout-pay]')!);
+    });
+
+    await waitFor(() => expect(region!.textContent).toContain('ORD-123'));
+    expect(container.querySelector('[data-shop-live="checkout.confirmation"]')).toBe(region);
+    const confirmation = container.querySelector('[data-checkout-confirmation]')!;
+    expect(confirmation).toBe(region);
+    expect(confirmation.querySelector('[role="status"]')).toBeNull();
+    // Drawn in the flow again once it holds the message.
+    expect(region!.style.position).toBe('');
+    expect(container.querySelectorAll('[role="status"]')).toHaveLength(LATER.length);
+  });
+
+  it('back from a hosted checkout: the part is its own region, with no wrapper around it', async () => {
+    window.history.replaceState(null, '', '/cart?checkout=cancelled&order=ORD-000006');
+    try {
+      const { container } = renderCheckout();
+      await waitFor(() => expect(container.querySelector('[data-checkout-returned="cancelled"]')).not.toBeNull());
+      const part = container.querySelector('[data-checkout-returned="cancelled"]')!;
+      expect(part.getAttribute('role')).toBe('status');
+      expect(part.getAttribute('data-shop-live')).toBe('checkout.returned-cancelled');
+      expect(part.parentElement?.closest('[role="status"]')).toBeNull();
+    } finally {
+      window.history.replaceState(null, '', '/');
+    }
+  });
+});
+
+describe('CheckoutButton a paid order below the payment minimum (422 order_too_small)', () => {
+  const TOO_SMALL = fakeResponse(422, {
+    error: { code: 'order_too_small', message: 'server words the buyer never sees' },
+  });
+
+  it('says what to change in the checkout\'s own words, keeps the cart, and shows no payment step or shortage', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(TOO_SMALL);
+    const { container, getByTestId } = renderCheckout();
+    await waitForHydratedCart(getByTestId);
+
+    clickCheckout(container);
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-checkout-error]')?.textContent).toBe(
+        'Checkout failed: the order total is below the minimum the payment provider accepts. Add items to your cart and check out again. Nothing has been charged.',
+      );
+    });
+    // Not read as an item no longer sold, an order too large, a shortage, or a server fault.
+    expect(container.textContent).not.toContain('server words');
+    expect(container.textContent).not.toContain('no longer available');
+    expect(container.textContent).not.toContain('larger than one order');
+    expect(container.textContent).not.toContain('422');
+    expect(container.querySelector('[data-checkout-shortage]')).toBeNull();
+    expect(container.querySelector('[data-checkout-payment]')).toBeNull();
+    expect(getByTestId('lines').textContent).toBe(JSON.stringify(SEEDED_LINES));
+    expect(container.querySelector('button[data-checkout]')).not.toBeNull();
+  });
+
+  it('on a German site the words are German', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(TOO_SMALL);
+    window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(SEEDED_LINES));
+    const { container, getByTestId } = render(
+      <ShopLocaleContext.Provider value="de">
+        <CartProvider>
+          <CheckoutButton node={makeNode()} scope={createScope()} gateway={instantGateway()} />
+          <CartProbe />
+        </CartProvider>
+      </ShopLocaleContext.Provider>,
+    );
+    await waitForHydratedCart(getByTestId);
+
+    clickCheckout(container);
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-checkout-error]')?.textContent).toContain(
+        'der Bestellwert liegt unter dem Mindestbetrag, den der Zahlungsanbieter annimmt. Legen Sie weitere Artikel in den Warenkorb und gehen Sie erneut zur Kasse. Es wurde nichts abgebucht.',
+      );
+    });
+    expect(container.textContent).not.toContain('server words');
+    expect(getByTestId('lines').textContent).toBe(JSON.stringify(SEEDED_LINES));
+  });
+});
+
+describe('CheckoutButton an order too large to store (422 order_too_large)', () => {
+  it('says what to change in the buyer\'s words, keeps the cart, and shows no payment step or shortage', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      fakeResponse(422, {
+        error: {
+          code: 'order_too_large',
+          message: 'the order is larger than one order can hold; lower a quantity and check out again',
+          variantId: 'var_a',
+        },
+      }),
+    );
+    const { container, getByTestId } = renderCheckout();
+    await waitForHydratedCart(getByTestId);
+
+    clickCheckout(container);
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-checkout-error]')?.textContent).toBe(
+        'Checkout failed: the order is larger than one order can hold. Lower a quantity in your cart and check out again.',
+      );
+    });
+    // Not read as an item no longer sold, a shortage, or a server fault.
+    expect(container.textContent).not.toContain('no longer available');
+    expect(container.textContent).not.toContain('422');
+    expect(container.querySelector('[data-checkout-shortage]')).toBeNull();
+    expect(container.querySelector('[data-checkout-payment]')).toBeNull();
+    expect(getByTestId('lines').textContent).toBe(JSON.stringify(SEEDED_LINES));
+    // The button stays for another try once the cart is changed.
+    expect(container.querySelector('button[data-checkout]')).not.toBeNull();
+  });
+
+  it('a total over what the payment provider takes (no line named) gets the same words, and the server\'s are not shown', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      fakeResponse(422, {
+        error: { code: 'order_too_large', message: 'server words the buyer never sees' },
+      }),
+    );
+    const { container, getByTestId } = renderCheckout();
+    await waitForHydratedCart(getByTestId);
+
+    clickCheckout(container);
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-checkout-error]')?.textContent).toBe(
+        'Checkout failed: the order is larger than one order can hold. Lower a quantity in your cart and check out again.',
+      );
+    });
+    expect(container.textContent).not.toContain('server words');
+    expect(getByTestId('lines').textContent).toBe(JSON.stringify(SEEDED_LINES));
+  });
+
+  it('a cart mixing prices with and without VAT gets the checkout\'s own words, not the server\'s or "no longer available"', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      fakeResponse(422, {
+        error: { code: 'mixed_price_basis', message: 'some items are priced with VAT and some without' },
+      }),
+    );
+    const { container, getByTestId } = renderCheckout();
+    await waitForHydratedCart(getByTestId);
+    clickCheckout(container);
+    await waitFor(() => {
+      expect(container.querySelector('[data-checkout-error]')?.textContent).toBe(
+        'Checkout failed: some items in your cart cannot be ordered together yet. Order them separately, or try again later. Nothing has been charged.',
+      );
+    });
+    expect(container.textContent).not.toContain('priced with VAT');
+    expect(container.textContent).not.toContain('no longer available');
   });
 });

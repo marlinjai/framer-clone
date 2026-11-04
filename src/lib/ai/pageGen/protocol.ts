@@ -58,6 +58,22 @@ export interface PageGenProgress {
   attempt: number;
 }
 
+/**
+ * SSE `gen:section`: one top-level section of the first attempt, complete and
+ * validated on its own while the model is still writing the rest
+ * (./sectionStream.ts). A preview only: the editor draws it as a draft that
+ * never enters the project, and `gen:result` replaces every section. Images
+ * keep their placeholder (photos are placed on the final result only).
+ * `index` counts from 0 in page order; a section that failed validation is
+ * skipped, so the indexes of the sections sent have no gaps.
+ */
+export interface PageGenSection {
+  generationId: string;
+  index: number;
+  node: GeneratedNodeSnapshot;
+  attempt: number;
+}
+
 /** SSE `gen:result`: a validated generation, ready to apply. */
 export interface PageGenResultPayload {
   generationId: string;

@@ -12,7 +12,7 @@ import { CommerceDataSourceContext } from '@/lib/commerce/context';
 import type { CommerceDataSource } from '@/lib/commerce/provider';
 import type { ProductVariantDTO } from '@/lib/commerce/types';
 import { SelectedVariantContext, type SelectionState } from '@/lib/commerce/selection';
-import { CartProvider, useCart } from '@/lib/commerce/cart';
+import { CartProvider, MAX_LINE_QUANTITY, useCart } from '@/lib/commerce/cart';
 import AddToCartButton from '../AddToCartButton';
 
 const VARIANT: ProductVariantDTO = {
@@ -55,9 +55,8 @@ function renderButton(opts: {
   variant: ProductVariantDTO | null;
   ds: CommerceDataSource;
   node?: ComponentInstance;
-  mode?: 'editor' | 'preview';
 }) {
-  const { variant, ds, node = makeNode(), mode = 'preview' } = opts;
+  const { variant, ds, node = makeNode() } = opts;
   const selectionState: SelectionState = {
     selection: {},
     variant,
@@ -67,7 +66,7 @@ function renderButton(opts: {
     <CommerceDataSourceContext.Provider value={ds}>
       <CartProvider>
         <SelectedVariantContext.Provider value={selectionState}>
-          <AddToCartButton node={node} scope={createScope()} mode={mode} />
+          <AddToCartButton node={node} scope={createScope()} />
         </SelectedVariantContext.Provider>
         <CartProbe />
       </CartProvider>
@@ -115,25 +114,17 @@ describe('AddToCartButton disable (UX hint, NOT the authority)', () => {
     });
   });
 
-  it('stays disabled and surfaces the error when the availability fetch throws (editor)', async () => {
+  it('stays disabled, tells the visitor in plain words and logs the real reason when the check fails', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
     // No availability record for var_s_red -> getAvailability throws.
-    const { container } = renderButton({ variant: VARIANT, ds: makeDS({}), mode: 'editor' });
-    await waitFor(() => {
-      const err = container.querySelector('[data-add-to-cart-error]');
-      expect(err?.textContent).toContain('Availability check failed');
-    });
-    const button = container.querySelector('button[data-add-to-cart]') as HTMLButtonElement;
-    expect(button.disabled).toBe(true);
-  });
-
-  it('stays disabled and tells the visitor in plain words when the check fails (preview)', async () => {
-    const { container } = renderButton({ variant: VARIANT, ds: makeDS({}), mode: 'preview' });
+    const { container } = renderButton({ variant: VARIANT, ds: makeDS({}) });
     await waitFor(() => {
       const err = container.querySelector('[data-add-to-cart-error]');
       expect(err?.textContent).toBe('Availability could not be checked right now. Please try again later.');
     });
     expect(container.textContent).not.toContain('Availability check failed');
     expect((container.querySelector('button[data-add-to-cart]') as HTMLButtonElement).disabled).toBe(true);
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining('could not be checked'), expect.anything());
   });
 });
 
@@ -155,6 +146,23 @@ describe('AddToCartButton add (client cart, no server write)', () => {
       expect(getByTestId('lines').textContent).toBe(
         JSON.stringify([{ variantId: 'var_s_red', quantity: 2 }]),
       );
+    });
+  });
+
+  it('adds at most what a cart line holds, whatever the node quantity says', async () => {
+    const { container, getByTestId } = renderButton({
+      variant: VARIANT,
+      ds: makeDS({ var_s_red: 9 }),
+      node: makeNode({ quantity: 1e15 }),
+    });
+    await waitFor(() => {
+      expect((container.querySelector('button[data-add-to-cart]') as HTMLButtonElement).disabled).toBe(false);
+    });
+    act(() => {
+      fireEvent.click(container.querySelector('button[data-add-to-cart]')!);
+    });
+    await waitFor(() => {
+      expect(getByTestId('lines').textContent).toBe(JSON.stringify([{ variantId: 'var_s_red', quantity: MAX_LINE_QUANTITY }]));
     });
   });
 

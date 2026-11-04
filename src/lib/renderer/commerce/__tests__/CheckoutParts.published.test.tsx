@@ -95,7 +95,9 @@ describe('a designed checkout, published', () => {
     expect(fetchSpy).toHaveBeenCalledWith('/api/commerce/orders', expect.objectContaining({ method: 'POST' }));
     expect(container.querySelector('[data-checkout-payment-total]')?.textContent).toBe('Summe: 47,60 EUR');
     const email = container.querySelector<HTMLInputElement>('input[data-checkout-buyer-field="email"]')!;
-    expect(email.name).toBe('email');
+    // No name, the designer's included: nothing of the buyer's can be posted by a form around the checkout.
+    expect(email.name).toBe('');
+    expect(email.autocomplete).toBe('email');
     expect(email.type).toBe('email');
     expect(email.required).toBe(true);
     expect(email.placeholder).toBe('du@beispiel.de');
@@ -104,7 +106,9 @@ describe('a designed checkout, published', () => {
     expect(badge.textContent).toBe('Demo-Zahlung. Es wird kein echtes Geld abgebucht.');
     // Its colour is the designer's; nothing hides it, inline or in the page sheet.
     expect(badge.style.color).toBe('rgb(9, 9, 9)');
-    expect(badge.style.display).toBe('');
+    // Shown, with the designer's display: the island pins a display only where it computes to none.
+    expect(getComputedStyle(badge).display).not.toBe('none');
+    expect(badge.style.getPropertyValue('display')).toBe('');
     const sheet = [...container.querySelectorAll('style')].map((style) => style.textContent).join('\n');
     expect(sheet).not.toMatch(/demo-badge[^{]*\{[^}]*display:\s*none/);
     expect(badge.hidden).toBe(false);

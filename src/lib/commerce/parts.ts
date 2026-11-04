@@ -25,6 +25,9 @@ import { HOVER_GATE } from '@/lib/rules/states';
 /** The role marker on a part node, like `data-form-kind` on a form field. Never `data-component-kind`. */
 export const SHOP_PART_ATTR = 'data-shop-part';
 
+/** The marker the island puts on every wrapper between a part kept in sight and its control. */
+export const SHOP_KEPT_WRAPPER_ATTR = 'data-shop-kept-wrapper';
+
 export type ShopLocale = 'en' | 'de';
 
 /** 'de' for a German site language ("de", "de-AT"), else 'en'. */
@@ -79,6 +82,8 @@ export interface ShopPartSpec {
   requiredTokens?: readonly string[];
   /** Why the text is fixed, said in the properties panel. */
   fixedReason?: string;
+  /** Holds its own parts only: anything else put inside it is dropped (a button whose wording is fixed). */
+  onlyParts?: true;
 }
 
 /** One state a control can be previewed in on the canvas. */
@@ -164,6 +169,7 @@ const CHECKOUT_PARTS: readonly ShopPartSpec[] = [
     label: 'Checkout button',
     tag: 'button',
     required: true,
+    onlyParts: true,
     style: PRIMARY_BUTTON,
     rules: BUTTON_RULES(),
     children: [
@@ -273,6 +279,7 @@ const CHECKOUT_PARTS: readonly ShopPartSpec[] = [
             label: 'Pay button',
             tag: 'button',
             required: true,
+            onlyParts: true,
             style: { ...PRIMARY_BUTTON, border: '1px solid #065f46', backgroundColor: '#065f46' },
             rules: BUTTON_RULES(),
             children: [
@@ -488,7 +495,9 @@ export const CHECKOUT_PREVIEW_STATES = [
   { id: 'payment-failed', label: 'Payment step: payment failed' },
   { id: 'redirecting', label: 'Going to the payment page' },
   { id: 'confirmed', label: 'Order confirmed (demo payment)' },
+  { id: 'confirmed-no-email', label: 'Order confirmed: no confirmation email' },
   { id: 'returned-paid', label: 'Back from payment: paid' },
+  { id: 'returned-paid-no-email', label: 'Back from payment: paid, no confirmation email' },
   { id: 'returned-cancelled', label: 'Back from payment: cancelled' },
   { id: 'shortage', label: 'Not enough stock' },
   { id: 'items-unavailable', label: 'Items no longer sold' },
@@ -824,6 +833,42 @@ export const CHECKOUT_CONTROL_STYLE: Readonly<Record<string, unknown>> = {
   padding: '4px',
 };
 
+/**
+ * The platform's own rule for every part kept in sight, which each control draws
+ * once: visible and opaque, with `!important`. No designer rule can carry
+ * `!important` (the normaliser strips it), so none outweighs this, wherever it
+ * sits on the page. The `::before` and `::after` of a kept part, of every wrapper
+ * around one and of a button whose wording is fixed hold no content, and a kept
+ * part's first letter and line look like the rest of it. Display is not pinned here, so the designer's flex or grid
+ * stays: no stored style keeps a display that hides, and the island pins the
+ * display only where it computes to none.
+ */
+export function shopGuardCss(): string {
+  const kept: string[] = [];
+  const blanked: string[] = [];
+  const visit = (specs: readonly ShopPartSpec[], holders: readonly string[]) => {
+    for (const spec of specs) {
+      const selector = `[${SHOP_PART_ATTR}="${spec.role}"]`;
+      if (spec.keepVisible) {
+        kept.push(selector);
+        blanked.push(selector, ...holders);
+      }
+      if (spec.onlyParts) blanked.push(selector);
+      if (spec.children) visit(spec.children, [...holders, selector]);
+    }
+  };
+  for (const kind of SHOP_CONTROL_KINDS) visit(SHOP_CONTROLS[kind].parts, []);
+  // Every wrapper the island found between a kept part and its control (src/lib/commerce/shopRuntime.tsx).
+  blanked.push(`[${SHOP_KEPT_WRAPPER_ATTR}]`);
+  const unique = [...new Set(blanked)];
+  return [
+    ...kept.map((selector) => `${selector}{visibility:visible!important;opacity:1!important}`),
+    // No words added beside a kept part or inside a button whose wording is fixed, from any rule on the page.
+    `${unique.flatMap((selector) => [`${selector}::before`, `${selector}::after`]).join(',')}{content:none!important}`,
+    `${kept.flatMap((selector) => [`${selector}::first-letter`, `${selector}::first-line`]).join(',')}{color:inherit!important;-webkit-text-fill-color:currentcolor!important;font-size:inherit!important;letter-spacing:inherit!important;word-spacing:inherit!important}`,
+  ].join('');
+}
+
 // ---------------------------------------------------------------------------
 // Lookups
 // ---------------------------------------------------------------------------
@@ -872,13 +917,17 @@ export function shopPartId(controlId: string, role: string): string {
  * stored text when it has any, else the default (so a required label emptied by
  * mistake still names its field). Dynamic parts have none.
  */
-export function shopPartText(role: string, stored: unknown, locale: ShopLocale): unknown {
+export function shopPartText(role: string, rawStored: unknown, locale: ShopLocale): unknown {
+  // A numeric binding ({{product.stock}}) reads as its digits, not as missing text.
+  const stored = typeof rawStored === 'number' && Number.isFinite(rawStored) ? String(rawStored) : rawStored;
   const spec = shopPartSpec(role);
   if (!spec || spec.dynamicText) return undefined;
   if (spec.fixedText) return spec.fixedText[locale];
   const plain = typeof stored === 'string' ? stored : isFormattedText(stored) ? formattedPlainText(stored) : '';
   // A text that drops a required token (the total, the order number) is not shown: the default is.
-  const keepsTokens = (spec.requiredTokens ?? []).every((token) => plain.includes(`{${token}}`));
+  // In formatted text a token must sit whole in one run, since tokens are filled run by run.
+  const pieces = typeof stored === 'string' ? [stored] : isFormattedText(stored) ? (stored as { runs: { text: string }[] }).runs.map((run) => run.text) : [];
+  const keepsTokens = (spec.requiredTokens ?? []).every((token) => pieces.some((piece) => piece.includes(`{${token}}`)));
   if (plain.trim().length > 0 && keepsTokens) return stored;
   return spec.text?.[locale];
 }
@@ -973,17 +1022,18 @@ function newPartNode(
 
 /**
  * The props and bindings of the controls before parts, and the part each moves to:
- * the checkout's and the add to cart's label, the checkout's pay label, the cart's
- * empty message. A prop becomes the part's text, a binding the part's text binding.
+ * the checkout's and the add to cart's label, the cart's empty message. A prop
+ * becomes the part's text, a binding the part's text binding. A `dropped` prop
+ * leaves the control and goes nowhere.
  */
-const LEGACY: Readonly<Record<ShopControlKind, { props: Record<string, { role: string; text: (value: string) => string }>; bindings: Record<string, string> }>> = {
+const LEGACY: Readonly<
+  Record<ShopControlKind, { props: Record<string, { role: string; text: (value: string) => string }>; bindings: Record<string, string>; dropped?: readonly string[] }>
+> = {
   'checkout-button': {
-    props: {
-      label: { role: 'checkout.button-label', text: (value) => value },
-      // The old pay label leaves the control and goes nowhere: the pay wording is fixed.
-      payLabel: { role: '', text: () => '' },
-    },
+    props: { label: { role: 'checkout.button-label', text: (value) => value } },
     bindings: { label: 'checkout.button-label' },
+    // The old pay label: the pay wording is fixed, so it has no part to move to.
+    dropped: ['payLabel'],
   },
   'add-to-cart': {
     props: { label: { role: 'addToCart.button-label', text: (value) => value } },
@@ -1001,7 +1051,7 @@ function legacyTexts(kind: ShopControlKind, props: Record<string, unknown> | und
   const out: Record<string, string> = {};
   for (const [key, { role, text }] of Object.entries(LEGACY[kind].props)) {
     const value = props?.[key];
-    if (role && typeof value === 'string' && value.trim()) out[role] = text(value);
+    if (typeof value === 'string' && value.trim()) out[role] = text(value);
   }
   return out;
 }
@@ -1079,39 +1129,236 @@ export function shopPartTag(role: string, stored: unknown): string {
 }
 
 /** Attributes no node inside a shop control keeps: they could send what a visitor typed elsewhere. */
-const SENDING_PROPS: readonly string[] = ['action', 'formAction', 'formaction', 'method', 'formMethod', 'formmethod', 'target', 'formTarget', 'formtarget', 'enctype', 'formEncType', 'formenctype'];
+const SENDING_PROPS: readonly string[] = ['form', 'action', 'formAction', 'formaction', 'method', 'formMethod', 'formmethod', 'target', 'formTarget', 'formtarget', 'enctype', 'formEncType', 'formenctype'];
 
 /** Attributes that take a part kept in sight out of sight. */
 const HIDING_PROPS: readonly string[] = ['hidden', 'aria-hidden', 'popover', 'inert'];
 
 const VISIBLE_DISPLAY = /^(block|inline|inline-block|flex|inline-flex|grid|inline-grid|flow-root|list-item|table|contents)$/;
 const PLAIN_NUMBER = /^-?\d*\.?\d+$/;
+const ZERO_LENGTH = /^0(\.0+)?(px|r?em|%)?$/;
+const NOT_NONE = (value: string) => value !== 'none';
+/** A length that pulls a box out of the way: any negative value. */
+const NEGATIVE = (value: string) => /(^|[\s(,])-\s*\d*\.?\d/.test(value);
+
+/** A font size under 10 pixels (or 0.65 em), or one the check cannot read. */
+function tooSmallFont(value: string): boolean {
+  const px = /^(\d*\.?\d+)px$/.exec(value);
+  if (px) return Number(px[1]) < 10;
+  const relative = /^(\d*\.?\d+)(r?em)$/.exec(value);
+  return relative ? Number(relative[1]) < 0.65 : true;
+}
+
+function inRange(value: number, low: number, high: number): boolean {
+  return Number.isFinite(value) && value >= low && value <= high;
+}
+/** An offset of at most 8 pixels (or 0.5 em) either way. */
+function smallOffset(value: string): boolean {
+  const px = /^(-?\d*\.?\d+)px$/.exec(value);
+  if (px) return Math.abs(Number(px[1])) <= 8;
+  const relative = /^(-?\d*\.?\d+)(r?em)$/.exec(value);
+  if (relative) return Math.abs(Number(relative[1])) <= 0.5;
+  return /^0(\.0+)?$/.test(value);
+}
+/** An angle of at most 5 degrees either way. */
+function smallAngle(value: string): boolean {
+  if (value === 'none') return true;
+  const deg = /^(-?\d*\.?\d+)deg$/.exec(value);
+  return deg ? Math.abs(Number(deg[1])) <= 5 : /^0(\.0+)?$/.test(value);
+}
+/** A transform made only of small translations, scales near one and small rotations. */
+function smallTransform(value: string): boolean {
+  if (value === 'none') return true;
+  const steps = [...value.matchAll(/([a-z0-9]+)\(([^)]*)\)/gi)];
+  if (steps.length === 0 || steps.map((step) => step[0]).join('').replace(/\s+/g, '') !== value.replace(/\s+/g, '')) return false;
+  // Repeated steps add up (three 8 pixel translations move a part 24 pixels, three 1.1 scales grow it by a third): one step per kind of transform.
+  const kinds = steps.map(([, name]) => (/^translate/i.test(name) ? 'translate' : /^scale/i.test(name) ? 'scale' : name.toLowerCase()));
+  if (new Set(kinds).size !== kinds.length) return false;
+  return steps.every(([, name, args]) => {
+    const values = args.split(',').map((entry) => entry.trim());
+    switch (name.toLowerCase()) {
+      case 'translate':
+      case 'translatex':
+      case 'translatey':
+      case 'translatez':
+      case 'translate3d':
+        return values.every(smallOffset);
+      case 'scale':
+      case 'scalex':
+      case 'scaley':
+        return values.every((entry) => inRange(Number(entry), 0.9, 1.1));
+      case 'rotate':
+        return values.every(smallAngle);
+      default:
+        return false;
+    }
+  });
+}
+/** A filter made only of brightness, contrast and saturation between 0.7 and 1.3, and drop shadows (which hide nothing). */
+function gentleFilter(value: string): boolean {
+  if (value === 'none') return true;
+  const steps = [...value.matchAll(/([a-z-]+)\(((?:[^()]|\([^()]*\))*)\)/gi)];
+  if (steps.length === 0 || steps.map((step) => step[0]).join('').replace(/\s+/g, '') !== value.replace(/\s+/g, '')) return false;
+  // Repeated steps multiply (brightness(0.7) three times is 0.343), and no product check covers contrast or saturate: one numeric step at most.
+  if (steps.filter(([, name]) => /^(brightness|contrast|saturate)$/i.test(name)).length > 1) return false;
+  return steps.every(([, name, arg]) => {
+    if (/^drop-shadow$/i.test(name)) return true;
+    if (!/^(brightness|contrast|saturate)$/i.test(name)) return false;
+    const number = arg.trim().endsWith('%') ? Number(arg.trim().slice(0, -1)) / 100 : Number(arg.trim());
+    return inRange(number, 0.7, 1.3);
+  });
+}
+
+/** A padding that pushes the text far away: over 200 pixels or 12 em, or a value the check cannot read. */
+const TOO_FAR = (value: string) =>
+  value.split(/\s+/).some((entry) => {
+    if (/^0(\.0+)?$/.test(entry)) return false;
+    const px = /^(\d*\.?\d+)px$/.exec(entry);
+    if (px) return Number(px[1]) > 200;
+    const relative = /^(\d*\.?\d+)(r?em)$/.exec(entry);
+    return relative ? Number(relative[1]) > 12 : true;
+  });
+
+/** Splits a CSS argument list at its top-level commas. */
+function splitTopLevel(body: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < body.length; i++) {
+    if (body[i] === '(') depth++;
+    else if (body[i] === ')') depth--;
+    else if (body[i] === ',' && depth === 0) {
+      parts.push(body.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  parts.push(body.slice(start).trim());
+  return parts;
+}
+
+/** Whether a colour is plainly see-through: `transparent`, or an alpha under 0.5. */
+function seeThrough(value: string): boolean {
+  if (value === 'transparent') return true;
+  const hex = /^#([0-9a-f]{4}|[0-9a-f]{8})$/.exec(value);
+  if (hex) {
+    const alpha = hex[1].length === 4 ? parseInt(hex[1][3] + hex[1][3], 16) : parseInt(hex[1].slice(6), 16);
+    return alpha / 255 < 0.5;
+  }
+  // color-mix(in srgb, a, b): see-through when any colour it mixes is (a mix of a faint colour stays faint enough to read as faint).
+  const mix = /^color-mix\((.*)\)$/.exec(value);
+  if (mix) return splitTopLevel(mix[1]).slice(1).some((part) => seeThrough(part.replace(/\s+\d*\.?\d+%\s*$/, '').replace(/^\d*\.?\d+%\s+/, '').trim()));
+  const fn = /^(rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\((.*)\)$/.exec(value);
+  if (!fn) return false;
+  const body = fn[2];
+  const slash = body.split('/');
+  const alpha = slash.length > 1 ? slash[1].trim() : /^(rgba|hsla)$/.test(fn[1]) ? body.split(',')[3]?.trim() : undefined;
+  if (alpha === undefined) return false;
+  const number = alpha.endsWith('%') ? Number(alpha.slice(0, -1)) / 100 : Number(alpha);
+  return !Number.isFinite(number) || number < 0.5;
+}
 
 /**
- * Style values that hide, on a part kept in sight or a wrapper around one. A value
- * the check cannot read (a `var()`, a percent, a calc) counts as hiding: only what
- * is plainly visible stays.
+ * Style values that hide, on a part kept in sight or a wrapper around one, and in
+ * the control's rules that reach inside it. A value the check cannot read (a
+ * `var()`, a percent, a calc) counts as hiding: only what is plainly visible stays.
  */
 const HIDING_VALUES: Readonly<Record<string, (value: string) => boolean>> = {
   display: (value) => !VISIBLE_DISPLAY.test(value),
   visibility: (value) => value !== 'visible',
   opacity: (value) => !PLAIN_NUMBER.test(value) || Number(value) < 0.5,
   contentVisibility: (value) => value !== 'visible' && value !== 'auto',
-  clipPath: (value) => value !== 'none',
+  clipPath: NOT_NONE,
   clip: (value) => value !== 'auto',
-  transform: (value) => value !== 'none',
-  filter: (value) => value !== 'none',
+  // A small hover lift, press or tilt stays; anything that shrinks, moves or turns it away goes.
+  transform: (value) => !smallTransform(value),
+  scale: (value) => !value.split(/\s+/).every((entry) => inRange(Number(entry), 0.9, 1.1)),
+  translate: (value) => !value.split(/\s+/).every(smallOffset),
+  rotate: (value) => !smallAngle(value),
+  zoom: (value) => value !== '1' && value !== 'normal' && value !== '100%',
+  // A hover that darkens or lightens a little stays.
+  filter: (value) => !gentleFilter(value),
+  backdropFilter: NOT_NONE,
+  mask: NOT_NONE,
+  maskImage: NOT_NONE,
+  maskSize: () => true,
+  WebkitMask: NOT_NONE,
+  WebkitMaskImage: NOT_NONE,
+  // Paint containment crops like an overflow that hides; size containment collapses the box.
+  contain: (value) => value !== 'none' && !/^(layout|style|inline-size)(\s+(layout|style|inline-size))*$/.test(value),
+  backgroundClip: (value) => value.includes('text'),
+  WebkitBackgroundClip: (value) => value.includes('text'),
+  WebkitTextFillColor: seeThrough,
+  color: seeThrough,
+  textIndent: NEGATIVE,
   fontSize: (value) => {
-    const px = /^(\d*\.?\d+)px$/.exec(value);
-    if (px) return Number(px[1]) < 10;
-    const relative = /^(\d*\.?\d+)(r?em)$/.exec(value);
-    return relative ? Number(relative[1]) < 0.65 : true;
+    // Responsive type: a clamp() whose smallest size is readable stays.
+    const clamped = /^clamp\(([^,]+),/.exec(value);
+    if (clamped) return tooSmallFont(clamped[1].trim());
+    return tooSmallFont(value);
   },
-  height: (value) => /^0(\.0+)?(px|r?em|%)?$/.test(value),
-  maxHeight: (value) => /^0(\.0+)?(px|r?em|%)?$/.test(value),
-  width: (value) => /^0(\.0+)?(px|r?em|%)?$/.test(value),
-  maxWidth: (value) => /^0(\.0+)?(px|r?em|%)?$/.test(value),
+  // A wrapper that crops (a 1px box with its overflow hidden) hides as surely as display: none.
+  overflow: (value) => value !== 'visible',
+  overflowX: (value) => value !== 'visible',
+  overflowY: (value) => value !== 'visible',
+  height: (value) => ZERO_LENGTH.test(value),
+  maxHeight: (value) => ZERO_LENGTH.test(value),
+  width: (value) => ZERO_LENGTH.test(value),
+  maxWidth: (value) => ZERO_LENGTH.test(value),
+  // Glyphs collapsed into one spot, an outline painted over the text, padding that pushes it away.
+  letterSpacing: NEGATIVE,
+  wordSpacing: NEGATIVE,
+  outlineOffset: NEGATIVE,
+  padding: TOO_FAR,
+  paddingTop: TOO_FAR,
+  paddingRight: TOO_FAR,
+  paddingBottom: TOO_FAR,
+  paddingLeft: TOO_FAR,
+  paddingInline: TOO_FAR,
+  paddingBlock: TOO_FAR,
+  // Positioned off screen.
+  position: (value) => value === 'absolute' || value === 'fixed',
+  top: NEGATIVE,
+  right: NEGATIVE,
+  bottom: NEGATIVE,
+  left: NEGATIVE,
+  inset: NEGATIVE,
+  margin: NEGATIVE,
+  marginTop: NEGATIVE,
+  marginRight: NEGATIVE,
+  marginBottom: NEGATIVE,
+  marginLeft: NEGATIVE,
+  marginInline: NEGATIVE,
+  marginBlock: NEGATIVE,
 };
+
+/**
+ * The only style keys a part kept in sight, or a wrapper between it and its
+ * control, keeps (in its style and in every rule it holds): type, colour, box,
+ * border and flex or grid layout. Anything else (a mask, containment, a scale, a
+ * position, an indent, an outline, which paints over what is around it) goes whether or not the check above could read it, so a
+ * new way to hide is closed by default. The keys that can still hide here are
+ * checked by value as well.
+ */
+const KEPT_STYLE_KEYS: ReadonlySet<string> = new Set([
+  'color', 'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'fontVariant', 'letterSpacing', 'lineHeight',
+  'textAlign', 'textTransform', 'textDecoration', 'textDecorationLine', 'textDecorationColor', 'textDecorationStyle',
+  'textDecorationThickness', 'textUnderlineOffset', 'textShadow', 'whiteSpace', 'wordBreak', 'overflowWrap', 'wordSpacing',
+  'padding', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'paddingInline', 'paddingBlock',
+  'margin', 'marginTop', 'marginRight', 'marginBottom', 'marginLeft', 'marginInline', 'marginBlock',
+  'border', 'borderWidth', 'borderStyle', 'borderColor', 'borderTop', 'borderRight', 'borderBottom', 'borderLeft',
+  'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth', 'borderTopColor', 'borderRightColor',
+  'borderBottomColor', 'borderLeftColor', 'borderTopStyle', 'borderRightStyle', 'borderBottomStyle', 'borderLeftStyle',
+  'borderRadius', 'borderTopLeftRadius', 'borderTopRightRadius', 'borderBottomLeftRadius', 'borderBottomRightRadius',
+  'background', 'backgroundColor', 'backgroundImage', 'backgroundSize', 'backgroundPosition', 'backgroundRepeat',
+  'boxShadow', 'boxSizing', 'cursor', 'transition', 'verticalAlign',
+  'display', 'visibility', 'opacity', 'transform', 'translate', 'scale', 'rotate', 'filter',
+  'flex', 'flexDirection', 'flexWrap', 'flexFlow', 'flexGrow', 'flexShrink', 'flexBasis', 'order',
+  'alignItems', 'alignSelf', 'alignContent', 'justifyContent', 'justifyItems', 'justifySelf',
+  'placeItems', 'placeContent', 'placeSelf', 'gap', 'rowGap', 'columnGap',
+  'gridTemplateColumns', 'gridTemplateRows', 'gridTemplateAreas', 'gridAutoFlow', 'gridAutoColumns', 'gridAutoRows',
+  'gridColumn', 'gridRow', 'gridArea',
+  'width', 'height', 'minWidth', 'minHeight', 'maxWidth', 'maxHeight',
+]);
 
 /** Whether a stored style value hides (scalar, or any breakpoint of a responsive map). */
 function hides(key: string, value: unknown): boolean {
@@ -1121,36 +1368,187 @@ function hides(key: string, value: unknown): boolean {
   return (typeof value === 'string' || typeof value === 'number') && test(String(value).trim().toLowerCase());
 }
 
+/** A style without what hides, for the control's rules that reach inside it. */
 function withoutHidingStyle(style: unknown): Record<string, unknown> | undefined {
   if (!isRecord(style)) return undefined;
   return Object.fromEntries(Object.entries(style).filter(([key, value]) => !hides(key, value)));
 }
 
+/** A style of a part kept in sight or a wrapper around one: listed keys only, none that hides. */
+function keptStyle(style: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(style)) return undefined;
+  return Object.fromEntries(
+    Object.entries(style).filter(
+      // A focus ring (an outline up to 4 pixels, offset at most 4) stays: a dark button needs a designed one.
+      ([key, value]) => (KEPT_STYLE_KEYS.has(key) && !hides(key, value)) || (FOCUS_RING_KEYS.has(key) && !wideOutline(value)),
+    ),
+  );
+}
+
+/** Style keys a node beside a part kept in sight never keeps: none can lift it over the part, or let a click through it. */
+const OVERLAY_KEYS: ReadonlySet<string> = new Set([
+  'position', 'zIndex', 'pointerEvents', 'top', 'right', 'bottom', 'left', 'inset', 'insetInline', 'insetBlock', 'boxShadow',
+]);
+/** Keys a node beside a part kept in sight keeps within the same bounds as the part's own wrappers. */
+const BOUNDED_BESIDE_KEYS: ReadonlySet<string> = new Set(['transform', 'translate', 'scale', 'rotate']);
+const NEGATIVE_MARGIN_KEYS: ReadonlySet<string> = new Set(['margin', 'marginTop', 'marginRight', 'marginBottom', 'marginLeft', 'marginInline', 'marginBlock']);
+
 /**
- * A node kept in sight: nothing that hides it, in its style, in any of its rules
- * (whatever their selector, so a rule reaching into its children cannot hide them
- * either), nor a hiding attribute.
+ * An outline paints after the content around it, so a wide one, or one pushed out
+ * by an offset, covers a neighbour's text. A focus ring (up to 4 pixels, offset at
+ * most 4) stays.
+ */
+const OUTLINE_KEYS: ReadonlySet<string> = new Set(['outline', 'outlineWidth', 'outlineOffset']);
+const FOCUS_RING_KEYS: ReadonlySet<string> = new Set(['outline', 'outlineWidth', 'outlineOffset', 'outlineColor', 'outlineStyle']);
+function wideOutline(value: unknown): boolean {
+  if (isRecord(value)) return Object.values(value).some(wideOutline);
+  if (typeof value === 'number') return Math.abs(value) > 4;
+  if (typeof value !== 'string') return false;
+  return value
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .some((token) => {
+      if (/^-/.test(token)) return true;
+      const px = /^(\d*\.?\d+)px$/.exec(token);
+      if (px) return Number(px[1]) > 4;
+      const relative = /^(\d*\.?\d+)(r?em)$/.exec(token);
+      if (relative) return Number(relative[1]) > 0.25;
+      // Keywords (a style, a colour, thin, medium, thick) and a bare zero are fine; any other length is not read.
+      return /^\d|calc\(|var\(/.test(token) && !/^0(\.0+)?$/.test(token);
+    });
+}
+
+function withoutOverlayStyle(style: unknown): unknown {
+  if (!isRecord(style)) return style;
+  return Object.fromEntries(
+    Object.entries(style).filter(
+      ([key, value]) =>
+        !OVERLAY_KEYS.has(key) &&
+        !(NEGATIVE_MARGIN_KEYS.has(key) && hides(key, value)) &&
+        !(BOUNDED_BESIDE_KEYS.has(key) && hides(key, value)) &&
+        !(OUTLINE_KEYS.has(key) && wideOutline(value)),
+    ),
+  );
+}
+
+/**
+ * A node beside a part kept in sight (in the same wrapper, or in any wrapper around
+ * it) without what would lay it over the part: positioning, stacking, a transform,
+ * a grid placement into the part's cell, a negative margin, a click passing through.
+ */
+function besideKept(node: ShopTreeNode): ShopTreeNode {
+  const props = node.props;
+  if (!props) return node;
+  const style = withoutOverlayStyle(props.style);
+  const rules = filteredRules(props.rules, withoutOverlayStyle);
+  const next = { ...node, props: { ...props, ...(props.style !== undefined ? { style } : {}), ...(props.rules !== undefined ? { rules } : {}) } };
+  return sameJson(next, node) ? node : next;
+}
+
+/**
+ * A node kept in sight: only listed style keys, none that hides, in its style and
+ * in any of its rules (whatever their selector, so a rule reaching into its
+ * children cannot hide them either), and no hiding attribute.
  */
 function inSight(node: ShopTreeNode): ShopTreeNode {
   const props = { ...(node.props ?? {}) };
   for (const key of HIDING_PROPS) delete props[key];
-  const style = withoutHidingStyle(props.style);
+  const style = keptStyle(props.style);
   if (style) props.style = style;
-  if (Array.isArray(props.rules)) {
-    props.rules = (props.rules as unknown[]).map((rule) =>
-      isRecord(rule) && isRecord(rule.style) ? { ...rule, style: withoutHidingStyle(rule.style) } : rule,
-    );
-  }
+  if (Array.isArray(props.rules)) props.rules = filteredRules(props.rules, keptStyle);
   return { ...node, props };
+}
+
+/** Attributes that give a node another accessible name or tooltip than its text. */
+const RENAMING_PROPS: readonly string[] = ['aria-label', 'aria-labelledby', 'aria-description', 'title'];
+
+function withoutProps(node: ShopTreeNode, keys: readonly string[]): ShopTreeNode {
+  if (!node.props || !keys.some((key) => key in node.props!)) return node;
+  const props = { ...node.props };
+  for (const key of keys) delete props[key];
+  return { ...node, props };
+}
+
+/**
+ * Rules with each style filtered; a rule the filter empties goes, so the panel is
+ * not left with an empty state (a hover with nothing in it).
+ */
+function filteredRules(rules: unknown, filter: (style: unknown) => unknown, applies: (rule: Record<string, unknown>) => boolean = () => true): unknown {
+  if (!Array.isArray(rules)) return rules;
+  return (rules as unknown[]).flatMap((rule) => {
+    if (!isRecord(rule) || !isRecord(rule.style) || !applies(rule)) return [rule];
+    const style = filter(rule.style);
+    const emptied = isRecord(style) && Object.keys(style).length === 0 && Object.keys(rule.style).length > 0;
+    return emptied ? [] : [{ ...rule, style }];
+  });
+}
+
+/** Style keys no node inside a shop control, nor the control itself, keeps. */
+const NEVER_IN_CONTROL = /^(content|animation[A-Za-z]*|WebkitAnimation[A-Za-z]*)$/;
+
+/** A style value with `!important` removed: nothing a designer stores outweighs the platform's own guard rule. */
+function withoutImportant(style: unknown, top = true): unknown {
+  if (!isRecord(style)) return style;
+  let changed = false;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(style)) {
+    // Generated content and animations never run inside a shop control: words beside
+    // a fixed wording, or a hiding step that starts after the island checked.
+    if (top && NEVER_IN_CONTROL.test(key)) {
+      changed = true;
+      continue;
+    }
+    const next = typeof value === 'string' && /!\s*important/i.test(value)
+      ? value.replace(/\s*!\s*important\s*/gi, '').trim()
+      : isRecord(value)
+        ? withoutImportant(value, false)
+        : value;
+    if (next !== value) changed = true;
+    out[key] = next;
+  }
+  return changed ? out : style;
+}
+
+/** A node's style and rules with no `!important`, no generated content and no animation anywhere. */
+function notImportant(node: ShopTreeNode): ShopTreeNode {
+  const props = node.props;
+  if (!props) return node;
+  const style = withoutImportant(props.style);
+  const rules = Array.isArray(props.rules)
+    ? (props.rules as unknown[]).map((rule) => (isRecord(rule) && isRecord(rule.style) ? { ...rule, style: withoutImportant(rule.style) } : rule))
+    : props.rules;
+  const rulesChanged = Array.isArray(props.rules) && (rules as unknown[]).some((rule, index) => rule !== (props.rules as unknown[])[index] && !sameJson(rule, (props.rules as unknown[])[index]));
+  if (style === props.style && !rulesChanged) return node;
+  return { ...node, props: { ...props, style, ...(rulesChanged ? { rules } : {}) } };
+}
+
+/** Whether a rule's selector reaches past its node (a descendant, child or sibling step). */
+function reachesInside(rule: Record<string, unknown>): boolean {
+  return typeof rule.selector === 'string' && /[\s>~+]/.test(rule.selector.replace(/^&/, '').replace(/\([^)]*\)/g, ''));
+}
+
+/**
+ * The control's own rules that reach inside it lose their hiding declarations when
+ * it holds a part kept in sight: a hover rule on the control that reaches the demo notice and hides it.
+ */
+function controlInSight(control: ShopTreeNode): ShopTreeNode {
+  const props = control.props;
+  if (!props || !Array.isArray(props.rules) || !holdsKeptPart(control)) return control;
+  const rules = filteredRules(props.rules, withoutHidingStyle, reachesInside);
+  return sameJson(rules, props.rules) ? control : { ...control, props: { ...props, rules } };
 }
 
 /** A node inside a shop control that cannot send anything: never a form, never a form override. */
 function notSending(node: ShopTreeNode): ShopTreeNode {
   const props = node.props ?? {};
   const isForm = typeof node.type === 'string' && node.type.toLowerCase() === 'form';
-  if (!isForm && !SENDING_PROPS.some((key) => key in props)) return node;
+  // A button without a type submits a form the page wraps around the control.
+  const untypedButton = typeof node.type === 'string' && node.type.toLowerCase() === 'button' && props.type !== 'button';
+  if (!isForm && !untypedButton && !SENDING_PROPS.some((key) => key in props)) return node;
   const next = { ...props };
   for (const key of SENDING_PROPS) delete next[key];
+  if (untypedButton) next.type = 'button';
   return { ...node, ...(isForm ? { type: 'div' } : {}), props: next };
 }
 
@@ -1167,40 +1565,230 @@ function holdsKeptPart(node: ShopTreeNode): boolean {
  * Every part of a control's subtree as it must reach a page: its tag on the
  * allowlist, fixed text stored nowhere, a run time message's text stored nowhere,
  * a part kept in sight (and every wrapper between it and the control) with
- * nothing that hides it, a role used twice kept only by its first part, and no
- * node able to send anything. The same object when nothing changes.
+ * nothing that hides it, a role used twice kept only by its first part, no
+ * stored attribute its island owns on a button or an input (SHOP_RUNTIME_OWNED_PROPS),
+ * and no node able to send anything. The same object when nothing changes.
  */
-function enforceParts(control: ShopTreeNode): ShopTreeNode {
-  const seen = new Set<string>();
-  const visit = (node: ShopTreeNode): ShopTreeNode => {
+function enforceParts(input: ShopTreeNode): ShopTreeNode {
+  const control = notImportant(controlInSight(notSending(input)));
+  const visit = (node: ShopTreeNode, inRepeat: boolean): ShopTreeNode => {
     let changed = false;
-    const children = node.children?.map((child) => {
+    const nodeRole = shopPartRoleOf(node.props);
+    // A button whose words are fixed holds its own parts only: a stray text beside
+    // them would undo the wording (the button solution).
+    const onlyParts = !!(nodeRole && shopPartSpec(nodeRole)?.onlyParts);
+    const kept = onlyParts && node.children ? liftParts(node.children, node.id, ownRoles(nodeRole!)) : node.children;
+    // Inside a node that holds a part kept in sight, nothing else may be laid over it.
+    // Scoped to the parts that hold one (the payment step, its actions row, the
+    // confirmation): the control's other steps are never on screen with it, so they
+    // keep their positioning and grid placement.
+    const besideKeptPart = node !== control && holdsKeptPart(node);
+    if (kept !== node.children) changed = true;
+    const children = kept?.map((child) => {
       if (shopControlKindOf(child.props)) return child;
-      let next = notSending(child);
-      let role = shopPartRoleOf(next.props);
-      if (role && seen.has(role)) {
-        // A second copy of a role (a paste, a duplicate, an outside write) is a plain node.
-        const props = { ...(next.props ?? {}) };
-        delete props[SHOP_PART_ATTR];
-        next = { ...next, props };
-        role = undefined;
-      }
-      if (role) seen.add(role);
-      next = visit(next);
+      let next = notImportant(notSending(nameless(child)));
+      const role = shopPartRoleOf(next.props);
       const spec = role ? shopPartSpec(role) : undefined;
+      // Inside a repeated part every copy carries the same nodes: an id of the
+      // designer's would repeat on the page, so it goes.
+      const repeated = inRepeat || !!spec?.repeat;
+      if (repeated && next.props && 'id' in next.props) {
+        const props = { ...next.props };
+        delete props.id;
+        next = { ...next, props };
+      }
+      next = visit(next, repeated);
       if (spec && role) {
         const tag = shopPartTag(role, next.type);
         if (tag !== next.type) next = { ...next, type: tag };
-        if (spec.fixedText || spec.dynamicText) next = withoutStoredText(next);
+        next = withoutRuntimeProps(next);
+        if (spec.fixedText || spec.dynamicText || spec.onlyParts) next = withoutStoredText(next);
+        // Nothing renames a fixed wording for assistive technology either.
+        if (spec.keepVisible || spec.fixedText || spec.onlyParts) next = withoutProps(next, RENAMING_PROPS);
+        // A part kept in sight, or one whose text is the platform's, is its text only:
+        // a node put inside it would add words to it or lay a cover over it.
+        if ((spec.keepVisible || spec.fixedText) && next.children && next.children.length > 0) next = { ...next, children: [] };
       }
       if (spec?.keepVisible || holdsKeptPart(next)) next = inSight(next);
+      else if (besideKeptPart) next = besideKept(next);
       if (next !== child && !sameJson(next, child)) changed = true;
       else next = child;
       return next;
     });
     return changed ? { ...node, children } : node;
   };
-  return visit(control);
+  return visit(control, false);
+}
+
+/**
+ * The children of a button whose wording is fixed, its own parts only (the roles its
+ * spec lists, never a part of somewhere else): a part stays, a part inside a
+ * wrapper without a role is lifted out of it (so a required label is never
+ * lost with its wrapper), and everything else (the wrapper, its text, a nested
+ * control) goes. The same array when every child is a part already, so a second
+ * pass changes nothing.
+ */
+function liftParts(children: ShopTreeNode[], parentId: string | undefined, own: ReadonlySet<string>): ShopTreeNode[] {
+  const isOwn = (node: ShopTreeNode) => {
+    const role = shopPartRoleOf(node.props);
+    return role !== undefined && own.has(role);
+  };
+  if (children.every(isOwn)) return children;
+  const lifted: ShopTreeNode[] = [];
+  const collect = (node: ShopTreeNode, top: boolean) => {
+    if (isOwn(node)) {
+      lifted.push(!top && 'parentId' in node && parentId !== undefined ? { ...node, parentId } : node);
+      return;
+    }
+    if (shopControlKindOf(node.props)) return;
+    for (const child of node.children ?? []) collect(child, false);
+  };
+  for (const child of children) collect(child, true);
+  return lifted;
+}
+
+/** The roles a part's spec lists as its own children. */
+function ownRoles(role: string): ReadonlySet<string> {
+  return new Set((shopPartSpec(role)?.children ?? []).map((child) => child.role));
+}
+
+/** A node without its part role: a plain node from here on. */
+function withoutRole(node: ShopTreeNode): ShopTreeNode {
+  const props = { ...(node.props ?? {}) };
+  delete props[SHOP_PART_ATTR];
+  return { ...node, props };
+}
+
+/**
+ * Each part where its spec puts it, once: a part counts only under its spec parent
+ * (the part it belongs in, through any wrappers without a role, or the control
+ * itself for a top part), only in a control of its own kind, and only its first
+ * copy. Anything else (a second copy, a demo notice moved under the confirmation, a
+ * label moved into the pay button) loses its role and is a plain node, so the
+ * required part comes back in its own place. Runs before anything is re-added, so
+ * one pass settles the tree. The same object when nothing changes.
+ */
+function placedParts(control: ShopTreeNode, kind: ShopControlKind): ShopTreeNode {
+  const seen = new Set<string>();
+  const visit = (node: ShopTreeNode, nearest: string | undefined): ShopTreeNode => {
+    let changed = false;
+    const children = node.children?.map((child) => {
+      if (shopControlKindOf(child.props)) return child;
+      let next = child;
+      let here = nearest;
+      const role = shopPartRoleOf(child.props);
+      if (role) {
+        const indexed = PART_INDEX.get(role);
+        if (indexed && indexed.kind === kind && indexed.parentRole === nearest && !seen.has(role)) {
+          seen.add(role);
+          here = role;
+        } else {
+          next = withoutRole(child);
+        }
+      }
+      next = visit(next, here);
+      if (next !== child) changed = true;
+      return next;
+    });
+    return changed ? { ...node, children } : node;
+  };
+  return visit(control, undefined);
+}
+
+/** What the editor says when a move would take a part out of its place in its control. */
+export const MISPLACED_SHOP_PART_MESSAGE =
+  'This part of the shop control has its own place in it: it can move among its siblings, not into another part.';
+
+/** What the editor says when something would go inside a part that holds its own words only. */
+export const CLOSED_SHOP_PART_MESSAGE =
+  'This part of the shop control holds its own words only (the pay button, the total and the notices a buyer must see): nothing else can go inside it. Put it beside the part instead.';
+
+/**
+ * Why the editor refuses to put `node` under `ancestors` (nearest first, the new
+ * parent first) inside a shop control, or undefined when it may: a part going
+ * anywhere but the place its spec gives it, or anything going inside a part that
+ * holds its own words only (a button whose wording is fixed takes its own parts
+ * only; a part kept in sight or with fixed text takes nothing). The normaliser
+ * would undo either on the next load, so the editor says so now.
+ */
+export function shopPartRefusal(node: { props?: unknown; children?: readonly unknown[] }, ancestors: readonly { props?: unknown }[]): string | undefined {
+  let nearest: string | undefined;
+  let kind: ShopControlKind | undefined;
+  for (const ancestor of ancestors) {
+    kind = shopControlKindOf(ancestor.props);
+    if (kind) break;
+    if (nearest === undefined) nearest = shopPartRoleOf(ancestor.props);
+  }
+  if (!kind) return undefined;
+  const closed = nearest ? shopPartSpec(nearest) : undefined;
+  const role = shopPartRoleOf(node.props);
+  // A closed part takes no control either: the normaliser would remove it.
+  if (closed && (closed.keepVisible || closed.fixedText)) return CLOSED_SHOP_PART_MESSAGE;
+  if (closed?.onlyParts && !(role && ownRoles(nearest!).has(role))) return CLOSED_SHOP_PART_MESSAGE;
+  if (shopControlKindOf(node.props)) return undefined;
+  const misplaced = (candidate: { props?: unknown; children?: readonly unknown[] }): boolean => {
+    if (shopControlKindOf(candidate.props)) return false;
+    const own = shopPartRoleOf(candidate.props);
+    if (own) {
+      const indexed = PART_INDEX.get(own);
+      return !indexed || indexed.kind !== kind || indexed.parentRole !== nearest;
+    }
+    return (candidate.children ?? []).some((child) => isRecord(child) && misplaced(child as { props?: unknown; children?: readonly unknown[] }));
+  };
+  return misplaced(node) ? MISPLACED_SHOP_PART_MESSAGE : undefined;
+}
+
+/** Whether the editor refuses to put `node` under `ancestors` inside a shop control (shopPartRefusal). */
+export function misplacesShopPart(node: { props?: unknown; children?: readonly unknown[] }, ancestors: readonly { props?: unknown }[]): boolean {
+  return shopPartRefusal(node, ancestors) !== undefined;
+}
+
+/**
+ * How the published page limits a node's styles, for the properties panel's note
+ * (`ancestors` nearest first): 'kept' for a part kept in sight or a wrapper around
+ * one (an allowlist of styles, section 5 of the plan), 'beside' for a node next to
+ * one inside the part that holds it (no positioning, stacking or large transforms),
+ * undefined for anything else.
+ */
+export function shopStyleLimit(node: { props?: unknown; children?: readonly unknown[] }, ancestors: readonly { props?: unknown; children?: readonly unknown[] }[]): 'kept' | 'beside' | undefined {
+  const at = ancestors.findIndex((ancestor) => shopControlKindOf(ancestor.props));
+  if (at < 0 || shopControlKindOf(node.props)) return undefined;
+  const role = shopPartRoleOf(node.props);
+  if ((role && shopPartSpec(role)?.keepVisible) || holdsKeptPart(node as ShopTreeNode)) return 'kept';
+  const parent = ancestors[0];
+  if (at > 0 && parent && holdsKeptPart(parent as ShopTreeNode)) return 'beside';
+  return undefined;
+}
+
+/**
+ * The attributes the island owns on a part's interactive element, by tag, in every
+ * spelling a stored node may carry: whether it can be pressed or typed into, and
+ * whether the keyboard reaches it. A stored copy would make a remove button that
+ * cannot be pressed or a quantity input that cannot be typed into, so none is
+ * stored (enforceParts) and the island draws none of the designer's
+ * (ShopPartElement), setting its own where it means something.
+ */
+export const SHOP_RUNTIME_OWNED_PROPS: Readonly<Record<string, readonly string[]>> = {
+  button: ['disabled', 'aria-disabled', 'inert', 'tabIndex', 'tabindex'],
+  input: ['disabled', 'aria-disabled', 'inert', 'tabIndex', 'tabindex', 'readOnly', 'readonly', 'max'],
+};
+
+/** A part without the stored attributes its island owns (SHOP_RUNTIME_OWNED_PROPS). */
+function withoutRuntimeProps(node: ShopTreeNode): ShopTreeNode {
+  const owned = typeof node.type === 'string' ? SHOP_RUNTIME_OWNED_PROPS[node.type.toLowerCase()] : undefined;
+  return owned ? withoutProps(node, owned) : node;
+}
+
+/** Form field tags: their value lives in the island's state, so they carry no stored `name`. */
+const FIELD_TAGS: ReadonlySet<string> = new Set(['input', 'select', 'textarea']);
+
+/** A form field inside a shop control without a stored `name`: a form the page wraps around it has nothing to post. */
+function nameless(node: ShopTreeNode): ShopTreeNode {
+  const tag = typeof node.type === 'string' ? node.type.toLowerCase() : '';
+  if (!FIELD_TAGS.has(tag) || !node.props || !('name' in node.props)) return node;
+  const props = { ...node.props };
+  delete props.name;
+  return { ...node, props };
 }
 
 /** A part whose text is the platform's stores none. */
@@ -1233,14 +1821,15 @@ export function normalizeShopControl<N extends object>(
   const kind = asKind ?? shopControlKindOf(control.props);
   if (!kind) return input;
   const controlId = typeof control.id === 'string' && control.id ? control.id : `shop-${kind}`;
-  const existing = partsByRole(control);
-  let changed = false;
-  let root: ShopTreeNode = control;
+  const placed = placedParts(control, kind);
+  const existing = partsByRole(placed);
+  let changed = placed !== control;
+  let root: ShopTreeNode = placed;
 
   if (existing.size === 0) {
-    const parts = buildShopParts(kind, controlId, locale, shape, legacyTexts(kind, control.props), legacyBindings(kind, control.bindings), taken);
-    const own = control.children ?? [];
-    root = { ...control, children: SHOP_CONTROLS[kind].partsFirst ? [...parts, ...own] : [...own, ...parts] };
+    const parts = buildShopParts(kind, controlId, locale, shape, legacyTexts(kind, placed.props), legacyBindings(kind, placed.bindings), taken);
+    const own = placed.children ?? [];
+    root = { ...placed, children: SHOP_CONTROLS[kind].partsFirst ? [...parts, ...own] : [...own, ...parts] };
     changed = true;
   } else {
     // Missing required parts, top down, so a part comes back before the parts inside it.
@@ -1253,13 +1842,16 @@ export function normalizeShopControl<N extends object>(
     };
     visit(SHOP_CONTROLS[kind].parts);
     if (missing.length > 0) {
-      root = cloneTree(control);
+      root = cloneTree(placed);
       const byRole = partsByRole(root);
+      // A part rebuilt now takes a leftover legacy text prop as its text, as a control
+      // built whole does (and as a leftover legacy binding moves to it, below).
+      const texts = legacyTexts(kind, placed.props);
       for (const { spec, parentRole } of missing) {
         const parent = parentRole ? byRole.get(parentRole) : root;
         // A required part's parent is required too, so it exists by now.
         if (!parent) continue;
-        const node = newPartNode(spec, controlId, String(parent.id ?? controlId), locale, shape, undefined, taken);
+        const node = newPartNode(spec, controlId, String(parent.id ?? controlId), locale, shape, texts[spec.role], taken);
         const siblings = parent.children ?? [];
         const at = insertIndex(siblings, spec, parentRole, kind);
         parent.children = [...siblings.slice(0, at), node, ...siblings.slice(at)];
@@ -1270,7 +1862,12 @@ export function normalizeShopControl<N extends object>(
   }
 
   // Legacy label props and bindings leave the control once their text lives in the parts.
-  const legacy = Object.keys(LEGACY[kind].props).filter((key) => root.props && key in root.props);
+  // On a control that already has parts, a leftover legacy prop (label, emptyContent) is
+  // moved into its part when that part was rebuilt just now (above), and dropped when the
+  // part was already there: it holds the designer's text. A leftover legacy binding is
+  // moved (below) unless its part is bound already. Either way the prop is gone after one
+  // pass, so a second pass changes nothing.
+  const legacy = [...Object.keys(LEGACY[kind].props), ...(LEGACY[kind].dropped ?? [])].filter((key) => root.props && key in root.props);
   if (legacy.length > 0) {
     const props = { ...(root.props ?? {}) };
     for (const key of legacy) delete props[key];
@@ -1279,6 +1876,18 @@ export function normalizeShopControl<N extends object>(
   }
   const legacyBound = Object.keys(LEGACY[kind].bindings).filter((key) => root.bindings && key in root.bindings);
   if (legacyBound.length > 0) {
+    // A control built just now carried its bindings into the new parts. One that
+    // already had parts (an outside write, a page saved between versions) moves each
+    // to its part when the part has no text binding of its own; when it has one, the
+    // part's own binding wins and the legacy one is dropped.
+    if (existing.size > 0) {
+      root = cloneTree(root);
+      const byRole = partsByRole(root);
+      for (const key of legacyBound) {
+        const part = byRole.get(LEGACY[kind].bindings[key]);
+        if (part && part.bindings?.children === undefined) part.bindings = { ...(part.bindings ?? {}), children: root.bindings![key] };
+      }
+    }
     const bindings = { ...(root.bindings ?? {}) };
     for (const key of legacyBound) delete bindings[key];
     root = { ...root, bindings };
@@ -1345,6 +1954,27 @@ export function pageWithShopParts<P extends { appComponentTree?: unknown; canvas
   return next;
 }
 
+/**
+ * `pageWithShopParts` for every reusable component's page (a definition is
+ * `{ page, ... }`), so a legacy control inside a component gets its parts as nodes
+ * the editor can select. Anything that is not a definition with a page passes through.
+ */
+export function componentsWithShopParts<C>(components: C, language: string | null | undefined): C {
+  if (!isRecord(components)) return components;
+  let changed = false;
+  const out: Record<string, unknown> = {};
+  for (const [id, definition] of Object.entries(components)) {
+    if (isRecord(definition) && isRecord(definition.page)) {
+      const page = pageWithShopParts(definition.page as { appComponentTree?: unknown; canvasNodes?: unknown }, language);
+      out[id] = page === definition.page ? definition : { ...definition, page };
+      if (out[id] !== definition) changed = true;
+    } else {
+      out[id] = definition;
+    }
+  }
+  return changed ? (out as C) : components;
+}
+
 /** The parts of a control as the renderers hand them over: a stored node or a live editor node, read the same way. */
 interface ReadableNode {
   props?: unknown;
@@ -1367,16 +1997,7 @@ function childrenOf(node: ReadableNode): ReadableNode[] {
 export function missingShopParts(control: ReadableNode & { id?: unknown }, locale: ShopLocale, asKind?: ShopControlKind): ShopTreeNode[] {
   const kind = asKind ?? shopControlKindOf(control.props);
   if (!kind) return [];
-  const present = new Set<string>();
-  const walk = (node: ReadableNode) => {
-    for (const child of childrenOf(node)) {
-      if (shopControlKindOf(child.props)) continue;
-      const role = shopPartRoleOf(child.props);
-      if (role) present.add(role);
-      walk(child);
-    }
-  };
-  walk(control);
+  const present = presentShopPartRoles(control);
   const controlId = typeof control.id === 'string' && control.id ? control.id : `shop-${kind}`;
   const build = (spec: ShopPartSpec, parentId: string): ShopTreeNode => {
     const node = newPartNode(spec, controlId, parentId, locale, 'node');
@@ -1395,6 +2016,34 @@ export function missingShopParts(control: ReadableNode & { id?: unknown }, local
   };
   visit(SHOP_CONTROLS[kind].parts, true);
   return out;
+}
+
+/** The roles of the parts inside a control, not counting a control nested in it. */
+function presentShopPartRoles(control: ReadableNode): Set<string> {
+  const present = new Set<string>();
+  const walk = (node: ReadableNode) => {
+    for (const child of childrenOf(node)) {
+      if (shopControlKindOf(child.props)) continue;
+      const role = shopPartRoleOf(child.props);
+      if (role) present.add(role);
+      walk(child);
+    }
+  };
+  walk(control);
+  return present;
+}
+
+/**
+ * Everything missingShopParts reads from a control, as one string: its id, its kind
+ * and the roles of the parts it holds. Equal keys give equal results, so a surface
+ * that draws the control on every render (the canvas, the Preview, where the node
+ * is a live instance changed in place) can keep the result until the key changes.
+ */
+export function missingShopPartsKey(control: ReadableNode & { id?: unknown }, asKind?: ShopControlKind): string {
+  const kind = asKind ?? shopControlKindOf(control.props);
+  if (!kind) return '';
+  const controlId = typeof control.id === 'string' && control.id ? control.id : `shop-${kind}`;
+  return JSON.stringify([controlId, kind, [...presentShopPartRoles(control)].sort()]);
 }
 
 /** What the editor says when a delete would take a required part out of its control. */

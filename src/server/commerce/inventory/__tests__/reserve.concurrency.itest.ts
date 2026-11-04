@@ -17,6 +17,12 @@
 //      re-reads the winner and returns the SAME reservation id.
 //   4. two overlapping kits supplied in OPPOSITE component order acquire their
 //      locks ASCENDING and do not deadlock; both commit.
+//   5. two orders on two connections racing for one BACKORDER variant near the
+//      32-bit ceiling of reserved_quantity: when only one fits, the loser waits on
+//      the winner's row lock, re-evaluates the bounded UPDATE against the committed
+//      row, matches zero rows and is refused with the typed ReservationOverflowError
+//      (never 22003); reserved never passes 2147483647. When both fit, both commit
+//      and reserved lands exactly on the ceiling.
 //
 // The sequential guards and the release / fulfill / adjust effects are in
 // reserve.itest.ts. TRUST auth (no password literals). The `.itest.ts` suffix
@@ -39,11 +45,14 @@ import postgres from 'postgres';
 import type { CommerceDB } from '../../db-types';
 import { commerceProvisionOptions } from '../../provisioning/provision';
 import {
+  ReservationOverflowError,
+  reserve,
   reserveKitWithRetry,
   reserveTransaction,
   reserveWithRetry,
 } from '../reserve';
 import { DEMO_COMPANY_ID } from '@/lib/renderer/server/demoTenant';
+import { MAX_ORDER_INTEGER } from '@/lib/commerce/dto';
 
 const DB_NAME = 'framer_clone_test';
 const TG = assertTenantGroupId('018f9c10-0000-7000-8000-0000000008cc');
@@ -131,6 +140,35 @@ async function seedManaged(
     })
     .execute();
   return { variantId, inventoryItemId, locationId };
+}
+
+/** Seed a BACKORDER variant (manage_inventory, allow_backorder) whose level already holds `reserved`. */
+async function seedBackorder(
+  db: Kysely<CommerceDB>,
+  reserved: number,
+): Promise<{ variantId: string; inventoryItemId: string; locationId: string }> {
+  const seeded = await seedManaged(db, 0);
+  await db.updateTable('product_variant').set({ allow_backorder: true }).where('id', '=', seeded.variantId).execute();
+  await db
+    .updateTable('inventory_level')
+    .set({ reserved_quantity: reserved })
+    .where('inventory_item_id', '=', seeded.inventoryItemId)
+    .where('location_id', '=', seeded.locationId)
+    .execute();
+  return seeded;
+}
+
+/** Wait until some backend of the test database is blocked on a lock (the second order queued on the row lock). */
+async function waitForLockWaiter(): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const rows = await owner!<{ c: string }[]>`
+      SELECT count(*)::text AS c FROM pg_stat_activity
+       WHERE datname = ${DB_NAME} AND wait_event_type = 'Lock'
+    `;
+    if (Number(rows[0]!.c) > 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error('the second order never waited on the first one\'s row lock');
 }
 
 /** Seed one managed item+level sharing a single location (for the kit race). */
@@ -331,5 +369,96 @@ describe('CM-08 reserve concurrency (Dockerized Postgres)', () => {
     // Both kits reserved one of each item: reserved_quantity == 2 per item.
     expect((await readLevel(db, lo, locationId)).reserved).toBe(2);
     expect((await readLevel(db, hi, locationId)).reserved).toBe(2);
+  });
+
+  /**
+   * Order A reserves on its own connection and holds its transaction (and the row lock) open
+   * until order B, on a second connection, is seen waiting on that lock; only then A commits.
+   * So B always re-evaluates its bounded UPDATE against A's committed row: a forced race, not
+   * two calls that may happen to run one after the other. A failure on either side ends the
+   * test with its own error instead of a hung lock and a timeout.
+   */
+  async function raceBehindHeldOrder(
+    db: Kysely<CommerceDB>,
+    first: Parameters<typeof reserve>[2],
+    second: Parameters<typeof reserve>[2],
+  ) {
+    let releaseA!: () => void;
+    const aHolds = new Promise<void>((resolve) => {
+      releaseA = resolve;
+    });
+    let aReserved!: () => void;
+    const aHasReserved = new Promise<void>((resolve) => {
+      aReserved = resolve;
+    });
+    const orderA = reserveTransaction(db, async (trx) => {
+      const result = await reserve(trx, TG, first);
+      aReserved();
+      await aHolds;
+      return result;
+    });
+    // A failing before it reserved must end the wait for it, with A's own error.
+    await Promise.race([aHasReserved, orderA.then(() => undefined)]);
+
+    const orderB = reserveWithRetry(db, TG, second).then(
+      (result) => ({ result, error: null as unknown }),
+      (error: unknown) => ({ result: null, error }),
+    );
+    try {
+      await waitForLockWaiter();
+    } finally {
+      releaseA();
+    }
+    return { a: await orderA, b: await orderB };
+  }
+
+  it('two orders racing for a BACKORDER variant near the ceiling, only one fits: the loser re-evaluates the bounded UPDATE and is refused with ReservationOverflowError', async () => {
+    const db = tenantDb(ownerBase!, TG);
+    // 10 below the ceiling: one order of 6 fits, a second of 6 on top would pass it.
+    const { variantId, inventoryItemId, locationId } = await seedBackorder(db, MAX_ORDER_INTEGER - 10);
+    const requestA = `ceiling-a-${randomUUID()}`;
+    const requestB = `ceiling-b-${randomUUID()}`;
+
+    const { a, b } = await raceBehindHeldOrder(
+      db,
+      { inventoryItemId, variantId, locationId, needed: 6, requestId: requestA },
+      { inventoryItemId, variantId, locationId, needed: 6, requestId: requestB },
+    );
+    expect(a.ok).toBe(true);
+    expect(b.result).toBeNull();
+    expect(b.error).toBeInstanceOf(ReservationOverflowError);
+    const overflow = b.error as ReservationOverflowError;
+    // B saw A's committed reservation, not the value it would have read before the race.
+    expect(overflow.reserved).toBe(MAX_ORDER_INTEGER - 4);
+    expect(overflow.needed).toBe(6);
+
+    const after = await readLevel(db, inventoryItemId, locationId);
+    expect(after.reserved).toBe(MAX_ORDER_INTEGER - 4);
+    expect(after.reserved).toBeLessThanOrEqual(MAX_ORDER_INTEGER);
+    // Only the winner wrote its ledger rows; the refused order wrote nothing.
+    expect(await countRows(db, 'stock_movement', requestA)).toBe(1);
+    expect(await countRows(db, 'reservation', requestA)).toBe(1);
+    expect(await countRows(db, 'stock_movement', requestB)).toBe(0);
+    expect(await countRows(db, 'reservation', requestB)).toBe(0);
+  });
+
+  it('two orders racing for a BACKORDER variant near the ceiling, both fit: both commit and reserved lands exactly on 2147483647', async () => {
+    const db = tenantDb(ownerBase!, TG);
+    const { variantId, inventoryItemId, locationId } = await seedBackorder(db, MAX_ORDER_INTEGER - 10);
+    const requestA = `ceiling-fit-a-${randomUUID()}`;
+    const requestB = `ceiling-fit-b-${randomUUID()}`;
+
+    const { a, b } = await raceBehindHeldOrder(
+      db,
+      { inventoryItemId, variantId, locationId, needed: 4, requestId: requestA },
+      { inventoryItemId, variantId, locationId, needed: 6, requestId: requestB },
+    );
+    expect(a.ok).toBe(true);
+    expect(b.error).toBeNull();
+    expect(b.result?.ok).toBe(true);
+    const after = await readLevel(db, inventoryItemId, locationId);
+    expect(after.reserved).toBe(MAX_ORDER_INTEGER);
+    expect(await countRows(db, 'reservation', requestA)).toBe(1);
+    expect(await countRows(db, 'reservation', requestB)).toBe(1);
   });
 });

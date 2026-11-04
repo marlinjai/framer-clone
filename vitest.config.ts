@@ -59,6 +59,8 @@ export default defineConfig({
             'src/lib/bindings/resolver/**/*.{test,spec}.{ts,tsx}',
             // The score's own pure logic (the floor), no browser: the probes stay in vitest.score.config.ts.
             'test/score/lib/**/*.test.ts',
+            // The agent plugin's validator (plugin/validate.mjs), pure filesystem.
+            'plugin/**/*.test.ts',
           ],
         },
       },

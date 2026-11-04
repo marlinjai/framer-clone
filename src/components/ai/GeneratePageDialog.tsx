@@ -18,6 +18,13 @@
 // the start. Cancel and closing the dialog stop the run on the server;
 // unmounting the editor only stops following it.
 //
+// While it runs the page builds itself on the canvas: each section of the
+// first attempt is drawn as soon as it is written (a draft that never enters
+// the project, src/lib/ai/pageGen/draft.ts), and the dialog gives way to a
+// slim floating panel (./PageGenProgressPanel.tsx) so the canvas stays visible
+// and usable. Cancel there is the one stop. The result is applied exactly as
+// before, one undo step, and the draft is dropped in the same handler.
+//
 // After a generation is applied, one visual review round runs by default
 // (./VisualReview.tsx, plan docs/plans/2026-10-23-ai-design-quality-round-2.md
 // decision 4): the editor measures and captures the rendered page and an AI
@@ -26,8 +33,9 @@
 'use client';
 
 import React from 'react';
+import { runInAction } from 'mobx';
 import { observer } from 'mobx-react-lite';
-import { Sparkles, Loader2, Undo2 } from 'lucide-react';
+import { Sparkles, Undo2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -79,6 +87,8 @@ import {
 } from '@/lib/ai/pageGen/flow';
 import { GENERATION_LIMITS } from '@/lib/ai/pageGen/schema';
 import type { PageGenProgress, StockImageSummary } from '@/lib/ai/pageGen/protocol';
+import { draftTargetFor, type DraftPhase, type PageGenDraftTarget } from '@/lib/ai/pageGen/draft';
+import { PageGenProgressPanel } from '@/components/ai/PageGenProgressPanel';
 import {
   DEFAULT_REVIEW_SETTINGS,
   ReviewModelToggle,
@@ -89,6 +99,11 @@ import {
   type ReviewRunnerOptions,
   type ReviewSettings,
 } from '@/components/ai/VisualReview';
+import { IdeaBar, usePageIdeas } from '@/components/ai/IdeaBar';
+import { BriefNotice, EnhanceButton } from '@/components/ai/EnhanceButton';
+import { useBriefAssist } from '@/components/ai/useBriefAssist';
+import { fetchBriefApi, type BriefApi } from '@/lib/ai/brief/client';
+import { buildBriefSiteInput } from '@/lib/ai/brief/siteInput';
 
 const TARGETS: Array<{ kind: TargetKind; label: string }> = [
   { kind: 'newPage', label: 'New page' },
@@ -96,12 +111,18 @@ const TARGETS: Array<{ kind: TargetKind; label: string }> = [
   { kind: 'insert', label: 'Add to selection' },
 ];
 
+/** What the canvas says about the section still being written, from the run's progress. */
+function draftPhaseOf(p: PageGenProgress): DraftPhase {
+  if (p.attempt >= 2 || p.phase === 'repairing') return 'polishing';
+  return p.phase === 'generating' ? 'writing' : 'checking';
+}
+
 function progressText(p: PageGenProgress): string {
   const kb = (p.receivedChars / 1024).toFixed(1);
   if (p.phase === 'validating') return 'Checking the result against the editor...';
   if (p.phase === 'images') return 'Finding photos...';
   if (p.phase === 'repairing') {
-    return p.receivedChars > 0 ? `Fixing problems in the first draft (${kb} KB)...` : 'Fixing problems in the first draft...';
+    return p.receivedChars > 0 ? `Polishing the first draft (${kb} KB)...` : 'Polishing the first draft...';
   }
   return p.receivedChars > 0 ? `Designing (${kb} KB written)...` : 'Designing...';
 }
@@ -136,6 +157,8 @@ export interface GeneratePageDialogProps {
   resume?: PageGenResume;
   /** The visual review run (injectable for tests). */
   review?: ReviewRunnerOptions;
+  /** The idea row and Enhance calls (injectable for tests). */
+  briefApi?: BriefApi;
 }
 
 export const GeneratePageDialog = observer(function GeneratePageDialog({
@@ -144,6 +167,7 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
   transport = fetchPageGenTransport,
   resume = resumePageGen,
   review: reviewRunner,
+  briefApi = fetchBriefApi,
 }: GeneratePageDialogProps) {
   const { editorUI } = useStore();
   const project = editorUI.currentProject;
@@ -172,21 +196,68 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
     saveReviewSettings(next);
   };
 
+  // The canvas draft of the run in progress (src/lib/ai/pageGen/draft.ts).
+  const draft = editorUI.pageGenDraft;
+  const dropDraft = () => {
+    const current = stateRef.current;
+    if (current.phase === 'running') draft.clear(current.requestKey);
+  };
+
   // Unmounting (leaving the editor) only stops following a run: it keeps going
-  // on the server and is resumed from savePendingRun next time.
-  React.useEffect(() => () => abortRef.current?.abort(DETACH), []);
+  // on the server and is resumed from savePendingRun next time, draft and all.
+  React.useEffect(
+    () => () => {
+      abortRef.current?.abort(DETACH);
+      dropDraft();
+    },
+    // Unmount only; dropDraft reads the latest state through a ref.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
+  // The brief as it was before an Enhance started streaming, or null when none
+  // streams: the draft never holds the partial rewrite.
+  const settledBriefRef = React.useRef<string | null>(null);
 
   const edit = (patch: Partial<FlowInputs>) => {
     dispatch({ type: 'edit', inputs: patch, targetKey });
-    if (projectId) saveDraft(projectId, { ...inputs, ...patch });
+    if (projectId) saveDraft(projectId, { ...inputs, brief: settledBriefRef.current ?? inputs.brief, ...patch });
     if (patch.model) saveModelChoice('page-gen', patch.model);
   };
+
+  // The idea row and Enhance (./IdeaBar.tsx, ./useBriefAssist.ts). A streaming
+  // rewrite is not persisted until it finished (the draft keeps the original).
+  const setBrief = (brief: string, opts: { persist: boolean }) => {
+    if (opts.persist) settledBriefRef.current = null;
+    else if (settledBriefRef.current === null) settledBriefRef.current = stateRef.current.inputs.brief;
+    dispatch({ type: 'edit', inputs: { brief }, targetKey });
+    if (opts.persist && projectId) saveDraft(projectId, { ...stateRef.current.inputs, brief });
+  };
+  const briefSelection = inputs.targetKind !== 'newPage' && availability.ok ? selected : undefined;
+  const briefSiteInput = () =>
+    project ? buildBriefSiteInput(project, inputs.targetKind, briefSelection) : { targetKind: inputs.targetKind };
+  const assist = useBriefAssist({
+    brief: inputs.brief,
+    setBrief,
+    api: briefApi,
+    siteInput: briefSiteInput,
+    active: open && state.phase !== 'running',
+  });
+  const ideas = usePageIdeas({
+    open: open && state.phase === 'editing',
+    // The raw project id: every unsaved demo shares the storage key 'unsaved-demo' but not its ideas.
+    cacheKey: project ? `${project.id}|${inputs.targetKind}|${briefSelection?.id ?? ''}` : '',
+    targetKind: inputs.targetKind,
+    request: briefSiteInput,
+    api: briefApi,
+  });
 
   const cancel = () => {
     // A plain abort: the transport also stops the run on the server.
     abortRef.current?.abort();
     abortRef.current = null;
     if (projectId) clearPendingRun(projectId);
+    dropDraft();
     dispatch({ type: 'cancel' });
   };
 
@@ -215,12 +286,27 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
         savePendingRun(projectId, { generationId, requestKey, inputs: runInputs, target, startedAt: Date.now() });
       },
       onProgress: (progress) => {
-        if (isCurrent()) dispatch({ type: 'progress', requestKey, progress });
+        if (!isCurrent()) return;
+        draft.setPhase(requestKey, draftPhaseOf(progress));
+        dispatch({ type: 'progress', requestKey, progress });
+      },
+      // A preview section: drawn on the canvas, never part of the project. A
+      // collected run repeats the ones already drawn; the draft keeps one per index.
+      onSection: (section) => {
+        if (!isCurrent()) return;
+        if (draft.add(requestKey, section)) dispatch({ type: 'section', requestKey, count: draft.sections.length });
       },
       onResult: (result) => {
         if (!isCurrent() || !project) return; // cancelled or superseded: never apply
         if (projectId) clearPendingRun(projectId);
-        const outcome = applyResult(project, target, result, runInputs.targetKind === 'newPage' ? runInputs.pageTitle : undefined);
+        // The result replaces the draft in one go: the tracked apply (today's one
+        // undo step) and the draft dropped in the same action, so no frame shows
+        // both or neither.
+        const outcome = runInAction(() => {
+          const applied = applyResult(project, target, result, runInputs.targetKind === 'newPage' ? runInputs.pageTitle : undefined);
+          draft.clear(requestKey);
+          return applied;
+        });
         if (!outcome.ok) {
           dispatch({ type: 'failed', requestKey, error: { code: 'apply_failed', message: `Nothing was changed: ${outcome.reason}` } });
           return;
@@ -248,15 +334,18 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
       onError: (error) => {
         if (error.code === 'aborted' || !isCurrent()) return;
         if (projectId) clearPendingRun(projectId);
+        draft.clear(requestKey);
         dispatch({ type: 'failed', requestKey, error: describeError(error) });
       },
     };
   };
 
-  const begin = (requestKey: string): AbortController => {
+  const begin = (requestKey: string, draftTarget: PageGenDraftTarget): AbortController => {
     const controller = new AbortController();
     abortRef.current?.abort(DETACH);
     abortRef.current = controller;
+    // A new run starts a new draft; whatever an earlier one left is gone.
+    draft.begin(draftTarget);
     dispatch({ type: 'start', requestKey });
     review.reset();
     return controller;
@@ -269,7 +358,16 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
     const target = captureTarget(inputs.targetKind, page, selected);
     const requestKey = makeRequestKey(inputs, targetKey);
     const request = buildRequest({ brief, model: inputs.model, pageTitle: inputs.pageTitle, target, project });
-    const controller = begin(requestKey);
+    const controller = begin(
+      requestKey,
+      draftTargetFor({
+        requestKey,
+        target,
+        title: inputs.pageTitle,
+        rootId: page.appComponentTree.id,
+        siteLanguage: project.siteSettings?.language,
+      }),
+    );
     lastBriefRef.current = brief;
     await transport(request, follow({ requestKey, target, runInputs: inputs, brief }, controller), controller.signal);
     if (abortRef.current === controller) abortRef.current = null;
@@ -287,7 +385,17 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
       return;
     }
     dispatch({ type: 'reset', inputs: pending.inputs });
-    const controller = begin(pending.requestKey);
+    // The draft is rebuilt from the run: the collection hands back every section sent so far.
+    const controller = begin(
+      pending.requestKey,
+      draftTargetFor({
+        requestKey: pending.requestKey,
+        target: pending.target,
+        title: pending.inputs.pageTitle,
+        rootId: project?.getPage(pending.target.pageId)?.appComponentTree.id,
+        siteLanguage: project?.siteSettings?.language,
+      }),
+    );
     const brief = pending.inputs.brief.trim();
     lastBriefRef.current = brief;
     void resume(
@@ -316,10 +424,22 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
 
   const running = state.phase === 'running';
   const briefTooLong = inputs.brief.length > GENERATION_LIMITS.maxBriefChars;
-  const canGenerate = !running && !!project && availability.ok && inputs.brief.trim().length > 0 && !briefTooLong;
+  const canGenerate =
+    !running && !assist.enhancing && !!project && availability.ok && inputs.brief.trim().length > 0 && !briefTooLong;
+  // While a run builds the page on the canvas, the dialog gives way to the
+  // floating progress panel: a modal would cover the canvas and lock it.
+  const draftTarget = draft.target;
+  const draftElsewhere =
+    running && draftTarget && editorUI.currentPage?.id !== draftTarget.pageId
+      ? `drawn on ${project?.pageName(draftTarget.pageId) ?? 'another page'}`
+      : undefined;
 
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
+    <>
+    {running && (
+      <PageGenProgressPanel text={progressText(state.progress)} sections={state.sections} elsewhere={draftElsewhere} onCancel={cancel} />
+    )}
+    <Dialog open={open && !running} onOpenChange={handleOpenChange}>
       <DialogContent className="max-w-[520px]" data-editor-ui="true">
         <DialogHeader>
           <DialogTitle>Generate with AI</DialogTitle>
@@ -371,7 +491,7 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
             </div>
           ) : (
             <div className="grid gap-4">
-              <fieldset className="grid gap-2" disabled={running}>
+              <fieldset className="grid gap-2">
                 <legend className="mb-1 text-xs font-medium text-muted-foreground">Where</legend>
                 <div className="flex flex-wrap gap-2">
                   {TARGETS.map((t) => (
@@ -399,35 +519,43 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
                     id="pagegen-title"
                     value={inputs.pageTitle}
                     maxLength={120}
-                    disabled={running}
                     onChange={(e) => edit({ pageTitle: e.target.value })}
                     placeholder="The AI picks one if empty"
                   />
                 </div>
               )}
 
+              <IdeaBar ideas={ideas} disabled={assist.enhancing} onPick={assist.pickIdea} />
+
               <div className="grid gap-1.5">
                 <Label htmlFor="pagegen-brief">Brief</Label>
                 <textarea
                   id="pagegen-brief"
-                  className="min-h-[110px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+                  className="min-h-[110px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60 read-only:bg-muted/40"
                   value={inputs.brief}
-                  disabled={running}
+                  readOnly={assist.enhancing}
+                  aria-busy={assist.enhancing}
                   onChange={(e) => edit({ brief: e.target.value })}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && canGenerate) void generate();
                   }}
                   placeholder="A landing page for a neighbourhood bakery: hero with opening hours, three signature breads, a short story, and a footer with the address."
                 />
-                <p className={`text-right text-[11px] ${briefTooLong ? 'text-destructive' : 'text-muted-foreground'}`}>
-                  {inputs.brief.length} / {GENERATION_LIMITS.maxBriefChars}
-                </p>
+                <div className="flex items-center justify-between gap-2">
+                  <EnhanceButton
+                    assist={assist}
+                    disabled={!inputs.brief.trim() || briefTooLong || !project}
+                  />
+                  <p className={`text-right text-[11px] ${briefTooLong ? 'text-destructive' : 'text-muted-foreground'}`}>
+                    {inputs.brief.length} / {GENERATION_LIMITS.maxBriefChars}
+                  </p>
+                </div>
+                <BriefNotice assist={assist} />
               </div>
 
               <ModelSlider
                 id="pagegen-model"
                 value={inputs.model}
-                disabled={running}
                 onChange={(model) => edit({ model })}
               />
 
@@ -438,7 +566,6 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
                     type="checkbox"
                     className="size-4 accent-brand"
                     checked={reviewSettings.auto}
-                    disabled={running}
                     onChange={(e) => editReviewSettings({ auto: e.target.checked })}
                   />
                   <span>Review the layout with AI afterwards (one more round, a few cents)</span>
@@ -446,18 +573,10 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
                 {reviewSettings.auto && (
                   <ReviewModelToggle
                     value={reviewSettings.model}
-                    disabled={running}
                     onChange={(model) => editReviewSettings({ model })}
                   />
                 )}
               </div>
-
-              {running && (
-                <p role="status" aria-live="polite" className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                  {progressText(state.progress)}
-                </p>
-              )}
 
               {state.phase === 'editing' && state.error && (
                 <div role="alert" className="rounded-md border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive">
@@ -510,10 +629,6 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
                 Generate another
               </Button>
             </>
-          ) : running ? (
-            <Button type="button" variant="outline" onClick={cancel}>
-              Cancel
-            </Button>
           ) : (
             <Button type="button" onClick={() => void generate()} disabled={!canGenerate}>
               <Sparkles className="size-4" aria-hidden="true" />
@@ -523,6 +638,7 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+    </>
   );
 });
 

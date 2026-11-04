@@ -12,8 +12,8 @@ import type { ComponentInstance } from '@/models/ComponentModel';
 import type { PageModelType } from '@/models/PageModel';
 import ComponentRenderer from '../ComponentRenderer';
 import EditorCommerceProvider from '../EditorCommerceProvider';
-import { ShopPartNote } from '../sidebars/right/sections/ShopPartNote';
-import { REQUIRED_SHOP_PART_MESSAGE, SHOP_PART_ATTR, pageWithShopParts } from '@/lib/commerce/parts';
+import { ShopPartNote, ShopStyleNote } from '../sidebars/right/sections/ShopPartNote';
+import { CLOSED_SHOP_PART_MESSAGE, MISPLACED_SHOP_PART_MESSAGE, REQUIRED_SHOP_PART_MESSAGE, SHOP_PART_ATTR, pageWithShopParts } from '@/lib/commerce/parts';
 
 let store: RootStoreType;
 
@@ -77,11 +77,48 @@ describe('a part moved out of its control', () => {
     expect(fresh.editorUI.selectedComponent?.id).toBe(oldId);
   });
 
-  it('keeps its role while it moves inside its own control', () => {
+  it('keeps its role while it moves within its own place in its control', () => {
     const pay = part('checkout.pay')!;
-    const moved = page.moveTreeComponent(pay.id, { kind: 'parent', parentId: checkout.id })!;
+    const actions = part('checkout.actions')!;
+    const moved = page.moveTreeComponent(pay.id, { kind: 'parent', parentId: actions.id, index: 0 })!;
     expect(moved.id).toBe(pay.id);
     expect(moved.props[SHOP_PART_ATTR]).toBe('checkout.pay');
+  });
+
+  it('refuses a plain node dropped into the pay button or a notice, from the palette or by a move', () => {
+    const pay = part('checkout.pay')!;
+    const badge = part('checkout.demo-badge')!;
+    expect(page.insertRegistryComponent('text', { kind: 'parent', parentId: pay.id })).toBeUndefined();
+    expect(store.editorUI.editorNotice).toEqual({ kind: 'refused', message: CLOSED_SHOP_PART_MESSAGE });
+    expect(page.insertRegistryComponent('container', { kind: 'parent', parentId: badge.id })).toBeUndefined();
+    const before = pay.children.length;
+    const box = page.insertRegistryComponent('container', { kind: 'parent', parentId: root.id })!;
+    expect(page.moveTreeComponent(box.id, { kind: 'parent', parentId: pay.id })).toBeUndefined();
+    expect(page.findComponent(pay.id)!.children.length).toBe(before);
+    // Beside the pay button is fine.
+    expect(page.moveTreeComponent(box.id, { kind: 'parent', parentId: part('checkout.actions')!.id })).toBeDefined();
+  });
+
+  it('refuses a pay label moved from another control into the pay button, as it refuses any plain node', () => {
+    const controlCopy = page.duplicateComponent(checkout.id)!;
+    const label = part('checkout.pay-label', controlCopy)!;
+    const pay = part('checkout.pay')!;
+    const before = pay.children.length;
+    expect(page.moveTreeComponent(label.id, { kind: 'parent', parentId: pay.id })).toBeUndefined();
+    expect(store.editorUI.editorNotice).toEqual({ kind: 'refused', message: CLOSED_SHOP_PART_MESSAGE });
+    expect(page.findComponent(label.id)).toBeDefined();
+    expect(pay.children.length).toBe(before);
+  });
+
+  it('is refused, with a notice, when it would leave its place inside its own control', () => {
+    const pay = part('checkout.pay')!;
+    const parentBefore = pay.parentId;
+    expect(page.moveTreeComponent(pay.id, { kind: 'parent', parentId: checkout.id })).toBeUndefined();
+    expect(page.findComponent(pay.id)?.parentId).toBe(parentBefore);
+    expect(store.editorUI.editorNotice).toEqual({ kind: 'refused', message: MISPLACED_SHOP_PART_MESSAGE });
+    // The demo notice cannot go under the confirmation either.
+    const badge = part('checkout.demo-badge')!;
+    expect(page.moveTreeComponent(badge.id, { kind: 'parent', parentId: part('checkout.confirmation')!.id })).toBeUndefined();
   });
 });
 
@@ -103,10 +140,43 @@ describe('the generator', () => {
   });
 });
 
+describe('the generator, replacing inside a control', () => {
+  it('refuses a part role under the wrong parent, as insert mode does', () => {
+    const actions = part('checkout.actions')!;
+    const box = page.insertRegistryComponent('container', { kind: 'parent', parentId: actions.id })!;
+    const stray = { id: 'gen2', type: 'div', componentType: 'host', props: { [SHOP_PART_ATTR]: 'checkout.demo-badge' } } as never;
+    const outcome = page.applyGeneratedNodes('replace', box.id, [stray], 'g2');
+    expect(outcome).toEqual({ ok: false, reason: MISPLACED_SHOP_PART_MESSAGE });
+    expect(page.findComponent(box.id)).toBeDefined();
+  });
+});
+
 describe('the panel', () => {
   it('says why the pay wording is fixed', () => {
     const { getByTestId } = render(<ShopPartNote component={part('checkout.pay-label')!} />);
     expect(getByTestId('shop-part-note').textContent).toMatch(/Zahlungspflichtig bestellen/);
+  });
+
+  it('says which styles the published page leaves out around the parts a buyer must see, and only there', () => {
+    const kept = render(<ShopStyleNote component={part('checkout.pay')!} />);
+    expect(kept.getByTestId('shop-style-note').textContent).toMatch(/leave out positioning/);
+    kept.unmount();
+    const box = page.insertRegistryComponent('container', { kind: 'parent', parentId: part('checkout.actions')!.id })!;
+    const beside = render(<ShopStyleNote component={box} />);
+    expect(beside.getByTestId('shop-style-note').textContent).toMatch(/never covers them/);
+    beside.unmount();
+    const elsewhere = render(<ShopStyleNote component={part('checkout.button')!} />);
+    expect(elsewhere.queryByTestId('shop-style-note')).toBeNull();
+  });
+});
+
+describe('duplicating inside a part that holds its own words only', () => {
+  it('is refused with a notice, and the pay button keeps its two parts', () => {
+    const pay = part('checkout.pay')!;
+    const before = pay.children.length;
+    expect(page.duplicateComponent(part('checkout.pay-label')!.id)).toBeUndefined();
+    expect(store.editorUI.editorNotice).toEqual({ kind: 'refused', message: CLOSED_SHOP_PART_MESSAGE });
+    expect(page.findComponent(pay.id)!.children.length).toBe(before);
   });
 });
 

@@ -10,6 +10,8 @@ import {
   useCart,
   computeDisplaySubtotalCents,
   CART_STORAGE_KEY,
+  MAX_LINE_QUANTITY,
+  cartLineQuantity,
   type CartLine,
 } from '@/lib/commerce/cart';
 import type { PriceDTO } from '@/lib/commerce/types';
@@ -152,5 +154,46 @@ describe('no server write (cart interactions are client-only)', () => {
       result.current.clear();
     });
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('the quantity of a cart line, as the order route can store it', () => {
+  it('is the INTEGER ceiling of order_line_item.quantity', () => {
+    expect(MAX_LINE_QUANTITY).toBe(2 ** 31 - 1);
+  });
+
+  it('reads a number the way a number field gives it: exponents, decimals, a huge value', () => {
+    expect(cartLineQuantity('1e3')).toBe(1000);
+    expect(cartLineQuantity('2.7')).toBe(2);
+    expect(cartLineQuantity('0.5')).toBe(1);
+    expect(cartLineQuantity('-3')).toBe(1);
+    expect(cartLineQuantity('1e30')).toBe(MAX_LINE_QUANTITY);
+    expect(cartLineQuantity('99999999999')).toBe(MAX_LINE_QUANTITY);
+    expect(cartLineQuantity(' 4 ')).toBe(4);
+  });
+
+  it('is nothing for a blank, a word or an overflow to Infinity, so the caller keeps what it had', () => {
+    for (const value of ['', '   ', '-', 'abc', '1e999', Number.NaN, Number.POSITIVE_INFINITY, undefined]) {
+      expect(cartLineQuantity(value)).toBeNull();
+    }
+  });
+
+  it('caps an add, a merged add and a set quantity, and stores no NaN', () => {
+    const { result } = renderHook(() => useCart(), { wrapper });
+    act(() => result.current.add('v', MAX_LINE_QUANTITY - 1));
+    act(() => result.current.add('v', 5));
+    expect(result.current.lines).toEqual([{ variantId: 'v', quantity: MAX_LINE_QUANTITY }]);
+    act(() => result.current.setQuantity('v', 3));
+    act(() => result.current.setQuantity('v', 1e20));
+    expect(result.current.lines).toEqual([{ variantId: 'v', quantity: MAX_LINE_QUANTITY }]);
+    act(() => result.current.setQuantity('v', Number.NaN));
+    act(() => result.current.add('w', Number.NaN));
+    expect(result.current.lines).toEqual([{ variantId: 'v', quantity: MAX_LINE_QUANTITY }]);
+  });
+
+  it('caps a stored line read back from localStorage', async () => {
+    window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify([{ variantId: 'v', quantity: 1e15 }]));
+    const { result } = renderHook(() => useCart(), { wrapper });
+    await waitFor(() => expect(result.current.lines).toEqual([{ variantId: 'v', quantity: MAX_LINE_QUANTITY }]));
   });
 });
