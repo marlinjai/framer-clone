@@ -89,6 +89,11 @@ import {
   type ReviewRunnerOptions,
   type ReviewSettings,
 } from '@/components/ai/VisualReview';
+import { IdeaBar, usePageIdeas } from '@/components/ai/IdeaBar';
+import { BriefNotice, EnhanceButton } from '@/components/ai/EnhanceButton';
+import { useBriefAssist } from '@/components/ai/useBriefAssist';
+import { fetchBriefApi, type BriefApi } from '@/lib/ai/brief/client';
+import { buildBriefSiteInput } from '@/lib/ai/brief/siteInput';
 
 const TARGETS: Array<{ kind: TargetKind; label: string }> = [
   { kind: 'newPage', label: 'New page' },
@@ -136,6 +141,8 @@ export interface GeneratePageDialogProps {
   resume?: PageGenResume;
   /** The visual review run (injectable for tests). */
   review?: ReviewRunnerOptions;
+  /** The idea row and Enhance calls (injectable for tests). */
+  briefApi?: BriefApi;
 }
 
 export const GeneratePageDialog = observer(function GeneratePageDialog({
@@ -144,6 +151,7 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
   transport = fetchPageGenTransport,
   resume = resumePageGen,
   review: reviewRunner,
+  briefApi = fetchBriefApi,
 }: GeneratePageDialogProps) {
   const { editorUI } = useStore();
   const project = editorUI.currentProject;
@@ -176,11 +184,42 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
   // on the server and is resumed from savePendingRun next time.
   React.useEffect(() => () => abortRef.current?.abort(DETACH), []);
 
+  // The brief as it was before an Enhance started streaming, or null when none
+  // streams: the draft never holds the partial rewrite.
+  const settledBriefRef = React.useRef<string | null>(null);
+
   const edit = (patch: Partial<FlowInputs>) => {
     dispatch({ type: 'edit', inputs: patch, targetKey });
-    if (projectId) saveDraft(projectId, { ...inputs, ...patch });
+    if (projectId) saveDraft(projectId, { ...inputs, brief: settledBriefRef.current ?? inputs.brief, ...patch });
     if (patch.model) saveModelChoice('page-gen', patch.model);
   };
+
+  // The idea row and Enhance (./IdeaBar.tsx, ./useBriefAssist.ts). A streaming
+  // rewrite is not persisted until it finished (the draft keeps the original).
+  const setBrief = (brief: string, opts: { persist: boolean }) => {
+    if (opts.persist) settledBriefRef.current = null;
+    else if (settledBriefRef.current === null) settledBriefRef.current = stateRef.current.inputs.brief;
+    dispatch({ type: 'edit', inputs: { brief }, targetKey });
+    if (opts.persist && projectId) saveDraft(projectId, { ...stateRef.current.inputs, brief });
+  };
+  const briefSelection = inputs.targetKind !== 'newPage' && availability.ok ? selected : undefined;
+  const briefSiteInput = () =>
+    project ? buildBriefSiteInput(project, inputs.targetKind, briefSelection) : { targetKind: inputs.targetKind };
+  const assist = useBriefAssist({
+    brief: inputs.brief,
+    setBrief,
+    api: briefApi,
+    siteInput: briefSiteInput,
+    active: open && state.phase !== 'running',
+  });
+  const ideas = usePageIdeas({
+    open: open && state.phase === 'editing',
+    // The raw project id: every unsaved demo shares the storage key 'unsaved-demo' but not its ideas.
+    cacheKey: project ? `${project.id}|${inputs.targetKind}|${briefSelection?.id ?? ''}` : '',
+    targetKind: inputs.targetKind,
+    request: briefSiteInput,
+    api: briefApi,
+  });
 
   const cancel = () => {
     // A plain abort: the transport also stops the run on the server.
@@ -316,7 +355,8 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
 
   const running = state.phase === 'running';
   const briefTooLong = inputs.brief.length > GENERATION_LIMITS.maxBriefChars;
-  const canGenerate = !running && !!project && availability.ok && inputs.brief.trim().length > 0 && !briefTooLong;
+  const canGenerate =
+    !running && !assist.enhancing && !!project && availability.ok && inputs.brief.trim().length > 0 && !briefTooLong;
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -406,22 +446,33 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
                 </div>
               )}
 
+              <IdeaBar ideas={ideas} disabled={running || assist.enhancing} onPick={assist.pickIdea} />
+
               <div className="grid gap-1.5">
                 <Label htmlFor="pagegen-brief">Brief</Label>
                 <textarea
                   id="pagegen-brief"
-                  className="min-h-[110px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+                  className="min-h-[110px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60 read-only:bg-muted/40"
                   value={inputs.brief}
                   disabled={running}
+                  readOnly={assist.enhancing}
+                  aria-busy={assist.enhancing}
                   onChange={(e) => edit({ brief: e.target.value })}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && canGenerate) void generate();
                   }}
                   placeholder="A landing page for a neighbourhood bakery: hero with opening hours, three signature breads, a short story, and a footer with the address."
                 />
-                <p className={`text-right text-[11px] ${briefTooLong ? 'text-destructive' : 'text-muted-foreground'}`}>
-                  {inputs.brief.length} / {GENERATION_LIMITS.maxBriefChars}
-                </p>
+                <div className="flex items-center justify-between gap-2">
+                  <EnhanceButton
+                    assist={assist}
+                    disabled={running || !inputs.brief.trim() || briefTooLong || !project}
+                  />
+                  <p className={`text-right text-[11px] ${briefTooLong ? 'text-destructive' : 'text-muted-foreground'}`}>
+                    {inputs.brief.length} / {GENERATION_LIMITS.maxBriefChars}
+                  </p>
+                </div>
+                <BriefNotice assist={assist} />
               </div>
 
               <ModelSlider
