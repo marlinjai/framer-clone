@@ -39,10 +39,12 @@ export function ShopControlContent({ node, kind, locale, drawn, scope }: ShopCon
   // moved), so its reference says nothing: the fallback is kept for as long as the
   // parts the control holds stay the same (missingShopPartsKey).
   const missingKey = ownDraw ? null : missingShopPartsKey(node, kind);
-  const nodeRef = React.useRef(node);
-  nodeRef.current = node;
   const fallback = React.useMemo(
-    () => (missingKey === null ? null : missingShopParts(nodeRef.current, locale, kind)),
+    () => (missingKey === null ? null : missingShopParts(node, locale, kind)),
+    // `node` is left out on purpose: it is a live instance changed in place, so its
+    // reference stays the same when a part leaves it; the parts it holds (missingKey)
+    // are its identity here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [missingKey, locale, kind],
   );
   // A published page hands the island a plain node built once (CommerceIsland), so its reference is the key.
