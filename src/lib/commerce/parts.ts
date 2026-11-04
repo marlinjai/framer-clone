@@ -1746,6 +1746,8 @@ export function normalizeShopControl<N extends object>(
   }
 
   // Legacy label props and bindings leave the control once their text lives in the parts.
+  // On a control that already has parts, a leftover legacy prop (label, emptyContent) is
+  // dropped, not moved: the parts hold the text. A leftover legacy binding is moved (below).
   const legacy = [...Object.keys(LEGACY[kind].props), ...(LEGACY[kind].dropped ?? [])].filter((key) => root.props && key in root.props);
   if (legacy.length > 0) {
     const props = { ...(root.props ?? {}) };
