@@ -181,8 +181,9 @@ Persisted parts, checked against the save route (`writeWorkingCopy` in
 component definitions, the whole site settings (with theme and head), the description, the
 analytics binding (`lumitra`) and the last-edited time; the server derives redirects. Every one
 of them is a field of the `ProjectModel` tree, so every editor change to them (page settings,
-home page, site settings dialog, theme and head, definitions, repeat, the agent's site
-operations applied in the editor) makes a patch and is autosaved; `isSaved` compares all of them
+home page, site settings dialog, theme and head, definitions, repeat, a generated page or
+section) makes a patch and is autosaved (the agent's site operations run on the server and
+reach this tab as a newer version, which the version lock handles); `isSaved` compares all of them
 except the last-edited time. Not part of the save, and saved by their own routes at once: the
 name (rename, `PATCH /api/projects/<id>`), domains, forms, images, published versions
 (rollback does not touch the working copy or its version) and the CMS collections.
