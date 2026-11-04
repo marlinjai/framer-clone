@@ -46,16 +46,18 @@ import 'server-only';
 // Errors surface, never swallowed: a missing price, a non-positive quantity, or
 // any non-idempotency error propagates (the transaction rolls back). A short-stock
 // is the explicit { ok:false, shortages } contract, never a silent success. A
-// quantity, line amount or total over what the INTEGER columns store is the typed
-// OrderTooLargeError, thrown before any write (the route answers 422).
+// quantity (also one variant's quantities added up over its lines), line amount or
+// total over what the INTEGER columns store is the typed OrderTooLargeError, thrown
+// before any write (the route answers 422); so is a backorder whose reserved stock
+// would pass its column, raised by the reserve and rolled back with the order.
 
 import type { Kysely } from 'kysely';
 
-import { RESERVE_ISOLATION_LEVEL, reserve, type Shortage } from '../inventory/reserve';
+import { RESERVE_ISOLATION_LEVEL, ReservationOverflowError, reserve, type Shortage } from '../inventory/reserve';
 import { pricingRepository } from '../repository/pricing';
 import { orderRepository } from '../repository/order';
 import { OrderTooLargeError, UnknownVariantError } from '../repository/errors';
-import { MAX_ORDER_INTEGER } from '@/lib/commerce/dto';
+import { MAX_ORDER_INTEGER, oversizedVariant } from '@/lib/commerce/dto';
 import { toJsonb } from '../../books/snapshots';
 import { emitCommerceEvent } from '../jobs/emit';
 import type { Buyer } from '../payment/buyer';
@@ -214,6 +216,12 @@ export function validateCart(cart: Cart): void {
     if (!line.variantId) throw new Error('createOrder: line.variantId is required');
     assertPositiveInt(line.quantity, 'line.quantity');
     assertStorable(line.quantity, 'line.quantity', line.variantId);
+  }
+  // A variant named on several lines is reserved for their sum: the sum must fit the reserved quantity too.
+  const oversized = oversizedVariant(cart.lines);
+  if (oversized) {
+    const sum = cart.lines.filter((line) => line.variantId === oversized).reduce((total, line) => total + line.quantity, 0);
+    throw new OrderTooLargeError(oversized, 'quantity across lines', sum);
   }
 }
 
@@ -436,15 +444,26 @@ function runOrderTransaction(
         });
 
         const cartLine = cart.lines[i];
-        const result = await reserve(trx, tgId, {
-          inventoryItemId: cartLine.inventoryItemId,
-          variantId: cartLine.variantId,
-          locationId: cartLine.locationId,
-          needed: cartLine.quantity,
-          requestId: orderLineRequestId(cart.tenantId, cart.requestId, i),
-          refType: 'order_line',
-          refId: lineItem.id,
-        });
+        let result: Awaited<ReturnType<typeof reserve>>;
+        try {
+          result = await reserve(trx, tgId, {
+            inventoryItemId: cartLine.inventoryItemId,
+            variantId: cartLine.variantId,
+            locationId: cartLine.locationId,
+            needed: cartLine.quantity,
+            requestId: orderLineRequestId(cart.tenantId, cart.requestId, i),
+            refType: 'order_line',
+            refId: lineItem.id,
+          });
+        } catch (error) {
+          // A backorder whose reserved stock would pass its column (with the stock other
+          // orders hold): the cart asked for more than the shop can record. Thrown out of
+          // the transaction, so the order and every earlier reservation roll back.
+          if (error instanceof ReservationOverflowError) {
+            throw new OrderTooLargeError(cartLine.variantId, 'reserved quantity', error.reserved + error.needed);
+          }
+          throw error;
+        }
 
         if (!result.ok) {
           // Abort: throwing rolls back the order, every line, and every prior

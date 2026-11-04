@@ -46,6 +46,22 @@ export const MAX_ORDER_INTEGER = 2_147_483_647;
 /** The stable code of an order refused for exceeding MAX_ORDER_INTEGER. */
 export const ORDER_TOO_LARGE_CODE = 'order_too_large';
 
+/**
+ * The first variant whose quantities, added up over every line that names it, are
+ * more than one order stores (MAX_ORDER_INTEGER), or null. A cart may name a
+ * variant on two lines; its stock is reserved for their sum, so the sum is what
+ * has to fit (the reserved quantity is an INTEGER column too).
+ */
+export function oversizedVariant(lines: readonly { variantId: string; quantity: number }[]): string | null {
+  const sums = new Map<string, number>();
+  for (const line of lines) {
+    const sum = (sums.get(line.variantId) ?? 0) + line.quantity;
+    if (sum > MAX_ORDER_INTEGER) return line.variantId;
+    sums.set(line.variantId, sum);
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // The product graph a full product read yields: the product, its LIVE options
 // with their LIVE values, and its LIVE variants with each variant's

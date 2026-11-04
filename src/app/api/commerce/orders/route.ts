@@ -4,9 +4,11 @@
 //                              (confirmationEmail: the shop sends the buyer an order confirmation, being
 //                              connected to Lumitra Mail; the thank-you says so only then)
 //                           -> 409 { ok: false, shortages: { variantId, needed, available }[] }
-//                           -> 422 order_too_large: a quantity, a line's amount (unit price times quantity,
-//                              with its VAT) or the order total exceeds what the order's INTEGER columns
-//                              store (MAX_ORDER_INTEGER); nothing is ordered or reserved
+//                           -> 422 order_too_large: a quantity (or the quantities of one variant added up over
+//                              its lines), a line's amount (unit price times quantity, with its VAT) or the
+//                              order total exceeds what the order's INTEGER columns store (MAX_ORDER_INTEGER),
+//                              a backorder's reserved stock would, or the total is more than the payment
+//                              provider takes in one charge; nothing is ordered or reserved
 //                           -> 503 payments_unavailable: the company takes real payments (Stripe) but its Books
 //                              cannot issue the receipt yet, or it has no Stripe account that can take payments
 //                              and is not the demo company (demoCheckout.ts); nothing is ordered or reserved
@@ -81,7 +83,7 @@ import { hasShopMail } from '@/server/commerce/mail/connection';
 import { resolveStorefrontCommerce } from '@/server/commerce/storefrontTenant';
 import { commerceServerFault } from '@/server/commerce/faults';
 import { jsonError, parseBody } from '@/lib/api/respond';
-import { DEFAULT_CURRENCY, MAX_ORDER_INTEGER, ORDER_TOO_LARGE_CODE } from '@/lib/commerce/dto';
+import { DEFAULT_CURRENCY, ORDER_TOO_LARGE_CODE, oversizedVariant } from '@/lib/commerce/dto';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -156,9 +158,10 @@ export async function POST(req: Request): Promise<Response> {
   const parsed = await parseBody(req, orderBodySchema);
   if (!parsed.ok) return parsed.response;
   const { lines, idempotencyKey, buyer } = parsed.data;
-  // A quantity its column cannot store is the cart's problem, said before anything is read.
-  const oversized = lines.find((line) => line.quantity > MAX_ORDER_INTEGER);
-  if (oversized) return orderTooLarge(oversized.variantId);
+  // A quantity its column cannot store is the cart's problem, said before anything is read. A variant
+  // named on several lines is reserved for their sum, so the sum has to fit as well.
+  const oversized = oversizedVariant(lines);
+  if (oversized) return orderTooLarge(oversized);
 
   try {
     // Server-side identity resolution: variant -> inventory item (the client

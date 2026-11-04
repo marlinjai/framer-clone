@@ -55,7 +55,7 @@ vi.mock('../../repository/order', () => ({
 
 import type { CommerceDB } from '../../db-types';
 import { OrderTooLargeError } from '../../repository/errors';
-import { reserve } from '../../inventory/reserve';
+import { ReservationOverflowError, reserve } from '../../inventory/reserve';
 import { pricingRepository } from '../../repository/pricing';
 import { orderRepository } from '../../repository/order';
 import {
@@ -544,6 +544,53 @@ describe('createOrder: an order too large for its INTEGER columns', () => {
     expect(() => validateCart(baseCart({ lines: [{ inventoryItemId: 'inv-1', variantId: 'var-1', quantity: MAX + 1 }] }))).toThrow(
       OrderTooLargeError,
     );
+  });
+
+  it('one variant on two lines whose quantities add up past the column: refused by validateCart, naming it', () => {
+    let caught: unknown;
+    try {
+      validateCart(
+        baseCart({
+          lines: [
+            { inventoryItemId: 'inv-1', variantId: 'var-1', quantity: MAX },
+            { inventoryItemId: 'inv-2', variantId: 'var-2', quantity: 5 },
+            { inventoryItemId: 'inv-1', variantId: 'var-1', quantity: MAX },
+          ],
+        }),
+      );
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(OrderTooLargeError);
+    expect(caught).toMatchObject({ variantId: 'var-1', label: 'quantity across lines', value: MAX * 2 });
+  });
+
+  it('one variant on two lines that add up to exactly the column passes validateCart', () => {
+    expect(() =>
+      validateCart(
+        baseCart({
+          lines: [
+            { inventoryItemId: 'inv-1', variantId: 'var-1', quantity: MAX - 1 },
+            { inventoryItemId: 'inv-1', variantId: 'var-1', quantity: 1 },
+          ],
+        }),
+      ),
+    ).not.toThrow();
+  });
+
+  it('a backorder whose reserved stock would pass its column: OrderTooLargeError for its line, the order rolled back', async () => {
+    const { db } = makeFakeDb();
+    findByRequestIdMock.mockResolvedValue(undefined);
+    resolvePriceMock.mockResolvedValue(0);
+    nextOrderNumberMock.mockResolvedValue('ORD-000001');
+    insertOrderMock.mockResolvedValue({ id: 'order-1' } as never);
+    insertLineItemMock.mockResolvedValue({ id: 'line-1' } as never);
+    reserveMock.mockRejectedValue(new ReservationOverflowError('inv-1', 'loc-1', MAX - 1, 2));
+    const error = await createOrder(db, TG, baseCart({ lines: [{ inventoryItemId: 'inv-1', variantId: 'var-1', quantity: 2 }] })).catch(
+      (err: unknown) => err,
+    );
+    expect(error).toBeInstanceOf(OrderTooLargeError);
+    expect(error).toMatchObject({ variantId: 'var-1', label: 'reserved quantity', value: MAX + 1 });
   });
 
   it('an order of exactly the ceiling is placed', async () => {

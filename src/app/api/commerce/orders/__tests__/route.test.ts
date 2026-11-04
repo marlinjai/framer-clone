@@ -386,6 +386,28 @@ describe('POST /api/commerce/orders an order too large to store', () => {
     expect(createOrderMock).not.toHaveBeenCalled();
   });
 
+  it('one variant on two lines whose quantities add up past the column: the same 422, before anything is read', async () => {
+    const res = await POST(
+      postReq({
+        lines: [
+          { variantId: 'var_a', quantity: 2_147_483_647 },
+          { variantId: 'var_a', quantity: 2_147_483_647 },
+        ],
+      }),
+    );
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual(TOO_LARGE);
+    expect(resolveLinesMock).not.toHaveBeenCalled();
+    expect(createOrderMock).not.toHaveBeenCalled();
+  });
+
+  it('a backorder whose reserved stock would pass its column (createOrder refuses it): a 422, never a 500', async () => {
+    createOrderMock.mockRejectedValue(new OrderTooLargeError('var_a', 'reserved quantity', 2_147_483_648));
+    const res = await POST(postReq({ lines: [{ variantId: 'var_a', quantity: 2 }] }));
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual(TOO_LARGE);
+  });
+
   it('the largest quantity a line stores still goes through to createOrder', async () => {
     const res = await POST(postReq({ lines: [{ variantId: 'var_a', quantity: 2_147_483_647 }] }));
     expect(res.status).toBe(201);
