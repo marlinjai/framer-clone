@@ -12,6 +12,7 @@ import { getSnapshot } from 'mobx-state-tree';
 import { createRootStore, type RootStoreType } from '@/stores/RootStore';
 import { knownServerVersion, openProject } from '@/stores/openProject';
 import ProjectModel, { type ProjectSnapshotOut } from '@/models/ProjectModel';
+import { resetAutosaveForTests } from '@/lib/projects/autosave';
 
 let store: RootStoreType;
 vi.mock('@/hooks/useStore', () => ({ useStore: () => store }));
@@ -57,6 +58,7 @@ function sentVersion(call: number): unknown {
 }
 
 beforeEach(() => {
+  resetAutosaveForTests();
   store = createRootStore();
   fetchMock.mockReset();
   vi.stubGlobal('fetch', fetchMock);
@@ -205,7 +207,7 @@ describe('Publish and the version lock', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: /^publish$/i }));
     await waitFor(() => expect(knownServerVersion(project.id)).toBe(3));
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^saved$/i }));
     await waitFor(() => expect(knownServerVersion(project.id)).toBe(4));
     expect(sentVersion(1)).toBe(3);
   });
@@ -231,7 +233,7 @@ describe('a publish that committed before a later step failed', () => {
     fireEvent.click(screen.getByRole('button', { name: /^publish$/i }));
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('No address.'));
     expect(knownServerVersion(project.id)).toBe(3);
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^saved$/i }));
     await waitFor(() => expect(knownServerVersion(project.id)).toBe(4));
     expect(sentVersion(1)).toBe(3);
   });

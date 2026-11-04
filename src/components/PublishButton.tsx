@@ -9,7 +9,8 @@
 //   - success: a brief confirmation (how many pages went live),
 //   - conflict: the project was saved somewhere else since this tab loaded it
 //     (409 `site_changed`, the version lock): SiteChangedDialog asks whether to
-//     load the newer version, publish this one over it, or keep both,
+//     load the newer version, publish this one over it, or keep both (autosave
+//     stops for the project too, until a write of this tab succeeds),
 //   - failure: the structured server error message (or a network-error
 //     message), shown until the next attempt.
 //
@@ -29,6 +30,7 @@ import { Button } from '@/components/ui/button';
 import { useStore } from '@/hooks/useStore';
 import { knownServerVersion, markServerVersion, type ProjectContent } from '@/stores/openProject';
 import { postProjectWrite } from '@/lib/projects/projectWrite';
+import { existingAutosave } from '@/lib/projects/autosave';
 import SiteChangedDialog from './SiteChangedDialog';
 import SaveAsNewProjectDialog from './SaveAsNewProjectDialog';
 import { useSiteAddress } from '@/contexts/SiteAddressContext';
@@ -99,7 +101,11 @@ const PublishButton = observer(() => {
     setState((prev) =>
       overVersion !== undefined && prev.kind === 'conflict' ? { ...prev, retrying: true } : { kind: 'publishing' },
     );
-    try {
+    // Autosave (src/lib/projects/autosave.ts) is held while this runs: a save in
+    // flight finishes first and none starts meanwhile, so the version lock sees
+    // one writer from this tab. The snapshot is taken after that wait.
+    const autosave = existingAutosave(project.id);
+    const write = async () => {
       const snapshot = getSnapshot(project);
       // The edits refused up to this snapshot are the ones this publish leaves out.
       const acknowledged = [...project.refusedComponents];
@@ -109,21 +115,28 @@ const PublishButton = observer(() => {
         overVersion ?? knownServerVersion(project.id),
         'Publish failed',
       );
+      if (result.kind === 'conflict') autosave?.noteConflict(result.currentVersion);
+      else if (result.kind === 'error' && result.writtenVersion !== undefined) {
+        markServerVersion(project.id, snapshot as ProjectContent, result.writtenVersion);
+      } else if (result.kind === 'ok') {
+        // The server now holds exactly this project, at this version (see openProject).
+        markServerVersion(project.id, snapshot as ProjectContent, result.version);
+      }
+      return { result, acknowledged };
+    };
+    try {
+      const { result, acknowledged } = autosave ? await autosave.exclusive(write) : await write();
       if (result.kind === 'conflict') {
         setState({ kind: 'conflict', currentVersion: result.currentVersion, retrying: false });
         return;
       }
       if (result.kind === 'error') {
         // Published, but a later step failed: this snapshot is what the server
-        // holds, so the next Save must not meet it as someone else's change.
-        if (result.writtenVersion !== undefined) {
-          markServerVersion(project.id, snapshot as ProjectContent, result.writtenVersion);
-        }
+        // holds (marked inside `write`), so the next Save must not meet it as
+        // someone else's change.
         setState({ kind: 'error', message: result.message });
         return;
       }
-      // The server now holds exactly this project, at this version (see openProject).
-      markServerVersion(project.id, snapshot as ProjectContent, result.version);
       project.clearRefusedEdits(acknowledged);
       const ok = result.payload as { publishedPages?: unknown; liveUrl?: unknown; subdomain?: unknown };
       const published = ok?.publishedPages;

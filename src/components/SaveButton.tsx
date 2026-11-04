@@ -1,21 +1,29 @@
 // src/components/SaveButton.tsx
 //
-// The editor top-bar Save action (MT-10). The NON-DESTRUCTIVE sibling of
-// PublishButton: it serializes the SAME live ProjectModel
-// (`editorUI.currentProject`, which after MT-10 hydration IS the server-loaded
-// project) and POSTs it to /api/projects/save (MT-04), which persists the
-// working copy WITHOUT flipping the site's status. Saving a draft keeps it a
-// draft; it never publishes.
+// The editor top-bar Save action (MT-10, the per-project editor route) and the
+// face of autosave (src/lib/projects/autosave.ts, plan
+// docs/plans/2026-11-04-editor-autosave.md). The editor saves by itself about
+// 1.5 s after the last change; this button is "save now" and shows the state:
+// Saved, Saving..., Unsaved changes, or Not saved with the reason beside it.
 //
-// Outcomes surface LOUDLY and never silently no-op, mirroring PublishButton:
-//   - in-flight: the button shows "Saving..." and is disabled,
-//   - success: a brief confirmation (how many pages were saved),
+// It writes the SAME live ProjectModel (`editorUI.currentProject`, which after
+// MT-10 hydration IS the server-loaded project) to /api/projects/save (MT-04),
+// which persists the working copy WITHOUT flipping the site's status. Saving a
+// draft keeps it a draft; it never publishes.
+//
+// Outcomes surface LOUDLY and never silently no-op:
+//   - in flight: "Saving..." and the button is disabled,
+//   - a click that succeeded: a brief confirmation (how many pages were saved);
+//     an autosave only changes the label, so no notice pops up at every pause,
 //   - conflict: the project was saved somewhere else since this tab loaded it
-//     (409 `site_changed`, the version lock): SiteChangedDialog asks whether to
-//     load the newer version, save this one over it, or keep both,
-//   - failure: the structured server error message (or a network-error
-//     message), shown until the next attempt.
-// There is no autosave: every write is a click, so a refusal never loops.
+//     (409 `site_changed`, the version lock): autosave stops and
+//     SiteChangedDialog asks whether to load the newer version, save this one
+//     over it, or keep both. "Keep editing" leaves autosave stopped; the next
+//     click on Save asks again, so a refusal never loops,
+//   - failure: the reason, retried with backoff when it may pass (network,
+//     server errors), else kept until the next click.
+// The demo editor at `/` (isUnsavedDemo) has no server copy: no autosave, and
+// Save offers to make it a project of its own.
 'use client';
 
 import React from 'react';
@@ -24,92 +32,94 @@ import { getSnapshot } from 'mobx-state-tree';
 import { Save } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useStore } from '@/hooks/useStore';
-import { knownServerVersion, markServerVersion, type ProjectContent } from '@/stores/openProject';
-import { postProjectWrite } from '@/lib/projects/projectWrite';
+import { useAutosave } from '@/hooks/useAutosave';
+import type { AutosaveState } from '@/lib/projects/autosave';
 import SaveAsNewProjectDialog from './SaveAsNewProjectDialog';
 import SiteChangedDialog from './SiteChangedDialog';
 import { TopBarStatus } from './TopBarStatus';
 
-type SaveState =
-  | { kind: 'idle' }
-  | { kind: 'saving' }
-  | { kind: 'success'; message: string }
-  | { kind: 'error'; message: string }
-  // Refused by the version lock: the server is at `currentVersion`.
-  | { kind: 'conflict'; currentVersion: number; retrying: boolean };
+/** The button's label for an autosave state. */
+export function saveLabel(state: AutosaveState): string {
+  switch (state.phase) {
+    case 'saving':
+      return 'Saving...';
+    case 'unsaved':
+      return 'Unsaved changes';
+    case 'retrying':
+    case 'failed':
+    case 'conflict':
+      return 'Not saved';
+    default:
+      return 'Saved';
+  }
+}
+
+const CONFLICT_MESSAGE = 'Not saved: this project was changed somewhere else. Click Save to choose what to keep.';
 
 const SaveButton = observer(() => {
   const rootStore = useStore();
   const project = rootStore.editorUI.currentProject;
   const isUnsavedDemo = rootStore.editorUI.isUnsavedDemo === true;
-  const [state, setState] = React.useState<SaveState>({ kind: 'idle' });
+  const { controller, state } = useAutosave(project, !isUnsavedDemo);
   const [saveAsOpen, setSaveAsOpen] = React.useState(false);
+  const [demoError, setDemoError] = React.useState<string | null>(null);
 
-  // `overVersion`: save over the server's copy on purpose ("Save mine over it"),
-  // naming the version the refusal reported. Otherwise the version this tab's
-  // copy is based on.
-  const save = React.useCallback(async (overVersion?: number) => {
+  const save = () => {
     if (!project) {
-      setState({ kind: 'error', message: 'No project to save.' });
+      setDemoError('No project to save.');
       return;
     }
     // The demo editor at `/` builds its project in the browser; no company
     // holds it yet: Save offers to make it a project of its own.
-    if (isUnsavedDemo) {
-      setState({ kind: 'idle' });
+    if (isUnsavedDemo || !controller) {
       setSaveAsOpen(true);
       return;
     }
-    setState((prev) =>
-      overVersion !== undefined && prev.kind === 'conflict' ? { ...prev, retrying: true } : { kind: 'saving' },
-    );
-    // The loaded project's own id rides inside the snapshot, so the save
-    // targets exactly the project the editor is editing.
-    const snapshot = getSnapshot(project);
-    const result = await postProjectWrite(
-      '/api/projects/save',
-      snapshot,
-      overVersion ?? knownServerVersion(project.id),
-      'Save failed',
-    );
-    if (result.kind === 'conflict') {
-      setState({ kind: 'conflict', currentVersion: result.currentVersion, retrying: false });
-      return;
-    }
-    if (result.kind === 'error') {
-      setState({ kind: 'error', message: result.message });
-      return;
-    }
-    // The server now holds exactly this project, at this version (see openProject).
-    markServerVersion(project.id, snapshot as ProjectContent, result.version);
-    const saved = result.payload.savedPages;
-    const count = Array.isArray(saved) ? saved.length : 0;
-    setState({
-      kind: 'success',
-      message: `Saved ${count} ${count === 1 ? 'page' : 'pages'}.`,
-    });
-  }, [project, isUnsavedDemo]);
+    void controller.saveManually();
+  };
 
-  const saving = state.kind === 'saving' || (state.kind === 'conflict' && state.retrying);
+  const saving = state.phase === 'saving' || (state.phase === 'conflict' && state.retrying);
+  const label = isUnsavedDemo || !project ? 'Save' : saveLabel(state);
+  const notice: { kind: 'success' | 'error'; message: string } | null = demoError
+    ? { kind: 'error', message: demoError }
+    : state.phase === 'savedNow'
+      ? { kind: 'success', message: state.message }
+      : (state.phase === 'retrying' || state.phase === 'failed') && !state.hidden
+        ? { kind: 'error', message: state.message }
+        : state.phase === 'conflict' && !state.dialogOpen
+          ? { kind: 'error', message: CONFLICT_MESSAGE }
+          : null;
 
   return (
     <div className="flex items-center gap-2 mr-1 lg:mr-2">
-      {(state.kind === 'success' || state.kind === 'error') && (
-        <TopBarStatus kind={state.kind} title={state.message} onDismiss={() => setState({ kind: 'idle' })}>
-          <span className="lg:truncate">{state.message}</span>
+      {notice && (
+        <TopBarStatus
+          kind={notice.kind}
+          title={notice.message}
+          onDismiss={() => {
+            setDemoError(null);
+            controller?.dismissMessage();
+          }}
+        >
+          <span className="lg:truncate">{notice.message}</span>
         </TopBarStatus>
       )}
       <Button
         type="button"
         variant="outline"
         size="sm"
-        onClick={() => void save()}
+        onClick={save}
         disabled={saving}
-        title="Save this project (does not publish)"
+        title={
+          isUnsavedDemo
+            ? 'Save this demo as a project (does not publish)'
+            : 'Changes are saved automatically. Click to save now (does not publish).'
+        }
+        data-autosave-phase={isUnsavedDemo ? undefined : state.phase}
       >
         <Save size={16} />
         {/* Icon only on a phone; the label stays the button's name. */}
-        <span className="max-sm:sr-only">{saving ? 'Saving...' : 'Save'}</span>
+        <span className="max-sm:sr-only">{label}</span>
       </Button>
       {/* The demo's Save, or the conflict's "keep both" choice (mounted only while asked for). */}
       {project && (isUnsavedDemo || saveAsOpen) ? (
@@ -128,16 +138,19 @@ const SaveButton = observer(() => {
         />
       ) : null}
       <SiteChangedDialog
-        open={state.kind === 'conflict'}
+        open={state.phase === 'conflict' && state.dialogOpen}
         action="save"
-        busy={state.kind === 'conflict' && state.retrying}
-        onKeepEditing={() => setState({ kind: 'idle' })}
-        onLoadNewer={() => window.location.reload()}
+        busy={state.phase === 'conflict' && state.retrying}
+        onKeepEditing={() => controller?.dismissConflict()}
+        onLoadNewer={() => {
+          controller?.discardForReload();
+          window.location.reload();
+        }}
         onKeepMine={() => {
-          if (state.kind === 'conflict') void save(state.currentVersion);
+          if (state.phase === 'conflict') void controller?.saveManually(state.currentVersion);
         }}
         onSaveAsNew={() => {
-          setState({ kind: 'idle' });
+          controller?.dismissConflict();
           setSaveAsOpen(true);
         }}
       />
