@@ -203,16 +203,21 @@ const MESSAGES = {
   en: {
     paymentsUnavailable: 'this shop cannot take payments yet. Nothing has been charged.',
     orderTooLarge: 'the order is larger than one order can hold. Lower a quantity in your cart and check out again.',
+    mixedPriceBasis: 'some items in your cart cannot be ordered together yet. Order them separately, or try again later. Nothing has been charged.',
     orderFailed: (status: number) => `order failed (${status})`,
     declined: (message: string) => `${message}. Your cart is kept: check out again to try once more.`,
   },
   de: {
     paymentsUnavailable: 'dieser Shop kann noch keine Zahlungen annehmen. Es wurde nichts abgebucht.',
     orderTooLarge: 'die Bestellung ist größer, als eine Bestellung fassen kann. Verringern Sie eine Menge im Warenkorb und gehen Sie erneut zur Kasse.',
+    mixedPriceBasis: 'einige Artikel im Warenkorb können noch nicht zusammen bestellt werden. Bestellen Sie sie einzeln oder versuchen Sie es später erneut. Es wurde nichts abgebucht.',
     orderFailed: (status: number) => `Serverfehler (${status})`,
     declined: (message: string) => `${message}. Ihr Warenkorb bleibt erhalten: Gehen Sie erneut zur Kasse, um es noch einmal zu versuchen.`,
   },
 } as const;
+
+/** The order route's refusal of a cart that mixes prices with and without VAT. */
+const MIXED_PRICE_BASIS_CODE = 'mixed_price_basis';
 
 const UNAVAILABLE_NOTE_STYLE: React.CSSProperties = { margin: 0, fontFamily: 'inherit', fontSize: '12px', opacity: 0.75 };
 
@@ -367,9 +372,11 @@ function CheckoutLive({ node, scope, hostType = 'div', hostProps = {}, gateway, 
           setState({ status: 'order_error', reason: 'failed', message: messages.orderTooLarge });
           return;
         }
-        // Another refusal of the cart the server words for the buyer (mixed_price_basis).
-        if (error?.code && error.code !== 'unknown_variant' && error.message) {
-          setState({ status: 'order_error', reason: 'failed', message: error.message });
+        // Items priced with and without VAT in one cart (mixed_price_basis): the shop owner has
+        // to align them. The server's wording is for the owner and in English, so the buyer gets
+        // the checkout's own words in the site language.
+        if (error?.code === MIXED_PRICE_BASIS_CODE) {
+          setState({ status: 'order_error', reason: 'failed', message: messages.mixedPriceBasis });
           return;
         }
         // An item the storefront no longer sells (unknown_variant): NOT a stock

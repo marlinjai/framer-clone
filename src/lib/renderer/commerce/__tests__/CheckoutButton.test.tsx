@@ -821,7 +821,7 @@ describe('CheckoutButton an order too large to store (422 order_too_large)', () 
     expect(container.querySelector('button[data-checkout]')).not.toBeNull();
   });
 
-  it('another refusal of the cart shows the server\'s words, not "no longer available"', async () => {
+  it('a cart mixing prices with and without VAT gets the checkout\'s own words, not the server\'s or "no longer available"', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       fakeResponse(422, {
         error: { code: 'mixed_price_basis', message: 'some items are priced with VAT and some without' },
@@ -832,9 +832,10 @@ describe('CheckoutButton an order too large to store (422 order_too_large)', () 
     clickCheckout(container);
     await waitFor(() => {
       expect(container.querySelector('[data-checkout-error]')?.textContent).toBe(
-        'Checkout failed: some items are priced with VAT and some without',
+        'Checkout failed: some items in your cart cannot be ordered together yet. Order them separately, or try again later. Nothing has been charged.',
       );
     });
+    expect(container.textContent).not.toContain('priced with VAT');
     expect(container.textContent).not.toContain('no longer available');
   });
 });
