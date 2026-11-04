@@ -38,7 +38,11 @@ assistive technology what an element is), AI (the page generator).
 3. **Behaviour stays in the island.** The island passes the designer's props first and its own last, so a
    designer changes how a part looks and reads, never what it does: a button's `type`, its `disabled` and
    `aria-busy`, an input's `name`, `type`, `value`, `required`, `autocomplete`, ARIA wiring and every handler
-   are the island's. Order placement, the idempotency key, money and stock (server authored), the payment
+   are the island's. On a part's button or input, whether it can be pressed, typed into or reached by the
+   keyboard (`disabled`, `aria-disabled`, `tabindex`, and on an input `readonly` and `max`, in any spelling)
+   is never stored: the normaliser drops a stored copy and the island draws none of the designer's, setting
+   its own where it means something (a remove button that cannot be pressed would strand a visitor with a
+   line). Order placement, the idempotency key, money and stock (server authored), the payment
    gateway seam, Stripe, the demo company restriction, the receipt rules, the German VAT checks and "refuse
    Stripe until Books are ready" are untouched: they live in the island's controller and the server, which
    this change does not touch.
@@ -207,7 +211,18 @@ assistive technology what an element is), AI (the page generator).
    frames the island sits in (also on a control that already has parts, unless the part is bound already). A
    line no longer sold or failed to load keeps its remove button in sight whatever the design says (the
    island pins it as it does a part kept in sight), since its quantity cannot go below one. A designer's id
-   on a part inside the repeated line goes, so it never repeats on the page. Canvas states: ready, no option chosen, checking (loading), sold out and a failed
+   on a part inside the repeated line goes, so it never repeats on the page. The pinned remove button also
+   takes a press through a `pointer-events: none` of its own or of a wrapper (pinned `auto`, the design's
+   value back when the pin lets go). On the canvas and in the Preview only the first copy of the line, and
+   of every node inside it, carries the selection identity; every copy keeps the style hook. The quantity
+   input never removes a line (zero or less is one, a blank keeps the quantity: removing is the remove
+   button's), and after a removal the focus moves to the next line's remove button, else the previous one's,
+   else the empty message. While a line is not counted in the subtotal (loading, failed, no longer sold or
+   without a price), the estimate notice says so in the site language, and before any price is known the
+   subtotal shows a placeholder (a hyphen), never a bare 0.00 without its currency. The line price and the
+   subtotal are not kept in sight, by decision: they are display-only estimates, and the estimate notice
+   beside them, fixed and kept in sight, already tells the visitor the final total is the checkout's. The
+   checkout's total is kept in sight because it is the figure the buyer commits to when paying. Canvas states: ready, no option chosen, checking (loading), sold out and a failed
    check for the add to cart; items, empty, loading, low stock, an item no longer sold and an item that failed
    for the cart.
 3. **Variant selector:** the option groups, option labels and the choice buttons as a template drawn per
