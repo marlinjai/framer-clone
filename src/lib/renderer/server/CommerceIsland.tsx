@@ -115,11 +115,17 @@ function IslandBody({
   hostProps,
 }: CommerceIslandProps & { hostType: string; hostProps: Record<string, unknown> }) {
   // The island components index into `node.children`; normalize to an array so a
-  // verbatim node with no children does not crash VariantSelector's map.
-  const islandNode = {
-    ...node,
-    children: node.children ?? [],
-  } as unknown as ComponentInstance;
+  // verbatim node with no children does not crash VariantSelector's map. Built once
+  // per node: the controls memoise their normalised tree on it (ShopControlContent),
+  // so a new object every render would normalise the whole control again.
+  const islandNode = React.useMemo(
+    () =>
+      ({
+        ...node,
+        children: node.children ?? [],
+      }) as unknown as ComponentInstance,
+    [node],
+  );
 
   // Recurse back into the server walk for island descendants (e.g. an
   // add-to-cart inside a variant-selector), keeping the binding scope intact so
