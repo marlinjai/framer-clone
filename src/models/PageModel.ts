@@ -626,6 +626,9 @@ const PageModel = PageWithComponents
       id = node.parentId as string | undefined;
     }
     if (holdsRequiredShopPart(target, targetAncestors)) return { ok: false, reason: REQUIRED_SHOP_PART_MESSAGE };
+    // The same placement check insert mode runs, against the parent the replacement lands in.
+    const misplaced = snapshots.map((snapshot) => shopPartRefusal(snapshot as never, targetAncestors)).find(Boolean);
+    if (misplaced) return { ok: false, reason: misplaced };
     const index = parent.children.findIndex((c: ComponentInstance) => c.id === target.id);
     const previous = getSnapshot(target) as ComponentSnapshotIn;
     parent.removeChild(target.id);
@@ -927,6 +930,13 @@ const PageModel = PageWithComponents
       const to = nearestShopControlId(ancestorsOf(newParentId));
       if (from !== to) {
         const fresh = withoutOutsideRoles(getSnapshot(component) as unknown as ShopTreeNode, (id) => `${id}-${uuidv4().slice(0, 8)}`);
+        // The refusal ran above on the node with its roles; what lands is the stripped node, which a
+        // part that takes its own parts only (the pay button) refuses like any other plain node.
+        const landing = shopPartRefusal(fresh, ancestorsOf(newParentId));
+        if (landing === CLOSED_SHOP_PART_MESSAGE) {
+          refuseShopEdit(self, landing);
+          return undefined;
+        }
         return replaceAndMove(self, component, fresh as unknown as ComponentSnapshotIn, target, resolvedParentId, resolvedIndex);
       }
     }

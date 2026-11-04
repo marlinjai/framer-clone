@@ -1056,6 +1056,9 @@ function smallTransform(value: string): boolean {
   if (value === 'none') return true;
   const steps = [...value.matchAll(/([a-z0-9]+)\(([^)]*)\)/gi)];
   if (steps.length === 0 || steps.map((step) => step[0]).join('').replace(/\s+/g, '') !== value.replace(/\s+/g, '')) return false;
+  // Repeated steps add up (three 8 pixel translations move a part 24 pixels, three 1.1 scales grow it by a third): one step per kind of transform.
+  const kinds = steps.map(([, name]) => (/^translate/i.test(name) ? 'translate' : /^scale/i.test(name) ? 'scale' : name.toLowerCase()));
+  if (new Set(kinds).size !== kinds.length) return false;
   return steps.every(([, name, args]) => {
     const values = args.split(',').map((entry) => entry.trim());
     switch (name.toLowerCase()) {
@@ -1081,6 +1084,8 @@ function gentleFilter(value: string): boolean {
   if (value === 'none') return true;
   const steps = [...value.matchAll(/([a-z-]+)\(((?:[^()]|\([^()]*\))*)\)/gi)];
   if (steps.length === 0 || steps.map((step) => step[0]).join('').replace(/\s+/g, '') !== value.replace(/\s+/g, '')) return false;
+  // Repeated steps multiply (brightness(0.7) three times is 0.343), and no product check covers contrast or saturate: one numeric step at most.
+  if (steps.filter(([, name]) => /^(brightness|contrast|saturate)$/i.test(name)).length > 1) return false;
   return steps.every(([, name, arg]) => {
     if (/^drop-shadow$/i.test(name)) return true;
     if (!/^(brightness|contrast|saturate)$/i.test(name)) return false;
@@ -1099,6 +1104,23 @@ const TOO_FAR = (value: string) =>
     return relative ? Number(relative[1]) > 12 : true;
   });
 
+/** Splits a CSS argument list at its top-level commas. */
+function splitTopLevel(body: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < body.length; i++) {
+    if (body[i] === '(') depth++;
+    else if (body[i] === ')') depth--;
+    else if (body[i] === ',' && depth === 0) {
+      parts.push(body.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  parts.push(body.slice(start).trim());
+  return parts;
+}
+
 /** Whether a colour is plainly see-through: `transparent`, or an alpha under 0.5. */
 function seeThrough(value: string): boolean {
   if (value === 'transparent') return true;
@@ -1107,6 +1129,9 @@ function seeThrough(value: string): boolean {
     const alpha = hex[1].length === 4 ? parseInt(hex[1][3] + hex[1][3], 16) : parseInt(hex[1].slice(6), 16);
     return alpha / 255 < 0.5;
   }
+  // color-mix(in srgb, a, b): see-through when any colour it mixes is (a mix of a faint colour stays faint enough to read as faint).
+  const mix = /^color-mix\((.*)\)$/.exec(value);
+  if (mix) return splitTopLevel(mix[1]).slice(1).some((part) => seeThrough(part.replace(/\s+\d*\.?\d+%\s*$/, '').replace(/^\d*\.?\d+%\s+/, '').trim()));
   const fn = /^(rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\((.*)\)$/.exec(value);
   if (!fn) return false;
   const body = fn[2];
@@ -1247,7 +1272,7 @@ function keptStyle(style: unknown): Record<string, unknown> | undefined {
 
 /** Style keys a node beside a part kept in sight never keeps: none can lift it over the part, or let a click through it. */
 const OVERLAY_KEYS: ReadonlySet<string> = new Set([
-  'position', 'zIndex', 'pointerEvents', 'top', 'right', 'bottom', 'left', 'inset', 'insetInline', 'insetBlock',
+  'position', 'zIndex', 'pointerEvents', 'top', 'right', 'bottom', 'left', 'inset', 'insetInline', 'insetBlock', 'boxShadow',
 ]);
 /** Keys a node beside a part kept in sight keeps within the same bounds as the part's own wrappers. */
 const BOUNDED_BESIDE_KEYS: ReadonlySet<string> = new Set(['transform', 'translate', 'scale', 'rotate']);
@@ -1426,7 +1451,7 @@ function holdsKeptPart(node: ShopTreeNode): boolean {
  * node able to send anything. The same object when nothing changes.
  */
 function enforceParts(input: ShopTreeNode): ShopTreeNode {
-  const control = notImportant(controlInSight(input));
+  const control = notImportant(controlInSight(notSending(input)));
   const visit = (node: ShopTreeNode, inRepeat: boolean): ShopTreeNode => {
     let changed = false;
     const nodeRole = shopPartRoleOf(node.props);
@@ -1574,11 +1599,13 @@ export function shopPartRefusal(node: { props?: unknown; children?: readonly unk
     if (kind) break;
     if (nearest === undefined) nearest = shopPartRoleOf(ancestor.props);
   }
-  if (!kind || shopControlKindOf(node.props)) return undefined;
+  if (!kind) return undefined;
   const closed = nearest ? shopPartSpec(nearest) : undefined;
   const role = shopPartRoleOf(node.props);
+  // A closed part takes no control either: the normaliser would remove it.
   if (closed && (closed.keepVisible || closed.fixedText)) return CLOSED_SHOP_PART_MESSAGE;
   if (closed?.onlyParts && !(role && ownRoles(nearest!).has(role))) return CLOSED_SHOP_PART_MESSAGE;
+  if (shopControlKindOf(node.props)) return undefined;
   const misplaced = (candidate: { props?: unknown; children?: readonly unknown[] }): boolean => {
     if (shopControlKindOf(candidate.props)) return false;
     const own = shopPartRoleOf(candidate.props);
@@ -1781,6 +1808,27 @@ export function pageWithShopParts<P extends { appComponentTree?: unknown; canvas
     if (changed) next = { ...next, canvasNodes: out };
   }
   return next;
+}
+
+/**
+ * `pageWithShopParts` for every reusable component's page (a definition is
+ * `{ page, ... }`), so a legacy control inside a component gets its parts as nodes
+ * the editor can select. Anything that is not a definition with a page passes through.
+ */
+export function componentsWithShopParts<C>(components: C, language: string | null | undefined): C {
+  if (!isRecord(components)) return components;
+  let changed = false;
+  const out: Record<string, unknown> = {};
+  for (const [id, definition] of Object.entries(components)) {
+    if (isRecord(definition) && isRecord(definition.page)) {
+      const page = pageWithShopParts(definition.page as { appComponentTree?: unknown; canvasNodes?: unknown }, language);
+      out[id] = page === definition.page ? definition : { ...definition, page };
+      if (out[id] !== definition) changed = true;
+    } else {
+      out[id] = definition;
+    }
+  }
+  return changed ? (out as C) : components;
 }
 
 /** The parts of a control as the renderers hand them over: a stored node or a live editor node, read the same way. */

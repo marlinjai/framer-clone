@@ -129,6 +129,16 @@ describe('the checkout on the canvas', () => {
     expect(document.querySelector('[data-shop-preview-bar]')?.textContent).toMatch(/published site only/);
   });
 
+  it('keeps an explicit pick of a state that hides the selected part', () => {
+    renderCanvas();
+    act(() => store.editorUI.selectComponent(part('checkout.pay')));
+    const picker = document.querySelector<HTMLSelectElement>('[data-shop-preview-bar] select')!;
+    const hiding = Array.from(picker.options).find((option) => option.value !== 'payment')!.value;
+    fireEvent.change(picker, { target: { value: hiding } });
+    expect(store.editorUI.shopPreviewStates[checkout.id]).toBe(hiding);
+    expect(document.querySelector<HTMLSelectElement>('[data-shop-preview-bar] select')!.value).toBe(hiding);
+  });
+
   it('offers no bar when nothing of a shop control is selected', () => {
     renderCanvas();
     expect(document.querySelector('[data-shop-preview-bar]')).toBeNull();

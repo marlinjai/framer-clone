@@ -60,9 +60,11 @@ const ShopPreviewBar = observer(() => {
     if (lookup.shows(current, found.roles, locale)) return;
     const showing = lookup.showing(found.roles, locale);
     if (showing) editorUI.setShopPreviewState(controlId, showing);
-    // The roles stand for the selection; `found` is a new object each render.
+    // Runs when the selection (or the locale) changes, never when the designer picks a state:
+    // an explicit pick stays even if the selected part is hidden in it. The roles stand for the
+    // selection; `found` is a new object each render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [controlId, kind, rolesKey, current, locale, editorUI]);
+  }, [controlId, kind, rolesKey, locale, editorUI]);
 
   if (!found || !spec || !controlId) return null;
   return (

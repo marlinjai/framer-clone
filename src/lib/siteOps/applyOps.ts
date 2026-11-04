@@ -311,12 +311,15 @@ export async function applyOperations(
     recorder.undo();
   };
 
+  // A shop part that leaves its control lands under a new id; the id it had stays good for
+  // the rest of the batch, so a later operation need not know the new one.
+  const renewed: Record<string, string> = {};
   const resolveId = (raw: string): string => {
-    if (!raw.startsWith(REF_PREFIX)) return raw;
+    if (!raw.startsWith(REF_PREFIX)) return renewed[raw] ?? raw;
     const name = raw.slice(REF_PREFIX.length);
     const id = created[name];
     if (!id) throw new OpRefused(`${JSON.stringify(raw)} names no ref an earlier operation of this batch created`);
-    return id;
+    return renewed[id] ?? id;
   };
   const claimRef = (ref: string | undefined, id: string): void => {
     if (ref === undefined) return;
@@ -559,7 +562,11 @@ export async function applyOperations(
         if (refusal) throw new OpRefused(refusal);
         const moved = page.moveTreeComponent(node.id, target);
         if (!moved) throw new OpRefused('the node cannot move there (the page root, a frame, or into itself)');
-        // A shop part leaving its control lands renewed, under a new id.
+        // A shop part leaving its control lands renewed, under a new id: the old id (and every id that led to it) now names the new node.
+        if (moved.id !== node.id) {
+          for (const [from, to] of Object.entries(renewed)) if (to === node.id) renewed[from] = moved.id;
+          renewed[node.id] = moved.id;
+        }
         touched.push({ page, nodeId: moved.id });
         return moved.id === node.id ? `moved ${node.id}` : `moved ${node.id}, now a plain node ${moved.id} outside its shop control`;
       }

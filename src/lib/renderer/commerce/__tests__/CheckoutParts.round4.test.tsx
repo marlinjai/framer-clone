@@ -406,3 +406,45 @@ describe('a kept part that leaves the page', () => {
     expect(step.style.getPropertyPriority('opacity')).toBe('');
   });
 });
+
+describe('a kept part, read at run time', () => {
+  it('counts a see-through colour(...) value as see-through, and a solid one as solid', async () => {
+    const { keepInSightForTest } = await import('@/lib/commerce/shopRuntime');
+    const { container } = render(
+      <div data-component-kind="checkout-button">
+        <span data-shop-part="checkout.total">Total</span>
+      </div>,
+    );
+    const total = container.querySelector<HTMLElement>('[data-shop-part="checkout.total"]')!;
+    const real = window.getComputedStyle.bind(window);
+    const colour = (value: string) =>
+      vi.spyOn(window, 'getComputedStyle').mockImplementation((element, pseudo) => {
+        const computed = real(element, pseudo);
+        return element === total ? new Proxy(computed, { get: (target, key) => (key === 'color' ? value : Reflect.get(target, key) instanceof Function ? (Reflect.get(target, key) as () => unknown).bind(target) : Reflect.get(target, key)) }) : computed;
+      });
+    colour('color(srgb 1 0 0 / 0.2)');
+    keepInSightForTest(total);
+    expect(total.style.getPropertyValue('color')).toBe('rgb(17, 24, 39)');
+    vi.restoreAllMocks();
+    total.removeAttribute('style');
+    colour('color(srgb 1 0 0 / 0.9)');
+    keepInSightForTest(total);
+    expect(total.style.getPropertyValue('color')).toBe('');
+    vi.restoreAllMocks();
+  });
+});
+
+describe('a part with fixed text', () => {
+  it('draws the platform text even when a stored contentEditable is on it', async () => {
+    const { ShopPartElement, ShopRuntimeContext } = await import('@/lib/commerce/shopRuntime');
+    const runtime = { kind: 'checkout-button', locale: 'en', surface: 'live', part: () => ({ visible: true, tokens: { total: '1 EUR' } }) };
+    const { container } = render(
+      <ShopRuntimeContext.Provider value={runtime as never}>
+        <div data-component-kind="checkout-button">
+          <ShopPartElement role="checkout.demo-badge" tag="div" domProps={{ contentEditable: 'true' }} storedText={undefined} surface="preview" />
+        </div>
+      </ShopRuntimeContext.Provider>,
+    );
+    expect(container.querySelector('[data-component-kind] > div')?.textContent).toMatch(/Demo payment/);
+  });
+});

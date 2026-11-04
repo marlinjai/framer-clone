@@ -99,6 +99,17 @@ describe('a part moved out of its control', () => {
     expect(page.moveTreeComponent(box.id, { kind: 'parent', parentId: part('checkout.actions')!.id })).toBeDefined();
   });
 
+  it('refuses a pay label moved from another control into the pay button, as it refuses any plain node', () => {
+    const controlCopy = page.duplicateComponent(checkout.id)!;
+    const label = part('checkout.pay-label', controlCopy)!;
+    const pay = part('checkout.pay')!;
+    const before = pay.children.length;
+    expect(page.moveTreeComponent(label.id, { kind: 'parent', parentId: pay.id })).toBeUndefined();
+    expect(store.editorUI.editorNotice).toEqual({ kind: 'refused', message: CLOSED_SHOP_PART_MESSAGE });
+    expect(page.findComponent(label.id)).toBeDefined();
+    expect(pay.children.length).toBe(before);
+  });
+
   it('is refused, with a notice, when it would leave its place inside its own control', () => {
     const pay = part('checkout.pay')!;
     const parentBefore = pay.parentId;
@@ -126,6 +137,17 @@ describe('the generator', () => {
     const outcome = page.applyGeneratedNodes('replace', pay.id, [{ id: 'gen', type: 'div', componentType: 'host', props: {} } as never], 'g1');
     expect(outcome).toEqual({ ok: false, reason: REQUIRED_SHOP_PART_MESSAGE });
     expect(page.findComponent(pay.id)).toBeDefined();
+  });
+});
+
+describe('the generator, replacing inside a control', () => {
+  it('refuses a part role under the wrong parent, as insert mode does', () => {
+    const actions = part('checkout.actions')!;
+    const box = page.insertRegistryComponent('container', { kind: 'parent', parentId: actions.id })!;
+    const stray = { id: 'gen2', type: 'div', componentType: 'host', props: { [SHOP_PART_ATTR]: 'checkout.demo-badge' } } as never;
+    const outcome = page.applyGeneratedNodes('replace', box.id, [stray], 'g2');
+    expect(outcome).toEqual({ ok: false, reason: MISPLACED_SHOP_PART_MESSAGE });
+    expect(page.findComponent(box.id)).toBeDefined();
   });
 });
 
