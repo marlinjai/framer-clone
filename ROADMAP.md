@@ -47,6 +47,12 @@ build wave and stays outside this file's scope (`type: roadmap`, exempt from the
   is collected when the editor comes back, even after iOS reloaded the tab (proven with a reload in the
   browser; a real iPhone app switch is still Marlin's own check). Phase 4's style references
   and screenshot loop stay open. See [plan](docs/plans/ai-driven-page-generation.md). (2026-11-01)
+- [ ] AI page generation, ideas and streaming: an idea row in the Generate dialog (static ideas at
+  once, then six tailored to the site by Haiku) and an Enhance button that streams a structured
+  rewrite of the brief with one-step undo (pull request 1, merged 2026-11-04 as #327),
+  then a page that builds itself section by section on the canvas as a detached draft that never
+  enters the project tree, still one undo step (pull request 2). See
+  [plan](docs/plans/2026-11-04-page-generator-ideas-and-streaming.md). (2026-11-04)
 - [x] Motion and effects: an Effects section in the properties panel (appear on scroll, restrained
   hover states, light scroll-linked transforms such as a small image parallax), stored per
   breakpoint like any style, undoable and generatable by the AI, rendered on published pages with

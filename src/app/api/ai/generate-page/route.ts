@@ -16,9 +16,11 @@
 // detached stream, reading cookies off the Request (never next/headers).
 //
 // Status codes:
-//   200 -> SSE stream: gen:started { generationId }, gen:progress*, then
-//          gen:result or gen:error, then usage. Errors after the stream opened
-//          are `gen:error` events, never a silent close.
+//   200 -> SSE stream: gen:started { generationId }, gen:progress* and, on the
+//          first attempt, gen:section* (each top-level section as soon as it is
+//          complete and valid on its own, a preview the editor draws as a
+//          draft), then gen:result or gen:error, then usage. Errors after the
+//          stream opened are `gen:error` events, never a silent close.
 //   400 -> bad JSON / failed validation / brief or context over budget
 //   409 -> the client-chosen `runId` is already taken (`run_exists`)
 //   401 -> no session / missing ANTHROPIC_API_KEY
@@ -77,6 +79,7 @@ import {
   type PageGenErrorPayload,
   type PageGenProgress,
   type PageGenResultPayload,
+  type PageGenSection,
   type PageGenStarted,
   type PageGenTarget,
 } from '@/lib/ai/pageGen/protocol';
@@ -210,7 +213,7 @@ interface RunArgs {
   workspaceId: string;
   sse: ReturnType<typeof createSseStream>;
   /** The run's record: its outcome stays collectable after a disconnect, and its signal is the only stop. */
-  job: JobHandle<PageGenProgress, PageGenResultPayload, PageGenErrorPayload>;
+  job: JobHandle<PageGenProgress, PageGenResultPayload, PageGenErrorPayload, PageGenSection>;
   /** Frees the user's in-flight slot; called before the stream closes. */
   release: () => void;
 }
@@ -244,6 +247,10 @@ async function runGeneration(args: RunArgs): Promise<void> {
     job.progress(p);
     sse.send('gen:progress', p);
   };
+  const section = (s: PageGenSection): void => {
+    job.section(s);
+    sse.send('gen:section', s);
+  };
   const fail = (payload: PageGenErrorPayload): void => {
     errorCode = String(payload.code);
     status = payload.code === 'rate_limited' ? 'rate_limited' : payload.code === 'overloaded' ? 'overloaded' : 'error';
@@ -269,7 +276,7 @@ async function runGeneration(args: RunArgs): Promise<void> {
         existingPageTitles: body.existingPageTitles,
         siteContext: body.siteContext,
       },
-      { anthropic, signal, userId, workspaceId: args.workspaceId, onProgress: progress },
+      { anthropic, signal, userId, workspaceId: args.workspaceId, onProgress: progress, onSection: section },
       requestId,
     );
     usage = run.usage;

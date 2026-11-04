@@ -27,8 +27,8 @@ import {
 import { buildSystemPrompt } from '@/lib/ai/promptCache';
 import { logAiCall, startAiCallTimer } from '@/lib/ai/aiLogger';
 import { recordUsage } from '@/lib/ai/aiUsageStub';
-import { deriveBreakpointKeys, type BreakpointInput, type BreakpointKey } from './schema';
-import { addressesHeldBy, validateGeneration, type GenerationResult } from './validate';
+import { deriveBreakpointKeys, GENERATION_LIMITS, type BreakpointInput, type BreakpointKey } from './schema';
+import { addressesHeldBy, validateGeneration, type GenerationResult, type ValidateContext } from './validate';
 import {
   EMIT_TOOL_NAME,
   briefMessage,
@@ -44,9 +44,11 @@ import type {
   PageGenModel,
   PageGenProgress,
   PageGenResultPayload,
+  PageGenSection,
   PageGenTarget,
   StockImageSummary,
 } from './protocol';
+import { createSectionScanner } from './sectionStream';
 import { classifyProviderError } from './providerError';
 import {
   applyStockPhotos,
@@ -102,6 +104,12 @@ export interface PageGenerationContext {
   workspaceId: string;
   /** Each progress step, in order. */
   onProgress?: (progress: PageGenProgress) => void;
+  /**
+   * Each top-level section of the first attempt as soon as it is complete and
+   * valid on its own (a preview the editor draws as a draft). Optional: the
+   * site operations' generatePage passes nothing and nothing is scanned.
+   */
+  onSection?: (section: PageGenSection) => void;
 }
 
 export interface PageGenerationUsage {
@@ -231,6 +239,12 @@ export async function runPageGeneration(
 
     let lastProblems: string[] = [];
 
+    // The context every validation of this request runs with (the sections of
+    // the preview and the final result alike).
+    const heldAddresses = addressesHeldBy(input.target.kind === 'newPage' ? null : input.target.context);
+    // A Google map shows the business address of the Site settings, or is dropped.
+    const mapAddress = input.siteContext ? siteAddressOf(input.siteContext) : null;
+
     while (usage.attempts < MAX_ATTEMPTS) {
       usage.attempts += 1;
       const attempt = usage.attempts;
@@ -256,9 +270,16 @@ export async function runPageGeneration(
       let lastReported = 0;
       // The raw tool-input fragments, kept for a strict parse below.
       let rawInput = '';
+      // The preview sections: first attempt only (a repair round rewrites the
+      // whole page, and the draft of the first one stays up until the result).
+      const sections =
+        attempt === 1 && context.onSection
+          ? sectionPreview(context.onSection, requestId, attempt, { breakpoints, allowStickyCta: false, heldAddresses, mapAddress })
+          : undefined;
       stream.on('inputJson', (partialJson: string) => {
         rawInput += partialJson;
         received += partialJson.length;
+        sections?.push(partialJson);
         if (received - lastReported >= PROGRESS_EVERY_CHARS) {
           lastReported = received;
           progress({ phase: attempt === 1 ? 'generating' : 'repairing', receivedChars: received, attempt });
@@ -337,9 +358,8 @@ export async function runPageGeneration(
         const outcome = validateGeneration(toolUse.input, {
           breakpoints,
           allowStickyCta: input.target.kind === 'newPage',
-          heldAddresses: addressesHeldBy(input.target.kind === 'newPage' ? null : input.target.context),
-          // A Google map shows the business address of the Site settings, or is dropped.
-          mapAddress: input.siteContext ? siteAddressOf(input.siteContext) : null,
+          heldAddresses,
+          mapAddress,
         });
         if (outcome.ok) {
           const screened = screenTells(outcome.result, breakpoints, essentials);
@@ -399,6 +419,53 @@ export async function runPageGeneration(
     if (delivered) return done(delivered);
     return done({ kind: 'error', error: classifyProviderError(err) });
   }
+}
+
+/**
+ * The preview of one attempt: scans the streaming tool input for complete
+ * top-level sections (./sectionStream.ts), validates each one on its own and
+ * sends the valid ones, numbered without gaps. A section that fails is left out
+ * of the preview, never repaired (the final result corrects it anyway); once
+ * the sections sent reach the node budget, nothing more is sent. The page-level
+ * screens (tells, essentials) run on the final result only.
+ *
+ * Never throws: it runs inside the SDK's event handler, where an exception
+ * would reject the stream and pass for a provider error.
+ */
+function sectionPreview(
+  send: (section: PageGenSection) => void,
+  generationId: string,
+  attempt: number,
+  ctx: ValidateContext,
+): { push(fragment: string): void } {
+  const scanner = createSectionScanner();
+  let index = 0;
+  let nodeCount = 0;
+  let stopped = false;
+  return {
+    push(fragment) {
+      if (stopped) return;
+      try {
+        for (const raw of scanner.push(fragment)) {
+          const outcome = validateGeneration({ nodes: [raw] }, ctx);
+          if (!outcome.ok) continue;
+          nodeCount += outcome.result.stats.nodeCount;
+          if (nodeCount > GENERATION_LIMITS.maxNodes) {
+            stopped = true;
+            return;
+          }
+          for (const node of outcome.result.nodes) {
+            send({ generationId, index, node, attempt });
+            index += 1;
+          }
+        }
+      } catch (err) {
+        // A preview problem must never cost the generation: stop previewing.
+        stopped = true;
+        console.warn(`[generate-page] section preview stopped ${err instanceof Error ? err.name : 'error'}`);
+      }
+    },
+  };
 }
 
 /** A valid generation after the design-tells screen. */

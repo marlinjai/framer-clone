@@ -78,6 +78,14 @@ export function toEditorSnapshot(
   } as ComponentSnapshotIn;
 }
 
+/** The root of a generated new page (ProjectModel.addGeneratedPage); its draft frames draw the same box. */
+export const GENERATED_PAGE_ROOT_STYLE: Readonly<Record<string, string>> = {
+  display: 'flex',
+  flexDirection: 'column',
+  width: '100%',
+  fontFamily: 'system-ui, sans-serif',
+};
+
 /** Everything needed to reverse one applied generation (kept by the dialog). */
 export type GenerationUndoRecord =
   | { kind: 'newPage'; generationId: string; pageId: string; previousPageId?: string }
