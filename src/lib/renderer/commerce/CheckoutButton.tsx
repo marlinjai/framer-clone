@@ -217,7 +217,7 @@ export default function CheckoutButton(props: CheckoutButtonProps) {
   return props.surface === 'canvas' ? <CheckoutCanvas {...props} /> : <CheckoutLive {...props} />;
 }
 
-function CheckoutLive({ node, hostType = 'div', hostProps = {}, gateway, children }: CheckoutButtonProps) {
+function CheckoutLive({ node, scope, hostType = 'div', hostProps = {}, gateway, children }: CheckoutButtonProps) {
   const cart = useCart();
   const locale = React.useContext(ShopLocaleContext);
   const unavailableReason = useCheckoutUnavailableReason();
@@ -501,7 +501,7 @@ function CheckoutLive({ node, hostType = 'div', hostProps = {}, gateway, childre
     hostType,
     wrapperProps,
     <ShopRuntimeContext.Provider value={runtime}>
-      <ShopControlContent node={node} kind="checkout-button" locale={locale} drawn={children} />
+      <ShopControlContent node={node} kind="checkout-button" locale={locale} drawn={children} scope={scope} />
     </ShopRuntimeContext.Provider>,
     unavailableReason && noteShown ? (
       <p data-checkout-unavailable role="status" style={UNAVAILABLE_NOTE_STYLE}>

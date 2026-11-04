@@ -18,8 +18,10 @@
 // authority on what can actually be taken.
 //
 // READ-ONLY against the server: every per-line fetch is a read routed through
-// the shared pure `resolveDataState` helper, so errors surface (an editor chip /
-// a silent preview) and are never swallowed. Quantity changes and removals are
+// the shared pure `resolveDataState` helper, so errors surface and are never
+// swallowed: the visitor reads the shop's plain sentence on the failed line (both
+// live surfaces, the published page and the editor's Preview, are a visitor's),
+// and the real message goes to the console. Quantity changes and removals are
 // CLIENT cart mutations plus a localStorage persist: no server write happens.
 //
 // What the visitor sees is designed in the editor (docs/plans/2026-11-02-designable-shop-controls.md):
@@ -43,11 +45,8 @@ import type {
 } from '@/lib/commerce/types';
 import { computeDisplaySubtotalCents, useCart, type CartLine } from '@/lib/commerce/cart';
 import { lineTitle } from '@/lib/commerce/lineTitle';
-import {
-  resolveDataState,
-  type DataStateMode,
-} from '@/lib/renderer/data/resolveDataState';
-import { CART_PREVIEW_STATES, type ShopLocale } from '@/lib/commerce/parts';
+import { resolveDataState } from '@/lib/renderer/data/resolveDataState';
+import { CART_PREVIEW_STATES, shopPartText, type ShopLocale } from '@/lib/commerce/parts';
 import { ShopDesignContext, ShopLocaleContext, ShopRuntimeContext, type ShopPartRender, type ShopRuntime } from '@/lib/commerce/shopRuntime';
 import { ShopControlContent } from './ShopControlContent';
 
@@ -63,7 +62,7 @@ type LineData =
       availability: AvailabilityDTO;
     }
   | { status: 'empty' }
-  | { status: 'error'; message: string };
+  | { status: 'error' };
 
 export interface CartViewProps {
   node: ComponentInstance;
@@ -73,8 +72,6 @@ export interface CartViewProps {
   hostType?: string;
   /** Already-resolved wrapper props (identity attrs + style + marker). */
   hostProps?: Record<string, unknown>;
-  /** Rendering surface: editor surfaces error chips, preview renders nothing. */
-  mode?: DataStateMode;
   /** The control's children as the surface drew them (canvas, Preview); absent on a published page. */
   children?: React.ReactNode;
   /** `canvas`: the design surface, a preview state with sample lines and no behaviour. */
@@ -97,11 +94,35 @@ function formatDisplayMoney(amountCents: number, currency: string, locale: ShopL
   }
 }
 
+/** The cart's own words around the figures, in the site language. */
+const CART_TEXTS = {
+  en: {
+    priceUnavailable: 'Price unavailable',
+    // Said after the estimate notice while a line is not counted in the subtotal.
+    partial: 'Items still loading or not available are not counted.',
+  },
+  de: {
+    priceUnavailable: 'Preis nicht verfügbar',
+    partial: 'Noch ladende oder nicht verfügbare Artikel sind nicht eingerechnet.',
+  },
+} as const satisfies Readonly<Record<ShopLocale, Readonly<Record<string, string>>>>;
+
+/** The subtotal shown before any price is known: never a bare 0.00 without its currency. */
+const NO_SUBTOTAL = '-';
+
+/**
+ * The subtotal as the visitor reads it: the formatted estimate, or a placeholder
+ * when no line's price is known yet. DISPLAY ONLY, never authoritative.
+ */
+function subtotalText(cents: number, currency: string | null, locale: ShopLocale): string {
+  return currency != null ? formatDisplayMoney(cents, currency, locale) : NO_SUBTOTAL;
+}
+
 export default function CartView(props: CartViewProps) {
   return props.surface === 'canvas' ? <CartCanvas {...props} /> : <CartLive {...props} />;
 }
 
-function CartLive({ node, scope, hostType = 'div', hostProps = {}, mode = 'preview', children }: CartViewProps) {
+function CartLive({ node, scope, hostType = 'div', hostProps = {}, children }: CartViewProps) {
   const dataSource = useCommerceDataSource();
   const locale = React.useContext(ShopLocaleContext);
   const idBase = React.useId();
@@ -158,13 +179,9 @@ function CartLive({ node, scope, hostType = 'div', hostProps = {}, mode = 'previ
           },
         };
       } catch (err) {
-        return {
-          id,
-          data: {
-            status: 'error',
-            message: err instanceof Error ? err.message : String(err),
-          },
-        };
+        // The visitor reads the shop's sentence on the line; the real reason is logged, never swallowed.
+        console.error(`CartView: the line of variant ${id} could not be loaded`, err);
+        return { id, data: { status: 'error' } };
       }
     };
 
@@ -191,11 +208,15 @@ function CartLive({ node, scope, hostType = 'div', hostProps = {}, mode = 'previ
   // fabricated money). The subtotal is an ESTIMATE: never authoritative.
   const prices: Record<string, PriceDTO> = {};
   let displayCurrency: string | null = null;
+  // A line still loading, failed, no longer sold or without a price is not counted: the subtotal says so.
+  let partial = false;
   for (const line of lines) {
     const data = lineData[line.variantId];
     if (data?.status === 'ready' && data.price) {
       prices[line.variantId] = data.price;
       if (!displayCurrency) displayCurrency = data.price.currency;
+    } else {
+      partial = true;
     }
   }
   const subtotalCents = computeDisplaySubtotalCents(lines, prices);
@@ -208,20 +229,21 @@ function CartLive({ node, scope, hostType = 'div', hostProps = {}, mode = 'previ
     const directive = resolveDataState({
       isLoading: data.status === 'loading',
       rows,
-      error: data.status === 'error' ? new Error(data.message) : null,
-      mode,
+      error: data.status === 'error' ? new Error('the line could not be loaded') : null,
+      // A visitor's surface: the error carries no internal message.
+      mode: 'preview',
     });
     if (directive.kind === 'loading') return { kind: 'loading' };
-    // Editor: the real message. Preview / published: the shop's plain sentence
-    // (never the internal message, never a silent success), with the remove control.
-    if (directive.kind === 'error') return { kind: 'error', message: directive.message ?? null };
+    // The shop's plain sentence (never the internal message, never a silent
+    // success), with the remove control.
+    if (directive.kind === 'error') return { kind: 'error' };
     // The variant no longer resolves. Surface honestly; do NOT auto-remove (the visitor decides).
     if (directive.kind === 'empty' || data.status !== 'ready') return { kind: 'unavailable' };
     return {
       kind: 'ready',
       // Named as on the receipt (src/lib/commerce/lineTitle.ts), never by an id.
       title: lineTitle(data.productTitle, data.variant.title, data.variant.sku, 'Item'),
-      price: data.price ? formatDisplayMoney(data.price.amountCents, data.price.currency, locale) : locale === 'de' ? 'Preis nicht verfügbar' : 'Price unavailable',
+      price: data.price ? formatDisplayMoney(data.price.amountCents, data.price.currency, locale) : CART_TEXTS[locale].priceUnavailable,
       // ADVISORY warning: advertised availability is below the wanted quantity.
       // Advisory only, never authoritative; the line is NOT auto-removed.
       shortOf: data.availability.limited && data.availability.availableQuantity < line.quantity ? data.availability.availableQuantity : null,
@@ -230,24 +252,53 @@ function CartLive({ node, scope, hostType = 'div', hostProps = {}, mode = 'previ
 
   // DISPLAY-ONLY estimate. NOT AUTHORITATIVE: the real total is computed
   // server-side at order-create and is never trusted from the client.
-  const subtotal =
-    displayCurrency != null ? formatDisplayMoney(subtotalCents, displayCurrency, locale) : `${(subtotalCents / 100).toFixed(2)}`;
+  const subtotal = subtotalText(subtotalCents, displayCurrency, locale);
+
+  // Where the keyboard goes when a line is removed: the next line's remove button,
+  // else the previous one's, else (the cart now empty) the empty message.
+  const host = React.useRef<HTMLElement | null>(null);
+  const focusEmpty = React.useRef(false);
+  React.useEffect(() => {
+    if (!focusEmpty.current || lines.length > 0) return;
+    focusEmpty.current = false;
+    host.current?.querySelector<HTMLElement>('[data-cart-empty]')?.focus();
+  }, [lines.length]);
+  const removeLine = (variantId: string) => {
+    const at = lines.findIndex((line) => line.variantId === variantId);
+    const buttons = [...(host.current?.querySelectorAll<HTMLElement>('[data-cart-remove]') ?? [])];
+    const button = (id: string) => buttons.find((candidate) => candidate.getAttribute('data-cart-remove') === id);
+    const target = [...lines.slice(at + 1), ...lines.slice(0, Math.max(at, 0)).reverse()].map((line) => button(line.variantId)).find(Boolean);
+    // The other lines keep their elements (keyed by variant), so focus moves before the line goes.
+    if (target) target.focus();
+    else if (lines.length === 1) focusEmpty.current = true;
+    cart.remove(variantId);
+  };
 
   const runtime = cartRuntime({
     locale,
     lines: lines.map((line) => ({ variantId: line.variantId, quantity: line.quantity, view: lineView(line) })),
     subtotal,
     subtotalCents,
+    partial,
     idBase,
     handlers: {
       // CLIENT cart mutations + localStorage persist; no server write.
       setQuantity: (variantId, quantity) => cart.setQuantity(variantId, quantity),
-      remove: (variantId) => cart.remove(variantId),
+      remove: removeLine,
     },
   });
 
-  const wrapperProps = { ...hostProps };
-  delete (wrapperProps as Record<string, unknown>).children;
+  const outerRef = (hostProps as { ref?: unknown }).ref;
+  const hostRef = React.useCallback(
+    (element: HTMLElement | null) => {
+      host.current = element;
+      if (typeof outerRef === 'function') (outerRef as (element: HTMLElement | null) => void)(element);
+      else if (outerRef && typeof outerRef === 'object' && 'current' in outerRef) (outerRef as { current: HTMLElement | null }).current = element;
+    },
+    [outerRef],
+  );
+  const wrapperProps: Record<string, unknown> = { ...hostProps, ref: hostRef };
+  delete wrapperProps.children;
   return React.createElement(
     hostType,
     wrapperProps,
@@ -260,7 +311,7 @@ function CartLive({ node, scope, hostType = 'div', hostProps = {}, mode = 'previ
 /** What one line shows. */
 type LineView =
   | { kind: 'loading' }
-  | { kind: 'error'; message: string | null }
+  | { kind: 'error' }
   | { kind: 'unavailable' }
   | { kind: 'ready'; title: string; price: string; shortOf: number | null };
 
@@ -269,6 +320,8 @@ interface CartViewModel {
   lines: { variantId: string; quantity: number; view: LineView }[];
   subtotal: string;
   subtotalCents: number;
+  /** A line is not counted in the subtotal (loading, failed, no longer sold or without a price). */
+  partial: boolean;
   /** Unique to the control, for the ids that tie a quantity input to its label. */
   idBase: string;
   /** Null on the canvas, where nothing does anything. */
@@ -288,8 +341,8 @@ function cartPart(role: string, model: CartViewModel): ShopPartRender {
   const empty = model.lines.length === 0;
   switch (role) {
     case 'cart.empty':
-      // An honest note, not a fetch state.
-      return empty ? { visible: true, props: { 'data-cart-empty': '' } } : { visible: false };
+      // An honest note, not a fetch state. Live it takes the focus when the last line is removed.
+      return empty ? { visible: true, props: { 'data-cart-empty': '', ...(model.handlers ? { tabIndex: -1 } : {}) } } : { visible: false };
     case 'cart.lines':
       return empty ? { visible: false } : { visible: true, props: { 'data-cart-lines': '' } };
     case 'cart.line':
@@ -306,9 +359,19 @@ function cartPart(role: string, model: CartViewModel): ShopPartRender {
     case 'cart.subtotal':
       return empty
         ? { visible: false }
-        : { visible: true, tokens: { subtotal: model.subtotal }, props: { 'data-cart-subtotal': '', 'data-cart-subtotal-cents': model.subtotalCents } };
+        : {
+            visible: true,
+            tokens: { subtotal: model.subtotal },
+            props: { 'data-cart-subtotal': '', 'data-cart-subtotal-cents': model.subtotalCents, 'data-cart-subtotal-partial': model.partial ? '' : undefined },
+          };
     case 'cart.subtotal-note':
-      return empty ? { visible: false } : { visible: true, props: { 'data-cart-subtotal-note': '' } };
+      if (empty) return { visible: false };
+      // A subtotal that leaves a line out says so, after the fixed estimate notice.
+      return {
+        visible: true,
+        props: { 'data-cart-subtotal-note': '' },
+        ...(model.partial ? { text: `${String(shopPartText(role, undefined, model.locale))} ${CART_TEXTS[model.locale].partial}` } : {}),
+      };
     default:
       // A line's own parts outside a line have nothing to show.
       return { visible: false };
@@ -352,12 +415,18 @@ function linePart(role: string, line: CartViewModel['lines'][number], model: Car
           step: 1,
           'data-cart-qty': variantId,
           value: line.quantity,
+          disabled: false,
           ...(handlers
             ? {
+                readOnly: false,
+                tabIndex: undefined,
                 onChange: (event: React.ChangeEvent<HTMLInputElement>) => {
+                  // A blank field keeps the line's quantity (the controlled value
+                  // puts it back) until a number is typed; zero or less is one.
+                  // Removing a line is the remove button's, never the input's.
                   const next = parseInt(event.target.value, 10);
                   if (Number.isNaN(next)) return;
-                  handlers.setQuantity(variantId, next);
+                  handlers.setQuantity(variantId, Math.max(1, next));
                 },
               }
             : { readOnly: true, tabIndex: -1 }),
@@ -371,7 +440,7 @@ function linePart(role: string, line: CartViewModel['lines'][number], model: Car
       return {
         visible: true,
         ...(view.kind === 'unavailable' || view.kind === 'error' ? { keepInSight: true as const } : {}),
-        props: { type: 'button', 'data-cart-remove': variantId, ...(handlers ? { onClick: () => handlers.remove(variantId) } : {}) },
+        props: { type: 'button', disabled: false, 'data-cart-remove': variantId, ...(handlers ? { onClick: () => handlers.remove(variantId) } : {}) },
       };
     case 'cart.line-warning':
       return ready && view.shortOf !== null
@@ -383,11 +452,7 @@ function linePart(role: string, line: CartViewModel['lines'][number], model: Car
       return view.kind === 'unavailable' ? { visible: true, props: { 'data-cart-line-unavailable': '' } } : { visible: false };
     case 'cart.line-error':
       if (view.kind !== 'error') return { visible: false };
-      return {
-        visible: true,
-        props: { 'data-cart-line-error': '', role: 'status' },
-        ...(view.message ? { text: `Failed to load item: ${view.message}` } : {}),
-      };
+      return { visible: true, props: { 'data-cart-line-error': '', role: 'status' } };
     default:
       return { visible: false };
   }
@@ -403,11 +468,13 @@ export function sampleCartModel(id: string, locale: ShopLocale): CartViewModel {
   const text = SAMPLE[locale];
   const tee = { variantId: 'sample-tee', quantity: 2, view: { kind: 'ready', title: text.tee, price: text.price(2500), shortOf: null } as LineView };
   const mug = { variantId: 'sample-mug', quantity: 1, view: { kind: 'ready', title: text.mug, price: text.price(1490), shortOf: null } as LineView };
+  // The subtotal as the live cart words it: a placeholder before any price, a note while a line is not counted.
   const model = (lines: CartViewModel['lines'], cents: number): CartViewModel => ({
     locale,
     lines,
-    subtotal: text.price(cents),
+    subtotal: subtotalText(cents, lines.some((line) => line.view.kind === 'ready') ? 'EUR' : null, locale),
     subtotalCents: cents,
+    partial: lines.some((line) => line.view.kind !== 'ready'),
     idBase: 'cart-sample',
     handlers: null,
   });
@@ -421,7 +488,7 @@ export function sampleCartModel(id: string, locale: ShopLocale): CartViewModel {
     case 'unavailable':
       return model([tee, { ...mug, view: { kind: 'unavailable' } }], 5000);
     case 'error':
-      return model([tee, { ...mug, view: { kind: 'error', message: null } }], 5000);
+      return model([tee, { ...mug, view: { kind: 'error' } }], 5000);
     default:
       return model([tee, mug], 6490);
   }

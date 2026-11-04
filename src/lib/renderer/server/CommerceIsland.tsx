@@ -146,7 +146,6 @@ function IslandBody({
           scope={scope}
           hostType={hostType}
           hostProps={hostProps}
-          mode="preview"
         />
       );
     case 'cart-view':
@@ -156,7 +155,6 @@ function IslandBody({
           scope={scope}
           hostType={hostType}
           hostProps={hostProps}
-          mode="preview"
         />
       );
     case 'checkout-button':
