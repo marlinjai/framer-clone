@@ -27,6 +27,7 @@ import {
   type AutosaveState,
 } from '@/lib/projects/autosave';
 import { PROJECT_BODY_MAX_BYTES } from '@/lib/api/respond';
+import { knownServerVersion } from '@/stores/openProject';
 
 /** A save quicker than this never shows "Saving...". */
 export const SAVING_LABEL_DELAY_MS = 300;
@@ -48,7 +49,9 @@ export function useAutosave(
   enabled: boolean,
 ): { controller: AutosaveController | undefined; state: AutosaveState } {
   const [controller, setController] = React.useState<AutosaveController | undefined>(undefined);
-  const projectId = enabled && project ? project.id : undefined;
+  // Only a project this tab loaded from the server (never the demo, nor a demo
+  // just kept as a project before its own page opens) gets a controller.
+  const projectId = enabled && project && knownServerVersion(project.id) !== undefined ? project.id : undefined;
 
   React.useEffect(() => {
     if (!projectId || !project) {

@@ -204,6 +204,9 @@ export class AutosaveController {
     if (this.project === project && this.disposeSnapshot) return;
     // Only a live tree can be watched (a removed project, or a stand-in object).
     if (!isStateTreeNode(project) || !isAlive(project)) return;
+    // Never loaded from the server in this tab (the demo, or a demo just kept
+    // as a project before its page opens): nothing to save it over.
+    if (knownServerVersion(this.projectId) === undefined) return;
     this.disposeSnapshot?.();
     this.project = project;
     this.disposeSnapshot = onPatch(project, () => this.notifyChange());
@@ -219,6 +222,8 @@ export class AutosaveController {
     }
     this.dirtyHint = !isSaved(this.projectId, getSnapshot(project) as ProjectContent);
     if (!this.debounceTimer) this.setState({ phase: this.dirtyHint ? 'unsaved' : 'saved' });
+    // Work kept from an earlier visit in this tab is saved like any change.
+    if (this.dirtyHint && !this.debounceTimer) this.schedule();
   }
 
   /**
@@ -227,7 +232,8 @@ export class AutosaveController {
    * the registry, so coming back to the project finds the same request state.
    */
   detach(project?: AutosaveProject): void {
-    if (project && project !== this.project) return;
+    // Another instance is watched now; one never watched (no server version) just goes.
+    if (project && this.project && project !== this.project) return;
     this.disposeSnapshot?.();
     this.disposeSnapshot = undefined;
     notifyRegistry();
@@ -553,6 +559,7 @@ export class AutosaveController {
   /** True while leaving the page would lose work: a request out, or changes not on the server. */
   hasUnsavedWork(): boolean {
     if (this.discarding) return false;
+    if (knownServerVersion(this.projectId) === undefined) return false;
     if (this.inFlight) return true;
     const project = this.project;
     if (!project || !isAlive(project)) return false;

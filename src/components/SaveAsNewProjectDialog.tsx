@@ -53,6 +53,8 @@ export default function SaveAsNewProjectDialog({
   title = 'Save as a new project',
 }: SaveAsNewProjectDialogProps) {
   const router = useRouter();
+  // The verb follows the title: "Keep as project" in the demo.
+  const keep = title === 'Keep as project';
   const [name, setName] = useState(defaultName);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -161,7 +163,7 @@ export default function SaveAsNewProjectDialog({
             </a>
           ) : null}
           <p role="status" aria-live="polite" className="sr-only">
-            {saving ? 'Saving the project…' : ''}
+            {saving ? (keep ? 'Keeping the project…' : 'Saving the project…') : ''}
           </p>
           <DialogFooter>
             <Button
@@ -176,7 +178,7 @@ export default function SaveAsNewProjectDialog({
               Cancel
             </Button>
             <Button type="submit" size="sm" aria-disabled={saving || undefined} aria-busy={saving || undefined}>
-              {saving ? 'Saving…' : 'Save project'}
+              {saving ? (keep ? 'Keeping…' : 'Saving…') : keep ? 'Keep as project' : 'Save project'}
             </Button>
           </DialogFooter>
         </form>

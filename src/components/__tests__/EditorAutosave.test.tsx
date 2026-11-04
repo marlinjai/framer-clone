@@ -470,6 +470,27 @@ describe('a generated page', () => {
   });
 });
 
+describe('a demo kept as a project', () => {
+  it('leaves no unload warning and no notice behind once kept', async () => {
+    const demo = ProjectModel.create({ id: `demo_${++seq}`, metadata: { title: 'Demo', description: '' }, pages: {} });
+    act(() => {
+      store.projectStore.ingestProjectSnapshot(getSnapshot(demo) as ProjectSnapshotOut);
+      const live = store.projectStore.getProject(demo.id)!;
+      store.editorUI.setCurrentProject(live);
+      store.editorUI.markUnsavedDemo(live.id);
+    });
+    const { rerender } = render(<Editor />);
+    act(() => store.editorUI.consumeDemo()); // what "Keep as project" does before the new page opens
+    await advance(0);
+    act(() => store.projectStore.getProject(demo.id)!.updateMetadata({ description: 'kept' }));
+    rerender(<UnsavedWorkGuard />); // the new project's page replaces the editor
+    await advance(60_000);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(unloadWarns()).toBe(false);
+    expect(screen.queryByTestId('unsaved-work-notice')).toBeNull();
+  });
+});
+
 describe('the generator note follows the top bar', () => {
   it('Not saved in both when the save of a generated page fails', async () => {
     window.localStorage.setItem('framer-clone:visual-review', JSON.stringify({ auto: false, model: 'SONNET' }));

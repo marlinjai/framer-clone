@@ -559,12 +559,16 @@ describe('the review of 2026-11-04', () => {
     const project = ProjectModel.create({ id: `site_auto_${++seq}`, metadata: { title: 'Demo', description: '' }, pages: {} });
     const autosave = autosaveFor(project.id);
     autosave.attach(project);
+    expect(autosave.isAttached()).toBe(false);
     edit(project, 'demo work');
     await advance(AUTOSAVE_MAX_WAIT_MS);
     await autosave.saveNow();
     await autosave.flush();
+    expect(anyUnsavedWork()).toBe(false);
     autosave.detach(project);
     expect(calls).toHaveLength(0);
+    // Nothing held: no warning on unload, no model kept in the registry.
+    expect(existingAutosave(project.id)).toBeUndefined();
   });
 
   it('passing failures stop retrying by themselves after 10 minutes and become a refusal with Retry', async () => {
@@ -718,6 +722,20 @@ describe('the review of 2026-11-04', () => {
     expect(knownServerVersion(id)).toBe(3);
     await calls[0].answer(conflict(4));
     expect(autosave.getState()).toMatchObject({ phase: 'conflict', currentVersion: 4, dialogOpen: true });
+  });
+});
+
+describe('opening with work kept from an earlier visit', () => {
+  it('a copy that differs from the server when the status attaches is saved after the debounce', async () => {
+    const id = `site_auto_${++seq}`;
+    const project = openProject(store, serverSnapshot(id), null, 3).project!;
+    edit(project, 'changed while nothing watched');
+    const autosave = autosaveFor(id);
+    autosave.attach(project);
+    expect(autosave.getState().phase).toBe('unsaved');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].snapshot.metadata.description).toBe('changed while nothing watched');
   });
 });
 
