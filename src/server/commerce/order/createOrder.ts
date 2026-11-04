@@ -408,7 +408,7 @@ function runOrderTransaction(
       assertNonNegativeIntCents(total, 'order total');
       // More than the payment provider takes in one charge (Stripe: 999,999.99 EUR) would be
       // ordered and hold its stock, then fail when the payment starts: refused here, before any write.
-      if (cart.payment && total > maxChargeAmount(cart.payment.provider)) {
+      if (cart.payment && total > maxChargeAmount(cart.payment.provider, cart.currency)) {
         throw new OrderTooLargeError(null, 'order total over the payment maximum', total);
       }
 

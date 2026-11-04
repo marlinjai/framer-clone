@@ -11,23 +11,34 @@ import { MAX_ORDER_INTEGER } from '@/lib/commerce/dto';
 export type ProviderId = 'demo' | 'stripe';
 
 /**
- * The most Stripe takes in one charge, in the currency's minor unit: its `amount`
- * field holds at most eight digits (99999999, that is 999,999.99 EUR). Stripe
- * documents the same eight-digit ceiling for every currency it settles, so one
- * number serves; a larger amount is refused when the payment starts, after the
- * order already holds its stock.
+ * The most Stripe takes in one charge, in the currency's minor unit, for a payment
+ * method other than a card: its `amount` holds at most eight digits (99999999, that
+ * is 999,999.99 EUR) in every currency but the few in STRIPE_MAX_CHARGE_BY_CURRENCY
+ * (https://docs.stripe.com/currencies, "Maximum charge amounts", read 2026-11-04).
+ * Cards allow more (up to twelve digits, nine for American Express), but the hosted
+ * checkout may offer a buyer any method the account has, so the eight digits are
+ * what every payment can take. A larger amount is refused when the payment starts,
+ * after the order already holds its stock.
  */
 export const STRIPE_MAX_CHARGE = 99_999_999;
 
+/** The currencies Stripe allows more digits in (ISO 4217, uppercase), minor units. */
+export const STRIPE_MAX_CHARGE_BY_CURRENCY: Readonly<Record<string, number>> = {
+  IDR: 999_999_999_999,
+  COP: 9_999_999_999,
+  INR: 999_999_999,
+};
+
 /**
- * The largest order total `provider` takes in one payment, in the currency's minor
- * unit (the same ceiling for every currency, STRIPE_MAX_CHARGE). createOrder refuses
- * an order over it before anything is written (a 422 order_too_large), so no order
- * holds stock for a payment that cannot succeed. The demo provider moves no money,
- * so only what an order stores bounds it.
+ * The largest order total `provider` takes in one payment of `currency`, minor
+ * units, and never more than an order stores (MAX_ORDER_INTEGER). createOrder
+ * refuses an order over it before anything is written (a 422 order_too_large), so
+ * no order holds stock for a payment that cannot succeed. The demo provider moves
+ * no money, so only what an order stores bounds it.
  */
-export function maxChargeAmount(provider: ProviderId): number {
-  return provider === 'stripe' ? STRIPE_MAX_CHARGE : MAX_ORDER_INTEGER;
+export function maxChargeAmount(provider: ProviderId, currency: string): number {
+  if (provider !== 'stripe') return MAX_ORDER_INTEGER;
+  return Math.min(STRIPE_MAX_CHARGE_BY_CURRENCY[currency.toUpperCase()] ?? STRIPE_MAX_CHARGE, MAX_ORDER_INTEGER);
 }
 
 /** What a provider reports, normalised. `eventId` is the provider's own id: the handler records it once. */

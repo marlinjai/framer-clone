@@ -609,8 +609,12 @@ describe('createOrder: an order too large for its INTEGER columns', () => {
 
     it('Stripe takes at most 99999999 minor units (999,999.99 EUR); the demo provider only what an order stores', () => {
       expect(STRIPE_MAX_CHARGE).toBe(99_999_999);
-      expect(maxChargeAmount('stripe')).toBe(99_999_999);
-      expect(maxChargeAmount('demo')).toBe(MAX);
+      expect(maxChargeAmount('stripe', 'EUR')).toBe(99_999_999);
+      expect(maxChargeAmount('stripe', 'usd')).toBe(99_999_999);
+      // The currencies Stripe allows more digits in, never past what an order stores.
+      expect(maxChargeAmount('stripe', 'INR')).toBe(999_999_999);
+      expect(maxChargeAmount('stripe', 'IDR')).toBe(MAX);
+      expect(maxChargeAmount('demo', 'EUR')).toBe(MAX);
     });
 
     it('a Stripe order one cent over: refused on its total before anything is written or reserved', async () => {
