@@ -373,6 +373,10 @@ describe('the quantity input', () => {
       fireEvent.change(qty, { target: { value: '' } });
     });
     expect(getByTestId('lines').textContent).toBe('[{"variantId":"var_s_red","quantity":2}]');
+    // The field stays blank while edited (CartParts.thirdreview.test.tsx); leaving it shows the quantity.
+    act(() => {
+      fireEvent.blur(qty);
+    });
     expect(qty.value).toBe('2');
     for (const typed of ['0', '-2']) {
       act(() => {
