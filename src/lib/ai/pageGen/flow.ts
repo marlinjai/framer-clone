@@ -36,7 +36,14 @@ export interface FlowError {
 
 export type FlowState =
   | { phase: 'editing'; inputs: FlowInputs; error?: FlowError }
-  | { phase: 'running'; inputs: FlowInputs; requestKey: string; progress: PageGenProgress }
+  | {
+      phase: 'running';
+      inputs: FlowInputs;
+      requestKey: string;
+      progress: PageGenProgress;
+      /** Preview sections drawn so far (their trees live in the draft store, ./draft.ts). */
+      sections: number;
+    }
   | {
       phase: 'applied';
       inputs: FlowInputs;
@@ -56,6 +63,8 @@ export type FlowAction =
   | { type: 'edit'; inputs: Partial<FlowInputs>; targetKey: string }
   | { type: 'start'; requestKey: string }
   | { type: 'progress'; requestKey: string; progress: PageGenProgress }
+  /** A preview section was drawn; `count` is how many the draft now holds. */
+  | { type: 'section'; requestKey: string; count: number }
   | {
       type: 'applied';
       requestKey: string;
@@ -101,10 +110,14 @@ export function flowReducer(state: FlowState, action: FlowAction): FlowState {
         inputs: state.inputs,
         requestKey: action.requestKey,
         progress: { phase: 'generating', receivedChars: 0, attempt: 1 },
+        sections: 0,
       };
     case 'progress':
       if (state.phase !== 'running' || state.requestKey !== action.requestKey) return state;
       return { ...state, progress: action.progress };
+    case 'section':
+      if (state.phase !== 'running' || state.requestKey !== action.requestKey || action.count === state.sections) return state;
+      return { ...state, sections: action.count };
     case 'applied':
       if (state.phase !== 'running' || state.requestKey !== action.requestKey) return state;
       return {

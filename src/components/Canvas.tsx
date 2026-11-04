@@ -2,6 +2,7 @@
 'use client';
 import React, { useRef, useCallback, useEffect } from 'react';
 import ResponsivePageRenderer from './ResponsivePageRenderer';
+import { DraftCameraFollow } from '@/components/ai/PageGenDraftLayer';
 import { useTransformContext, useTransformNotifier } from '@/contexts/TransformContext';
 // HudSurface is now imported in EditorApp
 import { EditorTool } from '../stores/EditorUIStore';
@@ -1100,6 +1101,8 @@ const CanvasInner = observer(() => {
             {/* Page root(s) */}
             <ResponsivePageRenderer  />
           </div>
+          {/* Brings each section of a generation being written into view (until the user moves the camera). */}
+          <DraftCameraFollow />
 
           {/* Marquee (rubber-band) selection rectangle, in ground space.
               Positioned by direct DOM writes during the gesture. */}

@@ -46,6 +46,7 @@ import { useProductPageParams } from '@/lib/commerce/productPreview';
 import { surfaceBehaviour } from '@/lib/behaviour/surfaceBehaviour';
 import { SurfaceDomContext, useStableSurfaceDom } from '@/lib/behaviour/surfaceDom';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
+import { DraftPageFrames, DraftStyles } from '@/components/ai/PageGenDraftLayer';
 
 // Parse a CSS length into pixels for GroundWrapper sizing. Accepts a raw
 // number or a `<n>px` string. Anything else (e.g. '100%', 'auto',
@@ -178,6 +179,14 @@ const ResponsivePageRenderer = observer(() => {
         />
       ))}
       </CanvasBehaviour>
+
+      {/* A generation being written: its draft (motion and pointer rules, then a new page's frames). */}
+      <DraftStyles />
+      {/* 3. A new page being generated: its draft frames beside these (never part of the project). */}
+      <DraftPageFrames
+        framesRight={Math.max(...viewportNodes.map(v => (v.canvasX ?? 0) + (v.viewportWidth ?? FRAME_FALLBACK_WIDTH)))}
+        scope={rootScope}
+      />
     </>
   );
 });
