@@ -24,7 +24,7 @@ import { SHOP_STATE_LOOKUP } from '@/lib/renderer/commerce/shopControlStates';
 export function shopControlAround(node: ComponentInstance | undefined): { control: ComponentInstance; roles: string[] } | undefined {
   const roles: string[] = [];
   let current: unknown = node;
-  for (let i = 0; i < 256 && current; i++) {
+  while (current) {
     const candidate = current as ComponentInstance;
     if (shopControlKindOf(candidate.props)) return { control: candidate, roles: roles.reverse() };
     const role = shopPartRoleOf(candidate.props);

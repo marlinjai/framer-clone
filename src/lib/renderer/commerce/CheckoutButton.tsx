@@ -849,6 +849,13 @@ export function sampleCheckoutState(id: CheckoutPreviewStateId | string, locale:
         state: { status: 'confirmed', order: SAMPLE_ORDER, transactionId: 'demo_txn_sample', receiptNumber: 'RE-2026-0042', email: text.email },
         cartEmpty: true,
       };
+    case 'confirmed-no-email':
+      return {
+        state: { status: 'confirmed', order: { ...SAMPLE_ORDER, confirmationEmail: false }, transactionId: 'demo_txn_sample', receiptNumber: 'RE-2026-0042', email: text.email },
+        cartEmpty: true,
+      };
+    case 'returned-paid-no-email':
+      return { state: { status: 'returned', outcome: 'paid', orderNumber: SAMPLE_ORDER.orderNumber, confirmationTo: null }, cartEmpty: true };
     case 'returned-paid':
       return { state: { status: 'returned', outcome: 'paid', orderNumber: SAMPLE_ORDER.orderNumber, confirmationTo: text.email }, cartEmpty: true };
     case 'returned-cancelled':

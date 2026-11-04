@@ -493,7 +493,9 @@ export const CHECKOUT_PREVIEW_STATES = [
   { id: 'payment-failed', label: 'Payment step: payment failed' },
   { id: 'redirecting', label: 'Going to the payment page' },
   { id: 'confirmed', label: 'Order confirmed (demo payment)' },
+  { id: 'confirmed-no-email', label: 'Order confirmed: no confirmation email' },
   { id: 'returned-paid', label: 'Back from payment: paid' },
+  { id: 'returned-paid-no-email', label: 'Back from payment: paid, no confirmation email' },
   { id: 'returned-cancelled', label: 'Back from payment: cancelled' },
   { id: 'shortage', label: 'Not enough stock' },
   { id: 'items-unavailable', label: 'Items no longer sold' },
@@ -806,7 +808,9 @@ export function shopPartId(controlId: string, role: string): string {
  * stored text when it has any, else the default (so a required label emptied by
  * mistake still names its field). Dynamic parts have none.
  */
-export function shopPartText(role: string, stored: unknown, locale: ShopLocale): unknown {
+export function shopPartText(role: string, rawStored: unknown, locale: ShopLocale): unknown {
+  // A numeric binding ({{product.stock}}) reads as its digits, not as missing text.
+  const stored = typeof rawStored === 'number' && Number.isFinite(rawStored) ? String(rawStored) : rawStored;
   const spec = shopPartSpec(role);
   if (!spec || spec.dynamicText) return undefined;
   if (spec.fixedText) return spec.fixedText[locale];
@@ -1429,9 +1433,12 @@ function controlInSight(control: ShopTreeNode): ShopTreeNode {
 function notSending(node: ShopTreeNode): ShopTreeNode {
   const props = node.props ?? {};
   const isForm = typeof node.type === 'string' && node.type.toLowerCase() === 'form';
-  if (!isForm && !SENDING_PROPS.some((key) => key in props)) return node;
+  // A button without a type submits a form the page wraps around the control.
+  const untypedButton = typeof node.type === 'string' && node.type.toLowerCase() === 'button' && props.type !== 'button';
+  if (!isForm && !untypedButton && !SENDING_PROPS.some((key) => key in props)) return node;
   const next = { ...props };
   for (const key of SENDING_PROPS) delete next[key];
+  if (untypedButton) next.type = 'button';
   return { ...node, ...(isForm ? { type: 'div' } : {}), props: next };
 }
 
@@ -1652,8 +1659,8 @@ export function shopStyleLimit(node: { props?: unknown; children?: readonly unkn
  * (ShopPartElement), setting its own where it means something.
  */
 export const SHOP_RUNTIME_OWNED_PROPS: Readonly<Record<string, readonly string[]>> = {
-  button: ['disabled', 'aria-disabled', 'tabIndex', 'tabindex'],
-  input: ['disabled', 'aria-disabled', 'tabIndex', 'tabindex', 'readOnly', 'readonly', 'max'],
+  button: ['disabled', 'aria-disabled', 'inert', 'tabIndex', 'tabindex'],
+  input: ['disabled', 'aria-disabled', 'inert', 'tabIndex', 'tabindex', 'readOnly', 'readonly', 'max'],
 };
 
 /** A part without the stored attributes its island owns (SHOP_RUNTIME_OWNED_PROPS). */
