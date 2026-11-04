@@ -4,6 +4,9 @@
 //                              (confirmationEmail: the shop sends the buyer an order confirmation, being
 //                              connected to Lumitra Mail; the thank-you says so only then)
 //                           -> 409 { ok: false, shortages: { variantId, needed, available }[] }
+//                           -> 422 order_too_large: a quantity, a line's amount (unit price times quantity,
+//                              with its VAT) or the order total exceeds what the order's INTEGER columns
+//                              store (MAX_ORDER_INTEGER); nothing is ordered or reserved
 //                           -> 503 payments_unavailable: the company takes real payments (Stripe) but its Books
 //                              cannot issue the receipt yet, or it has no Stripe account that can take payments
 //                              and is not the demo company (demoCheckout.ts); nothing is ordered or reserved
@@ -72,13 +75,13 @@ import { sweepExpiredPayments } from '@/server/commerce/payment/payments';
 import { demoCheckoutAllowed } from '@/server/commerce/payment/demoCheckout';
 import { PAYMENTS_UNAVAILABLE_MESSAGE, receiptReadiness } from '@/server/commerce/payment/receiptReadiness';
 import { readAccount } from '@/server/commerce/payment/stripe/connect';
-import { UnknownVariantError } from '@/server/commerce/repository/errors';
+import { OrderTooLargeError, UnknownVariantError } from '@/server/commerce/repository/errors';
 import { readOrderTotal, resolveOrderLines } from '@/server/commerce/repository/storefront';
 import { hasShopMail } from '@/server/commerce/mail/connection';
 import { resolveStorefrontCommerce } from '@/server/commerce/storefrontTenant';
 import { commerceServerFault } from '@/server/commerce/faults';
 import { jsonError, parseBody } from '@/lib/api/respond';
-import { DEFAULT_CURRENCY } from '@/lib/commerce/dto';
+import { DEFAULT_CURRENCY, MAX_ORDER_INTEGER, ORDER_TOO_LARGE_CODE } from '@/lib/commerce/dto';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -87,6 +90,14 @@ export const dynamic = 'force-dynamic';
 // tax region are server constants for v1 (one storefront, one region), and the
 // idempotency key is generated per request. E7/E8 thread real values here.
 const ORDER_TAX_REGION = 'DE';
+
+/** The buyer-safe message of a 422 order_too_large (the checkout shows its own words for the code). */
+const ORDER_TOO_LARGE_MESSAGE = 'the order is larger than one order can hold; lower a quantity and check out again';
+
+/** The 422 an order too large to store is answered with. Not a 409 (a shortage) and not a 500. */
+function orderTooLarge(variantId: string | null): Response {
+  return jsonError(ORDER_TOO_LARGE_CODE, ORDER_TOO_LARGE_MESSAGE, 422, variantId ? { variantId } : undefined);
+}
 
 /** The generic, buyer-safe message every order 500 carries (details are logged). */
 const ORDER_FAILED_MESSAGE = 'the order could not be placed, please try again later';
@@ -145,6 +156,9 @@ export async function POST(req: Request): Promise<Response> {
   const parsed = await parseBody(req, orderBodySchema);
   if (!parsed.ok) return parsed.response;
   const { lines, idempotencyKey, buyer } = parsed.data;
+  // A quantity its column cannot store is the cart's problem, said before anything is read.
+  const oversized = lines.find((line) => line.quantity > MAX_ORDER_INTEGER);
+  if (oversized) return orderTooLarge(oversized.variantId);
 
   try {
     // Server-side identity resolution: variant -> inventory item (the client
@@ -284,6 +298,9 @@ export async function POST(req: Request): Promise<Response> {
       { status: 201 },
     );
   } catch (err) {
+    // A line amount or total over what the order stores (createOrder checks it once the prices are known,
+    // before anything is written): the cart's problem, a typed 422 the checkout shows the buyer.
+    if (err instanceof OrderTooLargeError) return orderTooLarge(err.variantId);
     // A real server fault (including a known variant with no SKU / inventory
     // item, a catalog misconfiguration). The full error goes to the server log;
     // the anonymous buyer gets a generic message, never internals.

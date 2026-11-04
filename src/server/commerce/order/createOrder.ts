@@ -45,14 +45,17 @@ import 'server-only';
 //
 // Errors surface, never swallowed: a missing price, a non-positive quantity, or
 // any non-idempotency error propagates (the transaction rolls back). A short-stock
-// is the explicit { ok:false, shortages } contract, never a silent success.
+// is the explicit { ok:false, shortages } contract, never a silent success. A
+// quantity, line amount or total over what the INTEGER columns store is the typed
+// OrderTooLargeError, thrown before any write (the route answers 422).
 
 import type { Kysely } from 'kysely';
 
 import { RESERVE_ISOLATION_LEVEL, reserve, type Shortage } from '../inventory/reserve';
 import { pricingRepository } from '../repository/pricing';
 import { orderRepository } from '../repository/order';
-import { UnknownVariantError } from '../repository/errors';
+import { OrderTooLargeError, UnknownVariantError } from '../repository/errors';
+import { MAX_ORDER_INTEGER } from '@/lib/commerce/dto';
 import { toJsonb } from '../../books/snapshots';
 import { emitCommerceEvent } from '../jobs/emit';
 import type { Buyer } from '../payment/buyer';
@@ -173,6 +176,15 @@ function assertNonNegativeIntCents(value: number, label: string): void {
   }
 }
 
+/**
+ * A quantity or cents amount the order's INTEGER columns can hold. Over it, the
+ * cart asked for more than one order stores: a typed OrderTooLargeError (a 422 at
+ * the route), never the database's out-of-range error (a 500).
+ */
+function assertStorable(value: number, label: string, variantId: string | null): void {
+  if (value > MAX_ORDER_INTEGER) throw new OrderTooLargeError(variantId, label, value);
+}
+
 /** True iff the error is the b3 inner-reserve concurrent-duplicate sentinel. */
 export function isReserveDuplicate(error: unknown): boolean {
   // DuplicateRequestError is not exported from reserve.ts (it never escapes the
@@ -201,6 +213,7 @@ export function validateCart(cart: Cart): void {
   for (const line of cart.lines) {
     if (!line.variantId) throw new Error('createOrder: line.variantId is required');
     assertPositiveInt(line.quantity, 'line.quantity');
+    assertStorable(line.quantity, 'line.quantity', line.variantId);
   }
 }
 
@@ -342,6 +355,8 @@ function runOrderTransaction(
           line.taxClass ?? variant?.variantTaxClass ?? variant?.productTaxClass ?? null;
 
         const base = unitPrice * line.quantity;
+        // Checked before the integer check: a product past 2^53 is no longer an exact integer.
+        assertStorable(base, 'line base amount', line.variantId);
         assertNonNegativeIntCents(base, 'line base amount');
 
         const lineTax = computeLineTax(base, {
@@ -368,9 +383,14 @@ function runOrderTransaction(
           variantRefSource: line.variantRefSource ?? 'none',
         });
 
+        // Net VAT adds to the base: the line's gross can go over where its base did not.
+        assertStorable(lineTax.gross, 'line gross amount', line.variantId);
+
         subtotal += lineTax.net;
         taxAmount += lineTax.tax;
         total += lineTax.gross;
+        // Lines that each fit can still add up to more than the order stores.
+        assertStorable(total, 'order total', null);
       }
 
       // (4) server-computed totals (any cart.clientTotal is ignored entirely).

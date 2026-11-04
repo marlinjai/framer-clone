@@ -28,6 +28,7 @@ import React, {
   type ReactNode,
 } from 'react';
 import type { PriceDTO } from './types';
+import { MAX_ORDER_INTEGER } from './dto';
 
 /** The localStorage key the persisted cart lives under (versioned). */
 export const CART_STORAGE_KEY = 'framer-clone:cart:v1';
@@ -51,13 +52,13 @@ export interface CartLine {
 }
 
 /**
- * The largest quantity one cart line holds: the largest the order route can store.
- * It accepts any positive integer (POST /api/commerce/orders) into the INTEGER
- * column `order_line_item.quantity` (migration 005), whose ceiling this is. A
- * line's money (unit price times quantity) is checked by the server at order-create,
- * never here.
+ * The largest quantity one cart line holds: the largest the order route can store
+ * (MAX_ORDER_INTEGER, the ceiling of the INTEGER column `order_line_item.quantity`).
+ * A line's money (unit price times quantity) is checked by the server at
+ * order-create, never here: an order too large to store is refused with a 422
+ * `order_too_large`, which the checkout shows the buyer.
  */
-export const MAX_LINE_QUANTITY = 2_147_483_647;
+export const MAX_LINE_QUANTITY = MAX_ORDER_INTEGER;
 
 /**
  * A quantity as a cart line holds it: a whole number from 1 to MAX_LINE_QUANTITY.

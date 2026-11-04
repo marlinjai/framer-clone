@@ -33,6 +33,19 @@ import { z } from 'zod';
  */
 export const DEFAULT_CURRENCY = 'EUR';
 
+/**
+ * The largest number an order stores: the ceiling of the 32-bit INTEGER columns
+ * a quantity and every cents amount of an order are written to (`order` and
+ * `order_line_item`, migration 005; `order_payment.amount`, migration 021). A
+ * cart line holds at most this many (cart.tsx), and the server refuses an order
+ * whose quantity, line amount or total would exceed it with a 422
+ * `order_too_large` (POST /api/commerce/orders) instead of failing on the insert.
+ */
+export const MAX_ORDER_INTEGER = 2_147_483_647;
+
+/** The stable code of an order refused for exceeding MAX_ORDER_INTEGER. */
+export const ORDER_TOO_LARGE_CODE = 'order_too_large';
+
 // ---------------------------------------------------------------------------
 // The product graph a full product read yields: the product, its LIVE options
 // with their LIVE values, and its LIVE variants with each variant's

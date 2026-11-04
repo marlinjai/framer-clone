@@ -20,7 +20,9 @@
 //     postgres.js 23505 on order_tenant_request_id_key), and the fresh-transaction
 //     re-read they trigger; an unrelated 23505 must propagate,
 //   - the transaction runs at READ COMMITTED, the idempotency pre-check return,
-//     and the happy-path order assembly.
+//     and the happy-path order assembly,
+//   - an order too large for its INTEGER columns (a quantity, a line amount with
+//     its VAT, or the sum of lines) is the typed OrderTooLargeError before any write.
 //
 // The REAL atomic rollback, the snapshot stability, the role REVOKE, the live
 // money-math, and the order-level idempotency race are proven against Dockerized
@@ -52,6 +54,7 @@ vi.mock('../../repository/order', () => ({
 }));
 
 import type { CommerceDB } from '../../db-types';
+import { OrderTooLargeError } from '../../repository/errors';
 import { reserve } from '../../inventory/reserve';
 import { pricingRepository } from '../../repository/pricing';
 import { orderRepository } from '../../repository/order';
@@ -475,5 +478,84 @@ describe('createOrder control flow', () => {
     ).rejects.toThrow(/reverseCharge requires customerType "b2b"/);
     expect(transactionCount()).toBe(0);
     expect(db.transaction).not.toHaveBeenCalled();
+  });
+});
+
+// ===========================================================================
+describe('createOrder: an order too large for its INTEGER columns', () => {
+  const MAX = 2_147_483_647;
+
+  /** Run the cart and return what it threw (or fail if it did not). */
+  async function refusal(cart: Cart): Promise<OrderTooLargeError> {
+    const error = await createOrder(makeFakeDb().db, TG, cart).then(
+      () => {
+        throw new Error('expected createOrder to refuse the order');
+      },
+      (err: unknown) => err,
+    );
+    expect(error).toBeInstanceOf(OrderTooLargeError);
+    return error as OrderTooLargeError;
+  }
+
+  function expectNothingWritten() {
+    expect(nextOrderNumberMock).not.toHaveBeenCalled();
+    expect(insertOrderMock).not.toHaveBeenCalled();
+    expect(insertLineItemMock).not.toHaveBeenCalled();
+    expect(reserveMock).not.toHaveBeenCalled();
+  }
+
+  it('the largest quantity times a price: refused for its line, nothing written', async () => {
+    findByRequestIdMock.mockResolvedValue(undefined);
+    resolvePriceMock.mockResolvedValue(100);
+    const error = await refusal(baseCart({ lines: [{ inventoryItemId: 'inv-1', variantId: 'var-1', quantity: MAX }] }));
+    expect(error.variantId).toBe('var-1');
+    expect(error.label).toBe('line base amount');
+    expect(error.code).toBe('ORDER_TOO_LARGE');
+    expectNothingWritten();
+  });
+
+  it('a base that fits but whose net VAT does not: refused on the gross', async () => {
+    findByRequestIdMock.mockResolvedValue(undefined);
+    // 2,000,000,000 cents net plus 19% VAT is 2,380,000,000: over the ceiling.
+    resolvePriceMock.mockResolvedValue(2_000_000_000);
+    const error = await refusal(baseCart({ netOrGross: 'net' }));
+    expect(error.label).toBe('line gross amount');
+    expectNothingWritten();
+  });
+
+  it('lines that each fit but add up to more: refused on the order total, naming no line', async () => {
+    findByRequestIdMock.mockResolvedValue(undefined);
+    resolvePriceMock.mockResolvedValue(1_500_000_000);
+    const error = await refusal(
+      baseCart({
+        netOrGross: 'gross',
+        lines: [
+          { inventoryItemId: 'inv-1', variantId: 'var-1', quantity: 1 },
+          { inventoryItemId: 'inv-2', variantId: 'var-2', quantity: 1 },
+        ],
+      }),
+    );
+    expect(error.variantId).toBeNull();
+    expect(error.label).toBe('order total');
+    expectNothingWritten();
+  });
+
+  it('a quantity over the column: refused by validateCart, before a transaction opens', () => {
+    expect(() => validateCart(baseCart({ lines: [{ inventoryItemId: 'inv-1', variantId: 'var-1', quantity: MAX + 1 }] }))).toThrow(
+      OrderTooLargeError,
+    );
+  });
+
+  it('an order of exactly the ceiling is placed', async () => {
+    const { db } = makeFakeDb();
+    findByRequestIdMock.mockResolvedValue(undefined);
+    resolvePriceMock.mockResolvedValue(MAX);
+    nextOrderNumberMock.mockResolvedValue('ORD-000001');
+    insertOrderMock.mockResolvedValue({ id: 'order-1' } as never);
+    insertLineItemMock.mockResolvedValue({ id: 'line-1' } as never);
+    reserveMock.mockResolvedValue({ ok: true } as never);
+    const result = await createOrder(db, TG, baseCart({ netOrGross: 'gross' }));
+    expect(result).toEqual({ ok: true, orderId: 'order-1' });
+    expect(insertOrderMock.mock.calls[0][1]).toMatchObject({ total: MAX });
   });
 });
