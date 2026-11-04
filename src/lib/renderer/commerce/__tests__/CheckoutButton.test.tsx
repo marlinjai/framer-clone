@@ -713,13 +713,79 @@ describe('CheckoutButton where checkout is unavailable (the editor preview)', ()
     // The design is shown as it publishes, not greyed; nothing is said before a press.
     await waitFor(() => expect(button.disabled).toBe(false));
     expect(container.querySelector('[data-checkout-unavailable]')).toBeNull();
+    // The note's status region is on the page before the press, empty, so the reason is announced when it arrives.
+    const region = container.querySelector<HTMLElement>('[data-checkout-unavailable-region]');
+    expect(region?.getAttribute('role')).toBe('status');
+    expect(region?.textContent).toBe('');
     act(() => fireEvent.click(button));
     const note = container.querySelector('[data-checkout-unavailable]');
     expect(note?.textContent).toContain('editor preview');
-    expect(note?.getAttribute('role')).toBe('status');
+    // The same region holds it; the note carries no role of its own, so nothing is announced twice.
+    expect(container.querySelector('[data-checkout-unavailable-region]')).toBe(region);
+    expect(note?.parentElement).toBe(region);
+    expect(note?.getAttribute('role')).toBeNull();
     expect(container.querySelector('[data-checkout-payment]')).toBeNull();
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
     window.localStorage.clear();
+  });
+});
+
+describe('CheckoutButton a message shown later is announced', () => {
+  const LATER = ['checkout.redirecting', 'checkout.returned-paid', 'checkout.returned-cancelled', 'checkout.confirmation'];
+
+  it('draws the status region of each later message before it, empty and out of the layout', async () => {
+    const { container, getByTestId } = renderCheckout();
+    await waitForHydratedCart(getByTestId);
+    for (const role of LATER) {
+      const region = container.querySelector<HTMLElement>(`[data-shop-live="${role}"]`);
+      expect(region, role).not.toBeNull();
+      expect(region!.getAttribute('role')).toBe('status');
+      expect(region!.textContent).toBe('');
+      // An empty region adds no gap to the control's column, and stays in the accessibility tree.
+      expect(region!.style.position).toBe('absolute');
+      expect(region!.style.display).toBe('');
+    }
+  });
+
+  it('the confirmation arrives in the region that was there during the payment step', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      fakeResponse(201, { orderId: 'order_123', orderNumber: 'ORD-123', totalCents: 4760, currency: 'EUR' }),
+    );
+    const { container, getByTestId } = renderCheckout();
+    await waitForHydratedCart(getByTestId);
+    clickCheckout(container);
+    await waitFor(() => expect(container.querySelector('[data-checkout-pay]')).not.toBeNull());
+    const region = container.querySelector<HTMLElement>('[data-shop-live="checkout.confirmation"]');
+    expect(region).not.toBeNull();
+    expect(region!.textContent).toBe('');
+    fillBuyer(container);
+
+    await act(async () => {
+      fireEvent.click(container.querySelector('button[data-checkout-pay]')!);
+    });
+
+    await waitFor(() => expect(region!.textContent).toContain('ORD-123'));
+    expect(container.querySelector('[data-shop-live="checkout.confirmation"]')).toBe(region);
+    const confirmation = container.querySelector('[data-checkout-confirmation]')!;
+    expect(confirmation.parentElement).toBe(region);
+    expect(confirmation.getAttribute('role')).toBeNull();
+    // Drawn in the flow again once it holds the message.
+    expect(region!.style.position).toBe('');
+    expect(container.querySelectorAll('[role="status"]')).toHaveLength(LATER.length);
+  });
+
+  it('back from a hosted checkout: the message sits in its region, and the part carries no role', async () => {
+    window.history.replaceState(null, '', '/cart?checkout=cancelled&order=ORD-000006');
+    try {
+      const { container } = renderCheckout();
+      await waitFor(() => expect(container.querySelector('[data-checkout-returned="cancelled"]')).not.toBeNull());
+      const part = container.querySelector('[data-checkout-returned="cancelled"]')!;
+      expect(part.getAttribute('role')).toBeNull();
+      expect(part.parentElement?.getAttribute('data-shop-live')).toBe('checkout.returned-cancelled');
+      expect(part.parentElement?.getAttribute('role')).toBe('status');
+    } finally {
+      window.history.replaceState(null, '', '/');
+    }
   });
 });

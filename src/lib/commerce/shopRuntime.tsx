@@ -400,11 +400,19 @@ function onlyPartElements(content: React.ReactNode, own: ReadonlySet<string>): R
  */
 function liveRegion(role: string, part: React.ReactNode): React.ReactElement {
   return (
-    <span role="status" data-shop-live={role}>
+    <span role="status" data-shop-live={role} style={part == null ? EMPTY_LIVE_REGION_STYLE : undefined}>
       {part}
     </span>
   );
 }
+
+/**
+ * An empty status region is taken out of the layout (an empty flex or grid item
+ * would still add the control's gap) but stays in the accessibility tree, which
+ * `display: none` or `visibility: hidden` would not. The same element holds the
+ * message once it shows, drawn in the flow again.
+ */
+export const EMPTY_LIVE_REGION_STYLE: Readonly<React.CSSProperties> = { position: 'absolute' };
 
 /** One shop part, drawn as its control's runtime says. */
 export function ShopPartElement({ role, tag, domProps, storedText, content, surface, linksAllowed = true }: ShopPartElementProps): React.ReactElement | null {

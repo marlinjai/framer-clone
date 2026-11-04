@@ -53,7 +53,7 @@ import type { BindingScope } from '@/lib/bindings/resolver/scope';
 import { useCart, useCheckoutUnavailableReason, type CartLine } from '@/lib/commerce/cart';
 import { getPaymentGateway, type CheckoutBuyer, type PaymentGateway, type RefusedBuyerField } from '@/lib/commerce/payment';
 import { CHECKOUT_BUYER_FIELDS, CHECKOUT_PREVIEW_STATES, type CheckoutPreviewStateId, type ShopLocale } from '@/lib/commerce/parts';
-import { ShopDesignContext, ShopLocaleContext, ShopRuntimeContext, type ShopPartRender, type ShopRuntime } from '@/lib/commerce/shopRuntime';
+import { EMPTY_LIVE_REGION_STYLE, ShopDesignContext, ShopLocaleContext, ShopRuntimeContext, type ShopPartRender, type ShopRuntime } from '@/lib/commerce/shopRuntime';
 import { ShopControlContent } from './ShopControlContent';
 
 /** A single per-line shortage, in the client's variant vocabulary. */
@@ -503,10 +503,16 @@ function CheckoutLive({ node, scope, hostType = 'div', hostProps = {}, gateway, 
     <ShopRuntimeContext.Provider value={runtime}>
       <ShopControlContent node={node} kind="checkout-button" locale={locale} drawn={children} scope={scope} />
     </ShopRuntimeContext.Provider>,
-    unavailableReason && noteShown ? (
-      <p data-checkout-unavailable role="status" style={UNAVAILABLE_NOTE_STYLE}>
-        {unavailableReason}
-      </p>
+    // Where no order can be placed, the note's status region is on the page before a
+    // press and receives the reason with it, so a screen reader announces it.
+    unavailableReason ? (
+      <div role="status" data-checkout-unavailable-region="" style={noteShown ? undefined : EMPTY_LIVE_REGION_STYLE}>
+        {noteShown ? (
+          <p data-checkout-unavailable style={UNAVAILABLE_NOTE_STYLE}>
+            {unavailableReason}
+          </p>
+        ) : null}
+      </div>
     ) : null,
   );
 }
@@ -540,6 +546,12 @@ function refused(refusal: { fields: RefusedBuyerField[] } | null, key: keyof Che
 
 const HIDDEN: ShopPartRender = { visible: false };
 const SHOWN: ShopPartRender = { visible: true };
+/**
+ * A message the checkout shows later (going to payment, back from payment, the
+ * confirmation): announced through a status region on the page in every state
+ * (ShopPartRender.live), so the part itself carries no role.
+ */
+const LIVE_HIDDEN: ShopPartRender = { visible: false, live: true };
 
 /** The checkout's runtime for its parts, from one state. The live control and the canvas both use it. */
 function checkoutRuntime(view: CheckoutView): ShopRuntime {
@@ -555,7 +567,7 @@ function checkoutPart(role: string, view: CheckoutView): ShopPartRender {
   const { state, locale, handlers } = view;
   const live = handlers !== null;
   const shown = (visible: boolean, render: Omit<ShopPartRender, 'visible'> = {}): ShopPartRender =>
-    visible ? { visible: true, ...render } : HIDDEN;
+    visible ? { visible: true, ...render } : render.live ? LIVE_HIDDEN : HIDDEN;
 
   const placing = state.status === 'placing';
   // The primary checkout button is hidden once the payment step / confirmation is
@@ -584,10 +596,11 @@ function checkoutPart(role: string, view: CheckoutView): ShopPartRender {
     case 'checkout.button-loading':
       return shown(placing);
     case 'checkout.redirecting':
-      return shown(state.status === 'redirecting', { props: { 'data-checkout-redirecting': '', role: 'status' } });
+      return shown(state.status === 'redirecting', { live: true, props: { 'data-checkout-redirecting': '' } });
     case 'checkout.returned-cancelled':
       return shown(state.status === 'returned' && state.outcome === 'cancelled', {
-        props: { 'data-checkout-returned': 'cancelled', role: 'status' },
+        live: true,
+        props: { 'data-checkout-returned': 'cancelled' },
       });
     case 'checkout.items-unavailable':
       return shown(state.status === 'order_error' && state.reason === 'items_unavailable', {
@@ -601,8 +614,8 @@ function checkoutPart(role: string, view: CheckoutView): ShopPartRender {
   }
 
   if (role.startsWith('checkout.returned-')) {
-    if (state.status !== 'returned' || state.outcome !== 'paid') return HIDDEN;
-    if (role === 'checkout.returned-paid') return shown(true, { props: { 'data-checkout-returned': 'paid', role: 'status' } });
+    if (state.status !== 'returned' || state.outcome !== 'paid') return role === 'checkout.returned-paid' ? LIVE_HIDDEN : HIDDEN;
+    if (role === 'checkout.returned-paid') return shown(true, { live: true, props: { 'data-checkout-returned': 'paid' } });
     if (role === 'checkout.returned-paid-text') return shown(true, { tokens: { orderNumber: state.orderNumber } });
     if (role === 'checkout.returned-email') return shown(state.confirmationTo !== null, { tokens: { email: state.confirmationTo ?? '' } });
     if (role === 'checkout.returned-keep') return shown(state.confirmationTo === null);
@@ -610,7 +623,7 @@ function checkoutPart(role: string, view: CheckoutView): ShopPartRender {
   }
 
   if (role === 'checkout.confirmation' || role === 'checkout.confirmed' || role === 'checkout.payment-ref' || role.startsWith('checkout.receipt')) {
-    if (state.status !== 'confirmed') return HIDDEN;
+    if (state.status !== 'confirmed') return role === 'checkout.confirmation' ? LIVE_HIDDEN : HIDDEN;
     const tokens = {
       orderNumber: state.order.orderNumber,
       total: formatCents(state.order.totalCents, state.order.currency, locale),
@@ -618,7 +631,7 @@ function checkoutPart(role: string, view: CheckoutView): ShopPartRender {
       receiptNumber: state.receiptNumber ?? '',
       email: state.email,
     };
-    if (role === 'checkout.confirmation') return shown(true, { props: { 'data-checkout-confirmation': '', role: 'status' } });
+    if (role === 'checkout.confirmation') return shown(true, { live: true, props: { 'data-checkout-confirmation': '' } });
     if (role === 'checkout.confirmed') return shown(true, { tokens });
     if (role === 'checkout.payment-ref') return shown(true, { tokens, props: { 'data-checkout-payment-ref': '' } });
     if (role === 'checkout.receipt-email') {
