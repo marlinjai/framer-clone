@@ -212,8 +212,9 @@ function addToCartPart(role: string, view: AddToCartView): ShopPartRender {
     case 'addToCart.button-soldout':
       return { visible: view.soldOut };
     case 'addToCart.error':
-      if (!view.error) return { visible: false };
-      return { visible: true, props: { 'data-add-to-cart-error': '', role: 'status' } };
+      // Announced when it shows: its status region is on the page before it (ShopPartRender.live).
+      if (!view.error) return { visible: false, live: true };
+      return { visible: true, live: true, props: { 'data-add-to-cart-error': '' } };
     default:
       return { visible: false };
   }

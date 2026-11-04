@@ -500,8 +500,9 @@ function linePart(role: string, line: CartViewModel['lines'][number], model: Car
     case 'cart.line-unavailable':
       return view.kind === 'unavailable' ? { visible: true, props: { 'data-cart-line-unavailable': '', id: describedBy } } : { visible: false };
     case 'cart.line-error':
-      if (view.kind !== 'error') return { visible: false };
-      return { visible: true, props: { 'data-cart-line-error': '', role: 'status', id: describedBy } };
+      // Announced when it shows: its status region is in the line before it (ShopPartRender.live).
+      if (view.kind !== 'error') return { visible: false, live: true };
+      return { visible: true, live: true, props: { 'data-cart-line-error': '', id: describedBy } };
     default:
       return { visible: false };
   }

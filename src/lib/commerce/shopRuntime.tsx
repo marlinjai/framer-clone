@@ -51,6 +51,15 @@ export interface ShopPartRender {
    */
   keepInSight?: true;
   /**
+   * A message the control shows later (a failed check): on a live surface the part
+   * sits in a status region that is on the page before the message and stays after
+   * it, so a screen reader announces the text when it arrives. A region mounted
+   * with its text already in it may never be announced. Given in every state, the
+   * hidden one too, since the region is drawn either way. The part itself carries
+   * no role, so nothing is announced twice.
+   */
+  live?: true;
+  /**
    * A repeated part: one element per item, each with its tokens and attributes, and
    * the runtime its own parts read (a cart line's title, price and quantity).
    */
@@ -383,6 +392,20 @@ function onlyPartElements(content: React.ReactNode, own: ReadonlySet<string>): R
   return parts;
 }
 
+/**
+ * The status region around a part whose message comes later (ShopPartRender.live).
+ * A plain inline span, not `display: contents`: some browsers leave an element
+ * drawn that way out of the accessibility tree, and a span is valid wherever a
+ * text part is. It names the part it holds, for tests and the page's own rules.
+ */
+function liveRegion(role: string, part: React.ReactNode): React.ReactElement {
+  return (
+    <span role="status" data-shop-live={role}>
+      {part}
+    </span>
+  );
+}
+
 /** One shop part, drawn as its control's runtime says. */
 export function ShopPartElement({ role, tag, domProps, storedText, content, surface, linksAllowed = true }: ShopPartElementProps): React.ReactElement | null {
   const runtime = useContext(ShopRuntimeContext);
@@ -423,7 +446,9 @@ export function ShopPartElement({ role, tag, domProps, storedText, content, surf
     );
   }
 
-  if (!render.visible) return null;
+  // A message that comes later sits in a status region drawn before it (live surfaces only).
+  const announce = !!render.live && runtime.surface === 'live';
+  if (!render.visible) return announce ? liveRegion(role, null) : null;
   // A part kept in sight, or one whose text is the platform's, draws its text only.
   if (spec?.keepVisible || spec?.fixedText) content = undefined;
   // A button whose wording is fixed draws only its own parts, whatever it was handed.
@@ -479,5 +504,6 @@ export function ShopPartElement({ role, tag, domProps, storedText, content, surf
       </>
     );
   }
-  return draw(undefined, render.tokens);
+  const drawn = draw(undefined, render.tokens);
+  return announce ? liveRegion(role, drawn) : drawn;
 }

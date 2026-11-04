@@ -11,9 +11,11 @@ import { CommerceDataSourceContext } from '@/lib/commerce/context';
 import { InMemoryCommerceDataSource } from '@/lib/commerce/inMemoryCommerceDataSource';
 import { CART_STORAGE_KEY, CartProvider, MAX_LINE_QUANTITY, useCart } from '@/lib/commerce/cart';
 import { ShopLocaleContext } from '@/lib/commerce/shopRuntime';
+import { SelectedVariantContext, type SelectionState } from '@/lib/commerce/selection';
 import { normalizeShopControl, type ShopTreeNode } from '@/lib/commerce/parts';
 import type { CommerceDataSource } from '@/lib/commerce/provider';
 import CartView from '../CartView';
+import AddToCartButton from '../AddToCartButton';
 
 afterEach(() => {
   cleanup();
@@ -185,5 +187,91 @@ describe('the quantity field reads a number the way the order route can store it
       fireEvent.blur(qty);
     });
     expect(qty.value).toBe('3');
+  });
+});
+
+/** A promise settled from the test. */
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((yes, no) => {
+    resolve = yes;
+    reject = no;
+  });
+  return { promise, resolve, reject };
+}
+
+describe('a message a control shows later is announced', () => {
+  it("the add to cart's failed check: its status region is on the page before the message and receives it", async () => {
+    const check = deferred<never>();
+    const { source } = dataSource({ getAvailability: () => check.promise } as Partial<CommerceDataSource>);
+    const selection: SelectionState = {
+      selection: {},
+      variant: { id: 'var_s_red', productId: 'prod_tee', title: 'Small / Red', optionValues: [] } as never,
+      setOptionValue: () => {},
+    };
+    const node = normalizeShopControl({ id: 'a', type: 'div', componentType: 'host', props: { 'data-component-kind': 'add-to-cart' } }, 'en', 'node');
+    const { container } = render(
+      <CommerceDataSourceContext.Provider value={source}>
+        <ShopLocaleContext.Provider value="en">
+          <CartProvider>
+            <SelectedVariantContext.Provider value={selection}>
+              <AddToCartButton node={node as unknown as ComponentInstance} scope={createScope()} />
+            </SelectedVariantContext.Provider>
+          </CartProvider>
+        </ShopLocaleContext.Provider>
+      </CommerceDataSourceContext.Provider>,
+    );
+    // While the check runs: the region is there, empty.
+    const region = container.querySelector<HTMLElement>('[data-shop-live="addToCart.error"]');
+    expect(region).not.toBeNull();
+    expect(region!.getAttribute('role')).toBe('status');
+    expect(region!.textContent).toBe('');
+    expect(container.querySelector('[data-add-to-cart-error]')).toBeNull();
+
+    const errors = console.error;
+    console.error = () => {};
+    try {
+      await act(async () => {
+        check.reject(new Error('offline'));
+        await check.promise.catch(() => {});
+      });
+    } finally {
+      console.error = errors;
+    }
+    // The same region (not a new one) now holds the message; the part carries no role of its own.
+    await waitFor(() => expect(container.querySelector('[data-add-to-cart-error]')).not.toBeNull());
+    expect(container.querySelector('[data-shop-live="addToCart.error"]')).toBe(region);
+    expect(region!.textContent).toBe('Availability could not be checked right now. Please try again later.');
+    expect(container.querySelector('[data-add-to-cart-error]')!.parentElement).toBe(region);
+    expect(container.querySelector('[data-add-to-cart-error]')!.getAttribute('role')).toBeNull();
+    expect(container.querySelectorAll('[role="status"]')).toHaveLength(1);
+  });
+
+  it("a cart line's failure: its status region is in the line while it loads and receives the message", async () => {
+    const read = deferred<never>();
+    const { source } = dataSource({ getVariant: () => read.promise } as Partial<CommerceDataSource>);
+    const { container } = renderCart([{ variantId: 'var_s_red', quantity: 1 }], source);
+    const region = await waitFor(() => {
+      const found = container.querySelector<HTMLElement>('[data-cart-line="var_s_red"] [data-shop-live="cart.line-error"]');
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    expect(region.getAttribute('role')).toBe('status');
+    expect(region.textContent).toBe('');
+
+    const errors = console.error;
+    console.error = () => {};
+    try {
+      await act(async () => {
+        read.reject(new Error('offline'));
+        await read.promise.catch(() => {});
+      });
+    } finally {
+      console.error = errors;
+    }
+    await waitFor(() => expect(region.textContent).toBe('This item could not be loaded right now.'));
+    expect(container.querySelector('[data-shop-live="cart.line-error"]')).toBe(region);
+    expect(region.querySelector('[data-cart-line-error]')!.getAttribute('role')).toBeNull();
   });
 });
