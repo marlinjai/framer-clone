@@ -1731,11 +1731,14 @@ export function normalizeShopControl<N extends object>(
     if (missing.length > 0) {
       root = cloneTree(placed);
       const byRole = partsByRole(root);
+      // A part rebuilt now takes a leftover legacy text prop as its text, as a control
+      // built whole does (and as a leftover legacy binding moves to it, below).
+      const texts = legacyTexts(kind, placed.props);
       for (const { spec, parentRole } of missing) {
         const parent = parentRole ? byRole.get(parentRole) : root;
         // A required part's parent is required too, so it exists by now.
         if (!parent) continue;
-        const node = newPartNode(spec, controlId, String(parent.id ?? controlId), locale, shape, undefined, taken);
+        const node = newPartNode(spec, controlId, String(parent.id ?? controlId), locale, shape, texts[spec.role], taken);
         const siblings = parent.children ?? [];
         const at = insertIndex(siblings, spec, parentRole, kind);
         parent.children = [...siblings.slice(0, at), node, ...siblings.slice(at)];
@@ -1747,7 +1750,10 @@ export function normalizeShopControl<N extends object>(
 
   // Legacy label props and bindings leave the control once their text lives in the parts.
   // On a control that already has parts, a leftover legacy prop (label, emptyContent) is
-  // dropped, not moved: the parts hold the text. A leftover legacy binding is moved (below).
+  // moved into its part when that part was rebuilt just now (above), and dropped when the
+  // part was already there: it holds the designer's text. A leftover legacy binding is
+  // moved (below) unless its part is bound already. Either way the prop is gone after one
+  // pass, so a second pass changes nothing.
   const legacy = [...Object.keys(LEGACY[kind].props), ...(LEGACY[kind].dropped ?? [])].filter((key) => root.props && key in root.props);
   if (legacy.length > 0) {
     const props = { ...(root.props ?? {}) };

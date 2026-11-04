@@ -208,7 +208,9 @@ assistive technology what an element is), AI (the page generator).
    messages) drawn once per cart line with each copy reading its own line, the estimated subtotal (it must
    keep `{subtotal}`) and the estimate notice (fixed text, kept in sight). The old `label` and `emptyContent`
    props and their bindings move to the label and empty message parts, where a binding resolves against the
-   frames the island sits in (also on a control that already has parts, unless the part is bound already). A
+   frames the island sits in. On a control that already has parts, a binding moves unless the part is bound
+   already, and a prop moves only into a part the normaliser rebuilds because it was missing; a part already
+   there keeps its own text and the prop is dropped. Normalising twice gives what normalising once gave. A
    line no longer sold or failed to load keeps its remove button in sight whatever the design says (the
    island pins it as it does a part kept in sight), since its quantity cannot go below one. A designer's id
    on a part inside the repeated line goes, so it never repeats on the page. The pinned remove button also
