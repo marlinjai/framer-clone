@@ -42,7 +42,7 @@ export const NAMED_STATES: readonly NamedState[] = [
 const CONTROL_STATE_LABELS: Readonly<Record<string, string>> = {
   '&:disabled': 'Disabled',
   '&[aria-busy="true"]': 'Loading',
-  '&[aria-pressed="true"]': 'Selected',
+  '&[aria-checked="true"]': 'Selected',
 };
 
 /** The name a rule goes by in the panel: its state, its selector, or its condition when it applies to the node itself. */

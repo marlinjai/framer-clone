@@ -435,6 +435,9 @@ export const EMPTY_LIVE_REGION_STYLE: Readonly<React.CSSProperties> = {
 export function ShopPartElement({ role, tag, domProps, storedText, content, surface, linksAllowed = true }: ShopPartElementProps): React.ReactElement | null {
   const runtime = useContext(ShopRuntimeContext);
   const locale = useContext(ShopLocaleContext);
+  // Inside a later copy of an outer repeated part (the second option), every copy of
+  // an inner one (its choices) is a later copy too, the first included.
+  const inLaterCopy = useContext(ShopRepeatCopyContext);
   const spec = shopPartSpec(role);
   const inControl = !!runtime && runtime.kind === shopPartControl(role);
   const render = inControl ? runtime.part(role) : undefined;
@@ -455,8 +458,10 @@ export function ShopPartElement({ role, tag, domProps, storedText, content, surf
   // Whether it can be pressed, typed into or reached by the keyboard is the runtime's,
   // in any spelling (a stored `tabindex` as well as `tabIndex`).
   for (const key of SHOP_RUNTIME_OWNED_PROPS[elementTag] ?? []) delete ownProps[key];
-  // Nothing renames a fixed wording for assistive technology (a label or tooltip of the designer's).
-  if (keep || spec?.fixedText || spec?.onlyParts) for (const key of RENAMING_ATTRIBUTES) delete ownProps[key];
+  // Nothing renames a fixed wording for assistive technology (a label or tooltip of the
+  // designer's), nor a part drawn once per item or one whose text holds the item's
+  // tokens: one stored name would give every copy (every choice) the same name.
+  if (keep || spec?.fixedText || spec?.onlyParts || spec?.repeat || spec?.requiredTokens) for (const key of RENAMING_ATTRIBUTES) delete ownProps[key];
   if (keep) {
     for (const key of HIDING_ATTRIBUTES) delete ownProps[key];
     ownProps.ref = keptRef;
@@ -514,7 +519,7 @@ export function ShopPartElement({ role, tag, domProps, storedText, content, surf
     // Inside a later copy, nothing carries the selection identity again. Every copy
     // has the provider, so a copy that becomes the first (the line above it removed)
     // keeps its elements and the focus in them.
-    if (copy !== undefined && inner !== undefined) inner = <ShopRepeatCopyContext.Provider value={copy}>{inner}</ShopRepeatCopyContext.Provider>;
+    if (copy !== undefined && inner !== undefined) inner = <ShopRepeatCopyContext.Provider value={copy || inLaterCopy}>{inner}</ShopRepeatCopyContext.Provider>;
     return React.createElement(elementTag, props, ...textChildren(text, linksAllowed && runLinksAllowedIn(elementTag)), inner);
   };
 

@@ -45,6 +45,9 @@ type AvailabilityState =
   | { status: 'ready'; availableQuantity: number; limited: boolean }
   | { status: 'error' };
 
+/** A check's answer, keyed by the variant it is for, so a previous choice's answer never shows. */
+type CheckedAvailability = { variantId: string } & ({ status: 'ready'; availableQuantity: number; limited: boolean } | { status: 'error' });
+
 export interface AddToCartButtonProps {
   node: ComponentInstance;
   /** Kept for dispatch-call parity; this control reads selection from context. */
@@ -85,29 +88,33 @@ function AddToCartLive({ node, scope, hostType = 'div', hostProps = {}, children
   // Advisory availability for the SELECTED variant, re-fetched read-only on
   // every selection change. Errors surface; they are never swallowed into a
   // silent "available".
-  const [availability, setAvailability] = React.useState<AvailabilityState>({ status: 'idle' });
+  const [checked, setChecked] = React.useState<CheckedAvailability | null>(null);
   React.useEffect(() => {
-    if (!selectedVariantId) {
-      setAvailability({ status: 'idle' });
-      return;
-    }
+    if (!selectedVariantId) return;
     let active = true;
-    setAvailability({ status: 'loading' });
     dataSource
       .getAvailability(selectedVariantId)
       .then((dto) => {
-        if (active) setAvailability({ status: 'ready', availableQuantity: dto.availableQuantity, limited: dto.limited });
+        if (active) setChecked({ variantId: selectedVariantId, status: 'ready', availableQuantity: dto.availableQuantity, limited: dto.limited });
       })
       .catch((err: unknown) => {
         if (!active) return;
         // The visitor reads the shop's sentence; the real reason is logged, never swallowed.
         console.error(`AddToCartButton: the availability of variant ${selectedVariantId} could not be checked`, err);
-        setAvailability({ status: 'error' });
+        setChecked({ variantId: selectedVariantId, status: 'error' });
       });
     return () => {
       active = false;
     };
   }, [dataSource, selectedVariantId]);
+  // Only the selected variant's answer counts: another's means its check is still running.
+  const availability: AvailabilityState = !selectedVariantId
+    ? { status: 'idle' }
+    : checked?.variantId !== selectedVariantId
+      ? { status: 'loading' }
+      : checked.status === 'ready'
+        ? { status: 'ready', availableQuantity: checked.availableQuantity, limited: checked.limited }
+        : { status: 'error' };
 
   // Route the advisory fetch through the shared resolver. A ready availability
   // is one row; an idle (no selection) state is the empty path; an error is the

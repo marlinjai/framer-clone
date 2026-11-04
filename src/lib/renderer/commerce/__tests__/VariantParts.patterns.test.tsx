@@ -82,7 +82,8 @@ describe('the island owns whether a choice can be pressed', () => {
     });
     expect(small.disabled).toBe(false);
     expect(small.hasAttribute('aria-disabled')).toBe(false);
-    expect(small.hasAttribute('tabindex')).toBe(false);
+    // The group's one tab stop is the island's: the first choice that can be made.
+    expect(small.getAttribute('tabindex')).toBe('0');
     expect(small.hasAttribute('inert')).toBe(false);
   });
 });
@@ -116,10 +117,11 @@ describe('every availability message is announced when it shows', () => {
     expect(container.querySelector('[data-shop-live="variant.in-stock"]')).toBe(inStock);
     expect(inStock.getAttribute('data-variant-availability')).toBe('ready');
     expect(inStock.querySelector('[role="status"]')).toBeNull();
-    expect(container.querySelectorAll('[role="status"]')).toHaveLength(MESSAGES.length);
+    // The availability messages and the two option messages (loading, not available).
+    expect(container.querySelectorAll('[role="status"]')).toHaveLength(MESSAGES.length + 2);
   });
 
-  it('says a failed variant load, with the real reason in the console, instead of drawing nothing to choose', async () => {
+  it('says a failed variant load, with the real reason in the console, instead of choices that cannot be made', async () => {
     const ds = new InMemoryCommerceDataSource();
     vi.spyOn(ds, 'listVariants').mockRejectedValue(new Error('variants unreachable'));
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -129,10 +131,8 @@ describe('every availability message is announced when it shows', () => {
     // A visitor never reads the internal message.
     expect(region.textContent).not.toContain('unreachable');
     expect(logged).toHaveBeenCalledWith(expect.stringContaining('could not be loaded'), expect.any(Error));
-    // No choice resolves to a variant: none is offered as pressable.
-    const buttons = [...container.querySelectorAll<HTMLButtonElement>('button[data-variant-value]')];
-    expect(buttons.length).toBeGreaterThan(0);
-    expect(buttons.every((button) => button.disabled)).toBe(true);
+    // Nothing to choose is drawn as though it could be chosen.
+    expect(container.querySelectorAll('button[data-variant-value]')).toHaveLength(0);
   });
 });
 

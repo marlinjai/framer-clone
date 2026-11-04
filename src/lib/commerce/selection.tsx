@@ -111,26 +111,46 @@ export function resolveVariantFromSelection(
   );
 }
 
+/** Whether a variant carries every picked value of `probe`. */
+function variantMatches(variant: ProductVariantDTO, probe: Record<string, string>): boolean {
+  return Object.entries(probe).every(([axisId, axisValueId]) => {
+    const coordinate = variant.optionValues.find((c) => c.optionId === axisId);
+    return coordinate != null && coordinate.valueId === axisValueId;
+  });
+}
+
 /**
- * Is picking `valueId` on `optionId` a selectable choice given the rest of the
- * current selection? It is selectable only when at least one variant matches
- * the OTHER already-picked axes AND carries this value on this axis. A value
- * with no matching variant is an unselectable combo and the control greys it
- * out. Pure and React-free.
+ * Is `valueId` on `optionId` a choice a visitor can make? It is when any variant
+ * carries it, whatever the other axes hold: picking it clears the choices on the
+ * other axes that no variant combines with it (selectValue), so a visitor is never
+ * locked out of a value by an earlier pick (variants S-Red and L-Blue: after S and
+ * Red, L and Blue stay pressable). Only a value no variant has is greyed out.
+ * Pure and React-free.
  */
-export function isValueSelectable(
+export function isValueSelectable(variants: ProductVariantDTO[], optionId: string, valueId: string): boolean {
+  return variants.some((variant) => variantMatches(variant, { [optionId]: valueId }));
+}
+
+/**
+ * The selection after a visitor picks `valueId` on `optionId`: the pick, plus each
+ * earlier choice on another axis that some variant still combines with it (kept in
+ * the product's option order), the others cleared. Pure and React-free.
+ */
+export function selectValue(
+  options: readonly { id: string }[],
   variants: ProductVariantDTO[],
   selection: Record<string, string>,
   optionId: string,
   valueId: string,
-): boolean {
-  const probe: Record<string, string> = { ...selection, [optionId]: valueId };
-  return variants.some((variant) =>
-    Object.entries(probe).every(([axisId, axisValueId]) => {
-      const coordinate = variant.optionValues.find((c) => c.optionId === axisId);
-      return coordinate != null && coordinate.valueId === axisValueId;
-    }),
-  );
+): Record<string, string> {
+  const next: Record<string, string> = { [optionId]: valueId };
+  const axes = [...options.map((option) => option.id), ...Object.keys(selection)];
+  for (const axisId of axes) {
+    if (axisId === optionId || !(axisId in selection) || axisId in next) continue;
+    const probe = { ...next, [axisId]: selection[axisId] };
+    if (variants.some((variant) => variantMatches(variant, probe))) next[axisId] = selection[axisId];
+  }
+  return next;
 }
 
 /**
@@ -145,9 +165,13 @@ export function useVariantSelection(
 ): SelectionState {
   const [selection, setSelection] = useState<Record<string, string>>({});
 
-  const setOptionValue = useCallback((optionId: string, valueId: string) => {
-    setSelection((prev) => ({ ...prev, [optionId]: valueId }));
-  }, []);
+  // A pick that no variant combines with an earlier choice clears that choice (selectValue).
+  const setOptionValue = useCallback(
+    (optionId: string, valueId: string) => {
+      setSelection((prev) => selectValue(product.options, variants, prev, optionId, valueId));
+    },
+    [product.options, variants],
+  );
 
   const variant = useMemo(
     () => resolveVariantFromSelection(product, variants, selection),

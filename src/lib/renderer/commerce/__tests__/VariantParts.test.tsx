@@ -96,7 +96,7 @@ describe('a designed variant selector, live', () => {
     expect(small.type).toBe('button');
     expect(small.textContent).toBe('Wähle Small');
     expect(small.style.color).toBe('rgb(1, 2, 3)');
-    expect(small.getAttribute('aria-pressed')).toBe('false');
+    expect(small.getAttribute('aria-checked')).toBe('false');
 
     act(() => {
       fireEvent.click(small);
@@ -105,7 +105,7 @@ describe('a designed variant selector, live', () => {
       fireEvent.click(container.querySelector('button[data-variant-value="ov_color_red"]')!);
     });
     await waitFor(() => expect(container.querySelector('span[data-inner-component-id="vs-title"]')?.textContent).toBe('Small / Red'));
-    expect(container.querySelector('button[data-variant-value="ov_size_s"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(container.querySelector('button[data-variant-value="ov_size_s"]')?.getAttribute('aria-checked')).toBe('true');
     await waitFor(() => expect(container.querySelector('[data-variant-availability="ready"]')?.textContent).toBe('Auf Lager'));
   });
 });

@@ -38,7 +38,7 @@ import { expandPage, literalPageRoots, type PageExpansion } from '@/lib/componen
 import { extractBreakpoints, type ComponentSnapshotLike } from '@/lib/renderer/server/componentSnapshot';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { getComponentEntry } from '@/lib/componentRegistry';
-import { CLOSED_SHOP_PART_MESSAGE, REQUIRED_SHOP_PART_MESSAGE, buildShopParts, shopPartRefusal, holdsOutsidePart, holdsRequiredShopPart, nearestShopControlId, shopControlKindOf, withoutOutsideRoles, shopLocaleOf, withShopParts, type ShopTreeNode } from '@/lib/commerce/parts';
+import { CLOSED_SHOP_PART_MESSAGE, INTERACTIVE_SHOP_PART_MESSAGE, REQUIRED_SHOP_PART_MESSAGE, buildShopParts, shopPartRefusal, holdsOutsidePart, holdsRequiredShopPart, nearestShopControlId, shopControlKindOf, withoutOutsideRoles, shopLocaleOf, withShopParts, type ShopTreeNode } from '@/lib/commerce/parts';
 import type { ApplyOutcome, GenerationUndoRecord } from '@/lib/ai/pageGen/apply';
 import { isVoidTag } from '@/lib/drag/voidTags';
 import { bareTextRefusal, isTextNodeType } from '@/lib/renderer/textNode';
@@ -902,9 +902,10 @@ const PageModel = PageWithComponents
       const newParentId = target.kind === 'appTree' ? appTree.id : target.kind === 'floating' ? undefined : resolvedParentId;
       const toAncestors = chain(newParentId);
       const sameControl = nearestShopControlId(chain(component.parentId as string | undefined)) === nearestShopControlId(toAncestors);
-      // A plain node dropped into the pay button or a notice is refused the same way.
+      // A plain node dropped into the pay button or a notice is refused the same way,
+      // and so is anything a visitor presses dropped into a part they press (a choice).
       const refusal = shopPartRefusal(component, toAncestors);
-      if (refusal && (sameControl || refusal === CLOSED_SHOP_PART_MESSAGE)) {
+      if (refusal && (sameControl || refusal === CLOSED_SHOP_PART_MESSAGE || refusal === INTERACTIVE_SHOP_PART_MESSAGE)) {
         refuseShopEdit(self, refusal);
         return undefined;
       }
@@ -933,7 +934,7 @@ const PageModel = PageWithComponents
         // The refusal ran above on the node with its roles; what lands is the stripped node, which a
         // part that takes its own parts only (the pay button) refuses like any other plain node.
         const landing = shopPartRefusal(fresh, ancestorsOf(newParentId));
-        if (landing === CLOSED_SHOP_PART_MESSAGE) {
+        if (landing === CLOSED_SHOP_PART_MESSAGE || landing === INTERACTIVE_SHOP_PART_MESSAGE) {
           refuseShopEdit(self, landing);
           return undefined;
         }

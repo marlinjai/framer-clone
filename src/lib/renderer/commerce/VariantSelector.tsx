@@ -16,13 +16,13 @@
 // (In stock / Only N left / Out of stock) is information for the visitor, NOT
 // permission to sell: the b3 guarded reserve-at-checkout is the SOLE gate on
 // whether stock can actually be taken. Errors from `getAvailability` surface
-// (an editor chip / a visible note); they are NEVER swallowed into a silent
-// "looks-available" state. READ-ONLY: this component never writes stock, money,
+// (the shop's failed check message, the reason in the console); they are NEVER
+// swallowed into a silent "looks-available" state. READ-ONLY: this component never writes stock, money,
 // or any commerce mutation.
 //
 // What the visitor sees is designed in the editor (docs/plans/2026-11-02-designable-shop-controls.md):
-// an option template (its name and a choice button drawn once per value, with
-// the selected and unavailable looks as stored rules), the availability messages
+// an option template (a radio group: its name and a choice drawn once per value,
+// with the selected and unavailable looks as stored rules), the availability messages
 // and the no-product note are child nodes of the control with a role marker
 // (src/lib/commerce/parts.ts), beside whatever the designer adds (an add to cart,
 // a price bound to the variant). This file owns the data and the selection;
@@ -41,6 +41,7 @@ import {
 import { useCommerceDataSource } from '@/lib/commerce/context';
 import type {
   AvailabilityDTO,
+  PriceDTO,
   ProductDTO,
   ProductVariantDTO,
 } from '@/lib/commerce/types';
@@ -50,35 +51,31 @@ import {
   useVariantSelection,
 } from '@/lib/commerce/selection';
 import type { RenderNode } from '@/lib/renderer/data/CollectionRenderer';
-import type { DataStateMode } from '@/lib/renderer/data/resolveDataState';
 import { VARIANT_PREVIEW_STATES, type ShopLocale } from '@/lib/commerce/parts';
 import { ShopDesignContext, ShopLocaleContext, ShopRuntimeContext, type ShopPartRender, type ShopRuntime } from '@/lib/commerce/shopRuntime';
 import { ShopControlContent } from './ShopControlContent';
 
-/** Low-stock threshold (advisory only) below which the text names the count. */
+/** Low-stock threshold (advisory only) at or below which the text names the count. */
 export const LOW_STOCK_THRESHOLD = 5;
 
-/**
- * Map an advisory available quantity to display text.
- *
- * ADVISORY ONLY: this reflects the fire-and-forget availability poll, NOT
- * permission to sell. The number can be stale the instant it is read; the b3
- * guarded reserve-at-checkout is the SOLE authority on whether stock can be
- * taken. This text never gates the sale.
- */
-export function advisoryAvailabilityText(availableQuantity: number, limited = true): string {
-  // Untracked stock (a service) or an allowed back-order: the quantity is no limit.
-  if (!limited) return 'Available';
-  if (availableQuantity <= 0) return 'Out of stock';
-  if (availableQuantity <= LOW_STOCK_THRESHOLD) return `Only ${availableQuantity} left`;
-  return 'In stock';
+/** The variants of the product in scope, keyed by that product so another product's never show. */
+type VariantsState =
+  | { productId: string; status: 'loading' }
+  | { productId: string; status: 'ready'; variants: ProductVariantDTO[] }
+  | { productId: string; status: 'error' };
+
+/** The advisory availability of one variant, keyed by it so a previous choice's never shows. */
+type AvailabilityState =
+  | { variantId: string; status: 'ready'; availability: AvailabilityDTO }
+  | { variantId: string; status: 'error' };
+
+/** The first price of one variant, keyed by it. */
+interface PriceState {
+  variantId: string;
+  price: PriceDTO | undefined;
 }
 
-type AvailabilityState =
-  | { status: 'idle' }
-  | { status: 'loading' }
-  | { status: 'ready'; availability: AvailabilityDTO }
-  | { status: 'error'; message: string };
+const NO_VARIANTS: ProductVariantDTO[] = [];
 
 export interface VariantSelectorProps {
   node: ComponentInstance;
@@ -88,14 +85,12 @@ export interface VariantSelectorProps {
   hostType: string;
   /** Already-resolved wrapper props (identity attrs + style + marker). */
   hostProps: Record<string, unknown>;
-  /** Rendering surface: editor surfaces error chips, preview renders nothing. */
-  mode?: DataStateMode;
   /** `canvas`: the design surface, the parts in a picked state with a sample product. */
   surface?: 'live' | 'canvas';
 }
 
 const VariantSelector = observer(
-  ({ node, scope, renderNode, hostType, hostProps, mode = 'preview', surface = 'live' }: VariantSelectorProps) => {
+  ({ node, scope, renderNode, hostType, hostProps, surface = 'live' }: VariantSelectorProps) => {
     const dataSource = useCommerceDataSource();
     const locale = React.useContext(ShopLocaleContext);
     const design = React.useContext(ShopDesignContext);
@@ -108,36 +103,29 @@ const VariantSelector = observer(
 
     // The full variant matrix for this product (the product frame only carries
     // variantIds). Fetched read-only via the data source.
-    const [variants, setVariants] = React.useState<ProductVariantDTO[]>([]);
-    // A failed variant fetch, with its message for the editor; null while none failed.
-    const [variantsError, setVariantsError] = React.useState<string | null>(null);
+    const [variantsState, setVariantsState] = React.useState<VariantsState | null>(null);
     React.useEffect(() => {
-      setVariantsError(null);
-      if (!productId) {
-        setVariants([]);
-        return;
-      }
+      if (!productId) return;
       let active = true;
+      setVariantsState({ productId, status: 'loading' });
       dataSource
         .listVariants(productId)
         .then((rows) => {
-          if (active) setVariants(rows);
+          if (active) setVariantsState({ productId, status: 'ready', variants: rows });
         })
         .catch((err: unknown) => {
           if (!active) return;
-          // A failed variant fetch leaves the matrix empty: every combo then
-          // resolves to no variant (an honest "unselectable" rather than a
-          // fabricated selection). Nothing is silently marked available, and the
-          // failure is said: the visitor reads the failed check message, the
-          // console the real reason.
+          // A failed variant fetch selects nothing (no fabricated selection) and is
+          // said: the visitor reads the failed check message, the console the reason.
           console.error(`VariantSelector: the variants of product ${productId} could not be loaded`, err);
-          setVariants([]);
-          setVariantsError(err instanceof Error ? err.message : String(err));
+          setVariantsState({ productId, status: 'error' });
         });
       return () => {
         active = false;
       };
     }, [dataSource, productId]);
+    const current = variantsState && variantsState.productId === productId ? variantsState : null;
+    const variants = current?.status === 'ready' ? current.variants : NO_VARIANTS;
 
     // Client-only selection state (React state; NEVER MST, NEVER the server).
     // Hooks must run unconditionally, so this is called before any early return;
@@ -156,43 +144,51 @@ const VariantSelector = observer(
     );
     const { selection, variant, setOptionValue } = useVariantSelection(emptyProduct, variants);
 
-    // Advisory availability for the SELECTED variant. Re-fetched read-only on
-    // every selection change. Errors surface; they are never swallowed.
+    // Advisory availability and the price of the SELECTED variant, re-fetched
+    // read-only on every selection change. Errors surface; they are never swallowed.
     const selectedVariantId = variant?.id ?? null;
-    const [availability, setAvailability] = React.useState<AvailabilityState>({ status: 'idle' });
+    const [availabilityState, setAvailabilityState] = React.useState<AvailabilityState | null>(null);
+    const [priceState, setPriceState] = React.useState<PriceState | null>(null);
     React.useEffect(() => {
-      if (!selectedVariantId) {
-        setAvailability({ status: 'idle' });
-        return;
-      }
+      if (!selectedVariantId) return;
       let active = true;
-      setAvailability({ status: 'loading' });
       dataSource
         .getAvailability(selectedVariantId)
         .then((dto) => {
-          if (active) setAvailability({ status: 'ready', availability: dto });
+          if (active) setAvailabilityState({ variantId: selectedVariantId, status: 'ready', availability: dto });
         })
         .catch((err: unknown) => {
-          if (active) {
-            setAvailability({
-              status: 'error',
-              message: err instanceof Error ? err.message : String(err),
-            });
-          }
+          if (!active) return;
+          console.error(`VariantSelector: the availability of variant ${selectedVariantId} could not be checked`, err);
+          setAvailabilityState({ variantId: selectedVariantId, status: 'error' });
+        });
+      // The chosen variant's own price, so a price bound to the variant follows the choice.
+      Promise.resolve()
+        .then(() => dataSource.getPrices(selectedVariantId))
+        .then((prices) => {
+          if (active) setPriceState({ variantId: selectedVariantId, price: prices[0] });
+        })
+        .catch((err: unknown) => {
+          if (!active) return;
+          console.error(`VariantSelector: the price of variant ${selectedVariantId} could not be read`, err);
+          setPriceState({ variantId: selectedVariantId, price: undefined });
         });
       return () => {
         active = false;
       };
     }, [dataSource, selectedVariantId]);
+    // Only the selected variant's answers count: another's are a check still running.
+    const availability = selectedVariantId && availabilityState?.variantId === selectedVariantId ? availabilityState : null;
+    const price = selectedVariantId && priceState?.variantId === selectedVariantId ? priceState.price : undefined;
 
     const wrapperProps = { ...hostProps };
     delete (wrapperProps as any).children;
 
-    // What the parts show. A value whose combination resolves to no variant is
-    // disabled (unselectable). The availability text is ADVISORY ONLY: the poll
-    // result, NOT permission to sell (reserve-at-checkout is the gate). An error
-    // surfaces (the real message in the editor, a plain sentence for a visitor);
-    // it is never a silent "in stock".
+    // What the parts show. A value no variant has is disabled; any other is a
+    // choice (picking it clears an earlier choice no variant combines with it).
+    // The availability text is ADVISORY ONLY, NOT permission to sell: the poll
+    // result (reserve-at-checkout is the gate). A failure surfaces as the shop's
+    // plain sentence; it is never a silent "in stock".
     const liveView: VariantView = {
       locale,
       product: product
@@ -203,30 +199,41 @@ const VariantSelector = observer(
               id: value.id,
               label: value.label,
               selected: selection[option.id] === value.id,
-              selectable: isValueSelectable(variants, selection, option.id, value.id),
+              selectable: isValueSelectable(variants, option.id, value.id),
             })),
           }))
         : null,
+      catalog: !current || current.status === 'loading' ? 'loading' : current.status === 'error' ? 'failed' : variants.length === 0 ? 'none' : 'ready',
       availability:
-        variantsError !== null
-          ? { status: 'error', message: mode === 'editor' ? variantsError : null }
-          : availability.status === 'ready'
-          ? { status: 'ready', quantity: availability.availability.availableQuantity, limited: availability.availability.limited }
-          : availability.status === 'error'
-            ? { status: 'error', message: mode === 'editor' ? availability.message : null }
-            : { status: availability.status },
+        current?.status === 'error'
+          ? { status: 'error' }
+          : !selectedVariantId
+            ? { status: 'idle' }
+            : !availability
+              ? { status: 'loading' }
+              : availability.status === 'ready'
+                ? { status: 'ready', quantity: availability.availability.availableQuantity, limited: availability.availability.limited }
+                : { status: 'error' },
       onSelect: setOptionValue,
     };
     const id = typeof node.id === 'string' ? node.id : '';
     const view = surface === 'canvas' ? sampleVariantView(design?.stateOf(id) ?? 'in-stock', locale) : liveView;
     const runtime = variantRuntime(view);
 
-    // Re-push the SELECTED variant (and its advisory availability) so descendant
-    // `{{variant.*}}` / `{{availability.*}}` re-resolve to the chosen variant.
+    // Re-push the SELECTED variant (with its price and advisory availability) so
+    // descendant `{{variant.*}}` / `{{availability.*}}` re-resolve to the choice.
+    // The canvas pushes its sample choice, so a price bound to the variant shows
+    // in the state picked (the real price when a product frame carries one).
     let childScope = scope;
-    if (variant) {
-      childScope = pushVariantFrame(childScope, variant);
-      if (availability.status === 'ready') {
+    if (surface === 'canvas') {
+      const sample = sampleChoice(view, product?.id ?? 'sample-product', lookup(scope, ['variant', 'price']) as PriceDTO | undefined);
+      if (sample) {
+        childScope = pushVariantFrame(childScope, sample.variant, sample.price);
+        if (sample.availability) childScope = pushAvailabilityFrame(childScope, sample.availability);
+      }
+    } else if (variant) {
+      childScope = pushVariantFrame(childScope, variant, price);
+      if (availability?.status === 'ready') {
         childScope = pushAvailabilityFrame(childScope, availability.availability);
       }
     }
@@ -274,11 +281,11 @@ interface VariantView {
   locale: ShopLocale;
   /** The product's options, or null when no product is in scope. */
   product: { id: string; title: string; values: VariantValueView[] }[] | null;
+  /** The product's variants: being loaded, loaded, failed to load, or none to sell. */
+  catalog: 'loading' | 'ready' | 'failed' | 'none';
   availability:
-    | { status: 'idle' | 'loading' }
-    | { status: 'ready'; quantity: number; limited: boolean }
-    /** `message` is the real one in the editor, null for a visitor. */
-    | { status: 'error'; message: string | null };
+    | { status: 'idle' | 'loading' | 'error' }
+    | { status: 'ready'; quantity: number; limited: boolean };
   /** Null on the canvas, where nothing does anything. */
   onSelect: ((optionId: string, valueId: string) => void) | null;
 }
@@ -300,19 +307,27 @@ function shownLater(visible: boolean, props?: Record<string, unknown>): ShopPart
 function variantPart(role: string, view: VariantView): ShopPartRender {
   const { availability } = view;
   const ready = availability.status === 'ready' ? availability : null;
+  const hasProduct = view.product !== null;
   switch (role) {
     case 'variant.no-product':
-      return { visible: view.product === null };
+      return { visible: !hasProduct };
+    // The options load after the page: their wait and a product with nothing to
+    // sell are said, each in its own status region (ShopPartRender.live).
+    case 'variant.loading':
+      return shownLater(hasProduct && view.catalog === 'loading', { 'data-variant-catalog': 'loading' });
+    case 'variant.unavailable':
+      return shownLater(hasProduct && view.catalog === 'none', { 'data-variant-catalog': 'none' });
     case 'variant.options':
-      return { visible: view.product !== null };
+      return { visible: hasProduct && view.catalog === 'ready' };
     case 'variant.option':
-      if (!view.product) return { visible: false };
+      if (!view.product || view.catalog !== 'ready') return { visible: false };
       return {
         visible: true,
         items: view.product.map((option) => ({
           key: option.id,
           tokens: { option: option.title },
-          props: { role: 'group', 'aria-label': option.title, 'data-variant-option': option.id },
+          // One radio group per option, named by the option.
+          props: { role: 'radiogroup', 'aria-label': option.title, 'data-variant-option': option.id },
           runtime: optionRuntime(option, view),
         })),
       };
@@ -333,23 +348,54 @@ function variantPart(role: string, view: VariantView): ShopPartRender {
       // Untracked stock (a service) or an allowed back-order: the quantity is no limit.
       return shownLater(!!ready && !ready.limited, { 'data-variant-availability': 'ready' });
     case 'variant.availability-error':
-      if (availability.status !== 'error') return shownLater(false);
-      return {
-        ...shownLater(true, { 'data-variant-availability': 'error' }),
-        ...(availability.message ? { text: `Availability check failed: ${availability.message}` } : {}),
-      };
+      return shownLater(availability.status === 'error', { 'data-variant-availability': 'error' });
     default:
       // An option's own parts outside an option have nothing to show.
       return { visible: false };
   }
 }
 
+/**
+ * The radio keys of one option's choices (the WAI-ARIA radio group pattern): the
+ * arrows move to the next or previous choice that can be made and select it,
+ * wrapping around, Home and End go to the first and the last. Space presses the
+ * focused choice as any button (its click selects it).
+ */
+function onRadioKey(
+  event: React.KeyboardEvent<HTMLElement>,
+  option: NonNullable<VariantView['product']>[number],
+  onSelect: (optionId: string, valueId: string) => void,
+) {
+  const step = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 0;
+  if (step === 0 && event.key !== 'Home' && event.key !== 'End') return;
+  const group = event.currentTarget.closest('[role="radiogroup"]');
+  if (!group) return;
+  // The group's radios in order, one per value of the option (the copies keep the values' order).
+  const radios = Array.from(group.querySelectorAll<HTMLElement>('[role="radio"]')).filter((radio) => radio.closest('[role="radiogroup"]') === group);
+  if (radios.length !== option.values.length) return;
+  const choosable = option.values.map((value, index) => ({ value, radio: radios[index] })).filter(({ value }) => value.selectable);
+  if (choosable.length === 0) return;
+  const at = choosable.findIndex(({ radio }) => radio === event.currentTarget);
+  const next =
+    event.key === 'Home'
+      ? choosable[0]
+      : event.key === 'End'
+        ? choosable[choosable.length - 1]
+        : choosable[(at + step + choosable.length) % choosable.length];
+  event.preventDefault();
+  next.radio.focus();
+  onSelect(option.id, next.value.id);
+}
+
 /** The runtime one copy of the option template reads: its name and its choices. */
 function optionRuntime(option: NonNullable<VariantView['product']>[number], view: VariantView): ShopRuntime {
+  // One tab stop per group: the chosen value, else the first that can be chosen.
+  const tabStop = option.values.find((value) => value.selected && value.selectable) ?? option.values.find((value) => value.selectable);
+  const onSelect = view.onSelect;
   return {
     kind: 'variant-selector',
     locale: view.locale,
-    surface: view.onSelect ? 'live' : 'canvas',
+    surface: onSelect ? 'live' : 'canvas',
     part: (role) => {
       if (role === 'variant.option-label') return { visible: true, tokens: { option: option.title } };
       if (role !== 'variant.value') return { visible: false };
@@ -358,16 +404,24 @@ function optionRuntime(option: NonNullable<VariantView['product']>[number], view
         items: option.values.map((value) => ({
           key: value.id,
           tokens: { value: value.label },
-          // Native `disabled` tells assistive technology a choice with no variant
-          // cannot be pressed, so no `aria-disabled` is drawn; the designer's copy
-          // of either (and of `tabindex`) never reaches the page and is never
-          // stored (SHOP_RUNTIME_OWNED_PROPS).
+          // A native button with the radio role: it keeps the button's focus and
+          // Space press. Native `disabled` tells assistive technology a choice no
+          // variant has cannot be made, so no `aria-disabled` is drawn; the
+          // designer's copy of either (and of `tabindex`) never reaches the page and
+          // is never stored (SHOP_RUNTIME_OWNED_PROPS).
           props: {
             type: 'button',
+            role: 'radio',
+            'aria-checked': value.selected,
             'data-variant-value': value.id,
-            'aria-pressed': value.selected,
             disabled: !value.selectable,
-            ...(view.onSelect ? { onClick: () => view.onSelect!(option.id, value.id) } : {}),
+            tabIndex: value === tabStop ? 0 : -1,
+            ...(onSelect
+              ? {
+                  onClick: () => onSelect(option.id, value.id),
+                  onKeyDown: (event: React.KeyboardEvent<HTMLElement>) => onRadioKey(event, option, onSelect),
+                }
+              : {}),
           },
         })),
       };
@@ -388,7 +442,8 @@ const SAMPLE_OPTIONS = {
 
 /** The view the canvas shows for a preview state id, with a sample product. */
 export function sampleVariantView(id: string, locale: ShopLocale): VariantView {
-  const chosen = id !== 'nothing-chosen' && id !== 'no-product';
+  const catalog: VariantView['catalog'] = id === 'loading-options' ? 'loading' : id === 'not-available' ? 'none' : 'ready';
+  const chosen = catalog === 'ready' && id !== 'nothing-chosen' && id !== 'no-product';
   const product = SAMPLE_OPTIONS[locale].map((option) => ({
     id: option.id,
     title: option.title,
@@ -396,8 +451,8 @@ export function sampleVariantView(id: string, locale: ShopLocale): VariantView {
       id: `${option.id}-${index}`,
       label,
       selected: chosen && index === (option.id === 'size' ? 1 : 0),
-      // Out of stock shows a choice that has no variant, greyed out.
-      selectable: !(id === 'out-of-stock' && option.id === 'size' && index === 2),
+      // Only a value no variant has is greyed out, as on a page.
+      selectable: !(id === 'choice-unavailable' && option.id === 'size' && index === 2),
     })),
   }));
   const availability: VariantView['availability'] =
@@ -410,11 +465,35 @@ export function sampleVariantView(id: string, locale: ShopLocale): VariantView {
           : id === 'available'
             ? { status: 'ready', quantity: 0, limited: false }
             : id === 'error'
-              ? { status: 'error', message: null }
+              ? { status: 'error' }
               : chosen
                 ? { status: 'ready', quantity: 24, limited: true }
                 : { status: 'idle' };
-  return { locale, product: id === 'no-product' ? null : product, availability, onSelect: null };
+  return { locale, product: id === 'no-product' ? null : product, catalog, availability, onSelect: null };
+}
+
+/** The sample choice of a canvas view as a variant, a price and an availability; null when nothing is chosen. */
+function sampleChoice(
+  view: VariantView,
+  productId: string,
+  outerPrice: PriceDTO | undefined,
+): { variant: ProductVariantDTO; price: PriceDTO; availability?: AvailabilityDTO } | null {
+  const picked = (view.product ?? []).map((option) => option.values.find((value) => value.selected)).filter((value) => value !== undefined);
+  if (!view.product || picked.length !== view.product.length) return null;
+  const variantId = 'sample-variant';
+  const variant: ProductVariantDTO = {
+    id: variantId,
+    productId,
+    title: picked.map((value) => value!.label).join(' / '),
+    optionValues: view.product.map((option, index) => ({ optionId: option.id, valueId: picked[index]!.id, label: picked[index]!.label })),
+  };
+  const price: PriceDTO = outerPrice ?? { variantId, amountCents: 2900, currency: 'EUR' };
+  const ready = view.availability.status === 'ready' ? view.availability : null;
+  return {
+    variant,
+    price,
+    ...(ready ? { availability: { variantId, locationId: 'sample', availableQuantity: ready.quantity, limited: ready.limited, stale: false } } : {}),
+  };
 }
 
 /** Whether a preview state shows a part and every part around it; an option's part shows in any option. */
@@ -422,7 +501,7 @@ export function variantStateShows(id: string, roles: readonly string[], locale: 
   const view = sampleVariantView(id, locale);
   return roles.every((role) => {
     if (variantPart(role, view).visible) return true;
-    return (view.product ?? []).some((option) => optionRuntime(option, view).part(role).visible);
+    return view.catalog === 'ready' && (view.product ?? []).some((option) => optionRuntime(option, view).part(role).visible);
   });
 }
 

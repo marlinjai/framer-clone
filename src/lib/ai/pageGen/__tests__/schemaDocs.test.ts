@@ -22,6 +22,15 @@ describe('buildSchemaDocs', () => {
     await expect(docs).toMatchFileSnapshot('./__golden__/schemaDocs.md');
   });
 
+  it('tells the model to put the add to cart and a variant price inside the variant selector', () => {
+    const selectorLine = docs.split('\n').find((line) => line.startsWith('- shop control "variant-selector"'))!;
+    expect(selectorLine).toContain('Put the add to cart and any price bound to the variant');
+    expect(selectorLine).toContain('INSIDE it');
+    expect(selectorLine).not.toContain('never add children');
+    const addToCartLine = docs.split('\n').find((line) => line.startsWith('- shop control "add-to-cart"'))!;
+    expect(addToCartLine).toContain('put it INSIDE the variant selector');
+  });
+
   it('teaches the short list of rules and nothing else', () => {
     const section = rulesDocs();
     expect(docs).toContain(section);

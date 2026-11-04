@@ -726,6 +726,14 @@ const VARIANT_VALUE_STYLE = {
   fontSize: '14px',
 };
 
+/**
+ * A choice's Selected state: the choice is a radio (`aria-checked`). A page saved
+ * when it was a toggle button carries the old selector, which the normaliser
+ * rewrites (VARIANT_LEGACY_SELECTED_SELECTOR).
+ */
+export const VARIANT_SELECTED_SELECTOR = '&[aria-checked="true"]';
+const VARIANT_LEGACY_SELECTED_SELECTOR = '&[aria-pressed="true"]';
+
 const VARIANT_PARTS: readonly ShopPartSpec[] = [
   {
     role: 'variant.no-product',
@@ -734,6 +742,15 @@ const VARIANT_PARTS: readonly ShopPartSpec[] = [
     required: true,
     text: { en: 'Variant selector: no product in scope', de: 'Variantenauswahl: hier ist kein Produkt' },
     style: NOTE,
+  },
+  { role: 'variant.loading', label: 'Loading the options', tag: 'span', required: true, text: { en: 'Loading options...', de: 'Optionen werden geladen...' }, style: NOTE },
+  {
+    role: 'variant.unavailable',
+    label: 'Product not available',
+    tag: 'span',
+    required: true,
+    text: { en: 'This product is not available right now.', de: 'Dieses Produkt ist gerade nicht erhältlich.' },
+    style: { ...NOTE, color: '#b91c1c' },
   },
   {
     role: 'variant.options',
@@ -762,7 +779,7 @@ const VARIANT_PARTS: readonly ShopPartSpec[] = [
             style: VARIANT_VALUE_STYLE,
             rules: [
               { id: 'hover', selector: '&:hover', at: [HOVER_GATE], style: { borderColor: '#111827' } },
-              { id: 'selected', selector: '&[aria-pressed="true"]', style: { backgroundColor: '#111827', borderColor: '#111827', color: '#ffffff' } },
+              { id: 'selected', selector: VARIANT_SELECTED_SELECTOR, style: { backgroundColor: '#111827', borderColor: '#111827', color: '#ffffff' } },
               { id: 'disabled', selector: '&:disabled', style: { opacity: 0.4, cursor: 'not-allowed' } },
             ],
           },
@@ -800,11 +817,14 @@ const VARIANT_PARTS: readonly ShopPartSpec[] = [
 export const VARIANT_PREVIEW_STATES = [
   { id: 'in-stock', label: 'A choice made, in stock' },
   { id: 'nothing-chosen', label: 'Nothing chosen yet' },
+  { id: 'loading-options', label: 'Loading the options' },
   { id: 'checking', label: 'Checking availability (loading)' },
   { id: 'low-stock', label: 'Only a few left' },
-  { id: 'out-of-stock', label: 'Out of stock, a choice unavailable' },
+  { id: 'out-of-stock', label: 'Out of stock' },
+  { id: 'choice-unavailable', label: 'A choice no variant has (disabled)' },
   { id: 'available', label: 'Available (no stock limit)' },
   { id: 'error', label: 'Availability check failed' },
+  { id: 'not-available', label: 'Product not available (no variants)' },
   { id: 'no-product', label: 'No product on this page' },
 ] as const satisfies readonly ShopPreviewState[];
 
@@ -1603,8 +1623,11 @@ function enforceParts(input: ShopTreeNode): ShopTreeNode {
         if (tag !== next.type) next = { ...next, type: tag };
         next = withoutRuntimeProps(next);
         if (spec.fixedText || spec.dynamicText || spec.onlyParts) next = withoutStoredText(next);
-        // Nothing renames a fixed wording for assistive technology either.
-        if (spec.keepVisible || spec.fixedText || spec.onlyParts) next = withoutProps(next, RENAMING_PROPS);
+        // Nothing renames a fixed wording for assistive technology either, nor a part
+        // drawn once per item or one whose text holds the item's tokens: one stored
+        // name would give every copy (every choice, every option) the same name.
+        if (spec.keepVisible || spec.fixedText || spec.onlyParts || spec.repeat || spec.requiredTokens) next = withoutProps(next, RENAMING_PROPS);
+        if (role === 'variant.value') next = withCurrentSelectedRule(next);
         // A part kept in sight, or one whose text is the platform's, is its text only:
         // a node put inside it would add words to it or lay a cover over it.
         if ((spec.keepVisible || spec.fixedText) && next.children && next.children.length > 0) next = { ...next, children: [] };
@@ -1618,6 +1641,22 @@ function enforceParts(input: ShopTreeNode): ShopTreeNode {
     return changed ? { ...node, children } : node;
   };
   return visit(control, false);
+}
+
+/**
+ * A choice whose Selected rule still addresses the toggle button it once was
+ * (`aria-pressed`), rewritten to the radio it is now (`aria-checked`). The same
+ * object when no rule needs it, so a second pass changes nothing.
+ */
+function withCurrentSelectedRule(node: ShopTreeNode): ShopTreeNode {
+  const rules = node.props?.rules;
+  if (!Array.isArray(rules)) return node;
+  const legacy = (rule: unknown) => isRecord(rule) && typeof rule.selector === 'string' && rule.selector.includes(VARIANT_LEGACY_SELECTED_SELECTOR);
+  if (!rules.some(legacy)) return node;
+  const next = rules.map((rule) =>
+    legacy(rule) ? { ...(rule as Record<string, unknown>), selector: (rule as { selector: string }).selector.split(VARIANT_LEGACY_SELECTED_SELECTOR).join(VARIANT_SELECTED_SELECTOR) } : rule,
+  );
+  return { ...node, props: { ...node.props, rules: next } };
 }
 
 /**
@@ -1699,6 +1738,15 @@ function placedParts(control: ShopTreeNode, kind: ShopControlKind): ShopTreeNode
 export const MISPLACED_SHOP_PART_MESSAGE =
   'This part of the shop control has its own place in it: it can move among its siblings, not into another part.';
 
+/** What the editor says when a control, a button, a link or a field would go inside a part a visitor presses. */
+export const INTERACTIVE_SHOP_PART_MESSAGE =
+  'This part of the shop control is pressed or typed into by a visitor (a choice, a button, a field): a button, a link, a field or a shop control cannot go inside it, since a visitor could not press both. Put it beside the part instead.';
+
+/** Part tags a visitor presses or types into: nothing they can press goes inside one. */
+const INTERACTIVE_PART_TAGS: ReadonlySet<string> = new Set(['button', 'a', 'label', 'input', 'select', 'textarea']);
+/** Element tags a visitor can press or type into. */
+const INTERACTIVE_TAGS: ReadonlySet<string> = new Set(['button', 'a', 'input', 'select', 'textarea', 'label', 'details', 'summary', 'iframe']);
+
 /** What the editor says when something would go inside a part that holds its own words only. */
 export const CLOSED_SHOP_PART_MESSAGE =
   'This part of the shop control holds its own words only (the pay button, the total and the notices a buyer must see): nothing else can go inside it. Put it beside the part instead.';
@@ -1711,13 +1759,18 @@ export const CLOSED_SHOP_PART_MESSAGE =
  * only; a part kept in sight or with fixed text takes nothing). The normaliser
  * would undo either on the next load, so the editor says so now.
  */
-export function shopPartRefusal(node: { props?: unknown; children?: readonly unknown[] }, ancestors: readonly { props?: unknown }[]): string | undefined {
+export function shopPartRefusal(node: { type?: unknown; props?: unknown; children?: readonly unknown[] }, ancestors: readonly { props?: unknown }[]): string | undefined {
   let nearest: string | undefined;
   let kind: ShopControlKind | undefined;
+  // Inside a part a visitor presses (a choice, a button) or types into, at any depth.
+  let inInteractive = false;
   for (const ancestor of ancestors) {
     kind = shopControlKindOf(ancestor.props);
     if (kind) break;
-    if (nearest === undefined) nearest = shopPartRoleOf(ancestor.props);
+    const ancestorRole = shopPartRoleOf(ancestor.props);
+    if (nearest === undefined) nearest = ancestorRole;
+    const ancestorSpec = ancestorRole ? shopPartSpec(ancestorRole) : undefined;
+    if (ancestorSpec && INTERACTIVE_PART_TAGS.has(ancestorSpec.tag)) inInteractive = true;
   }
   if (!kind) return undefined;
   const closed = nearest ? shopPartSpec(nearest) : undefined;
@@ -1725,6 +1778,10 @@ export function shopPartRefusal(node: { props?: unknown; children?: readonly unk
   // A closed part takes no control either: the normaliser would remove it.
   if (closed && (closed.keepVisible || closed.fixedText)) return CLOSED_SHOP_PART_MESSAGE;
   if (closed?.onlyParts && !(role && ownRoles(nearest!).has(role))) return CLOSED_SHOP_PART_MESSAGE;
+  // Nothing a visitor presses goes inside what they press: the inner one could not
+  // be pressed on its own, and a control there would nest one island in another.
+  // A part of the interactive part's own (its label, its input) is checked below.
+  if (inInteractive && pressable(node)) return INTERACTIVE_SHOP_PART_MESSAGE;
   if (shopControlKindOf(node.props)) return undefined;
   const misplaced = (candidate: { props?: unknown; children?: readonly unknown[] }): boolean => {
     if (shopControlKindOf(candidate.props)) return false;
@@ -1736,6 +1793,15 @@ export function shopPartRefusal(node: { props?: unknown; children?: readonly unk
     return (candidate.children ?? []).some((child) => isRecord(child) && misplaced(child as { props?: unknown; children?: readonly unknown[] }));
   };
   return misplaced(node) ? MISPLACED_SHOP_PART_MESSAGE : undefined;
+}
+
+/** Whether a node, or a plain node inside it, is something a visitor presses: a shop control or an interactive element. Parts are placed by their spec. */
+function pressable(node: { type?: unknown; props?: unknown; children?: readonly unknown[] }): boolean {
+  if (shopControlKindOf(node.props)) return true;
+  if (shopPartRoleOf(node.props)) return false;
+  if (typeof node.type === 'string' && INTERACTIVE_TAGS.has(node.type.toLowerCase())) return true;
+  if (isRecord(node.props) && (typeof node.props.href === 'string')) return true;
+  return (node.children ?? []).some((child) => isRecord(child) && pressable(child as { type?: unknown; props?: unknown; children?: readonly unknown[] }));
 }
 
 /** Whether the editor refuses to put `node` under `ancestors` inside a shop control (shopPartRefusal). */

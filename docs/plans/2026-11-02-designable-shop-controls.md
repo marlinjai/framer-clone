@@ -239,18 +239,26 @@ assistive technology what an element is), AI (the page generator).
    there). Canvas states: ready, no option chosen, checking (loading), sold out and a failed
    check for the add to cart; items, empty, loading, low stock, an item no longer sold and an item that failed
    for the cart.
-3. **Variant selector** (built, held until slices 1 and 2 land): an option template drawn once per product
-   option (its name, which must keep `{option}`) holding a choice button drawn once per value (its text must
-   keep `{value}`), with Hover, Selected (`aria-pressed`) and Disabled (a choice with no variant) as stored
-   rules; the availability messages (checking, in stock, only `{count}` left, out of stock, available with no
-   stock limit, a failed check) and the no-product note. A selector given its parts puts them before the
-   designer's own children (an add to cart, a price bound to the variant), which keep their place and scope.
-   Canvas states use a sample product: a choice made, nothing chosen, checking, few left, out of stock with a
-   choice unavailable, no stock limit, a failed check, no product. It follows what review settled for slice 2:
-   the island owns whether a choice can be pressed or reached by the keyboard (no stored `disabled`,
-   `aria-disabled`, `tabindex` or `inert`), every availability message is its own status region on the
-   page before its text, a missing part is drawn before the designer's children (where the next load stores
-   it), and a failed variant load shows the failed check message instead of a selector with nothing to choose.
+3. **Variant selector** (built, held for review): an option template drawn once per product option as a
+   radio group (its name, which must keep `{option}`) holding a choice drawn once per value as a radio
+   (a native button with `role="radio"`, its text must keep `{value}`), with Hover, Selected
+   (`aria-checked`; a page saved with the old `aria-pressed` rule is rewritten on load) and Disabled (a
+   value no variant has) as stored rules; one tab stop per group, the arrows, Home and End move and choose,
+   Space presses. Any value some variant has can be chosen: a pick clears an earlier choice no variant
+   combines with it, so no choice locks another out. Messages: loading the options, the product not
+   available (options but no variant), the availability messages (checking, in stock, only `{count}` left,
+   out of stock, available with no stock limit, a failed check, also said when the variants fail to load)
+   and the no-product note; every message shown later is its own status region. A selector given its parts
+   puts them before the designer's own children (an add to cart, a price bound to the variant), which keep
+   their place and scope; the add to cart finds the chosen variant only inside the selector, so the page
+   generator is told to put it there and moves one written beside a selector into it. The selector reads
+   the chosen variant's own price for `{{variant.price.*}}`, and an availability or price answer counts only
+   for the variant it was asked for (in the add to cart too). A stored name (`aria-label`, `title`) on a
+   repeated part or one whose text holds tokens is never stored or drawn, and nothing a visitor presses (a
+   button, a link, a field, a shop control) can be put inside a part they press. Canvas states use a sample
+   product, and the designer's children read its sample choice: a choice made, nothing chosen, loading the
+   options, checking, few left, out of stock, a choice no variant has, no stock limit, a failed check, not
+   available, no product.
 
 ## Score
 
