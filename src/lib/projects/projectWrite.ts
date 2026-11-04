@@ -14,7 +14,7 @@
 export type ProjectWriteResult =
   | { kind: 'ok'; payload: Record<string, unknown>; version: number }
   | { kind: 'conflict'; currentVersion: number }
-  | { kind: 'error'; message: string; writtenVersion?: number };
+  | { kind: 'error'; message: string; status?: number; writtenVersion?: number };
 
 export async function postProjectWrite(
   url: '/api/projects/save' | '/api/projects/publish',
@@ -43,6 +43,7 @@ export async function postProjectWrite(
     return {
       kind: 'error',
       message: typeof error?.message === 'string' ? error.message : `${failedLabel} (${res.status}).`,
+      status: res.status,
       ...(typeof error?.writtenVersion === 'number' ? { writtenVersion: error.writtenVersion } : {}),
     };
   }
@@ -52,6 +53,7 @@ export async function postProjectWrite(
   if (typeof body.version !== 'number') {
     return {
       kind: 'error',
+      status: res.status,
       message: 'The server took the changes but did not return the project version. Reload the page before making more changes.',
     };
   }
