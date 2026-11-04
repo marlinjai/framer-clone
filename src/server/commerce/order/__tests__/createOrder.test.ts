@@ -44,6 +44,8 @@ vi.mock('../../inventory/reserve', async () => {
 vi.mock('../../repository/pricing', () => ({
   pricingRepository: { resolvePrice: vi.fn() },
 }));
+// The order.placed job a paid order emits: recorded here, proven against Postgres in the itests.
+vi.mock('../../jobs/emit', () => ({ emitCommerceEvent: vi.fn(async () => undefined) }));
 vi.mock('../../repository/order', () => ({
   orderRepository: {
     findByRequestId: vi.fn(),
@@ -55,6 +57,7 @@ vi.mock('../../repository/order', () => ({
 
 import type { CommerceDB } from '../../db-types';
 import { OrderTooLargeError } from '../../repository/errors';
+import { maxChargeAmount, STRIPE_MAX_CHARGE } from '../../payment/provider';
 import { ReservationOverflowError, reserve } from '../../inventory/reserve';
 import { pricingRepository } from '../../repository/pricing';
 import { orderRepository } from '../../repository/order';
@@ -110,10 +113,12 @@ function makeFakeDb(canned: { variant?: unknown } = {}): {
       ? canned.variant
       : { title: 'V', sku: 'SKU', variantTaxClass: null, productTaxClass: null };
   const builder: Record<string, unknown> = {};
-  for (const method of ['selectFrom', 'leftJoin', 'select', 'where']) {
+  for (const method of ['selectFrom', 'leftJoin', 'select', 'where', 'insertInto', 'values']) {
     builder[method] = vi.fn(() => builder);
   }
   builder.executeTakeFirst = vi.fn(async () => variant);
+  // The order_payment insert of an order that opens its payment.
+  builder.execute = vi.fn(async () => []);
   const trx = builder;
   const isolationLevels: string[] = [];
   let transactions = 0;
@@ -591,6 +596,46 @@ describe('createOrder: an order too large for its INTEGER columns', () => {
     );
     expect(error).toBeInstanceOf(OrderTooLargeError);
     expect(error).toMatchObject({ variantId: 'var-1', label: 'reserved quantity', value: MAX + 1 });
+  });
+
+  describe("over what the payment provider takes in one charge", () => {
+    function placeable() {
+      findByRequestIdMock.mockResolvedValue(undefined);
+      nextOrderNumberMock.mockResolvedValue('ORD-000001');
+      insertOrderMock.mockResolvedValue({ id: 'order-1' } as never);
+      insertLineItemMock.mockResolvedValue({ id: 'line-1' } as never);
+      reserveMock.mockResolvedValue({ ok: true } as never);
+    }
+
+    it('Stripe takes at most 99999999 minor units (999,999.99 EUR); the demo provider only what an order stores', () => {
+      expect(STRIPE_MAX_CHARGE).toBe(99_999_999);
+      expect(maxChargeAmount('stripe')).toBe(99_999_999);
+      expect(maxChargeAmount('demo')).toBe(MAX);
+    });
+
+    it('a Stripe order one cent over: refused on its total before anything is written or reserved', async () => {
+      placeable();
+      resolvePriceMock.mockResolvedValue(STRIPE_MAX_CHARGE + 1);
+      const error = await refusal(baseCart({ netOrGross: 'gross', payment: { provider: 'stripe' } }));
+      expect(error.variantId).toBeNull();
+      expect(error.label).toBe('order total over the payment maximum');
+      expect(error.value).toBe(STRIPE_MAX_CHARGE + 1);
+      expectNothingWritten();
+    });
+
+    it('a Stripe order of exactly the maximum is placed with its payment', async () => {
+      placeable();
+      resolvePriceMock.mockResolvedValue(STRIPE_MAX_CHARGE);
+      const result = await createOrder(makeFakeDb().db, TG, baseCart({ netOrGross: 'gross', payment: { provider: 'stripe' } }));
+      expect(result).toEqual({ ok: true, orderId: 'order-1' });
+    });
+
+    it('the same total with the demo provider is placed: it moves no money', async () => {
+      placeable();
+      resolvePriceMock.mockResolvedValue(STRIPE_MAX_CHARGE + 1);
+      const result = await createOrder(makeFakeDb().db, TG, baseCart({ netOrGross: 'gross', payment: { provider: 'demo' } }));
+      expect(result).toEqual({ ok: true, orderId: 'order-1' });
+    });
   });
 
   it('an order of exactly the ceiling is placed', async () => {

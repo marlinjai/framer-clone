@@ -18,9 +18,11 @@ export class UnknownVariantError extends Error {
 
 /**
  * An order whose quantity, line amount or total exceeds what its INTEGER columns
- * store (MAX_ORDER_INTEGER in src/lib/commerce/dto.ts): caused by the cart (a
- * huge quantity times its price), not a server fault, and thrown before anything
- * is written. The orders route answers it with 422 `order_too_large`.
+ * store (MAX_ORDER_INTEGER in src/lib/commerce/dto.ts), whose backorder would take
+ * the reserved stock past its column, or whose total is more than its payment
+ * provider takes in one charge (maxChargeAmount, payment/provider.ts): caused by
+ * the cart (a huge quantity times its price), not a server fault, and nothing of it
+ * is kept. The orders route answers it with 422 `order_too_large`.
  */
 export class OrderTooLargeError extends Error {
   readonly code = 'ORDER_TOO_LARGE';

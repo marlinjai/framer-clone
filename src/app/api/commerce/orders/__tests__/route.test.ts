@@ -408,6 +408,14 @@ describe('POST /api/commerce/orders an order too large to store', () => {
     expect(await res.json()).toEqual(TOO_LARGE);
   });
 
+  it('a total over what the payment provider takes in one charge (createOrder refuses it): the same 422, naming no line', async () => {
+    createOrderMock.mockRejectedValue(new OrderTooLargeError(null, 'order total over the payment maximum', 100_000_000));
+    const res = await POST(postReq({ lines: [{ variantId: 'var_a', quantity: 1 }] }));
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toEqual({ code: 'order_too_large', message: TOO_LARGE.error.message });
+    expect(readTotalMock).not.toHaveBeenCalled();
+  });
+
   it('the largest quantity a line stores still goes through to createOrder', async () => {
     const res = await POST(postReq({ lines: [{ variantId: 'var_a', quantity: 2_147_483_647 }] }));
     expect(res.status).toBe(201);

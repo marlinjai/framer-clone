@@ -821,6 +821,26 @@ describe('CheckoutButton an order too large to store (422 order_too_large)', () 
     expect(container.querySelector('button[data-checkout]')).not.toBeNull();
   });
 
+  it('a total over what the payment provider takes (no line named) gets the same words, and the server\'s are not shown', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      fakeResponse(422, {
+        error: { code: 'order_too_large', message: 'server words the buyer never sees' },
+      }),
+    );
+    const { container, getByTestId } = renderCheckout();
+    await waitForHydratedCart(getByTestId);
+
+    clickCheckout(container);
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-checkout-error]')?.textContent).toBe(
+        'Checkout failed: the order is larger than one order can hold. Lower a quantity in your cart and check out again.',
+      );
+    });
+    expect(container.textContent).not.toContain('server words');
+    expect(getByTestId('lines').textContent).toBe(JSON.stringify(SEEDED_LINES));
+  });
+
   it('a cart mixing prices with and without VAT gets the checkout\'s own words, not the server\'s or "no longer available"', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       fakeResponse(422, {

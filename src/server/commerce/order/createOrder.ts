@@ -48,8 +48,9 @@ import 'server-only';
 // is the explicit { ok:false, shortages } contract, never a silent success. A
 // quantity (also one variant's quantities added up over its lines), line amount or
 // total over what the INTEGER columns store is the typed OrderTooLargeError, thrown
-// before any write (the route answers 422); so is a backorder whose reserved stock
-// would pass its column, raised by the reserve and rolled back with the order.
+// before any write (the route answers 422), and so is a total over what the
+// order's payment provider takes in one charge; so is a backorder whose reserved
+// stock would pass its column, raised by the reserve and rolled back with the order.
 
 import type { Kysely } from 'kysely';
 
@@ -62,7 +63,7 @@ import { toJsonb } from '../../books/snapshots';
 import { emitCommerceEvent } from '../jobs/emit';
 import type { Buyer } from '../payment/buyer';
 import { PAYMENT_WINDOW_MS, platformFee } from '../payment/payments';
-import type { ProviderId } from '../payment/provider';
+import { maxChargeAmount, type ProviderId } from '../payment/provider';
 import type { CreateOrderLineItemInput } from '../repository/types';
 import type { CommerceDB } from '../db-types';
 import {
@@ -405,6 +406,11 @@ function runOrderTransaction(
       assertNonNegativeIntCents(subtotal, 'order subtotal');
       assertNonNegativeIntCents(taxAmount, 'order tax amount');
       assertNonNegativeIntCents(total, 'order total');
+      // More than the payment provider takes in one charge (Stripe: 999,999.99 EUR) would be
+      // ordered and hold its stock, then fail when the payment starts: refused here, before any write.
+      if (cart.payment && total > maxChargeAmount(cart.payment.provider)) {
+        throw new OrderTooLargeError(null, 'order total over the payment maximum', total);
+      }
 
       const taxNote = kleinunternehmer
         ? KLEINUNTERNEHMER_NOTICE

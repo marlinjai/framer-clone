@@ -6,7 +6,29 @@
 // in-process call for the demo one) and goes through ONE handler, payments.ts handlePaymentEvent, whatever
 // the provider. Money is integer minor units throughout.
 
+import { MAX_ORDER_INTEGER } from '@/lib/commerce/dto';
+
 export type ProviderId = 'demo' | 'stripe';
+
+/**
+ * The most Stripe takes in one charge, in the currency's minor unit: its `amount`
+ * field holds at most eight digits (99999999, that is 999,999.99 EUR). Stripe
+ * documents the same eight-digit ceiling for every currency it settles, so one
+ * number serves; a larger amount is refused when the payment starts, after the
+ * order already holds its stock.
+ */
+export const STRIPE_MAX_CHARGE = 99_999_999;
+
+/**
+ * The largest order total `provider` takes in one payment, in the currency's minor
+ * unit (the same ceiling for every currency, STRIPE_MAX_CHARGE). createOrder refuses
+ * an order over it before anything is written (a 422 order_too_large), so no order
+ * holds stock for a payment that cannot succeed. The demo provider moves no money,
+ * so only what an order stores bounds it.
+ */
+export function maxChargeAmount(provider: ProviderId): number {
+  return provider === 'stripe' ? STRIPE_MAX_CHARGE : MAX_ORDER_INTEGER;
+}
 
 /** What a provider reports, normalised. `eventId` is the provider's own id: the handler records it once. */
 export interface PaymentEvent {
