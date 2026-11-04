@@ -27,7 +27,7 @@ export interface BriefGuardPass<T> {
   userId: string;
   workspaceId: string;
   anthropic: Anthropic;
-  /** Frees the user's in-flight slot. Call exactly once, when the call ended. */
+  /** Frees the user's in-flight slot (a no-op for a window-only limiter). Call when the call ended. */
   release: () => void;
 }
 

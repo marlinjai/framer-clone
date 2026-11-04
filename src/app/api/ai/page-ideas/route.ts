@@ -15,8 +15,8 @@
 //   400 -> bad JSON / failed validation / context over budget
 //   401 -> no session / missing ANTHROPIC_API_KEY
 //   403 -> no active company / Sites not enabled / not permitted to edit
-//   429 -> a call is already running for this user, 20 in 10 minutes, or the
-//          provider rate limits (retry-after)
+//   429 -> 20 calls in 10 minutes for this user, or the provider rate limits
+//          (retry-after)
 //   502 -> the model returned nothing usable (`invalid_output`) or declined (`refused`)
 //   503 -> auth-brain or OpenFGA down, or the AI provider unavailable or overloaded
 //   504 -> the call took longer than IDEAS_TIMEOUT_MS (`aborted`)

@@ -38,7 +38,7 @@ The goal: ideas to start from, a fast rewrite of a brief typed by hand, and a pa
   - `ideas.ts`: Haiku, effort low, a tool `emit_ideas` with `{ ideas: [{ title, brief }] }`, 6 items, each brief 1 to 3 sentences in the site's language. The context is what the generator's `buildRequest` sends: project name, existing page titles, site context and target kind (`siteInput.ts` builds it in the editor). For replace or insert the ideas are about the selected section (its serialized summary, about 2,000 tokens). The output is checked: trimmed, capped, duplicates and existing page titles dropped, fewer than 3 usable ideas is `invalid_output`.
   - `enhance.ts`: Haiku text streaming. The system prompt keeps every fact, name, constraint and the language of the brief, and adds structure only: sections in order, audience, tone, the main call to action, and content per section. It never invents prices, addresses or claims. Plain text, at most about 150 words, capped at the 4,000 characters the generator accepts. Streamed back as Server-Sent Events (SSE) through `src/lib/ai/sse.ts`: `enhance:delta`, then `enhance:done` or `enhance:error`, then `usage`.
   - `staticIdeas.ts`: the curated fallback, 12 page types (landing page, pricing, about, contact, blog index, product launch, event, portfolio, restaurant menu, shop front, careers, FAQ), each with a page brief and a section brief. The dialog picks 6 by target mode.
-- Rate limits (`src/lib/ai/brief/rateLimit.ts`, built on `src/lib/ai/pageGen/rateLimit.ts`): ideas 20 and enhance 20 per user per 10 minutes, and one call of each in flight per user. Over the limit returns 429 with `retry-after`, as the generate route does. Usage goes through `logAiCall` and `recordUsage`.
+- Rate limits (`src/lib/ai/brief/rateLimit.ts`, built on `src/lib/ai/pageGen/rateLimit.ts`): ideas 20 and enhance 20 per user per 10 minutes, and one Enhance in flight per user. Over the limit returns 429 with `retry-after`, as the generate route does. Usage goes through `logAiCall` and `recordUsage`.
 
 ### Dialog
 
@@ -55,7 +55,8 @@ The goal: ideas to start from, a fast rewrite of a brief typed by hand, and a pa
 ### Decided while building pull request 1 (say so if you disagree)
 
 - **Stop restores the original brief** instead of keeping the partial rewrite: a half-written brief is worse than either version, and Enhance can simply be run again.
-- **One call in flight per user and helper**, besides the window limit, reusing the generator's limiter as is. A second click while one runs answers 429 with a plain "still running" message; the buttons are disabled meanwhile, so a person never sees it.
+- **One Enhance in flight per user**, besides the window limit, reusing the generator's limiter. A second call while one runs answers 429 with a plain "still running" message; the button is disabled meanwhile, so a person never sees it. Ideas count against the window only: switching the target quickly aborts one fetch and starts the next while the aborted call may still hold a slot on the server.
+- **An Enhance that hits the 60-second timeout reports `timeout`**, not the abort it surfaces as, so the dialog never says "stopped" when nobody pressed Stop.
 - **The tailored set waits once the row was touched**: the button then reads "Show ideas for this site" and shows it without a second call; the next press is "More ideas" with the shown titles excluded.
 - **The cache key is project, target kind and selected component**, so section ideas for one component never show for another target.
 - **The static ideas are English.** The tailored set follows the site language; translating the static set belongs to the editor's localisation, which does not exist yet.

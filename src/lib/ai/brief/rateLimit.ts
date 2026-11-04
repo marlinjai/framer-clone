@@ -1,8 +1,11 @@
 // src/lib/ai/brief/rateLimit.ts
 //
 // Per-user budgets of the two brief helpers, built on the page generator's
-// limiter (src/lib/ai/pageGen/rateLimit.ts): one call in flight per user and
-// helper, and at most 20 started per user in a sliding 10-minute window. Each
+// limiter (src/lib/ai/pageGen/rateLimit.ts): at most 20 started per user and
+// helper in a sliding 10-minute window, and for Enhance one in flight at a
+// time (its button is disabled while one runs). Ideas have no in-flight rule:
+// switching the target quickly aborts one fetch and starts the next, and the
+// aborted call may still hold its slot on the server for a moment. Each
 // call is one small Haiku request, so 20 is far above what a person clicking
 // "More ideas" or "Enhance" needs and still bounds a runaway script.
 //
@@ -18,8 +21,19 @@ export const BRIEF_RATE = {
 let _ideas: PageGenRateLimiter | null = null;
 let _enhance: PageGenRateLimiter | null = null;
 
+/** The window count only: the in-flight slot is given back at once. */
+function windowOnly(limiter: PageGenRateLimiter): PageGenRateLimiter {
+  return {
+    acquire(userId, now) {
+      const slot = limiter.acquire(userId, now);
+      if (slot.ok) slot.release(); // idempotent: the caller's release stays a no-op
+      return slot;
+    },
+  };
+}
+
 export function getIdeasRateLimiter(): PageGenRateLimiter {
-  if (!_ideas) _ideas = createPageGenRateLimiter(BRIEF_RATE);
+  if (!_ideas) _ideas = windowOnly(createPageGenRateLimiter(BRIEF_RATE));
   return _ideas;
 }
 

@@ -24,6 +24,7 @@
 //   401 -> no session / missing ANTHROPIC_API_KEY
 //   403 -> no active company / Sites not enabled / not permitted to edit
 //   429 -> an Enhance is already running for this user, or 20 in 10 minutes (retry-after)
+// A rewrite that takes longer than ENHANCE_TIMEOUT_MS ends in enhance:error `timeout`.
 //   503 -> auth-brain (`auth_unavailable`) or OpenFGA (`authz_unavailable`) down
 
 import { withAuthAvailability } from '@/lib/authBrainAvailability';
@@ -62,7 +63,8 @@ async function handlePOST(request: Request): Promise<Response> {
     let status: AiCallStatus = 'ok';
     let errorCode: string | undefined;
     try {
-      const signal = AbortSignal.any([sse.signal, request.signal, AbortSignal.timeout(ENHANCE_TIMEOUT_MS)]);
+      const timeout = AbortSignal.timeout(ENHANCE_TIMEOUT_MS);
+      const signal = AbortSignal.any([sse.signal, request.signal, timeout]);
       const outcome = await streamEnhance(body, {
         anthropic,
         signal,
@@ -72,9 +74,14 @@ async function handlePOST(request: Request): Promise<Response> {
       if (outcome.ok) {
         sse.send(ENHANCE_EVENTS.done, { text: outcome.text } satisfies EnhanceDone);
       } else {
-        errorCode = outcome.error.code;
-        status = logStatusFor(outcome.error.code);
-        sse.send(ENHANCE_EVENTS.error, outcome.error satisfies BriefErrorPayload);
+        // The timeout surfaces as an abort; it is not the person pressing Stop.
+        const error: BriefErrorPayload =
+          outcome.error.code === 'aborted' && timeout.aborted
+            ? { code: 'timeout', message: 'The rewrite took too long. Try again.' }
+            : outcome.error;
+        errorCode = error.code;
+        status = logStatusFor(error.code);
+        sse.send(ENHANCE_EVENTS.error, error);
       }
     } catch (err) {
       // streamEnhance reports its own failures; this is a bug guard so the

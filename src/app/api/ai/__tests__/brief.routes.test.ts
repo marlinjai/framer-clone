@@ -234,6 +234,18 @@ describe('POST /api/ai/page-ideas output', () => {
     expect((await res.json()).error.code).toBe('overloaded');
   });
 
+  it('overlapping idea calls (a quick target switch) are both answered: no in-flight rule for ideas', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const result = anthropicState.createResult;
+    anthropicState.createResult = gate.then(() => result);
+    const first = IDEAS(ideasReq());
+    const second = IDEAS(ideasReq({ targetKind: 'insert' }));
+    release();
+    const [a, b] = await Promise.all([first, second]);
+    expect([a.status, b.status]).toEqual([200, 200]);
+  });
+
   it('a provider rate limit is a 429 with retry-after', async () => {
     anthropicState.createError = Object.assign(new Error('slow'), { status: 429 });
     const res = await IDEAS(ideasReq());
