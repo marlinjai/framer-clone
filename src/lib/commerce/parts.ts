@@ -909,17 +909,18 @@ function newPartNode(
 
 /**
  * The props and bindings of the controls before parts, and the part each moves to:
- * the checkout's and the add to cart's label, the checkout's pay label, the cart's
- * empty message. A prop becomes the part's text, a binding the part's text binding.
+ * the checkout's and the add to cart's label, the cart's empty message. A prop
+ * becomes the part's text, a binding the part's text binding. A `dropped` prop
+ * leaves the control and goes nowhere.
  */
-const LEGACY: Readonly<Record<ShopControlKind, { props: Record<string, { role: string; text: (value: string) => string }>; bindings: Record<string, string> }>> = {
+const LEGACY: Readonly<
+  Record<ShopControlKind, { props: Record<string, { role: string; text: (value: string) => string }>; bindings: Record<string, string>; dropped?: readonly string[] }>
+> = {
   'checkout-button': {
-    props: {
-      label: { role: 'checkout.button-label', text: (value) => value },
-      // The old pay label leaves the control and goes nowhere: the pay wording is fixed.
-      payLabel: { role: '', text: () => '' },
-    },
+    props: { label: { role: 'checkout.button-label', text: (value) => value } },
     bindings: { label: 'checkout.button-label' },
+    // The old pay label: the pay wording is fixed, so it has no part to move to.
+    dropped: ['payLabel'],
   },
   'add-to-cart': {
     props: { label: { role: 'addToCart.button-label', text: (value) => value } },
@@ -936,7 +937,7 @@ function legacyTexts(kind: ShopControlKind, props: Record<string, unknown> | und
   const out: Record<string, string> = {};
   for (const [key, { role, text }] of Object.entries(LEGACY[kind].props)) {
     const value = props?.[key];
-    if (role && typeof value === 'string' && value.trim()) out[role] = text(value);
+    if (typeof value === 'string' && value.trim()) out[role] = text(value);
   }
   return out;
 }
@@ -1447,8 +1448,9 @@ function holdsKeptPart(node: ShopTreeNode): boolean {
  * Every part of a control's subtree as it must reach a page: its tag on the
  * allowlist, fixed text stored nowhere, a run time message's text stored nowhere,
  * a part kept in sight (and every wrapper between it and the control) with
- * nothing that hides it, a role used twice kept only by its first part, and no
- * node able to send anything. The same object when nothing changes.
+ * nothing that hides it, a role used twice kept only by its first part, no
+ * stored attribute its island owns on a button or an input (SHOP_RUNTIME_OWNED_PROPS),
+ * and no node able to send anything. The same object when nothing changes.
  */
 function enforceParts(input: ShopTreeNode): ShopTreeNode {
   const control = notImportant(controlInSight(notSending(input)));
@@ -1482,6 +1484,7 @@ function enforceParts(input: ShopTreeNode): ShopTreeNode {
       if (spec && role) {
         const tag = shopPartTag(role, next.type);
         if (tag !== next.type) next = { ...next, type: tag };
+        next = withoutRuntimeProps(next);
         if (spec.fixedText || spec.dynamicText || spec.onlyParts) next = withoutStoredText(next);
         // Nothing renames a fixed wording for assistive technology either.
         if (spec.keepVisible || spec.fixedText || spec.onlyParts) next = withoutProps(next, RENAMING_PROPS);
@@ -1640,6 +1643,25 @@ export function shopStyleLimit(node: { props?: unknown; children?: readonly unkn
   return undefined;
 }
 
+/**
+ * The attributes the island owns on a part's interactive element, by tag, in every
+ * spelling a stored node may carry: whether it can be pressed or typed into, and
+ * whether the keyboard reaches it. A stored copy would make a remove button that
+ * cannot be pressed or a quantity input that cannot be typed into, so none is
+ * stored (enforceParts) and the island draws none of the designer's
+ * (ShopPartElement), setting its own where it means something.
+ */
+export const SHOP_RUNTIME_OWNED_PROPS: Readonly<Record<string, readonly string[]>> = {
+  button: ['disabled', 'aria-disabled', 'tabIndex', 'tabindex'],
+  input: ['disabled', 'aria-disabled', 'tabIndex', 'tabindex', 'readOnly', 'readonly', 'max'],
+};
+
+/** A part without the stored attributes its island owns (SHOP_RUNTIME_OWNED_PROPS). */
+function withoutRuntimeProps(node: ShopTreeNode): ShopTreeNode {
+  const owned = typeof node.type === 'string' ? SHOP_RUNTIME_OWNED_PROPS[node.type.toLowerCase()] : undefined;
+  return owned ? withoutProps(node, owned) : node;
+}
+
 /** Form field tags: their value lives in the island's state, so they carry no stored `name`. */
 const FIELD_TAGS: ReadonlySet<string> = new Set(['input', 'select', 'textarea']);
 
@@ -1724,7 +1746,7 @@ export function normalizeShopControl<N extends object>(
   }
 
   // Legacy label props and bindings leave the control once their text lives in the parts.
-  const legacy = Object.keys(LEGACY[kind].props).filter((key) => root.props && key in root.props);
+  const legacy = [...Object.keys(LEGACY[kind].props), ...(LEGACY[kind].dropped ?? [])].filter((key) => root.props && key in root.props);
   if (legacy.length > 0) {
     const props = { ...(root.props ?? {}) };
     for (const key of legacy) delete props[key];
@@ -1735,7 +1757,8 @@ export function normalizeShopControl<N extends object>(
   if (legacyBound.length > 0) {
     // A control built just now carried its bindings into the new parts. One that
     // already had parts (an outside write, a page saved between versions) moves each
-    // to its part, unless the part is bound already: the binding is never lost.
+    // to its part when the part has no text binding of its own; when it has one, the
+    // part's own binding wins and the legacy one is dropped.
     if (existing.size > 0) {
       root = cloneTree(root);
       const byRole = partsByRole(root);
