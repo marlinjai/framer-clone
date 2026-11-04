@@ -14,7 +14,7 @@ import React from 'react';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import type { BindingScope } from '@/lib/bindings/resolver/scope';
 import { createScope } from '@/lib/bindings/resolver/scope';
-import { missingShopParts, normalizeShopControl, shopGuardCss, type ShopControlKind, type ShopLocale, type ShopTreeNode } from '@/lib/commerce/parts';
+import { missingShopParts, missingShopPartsKey, normalizeShopControl, shopGuardCss, type ShopControlKind, type ShopLocale, type ShopTreeNode } from '@/lib/commerce/parts';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { renderNodeChildren } from '@/lib/renderer/server/renderComponentNode';
 
@@ -32,10 +32,23 @@ export interface ShopControlContentProps {
 }
 
 export function ShopControlContent({ node, kind, locale, drawn, scope }: ShopControlContentProps) {
-  const fallback = React.useMemo(() => (drawn === undefined ? null : missingShopParts(node, locale, kind)), [node, drawn, locale, kind]);
+  // `drawn` is a new element on every render of the canvas and the Preview, so the
+  // memos read only whether the surface drew the children, never the element itself.
+  const ownDraw = drawn === undefined;
+  // On those surfaces the node is a live instance changed in place (a part deleted,
+  // moved), so its reference says nothing: the fallback is kept for as long as the
+  // parts the control holds stay the same (missingShopPartsKey).
+  const missingKey = ownDraw ? null : missingShopPartsKey(node, kind);
+  const nodeRef = React.useRef(node);
+  nodeRef.current = node;
+  const fallback = React.useMemo(
+    () => (missingKey === null ? null : missingShopParts(nodeRef.current, locale, kind)),
+    [missingKey, locale, kind],
+  );
+  // A published page hands the island a plain node built once (CommerceIsland), so its reference is the key.
   const own = React.useMemo(
-    () => (drawn === undefined ? normalizeShopControl(node as unknown as ShopTreeNode, locale, 'node', kind) : null),
-    [node, drawn, locale, kind],
+    () => (ownDraw ? normalizeShopControl(node as unknown as ShopTreeNode, locale, 'node', kind) : null),
+    [node, ownDraw, locale, kind],
   );
   const at = scope ?? createScope();
   // The platform's guard rule for the parts kept in sight comes first (shopGuardCss).

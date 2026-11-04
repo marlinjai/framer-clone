@@ -1878,16 +1878,7 @@ function childrenOf(node: ReadableNode): ReadableNode[] {
 export function missingShopParts(control: ReadableNode & { id?: unknown }, locale: ShopLocale, asKind?: ShopControlKind): ShopTreeNode[] {
   const kind = asKind ?? shopControlKindOf(control.props);
   if (!kind) return [];
-  const present = new Set<string>();
-  const walk = (node: ReadableNode) => {
-    for (const child of childrenOf(node)) {
-      if (shopControlKindOf(child.props)) continue;
-      const role = shopPartRoleOf(child.props);
-      if (role) present.add(role);
-      walk(child);
-    }
-  };
-  walk(control);
+  const present = presentShopPartRoles(control);
   const controlId = typeof control.id === 'string' && control.id ? control.id : `shop-${kind}`;
   const build = (spec: ShopPartSpec, parentId: string): ShopTreeNode => {
     const node = newPartNode(spec, controlId, parentId, locale, 'node');
@@ -1906,6 +1897,34 @@ export function missingShopParts(control: ReadableNode & { id?: unknown }, local
   };
   visit(SHOP_CONTROLS[kind].parts, true);
   return out;
+}
+
+/** The roles of the parts inside a control, not counting a control nested in it. */
+function presentShopPartRoles(control: ReadableNode): Set<string> {
+  const present = new Set<string>();
+  const walk = (node: ReadableNode) => {
+    for (const child of childrenOf(node)) {
+      if (shopControlKindOf(child.props)) continue;
+      const role = shopPartRoleOf(child.props);
+      if (role) present.add(role);
+      walk(child);
+    }
+  };
+  walk(control);
+  return present;
+}
+
+/**
+ * Everything missingShopParts reads from a control, as one string: its id, its kind
+ * and the roles of the parts it holds. Equal keys give equal results, so a surface
+ * that draws the control on every render (the canvas, the Preview, where the node
+ * is a live instance changed in place) can keep the result until the key changes.
+ */
+export function missingShopPartsKey(control: ReadableNode & { id?: unknown }, asKind?: ShopControlKind): string {
+  const kind = asKind ?? shopControlKindOf(control.props);
+  if (!kind) return '';
+  const controlId = typeof control.id === 'string' && control.id ? control.id : `shop-${kind}`;
+  return JSON.stringify([controlId, kind, [...presentShopPartRoles(control)].sort()]);
 }
 
 /** What the editor says when a delete would take a required part out of its control. */
