@@ -113,10 +113,11 @@ Folded in from the re-review of 86b2d472 (decided while building, say so if you 
   at once.
 - **A save attempt is idempotent.** The client names each attempt (`requestKey`, new for new
   content or a new version, reused on retry); the site row keeps the key of its last write
-  (`sites.last_write_key`, an additive nullable column, migration
-  `20261104000000_site_last_write_key`). A repeat of that write, still based on the version
-  just before it, gets the stored version back and writes nothing, instead of a false 409 after
-  a lost answer. It lives until the next write of the site; publish and erase clear it. A 2xx
+  (`sites.last_write_key`) together with the version that write produced
+  (`sites.last_write_version`, fifth review), two additive nullable columns in migration
+  `20261104000000_site_last_write_key`. A repeat of that write, while its key is still bound to
+  the current version, gets the stored version back and writes nothing, instead of a false 409
+  after a lost answer. It lives until the next write of the site; publish and erase clear it. A 2xx
   without a version is a 502 server error (retried with the same key), never a refusal.
 - **Calmer status:** only failures, the conflict and the first "Saved" after one are announced
   to screen readers (a separate polite region); only a problem fades in; the retry countdown
@@ -124,10 +125,12 @@ Folded in from the re-review of 86b2d472 (decided while building, say so if you 
 - **One serialisation per save cycle:** the comparison key is computed when the debounce fires
   and passed on to `isSaved` and `markServerVersion`.
 - **The attempt key is bound to content and version.** An edit during the backoff after a lost
-  answer is a new attempt with a new key, and it names the lost attempt (`previousRequestKey`):
-  when the stored write is that one (its key, the version just after `expectedVersion`), the
-  server writes the new content on top of it instead of a false 409 (third review). Someone
-  else's write, or more than one write ahead, stays a 409. Reusing the key for new content would
+  answer is a new attempt with a new key, and it names every lost attempt on the same base
+  (`previousRequestKeys`, at most 8; fifth review, it was one key): when the latest stored write
+  is one of them, its key still bound to the current version, the server writes the new content
+  on top of it instead of a false 409. Someone else's write stays a 409, and so does a stale key
+  after a writer that does not know it (an older container during a rolling deploy moves the
+  version and leaves the key, which unbinds it). Reusing the key for new content would
   mark it saved while the server holds the old content.
 - **Hiding the tab while editing text on the canvas** commits the text and keeps the inline
   edit open, with the focus where it was (changed in the fourth review; only Cmd+S ends it).
@@ -160,6 +163,27 @@ Folded in from the third review of 8bcce7b1 (decided while building, say so if y
   "Migration rollbacks".
 - **Cmd/Ctrl+S on the standalone preview** only keeps the browser dialog away (nothing to save
   there).
+
+Folded in from the fifth review of 812634de (approved; these close it, decided while building,
+say so if you disagree):
+
+- **Two lost answers in a row no longer end in a false 409.** The client keeps every lost
+  attempt on the base version since the last confirmed write (at most 8) and names them all;
+  the server accepts when the latest write is one of them. The guard is the key's binding to
+  the version it wrote (`last_write_version`), not `expectedVersion + 1`: during a rolling
+  deploy an older container moves the version without clearing the key, and the binding stops
+  that stale key from matching.
+- **A lost "Save mine over it" retries over the version the conflict reported**, by timer and by
+  Retry, never on the old known version.
+- **A successful Publish settles a lost save on the same base**: no false leave warning after it.
+- **Publish names the lost save keys too** when its settling retry failed again: the publish
+  route accepts `previousRequestKeys` (never a key of its own, publishing has no replay), and
+  the same binding guard applies, so a landed lost save is built on instead of being a conflict.
+- **Cmd+S on the overview never opens a conflict's dialog** (there is no status on screen for
+  it); the notice says "Changed elsewhere: go back to it to choose what to keep".
+- **After a 400** the next change gets one debounced attempt; refused again, it stays failed. Other
+  refusals (401, 403, 404, 413) still wait for Retry.
+- **The Details panel closes on Escape**, and the focus goes back to Details.
 
 Folded in from the fourth review of d38f636e (each reviewer probe ported as a failing test
 first, then fixed; decided while building, say so if you disagree):
@@ -230,7 +254,8 @@ Decided while building (say so if you disagree):
   503 `auth_unavailable` and `authz_unavailable`), with waits of 2 s, 5 s, 15 s, 30 s, then every
   60 s, for at most 10 minutes. Every other failure is a refusal that cannot pass by itself (401
   signed out, 403 no permission, 400 malformed or `version_required`, 404, 413 too large, another
-  409 such as `erased_since_load`): shown, and tried again only on Retry (or Cmd+S). For 401 this
+  409 such as `erased_since_load`): shown, and tried again only on Retry (or Cmd+S); after a 400
+  the next change gets one attempt as well (fifth review: the change may fix it). For 401 this
   differs slightly from decision 4 ("auth retried"): repeating a request every minute while
   signed out achieves nothing until the person signs in, and the message stays visible until
   then.
@@ -334,6 +359,13 @@ The four paths of the stateful flow standard (knowledge-base `standards/stateful
   generator's line in the top bar's words.
 - `src/components/__tests__/SiteVersionLock.test.tsx` keeps the version lock's cases, driven by
   an edit and Cmd+S; `DemoProjectSaving.test.tsx` the demo versus a real project.
+- Fifth review: the lost-answer chain end to end, the real controller against the real
+  `SiteRepository` with a one-row database stand-in (`autosave.lostAnswers.e2e.test.ts`: two
+  lost answers then the retry, newer content after two, a third-party write, a stale key after an
+  older container); the repository's key binding (latest key, chain, stale key, third party);
+  both routes taking `previousRequestKeys`; the controller's list and its cap, the lost "Save
+  mine over it", Publish settling and naming the keys, the 400 attempt; the overview's Cmd+S
+  with a conflict; Details on Escape.
 - Fourth review: the reviewer's probes P1 to P5 (an undo after a lost answer, a 401 between lost
   answers, one recovery attempt also for a 503, leaving during a request, Publish during the
   backoff) in `autosave.test.ts`; the cached unsaved check (`autosave.unsavedCache.test.ts`);
@@ -343,7 +375,7 @@ The four paths of the stateful flow standard (knowledge-base `standards/stateful
 - Third review: unmounting the editor with a dirty panel draft and with an open inline edit
   saves the text; ColorInput and DimensionInput as open drafts (Cmd+S and unmount), a field
   nobody typed in is none; the notice's countdown outside the live region; "Save mine as a new
-  project" ending the warning and the notice; `previousRequestKey` in the controller (an edit
+  project" ending the warning and the notice; the lost attempt's key in the controller (an edit
   during the backoff, a new version), the repository and the route;
   Publish refusing the key; recovery of 401 and stopped failures; the reload re-armed by a sign
   and not by time or after pagehide; the preview's Cmd+S block.
@@ -362,5 +394,6 @@ The four paths of the stateful flow standard (knowledge-base `standards/stateful
   browser warns; Cmd+S shows no browser dialog (also while typing on the canvas and in the
   panel); signed out in another tab, the status offers "Sign in again", Retry saves; Back from
   Preview after a few saves keeps the newest copy.
-- The migration `20261104000000_site_last_write_key` runs with the deploy (additive, one
-  nullable column).
+- The migration `20261104000000_site_last_write_key` runs with the deploy (additive, two
+  nullable columns: `last_write_key` and, since the fifth review, `last_write_version`; it was
+  never applied anywhere, so it was extended rather than followed by a second migration).
