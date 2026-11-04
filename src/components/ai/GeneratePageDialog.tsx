@@ -62,6 +62,8 @@ import {
   type TargetKind,
 } from '@/lib/ai/pageGen/editorBridge';
 import { ModelSlider } from '@/components/ai/ModelSlider';
+import { GeneratedSaveNote } from '@/components/ai/GeneratedSaveNote';
+import { existingAutosave } from '@/lib/projects/autosave';
 import { saveModelChoice } from '@/lib/ai/modelChoice';
 import {
   clearDraft,
@@ -230,6 +232,8 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
         const toSelect = shownPage && outcome.value.selectId ? findComponent(shownPage, outcome.value.selectId) : undefined;
         if (toSelect) editorUI.selectComponent(toSelect);
         clearDraft(projectId);
+        // A generated page or section is saved at once, not after the debounce.
+        void existingAutosave(project.id)?.saveNow();
         dispatch({
           type: 'applied',
           requestKey,
@@ -336,7 +340,8 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
                   ? 'The generation was undone.'
                   : `Added ${state.nodeCount} ${state.nodeCount === 1 ? 'component' : 'components'}${
                       state.record.kind === 'newPage' ? ' on a new page' : ''
-                    }. Save the project to keep it.`}
+                    }.`}
+                {!state.undone && <GeneratedSaveNote projectId={project?.id} demo={editorUI.isUnsavedDemo} />}
               </p>
               {!state.undone && <StockImageNote images={state.images} />}
               {state.warnings.length > 0 && !state.undone && (
