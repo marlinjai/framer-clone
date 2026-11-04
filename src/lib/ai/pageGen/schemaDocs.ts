@@ -51,9 +51,17 @@ export function buildSchemaDocs(): string {
     if (p.dataComponentKind && isShopControlKind(p.dataComponentKind)) {
       // Its button, steps and messages arrive as part nodes when it lands on the page
       // (src/lib/commerce/parts.ts): the generator writes the control alone.
+      const parts = `- shop control "${p.dataComponentKind}": the page adds its parts (buttons, fields, messages) as child nodes in the site language, which the user then styles. `;
       header.push(
-        `- shop control "${p.dataComponentKind}": the page adds its parts (buttons, fields, messages) as child nodes in the site language, which the user then styles. ` +
-          'Use it only when the brief clearly asks for it; never add children to it.',
+        p.dataComponentKind === 'variant-selector'
+          ? parts +
+              'Use it only when the brief clearly asks for it. Put the add to cart and any price bound to the variant ({{variant.price.*}}) INSIDE it, as its children: ' +
+              'they follow the visitor\'s choice only there. Never write its parts.'
+          : p.dataComponentKind === 'add-to-cart'
+            ? parts +
+              'Use it only when the brief clearly asks for it; never add children to it. On a product page with options, put it INSIDE the variant selector: ' +
+              'it adds the chosen variant only there (one written beside the selector is moved into it).'
+            : parts + 'Use it only when the brief clearly asks for it; never add children to it.',
       );
     } else if (p.dataComponentKind) {
       header.push(

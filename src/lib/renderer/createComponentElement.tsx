@@ -347,7 +347,7 @@ export function createComponentElement(
             renderNode={renderNode}
             hostType={hostType}
             hostProps={propsWithIdentity}
-            mode={mode}
+            surface={mode === 'editor' ? 'canvas' : 'live'}
           />,
         );
       }

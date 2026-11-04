@@ -164,7 +164,7 @@ describe('normalizeShopControl', () => {
   });
 
   it('leaves any other node alone', () => {
-    const plain: ShopTreeNode = { id: 'x', type: 'div', props: { 'data-component-kind': 'variant-selector' } };
+    const plain: ShopTreeNode = { id: 'x', type: 'div', props: { 'data-component-kind': 'product-detail' } };
     expect(normalizeShopControl(plain, 'en', 'node')).toBe(plain);
   });
 });

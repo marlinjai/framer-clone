@@ -142,7 +142,6 @@ function IslandBody({
           renderNode={renderNode}
           hostType={hostType}
           hostProps={hostProps}
-          mode="preview"
         />
       );
     case 'add-to-cart':

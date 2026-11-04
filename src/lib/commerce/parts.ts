@@ -21,6 +21,7 @@ import { localeOf } from '@/lib/forms/validation';
 import { formattedPlainText, isFormattedText } from '@/lib/renderer/textNode';
 import type { StoredRule } from '@/lib/rules/rules';
 import { HOVER_GATE } from '@/lib/rules/states';
+import { isPlacementType } from '@/lib/components/placement';
 
 /** The role marker on a part node, like `data-form-kind` on a form field. Never `data-component-kind`. */
 export const SHOP_PART_ATTR = 'data-shop-part';
@@ -38,9 +39,9 @@ export function shopLocaleOf(language: string | null | undefined): ShopLocale {
 type Localized = Readonly<Record<ShopLocale, string>>;
 
 /** The shop controls whose visible parts are nodes. */
-export type ShopControlKind = 'checkout-button' | 'add-to-cart' | 'cart-view';
+export type ShopControlKind = 'checkout-button' | 'add-to-cart' | 'cart-view' | 'variant-selector';
 
-export const SHOP_CONTROL_KINDS: readonly ShopControlKind[] = ['checkout-button', 'add-to-cart', 'cart-view'];
+export const SHOP_CONTROL_KINDS: readonly ShopControlKind[] = ['checkout-button', 'add-to-cart', 'cart-view', 'variant-selector'];
 
 export function isShopControlKind(kind: unknown): kind is ShopControlKind {
   return typeof kind === 'string' && (SHOP_CONTROL_KINDS as readonly string[]).includes(kind);
@@ -97,6 +98,8 @@ export interface ShopControlSpec {
   /** The preview states, in the picker's order; the first is the default. */
   states: readonly ShopPreviewState[];
   parts: readonly ShopPartSpec[];
+  /** A control given its parts for the first time puts them before its existing children. */
+  partsFirst?: true;
 }
 
 // ---------------------------------------------------------------------------
@@ -709,10 +712,157 @@ export const ADD_TO_CART_CONTROL_STYLE: Readonly<Record<string, unknown>> = {
   padding: '4px',
 };
 
+// ---------------------------------------------------------------------------
+// Variant selector
+// ---------------------------------------------------------------------------
+
+const VARIANT_VALUE_STYLE = {
+  padding: '4px 10px',
+  border: '1px solid #d1d5db',
+  borderRadius: '4px',
+  backgroundColor: '#ffffff',
+  color: '#111827',
+  cursor: 'pointer',
+  fontFamily: 'inherit',
+  fontSize: '14px',
+};
+
+/** A choice's Selected state: the choice is a radio (`aria-checked`). */
+export const VARIANT_SELECTED_SELECTOR = '&[aria-checked="true"]';
+
+const VARIANT_PARTS: readonly ShopPartSpec[] = [
+  {
+    role: 'variant.no-product',
+    label: 'No product here',
+    tag: 'span',
+    required: true,
+    text: { en: 'Variant selector: no product in scope', de: 'Variantenauswahl: hier ist kein Produkt' },
+    style: NOTE,
+  },
+  { role: 'variant.loading', label: 'Loading the options', tag: 'span', required: true, text: { en: 'Loading options...', de: 'Optionen werden geladen...' }, style: NOTE },
+  {
+    role: 'variant.unavailable',
+    label: 'Product not available',
+    tag: 'span',
+    required: true,
+    text: { en: 'This product is not available right now.', de: 'Dieses Produkt ist gerade nicht erhältlich.' },
+    style: { ...NOTE, color: '#b91c1c' },
+  },
+  {
+    role: 'variant.options',
+    label: 'Options',
+    tag: 'div',
+    required: true,
+    style: { display: 'flex', flexDirection: 'column', gap: '8px' },
+    children: [
+      {
+        role: 'variant.option',
+        label: 'Option (repeated per option)',
+        tag: 'div',
+        required: true,
+        repeat: true,
+        style: { display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' },
+        children: [
+          { role: 'variant.option-label', label: 'Option name', tag: 'span', required: true, requiredTokens: ['option'], text: { en: '{option}', de: '{option}' }, style: NOTE },
+          {
+            role: 'variant.value',
+            label: 'Choice (repeated per value)',
+            tag: 'button',
+            required: true,
+            repeat: true,
+            requiredTokens: ['value'],
+            text: { en: '{value}', de: '{value}' },
+            style: VARIANT_VALUE_STYLE,
+            rules: [
+              { id: 'hover', selector: '&:hover', at: [HOVER_GATE], style: { borderColor: '#111827' } },
+              { id: 'selected', selector: VARIANT_SELECTED_SELECTOR, style: { backgroundColor: '#111827', borderColor: '#111827', color: '#ffffff' } },
+              { id: 'disabled', selector: '&:disabled', style: { opacity: 0.4, cursor: 'not-allowed' } },
+            ],
+          },
+        ],
+      },
+    ],
+  },
+  { role: 'variant.checking', label: 'Checking availability', tag: 'span', required: true, text: { en: 'Checking availability...', de: 'Verfügbarkeit wird geprüft...' }, style: NOTE },
+  { role: 'variant.in-stock', label: 'In stock', tag: 'span', required: true, text: { en: 'In stock', de: 'Auf Lager' }, style: NOTE },
+  {
+    role: 'variant.low-stock',
+    label: 'Only a few left',
+    tag: 'span',
+    required: true,
+    requiredTokens: ['count'],
+    text: { en: 'Only {count} left', de: 'Nur noch {count} verfügbar' },
+    style: { ...NOTE, color: '#b45309' },
+  },
+  { role: 'variant.out-of-stock', label: 'Out of stock', tag: 'span', required: true, text: { en: 'Out of stock', de: 'Nicht vorrätig' }, style: { ...NOTE, color: '#b91c1c' } },
+  { role: 'variant.available', label: 'Available (no stock limit)', tag: 'span', required: true, text: { en: 'Available', de: 'Verfügbar' }, style: NOTE },
+  {
+    role: 'variant.availability-error',
+    label: 'Availability check failed',
+    tag: 'span',
+    required: true,
+    text: {
+      en: 'Availability could not be checked right now. Please try again later.',
+      de: 'Die Verfügbarkeit kann gerade nicht geprüft werden. Bitte versuchen Sie es später erneut.',
+    },
+    style: { ...NOTE, color: '#b91c1c' },
+  },
+  {
+    role: 'variant.price-error',
+    label: 'Price not available',
+    tag: 'span',
+    required: true,
+    text: {
+      en: 'The price of this choice could not be loaded right now, so it cannot be added to the cart yet.',
+      de: 'Der Preis dieser Auswahl kann gerade nicht geladen werden, daher kann sie noch nicht in den Warenkorb.',
+    },
+    style: { ...NOTE, color: '#b91c1c' },
+  },
+  {
+    role: 'variant.cleared',
+    label: 'A choice cleared by another',
+    tag: 'span',
+    required: true,
+    requiredTokens: ['cleared'],
+    text: {
+      en: '{cleared} cleared: no variant has {option} {value} with {clearedValue}.',
+      de: '{cleared} zurückgesetzt: keine Variante hat {option} {value} mit {clearedValue}.',
+    },
+    style: NOTE,
+  },
+];
+
+/** The variant selector's preview states: real states of the island, with a sample product on the canvas. */
+export const VARIANT_PREVIEW_STATES = [
+  { id: 'in-stock', label: 'A choice made, in stock' },
+  { id: 'nothing-chosen', label: 'Nothing chosen yet' },
+  { id: 'loading-options', label: 'Loading the options' },
+  { id: 'checking', label: 'Checking availability (loading)' },
+  { id: 'low-stock', label: 'Only a few left' },
+  { id: 'out-of-stock', label: 'Out of stock' },
+  { id: 'choice-unavailable', label: 'A choice no variant has (disabled)' },
+  { id: 'available', label: 'Available (no stock limit)' },
+  { id: 'error', label: 'Availability check failed' },
+  { id: 'price-error', label: 'Price could not be loaded' },
+  { id: 'choice-cleared', label: 'A choice cleared by another' },
+  { id: 'not-available', label: 'Product not available (no variants)' },
+  { id: 'no-product', label: 'No product on this page' },
+] as const satisfies readonly ShopPreviewState[];
+
+/** The default style of a variant selector. */
+export const VARIANT_CONTROL_STYLE: Readonly<Record<string, unknown>> = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '8px',
+  padding: '12px',
+};
+
 export const SHOP_CONTROLS: Readonly<Record<ShopControlKind, ShopControlSpec>> = {
   'checkout-button': { kind: 'checkout-button', states: CHECKOUT_PREVIEW_STATES, parts: CHECKOUT_PARTS },
   'add-to-cart': { kind: 'add-to-cart', states: ADD_TO_CART_PREVIEW_STATES, parts: ADD_TO_CART_PARTS },
   'cart-view': { kind: 'cart-view', states: CART_PREVIEW_STATES, parts: CART_PARTS },
+  // Its parts come before the designer's own children (an add to cart, a price bound to the variant).
+  'variant-selector': { kind: 'variant-selector', states: VARIANT_PREVIEW_STATES, parts: VARIANT_PARTS, partsFirst: true },
 };
 
 /** The default style of a checkout control: a column, so its steps stack. */
@@ -934,6 +1084,7 @@ const LEGACY: Readonly<
     props: { emptyContent: { role: 'cart.empty', text: (value) => value } },
     bindings: { emptyContent: 'cart.empty' },
   },
+  'variant-selector': { props: {}, bindings: {} },
 };
 
 /** Legacy props of a control that become part text. */
@@ -1493,8 +1644,10 @@ function enforceParts(input: ShopTreeNode): ShopTreeNode {
         if (tag !== next.type) next = { ...next, type: tag };
         next = withoutRuntimeProps(next);
         if (spec.fixedText || spec.dynamicText || spec.onlyParts) next = withoutStoredText(next);
-        // Nothing renames a fixed wording for assistive technology either.
-        if (spec.keepVisible || spec.fixedText || spec.onlyParts) next = withoutProps(next, RENAMING_PROPS);
+        // Nothing renames a fixed wording for assistive technology either, nor a part
+        // drawn once per item or one whose text holds the item's tokens: one stored
+        // name would give every copy (every choice, every option) the same name.
+        if (spec.keepVisible || spec.fixedText || spec.onlyParts || spec.repeat || spec.requiredTokens) next = withoutProps(next, RENAMING_PROPS);
         // A part kept in sight, or one whose text is the platform's, is its text only:
         // a node put inside it would add words to it or lay a cover over it.
         if ((spec.keepVisible || spec.fixedText) && next.children && next.children.length > 0) next = { ...next, children: [] };
@@ -1589,6 +1742,22 @@ function placedParts(control: ShopTreeNode, kind: ShopControlKind): ShopTreeNode
 export const MISPLACED_SHOP_PART_MESSAGE =
   'This part of the shop control has its own place in it: it can move among its siblings, not into another part.';
 
+/** What the editor says when a control, a button, a link or a field would go inside a part a visitor presses. */
+export const INTERACTIVE_SHOP_PART_MESSAGE =
+  'This part of the shop control is pressed or typed into by a visitor (a choice, a button, a field): a button, a link, a field or a shop control cannot go inside it, since a visitor could not press both. Put it beside the part instead.';
+
+/** What the editor says when a control, a button or a field would go inside a field's label (a link is fine there). */
+export const LABEL_SHOP_PART_MESSAGE =
+  'This part of the shop control is the label of a field a visitor fills in: a button, a field or a shop control cannot go inside it, since pressing the label would also reach the field. A link can (the terms). Put the rest beside the label instead.';
+
+/** Part tags a visitor presses or types into: nothing they can press goes inside one. */
+const INTERACTIVE_PART_TAGS: ReadonlySet<string> = new Set(['button', 'a', 'input', 'select', 'textarea']);
+/** Element tags a visitor can press or type into. */
+const INTERACTIVE_TAGS: ReadonlySet<string> = new Set(['button', 'a', 'input', 'select', 'textarea', 'label', 'details', 'summary', 'iframe']);
+
+/** Reads a reusable component's definition tree by its id, so a placement can be looked inside. */
+export type ShopDefinitionTree = (definitionId: string) => unknown;
+
 /** What the editor says when something would go inside a part that holds its own words only. */
 export const CLOSED_SHOP_PART_MESSAGE =
   'This part of the shop control holds its own words only (the pay button, the total and the notices a buyer must see): nothing else can go inside it. Put it beside the part instead.';
@@ -1601,13 +1770,26 @@ export const CLOSED_SHOP_PART_MESSAGE =
  * only; a part kept in sight or with fixed text takes nothing). The normaliser
  * would undo either on the next load, so the editor says so now.
  */
-export function shopPartRefusal(node: { props?: unknown; children?: readonly unknown[] }, ancestors: readonly { props?: unknown }[]): string | undefined {
+export function shopPartRefusal(
+  node: { type?: unknown; props?: unknown; children?: readonly unknown[] },
+  ancestors: readonly { props?: unknown }[],
+  /** Looks inside a placed reusable component; without it a placement counts as holding nothing pressable. */
+  definitionTree?: ShopDefinitionTree,
+): string | undefined {
   let nearest: string | undefined;
   let kind: ShopControlKind | undefined;
+  // Inside a part a visitor presses (a choice, a button) or types into, at any depth,
+  // or inside a field's label, which takes a link (the terms) but nothing else pressable.
+  let inInteractive = false;
+  let inLabel = false;
   for (const ancestor of ancestors) {
     kind = shopControlKindOf(ancestor.props);
     if (kind) break;
-    if (nearest === undefined) nearest = shopPartRoleOf(ancestor.props);
+    const ancestorRole = shopPartRoleOf(ancestor.props);
+    if (nearest === undefined) nearest = ancestorRole;
+    const ancestorSpec = ancestorRole ? shopPartSpec(ancestorRole) : undefined;
+    if (ancestorSpec && INTERACTIVE_PART_TAGS.has(ancestorSpec.tag)) inInteractive = true;
+    if (ancestorSpec?.tag === 'label') inLabel = true;
   }
   if (!kind) return undefined;
   const closed = nearest ? shopPartSpec(nearest) : undefined;
@@ -1615,6 +1797,11 @@ export function shopPartRefusal(node: { props?: unknown; children?: readonly unk
   // A closed part takes no control either: the normaliser would remove it.
   if (closed && (closed.keepVisible || closed.fixedText)) return CLOSED_SHOP_PART_MESSAGE;
   if (closed?.onlyParts && !(role && ownRoles(nearest!).has(role))) return CLOSED_SHOP_PART_MESSAGE;
+  // Nothing a visitor presses goes inside what they press: the inner one could not
+  // be pressed on its own, and a control there would nest one island in another.
+  // A part of the interactive part's own (its label, its input) is checked below.
+  if (inInteractive && pressable(node, false, definitionTree)) return INTERACTIVE_SHOP_PART_MESSAGE;
+  if (inLabel && pressable(node, true, definitionTree)) return LABEL_SHOP_PART_MESSAGE;
   if (shopControlKindOf(node.props)) return undefined;
   const misplaced = (candidate: { props?: unknown; children?: readonly unknown[] }): boolean => {
     if (shopControlKindOf(candidate.props)) return false;
@@ -1628,9 +1815,37 @@ export function shopPartRefusal(node: { props?: unknown; children?: readonly unk
   return misplaced(node) ? MISPLACED_SHOP_PART_MESSAGE : undefined;
 }
 
+type PressableNode = { type?: unknown; props?: unknown; children?: readonly unknown[] };
+
+/**
+ * Whether a node, or a plain node inside it, is something a visitor presses: a shop
+ * control or an interactive element, also inside a placed reusable component (its
+ * definition read through `definitionTree`). `linksAllowed`: inside a label, where a
+ * link is valid. Parts are placed by their spec.
+ */
+function pressable(node: PressableNode, linksAllowed: boolean, definitionTree?: ShopDefinitionTree, stack: readonly string[] = []): boolean {
+  if (shopControlKindOf(node.props)) return true;
+  if (shopPartRoleOf(node.props)) return false;
+  if (isPlacementType(node.type)) {
+    const component = isRecord(node.props) ? node.props.component : undefined;
+    if (typeof component !== 'string' || stack.includes(component) || !definitionTree) return false;
+    const tree = definitionTree(component);
+    return isRecord(tree) && pressable(tree as PressableNode, linksAllowed, definitionTree, [...stack, component]);
+  }
+  const tag = typeof node.type === 'string' ? node.type.toLowerCase() : '';
+  if (INTERACTIVE_TAGS.has(tag) && !(linksAllowed && tag === 'a')) return true;
+  if (!linksAllowed && isRecord(node.props) && typeof node.props.href === 'string') return true;
+  return (node.children ?? []).some((child) => isRecord(child) && pressable(child as PressableNode, linksAllowed, definitionTree, stack));
+}
+
 /** Whether the editor refuses to put `node` under `ancestors` inside a shop control (shopPartRefusal). */
-export function misplacesShopPart(node: { props?: unknown; children?: readonly unknown[] }, ancestors: readonly { props?: unknown }[]): boolean {
-  return shopPartRefusal(node, ancestors) !== undefined;
+export function misplacesShopPart(
+  node: { type?: unknown; props?: unknown; children?: readonly unknown[] },
+  ancestors: readonly { props?: unknown }[],
+  /** Looks inside a placed reusable component, as shopPartRefusal does. */
+  definitionTree?: ShopDefinitionTree,
+): boolean {
+  return shopPartRefusal(node, ancestors, definitionTree) !== undefined;
 }
 
 /**
@@ -1717,13 +1932,9 @@ export function normalizeShopControl<N extends object>(
   let root: ShopTreeNode = placed;
 
   if (existing.size === 0) {
-    root = {
-      ...placed,
-      children: [
-        ...(placed.children ?? []),
-        ...buildShopParts(kind, controlId, locale, shape, legacyTexts(kind, placed.props), legacyBindings(kind, placed.bindings), taken),
-      ],
-    };
+    const parts = buildShopParts(kind, controlId, locale, shape, legacyTexts(kind, placed.props), legacyBindings(kind, placed.bindings), taken);
+    const own = placed.children ?? [];
+    root = { ...placed, children: SHOP_CONTROLS[kind].partsFirst ? [...parts, ...own] : [...own, ...parts] };
     changed = true;
   } else {
     // Missing required parts, top down, so a part comes back before the parts inside it.

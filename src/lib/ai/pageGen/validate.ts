@@ -1260,7 +1260,9 @@ class Validator {
       this.warn(path, 'the Google map renders its own content, children dropped');
     } else if (rawChildren.length > 0 && ['form-field', 'form-submit'].includes(presetFormKind(presetDefaults) ?? '')) {
       this.warn(path, `form component "${preset?.id}" renders its own content, children dropped`);
-    } else if (preset?.dataComponentKind && rawChildren.length > 0) {
+    } else if (preset?.dataComponentKind && preset.dataComponentKind !== 'variant-selector' && rawChildren.length > 0) {
+      // The variant selector is the exception: the add to cart and a price bound to
+      // the variant go inside it (its parts are added after, before them).
       this.warn(path, `data component "${preset.id}" renders its own content, children dropped`);
     } else {
       if (text !== undefined && rawChildren.length > 0) {
@@ -1278,6 +1280,7 @@ class Validator {
         }
         children.push(...this.node(child, childPath, depth + 1, id, childNamespace(type, namespace)));
       });
+      this.addToCartIntoSelector(path, children);
     }
     if (isStickyCta(presetDefaults)) {
       // The bar draws its link from ctaLabel; text on the bar is that label.
@@ -1305,7 +1308,29 @@ class Validator {
     if (parentId) snapshot.parentId = parentId;
     return [snapshot];
   }
+
+  /**
+   * An add to cart finds the chosen variant only inside a variant selector, so one
+   * written beside a selector (its sibling, as a product page often lays them out)
+   * is moved into it: into the nearest selector before it, else the first after it.
+   */
+  addToCartIntoSelector(path: string, children: GeneratedNodeSnapshot[]): void {
+    const selectors = children.filter((child) => shopKindOf(child) === 'variant-selector');
+    if (selectors.length === 0) return;
+    for (let i = 0; i < children.length; i++) {
+      const child = children[i];
+      if (shopKindOf(child) !== 'add-to-cart') continue;
+      const before = children.slice(0, i).reverse().find((sibling) => shopKindOf(sibling) === 'variant-selector');
+      const selector = before ?? selectors[0];
+      children.splice(i, 1);
+      i -= 1;
+      selector.children.push({ ...child, parentId: selector.id });
+      this.warn(path, 'an add to cart beside a variant selector was moved into it: it finds the chosen variant only inside one');
+    }
+  }
 }
+
+const shopKindOf = (node: GeneratedNodeSnapshot): unknown => node.props['data-component-kind'];
 
 /** Count a subtree's nodes. */
 function countNodes(node: GeneratedNodeSnapshot): number {
@@ -1789,6 +1814,7 @@ export function validateGeneration(raw: unknown, ctx: ValidateContext): Validati
 
   const parsed: GeneratedNodeSnapshot[] = [];
   raw.nodes.forEach((n, i) => parsed.push(...v.node(n, `nodes[${i}]`, 1)));
+  v.addToCartIntoSelector('nodes', parsed);
   // Decided before any svg is dropped: a page past the limit was cut short, and must not pass for being under it.
   const overLimit = v.nodeCount > GENERATION_LIMITS.maxNodes;
   const placed = placeMapEmbeds(placeStickyCta(parsed, v, ctx.allowStickyCta === true), v, cleanMapText(ctx.mapAddress ?? undefined));

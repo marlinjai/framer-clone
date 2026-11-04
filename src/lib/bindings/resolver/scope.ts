@@ -71,7 +71,12 @@ export interface VariantFrame {
  *  sell. Track B stays server-authoritative for stock and writes. */
 export interface AvailabilityFrame {
   kind: 'availability';
-  availability: AvailabilityDTO;
+  /**
+   * Null while the availability of the variant this frame is for is not known yet
+   * (its check is running, or it failed): every `{{availability.*}}` then resolves
+   * to nothing, never to an outer frame's answer for another variant.
+   */
+  availability: AvailabilityDTO | null;
 }
 
 /** An input frame holds the values one placement passes to its definition.
@@ -168,6 +173,16 @@ export function pushAvailabilityFrame(
   return {
     frames: [...scope.frames, { kind: 'availability', availability }],
   };
+}
+
+/**
+ * Push an availability frame that knows nothing yet, returning a NEW immutable
+ * scope: inside it `{{availability.*}}` resolves to nothing, so an outer frame's
+ * answer (the product's default variant) never shows for a variant whose own
+ * check is still running or failed.
+ */
+export function pushPendingAvailabilityFrame(scope: BindingScope): BindingScope {
+  return { frames: [...scope.frames, { kind: 'availability', availability: null }] };
 }
 
 /** Push an input frame, returning a NEW immutable scope. Drives `{{input.*}}`. */

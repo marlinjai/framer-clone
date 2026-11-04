@@ -45,6 +45,9 @@ type AvailabilityState =
   | { status: 'ready'; availableQuantity: number; limited: boolean }
   | { status: 'error' };
 
+/** A check's answer, keyed by the variant it is for, so a previous choice's answer never shows. */
+type CheckedAvailability = { variantId: string } & ({ status: 'ready'; availableQuantity: number; limited: boolean } | { status: 'error' });
+
 export interface AddToCartButtonProps {
   node: ComponentInstance;
   /** Kept for dispatch-call parity; this control reads selection from context. */
@@ -77,7 +80,11 @@ function AddToCartLive({ node, scope, hostType = 'div', hostProps = {}, children
   // server-side render where no variant is selected yet) this is null and the
   // control degrades to its disabled no-selection state instead of throwing and
   // 500-ing the published page.
-  const variant = useOptionalSelectedVariant()?.variant ?? null;
+  const selected = useOptionalSelectedVariant();
+  const variant = selected?.variant ?? null;
+  // A variant selector that reads prices says whether the chosen variant's is known:
+  // none is added without one, and the button waits while it is read.
+  const priceStatus = variant ? selected?.price : undefined;
   const cart = useCart();
 
   const selectedVariantId = variant?.id ?? null;
@@ -85,29 +92,33 @@ function AddToCartLive({ node, scope, hostType = 'div', hostProps = {}, children
   // Advisory availability for the SELECTED variant, re-fetched read-only on
   // every selection change. Errors surface; they are never swallowed into a
   // silent "available".
-  const [availability, setAvailability] = React.useState<AvailabilityState>({ status: 'idle' });
+  const [checked, setChecked] = React.useState<CheckedAvailability | null>(null);
   React.useEffect(() => {
-    if (!selectedVariantId) {
-      setAvailability({ status: 'idle' });
-      return;
-    }
+    if (!selectedVariantId) return;
     let active = true;
-    setAvailability({ status: 'loading' });
     dataSource
       .getAvailability(selectedVariantId)
       .then((dto) => {
-        if (active) setAvailability({ status: 'ready', availableQuantity: dto.availableQuantity, limited: dto.limited });
+        if (active) setChecked({ variantId: selectedVariantId, status: 'ready', availableQuantity: dto.availableQuantity, limited: dto.limited });
       })
       .catch((err: unknown) => {
         if (!active) return;
         // The visitor reads the shop's sentence; the real reason is logged, never swallowed.
         console.error(`AddToCartButton: the availability of variant ${selectedVariantId} could not be checked`, err);
-        setAvailability({ status: 'error' });
+        setChecked({ variantId: selectedVariantId, status: 'error' });
       });
     return () => {
       active = false;
     };
   }, [dataSource, selectedVariantId]);
+  // Only the selected variant's answer counts: another's means its check is still running.
+  const availability: AvailabilityState = !selectedVariantId
+    ? { status: 'idle' }
+    : checked?.variantId !== selectedVariantId
+      ? { status: 'loading' }
+      : checked.status === 'ready'
+        ? { status: 'ready', availableQuantity: checked.availableQuantity, limited: checked.limited }
+        : { status: 'error' };
 
   // Route the advisory fetch through the shared resolver. A ready availability
   // is one row; an idle (no selection) state is the empty path; an error is the
@@ -140,7 +151,7 @@ function AddToCartLive({ node, scope, hostType = 'div', hostProps = {}, children
     // Guard mirrors the disable: never add when there is no resolved variant.
     // This is a client cart mutation plus a localStorage persist, NOT a server
     // write and NOT a stock reservation.
-    if (!variant) return;
+    if (!variant || priceStatus === 'loading' || priceStatus === 'missing') return;
     cart.add(variant.id, quantity);
   };
 
@@ -149,7 +160,8 @@ function AddToCartLive({ node, scope, hostType = 'div', hostProps = {}, children
   const runtime = addToCartRuntime({
     locale,
     hasVariant: !!variant,
-    checking: directive.kind === 'loading',
+    checking: directive.kind === 'loading' || priceStatus === 'loading',
+    unpriced: priceStatus === 'missing',
     content: directive.kind === 'content',
     soldOut,
     error: directive.kind === 'error',
@@ -170,8 +182,10 @@ function AddToCartLive({ node, scope, hostType = 'div', hostProps = {}, children
 interface AddToCartView {
   locale: ShopLocale;
   hasVariant: boolean;
-  /** The advisory availability is being read. */
+  /** The advisory availability (or the chosen variant's price) is being read. */
   checking: boolean;
+  /** The chosen variant's price could not be read, or it has none: it is not added. */
+  unpriced: boolean;
   /** The advisory availability has been read. */
   content: boolean;
   soldOut: boolean;
@@ -191,7 +205,7 @@ function addToCartRuntime(view: AddToCartView): ShopRuntime {
 }
 
 function addToCartPart(role: string, view: AddToCartView): ShopPartRender {
-  const disabled = !view.hasVariant || !view.content || view.soldOut;
+  const disabled = !view.hasVariant || !view.content || view.soldOut || view.checking || view.unpriced;
   switch (role) {
     case 'addToCart.button':
       return {
@@ -222,7 +236,7 @@ function addToCartPart(role: string, view: AddToCartView): ShopPartRender {
 
 /** The view the canvas shows for a preview state id. */
 export function sampleAddToCartView(id: string, locale: ShopLocale): AddToCartView {
-  const base: AddToCartView = { locale, hasVariant: true, checking: false, content: true, soldOut: false, error: false, onClick: null };
+  const base: AddToCartView = { locale, hasVariant: true, checking: false, unpriced: false, content: true, soldOut: false, error: false, onClick: null };
   switch (id) {
     case 'no-variant':
       return { ...base, hasVariant: false, content: false };
