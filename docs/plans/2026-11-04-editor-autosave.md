@@ -83,7 +83,11 @@ Decided while building (say so if you disagree):
   label; a click on Save still shows "Saved n pages".
 - **Publish holds autosave.** Publish waits for a save in flight, no save starts while it runs,
   and its success counts as saved. Without this the two requests of one tab would race on the
-  version lock and one would be refused by the other.
+  version lock and one would be refused by the other. A click on Save while Publish runs sends
+  nothing of its own (Publish writes the same copy); anything still unsaved afterwards is saved
+  by autosave, and a retry that came due meanwhile is armed again.
+- **"Load the newer version" switches autosave off for the rest of that page**, because the page
+  reloads (no other `beforeunload` handler in the editor can cancel it).
 - **Leaving the editor in the same tab saves a pending change at once** (the controller lives on
   per project, so coming back finds the same state). No save is attempted during unload itself:
   `fetch` with `keepalive` caps the body at 64 KB and a project can be megabytes; the warning
@@ -150,7 +154,8 @@ The four paths of the stateful flow standard (knowledge-base `standards/stateful
     the backoff, which grows and stays at its last step; 400, 401, 403, 404 and 413 never retry
     by themselves and a click tries again;
   - opening a project (also again in the same tab, renamed or with a newer server copy) sends
-    nothing; a generated page saves at once; Publish holds autosave; a refused Publish pauses it.
+    nothing; a generated page saves at once; Publish holds autosave; a retry that came due during
+    a failed Publish is armed again; a refused Publish pauses it.
 - `src/components/__tests__/EditorAutosave.test.tsx` (the UI): the label through Saved, Unsaved
   changes, Saving..., Saved with no request on open and no notice per autosave; a server error in
   the top bar and the retry; `beforeunload` while dirty or in flight and not when clean or after

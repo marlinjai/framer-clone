@@ -295,13 +295,7 @@ export class AutosaveController {
     if (result.kind === 'error') {
       this.dirtyHint = true;
       if (isPassingFailure(result.status)) {
-        const wait = AUTOSAVE_BACKOFF_MS[Math.min(this.attempts, AUTOSAVE_BACKOFF_MS.length - 1)];
-        this.attempts++;
-        if (this.retryTimer) clearTimeout(this.retryTimer);
-        this.retryTimer = setTimeout(() => {
-          this.retryTimer = undefined;
-          void this.run('now');
-        }, wait);
+        const wait = this.armRetry();
         this.setState({
           phase: 'retrying',
           message: `Not saved: ${result.message} Trying again in ${Math.round(wait / 1000)} s.`,
@@ -324,6 +318,18 @@ export class AutosaveController {
     } else {
       this.setState({ phase: this.dirtyHint ? 'unsaved' : 'saved' });
     }
+  }
+
+  /** Schedule the next retry of a passing failure; answers the wait. */
+  private armRetry(): number {
+    const wait = AUTOSAVE_BACKOFF_MS[Math.min(this.attempts, AUTOSAVE_BACKOFF_MS.length - 1)];
+    this.attempts++;
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = undefined;
+      void this.run('now');
+    }, wait);
+    return wait;
   }
 
   /** One trailing save for the changes made while the request was out. */
@@ -407,7 +413,13 @@ export class AutosaveController {
       this.attempts = 0;
       this.dirtyHint = false;
       this.setState({ phase: 'saved' });
-    } else if (this.dirtyHint && !this.paused() && this.state.phase !== 'retrying') {
+    } else if (this.state.phase === 'retrying') {
+      // A retry that came due while the other write ran was skipped: arm it again.
+      if (!this.retryTimer) {
+        const wait = this.armRetry();
+        this.setState({ ...this.state, retryAt: Date.now() + wait });
+      }
+    } else if (this.dirtyHint && !this.paused()) {
       this.setState({ phase: 'unsaved' });
       this.schedule();
     }

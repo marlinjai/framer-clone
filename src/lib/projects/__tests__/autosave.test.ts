@@ -417,6 +417,24 @@ describe('opening, generation and Publish', () => {
     expect(autosave.getState().phase).toBe('saved');
   });
 
+  it('a retry that came due during a failed Publish is armed again, not stranded', async () => {
+    const { project, autosave } = openAndWatch(3);
+    edit(project, 'mine');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    await calls[0].answer(failure(500));
+    expect(autosave.getState().phase).toBe('retrying');
+    // Publish runs across the retry's due time and fails (nothing marked saved).
+    await autosave.exclusive(async () => {
+      await advance(AUTOSAVE_BACKOFF_MS[0] * 2);
+    });
+    expect(calls).toHaveLength(1);
+    expect(autosave.getState().phase).toBe('retrying');
+    await advance(AUTOSAVE_BACKOFF_MS[1]);
+    expect(calls).toHaveLength(2);
+    await calls[1].answer(ok(4));
+    expect(autosave.getState().phase).toBe('saved');
+  });
+
   it('a Publish refused by the version lock pauses autosave quietly', async () => {
     const { project, autosave } = openAndWatch(3);
     edit(project, 'mine');
