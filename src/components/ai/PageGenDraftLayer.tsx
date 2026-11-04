@@ -120,7 +120,7 @@ export function draftBandText(phase: PageGenDraftStore['phase'], drawn: number):
  * the page's own selectors). Static text.
  */
 export function DraftStyles() {
-  return <style data-fc-pagegen-draft="">{DRAFT_CSS}</style>;
+  return <style data-pagegen-draft-styles="">{DRAFT_CSS}</style>;
 }
 
 export interface DraftSectionsProps {

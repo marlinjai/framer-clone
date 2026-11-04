@@ -186,7 +186,7 @@ describe('the draft on the canvas', () => {
 
   it('motion: a 200ms ease-out fade and 8px rise, none with reduced motion, no shimmer', () => {
     const { container: dom } = render(<DraftStyles />);
-    const css = dom.querySelector('style[data-fc-pagegen-draft]')!.textContent!;
+    const css = dom.querySelector('style[data-pagegen-draft-styles]')!.textContent!;
     expect(css).toContain('200ms ease-out');
     expect(css).toContain('translateY(8px)');
     expect(css).toMatch(/prefers-reduced-motion: reduce\)\s*\{[^}]*animation: none/);
