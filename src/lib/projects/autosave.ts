@@ -199,6 +199,8 @@ export class AutosaveController {
   private attempts = 0;
   /** Publish (or another writer of this tab) is writing: autosave waits. */
   private held = 0;
+  /** Settles when the latest queued exclusive write is done. */
+  private exclusiveTail: Promise<void> = Promise.resolve();
   /** The page is being reloaded on purpose ("Load the newer version"). */
   private discarding = false;
 
@@ -734,6 +736,24 @@ export class AutosaveController {
    * Publish counts as a save: a success resolves a pause or a pending retry.
    */
   async exclusive<T>(write: () => Promise<T>): Promise<T> {
+    // One exclusive write at a time: a second Publish waits for the first, so it
+    // builds on the version the first produced instead of meeting it as someone
+    // else's change (both would send the same expectedVersion).
+    const previous = this.exclusiveTail;
+    let release!: () => void;
+    this.exclusiveTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    try {
+      await previous;
+      return await this.runExclusive(write);
+    } finally {
+      release();
+    }
+  }
+
+  private async runExclusive<T>(write: () => Promise<T>): Promise<T> {
+    let landed = false;
     if (this.held === 0) this.beforeHold = this.state;
     this.held++;
     this.clearDebounce();
@@ -762,6 +782,7 @@ export class AutosaveController {
         // The other write landed (it moved the known version): it settles any
         // lost save on the old base, which it built on or replaced.
         if (knownServerVersion(this.projectId) !== versionBefore) {
+          landed = true;
           this.unconfirmed = undefined;
           this.overPending = undefined;
         }
@@ -771,7 +792,7 @@ export class AutosaveController {
       if (this.held === 0) {
         if (this.state.phase === 'publishing') this.setState(this.beforeHold ?? { phase: 'unsaved' });
         this.beforeHold = undefined;
-        this.afterOtherWrite();
+        this.afterOtherWrite(landed);
         this.maybeRelease();
       }
     }
@@ -784,7 +805,7 @@ export class AutosaveController {
     this.setState({ phase: 'conflict', currentVersion, dialogOpen: false, retrying: false });
   }
 
-  private afterOtherWrite() {
+  private afterOtherWrite(landed: boolean) {
     const project = this.project;
     if (!project || !isAlive(project)) return;
     const saved = isSaved(this.projectId, getSnapshot(project) as ProjectContent);
@@ -802,6 +823,16 @@ export class AutosaveController {
         const wait = this.armRetry();
         this.setState({ ...this.state, retryAt: Date.now() + wait });
       }
+    } else if (landed && !this.unconfirmed && !this.discarding) {
+      // The other write succeeded (it moved the known version) but an edit made
+      // meanwhile is still unsaved: the pause it resolves (a conflict, a failure)
+      // is over, so autosave picks the remaining edit up.
+      this.clearTimers();
+      this.attempts = 0;
+      this.failingSince = undefined;
+      this.dirtyHint = true;
+      this.setState({ phase: 'unsaved' });
+      this.schedule();
     } else if (this.dirtyHint && !this.paused()) {
       this.setState({ phase: 'unsaved' });
       this.schedule();

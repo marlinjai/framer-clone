@@ -1305,3 +1305,44 @@ describe('the delta review of 2026-11-05', () => {
     expect(last.options.previousRequestKeys).toBeUndefined();
   });
 });
+
+
+describe('the sixth review of 2026-11-05', () => {
+  it('a second Publish waits for the first, then writes on the version the first produced', async () => {
+    const { project, autosave } = openAndWatch(3);
+    const bases: Array<number | undefined> = [];
+    let releaseFirst!: () => void;
+    const first = autosave.exclusive(async () => {
+      bases.push(knownServerVersion(project.id));
+      await new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      markServerVersion(project.id, getSnapshot(project) as ProjectContent, 4);
+    });
+    const second = autosave.exclusive(async () => {
+      bases.push(knownServerVersion(project.id));
+    });
+    await advance(0);
+    expect(bases).toEqual([3]); // the second has not started
+    releaseFirst();
+    await first;
+    await second;
+    expect(bases).toEqual([3, 4]);
+  });
+
+  it('a successful Publish resumes a paused autosave when an edit arrived meanwhile', async () => {
+    const { project, autosave } = openAndWatch(3);
+    edit(project, 'first');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    await calls[0].answer(conflict(8));
+    expect(autosave.getState().phase).toBe('conflict');
+    await autosave.exclusive(async () => {
+      markServerVersion(project.id, getSnapshot(project) as ProjectContent, 9);
+      edit(project, 'typed during publish');
+    });
+    expect(autosave.getState().phase).toBe('unsaved');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    expect(calls).toHaveLength(2);
+    expect(calls[1].expectedVersion).toBe(9);
+  });
+});

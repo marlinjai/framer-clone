@@ -82,8 +82,11 @@ const PublishButton = observer(() => {
       });
       return;
     }
-    if (!skipChecks) {
-      const check = checkBeforePublish(
+    // The legal check reads the working copy as it is now. It runs again inside
+    // `write`, on the snapshot that is sent, because an edit made while a save was
+    // in flight can add an issue after this first run (the publish route does not check).
+    const runCheck = () =>
+      checkBeforePublish(
         project.site.business,
         project.pagesArray.map((p) => ({
           id: p.id,
@@ -93,6 +96,8 @@ const PublishButton = observer(() => {
         })),
         { definitions: project.definitions, refused: project.refusedComponents },
       );
+    if (!skipChecks) {
+      const check = runCheck();
       if (hasPublishIssues(check)) {
         setState({ kind: 'confirm', check });
         return;
@@ -106,6 +111,10 @@ const PublishButton = observer(() => {
     // one writer from this tab. The snapshot is taken after that wait.
     const autosave = existingAutosave(project.id);
     const write = async () => {
+      if (!skipChecks) {
+        const recheck = runCheck();
+        if (hasPublishIssues(recheck)) return { recheck };
+      }
       const snapshot = getSnapshot(project);
       // The edits refused up to this snapshot are the ones this publish leaves out.
       const acknowledged = [...project.refusedComponents];
@@ -130,7 +139,13 @@ const PublishButton = observer(() => {
       return { result, acknowledged };
     };
     try {
-      const { result, acknowledged } = autosave ? await autosave.exclusive(write) : await write();
+      const outcome = autosave ? await autosave.exclusive(write) : await write();
+      if (outcome.recheck) {
+        // An edit during the wait added an issue: nothing was sent, ask first.
+        setState({ kind: 'confirm', check: outcome.recheck });
+        return;
+      }
+      const { result, acknowledged } = outcome;
       if (result.kind === 'conflict') {
         setState({ kind: 'conflict', currentVersion: result.currentVersion, retrying: false });
         return;

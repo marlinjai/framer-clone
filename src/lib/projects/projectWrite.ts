@@ -19,6 +19,13 @@ export type ProjectWriteResult =
 /** Browsers refuse a `keepalive` request whose body is larger than 64 KB; stay under it. */
 export const KEEPALIVE_BODY_MAX_BYTES = 60 * 1024;
 
+/**
+ * How long a save may take before it counts as a network failure (and enters
+ * autosave's retry backoff). Only the save has a deadline: aborting a publish
+ * client-side could hide a write the server already committed.
+ */
+export const SAVE_TIMEOUT_MS = 30_000;
+
 export interface ProjectWriteOptions {
   /** Names this attempt (save only): a retry of the same content reuses it. */
   requestKey?: string;
@@ -59,8 +66,12 @@ export async function postProjectWrite(
       headers: { 'content-type': 'application/json' },
       body,
       ...(keepalive ? { keepalive: true } : {}),
+      ...(url === '/api/projects/save' ? { signal: AbortSignal.timeout(SAVE_TIMEOUT_MS) } : {}),
     });
   } catch (err) {
+    if (err instanceof Error && err.name === 'TimeoutError') {
+      return { kind: 'error', message: `${failedLabel}: the server did not answer in time.` };
+    }
     return { kind: 'error', message: err instanceof Error ? err.message : `Network error: ${failedLabel}.` };
   }
   const payload: unknown = await res.json().catch(() => null);
