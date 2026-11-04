@@ -33,6 +33,20 @@ export interface SelectionState {
   variant: ProductVariantDTO | null;
   /** Pick a value for one option axis. Pure client state mutation. */
   setOptionValue(optionId: string, valueId: string): void;
+  /** The last pick, when it cleared earlier choices no variant combines with it (to say so); else null. */
+  cleared?: ClearedChoices | null;
+  /**
+   * Whether the selected variant's price is known: 'loading' while it is read,
+   * 'missing' when it failed or the variant has none. An add to cart does not add a
+   * variant without a known price. Absent where no selector reads prices.
+   */
+  price?: 'loading' | 'ready' | 'missing';
+}
+
+/** A pick and the earlier choices it cleared (optionId and valueId each). */
+export interface ClearedChoices {
+  pick: { optionId: string; valueId: string };
+  cleared: { optionId: string; valueId: string }[];
 }
 
 /**
@@ -143,6 +157,8 @@ export function selectValue(
   optionId: string,
   valueId: string,
 ): Record<string, string> {
+  // A value no variant has is no choice: the selection stays as it was.
+  if (!isValueSelectable(variants, optionId, valueId)) return selection;
   const next: Record<string, string> = { [optionId]: valueId };
   const axes = [...options.map((option) => option.id), ...Object.keys(selection)];
   for (const axisId of axes) {
@@ -163,12 +179,21 @@ export function useVariantSelection(
   product: ProductDTO,
   variants: ProductVariantDTO[],
 ): SelectionState {
-  const [selection, setSelection] = useState<Record<string, string>>({});
+  const [state, setState] = useState<{ selection: Record<string, string>; cleared: ClearedChoices | null }>({ selection: {}, cleared: null });
+  const { selection, cleared } = state;
 
-  // A pick that no variant combines with an earlier choice clears that choice (selectValue).
+  // A pick that no variant combines with an earlier choice clears that choice
+  // (selectValue), and the clearing is kept so the selector can say so.
   const setOptionValue = useCallback(
     (optionId: string, valueId: string) => {
-      setSelection((prev) => selectValue(product.options, variants, prev, optionId, valueId));
+      setState((prev) => {
+        const next = selectValue(product.options, variants, prev.selection, optionId, valueId);
+        if (next === prev.selection) return prev;
+        const gone = Object.entries(prev.selection)
+          .filter(([axisId]) => axisId !== optionId && !(axisId in next))
+          .map(([axisId, axisValueId]) => ({ optionId: axisId, valueId: axisValueId }));
+        return { selection: next, cleared: gone.length > 0 ? { pick: { optionId, valueId }, cleared: gone } : null };
+      });
     },
     [product.options, variants],
   );
@@ -179,7 +204,7 @@ export function useVariantSelection(
   );
 
   return useMemo(
-    () => ({ selection, variant, setOptionValue }),
-    [selection, variant, setOptionValue],
+    () => ({ selection, variant, setOptionValue, cleared }),
+    [selection, variant, setOptionValue, cleared],
   );
 }

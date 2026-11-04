@@ -21,6 +21,7 @@ import { localeOf } from '@/lib/forms/validation';
 import { formattedPlainText, isFormattedText } from '@/lib/renderer/textNode';
 import type { StoredRule } from '@/lib/rules/rules';
 import { HOVER_GATE } from '@/lib/rules/states';
+import { isPlacementType } from '@/lib/components/placement';
 
 /** The role marker on a part node, like `data-form-kind` on a form field. Never `data-component-kind`. */
 export const SHOP_PART_ATTR = 'data-shop-part';
@@ -726,13 +727,8 @@ const VARIANT_VALUE_STYLE = {
   fontSize: '14px',
 };
 
-/**
- * A choice's Selected state: the choice is a radio (`aria-checked`). A page saved
- * when it was a toggle button carries the old selector, which the normaliser
- * rewrites (VARIANT_LEGACY_SELECTED_SELECTOR).
- */
+/** A choice's Selected state: the choice is a radio (`aria-checked`). */
 export const VARIANT_SELECTED_SELECTOR = '&[aria-checked="true"]';
-const VARIANT_LEGACY_SELECTED_SELECTOR = '&[aria-pressed="true"]';
 
 const VARIANT_PARTS: readonly ShopPartSpec[] = [
   {
@@ -811,6 +807,29 @@ const VARIANT_PARTS: readonly ShopPartSpec[] = [
     },
     style: { ...NOTE, color: '#b91c1c' },
   },
+  {
+    role: 'variant.price-error',
+    label: 'Price not available',
+    tag: 'span',
+    required: true,
+    text: {
+      en: 'The price of this choice could not be loaded right now, so it cannot be added to the cart yet.',
+      de: 'Der Preis dieser Auswahl kann gerade nicht geladen werden, daher kann sie noch nicht in den Warenkorb.',
+    },
+    style: { ...NOTE, color: '#b91c1c' },
+  },
+  {
+    role: 'variant.cleared',
+    label: 'A choice cleared by another',
+    tag: 'span',
+    required: true,
+    requiredTokens: ['cleared'],
+    text: {
+      en: '{cleared} cleared: no variant has {option} {value} in {clearedValue}.',
+      de: '{cleared} zurückgesetzt: keine Variante hat {option} {value} in {clearedValue}.',
+    },
+    style: NOTE,
+  },
 ];
 
 /** The variant selector's preview states: real states of the island, with a sample product on the canvas. */
@@ -824,6 +843,8 @@ export const VARIANT_PREVIEW_STATES = [
   { id: 'choice-unavailable', label: 'A choice no variant has (disabled)' },
   { id: 'available', label: 'Available (no stock limit)' },
   { id: 'error', label: 'Availability check failed' },
+  { id: 'price-error', label: 'Price could not be loaded' },
+  { id: 'choice-cleared', label: 'A choice cleared by another' },
   { id: 'not-available', label: 'Product not available (no variants)' },
   { id: 'no-product', label: 'No product on this page' },
 ] as const satisfies readonly ShopPreviewState[];
@@ -1627,7 +1648,6 @@ function enforceParts(input: ShopTreeNode): ShopTreeNode {
         // drawn once per item or one whose text holds the item's tokens: one stored
         // name would give every copy (every choice, every option) the same name.
         if (spec.keepVisible || spec.fixedText || spec.onlyParts || spec.repeat || spec.requiredTokens) next = withoutProps(next, RENAMING_PROPS);
-        if (role === 'variant.value') next = withCurrentSelectedRule(next);
         // A part kept in sight, or one whose text is the platform's, is its text only:
         // a node put inside it would add words to it or lay a cover over it.
         if ((spec.keepVisible || spec.fixedText) && next.children && next.children.length > 0) next = { ...next, children: [] };
@@ -1641,22 +1661,6 @@ function enforceParts(input: ShopTreeNode): ShopTreeNode {
     return changed ? { ...node, children } : node;
   };
   return visit(control, false);
-}
-
-/**
- * A choice whose Selected rule still addresses the toggle button it once was
- * (`aria-pressed`), rewritten to the radio it is now (`aria-checked`). The same
- * object when no rule needs it, so a second pass changes nothing.
- */
-function withCurrentSelectedRule(node: ShopTreeNode): ShopTreeNode {
-  const rules = node.props?.rules;
-  if (!Array.isArray(rules)) return node;
-  const legacy = (rule: unknown) => isRecord(rule) && typeof rule.selector === 'string' && rule.selector.includes(VARIANT_LEGACY_SELECTED_SELECTOR);
-  if (!rules.some(legacy)) return node;
-  const next = rules.map((rule) =>
-    legacy(rule) ? { ...(rule as Record<string, unknown>), selector: (rule as { selector: string }).selector.split(VARIANT_LEGACY_SELECTED_SELECTOR).join(VARIANT_SELECTED_SELECTOR) } : rule,
-  );
-  return { ...node, props: { ...node.props, rules: next } };
 }
 
 /**
@@ -1742,10 +1746,17 @@ export const MISPLACED_SHOP_PART_MESSAGE =
 export const INTERACTIVE_SHOP_PART_MESSAGE =
   'This part of the shop control is pressed or typed into by a visitor (a choice, a button, a field): a button, a link, a field or a shop control cannot go inside it, since a visitor could not press both. Put it beside the part instead.';
 
+/** What the editor says when a control, a button or a field would go inside a field's label (a link is fine there). */
+export const LABEL_SHOP_PART_MESSAGE =
+  'This part of the shop control is the label of a field a visitor fills in: a button, a field or a shop control cannot go inside it, since pressing the label would also reach the field. A link can (the terms). Put the rest beside the label instead.';
+
 /** Part tags a visitor presses or types into: nothing they can press goes inside one. */
-const INTERACTIVE_PART_TAGS: ReadonlySet<string> = new Set(['button', 'a', 'label', 'input', 'select', 'textarea']);
+const INTERACTIVE_PART_TAGS: ReadonlySet<string> = new Set(['button', 'a', 'input', 'select', 'textarea']);
 /** Element tags a visitor can press or type into. */
 const INTERACTIVE_TAGS: ReadonlySet<string> = new Set(['button', 'a', 'input', 'select', 'textarea', 'label', 'details', 'summary', 'iframe']);
+
+/** Reads a reusable component's definition tree by its id, so a placement can be looked inside. */
+export type ShopDefinitionTree = (definitionId: string) => unknown;
 
 /** What the editor says when something would go inside a part that holds its own words only. */
 export const CLOSED_SHOP_PART_MESSAGE =
@@ -1759,11 +1770,18 @@ export const CLOSED_SHOP_PART_MESSAGE =
  * only; a part kept in sight or with fixed text takes nothing). The normaliser
  * would undo either on the next load, so the editor says so now.
  */
-export function shopPartRefusal(node: { type?: unknown; props?: unknown; children?: readonly unknown[] }, ancestors: readonly { props?: unknown }[]): string | undefined {
+export function shopPartRefusal(
+  node: { type?: unknown; props?: unknown; children?: readonly unknown[] },
+  ancestors: readonly { props?: unknown }[],
+  /** Looks inside a placed reusable component; without it a placement counts as holding nothing pressable. */
+  definitionTree?: ShopDefinitionTree,
+): string | undefined {
   let nearest: string | undefined;
   let kind: ShopControlKind | undefined;
-  // Inside a part a visitor presses (a choice, a button) or types into, at any depth.
+  // Inside a part a visitor presses (a choice, a button) or types into, at any depth,
+  // or inside a field's label, which takes a link (the terms) but nothing else pressable.
   let inInteractive = false;
+  let inLabel = false;
   for (const ancestor of ancestors) {
     kind = shopControlKindOf(ancestor.props);
     if (kind) break;
@@ -1771,6 +1789,7 @@ export function shopPartRefusal(node: { type?: unknown; props?: unknown; childre
     if (nearest === undefined) nearest = ancestorRole;
     const ancestorSpec = ancestorRole ? shopPartSpec(ancestorRole) : undefined;
     if (ancestorSpec && INTERACTIVE_PART_TAGS.has(ancestorSpec.tag)) inInteractive = true;
+    if (ancestorSpec?.tag === 'label') inLabel = true;
   }
   if (!kind) return undefined;
   const closed = nearest ? shopPartSpec(nearest) : undefined;
@@ -1781,7 +1800,8 @@ export function shopPartRefusal(node: { type?: unknown; props?: unknown; childre
   // Nothing a visitor presses goes inside what they press: the inner one could not
   // be pressed on its own, and a control there would nest one island in another.
   // A part of the interactive part's own (its label, its input) is checked below.
-  if (inInteractive && pressable(node)) return INTERACTIVE_SHOP_PART_MESSAGE;
+  if (inInteractive && pressable(node, false, definitionTree)) return INTERACTIVE_SHOP_PART_MESSAGE;
+  if (inLabel && pressable(node, true, definitionTree)) return LABEL_SHOP_PART_MESSAGE;
   if (shopControlKindOf(node.props)) return undefined;
   const misplaced = (candidate: { props?: unknown; children?: readonly unknown[] }): boolean => {
     if (shopControlKindOf(candidate.props)) return false;
@@ -1795,13 +1815,27 @@ export function shopPartRefusal(node: { type?: unknown; props?: unknown; childre
   return misplaced(node) ? MISPLACED_SHOP_PART_MESSAGE : undefined;
 }
 
-/** Whether a node, or a plain node inside it, is something a visitor presses: a shop control or an interactive element. Parts are placed by their spec. */
-function pressable(node: { type?: unknown; props?: unknown; children?: readonly unknown[] }): boolean {
+type PressableNode = { type?: unknown; props?: unknown; children?: readonly unknown[] };
+
+/**
+ * Whether a node, or a plain node inside it, is something a visitor presses: a shop
+ * control or an interactive element, also inside a placed reusable component (its
+ * definition read through `definitionTree`). `linksAllowed`: inside a label, where a
+ * link is valid. Parts are placed by their spec.
+ */
+function pressable(node: PressableNode, linksAllowed: boolean, definitionTree?: ShopDefinitionTree, stack: readonly string[] = []): boolean {
   if (shopControlKindOf(node.props)) return true;
   if (shopPartRoleOf(node.props)) return false;
-  if (typeof node.type === 'string' && INTERACTIVE_TAGS.has(node.type.toLowerCase())) return true;
-  if (isRecord(node.props) && (typeof node.props.href === 'string')) return true;
-  return (node.children ?? []).some((child) => isRecord(child) && pressable(child as { type?: unknown; props?: unknown; children?: readonly unknown[] }));
+  if (isPlacementType(node.type)) {
+    const component = isRecord(node.props) ? node.props.component : undefined;
+    if (typeof component !== 'string' || stack.includes(component) || !definitionTree) return false;
+    const tree = definitionTree(component);
+    return isRecord(tree) && pressable(tree as PressableNode, linksAllowed, definitionTree, [...stack, component]);
+  }
+  const tag = typeof node.type === 'string' ? node.type.toLowerCase() : '';
+  if (INTERACTIVE_TAGS.has(tag) && !(linksAllowed && tag === 'a')) return true;
+  if (!linksAllowed && isRecord(node.props) && typeof node.props.href === 'string') return true;
+  return (node.children ?? []).some((child) => isRecord(child) && pressable(child as PressableNode, linksAllowed, definitionTree, stack));
 }
 
 /** Whether the editor refuses to put `node` under `ancestors` inside a shop control (shopPartRefusal). */

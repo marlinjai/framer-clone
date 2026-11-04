@@ -50,6 +50,8 @@ import {
   SelectedVariantContext,
   isValueSelectable,
   useVariantSelection,
+  type ClearedChoices,
+  type SelectionState,
 } from '@/lib/commerce/selection';
 import type { RenderNode } from '@/lib/renderer/data/CollectionRenderer';
 import { VARIANT_PREVIEW_STATES, type ShopLocale } from '@/lib/commerce/parts';
@@ -73,6 +75,7 @@ type AvailabilityState =
 /** The first price of one variant, keyed by it. */
 interface PriceState {
   variantId: string;
+  /** Undefined when the read failed or the variant has no price. */
   price: PriceDTO | undefined;
 }
 
@@ -143,7 +146,7 @@ const VariantSelector = observer(
         },
       [product],
     );
-    const { selection, variant, setOptionValue } = useVariantSelection(emptyProduct, variants);
+    const { selection, variant, setOptionValue, cleared } = useVariantSelection(emptyProduct, variants);
 
     // Advisory availability and the price of the SELECTED variant, re-fetched
     // read-only on every selection change. Errors surface; they are never swallowed.
@@ -180,7 +183,11 @@ const VariantSelector = observer(
     }, [dataSource, selectedVariantId]);
     // Only the selected variant's answers count: another's are a check still running.
     const availability = selectedVariantId && availabilityState?.variantId === selectedVariantId ? availabilityState : null;
-    const price = selectedVariantId && priceState?.variantId === selectedVariantId ? priceState.price : undefined;
+    const priceKnown = !!selectedVariantId && priceState?.variantId === selectedVariantId;
+    const price = priceKnown ? priceState!.price : undefined;
+    // Whether the chosen variant can be sold at a known price: an add to cart waits
+    // for it and adds no variant without one.
+    const priceStatus: VariantView['price'] = !selectedVariantId ? 'idle' : !priceKnown ? 'loading' : price ? 'ready' : 'missing';
 
     const wrapperProps = { ...hostProps };
     delete (wrapperProps as any).children;
@@ -215,6 +222,8 @@ const VariantSelector = observer(
               : availability.status === 'ready'
                 ? { status: 'ready', quantity: availability.availability.availableQuantity, limited: availability.availability.limited }
                 : { status: 'error' },
+      price: priceStatus,
+      cleared: product && cleared ? clearedWords(product, cleared) : null,
       onSelect: setOptionValue,
     };
     const id = typeof node.id === 'string' ? node.id : '';
@@ -254,7 +263,13 @@ const VariantSelector = observer(
 
     // The selection state is published through context so the add-to-cart spec
     // can read the current variant. This is client-only state, never persisted.
-    const selectionState = { selection, variant, setOptionValue };
+    const selectionState: SelectionState = {
+      selection,
+      variant,
+      setOptionValue,
+      cleared,
+      ...(priceStatus === 'idle' ? {} : { price: priceStatus }),
+    };
 
     return React.createElement(
       hostType as any,
@@ -291,8 +306,25 @@ interface VariantView {
   availability:
     | { status: 'idle' | 'loading' | 'error' }
     | { status: 'ready'; quantity: number; limited: boolean };
+  /** The chosen variant's price: none chosen, being read, known, or failed or absent. */
+  price: 'idle' | 'loading' | 'ready' | 'missing';
+  /** The last pick's clearing of earlier choices, in words; null when it cleared none. */
+  cleared: { cleared: string; clearedValue: string; option: string; value: string } | null;
   /** Null on the canvas, where nothing does anything. */
   onSelect: ((optionId: string, valueId: string) => void) | null;
+}
+
+/** A pick's clearing of earlier choices in the product's own names (several joined). */
+function clearedWords(product: ProductDTO, cleared: ClearedChoices): NonNullable<VariantView['cleared']> {
+  const optionTitle = (optionId: string) => product.options.find((option) => option.id === optionId)?.title ?? optionId;
+  const valueLabel = (optionId: string, valueId: string) =>
+    product.options.find((option) => option.id === optionId)?.values.find((value) => value.id === valueId)?.label ?? valueId;
+  return {
+    cleared: cleared.cleared.map(({ optionId }) => optionTitle(optionId)).join(', '),
+    clearedValue: cleared.cleared.map(({ optionId, valueId }) => valueLabel(optionId, valueId)).join(', '),
+    option: optionTitle(cleared.pick.optionId),
+    value: valueLabel(cleared.pick.optionId, cleared.pick.valueId),
+  };
 }
 
 function variantRuntime(view: VariantView): ShopRuntime {
@@ -354,6 +386,15 @@ function variantPart(role: string, view: VariantView): ShopPartRender {
       return shownLater(!!ready && !ready.limited, { 'data-variant-availability': 'ready' });
     case 'variant.availability-error':
       return shownLater(availability.status === 'error', { 'data-variant-availability': 'error' });
+    // The chosen variant's price could not be read (or it has none): said, and the
+    // add to cart does not add it (SelectionState.price).
+    case 'variant.price-error':
+      return shownLater(hasProduct && view.catalog === 'ready' && view.price === 'missing', { 'data-variant-price': 'missing' });
+    // A pick cleared an earlier choice no variant combines with it: said politely.
+    case 'variant.cleared':
+      return view.cleared && hasProduct && view.catalog === 'ready'
+        ? { ...shownLater(true, { 'data-variant-cleared': '' }), tokens: view.cleared }
+        : shownLater(false);
     default:
       // An option's own parts outside an option have nothing to show.
       return { visible: false };
@@ -474,7 +515,17 @@ export function sampleVariantView(id: string, locale: ShopLocale): VariantView {
               : chosen
                 ? { status: 'ready', quantity: 24, limited: true }
                 : { status: 'idle' };
-  return { locale, product: id === 'no-product' ? null : product, catalog, availability, onSelect: null };
+  const sample = SAMPLE_OPTIONS[locale];
+  return {
+    locale,
+    product: id === 'no-product' ? null : product,
+    catalog,
+    availability,
+    price: id === 'price-error' ? 'missing' : chosen ? 'ready' : 'idle',
+    // Sample: the colour cleared when size L was picked with Red.
+    cleared: id === 'choice-cleared' ? { cleared: sample[1].title, clearedValue: sample[1].values[0], option: sample[0].title, value: sample[0].values[2] } : null,
+    onSelect: null,
+  };
 }
 
 /** The sample choice of a canvas view as a variant, a price and an availability; null when nothing is chosen. */

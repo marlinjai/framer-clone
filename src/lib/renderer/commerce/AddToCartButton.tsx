@@ -80,7 +80,11 @@ function AddToCartLive({ node, scope, hostType = 'div', hostProps = {}, children
   // server-side render where no variant is selected yet) this is null and the
   // control degrades to its disabled no-selection state instead of throwing and
   // 500-ing the published page.
-  const variant = useOptionalSelectedVariant()?.variant ?? null;
+  const selected = useOptionalSelectedVariant();
+  const variant = selected?.variant ?? null;
+  // A variant selector that reads prices says whether the chosen variant's is known:
+  // none is added without one, and the button waits while it is read.
+  const priceStatus = variant ? selected?.price : undefined;
   const cart = useCart();
 
   const selectedVariantId = variant?.id ?? null;
@@ -147,7 +151,7 @@ function AddToCartLive({ node, scope, hostType = 'div', hostProps = {}, children
     // Guard mirrors the disable: never add when there is no resolved variant.
     // This is a client cart mutation plus a localStorage persist, NOT a server
     // write and NOT a stock reservation.
-    if (!variant) return;
+    if (!variant || priceStatus === 'loading' || priceStatus === 'missing') return;
     cart.add(variant.id, quantity);
   };
 
@@ -156,7 +160,8 @@ function AddToCartLive({ node, scope, hostType = 'div', hostProps = {}, children
   const runtime = addToCartRuntime({
     locale,
     hasVariant: !!variant,
-    checking: directive.kind === 'loading',
+    checking: directive.kind === 'loading' || priceStatus === 'loading',
+    unpriced: priceStatus === 'missing',
     content: directive.kind === 'content',
     soldOut,
     error: directive.kind === 'error',
@@ -177,8 +182,10 @@ function AddToCartLive({ node, scope, hostType = 'div', hostProps = {}, children
 interface AddToCartView {
   locale: ShopLocale;
   hasVariant: boolean;
-  /** The advisory availability is being read. */
+  /** The advisory availability (or the chosen variant's price) is being read. */
   checking: boolean;
+  /** The chosen variant's price could not be read, or it has none: it is not added. */
+  unpriced: boolean;
   /** The advisory availability has been read. */
   content: boolean;
   soldOut: boolean;
@@ -198,7 +205,7 @@ function addToCartRuntime(view: AddToCartView): ShopRuntime {
 }
 
 function addToCartPart(role: string, view: AddToCartView): ShopPartRender {
-  const disabled = !view.hasVariant || !view.content || view.soldOut;
+  const disabled = !view.hasVariant || !view.content || view.soldOut || view.checking || view.unpriced;
   switch (role) {
     case 'addToCart.button':
       return {
@@ -229,7 +236,7 @@ function addToCartPart(role: string, view: AddToCartView): ShopPartRender {
 
 /** The view the canvas shows for a preview state id. */
 export function sampleAddToCartView(id: string, locale: ShopLocale): AddToCartView {
-  const base: AddToCartView = { locale, hasVariant: true, checking: false, content: true, soldOut: false, error: false, onClick: null };
+  const base: AddToCartView = { locale, hasVariant: true, checking: false, unpriced: false, content: true, soldOut: false, error: false, onClick: null };
   switch (id) {
     case 'no-variant':
       return { ...base, hasVariant: false, content: false };

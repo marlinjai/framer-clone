@@ -38,7 +38,7 @@ import { expandPage, literalPageRoots, type PageExpansion } from '@/lib/componen
 import { extractBreakpoints, type ComponentSnapshotLike } from '@/lib/renderer/server/componentSnapshot';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { getComponentEntry } from '@/lib/componentRegistry';
-import { CLOSED_SHOP_PART_MESSAGE, INTERACTIVE_SHOP_PART_MESSAGE, REQUIRED_SHOP_PART_MESSAGE, buildShopParts, shopPartRefusal, holdsOutsidePart, holdsRequiredShopPart, nearestShopControlId, shopControlKindOf, withoutOutsideRoles, shopLocaleOf, withShopParts, type ShopTreeNode } from '@/lib/commerce/parts';
+import { CLOSED_SHOP_PART_MESSAGE, INTERACTIVE_SHOP_PART_MESSAGE, LABEL_SHOP_PART_MESSAGE, REQUIRED_SHOP_PART_MESSAGE, buildShopParts, shopPartRefusal, holdsOutsidePart, holdsRequiredShopPart, nearestShopControlId, shopControlKindOf, withoutOutsideRoles, shopLocaleOf, withShopParts, type ShopTreeNode } from '@/lib/commerce/parts';
 import type { ApplyOutcome, GenerationUndoRecord } from '@/lib/ai/pageGen/apply';
 import { isVoidTag } from '@/lib/drag/voidTags';
 import { bareTextRefusal, isTextNodeType } from '@/lib/renderer/textNode';
@@ -103,6 +103,11 @@ function projectOf(page: object): { definitions: ComponentDefinitions } | undefi
     if ('definitions' in node) return node as { definitions: ComponentDefinitions };
   }
   return undefined;
+}
+
+/** Reads a reusable component's tree by its id, for the shop part refusals that look inside a placement. */
+function definitionTreeOf(page: object): (definitionId: string) => unknown {
+  return (definitionId) => projectOf(page)?.definitions?.[definitionId]?.page?.appComponentTree;
 }
 
 /** The site language of the project around a page ('en' when it has none, such as a page on its own). */
@@ -522,7 +527,7 @@ const PageModel = PageWithComponents
       console.warn('[PageModel] Insert target is a text node or a placement, which hold no children');
       return undefined;
     }
-    const refusal = shopPartRefusal(getSnapshot(child) as never, ancestorChain(self, parent));
+    const refusal = shopPartRefusal(getSnapshot(child) as never, ancestorChain(self, parent), definitionTreeOf(self));
     if (refusal) {
       refuseShopEdit(self, refusal);
       return undefined;
@@ -545,7 +550,7 @@ const PageModel = PageWithComponents
     }
     const { parent, index } = insertPlace(self, target);
     const placement = createIntrinsicComponent(id, PLACEMENT_TYPE as never, { component: definitionId });
-    const refusal = shopPartRefusal(getSnapshot(placement) as never, ancestorChain(self, parent));
+    const refusal = shopPartRefusal(getSnapshot(placement) as never, ancestorChain(self, parent), definitionTreeOf(self));
     if (refusal) {
       refuseShopEdit(self, refusal);
       return undefined;
@@ -593,7 +598,7 @@ const PageModel = PageWithComponents
       if (typeof target.props?.children === 'string') {
         return { ok: false, reason: 'The selected component holds text; select a container instead.' };
       }
-      const closed = snapshots.map((snapshot) => shopPartRefusal(snapshot as never, ancestorChain(self, target))).find(Boolean);
+      const closed = snapshots.map((snapshot) => shopPartRefusal(snapshot as never, ancestorChain(self, target), definitionTreeOf(self))).find(Boolean);
       if (closed) return { ok: false, reason: closed };
       createAll(target.id).forEach(child => target.addChild(child));
       self.updatedAt = new Date();
@@ -627,7 +632,7 @@ const PageModel = PageWithComponents
     }
     if (holdsRequiredShopPart(target, targetAncestors)) return { ok: false, reason: REQUIRED_SHOP_PART_MESSAGE };
     // The same placement check insert mode runs, against the parent the replacement lands in.
-    const misplaced = snapshots.map((snapshot) => shopPartRefusal(snapshot as never, targetAncestors)).find(Boolean);
+    const misplaced = snapshots.map((snapshot) => shopPartRefusal(snapshot as never, targetAncestors, definitionTreeOf(self))).find(Boolean);
     if (misplaced) return { ok: false, reason: misplaced };
     const index = parent.children.findIndex((c: ComponentInstance) => c.id === target.id);
     const previous = getSnapshot(target) as ComponentSnapshotIn;
@@ -726,7 +731,7 @@ const PageModel = PageWithComponents
       const index = parent.children.findIndex((c: ComponentInstance) => c.id === component.id);
       const copySnapshot = withFreshIds(getSnapshot(component) as ComponentSnapshotIn, parent.id);
       // A copy inside the pay button or a notice would be dropped on the next load: say so now.
-      const refusal = shopPartRefusal(copySnapshot as never, ancestorChain(self, parent));
+      const refusal = shopPartRefusal(copySnapshot as never, ancestorChain(self, parent), definitionTreeOf(self));
       if (refusal) {
         refuseShopEdit(self, refusal);
         return undefined;
@@ -904,8 +909,8 @@ const PageModel = PageWithComponents
       const sameControl = nearestShopControlId(chain(component.parentId as string | undefined)) === nearestShopControlId(toAncestors);
       // A plain node dropped into the pay button or a notice is refused the same way,
       // and so is anything a visitor presses dropped into a part they press (a choice).
-      const refusal = shopPartRefusal(component, toAncestors);
-      if (refusal && (sameControl || refusal === CLOSED_SHOP_PART_MESSAGE || refusal === INTERACTIVE_SHOP_PART_MESSAGE)) {
+      const refusal = shopPartRefusal(component, toAncestors, definitionTreeOf(self));
+      if (refusal && (sameControl || refusal === CLOSED_SHOP_PART_MESSAGE || refusal === INTERACTIVE_SHOP_PART_MESSAGE || refusal === LABEL_SHOP_PART_MESSAGE)) {
         refuseShopEdit(self, refusal);
         return undefined;
       }
@@ -933,8 +938,8 @@ const PageModel = PageWithComponents
         const fresh = withoutOutsideRoles(getSnapshot(component) as unknown as ShopTreeNode, (id) => `${id}-${uuidv4().slice(0, 8)}`);
         // The refusal ran above on the node with its roles; what lands is the stripped node, which a
         // part that takes its own parts only (the pay button) refuses like any other plain node.
-        const landing = shopPartRefusal(fresh, ancestorsOf(newParentId));
-        if (landing === CLOSED_SHOP_PART_MESSAGE || landing === INTERACTIVE_SHOP_PART_MESSAGE) {
+        const landing = shopPartRefusal(fresh, ancestorsOf(newParentId), definitionTreeOf(self));
+        if (landing === CLOSED_SHOP_PART_MESSAGE || landing === INTERACTIVE_SHOP_PART_MESSAGE || landing === LABEL_SHOP_PART_MESSAGE) {
           refuseShopEdit(self, landing);
           return undefined;
         }

@@ -242,23 +242,25 @@ assistive technology what an element is), AI (the page generator).
 3. **Variant selector** (built, held for review): an option template drawn once per product option as a
    radio group (its name, which must keep `{option}`) holding a choice drawn once per value as a radio
    (a native button with `role="radio"`, its text must keep `{value}`), with Hover, Selected
-   (`aria-checked`; a page saved with the old `aria-pressed` rule is rewritten on load) and Disabled (a
-   value no variant has) as stored rules; one tab stop per group, the arrows, Home and End move and choose,
+   (`aria-checked`) and Disabled (a value no variant has) as stored rules; one tab stop per group, the arrows, Home and End move and choose,
    Space presses. Any value some variant has can be chosen: a pick clears an earlier choice no variant
-   combines with it, so no choice locks another out. Messages: loading the options, the product not
+   combines with it, so no choice locks another out, and that clearing is announced in the site language
+   ("Color cleared: no variant has Size L in Red"). Messages: loading the options, the product not
    available (options but no variant), the availability messages (checking, in stock, only `{count}` left,
    out of stock, available with no stock limit, a failed check, also said when the variants fail to load)
-   and the no-product note; every message shown later is its own status region. A selector given its parts
+   a price that could not be loaded (or a variant without one, which the add to cart then does not add) and
+   the no-product note; every message shown later is its own status region. A selector given its parts
    puts them before the designer's own children (an add to cart, a price bound to the variant), which keep
    their place and scope; the add to cart finds the chosen variant only inside the selector, so the page
    generator is told to put it there and moves one written beside a selector into it. The selector reads
    the chosen variant's own price for `{{variant.price.*}}`, and an availability or price answer counts only
    for the variant it was asked for (in the add to cart too). A stored name (`aria-label`, `title`) on a
    repeated part or one whose text holds tokens is never stored or drawn, and nothing a visitor presses (a
-   button, a link, a field, a shop control) can be put inside a part they press. Canvas states use a sample
+   button, a link, a field, a shop control, also inside a placed reusable component) can be put inside a
+   part they press; a field's label takes a link (the terms) but nothing else a visitor presses. Canvas states use a sample
    product, and the designer's children read its sample choice: a choice made, nothing chosen, loading the
-   options, checking, few left, out of stock, a choice no variant has, no stock limit, a failed check, not
-   available, no product.
+   options, checking, few left, out of stock, a choice no variant has, no stock limit, a failed check, a
+   price that could not be loaded, a choice cleared by another, not available, no product.
 
 ## Score
 

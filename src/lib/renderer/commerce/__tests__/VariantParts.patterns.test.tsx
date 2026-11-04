@@ -117,8 +117,8 @@ describe('every availability message is announced when it shows', () => {
     expect(container.querySelector('[data-shop-live="variant.in-stock"]')).toBe(inStock);
     expect(inStock.getAttribute('data-variant-availability')).toBe('ready');
     expect(inStock.querySelector('[role="status"]')).toBeNull();
-    // The availability messages and the two option messages (loading, not available).
-    expect(container.querySelectorAll('[role="status"]')).toHaveLength(MESSAGES.length + 2);
+    // The availability messages, the two option messages (loading, not available), the price message and the cleared choice.
+    expect(container.querySelectorAll('[role="status"]')).toHaveLength(MESSAGES.length + 4);
   });
 
   it('says a failed variant load, with the real reason in the console, instead of choices that cannot be made', async () => {

@@ -241,6 +241,13 @@ describe('isValueSelectable and selectValue (no choice locks another out)', () =
     expect(selectValue(options, variants, selection, 'o_color', 'red')).toEqual({ o_color: 'red' });
   });
 
+  it('returns the selection unchanged (the same object) for a value no variant has', () => {
+    const { options, variants } = diagonal();
+    const selection = { o_size: 's', o_color: 'red' };
+    expect(selectValue(options, variants, selection, 'o_size', 'm')).toBe(selection);
+    expect(selectValue(options, variants, {}, 'o_color', 'green')).toEqual({});
+  });
+
   it('keeps an earlier choice a variant combines with the new one', () => {
     const { product, variants } = twoByFourProduct();
     expect(selectValue(product.options, variants, { o_size: 'm', o_color: 'red' }, 'o_color', 'blue')).toEqual({ o_color: 'blue', o_size: 'm' });

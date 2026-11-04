@@ -1,8 +1,7 @@
 // The review of the designable variant selector (docs/plans/2026-11-02-designable-shop-controls.md,
 // slice 3): each option is a radio group (one tab stop, the arrows, Home and End
 // choose), a stored name on the choice or option name template never reaches the
-// copies, a page saved with the toggle button's Selected rule is rewritten once,
-// the wait for the options and a product with nothing to sell are said, and a
+// copies, the wait for the options and a product with nothing to sell are said, and a
 // price bound to the variant follows the choice (keyed availability:
 // VariantParts.keyed.test.tsx).
 import React from 'react';
@@ -15,7 +14,6 @@ import { CartProvider } from '@/lib/commerce/cart';
 import { InMemoryCommerceDataSource } from '@/lib/commerce/inMemoryCommerceDataSource';
 import { createScope, pushProductFrame, type BindingScope } from '@/lib/bindings/resolver/scope';
 import { VARIANT_SELECTED_SELECTOR, buildShopParts, normalizeShopControl, shopPartRoleOf, type ShopTreeNode } from '@/lib/commerce/parts';
-import { ruleLabel } from '@/lib/rules/states';
 import type { ProductDTO, ProductVariantDTO } from '@/lib/commerce/types';
 import type { RenderNode } from '@/lib/renderer/data/CollectionRenderer';
 import VariantSelector from '../VariantSelector';
@@ -164,33 +162,6 @@ describe('each option is a radio group', () => {
       fireEvent.keyDown(small, { key: 'ArrowRight' });
     });
     expect(document.activeElement).toBe(small);
-  });
-});
-
-describe('a page saved with the toggle button’s Selected rule', () => {
-  it('is rewritten to the radio’s state once, other rules untouched', () => {
-    const legacy = control(
-      editedParts((node) =>
-        shopPartRoleOf(node.props) === 'variant.value'
-          ? {
-              ...node,
-              props: {
-                ...node.props,
-                rules: [
-                  { id: 'hover', selector: '&:hover', style: { opacity: 0.9 } },
-                  { id: 'selected', selector: '&[aria-pressed="true"]', style: { color: 'red' } },
-                  { id: 'selected-hover', selector: '&[aria-pressed="true"]:hover', style: { color: 'blue' } },
-                ],
-              },
-            }
-          : node,
-      ),
-    );
-    const once = normalizeShopControl(legacy, 'en', 'node');
-    const rules = byRole(once.children ?? [], 'variant.value')!.props!.rules as { selector: string }[];
-    expect(rules.map((rule) => rule.selector)).toEqual(['&:hover', '&[aria-checked="true"]', '&[aria-checked="true"]:hover']);
-    expect(ruleLabel(rules[1] as never)).toBe('Selected');
-    expect(normalizeShopControl(once, 'en', 'node')).toBe(once);
   });
 });
 

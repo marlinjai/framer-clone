@@ -105,6 +105,10 @@ describe('the variant selector on the canvas', () => {
     show('loading-options');
     expect(copies('variant.loading')[0]?.textContent).toBe('Optionen werden geladen...');
     expect(copies('variant.value')).toHaveLength(0);
+    show('price-error');
+    expect(copies('variant.price-error')[0]?.textContent).toBe('Der Preis dieser Auswahl kann gerade nicht geladen werden, daher kann sie noch nicht in den Warenkorb.');
+    show('choice-cleared');
+    expect(copies('variant.cleared')[0]?.textContent).toBe('Farbe zurückgesetzt: keine Variante hat Größe L in Rot.');
     show('not-available');
     expect(copies('variant.unavailable')[0]?.textContent).toBe('Dieses Produkt ist gerade nicht erhältlich.');
     expect(copies('variant.value')).toHaveLength(0);
