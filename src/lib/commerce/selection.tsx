@@ -189,8 +189,11 @@ export function useVariantSelection(
       setState((prev) => {
         const next = selectValue(product.options, variants, prev.selection, optionId, valueId);
         if (next === prev.selection) return prev;
+        // In the product's option order, so the sentence names them as the page lists them.
+        const order = product.options.map((option) => option.id);
         const gone = Object.entries(prev.selection)
           .filter(([axisId]) => axisId !== optionId && !(axisId in next))
+          .sort(([a], [b]) => order.indexOf(a) - order.indexOf(b))
           .map(([axisId, axisValueId]) => ({ optionId: axisId, valueId: axisValueId }));
         return { selection: next, cleared: gone.length > 0 ? { pick: { optionId, valueId }, cleared: gone } : null };
       });

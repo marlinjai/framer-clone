@@ -148,6 +148,21 @@ const VariantSelector = observer(
     );
     const { selection, variant, setOptionValue, cleared } = useVariantSelection(emptyProduct, variants);
 
+    // Each clearing is said anew, the same words included: the region empties at
+    // once and takes the words on the next frame, so a screen reader that heard the
+    // same sentence before announces it again.
+    const [announcedClear, setAnnouncedClear] = React.useState<ClearedChoices | null>(null);
+    React.useEffect(() => {
+      setAnnouncedClear(null);
+      if (!cleared) return;
+      if (typeof requestAnimationFrame === 'function') {
+        const frame = requestAnimationFrame(() => setAnnouncedClear(cleared));
+        return () => cancelAnimationFrame(frame);
+      }
+      const timer = setTimeout(() => setAnnouncedClear(cleared), 16);
+      return () => clearTimeout(timer);
+    }, [cleared]);
+
     // Advisory availability and the price of the SELECTED variant, re-fetched
     // read-only on every selection change. Errors surface; they are never swallowed.
     const selectedVariantId = variant?.id ?? null;
@@ -223,7 +238,7 @@ const VariantSelector = observer(
                 ? { status: 'ready', quantity: availability.availability.availableQuantity, limited: availability.availability.limited }
                 : { status: 'error' },
       price: priceStatus,
-      cleared: product && cleared ? clearedWords(product, cleared) : null,
+      cleared: product && announcedClear ? clearedWords(product, announcedClear, locale) : null,
       onSelect: setOptionValue,
     };
     const id = typeof node.id === 'string' ? node.id : '';
@@ -314,13 +329,25 @@ interface VariantView {
   onSelect: ((optionId: string, valueId: string) => void) | null;
 }
 
-/** A pick's clearing of earlier choices in the product's own names (several joined). */
-function clearedWords(product: ProductDTO, cleared: ClearedChoices): NonNullable<VariantView['cleared']> {
+/** How the names of several cleared options are joined, per site language ("Color and Material"). */
+const AND: Readonly<Record<ShopLocale, string>> = { en: ' and ', de: ' und ' };
+
+/** A list read aloud: "A", "A and B", "A, B and C". */
+function joinNames(names: readonly string[], locale: ShopLocale): string {
+  return names.length <= 1 ? names.join('') : `${names.slice(0, -1).join(', ')}${AND[locale]}${names[names.length - 1]}`;
+}
+
+/**
+ * A pick's clearing of earlier choices in the product's own names: each cleared
+ * option named ("Color and Material"), their values listed in the same order
+ * ("Red, Linen").
+ */
+function clearedWords(product: ProductDTO, cleared: ClearedChoices, locale: ShopLocale): NonNullable<VariantView['cleared']> {
   const optionTitle = (optionId: string) => product.options.find((option) => option.id === optionId)?.title ?? optionId;
   const valueLabel = (optionId: string, valueId: string) =>
     product.options.find((option) => option.id === optionId)?.values.find((value) => value.id === valueId)?.label ?? valueId;
   return {
-    cleared: cleared.cleared.map(({ optionId }) => optionTitle(optionId)).join(', '),
+    cleared: joinNames(cleared.cleared.map(({ optionId }) => optionTitle(optionId)), locale),
     clearedValue: cleared.cleared.map(({ optionId, valueId }) => valueLabel(optionId, valueId)).join(', '),
     option: optionTitle(cleared.pick.optionId),
     value: valueLabel(cleared.pick.optionId, cleared.pick.valueId),

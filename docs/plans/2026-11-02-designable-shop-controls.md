@@ -244,17 +244,20 @@ assistive technology what an element is), AI (the page generator).
    (a native button with `role="radio"`, its text must keep `{value}`), with Hover, Selected
    (`aria-checked`) and Disabled (a value no variant has) as stored rules; one tab stop per group, the arrows, Home and End move and choose,
    Space presses. Any value some variant has can be chosen: a pick clears an earlier choice no variant
-   combines with it, so no choice locks another out, and that clearing is announced in the site language
-   ("Color cleared: no variant has Size L in Red"). Messages: loading the options, the product not
+   combines with it, so no choice locks another out, and that clearing is announced in the site language,
+   each cleared option named ("Color and Material cleared: no variant has Size M with Red, Linen"); the
+   region empties and takes the words on the next frame, so the same sentence is announced again. Messages: loading the options, the product not
    available (options but no variant), the availability messages (checking, in stock, only `{count}` left,
-   out of stock, available with no stock limit, a failed check, also said when the variants fail to load)
+   out of stock, available with no stock limit, a failed check, also said when the variants fail to load),
    a price that could not be loaded (or a variant without one, which the add to cart then does not add) and
    the no-product note; every message shown later is its own status region. A selector given its parts
    puts them before the designer's own children (an add to cart, a price bound to the variant), which keep
    their place and scope; the add to cart finds the chosen variant only inside the selector, so the page
    generator is told to put it there and moves one written beside a selector into it. The selector reads
    the chosen variant's own price for `{{variant.price.*}}`, and an availability or price answer counts only
-   for the variant it was asked for (in the add to cart too). A stored name (`aria-label`, `title`) on a
+   for the variant it was asked for (in the add to cart too). The add to cart is disabled (and marked busy)
+   while the chosen variant's availability or price is being read, so a buyer cannot add before the read
+   answers; it enables once both are known. A stored name (`aria-label`, `title`) on a
    repeated part or one whose text holds tokens is never stored or drawn, and nothing a visitor presses (a
    button, a link, a field, a shop control, also inside a placed reusable component) can be put inside a
    part they press; a field's label takes a link (the terms) but nothing else a visitor presses. Canvas states use a sample

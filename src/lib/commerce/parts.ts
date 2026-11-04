@@ -825,8 +825,8 @@ const VARIANT_PARTS: readonly ShopPartSpec[] = [
     required: true,
     requiredTokens: ['cleared'],
     text: {
-      en: '{cleared} cleared: no variant has {option} {value} in {clearedValue}.',
-      de: '{cleared} zurückgesetzt: keine Variante hat {option} {value} in {clearedValue}.',
+      en: '{cleared} cleared: no variant has {option} {value} with {clearedValue}.',
+      de: '{cleared} zurückgesetzt: keine Variante hat {option} {value} mit {clearedValue}.',
     },
     style: NOTE,
   },
@@ -1839,8 +1839,13 @@ function pressable(node: PressableNode, linksAllowed: boolean, definitionTree?: 
 }
 
 /** Whether the editor refuses to put `node` under `ancestors` inside a shop control (shopPartRefusal). */
-export function misplacesShopPart(node: { props?: unknown; children?: readonly unknown[] }, ancestors: readonly { props?: unknown }[]): boolean {
-  return shopPartRefusal(node, ancestors) !== undefined;
+export function misplacesShopPart(
+  node: { type?: unknown; props?: unknown; children?: readonly unknown[] },
+  ancestors: readonly { props?: unknown }[],
+  /** Looks inside a placed reusable component, as shopPartRefusal does. */
+  definitionTree?: ShopDefinitionTree,
+): boolean {
+  return shopPartRefusal(node, ancestors, definitionTree) !== undefined;
 }
 
 /**

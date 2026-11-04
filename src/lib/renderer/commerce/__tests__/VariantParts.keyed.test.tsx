@@ -194,4 +194,27 @@ describe('the add to cart, across a choice whose check is held', () => {
     await act(async () => pending.resolve(dto('var_m_red', 4)));
     await waitFor(() => expect(button.disabled).toBe(false));
   });
+
+  it('is disabled and checking while the first choice’s availability is read, and enabled after', async () => {
+    const { ds, pending } = holding('var_s_red');
+    const variants = await ds.listVariants('prod_tee');
+    const node = ComponentModel.create({ id: 'atc', type: 'div', componentType: 'host', props: { 'data-component-kind': 'add-to-cart' } });
+    const selection: SelectionState = { selection: {}, variant: variants.find((entry) => entry.id === 'var_s_red')!, setOptionValue: () => {} };
+    const { container } = render(
+      <CommerceDataSourceContext.Provider value={ds}>
+        <CartProvider storageKey="add-to-cart-first-read">
+          <SelectedVariantContext.Provider value={selection}>
+            <AddToCartButton node={node} scope={createScope()} hostType="div" hostProps={{}} />
+          </SelectedVariantContext.Provider>
+        </CartProvider>
+      </CommerceDataSourceContext.Provider>,
+    );
+    const button = container.querySelector<HTMLButtonElement>('button[data-add-to-cart]')!;
+    // A buyer cannot add before the read answers.
+    expect(button.disabled).toBe(true);
+    expect(button.getAttribute('aria-busy')).toBe('true');
+    await act(async () => pending.resolve(dto('var_s_red', 6)));
+    await waitFor(() => expect(button.disabled).toBe(false));
+    expect(button.hasAttribute('aria-busy')).toBe(false);
+  });
 });
