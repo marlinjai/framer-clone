@@ -491,7 +491,7 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
             </div>
           ) : (
             <div className="grid gap-4">
-              <fieldset className="grid gap-2" disabled={running}>
+              <fieldset className="grid gap-2">
                 <legend className="mb-1 text-xs font-medium text-muted-foreground">Where</legend>
                 <div className="flex flex-wrap gap-2">
                   {TARGETS.map((t) => (
@@ -519,14 +519,13 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
                     id="pagegen-title"
                     value={inputs.pageTitle}
                     maxLength={120}
-                    disabled={running}
                     onChange={(e) => edit({ pageTitle: e.target.value })}
                     placeholder="The AI picks one if empty"
                   />
                 </div>
               )}
 
-              <IdeaBar ideas={ideas} disabled={running || assist.enhancing} onPick={assist.pickIdea} />
+              <IdeaBar ideas={ideas} disabled={assist.enhancing} onPick={assist.pickIdea} />
 
               <div className="grid gap-1.5">
                 <Label htmlFor="pagegen-brief">Brief</Label>
@@ -534,7 +533,6 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
                   id="pagegen-brief"
                   className="min-h-[110px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60 read-only:bg-muted/40"
                   value={inputs.brief}
-                  disabled={running}
                   readOnly={assist.enhancing}
                   aria-busy={assist.enhancing}
                   onChange={(e) => edit({ brief: e.target.value })}
@@ -546,7 +544,7 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
                 <div className="flex items-center justify-between gap-2">
                   <EnhanceButton
                     assist={assist}
-                    disabled={running || !inputs.brief.trim() || briefTooLong || !project}
+                    disabled={!inputs.brief.trim() || briefTooLong || !project}
                   />
                   <p className={`text-right text-[11px] ${briefTooLong ? 'text-destructive' : 'text-muted-foreground'}`}>
                     {inputs.brief.length} / {GENERATION_LIMITS.maxBriefChars}
@@ -558,7 +556,6 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
               <ModelSlider
                 id="pagegen-model"
                 value={inputs.model}
-                disabled={running}
                 onChange={(model) => edit({ model })}
               />
 
@@ -569,7 +566,6 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
                     type="checkbox"
                     className="size-4 accent-brand"
                     checked={reviewSettings.auto}
-                    disabled={running}
                     onChange={(e) => editReviewSettings({ auto: e.target.checked })}
                   />
                   <span>Review the layout with AI afterwards (one more round, a few cents)</span>
@@ -577,7 +573,6 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
                 {reviewSettings.auto && (
                   <ReviewModelToggle
                     value={reviewSettings.model}
-                    disabled={running}
                     onChange={(model) => editReviewSettings({ model })}
                   />
                 )}
