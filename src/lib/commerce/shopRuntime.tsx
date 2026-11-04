@@ -148,7 +148,12 @@ interface Pin {
   value: string;
   priority: string;
   owners: Set<HTMLElement>;
+  /** A hiding attribute taken off (`hidden`, `inert`, `aria-hidden`) rather than a style: `value` is the attribute's. */
+  attribute?: true;
 }
+
+/** The key a hiding attribute's pin is filed under, beside the style properties. */
+const ATTRIBUTE_PIN = 'attr:';
 
 /** What the kept parts pinned on each element, so each part's next render starts from the design. */
 const PINNED = new WeakMap<HTMLElement, Map<string, Pin>>();
@@ -168,6 +173,12 @@ function releaseKept(owner: HTMLElement): void {
     for (const [property, pin] of pins) {
       if (!pin.owners.delete(owner) || pin.owners.size > 0) continue;
       pins.delete(property);
+      if (pin.attribute) {
+        const name = property.slice(ATTRIBUTE_PIN.length);
+        // Written again since (React or the design): that value stands.
+        if (!target.hasAttribute(name)) target.setAttribute(name, pin.value);
+        continue;
+      }
       // React wrote the design's new value over the pin since (it sets no priority): that value stands.
       if (target.style.getPropertyPriority(property) !== 'important') continue;
       if (pin.value) target.style.setProperty(property, pin.value, pin.priority);
@@ -211,6 +222,9 @@ function seeThrough(color: string): boolean {
  *   clip path or mask, and an overflow that crops what it holds. Each wrapper
  *   also gets a marker the guard rule uses to blank its `::before` and `::after`
  *   (src/lib/commerce/parts.ts, shopGuardCss).
+ * - On the part and every wrapper up to the control: a `hidden`, `inert` or
+ *   `aria-hidden` attribute comes off, so the part is seen, pressed and announced;
+ *   each goes back when the part lets go (releaseKept), as the pinned styles do.
  * - On a part a visitor presses (a cart line's remove button): `pointer-events:
  *   auto` on the part, and on every wrapper up to the control whose computed value
  *   is `none`, so a press is never let through to the page behind.
@@ -232,6 +246,22 @@ function keepInSight(element: HTMLElement): void {
     targets.add(target);
     PINNED_BY.set(element, targets);
     target.style.setProperty(property, value, 'important');
+  };
+  // A wrapper's hiding attribute comes off while the part holds it, and goes back on release.
+  const lift = (target: HTMLElement, name: string) => {
+    const key = `${ATTRIBUTE_PIN}${name}`;
+    const pins = PINNED.get(target) ?? new Map<string, Pin>();
+    let pin = pins.get(key);
+    if (!pin) {
+      pin = { value: target.getAttribute(name) ?? '', priority: '', owners: new Set(), attribute: true };
+      pins.set(key, pin);
+    }
+    pin.owners.add(element);
+    PINNED.set(target, pins);
+    const targets = PINNED_BY.get(element) ?? new Set<HTMLElement>();
+    targets.add(target);
+    PINNED_BY.set(element, targets);
+    target.removeAttribute(name);
   };
   // Each render starts from the design: what this part pinned at its last render
   // comes off first (releaseKept), so a fade or a colour the designer changed since
@@ -275,7 +305,11 @@ function keepInSight(element: HTMLElement): void {
     }
     if (crops) force(node, 'overflow', 'visible');
     if (node !== element && !node.hasAttribute(SHOP_KEPT_WRAPPER_ATTR)) node.setAttribute(SHOP_KEPT_WRAPPER_ATTR, '');
-    if (node.hidden) node.hidden = false;
+    // Hidden, taken out of interaction (inert) or out of the accessibility tree
+    // (aria-hidden): neither a visitor nor assistive technology could reach the part.
+    if (node.hasAttribute('hidden')) lift(node, 'hidden');
+    if (node.hasAttribute('inert')) lift(node, 'inert');
+    if (node.hasAttribute('aria-hidden') && node.getAttribute('aria-hidden') !== 'false') lift(node, 'aria-hidden');
   }
   force(element, 'visibility', 'visible');
   force(element, 'opacity', '1');
@@ -299,6 +333,8 @@ function keepInSight(element: HTMLElement): void {
 
 /** keepInSight, for tests of the pins across renders. */
 export const keepInSightForTest = keepInSight;
+/** releaseKept, for tests of what a part gives back when it lets go. */
+export const releaseKeptForTest = releaseKept;
 
 /** A ref that keeps the element in sight after every render, chained to the ref the surface passed, if any. */
 function useKeptInSight(enabled: boolean, outer: unknown): React.RefCallback<HTMLElement> | undefined {
