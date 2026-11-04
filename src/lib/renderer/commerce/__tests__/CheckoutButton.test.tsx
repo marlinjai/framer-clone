@@ -22,6 +22,7 @@ import { createScope } from '@/lib/bindings/resolver/scope';
 import { CartProvider, CheckoutUnavailableContext, useCart, CART_STORAGE_KEY } from '@/lib/commerce/cart';
 import { FakePaymentGateway } from '@/lib/commerce/payment';
 import type { PaymentGateway, PaymentResult } from '@/lib/commerce/payment';
+import { ShopLocaleContext } from '@/lib/commerce/shopRuntime';
 import CheckoutButton, { RETURN_NOTE_KEY } from '../CheckoutButton';
 
 function makeNode(props: Record<string, unknown> = {}): ComponentInstance {
@@ -793,6 +794,59 @@ describe('CheckoutButton a message shown later is announced', () => {
     } finally {
       window.history.replaceState(null, '', '/');
     }
+  });
+});
+
+describe('CheckoutButton a paid order below the payment minimum (422 order_too_small)', () => {
+  const TOO_SMALL = fakeResponse(422, {
+    error: { code: 'order_too_small', message: 'server words the buyer never sees' },
+  });
+
+  it('says what to change in the checkout\'s own words, keeps the cart, and shows no payment step or shortage', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(TOO_SMALL);
+    const { container, getByTestId } = renderCheckout();
+    await waitForHydratedCart(getByTestId);
+
+    clickCheckout(container);
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-checkout-error]')?.textContent).toBe(
+        'Checkout failed: the order total is below the minimum the payment provider accepts. Add items to your cart and check out again. Nothing has been charged.',
+      );
+    });
+    // Not read as an item no longer sold, an order too large, a shortage, or a server fault.
+    expect(container.textContent).not.toContain('server words');
+    expect(container.textContent).not.toContain('no longer available');
+    expect(container.textContent).not.toContain('larger than one order');
+    expect(container.textContent).not.toContain('422');
+    expect(container.querySelector('[data-checkout-shortage]')).toBeNull();
+    expect(container.querySelector('[data-checkout-payment]')).toBeNull();
+    expect(getByTestId('lines').textContent).toBe(JSON.stringify(SEEDED_LINES));
+    expect(container.querySelector('button[data-checkout]')).not.toBeNull();
+  });
+
+  it('on a German site the words are German', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(TOO_SMALL);
+    window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(SEEDED_LINES));
+    const { container, getByTestId } = render(
+      <ShopLocaleContext.Provider value="de">
+        <CartProvider>
+          <CheckoutButton node={makeNode()} scope={createScope()} gateway={instantGateway()} />
+          <CartProbe />
+        </CartProvider>
+      </ShopLocaleContext.Provider>,
+    );
+    await waitForHydratedCart(getByTestId);
+
+    clickCheckout(container);
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-checkout-error]')?.textContent).toContain(
+        'der Bestellwert liegt unter dem Mindestbetrag, den der Zahlungsanbieter annimmt. Legen Sie weitere Artikel in den Warenkorb und gehen Sie erneut zur Kasse. Es wurde nichts abgebucht.',
+      );
+    });
+    expect(container.textContent).not.toContain('server words');
+    expect(getByTestId('lines').textContent).toBe(JSON.stringify(SEEDED_LINES));
   });
 });
 

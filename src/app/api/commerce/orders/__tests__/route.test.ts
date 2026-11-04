@@ -17,7 +17,8 @@
 //   - keeps the body INTENTIONS-ONLY (a client-sent price/stock/total is a 400),
 //   - bounds the idempotency key (a too-short value is a 400),
 //   - surfaces faults as error envelopes, never a swallowed empty 200,
-//   - answers an order too large for its INTEGER columns with a typed 422 order_too_large.
+//   - answers an order too large for its INTEGER columns with a typed 422 order_too_large,
+//   - answers a paid order below the payment provider's minimum charge with a typed 422 order_too_small.
 //
 // The Dockerized `.itest.ts` suites prove the same route against live Postgres
 // (route.itest.ts) and across two tenant groups (routes.isolation.itest.ts).
@@ -62,7 +63,7 @@ import { hasShopMail } from '@/server/commerce/mail/connection';
 import { createOrder } from '@/server/commerce/order/createOrder';
 import { commerceTenantDbChecked } from '@/server/commerce/db';
 import { sweepExpiredPayments } from '@/server/commerce/payment/payments';
-import { OrderTooLargeError, UnknownVariantError } from '@/server/commerce/repository/errors';
+import { OrderTooLargeError, OrderTooSmallError, UnknownVariantError } from '@/server/commerce/repository/errors';
 import { readOrderTotal, resolveOrderLines } from '@/server/commerce/repository/storefront';
 import { resolvePublishedSite } from '@/server/sites/publicResolver';
 import { DEMO_COMPANY_ID } from '@/lib/renderer/server/demoTenant';
@@ -347,6 +348,25 @@ describe('POST /api/commerce/orders body contract', () => {
     const res = await POST(postReq({ lines: [{ variantId: 'var_a', quantity: 1 }] }));
     expect(res.status).toBe(500);
     expect((await res.json()).error.code).toBe('commerce_order_failed');
+  });
+});
+
+describe('POST /api/commerce/orders a paid order below the payment minimum', () => {
+  it('a total below what the provider takes in one charge (createOrder refuses it): a typed 422 order_too_small, never a 500', async () => {
+    createOrderMock.mockRejectedValue(new OrderTooSmallError(49, 50));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = await POST(postReq({ lines: [{ variantId: 'var_a', quantity: 1 }] }));
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({
+      error: {
+        code: 'order_too_small',
+        message: 'the order total is below the minimum the payment provider accepts; add items and check out again',
+      },
+    });
+    // A buyer's problem, not a fault: nothing is logged as one, and no order is read back.
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+    expect(readTotalMock).not.toHaveBeenCalled();
   });
 });
 

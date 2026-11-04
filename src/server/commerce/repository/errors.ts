@@ -36,3 +36,22 @@ export class OrderTooLargeError extends Error {
     this.name = 'OrderTooLargeError';
   }
 }
+
+/**
+ * A paid order whose total is below the least its payment provider takes in one
+ * charge (minChargeAmount, payment/provider.ts; Stripe: 0.50 EUR): the payment
+ * would be refused when it starts, after the order already held its stock. Caused
+ * by the cart, not a server fault, and nothing of it is kept. A free order (total
+ * 0) opens no payment and is never refused for it. The orders route answers it
+ * with 422 `order_too_small`.
+ */
+export class OrderTooSmallError extends Error {
+  readonly code = 'ORDER_TOO_SMALL';
+  constructor(
+    readonly total: number,
+    readonly minimum: number,
+  ) {
+    super(`order too small: total ${total} is below the payment minimum ${minimum}`);
+    this.name = 'OrderTooSmallError';
+  }
+}

@@ -56,8 +56,8 @@ vi.mock('../../repository/order', () => ({
 }));
 
 import type { CommerceDB } from '../../db-types';
-import { OrderTooLargeError } from '../../repository/errors';
-import { maxChargeAmount, STRIPE_MAX_CHARGE } from '../../payment/provider';
+import { OrderTooLargeError, OrderTooSmallError } from '../../repository/errors';
+import { maxChargeAmount, minChargeAmount, STRIPE_MAX_CHARGE, STRIPE_MIN_CHARGE } from '../../payment/provider';
 import { ReservationOverflowError, reserve } from '../../inventory/reserve';
 import { pricingRepository } from '../../repository/pricing';
 import { orderRepository } from '../../repository/order';
@@ -653,5 +653,81 @@ describe('createOrder: an order too large for its INTEGER columns', () => {
     const result = await createOrder(db, TG, baseCart({ netOrGross: 'gross' }));
     expect(result).toEqual({ ok: true, orderId: 'order-1' });
     expect(insertOrderMock.mock.calls[0][1]).toMatchObject({ total: MAX });
+  });
+});
+
+// ===========================================================================
+describe('createOrder: a paid order below what the payment provider takes in one charge', () => {
+  function placeable() {
+    findByRequestIdMock.mockResolvedValue(undefined);
+    nextOrderNumberMock.mockResolvedValue('ORD-000001');
+    insertOrderMock.mockResolvedValue({ id: 'order-1' } as never);
+    insertLineItemMock.mockResolvedValue({ id: 'line-1' } as never);
+    reserveMock.mockResolvedValue({ ok: true } as never);
+  }
+
+  function expectNothingWritten() {
+    expect(nextOrderNumberMock).not.toHaveBeenCalled();
+    expect(insertOrderMock).not.toHaveBeenCalled();
+    expect(insertLineItemMock).not.toHaveBeenCalled();
+    expect(reserveMock).not.toHaveBeenCalled();
+  }
+
+  it('Stripe takes at least 0.50 in most currencies, its own minimum in the listed ones; the demo provider has none', () => {
+    expect(STRIPE_MIN_CHARGE).toBe(50);
+    expect(minChargeAmount('stripe', 'EUR')).toBe(50);
+    expect(minChargeAmount('stripe', 'usd')).toBe(50);
+    expect(minChargeAmount('stripe', 'GBP')).toBe(30);
+    expect(minChargeAmount('stripe', 'HUF')).toBe(17_500);
+    expect(minChargeAmount('stripe', 'JPY')).toBe(50);
+    expect(minChargeAmount('demo', 'EUR')).toBe(0);
+  });
+
+  it('a Stripe order one cent below the minimum: refused before anything is written or reserved', async () => {
+    placeable();
+    resolvePriceMock.mockResolvedValue(STRIPE_MIN_CHARGE - 1);
+    const error = await createOrder(makeFakeDb().db, TG, baseCart({ netOrGross: 'gross', payment: { provider: 'stripe' } })).then(
+      () => {
+        throw new Error('expected createOrder to refuse the order');
+      },
+      (err: unknown) => err,
+    );
+    expect(error).toBeInstanceOf(OrderTooSmallError);
+    expect(error).toMatchObject({ code: 'ORDER_TOO_SMALL', total: 49, minimum: 50 });
+    expectNothingWritten();
+  });
+
+  it('a Stripe order of exactly the minimum is placed with its payment', async () => {
+    placeable();
+    resolvePriceMock.mockResolvedValue(STRIPE_MIN_CHARGE);
+    const { db, trx } = makeFakeDb();
+    const result = await createOrder(db, TG, baseCart({ netOrGross: 'gross', payment: { provider: 'stripe' } }));
+    expect(result).toEqual({ ok: true, orderId: 'order-1' });
+    expect(trx.insertInto).toHaveBeenCalledWith('order_payment');
+  });
+
+  it('the same small total with the demo provider is placed: it moves no money', async () => {
+    placeable();
+    resolvePriceMock.mockResolvedValue(STRIPE_MIN_CHARGE - 1);
+    const result = await createOrder(makeFakeDb().db, TG, baseCart({ netOrGross: 'gross', payment: { provider: 'demo' } }));
+    expect(result).toEqual({ ok: true, orderId: 'order-1' });
+  });
+
+  it('a free Stripe order (every item priced 0) is placed as before, without a payment', async () => {
+    placeable();
+    resolvePriceMock.mockResolvedValue(0);
+    const { db, trx } = makeFakeDb();
+    const result = await createOrder(db, TG, baseCart({ netOrGross: 'gross', payment: { provider: 'stripe' } }));
+    expect(result).toEqual({ ok: true, orderId: 'order-1' });
+    expect(trx.insertInto).not.toHaveBeenCalledWith('order_payment');
+  });
+
+  it('a retried request whose order already exists replays it before the minimum is checked', async () => {
+    findByRequestIdMock.mockResolvedValue({ id: 'order-prior' } as never);
+    resolvePriceMock.mockResolvedValue(STRIPE_MIN_CHARGE - 1);
+    const result = await createOrder(makeFakeDb().db, TG, baseCart({ netOrGross: 'gross', payment: { provider: 'stripe' } }));
+    expect(result).toEqual({ ok: true, orderId: 'order-prior' });
+    expect(resolvePriceMock).not.toHaveBeenCalled();
+    expectNothingWritten();
   });
 });

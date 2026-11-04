@@ -51,19 +51,21 @@ import 'server-only';
 // before any write (the route answers 422), and so is a total over what the
 // order's payment provider takes in one charge; so is a backorder whose reserved
 // stock would pass its column, raised by the reserve and rolled back with the order.
+// A paid total below the provider's minimum charge is the typed OrderTooSmallError,
+// also thrown before any write (a 422 order_too_small); a free order (total 0) is not.
 
 import type { Kysely } from 'kysely';
 
 import { RESERVE_ISOLATION_LEVEL, ReservationOverflowError, reserve, type Shortage } from '../inventory/reserve';
 import { pricingRepository } from '../repository/pricing';
 import { orderRepository } from '../repository/order';
-import { OrderTooLargeError, UnknownVariantError } from '../repository/errors';
+import { OrderTooLargeError, OrderTooSmallError, UnknownVariantError } from '../repository/errors';
 import { MAX_ORDER_INTEGER, oversizedVariant } from '@/lib/commerce/dto';
 import { toJsonb } from '../../books/snapshots';
 import { emitCommerceEvent } from '../jobs/emit';
 import type { Buyer } from '../payment/buyer';
 import { PAYMENT_WINDOW_MS, platformFee } from '../payment/payments';
-import { maxChargeAmount, type ProviderId } from '../payment/provider';
+import { maxChargeAmount, minChargeAmount, type ProviderId } from '../payment/provider';
 import type { CreateOrderLineItemInput } from '../repository/types';
 import type { CommerceDB } from '../db-types';
 import {
@@ -410,6 +412,13 @@ function runOrderTransaction(
       // ordered and hold its stock, then fail when the payment starts: refused here, before any write.
       if (cart.payment && total > maxChargeAmount(cart.payment.provider, cart.currency)) {
         throw new OrderTooLargeError(null, 'order total over the payment maximum', total);
+      }
+      // Less than the provider takes in one charge (Stripe: 0.50 EUR) would hold its stock, then fail
+      // when the payment starts: refused here too. A free order (total 0) opens no payment (step 7) and
+      // stays allowed; the demo provider has no minimum.
+      if (cart.payment && total > 0) {
+        const minimum = minChargeAmount(cart.payment.provider, cart.currency);
+        if (total < minimum) throw new OrderTooSmallError(total, minimum);
       }
 
       const taxNote = kleinunternehmer

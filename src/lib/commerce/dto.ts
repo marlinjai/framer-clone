@@ -46,6 +46,9 @@ export const MAX_ORDER_INTEGER = 2_147_483_647;
 /** The stable code of an order refused for exceeding MAX_ORDER_INTEGER. */
 export const ORDER_TOO_LARGE_CODE = 'order_too_large';
 
+/** The stable code of a paid order refused for a total below its payment provider's minimum charge. */
+export const ORDER_TOO_SMALL_CODE = 'order_too_small';
+
 /**
  * The first variant whose quantities, added up over every line that names it, are
  * more than one order stores (MAX_ORDER_INTEGER), or null. A cart may name a

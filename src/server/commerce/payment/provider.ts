@@ -41,6 +41,51 @@ export function maxChargeAmount(provider: ProviderId, currency: string): number 
   return Math.min(STRIPE_MAX_CHARGE_BY_CURRENCY[currency.toUpperCase()] ?? STRIPE_MAX_CHARGE, MAX_ORDER_INTEGER);
 }
 
+/**
+ * The least Stripe takes in one charge, in the currency's minor unit: 0.50 in
+ * most currencies (https://docs.stripe.com/currencies, "Minimum charge amounts",
+ * read 2026-11-04), so the fee never exceeds the charge. The currencies with a
+ * different minimum are in STRIPE_MIN_CHARGE_BY_CURRENCY. Stripe applies the
+ * minimum of the account's settlement currency: a charge in another currency must
+ * still reach it after conversion, which no table here can know, so an unlisted
+ * currency is held to 50 minor units, the most common minimum. A smaller amount is
+ * refused when the payment starts, after the order already holds its stock.
+ */
+export const STRIPE_MIN_CHARGE = 50;
+
+/**
+ * The currencies whose Stripe minimum is not 50 minor units (ISO 4217, uppercase),
+ * minor units. HUF is charged with two decimals (175.00 HUF is 17500); JPY and KRW
+ * are zero-decimal and their 50 is the default, so they are not listed.
+ */
+export const STRIPE_MIN_CHARGE_BY_CURRENCY: Readonly<Record<string, number>> = {
+  AED: 200,
+  CZK: 1_500,
+  DKK: 250,
+  GBP: 30,
+  HKD: 400,
+  HUF: 17_500,
+  MXN: 1_000,
+  MYR: 200,
+  NOK: 300,
+  PLN: 200,
+  RON: 200,
+  SEK: 300,
+  THB: 1_000,
+};
+
+/**
+ * The smallest order total `provider` takes in one payment of `currency`, minor
+ * units. createOrder refuses a paid order below it before anything is written (a
+ * 422 order_too_small), so no order holds stock for a payment that cannot start.
+ * A free order (total 0) opens no payment and is not held to it. The demo provider
+ * moves no money, so it has no minimum (0).
+ */
+export function minChargeAmount(provider: ProviderId, currency: string): number {
+  if (provider !== 'stripe') return 0;
+  return STRIPE_MIN_CHARGE_BY_CURRENCY[currency.toUpperCase()] ?? STRIPE_MIN_CHARGE;
+}
+
 /** What a provider reports, normalised. `eventId` is the provider's own id: the handler records it once. */
 export interface PaymentEvent {
   provider: ProviderId;

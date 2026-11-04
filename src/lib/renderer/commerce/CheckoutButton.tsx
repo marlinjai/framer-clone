@@ -52,7 +52,7 @@ import type { ComponentInstance } from '@/models/ComponentModel';
 import type { BindingScope } from '@/lib/bindings/resolver/scope';
 import { useCart, useCheckoutUnavailableReason, type CartLine } from '@/lib/commerce/cart';
 import { getPaymentGateway, type CheckoutBuyer, type PaymentGateway, type RefusedBuyerField } from '@/lib/commerce/payment';
-import { ORDER_TOO_LARGE_CODE } from '@/lib/commerce/dto';
+import { ORDER_TOO_LARGE_CODE, ORDER_TOO_SMALL_CODE } from '@/lib/commerce/dto';
 import { CHECKOUT_BUYER_FIELDS, CHECKOUT_PREVIEW_STATES, type CheckoutPreviewStateId, type ShopLocale } from '@/lib/commerce/parts';
 import { EMPTY_LIVE_REGION_STYLE, ShopDesignContext, ShopLocaleContext, ShopRuntimeContext, type ShopPartRender, type ShopRuntime } from '@/lib/commerce/shopRuntime';
 import { ShopControlContent } from './ShopControlContent';
@@ -203,6 +203,7 @@ const MESSAGES = {
   en: {
     paymentsUnavailable: 'this shop cannot take payments yet. Nothing has been charged.',
     orderTooLarge: 'the order is larger than one order can hold. Lower a quantity in your cart and check out again.',
+    orderTooSmall: 'the order total is below the minimum the payment provider accepts. Add items to your cart and check out again. Nothing has been charged.',
     mixedPriceBasis: 'some items in your cart cannot be ordered together yet. Order them separately, or try again later. Nothing has been charged.',
     orderFailed: (status: number) => `order failed (${status})`,
     declined: (message: string) => `${message}. Your cart is kept: check out again to try once more.`,
@@ -210,6 +211,7 @@ const MESSAGES = {
   de: {
     paymentsUnavailable: 'dieser Shop kann noch keine Zahlungen annehmen. Es wurde nichts abgebucht.',
     orderTooLarge: 'die Bestellung ist größer, als eine Bestellung fassen kann. Verringern Sie eine Menge im Warenkorb und gehen Sie erneut zur Kasse.',
+    orderTooSmall: 'der Bestellwert liegt unter dem Mindestbetrag, den der Zahlungsanbieter annimmt. Legen Sie weitere Artikel in den Warenkorb und gehen Sie erneut zur Kasse. Es wurde nichts abgebucht.',
     mixedPriceBasis: 'einige Artikel im Warenkorb können noch nicht zusammen bestellt werden. Bestellen Sie sie einzeln oder versuchen Sie es später erneut. Es wurde nichts abgebucht.',
     orderFailed: (status: number) => `Serverfehler (${status})`,
     declined: (message: string) => `${message}. Ihr Warenkorb bleibt erhalten: Gehen Sie erneut zur Kasse, um es noch einmal zu versuchen.`,
@@ -370,6 +372,12 @@ function CheckoutLive({ node, scope, hostType = 'div', hostProps = {}, gateway, 
         // price): nothing was ordered. Keep the cart and say what to change, in the checkout's words.
         if (error?.code === ORDER_TOO_LARGE_CODE) {
           setState({ status: 'order_error', reason: 'failed', message: messages.orderTooLarge });
+          return;
+        }
+        // A paid total below the payment provider's minimum charge (order_too_small): nothing was
+        // ordered. Keep the cart and say what to change, in the checkout's words and the site language.
+        if (error?.code === ORDER_TOO_SMALL_CODE) {
+          setState({ status: 'order_error', reason: 'failed', message: messages.orderTooSmall });
           return;
         }
         // Items priced with and without VAT in one cart (mixed_price_basis): the shop owner has
