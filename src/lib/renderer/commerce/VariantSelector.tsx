@@ -51,10 +51,9 @@ import {
 } from '@/lib/commerce/selection';
 import type { RenderNode } from '@/lib/renderer/data/CollectionRenderer';
 import type { DataStateMode } from '@/lib/renderer/data/resolveDataState';
-import { VARIANT_PREVIEW_STATES, missingShopParts, type ShopLocale } from '@/lib/commerce/parts';
+import { VARIANT_PREVIEW_STATES, type ShopLocale } from '@/lib/commerce/parts';
 import { ShopDesignContext, ShopLocaleContext, ShopRuntimeContext, type ShopPartRender, type ShopRuntime } from '@/lib/commerce/shopRuntime';
-import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
-import { renderNodeChildren } from '@/lib/renderer/server/renderComponentNode';
+import { ShopControlContent } from './ShopControlContent';
 
 /** Low-stock threshold (advisory only) below which the text names the count. */
 export const LOW_STOCK_THRESHOLD = 5;
@@ -110,7 +109,10 @@ const VariantSelector = observer(
     // The full variant matrix for this product (the product frame only carries
     // variantIds). Fetched read-only via the data source.
     const [variants, setVariants] = React.useState<ProductVariantDTO[]>([]);
+    // A failed variant fetch, with its message for the editor; null while none failed.
+    const [variantsError, setVariantsError] = React.useState<string | null>(null);
     React.useEffect(() => {
+      setVariantsError(null);
       if (!productId) {
         setVariants([]);
         return;
@@ -121,11 +123,16 @@ const VariantSelector = observer(
         .then((rows) => {
           if (active) setVariants(rows);
         })
-        .catch(() => {
+        .catch((err: unknown) => {
+          if (!active) return;
           // A failed variant fetch leaves the matrix empty: every combo then
           // resolves to no variant (an honest "unselectable" rather than a
-          // fabricated selection). Nothing is silently marked available.
-          if (active) setVariants([]);
+          // fabricated selection). Nothing is silently marked available, and the
+          // failure is said: the visitor reads the failed check message, the
+          // console the real reason.
+          console.error(`VariantSelector: the variants of product ${productId} could not be loaded`, err);
+          setVariants([]);
+          setVariantsError(err instanceof Error ? err.message : String(err));
         });
       return () => {
         active = false;
@@ -201,7 +208,9 @@ const VariantSelector = observer(
           }))
         : null,
       availability:
-        availability.status === 'ready'
+        variantsError !== null
+          ? { status: 'error', message: mode === 'editor' ? variantsError : null }
+          : availability.status === 'ready'
           ? { status: 'ready', quantity: availability.availability.availableQuantity, limited: availability.availability.limited }
           : availability.status === 'error'
             ? { status: 'error', message: mode === 'editor' ? availability.message : null }
@@ -223,12 +232,13 @@ const VariantSelector = observer(
     }
 
     // The control's children (its parts and whatever the designer put beside them,
-    // such as an add to cart) through the surface's renderer, then a default copy
-    // of any required part the tree lacks.
+    // such as an add to cart) through the surface's renderer, under the selected
+    // variant's scope. ShopControlContent adds a default copy of any required part
+    // the tree lacks (before them: the selector's parts come first) and the
+    // platform's guard rule.
     const children = Array.from(node.children ?? []).map((child: ComponentInstance) => (
       <React.Fragment key={child.id}>{renderNode(child, childScope)}</React.Fragment>
     ));
-    const missing = missingShopParts(node, locale, 'variant-selector');
 
     // The selection state is published through context so the add-to-cart spec
     // can read the current variant. This is client-only state, never persisted.
@@ -239,8 +249,7 @@ const VariantSelector = observer(
       wrapperProps,
       <SelectedVariantContext.Provider value={selectionState}>
         <ShopRuntimeContext.Provider value={runtime}>
-          {missing.length > 0 ? renderNodeChildren({ type: 'div', children: missing } as ComponentNode, childScope) : null}
-          {children}
+          <ShopControlContent node={node} kind="variant-selector" locale={locale} drawn={children} scope={childScope} />
         </ShopRuntimeContext.Provider>
       </SelectedVariantContext.Provider>,
     );
@@ -283,6 +292,11 @@ function variantRuntime(view: VariantView): ShopRuntime {
   };
 }
 
+/** A message shown later: its own status region in every state, its props only while it shows. */
+function shownLater(visible: boolean, props?: Record<string, unknown>): ShopPartRender {
+  return visible ? { visible: true, live: true, ...(props ? { props } : {}) } : { visible: false, live: true };
+}
+
 function variantPart(role: string, view: VariantView): ShopPartRender {
   const { availability } = view;
   const ready = availability.status === 'ready' ? availability : null;
@@ -302,24 +316,26 @@ function variantPart(role: string, view: VariantView): ShopPartRender {
           runtime: optionRuntime(option, view),
         })),
       };
+    // Every availability message shows later (after a choice, when the check
+    // answers), so each is its own status region, on the page before its text and
+    // after it, and a screen reader announces the answer (ShopPartRender.live).
     case 'variant.checking':
-      return availability.status === 'loading' ? { visible: true, props: { 'data-variant-availability': 'loading', role: 'status' } } : { visible: false };
+      return shownLater(availability.status === 'loading', { 'data-variant-availability': 'loading' });
     case 'variant.in-stock':
-      return { visible: !!ready && ready.limited && ready.quantity > LOW_STOCK_THRESHOLD, props: { 'data-variant-availability': 'ready' } };
+      return shownLater(!!ready && ready.limited && ready.quantity > LOW_STOCK_THRESHOLD, { 'data-variant-availability': 'ready' });
     case 'variant.low-stock':
       return ready && ready.limited && ready.quantity > 0 && ready.quantity <= LOW_STOCK_THRESHOLD
-        ? { visible: true, tokens: { count: String(ready.quantity) }, props: { 'data-variant-availability': 'ready' } }
-        : { visible: false };
+        ? { ...shownLater(true, { 'data-variant-availability': 'ready' }), tokens: { count: String(ready.quantity) } }
+        : shownLater(false);
     case 'variant.out-of-stock':
-      return { visible: !!ready && ready.limited && ready.quantity <= 0, props: { 'data-variant-availability': 'ready' } };
+      return shownLater(!!ready && ready.limited && ready.quantity <= 0, { 'data-variant-availability': 'ready' });
     case 'variant.available':
       // Untracked stock (a service) or an allowed back-order: the quantity is no limit.
-      return { visible: !!ready && !ready.limited, props: { 'data-variant-availability': 'ready' } };
+      return shownLater(!!ready && !ready.limited, { 'data-variant-availability': 'ready' });
     case 'variant.availability-error':
-      if (availability.status !== 'error') return { visible: false };
+      if (availability.status !== 'error') return shownLater(false);
       return {
-        visible: true,
-        props: { 'data-variant-availability': 'error', role: 'status' },
+        ...shownLater(true, { 'data-variant-availability': 'error' }),
         ...(availability.message ? { text: `Availability check failed: ${availability.message}` } : {}),
       };
     default:
@@ -342,6 +358,10 @@ function optionRuntime(option: NonNullable<VariantView['product']>[number], view
         items: option.values.map((value) => ({
           key: value.id,
           tokens: { value: value.label },
+          // Native `disabled` tells assistive technology a choice with no variant
+          // cannot be pressed, so no `aria-disabled` is drawn; the designer's copy
+          // of either (and of `tabindex`) never reaches the page and is never
+          // stored (SHOP_RUNTIME_OWNED_PROPS).
           props: {
             type: 'button',
             'data-variant-value': value.id,

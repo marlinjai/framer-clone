@@ -246,7 +246,11 @@ assistive technology what an element is), AI (the page generator).
    stock limit, a failed check) and the no-product note. A selector given its parts puts them before the
    designer's own children (an add to cart, a price bound to the variant), which keep their place and scope.
    Canvas states use a sample product: a choice made, nothing chosen, checking, few left, out of stock with a
-   choice unavailable, no stock limit, a failed check, no product.
+   choice unavailable, no stock limit, a failed check, no product. It follows what review settled for slice 2:
+   the island owns whether a choice can be pressed or reached by the keyboard (no stored `disabled`,
+   `aria-disabled`, `tabindex` or `inert`), every availability message is its own status region on the
+   page before its text, a missing part is drawn before the designer's children (where the next load stores
+   it), and a failed variant load shows the failed check message instead of a selector with nothing to choose.
 
 ## Score
 
