@@ -33,7 +33,7 @@
 // The demo editor at `/` never gets a controller: it has no server copy and
 // keeps its Save-as flow (SaveButton).
 
-import { getSnapshot, isAlive, onSnapshot } from 'mobx-state-tree';
+import { getSnapshot, isAlive, isStateTreeNode, onSnapshot } from 'mobx-state-tree';
 import type { ProjectModelType } from '@/models/ProjectModel';
 import { postProjectWrite, type ProjectWriteResult } from './projectWrite';
 import {
@@ -143,6 +143,8 @@ export class AutosaveController {
    */
   attach(project: AutosaveProject): void {
     if (this.project === project && this.disposeSnapshot) return;
+    // Only a live tree can be watched (a removed project, or a stand-in object).
+    if (!isStateTreeNode(project) || !isAlive(project)) return;
     this.disposeSnapshot?.();
     this.project = project;
     this.disposeSnapshot = onSnapshot(project, () => this.notifyChange());
