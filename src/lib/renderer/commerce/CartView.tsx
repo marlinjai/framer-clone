@@ -135,9 +135,18 @@ function CartLive({ node, scope, hostType = 'div', hostProps = {}, children }: C
   const variantIdsKey = lines.map((line) => line.variantId).join('|');
 
   const [lineData, setLineData] = React.useState<Record<string, LineData>>({});
+  // What the visitor has typed into a quantity field while editing it, per line: a
+  // blank or a lone minus sign stays in the field instead of the stored quantity
+  // snapping back under the next keystroke. No entry: the field shows the stored quantity.
+  const [drafts, setDrafts] = React.useState<Record<string, string>>({});
 
   React.useEffect(() => {
     const ids = variantIdsKey ? variantIdsKey.split('|') : [];
+    // A removed line takes its draft with it.
+    setDrafts((prev) => {
+      const kept = Object.fromEntries(Object.entries(prev).filter(([id]) => ids.includes(id)));
+      return Object.keys(kept).length === Object.keys(prev).length ? prev : kept;
+    });
     if (ids.length === 0) {
       setLineData({});
       return;
@@ -255,7 +264,9 @@ function CartLive({ node, scope, hostType = 'div', hostProps = {}, children }: C
   const subtotal = subtotalText(subtotalCents, displayCurrency, locale);
 
   // Where the keyboard goes when a line is removed: the next line's remove button,
-  // else the previous one's, else (the cart now empty) the empty message.
+  // else the previous one's, else (the cart now empty) the empty message. When other
+  // lines remain but none has a remove button drawn (all still loading), the lines
+  // themselves (or the subtotal), so the focus never falls to the page body.
   const host = React.useRef<HTMLElement | null>(null);
   const focusEmpty = React.useRef(false);
   React.useEffect(() => {
@@ -271,6 +282,7 @@ function CartLive({ node, scope, hostType = 'div', hostProps = {}, children }: C
     // The other lines keep their elements (keyed by variant), so focus moves before the line goes.
     if (target) target.focus();
     else if (lines.length === 1) focusEmpty.current = true;
+    else host.current?.querySelector<HTMLElement>('[data-cart-lines], [data-cart-subtotal]')?.focus();
     cart.remove(variantId);
   };
 
@@ -285,7 +297,15 @@ function CartLive({ node, scope, hostType = 'div', hostProps = {}, children }: C
       // CLIENT cart mutations + localStorage persist; no server write.
       setQuantity: (variantId, quantity) => cart.setQuantity(variantId, quantity),
       remove: removeLine,
+      draft: (variantId, value) =>
+        setDrafts((prev) => {
+          if (value !== null) return { ...prev, [variantId]: value };
+          const next = { ...prev };
+          delete next[variantId];
+          return next;
+        }),
     },
+    drafts,
   });
 
   const outerRef = (hostProps as { ref?: unknown }).ref;
@@ -322,10 +342,17 @@ interface CartViewModel {
   subtotalCents: number;
   /** A line is not counted in the subtotal (loading, failed, no longer sold or without a price). */
   partial: boolean;
-  /** Unique to the control, for the ids that tie a quantity input to its label. */
+  /** Unique to the control, for the ids that tie a quantity input to its label and a line's controls to its title. */
   idBase: string;
   /** Null on the canvas, where nothing does anything. */
-  handlers: { setQuantity: (variantId: string, quantity: number) => void; remove: (variantId: string) => void } | null;
+  handlers: {
+    setQuantity: (variantId: string, quantity: number) => void;
+    remove: (variantId: string) => void;
+    /** Keeps what is typed in a line's quantity field while it is edited; null ends the edit. */
+    draft: (variantId: string, value: string | null) => void;
+  } | null;
+  /** What is typed in each quantity field being edited (see CartLive). */
+  drafts?: Readonly<Record<string, string>>;
 }
 
 function cartRuntime(model: CartViewModel): ShopRuntime {
@@ -344,16 +371,17 @@ function cartPart(role: string, model: CartViewModel): ShopPartRender {
       // An honest note, not a fetch state. Live it takes the focus when the last line is removed.
       return empty ? { visible: true, props: { 'data-cart-empty': '', ...(model.handlers ? { tabIndex: -1 } : {}) } } : { visible: false };
     case 'cart.lines':
-      return empty ? { visible: false } : { visible: true, props: { 'data-cart-lines': '' } };
+      // Live it takes the focus when a removed line leaves no remove button to go to.
+      return empty ? { visible: false } : { visible: true, props: { 'data-cart-lines': '', ...(model.handlers ? { tabIndex: -1 } : {}) } };
     case 'cart.line':
       if (empty) return { visible: false };
       return {
         visible: true,
-        items: model.lines.map((line) => ({
+        items: model.lines.map((line, index) => ({
           key: line.variantId,
           tokens: {},
           props: { 'data-cart-line': line.variantId },
-          runtime: lineRuntime(line, model),
+          runtime: lineRuntime(line, model, index),
         })),
       };
     case 'cart.subtotal':
@@ -362,7 +390,7 @@ function cartPart(role: string, model: CartViewModel): ShopPartRender {
         : {
             visible: true,
             tokens: { subtotal: model.subtotal },
-            props: { 'data-cart-subtotal': '', 'data-cart-subtotal-cents': model.subtotalCents, 'data-cart-subtotal-partial': model.partial ? '' : undefined },
+            props: { 'data-cart-subtotal': '', ...(model.handlers ? { tabIndex: -1 } : {}), 'data-cart-subtotal-cents': model.subtotalCents, 'data-cart-subtotal-partial': model.partial ? '' : undefined },
           };
     case 'cart.subtotal-note':
       if (empty) return { visible: false };
@@ -379,22 +407,26 @@ function cartPart(role: string, model: CartViewModel): ShopPartRender {
 }
 
 /** The runtime one copy of the line template reads. */
-function lineRuntime(line: CartViewModel['lines'][number], model: CartViewModel): ShopRuntime {
+function lineRuntime(line: CartViewModel['lines'][number], model: CartViewModel, index: number): ShopRuntime {
   return {
     kind: 'cart-view',
     locale: model.locale,
     surface: model.handlers ? 'live' : 'canvas',
-    part: (role) => linePart(role, line, model),
+    part: (role) => linePart(role, line, model, index),
   };
 }
 
-function linePart(role: string, line: CartViewModel['lines'][number], model: CartViewModel): ShopPartRender {
+function linePart(role: string, line: CartViewModel['lines'][number], model: CartViewModel, index: number): ShopPartRender {
   const { view, variantId } = line;
   const handlers = model.handlers;
   const ready = view.kind === 'ready';
+  // What a screen reader names a line's remove button and quantity input by, beside
+  // their own words: the line's title, or the sentence a line without one shows. Unique
+  // per control (idBase) and per line (index), so copies and controls never share one.
+  const describedBy = `${model.idBase}-line-${index}-about`;
   switch (role) {
     case 'cart.line-title':
-      return ready ? { visible: true, tokens: { title: view.title }, props: { 'data-cart-line-title': '' } } : { visible: false };
+      return ready ? { visible: true, tokens: { title: view.title }, props: { 'data-cart-line-title': '', id: describedBy } } : { visible: false };
     case 'cart.line-price':
       return ready ? { visible: true, tokens: { price: view.price }, props: { 'data-cart-line-price': '' } } : { visible: false };
     // Each quantity input is named by its label, whatever the layout: the label points
@@ -413,21 +445,25 @@ function linePart(role: string, line: CartViewModel['lines'][number], model: Car
           type: 'number',
           min: 1,
           step: 1,
+          'aria-describedby': describedBy,
           'data-cart-qty': variantId,
-          value: line.quantity,
+          // While the visitor edits the field it shows what they typed; otherwise the stored quantity.
+          value: model.drafts?.[variantId] ?? String(line.quantity),
           disabled: false,
           ...(handlers
             ? {
                 readOnly: false,
                 tabIndex: undefined,
                 onChange: (event: React.ChangeEvent<HTMLInputElement>) => {
-                  // A blank field keeps the line's quantity (the controlled value
-                  // puts it back) until a number is typed; zero or less is one.
-                  // Removing a line is the remove button's, never the input's.
+                  // The field keeps what is typed, a blank too, so clearing "2" and
+                  // typing "5" gives 5. Only a number changes the line; zero or less
+                  // is one. Removing a line is the remove button's, never the input's.
+                  handlers.draft(variantId, event.target.value);
                   const next = parseInt(event.target.value, 10);
-                  if (Number.isNaN(next)) return;
-                  handlers.setQuantity(variantId, Math.max(1, next));
+                  if (!Number.isNaN(next)) handlers.setQuantity(variantId, Math.max(1, next));
                 },
+                // Leaving the field ends the edit: a blank or unreadable entry shows the stored quantity again.
+                onBlur: () => handlers.draft(variantId, null),
               }
             : { readOnly: true, tabIndex: -1 }),
         },
@@ -440,7 +476,7 @@ function linePart(role: string, line: CartViewModel['lines'][number], model: Car
       return {
         visible: true,
         ...(view.kind === 'unavailable' || view.kind === 'error' ? { keepInSight: true as const } : {}),
-        props: { type: 'button', disabled: false, 'data-cart-remove': variantId, ...(handlers ? { onClick: () => handlers.remove(variantId) } : {}) },
+        props: { type: 'button', disabled: false, 'aria-describedby': describedBy, 'data-cart-remove': variantId, ...(handlers ? { onClick: () => handlers.remove(variantId) } : {}) },
       };
     case 'cart.line-warning':
       return ready && view.shortOf !== null
@@ -449,10 +485,10 @@ function linePart(role: string, line: CartViewModel['lines'][number], model: Car
     case 'cart.line-loading':
       return { visible: view.kind === 'loading' };
     case 'cart.line-unavailable':
-      return view.kind === 'unavailable' ? { visible: true, props: { 'data-cart-line-unavailable': '' } } : { visible: false };
+      return view.kind === 'unavailable' ? { visible: true, props: { 'data-cart-line-unavailable': '', id: describedBy } } : { visible: false };
     case 'cart.line-error':
       if (view.kind !== 'error') return { visible: false };
-      return { visible: true, props: { 'data-cart-line-error': '', role: 'status' } };
+      return { visible: true, props: { 'data-cart-line-error': '', role: 'status', id: describedBy } };
     default:
       return { visible: false };
   }
@@ -464,7 +500,7 @@ const SAMPLE = {
 } as const;
 
 /** The model the canvas shows for a preview state id, with sample lines. */
-export function sampleCartModel(id: string, locale: ShopLocale): CartViewModel {
+export function sampleCartModel(id: string, locale: ShopLocale, idBase = 'cart-sample'): CartViewModel {
   const text = SAMPLE[locale];
   const tee = { variantId: 'sample-tee', quantity: 2, view: { kind: 'ready', title: text.tee, price: text.price(2500), shortOf: null } as LineView };
   const mug = { variantId: 'sample-mug', quantity: 1, view: { kind: 'ready', title: text.mug, price: text.price(1490), shortOf: null } as LineView };
@@ -475,7 +511,7 @@ export function sampleCartModel(id: string, locale: ShopLocale): CartViewModel {
     subtotal: subtotalText(cents, lines.some((line) => line.view.kind === 'ready') ? 'EUR' : null, locale),
     subtotalCents: cents,
     partial: lines.some((line) => line.view.kind !== 'ready'),
-    idBase: 'cart-sample',
+    idBase,
     handlers: null,
   });
   switch (id) {
@@ -499,7 +535,7 @@ export function cartStateShows(id: string, roles: readonly string[], locale: Sho
   const model = sampleCartModel(id, locale);
   return roles.every((role) => {
     if (cartPart(role, model).visible) return true;
-    return model.lines.some((line) => linePart(role, line, model).visible);
+    return model.lines.some((line, index) => linePart(role, line, model, index).visible);
   });
 }
 
@@ -512,8 +548,10 @@ export function cartStateShowing(roles: readonly string[], locale: ShopLocale): 
 function CartCanvas({ node, hostType = 'div', hostProps = {}, children }: CartViewProps) {
   const locale = React.useContext(ShopLocaleContext);
   const design = React.useContext(ShopDesignContext);
+  // Two carts on one canvas never share an id.
+  const idBase = React.useId();
   const id = typeof node.id === 'string' ? node.id : '';
-  const runtime = cartRuntime(sampleCartModel(design?.stateOf(id) ?? 'ready', locale));
+  const runtime = cartRuntime(sampleCartModel(design?.stateOf(id) ?? 'ready', locale, idBase));
   const wrapperProps = { ...hostProps };
   delete (wrapperProps as Record<string, unknown>).children;
   return React.createElement(
