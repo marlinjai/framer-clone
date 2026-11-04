@@ -100,7 +100,8 @@ Folded in from the re-review of 86b2d472 (decided while building, say so if you 
   and the component dialogs stop every keydown, so a bubbling listener let the browser dialog
   through. Text being typed there registers as an open draft (`src/lib/projects/openDrafts.ts`):
   it counts for the unload warning, and Cmd+S and leaving the page commit it first. In the
-  canvas this ends the inline edit, as Enter does (one undo step); the panel field keeps focus.
+  canvas Cmd+S ends the inline edit, as Enter does (one undo step); hiding the tab or leaving
+  writes the text and keeps the edit open (fourth review); the panel field keeps focus.
 - **A reload on purpose that the person cancels** (Stay, when the browser asks about another
   project's unsaved work) leaves autosave and the warning working again, re-armed by a real sign
   the page stayed (the person pressing a key or the pointer on it, or the page shown again from
@@ -128,8 +129,8 @@ Folded in from the re-review of 86b2d472 (decided while building, say so if you 
   server writes the new content on top of it instead of a false 409 (third review). Someone
   else's write, or more than one write ahead, stays a 409. Reusing the key for new content would
   mark it saved while the server holds the old content.
-- **Hiding the tab while editing text on the canvas** commits the text and ends the inline edit
-  (the panel field keeps its focus).
+- **Hiding the tab while editing text on the canvas** commits the text and keeps the inline
+  edit open, with the focus where it was (changed in the fourth review; only Cmd+S ends it).
 - **No router refresh on a stale read:** nothing is adopted, so there is nothing to refresh.
 
 Folded in from the third review of 8bcce7b1 (decided while building, say so if you disagree):
@@ -152,10 +153,48 @@ Folded in from the third review of 8bcce7b1 (decided while building, say so if y
 - **Recovery:** back online, or when the tab is visible again, a failure whose automatic retries
   stopped and a sign-out (401) are tried once more; still refused, they stay failed.
 - **Publish's body is strict** and refuses the save's attempt keys; the save has its own schema.
-- **The migration gives up after 5 s** waiting for its lock on `sites` (`SET lock_timeout`),
-  instead of queueing every read behind it.
+- ~~The migration gives up after 5 s waiting for its lock.~~ Taken out again in the fourth
+  review: adding a nullable column without a default is metadata only, and a migration that
+  fails on a timeout is marked failed by Prisma (P3009), blocking every later deploy. The
+  rollback (drop the column, `prisma migrate resolve --rolled-back`) is in `deploy/README.md`,
+  "Migration rollbacks".
 - **Cmd/Ctrl+S on the standalone preview** only keeps the browser dialog away (nothing to save
   there).
+
+Folded in from the fourth review of d38f636e (each reviewer probe ported as a failing test
+first, then fixed; decided while building, say so if you disagree):
+
+- **Only an ok or a conflict settles a lost attempt.** A refusal of a later attempt (401, 403,
+  413, 400) says nothing about the lost one, so the next save still names it; before, a refusal
+  in between led to a false 409 against this tab's own write.
+- **While an attempt's answer is lost, nothing counts as saved:** an undo back to the loaded copy
+  is still sent (naming the lost attempt), and the unload warning stays on until the server
+  answers.
+- **Publish settles a lost or waiting save first** (that save goes past Publish's hold, with its
+  own key, so the server replays it), then publishes on the version it produced. If that save
+  fails again, Publish goes on and its own version lock decides.
+- **Leaving while a request is out** sends what changed during it at once after the answer, as a
+  keepalive request, not after a debounce.
+- **A recovery is one attempt** (back online, the tab visible again): still failing, also with a
+  5xx, it stays failed without a new 10 minutes of retries.
+- **The unsaved check is cached per change** (a counter moved by every patch of the project,
+  also while it is not on screen, and by every state), so the notice's one-second countdown
+  never serialises a project again.
+- **The keepalive budget is shared:** the browser caps all keepalive bodies of a page at 64 KB
+  together, so the project on screen goes first and the others take what is left; a body that
+  does not fit goes as a normal request.
+- **Mobile Safari has no unload warning.** Measured on 2026-11-05
+  (`src/lib/projects/__tests__/saveBodySize.test.ts`): a project with a generated six-section page
+  plus three more pages sends a save body of 33,578 bytes (about 34 KB), inside the 60 KB
+  keepalive budget. A project about twice that size or larger cannot be finished by the browser
+  after the page is gone, and the unload warning, its fallback, does not exist on mobile
+  Safari: there, leaving with a save not yet answered can lose the last seconds of work.
+- **The full failure reason is reachable by keyboard** on the wide bar (a Details disclosure);
+  the compact bar shows it whole in its notice.
+- **Cmd/Ctrl+S on the projects overview** keeps the browser dialog away and saves projects left
+  behind at once.
+- **The autosave lifetime lives in the editor shell** (`EditorAutosave`, first in EditorApp),
+  not in the status display.
 
 Decided by Marlin on 2026-11-04 (the brief of the first version):
 
@@ -241,8 +280,11 @@ Decided while building (say so if you disagree):
 - `src/hooks/useAutosave.ts`: `useAutosave` attaches the current project (never the demo) in an
   effect; `useAutosaveState` is the read-only view; `useSaveStatusLabel` is the one wording
   with the 300 ms threshold; `saveFailureReason` says what to do.
-- `src/components/SaveStatus.tsx` (replaces `SaveButton.tsx`): the status, Retry, "Sign in
-  again", "Changed elsewhere", the version lock dialog, and in the demo "Keep as project".
+- `src/components/EditorAutosave.tsx`: the autosave lifetime, first in the editor shell
+  (EditorApp), so its cleanup runs while every open draft is still registered.
+- `src/components/SaveStatus.tsx` (replaces `SaveButton.tsx`): shows the state only; Retry,
+  Details, "Sign in again", "Changed elsewhere", the version lock dialog, and in the demo "Keep
+  as project".
 - `src/components/UnsavedWorkGuard.tsx`: the one `beforeunload` and the left-behind notice.
 - `src/components/PublishButton.tsx`: the write runs inside `exclusive`; a refusal pauses
   autosave quietly (Publish shows its own dialog).
@@ -292,11 +334,17 @@ The four paths of the stateful flow standard (knowledge-base `standards/stateful
   generator's line in the top bar's words.
 - `src/components/__tests__/SiteVersionLock.test.tsx` keeps the version lock's cases, driven by
   an edit and Cmd+S; `DemoProjectSaving.test.tsx` the demo versus a real project.
+- Fourth review: the reviewer's probes P1 to P5 (an undo after a lost answer, a 401 between lost
+  answers, one recovery attempt also for a 503, leaving during a request, Publish during the
+  backoff) in `autosave.test.ts`; the cached unsaved check (`autosave.unsavedCache.test.ts`);
+  the measured body size (`saveBodySize.test.ts`); the shared keepalive budget
+  (`projectWrite.test.ts` and the UI suite); the hidden tab keeping the inline edit open; Details;
+  Cmd+S on the overview.
 - Third review: unmounting the editor with a dirty panel draft and with an open inline edit
   saves the text; ColorInput and DimensionInput as open drafts (Cmd+S and unmount), a field
   nobody typed in is none; the notice's countdown outside the live region; "Save mine as a new
   project" ending the warning and the notice; `previousRequestKey` in the controller (an edit
-  during the backoff, a new version, a refusal settling it), the repository and the route;
+  during the backoff, a new version), the repository and the route;
   Publish refusing the key; recovery of 401 and stopped failures; the reload re-armed by a sign
   and not by time or after pagehide; the preview's Cmd+S block.
 - Re-review: `src/stores/__tests__/openProject.test.ts` (stale read with and without unsaved
