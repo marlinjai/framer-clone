@@ -140,13 +140,19 @@ function CartLive({ node, scope, hostType = 'div', hostProps = {}, children }: C
   // snapping back under the next keystroke. No entry: the field shows the stored quantity.
   const [drafts, setDrafts] = React.useState<Record<string, string>>({});
 
+  // A draft lives only while its field does: the field is drawn for a line that is
+  // ready, so a line removed, failed or loading again takes its draft with it (the
+  // input unmounts without a blur), and a line that loads again shows its stored
+  // quantity. A ready line re-read in the background keeps the edit in progress.
   React.useEffect(() => {
-    const ids = variantIdsKey ? variantIdsKey.split('|') : [];
-    // A removed line takes its draft with it.
     setDrafts((prev) => {
-      const kept = Object.fromEntries(Object.entries(prev).filter(([id]) => ids.includes(id)));
+      const kept = Object.fromEntries(Object.entries(prev).filter(([id]) => lineData[id]?.status === 'ready'));
       return Object.keys(kept).length === Object.keys(prev).length ? prev : kept;
     });
+  }, [lineData]);
+
+  React.useEffect(() => {
+    const ids = variantIdsKey ? variantIdsKey.split('|') : [];
     if (ids.length === 0) {
       setLineData({});
       return;
