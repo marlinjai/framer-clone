@@ -12,7 +12,7 @@ import { CommerceDataSourceContext } from '@/lib/commerce/context';
 import type { CommerceDataSource } from '@/lib/commerce/provider';
 import type { ProductVariantDTO } from '@/lib/commerce/types';
 import { SelectedVariantContext, type SelectionState } from '@/lib/commerce/selection';
-import { CartProvider, useCart } from '@/lib/commerce/cart';
+import { CartProvider, MAX_LINE_QUANTITY, useCart } from '@/lib/commerce/cart';
 import AddToCartButton from '../AddToCartButton';
 
 const VARIANT: ProductVariantDTO = {
@@ -146,6 +146,23 @@ describe('AddToCartButton add (client cart, no server write)', () => {
       expect(getByTestId('lines').textContent).toBe(
         JSON.stringify([{ variantId: 'var_s_red', quantity: 2 }]),
       );
+    });
+  });
+
+  it('adds at most what a cart line holds, whatever the node quantity says', async () => {
+    const { container, getByTestId } = renderButton({
+      variant: VARIANT,
+      ds: makeDS({ var_s_red: 9 }),
+      node: makeNode({ quantity: 1e15 }),
+    });
+    await waitFor(() => {
+      expect((container.querySelector('button[data-add-to-cart]') as HTMLButtonElement).disabled).toBe(false);
+    });
+    act(() => {
+      fireEvent.click(container.querySelector('button[data-add-to-cart]')!);
+    });
+    await waitFor(() => {
+      expect(getByTestId('lines').textContent).toBe(JSON.stringify([{ variantId: 'var_s_red', quantity: MAX_LINE_QUANTITY }]));
     });
   });
 

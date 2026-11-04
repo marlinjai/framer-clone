@@ -43,7 +43,7 @@ import type {
   PriceDTO,
   ProductVariantDTO,
 } from '@/lib/commerce/types';
-import { computeDisplaySubtotalCents, useCart, type CartLine } from '@/lib/commerce/cart';
+import { cartLineQuantity, computeDisplaySubtotalCents, useCart, type CartLine } from '@/lib/commerce/cart';
 import { lineTitle } from '@/lib/commerce/lineTitle';
 import { resolveDataState } from '@/lib/renderer/data/resolveDataState';
 import { CART_PREVIEW_STATES, shopPartText, type ShopLocale } from '@/lib/commerce/parts';
@@ -469,9 +469,11 @@ function linePart(role: string, line: CartViewModel['lines'][number], model: Car
                   // The field keeps what is typed, a blank too, so clearing "2" and
                   // typing "5" gives 5. Only a number changes the line; zero or less
                   // is one. Removing a line is the remove button's, never the input's.
+                  // Read as a number ("1e3" is 1000, "2.7" is 2), from one up to what the order
+                  // route can store; a blank or an unreadable entry changes nothing.
                   handlers.draft(variantId, event.target.value);
-                  const next = parseInt(event.target.value, 10);
-                  if (!Number.isNaN(next)) handlers.setQuantity(variantId, Math.max(1, next));
+                  const next = cartLineQuantity(event.target.value);
+                  if (next !== null) handlers.setQuantity(variantId, next);
                 },
                 // Leaving the field ends the edit: a blank or unreadable entry shows the stored quantity again.
                 onBlur: () => handlers.draft(variantId, null),

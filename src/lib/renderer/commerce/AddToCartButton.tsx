@@ -33,7 +33,7 @@ import type { BindingScope } from '@/lib/bindings/resolver/scope';
 import type { Row } from '@/lib/bindings/dataSource/types';
 import { useCommerceDataSource } from '@/lib/commerce/context';
 import { useOptionalSelectedVariant } from '@/lib/commerce/selection';
-import { useCart } from '@/lib/commerce/cart';
+import { MAX_LINE_QUANTITY, useCart } from '@/lib/commerce/cart';
 import { ADD_TO_CART_PREVIEW_STATES, type ShopLocale } from '@/lib/commerce/parts';
 import { ShopDesignContext, ShopLocaleContext, ShopRuntimeContext, type ShopPartRender, type ShopRuntime } from '@/lib/commerce/shopRuntime';
 import { resolveDataState } from '@/lib/renderer/data/resolveDataState';
@@ -59,10 +59,10 @@ export interface AddToCartButtonProps {
   surface?: 'live' | 'canvas';
 }
 
-/** Read a positive-integer quantity from a node prop, defaulting to 1. */
+/** Read a positive-integer quantity from a node prop, defaulting to 1, at most what a cart line holds. */
 function quantityProp(props: Record<string, unknown> | undefined): number {
   const raw = props?.quantity;
-  if (typeof raw === 'number' && Number.isInteger(raw) && raw > 0) return raw;
+  if (typeof raw === 'number' && Number.isInteger(raw) && raw > 0) return Math.min(MAX_LINE_QUANTITY, raw);
   return 1;
 }
 

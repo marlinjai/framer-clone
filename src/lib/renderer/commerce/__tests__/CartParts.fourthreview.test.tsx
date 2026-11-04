@@ -9,7 +9,7 @@ import type { ComponentInstance } from '@/models/ComponentModel';
 import { createScope } from '@/lib/bindings/resolver/scope';
 import { CommerceDataSourceContext } from '@/lib/commerce/context';
 import { InMemoryCommerceDataSource } from '@/lib/commerce/inMemoryCommerceDataSource';
-import { CART_STORAGE_KEY, CartProvider, useCart } from '@/lib/commerce/cart';
+import { CART_STORAGE_KEY, CartProvider, MAX_LINE_QUANTITY, useCart } from '@/lib/commerce/cart';
 import { ShopLocaleContext } from '@/lib/commerce/shopRuntime';
 import { normalizeShopControl, type ShopTreeNode } from '@/lib/commerce/parts';
 import type { CommerceDataSource } from '@/lib/commerce/provider';
@@ -160,5 +160,30 @@ describe('the focus after a line is removed', () => {
     });
     await waitFor(() => expect(container.querySelector('[data-cart-line="var_s_red"]')).toBeNull());
     expect(document.activeElement).toBe(container.querySelector('button[data-cart-remove="var_s_blue"]'));
+  });
+});
+
+describe('the quantity field reads a number the way the order route can store it', () => {
+  it('"1e3" is 1000, a decimal is its whole part, a huge number is capped, and a blank or an overflow changes nothing', async () => {
+    const { container, getByTestId } = renderCart([{ variantId: 'var_s_red', quantity: 2 }]);
+    const qty = await quantityField(container);
+    const typed = async (value: string, quantity: number) => {
+      act(() => {
+        fireEvent.change(qty, { target: { value } });
+      });
+      await waitFor(() => expect(getByTestId('lines').textContent).toBe(JSON.stringify([{ variantId: 'var_s_red', quantity }])));
+    };
+    await typed('1e3', 1000);
+    await typed('2.7', 2);
+    await typed('0.4', 1);
+    await typed('99999999999999', MAX_LINE_QUANTITY);
+    await typed('3', 3);
+    // A blank, a lone exponent overflowing to Infinity: the line keeps its quantity.
+    await typed('', 3);
+    await typed('1e999', 3);
+    act(() => {
+      fireEvent.blur(qty);
+    });
+    expect(qty.value).toBe('3');
   });
 });

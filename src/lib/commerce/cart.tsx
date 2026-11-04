@@ -51,6 +51,26 @@ export interface CartLine {
 }
 
 /**
+ * The largest quantity one cart line holds: the largest the order route can store.
+ * It accepts any positive integer (POST /api/commerce/orders) into the INTEGER
+ * column `order_line_item.quantity` (migration 005), whose ceiling this is. A
+ * line's money (unit price times quantity) is checked by the server at order-create,
+ * never here.
+ */
+export const MAX_LINE_QUANTITY = 2_147_483_647;
+
+/**
+ * A quantity as a cart line holds it: a whole number from 1 to MAX_LINE_QUANTITY.
+ * Null for anything that is not a finite number (a blank, a word, an overflow to
+ * Infinity), so a caller keeps what it had instead of guessing.
+ */
+export function cartLineQuantity(value: unknown): number | null {
+  const n = typeof value === 'string' ? (value.trim() === '' ? NaN : Number(value)) : typeof value === 'number' ? value : NaN;
+  if (!Number.isFinite(n)) return null;
+  return Math.min(MAX_LINE_QUANTITY, Math.max(1, Math.floor(n)));
+}
+
+/**
  * The cart store exposed through context. Every mutation is a pure client-state
  * change plus a localStorage persist: there is no server write of any kind.
  */
@@ -124,7 +144,7 @@ function normalizeLines(parsed: unknown): CartLine[] {
     const quantity = (entry as { quantity?: unknown }).quantity;
     if (typeof variantId !== 'string' || variantId.length === 0) continue;
     if (typeof quantity !== 'number' || !Number.isInteger(quantity) || quantity <= 0) continue;
-    lines.push({ variantId, quantity });
+    lines.push({ variantId, quantity: Math.min(MAX_LINE_QUANTITY, quantity) });
   }
   return lines;
 }
@@ -197,13 +217,15 @@ export function CartProvider({ children, storageKey = CART_STORAGE_KEY }: CartPr
 
   const add = useCallback(
     (variantId: string, quantity: number) => {
-      const qty = Math.max(1, Math.floor(quantity));
+      const qty = cartLineQuantity(quantity);
+      if (qty === null) return;
       mutate((prev) => {
         const existing = prev.find((line) => line.variantId === variantId);
         if (existing) {
+          // Adding to a line never takes it past what the order route can store.
           return prev.map((line) =>
             line.variantId === variantId
-              ? { variantId, quantity: line.quantity + qty }
+              ? { variantId, quantity: Math.min(MAX_LINE_QUANTITY, line.quantity + qty) }
               : line,
           );
         }
@@ -215,7 +237,8 @@ export function CartProvider({ children, storageKey = CART_STORAGE_KEY }: CartPr
 
   const setQuantity = useCallback(
     (variantId: string, quantity: number) => {
-      const qty = Math.floor(quantity);
+      if (Number.isNaN(quantity)) return;
+      const qty = Math.min(MAX_LINE_QUANTITY, Math.floor(quantity));
       mutate((prev) => {
         // A non-positive quantity removes the line (a cart never holds zero of
         // something); an explicit `remove` exists for clarity at the call site.
