@@ -104,7 +104,7 @@ export type AutosaveProject = ProjectModelType;
 export interface AutosaveWriteOptions {
   /** Names this attempt; a retry of the same content on the same version reuses it. */
   requestKey: string;
-  /** An earlier attempt on the same version whose answer was lost (it may have been written). */
+  /** Earlier attempts on the same version whose answers were lost (any of them may have been written). */
   previousRequestKeys?: readonly string[];
   /**
    * The page is going away: the browser should finish the request. Shared by
@@ -541,7 +541,8 @@ export class AutosaveController {
     }
     // A lost "Save mine over it" retries over the same reported version; any answer ends that.
     if (!(result.kind === 'error' && isPassingFailure(result.status))) this.overPending = undefined;
-    // A 400 may be fixed by the next change: that change gets one attempt.
+    // A 400 may be fixed by a change: the next change after each 400 gets one
+    // debounced attempt (refused again, the next change gets another).
     this.retryOnceOnChange = result.kind === 'error' && result.status === 400;
     if (result.kind === 'conflict') {
       this.clearTimers();
@@ -675,6 +676,15 @@ export class AutosaveController {
    * server may hold the latest of them). Publish names them too, so it builds
    * on a landed one instead of meeting it as someone else's change.
    */
+  /**
+   * The lost attempts and the base version they were made on (the known
+   * version, or the version a lost "Save mine over it" named). Publish sends
+   * that base with them, so the server can recognise a landed one.
+   */
+  lostAttempts(): { expectedVersion: number | undefined; keys: string[] } | undefined {
+    return this.unconfirmed ? { expectedVersion: this.unconfirmed.expectedVersion, keys: [...this.unconfirmed.keys] } : undefined;
+  }
+
   lostAttemptKeys(expectedVersion: number | undefined): string[] {
     return this.unconfirmed && this.unconfirmed.expectedVersion === expectedVersion ? [...this.unconfirmed.keys] : [];
   }
@@ -733,7 +743,10 @@ export class AutosaveController {
       // first (past the hold): Publish then writes on the version it produced,
       // instead of meeting it as someone else's change.
       if (this.unconfirmed || this.state.phase === 'retrying') {
-        await this.run('retry', undefined, { bypassHold: true });
+        // A lost "Save mine over it" is settled over the version its conflict reported.
+        await (this.overPending !== undefined
+          ? this.run('over', this.overPending, { bypassHold: true })
+          : this.run('retry', undefined, { bypassHold: true }));
         while (this.inFlight) await this.inFlight;
       }
       if (this.state.phase !== 'publishing') {
@@ -748,7 +761,10 @@ export class AutosaveController {
         noteWriteInFlight(this.projectId, false);
         // The other write landed (it moved the known version): it settles any
         // lost save on the old base, which it built on or replaced.
-        if (knownServerVersion(this.projectId) !== versionBefore) this.unconfirmed = undefined;
+        if (knownServerVersion(this.projectId) !== versionBefore) {
+          this.unconfirmed = undefined;
+          this.overPending = undefined;
+        }
       }
     } finally {
       this.held--;

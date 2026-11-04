@@ -109,12 +109,14 @@ const PublishButton = observer(() => {
       const snapshot = getSnapshot(project);
       // The edits refused up to this snapshot are the ones this publish leaves out.
       const acknowledged = [...project.refusedComponents];
-      const expectedVersion = overVersion ?? knownServerVersion(project.id);
       // A save of this tab whose answer was lost (and whose settling retry failed
-      // too) may be the latest write: name it, so Publish builds on it instead of
-      // meeting it as someone else's change (the server checks the key is bound
-      // to the current version).
-      const lost = autosave?.lostAttemptKeys(expectedVersion) ?? [];
+      // too) may be the latest write: name it, on the base it was made on (the
+      // known version, or the one a lost "Save mine over it" named), so Publish
+      // builds on it instead of meeting it as someone else's change (the server
+      // checks the key is bound to the current version).
+      const pending = overVersion === undefined ? autosave?.lostAttempts() : undefined;
+      const expectedVersion = overVersion ?? pending?.expectedVersion ?? knownServerVersion(project.id);
+      const lost = pending?.keys ?? [];
       const result = await postProjectWrite('/api/projects/publish', snapshot, expectedVersion, 'Publish failed', {
         ...(lost.length > 0 ? { previousRequestKeys: lost } : {}),
       });

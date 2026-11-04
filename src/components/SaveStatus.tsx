@@ -73,11 +73,15 @@ const SaveStatus = observer(() => {
   const [detailsOpen, setDetailsOpen] = React.useState(false);
   const detailsId = React.useId();
   const detailsButton = React.useRef<HTMLButtonElement>(null);
-  // Escape closes the reason and puts the focus back on Details.
+  const statusRoot = React.useRef<HTMLDivElement>(null);
+  // Escape closes the reason and puts the focus back on Details, only while the
+  // focus is in the status (or its panel) and nothing else handled the key (a
+  // dialog, a menu, a text edit on the canvas).
   React.useEffect(() => {
     if (!detailsOpen) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      if (!statusRoot.current?.contains(document.activeElement)) return;
       setDetailsOpen(false);
       detailsButton.current?.focus();
     };
@@ -129,7 +133,7 @@ const SaveStatus = observer(() => {
   const reasonHidden = failed && state.hidden === true;
 
   return (
-    <div className="mr-1 flex min-w-0 items-center gap-1.5 lg:mr-2" data-autosave-phase={state.phase}>
+    <div ref={statusRoot} className="mr-1 flex min-w-0 items-center gap-1.5 lg:mr-2" data-autosave-phase={state.phase}>
       <span role="status" aria-live="polite" aria-atomic="true" data-testid="save-announcement" className="sr-only">
         {announcement}
       </span>

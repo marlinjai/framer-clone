@@ -254,12 +254,29 @@ describe('the full reason on the wide bar', () => {
     const panel = screen.getByTestId('save-status-details');
     expect(details.getAttribute('aria-controls')).toBe(panel.id);
     expect(panel.textContent).toContain('larger than the 10 MB a save can take');
+    // Focus elsewhere, or Escape handled by something else: it stays open.
+    const elsewhere = document.createElement('button');
+    document.body.appendChild(elsewhere);
+    elsewhere.focus();
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    expect(screen.getByTestId('save-status-details')).toBeTruthy();
+    details.focus();
+    const handled = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+    handled.preventDefault();
+    act(() => {
+      document.dispatchEvent(handled);
+    });
+    expect(screen.getByTestId('save-status-details')).toBeTruthy();
+    // Focus in the status: Escape closes it and the focus stays on Details.
     act(() => {
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     });
     expect(screen.queryByTestId('save-status-details')).toBeNull();
     expect(details.getAttribute('aria-expanded')).toBe('false');
     expect(document.activeElement).toBe(details);
+    elsewhere.remove();
   });
 });
 
@@ -627,6 +644,40 @@ describe('"Save mine as a new project"', () => {
     await advance(60_000);
     expect(screen.queryByTestId('unsaved-work-notice')).toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('Publish after a lost "Save mine over it"', () => {
+  it('sends the version the conflict reported, naming the lost attempt', async () => {
+    const project = openServerProject(3);
+    fetchMock
+      .mockResolvedValueOnce(conflict(9))
+      .mockResolvedValueOnce(failure(502, 'Bad gateway.')) // the save over it: answer lost
+      .mockResolvedValueOnce(failure(503, 'Busy.')) // Publish's settling retry: lost again
+      .mockResolvedValueOnce(new Response(JSON.stringify({ publishedPages: [''], subdomain: 'x', version: 11 }), { status: 200 }));
+    render(
+      <>
+        <Editor />
+        <PublishButton />
+      </>,
+    );
+    edit(project, 'mine');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    fireEvent.click(await screen.findByRole('button', { name: 'Save mine over it' }));
+    await advance(0);
+    fireEvent.click(screen.getByRole('button', { name: /^publish$/i }));
+    await advance(0);
+    await advance(0);
+    const over = JSON.parse(fetchMock.mock.calls[1][1].body);
+    const settle = JSON.parse(fetchMock.mock.calls[2][1].body);
+    expect(fetchMock.mock.calls[3][0]).toBe('/api/projects/publish');
+    const publish = JSON.parse(fetchMock.mock.calls[3][1].body);
+    expect(over.expectedVersion).toBe(9);
+    expect(settle).toMatchObject({ expectedVersion: 9, requestKey: over.requestKey });
+    expect(publish.expectedVersion).toBe(9);
+    expect(publish.previousRequestKeys).toEqual([over.requestKey]);
+    expect(publish.requestKey).toBeUndefined();
+    expect(knownServerVersion(project.id)).toBe(11);
   });
 });
 

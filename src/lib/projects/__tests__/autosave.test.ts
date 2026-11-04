@@ -1257,3 +1257,51 @@ describe('the fifth review of 2026-11-05', () => {
     expect(autosave.getState().phase).toBe('failed');
   });
 });
+
+
+describe('the delta review of 2026-11-05', () => {
+  it('Publish settles a lost "Save mine over it" over the reported version, then publishes on what it produced', async () => {
+    const { project, autosave } = openAndWatch(3);
+    edit(project, 'mine');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    await calls[0].answer(conflict(9));
+    void autosave.saveOver(9);
+    await calls[1].answer(failure(502)); // maybe written as 10
+    let publishedOn: number | undefined;
+    const publishing = autosave.exclusive(async () => {
+      publishedOn = knownServerVersion(project.id);
+    });
+    await advance(0);
+    expect(calls[2].expectedVersion).toBe(9);
+    expect(calls[2].options.requestKey).toBe(calls[1].options.requestKey);
+    await calls[2].answer(ok(10)); // replayed
+    await publishing;
+    expect(publishedOn).toBe(10);
+  });
+
+  it('when that settling save fails again, Publish gets the over-version as the base with its keys', async () => {
+    const { project, autosave } = openAndWatch(3);
+    edit(project, 'mine');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    await calls[0].answer(conflict(9));
+    void autosave.saveOver(9);
+    await calls[1].answer(failure(502));
+    let pending: ReturnType<AutosaveController['lostAttempts']>;
+    const publishing = autosave.exclusive(async () => {
+      pending = autosave.lostAttempts();
+      // The publish built on the landed save: the server answered 11.
+      markServerVersion(project.id, getSnapshot(project) as ProjectContent, 11);
+    });
+    await advance(0);
+    await calls[2].answer(failure(503));
+    await publishing;
+    expect(pending!).toEqual({ expectedVersion: 9, keys: [calls[1].options.requestKey] });
+    // The successful Publish settled both: no lost attempt, no pending "over".
+    expect(autosave.lostAttempts()).toBeUndefined();
+    edit(project, 'after publish');
+    await advance(AUTOSAVE_DEBOUNCE_MS);
+    const last = calls.at(-1)!;
+    expect(last.expectedVersion).toBe(11);
+    expect(last.options.previousRequestKeys).toBeUndefined();
+  });
+});
