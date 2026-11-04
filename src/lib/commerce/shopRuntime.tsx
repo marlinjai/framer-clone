@@ -10,7 +10,9 @@
 //
 // The designer's props come first and the runtime's last: a designer can change
 // how a part looks and reads, never what it does (its type, name, value,
-// disabled state, handlers and ARIA wiring are the runtime's).
+// disabled state, keyboard reach, handlers and ARIA wiring are the runtime's;
+// on a button or an input the designer's copies of these never reach the page,
+// SHOP_RUNTIME_OWNED_PROPS).
 'use client';
 
 import React, { createContext, useContext } from 'react';
@@ -19,6 +21,7 @@ import { createRunElement } from '@/lib/renderer/runElements';
 import { renderOwnText, runLinksAllowedIn } from '@/lib/renderer/textNode';
 import {
   SHOP_KEPT_WRAPPER_ATTR,
+  SHOP_RUNTIME_OWNED_PROPS,
   fillShopTokensIn,
   shopPartControl,
   shopPartRoleOf,
@@ -69,6 +72,14 @@ export interface ShopRuntime {
 /** The runtime of the control a part sits in; null outside any control. */
 export const ShopRuntimeContext = createContext<ShopRuntime | null>(null);
 ShopRuntimeContext.displayName = 'ShopRuntimeContext';
+
+/**
+ * True inside the second or a later copy of a repeated part (a cart line): every
+ * node drawn there keeps its style hook but not its selection identity, which only
+ * the first copy carries, so an id never repeats on the canvas or in the Preview.
+ */
+export const ShopRepeatCopyContext = createContext(false);
+ShopRepeatCopyContext.displayName = 'ShopRepeatCopyContext';
 
 /** The site language the shop controls speak, set by the page (published) or the editor. */
 export const ShopLocaleContext = createContext<ShopLocale>('en');
@@ -125,6 +136,9 @@ const KEPT_FALLBACK_COLOR = '#111827';
 
 /** Properties pinned to `none` on a part kept in sight itself, always (it is a run of text, so none is designed). */
 const PART_NONE = ['transform', 'scale', 'translate', 'rotate', 'clip-path', 'mask-image', '-webkit-mask-image', 'filter', 'animation'];
+
+/** The tags of a part kept in sight that a visitor presses or types into (a cart line's remove button). */
+const INTERACTIVE_TAG = /^(BUTTON|INPUT|SELECT|TEXTAREA|A)$/;
 
 /** Properties a wrapper keeps unless they hide what it holds: then they are pinned to `none`. */
 const WRAPPER_NONE_WHEN_SET = ['clip-path', 'mask-image', '-webkit-mask-image'];
@@ -197,6 +211,9 @@ function seeThrough(color: string): boolean {
  *   clip path or mask, and an overflow that crops what it holds. Each wrapper
  *   also gets a marker the guard rule uses to blank its `::before` and `::after`
  *   (src/lib/commerce/parts.ts, shopGuardCss).
+ * - On a part a visitor presses (a cart line's remove button): `pointer-events:
+ *   auto` on the part, and on every wrapper up to the control whose computed value
+ *   is `none`, so a press is never let through to the page behind.
  */
 function keepInSight(element: HTMLElement): void {
   const view = element.ownerDocument.defaultView;
@@ -242,8 +259,11 @@ function keepInSight(element: HTMLElement): void {
   // wrapper is pinned opaque.
   const opacityOf = (computed: CSSStyleDeclaration) => (computed.opacity === '' ? 1 : Number(computed.opacity));
   const fadedTogether = chain.slice(1).reduce((product, { computed }) => product * opacityOf(computed), 1) < 0.5;
+  const interactive = INTERACTIVE_TAG.test(element.tagName);
   for (const { node, computed, crops } of chain) {
     if (computed.display === 'none') force(node, 'display', 'block');
+    // A part a visitor presses takes the press: no wrapper lets it fall through.
+    if (interactive && computed.getPropertyValue('pointer-events') === 'none') force(node, 'pointer-events', 'auto');
     if (computed.visibility !== 'visible') force(node, 'visibility', 'visible');
     if (opacityOf(computed) < 0.5 || (fadedTogether && opacityOf(computed) < 1)) force(node, 'opacity', '1');
     if (computed.getPropertyValue('content-visibility') === 'hidden') force(node, 'content-visibility', 'visible');
@@ -269,8 +289,9 @@ function keepInSight(element: HTMLElement): void {
   if (seeThrough(ownColor)) force(element, 'color', KEPT_FALLBACK_COLOR);
   force(element, '-webkit-text-fill-color', 'currentcolor');
   force(element, 'text-indent', '0');
-  // A button kept in sight (a cart line's remove button) keeps its focus ring.
-  if (!/^(BUTTON|INPUT|SELECT|TEXTAREA|A)$/.test(element.tagName)) force(element, 'outline', 'none');
+  // A button kept in sight (a cart line's remove button) keeps its focus ring and takes a press.
+  if (interactive) force(element, 'pointer-events', 'auto');
+  else force(element, 'outline', 'none');
   if (!Number.isFinite(letterSpacing) || letterSpacing < 0) force(element, 'letter-spacing', 'normal');
   if (!Number.isFinite(wordSpacing) || wordSpacing < 0) force(element, 'word-spacing', 'normal');
   if (!Number.isFinite(size) || size < MIN_KEPT_FONT_PX) force(element, 'font-size', `${MIN_KEPT_FONT_PX}px`);
@@ -343,6 +364,9 @@ export function ShopPartElement({ role, tag, domProps, storedText, content, surf
   // An input part has no name: its value lives in the island's state, so a form the
   // page wraps around the control has nothing of the visitor's to post.
   if (elementTag === 'input' || elementTag === 'select' || elementTag === 'textarea') delete ownProps.name;
+  // Whether it can be pressed, typed into or reached by the keyboard is the runtime's,
+  // in any spelling (a stored `tabindex` as well as `tabIndex`).
+  for (const key of SHOP_RUNTIME_OWNED_PROPS[elementTag] ?? []) delete ownProps[key];
   // Nothing renames a fixed wording for assistive technology (a label or tooltip of the designer's).
   if (keep || spec?.fixedText || spec?.onlyParts) for (const key of RENAMING_ATTRIBUTES) delete ownProps[key];
   if (keep) {
@@ -380,6 +404,8 @@ export function ShopPartElement({ role, tag, domProps, storedText, content, surf
     tokens: Readonly<Record<string, string>> | undefined,
     extra?: Record<string, unknown>,
     itemRuntime?: ShopRuntime,
+    /** For a copy of a repeated part: whether it is the second or a later one. */
+    copy?: boolean,
   ) => {
     const props: Record<string, unknown> = { ...ownProps, ...(render.props ?? {}), ...(extra ?? {}) };
     if (key !== undefined) props.key = key;
@@ -389,7 +415,11 @@ export function ShopPartElement({ role, tag, domProps, storedText, content, surf
     }
     const text = editing ? raw : fillShopTokensIn(raw, tokens ?? {});
     // A repeated part's own parts read their item (a cart line's title reads that line).
-    const inner = itemRuntime && content !== undefined ? <ShopRuntimeContext.Provider value={itemRuntime}>{content}</ShopRuntimeContext.Provider> : content;
+    let inner = itemRuntime && content !== undefined ? <ShopRuntimeContext.Provider value={itemRuntime}>{content}</ShopRuntimeContext.Provider> : content;
+    // Inside a later copy, nothing carries the selection identity again. Every copy
+    // has the provider, so a copy that becomes the first (the line above it removed)
+    // keeps its elements and the focus in them.
+    if (copy !== undefined && inner !== undefined) inner = <ShopRepeatCopyContext.Provider value={copy}>{inner}</ShopRepeatCopyContext.Provider>;
     return React.createElement(elementTag, props, ...textChildren(text, linksAllowed && runLinksAllowedIn(elementTag)), inner);
   };
 
@@ -397,7 +427,8 @@ export function ShopPartElement({ role, tag, domProps, storedText, content, surf
     if (render.items.length === 0) return null;
     // A repeated part's copies are siblings. Each keeps the node's style hook (its
     // states and rules reach every copy on the canvas), only the first its
-    // selection identity, so a click on any copy selects the one node.
+    // selection identity, so a click on any copy selects the one node; the nodes
+    // inside a later copy lose theirs too (ShopRepeatCopyContext).
     return (
       <>
         {render.items.map((item, index) =>
@@ -406,6 +437,7 @@ export function ShopPartElement({ role, tag, domProps, storedText, content, surf
             { ...(render.tokens ?? {}), ...item.tokens },
             index === 0 ? item.props : { ...item.props, 'data-inner-component-id': undefined },
             item.runtime,
+            index > 0,
           ),
         )}
       </>

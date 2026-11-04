@@ -11,7 +11,7 @@
 const PLATFORM_FAMILY = /^data-(?:fc|fcs|fx|u|island|component|inner-component|form|sticky|repeat|ground|viewport|breakpoint|floating-root|preview|editor|camera|lenis)(?:-|$)/i;
 
 const PLATFORM_NAMES: ReadonlySet<string> = new Set([
-  'data-add-line', 'data-discard-row', 'data-drag-handle', 'data-escape-local', 'data-focus-key', 'data-haptics', 'data-import-all',
+  'data-add-line', 'data-cart-empty', 'data-cart-remove', 'data-discard-row', 'data-drag-handle', 'data-escape-local', 'data-focus-key', 'data-haptics', 'data-import-all',
   'data-import-row', 'data-layer-breakpoint', 'data-layer-row', 'data-logo-choose', 'data-menu-item', 'data-notice-action',
   'data-outline-select', 'data-page-overlay', 'data-page-settings-button', 'data-pan-cursor', 'data-placement', 'data-placement-root', 'data-pointer',
   'data-radius-corner', 'data-resize-direction', 'data-resume-offer', 'data-shown', 'data-spacing-band', 'data-spacing-handle', 'data-text-node-row',
