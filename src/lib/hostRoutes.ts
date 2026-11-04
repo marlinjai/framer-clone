@@ -118,6 +118,8 @@ export const HOST_ROUTES: readonly HostRoute[] = [
   { route: '/api/ai/generate-page/[id]', why: 'AI authoring' },
   { route: '/api/ai/review-page', why: 'AI authoring' },
   { route: '/api/ai/review-page/[id]', why: 'AI authoring' },
+  { route: '/api/ai/page-ideas', why: 'AI authoring' },
+  { route: '/api/ai/enhance-brief', why: 'AI authoring' },
   { route: '/api/books/assets', why: 'Books' },
   { route: '/api/books/assets/[sha256]', why: 'Books' },
   { route: '/api/books/catalogue', why: 'Books' },
