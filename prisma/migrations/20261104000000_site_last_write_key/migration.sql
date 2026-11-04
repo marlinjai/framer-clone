@@ -5,12 +5,10 @@
 -- write of that site. A repeated key whose write is still the latest returns that write's version
 -- instead of a false 409. Additive: one nullable column. Rewrites no row.
 
--- ADD COLUMN takes an ACCESS EXCLUSIVE lock on "sites", which every read of a site waits behind.
--- Behind a long transaction it would wait, and every query on the table would queue behind it:
--- give up after 5 s instead (the deploy's migration step fails loudly and the next run retries),
--- as the tenant migrations do. Adding a nullable column without a default is metadata only, so
--- once the lock is held the change itself is instant.
-SET lock_timeout = '5s';
+-- No lock timeout here: adding a nullable column without a default only changes the catalogue
+-- (no row is rewritten, the ACCESS EXCLUSIVE lock is held for an instant), and a migration that
+-- fails on a timeout is marked failed by Prisma (P3009), which blocks every later deploy until it
+-- is resolved by hand. Rollback: deploy/README.md, "Migration rollbacks".
 
 -- AlterTable
 ALTER TABLE "public"."sites" ADD COLUMN     "last_write_key" TEXT;
