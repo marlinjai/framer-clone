@@ -286,9 +286,14 @@ function CartLive({ node, scope, hostType = 'div', hostProps = {}, children }: C
     const button = (id: string) => buttons.find((candidate) => candidate.getAttribute('data-cart-remove') === id);
     const target = [...lines.slice(at + 1), ...lines.slice(0, Math.max(at, 0)).reverse()].map((line) => button(line.variantId)).find(Boolean);
     // The other lines keep their elements (keyed by variant), so focus moves before the line goes.
-    if (target) target.focus();
-    else if (lines.length === 1) focusEmpty.current = true;
-    else host.current?.querySelector<HTMLElement>('[data-cart-lines], [data-cart-subtotal]')?.focus();
+    // A button the design hides (display: none, visibility: hidden) is drawn but takes no
+    // focus, so the move is checked, and one that did not land falls back as below.
+    target?.focus();
+    const moved = !!target && target.ownerDocument.activeElement === target;
+    if (!moved) {
+      if (lines.length === 1) focusEmpty.current = true;
+      else host.current?.querySelector<HTMLElement>('[data-cart-lines], [data-cart-subtotal]')?.focus();
+    }
     cart.remove(variantId);
   };
 

@@ -115,3 +115,50 @@ describe('a quantity draft never outlives its field', () => {
     expect((await quantityField(container)).value).toBe('');
   });
 });
+
+describe('the focus after a line is removed', () => {
+  it('falls back to the lines when the next remove button takes no focus (hidden by the design)', async () => {
+    const { container } = renderCart([
+      { variantId: 'var_s_red', quantity: 1 },
+      { variantId: 'var_s_blue', quantity: 1 },
+    ]);
+    const [first, next] = await waitFor(() => {
+      const red = container.querySelector<HTMLButtonElement>('button[data-cart-remove="var_s_red"]');
+      const blue = container.querySelector<HTMLButtonElement>('button[data-cart-remove="var_s_blue"]');
+      expect(red).not.toBeNull();
+      expect(blue).not.toBeNull();
+      return [red!, blue!];
+    });
+    // A browser ignores focus() on an element that is not rendered (display: none):
+    // the call returns and the active element stays where it was. jsdom does no
+    // layout, so display: none alone would not stop the focus there; replacing this
+    // one button's focus with a call that does nothing gives exactly that observable.
+    next.style.display = 'none';
+    Object.defineProperty(next, 'focus', { configurable: true, value: () => {} });
+    act(() => first.focus());
+    act(() => {
+      fireEvent.click(first);
+    });
+    await waitFor(() => expect(container.querySelector('[data-cart-line="var_s_red"]')).toBeNull());
+    expect(document.activeElement).toBe(container.querySelector('[data-cart-lines]'));
+    expect(document.activeElement).not.toBe(document.body);
+  });
+
+  it('still goes to the next remove button when it takes the focus', async () => {
+    const { container } = renderCart([
+      { variantId: 'var_s_red', quantity: 1 },
+      { variantId: 'var_s_blue', quantity: 1 },
+    ]);
+    const first = await waitFor(() => {
+      const red = container.querySelector<HTMLButtonElement>('button[data-cart-remove="var_s_red"]');
+      expect(container.querySelector('button[data-cart-remove="var_s_blue"]')).not.toBeNull();
+      return red!;
+    });
+    act(() => first.focus());
+    act(() => {
+      fireEvent.click(first);
+    });
+    await waitFor(() => expect(container.querySelector('[data-cart-line="var_s_red"]')).toBeNull());
+    expect(document.activeElement).toBe(container.querySelector('button[data-cart-remove="var_s_blue"]'));
+  });
+});
