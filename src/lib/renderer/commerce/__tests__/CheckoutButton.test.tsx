@@ -789,3 +789,52 @@ describe('CheckoutButton a message shown later is announced', () => {
     }
   });
 });
+
+describe('CheckoutButton an order too large to store (422 order_too_large)', () => {
+  it('says what to change in the buyer\'s words, keeps the cart, and shows no payment step or shortage', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      fakeResponse(422, {
+        error: {
+          code: 'order_too_large',
+          message: 'the order is larger than one order can hold; lower a quantity and check out again',
+          variantId: 'var_a',
+        },
+      }),
+    );
+    const { container, getByTestId } = renderCheckout();
+    await waitForHydratedCart(getByTestId);
+
+    clickCheckout(container);
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-checkout-error]')?.textContent).toBe(
+        'Checkout failed: the order is larger than one order can hold. Lower a quantity in your cart and check out again.',
+      );
+    });
+    // Not read as an item no longer sold, a shortage, or a server fault.
+    expect(container.textContent).not.toContain('no longer available');
+    expect(container.textContent).not.toContain('422');
+    expect(container.querySelector('[data-checkout-shortage]')).toBeNull();
+    expect(container.querySelector('[data-checkout-payment]')).toBeNull();
+    expect(getByTestId('lines').textContent).toBe(JSON.stringify(SEEDED_LINES));
+    // The button stays for another try once the cart is changed.
+    expect(container.querySelector('button[data-checkout]')).not.toBeNull();
+  });
+
+  it('another refusal of the cart shows the server\'s words, not "no longer available"', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      fakeResponse(422, {
+        error: { code: 'mixed_price_basis', message: 'some items are priced with VAT and some without' },
+      }),
+    );
+    const { container, getByTestId } = renderCheckout();
+    await waitForHydratedCart(getByTestId);
+    clickCheckout(container);
+    await waitFor(() => {
+      expect(container.querySelector('[data-checkout-error]')?.textContent).toBe(
+        'Checkout failed: some items are priced with VAT and some without',
+      );
+    });
+    expect(container.textContent).not.toContain('no longer available');
+  });
+});

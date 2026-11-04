@@ -52,6 +52,7 @@ import type { ComponentInstance } from '@/models/ComponentModel';
 import type { BindingScope } from '@/lib/bindings/resolver/scope';
 import { useCart, useCheckoutUnavailableReason, type CartLine } from '@/lib/commerce/cart';
 import { getPaymentGateway, type CheckoutBuyer, type PaymentGateway, type RefusedBuyerField } from '@/lib/commerce/payment';
+import { ORDER_TOO_LARGE_CODE } from '@/lib/commerce/dto';
 import { CHECKOUT_BUYER_FIELDS, CHECKOUT_PREVIEW_STATES, type CheckoutPreviewStateId, type ShopLocale } from '@/lib/commerce/parts';
 import { EMPTY_LIVE_REGION_STYLE, ShopDesignContext, ShopLocaleContext, ShopRuntimeContext, type ShopPartRender, type ShopRuntime } from '@/lib/commerce/shopRuntime';
 import { ShopControlContent } from './ShopControlContent';
@@ -201,11 +202,13 @@ function newIdempotencyKey(): string {
 const MESSAGES = {
   en: {
     paymentsUnavailable: 'this shop cannot take payments yet. Nothing has been charged.',
+    orderTooLarge: 'the order is larger than one order can hold. Lower a quantity in your cart and check out again.',
     orderFailed: (status: number) => `order failed (${status})`,
     declined: (message: string) => `${message}. Your cart is kept: check out again to try once more.`,
   },
   de: {
     paymentsUnavailable: 'dieser Shop kann noch keine Zahlungen annehmen. Es wurde nichts abgebucht.',
+    orderTooLarge: 'die Bestellung ist größer, als eine Bestellung fassen kann. Verringern Sie eine Menge im Warenkorb und gehen Sie erneut zur Kasse.',
     orderFailed: (status: number) => `Serverfehler (${status})`,
     declined: (message: string) => `${message}. Ihr Warenkorb bleibt erhalten: Gehen Sie erneut zur Kasse, um es noch einmal zu versuchen.`,
   },
@@ -357,6 +360,18 @@ function CheckoutLive({ node, scope, hostType = 'div', hostProps = {}, gateway, 
       }
 
       if (res.status === 422) {
+        const error = ((await res.json().catch(() => null)) as { error?: { code?: string; message?: string } } | null)?.error;
+        // An order larger than one order stores (order_too_large: a huge quantity times its
+        // price): nothing was ordered. Keep the cart and say what to change, in the checkout's words.
+        if (error?.code === ORDER_TOO_LARGE_CODE) {
+          setState({ status: 'order_error', reason: 'failed', message: messages.orderTooLarge });
+          return;
+        }
+        // Another refusal of the cart the server words for the buyer (mixed_price_basis).
+        if (error?.code && error.code !== 'unknown_variant' && error.message) {
+          setState({ status: 'order_error', reason: 'failed', message: error.message });
+          return;
+        }
         // An item the storefront no longer sells (unknown_variant): NOT a stock
         // shortage and NOT a server fault. Keep the cart and tell the visitor
         // what to do next (its own part, in the shop's words).
