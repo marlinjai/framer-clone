@@ -1022,3 +1022,41 @@ describe('SiteRepository.saveProject: a repeated attempt (requestKey)', () => {
     await expect(repo.saveProject(SCOPE, makeProject(), { mustExist: true, expectedVersion: 4, requestKey: 'attempt-0001' })).rejects.toBeInstanceOf(SiteChangedError);
   });
 });
+
+describe('SiteRepository.saveProject: newer content after a lost answer (previousRequestKey)', () => {
+  function makeProject() {
+    const p = ProjectModel.create({ id: 'site_prev', metadata: { title: 'Prev', description: '' }, pages: {} });
+    p.createPage('Home');
+    return p;
+  }
+  const stored = (over: Record<string, unknown>) => ({ erasureEpoch: 0, version: 1, id: 'site_prev', workspaceId: 'ws_marlin', lastWriteKey: null, ...over });
+  const ready = () => {
+    prisma.site.updateMany.mockResolvedValue({ count: 1 });
+    prisma.sitePage.upsert.mockResolvedValue({});
+    prisma.sitePage.deleteMany.mockResolvedValue({ count: 0 });
+  };
+
+  it('writes on top of the lost write when it was this tab\'s own (its key, the version just after)', async () => {
+    ready();
+    prisma.site.findUnique.mockResolvedValue(stored({ version: 5, lastWriteKey: 'attempt-lost' }));
+    await expect(
+      repo.saveProject(SCOPE, makeProject(), { mustExist: true, expectedVersion: 4, requestKey: 'attempt-new', previousRequestKey: 'attempt-lost' }),
+    ).resolves.toEqual({ version: 6 });
+    const update = prisma.site.updateMany.mock.calls[0][0];
+    expect(update.where).toMatchObject({ version: 5 });
+    expect(update.data).toMatchObject({ version: 6, lastWriteKey: 'attempt-new' });
+  });
+
+  it('is a 409 when the stored write is someone else\'s, or more than one write ahead', async () => {
+    ready();
+    prisma.site.findUnique.mockResolvedValue(stored({ version: 5, lastWriteKey: 'agent-write' }));
+    await expect(
+      repo.saveProject(SCOPE, makeProject(), { mustExist: true, expectedVersion: 4, requestKey: 'attempt-new', previousRequestKey: 'attempt-lost' }),
+    ).rejects.toBeInstanceOf(SiteChangedError);
+    prisma.site.findUnique.mockResolvedValue(stored({ version: 6, lastWriteKey: 'attempt-lost' }));
+    await expect(
+      repo.saveProject(SCOPE, makeProject(), { mustExist: true, expectedVersion: 4, requestKey: 'attempt-new', previousRequestKey: 'attempt-lost' }),
+    ).rejects.toBeInstanceOf(SiteChangedError);
+    expect(prisma.site.updateMany).not.toHaveBeenCalled();
+  });
+});

@@ -181,6 +181,20 @@ describe('POST /api/projects/save (authorized)', () => {
     expect(save).toHaveBeenCalledTimes(1);
   });
 
+  it('passes the lost attempt\'s key through with the new one', async () => {
+    const save = vi.fn().mockResolvedValue({ version: 6 });
+    installRepo({ saveProject: save, publishProject: vi.fn() });
+    const res = await POST(saveReq({ project: PROJECT, expectedVersion: 4, requestKey: 'k_new_attempt', previousRequestKey: 'k_lost_attempt' }));
+    expect(res.status).toBe(200);
+    expect(save.mock.calls[0][2]).toEqual({
+      mustExist: true,
+      companyId: 'tenant-1',
+      expectedVersion: 4,
+      requestKey: 'k_new_attempt',
+      previousRequestKey: 'k_lost_attempt',
+    });
+  });
+
   it('does not claim a status in the success envelope (save leaves it untouched)', async () => {
     const save = vi.fn().mockResolvedValue({ version: 2 });
     installRepo({ saveProject: save, publishProject: vi.fn() });

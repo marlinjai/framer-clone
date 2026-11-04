@@ -305,6 +305,13 @@ export interface WorkingCopyWriteOptions {
    * version and writes nothing: its first answer was lost on the way back.
    */
   requestKey?: string;
+  /**
+   * The editor's earlier attempt whose answer was lost (save only). When the
+   * stored write is that one (its key, the version just after
+   * `expectedVersion`), this write goes on top of it instead of a 409: the
+   * version it moved past was this tab's own.
+   */
+  previousRequestKey?: string;
 }
 
 export class SiteRepository {
@@ -529,7 +536,14 @@ export class SiteRepository {
     ) {
       return existing.version;
     }
-    if (existing) {
+    // The lost write was this tab's own: build on the version it produced.
+    const ownLostWrite =
+      !!existing &&
+      !!options.previousRequestKey &&
+      existing.lastWriteKey === options.previousRequestKey &&
+      options.expectedVersion !== undefined &&
+      existing.version === options.expectedVersion + 1;
+    if (existing && !ownLostWrite) {
       if (options.expectedVersion === undefined) throw new SiteVersionRequiredError();
       if (options.expectedVersion !== existing.version) throw new SiteChangedError(existing.version);
     }

@@ -217,6 +217,14 @@ describe('POST /api/projects/publish (authorized)', () => {
     );
   });
 
+  it('refuses a save attempt key: publishing has no replay', async () => {
+    const publish = vi.fn().mockResolvedValue({ revision: 7, version: 2 });
+    installRepo({ publishProject: publish, ensureSiteDomain: vi.fn().mockResolvedValue({ subdomain: 'demo-abc123' }) });
+    const res = await POST(publishReq({ project: PROJECT, expectedVersion: 1, requestKey: 'k_0123456789' }));
+    expect(res.status).toBe(400);
+    expect(publish).not.toHaveBeenCalled();
+  });
+
   it('invalidates the origin render cache for the published subdomain (MT-17)', async () => {
     const ensure = vi.fn().mockResolvedValue({ subdomain: 'demo-abc123' });
     installRepo({
