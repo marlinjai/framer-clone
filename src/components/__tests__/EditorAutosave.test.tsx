@@ -764,7 +764,7 @@ describe('a generated page', () => {
       calls[0].finish();
     });
     // No debounce: the request went out with the result.
-    expect(fetchMock.mock.calls.map((c) => `${String(c[0])} ${String(c[1]?.body).slice(0, 120)}`)).toHaveLength(1);
+    expect(fetchMock.mock.calls.map((c) => `${String(c[0])} ${String(c[1]?.body).slice(0, 120)}`)).toEqual(['one request']);
     await advance(0);
     expect(screen.getByText(/Added \d+ components? on a new page\. Saved\./)).toBeTruthy();
     expect(screen.queryByText(/Save the project to keep it/)).toBeNull();
