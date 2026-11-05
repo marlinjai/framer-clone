@@ -5,11 +5,12 @@
 // which persists it and flips the site to `published`.
 //
 // Outcomes surface LOUDLY and never silently no-op:
-//   - in-flight: the button shows "Publishing..." and is disabled,
+//   - in-flight: the button shows "Publishing…" and is disabled,
 //   - success: a brief confirmation (how many pages went live),
 //   - conflict: the project was saved somewhere else since this tab loaded it
 //     (409 `site_changed`, the version lock): SiteChangedDialog asks whether to
-//     load the newer version, publish this one over it, or keep both,
+//     load the newer version, publish this one over it, or keep both (autosave
+//     stops for the project too, until a write of this tab succeeds),
 //   - failure: the structured server error message (or a network-error
 //     message), shown until the next attempt.
 //
@@ -29,6 +30,7 @@ import { Button } from '@/components/ui/button';
 import { useStore } from '@/hooks/useStore';
 import { knownServerVersion, markServerVersion, type ProjectContent } from '@/stores/openProject';
 import { postProjectWrite } from '@/lib/projects/projectWrite';
+import { abandonWorkingCopy, existingAutosave, reloadDiscarding } from '@/lib/projects/autosave';
 import SiteChangedDialog from './SiteChangedDialog';
 import SaveAsNewProjectDialog from './SaveAsNewProjectDialog';
 import { useSiteAddress } from '@/contexts/SiteAddressContext';
@@ -76,12 +78,15 @@ const PublishButton = observer(() => {
     if (isUnsavedDemo) {
       setState({
         kind: 'error',
-        message: 'This demo project exists only in this browser. Save it as a project first (Save), then publish it from there.',
+        message: 'This demo project exists only in this browser. Keep it as a project first (Keep as project), then publish it from there.',
       });
       return;
     }
-    if (!skipChecks) {
-      const check = checkBeforePublish(
+    // The legal check reads the working copy as it is now. It runs again inside
+    // `write`, on the snapshot that is sent, because an edit made while a save was
+    // in flight can add an issue after this first run (the publish route does not check).
+    const runCheck = () =>
+      checkBeforePublish(
         project.site.business,
         project.pagesArray.map((p) => ({
           id: p.id,
@@ -91,6 +96,8 @@ const PublishButton = observer(() => {
         })),
         { definitions: project.definitions, refused: project.refusedComponents },
       );
+    if (!skipChecks) {
+      const check = runCheck();
       if (hasPublishIssues(check)) {
         setState({ kind: 'confirm', check });
         return;
@@ -99,31 +106,57 @@ const PublishButton = observer(() => {
     setState((prev) =>
       overVersion !== undefined && prev.kind === 'conflict' ? { ...prev, retrying: true } : { kind: 'publishing' },
     );
-    try {
+    // Autosave (src/lib/projects/autosave.ts) is held while this runs: a save in
+    // flight finishes first and none starts meanwhile, so the version lock sees
+    // one writer from this tab. The snapshot is taken after that wait.
+    const autosave = existingAutosave(project.id);
+    const write = async () => {
+      if (!skipChecks) {
+        const recheck = runCheck();
+        if (hasPublishIssues(recheck)) return { recheck };
+      }
       const snapshot = getSnapshot(project);
       // The edits refused up to this snapshot are the ones this publish leaves out.
       const acknowledged = [...project.refusedComponents];
-      const result = await postProjectWrite(
-        '/api/projects/publish',
-        snapshot,
-        overVersion ?? knownServerVersion(project.id),
-        'Publish failed',
-      );
+      // A save of this tab whose answer was lost (and whose settling retry failed
+      // too) may be the latest write: name it, on the base it was made on (the
+      // known version, or the one a lost "Save mine over it" named), so Publish
+      // builds on it instead of meeting it as someone else's change (the server
+      // checks the key is bound to the current version).
+      const pending = overVersion === undefined ? autosave?.lostAttempts() : undefined;
+      const expectedVersion = overVersion ?? pending?.expectedVersion ?? knownServerVersion(project.id);
+      const lost = pending?.keys ?? [];
+      const result = await postProjectWrite('/api/projects/publish', snapshot, expectedVersion, 'Publish failed', {
+        ...(lost.length > 0 ? { previousRequestKeys: lost } : {}),
+      });
+      if (result.kind === 'conflict') autosave?.noteConflict(result.currentVersion);
+      else if (result.kind === 'error' && result.writtenVersion !== undefined) {
+        markServerVersion(project.id, snapshot as ProjectContent, result.writtenVersion);
+      } else if (result.kind === 'ok') {
+        // The server now holds exactly this project, at this version (see openProject).
+        markServerVersion(project.id, snapshot as ProjectContent, result.version);
+      }
+      return { result, acknowledged };
+    };
+    try {
+      const outcome = autosave ? await autosave.exclusive(write) : await write();
+      if (outcome.recheck) {
+        // An edit during the wait added an issue: nothing was sent, ask first.
+        setState({ kind: 'confirm', check: outcome.recheck });
+        return;
+      }
+      const { result, acknowledged } = outcome;
       if (result.kind === 'conflict') {
         setState({ kind: 'conflict', currentVersion: result.currentVersion, retrying: false });
         return;
       }
       if (result.kind === 'error') {
         // Published, but a later step failed: this snapshot is what the server
-        // holds, so the next Save must not meet it as someone else's change.
-        if (result.writtenVersion !== undefined) {
-          markServerVersion(project.id, snapshot as ProjectContent, result.writtenVersion);
-        }
+        // holds (marked inside `write`), so the next save (autosave) must not meet it as
+        // someone else's change.
         setState({ kind: 'error', message: result.message });
         return;
       }
-      // The server now holds exactly this project, at this version (see openProject).
-      markServerVersion(project.id, snapshot as ProjectContent, result.version);
       project.clearRefusedEdits(acknowledged);
       const ok = result.payload as { publishedPages?: unknown; liveUrl?: unknown; subdomain?: unknown };
       const published = ok?.publishedPages;
@@ -227,7 +260,7 @@ const PublishButton = observer(() => {
         action="publish"
         busy={state.kind === 'conflict' && state.retrying}
         onKeepEditing={() => setState({ kind: 'idle' })}
-        onLoadNewer={() => window.location.reload()}
+        onLoadNewer={() => reloadDiscarding(project?.id)}
         onKeepMine={() => {
           if (state.kind === 'conflict') void publish(true, state.currentVersion);
         }}
@@ -245,6 +278,8 @@ const PublishButton = observer(() => {
           getSnapshot={() => getSnapshot(project) as unknown as { pages: Record<string, unknown>; components: Record<string, unknown> }}
           currentPageId={rootStore.editorUI.currentPage?.id}
           description="Keeps both versions: this tab's pages and components become a new project in your company, and it opens in the editor. Nothing is published; the project changed elsewhere stays as it is."
+          // The original's working copy now lives on as the new project: give it up here.
+          onSaved={() => abandonWorkingCopy(project.id)}
         />
       ) : null}
       <Button
@@ -256,7 +291,7 @@ const PublishButton = observer(() => {
         title="Publish this site"
       >
         <UploadCloud size={16} />
-        {publishing ? 'Publishing...' : 'Publish'}
+        {publishing ? 'Publishing…' : 'Publish'}
       </Button>
     </div>
   );

@@ -299,6 +299,20 @@ export interface WorkingCopyWriteOptions {
    * already exists; only creating a new site goes without.
    */
   expectedVersion?: number;
+  /**
+   * The editor's key for this attempt (save only). A repeat of the site's last
+   * write (the stored key, bound to the version it wrote, which is still the
+   * current one) returns that write's version and writes nothing: its first
+   * answer was lost on the way back.
+   */
+  requestKey?: string;
+  /**
+   * The editor's earlier attempts on the same base whose answers were lost
+   * (save and publish). When the stored write is one of them, still the latest
+   * (its key bound to the current version), this write goes on top of it
+   * instead of a 409: every version it moved past was this tab's own.
+   */
+  previousRequestKeys?: readonly string[];
 }
 
 export class SiteRepository {
@@ -487,6 +501,8 @@ export class SiteRepository {
         publishedRevisionId: true,
         erasureEpoch: true,
         version: true,
+        lastWriteKey: true,
+        lastWriteVersion: true,
       },
     });
     if (existing && existing.workspaceId !== scope.workspaceId) {
@@ -510,7 +526,20 @@ export class SiteRepository {
     // caller that names the version it was based on, and only while that is
     // still the stored one. Below, the UPDATE repeats the comparison in its
     // WHERE, so the check holds even without the isolation level around it.
-    if (existing) {
+    // The stored key counts only while the write it names is still the latest:
+    // the key is bound to the version it wrote. A writer that does not know the
+    // key (an older container during a rolling deploy) moves the version
+    // without touching the key, and that unbinds it.
+    const latestKey =
+      existing && existing.lastWriteKey && existing.lastWriteVersion === existing.version ? existing.lastWriteKey : undefined;
+    // A retry of the last write whose answer was lost: answered again, nothing written.
+    if (existing && options.requestKey && latestKey === options.requestKey) {
+      return existing.version;
+    }
+    // The latest write is one of this tab's lost ones (one or several in a
+    // row): build on the version it produced.
+    const ownLostWrite = !!latestKey && !!options.previousRequestKeys?.includes(latestKey);
+    if (existing && !ownLostWrite) {
       if (options.expectedVersion === undefined) throw new SiteVersionRequiredError();
       if (options.expectedVersion !== existing.version) throw new SiteChangedError(existing.version);
     }
@@ -612,6 +641,9 @@ export class SiteRepository {
       projectUpdatedAt: new Date(persisted.projectUpdatedAt),
       redirects: redirects as unknown as Prisma.InputJsonValue,
       version: nextVersion,
+      // Only a save names its attempt; any other write ends the old key's life.
+      lastWriteKey: options.requestKey ?? null,
+      lastWriteVersion: options.requestKey ? nextVersion : null,
       ...componentsColumn,
     };
 
@@ -654,6 +686,8 @@ export class SiteRepository {
           redirects: redirects as unknown as Prisma.InputJsonValue,
           companyId: options.companyId ?? null,
           version: nextVersion,
+          lastWriteKey: options.requestKey ?? null,
+          lastWriteVersion: options.requestKey ? nextVersion : null,
           ...componentsColumn,
         },
         // `name` is written on create only. After that the rename action
@@ -854,7 +888,7 @@ export class SiteRepository {
   async publishProject(
     scope: TenantScope,
     project: ProjectModelType | Parameters<typeof projectToPersisted>[0],
-    options: { companyId?: string; publishedBy?: string; expectedVersion?: number } = {},
+    options: { companyId?: string; publishedBy?: string; expectedVersion?: number; previousRequestKeys?: readonly string[] } = {},
   ): Promise<{ revision: number; version: number }> {
     assertScope(scope);
     const persisted: PersistedSite = projectToPersisted(project);
@@ -866,6 +900,8 @@ export class SiteRepository {
         mustExist: true,
         companyId: options.companyId,
         expectedVersion: options.expectedVersion,
+        // A save of this tab whose answer was lost may be the latest write: publish on top of it.
+        ...(options.previousRequestKeys ? { previousRequestKeys: options.previousRequestKeys } : {}),
       });
       const revision = await this.freezeRevision(tx, scope, siteId, {
         kind: 'publish',
@@ -1134,7 +1170,7 @@ export class SiteRepository {
       // revisions: a tab loaded long ago may hold it even if the working copy does not.
       // The version moves too: the working copy may have been rewritten, and an
       // agent holding the old version must load again before it writes.
-      await tx.site.updateMany({ where, data: { erasureEpoch: { increment: 1 }, version: { increment: 1 } } });
+      await tx.site.updateMany({ where, data: { erasureEpoch: { increment: 1 }, version: { increment: 1 }, lastWriteKey: null, lastWriteVersion: null } });
 
       const holdsValue = redactionMatcher(query);
       const places = erased.map((match) => placeOf(match, holdsValue));

@@ -114,7 +114,7 @@ describe('middleware: editor-host auth gate (MT-16 reconciled surfaces)', () => 
     process.env.EDITOR_HOST = EDITOR;
     for (const path of ['/api/projects/save', '/api/ai/edit']) {
       const res = await middleware(req(`https://${EDITOR}${path}`, { host: EDITOR }));
-      // A fetch client (PublishButton/SaveButton, cms-agent) must get a JSON 401,
+      // A fetch client (PublishButton/autosave, cms-agent) must get a JSON 401,
       // never a 302/307 redirect to an HTML login page.
       expect(res.status).toBe(401);
       expect(res.headers.get('location')).toBeNull();

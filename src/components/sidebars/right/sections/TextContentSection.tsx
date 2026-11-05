@@ -26,6 +26,7 @@ import { CollapsibleSection, FIELD_LABEL } from '../primitives';
 import BindingControl from '../BindingControl';
 import { owningDefinition } from '@/lib/bindings/scopeIntrospection';
 import { getRegistryIdForNode } from '../registryId';
+import { registerOpenDraft } from '@/lib/projects/openDrafts';
 
 interface TextContentFieldProps {
   node: ComponentInstance;
@@ -75,6 +76,17 @@ export const TextContentField = observer(({ node, label = 'Text content', varian
     () => () => {
       if (dirty.current) latest.current.commit(latest.current.draft);
     },
+    [],
+  );
+
+  // Typing not committed yet counts as unsaved work for the unload warning, and
+  // Cmd+S (or leaving the page) commits it first (src/lib/projects/openDrafts.ts).
+  React.useEffect(
+    () =>
+      registerOpenDraft({
+        isDirty: () => dirty.current,
+        commit: () => latest.current.commit(latest.current.draft),
+      }),
     [],
   );
 

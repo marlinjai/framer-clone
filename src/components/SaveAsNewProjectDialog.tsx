@@ -4,7 +4,7 @@
 // "Save as a new project" for the browser-only demo editor (`/`), and for an
 // editor tab whose Save met a newer version on the server (SiteChangedDialog:
 // keep both by making this tab's copy a project of its own). The demo
-// project belongs to no company, so Save offers to create a dashboard project
+// project belongs to no company, so "Keep as project" creates a dashboard project
 // in the active company from its pages (name prefilled from the project
 // title), then opens it at /projects/<newId> on the same page. When that is
 // not possible (no company with Lumitra Sites, none chosen, session ended)
@@ -38,6 +38,8 @@ export interface SaveAsNewProjectDialogProps {
   onSaved?: () => void;
   /** Overrides the demo wording, for a copy of a project that already exists. */
   description?: string;
+  /** The dialog's title ("Keep as project" in the demo). */
+  title?: string;
 }
 
 export default function SaveAsNewProjectDialog({
@@ -48,8 +50,11 @@ export default function SaveAsNewProjectDialog({
   currentPageId,
   onSaved,
   description,
+  title = 'Save as a new project',
 }: SaveAsNewProjectDialogProps) {
   const router = useRouter();
+  // The verb follows the title: "Keep as project" in the demo.
+  const keep = title === 'Keep as project';
   const [name, setName] = useState(defaultName);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -107,7 +112,7 @@ export default function SaveAsNewProjectDialog({
         }}
       >
         <DialogHeader>
-          <DialogTitle>Save as a new project</DialogTitle>
+          <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
             {description ??
               'This demo project exists only in this browser tab. Saving creates a project in your company with all of its pages, and opens it in the editor.'}
@@ -158,7 +163,7 @@ export default function SaveAsNewProjectDialog({
             </a>
           ) : null}
           <p role="status" aria-live="polite" className="sr-only">
-            {saving ? 'Saving the project…' : ''}
+            {saving ? (keep ? 'Keeping the project…' : 'Saving the project…') : ''}
           </p>
           <DialogFooter>
             <Button
@@ -173,7 +178,7 @@ export default function SaveAsNewProjectDialog({
               Cancel
             </Button>
             <Button type="submit" size="sm" aria-disabled={saving || undefined} aria-busy={saving || undefined}>
-              {saving ? 'Saving…' : 'Save project'}
+              {saving ? (keep ? 'Keeping…' : 'Saving…') : keep ? 'Keep as project' : 'Save project'}
             </Button>
           </DialogFooter>
         </form>

@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { getSnapshot } from 'mobx-state-tree';
 import { createRootStore, getHistoryStore, type RootStoreType } from '@/stores/RootStore';
 import ProjectModel, { type ProjectSnapshotOut } from '@/models/ProjectModel';
-import { changedElsewhereMessage, markServerVersion, openProject, pickPage } from '../openProject';
+import { changedElsewhereMessage, changedElsewhereVersion, knownServerVersion, markServerVersion, openProject, pickPage } from '../openProject';
 import { withDefaultViewports } from '@/lib/canvas/defaultViewports';
 import { pageWithShopParts } from '@/lib/commerce/parts';
 
@@ -399,5 +399,62 @@ describe('restoreStashedDemo (back on `/` after choosing a company or signing in
     const spy = (await import('vitest')).vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(restoreStashedDemo(store, null)).toBe(false);
     spy.mockRestore();
+  });
+});
+
+describe('openProject and the version order (review of 2026-11-04)', () => {
+  let n = 0;
+  function snapshotFor(id: string, description = ''): ProjectSnapshotOut {
+    const p = ProjectModel.create({ id, metadata: { title: 'Site', description }, pages: {} });
+    p.createPage('Home').setSlug('');
+    return getSnapshot(p) as ProjectSnapshotOut;
+  }
+
+  it('a LOWER server version is a stale read: the working copy and its version stand, nothing is adopted', () => {
+    const id = `site_order_${++n}`;
+    const project = openProject(store, snapshotFor(id, 'version 5'), null, 5).project!;
+    // Autosave went on to version 9 with this tab's work.
+    project.updateMetadata({ description: 'saved at 9' });
+    markServerVersion(id, getSnapshot(project), 9);
+    project.updateMetadata({ description: 'typed after 9' });
+    // Back after Preview: the router cache replays the payload read at version 5.
+    const out = openProject(store, snapshotFor(id, 'version 5'), null, 5);
+    expect(out.keptWorkingCopy).toBe(true);
+    expect(out.changedElsewhere).toBe(false);
+    expect(store.editorUI.currentProject?.metadata.description).toBe('typed after 9');
+    expect(knownServerVersion(id)).toBe(9);
+    expect(changedElsewhereVersion(id)).toBeUndefined();
+  });
+
+  it('a stale read of a clean tab changes nothing either', () => {
+    const id = `site_order_${++n}`;
+    const project = openProject(store, snapshotFor(id), null, 4).project!;
+    project.updateMetadata({ description: 'saved at 6' });
+    markServerVersion(id, getSnapshot(project), 6);
+    const out = openProject(store, snapshotFor(id), null, 4);
+    expect(out.project).toBe(project);
+    expect(project.metadata.description).toBe('saved at 6');
+    expect(knownServerVersion(id)).toBe(6);
+  });
+
+  it('an unsaved edit of the legal details is kept over a newer server copy, and warned about', () => {
+    const id = `site_order_${++n}`;
+    const project = openProject(store, snapshotFor(id), null, 3).project!;
+    project.updateSiteSettings({ business: { legalName: 'Bäckerei Müller GmbH' } });
+    // Someone else saved meanwhile (the version moved), with the old legal details.
+    const out = openProject(store, snapshotFor(id), null, 4);
+    expect(out.keptWorkingCopy).toBe(true);
+    expect(out.changedElsewhere).toBe(true);
+    expect(store.editorUI.currentProject?.site.business.legalName).toBe('Bäckerei Müller GmbH');
+    expect(knownServerVersion(id)).toBe(3);
+  });
+
+  it('an unsaved description edit is kept too', () => {
+    const id = `site_order_${++n}`;
+    const project = openProject(store, snapshotFor(id), null, 3).project!;
+    project.updateMetadata({ description: 'mine' });
+    const out = openProject(store, snapshotFor(id), null, 4);
+    expect(out.keptWorkingCopy).toBe(true);
+    expect(store.editorUI.currentProject?.metadata.description).toBe('mine');
   });
 });

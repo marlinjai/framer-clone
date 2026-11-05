@@ -1,5 +1,6 @@
 'use client';
 import React, { useState, useEffect, useCallback } from 'react';
+import { useOpenDraft } from '@/hooks/useOpenDraft';
 import { ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { FIELD_INNER_INPUT, FIELD_LABEL, FIELD_SHELL, useFieldIdentity } from './field';
@@ -154,6 +155,8 @@ export function DimensionInput({
     setUnit(nextUnit);
     emit(formatStyleValue(num, nextUnit));
   }, [bareUnit, emit, numericUnit, units, value]);
+  // Counted as unsaved, and committed by Cmd+S, leaving and unmount (useOpenDraft).
+  const draftState = useOpenDraft(() => commit(localValue, unit));
 
   const stepBy = (direction: 1 | -1, large: boolean) => {
     if (unit === 'auto') return;
@@ -192,10 +195,19 @@ export function DimensionInput({
           value={isAuto ? '' : localValue}
           disabled={isAuto}
           placeholder={isAuto ? 'auto' : unit === 'none' ? 'none' : placeholder}
-          onChange={(e) => setLocalValue(e.target.value)}
-          onBlur={() => commit(localValue, unit)}
+          onChange={(e) => {
+            draftState.edited();
+            setLocalValue(e.target.value);
+          }}
+          onBlur={() => {
+            draftState.settled();
+            commit(localValue, unit);
+          }}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') commit(localValue, unit);
+            if (e.key === 'Enter') {
+              draftState.settled();
+              commit(localValue, unit);
+            }
             if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
               e.preventDefault();
               stepBy(e.key === 'ArrowUp' ? 1 : -1, e.shiftKey);

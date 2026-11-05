@@ -404,6 +404,25 @@ during that window and either republish it, or clear `published_revision_id` for
 path (it serves its rows until its next save or publish freezes them). Which sites: `status = 'published'` with
 `updated_at` after the noted time.
 
+## Migration rollbacks
+
+`20261104000000_site_last_write_key` (the editor autosave's attempt keys, plan
+`docs/plans/2026-11-04-editor-autosave.md`) adds two nullable columns, `sites.last_write_key` and `sites.last_write_version`. Older code ignores them, so a
+code rollback needs nothing. To take the columns out as well, after the application runs the previous image:
+
+```sql
+ALTER TABLE "sites" DROP COLUMN "last_write_key", DROP COLUMN "last_write_version";
+```
+
+then tell Prisma the migration is no longer applied, so the next deploy applies it again:
+
+```sh
+pnpm exec prisma migrate resolve --rolled-back 20261104000000_site_last_write_key
+```
+
+The same `migrate resolve --rolled-back <name>` clears a migration Prisma marked as failed (error P3009 at boot), once
+its partial effect has been undone by hand; until then every later deploy refuses to migrate.
+
 ## Erasing personal data: one container only
 
 The owner's erase tool (plan `docs/plans/2026-11-01-immutable-published-copy.md`, "Erasing personal data from the

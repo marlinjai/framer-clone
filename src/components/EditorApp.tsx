@@ -18,6 +18,7 @@ import { EditorTool } from '@/stores/EditorUIStore';
 import { getUndoManager, getHistoryStore, getDragManager } from '@/stores/RootStore';
 import { changedElsewhereMessage, openProject, pageIdFromLocation, pickPage, restoreStashedDemo } from '@/stores/openProject';
 import EditorNotice from './EditorNotice';
+import EditorAutosave from './EditorAutosave';
 import ComponentBreadcrumb from './ComponentBreadcrumb';
 import ComponentDialogs from './ComponentDialogs';
 import { requestCreateComponent } from '@/lib/components/editorCommands';
@@ -25,6 +26,7 @@ import { isPlacementType, type PlacementProps } from '@/lib/components/placement
 import InlineFormatBar from './InlineFormatBar';
 import LegalTemplateNotice from './site/LegalTemplateNotice';
 import { resolveAction } from '@/lib/keyBindings';
+import { installSaveShortcut } from '@/lib/projects/saveShortcut';
 import { bindSpacePan, isActivatableControl } from '@/lib/canvas/spacePan';
 import { deleteSelection } from '@/lib/canvas/deleteSelection';
 import { duplicateLayer } from '@/lib/layers/layerActions';
@@ -133,7 +135,7 @@ export default function EditorApp({ projectSnapshot, projectVersion }: EditorApp
         const demo = projectStore.findProjectByTitle('Framer Clone Demo');
         editorUI.setCurrentProject(demo);
         editorUI.setCurrentPage(demo?.findPageBySlug(''));
-        // It exists only in this browser: Save offers "Save as a new project".
+        // It exists only in this browser: the top bar offers "Keep as project".
         if (demo) editorUI.markUnsavedDemo(demo.id);
       }
       // Undo history belongs to one project: a different one (or a seeded
@@ -265,6 +267,12 @@ export default function EditorApp({ projectSnapshot, projectVersion }: EditorApp
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [rootStore.editorUI]);
 
+  // Cmd/Ctrl+S in the capture phase, before any field can stop the key: the
+  // browser's "save page" dialog must never open over the editor (also
+  // mid-drag, in the preview or while typing). It saves at once
+  // (src/lib/projects/saveShortcut.ts).
+  React.useEffect(() => installSaveShortcut(window, rootStore.editorUI), [rootStore.editorUI]);
+
   // Hold Space to pan; a focused control, a field, a dialog or a menu keeps
   // its own Space (src/lib/canvas/spacePan.ts).
   React.useEffect(
@@ -276,6 +284,9 @@ export default function EditorApp({ projectSnapshot, projectVersion }: EditorApp
     <DataSourceProviderContext.Provider value={getSharedPrismaDataSourceProvider()}>
     <EditorCommerceProvider>
     <TransformProvider>
+      {/* First in the shell: the autosave lifetime (watching the project,
+          committing typed text and saving when the editor closes). */}
+      <EditorAutosave />
       <DragManagerBinding />
       <ComponentDialogs />
 

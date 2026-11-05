@@ -987,3 +987,77 @@ describe('SiteRepository.saveProject with mustExist (editor Save and Publish)', 
     expect(prisma.sitePage.upsert).not.toHaveBeenCalled();
   });
 });
+
+describe('SiteRepository.saveProject: attempt keys bound to the version they wrote', () => {
+  function makeProject() {
+    const p = ProjectModel.create({ id: 'site_key', metadata: { title: 'Key', description: '' }, pages: {} });
+    p.createPage('Home');
+    return p;
+  }
+  const stored = (over: Record<string, unknown>) => ({
+    erasureEpoch: 0,
+    version: 1,
+    id: 'site_key',
+    workspaceId: 'ws_marlin',
+    lastWriteKey: null,
+    lastWriteVersion: null,
+    ...over,
+  });
+  const ready = () => {
+    prisma.site.updateMany.mockResolvedValue({ count: 1 });
+    prisma.sitePage.upsert.mockResolvedValue({});
+    prisma.sitePage.deleteMany.mockResolvedValue({ count: 0 });
+  };
+  const save = (options: Record<string, unknown>) => repo.saveProject(SCOPE, makeProject(), { mustExist: true, ...options });
+
+  it('stores the key with the version it wrote; a write without a key clears both', async () => {
+    ready();
+    prisma.site.findUnique.mockResolvedValue(stored({ version: 4 }));
+    await expect(save({ expectedVersion: 4, requestKey: 'attempt-0001' })).resolves.toEqual({ version: 5 });
+    expect(prisma.site.updateMany.mock.calls[0][0].data).toMatchObject({ version: 5, lastWriteKey: 'attempt-0001', lastWriteVersion: 5 });
+    await save({ expectedVersion: 4 });
+    expect(prisma.site.updateMany.mock.calls.at(-1)![0].data).toMatchObject({ lastWriteKey: null, lastWriteVersion: null });
+  });
+
+  it('a repeat of the latest write is answered with its version and writes nothing', async () => {
+    prisma.site.findUnique.mockResolvedValue(stored({ version: 5, lastWriteKey: 'attempt-0001', lastWriteVersion: 5 }));
+    await expect(save({ expectedVersion: 4, requestKey: 'attempt-0001' })).resolves.toEqual({ version: 5 });
+    expect(prisma.site.updateMany).not.toHaveBeenCalled();
+    expect(prisma.sitePage.upsert).not.toHaveBeenCalled();
+  });
+
+  it('newer content naming a lost attempt that is the latest write builds on it', async () => {
+    ready();
+    prisma.site.findUnique.mockResolvedValue(stored({ version: 5, lastWriteKey: 'attempt-lost', lastWriteVersion: 5 }));
+    await expect(save({ expectedVersion: 4, requestKey: 'attempt-new', previousRequestKeys: ['attempt-lost'] })).resolves.toEqual({ version: 6 });
+    const update = prisma.site.updateMany.mock.calls[0][0];
+    expect(update.where).toMatchObject({ version: 5 });
+    expect(update.data).toMatchObject({ version: 6, lastWriteKey: 'attempt-new', lastWriteVersion: 6 });
+  });
+
+  it('two lost answers in a row: the latest write of this tab is recognised among the named ones', async () => {
+    ready();
+    // A (on 4) wrote 5, B (naming A) wrote 6; both answers were lost. C names A and B.
+    prisma.site.findUnique.mockResolvedValue(stored({ version: 6, lastWriteKey: 'attempt-b', lastWriteVersion: 6 }));
+    await expect(save({ expectedVersion: 4, requestKey: 'attempt-c', previousRequestKeys: ['attempt-a', 'attempt-b'] })).resolves.toEqual({ version: 7 });
+    // And B's own retry is a replay.
+    prisma.site.findUnique.mockResolvedValue(stored({ version: 6, lastWriteKey: 'attempt-b', lastWriteVersion: 6 }));
+    await expect(save({ expectedVersion: 4, requestKey: 'attempt-b', previousRequestKeys: ['attempt-a'] })).resolves.toEqual({ version: 6 });
+  });
+
+  it('a stale key after a writer that does not know it (an older container) never matches', async () => {
+    // A wrote 5; an older container then wrote 6 and left the key as it was.
+    prisma.site.findUnique.mockResolvedValue(stored({ version: 6, lastWriteKey: 'attempt-a', lastWriteVersion: 5 }));
+    await expect(save({ expectedVersion: 4, requestKey: 'attempt-a' })).rejects.toBeInstanceOf(SiteChangedError);
+    await expect(save({ expectedVersion: 4, requestKey: 'attempt-b', previousRequestKeys: ['attempt-a'] })).rejects.toBeInstanceOf(SiteChangedError);
+    expect(prisma.site.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('a third-party write in between is still a 409, also for a key it does not hold', async () => {
+    prisma.site.findUnique.mockResolvedValue(stored({ version: 6, lastWriteKey: null, lastWriteVersion: null }));
+    await expect(save({ expectedVersion: 4, requestKey: 'attempt-c', previousRequestKeys: ['attempt-a', 'attempt-b'] })).rejects.toBeInstanceOf(SiteChangedError);
+    prisma.site.findUnique.mockResolvedValue(stored({ version: 6, lastWriteKey: 'agent-write', lastWriteVersion: 6 }));
+    await expect(save({ expectedVersion: 4, requestKey: 'attempt-c', previousRequestKeys: ['attempt-a', 'attempt-b'] })).rejects.toBeInstanceOf(SiteChangedError);
+    expect(prisma.site.updateMany).not.toHaveBeenCalled();
+  });
+});

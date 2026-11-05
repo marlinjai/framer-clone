@@ -20,6 +20,7 @@
 // Contract: docs/plans/2026-11-02-reusable-components.md, "The right panel".
 
 import React, { useEffect, useState } from 'react';
+import { useOpenDraft } from '@/hooks/useOpenDraft';
 import { observer } from 'mobx-react-lite';
 import { ArrowDown, ArrowUp, Component, Pencil, Plus, RotateCcw, Trash2, Unlink } from 'lucide-react';
 import type { ComponentInstance } from '@/models/ComponentModel';
@@ -105,7 +106,10 @@ export const CommitField = ({
     setDraft(shown);
     setError(null);
   }, [shown]);
+  // Counted as unsaved, and committed by Cmd+S, leaving and unmount (useOpenDraft).
+  const draftState = useOpenDraft(() => commit());
   const commit = () => {
+    draftState.settled();
     if (draft === shown) return;
     const parsed = parse(draft);
     if (!parsed.ok) {
@@ -121,6 +125,7 @@ export const CommitField = ({
       commit();
     }
     if (e.key === 'Escape') {
+      draftState.settled();
       setDraft(shown);
       setError(null);
     }
@@ -134,7 +139,10 @@ export const CommitField = ({
           placeholder={placeholder}
           rows={3}
           aria-invalid={error ? true : undefined}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => {
+            draftState.edited();
+            setDraft(e.target.value);
+          }}
           onBlur={commit}
           onKeyDown={keys}
           className={cn(FIELD_CONTROL, 'h-auto resize-y py-1')}
@@ -148,7 +156,10 @@ export const CommitField = ({
           inputMode={inputMode}
           mono={mono}
           aria-invalid={error ? true : undefined}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => {
+            draftState.edited();
+            setDraft(e.target.value);
+          }}
           onBlur={commit}
           onKeyDown={keys}
         />

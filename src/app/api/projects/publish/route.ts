@@ -88,7 +88,7 @@ async function handlePOST(req: Request): Promise<Response> {
   if (!body.ok) return body.response;
   // The version lock (_schema.ts): checked here rather than in the schema so a
   // tab that predates it gets a message it can act on, not a generic 400.
-  const { expectedVersion } = body.data;
+  const { expectedVersion, previousRequestKeys } = body.data;
   if (expectedVersion === undefined) return siteRepositoryErrorResponse(new SiteVersionRequiredError());
 
   // 5. Persist and freeze the snapshot, transition the site to published, then
@@ -110,6 +110,8 @@ async function handlePOST(req: Request): Promise<Response> {
       companyId,
       publishedBy: session.user.id,
       expectedVersion,
+      // This tab's saves whose answers were lost: one of them may be the latest write.
+      ...(previousRequestKeys ? { previousRequestKeys } : {}),
     }));
     written = version;
     // ensureSiteDomain is idempotent: a re-publish returns the SAME slug, so the
@@ -133,7 +135,7 @@ async function handlePOST(req: Request): Promise<Response> {
     // The publish committed and a later step (the address, the cache) failed:
     // the working copy IS this snapshot now, at `written`. The error carries it
     // as `writtenVersion`, so the editor adopts it instead of meeting its own
-    // change as a conflict on the next Save.
+    // change as a conflict on its next save.
     if (written === undefined) return failure;
     const body = (await failure.json()) as { error: Record<string, unknown> };
     return Response.json({ error: { ...body.error, writtenVersion: written } }, { status: failure.status });

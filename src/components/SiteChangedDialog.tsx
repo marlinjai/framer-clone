@@ -13,8 +13,9 @@
 //     again meanwhile, the server refuses again and this dialog returns;
 //   - Save mine as a new project: keep both, this tab's pages and components
 //     become a project of their own (SaveAsNewProjectDialog);
-//   - Keep editing: close, nothing happens; the next Save asks again.
-// Shared by SaveButton and PublishButton, which own the request itself.
+//   - Keep editing: close, nothing happens; autosave stays paused and the top
+//     bar's "Changed elsewhere" (or Cmd+S) asks again.
+// Shared by SaveStatus (autosave) and PublishButton, which own the request itself.
 
 import React from 'react';
 import {

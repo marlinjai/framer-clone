@@ -349,7 +349,7 @@ async function route(request: NextRequest) {
   const sessionCookie = bearer ? undefined : request.cookies.get('lumitra_session')?.value;
 
   if (!sessionCookie) {
-    // API requests get a JSON 401 -- a fetch client (PublishButton/SaveButton,
+    // API requests get a JSON 401 -- a fetch client (PublishButton/autosave,
     // the cms-agent) must NOT be 302-redirected to an HTML login page, or its
     // error handling breaks (e.g. an expired session mid-edit). Page requests
     // bounce to the auth-brain login. (Matched routes ALSO self-guard via
