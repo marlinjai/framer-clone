@@ -683,8 +683,8 @@ model SiteOperationAudit {
 /// delivery of an erasure already done answers 2xx without deleting again. `scope` keeps what the first
 /// attempt found (site ids, workspace ids, subdomains, custom hostnames), so a retry after a partial
 /// failure still knows which caches to purge and which form submissions to delete once the site rows are
-/// gone. Ids only, never content: the company id is the one thing it must name, and it is the record that
-/// the erasure happened. `processed_at` stays NULL until every row and cached copy is gone.
+/// gone. Completed scopes retain site and workspace ids only; hostnames and subdomains are cleared
+/// atomically with completion. The company id records which company was erased. `processed_at` stays NULL until every row and cached copy is gone.
 model ErasureEvent {
   id          String    @id @map("event_id")
   kind        String

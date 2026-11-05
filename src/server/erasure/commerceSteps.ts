@@ -22,13 +22,21 @@ export interface StepValues {
   sites: string[];
 }
 
+export const COMMERCE_ERASURE_BATCH_SIZE = 500;
+
 type Step = (tx: postgres.TransactionSql, schema: string, v: StepValues) => postgres.PendingQuery<postgres.Row[]>;
+
+/** Delete a bounded set of physical rows, also for tables without a single-column primary key. */
+const batchDelete = (tx: postgres.TransactionSql, s: string, table: string, predicate: postgres.PendingQuery<postgres.Row[]>) => tx`
+  DELETE FROM ${tx(s)}.${tx(table)} WHERE ctid IN (
+    SELECT ctid FROM ${tx(s)}.${tx(table)} WHERE ${predicate} LIMIT ${COMMERCE_ERASURE_BATCH_SIZE}
+  )`;
 
 /** Delete the company's rows of a table that names the company in `tenant_id`. */
 const byCompany =
   (table: string): Step =>
   (tx, s, v) =>
-    tx`DELETE FROM ${tx(s)}.${tx(table)} WHERE "tenant_id" = ${v.company}`;
+    batchDelete(tx, s, table, tx`"tenant_id" = ${v.company}`);
 
 /** The inventory items of the company: its variants' SKUs that no variant of another company carries. */
 const companyItems = (tx: postgres.TransactionSql, s: string, v: StepValues) => tx`
@@ -66,14 +74,13 @@ export function holdsCompany(
 export const ERASURE_STEPS: ReadonlyArray<{ label: string; run: Step }> = [
   {
     label: 'form_submission',
-    run: (tx, s, v) => tx`
-      DELETE FROM ${tx(s)}."form_submission"
-       WHERE "tenant_id" = ${v.group}
-         AND ("workspace_id" = ANY(${tx.array(v.workspaces)}::text[]) OR "site_id" = ANY(${tx.array(v.sites)}::text[]))`,
+    run: (tx, s, v) => batchDelete(tx, s, 'form_submission', tx`
+      "tenant_id" = ${v.group}
+      AND ("workspace_id" = ANY(${tx.array(v.workspaces)}::text[]) OR "site_id" = ANY(${tx.array(v.sites)}::text[]))`),
   },
   {
     label: 'fulfillment_location_default',
-    run: (tx, s, v) => tx`DELETE FROM ${tx(s)}."fulfillment_location_default" WHERE "workspace_id" = ANY(${tx.array(v.workspaces)}::text[])`,
+    run: (tx, s, v) => batchDelete(tx, s, 'fulfillment_location_default', tx`"workspace_id" = ANY(${tx.array(v.workspaces)}::text[])`),
   },
   { label: 'shop_mail', run: byCompany('shop_mail') },
   { label: 'shop_mail_connection', run: byCompany('shop_mail_connection') },
@@ -82,26 +89,24 @@ export const ERASURE_STEPS: ReadonlyArray<{ label: string; run: Step }> = [
   { label: 'order_payment', run: byCompany('order_payment') },
   {
     label: 'reservation',
-    run: (tx, s, v) => tx`
-      DELETE FROM ${tx(s)}."reservation"
-       WHERE "line_item_id" IN (SELECT "id" FROM ${tx(s)}."order_line_item" WHERE "tenant_id" = ${v.company})`,
+    run: (tx, s, v) => batchDelete(tx, s, 'reservation', tx`
+      "line_item_id" IN (SELECT "id" FROM ${tx(s)}."order_line_item" WHERE "tenant_id" = ${v.company})`),
   },
   {
     label: 'credit_note',
-    run: (tx, s, v) => tx`
-      DELETE FROM ${tx(s)}."credit_note" WHERE "order_id" IN (SELECT "id" FROM ${tx(s)}."order" WHERE "tenant_id" = ${v.company})`,
+    run: (tx, s, v) => batchDelete(tx, s, 'credit_note', tx`"order_id" IN (SELECT "id" FROM ${tx(s)}."order" WHERE "tenant_id" = ${v.company})`),
   },
   {
     label: 'stock_movement',
-    run: (tx, s, v) => tx`DELETE FROM ${tx(s)}."stock_movement" WHERE "inventory_item_id" IN (${companyItems(tx, s, v)})`,
+    run: (tx, s, v) => batchDelete(tx, s, 'stock_movement', tx`"inventory_item_id" IN (${companyItems(tx, s, v)})`),
   },
   {
     label: 'inventory_level',
-    run: (tx, s, v) => tx`DELETE FROM ${tx(s)}."inventory_level" WHERE "inventory_item_id" IN (${companyItems(tx, s, v)})`,
+    run: (tx, s, v) => batchDelete(tx, s, 'inventory_level', tx`"inventory_item_id" IN (${companyItems(tx, s, v)})`),
   },
   {
     label: 'inventory_item',
-    run: (tx, s, v) => tx`DELETE FROM ${tx(s)}."inventory_item" WHERE "id" IN (${companyItems(tx, s, v)})`,
+    run: (tx, s, v) => batchDelete(tx, s, 'inventory_item', tx`"id" IN (${companyItems(tx, s, v)})`),
   },
   { label: 'order_line_item', run: byCompany('order_line_item') },
   { label: 'order', run: byCompany('order') },
@@ -112,15 +117,29 @@ export const ERASURE_STEPS: ReadonlyArray<{ label: string; run: Step }> = [
   {
     label: 'sales_document_file+sales_document',
     run: (tx, s, v) => tx`
-      WITH files AS (DELETE FROM ${tx(s)}."sales_document_file" WHERE "tenant_id" = ${v.company} RETURNING 1)
-      DELETE FROM ${tx(s)}."sales_document" WHERE "tenant_id" = ${v.company}`,
+      WITH batch AS MATERIALIZED (
+        SELECT d."id" FROM ${tx(s)}."sales_document" d WHERE d."tenant_id" = ${v.company}
+          AND NOT EXISTS (SELECT 1 FROM ${tx(s)}."sales_document" child
+            WHERE child."tenant_id" = ${v.company}
+              AND (child."corrects_document_id" = d."id" OR child."replaces_document_id" = d."id"))
+        LIMIT ${COMMERCE_ERASURE_BATCH_SIZE}
+      ), files AS (
+        DELETE FROM ${tx(s)}."sales_document_file" WHERE "tenant_id" = ${v.company}
+          AND "document_id" IN (SELECT "id" FROM batch) RETURNING 1
+      )
+      DELETE FROM ${tx(s)}."sales_document" WHERE "tenant_id" = ${v.company} AND "id" IN (SELECT "id" FROM batch)`,
   },
   { label: 'customer', run: byCompany('customer') },
   {
     label: 'document_template_version+document_template',
     run: (tx, s, v) => tx`
-      WITH versions AS (DELETE FROM ${tx(s)}."document_template_version" WHERE "tenant_id" = ${v.company} RETURNING 1)
-      DELETE FROM ${tx(s)}."document_template" WHERE "tenant_id" = ${v.company}`,
+      WITH batch AS MATERIALIZED (
+        SELECT "id" FROM ${tx(s)}."document_template" WHERE "tenant_id" = ${v.company} LIMIT ${COMMERCE_ERASURE_BATCH_SIZE}
+      ), versions AS (
+        DELETE FROM ${tx(s)}."document_template_version" WHERE "tenant_id" = ${v.company}
+          AND "template_id" IN (SELECT "id" FROM batch) RETURNING 1
+      )
+      DELETE FROM ${tx(s)}."document_template" WHERE "tenant_id" = ${v.company} AND "id" IN (SELECT "id" FROM batch)`,
   },
   { label: 'document_number_counter', run: byCompany('document_number_counter') },
   { label: 'books_company_settings', run: byCompany('books_company_settings') },

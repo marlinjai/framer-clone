@@ -22,9 +22,9 @@ import 'server-only';
 // Runs on the OWNER connection (COMMERCE_OWNER_DATABASE_URL, role commerce_ddl): the app role may not delete
 // the append-only tables, and the delete guards let a delete through only for the schema owner with the
 // transaction-local `lumitra.erasing_company` setting naming the company (tenant migration 029). One
-// transaction per schema, under the shared form of the deploy lock, so it never interleaves with the fleet
-// migration of that schema. A failure rolls that schema back and throws: the caller answers 5xx and
-// auth-brain retries. Every statement is idempotent, so a retry finishes what an earlier attempt left.
+// transaction per bounded delete batch, under the shared form of the deploy lock. A failure rolls back
+// only the current batch and throws: the caller answers 5xx and auth-brain retries with the earlier
+// batches already committed. Every statement is idempotent, so a retry finishes what an earlier attempt left.
 
 import type postgres from 'postgres';
 
@@ -141,24 +141,41 @@ export async function eraseCompanyCommerceWith(sql: postgres.Sql, scope: Commerc
     const groupId = groupIdOfSchema(schema);
     if (!groupId) continue;
     const values: StepValues = { company: scope.companyId, group: groupId, workspaces: [...scope.workspaceIds], sites: [...scope.siteIds] };
-    await sql.begin(async (tx) => {
-      // Most schemas belong to other companies' groups: a read decides, and only a schema holding something
-      // of the company gets the lock and the deletes.
+    const lockForms = async (tx: postgres.TransactionSql) => {
+      // Drain writers before even probing: an uncommitted first submission must not make a schema
+      // look empty. Writers re-check the deleted public site while holding this same lock.
+      for (const siteId of [...new Set(scope.siteIds)].sort()) {
+        await tx`SELECT pg_advisory_xact_lock(hashtextextended(${`site-forms:${siteId}`}, 0))`;
+      }
+    };
+    const hit = await sql.begin(async (tx) => {
+      await lockForms(tx);
       const [probe] = await holdsCompany(tx, schema, values, COMPANY_KEYED_TABLES);
-      if (!probe?.hit) return;
-      visited += 1;
-      await tx`SELECT pg_advisory_xact_lock_shared(${COMMERCE_DEPLOY_LOCK_KEY}::bigint)`;
-      const [applied] = await tx<{ ok: boolean }[]>`
-        SELECT EXISTS (SELECT 1 FROM ${tx(schema)}."__tenant_db_migrations" WHERE "id" = ${ERASURE_MIGRATION_ID}) AS ok`;
-      if (!applied?.ok) {
-        throw new Error(`company erasure: schema ${schema} lacks migration ${ERASURE_MIGRATION_ID}; the fleet migration must run first`);
-      }
-      await tx`SELECT set_config(${ERASING_COMPANY_SETTING}, ${scope.companyId}, true)`;
-      for (const step of ERASURE_STEPS) {
-        const result = await step.run(tx, schema, values);
-        deleted[step.label] = (deleted[step.label] ?? 0) + result.count;
-      }
+      return probe?.hit === true;
     });
+    if (!hit) continue;
+    visited += 1;
+    for (const step of ERASURE_STEPS) {
+      for (;;) {
+        const count = await sql.begin(async (tx) => {
+          await tx`SELECT pg_advisory_xact_lock_shared(${COMMERCE_DEPLOY_LOCK_KEY}::bigint)`;
+          // Overlapping events must not select the same physical batch and mistake a lost delete race
+          // for an empty table. A fresh statement snapshot follows this company lock.
+          await tx`SELECT pg_advisory_xact_lock(hashtextextended(${`company-erasure:${scope.companyId}`}, 0))`;
+          const [applied] = await tx<{ ok: boolean }[]>`
+            SELECT EXISTS (SELECT 1 FROM ${tx(schema)}."__tenant_db_migrations" WHERE "id" = ${ERASURE_MIGRATION_ID}) AS ok`;
+          if (!applied?.ok) {
+            throw new Error(`company erasure: schema ${schema} lacks migration ${ERASURE_MIGRATION_ID}; the fleet migration must run first`);
+          }
+          if (step.label === 'form_submission') await lockForms(tx);
+          await tx`SELECT set_config(${ERASING_COMPANY_SETTING}, ${scope.companyId}, true)`;
+          return (await step.run(tx, schema, values)).count;
+        });
+        deleted[step.label] = (deleted[step.label] ?? 0) + count;
+        // Some batches (invoice leaves) are shorter than the limit even with parents left to erase.
+        if (count === 0) break;
+      }
+    }
   }
   return { schemas: schemas.length, erasedIn: visited, deleted };
 }

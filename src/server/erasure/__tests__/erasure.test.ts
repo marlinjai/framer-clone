@@ -48,9 +48,15 @@ describe('parseErasureDelivery', () => {
     expect(parsed).toEqual({ kind: 'company', erasure: { eventId, companyId: tenantId, workspaceIds: ['w1', 'w2'] } });
   });
 
-  it('reads a body without workspaces (auth-brain before 1.4.0) and tolerates fields added later', () => {
+  it('requires a complete workspace list before acknowledging a company erasure', () => {
     const parsed = parseErasureDelivery(JSON.stringify({ ...base, kind: 'tenant.erased', tenant_id: tenantId, later: true }));
-    expect(parsed).toMatchObject({ kind: 'company', erasure: { workspaceIds: [] } });
+    expect(parsed).toMatchObject({ kind: 'incomplete', eventId });
+  });
+
+  it('accepts more than 1000 workspaces within the route body limit and tolerates added fields', () => {
+    const workspaceIds = Array.from({ length: 1001 }, (_, i) => `workspace-${i}`);
+    const parsed = parseErasureDelivery(JSON.stringify({ ...base, kind: 'tenant.erased', tenant_id: tenantId, workspace_ids: workspaceIds, later: true }));
+    expect(parsed).toMatchObject({ kind: 'company', erasure: { workspaceIds } });
   });
 
   it('acknowledges user.erased and unknown kinds without acting', () => {

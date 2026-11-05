@@ -66,6 +66,8 @@ export async function POST(req: Request): Promise<Response> {
     return jsonError('bad_payload', 'the event id header does not match the body', 400);
   }
 
+  if (delivery.kind === 'incomplete') return jsonError('incomplete_scope', delivery.reason, 503);
+
   if (delivery.kind === 'ignored') {
     console.info(`[erasure] ${eventId}: acknowledged without action (${delivery.reason})`);
     return Response.json({ ok: true, eventId, ignored: delivery.reason }, { headers: NO_STORE });

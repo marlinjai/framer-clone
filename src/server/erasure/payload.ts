@@ -14,7 +14,7 @@ const payloadSchema = z.object({
   kind: z.string().min(1).max(100),
   user_id: z.string().max(200).optional(),
   tenant_id: z.string().regex(UUID).optional(),
-  workspace_ids: z.array(z.string().min(1).max(200)).max(1000).optional(),
+  workspace_ids: z.array(z.string().min(1).max(200)).optional(),
   requested_at: z.string().max(100).optional(),
 });
 
@@ -32,7 +32,8 @@ export interface CompanyErasure {
 export type ParsedDelivery =
   | { kind: 'company'; erasure: CompanyErasure }
   | { kind: 'ignored'; eventId: string; reason: string }
-  | { kind: 'invalid'; reason: string };
+  | { kind: 'invalid'; reason: string }
+  | { kind: 'incomplete'; eventId: string; reason: string };
 
 /** Parse a verified body. Never throws. */
 export function parseErasureDelivery(raw: string): ParsedDelivery {
@@ -54,6 +55,7 @@ export function parseErasureDelivery(raw: string): ParsedDelivery {
   }
   if (body.kind !== 'tenant.erased') return { kind: 'ignored', eventId, reason: `unknown kind ${body.kind}` };
   if (!body.tenant_id) return { kind: 'invalid', reason: 'tenant.erased without tenant_id' };
+  if (!body.workspace_ids) return { kind: 'incomplete', eventId, reason: 'tenant.erased requires workspace_ids to include legacy sites; resend with the complete workspace list' };
   return {
     kind: 'company',
     erasure: {

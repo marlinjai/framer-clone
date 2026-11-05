@@ -18,6 +18,9 @@ import 'server-only';
 //     dropping the `tg_<id>` schema: it is shared by every company of the
 //     tenant group.
 
+import type { PrismaClient } from '@prisma/client';
+import { getPrismaClient } from '@/server/db';
+
 import { sql, type Kysely } from 'kysely';
 import { z } from 'zod';
 
@@ -96,28 +99,44 @@ function toSubmission(row: Row): FormSubmission {
 
 const COLUMNS = ['id', 'site_id', 'page_id', 'page_path', 'form_id', 'form_name', 'fields', 'read_at', 'created_at'] as const;
 
+export class FormSiteUnavailableError extends Error {
+  constructor() {
+    super('The site no longer accepts submissions');
+    this.name = 'FormSiteUnavailableError';
+  }
+}
+
 /**
  * Store one submission. Idempotent on the id: the island re-sends a lost
  * answer with the same id, which must not store the message twice. Returns
  * whether a row was written (false: it existed already).
  */
-export async function insertFormSubmission(db: Kysely<CommerceDB>, row: NewFormSubmission): Promise<boolean> {
-  const result = await db
-    .insertInto('form_submission')
-    .values({
-      id: row.id,
-      tenant_id: row.tenantId,
-      workspace_id: row.workspaceId,
-      site_id: row.siteId,
-      page_id: row.pageId,
-      page_path: row.pagePath,
-      form_id: row.formId,
-      form_name: row.formName,
-      fields: toJsonb(row.fields),
-    })
-    .onConflict((oc) => oc.column('id').doNothing())
-    .executeTakeFirst();
-  return Number(result.numInsertedOrUpdatedRows ?? 0) > 0;
+export async function insertFormSubmission(
+  db: Kysely<CommerceDB>, row: NewFormSubmission, prisma: PrismaClient = getPrismaClient(),
+): Promise<boolean> {
+  // This transaction owns the same site lock as company erasure's form cleanup. Re-check the
+  // public parent after acquiring it: a request that resolved before erasure cannot write afterward.
+  return db.transaction().execute(async (tx) => {
+    await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`site-forms:${row.siteId}`}, 0))`.execute(tx);
+    const site = await prisma.site.findFirst({ where: { id: row.siteId, tenantGroupId: row.tenantId }, select: { id: true } });
+    if (!site) throw new FormSiteUnavailableError();
+    const result = await tx
+      .insertInto('form_submission')
+      .values({
+        id: row.id,
+        tenant_id: row.tenantId,
+        workspace_id: row.workspaceId,
+        site_id: row.siteId,
+        page_id: row.pageId,
+        page_path: row.pagePath,
+        form_id: row.formId,
+        form_name: row.formName,
+        fields: toJsonb(row.fields),
+      })
+      .onConflict((oc) => oc.column('id').doNothing())
+      .executeTakeFirst();
+    return Number(result.numInsertedOrUpdatedRows ?? 0) > 0;
+  });
 }
 
 export interface SiteRef {

@@ -74,7 +74,7 @@ import {
   validateSubmission,
   type FormLocale,
 } from '@/lib/forms/validation';
-import type { NewFormSubmission } from './repository';
+import { FormSiteUnavailableError, type NewFormSubmission } from './repository';
 import { clientIpOf, type FormRateLimiter } from './rateLimit';
 
 /** Faster than this after the page rendered is not a person filling in a form. */
@@ -397,6 +397,7 @@ export async function handleFormSubmit(req: Request, deps: SubmitDeps): Promise<
     });
     if (!stored) deps.log('info', `[forms] site ${site.siteId}: submission ${submissionId} was sent again, kept the first`);
   } catch (err) {
+    if (err instanceof FormSiteUnavailableError) return refuse(404, 'form_not_found', locale, copy.notFound, back);
     deps.log('error', `[forms] site ${site.siteId}: storing a submission failed`, err);
     return refuse(500, 'submit_failed', locale, copy.failed, back);
   }

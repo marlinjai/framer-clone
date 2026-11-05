@@ -10,8 +10,8 @@ import 'server-only';
 //      hostnames) is merged with what is found now and stored BEFORE anything is deleted, so a retry after
 //      a partial failure still knows the hosts to purge and the workspaces whose form submissions to delete
 //      once the site rows are gone.
-//   2. The public rows, in one transaction: the sites go first, so the published hosts stop resolving and
-//      no new order or form submission can land for them.
+//   2. The public rows, in committed batches. The sites stop resolving. Commerce cleanup then drains
+//      in-flight form writers; later writers re-check the deleted site under its form lock and are refused.
 //   3. The cached copies this container holds (see deploy/README.md, "Erasing personal data: one
 //      container only"): the resolver's cache by tag and its remembered misses, the expanded page trees in
 //      memory, and the origin cache's files on disk. A second invalidation a few seconds later closes the
@@ -42,6 +42,7 @@ import {
   parseScope,
   type ErasureScope,
   type PublicErasureResult,
+  PUBLIC_ERASURE_TRANSACTION,
 } from './public';
 
 /** Delay of the second cache invalidation, as the project delete (DELETE /api/projects/<id>). */
@@ -89,26 +90,36 @@ export function productionDeps(): EraseCompanyDeps {
 /** Run one company erasure delivery. */
 export async function eraseCompany(erasure: CompanyErasure, deps: EraseCompanyDeps = productionDeps()): Promise<EraseCompanyOutcome> {
   const { prisma } = deps;
-  const existing = await prisma.erasureEvent.findUnique({ where: { id: erasure.eventId } });
-  if (existing?.processedAt) return { status: 'already_processed' };
-  if (existing && existing.tenantId !== erasure.companyId) {
-    // The same event id for another company is not a retry: refuse rather than guess.
-    throw new Error(`erasure event ${erasure.eventId} was received for another company`);
-  }
-
-  const found = await findErasureScope(prisma, erasure.companyId, erasure.workspaceIds);
-  const scope = mergeScope(parseScope(existing?.scope), found);
-  await prisma.erasureEvent.upsert({
-    where: { id: erasure.eventId },
-    create: { id: erasure.eventId, kind: 'tenant.erased', tenantId: erasure.companyId, scope: { ...scope }, attempts: 1 },
-    update: { scope: { ...scope }, attempts: { increment: 1 } },
+  // Creating an empty row is safe under simultaneous first deliveries. The row lock below owns all
+  // subsequent scope changes and verifies company identity before acknowledging a completed event.
+  await prisma.erasureEvent.createMany({
+    data: [{ id: erasure.eventId, kind: 'tenant.erased', tenantId: erasure.companyId }], skipDuplicates: true,
   });
+  const prepared = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT event_id FROM public.erasure_events WHERE event_id = ${erasure.eventId} FOR UPDATE`;
+    const existing = await tx.erasureEvent.findUniqueOrThrow({ where: { id: erasure.eventId } });
+    if (existing.tenantId !== erasure.companyId) throw new Error('erasure event was received for another company');
+    if (existing.processedAt) return null;
+    const found = await findErasureScope(tx, erasure.companyId, erasure.workspaceIds);
+    const scope = mergeScope(parseScope(existing.scope), found);
+    const updated = await tx.erasureEvent.updateMany({
+      where: { id: erasure.eventId, processedAt: null },
+      data: { scope: { ...scope }, attempts: { increment: 1 } },
+    });
+    return updated.count ? scope : null;
+  }, PUBLIC_ERASURE_TRANSACTION);
+  if (!prepared) return { status: 'already_processed' };
 
-  const publicRows = await eraseCompanyPublic(prisma, scope);
+  const erasedPublic = await eraseCompanyPublic(prisma, prepared, erasure.eventId);
+  if (!erasedPublic) return { status: 'already_processed' };
+  const { scope, rows: publicRows } = erasedPublic;
   await deps.purgeCaches(scope);
   const commerce = await deps.eraseCommerce({ companyId: erasure.companyId, workspaceIds: scope.workspaceIds, siteIds: scope.siteIds });
 
-  await prisma.erasureEvent.update({ where: { id: erasure.eventId }, data: { processedAt: new Date() } });
+  await prisma.erasureEvent.updateMany({
+    where: { id: erasure.eventId, processedAt: null },
+    data: { processedAt: new Date(), scope: { siteIds: scope.siteIds, workspaceIds: scope.workspaceIds } },
+  });
   const commerceRows = Object.values(commerce.deleted).reduce((a, b) => a + b, 0);
   // A company this app never served deletes nothing anywhere: still a success (auth-brain must not wedge).
   const servedHere = scope.siteIds.length > 0 || Object.values(publicRows).some((n) => n > 0) || commerceRows > 0;

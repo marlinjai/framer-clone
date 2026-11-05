@@ -231,7 +231,8 @@ describe('the repository behind the submissions view', () => {
   });
 
   it("another site's row in the same schema answers not found, never changes", async () => {
-    await insertFormSubmission(appDb, row({ id: 'foreign', siteId: 'other-site' }));
+    const otherSite = await createPublishedSite(fx, tgId, 'forms-other');
+    await insertFormSubmission(appDb, row({ id: 'foreign', siteId: otherSite.siteId, workspaceId: otherSite.workspaceId }));
     const ref = { tenantId: tgId, siteId: site.siteId };
     expect(await setFormSubmissionRead(appDb, ref, 'foreign', true)).toBe(false);
     expect(await deleteFormSubmission(appDb, ref, 'foreign')).toBe(false);
@@ -243,7 +244,8 @@ describe('deletion and erasure', () => {
   it('the project delete removes exactly that project rows', async () => {
     await insertFormSubmission(appDb, row());
     await insertFormSubmission(appDb, row());
-    await insertFormSubmission(appDb, row({ siteId: 'other-site' }));
+    const otherSite = await createPublishedSite(fx, tgId, 'forms-other-delete');
+    await insertFormSubmission(appDb, row({ siteId: otherSite.siteId, workspaceId: otherSite.workspaceId }));
     expect(await deleteProjectSubmissions(tgId, site.siteId)).toBe(2);
     expect(await countInSchema(fx, schema, 'form_submission')).toBe(1);
     // A legacy site without a commerce schema has nothing to delete.
@@ -256,7 +258,8 @@ describe('deletion and erasure', () => {
   it('dropping the tenant schema takes every submission with it', async () => {
     const other = await provisionCommerceTenant(fx, 'forms-drop');
     const db = tenantDb(appBase, other.tgId);
-    await insertFormSubmission(db, row({ tenantId: other.tgId }));
+    const otherSite = await createPublishedSite(fx, other.tgId, 'forms-drop-site');
+    await insertFormSubmission(db, row({ tenantId: other.tgId, siteId: otherSite.siteId, workspaceId: otherSite.workspaceId }));
     expect(await countInSchema(fx, other.schema, 'form_submission')).toBe(1);
     await fx.owner`DROP SCHEMA ${fx.owner(other.schema)} CASCADE`;
     const left = await fx.owner`SELECT 1 FROM information_schema.tables WHERE table_schema = ${other.schema}`;

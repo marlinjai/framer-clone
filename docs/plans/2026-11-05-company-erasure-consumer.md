@@ -29,6 +29,7 @@ receipt-ocr consumers.
 | Secret not set | 503, nothing deleted |
 | Missing or wrong signature | 401, nothing deleted |
 | Malformed body, event id header not matching the body | 400 |
+| Company delivery without `workspace_ids` | 503, resend with the complete list (including legacy workspaces) |
 | `user.erased`, unknown kind | 200, no-op |
 | Event already processed | 200, nothing deleted again |
 | Company never served here | 200, no-op |
@@ -73,11 +74,16 @@ receipt-ocr consumers.
    container only").
 7. **Order and retries.** A ledger row (`erasure_events`, keyed by event id) stores the scope the first
    attempt found (site ids, workspace ids, subdomains, hostnames) before anything is deleted. Then the public
-   rows in one transaction (the site stops resolving, so no new order or form submission lands), then the
-   caches, then the tenant schemas. Each schema is first probed with one read (any row naming the company,
-   or a form submission or fulfillment default of its workspaces or sites); only a schema with a hit gets
-   the delete transaction, under the shared form of the deploy lock, so an erasure locks nothing in the
-   schemas of other groups. `processed_at` is set last. Every step is idempotent.
+   rows in committed batches with a 120-second transaction budget, then the caches, then the tenant schemas.
+   Sites are locked before their domains are re-read; newly discovered hosts are persisted with the delete.
+   Form writers hold a per-site transaction lock and re-check the public site before insertion. Commerce
+   cleanup takes that same lock before its probe and form deletion, draining writers already in flight.
+   Each schema is probed for company rows; only schemas with a hit get deletes. Deletes select at most 500
+   primary rows per batch (their dependent rows are deleted with them), under the shared deploy lock, so retries keep completed
+   work. Mutually referencing document/file and template/version pairs remain atomic; document references
+   are removed from leaves toward parents. `processed_at` is set last, atomically clearing hostnames and
+   subdomains from the ledger. Conditional writes under a ledger row lock prevent overlapping deliveries
+   from restoring cleared values. Every step is idempotent.
 8. **External services.** The Stripe `payment_account` row is deleted; Stripe is not called. The Lumitra
    Mail connection row is deleted; Lumitra Mail erases its own side from its own webhook.
 
@@ -85,5 +91,9 @@ receipt-ocr consumers.
 
 1. Merge and deploy (the start step runs tenant migration 029 on every schema).
 2. Set `SITES_ERASURE_WEBHOOK_SECRET` in Infisical (project framer-clone, `prod`) to the same value auth-brain
-   holds for this endpoint, then register `https://app.lumitra.co/api/internal/erasure` in auth-brain.
-3. Until the secret is set the endpoint answers 503, so auth-brain keeps retrying and loses nothing.
+   holds for this endpoint.
+3. Restart or redeploy the app so a new container starts with that secret. Setting Infisical alone does
+   not update the running process; the endpoint keeps answering 503 until the new process has the secret.
+4. Register `https://app.lumitra.co/api/internal/erasure` in auth-brain, sending the complete `workspace_ids`
+   list on company erasures. Missing lists answer 503 so legacy sites cannot be silently skipped.
+5. A missing secret or incomplete scope remains retryable; auth-brain keeps retrying and loses nothing.

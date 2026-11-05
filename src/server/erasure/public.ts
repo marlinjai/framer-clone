@@ -16,7 +16,7 @@ import 'server-only';
 // copies are site_revisions rows), so deleting the rows deletes the files. CMS file cells (dt_files) are
 // references to an address the editor was given (`file_url`), not bytes stored here; the rows go.
 
-import type { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
 
 /** What an erasure found to delete, kept on the ledger row so a retry still knows it once the rows are gone. */
 export interface ErasureScope {
@@ -50,7 +50,7 @@ export function parseScope(value: unknown): ErasureScope {
 
 /** Find the company's sites, their workspaces, subdomains and custom hostnames. */
 export async function findErasureScope(
-  prisma: PrismaClient,
+  prisma: PrismaClient | Prisma.TransactionClient,
   companyId: string,
   workspaceIds: readonly string[],
 ): Promise<ErasureScope> {
@@ -83,45 +83,80 @@ export interface PublicErasureResult {
   cmsRows: number;
 }
 
-/** Delete the company's public rows in one transaction. Idempotent. */
-export async function eraseCompanyPublic(prisma: PrismaClient, scope: ErasureScope): Promise<PublicErasureResult> {
-  const { siteIds, workspaceIds } = scope;
-  return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-    const siteErasures = await tx.siteErasure.deleteMany({
-      where: { OR: [{ siteId: { in: siteIds } }, { workspaceId: { in: workspaceIds } }] },
-    });
-    const siteOperationAudits = await tx.siteOperationAudit.deleteMany({
-      where: { OR: [{ siteId: { in: siteIds } }, { workspaceId: { in: workspaceIds } }] },
-    });
-    // agent_changes cascade from agent_runs.
-    const agentRuns = await tx.agentRun.deleteMany({ where: { workspaceId: { in: workspaceIds } } });
+/** Each committed batch can use the same budget as the owner's site erasure. */
+export const PUBLIC_ERASURE_TRANSACTION = { maxWait: 5_000, timeout: 120_000 } as const;
+const PUBLIC_BATCH_SIZE = 500;
 
-    // The CMS (dt_*): only dt_columns and dt_views cascade from dt_tables, so the rest is chased by id.
-    const tables = await tx.dtTable.findMany({ where: { workspaceId: { in: workspaceIds } }, select: { id: true } });
-    const tableIds = tables.map((t) => t.id);
-    const columnIds = (await tx.dtColumn.findMany({ where: { tableId: { in: tableIds } }, select: { id: true } })).map((c) => c.id);
-    const rowIds = (await tx.dtRow.findMany({ where: { tableId: { in: tableIds } }, select: { id: true } })).map((r) => r.id);
-    await tx.dtRowSelectValue.deleteMany({ where: { OR: [{ rowId: { in: rowIds } }, { columnId: { in: columnIds } }] } });
-    await tx.dtRelation.deleteMany({
-      where: { OR: [{ sourceRowId: { in: rowIds } }, { targetRowId: { in: rowIds } }, { sourceColumnId: { in: columnIds } }] },
-    });
-    await tx.dtFile.deleteMany({ where: { OR: [{ rowId: { in: rowIds } }, { columnId: { in: columnIds } }] } });
-    await tx.selectOption.deleteMany({ where: { columnId: { in: columnIds } } });
-    const cmsRows = await tx.dtRow.deleteMany({ where: { tableId: { in: tableIds } } });
-    const cmsTables = await tx.dtTable.deleteMany({ where: { id: { in: tableIds } } });
+/** Delete public rows in committed batches, persisting newly discovered hosts before their rows go. */
+export async function eraseCompanyPublic(
+  prisma: PrismaClient, initialScope: ErasureScope, eventId: string,
+): Promise<{ scope: ErasureScope; rows: PublicErasureResult } | null> {
+  let scope = initialScope;
+  const rows: PublicErasureResult = { sites: 0, siteErasures: 0, siteOperationAudits: 0, agentRuns: 0, cmsTables: 0, cmsRows: 0 };
+  for (;;) {
+    const batch = await prisma.$transaction(async (tx) => {
+      // Serialize scope changes with other deliveries and the final completion write. Re-read after
+      // taking the lock, so a late worker cannot restore hostnames on a completed ledger row.
+      await tx.$queryRaw`SELECT event_id FROM public.erasure_events WHERE event_id = ${eventId} FOR UPDATE`;
+      const event = await tx.erasureEvent.findUniqueOrThrow({ where: { id: eventId } });
+      if (event.processedAt) return null;
+      let current = mergeScope(parseScope(event.scope), scope);
+      const { siteIds, workspaceIds } = current;
+      const sitesToDelete = await tx.site.findMany({ where: { id: { in: siteIds } }, select: { id: true }, take: 25, orderBy: { id: 'asc' } });
+      const ids = sitesToDelete.map((site) => site.id);
+      if (ids.length) {
+        // Domain inserts hold a foreign-key lock on the site. Wait for those writers, then read their
+        // committed hosts. New inserts block here and fail once the site deletion commits.
+        await tx.$queryRaw`SELECT id FROM public.sites WHERE id IN (${Prisma.join(ids)}) ORDER BY id FOR UPDATE`;
+        const domains = await tx.siteDomain.findMany({
+          where: { siteId: { in: ids } }, select: { subdomain: true, hostname: true, customHostname: true },
+        });
+        current = mergeScope(current, {
+          ...EMPTY_SCOPE,
+          subdomains: uniq(domains.map((domain) => domain.subdomain)),
+          hostnames: uniq(domains.flatMap((domain) => [domain.hostname, domain.customHostname])),
+        });
+      }
+      await tx.erasureEvent.updateMany({ where: { id: eventId, processedAt: null }, data: { scope: { ...current } } });
 
-    // The sites: pages, revisions (the published copies), images (their bytes), domains, experiments and
-    // report counts cascade. `sites.published_revision_id` is checked at the end of the statement, so the
-    // cascade into the revisions passes.
-    const sites = await tx.site.deleteMany({ where: { id: { in: siteIds } } });
+      const auditWhere = { OR: [{ siteId: { in: siteIds } }, { workspaceId: { in: workspaceIds } }] };
+      const eraseIds = (await tx.siteErasure.findMany({ where: auditWhere, select: { id: true }, take: PUBLIC_BATCH_SIZE })).map((r) => r.id);
+      const siteErasures = await tx.siteErasure.deleteMany({ where: { id: { in: eraseIds } } });
+      const auditIds = (await tx.siteOperationAudit.findMany({ where: auditWhere, select: { id: true }, take: PUBLIC_BATCH_SIZE })).map((r) => r.id);
+      const siteOperationAudits = await tx.siteOperationAudit.deleteMany({ where: { id: { in: auditIds } } });
+      const runIds = (await tx.agentRun.findMany({ where: { workspaceId: { in: workspaceIds } }, select: { id: true }, take: PUBLIC_BATCH_SIZE })).map((r) => r.id);
+      const agentRuns = await tx.agentRun.deleteMany({ where: { id: { in: runIds } } });
 
-    return {
-      sites: sites.count,
-      siteErasures: siteErasures.count,
-      siteOperationAudits: siteOperationAudits.count,
-      agentRuns: agentRuns.count,
-      cmsTables: cmsTables.count,
-      cmsRows: cmsRows.count,
-    };
-  });
+      // One collection and a bounded set of rows per commit; a retry keeps the work already done.
+      const tables = await tx.dtTable.findMany({ where: { workspaceId: { in: workspaceIds } }, select: { id: true }, take: 1 });
+      const tableIds = tables.map((t) => t.id);
+      const columnIds = (await tx.dtColumn.findMany({ where: { tableId: { in: tableIds } }, select: { id: true } })).map((c) => c.id);
+      const rowIds = (await tx.dtRow.findMany({ where: { tableId: { in: tableIds } }, select: { id: true }, take: PUBLIC_BATCH_SIZE })).map((r) => r.id);
+      await tx.dtRowSelectValue.deleteMany({ where: { rowId: { in: rowIds } } });
+      await tx.dtRelation.deleteMany({ where: { OR: [{ sourceRowId: { in: rowIds } }, { targetRowId: { in: rowIds } }] } });
+      await tx.dtFile.deleteMany({ where: { rowId: { in: rowIds } } });
+      const cmsRows = await tx.dtRow.deleteMany({ where: { id: { in: rowIds } } });
+      let cmsTables = 0;
+      if (rowIds.length < PUBLIC_BATCH_SIZE) {
+        // Also remove cells pointing at these columns from rows outside the deleted collection.
+        await tx.dtRowSelectValue.deleteMany({ where: { columnId: { in: columnIds } } });
+        await tx.dtRelation.deleteMany({ where: { sourceColumnId: { in: columnIds } } });
+        await tx.dtFile.deleteMany({ where: { columnId: { in: columnIds } } });
+        await tx.selectOption.deleteMany({ where: { columnId: { in: columnIds } } });
+        cmsTables = (await tx.dtTable.deleteMany({ where: { id: { in: tableIds } } })).count;
+      }
+
+      // Pages, revisions, image bytes, domains, experiments and report counts cascade.
+      const sites = await tx.site.deleteMany({ where: { id: { in: ids } } });
+      return {
+        scope: current,
+        rows: { sites: sites.count, siteErasures: siteErasures.count, siteOperationAudits: siteOperationAudits.count,
+          agentRuns: agentRuns.count, cmsTables, cmsRows: cmsRows.count },
+      };
+    }, PUBLIC_ERASURE_TRANSACTION);
+    if (!batch) return null;
+    scope = batch.scope;
+    for (const key of Object.keys(rows) as (keyof PublicErasureResult)[]) rows[key] += batch.rows[key];
+    if (Object.values(batch.rows).every((count) => count === 0)) return { scope, rows };
+  }
 }

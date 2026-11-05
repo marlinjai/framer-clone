@@ -26,6 +26,8 @@ import { booksScope } from '@/server/books/scope';
 import { createDraft } from '@/server/books/repository/documents';
 import { addLine } from '@/server/books/repository/lines';
 import { issue } from '@/server/books/issue';
+import { startCorrection } from '@/server/books/correct';
+import { cancelInvoice } from '@/server/books/cancel';
 import { storeLogo } from '@/server/books/repository/assets';
 import { createTemplate } from '@/server/books/repository/templates';
 import { addProductImage } from '@/server/catalog/repository/images';
@@ -53,10 +55,12 @@ import { pricingRepository } from '@/server/commerce/repository/pricing';
 import { handlePaymentEvent, type PaymentDeps } from '@/server/commerce/payment/payments';
 import { demoProvider } from '@/server/commerce/payment/provider';
 import { ensureReceipt } from '@/server/commerce/payment/receipt';
-import { insertFormSubmission } from '@/server/forms/repository';
+import { insertFormSubmission, type NewFormSubmission } from '@/server/forms/repository';
 import { resolvePublishedSite } from '@/server/sites/publicResolver';
 
 import { ERASURE_COVERAGE, ERASURE_MIGRATION_ID, eraseCompanyCommerce } from '../commerce';
+import { COMMERCE_ERASURE_BATCH_SIZE } from '../commerceSteps';
+import { findErasureScope, eraseCompanyPublic } from '../public';
 import { ERASURE_GUARDED_TRIGGERS } from '@/server/commerce/migrations/tenant/029_company_erasure';
 import { eraseCompany, purgeErasedSiteCaches, type EraseCompanyDeps } from '../eraseCompany';
 import { ERASURE_EVENT_ID_HEADER, ERASURE_SIGNATURE_HEADER, signErasureBody } from '../signature';
@@ -73,6 +77,8 @@ let env: BooksEnv;
 /** A login role that is no superuser, only a member of the schemas' owner (as commerce_ddl). */
 let ownerRoleUrl = '';
 let ownerRole = '';
+
+const seeded = new Map<string, { siteId: string; creditNoteId: string }>();
 
 /** Rows of a company, per covered table (the test's own SQL, independent of the code under test). */
 async function countsOf(company: string, workspaces: string[]): Promise<Record<string, number>> {
@@ -91,7 +97,10 @@ async function countsOf(company: string, workspaces: string[]): Promise<Record<s
   const items = () => o`
     SELECT "id" FROM ${o(s)}."inventory_item"
      WHERE "sku" IN (SELECT "sku" FROM ${o(s)}."product_variant" WHERE "tenant_id" = ${company})`;
-  await one('form_submission', o`SELECT count(*) AS n FROM ${o(s)}."form_submission" WHERE "workspace_id" = ANY(${ws}::text[])`);
+  const fixture = seeded.get(company);
+  await one('form_submission', o`SELECT count(*) AS n FROM ${o(s)}."form_submission" WHERE "workspace_id" = ANY(${ws}::text[]) OR "site_id" = ${fixture?.siteId ?? ''}`);
+  await one('credit_note', o`SELECT count(*) AS n FROM ${o(s)}."credit_note" WHERE "id" = ${fixture?.creditNoteId ?? ''}`);
+  await one('credit_note_ref', o`SELECT count(*) AS n FROM ${o(s)}."credit_note_ref" WHERE "credit_note_id" = ${fixture?.creditNoteId ?? ''}`);
   await one(
     'fulfillment_location_default',
     o`SELECT count(*) AS n FROM ${o(s)}."fulfillment_location_default" WHERE "workspace_id" = ANY(${ws}::text[])`,
@@ -220,6 +229,9 @@ async function seedCompany(label: string): Promise<Company> {
     .where('tenant_id', '=', company)
     .where('id', '=', issued.document.document.id)
     .execute();
+  // Both kinds of invoice self-reference must be erased from leaves toward their parent.
+  await startCorrection(scope, issued.document.document.id, { actorUserId: ACTOR });
+  await cancelInvoice(scope, issued.document.document.id, { actorUserId: ACTOR, reason: 'Synthetic correction' });
   // The SAME logo bytes for both companies: content-addressed per company, so erasing one keeps the other's.
   const logo = await storeLogo(scope, makePng(140, 40), 'image/png');
   const staged = await stageUpload(scope, { fileName: `${label}.pdf`, bytes: pdfBytes(`${label}-${company}`) });
@@ -277,6 +289,14 @@ async function seedCompany(label: string): Promise<Company> {
     },
   });
   if (!order.ok) throw new Error('the order was short');
+  const creditNoteId = randomUUID();
+  await env.ownerDb.insertInto('credit_note').values({
+    id: creditNoteId, order_id: order.orderId, corrected_ref: null, reason: 'Synthetic correction', currency_code: 'EUR', amount: 100,
+  }).execute();
+  await env.ownerDb.insertInto('credit_note_ref').values({
+    id: randomUUID(), credit_note_id: creditNoteId, ref_type: 'order', ref_id: order.orderId,
+  }).execute();
+  seeded.set(company, { siteId, creditNoteId });
   const paid = await handlePaymentEvent(deps, {
     provider: 'stripe',
     eventId: `evt-${randomUUID()}`,
@@ -290,7 +310,7 @@ async function seedCompany(label: string): Promise<Company> {
   }
 
   // A form submission on the site, the shop's mail connection and its payment account.
-  await insertFormSubmission(env.appDb, {
+  const submission: NewFormSubmission = {
     id: randomUUID(),
     tenantId: env.tgId,
     workspaceId,
@@ -300,7 +320,9 @@ async function seedCompany(label: string): Promise<Company> {
     formId: 'contact',
     formName: 'Kontakt',
     fields: [{ key: 'email', label: 'E-Mail', type: 'email', value: 'visitor@example.com' }] as never,
-  });
+  };
+  await insertFormSubmission(env.appDb, submission);
+  await insertFormSubmission(env.appDb, { ...submission, id: randomUUID(), workspaceId: `outside-${company}` });
   await env.ownerDb
     .insertInto('shop_mail_connection')
     .values({
@@ -421,10 +443,10 @@ describe('erasing one company of a shared tenant group', () => {
   it('a repeated delivery of the same event deletes nothing again', async () => {
     const eventId = randomUUID();
     const fresh = await seedCompany('erase-c');
-    expect((await eraseCompany({ eventId, companyId: fresh.id, workspaceIds: [] }, prodLikeDeps())).status).toBe('erased');
+    expect((await eraseCompany({ eventId, companyId: fresh.id, workspaceIds: [fresh.legacyWorkspaceId] }, prodLikeDeps())).status).toBe('erased');
     const beforeB = await countsOf(b.id, [b.workspaceId]);
     const eraseCommerce = vi.fn();
-    expect(await eraseCompany({ eventId, companyId: fresh.id, workspaceIds: [] }, { ...prodLikeDeps(), eraseCommerce })).toEqual({
+    expect(await eraseCompany({ eventId, companyId: fresh.id, workspaceIds: [fresh.legacyWorkspaceId] }, { ...prodLikeDeps(), eraseCommerce })).toEqual({
       status: 'already_processed',
     });
     expect(eraseCommerce).not.toHaveBeenCalled();
@@ -435,17 +457,160 @@ describe('erasing one company of a shared tenant group', () => {
     const eventId = randomUUID();
     const c = await seedCompany('erase-d');
     const failing = vi.fn().mockRejectedValue(new Error('synthetic outage'));
-    await expect(eraseCompany({ eventId, companyId: c.id, workspaceIds: [] }, { ...prodLikeDeps(), eraseCommerce: failing })).rejects.toThrow('synthetic outage');
+    await expect(eraseCompany({ eventId, companyId: c.id, workspaceIds: [c.legacyWorkspaceId] }, { ...prodLikeDeps(), eraseCommerce: failing })).rejects.toThrow('synthetic outage');
     // The site rows are already gone, the form submission (found through the site) is not yet.
     expect((await countsOf(c.id, [c.workspaceId])).sites).toBe(0);
-    expect((await countsOf(c.id, [c.workspaceId])).form_submission).toBe(1);
+    expect((await countsOf(c.id, [c.workspaceId])).form_submission).toBe(2);
     const ledger = await env.fx.prisma.erasureEvent.findUniqueOrThrow({ where: { id: eventId } });
     expect(ledger.processedAt).toBeNull();
 
-    expect(await eraseCompany({ eventId, companyId: c.id, workspaceIds: [] }, prodLikeDeps())).toMatchObject({ status: 'erased' });
+    expect(await eraseCompany({ eventId, companyId: c.id, workspaceIds: [c.legacyWorkspaceId] }, prodLikeDeps())).toMatchObject({ status: 'erased' });
     const after = await countsOf(c.id, [c.workspaceId]);
     expect(Object.entries(after).filter(([, n]) => n !== 0)).toEqual([]);
     expect((await env.fx.prisma.erasureEvent.findUniqueOrThrow({ where: { id: eventId } })).attempts).toBe(2);
+  });
+
+  it('rejects reuse of a processed event for a different company', async () => {
+    const eventId = randomUUID();
+    await eraseCompany({ eventId, companyId: randomUUID(), workspaceIds: [] }, prodLikeDeps());
+    await expect(eraseCompany({ eventId, companyId: b.id, workspaceIds: [] }, prodLikeDeps())).rejects.toThrow('another company');
+  });
+
+  it('a late overlapping delivery cannot restore hostnames to a completed ledger', async () => {
+    const c = await seedCompany('erase-overlap');
+    const erasure = { eventId: randomUUID(), companyId: c.id, workspaceIds: [c.legacyWorkspaceId] };
+    let release!: () => void;
+    let reached!: () => void;
+    const waiting = new Promise<void>((resolve) => { reached = resolve; });
+    const barrier = new Promise<void>((resolve) => { release = resolve; });
+    const delayed = eraseCompany(erasure, { ...prodLikeDeps(), purgeCaches: async () => { reached(); await barrier; throw new Error('late failure'); } });
+    const failure = expect(delayed).rejects.toThrow('late failure');
+    try {
+      await waiting;
+      await eraseCompany(erasure, prodLikeDeps());
+    } finally { release(); }
+    await failure;
+    const ledger = await env.fx.prisma.erasureEvent.findUniqueOrThrow({ where: { id: erasure.eventId } });
+    expect(ledger.processedAt).not.toBeNull();
+    expect(ledger.scope).toEqual({ siteIds: expect.arrayContaining([c.siteId]), workspaceIds: expect.arrayContaining([c.workspaceId]) });
+    expect(await eraseCompany(erasure, prodLikeDeps())).toEqual({ status: 'already_processed' });
+  });
+
+  it('captures domains committed after initial discovery and keeps them for a failed attempt retry', async () => {
+    const c = await createPublishedSite(env.fx, env.tgId, 'late-domain', randomUUID());
+    const companyId = (await env.fx.prisma.site.findUniqueOrThrow({ where: { id: c.siteId } })).companyId!;
+    const scope = await findErasureScope(env.fx.prisma, companyId, [c.workspaceId]);
+    const eventId = randomUUID();
+    await env.fx.prisma.erasureEvent.create({ data: { id: eventId, tenantId: companyId, kind: 'tenant.erased', scope: { ...scope } } });
+    const hostname = `late-${randomUUID()}.example`;
+    let release!: () => void;
+    let reached!: () => void;
+    const waiting = new Promise<void>((resolve) => { reached = resolve; });
+    const barrier = new Promise<void>((resolve) => { release = resolve; });
+    const domainWriter = env.fx.prisma.$transaction(async (tx) => {
+      await tx.siteDomain.create({ data: { siteId: c.siteId, workspaceId: c.workspaceId, tenantGroupId: env.tgId, hostname } });
+      reached();
+      await barrier;
+    }, { timeout: 120_000 });
+    await waiting;
+    const erasing = eraseCompanyPublic(env.fx.prisma, scope, eventId);
+    try {
+      await vi.waitFor(async () => {
+        const [lock] = await env.fx.owner<{ waiting: boolean }[]>`
+          SELECT EXISTS (SELECT 1 FROM pg_stat_activity
+            WHERE wait_event_type = 'Lock' AND query LIKE '%public.sites%' AND query LIKE '%FOR UPDATE%') AS waiting`;
+        expect(lock.waiting).toBe(true);
+      }, { timeout: 10_000 });
+    } finally { release(); }
+    await domainWriter;
+    const result = await erasing;
+    expect(result?.scope.hostnames).toContain(hostname);
+    const ledger = await env.fx.prisma.erasureEvent.findUniqueOrThrow({ where: { id: eventId } });
+    expect(ledger.scope).toMatchObject({ hostnames: expect.arrayContaining([hostname]) });
+    const purgeCaches = vi.fn().mockResolvedValue(undefined);
+    await eraseCompany({ eventId, companyId, workspaceIds: [c.workspaceId] }, { ...prodLikeDeps(), purgeCaches });
+    expect(purgeCaches).toHaveBeenCalledWith(expect.objectContaining({ hostnames: expect.arrayContaining([hostname]) }));
+  });
+
+  it('refuses a form request that resolved its site before deletion', async () => {
+    const c = await createPublishedSite(env.fx, env.tgId, 'late-form', randomUUID());
+    const companyId = (await env.fx.prisma.site.findUniqueOrThrow({ where: { id: c.siteId } })).companyId!;
+    await eraseCompany({ eventId: randomUUID(), companyId, workspaceIds: [c.workspaceId] }, prodLikeDeps());
+    await expect(insertFormSubmission(env.appDb, {
+      id: randomUUID(), tenantId: env.tgId, workspaceId: c.workspaceId, siteId: c.siteId,
+      pageId: 'home', pagePath: '/', formId: 'contact', formName: 'Contact', fields: [],
+    })).rejects.toThrow('no longer accepts');
+  });
+
+  it('waits for a form writer that checked the site before public deletion, even when the schema probe would be empty', async () => {
+    const c = await createPublishedSite(env.fx, env.tgId, 'inflight-form', randomUUID());
+    const companyId = (await env.fx.prisma.site.findUniqueOrThrow({ where: { id: c.siteId } })).companyId!;
+    const id = randomUUID();
+    let release!: () => void;
+    let reached!: () => void;
+    const waiting = new Promise<void>((resolve) => { reached = resolve; });
+    const barrier = new Promise<void>((resolve) => { release = resolve; });
+    const original = env.fx.prisma.site.findFirst.bind(env.fx.prisma.site);
+    const spy = vi.spyOn(env.fx.prisma.site, 'findFirst').mockImplementationOnce((args) => (async () => {
+      const site = await original(args);
+      reached();
+      await barrier;
+      return site;
+    })() as unknown as ReturnType<typeof original>);
+    const writer = insertFormSubmission(env.appDb, { id, tenantId: env.tgId, workspaceId: c.workspaceId, siteId: c.siteId,
+      pageId: 'home', pagePath: '/', formId: 'contact', formName: 'Contact', fields: [], }, env.fx.prisma);
+    await waiting;
+    let cleanupStarted!: () => void;
+    const started = new Promise<void>((resolve) => { cleanupStarted = resolve; });
+    const erasing = eraseCompany({ eventId: randomUUID(), companyId, workspaceIds: [c.workspaceId] }, {
+      ...prodLikeDeps(), eraseCommerce: async (scope) => { cleanupStarted(); return eraseCompanyCommerce(ownerRoleUrl, scope); },
+    });
+    try {
+      await started;
+      // Public deletion has committed, while the form writer still holds its transaction lock.
+      expect(await env.fx.prisma.site.findUnique({ where: { id: c.siteId } })).toBeNull();
+      await vi.waitFor(async () => {
+        const [lock] = await env.fx.owner<{ waiting: boolean }[]>`
+          SELECT EXISTS (SELECT 1 FROM pg_stat_activity
+            WHERE application_name = 'framer-clone-commerce-owner' AND wait_event_type = 'Lock'
+              AND query LIKE '%pg_advisory_xact_lock(hashtextextended%') AS waiting`;
+        expect(lock.waiting).toBe(true);
+      }, { timeout: 10_000 });
+    } finally { release(); spy.mockRestore(); }
+    expect(await writer).toBe(true);
+    await erasing;
+    expect(await env.ownerDb.selectFrom('form_submission').select('id').where('id', '=', id).execute()).toEqual([]);
+  });
+
+  it('commits bounded commerce batches and resumes after a later batch fails', async () => {
+    const c = await createPublishedSite(env.fx, env.tgId, 'batch-form', randomUUID());
+    const companyId = (await env.fx.prisma.site.findUniqueOrThrow({ where: { id: c.siteId } })).companyId!;
+    const eventId = randomUUID();
+    const schema = tenantSchema(env.tgId);
+    const owner = env.fx.owner;
+    await owner`INSERT INTO ${owner(schema)}.form_submission
+      (id, tenant_id, workspace_id, site_id, page_id, page_path, form_id, form_name, fields)
+      SELECT ${eventId} || '-' || i, ${env.tgId}, ${c.workspaceId}, ${c.siteId}, 'home', '/', 'contact', 'Contact', '[]'::jsonb
+      FROM generate_series(1, ${COMMERCE_ERASURE_BATCH_SIZE + 1}) i`;
+    await owner`CREATE FUNCTION ${owner(schema)}.fail_last_form_batch() RETURNS trigger LANGUAGE plpgsql AS $$
+      DECLARE remaining bigint;
+      BEGIN
+        EXECUTE format('SELECT count(*) FROM %I.%I WHERE site_id = $1', TG_TABLE_SCHEMA, 'form_submission')
+          INTO remaining USING OLD.site_id;
+        IF remaining = 1 THEN RAISE EXCEPTION 'synthetic batch failure'; END IF;
+        RETURN OLD;
+      END $$`;
+    await owner`CREATE TRIGGER fail_last_form_batch BEFORE DELETE ON ${owner(schema)}.form_submission
+      FOR EACH ROW EXECUTE FUNCTION ${owner(schema)}.fail_last_form_batch()`;
+    try {
+      await expect(eraseCompany({ eventId, companyId, workspaceIds: [c.workspaceId] }, prodLikeDeps())).rejects.toThrow('synthetic batch failure');
+      expect(await env.ownerDb.selectFrom('form_submission').select('id').where('site_id', '=', c.siteId).execute()).toHaveLength(1);
+    } finally {
+      await owner`DROP TRIGGER fail_last_form_batch ON ${owner(schema)}.form_submission`;
+      await owner`DROP FUNCTION ${owner(schema)}.fail_last_form_batch()`;
+    }
+    await eraseCompany({ eventId, companyId, workspaceIds: [c.workspaceId] }, prodLikeDeps());
+    expect(await env.ownerDb.selectFrom('form_submission').select('id').where('site_id', '=', c.siteId).execute()).toEqual([]);
   });
 
   it('a company never served here is a successful no-op', async () => {
@@ -511,6 +676,7 @@ describe('POST /api/internal/erasure', () => {
     kind: 'tenant.erased',
     user_id: randomUUID(),
     tenant_id: tenantId,
+    workspace_ids: [],
     requested_at: new Date().toISOString(),
     ...extra,
   });
@@ -556,6 +722,14 @@ describe('POST /api/internal/erasure', () => {
     expect(await res.json()).toMatchObject({ ok: true, ignored: expect.stringContaining('user.erased') });
   });
 
+  it('answers retryable 503 without acknowledging a delivery that omits the workspace list', async () => {
+    const body = tenantErased(b.id, { workspace_ids: undefined });
+    const response = await POST(delivery(body));
+    expect(response.status).toBe(503);
+    expect(await env.fx.prisma.erasureEvent.findUnique({ where: { id: body.event_id } })).toBeNull();
+    expect(await env.fx.prisma.site.findUnique({ where: { id: b.legacySiteId } })).not.toBeNull();
+  });
+
   it('acknowledges a company never served here, and a replay of the same event', async () => {
     const body = tenantErased(randomUUID(), { workspace_ids: [] });
     const first = await POST(delivery(body));
@@ -568,7 +742,7 @@ describe('POST /api/internal/erasure', () => {
 
   it('erases a served company end to end and its published host stops resolving', async () => {
     const c = await seedCompany('erase-route');
-    const res = await POST(delivery(tenantErased(c.id, { workspace_ids: [c.workspaceId] })));
+    const res = await POST(delivery(tenantErased(c.id, { workspace_ids: [c.workspaceId, c.legacyWorkspaceId] })));
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ ok: true, servedHere: true });
     expect(await resolvePublishedSite(c.host, env.fx.prisma)).toBeNull();
