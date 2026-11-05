@@ -70,6 +70,16 @@ function Editor() {
   );
 }
 
+/**
+ * Answer the save with `res` and anything else (the generator dialog also asks
+ * for page ideas) with an empty list, so call order never decides who gets it.
+ */
+function answerSaveWith(res: () => Response) {
+  fetchMock.mockImplementation((url: unknown) =>
+    Promise.resolve(String(url) === '/api/projects/save' ? res() : new Response(JSON.stringify({ ideas: [] }), { status: 200 })),
+  );
+}
+
 function pending() {
   let answer: (r: Response) => void = () => {};
   fetchMock.mockImplementationOnce(() => new Promise<Response>((resolve) => (answer = resolve)));
@@ -751,7 +761,7 @@ describe('a generated page', () => {
   it('is saved at once, and the dialog says Saved, in the same words as the top bar', async () => {
     window.localStorage.setItem('framer-clone:visual-review', JSON.stringify({ auto: false, model: 'SONNET' }));
     openServerProject(3);
-    fetchMock.mockResolvedValueOnce(ok(4));
+    answerSaveWith(() => ok(4));
     const { transport, calls } = manualTransport();
     render(
       <>
@@ -801,7 +811,7 @@ describe('the generator note follows the top bar', () => {
   it('Not saved in both when the save of a generated page fails', async () => {
     window.localStorage.setItem('framer-clone:visual-review', JSON.stringify({ auto: false, model: 'SONNET' }));
     openServerProject(3);
-    fetchMock.mockResolvedValueOnce(failure(403, 'Not an admin.'));
+    answerSaveWith(() => failure(403, 'Not an admin.'));
     const calls: Array<{ req: PageGenRequest; handlers: PageGenHandlers; finish: () => void }> = [];
     const transport: PageGenTransport = (req, handlers) => new Promise<void>((resolve) => calls.push({ req, handlers, finish: resolve }));
     render(
