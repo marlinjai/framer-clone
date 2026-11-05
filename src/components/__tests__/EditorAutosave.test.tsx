@@ -729,6 +729,8 @@ describe('the demo editor at /', () => {
 });
 
 describe('a generated page', () => {
+  // The dialog also asks for page ideas on its own; only saves are counted here.
+  const saves = () => fetchMock.mock.calls.filter((c) => String(c[0]) === '/api/projects/save').length;
   function manualTransport() {
     const calls: Array<{ req: PageGenRequest; handlers: PageGenHandlers; finish: () => void }> = [];
     const transport: PageGenTransport = (req, handlers) =>
@@ -764,13 +766,13 @@ describe('a generated page', () => {
       calls[0].finish();
     });
     // No debounce: the request went out with the result.
-    expect(fetchMock.mock.calls.map((c) => `${String(c[0])} ${String(c[1]?.body).slice(0, 120)}`)).toEqual(['one request']);
+    expect(saves()).toBe(1);
     await advance(0);
     expect(screen.getByText(/Added \d+ components? on a new page\. Saved\./)).toBeTruthy();
     expect(screen.queryByText(/Save the project to keep it/)).toBeNull();
     expect(label()).toBe('Saved');
     await advance(60_000);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(saves()).toBe(1);
   });
 });
 
