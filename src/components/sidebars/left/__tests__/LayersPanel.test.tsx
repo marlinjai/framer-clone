@@ -168,14 +168,23 @@ describe('folding', () => {
     expect(rowOf(nested)).not.toBeNull();
   });
 
-  it('Collapse all folds every container but keeps the page sections listed; Expand all opens them', () => {
+  it('Collapse all folds the breakpoint groups and every container; Expand all opens them', () => {
     render(<LayersPanel />);
     fireEvent.click(screen.getByRole('button', { name: 'Collapse all layers' }));
+    // The breakpoint rows stay, folded; nothing inside them is listed.
     expect(rowOf(root)).not.toBeNull();
-    expect(rowOf(main)).not.toBeNull();
+    for (const viewport of page.sortedViewportNodes) {
+      expect(store.editorUI.collapsedLayerIds.has(viewport.id)).toBe(true);
+    }
+    expect(rowOf(main)).toBeNull();
     expect(rowOf(nested)).toBeNull();
     // The root has no row to fold, so its id never piles up in the fold state.
     expect(store.editorUI.collapsedLayerIds.has(root.id)).toBe(false);
+    // Opening one group afterwards lists its sections, still folded.
+    const desktop = page.sortedViewportNodes[0];
+    fireEvent.click(within(rowOf(root)).getByRole('button', { name: `Expand ${desktop.label}` }));
+    expect(rowOf(main)).not.toBeNull();
+    expect(rowOf(nested)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Expand all layers' }));
     expect(rowOf(nested)).not.toBeNull();
   });
