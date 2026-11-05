@@ -25,8 +25,6 @@ import { POST } from '@/app/api/forms/submit/route';
 import { __resetFormRateLimiterForTests } from '../rateLimit';
 import {
   deleteFormSubmission,
-  deleteSiteSubmissions,
-  deleteWorkspaceSubmissions,
   insertFormSubmission,
   listFormSubmissions,
   setFormSubmissionRead,
@@ -233,7 +231,8 @@ describe('the repository behind the submissions view', () => {
   });
 
   it("another site's row in the same schema answers not found, never changes", async () => {
-    await insertFormSubmission(appDb, row({ id: 'foreign', siteId: 'other-site' }));
+    const otherSite = await createPublishedSite(fx, tgId, 'forms-other');
+    await insertFormSubmission(appDb, row({ id: 'foreign', siteId: otherSite.siteId, workspaceId: otherSite.workspaceId }));
     const ref = { tenantId: tgId, siteId: site.siteId };
     expect(await setFormSubmissionRead(appDb, ref, 'foreign', true)).toBe(false);
     expect(await deleteFormSubmission(appDb, ref, 'foreign')).toBe(false);
@@ -245,25 +244,22 @@ describe('deletion and erasure', () => {
   it('the project delete removes exactly that project rows', async () => {
     await insertFormSubmission(appDb, row());
     await insertFormSubmission(appDb, row());
-    await insertFormSubmission(appDb, row({ siteId: 'other-site' }));
+    const otherSite = await createPublishedSite(fx, tgId, 'forms-other-delete');
+    await insertFormSubmission(appDb, row({ siteId: otherSite.siteId, workspaceId: otherSite.workspaceId }));
     expect(await deleteProjectSubmissions(tgId, site.siteId)).toBe(2);
     expect(await countInSchema(fx, schema, 'form_submission')).toBe(1);
     // A legacy site without a commerce schema has nothing to delete.
     expect(await deleteProjectSubmissions('not-a-tenant-group', site.siteId)).toBe(0);
   });
 
-  it('a company erasure by workspace removes its rows and leaves other workspaces', async () => {
-    await insertFormSubmission(appDb, row());
-    await insertFormSubmission(appDb, row({ workspaceId: 'ws-other' }));
-    expect(await deleteWorkspaceSubmissions(appDb, { tenantId: tgId, workspaceId: site.workspaceId })).toBe(1);
-    expect(await deleteSiteSubmissions(appDb, { tenantId: tgId, siteId: site.siteId })).toBe(1);
-    expect(await countInSchema(fx, schema, 'form_submission')).toBe(0);
-  });
+  // A company erasure's delete of submissions (by workspace and site, other companies' rows kept) is proven
+  // in src/server/erasure/__tests__/companyErasure.itest.ts.
 
   it('dropping the tenant schema takes every submission with it', async () => {
     const other = await provisionCommerceTenant(fx, 'forms-drop');
     const db = tenantDb(appBase, other.tgId);
-    await insertFormSubmission(db, row({ tenantId: other.tgId }));
+    const otherSite = await createPublishedSite(fx, other.tgId, 'forms-drop-site');
+    await insertFormSubmission(db, row({ tenantId: other.tgId, siteId: otherSite.siteId, workspaceId: otherSite.workspaceId }));
     expect(await countInSchema(fx, other.schema, 'form_submission')).toBe(1);
     await fx.owner`DROP SCHEMA ${fx.owner(other.schema)} CASCADE`;
     const left = await fx.owner`SELECT 1 FROM information_schema.tables WHERE table_schema = ${other.schema}`;

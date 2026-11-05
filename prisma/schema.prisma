@@ -677,3 +677,24 @@ model SiteOperationAudit {
   @@map("site_operation_audits")
   @@schema("public")
 }
+
+/// One company erasure delivery from auth-brain (`POST /api/internal/erasure`, src/server/erasure; plan
+/// docs/plans/2026-11-05-company-erasure-consumer.md). Keyed by auth-brain's event id, so a repeated
+/// delivery of an erasure already done answers 2xx without deleting again. `scope` keeps what the first
+/// attempt found (site ids, workspace ids, subdomains, custom hostnames), so a retry after a partial
+/// failure still knows which caches to purge and which form submissions to delete once the site rows are
+/// gone. Completed scopes retain site and workspace ids only; hostnames and subdomains are cleared
+/// atomically with completion. The company id records which company was erased. `processed_at` stays NULL until every row and cached copy is gone.
+model ErasureEvent {
+  id          String    @id @map("event_id")
+  kind        String
+  tenantId    String    @map("tenant_id")
+  scope       Json      @default("{}")
+  attempts    Int       @default(0)
+  receivedAt  DateTime  @default(now()) @map("received_at")
+  processedAt DateTime? @map("processed_at")
+
+  @@index([tenantId])
+  @@map("erasure_events")
+  @@schema("public")
+}

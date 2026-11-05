@@ -240,6 +240,7 @@ says where each comes from.
 | `COMMERCE_APP_DATABASE_URL` | yes | Same database as `commerce_app`; every commerce read and write at runtime |
 | `COMMERCE_OWNER_DATABASE_URL` | yes | Same database as `commerce_ddl` (never a superuser, refused at start), a direct connection; the start step and first-project provisioning, so it is in the server process environment. The start fails without it, and project creation answers 500 `commerce_not_configured`. |
 | `COMMERCE_MIGRATE_STATEMENT_TIMEOUT_MS` | no | Bound on each commerce migration statement at container start, in whole milliseconds; unset or `0` means no limit (the default) |
+| `SITES_ERASURE_WEBHOOK_SECRET` | for erasure | The secret auth-brain signs its `tenant.erased` webhook with (HMAC-SHA256 over the raw body), shared with auth-brain's registration of `POST /api/internal/erasure`. Unset means that endpoint answers 503 and deletes nothing, so auth-brain keeps retrying. After setting it in Infisical, restart or redeploy the app before registering the webhook; the running process keeps its old environment until then. The erasure runs on `COMMERCE_OWNER_DATABASE_URL` (plan `docs/plans/2026-11-05-company-erasure-consumer.md`) |
 | `EDITOR_HOST` | yes | Host that serves the editor (`app.lumitra.co`); every other host is treated as a published site. With `NODE_ENV=production` the container refuses to start when it is unset or blank (`boot.sh`, and again in `src/instrumentation.ts`) |
 | `PUBLIC_SITE_BASE_HOST` | yes | Parent domain of published sites (`sites.lumitra.co`); the label in front of it selects the site |
 | `AUTH_BRAIN_URL` | no | auth-brain base URL for session checks and the login redirect; defaults to `https://auth.lumitra.co` |
@@ -436,6 +437,11 @@ serving its cached copy of the site, the erased value included, with no time lim
 running instances. Before scaling out, add one (a shared cache handler for Next, for example on Redis, plus a broadcast
 for the in-memory trees), or restart every replica after each erase. The same limit already applied to publish and
 rollback, where it only delays an update; for an erase it is a privacy failure.
+
+The company erasure (`POST /api/internal/erasure`, plan `docs/plans/2026-11-05-company-erasure-consumer.md`) has the
+same limit: its rows are gone for every container, but only the container that received auth-brain's delivery
+purges its cached copies of the company's sites (at once and again five seconds later). With a second replica, that
+replica keeps serving the erased company's cached pages until it restarts.
 
 Migration `20261102230000_site_erasures` is additive. Erase only once every container runs the new code: an older
 container neither refuses Save from editor tabs loaded before the erase nor knows the new cache key.

@@ -93,13 +93,27 @@ export async function readBodyText(
   req: Request,
   maxBytes: number,
 ): Promise<{ ok: true; text: string } | { ok: false; response: Response }> {
+  const read = await readBodyBytes(req, maxBytes);
+  if (!read.ok) return read;
+  return { ok: true, text: new TextDecoder().decode(read.bytes) };
+}
+
+/**
+ * Read a request body as the exact bytes received, with the same bound as
+ * readBodyText. For a signature over the raw body, which must be checked
+ * against these bytes and not a decoded and re-encoded copy.
+ */
+export async function readBodyBytes(
+  req: Request,
+  maxBytes: number,
+): Promise<{ ok: true; bytes: Uint8Array } | { ok: false; response: Response }> {
   const tooLarge = () => ({
     ok: false as const,
     response: jsonError('body_too_large', `the request body is larger than ${maxBytes} bytes`, 413),
   });
   const declared = Number(req.headers.get('content-length'));
   if (Number.isFinite(declared) && declared > maxBytes) return tooLarge();
-  if (!req.body) return { ok: true, text: '' };
+  if (!req.body) return { ok: true, bytes: new Uint8Array(0) };
   const reader = req.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
@@ -119,5 +133,5 @@ export async function readBodyText(
     all.set(c, offset);
     offset += c.byteLength;
   }
-  return { ok: true, text: new TextDecoder().decode(all) };
+  return { ok: true, bytes: all };
 }

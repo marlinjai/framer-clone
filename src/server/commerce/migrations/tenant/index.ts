@@ -28,6 +28,7 @@ import { commerceJob } from './025_commerce_job';
 import { orderRequestKey } from './026_order_request_key';
 import { receiptTaxCountry } from './027_receipt_tax_country';
 import { checkoutRequest } from './028_checkout_request';
+import { companyErasure } from './029_company_erasure';
 
 /**
  * CM-04 — `COMMERCE_TENANT_MIGRATIONS`: the per-tenant (`tg_<id>`) commerce
@@ -134,6 +135,8 @@ import { checkoutRequest } from './028_checkout_request';
  *                            buyer's, not the reused customer row's)
  *   028_checkout_request   : a hosted checkout's request, fixed once with the
  *                            buyer it is made out to (BK018)
+ *   029_company_erasure    : the owner-only way past the delete guards while auth-brain
+ *                            erases one company of a shared schema
  */
 export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   enums,
@@ -165,4 +168,5 @@ export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   orderRequestKey,
   receiptTaxCountry,
   checkoutRequest,
+  companyErasure,
 ];
