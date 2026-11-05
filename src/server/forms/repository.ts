@@ -13,8 +13,10 @@ import 'server-only';
 //     (`deleteFormSubmission`);
 //   - deleting the project deletes its submissions (`deleteSiteSubmissions`,
 //     called by DELETE /api/projects/<id> after the site row is gone);
-//   - a company erasure deletes the company's rows by workspace
-//     (`deleteWorkspaceSubmissions`), or with the whole `tg_<id>` schema.
+//   - a company erasure deletes the company's rows by its workspaces and
+//     sites (src/server/erasure/commerce.ts, ERASURE_STEPS). Never by
+//     dropping the `tg_<id>` schema: it is shared by every company of the
+//     tenant group.
 
 import { sql, type Kysely } from 'kysely';
 import { z } from 'zod';
@@ -243,15 +245,3 @@ export async function deleteSiteSubmissions(db: Kysely<CommerceDB>, ref: SiteRef
   return Number(result.numDeletedRows);
 }
 
-/** Delete every submission of a company's workspace (company erasure). Returns how many rows went. */
-export async function deleteWorkspaceSubmissions(
-  db: Kysely<CommerceDB>,
-  ref: { tenantId: string; workspaceId: string },
-): Promise<number> {
-  const result = await db
-    .deleteFrom('form_submission')
-    .where('tenant_id', '=', ref.tenantId)
-    .where('workspace_id', '=', ref.workspaceId)
-    .executeTakeFirst();
-  return Number(result.numDeletedRows);
-}

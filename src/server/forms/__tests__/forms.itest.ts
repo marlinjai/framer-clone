@@ -25,8 +25,6 @@ import { POST } from '@/app/api/forms/submit/route';
 import { __resetFormRateLimiterForTests } from '../rateLimit';
 import {
   deleteFormSubmission,
-  deleteSiteSubmissions,
-  deleteWorkspaceSubmissions,
   insertFormSubmission,
   listFormSubmissions,
   setFormSubmissionRead,
@@ -252,13 +250,8 @@ describe('deletion and erasure', () => {
     expect(await deleteProjectSubmissions('not-a-tenant-group', site.siteId)).toBe(0);
   });
 
-  it('a company erasure by workspace removes its rows and leaves other workspaces', async () => {
-    await insertFormSubmission(appDb, row());
-    await insertFormSubmission(appDb, row({ workspaceId: 'ws-other' }));
-    expect(await deleteWorkspaceSubmissions(appDb, { tenantId: tgId, workspaceId: site.workspaceId })).toBe(1);
-    expect(await deleteSiteSubmissions(appDb, { tenantId: tgId, siteId: site.siteId })).toBe(1);
-    expect(await countInSchema(fx, schema, 'form_submission')).toBe(0);
-  });
+  // A company erasure's delete of submissions (by workspace and site, other companies' rows kept) is proven
+  // in src/server/erasure/__tests__/companyErasure.itest.ts.
 
   it('dropping the tenant schema takes every submission with it', async () => {
     const other = await provisionCommerceTenant(fx, 'forms-drop');

@@ -183,6 +183,7 @@ export const HOST_ROUTES: readonly HostRoute[] = [
   { route: '/api/internal/commerce/jobs/run', why: 'host timer, bearer token' },
   { route: '/api/internal/custom-domains/hostnames', why: 'host timer, bearer token' },
   { route: '/api/internal/custom-domains/recheck', why: 'host timer, bearer token' },
+  { route: '/api/internal/erasure', why: 'auth-brain erasure webhook, HMAC-signed body (src/server/erasure)' },
 ];
 
 type Segment = { kind: 'static'; name: string } | { kind: 'dynamic' } | { kind: 'catchAll' };
