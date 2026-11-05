@@ -110,10 +110,11 @@ const HistoryList = observer(() => {
           return (
             <button
               key={entry.id}
+              aria-current={isCurrent ? 'true' : undefined}
               onClick={() => history.jumpTo(originalIdx + 1)}
               className={`w-full flex items-start gap-2 text-left px-2 py-1.5 rounded text-xs transition-colors ${
                 isCurrent
-                  ? 'bg-brand/10'
+                  ? 'bg-brand/10 forced-colors:outline forced-colors:outline-2 forced-colors:-outline-offset-2'
                   : isApplied
                     ? 'text-foreground hover:bg-accent'
                     : 'text-muted-foreground hover:bg-accent'
@@ -133,9 +134,10 @@ const HistoryList = observer(() => {
       )}
       <button
         onClick={() => history.jumpTo(0)}
+        aria-current={history.undoIdx === 0 ? 'true' : undefined}
         className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs italic ${
           history.undoIdx === 0
-            ? 'bg-brand/10 text-foreground'
+            ? 'bg-brand/10 text-foreground forced-colors:outline forced-colors:outline-2 forced-colors:-outline-offset-2'
             : 'text-muted-foreground hover:bg-accent'
         }`}
       >
