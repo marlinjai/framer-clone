@@ -264,10 +264,14 @@ const LayersPanel = observer(() => {
     editorUI.setCollapsedLayerIds(next.has(viewportId) ? collapseAll(next, children) : expandAll(next, children));
   };
 
-  // Collapse all folds every container row but keeps the breakpoint groups
-  // open, so each shows its top rows (the page's sections). Expand all opens
-  // everything.
-  const onCollapseAll = () => editorUI.setCollapsedLayerIds(collapseAll(collapsed, roots));
+  // Collapse all folds everything: the breakpoint groups and every container
+  // row in them, so opening one group afterwards lists only its sections.
+  // Expand all opens everything.
+  const onCollapseAll = () => {
+    const next = collapseAll(collapsed, roots);
+    for (const id of viewportIds) next.add(id);
+    editorUI.setCollapsedLayerIds(next);
+  };
   const onExpandAll = () => {
     const next = expandAll(collapsed, roots);
     for (const id of viewportIds) next.delete(id);
@@ -427,14 +431,6 @@ const BreakpointRow = observer(({ viewport, pageBody, isCollapsed, onToggleColla
           setMenu({ x: e.clientX, y: e.clientY });
         }}
       >
-        {/* Selection: 2px left rail */}
-        {isSelected && (
-          <span
-            className="absolute left-0 bg-brand rounded-[2px]"
-            style={{ top: '5px', bottom: '5px', width: '2px' }}
-          />
-        )}
-
         <button
           type="button"
           aria-expanded={!isCollapsed}
@@ -624,14 +620,6 @@ const LayerNode = observer(({ component, depth, breakpointId, breakpoints, hidde
           setMenu({ x: e.clientX, y: e.clientY });
         }}
       >
-        {/* Selection: 2px left rail */}
-        {isSelected && (
-          <span
-            className="absolute left-0 bg-brand rounded-[2px]"
-            style={{ top: '5px', bottom: '5px', width: '2px' }}
-          />
-        )}
-
         {/* Indent guide: thin vertical rule, one per depth level */}
         {depth > 0 && (
           <span className="text-border flex-none flex justify-center" style={{ width: '14px', fontSize: '12px' }}>
