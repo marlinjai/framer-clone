@@ -438,6 +438,11 @@ running instances. Before scaling out, add one (a shared cache handler for Next,
 for the in-memory trees), or restart every replica after each erase. The same limit already applied to publish and
 rollback, where it only delays an update; for an erase it is a privacy failure.
 
+The company erasure (`POST /api/internal/erasure`, plan `docs/plans/2026-11-05-company-erasure-consumer.md`) has the
+same limit: its rows are gone for every container, but only the container that received auth-brain's delivery
+purges its cached copies of the company's sites (at once and again five seconds later). With a second replica, that
+replica keeps serving the erased company's cached pages until it restarts.
+
 Migration `20261102230000_site_erasures` is additive. Erase only once every container runs the new code: an older
 container neither refuses Save from editor tabs loaded before the erase nor knows the new cache key.
 

@@ -22,7 +22,7 @@
 //
 // No answer or log line carries anything but ids and counts.
 
-import { jsonError, readBodyText } from '@/lib/api/respond';
+import { jsonError, readBodyBytes } from '@/lib/api/respond';
 import { isEditorHost } from '@/lib/editorHost';
 import { eraseCompany } from '@/server/erasure/eraseCompany';
 import { parseErasureDelivery } from '@/server/erasure/payload';
@@ -50,14 +50,14 @@ export async function POST(req: Request): Promise<Response> {
     return jsonError('erasure_not_configured', 'erasure is not configured', 503);
   }
 
-  const body = await readBodyText(req, MAX_BODY_BYTES);
+  // The signature covers the exact bytes received: verify those, never a decoded and re-encoded copy.
+  const body = await readBodyBytes(req, MAX_BODY_BYTES);
   if (!body.ok) return body.response;
-  const raw = new TextEncoder().encode(body.text);
-  if (!verifyErasureSignature(raw, req.headers.get(ERASURE_SIGNATURE_HEADER), secret)) {
+  if (!verifyErasureSignature(body.bytes, req.headers.get(ERASURE_SIGNATURE_HEADER), secret)) {
     return jsonError('invalid_signature', 'invalid signature', 401);
   }
 
-  const delivery = parseErasureDelivery(body.text);
+  const delivery = parseErasureDelivery(new TextDecoder().decode(body.bytes));
   if (delivery.kind === 'invalid') return jsonError('bad_payload', delivery.reason, 400);
 
   const headerEventId = req.headers.get(ERASURE_EVENT_ID_HEADER)?.trim().toLowerCase();

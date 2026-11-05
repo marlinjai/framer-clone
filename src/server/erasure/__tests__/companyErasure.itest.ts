@@ -135,7 +135,7 @@ async function seedCompany(label: string): Promise<Company> {
   // public: a custom hostname, a page, a published revision, an image, the erase and operation records, an
   // agent run with a change, a CMS collection with a row and its cells.
   await prisma.siteDomain.create({
-    data: { siteId, workspaceId, tenantGroupId: env.tgId, hostname: `www.${label}-${company.slice(0, 8)}.example`, verificationStatus: 'active' },
+    data: { siteId, workspaceId, tenantGroupId: env.tgId, hostname: `www.${label}-${company.slice(0, 8)}.example`, verificationStatus: 'pending' },
   });
   await prisma.sitePage.create({
     data: { siteId, workspaceId, tenantGroupId: env.tgId, pageId: 'about', slug: 'about', snapshot: { id: 'about' } },
@@ -356,6 +356,8 @@ beforeAll(async () => {
 }, 240_000);
 
 afterAll(async () => {
+  // Leave nothing of this suite in the shared database for the suites that read across all sites.
+  if (b) await eraseCompany({ eventId: randomUUID(), companyId: b.id, workspaceIds: [b.legacyWorkspaceId] }, prodLikeDeps());
   await env?.close();
 });
 
