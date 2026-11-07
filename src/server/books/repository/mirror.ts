@@ -170,7 +170,7 @@ export async function listMirrorDocuments(scope: BooksScope, input: ListMirrorIn
     .where('sales_document.status', 'in', [...MIRROR_STATUSES]);
   if (cursor) {
     // Sent as TEXT and cast in SQL (full microsecond precision, no JS Date round trip).
-    const at = sql<string>`${cursor.issuedAt}::text::timestamptz`;
+    const at = sql<Date>`${cursor.issuedAt}::text::timestamptz`;
     q = q.where((eb) =>
       eb.or([
         eb('sales_document.issued_at', '>', at),
