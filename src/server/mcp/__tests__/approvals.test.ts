@@ -46,6 +46,7 @@ const KEY: VerifiedKey = Object.freeze({
   serviceAccountId: 'sa_1',
   scope: Object.freeze({ ...SCOPE }),
   workspaceRole: 'admin' as const,
+  appGrants: Object.freeze(['sites']),
 });
 
 // Who may publish where: the owner of company A on its workspace; a member of

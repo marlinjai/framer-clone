@@ -60,7 +60,10 @@ import 'server-only';
  *   | editSite, publishSite            | its workspace role satisfies `workspace.admin`  |
  *   | manageDomain                     | never (custom domains stay a person's job)      |
  *   | eraseSiteData                    | never (needs the company owner's session)       |
- *   | viewBooks, editBooks             | never (the Books have their own `books` grant)  |
+ *   | viewBooks                        | the company holds the `books` app grant AND the |
+ *   |                                  | role satisfies `workspace.admin` (the read-only |
+ *   |                                  | Books endpoint, /api/machine/books/documents)   |
+ *   | editBooks                        | never (writing invoices stays a person's job)   |
  *   | any action added later           | never, until it is added to MACHINE_ACTIONS     |
  *
  * The required role comes from FRAMER_PERMISSIONS (src/lib/permissions.ts), the
@@ -141,7 +144,11 @@ export const MACHINE_ACTIONS: ReadonlySet<FramerAction> = new Set<FramerAction>(
   'viewSite',
   'editSite',
   'publishSite',
+  'viewBooks',
 ]);
+
+/** The auth-brain app grant a company needs before a key may read its Books (same slug as src/server/books/access.ts). */
+export const BOOKS_APP_GRANT = 'books';
 
 export const KEY_CACHE_TTL_MS = 10_000;
 export const KEY_CACHE_MAX = 256;
@@ -174,6 +181,8 @@ export interface VerifiedKey {
   readonly scope: Readonly<TenantScope>;
   /** The key's effective role on `scope.workspaceId`, or null for none. */
   readonly workspaceRole: WorkspaceRole | null;
+  /** The auth-brain app grants of the key's company, as its verify answer stated them (frozen). */
+  readonly appGrants: readonly string[];
 }
 
 export type ForbiddenReason = 'sites_not_enabled' | 'workspace_mismatch' | KeyScopeError;
@@ -462,6 +471,8 @@ export function authorizeKeyAction(
     return false;
   };
   if (!MACHINE_ACTIONS.has(action)) return deny('action_not_allowed_for_keys');
+  // The Books are an app of their own: reading them needs the company's `books` grant on top of the role.
+  if (action === 'viewBooks' && !key.appGrants.includes(BOOKS_APP_GRANT)) return deny('books_not_enabled');
   if (target?.workspaceId !== undefined && target.workspaceId !== key.scope.workspaceId) return deny('foreign_workspace');
   if (target?.tenantGroupId !== undefined && target.tenantGroupId !== key.scope.tenantGroupId) {
     return deny('foreign_tenant_group');
@@ -612,6 +623,7 @@ async function verifyFresh(presented: string): Promise<FreshResult> {
     serviceAccountId,
     scope: Object.freeze({ ...resolved.scope }),
     workspaceRole: keyWorkspaceRole(verified, tenantId, resolved.scope.workspaceId),
+    appGrants: Object.freeze(grants.filter((g): g is string => typeof g === 'string')),
   });
   return { result: key, keyExpiresAt: Number.isFinite(expires) ? expires : null };
 }
