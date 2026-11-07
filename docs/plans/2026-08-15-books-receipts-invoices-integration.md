@@ -1151,7 +1151,7 @@ receipts plan `docs/plans/2026-10-14-invoicing-and-income.md`, step 4 and decisi
   carries its company's `appGrants`. Consequence: the service account's company needs both
   `sites` and `books`, as a person's session does today (`access.ts`).
 - **What it hands over.** The company's `invoice` and `credit_note` documents in a live status
-  (`issued`, `sent`, `paid`, `cancelled`), oldest first by issue day then id, 100 a page (at most
+  (`issued`, `sent`, `paid`, `cancelled`), in the order they were issued (`issued_at`, then id), 100 a page (at most
   200) with a keyset cursor, in exactly the fields the receipts parser reads
   (`parseBooksDocuments` there): `id, docType, status, number, issueDate, dueDate, currencyCode,
   kleinunternehmer, reverseCharge, totalCents, taxCents, taxSummary[{rateBp, netCents, taxCents}],

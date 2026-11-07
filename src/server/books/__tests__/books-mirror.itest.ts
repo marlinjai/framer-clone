@@ -121,6 +121,32 @@ describe('the Books mirror read', () => {
     expect([...days].sort()).toEqual(days);
   });
 
+  it('does not skip a document issued between two pages', async () => {
+    const { scope } = await company();
+    const { customer } = await newCustomer(scope, new FakeDirectory(), { customerType: 'b2b' });
+    // Drafts exist before the pull starts and are issued while it is walking.
+    const draftIds: string[] = [];
+    for (let i = 0; i < 3; i += 1) {
+      const d = await createDraft(scope, { docType: 'invoice', actorUserId: ACTOR, customerId: customer.id, serviceDate: '2026-10-01' });
+      await addLine(scope, d.document.id, { kind: 'service', title: 'Late', quantity: 1000, unitPrice: 1000 + i });
+      draftIds.push(d.document.id);
+    }
+    const first = await listMirrorDocuments(scope, { limit: 1 });
+    const seen = first.documents.map((d) => d.id);
+    for (const id of draftIds) {
+      const issued = await issue(scope, id, { actorUserId: ACTOR }, { beforeCommit: storeBeforeCommit(scope) });
+      expect(issued.document.document.id).toBe(id);
+    }
+    let cursor = first.nextCursor ?? undefined;
+    while (cursor) {
+      const page = await listMirrorDocuments(scope, { limit: 1, cursor });
+      seen.push(...page.documents.map((d) => d.id));
+      cursor = page.nextCursor ?? undefined;
+    }
+    for (const id of draftIds) expect(seen).toContain(id);
+    expect(new Set(seen).size).toBe(seen.length);
+  });
+
   it('never shows another company of the same tenant group', async () => {
     const a = await company();
     const b = await company();

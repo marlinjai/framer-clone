@@ -17,14 +17,16 @@
 //   - Amounts stay non-negative: a credit note states its own amount positive
 //     (the document type carries the sign, src/server/books/cancel.ts).
 //
-// Ordered by issue day, then id, with a keyset cursor, so a full pull walks
-// every document once even while new ones are issued.
+// Ordered by the moment of issue (`issued_at`, set once when a draft is issued),
+// then id, with a keyset cursor. The issue DAY is not a safe key: a draft issued
+// between two pages can carry an earlier-sorting id on the same day and would be
+// skipped. `issued_at` only grows, so a full pull walks every document once even
+// while new ones are issued.
 
 import { sql } from 'kysely';
 import { z } from 'zod';
 
 import { invalid, BooksError } from '../errors';
-import { isIsoDate } from '../numbering';
 import type { TaxSummary } from '../snapshots';
 import type { BooksScope } from '../scope';
 
@@ -67,6 +69,8 @@ export interface MirrorRow {
   status: string;
   document_number: string | null;
   issue_date: string | null;
+  /** Full-precision text of `issued_at`: the cursor key, never handed over. */
+  issued_at?: string | null;
   due_date: string | null;
   currency_code: string;
   kleinunternehmer: boolean;
@@ -108,7 +112,10 @@ export function toMirrorDocument(row: MirrorRow): MirrorDocument {
   };
 }
 
-const cursorSchema = z.object({ issueDate: z.string().refine(isIsoDate), id: z.string().min(1).max(100) });
+const cursorSchema = z.object({
+  issuedAt: z.string().min(1).max(64).refine((v) => !Number.isNaN(Date.parse(v))),
+  id: z.string().min(1).max(100),
+});
 type Cursor = z.infer<typeof cursorSchema>;
 
 export function encodeMirrorCursor(c: Cursor): string {
@@ -132,7 +139,7 @@ const listInput = z.object({
 });
 export type ListMirrorInput = z.input<typeof listInput>;
 
-/** One page of the company's issued invoices and credit notes, oldest first. */
+/** One page of the company's issued invoices and credit notes, in the order they were issued. */
 export async function listMirrorDocuments(scope: BooksScope, input: ListMirrorInput = {}): Promise<MirrorPage> {
   const parsed = listInput.safeParse(input);
   if (!parsed.success) throw invalid('INVALID_INPUT', parsed.error.issues);
@@ -147,6 +154,7 @@ export async function listMirrorDocuments(scope: BooksScope, input: ListMirrorIn
       'sales_document.status',
       'sales_document.document_number',
       eb.cast<string | null>('sales_document.issue_date', 'text').as('issue_date'),
+      eb.cast<string | null>('sales_document.issued_at', 'text').as('issued_at'),
       eb.cast<string | null>('sales_document.due_date', 'text').as('due_date'),
       'sales_document.currency_code',
       'sales_document.kleinunternehmer',
@@ -161,25 +169,29 @@ export async function listMirrorDocuments(scope: BooksScope, input: ListMirrorIn
     .where('sales_document.doc_type', 'in', [...MIRROR_DOC_TYPES])
     .where('sales_document.status', 'in', [...MIRROR_STATUSES]);
   if (cursor) {
-    // Sent as TEXT and cast in SQL, as listDocuments does (no local-time shift through a Date).
-    const day = sql<string>`${cursor.issueDate}::text::date`;
+    // Sent as TEXT and cast in SQL (full microsecond precision, no JS Date round trip).
+    const at = sql<string>`${cursor.issuedAt}::text::timestamptz`;
     q = q.where((eb) =>
       eb.or([
-        eb('sales_document.issue_date', '>', day),
-        eb.and([eb('sales_document.issue_date', '=', day), eb('sales_document.id', '>', cursor.id)]),
+        eb('sales_document.issued_at', '>', at),
+        eb.and([eb('sales_document.issued_at', '=', at), eb('sales_document.id', '>', cursor.id)]),
       ]),
     );
   }
   const rows = (await q
-    .orderBy('sales_document.issue_date', 'asc')
+    .orderBy('sales_document.issued_at', 'asc')
     .orderBy('sales_document.id', 'asc')
     .limit(limit + 1)
     .execute()) as unknown as MirrorRow[];
 
   const page = rows.slice(0, limit).map(toMirrorDocument);
-  const last = page[page.length - 1];
+  const lastRow = rows[limit - 1];
+  if (rows.length > limit && lastRow && !lastRow.issued_at) {
+    throw new Error(`books mirror: issued document ${lastRow.id} has no issued_at`);
+  }
   return {
     documents: page,
-    nextCursor: rows.length > limit && last ? encodeMirrorCursor({ issueDate: last.issueDate, id: last.id }) : null,
+    nextCursor:
+      rows.length > limit && lastRow?.issued_at ? encodeMirrorCursor({ issuedAt: lastRow.issued_at, id: lastRow.id }) : null,
   };
 }
