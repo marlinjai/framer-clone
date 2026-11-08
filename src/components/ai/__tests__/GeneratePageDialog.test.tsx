@@ -95,7 +95,9 @@ describe('GeneratePageDialog forward', () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0].req).toMatchObject({ brief: 'A bakery landing page', model: 'SONNET', target: { kind: 'newPage' } });
-    expect(screen.getByLabelText('Brief')).toBeDisabled();
+    // While it runs, the modal gives way to the floating progress panel.
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByTestId('pagegen-progress-panel')).toBeInTheDocument();
 
     act(() => calls[0].handlers.onProgress?.({ phase: 'generating', receivedChars: 4096, attempt: 1 }));
     expect(screen.getByText('Designing (4.0 KB written)...')).toBeInTheDocument();
@@ -219,13 +221,19 @@ describe('GeneratePageDialog backtrack and revise', () => {
     expect(project().pages.size).toBe(initialPages + 1);
   });
 
-  it('closing the dialog while running aborts it', () => {
+  it('while running nothing is modal: the panel stays, the brief comes back after Cancel', () => {
     const { transport, calls } = manualTransport();
     setup(transport);
     typeBrief('A bakery');
     fireEvent.click(screen.getByRole('button', { name: /^Generate$/ }));
-    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    // No modal dialog locks the canvas: only the panel, with the one stop.
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Close' })).toBeNull();
+    expect(calls[0].signal?.aborted).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(calls[0].signal?.aborted).toBe(true);
+    expect(screen.queryByTestId('pagegen-progress-panel')).toBeNull();
+    expect(screen.getByLabelText('Brief')).toHaveValue('A bakery');
   });
 });
 
@@ -359,7 +367,7 @@ describe('GeneratePageDialog survives the tab going away (phone in the backgroun
     return { ...utils, onOpenChange };
   }
 
-  it('cancel and close stop the run on the server; leaving the editor only stops following it', () => {
+  it('cancel stops the run on the server; leaving the editor only stops following it', () => {
     const { transport, calls } = manualTransport();
     const r = manualResume();
     const first = setupWithResume(transport, r.resume);
@@ -393,8 +401,7 @@ describe('GeneratePageDialog survives the tab going away (phone in the backgroun
     setupWithResume(transport, r.resume);
     expect(r.calls).toHaveLength(1);
     expect(r.calls[0].id).toBe('gen-1');
-    expect(screen.getByLabelText('Brief')).toHaveValue('A bakery');
-    expect(screen.getByLabelText('Brief')).toBeDisabled();
+    expect(screen.getByTestId('pagegen-progress-panel')).toBeInTheDocument();
 
     act(() => r.calls[0].handlers.onProgress?.({ phase: 'images', receivedChars: 100, attempt: 1 }));
     expect(screen.getByText('Finding photos...')).toBeInTheDocument();
@@ -482,7 +489,7 @@ describe('GeneratePageDialog survives the tab going away (phone in the backgroun
     store.editorUI.markUnsavedDemo(demo.id);
 
     render(<GeneratePageButton transport={transport} resume={r.resume} />);
-    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByTestId('pagegen-progress-panel')).toBeInTheDocument();
     expect(r.calls.map((c) => c.id)).toEqual(['gen-1']);
     await act(async () => r.calls[0].handlers.onResult?.(resultFor(req, PAGE, 'gen-1')));
     expect(screen.getByText(/Added 3 components on a new page/)).toBeInTheDocument();
@@ -499,7 +506,8 @@ describe('GeneratePageDialog survives the tab going away (phone in the backgroun
     first.unmount();
 
     render(<GeneratePageButton transport={transport} resume={r.resume} />);
-    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    // The run is followed again: its panel is up (the dialog returns for the result).
+    expect(screen.getByTestId('pagegen-progress-panel')).toBeInTheDocument();
     expect(r.calls.map((c) => c.id)).toContain('gen-1');
   });
 });

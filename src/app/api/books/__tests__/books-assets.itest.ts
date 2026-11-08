@@ -91,6 +91,7 @@ import * as cancelRoute from '../documents/[id]/cancel/route';
 import * as templatesRoute from '../templates/route';
 import * as templateRoute from '../templates/[id]/route';
 import * as previewRoute from '../templates/preview/route';
+import { __resetUploadRateLimiterForTests } from '@/server/uploads/rateLimit';
 
 let env: BooksEnv;
 let tenantId: string;
@@ -123,6 +124,8 @@ async function company() {
 
 beforeEach(async () => {
   state.can = true;
+  // The per-user upload limit (src/server/uploads/rateLimit.ts) starts empty for each test.
+  __resetUploadRateLimiterForTests();
   await company();
 });
 
@@ -234,6 +237,13 @@ async function draftWithLine(): Promise<string> {
 const issue = (id: string) => call(issueRoute.POST, 'POST', `/api/books/documents/${id}/issue`, { id }, {});
 
 describe('POST /api/books/assets', () => {
+  it('limits one user to 30 upload attempts in 10 minutes (429 with Retry-After)', async () => {
+    for (let i = 0; i < 30; i++) expect((await upload(new Uint8Array([1, 2, 3]), 'image/gif')).status).toBe(415);
+    const limited = await upload(makePng(8, 8), 'image/png');
+    expect(limited.status).toBe(429);
+    expect(limited.json.error.code).toBe('rate_limited');
+  });
+
   it('stores a PNG (201), answers the same bytes again with the stored one (200), and a JPEG', async () => {
     const png = makePng(300, 100);
     const first = await upload(png, 'image/png');

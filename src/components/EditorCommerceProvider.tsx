@@ -19,8 +19,10 @@
 // It also holds the project's cart, so the add-to-cart, cart and checkout
 // blocks render on the canvas and work in the preview. The cart persists per
 // project (every project shares the editor's host) and is remounted when the
-// project changes, so one shop's lines never show in another shop's cart. Checkout itself is disabled here with
-// a clear message: the order route resolves a published storefront from the request host, which the editor is not.
+// project changes, so one shop's lines never show in another shop's cart. No order can be placed here: the order
+// route resolves a published storefront from the request host, which the editor is not. The Preview says so when
+// the checkout is pressed; the canvas never runs the checkout and shows the state picked in the ShopPreviewBar.
+// The shop controls speak the site language (ShopLocaleContext).
 // A project with a product page also gets the catalogue's products, so that page shows a real product while designing.
 
 import React from 'react';
@@ -31,14 +33,20 @@ import { CommerceDataSourceContext } from '@/lib/commerce/context';
 import { getEditorCommerceDataSource } from '@/lib/commerce/httpCommerceDataSource';
 import { ProductPreviewProvider } from '@/lib/commerce/productPreview';
 import { useStore } from '@/hooks/useStore';
+import { shopLocaleOf } from '@/lib/commerce/parts';
+import { ShopDesignContext, ShopLocaleContext, type ShopDesignState } from '@/lib/commerce/shopRuntime';
 
 const NO_PROJECT_ID = '__no_project__';
 const CHECKOUT_PREVIEW_MESSAGE =
-  'Checkout is not available in the editor preview. Publish the site to place an order.';
+  'Orders cannot be placed in the editor preview. Publish the site to place an order.';
 
 const EditorCommerceProvider = observer(({ children }: { children: React.ReactNode }) => {
   const rootStore = useStore();
   const projectId = rootStore.editorUI.currentProject?.id ?? NO_PROJECT_ID;
+  const language = rootStore.editorUI.currentProject?.siteSettings?.language;
+  // Read here, inside the observer, so a picked state re-renders the controls that show it.
+  const states = rootStore.editorUI.shopPreviewStates;
+  const design = React.useMemo<ShopDesignState>(() => ({ stateOf: (id) => states[id] }), [states]);
   return (
     <CommerceDataSourceContext.Provider value={getEditorCommerceDataSource(projectId)}>
       <ProductPreviewProvider
@@ -47,7 +55,11 @@ const EditorCommerceProvider = observer(({ children }: { children: React.ReactNo
         onChoose={(handle) => rootStore.editorUI.setPreviewProductHandle(handle)}
       >
         <CartProvider key={projectId} storageKey={editorCartStorageKey(projectId)}>
-          <CheckoutUnavailableContext.Provider value={CHECKOUT_PREVIEW_MESSAGE}>{children}</CheckoutUnavailableContext.Provider>
+          <CheckoutUnavailableContext.Provider value={CHECKOUT_PREVIEW_MESSAGE}>
+            <ShopLocaleContext.Provider value={shopLocaleOf(language)}>
+              <ShopDesignContext.Provider value={design}>{children}</ShopDesignContext.Provider>
+            </ShopLocaleContext.Provider>
+          </CheckoutUnavailableContext.Provider>
         </CartProvider>
       </ProductPreviewProvider>
     </CommerceDataSourceContext.Provider>

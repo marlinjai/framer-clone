@@ -37,7 +37,8 @@ import { takeBackRefusedEdit } from '@/stores/HistoryStore';
 import ComponentModel, { createIntrinsicComponent, createViewportNode, type ComponentInstance, type ComponentSnapshotIn } from './ComponentModel';
 import { isDynamicSegment, productPagePath, suggestSlug, validateSlug, type SlugValidation } from '@/lib/pages/slug';
 import {
-  isHttpsUrl,
+  IMAGE_REFERENCE_ERROR,
+  isImageReference,
   normalizeSiteSettings,
   validateSiteSettings,
   type SiteSettings,
@@ -65,6 +66,7 @@ import {
   type FooterLink,
   type LegalPageLook,
 } from '@/lib/legal/legalPageTree';
+import { GENERATED_PAGE_ROOT_STYLE } from '@/lib/ai/pageGen/apply';
 
 /** A style value's base (responsive maps carry `base`), when it is a plain safe string. */
 function baseStyle(value: unknown): string | undefined {
@@ -1150,7 +1152,7 @@ export const ProjectModel = types
           type: 'div',
           componentType: 'host',
           label: 'Page',
-          props: { style: { display: 'flex', flexDirection: 'column', width: '100%', fontFamily: 'system-ui, sans-serif' } },
+          props: { style: { ...GENERATED_PAGE_ROOT_STYLE } },
           children: input.sections.map(s => ({ ...s, parentId: rootId })),
         },
         canvasNodes,
@@ -1228,7 +1230,7 @@ export const ProjectModel = types
         }
       }
       const ogImage = input.ogImage === undefined ? page.metadata.ogImage : input.ogImage.trim();
-      if (ogImage && !isHttpsUrl(ogImage)) errors.ogImage = 'Enter a full https:// address of an image.';
+      if (ogImage && !isImageReference(ogImage)) errors.ogImage = IMAGE_REFERENCE_ERROR;
       // The page that ends up at the site root can never be the 404 page.
       const endsAsHome = slugChanged ? input.slug === '' : page.slug === '';
       if (input.notFoundPage && endsAsHome) {

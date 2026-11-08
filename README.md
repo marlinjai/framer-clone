@@ -207,6 +207,16 @@ notifySubscribers(); // Update overlays
 - **Unified Colors**: All selections use consistent green highlighting
 - **Empty Space Deselection**: Click canvas to clear selections
 
+## Agent plugin (Lumitra Sites)
+
+Agents build and edit sites through the MCP endpoint at `https://app.lumitra.co/api/mcp` (`src/app/api/mcp/route.ts`, tools in `src/server/mcp/tools.ts`), with a company API key from auth.lumitra.co that carries the `sites` grant. The `lumitra-sites` plugin packages that endpoint with three skills (`build-a-site`, `edit-a-site`, `redesign-a-site`):
+
+- `plugin/lumitra-sites/`: the Agent Plugins payload and its README (install, key, approvals, limits).
+- `plugin/lumitra-sites-mirror/`: the Claude Code files of the public mirror `marlinjai/lumitra-sites-plugin`.
+- `node plugin/validate.mjs` validates both; `scripts/sync-plugin-repo.sh` pushes them to the mirror from main (`.github/workflows/sync-plugin-mirror.yml`). Bump the version in all three manifests together.
+
+In Claude Code: `/plugin marketplace add marlinjai/lumitra-sites-plugin`, then `/plugin install lumitra-sites@lumitra-sites`, with `LUMITRA_SITES_API_KEY` set in the environment. Plan: `docs/plans/2026-11-02-lumitra-sites-agent-plugin.md`.
+
 ## 🔧 Development
 
 ### **Project Structure**

@@ -51,7 +51,8 @@ vi.mock('@/server/sites', async (importActual) => {
   return {
     ...actual,
     getSiteRepository: () => ({
-      loadProject: mockLoadProject,
+      // The loader reads the version with the project (the version lock).
+      loadProjectWithVersion: async (...args: unknown[]) => ({ project: await mockLoadProject(...args), version: 7 }),
       findSiteWorkspaceAmong: mockFindSiteWorkspaceAmong,
       getSiteAddress: mockGetSiteAddress,
     }),

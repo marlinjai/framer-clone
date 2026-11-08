@@ -24,14 +24,10 @@ import {
   type BindingScope,
 } from '@/lib/bindings/resolver/scope';
 import type { RenderNode } from '@/lib/renderer/data/CollectionRenderer';
-import type { DataStateMode } from '@/lib/renderer/data/resolveDataState';
 import VariantSelector from '../VariantSelector';
 import {
-  advisoryAvailabilityText,
-  LOW_STOCK_THRESHOLD,
-} from '../VariantSelector';
-import {
   isValueSelectable,
+  selectValue,
   resolveVariantFromSelection,
   useSelectedVariant,
 } from '@/lib/commerce/selection';
@@ -81,9 +77,8 @@ function renderSelector(opts: {
   ds: CommerceDataSource;
   node?: ComponentInstance;
   renderNodeOverride?: RenderNode;
-  mode?: DataStateMode;
 }) {
-  const { product, ds, node = makeSelectorNode(), renderNodeOverride, mode = 'preview' } = opts;
+  const { product, ds, node = makeSelectorNode(), renderNodeOverride } = opts;
   const scope = pushProductFrame(createScope(), product);
   return {
     node,
@@ -95,7 +90,6 @@ function renderSelector(opts: {
           renderNode={renderNodeOverride ?? renderNode}
           hostType="div"
           hostProps={{ 'data-component-id': `${BP}-vs-1`, 'data-inner-component-id': 'vs-1' }}
-          mode={mode}
         />
       </CommerceDataSourceContext.Provider>,
     ),
@@ -207,27 +201,56 @@ describe('resolveVariantFromSelection (matrix walk)', () => {
   });
 });
 
-describe('isValueSelectable', () => {
-  it('greys out a value whose combination with the rest of the selection has no variant', () => {
-    const { variants } = twoByFourProduct();
-    const without = variants.filter((v) => v.id !== 'v_m_blue');
-    // With Size = M picked, Blue is unselectable (no M/Blue variant exists)...
-    expect(isValueSelectable(without, { o_size: 'm' }, 'o_color', 'blue')).toBe(false);
-    // ...while Red stays selectable (M/Red exists).
-    expect(isValueSelectable(without, { o_size: 'm' }, 'o_color', 'red')).toBe(true);
-  });
-});
+describe('isValueSelectable and selectValue (no choice locks another out)', () => {
+  // Variants S-Red and L-Blue only.
+  const diagonal = (): { options: { id: string }[]; variants: ProductVariantDTO[] } => {
+    const mk = (id: string, size: string, color: string): ProductVariantDTO => ({
+      id,
+      productId: 'p',
+      title: id,
+      optionValues: [
+        { optionId: 'o_size', valueId: size, label: size },
+        { optionId: 'o_color', valueId: color, label: color },
+      ],
+    });
+    return { options: [{ id: 'o_size' }, { id: 'o_color' }], variants: [mk('v_s_red', 's', 'red'), mk('v_l_blue', 'l', 'blue')] };
+  };
 
-describe('advisoryAvailabilityText (advisory only, never permission to sell)', () => {
-  it('maps quantity to the three advisory bands', () => {
-    expect(advisoryAvailabilityText(0)).toBe('Out of stock');
-    expect(advisoryAvailabilityText(LOW_STOCK_THRESHOLD)).toBe(`Only ${LOW_STOCK_THRESHOLD} left`);
-    expect(advisoryAvailabilityText(LOW_STOCK_THRESHOLD + 100)).toBe('In stock');
+  it('keeps every value some variant has selectable, whatever is picked on the other axes', () => {
+    const { variants } = diagonal();
+    for (const [optionId, valueId] of [['o_size', 's'], ['o_size', 'l'], ['o_color', 'red'], ['o_color', 'blue']]) {
+      expect(isValueSelectable(variants, optionId, valueId)).toBe(true);
+    }
   });
 
-  it('never says out of stock when the quantity is no limit (untracked stock or back-orders)', () => {
-    expect(advisoryAvailabilityText(0, false)).toBe('Available');
-    expect(advisoryAvailabilityText(3, false)).toBe('Available');
+  it('greys out only a value no variant has', () => {
+    const { variants } = diagonal();
+    expect(isValueSelectable(variants, 'o_size', 'm')).toBe(false);
+  });
+
+  it('after S then Red, picking L clears Red and picking Blue then reaches L-Blue', () => {
+    const { options, variants } = diagonal();
+    let selection = selectValue(options, variants, {}, 'o_size', 's');
+    selection = selectValue(options, variants, selection, 'o_color', 'red');
+    expect(selection).toEqual({ o_size: 's', o_color: 'red' });
+    selection = selectValue(options, variants, selection, 'o_size', 'l');
+    expect(selection).toEqual({ o_size: 'l' });
+    selection = selectValue(options, variants, selection, 'o_color', 'blue');
+    expect(selection).toEqual({ o_size: 'l', o_color: 'blue' });
+    // Picking Red now clears L, keeping only what a variant combines.
+    expect(selectValue(options, variants, selection, 'o_color', 'red')).toEqual({ o_color: 'red' });
+  });
+
+  it('returns the selection unchanged (the same object) for a value no variant has', () => {
+    const { options, variants } = diagonal();
+    const selection = { o_size: 's', o_color: 'red' };
+    expect(selectValue(options, variants, selection, 'o_size', 'm')).toBe(selection);
+    expect(selectValue(options, variants, {}, 'o_color', 'green')).toEqual({});
+  });
+
+  it('keeps an earlier choice a variant combines with the new one', () => {
+    const { product, variants } = twoByFourProduct();
+    expect(selectValue(product.options, variants, { o_size: 'm', o_color: 'red' }, 'o_color', 'blue')).toEqual({ o_color: 'blue', o_size: 'm' });
   });
 });
 
@@ -281,7 +304,7 @@ describe('VariantSelector rendering', () => {
     });
   });
 
-  it('disables an unselectable combination (no matching variant)', async () => {
+  it('keeps a value pressable after a pick it does not combine with, and the pick clears the other choice', async () => {
     const { product, variants } = twoByFourProduct();
     const without = variants.filter((v) => v.id !== 'v_m_blue');
     const ds = makeFakeDS(without, { v_s_red: 9, v_s_blue: 9, v_m_red: 9 });
@@ -291,17 +314,26 @@ describe('VariantSelector rendering', () => {
       const blue = container.querySelector('button[data-variant-value="blue"]') as HTMLButtonElement;
       expect(blue?.disabled).toBe(false);
     });
-
-    // Pick Size = M. Now Blue has no matching variant: it greys out.
     act(() => {
       fireEvent.click(container.querySelector('button[data-variant-value="m"]')!);
     });
-    await waitFor(() => {
-      const blue = container.querySelector('button[data-variant-value="blue"]') as HTMLButtonElement;
-      expect(blue.disabled).toBe(true);
+    const blue = container.querySelector('button[data-variant-value="blue"]') as HTMLButtonElement;
+    expect(blue.disabled).toBe(false);
+    act(() => {
+      fireEvent.click(blue);
     });
-    const red = container.querySelector('button[data-variant-value="red"]') as HTMLButtonElement;
-    expect(red.disabled).toBe(false);
+    // No M-Blue variant: Blue is chosen and M is cleared, never locked out.
+    await waitFor(() => expect(blue.getAttribute('aria-checked')).toBe('true'));
+    expect(container.querySelector('button[data-variant-value="m"]')?.getAttribute('aria-checked')).toBe('false');
+  });
+
+  it('disables a value no variant has at all', async () => {
+    const { product, variants } = twoByFourProduct();
+    const onlySmall = variants.filter((v) => v.optionValues.some((c) => c.valueId === 's'));
+    const ds = makeFakeDS(onlySmall, { v_s_red: 9, v_s_blue: 9 });
+    const { container } = renderSelector({ product, ds });
+    await waitFor(() => expect((container.querySelector('button[data-variant-value="s"]') as HTMLButtonElement)?.disabled).toBe(false));
+    expect((container.querySelector('button[data-variant-value="m"]') as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('shows advisory low-stock text for the selected variant', async () => {
@@ -325,32 +357,10 @@ describe('VariantSelector rendering', () => {
     });
   });
 
-  it('surfaces an availability fetch error (never swallowed into a silent "in stock")', async () => {
-    const { product, variants } = twoByFourProduct();
-    // No availability record for v_s_red -> getAvailability throws.
-    const ds = makeFakeDS(variants, { v_s_blue: 9, v_m_red: 9, v_m_blue: 9 });
-    const { container } = renderSelector({ product, ds, mode: 'editor' });
-
-    await waitFor(() => {
-      const small = container.querySelector('button[data-variant-value="s"]') as HTMLButtonElement;
-      expect(small?.disabled).toBe(false);
-    });
-    act(() => {
-      fireEvent.click(container.querySelector('button[data-variant-value="s"]')!);
-    });
-    act(() => {
-      fireEvent.click(container.querySelector('button[data-variant-value="red"]')!);
-    });
-    await waitFor(() => {
-      const err = container.querySelector('[data-variant-availability="error"]');
-      expect(err?.textContent).toContain('Availability check failed');
-    });
-  });
-
   it('tells the visitor in plain words when the availability check fails (preview)', async () => {
     const { product, variants } = twoByFourProduct();
     const ds = makeFakeDS(variants, { v_s_blue: 9, v_m_red: 9, v_m_blue: 9 });
-    const { container } = renderSelector({ product, ds, mode: 'preview' });
+    const { container } = renderSelector({ product, ds });
 
     await waitFor(() => {
       const small = container.querySelector('button[data-variant-value="s"]') as HTMLButtonElement;

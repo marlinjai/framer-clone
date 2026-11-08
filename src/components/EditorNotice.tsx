@@ -14,6 +14,7 @@
 import React from 'react';
 import { observer } from 'mobx-react-lite';
 import { useStore } from '@/hooks/useStore';
+import { reloadDiscarding } from '@/lib/projects/autosave';
 
 const EditorNotice = observer(() => {
   const { editorUI } = useStore();
@@ -32,7 +33,8 @@ const EditorNotice = observer(() => {
           {notice.kind === 'changedElsewhere' ? (
             <button
               type="button"
-              onClick={() => window.location.reload()}
+              // On purpose: this tab's unsaved work goes, so the reload must not warn.
+              onClick={() => reloadDiscarding(editorUI.currentProject?.id)}
               className="shrink-0 rounded border border-amber-400 px-2 py-0.5 font-medium hover:bg-amber-100"
             >
               Load the newer version

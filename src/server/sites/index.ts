@@ -32,8 +32,11 @@ export {
   InvalidPageSlugError,
   SiteRevisionNotFoundError,
   SiteErasedSinceLoadError,
+  SiteChangedError,
+  SiteVersionRequiredError,
   ErasePreviewStaleError,
   NothingToEraseError,
+  SiteImageMissingError,
   siteRepositoryErrorResponse,
 } from './errors';
 

@@ -5,7 +5,7 @@ import { haptic } from '@/lib/haptics';
 import { lastPointerIsTouch } from '@/hooks/useEditorGestureGuard';
 import { computed } from 'mobx';
 import { observer } from 'mobx-react-lite';
-import { getSnapshot } from 'mobx-state-tree';
+import { getSnapshot, isAlive } from 'mobx-state-tree';
 import { ComponentInstance } from '../models/ComponentModel';
 import { EditorTool } from '../stores/EditorUIStore';
 import { useStore } from '@/hooks/useStore';
@@ -22,10 +22,13 @@ import { COMPONENT_LIMITS, isPlacementType, type PlacementProps } from '@/lib/co
 import { extractBreakpoints } from '@/lib/renderer/server/componentSnapshot';
 import { EDITING_TEXT_STYLE, startInlineTextEdit } from '@/lib/canvas/inlineTextEdit';
 import { INLINE_FORMAT_KEYS, applyInlineFormat, beginRunEdit, normaliseEditedText, runAtPoint } from '@/lib/canvas/inlineFormat';
+import { registerOpenDraft } from '@/lib/projects/openDrafts';
 import { isTextBound } from '@/lib/renderer/textContent';
 import { isTextNodeType } from '@/lib/renderer/textNode';
 import { childrenWithRepeats } from '@/lib/renderer/repeatChildren';
 import { SurfaceDomContext, withSurfaceDom } from '@/lib/behaviour/surfaceDom';
+import { ShopRepeatCopyContext } from '@/lib/commerce/shopRuntime';
+import { DraftSections, useDraftHook } from '@/components/ai/PageGenDraftLayer';
 
 interface ComponentRendererProps {
   component: ComponentInstance;
@@ -96,6 +99,8 @@ const NodeRenderer = observer(({ component, breakpointId, allBreakpoints, scope,
   // Inside a link or a button, formatted text holds no links (createComponentElement).
   const runLinksAllowed = React.useContext(RunLinksContext);
   const surfaceDom = React.useContext(SurfaceDomContext);
+  // Inside a later copy of a repeated shop part, only the first copy is selectable.
+  const inRepeatCopy = React.useContext(ShopRepeatCopyContext);
   const frameId = host?.frameId ?? breakpointId;
   const owner = placement ?? component;
   const editRef = React.useRef<HTMLElement | null>(null);
@@ -125,6 +130,44 @@ const NodeRenderer = observer(({ component, breakpointId, allBreakpoints, scope,
     startInlineTextEdit(el, 'all');
   }, [editingId, component.id]);
 
+  // The text being typed is not in the project until blur or Enter: it counts
+  // as unsaved work for the unload warning, and Cmd+S (or leaving the page)
+  // commits it the way Enter does, so the save carries it (src/lib/projects/openDrafts.ts).
+  // The box going away mid-edit (the editor closed by browser Back) writes the
+  // text straight into the node: there is no blur then.
+  const draftText = React.useRef<{ initial: string; read: (el: HTMLElement) => string } | null>(null);
+  React.useEffect(() => {
+    if (editingId !== component.id) return;
+    // The element of this edit, held for the unmount (the ref is cleared by then).
+    const el = editRef.current;
+    const typed = () => {
+      const draft = draftText.current;
+      return el && draft ? draft.read(el) : undefined;
+    };
+    const isDirty = () => {
+      const text = typed();
+      return text !== undefined && text !== draftText.current?.initial;
+    };
+    const writeDirectly = () => {
+      const text = typed();
+      // Only while this edit is still open: a blur, Enter or Escape has already
+      // committed or reverted it and ended the edit.
+      if (editorUI.editingComponent?.id !== component.id) return;
+      if (text !== undefined && isDirty() && isAlive(component)) component.setTextContent(text);
+    };
+    const unregister = registerOpenDraft({
+      isDirty,
+      // Cmd+S on the page: as Enter does (blur commits, one undo step, the edit
+      // ends). A hidden tab or a page on its way out: write the text and leave
+      // the edit open, the person is in the middle of it.
+      commit: (how) => (how === 'end' && el && el.isConnected && document.activeElement === el ? el.blur() : writeDirectly()),
+    });
+    return () => {
+      unregister();
+      if (el && !el.isConnected) writeDirectly();
+    };
+  }, [editingId, component, editorUI]);
+
   // Only non-root tree components can be moved. The root of the app tree must
   // stay put. Text-editing suppresses drag until the user exits edit mode. A
   // text node has no element to press on: it moves from its Layers row.
@@ -143,60 +186,72 @@ const NodeRenderer = observer(({ component, breakpointId, allBreakpoints, scope,
     canMove && !isEditing && !isLocked && !interact ? { kind: 'moveNode', nodeId: owner.id } : null,
     owner,
   );
+  // A running generation's draft meets this node (src/components/ai/PageGenDraftLayer.tsx):
+  // never inside a placement's definition, which a generation does not target.
+  const draftHook = useDraftHook(component.id, !!host || !!placement);
 
   // LayersPanel eye toggle writes to canvasVisible; honour it here so hidden
   // tree children disappear from the viewport. Floating elements and viewport
   // nodes get the same treatment via GroundWrapper's `visible` prop.
   if (!component.canvasVisible || !owner.canvasVisible) return null;
 
+  // Replaced by a generation that is still being written: its draft sections
+  // stand where this node will go, until the result replaces it for real.
+  if (draftHook === 'replace') {
+    return <DraftSections breakpointId={breakpointId} allBreakpoints={allBreakpoints} scope={activeScope} />;
+  }
+
   // What makes an element a text box, for an element and for a text node's span.
   // Commits on blur; Enter commits, ESC cancels.
-  const textBoxProps = (initialText: string, readText: (el: HTMLElement) => string) => ({
-    onBlur: (e: React.FocusEvent<HTMLElement>) => {
-      // The edit moved on: a format wrote this text in its own action.
-      if (editorUI.editingComponent?.id !== component.id) return;
-      const next = readText(e.currentTarget);
-      if (next !== initialText) {
-        component.setTextContent(next);
-      }
-      editorUI.endTextEdit();
-    },
-    onKeyDown: (e: React.KeyboardEvent<HTMLElement>) => {
-      e.stopPropagation();
-      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
-        const key = e.key.toLowerCase();
-        const format = Object.hasOwn(INLINE_FORMAT_KEYS, key) ? INLINE_FORMAT_KEYS[key] : undefined;
-        if (format) {
-          // Also keeps the browser's own bold from writing markup in here.
-          e.preventDefault();
-          applyInlineFormat(editorUI, format);
-          return;
+  const textBoxProps = (initialText: string, readText: (el: HTMLElement) => string) => {
+    draftText.current = { initial: initialText, read: readText };
+    return {
+      onBlur: (e: React.FocusEvent<HTMLElement>) => {
+        // The edit moved on: a format wrote this text in its own action.
+        if (editorUI.editingComponent?.id !== component.id) return;
+        const next = readText(e.currentTarget);
+        if (next !== initialText) {
+          component.setTextContent(next);
         }
-        // Nothing typed in this box: the step to undo is the page's, such as the
-        // format that opened it. The box has no undo of its own to offer.
-        if (key === 'z' && readText(e.currentTarget) === initialText) {
-          e.preventDefault();
-          editorUI.endTextEdit();
-          getUndoManager()?.undo();
-          return;
+        editorUI.endTextEdit();
+      },
+      onKeyDown: (e: React.KeyboardEvent<HTMLElement>) => {
+        e.stopPropagation();
+        if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
+          const key = e.key.toLowerCase();
+          const format = Object.hasOwn(INLINE_FORMAT_KEYS, key) ? INLINE_FORMAT_KEYS[key] : undefined;
+          if (format) {
+            // Also keeps the browser's own bold from writing markup in here.
+            e.preventDefault();
+            applyInlineFormat(editorUI, format);
+            return;
+          }
+          // Nothing typed in this box: the step to undo is the page's, such as the
+          // format that opened it. The box has no undo of its own to offer.
+          if (key === 'z' && readText(e.currentTarget) === initialText) {
+            e.preventDefault();
+            editorUI.endTextEdit();
+            getUndoManager()?.undo();
+            return;
+          }
         }
-      }
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        (e.currentTarget as HTMLElement).blur();
-      } else if (e.key === 'Escape') {
-        e.preventDefault();
-        // Revert the DOM text before blurring so onBlur doesn't commit the
-        // in-progress edit.
-        e.currentTarget.textContent = initialText;
-        (e.currentTarget as HTMLElement).blur();
-      }
-    },
-    // Remove the upstream onClick handler during editing so clicks inside the
-    // textbox don't re-trigger selection.
-    onClick: (e: React.MouseEvent) => e.stopPropagation(),
-    onMouseDown: (e: React.MouseEvent) => e.stopPropagation(),
-  });
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          (e.currentTarget as HTMLElement).blur();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          // Revert the DOM text before blurring so onBlur doesn't commit the
+          // in-progress edit.
+          e.currentTarget.textContent = initialText;
+          (e.currentTarget as HTMLElement).blur();
+        }
+      },
+      // Remove the upstream onClick handler during editing so clicks inside the
+      // textbox don't re-trigger selection.
+      onClick: (e: React.MouseEvent) => e.stopPropagation(),
+      onMouseDown: (e: React.MouseEvent) => e.stopPropagation(),
+    };
+  };
 
   // A text node has no element, so while it is edited it gets a span of its own
   // and nothing else in the element is editable (src/lib/canvas/inlineFormat.ts).
@@ -331,7 +386,13 @@ const NodeRenderer = observer(({ component, breakpointId, allBreakpoints, scope,
   );
 
   // A child repeated for a list is drawn once per item (src/lib/components/repeat.ts), and once, empty, on the component's own canvas when there is none.
-  const children = childrenWithRepeats(component.children, activeScope, renderNode, !host);
+  const ownChildren = childrenWithRepeats(component.children, activeScope, renderNode, !host);
+  // A generation being written into this node: its draft after the children
+  // (insert) or in their place (the page root replaced).
+  const draft = draftHook ? (
+    <DraftSections key="pagegen-draft" breakpointId={breakpointId} allBreakpoints={allBreakpoints} scope={activeScope} />
+  ) : null;
+  const children = draftHook === 'replaceChildren' ? [draft] : draftHook === 'insert' ? [...ownChildren, draft] : ownChildren;
 
   if (placement) finalProps[DATA_PLACEMENT_ROOT] = `${frameId}-${component.id}`;
 
@@ -341,7 +402,7 @@ const NodeRenderer = observer(({ component, breakpointId, allBreakpoints, scope,
     children,
     (resolvedAttributes as any).children,
     {
-      identity: { breakpointId: frameId, componentId: owner.id },
+      identity: { breakpointId: frameId, componentId: owner.id, copy: inRepeatCopy },
       scope: activeScope,
       renderNode,
       // Editor surface: data renderers surface an inline error chip with the

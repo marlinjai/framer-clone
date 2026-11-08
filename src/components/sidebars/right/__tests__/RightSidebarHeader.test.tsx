@@ -7,6 +7,8 @@
 import React from 'react';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, cleanup, fireEvent, screen } from '@testing-library/react';
+import { createRootStore } from '@/stores/RootStore';
+import type { ComponentInstance } from '@/models/ComponentModel';
 import RightSidebarHeader from '../RightSidebarHeader';
 
 // Stub useStore so the component does not need a live MST tree in tests.
@@ -76,5 +78,42 @@ describe('RightSidebarHeader (collapsed)', () => {
     render(<RightSidebarHeader />);
     fireEvent.click(screen.getByLabelText('Expand properties'));
     expect(mockToggle).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('RightSidebarHeader title and type tile', () => {
+  // A real store: the tile's icon reads the node's kind and layout.
+  function realStore() {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const store = createRootStore();
+    store.projectStore.createProject('Header test');
+    const project = store.projectStore.findProjectByTitle('Header test')!;
+    const page = project.findPageBySlug('')!;
+    store.editorUI.setCurrentProject(project);
+    store.editorUI.setCurrentPage(page);
+    currentStore = store as unknown as typeof currentStore;
+    return { store, page };
+  }
+
+  it('titles the page root as the page body of its breakpoint, with that device icon', () => {
+    const { store, page } = realStore();
+    const tablet = page.sortedViewportNodes[1];
+    store.editorUI.selectComponent(page.appComponentTree as ComponentInstance, tablet.breakpointId);
+    const { container } = render(<RightSidebarHeader />);
+    expect(screen.getByText('Page')).toBeTruthy();
+    expect(screen.getByText(tablet.label!)).toBeTruthy();
+    expect(screen.queryByText('Container')).toBeNull();
+    expect(container.querySelector('svg.lucide-tablet')).not.toBeNull();
+  });
+
+  it('shows a container with the layout icon its Layers row shows, not a text "T"', () => {
+    const { store, page } = realStore();
+    const section = page.appComponentTree!.children[0] as ComponentInstance;
+    store.editorUI.selectComponent(section, page.sortedViewportNodes[0].breakpointId);
+    const { container } = render(<RightSidebarHeader />);
+    expect(screen.queryByText('Page')).toBeNull();
+    expect(screen.getByText(section.displayName)).toBeTruthy();
+    expect(container.querySelector('svg.lucide-type')).toBeNull();
+    expect(container.querySelector('svg.lucide-container')).not.toBeNull();
   });
 });

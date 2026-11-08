@@ -254,6 +254,51 @@ describe('validateGeneration: repairs', () => {
     expect(result.nodes[1].props['data-component-kind']).toBe('product-list');
   });
 
+  it('keeps the children of a variant selector: the add to cart and a variant price go inside it', () => {
+    const result = ok({
+      nodes: [
+        {
+          type: 'div',
+          preset: 'variantSelector',
+          children: [{ type: 'div', preset: 'addToCart' }, { type: 'span', props: { children: 'price' } }],
+        },
+      ],
+    });
+    const selector = result.nodes[0];
+    expect(selector.props['data-component-kind']).toBe('variant-selector');
+    expect(selector.children.map((child) => child.props['data-component-kind'] ?? child.type)).toEqual(['add-to-cart', 'span']);
+  });
+
+  it('moves an add to cart written beside a variant selector into it, with a warning', () => {
+    const out = validateGeneration(
+      {
+        nodes: [
+          {
+            type: 'section',
+            children: [
+              { type: 'div', preset: 'addToCart' },
+              { type: 'div', preset: 'variantSelector' },
+              { type: 'p', props: { children: 'Details' } },
+              { type: 'div', preset: 'addToCart' },
+            ],
+          },
+          { type: 'div', preset: 'variantSelector' },
+          { type: 'div', preset: 'addToCart' },
+        ],
+      },
+      { breakpoints, newId: counter() },
+    );
+    if (!out.ok) throw new Error(out.errors.join('; '));
+    const [section, topSelector] = out.result.nodes;
+    expect(out.result.nodes).toHaveLength(2);
+    expect(section.children.map((child) => child.props['data-component-kind'] ?? child.type)).toEqual(['variant-selector', 'p']);
+    const selector = section.children[0];
+    expect(selector.children.map((child) => child.props['data-component-kind'])).toEqual(['add-to-cart', 'add-to-cart']);
+    expect(selector.children.every((child) => child.parentId === selector.id)).toBe(true);
+    expect(topSelector.children.map((child) => child.props['data-component-kind'])).toEqual(['add-to-cart']);
+    expect(out.result.warnings.filter((w) => w.includes('moved into it'))).toHaveLength(3);
+  });
+
   it('cuts overlong text with a warning', () => {
     const result = ok({ nodes: [{ type: 'p', props: { children: 'a'.repeat(GENERATION_LIMITS.maxTextChars + 10) } }] });
     expect((result.nodes[0].props.children as string).length).toBe(GENERATION_LIMITS.maxTextChars);

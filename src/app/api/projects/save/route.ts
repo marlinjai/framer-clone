@@ -20,7 +20,10 @@
 //
 // Failures surface loudly as the Track-0 `{ error: { code, message } }`
 // envelope: 401 unauthenticated, 403 not a workspace admin / no resolvable
-// company (`no_active_company`) / no company with Sites (`sites_not_enabled`), 400 malformed body, 404 cross-workspace site id, 500 otherwise. A
+// company (`no_active_company`) / no company with Sites (`sites_not_enabled`), 400 malformed body, 404 cross-workspace site id, 500 otherwise.
+// The version lock: the body names `expectedVersion`; missing -> 400
+// `version_required`, stale -> 409 `site_changed` with `currentVersion`, and
+// nothing is written. Success answers the new `version`. A
 // save failure is never swallowed into a silent success.
 //
 // Runs on the Node runtime because the repository reaches Postgres through
@@ -35,10 +38,11 @@ import {
   resolveActiveScope,
   siteRepositoryErrorResponse,
   SiteRepositoryError,
+  SiteVersionRequiredError,
 } from '@/server/sites';
 import type { ProjectSnapshotOut } from '@/models/ProjectModel';
 import { jsonError, parseBody, PROJECT_BODY_MAX_BYTES } from '@/lib/api/respond';
-import { projectBodySchema as saveBodySchema } from '../_schema';
+import { saveBodySchema } from '../_schema';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -77,15 +81,28 @@ async function handlePOST(req: Request): Promise<Response> {
   // 4. Validate the snapshot body. Malformed -> 400.
   const body = await parseBody(req, saveBodySchema, { maxBytes: PROJECT_BODY_MAX_BYTES });
   if (!body.ok) return body.response;
+  // The version lock (_schema.ts): checked here rather than in the schema so a
+  // tab that predates it gets a message it can act on, not a generic 400.
+  const { expectedVersion, requestKey, previousRequestKeys } = body.data;
+  if (expectedVersion === undefined) return siteRepositoryErrorResponse(new SiteVersionRequiredError());
 
   // 5. Persist the snapshot — and ONLY that. saveProject preserves the site's
   //    status, so this never publishes. A cross-workspace site id is rejected
   //    (SiteNotFoundError -> 404) inside the repository; any other failure is a
   //    loud 500.
   const project = body.data.project as unknown as ProjectSnapshotOut;
+  let version: number;
   try {
     const repo = getSiteRepository();
-    await repo.saveProject(scope, project, { mustExist: true, companyId });
+    ({ version } = await repo.saveProject(scope, project, {
+      mustExist: true,
+      companyId,
+      expectedVersion,
+      // A repeat of an attempt whose answer was lost gets that attempt's result.
+      ...(requestKey ? { requestKey } : {}),
+      // This tab's earlier attempts whose answers were lost, on the same base.
+      ...(previousRequestKeys ? { previousRequestKeys } : {}),
+    }));
   } catch (err) {
     if (err instanceof SiteRepositoryError) return siteRepositoryErrorResponse(err);
     return jsonError(
@@ -101,6 +118,7 @@ async function handlePOST(req: Request): Promise<Response> {
   return Response.json({
     siteId: project.id,
     savedPages,
+    version,
   });
 }
 

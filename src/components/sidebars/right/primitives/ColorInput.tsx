@@ -1,5 +1,6 @@
 'use client';
 import React, { useState, useEffect } from 'react';
+import { useOpenDraft } from '@/hooks/useOpenDraft';
 import { cn } from '@/lib/utils';
 import { FIELD_INNER_INPUT, FIELD_LABEL, FIELD_SHELL, useFieldIdentity } from './field';
 
@@ -43,10 +44,13 @@ export function ColorInput({ label, value, onChange, className, 'aria-label': ar
   const pickerHex = toPickerHex(localValue) ?? toPickerHex(value || '') ?? '#000000';
 
   const commitText = () => {
+    draftState.settled();
     const next = localValue.trim();
     if (next && next !== value) onChange(next);
     else if (!next) setLocalValue(value || '#ffffff');
   };
+  // Counted as unsaved, and committed by Cmd+S, leaving and unmount (useOpenDraft).
+  const draftState = useOpenDraft(() => commitText());
 
   return (
     <div className={cn('flex min-w-0 flex-col gap-1.5', className)}>
@@ -79,7 +83,10 @@ export function ColorInput({ label, value, onChange, className, 'aria-label': ar
           type="text"
           aria-label={ariaLabel}
           value={localValue}
-          onChange={(e) => setLocalValue(e.target.value)}
+          onChange={(e) => {
+            draftState.edited();
+            setLocalValue(e.target.value);
+          }}
           onBlur={commitText}
           onKeyDown={(e) => {
             if (e.key === 'Enter') commitText();

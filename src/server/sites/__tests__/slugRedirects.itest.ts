@@ -13,9 +13,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { PrismaClient } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { getPrismaClient } from '@/server/db';
-import { getSiteRepository, InvalidPageSlugError, type TenantScope } from '@/server/sites';
+import { InvalidPageSlugError, type TenantScope } from '@/server/sites';
 import { resolvePublishedSiteByKey } from '@/server/sites/publicResolver';
 import { findRedirectTarget } from '@/lib/pages/redirects';
+import { latestVersionRepository } from './latestVersionRepository';
 
 const SCOPE: TenantScope = {
   workspaceId: `ws_slug_${randomUUID().slice(0, 8)}`,
@@ -59,7 +60,7 @@ afterAll(async () => {
 
 describe('slug changes on a real database', () => {
   it('starts with no redirects, and records none before the first publish', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.saveProject(SCOPE, project({ home: '', about: 'about' }));
     expect(await storedRedirects()).toEqual([]);
     await repo.saveProject(SCOPE, project({ home: '', about: 'about-draft' }));
@@ -68,7 +69,7 @@ describe('slug changes on a real database', () => {
   });
 
   it('keeps the old path once the site has been published, and serves it to the router', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.publishProject(SCOPE, project({ home: '', about: 'about' }));
     const { subdomain } = await repo.ensureSiteDomain(SCOPE, SITE_ID);
 
@@ -85,7 +86,7 @@ describe('slug changes on a real database', () => {
   });
 
   it('refuses an invalid slug and leaves the stored rows alone', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await expect(repo.saveProject(SCOPE, project({ home: '', about: 'Projects' }))).rejects.toBeInstanceOf(
       InvalidPageSlugError,
     );
@@ -97,13 +98,13 @@ describe('slug changes on a real database', () => {
   });
 
   it('drops the redirect when a page reclaims the old path', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.saveProject(SCOPE, project({ home: '', about: 'about-us', team: 'about' }));
     expect(await storedRedirects()).toEqual([]);
   });
 
   it('accepts a home page change, serves the new home page at the root and redirects its old path there', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     // "Set as home page" on "team": it takes the root, the former home page
     // moves to a slug from its name.
     await repo.saveProject(SCOPE, project({ home: 'home-page', about: 'about-us', team: '' }));
@@ -117,7 +118,7 @@ describe('slug changes on a real database', () => {
   });
 
   it('then deletes the former home page like any page, but never leaves the root empty', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.saveProject(SCOPE, project({ about: 'about-us', team: '' }));
     await expect(repo.saveProject(SCOPE, project({ about: 'about-us', team: 'team' }))).rejects.toBeInstanceOf(
       InvalidPageSlugError,

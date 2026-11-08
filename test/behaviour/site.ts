@@ -58,8 +58,8 @@ export async function publishPages(
     ...(analytics ? { lumitra: { enabled: true } } : {}),
     ...(siteSettings || language ? { siteSettings: { ...(siteSettings ?? {}), ...(language ? { language } : {}) } } : {}),
   };
-  await repo.saveProject(SCOPE, project as never);
-  await repo.publishProject(SCOPE, project as never);
+  const saved = await repo.saveProject(SCOPE, project as never);
+  await repo.publishProject(SCOPE, project as never, { expectedVersion: saved.version });
   const { subdomain } = await repo.ensureSiteDomain(SCOPE, siteId);
   return `http://${subdomain}.sites.localhost:${port}`;
 }

@@ -63,6 +63,7 @@ import * as productImageRoute from '../products/[id]/images/[imageId]/route';
 import * as productCollectionsRoute from '../products/[id]/collections/route';
 import * as productSitesRoute from '../products/[id]/sites/route';
 import * as imagesRoute from '../images/route';
+import { __resetUploadRateLimiterForTests } from '@/server/uploads/rateLimit';
 import * as imageRoute from '../images/[sha256]/route';
 import * as collectionsRoute from '../collections/route';
 import * as collectionRoute from '../collections/[id]/route';
@@ -92,6 +93,8 @@ function activate(id: string, grants: string[] = ['sites']) {
 }
 
 beforeEach(() => {
+  // The per-user upload limit (src/server/uploads/rateLimit.ts) starts empty for each test.
+  __resetUploadRateLimiterForTests();
   state.allowed = new Set(['viewSite', 'editSite']);
   state.notProvisioned = false;
   state.sites = [
@@ -270,6 +273,13 @@ describe('products through HTTP', () => {
 });
 
 describe('images, collections, sites, samples', () => {
+  it('limits one user to 30 image upload attempts in 10 minutes (429 with Retry-After)', async () => {
+    for (let i = 0; i < 30; i++) expect((await call(imagesRoute.POST, 'POST', 'x', {}, new Uint8Array(0))).status).toBe(422);
+    const limited = await call(imagesRoute.POST, 'POST', 'x', {}, png(6, 6));
+    expect(limited.status).toBe(429);
+    expect(limited.json.error.code).toBe('rate_limited');
+  });
+
   it('uploads, serves with the hash as ETag, reorders and removes images', async () => {
     const p = await create('Cuff');
     const first = await call(productImagesRoute.POST, 'POST', 'x', { id: p.id }, png(3, 3, [10, 20, 30]));

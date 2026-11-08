@@ -298,6 +298,22 @@ model Site {
   // opened before an erase cannot write the erased value back.
   erasureEpoch Int @default(0) @map("erasure_epoch")
 
+  // The version lock: raised by one on every write of the working copy (save, publish, an erase of personal
+  // data). A save or publish names the version it was based on (`expectedVersion`), and a different stored
+  // number refuses it with 409 `site_changed`, so an editor tab and an agent never overwrite each other
+  // unseen. Rename, rollback and unpublish leave it alone: none of them writes what a save writes.
+  version Int @default(1)
+
+  // The key the editor named its last write of the working copy with (save only; publish and
+  // erase clear it). A retry of that attempt after a lost answer, still based on the version just
+  // before it, gets this write's version back instead of a false 409 `site_changed`. Lives exactly
+  // until the next write of the site.
+  lastWriteKey String? @map("last_write_key")
+  // The version the write named by `lastWriteKey` produced. The key counts only while this equals
+  // `version`: a writer that does not know the key (an older container during a rolling deploy)
+  // moves the version and leaves the key, and that unbinds it.
+  lastWriteVersion Int? @map("last_write_version")
+
   // Persistence-layer timestamps (when the ROW was written), set by the DB.
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -307,12 +323,47 @@ model Site {
   experiments SiteExperiment[]
   cspReports  CspReportCount[]
   revisions   SiteRevision[]   @relation("SiteRevisions")
+  images      SiteImage[]
 
   @@index([workspaceId])
   @@index([tenantGroupId])
   // Deleting a revision makes the foreign key check look here.
   @@index([publishedRevisionId])
   @@map("sites")
+  @@schema("public")
+}
+
+/// One uploaded site image (favicon or sharing image, src/lib/site/siteImages.ts): the checked bytes, stored once
+/// per site and SHA-256, named in the settings by `/site-images/<sha256>.<ext>` and served on the site's own hosts
+/// (src/app/site-images/[file]/route.ts). Never updated; deleted only once nothing names it (no setting, no page,
+/// no kept revision, which freezes the path). Deleting the site deletes its images.
+model SiteImage {
+  id String @id @default(uuid())
+
+  siteId String @map("site_id")
+
+  // --- hard isolation boundary (both indexed), denormalised from the Site ---
+  workspaceId   String @map("workspace_id")
+  tenantGroupId String @map("tenant_group_id")
+
+  sha256      String
+  // Read from the bytes, never from the request: image/png, image/jpeg, image/webp or image/x-icon.
+  contentType String @map("content_type")
+  byteSize    Int    @map("byte_size")
+  width       Int
+  height      Int
+  content     Bytes
+
+  // The auth-brain user who uploaded it first.
+  uploadedBy String   @map("uploaded_by")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  site Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@unique([siteId, sha256])
+  @@index([workspaceId])
+  @@index([tenantGroupId])
+  @@map("site_images")
   @@schema("public")
 }
 
@@ -587,5 +638,63 @@ model CspReportCount {
 
   @@id([siteId, directive, blockedHost])
   @@map("csp_report_counts")
+  @@schema("public")
+}
+
+/// One write of the site operations library (src/server/siteOps): who wrote
+/// (an editor user or a company API key), to which site, which operations and
+/// the version it moved the site from and to. Ids and operation names only,
+/// never page content, so an erase of personal data has nothing to rewrite
+/// here. No foreign key on purpose: the record of what an agent did outlives
+/// the site it did it to.
+model SiteOperationAudit {
+  id String @id @default(uuid())
+
+  siteId        String @map("site_id")
+  workspaceId   String @map("workspace_id")
+  tenantGroupId String @map("tenant_group_id")
+
+  // `user` (an auth-brain user id) or `key` (an auth-brain API key id).
+  actorKind String @map("actor_kind")
+  actorId   String @map("actor_id")
+  // Extra ids about the actor (a key's service account), never a secret.
+  actorDetail Json? @map("actor_detail")
+
+  // batch, create_site, generate_page, publish, rollback.
+  operation String
+
+  // The batch's operations: [{ op, nodeId?, pageId? }].
+  ops Json?
+
+  versionBefore Int? @map("version_before")
+  versionAfter  Int? @map("version_after")
+  revision      Int?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([siteId, createdAt])
+  @@index([workspaceId])
+  @@map("site_operation_audits")
+  @@schema("public")
+}
+
+/// One company erasure delivery from auth-brain (`POST /api/internal/erasure`, src/server/erasure; plan
+/// docs/plans/2026-11-05-company-erasure-consumer.md). Keyed by auth-brain's event id, so a repeated
+/// delivery of an erasure already done answers 2xx without deleting again. `scope` keeps what the first
+/// attempt found (site ids, workspace ids, subdomains, custom hostnames), so a retry after a partial
+/// failure still knows which caches to purge and which form submissions to delete once the site rows are
+/// gone. Completed scopes retain site and workspace ids only; hostnames and subdomains are cleared
+/// atomically with completion. The company id records which company was erased. `processed_at` stays NULL until every row and cached copy is gone.
+model ErasureEvent {
+  id          String    @id @map("event_id")
+  kind        String
+  tenantId    String    @map("tenant_id")
+  scope       Json      @default("{}")
+  attempts    Int       @default(0)
+  receivedAt  DateTime  @default(now()) @map("received_at")
+  processedAt DateTime? @map("processed_at")
+
+  @@index([tenantId])
+  @@map("erasure_events")
   @@schema("public")
 }

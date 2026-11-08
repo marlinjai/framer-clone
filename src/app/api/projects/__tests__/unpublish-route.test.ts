@@ -248,20 +248,20 @@ describe('POST /api/projects/unpublish (authorized)', () => {
     // the SAME slug across publishes; unpublishProject does NOT touch the domain
     // row, so the slug survives the publish -> unpublish -> re-publish cycle.
     const repo = {
-      publishProject: vi.fn().mockResolvedValue({ revision: 1 }),
+      publishProject: vi.fn().mockResolvedValue({ revision: 1, version: 2 }),
       ensureSiteDomain: vi.fn().mockResolvedValue({ subdomain: 'demo-abc123' }),
       unpublishProject: vi.fn().mockResolvedValue(undefined),
     };
     installRepo(repo);
 
     const firstPublish = await (
-      await PUBLISH(publishReq({ project: PROJECT }))
+      await PUBLISH(publishReq({ project: PROJECT, expectedVersion: 1 }))
     ).json();
     const unpublished = await (
       await POST(unpublishReq({ siteId: 'site_1' }))
     ).json();
     const rePublish = await (
-      await PUBLISH(publishReq({ project: PROJECT }))
+      await PUBLISH(publishReq({ project: PROJECT, expectedVersion: 1 }))
     ).json();
 
     expect(firstPublish.subdomain).toBe('demo-abc123');

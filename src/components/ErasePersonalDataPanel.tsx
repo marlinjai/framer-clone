@@ -22,6 +22,7 @@
 import React, { useState } from 'react';
 import { Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { reloadDiscarding } from '@/lib/projects/autosave';
 
 type Location = { kind: 'revision'; number: number } | { kind: 'working' };
 
@@ -196,7 +197,8 @@ export function ErasePersonalDataPanel({ projectId }: { projectId: string }) {
         <p className="text-sm text-muted-foreground">
           This editor still holds the old copy. Reload it before you go on; every other open tab of this project needs a reload too, and cannot save until then.
         </p>
-        <Button type="button" size="sm" onClick={() => window.location.reload()}>
+        {/* The old copy is discarded on purpose: it may hold the erased value. */}
+        <Button type="button" size="sm" onClick={() => reloadDiscarding(projectId)}>
           Reload the editor
         </Button>
       </div>

@@ -188,7 +188,7 @@ function VersionsPanel({ projectId }: { projectId: string }) {
     return (
       <p className="text-sm text-muted-foreground">
         {online
-          ? 'This site went live before versions were kept. Its first version is recorded with your next Save or Publish.'
+          ? 'This site went live before versions were kept. Its first version is recorded with the next save (the editor saves by itself) or Publish.'
           : 'Nothing published yet. Each Publish is kept here.'}
       </p>
     );

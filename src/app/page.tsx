@@ -18,7 +18,14 @@ import './cms-grid-theme.css';
 import dynamic from 'next/dynamic';
 
 const EditorApp = dynamic(() => import('../components/EditorApp'), { ssr: false });
+// The demo itself never autosaves; projects of this tab opened before still warn.
+const UnsavedWorkGuard = dynamic(() => import('../components/UnsavedWorkGuard'), { ssr: false });
 
 export default function Page() {
-  return <EditorApp />;
+  return (
+    <>
+      <EditorApp />
+      <UnsavedWorkGuard />
+    </>
+  );
 }

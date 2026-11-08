@@ -18,6 +18,7 @@ import { EditorTool } from '@/stores/EditorUIStore';
 import { getUndoManager, getHistoryStore, getDragManager } from '@/stores/RootStore';
 import { changedElsewhereMessage, openProject, pageIdFromLocation, pickPage, restoreStashedDemo } from '@/stores/openProject';
 import EditorNotice from './EditorNotice';
+import EditorAutosave from './EditorAutosave';
 import ComponentBreadcrumb from './ComponentBreadcrumb';
 import ComponentDialogs from './ComponentDialogs';
 import { requestCreateComponent } from '@/lib/components/editorCommands';
@@ -25,6 +26,7 @@ import { isPlacementType, type PlacementProps } from '@/lib/components/placement
 import InlineFormatBar from './InlineFormatBar';
 import LegalTemplateNotice from './site/LegalTemplateNotice';
 import { resolveAction } from '@/lib/keyBindings';
+import { installSaveShortcut } from '@/lib/projects/saveShortcut';
 import { bindSpacePan, isActivatableControl } from '@/lib/canvas/spacePan';
 import { pageContentOf } from '@/lib/canvas/interactShim';
 import { deleteSelection } from '@/lib/canvas/deleteSelection';
@@ -33,6 +35,7 @@ import { DataSourceProviderContext } from '@/lib/bindings/dataSource/context';
 import { getSharedPrismaDataSourceProvider } from '@/lib/bindings/dataSource/prismaProvider';
 import EditorCommerceProvider from '@/components/EditorCommerceProvider';
 import ProductPreviewBar from '@/components/ProductPreviewBar';
+import ShopPreviewBar from '@/components/ShopPreviewBar';
 import PreviewOverlay, { previewRequestedInLocation } from '@/components/preview/PreviewOverlay';
 import type { ProjectSnapshotOut } from '@/models/ProjectModel';
 
@@ -69,7 +72,15 @@ function syncPageParam(pageId: string | undefined) {
   window.history.replaceState(window.history.state, '', url.toString());
 }
 
-export default function EditorApp({ projectSnapshot }: { projectSnapshot?: ProjectSnapshotOut } = {}) {
+/**
+ * A server-loaded project comes with the site version read alongside it (the
+ * version lock, see openProject); the demo editor at `/` passes neither.
+ */
+type EditorAppProps =
+  | { projectSnapshot: ProjectSnapshotOut; projectVersion: number }
+  | { projectSnapshot?: undefined; projectVersion?: undefined };
+
+export default function EditorApp({ projectSnapshot, projectVersion }: EditorAppProps = {}) {
   const rootStore = useStore();
   // Browser page zoom off inside the editor; the canvas has its own.
   useEditorGestureGuard();
@@ -94,7 +105,7 @@ export default function EditorApp({ projectSnapshot }: { projectSnapshot?: Proje
       // server snapshot, or this tab's working copy when the server has
       // nothing newer (unsaved work, such as a page just generated, survives
       // a trip to Preview). openProject also owns the undo-history rules.
-      const opened = openProject(rootStore, projectSnapshot, requestedPageId);
+      const opened = openProject(rootStore, projectSnapshot, requestedPageId, projectVersion);
       missingPageId = opened.missingPageId;
       if (opened.changedElsewhere) {
         editorUI.setEditorNotice({
@@ -125,7 +136,7 @@ export default function EditorApp({ projectSnapshot }: { projectSnapshot?: Proje
         const demo = projectStore.findProjectByTitle('Framer Clone Demo');
         editorUI.setCurrentProject(demo);
         editorUI.setCurrentPage(demo?.findPageBySlug(''));
-        // It exists only in this browser: Save offers "Save as a new project".
+        // It exists only in this browser: the top bar offers "Keep as project".
         if (demo) editorUI.markUnsavedDemo(demo.id);
       }
       // Undo history belongs to one project: a different one (or a seeded
@@ -278,6 +289,12 @@ export default function EditorApp({ projectSnapshot }: { projectSnapshot?: Proje
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [rootStore.editorUI]);
 
+  // Cmd/Ctrl+S in the capture phase, before any field can stop the key: the
+  // browser's "save page" dialog must never open over the editor (also
+  // mid-drag, in the preview or while typing). It saves at once
+  // (src/lib/projects/saveShortcut.ts).
+  React.useEffect(() => installSaveShortcut(window, rootStore.editorUI), [rootStore.editorUI]);
+
   // Hold Space to pan; a focused control, a field, a dialog or a menu keeps
   // its own Space (src/lib/canvas/spacePan.ts).
   React.useEffect(
@@ -289,6 +306,9 @@ export default function EditorApp({ projectSnapshot }: { projectSnapshot?: Proje
     <DataSourceProviderContext.Provider value={getSharedPrismaDataSourceProvider()}>
     <EditorCommerceProvider>
     <TransformProvider>
+      {/* First in the shell: the autosave lifetime (watching the project,
+          committing typed text and saving when the editor closes). */}
+      <EditorAutosave />
       <DragManagerBinding />
       <ComponentDialogs />
 
@@ -315,6 +335,7 @@ export default function EditorApp({ projectSnapshot }: { projectSnapshot?: Proje
         <EditorNotice />
         <LegalTemplateNotice />
         <ProductPreviewBar />
+        <ShopPreviewBar />
       </div>
       {isPhone ? (
         <PhoneEditorChrome editorUI={rootStore.editorUI} />

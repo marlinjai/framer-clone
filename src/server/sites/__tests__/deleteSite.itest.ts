@@ -19,6 +19,7 @@ import { createIntrinsicComponent } from '@/models/ComponentModel';
 import { SiteRepository, type TenantScope } from '../repository';
 import { SiteDeleteConfirmationError, SiteGoneError, SiteNotFoundError } from '../errors';
 import { resolvePublishedSite } from '../publicResolver';
+import { LatestVersionRepository } from './latestVersionRepository';
 
 const TG = '018f9c10-0000-7000-8000-0000000000e1';
 const OTHER_TG = '018f9c10-0000-7000-8000-0000000000e2';
@@ -87,7 +88,7 @@ async function cleanup() {
 
 beforeAll(() => {
   prisma = getPrismaClient();
-  repo = new SiteRepository(prisma);
+  repo = new LatestVersionRepository(prisma);
 });
 beforeEach(cleanup);
 afterAll(cleanup);

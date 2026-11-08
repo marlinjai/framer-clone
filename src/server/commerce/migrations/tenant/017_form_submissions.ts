@@ -24,8 +24,9 @@ import type { Migration } from '@marlinjai/tenant-db';
  *      the schema is named after), `workspace_id` (the company's workspace) and
  *      `site_id` (the project). So the project delete removes a project's rows
  *      (`deleteSiteSubmissions`, called by DELETE /api/projects/<id>), a
- *      company erasure removes them by workspace (`deleteWorkspaceSubmissions`)
- *      or with the whole `tg_<id>` schema, and the owner deletes one row from
+ *      company erasure removes them by workspace and site (src/server/erasure,
+ *      never by dropping the schema, which the companies of a tenant group
+ *      share), and the owner deletes one row from
  *      the submissions view. Every delete is a real DELETE, never a flag.
  *   3. Bounded size: at most 64 KiB of field JSON per row, a form name of 1 to
  *      120 characters, ids of at most 200. The endpoint refuses a larger body

@@ -9,7 +9,7 @@
 // Kept deliberately tiny. When the Settings page ships, swap `DEFAULT_BINDINGS`
 // for a MobX-observable map read from persisted user config.
 
-export type KeyBindingActionId = 'delete' | 'duplicate' | 'undo' | 'redo' | 'clearSelection' | 'enterComponent' | 'createComponent' | 'selectTool' | 'grabTool';
+export type KeyBindingActionId = 'save' | 'delete' | 'duplicate' | 'undo' | 'redo' | 'clearSelection' | 'enterComponent' | 'createComponent' | 'selectTool' | 'grabTool';
 
 // Descriptor for a single key combo. Modifier keys are normalised across macOS
 // (Cmd) and other platforms (Ctrl) via `primary: true` — the matcher treats
@@ -31,6 +31,16 @@ export interface KeyBindingDefinition {
 }
 
 export const DEFAULT_BINDINGS: KeyBindingDefinition[] = [
+  {
+    // The editor saves by itself; this saves at once instead of after the
+    // debounce, and keeps the browser's "save page" dialog from opening, also
+    // while typing in a field (plan docs/plans/2026-11-04-editor-autosave.md).
+    action: 'save',
+    label: 'Save now',
+    bindings: [
+      { key: 's', primary: true, allowInEditable: true },
+    ],
+  },
   {
     action: 'delete',
     label: 'Delete selected component',
@@ -124,7 +134,7 @@ export function isEditableTarget(target: EventTarget | null): boolean {
 // Match an event against the full registry. Returns the first action whose
 // binding matches, or null. Callers are responsible for the editable-target
 // guard: pass `allowInEditable` on a binding only when typing should still
-// trigger it (none today).
+// trigger it (only Save now).
 export function resolveAction(
   event: KeyboardEvent,
   bindings: KeyBindingDefinition[] = DEFAULT_BINDINGS,

@@ -47,7 +47,7 @@ beforeEach(() => {
   const home = p.createPage('Home');
   home.setSlug('');
   pageId = home.id;
-  openProject(store, getSnapshot(p) as ProjectSnapshotOut, pageId);
+  openProject(store, getSnapshot(p) as ProjectSnapshotOut, pageId, 1);
 });
 afterEach(() => {
   cleanup();
