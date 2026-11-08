@@ -51,7 +51,14 @@ none, writes the base value every breakpoint inherits.
 - A batch is all or nothing. `rejected` lists each refused operation with its index and reason:
   fix those and resend the whole batch. `site_changed` means someone else changed the site: read it
   again (`get_site`, `get_page`), see what changed, redo your change on the current version.
-  Never resend the old batch unchanged. `rate_limited`: wait `retryAfterSec` seconds.
+  Never resend the old batch unchanged. The person may have undone your work on purpose: if
+  something you wrote is gone, ask before you write it again. `rate_limited`: wait
+  `retryAfterSec` seconds.
+- When the change adds whole sections, announce them first with `announce_sections` (the page,
+  and per section the `ref` you will put on its root node, a short title the person reads and a
+  `kind`), so the person watching the editor sees a placeholder where each will go. Then write one
+  section per `apply_batch` with its `ref` on the section's root node, and call `clear_sections`
+  with the `planId` if you change course.
 - `removeNode` deletes the node and everything inside it from the draft. Check the outline before
   you remove, and remove only what the person asked to go.
 - New stock photos come from `find_images`; keep their `data-credit-*` attributes and write an

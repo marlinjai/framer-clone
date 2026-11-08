@@ -11,7 +11,8 @@
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { APPROVAL_RATE, IMAGE_RATE, LISTED_TOOLS, OPERATION_SCHEMAS, READ_RATE, TOOLS, WRITE_RATE } from '../tools';
+import { APPROVAL_RATE, IMAGE_RATE, LISTED_TOOLS, OPERATION_SCHEMAS, PLAN_RATE, READ_RATE, TOOLS, WRITE_RATE } from '../tools';
+import { PLAN_LIMITS } from '@/lib/projects/liveEvents';
 import { APPROVAL_TTL_MS } from '../approvals';
 import { MAX_BATCH_OPS } from '@/lib/siteOps/types';
 import { machineAuthDenial } from '@/lib/auth-machine';
@@ -43,6 +44,8 @@ const NON_TOOL_WORDS = new Set([
   // answer and argument fields
   'siteId', 'pageId', 'expectedVersion', 'version', 'nextCursor', 'retryAfterSec', 'ref', 'alt', 'approvalId', 'approvalUrl',
   'approvalRequired', 'approvalPending', 'declined', 'summary', 'replace',
+  // skeleton plans (announce_sections)
+  'planId', 'replaces', 'newPage', 'after', 'kind',
   // the server entry and the plugin's own names
   'lumitra-sites', 'build-a-site', 'edit-a-site', 'redesign-a-site', 'mcp.json', '.mcp.json', 'plugin.json', '.claude-plugin/',
   'streamable-http', 'skills/', 'sites', '--scope project', '--scope user', '--scope local', '${LUMITRA_SITES_API_KEY}',
@@ -65,7 +68,7 @@ describe('the plugin names the tools the server has', () => {
     const section = README.split('## Tools')[1].split('\n## ')[0];
     const listed = [...section.matchAll(/^\| `([a-z_]+)` \|/gm)].map((m) => m[1]);
     expect(listed).toEqual(LISTED_TOOLS.map((t) => t.name));
-    expect(listed).toHaveLength(12);
+    expect(listed).toHaveLength(14);
   });
 
   it('every word a skill or the README puts in code is a tool, an operation or a known field', () => {
@@ -97,6 +100,22 @@ describe('the plugin names the tools the server has', () => {
       expect(skillText[s], s).toContain('site_changed');
     }
     for (const tool of TOOL_NAMES) expect(skillText['build-a-site'], `build-a-site names ${tool}`).toContain(`\`${tool}\``);
+  });
+});
+
+describe('the plugin teaches the live canvas', () => {
+  it('every skill announces sections before writing them, one section per batch with its ref, and clears on a change of course', () => {
+    for (const s of SKILLS) {
+      const text = flat(skillText[s]);
+      expect(text, s).toContain('`announce_sections`');
+      expect(text, s).toContain('`clear_sections`');
+      expect(text, s).toMatch(/one section per (?:`apply_batch`|batch)/);
+      expect(text, s).toMatch(/`ref` (?:you will put )?on (?:its|the section's) root node|`ref` on the section's root node/);
+    }
+  });
+
+  it('every skill says the person may have undone the work on purpose', () => {
+    for (const s of SKILLS) expect(flat(skillText[s]), s).toMatch(/may have undone (?:your work|it) on purpose/);
   });
 });
 
@@ -167,6 +186,10 @@ describe('the limits the docs quote are the server\'s', () => {
     expect(readme).toContain(`Reads: ${perWindow(READ_RATE)}`);
     expect(readme).toContain(`Stock photo searches: ${perWindow(IMAGE_RATE)}`);
     expect(readme).toContain(`Approval links: ${perWindow(APPROVAL_RATE)}`);
+    expect(readme).toContain(`Section announcements: ${perWindow(PLAN_RATE)}, at most ${PLAN_LIMITS.sectionsPerPlan} sections each and ${PLAN_LIMITS.plansPerSite} announced plans per site`);
+    expect(build).toContain(`at most ${PLAN_LIMITS.sectionsPerPlan} sections; a site holds at most ${PLAN_LIMITS.plansPerSite} announced plans`);
+    expect(build).toContain(perWindow(PLAN_RATE));
+    expect(build).toContain(`at most ${PLAN_LIMITS.titleMax} characters`);
     expect(APPROVAL_TTL_MS).toBe(5 * 60_000);
     expect(readme).toContain('five minutes');
     expect(build).toContain('five minutes');

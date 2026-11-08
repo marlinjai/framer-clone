@@ -25,6 +25,8 @@ It ships four components, discovered at the fixed locations the spec defines:
 | `describe_vocabulary` | How to write: the batch operations, the node format, tags, fonts, motion, and a site's own breakpoints, tokens and components. |
 | `create_site` | A new, empty draft site with one home page. |
 | `apply_batch` | Up to 200 edit operations in one all or nothing write, on the version you read. |
+| `announce_sections` | Placeholders in the open editor for the sections you are about to write; writes nothing. |
+| `clear_sections` | Removes the placeholders of a plan you announced. |
 | `generate_page` | A page or section drafted from a brief by the editor's own generator. |
 | `find_images` | Credited stock photos (Unsplash), with the props that place them. |
 | `preview_url` | The editor preview link of the draft. |
@@ -144,7 +146,9 @@ A publish can be undone: `rollback` serves an earlier published version again.
 
 - Writes: 60 a minute per key, one at a time; a batch holds at most 200 operations and is all or
   nothing. Reads: 300 a minute. Stock photo searches: 30 per ten minutes. Approval links: 10 per
-  ten minutes. Generations: one at a time per key.
+  ten minutes. Generations: one at a time per key. Section announcements: 20 a minute, at most 20
+  sections each and 3 announced plans per site; a plan ends three minutes after the agent's last
+  call.
 - Every write names the version it was based on. If anyone changed the site since, it is refused
   with `site_changed` and nothing is written; the agent reads again and redoes the change.
 - Deleting sites or domains is not possible through the server.

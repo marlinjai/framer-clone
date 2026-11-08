@@ -88,6 +88,23 @@ Motion follows these rules, without exception:
 - Give every layout property a mobile value when the desktop value would not fit a phone
   (padding, font size, grid columns, flex direction), as a responsive map with the base key.
 - Name what a batch creates with `ref` and refer to it later in the same batch as `ref:<name>`.
+
+### Announce the sections, then write them one by one
+
+The person often watches the editor while you work. Show them what is coming:
+
+1. Before you write a page's sections, call `announce_sections` with the page (`pageId`, or
+   `newPage` with the `ref` your `createPage` operation will carry) and the sections in the order a
+   visitor reads them. Give each section the `ref` you will put on its root node, a short title in
+   the site's language as the person would read it ("Pricing", at most 60 characters) and a `kind`
+   (hero, features, gallery, pricing, testimonials, faq, cta, form, footer or generic). Open editors
+   draw a placeholder for each, where it will go; `after` places them after a top-level section of
+   the page instead of at its end. The call writes nothing and needs no `expectedVersion`.
+2. Then write one section per `apply_batch`, with that `ref` on the section's root node in
+   `insertNodes`. Each placeholder turns into the real section when its batch commits.
+3. When you change course (drop, add, reorder or rename sections), call `clear_sections` with the
+   `planId`, or announce again with `replaces` set to it: sections that keep their ref keep their
+   placeholder. A plan also ends by itself three minutes after your last call on the site.
 - `generate_page` drafts a whole page or section from a brief in one call. It runs a minute or
   more: wait, do not retry a slow answer. Read its warnings (what it dropped) and fix with
   `apply_batch`. Use `apply_batch` for anything precise.
@@ -106,7 +123,8 @@ Nothing was written, and the version did not move.
 
 - `site_changed`: someone (the editor, another agent) changed the site since your read. Read it
   again (`get_site`, `get_page`), look at what changed, redo your change on the current version and
-  send it with that version. Never resend the old batch unchanged.
+  send it with that version. Never resend the old batch unchanged. The person may have undone your
+  work on purpose: if something you wrote is gone, ask before you write it again.
 - `rejected`: each refused operation comes with its index and reason (a blocked tag or attribute,
   an unknown id, a value the editor would not keep). Fix those operations and resend the whole
   batch.
@@ -155,6 +173,8 @@ same way.
 - A batch holds at most 200 operations, but keep yours to a section or a handful of edits: a
   small batch is easy to fix when one operation is refused. Writes are rate limited per key
   (60 a minute, one at a time), and one generation per key runs at a time.
+- `announce_sections` takes at most 20 sections; a site holds at most 3 announced plans at once,
+  and announcements and clears are limited to 20 a minute per key.
 - Deleting sites or domains is not possible through these tools.
 - The draft is shared with the editor: a person editing the same site at the same time makes your
   next write answer `site_changed`, which is the version lock working, not an error to work around.
