@@ -88,12 +88,26 @@ function follow(event: MouseEvent, hooks: InteractFrameHooks): void {
   link.ownerDocument.defaultView?.open(url.href, '_blank', 'noopener,noreferrer');
 }
 
+/**
+ * How a submit goes: the submitter's `formmethod` when it has one, else the form's method,
+ * read as the browser reads the keyword (any case; a missing or unknown value is `get`).
+ */
+function submitMethod(event: SubmitEvent): string {
+  const submitter = event.submitter;
+  const form = event.target instanceof HTMLFormElement ? event.target : null;
+  const value = submitter?.hasAttribute('formmethod') ? submitter.getAttribute('formmethod') : form?.getAttribute('method');
+  const method = (value ?? '').toLowerCase();
+  return method === 'post' || method === 'dialog' ? method : 'get';
+}
+
 /** Starts the frame's handling. Returns what stops it. */
 export function startInteractFrame(frame: HTMLElement, hooks: InteractFrameHooks): () => void {
   const onPress = (event: MouseEvent) => retarget(frame, event);
   const onClick = (event: MouseEvent) => follow(event, hooks);
   const onSubmit = (event: SubmitEvent) => {
     if (event.defaultPrevented) return;
+    // A dialog form sends nothing: the browser closes its dialog, as on the published page.
+    if (submitMethod(event) === 'dialog') return;
     event.preventDefault();
     hooks.refused('A form on the canvas does not send. Publish the page to send it.');
   };

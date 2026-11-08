@@ -19,7 +19,8 @@ function frame(): HTMLElement {
     <a id="about" href="/about">About</a><a id="away" href="https://away.test/x">Away</a>
     <a id="jump" href="#top">Jump</a><a id="mail" href="mailto:hi@example.test">Mail</a>
     <a id="broken" href="https://[bad">Broken</a>
-    <form id="form"><button id="send" type="submit">Send</button></form>
+    <form id="form"><button id="send" type="submit">Send</button><button id="close" type="submit" formmethod="dialog">Close</button></form>
+    <form id="dialog-form" method="DIALOG"><button id="ok" type="submit">OK</button><button id="post" type="submit" formmethod="post">Post</button></form>
     <div id="scroller"><p id="inner">Inner</p></div>`;
   document.body.appendChild(el);
   frames.push(el);
@@ -112,6 +113,24 @@ describe('forms', () => {
     inSecond('form').dispatchEvent(event);
     expect(event.defaultPrevented).toBe(true);
     expect(hooks.refused).toHaveBeenCalledWith(expect.stringContaining('does not send'));
+  });
+
+  const submit = (form: string, submitter: string): SubmitEvent => {
+    const event = new SubmitEvent('submit', { bubbles: true, cancelable: true, submitter: inSecond(submitter) });
+    inSecond(form).dispatchEvent(event);
+    return event;
+  };
+
+  it('a dialog form closes its dialog as the page would: nothing prevented, nothing said', () => {
+    expect(submit('dialog-form', 'ok').defaultPrevented).toBe(false);
+    expect(submit('form', 'close').defaultPrevented).toBe(false);
+    expect(hooks.refused).not.toHaveBeenCalled();
+  });
+
+  it("a submitter's own method wins over the form's", () => {
+    expect(submit('dialog-form', 'post').defaultPrevented).toBe(true);
+    expect(submit('form', 'send').defaultPrevented).toBe(true);
+    expect(hooks.refused).toHaveBeenCalledTimes(2);
   });
 
   it('stops listening when stopped', () => {
