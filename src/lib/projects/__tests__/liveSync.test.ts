@@ -329,6 +329,31 @@ describe('liveSync: a write of this tab that succeeds while a newer version is h
   });
 });
 
+describe('liveSync: a held copy older than the 409', () => {
+  it('never lowers the version the dialog names, and Load the newer version fetches the newest', async () => {
+    start();
+    let finish!: (result: ProjectWriteResult) => void;
+    resetAutosaveForTests({
+      write: () =>
+        new Promise<ProjectWriteResult>((resolve) => {
+          finish = resolve;
+        }),
+    });
+    autosaveFor(SITE).attach(project());
+    project().updateMetadata({ description: 'mine' });
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+    await agentWrites('v2'); // held at 2
+    await agentWrites('v3', false); // the server moved on unannounced
+    finish({ kind: 'conflict', currentVersion: 3 });
+    await settle();
+    await settle();
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', currentVersion: 3 });
+    await loadNewerVersion(SITE);
+    expect(knownServerVersion(SITE)).toBe(3);
+    expect(working()).toEqual(server.snapshot);
+  });
+});
+
 describe('liveSync: an erasure', () => {
   it('is adopted without an undo step and clears the history, so undo cannot bring erased values back', async () => {
     start();

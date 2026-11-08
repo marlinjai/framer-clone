@@ -810,7 +810,8 @@ export class AutosaveController {
     this.dirtyHint = true;
     const state = this.state;
     if (state.phase === 'conflict') {
-      if (state.currentVersion !== currentVersion && !state.retrying) this.setState({ ...state, currentVersion });
+      // Versions only go up: an older held copy never lowers what a 409 reported.
+      if (currentVersion > state.currentVersion && !state.retrying) this.setState({ ...state, currentVersion });
       return;
     }
     // A write of this tab is out: its answer (the 409) opens the dialog.

@@ -292,6 +292,9 @@ const HistoryStore = types
       clear() {
         self.history.clear();
         self.undoIdx = 0;
+        // A gesture's patches were recorded against the tree before the clear: dropped too.
+        self.batch = undefined;
+        self.displaced = undefined;
       },
 
       // ------ Gesture batching ------

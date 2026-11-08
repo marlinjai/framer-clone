@@ -87,7 +87,8 @@ async function handleGET(req: Request, { params }: Ctx): Promise<Response> {
     lastCheck = Date.now();
     try {
       const again = await authorizeLiveProject(req, projectId);
-      if (again.ok) return;
+      // The browser may have left while the check ran.
+      if (again.ok || ended) return;
       sse.send(LIVE_EVENTS.authExpired, {});
       end();
     } catch (err) {
