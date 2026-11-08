@@ -1,7 +1,7 @@
 {
   "comparedWith": {
     "file": "docs/primitives-score/latest.json",
-    "generatedAt": "2026-11-08T13:11:42.109Z",
+    "generatedAt": "2026-11-08T13:49:02.449Z",
     "included": 1842
   },
   "framerPlugin": {
@@ -19,7 +19,7 @@
     },
     "framerTyped": 549,
     "ourRenderer": 1793,
-    "ourPanel": 1232,
+    "ourPanel": 1241,
     "documentedNotMeasured": 83
   },
   "byKind": [
@@ -290,10 +290,10 @@
       },
       "framerTyped": 3,
       "ourRenderer": 9,
-      "ourPanel": 0,
+      "ourPanel": 9,
       "framerTypedOursFails": 0,
       "oursPassesFramerUntyped": 6,
-      "framerTypedPanelFails": 3
+      "framerTypedPanelFails": 0
     }
   ],
   "rows": [
@@ -16619,7 +16619,7 @@
         "FramerPluginAPI.createColorStyle"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:theme:dark-value",
@@ -16631,7 +16631,7 @@
         "ColorStyle.dark"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:theme:document-background",
@@ -16643,7 +16643,7 @@
         "WithWebPageInfoTrait"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:theme:document-color",
@@ -16655,7 +16655,7 @@
         "WithWebPageInfoTrait"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:theme:document-font",
@@ -16667,7 +16667,7 @@
         "WithWebPageInfoTrait"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:theme:font-token",
@@ -16681,7 +16681,7 @@
         "FramerPluginAPI.createTextStyle"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:theme:mode-dark",
@@ -16693,7 +16693,7 @@
         "ColorStyle.dark"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:theme:mode-light",
@@ -16705,7 +16705,7 @@
         "ColorStyle.dark"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:theme:mode-system",
@@ -16717,7 +16717,7 @@
         "ColorStyle.dark"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "svg-attribute:*.alignment-baseline",
