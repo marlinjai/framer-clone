@@ -235,6 +235,7 @@ describe('verifyCompanyKey: auth-brain answers', () => {
       serviceAccountId: 'sa-1',
       scope: { workspaceId: WORKSPACE, tenantGroupId: GROUP },
       workspaceRole: 'admin',
+      appGrants: ['sites'],
     });
     expect(mockReadCompanyStructure).toHaveBeenCalledWith(TENANT);
     expect(auditLines()).toEqual([
@@ -396,7 +397,7 @@ describe('keyWorkspaceRole: the role mapping', () => {
 });
 
 describe('authorizeKeyAction', () => {
-  const key = (workspaceRole: VerifiedKey['workspaceRole']): VerifiedKey => ({
+  const key = (workspaceRole: VerifiedKey['workspaceRole'], appGrants: string[] = ['sites']): VerifiedKey => ({
     kind: 'key',
     tenantId: TENANT,
     companySlug: 'acme',
@@ -404,6 +405,7 @@ describe('authorizeKeyAction', () => {
     serviceAccountId: 'sa-1',
     scope: { workspaceId: WORKSPACE, tenantGroupId: GROUP },
     workspaceRole,
+    appGrants,
   });
 
   it('lets a workspace admin key view, edit and publish', () => {
@@ -426,11 +428,20 @@ describe('authorizeKeyAction', () => {
     }
   });
 
-  it('never lets a key manage domains, erase personal data or touch the Books, even as admin', () => {
-    for (const action of ['manageDomain', 'eraseSiteData', 'viewBooks', 'editBooks'] as const) {
-      expect(authorizeKeyAction(key('admin'), action)).toBe(false);
+  it('never lets a key manage domains, erase personal data or write the Books, even as admin', () => {
+    for (const action of ['manageDomain', 'eraseSiteData', 'editBooks'] as const) {
+      expect(authorizeKeyAction(key('admin', ['sites', 'books']), action)).toBe(false);
     }
-    expect([...MACHINE_ACTIONS].sort()).toEqual(['editSite', 'publishSite', 'viewSite']);
+    expect([...MACHINE_ACTIONS].sort()).toEqual(['editSite', 'publishSite', 'viewBooks', 'viewSite']);
+  });
+
+  it('lets a key read the Books only with the company books grant and a workspace admin role', () => {
+    expect(authorizeKeyAction(key('admin', ['sites', 'books']), 'viewBooks')).toBe(true);
+    expect(authorizeKeyAction(key('admin', ['sites']), 'viewBooks')).toBe(false);
+    expect(auditLines().at(-1)).toEqual(expect.objectContaining({ action: 'viewBooks', outcome: 'denied', reason: 'books_not_enabled' }));
+    for (const role of ['member', 'viewer', null] as const) {
+      expect(authorizeKeyAction(key(role, ['sites', 'books']), 'viewBooks')).toBe(false);
+    }
   });
 
   it('denies a target in another workspace or tenant group (a foreign company)', () => {

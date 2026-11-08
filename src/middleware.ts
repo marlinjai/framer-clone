@@ -36,16 +36,19 @@ import { carriesBearer } from '@/lib/bearer';
  */
 /**
  * The machine door (docs/plans/2026-11-02-lumitra-sites-agent-plugin.md): the
- * only path a request authenticated by a company API key
- * (`Authorization: Bearer <key>`) may reach on the authoring plane.
+ * only paths a request authenticated by a company API key
+ * (`Authorization: Bearer <key>`) may reach on the authoring plane:
+ *   - `/api/mcp`, the Lumitra Sites MCP endpoint (src/server/mcp/handler.ts),
+ *   - `/api/machine/*`, plain JSON routes for other apps' scheduled jobs, today
+ *     the read-only Books endpoint receipt-ocr-app mirrors its income from
+ *     (src/server/books/machine.ts).
  *
  * THIS GATE NEVER VERIFIES A KEY. It only decides which credential a path
- * accepts: any string after `Bearer` passes it. Every handler behind
- * `/api/mcp` (step 4 of the plan) MUST call `verifyCompanyKey`
- * (src/lib/auth-machine.ts) itself and refuse anything but a verified key;
- * the middleware is never the gate.
+ * accepts: any string after `Bearer` passes it. Every handler behind a machine
+ * path MUST call `verifyCompanyKey` (src/lib/auth-machine.ts) itself and refuse
+ * anything but a verified key; the middleware is never the gate.
  */
-const MACHINE_PATH = '/api/mcp';
+const MACHINE_PATHS = ['/api/mcp', '/api/machine'] as const;
 
 /**
  * The path as the gates compare it: percent-decoded, lowercased, with repeated
@@ -68,14 +71,15 @@ function isUnder(pathname: string, prefix: string): boolean {
 }
 
 function isMachinePath(pathname: string): boolean {
-  return isUnder(normalizedPath(pathname), MACHINE_PATH);
+  const path = normalizedPath(pathname);
+  return MACHINE_PATHS.some((prefix) => isUnder(path, prefix));
 }
 
 /** Which editor-plane surface a path belongs to, or null for any other path. */
 function isEditorPlanePath(pathname: string): 'api' | 'page' | null {
   const path = normalizedPath(pathname);
   const under = (prefix: string) => isUnder(path, prefix);
-  if (under('/api/projects') || under('/api/ai') || under('/api/books') || under(MACHINE_PATH)) return 'api';
+  if (under('/api/projects') || under('/api/ai') || under('/api/books') || MACHINE_PATHS.some(under)) return 'api';
   if (under('/projects')) return 'page';
   return null;
 }

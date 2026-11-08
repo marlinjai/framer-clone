@@ -201,13 +201,15 @@ connections to the suite. The four lines below are in that order.
   Media, 61 imported and 0 errors, the printed yearly totals matching the filed returns 2019 to
   2025, the invoice counter still at 62; checked in the live editor (61 documents numbered 1 to
   61, the PDFs of invoices 1, 23 and 60 byte-identical to the originals). Imports keep their
-  printed currency (invoice 23 is in CHF, never converted). Open, the connections: the read-only
-  endpoint receipt-ocr-app pulls issued invoices from (carrying each document's
-  `currency_code`; service-account key from auth-brain; the receipts session gets the contract
-  when it exists), storage-brain for the PDFs, the shared contacts database for recipients in
-  production. Then the receipts app's register rows map to the mirror by invoice number. See the
-  Books plan's amendment of 2026-10-15 and "Historical import build notes (2026-10-20)".
-  (2026-10-20)
+  printed currency (invoice 23 is in CHF, never converted). The read-only endpoint receipt-ocr-app
+  pulls issued invoices from is built (2026-11-08): `GET /api/machine/books/documents`, behind the
+  machine door of #316 (`/api/machine/*` is bearer only, like `/api/mcp`), a company API key of a
+  service account scoped to the company, with the `books` app grant and a workspace admin role;
+  issued invoices and credit notes only, in the fields the receipts parser reads, never a
+  recipient (`src/server/books/machine.ts`, `repository/mirror.ts`). Open: storage-brain for the
+  PDFs, the shared contacts database for recipients in production. See the Books plan's
+  "Connections: the mirror endpoint (2026-11-08)" and "Historical import build notes
+  (2026-10-20)". (2026-11-08)
 - [x] 5. Importing past invoices by uploading PDFs in the Books: a company drops up to 50 invoice
   PDFs, Claude Sonnet 5.5 reads each one into the historical-import record, the user checks and
   corrects the rows in a review table beside the PDF, and confirmed rows import through the same

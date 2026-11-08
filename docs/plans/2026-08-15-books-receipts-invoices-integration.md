@@ -52,6 +52,8 @@ Decided with Marlin on 2026-10-15; supersedes the body where they conflict.
 6. **Connections** (after the import): the read-only machine endpoint receipt-ocr-app pulls
    issued documents from (section 3's pull model, service-account key, company-scoped),
    storage-brain for PDFs, the shared contacts database for recipients.
+   **Reality note (2026-11-08):** the machine endpoint is built, see "Connections: the mirror
+   endpoint (2026-11-08)" below.
 
 ## Phase 1 build specification (2026-10-17)
 
@@ -1127,6 +1129,47 @@ and grant it to Whiz-Art Media and Lumitra; scaffold `CONTACTS_DATABASE_URL` in
 framer-clone's Infisical project and copy the value from the receipts project with
 `copy_secret`; deploy, which rolls `008_books_files` across every tenant schema at boot; run
 `pnpm books:init-company` for Whiz-Art Media (P1.8). No other secret or variable is new.
+
+## Connections: the mirror endpoint (2026-11-08)
+
+The read-only endpoint receipt-ocr-app mirrors its income from (item 6 of the amendment above;
+receipts plan `docs/plans/2026-10-14-invoicing-and-income.md`, step 4 and decision D10 there).
+
+- **A plain JSON route, not an MCP tool.** `GET /api/machine/books/documents` (route
+  `src/app/api/machine/books/documents/route.ts`, handler `src/server/books/machine.ts`). The
+  caller is a scheduled job of another app that wants one list call; an MCP tool would make it
+  run a protocol session for that. The machine door of #316 (`src/middleware.ts`) now covers
+  `/api/machine/*` next to `/api/mcp`: a bearer only, the cookie stripped, a session refused
+  with 401, a published host answering 404, case and percent-encoded variants under the same
+  rule. `src/lib/hostRoutes.ts` lists the route as editor-host only.
+- **Who may read.** A company API key (`verifyCompanyKey`, unchanged: a service account scoped to
+  one company, its sites workspace resolved by the server), then `viewBooks` through
+  `authorizeKeyAction`: the company holds the auth-brain app grant `books` (else 403
+  `books_not_enabled`) and the key is an effective workspace admin of the company's workspace
+  (the same role a person needs, `FRAMER_PERMISSIONS.viewBooks`; else 403 `forbidden`).
+  `editBooks` stays out of `MACHINE_ACTIONS`: no key writes the Books. The verified key now
+  carries its company's `appGrants`. Consequence: the service account's company needs both
+  `sites` and `books`, as a person's session does today (`access.ts`).
+- **What it hands over.** The company's `invoice` and `credit_note` documents in a live status
+  (`issued`, `sent`, `paid`, `cancelled`), all of them in one answer read by one statement (one
+  snapshot), in the order they were issued (`issued_at`, then id). No pages (`nextCursor` is always
+  null, a `limit` is ignored, a `cursor` refused): separate pages read separate snapshots, and a
+  document whose issue commits after a page boundary passed its `issued_at` would be skipped (the
+  CodeRabbit review of 2026-11-08). Capped at 10,000 documents, a few megabytes; above that the
+  answer is 422 `too_many_documents`, never a cut list. In exactly the fields the receipts parser reads
+  (`parseBooksDocuments` there): `id, docType, status, number, issueDate, dueDate, currencyCode,
+  kleinunternehmer, reverseCharge, totalCents, taxCents, taxSummary[{rateBp, netCents, taxCents}],
+  correctsDocumentId, replacesDocumentId`, plus the verified `companyId` in the envelope. Never a
+  recipient's name or address, a snapshot, a text or a file. Amounts stay positive (a credit note
+  states its own amount, the type carries the sign). A row an issued document can never be (no
+  number, no day, a negative amount) fails the read loudly instead of being handed over.
+- **Audit.** Every read is a `[machine-audit]` line (`viewBooks`, the number of documents).
+- **Tests.** `src/server/books/__tests__/mirror.test.ts` (projection, guard chain),
+  `books-mirror.itest.ts` (real schema: only issued documents, the credit note, paging walks each
+  document once, no other company), the middleware and host-route tests.
+- **Production, before the first pull:** a service account scoped to the company in auth-brain,
+  the company holding `books` and `sites`, the service account a company admin (or owner), and
+  one key minted for it; that key goes into the receipts app's secrets, never into this repo.
 
 ## Historical import build notes (2026-10-20)
 

@@ -491,7 +491,7 @@ describe('middleware: the report-only policy of published pages', () => {
   });
 });
 
-describe('middleware: the machine door (a company API key reaches /api/mcp only)', () => {
+describe('middleware: the machine door (a company API key reaches /api/mcp and /api/machine only)', () => {
   // A placeholder token: the middleware never verifies it (the route does,
   // src/lib/auth-machine.ts), it only decides which credential a path accepts.
   const BEARER = 'Bearer not-a-real-key';
@@ -585,6 +585,32 @@ describe('middleware: the machine door (a company API key reaches /api/mcp only)
       const res = await middleware(call('/api/mcp', headers, { host: PUBLISHED }));
       expect(res.status).toBe(404);
     }
+  });
+
+  it('treats /api/machine/* (the Books read for the receipts mirror) as the machine door too', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    const path = '/api/machine/books/documents';
+    // A bearer passes, without the cookie that came along.
+    const ok = await middleware(call(path, { authorization: BEARER, cookie: 'lumitra_session=valid' }, { method: 'GET' }));
+    expect(isNext(ok)).toBe(true);
+    expect(forwarded(ok)).not.toContain('cookie');
+    // A session is no credential there.
+    for (const headers of [{}, { cookie: 'lumitra_session=valid' }] as Record<string, string>[]) {
+      const res = await middleware(call(path, { ...headers, 'sec-fetch-site': 'same-origin' }, { method: 'GET' }));
+      expect(res.status).toBe(401);
+      expect(res.headers.get('www-authenticate')).toMatch(/^Bearer/);
+    }
+    // Case and encoding variants fall under the same rule.
+    for (const variant of ['/API/Machine/books/documents', '/api/%6Dachine/books/documents', '//api/machine/books/documents']) {
+      const res = await middleware(call(variant, { 'sec-fetch-site': 'same-origin' }, { method: 'GET' }));
+      expect(res.status).toBe(401);
+    }
+    // A published host never serves it.
+    for (const headers of [{ authorization: BEARER }, {}] as Record<string, string>[]) {
+      expect((await middleware(call(path, headers, { host: PUBLISHED, method: 'GET' }))).status).toBe(404);
+    }
+    // A prefix that only looks alike is no machine path: it keeps the session gate.
+    expect((await middleware(call('/api/machinery', { authorization: BEARER }, { method: 'GET' }))).status).not.toBe(401);
   });
 
   it("keeps today's cookie gate unchanged for requests without a bearer", async () => {

@@ -73,6 +73,7 @@ function verifiedKey(role: VerifiedKey['workspaceRole'] = 'admin', keyId = 'key_
     serviceAccountId: 'sa_1',
     scope: Object.freeze({ ...SCOPE }),
     workspaceRole: role,
+    appGrants: Object.freeze(['sites']),
   });
 }
 
