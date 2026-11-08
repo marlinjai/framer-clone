@@ -32,7 +32,8 @@ vi.mock('@/server/sites/repository', async (importActual) => {
 import { getSiteRepository, SiteNotFoundError } from '@/server/sites';
 import { getSiteRepository as getRepositoryDirect } from '@/server/sites/repository';
 import { publishSiteEvent, resetLiveBusForTests, LIVE_STREAM_LIMITS } from '@/server/sites/liveBus';
-import { GET as EVENTS, LIVE_RECHECK_MS, LIVE_RECHECK_ON_WRITE_MS } from '../[projectId]/events/route';
+import { GET as EVENTS } from '../[projectId]/events/route';
+import { LIVE_RECHECK_MS, LIVE_RECHECK_ON_WRITE_MS } from '@/lib/projects/liveEvents';
 import { GET as DOCUMENT } from '../[projectId]/document/route';
 
 const ORIGINAL_EDITOR_HOST = process.env.EDITOR_HOST;

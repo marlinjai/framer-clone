@@ -34,15 +34,10 @@ import { createSseStream, SSE_HEADERS, SSE_HEARTBEAT_MS } from '@/lib/ai/sse';
 import { authorizeLiveProject } from '@/server/sites/liveGuard';
 import { acquireStreamSlot, subscribeSite } from '@/server/sites/liveBus';
 import { getSiteRepository } from '@/server/sites';
-import { LIVE_EVENTS, ORIGIN_TAB_PATTERN, type SiteStateEvent, type SiteVersionEvent } from '@/lib/projects/liveEvents';
+import { LIVE_EVENTS, LIVE_RECHECK_MS, LIVE_RECHECK_ON_WRITE_MS, ORIGIN_TAB_PATTERN, type SiteStateEvent, type SiteVersionEvent } from '@/lib/projects/liveEvents';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-
-/** How often an open stream checks that its session and permission still hold. */
-export const LIVE_RECHECK_MS = 5 * 60_000;
-/** A write heard longer than this after the last check triggers one more (access lost shows up within a write). */
-export const LIVE_RECHECK_ON_WRITE_MS = 30_000;
 
 type Ctx = { params: Promise<{ projectId: string }> };
 

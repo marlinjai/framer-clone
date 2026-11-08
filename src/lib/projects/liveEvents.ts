@@ -103,3 +103,8 @@ export function boundedWriteEvent(event: SiteWriteEvent): SiteWriteEvent {
 
 /** The pattern a tab id must match (the save and publish bodies check it). */
 export const ORIGIN_TAB_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
+
+/** How often an open stream checks that its session and permission still hold. */
+export const LIVE_RECHECK_MS = 5 * 60_000;
+/** A write heard longer than this after the last check triggers one more (access lost shows up within a write). */
+export const LIVE_RECHECK_ON_WRITE_MS = 30_000;
