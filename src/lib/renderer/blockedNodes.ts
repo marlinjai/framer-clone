@@ -299,19 +299,41 @@ const EDITOR_SURFACE_DROPPED: ReadonlySet<string> = new Set([
   'action', 'form', 'formaction', 'formenctype', 'formmethod', 'formtarget', 'ping',
 ]);
 
+/** The one method a form takes that sends nothing: it closes the dialog around the form. */
+const isDialogMethod = (value: unknown): boolean => typeof value === 'string' && value.toLowerCase() === 'dialog';
+
 /**
  * `props` as this tag renders them on the editor surfaces; the same object when
  * nothing is dropped. On MathML's `mo`, `form` is only how an operator is laid out.
  */
 export function withoutEditorSurfaceProps(tag: unknown, props: Record<string, unknown>): Record<string, unknown> {
   const isOperator = typeof tag === 'string' && tag.toLowerCase() === 'mo';
-  const dropped = (name: string) => EDITOR_SURFACE_DROPPED.has(name.toLowerCase()) && !(isOperator && name === 'form');
+  // `formmethod="dialog"` sends nothing, so a button that closes its dialog keeps it.
+  const dropped = (name: string) =>
+    EDITOR_SURFACE_DROPPED.has(name.toLowerCase()) && !(isOperator && name === 'form') && !(name.toLowerCase() === 'formmethod' && isDialogMethod(props[name]));
   const names = Object.keys(props);
   if (!names.some(dropped)) return props;
   return Object.fromEntries(names.filter((name) => !dropped(name)).map((name) => [name, props[name]]));
 }
 
-/** A form on an editor surface never submits: with no action it would reload the editor. */
-export function refuseSubmit(event: { preventDefault(): void }): void {
+/**
+ * How a submit goes: the submitter's `formmethod` when it has one, else the form's method,
+ * read as the browser reads the keyword (any case; a missing or unknown value is `get`).
+ */
+export function submitMethod(event: Pick<SubmitEvent, 'target' | 'submitter'>): 'get' | 'post' | 'dialog' {
+  const submitter = event.submitter;
+  const form = event.target as Element | null;
+  const value = submitter?.hasAttribute('formmethod') ? submitter.getAttribute('formmethod') : form?.getAttribute?.('method');
+  const method = (value ?? '').toLowerCase();
+  return method === 'post' || method === 'dialog' ? method : 'get';
+}
+
+/**
+ * A form on an editor surface never submits: with no action it would reload the editor.
+ * A dialog form is let through: it sends nothing, the browser only closes its dialog.
+ */
+export function refuseSubmit(event: { preventDefault(): void; nativeEvent?: Event }): void {
+  const native = event.nativeEvent;
+  if (typeof SubmitEvent !== 'undefined' && native instanceof SubmitEvent && submitMethod(native) === 'dialog') return;
   event.preventDefault();
 }

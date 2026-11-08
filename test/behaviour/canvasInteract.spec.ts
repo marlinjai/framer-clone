@@ -227,6 +227,35 @@ describe.each(ENGINES)('in %s', (name, engine) => {
     await page.close();
   });
 
+  it('a dialog closes from its own dialog form, by the form method or the button\'s formmethod, and nothing is refused', async () => {
+    const opener = (id: string, dialog: string) =>
+      node(id, 'button', { type: 'button', children: `Open ${dialog}`, behaviour: { on: [{ id: `o-${id}`, on: 'click', do: [{ dialog, op: 'showModal' }] }] } });
+    const tree = node(
+      'dialogs',
+      'div',
+      {},
+      opener('open-a', 'dlg-a'),
+      node('dlg-a', 'dialog', { id: 'dlg-a' }, node('form-a', 'form', { method: 'dialog' }, node('ok-a', 'button', { type: 'submit', value: 'ok-a', children: 'OK' }))),
+      opener('open-b', 'dlg-b'),
+      node('dlg-b', 'dialog', { id: 'dlg-b' }, node('form-b', 'form', {}, node('ok-b', 'button', { type: 'submit', formMethod: 'dialog', value: 'ok-b', children: 'Done' }))),
+    );
+    const { page, crashes } = await mount({}, tree);
+    await enterInteract(page);
+    for (const id of ['a', 'b']) {
+      const dialog = inFrames(page, `dlg-${id}`).first();
+      await inFrames(page, `open-${id}`).first().click();
+      await expect.poll(() => dialog.evaluate((el) => el.matches(':modal'))).toBe(true);
+      await inFrames(page, `ok-${id}`).first().click();
+      // The browser's own dialog submission closes it, and hands it the button's value.
+      await expect.poll(() => dialog.evaluate((el) => (el as HTMLDialogElement).open)).toBe(false);
+      expect(await dialog.evaluate((el) => (el as HTMLDialogElement).returnValue)).toBe(`ok-${id}`);
+    }
+    expect(await editor(page, (api) => api.notice())).toBeUndefined();
+    expect(await editor(page, (api) => api.tool())).toBe('interact');
+    expect(crashes).toEqual([]);
+    await page.close();
+  });
+
   it('re-entry: leaving resets what the page changed natively, and entering again starts from first values', async () => {
     const { page, crashes } = await mount();
     await enterInteract(page);

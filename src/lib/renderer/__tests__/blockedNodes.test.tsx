@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createComponentElement } from '@/lib/renderer/createComponentElement';
 import { renderComponentNode } from '@/lib/renderer/server/renderComponentNode';
-import { safeInlineStyle } from '@/lib/renderer/blockedNodes';
+import { refuseSubmit, safeInlineStyle, submitMethod, withoutEditorSurfaceProps } from '@/lib/renderer/blockedNodes';
 
 const published = (node: Record<string, unknown>) => renderToStaticMarkup(renderComponentNode({ id: 'n', ...node } as never) as never);
 const editor = (type: string, props: Record<string, unknown>) =>
@@ -382,5 +382,48 @@ describe('blocked nodes', () => {
       expect(safeInlineStyle({ [key]: 'url(x.htc)', color: 'red' })).toEqual({ color: 'red' });
     }
     expect(published({ type: 'div', props: { style: { behavior: 'url(x.htc)', color: 'red' } } })).toBe('<div style="color:red"></div>');
+  });
+});
+
+describe('a dialog form on an editor surface', () => {
+  it("keeps a button's formmethod only when it closes a dialog", () => {
+    expect(withoutEditorSurfaceProps('button', { formMethod: 'dialog' })).toEqual({ formMethod: 'dialog' });
+    expect(withoutEditorSurfaceProps('button', { formmethod: 'DIALOG' })).toEqual({ formmethod: 'DIALOG' });
+    expect(withoutEditorSurfaceProps('button', { formMethod: 'post' })).toEqual({});
+    expect(withoutEditorSurfaceProps('button', { formMethod: ' dialog ' })).toEqual({});
+    expect(withoutEditorSurfaceProps('button', { formAction: 'dialog' })).toEqual({});
+  });
+
+  function submitted(formHtml: string, submitterId?: string): SubmitEvent {
+    document.body.innerHTML = formHtml;
+    const form = document.querySelector('form') as HTMLFormElement;
+    const submitter = submitterId ? (document.getElementById(submitterId) as HTMLElement) : null;
+    const event = new SubmitEvent('submit', { bubbles: true, cancelable: true, submitter });
+    form.dispatchEvent(event);
+    return event;
+  }
+
+  it("reads the method as the browser does: the submitter's formmethod first, any case, unknown is get", () => {
+    expect(submitMethod(submitted('<form method="DIALOG"></form>'))).toBe('dialog');
+    expect(submitMethod(submitted('<form method="dialog"><button id="b" formmethod="post"></button></form>', 'b'))).toBe('post');
+    expect(submitMethod(submitted('<form><button id="b" formmethod="Dialog"></button></form>', 'b'))).toBe('dialog');
+    expect(submitMethod(submitted('<form method="put"></form>'))).toBe('get');
+    expect(submitMethod(submitted('<form method=" dialog "></form>'))).toBe('get');
+  });
+
+  it('refuses every submit but a dialog one', () => {
+    const refused = (event: SubmitEvent) => {
+      const preventDefault = vi.fn();
+      refuseSubmit({ preventDefault, nativeEvent: event });
+      return preventDefault.mock.calls.length > 0;
+    };
+    expect(refused(submitted('<form method="dialog"></form>'))).toBe(false);
+    expect(refused(submitted('<form><button id="b" formmethod="dialog"></button></form>', 'b'))).toBe(false);
+    expect(refused(submitted('<form></form>'))).toBe(true);
+    expect(refused(submitted('<form method="dialog"><button id="b" formmethod="get"></button></form>', 'b'))).toBe(true);
+    // A call without the native event, as before, still refuses.
+    const preventDefault = vi.fn();
+    refuseSubmit({ preventDefault });
+    expect(preventDefault).toHaveBeenCalledOnce();
   });
 });
