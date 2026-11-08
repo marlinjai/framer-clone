@@ -3,7 +3,7 @@ type: plan
 status: draft
 date: 2026-11-08
 title: "Lumitra FX moves into Lumitra Sites: the WebGL effects engine becomes an FX scene block"
-summary: "Marlin decided on 2026-11-08 that Lumitra FX, the owned WebGL effects engine (god rays, bloom, noise fields, gradients, grain; today the private package @lumitra-web/fx in the lumitra-web repo, whose only consumer is the lumitra.co hub hero), belongs in Lumitra Sites (framer-clone). This plan copies the engine into framer-clone as an internal module, adds an `FX scene` node (a marked div with the scene as data, rendered by a lazy client island only where one is on the page), generates its properties panel from the engine's own parameter schema in place of the leva tuning panel, teaches the AI generator and the agent plugin about it, and proves it pixel for pixel against lumitra.co before lumitra.co itself moves. lumitra-web keeps a frozen copy and lumitra.co and services.lumitra.co keep running untouched until Marlin approves the apex move. Supersedes the 2026-06-27 decision (D4) that FX would move into the lumitra-studio monorepo. Eight slices, about 17 to 24 agent days."
+summary: "Marlin decided on 2026-11-08 that Lumitra FX, the owned WebGL effects engine (god rays, bloom, noise fields, gradients, grain; today the private package @lumitra-web/fx in the lumitra-web repo, whose only consumer is the lumitra.co hub hero), belongs in Lumitra Sites (framer-clone). This plan copies the engine into framer-clone as an internal module, adds an `FX scene` node (a marked div with the scene as data, rendered by a lazy client island only where one is on the page), generates its properties panel from the engine's own parameter schema in place of the leva tuning panel, teaches the AI generator and the agent plugin about it, and proves it pixel for pixel against lumitra.co before lumitra.co itself moves. lumitra-web keeps a frozen copy and lumitra.co and services.lumitra.co keep running untouched until Marlin approves the apex move. Supersedes the 2026-06-27 decision (D4) that FX would move into the lumitra-studio monorepo. Eight slices, about 17 to 24 agent days. Marlin also decided on 2026-11-08 (option B) that services.lumitra.co is rebuilt in Sites as well and lumitra-web is retired once both hosts run on Sites; the retirement sequence is part of this plan."
 tags: [framer-clone, lumitra-sites, fx, webgl, three-js, react-three-fiber, primitives, migration, lumitra-web]
 projects: [framer-clone, lumitra-web, knowledge-base]
 ---
@@ -40,9 +40,13 @@ Why, from the evidence gathered for this plan:
    schema that already drives the editor, serialization and the runtime from one source
    (`packages/fx/src/types.ts`, `registry.ts`, `serialize.ts`). That is exactly the shape a Sites node stores.
 
-**Not decided by this plan, and not assumed:** whether services.lumitra.co is kept, whether lumitra-web is retired, and
-when lumitra.co's domain points at Sites. The agent plugin plan already holds the domain move as Marlin's yes. See
-"For Marlin to decide".
+**Decided later the same day (2026-11-08, option B of "For Marlin to decide"):** services.lumitra.co is rebuilt in Sites
+too, and lumitra-web is retired once lumitra.co and services.lumitra.co both run on Sites. Why: it ends a second Next.js
+app, container image and deploy pipeline that would otherwise exist for one German one-pager, and the services page (a
+pitch plus an offer ladder) is what Sites builds. See "Retiring lumitra-web" below.
+
+**Still not decided here:** when lumitra.co's domain points at Sites. The agent plugin plan holds that as Marlin's yes,
+and the same applies to services.lumitra.co.
 
 ## Current state (verified 2026-11-08)
 
@@ -234,12 +238,35 @@ Each slice is one pull request, green alone. Sizes are judgement in agent days.
 
 Total about 17 to 24 agent days. F1 to F4 can run as one worker in sequence; F5 and F6 can run in parallel after F3.
 
-Then, outside this plan's build and only with Marlin's yes:
+## Retiring lumitra-web (decided 2026-11-08, option B)
 
-- **Apex cutover** (the agent plugin plan's gated step): lumitra.co and www.lumitra.co move from the Coolify app
-  `lumitra-web` to `framer-clone` as a custom domain. services.lumitra.co stays on `lumitra-web`, which keeps running.
-- **Cleanup in lumitra-web**, gated on the services question below: remove `packages/fx`, the hub routes and the `/fx`
-  demo routes, or retire the repo.
+lumitra-web serves ten pages today (checked 2026-11-08): the English hub `/`, `/terms`; the German `/de`, `/impressum`,
+`/datenschutz`; the noindexed demos `/fx` and `/fx/gallery`; and on services.lumitra.co the pitch `/`, the offer ladder
+`/angebot` and the ArboSano offer `/angebot/arbosano` (offer content typed in `src/lib/offers.ts`, 369 lines), plus
+`/api/health`. Each moves into Sites or is dropped, then the app is switched off.
+
+| # | Step | What it does | Depends on | Acceptance | Gate |
+|---|---|---|---|---|---|
+| R1 | `hub-in-sites` | The new lumitra.co site in Sites (the agent plugin plan's step 6) carries every hub page: `/`, `/terms`, `/de`, `/impressum`, `/datenschutz`, with the FX hero from F8, the same titles, descriptions, `lang` per page and the same addresses. `/fx` and `/fx/gallery` are dropped: the presets live in the Sites palette now | F8 | A page-by-page check of title, description, canonical address and visible text against the live lumitra.co, recorded in the build log | none |
+| R2 | `services-in-sites` | A second Sites site for services.lumitra.co with `/`, `/angebot`, `/angebot/arbosano`, rebuilt from the current pages and `src/lib/offers.ts`, German, indexed, on a sites.lumitra.co address first. The open copy and booking items carried over from lumitra-web's roadmap (below) are done here, not in lumitra-web | Sites custom domains (live) | Same page-by-page check against live services.lumitra.co | Marlin's plain-German copy decisions, already his on lumitra-web's roadmap |
+| R3 | `apex-cutover` | lumitra.co and www.lumitra.co move from the Coolify app `lumitra-web` to `framer-clone` as custom domains; `www` keeps its 301 to the apex | R1 | Browser proof on both hosts; search console sees no new 404s for a week | Marlin's yes (agent plugin plan) |
+| R4 | `services-cutover` | services.lumitra.co moves the same way | R2 | Browser proof; no new 404s for a week | Marlin's yes, one line with rollback |
+| R5 | `lumitra-web-off` | Stop the Coolify app `lumitra-web` (kept, not deleted), remove the `lumitra-web` health monitor, and archive the GitHub repo (read-only, restorable) | R3 and R4 held for 14 days | Both hosts still answer from framer-clone; the stopped app can be started again | One line with rollback, as a production change |
+| R6 | `lumitra-web-removed` | Delete the stopped Coolify app and its images, remove `infra/deployments/lumitra-web` from Terraform, update the knowledge-base package naming row and the agent fleet's project list | R5 held for 30 days | `terraform plan` shows only the removal; nothing references lumitra-web | One line with rollback (the archived repo rebuilds the image) |
+
+Carried over from lumitra-web's `ROADMAP.md` into R2 on 2026-11-08 (their home is now this plan and its roadmap line):
+
+- The German Mittelstand-KI copy pass for services.lumitra.co: the package content (scope, deliverables, Ablauf, FAQ)
+  wired into the offer pages, buyer-facing copy de-jargonized (no "Souveränität" as a headline word, no RAG, LLM or
+  backend jargon), and the user interface audit's high-impact fixes (real proof of the live product, a redesigned
+  guarantee, contrast, a real booking link). The old branch `feat/mittelstand-ki-positioning` (`d0ad640`) is source
+  material only. Needs Marlin's plain-German copy decisions.
+- Two human-sourced values before the booking and payment path works: the booking address (Lumitra Booking at
+  booking.lumitra.co is the natural choice now that it exists) and a Stripe payment link for the 50 percent deposit on the
+  consolidated Lumitra Stripe account.
+
+Also carried by R1, owned elsewhere: the knowledge-base roadmap line on the hub's "Built by" portrait and the privacy
+page's log-retention number (decided 2026-11-08, being worked by another session); the rebuilt pages take those values.
 
 ## Rollback
 
@@ -249,7 +276,10 @@ Then, outside this plan's build and only with Marlin's yes:
 | F3 onward on published sites | The island misbehaves on a customer page | The box's CSS background and children are what the server sends, so removing `FxIsland` from `renderPublishedPage` (one line, a revert) returns every FX page to its static state without touching stored data |
 | F8 | The Sites hero does not match | Nothing to roll back: the comparison runs on a sites.lumitra.co address while lumitra.co stays on lumitra-web |
 | Apex cutover | lumitra.co misbehaves on Sites | Put `https://lumitra.co,https://www.lumitra.co` back on the `lumitra-web` Coolify app's domain list; that app stays deployed and healthy, with its frozen FX, until the cleanup step. DNS needs no change when both apps run on the same server; if a record does change, the previous one is noted in the cutover step |
-| Cleanup | Removed too early | Not started until the cutover has held for a period Marlin names with his services decision |
+| R2 | The services rebuild does not match | Nothing to roll back: it runs on a sites.lumitra.co address while services.lumitra.co stays on lumitra-web |
+| R4 services cutover | services.lumitra.co misbehaves on Sites | Put `https://services.lumitra.co` back on the `lumitra-web` app's domain list; the app is still running |
+| R5 app stopped | Something still needed lumitra-web | Start the stopped Coolify app and move the domain back; unarchive the repo |
+| R6 removed | Needed after removal | Unarchive the repo, re-apply its Terraform, redeploy the image from the repo's last commit |
 
 ## Visual verification
 
@@ -299,7 +329,7 @@ Then, outside this plan's build and only with Marlin's yes:
 
 ## For Marlin to decide
 
-One question, needed only before the final cleanup step, not before any slice:
+**Answered by Marlin on 2026-11-08: option B,** rebuild services in Sites and retire lumitra-web. The question as asked:
 
 - **What lumitra-web becomes once lumitra.co moves to Sites.** Option A: lumitra-web keeps serving services.lumitra.co
   alone; FX, the hub and the `/fx` demos are removed from it, and the services copy work on its roadmap continues there.
