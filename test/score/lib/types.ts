@@ -94,6 +94,7 @@ export const GAPS = {
   'panel-no-tag-choice': 'The tag picker of the Custom section does not offer SVG and MathML elements.',
   'ai-rule-refused': 'A rule that reads what a visitor does or looks beyond its node: stored and rendered, but refused to the generator on purpose, because a generation must not be able to report a visitor. See "AI output" in the selector styling plan.',
   'ai-motion-refused': 'Motion a generation may not start: an `every` trigger is refused to the generator, so nothing it makes rotates or ticks by itself unasked. A safety decision, see "AI output" in the behaviour model plan.',
+  'ai-trigger-refused': 'A trigger the model writes itself runs on a person\'s click, key or input only, and never waits (`delay`) or fires another trigger (`emit`): a trigger on load, on scroll into view, on focus, on a media or animation event or on a custom event is refused to the generator, so nothing it writes runs without a person. A safety decision from the security review of slice B12, see "Decided in slice B12" in the behaviour model plan. Presets keep their own triggers.',
   'ai-style-allowlist': 'The AI generator validator drops a CSS property it does not know.',
   'ai-tag-allowlist': 'The AI generator validator refuses this tag on purpose: blocked in every renderer, or a raw form control, which only works through the form presets.',
   'ai-attribute-allowlist': 'The AI generator validator refuses this attribute on purpose, or a tree lost a raw form control (see the tag gap).',

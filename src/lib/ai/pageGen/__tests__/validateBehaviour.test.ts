@@ -18,8 +18,8 @@ import { toolbar } from '@/lib/behaviour/presets/toolbar';
 import { tooltip } from '@/lib/behaviour/presets/tooltip';
 import { treegrid, treeview } from '@/lib/behaviour/presets/tree';
 import type { PresetNode } from '@/lib/behaviour/presets';
-import { deriveBreakpointKeys } from '../schema';
-import { MAX_GENERATED_PRESETS, MAX_GENERATED_TRIGGERS, behaviourDocs } from '../promptSections/behaviour';
+import { GENERATION_LIMITS, deriveBreakpointKeys } from '../schema';
+import { GENERATED_TRIGGER_EVENTS, MAX_GENERATED_PRESETS, MAX_GENERATED_TRIGGERS, behaviourDocs } from '../promptSections/behaviour';
 import { buildSchemaDocs } from '../schemaDocs';
 import { validateGeneration, type GeneratedNodeSnapshot } from '../validate';
 
@@ -148,6 +148,60 @@ describe('behaviour the model writes itself', () => {
     expect(warnings.join(' ')).toContain('every is refused');
   });
 
+  // Security review of slice B12: a model-written trigger runs only on what a person does.
+  it.each(['page-ready', 'view-enter', 'view-leave', 'custom:next', 'focus', 'mouseenter'])(
+    'refuses a trigger the model wrote on %s: nothing it writes runs without a person',
+    (event) => {
+      const { nodes, warnings } = run([reveal({ on: [{ id: 'auto', on: event, do: [{ toggle: 'open' }] }] })]);
+      expect(triggersOf(nodes[0].children[0])).toEqual([]);
+      expect(warnings.join(' ')).toContain(`runs on a person's click, key or input only: "${event}" is refused`);
+    },
+  );
+
+  it('refuses a dialog the model opens on load, with any text in it', () => {
+    const { nodes, warnings } = run([{
+      type: 'div',
+      children: [
+        { id: 'gate', type: 'dialog', children: [{ type: 'p', props: { children: 'Your session expired, sign in again' } }] },
+        { type: 'div', props: { behaviour: { on: [
+          { id: 'load', on: 'page-ready', do: [{ dialog: 'gate', op: 'showModal' }] },
+          { id: 'seen', on: 'view-enter', do: [{ dialog: 'gate', op: 'showModal' }] },
+        ] } } },
+      ],
+    }]);
+    const all = (node: GeneratedNodeSnapshot): GeneratedNodeSnapshot[] => [node, ...node.children.flatMap(all)];
+    expect(all(nodes[0]).flatMap(triggersOf)).toEqual([]);
+    expect(warnings.filter((w) => w.includes('is refused'))).toHaveLength(2);
+  });
+
+  it('refuses a delay and an emit in a trigger the model wrote, so it builds no timer of its own', () => {
+    const { nodes, warnings } = run([reveal({ on: [
+      { id: 'later', on: 'click', do: [{ delay: 1000, do: [{ toggle: 'open' }] }] },
+      { id: 'chain', on: 'click', do: [{ toggle: 'open' }, { emit: 'next' }] },
+    ] })]);
+    expect(triggersOf(nodes[0].children[0])).toEqual([]);
+    expect(warnings.join(' ')).toContain('delay is refused');
+    expect(warnings.join(' ')).toContain('emit is refused');
+    // The loop itself, a page-ready that waits and emits and a custom event that does it again:
+    // every link of it is refused, so nothing the model wrote advances the page by itself.
+    const loop = run([reveal({ on: [
+      { id: 'start', on: 'page-ready', do: [{ delay: 1000, do: [{ toggle: 'open' }, { emit: 'tick' }] }] },
+      { id: 'again', on: 'custom:tick', do: [{ delay: 1000, do: [{ toggle: 'open' }, { emit: 'tick' }] }] },
+    ] })]);
+    expect(triggersOf(loop.nodes[0].children[0])).toEqual([]);
+    expect(loop.warnings.filter((w) => w.includes('is refused'))).toHaveLength(2);
+  });
+
+  it('keeps a trigger the model wrote on a key, an input or a change', () => {
+    for (const event of ['keydown', 'keyup', 'input', 'change']) {
+      // Typing repeats, so the parser takes only what repeating leaves unchanged there.
+      const trigger = { id: 'act', on: event, do: [{ set: 'open', value: true }] };
+      const { nodes, warnings } = run([reveal({ on: [trigger] })]);
+      expect(triggersOf(nodes[0].children[0])).toEqual([trigger]);
+      expect(warnings).toEqual([]);
+    }
+  });
+
   it('takes a site path or an anchor for navigate, never an address off the site', () => {
     const go = (href: string) => triggersOf(run([{
       type: 'button',
@@ -177,6 +231,13 @@ describe('behaviour the model writes itself', () => {
     ]);
     for (const node of nodes) expect(node.props).not.toHaveProperty('customCode');
     expect(warnings.filter((w) => w.includes('customCode dropped: custom code is never written by a generator'))).toHaveLength(2);
+  });
+
+  it('drops customCode in any spelling', () => {
+    const spellings = ['customcode', 'CustomCode', 'CUSTOMCODE', 'custom_code', 'custom-code'];
+    const { nodes, warnings } = run(spellings.map((key) => ({ type: 'div', props: { [key]: { sha256: 'a'.repeat(64), title: 'Calculator' } } })));
+    nodes.forEach((node, i) => expect(node.props).not.toHaveProperty(spellings[i]));
+    for (const key of spellings) expect(warnings).toContainEqual(expect.stringContaining(`${key} dropped: custom code is never written by a generator`));
   });
 
   it('counts stored behaviour as a rule for an image from another host', () => {
@@ -294,6 +355,55 @@ describe('behaviour presets the model asks for', () => {
     expect(out.result.nodes[0].children).toEqual([]);
     expect(out.result.warnings.join(' ')).toContain('preset dropped, its behaviour does not hold here');
     expect(out.result.stats.nodeCount).toBe(1);
+  });
+
+  it('keeps a preset\'s own triggers on events the model may not write itself', () => {
+    const { nodes, warnings } = run([{ preset: 'tooltip', options: { label: 'Save', text: 'Saves the page' } }]);
+    const all = (node: GeneratedNodeSnapshot): GeneratedNodeSnapshot[] => [node, ...node.children.flatMap(all)];
+    const events = all(nodes[0]).flatMap(triggersOf).map((t) => t.on as string);
+    expect(events.some((event) => !GENERATED_TRIGGER_EVENTS.has(event))).toBe(true);
+    expect(warnings).toEqual([]);
+  });
+
+  it.each(['button', 'a', 'label', 'p', 'h2', 'summary'])('keeps a preset out of <%s>, at any depth', (tag) => {
+    const request = { preset: 'menu-button', items: ['Copy', 'Paste'], options: { label: 'Actions' } };
+    const host = (children: unknown[]) => ({ type: tag, props: tag === 'a' ? { href: '/x' } : tag === 'button' ? { type: 'button' } : {}, children });
+    const direct = run([tag === 'summary' ? { type: 'details', children: [host([request])] } : host([request])]);
+    const hostOf = (nodes: GeneratedNodeSnapshot[]) => (nodes[0].type === 'details' ? nodes[0].children[0] : nodes[0]);
+    expect(hostOf(direct.nodes).children).toEqual([]);
+    expect(direct.warnings.join(' ')).toContain(`cannot sit inside <${tag}>`);
+    const deep = run([tag === 'summary'
+      ? { type: 'details', children: [host([{ type: 'span', children: [request] }])] }
+      : host([{ type: 'span', children: [request] }])]);
+    expect(hostOf(deep.nodes).children[0].children).toEqual([]);
+    expect(deep.warnings.join(' ')).toContain(`cannot sit inside <${tag}>`);
+  });
+
+  it('places a preset inside a section, a list item or a div', () => {
+    for (const tag of ['section', 'div', 'article']) {
+      const { nodes, warnings } = run([{ type: tag, children: [{ preset: 'menu-button', items: ['Copy', 'Paste'], options: { label: 'Actions' } }] }]);
+      expect(nodes[0].children).toHaveLength(1);
+      expect(warnings).toEqual([]);
+    }
+  });
+
+  it('says how many nodes the model wrote when it is over the limit, a dropped preset included', () => {
+    // The preset comes first so it is counted, and the model's state above it makes it not hold:
+    // it is dropped after the limit was decided, and the error must not count without it.
+    let n = 0;
+    const out = validateGeneration({
+      nodes: [
+        {
+          type: 'div',
+          props: { behaviour: { state: [{ id: 'tabs-id2-active', name: 'Taken', type: 'number', initial: 0 }] } },
+          children: [{ preset: 'tabs', items: [{ title: 'One', body: 'First' }, { title: 'Two', body: 'Second' }], options: { label: 'S' } }],
+        },
+        ...Array.from({ length: GENERATION_LIMITS.maxNodes + 20 }, (_, i) => ({ type: 'p', props: { children: `Filler ${i}` } })),
+      ],
+    }, { breakpoints, newId: () => `id${(n += 1)}` });
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.errors).toContain(`${GENERATION_LIMITS.maxNodes + 1} nodes exceed the limit of ${GENERATION_LIMITS.maxNodes}: produce a smaller page`);
   });
 
   it('keeps a preset out of svg', () => {

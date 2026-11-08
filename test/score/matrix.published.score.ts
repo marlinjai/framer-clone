@@ -11,7 +11,7 @@ import { cssPropertyName, maxWidthBelow } from '@/lib/responsive/responsiveCss';
 import { CSS_PROP_SET } from '@/lib/styles/cssPropSet';
 import { deriveBreakpointKeys } from '@/lib/ai/pageGen/schema';
 import { TAUGHT_RULE_ROWS } from '@/lib/ai/pageGen/promptSections/rules';
-import { TAUGHT_EVENT_ROWS } from '@/lib/ai/pageGen/promptSections/behaviour';
+import { PERSON_TRIGGER_REFUSALS, TAUGHT_EVENT_ROWS } from '@/lib/ai/pageGen/promptSections/behaviour';
 import { stableStringify } from '@/lib/ai/serializers/normalize';
 import { validateGeneration } from '@/lib/ai/pageGen/validate';
 import { isBlockedTag } from '@/lib/renderer/blockedNodes';
@@ -201,9 +201,13 @@ function triggersIn(root: Made | StoredProofNode | undefined): Array<{ tag: stri
  * events.score.ts, the trigger on that event included, and must give it back. Its trigger
  * has to come back unchanged on the same tag, and so does every other trigger the proof
  * stores, since the row's cause depends on them. Acceptance alone earns the cell: the prompt
- * teaches only a press, so every other row says `accepted, not taught`. A row with no proof
- * stays red for the reason the other columns give.
+ * teaches only a press, so every other row says `accepted, not taught`. A trigger the model
+ * writes runs on a person's click, key or input only, so a row whose proof stores any other
+ * trigger is `ai-trigger-refused`, a safety decision. A row with no proof stays red for the
+ * reason the other columns give.
  */
+const TRIGGER_REFUSALS: readonly string[] = Object.values(PERSON_TRIGGER_REFUSALS);
+
 function generatedEvent(event: string, key: string): Cell {
   const proof = EVENT_PROOFS[event];
   if (!proof) return fail('blocked-event-handlers', NOT_PROVEN[event] ?? 'no proof yet');
@@ -223,6 +227,8 @@ function generatedEvent(event: string, key: string): Cell {
   // The proof's own `data-t` markers are refused too, and say nothing about the row.
   const lost = made.warnings.find((warning) => /behaviour|tag "|is a preset/.test(warning)) ?? made.warnings.find((warning) => !warning.includes('"data-t"'));
   if (!findNode(made.node, host ?? '')) return fail('ai-tag-allowlist', lost);
+  const refused = made.warnings.find((warning) => TRIGGER_REFUSALS.some((reason) => warning.includes(reason)));
+  if (refused) return fail('ai-trigger-refused', refused);
   return fail('blocked-event-handlers', lost ?? 'the generator did not keep the trigger');
 }
 

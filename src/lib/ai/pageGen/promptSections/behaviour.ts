@@ -15,7 +15,10 @@
 // have been written by a prompt injection in a brief:
 //
 //   - Nothing moves by itself unasked: an `every` trigger is refused, and a carousel is
-//     never generated with a rotation.
+//     never generated with a rotation. A trigger the model writes itself runs on a
+//     person's click, key or input only (GENERATED_TRIGGER_EVENTS) and never holds a
+//     `delay` or an `emit`, so it cannot open a dialog on load or advance the page by
+//     itself. A preset's own triggers are the palette's and keep their events.
 //   - `navigate` takes a site path or an anchor only. An address that leaves the site is
 //     a person's choice in the panel (decision M6).
 //   - `customCode` is never written by a generator, only by a person through the guarded
@@ -48,6 +51,18 @@ export const BEHAVIOUR_PROP = 'behaviour';
 /** The node prop of a custom code block. A generator never writes one. */
 export const CUSTOM_CODE_PROP = 'customCode';
 
+const CUSTOM_CODE_SPELLING = CUSTOM_CODE_PROP.toLowerCase();
+
+/**
+ * Whether a key or a value names custom code however it is spelled: `customCode`,
+ * `customcode`, `CustomCode`, `custom_code`, `custom-code` and ` customCode ` all do. A
+ * guard that matched one spelling would hold only as long as nothing downstream ever
+ * folds case or separators.
+ */
+export function namesCustomCodeProp(name: unknown): boolean {
+  return typeof name === 'string' && name.toLowerCase().replace(/[^a-z0-9]/g, '') === CUSTOM_CODE_SPELLING;
+}
+
 /** Most triggers the model may write itself in one generation; the rest are dropped with a warning. */
 export const MAX_GENERATED_TRIGGERS = 24;
 
@@ -78,11 +93,41 @@ function actionsOf(actions: readonly Action[]): Action[] {
   return actions.flatMap((action) => ('delay' in action ? [action, ...actionsOf(action.do)] : [action]));
 }
 
-/** Why the generator may not keep this parsed trigger, or null. */
-export function generatedTriggerRefusal(trigger: Trigger): string | null {
+/**
+ * The events a trigger the model wrote itself may run on: what a person does on purpose
+ * to the element. Anything else fires without them (`page-ready`, `view-enter`,
+ * `view-leave`, `every`, focus and load events, `custom:*` a timer or another trigger can
+ * emit), which is how a generation would open a dialog nobody asked for on load, or build
+ * a page that advances itself.
+ */
+export const GENERATED_TRIGGER_EVENTS: ReadonlySet<string> = new Set(['click', 'keydown', 'keyup', 'input', 'change']);
+
+/** What a refusal of a trigger the model wrote says, beyond the refusals presets share. */
+export const PERSON_TRIGGER_REFUSALS = {
+  event: "a generated trigger runs on a person's click, key or input only",
+  delay: 'a generated trigger runs at once: delay is refused',
+  emit: 'a generated trigger fires no other trigger: emit is refused',
+} as const;
+
+/**
+ * Why the generator may not keep this parsed trigger, or null. A preset's triggers are the
+ * palette's own and only lose `every` and a `navigate` that leaves the site; a trigger the
+ * model wrote also runs only on a person's event, and never waits (`delay`) or fires
+ * another trigger (`emit`), so nothing it writes runs without a person.
+ */
+export function generatedTriggerRefusal(trigger: Trigger, fromPreset = false): string | null {
   if (trigger.on === 'every') return 'nothing generated runs on a timer: every is refused';
-  for (const action of actionsOf(trigger.do)) {
+  const actions = actionsOf(trigger.do);
+  for (const action of actions) {
     if ('navigate' in action && leavesSite(action.navigate)) return 'a generated navigate goes to a site path or an anchor only';
+  }
+  if (fromPreset) return null;
+  if (!GENERATED_TRIGGER_EVENTS.has(trigger.on)) {
+    return `${PERSON_TRIGGER_REFUSALS.event}: "${trigger.on}" is refused`;
+  }
+  for (const action of actions) {
+    if ('delay' in action) return PERSON_TRIGGER_REFUSALS.delay;
+    if ('emit' in action) return PERSON_TRIGGER_REFUSALS.emit;
   }
   return null;
 }

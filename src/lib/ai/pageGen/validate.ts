@@ -139,7 +139,7 @@ import type { PresetKind, PresetNode } from '@/lib/behaviour/presets';
 import { getComponentEntry } from '@/lib/componentRegistry';
 import {
   BEHAVIOUR_PROP,
-  CUSTOM_CODE_PROP,
+  namesCustomCodeProp,
   CUSTOM_CODE_REASON,
   MAX_GENERATED_PRESETS,
   MAX_GENERATED_TRIGGERS,
@@ -491,6 +491,15 @@ function attributeProblem(tag: string, name: string, text: string, namespace: Ma
   return undefined;
 }
 
+/**
+ * Elements a behaviour preset may not sit inside, at any depth: interactive content (a
+ * preset holds buttons and links, and one control inside another is invalid HTML) and
+ * elements whose content is phrasing only (a preset holds lists and panels, which the HTML
+ * parser moves out of a p or a heading). Either way the server renders markup the browser
+ * reads differently, and hydration of the published page breaks.
+ */
+const PRESET_CLOSED_TAGS: ReadonlySet<string> = new Set(['a', 'button', 'label', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'summary']);
+
 class Validator {
   readonly warnings: string[] = [];
   readonly errors: string[] = [];
@@ -662,10 +671,15 @@ class Validator {
     depth: number,
     parentId: string | undefined,
     namespace: MarkupNamespace,
+    closedAncestor: string | undefined,
   ): GeneratedNodeSnapshot[] {
     const name = raw.preset as string;
     if (namespace !== 'html') {
       this.warn(path, `preset "${name}" cannot sit inside svg or math, dropped`);
+      return [];
+    }
+    if (closedAncestor !== undefined) {
+      this.warn(path, `preset "${name}" cannot sit inside <${closedAncestor}>, dropped: its buttons, lists and panels are not allowed there`);
       return [];
     }
     for (const key of Object.keys(raw)) {
@@ -1100,7 +1114,18 @@ class Validator {
     return [snapshot];
   }
 
-  node(raw: unknown, path: string, depth: number, parentId?: string, namespace: MarkupNamespace = 'html'): GeneratedNodeSnapshot[] {
+  /**
+   * One node and its subtree. `closedAncestor` is the nearest ancestor tag a preset may not
+   * sit inside (PRESET_CLOSED_TAGS), since a preset's markup there is invalid HTML.
+   */
+  node(
+    raw: unknown,
+    path: string,
+    depth: number,
+    parentId?: string,
+    namespace: MarkupNamespace = 'html',
+    closedAncestor?: string,
+  ): GeneratedNodeSnapshot[] {
     if (!isPlainObject(raw)) {
       this.fail(path, 'node must be an object');
       return [];
@@ -1112,7 +1137,7 @@ class Validator {
       return [];
     }
     const behaviourPreset = behaviourPresetOf(raw.preset);
-    if (behaviourPreset) return this.presetRequest(behaviourPreset, raw, path, depth, parentId, namespace);
+    if (behaviourPreset) return this.presetRequest(behaviourPreset, raw, path, depth, parentId, namespace, closedAncestor);
     for (const key of Object.keys(raw)) {
       if (!NODE_KEYS.has(key) && !OWNED_KEYS.has(key)) this.warn(path, `unknown key "${key}" ignored`);
     }
@@ -1180,8 +1205,8 @@ class Validator {
         rawEffects = value;
         continue;
       }
-      if (key === CUSTOM_CODE_PROP) {
-        this.warn(path, `customCode dropped: ${CUSTOM_CODE_REASON}`);
+      if (namesCustomCodeProp(key)) {
+        this.warn(path, `${key} dropped: ${CUSTOM_CODE_REASON}`);
         continue;
       }
       if (key === BEHAVIOUR_PROP) {
@@ -1398,7 +1423,7 @@ class Validator {
           this.warn(childPath, `a #text node cannot sit directly inside <${type}>, dropped`);
           return;
         }
-        children.push(...this.node(child, childPath, depth + 1, id, childNamespace(type, namespace)));
+        children.push(...this.node(child, childPath, depth + 1, id, childNamespace(type, namespace), closedAncestor ?? (PRESET_CLOSED_TAGS.has(type) ? type : undefined)));
       });
       this.addToCartIntoSelector(path, children);
     }
@@ -1498,8 +1523,10 @@ function withoutNodes(nodes: GeneratedNodeSnapshot[], ids: ReadonlySet<string>):
  * node() untouched; here references follow the fresh ids, the whole forest goes through
  * `readBehaviourTree` (the one trust boundary, src/lib/behaviour/format.ts), and what it
  * refuses is dropped with a warning. On top, what only a generator may not do: a trigger on
- * a timer, a `navigate` that leaves the site, and more than MAX_GENERATED_TRIGGERS triggers
- * the model wrote itself. A preset's triggers are the palette's and do not count, and a
+ * a timer, a `navigate` that leaves the site, a trigger the model wrote on anything but a
+ * person's click, key or input or holding a `delay` or an `emit` (generatedTriggerRefusal),
+ * and more than MAX_GENERATED_TRIGGERS triggers the model wrote itself. A preset's triggers
+ * are the palette's, keep their own events and do not count, and a
  * preset with any part refused is dropped whole, since half a tab list is something nobody
  * wrote.
  *
@@ -1546,7 +1573,7 @@ function applyGeneratedBehaviour(nodes: GeneratedNodeSnapshot[], v: Validator): 
       }
       const kept: StoredBehaviour = { ...parsed };
       const triggers = (parsed.on ?? []).filter((trigger) => {
-        const refusal = generatedTriggerRefusal(trigger);
+        const refusal = generatedTriggerRefusal(trigger, preset !== undefined);
         if (refusal) {
           v.warnings.push(`${node.label}: behaviour trigger "${trigger.id}" dropped: ${refusal}`);
           return false;
@@ -2051,13 +2078,16 @@ export function validateGeneration(raw: unknown, ctx: ValidateContext): Validati
   v.addToCartIntoSelector('nodes', parsed);
   // Decided before any svg is dropped: a page past the limit was cut short, and must not pass for being under it.
   const overLimit = v.nodeCount > GENERATION_LIMITS.maxNodes;
+  // Counted with it: a preset dropped below takes its nodes off v.nodeCount, and the error
+  // must say how many nodes the model wrote, not how many were left.
+  const writtenNodes = v.nodeCount;
   const placed = placeMapEmbeds(placeStickyCta(parsed, v, ctx.allowStickyCta === true), v, cleanMapText(ctx.mapAddress ?? undefined));
   const nodes = applyGeneratedBehaviour(dropExpandingSvgs(scopeIds(placed, v), v), v);
   gateStartValues(nodes, v);
   dropForeignAddresses(nodes, v, ctx.heldAddresses ?? new Set());
 
   if (overLimit) {
-    v.errors.push(`${v.nodeCount} nodes exceed the limit of ${GENERATION_LIMITS.maxNodes}: produce a smaller page`);
+    v.errors.push(`${writtenNodes} nodes exceed the limit of ${GENERATION_LIMITS.maxNodes}: produce a smaller page`);
   }
   if (v.errors.length === 0 && nodes.length === 0) {
     v.errors.push('nothing usable was left after removing disallowed nodes');

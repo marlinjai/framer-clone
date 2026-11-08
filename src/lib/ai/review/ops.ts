@@ -43,7 +43,7 @@ import { cssUrlsIn } from '@/lib/responsive/responsiveCss';
 import { GENERATION_LIMITS, isAcceptedStyleKey, isSafeSrc, styleKeyFrom } from '@/lib/ai/pageGen/schema';
 import { clampedZIndex, styleValueBreaksOut, styleValueProblem } from '@/lib/ai/pageGen/validate';
 import { motionValueProblem } from '@/lib/ai/pageGen/promptSections/rules';
-import { CUSTOM_CODE_PROP, CUSTOM_CODE_REASON } from '@/lib/ai/pageGen/promptSections/behaviour';
+import { CUSTOM_CODE_REASON, namesCustomCodeProp } from '@/lib/ai/pageGen/promptSections/behaviour';
 import { styleValueTell, textTell } from '@/lib/ai/pageGen/tells';
 import { REVIEW_LIMITS, type RejectedOp, type ReviewOp, type ReviewTreeNode } from './protocol';
 
@@ -93,12 +93,28 @@ export function indexReviewTree(tree: ReviewTreeNode): Map<string, IndexedNode> 
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 
-/** Whether an operation names custom code, as a key or as the property it writes, at any depth. */
-function namesCustomCode(value: unknown, depth = 0): boolean {
-  if (depth > 8 || !value || typeof value !== 'object') return false;
-  if (Array.isArray(value)) return value.some((entry) => namesCustomCode(entry, depth + 1));
-  return Object.entries(value).some(([key, entry]) =>
-    key === CUSTOM_CODE_PROP || (key === 'property' && entry === CUSTOM_CODE_PROP) || namesCustomCode(entry, depth + 1));
+/**
+ * Whether an operation names custom code, as a key or as the property it writes, at any
+ * depth and in any spelling (namesCustomCodeProp). Walked with a stack rather than by
+ * recursion, so no depth is too deep to look at and no nesting overflows the call stack.
+ */
+function namesCustomCode(value: unknown): boolean {
+  const pending: unknown[] = [value];
+  const seen = new Set<object>();
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (!current || typeof current !== 'object' || seen.has(current)) continue;
+    seen.add(current);
+    if (Array.isArray(current)) {
+      pending.push(...current);
+      continue;
+    }
+    for (const [key, entry] of Object.entries(current)) {
+      if (namesCustomCodeProp(key) || (key.toLowerCase() === 'property' && namesCustomCodeProp(entry))) return true;
+      pending.push(entry);
+    }
+  }
+  return false;
 }
 
 /** Why a style value is refused, or null when it is fine. */
