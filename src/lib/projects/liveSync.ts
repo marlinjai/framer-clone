@@ -166,7 +166,8 @@ export class LiveSync {
   private disposeVisibility: (() => void) | undefined;
   private disposeSettled: (() => void) | undefined;
   /** The newest version announced by another writer, with its event. */
-  private wanted: { version: number; event?: SiteVersionEvent } | undefined;
+  /** `retry`: an earlier fetch for it failed, so the copy that arrives is catch-up, never a live adoption. */
+  private wanted: { version: number; event?: SiteVersionEvent; retry?: boolean } | undefined;
   private fetching = false;
   /** Something was announced while a fetch was out: one more fetch follows it. */
   private again = false;
@@ -400,6 +401,8 @@ export class LiveSync {
           answer = await this.deps.fetchDocument(`${this.base}/document`, knownServerVersion(this.projectId));
         } catch {
           // A network failure: the stream reconnects (or the poll comes back) and asks again.
+          // That later copy is catch-up: it appears at once, never as the agent's live write.
+          if (this.wanted) this.wanted = { ...this.wanted, retry: true };
           return;
         }
         if (this.phaseValue === 'stopped') return;
@@ -418,7 +421,9 @@ export class LiveSync {
           const wanted = this.wanted;
           const covers = !!wanted && answer.body.version >= wanted.version;
           if (covers) this.wanted = undefined;
-          this.take(answer.body, covers ? wanted?.event : undefined);
+          this.take(answer.body, covers ? wanted?.event : undefined, undefined, !wanted?.retry);
+        } else if (this.wanted && answer.status !== 304) {
+          this.wanted = { ...this.wanted, retry: true };
         }
         // 304: nothing newer than this tab's copy. Anything else: a passing
         // failure; the next event or poll asks again.
@@ -442,7 +447,7 @@ export class LiveSync {
   }
 
   /** A fetched copy: adopt it now, or hold it for the person. */
-  private take(body: { version: number; snapshot: ProjectSnapshotOut }, event?: SiteVersionEvent, heldLabel?: string) {
+  private take(body: { version: number; snapshot: ProjectSnapshotOut }, event?: SiteVersionEvent, heldLabel?: string, live = true) {
     const known = knownServerVersion(this.projectId);
     if (known !== undefined && body.version <= known) return;
     const label = heldLabel ?? adoptionLabel(event);
@@ -456,7 +461,7 @@ export class LiveSync {
       autosavePhase !== 'publishing' &&
       isSaved(this.projectId, getSnapshot(project) as unknown as ProjectContent);
     if (!clean) {
-      this.held = { version: body.version, snapshot: body.snapshot, label, ...(event ? { event } : {}) };
+      this.held = { version: body.version, snapshot: body.snapshot, label, ...(event && live ? { event } : {}) };
       autosave?.noteChangedElsewhere(body.version);
       return;
     }
@@ -464,7 +469,7 @@ export class LiveSync {
     // has, reveals: a fetch that also brought other writers' versions (a burst
     // coalesced into one fetch, a poll after a failed fetch, a held copy replaced
     // by a newer one) would otherwise reveal their nodes as the agent's.
-    const exact = !!event && event.version === body.version && event.versionBefore === known;
+    const exact = live && !!event && event.version === body.version && event.versionBefore === known;
     this.adopt(body.version, body.snapshot, label, event, exact && revealsOnAdoption(event));
   }
 

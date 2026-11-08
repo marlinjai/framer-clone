@@ -198,8 +198,11 @@ html[data-pointer="touch"] [data-resize-direction] {
    4px rise over 180ms, ease-out, after its own delay (the inline
    --live-reveal-delay ComponentRenderer sets). `translate` rather than
    `transform`, so a node's own transform is never overridden; `backwards`
-   holds the start values only until the animation runs. Nothing moves under
-   reduced motion: the nodes appear at once. */
+   holds the start values only until the animation runs. A node with an
+   animation of its own authored never takes the attribute (ComponentRenderer),
+   so the two never fight over the `animation` properties. Nothing moves under
+   reduced motion: the nodes appear at once, and `!important` keeps an inline
+   animation from putting the motion back. */
 @keyframes fc-live-reveal {
   from {
     opacity: 0;
@@ -211,6 +214,6 @@ html[data-pointer="touch"] [data-resize-direction] {
 }
 @media (prefers-reduced-motion: reduce) {
   [data-live-reveal] {
-    animation: none;
+    animation: none !important;
   }
 }

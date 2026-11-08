@@ -199,6 +199,15 @@ const AgentPresenceLayer = observer(function AgentPresenceLayer() {
       const elements = targetElements(agent.target);
       for (const element of elements) measured.add(element);
       const move = moves.current.get(agent.agentId);
+      // The pill goes on the first frame that shows in the visible canvas (the
+      // first breakpoint may be scrolled out of it), else on the first.
+      const pillIndex = Math.max(
+        0,
+        elements.findIndex((el) => {
+          const r = el.getBoundingClientRect();
+          return (r.width > 0 || r.height > 0) && !!pillPlacement(frameBox(r), visible, { width: 0, height: 0 });
+        }),
+      );
       const moving = !immediate && !reduced && !!move && move.until > now;
       elements.forEach((element, index) => {
         const rect = element.getBoundingClientRect();
@@ -224,7 +233,7 @@ const AgentPresenceLayer = observer(function AgentPresenceLayer() {
         frame.style.height = `${box.height}px`;
         frame.style.opacity = agent.shown ? '1' : '0';
         let pill = frame.querySelector<HTMLDivElement>(`[${PRESENCE_LABEL_ATTR}]`);
-        if (index === 0) {
+        if (index === pillIndex) {
           if (!pill) {
             pill = document.createElement('div');
             pill.setAttribute(PRESENCE_LABEL_ATTR, '');
@@ -234,6 +243,8 @@ const AgentPresenceLayer = observer(function AgentPresenceLayer() {
           }
           // Plain text only.
           if (pill.textContent !== agent.label) pill.textContent = agent.label;
+          // Never wider than the visible canvas (it would run under a sidebar).
+          pill.style.maxWidth = `${Math.max(0, Math.min(240, visible.right - visible.left - 2 * PRESENCE_PILL_INSET))}px`;
           // Inside the visible canvas, never under a sidebar or the top bar.
           const size = pill.getBoundingClientRect();
           const place = pillPlacement(box, visible, { width: size.width, height: size.height || 20 });
@@ -292,7 +303,11 @@ const AgentPresenceLayer = observer(function AgentPresenceLayer() {
       if (e.animationName === REVEAL_KEYFRAMES) update(true);
     };
     document.addEventListener('animationend', onEnd);
-    return () => document.removeEventListener('animationend', onEnd);
+    document.addEventListener('animationcancel', onEnd);
+    return () => {
+      document.removeEventListener('animationend', onEnd);
+      document.removeEventListener('animationcancel', onEnd);
+    };
   }, [update]);
 
   // Camera moves (pan, zoom) and window resizes: redraw at once, without the move transition.
@@ -334,6 +349,18 @@ const AgentPresenceLayer = observer(function AgentPresenceLayer() {
       observer.disconnect();
       layout.current = null;
     };
+  }, [update]);
+
+  // Chrome that mounts or unmounts (the phone bar appears, the toolbar leaves) changes the visible canvas.
+  React.useEffect(() => {
+    if (typeof MutationObserver === 'undefined') return;
+    const isChrome = (node: Node) =>
+      node instanceof Element && (node.hasAttribute(EDITOR_CHROME_ATTR) || !!node.querySelector(`[${EDITOR_CHROME_ATTR}]`));
+    const observer = new MutationObserver((mutations) => {
+      if (mutations.some((m) => Array.from(m.addedNodes).some(isChrome) || Array.from(m.removedNodes).some(isChrome))) update(true);
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => observer.disconnect();
   }, [update]);
 
   return <div ref={containerRef} aria-hidden="true" className="pointer-events-none fixed inset-0" style={{ zIndex: 9 }} data-agent-presence-layer="" />;

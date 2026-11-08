@@ -90,7 +90,7 @@ import {
 } from '@/lib/ai/pageGen/flow';
 import { GENERATION_LIMITS } from '@/lib/ai/pageGen/schema';
 import type { PageGenProgress, StockImageSummary } from '@/lib/ai/pageGen/protocol';
-import { draftTargetFor, type DraftPhase, type PageGenDraftTarget } from '@/lib/ai/pageGen/draft';
+import { draftTargetFor, sectionContentKey, type DraftPhase, type PageGenDraftTarget } from '@/lib/ai/pageGen/draft';
 import { PageGenProgressPanel } from '@/components/ai/PageGenProgressPanel';
 import {
   DEFAULT_REVIEW_SETTINGS,
@@ -305,19 +305,31 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
         // The result replaces the draft in one go: the tracked apply (today's one
         // undo step) and the draft dropped in the same action, so no frame shows
         // both or neither.
-        // The sections the draft drew already revealed there, node by node: the
-        // result's sections at those indexes stay still (a preview section and its
-        // result get different ids, so the index in page order is what matches
-        // them). The sections the draft never drew (no stream, one the editor
-        // refused, or the run ended before it was sent) reveal now, in the same
-        // action, so none is drawn once without its reveal.
-        const drawn = new Set(draft.sections.map((s) => s.index));
+        // The sections the canvas drew already revealed there, node by node: a
+        // result section identical to one of them stays still (a preview section
+        // and its result get different ids, so what the model wrote is what
+        // matches them, never the position: a repair may insert or reorder).
+        // Everything else (no stream, a section stored while another page was on
+        // screen, one the editor refused, one a repair rewrote) reveals now, in
+        // the same action, so none is drawn once without its reveal.
+        const seen = new Map<string, number>();
+        for (const source of draft.shownSources()) {
+          const key = sectionContentKey(source);
+          seen.set(key, (seen.get(key) ?? 0) + 1);
+        }
+        const drawnBefore = result.nodes.map((n) => {
+          const key = sectionContentKey(n);
+          const left = seen.get(key) ?? 0;
+          if (left === 0) return false;
+          seen.set(key, left - 1);
+          return true;
+        });
         const outcome = runInAction(() => {
           const applied = applyResult(project, target, result, runInputs.targetKind === 'newPage' ? runInputs.pageTitle : undefined);
           draft.clear(requestKey);
           if (applied.ok) {
             const page = project.getPage(applied.value.pageId);
-            const fresh = page ? result.nodes.filter((_, i) => !drawn.has(i)).map((n) => findComponent(page, n.id)) : [];
+            const fresh = page ? result.nodes.filter((_, i) => !drawnBefore[i]).map((n) => findComponent(page, n.id)) : [];
             editorUI.liveReveal.start(revealPlanOfTrees(fresh));
           }
           return applied;

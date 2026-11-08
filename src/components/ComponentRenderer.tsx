@@ -403,7 +403,12 @@ const NodeRenderer = observer(({ component, breakpointId, allBreakpoints, scope,
   // never on the text being typed into.
   const revealId = placement ? placement.id : host ? undefined : component.id;
   const revealDelay = revealId && !interact && !isEditing ? editorUI.liveReveal.delayOf(revealId) : undefined;
-  if (revealDelay !== undefined) {
+  // A node with an animation of its own authored keeps it: the reveal would
+  // override (or be overridden by) its animation properties, so the node
+  // appears without one.
+  const authoredStyle = finalProps.style as Record<string, unknown> | undefined;
+  const ownAnimation = !!authoredStyle && Object.keys(authoredStyle).some((k) => /^animation/i.test(k));
+  if (revealDelay !== undefined && !ownAnimation) {
     finalProps[REVEAL_ATTR] = '';
     finalProps.style = { ...(finalProps.style as Record<string, unknown> | undefined), '--live-reveal-delay': `${revealDelay}ms` };
   }

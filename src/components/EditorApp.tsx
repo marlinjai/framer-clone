@@ -359,7 +359,7 @@ export default function EditorApp({ projectSnapshot, projectVersion }: EditorApp
           <div data-editor-ui="true" data-editor-chrome="right" className="fixed top-16 right-0 bottom-0 z-90 phone:hidden">
             <RightSidebar />
           </div>
-          <div data-editor-ui="true" data-editor-chrome="bottom" className="fixed bottom-0 left-0 right-0 z-30 phone:hidden">
+          <div data-editor-ui="true" className="fixed bottom-0 left-0 right-0 z-30 phone:hidden">
             <Toolbar editorUI={rootStore.editorUI} />
           </div>
         </>

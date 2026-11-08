@@ -83,6 +83,18 @@ describe('ComponentRenderer: the reveal', () => {
     expect(el('new-section')?.style.getPropertyValue('--live-reveal-delay')).toBe('');
   });
 
+  it('a node with an animation of its own authored takes no reveal, so the two never fight', () => {
+    renderTree();
+    act(() => {
+      runInAction(() => {
+        root.addChild(createIntrinsicComponent('spin', 'section', { style: { animationDuration: '0s' } }));
+        store.editorUI.liveReveal.start(new Map([['spin', 0]]));
+      });
+    });
+    expect(el('spin')).not.toBeNull();
+    expect(el('spin')?.hasAttribute(REVEAL_ATTR)).toBe(false);
+  });
+
   it('never in Interact, where the page runs as published', () => {
     store.editorUI.setSelectedTool(EditorTool.INTERACT);
     renderTree();

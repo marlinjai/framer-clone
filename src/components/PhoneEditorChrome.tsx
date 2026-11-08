@@ -271,6 +271,7 @@ const PhoneEditorChrome = observer(({ editorUI }: { editorUI: EditorUIType }) =>
       <div
         ref={barRef}
         data-editor-ui="true"
+        data-editor-chrome="bottom"
         data-testid="phone-bottom-bar"
         role="toolbar"
         aria-label="Editor tools"

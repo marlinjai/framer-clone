@@ -537,8 +537,14 @@ const HudSurface = observer(() => {
     const onEnd = (e: AnimationEvent) => {
       if (e.animationName === REVEAL_KEYFRAMES) updateAllOverlays();
     };
+    // A reveal cancelled mid-way (reduced motion turned on, the node unmounted)
+    // jumps to its final place without an end: measure again then too.
     document.addEventListener('animationend', onEnd);
-    return () => document.removeEventListener('animationend', onEnd);
+    document.addEventListener('animationcancel', onEnd);
+    return () => {
+      document.removeEventListener('animationend', onEnd);
+      document.removeEventListener('animationcancel', onEnd);
+    };
   }, [updateAllOverlays]);
 
   // Update cross-viewport selection when component selection changes

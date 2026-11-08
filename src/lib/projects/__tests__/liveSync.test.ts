@@ -701,6 +701,17 @@ describe('liveSync: the per-component reveal (live agent canvas, slice 3)', () =
     expect(reveal().size).toBe(0);
   });
 
+  it("the poll that retries a failed fetch of exactly the agent's write: catch-up, no reveal", async () => {
+    start();
+    failFetch = true;
+    await writes({});
+    expect(knownServerVersion(SITE)).toBe(1);
+    stream().fail(true);
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_VISIBLE_MS);
+    expect(knownServerVersion(SITE)).toBe(2);
+    expect(reveal().size).toBe(0);
+  });
+
   it('a held agent write replaced by a newer one before it was adopted: no reveal for the two together', async () => {
     start();
     let finish!: () => void;

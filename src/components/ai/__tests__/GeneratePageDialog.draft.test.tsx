@@ -313,6 +313,8 @@ describe('the draft: re-entry', () => {
 
 describe('the apply and the per-component reveal (live agent canvas, slice 3)', () => {
   const reveal = () => store.editorUI.liveReveal;
+  // The canvas drawing the draft (DraftSections marks what it drew): the dialog tests mount no canvas.
+  const drawn = () => store.editorUI.pageGenDraft.sections.forEach((s) => store.editorUI.pageGenDraft.markShown(s.index));
   const subtree = (id: string) => {
     const ids: string[] = [];
     const walk = (n: ComponentInstance) => {
@@ -333,6 +335,7 @@ describe('the apply and the per-component reveal (live agent canvas, slice 3)', 
     const req = calls[0].req;
     act(() => calls[0].handlers.onSection?.(sectionFor(req, HERO, 0)));
     act(() => calls[0].handlers.onSection?.(sectionFor(req, STORY, 1)));
+    drawn();
     await act(async () => calls[0].handlers.onResult?.(resultFor(req, PAGE)));
     expect(page().metadata.title).toBe('Bakery');
     expect(reveal().size).toBe(0);
@@ -345,6 +348,7 @@ describe('the apply and the per-component reveal (live agent canvas, slice 3)', 
     generate();
     const req = calls[0].req;
     act(() => calls[0].handlers.onSection?.(sectionFor(req, HERO, 0)));
+    drawn();
     const result = resultFor(req, PAGE);
     await act(async () => calls[0].handlers.onResult?.(result));
     const story = subtree(result.nodes[1].id);
@@ -355,7 +359,36 @@ describe('the apply and the per-component reveal (live agent canvas, slice 3)', 
     expect(getHistoryStore()!.history.length).toBe(1);
   });
 
-  it('matches drawn sections by index: a section missing from the draft reveals, the drawn ones stay still', async () => {
+  it('a section stored but never drawn (another page was on screen) reveals when the result lands', async () => {
+    const { transport, calls } = manualTransport();
+    setup(transport);
+    typeBrief('A bakery');
+    generate();
+    const req = calls[0].req;
+    act(() => calls[0].handlers.onSection?.(sectionFor(req, HERO, 0)));
+    act(() => calls[0].handlers.onSection?.(sectionFor(req, STORY, 1)));
+    // Only the first was drawn.
+    store.editorUI.pageGenDraft.markShown(0);
+    const result = resultFor(req, PAGE);
+    await act(async () => calls[0].handlers.onResult?.(result));
+    expect([...reveal().delays.keys()]).toEqual(subtree(result.nodes[1].id));
+  });
+
+  it('a repair that reorders sections: what was drawn stays still by content, the unseen one reveals', async () => {
+    const { transport, calls } = manualTransport();
+    setup(transport);
+    typeBrief('A bakery');
+    generate();
+    const req = calls[0].req;
+    act(() => calls[0].handlers.onSection?.(sectionFor(req, HERO, 0)));
+    drawn();
+    // The final page puts a section the preview never showed first.
+    const result = resultFor(req, { title: 'Bakery', nodes: [STORY, HERO] });
+    await act(async () => calls[0].handlers.onResult?.(result));
+    expect([...reveal().delays.keys()]).toEqual(subtree(result.nodes[0].id));
+  });
+
+  it('matches drawn sections by content: a section missing from the draft reveals, the drawn ones stay still', async () => {
     const { transport, calls } = manualTransport();
     setup(transport);
     typeBrief('A bakery');
@@ -364,6 +397,7 @@ describe('the apply and the per-component reveal (live agent canvas, slice 3)', 
     // Section 1 never reached the draft; 0 and 2 did.
     act(() => calls[0].handlers.onSection?.(sectionFor(req, HERO, 0)));
     act(() => calls[0].handlers.onSection?.(sectionFor(req, HERO, 2)));
+    drawn();
     const result = resultFor(req, { title: 'Bakery', nodes: [HERO, STORY, HERO] });
     await act(async () => calls[0].handlers.onResult?.(result));
     expect([...reveal().delays.keys()]).toEqual(subtree(result.nodes[1].id));

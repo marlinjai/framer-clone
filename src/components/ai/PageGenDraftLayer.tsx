@@ -72,10 +72,12 @@ export function draftRevealCss(index: number, tree: RevealTreeNode): string {
   const rules: string[] = [];
   for (const [id, delay] of revealPlanOfTrees([tree])) {
     if (!PLAIN_ID.test(id)) continue;
-    rules.push(`${scope} [data-inner-component-id="${id}"] { animation: ${revealAnimation(delay)}; }`);
+    // A repeated copy (a second cart line) carries no inner id, only the style
+    // hook `<breakpoint>-<id>`, so it matches on that and reveals with the first.
+    rules.push(`${scope} [data-inner-component-id="${id}"], ${scope} [data-component-id$="-${id}"] { animation: ${revealAnimation(delay)}; }`);
   }
   if (rules.length === 0) return '';
-  return `${rules.join('\n')}\n@media (prefers-reduced-motion: reduce) { ${scope} [data-inner-component-id] { animation: none; } }`;
+  return `${rules.join('\n')}\n@media (prefers-reduced-motion: reduce) { ${scope} [data-inner-component-id], ${scope} [data-component-id] { animation: none !important; } }`;
 }
 
 /** A draft section's reveal stylesheet, written once per section tree. */
@@ -172,6 +174,14 @@ export interface DraftSectionsProps {
 export const DraftSections = observer(function DraftSections({ breakpointId, allBreakpoints, scope }: DraftSectionsProps) {
   const { editorUI } = useStore();
   const draft = editorUI.pageGenDraft as PageGenDraftStore | undefined;
+  const indexes = draft?.target ? draft.sections.map((s) => s.index) : [];
+  const drawn = indexes.join(',');
+  // What the canvas really drew (a section stored while another page was on
+  // screen is not drawn): the apply reveals the rest.
+  React.useEffect(() => {
+    for (const index of indexes) draft?.markShown(index);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft, drawn]);
   if (!draft?.target) return null;
   const band = draftBandText(draft.phase, draft.sections.length);
   return (
