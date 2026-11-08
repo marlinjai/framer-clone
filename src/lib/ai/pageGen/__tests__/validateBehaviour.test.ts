@@ -257,6 +257,35 @@ describe('behaviour the model writes itself', () => {
     expect(tip.warnings).toEqual([]);
   });
 
+  it('keeps two long state ids that cut to one stem two values', () => {
+    const outer = `${'a'.repeat(58)}x`;
+    const inner = `${'a'.repeat(58)}y`;
+    // Eight characters of token, as a real id gives one: a 59 character id is cut to 55.
+    let n = 0;
+    const out = validateGeneration({ nodes: [{
+      type: 'section',
+      props: { behaviour: { state: [flag(outer)] } },
+      children: [{
+        type: 'div',
+        props: { behaviour: { state: [flag(inner)] } },
+        children: [
+          { type: 'button', props: { type: 'button', children: 'Toggle', behaviour: { on: [{ id: 'press', on: 'click', do: [{ toggle: inner }] }] } } },
+          { type: 'p', props: { children: 'Outer', behaviour: { showWhen: { state: outer, eq: true } } } },
+        ],
+      }],
+    }] }, { breakpoints, newId: () => `${(n += 1)}`.padStart(8, 'k') });
+    if (!out.ok) throw new Error(out.errors.join('; '));
+    const { nodes, warnings } = out.result;
+    expect(warnings).toEqual([]);
+    const outerId = (behaviourOf(nodes[0])?.state as Array<{ id: string }>)[0].id;
+    const innerId = (behaviourOf(nodes[0].children[0])?.state as Array<{ id: string }>)[0].id;
+    expect(outerId).not.toBe(innerId);
+    for (const id of [outerId, innerId]) expect(id.length).toBeLessThanOrEqual(64);
+    const [button, part] = nodes[0].children[0].children;
+    expect(triggersOf(button)[0].do).toEqual([{ toggle: innerId }]);
+    expect(behaviourOf(part)?.showWhen).toEqual({ state: outerId, eq: true });
+  });
+
   it('keeps a value in reach only of the nodes inside the one declaring it', () => {
     const { nodes } = run([
       { type: 'div', props: { behaviour: { state: [flag('open')] } } },
@@ -565,7 +594,7 @@ describe('behaviour presets the model asks for', () => {
     expect(closedAncestorOf(tree, 'missing', 'insert')).toBeUndefined();
   });
 
-  it.each(['ul', 'ol', 'dl', 'table', 'thead', 'tbody', 'tfoot', 'tr', 'colgroup'])('keeps a preset from being a direct child of <%s>', (tag) => {
+  it.each(['ul', 'ol', 'menu', 'dl', 'hgroup', 'table', 'thead', 'tbody', 'tfoot', 'tr', 'colgroup', 'picture', 'video', 'audio', 'ruby', 'datalist', 'optgroup', 'option'])('keeps a preset from being a direct child of <%s>', (tag) => {
     const { nodes, warnings } = run([{ type: tag, children: [{ preset: 'menu-button', items: ['Copy', 'Paste'], options: { label: 'Actions' } }] }]);
     expect(nodes[0]?.children ?? []).toEqual([]);
     expect(warnings.join(' ')).toContain(`cannot sit inside <${tag}>`);

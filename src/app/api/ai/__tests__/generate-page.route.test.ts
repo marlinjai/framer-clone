@@ -1227,6 +1227,9 @@ describe('POST /api/ai/generate-page placed under a closed element', () => {
       expect(result?.nodes.map((n) => n.type)).toEqual(['span']);
       expect(result?.warnings.join(' ')).toContain(`cannot sit inside <${tag}>`);
     }
+    // A tag in upper case is read as validateGeneration reads it.
+    const upper = await labels({ kind: 'insert', context: { id: 'x-1', type: 'BUTTON', label: 'Button' }, closedAncestor: 'BUTTON' });
+    expect(upper?.nodes.map((n) => n.type)).toEqual(['span']);
     const kept = await labels({ kind: 'insert', context: { id: 'x-1', type: 'section', label: 'Section' } });
     expect(kept?.nodes).toHaveLength(2);
   });

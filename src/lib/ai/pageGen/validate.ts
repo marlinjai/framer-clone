@@ -1553,7 +1553,16 @@ function scopeGeneratedState(forest: GeneratedNodeSnapshot[], v: Validator): voi
   }
   if (declared.size === 0) return;
   const token = v.scopeToken();
-  const scoped = new Map([...declared].map((id) => [id, `${id.slice(0, 64 - token.length - 1)}-${token}`]));
+  // An id is cut to fit 64 characters with the token, so two long ids can cut to one stem;
+  // a counter keeps them two values, or a toggle of one would drive the other.
+  const scoped = new Map<string, string>();
+  const taken = new Set<string>();
+  for (const id of declared) {
+    let value = `${id.slice(0, 64 - token.length - 1)}-${token}`;
+    for (let n = 2; taken.has(value); n += 1) value = `${id.slice(0, 64 - token.length - String(n).length - 2)}-${n}-${token}`;
+    taken.add(value);
+    scoped.set(id, value);
+  }
   const rename = (value: unknown): unknown => (typeof value === 'string' ? (scoped.get(value) ?? value) : value);
   const rewrite = (value: unknown, depth: number): unknown => {
     if (depth > MAX_STATE_SCOPE_DEPTH || !value || typeof value !== 'object') return value;

@@ -169,10 +169,6 @@ const NODE_REFERENCES: ReadonlySet<string> = new Set([
   'setProp', 'filter', 'effect', 'of', 'active', 'owner',
 ]);
 
-/**
- * Every trigger of a tree with the tag it sits on. The generator gives each node a fresh id
- * and a reference follows it, so a reference to a node of the tree reads as `#node`.
- */
 /** The keys whose text names a state value. */
 const STATE_REFERENCES: ReadonlySet<string> = new Set(['set', 'toggle', 'step', 'get', 'map', 'state']);
 
@@ -185,9 +181,11 @@ function statesIn(root: Made | StoredProofNode | undefined): string[] {
 }
 
 /**
- * The triggers of a tree, node references anonymous. `scopedSuffix` is what the generator
- * appended to every state id it was given (scopeGeneratedState in validate.ts), taken off a
- * state reference so the proof's trigger and the generated one compare as one.
+ * Every trigger of a tree with the tag it sits on. The generator gives each node a fresh id
+ * and a reference follows it, so a reference to a node of the tree reads as `#node`.
+ * `scopedSuffix` is what the generator appended to every state id it was given
+ * (scopeGeneratedState in validate.ts), taken off a state reference so the proof's trigger
+ * and the generated one compare as one.
  */
 function triggersIn(root: Made | StoredProofNode | undefined, scopedSuffix = ''): Array<{ tag: string; trigger: string }> {
   if (!root) return [];

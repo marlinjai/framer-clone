@@ -107,6 +107,7 @@ const BreakpointSchema = z.object({
 /** The element that keeps a preset out of the result, one of the tags closedAncestorOf names (protocol.ts). */
 const ClosedAncestorSchema = z
   .string()
+  .transform((tag) => tag.toLowerCase())
   .refine((tag) => isPresetRefusingTag(tag), 'not an element a preset is refused under')
   .optional();
 

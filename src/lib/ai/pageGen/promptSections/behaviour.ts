@@ -145,11 +145,21 @@ export function generatedTriggerRefusal(trigger: Trigger, fromPreset = false): s
 export const PRESET_CLOSED_TAGS: ReadonlySet<string> = new Set(['a', 'button', 'label', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'summary']);
 
 /**
- * Elements whose content model takes no flow content, so the HTML parser moves a div, a
- * list or a button out of them: a preset may not be their direct child. Their own children
- * (li, td, th, dt, dd, caption) take flow content again, so the refusal stops there.
+ * Elements a preset may not be the direct child of, because their content model takes no
+ * flow content there. In the table family the HTML parser moves a div out (foster
+ * parenting), so the server's markup and the browser's tree differ and hydration breaks.
+ * Under the lists (ul, ol, menu, dl) and hgroup the markup is invalid but stays where it
+ * is. Under optgroup, datalist and option a preset is not rendered as content at all, and
+ * under picture, video, audio and ruby it is fallback or annotation content a visitor does
+ * not see. Their own content children (li, td, th, dt, dd, caption) take flow content
+ * again, so the refusal stops there.
  */
-export const PRESET_NO_FLOW_PARENT_TAGS: ReadonlySet<string> = new Set(['table', 'thead', 'tbody', 'tfoot', 'tr', 'colgroup', 'ul', 'ol', 'dl']);
+export const PRESET_NO_FLOW_PARENT_TAGS: ReadonlySet<string> = new Set([
+  'table', 'thead', 'tbody', 'tfoot', 'tr', 'colgroup',
+  'ul', 'ol', 'menu', 'dl', 'hgroup',
+  'optgroup', 'datalist', 'option',
+  'picture', 'video', 'audio', 'ruby',
+]);
 
 /** Whether a preset is refused as a child of this tag, directly or at some depth. */
 export const isPresetRefusingTag = (tag: string): boolean => PRESET_CLOSED_TAGS.has(tag) || PRESET_NO_FLOW_PARENT_TAGS.has(tag);
