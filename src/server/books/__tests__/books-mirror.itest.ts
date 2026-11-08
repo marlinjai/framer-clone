@@ -51,7 +51,7 @@ async function company() {
   const cancelled = await cancelInvoice(scope, second, { actorUserId: ACTOR, reason: 'Wrong amount' }, { beforeCommit: storeBeforeCommit(scope) });
   // A draft is no issued invoice and never handed over.
   await createDraft(scope, { docType: 'invoice', actorUserId: ACTOR, customerId: customer.id });
-  return { tenantId, scope, first, second, creditNoteId: cancelled.creditNote.document.id };
+  return { tenantId, dir, scope, first, second, creditNoteId: cancelled.creditNote.document.id };
 }
 
 const MIRROR_KEYS = [
@@ -122,8 +122,9 @@ describe('the Books mirror read', () => {
   });
 
   it('does not skip a document issued between two pages', async () => {
-    const { scope } = await company();
-    const { customer } = await newCustomer(scope, new FakeDirectory(), { customerType: 'b2b' });
+    // The customer's contact lives in the company's own directory, the one its scope reads.
+    const { scope, dir } = await company();
+    const { customer } = await newCustomer(scope, dir, { customerType: 'b2b' });
     // Drafts exist before the pull starts and are issued while it is walking.
     const draftIds: string[] = [];
     for (let i = 0; i < 3; i += 1) {
