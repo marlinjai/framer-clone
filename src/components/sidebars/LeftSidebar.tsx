@@ -23,6 +23,7 @@ import { useStore } from '@/hooks/useStore';
 import ComponentsPanel from './left/ComponentsPanel';
 import LayersPanel from './left/LayersPanel';
 import PagesPanel from './left/PagesPanel';
+import AgentActivityPanel from '@/components/live/AgentActivityPanel';
 import { PaneTabs, paneTabId, panePanelId, type PaneTab } from './left/PaneTabs';
 import ContentManagerPanel from '@/components/cms/ContentManagerPanel';
 import { tapInsertTarget } from '@/lib/layers/tapInsertTarget';
@@ -310,6 +311,9 @@ const LeftSidebar = observer(({ variant = 'docked', onComponentInserted }: LeftS
               {activeTab === 'content' && <ContentManagerPanel />}
             </div>
           </div>
+
+          {/* What agents did on this site (live agent canvas); absent until there is something to show. */}
+          <AgentActivityPanel />
         </div>
       )}
     </div>

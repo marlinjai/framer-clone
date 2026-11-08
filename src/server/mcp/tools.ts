@@ -84,7 +84,7 @@ export interface ToolResult {
   isError: boolean;
 }
 
-interface ToolDef<S extends z.ZodType = z.ZodType> {
+export interface ToolDef<S extends z.ZodType = z.ZodType> {
   name: string;
   title: string;
   description: string;

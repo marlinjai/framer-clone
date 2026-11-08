@@ -27,6 +27,11 @@
 //   - a version that erased personal data is adopted without an undo step and
 //     clears the history, as a load does (undo must not bring erased values back).
 //
+// The stream also says who works on the site (plan section 2): the `state`
+// event's agents and feed and every `agent:activity` go to the editor's
+// presence store (src/lib/live/presenceStore.ts), and every adoption drops the
+// frames keyed to nodes the new copy no longer has.
+//
 // When the stream is down (a network loss, the 429 of too many streams, a proxy
 // that buffers), the snapshot route is polled with If-None-Match every 5 s while
 // the tab is visible and every 60 s while hidden, until the stream is back. On
@@ -48,7 +53,8 @@ import {
 } from '@/stores/openProject';
 import { existingAutosave, reloadDiscarding } from './autosave';
 import { editorTabId } from './tabId';
-import { LIVE_EVENTS, type SiteStateEvent, type SiteVersionEvent } from './liveEvents';
+import { LIVE_EVENTS, type AgentActivity, type SiteStateEvent, type SiteVersionEvent } from './liveEvents';
+import type { LivePresenceStore } from '@/lib/live/presenceStore';
 
 export const LIVE_POLL_VISIBLE_MS = 5_000;
 export const LIVE_POLL_HIDDEN_MS = 60_000;
@@ -195,6 +201,8 @@ export class LiveSync {
 
   stop(): void {
     this.closeStream();
+    // Nothing of this site's agents carries over to the next one opened.
+    this.presence.reset();
     this.clearPoll();
     if (this.streamRetryTimer) clearTimeout(this.streamRetryTimer);
     this.streamRetryTimer = undefined;
@@ -235,8 +243,18 @@ export class LiveSync {
       }
     };
     stream.addEventListener(LIVE_EVENTS.state, (e) => {
+      if (this.stream !== stream) return;
       const state = parse<SiteStateEvent>(e.data);
-      if (state && typeof state.version === 'number') this.heard(state.version, undefined);
+      if (!state || typeof state.version !== 'number') return;
+      // Who works on the site and the feed, replacing what this tab held (a reconnect sends `state` again).
+      this.presence.applyState(state);
+      this.prunePresence();
+      this.heard(state.version, undefined);
+    });
+    stream.addEventListener(LIVE_EVENTS.agentActivity, (e) => {
+      if (this.stream !== stream) return;
+      const activity = parse<AgentActivity>(e.data);
+      if (activity) this.presence.applyActivity(activity);
     });
     stream.addEventListener(LIVE_EVENTS.siteVersion, (e) => {
       const event = parse<SiteVersionEvent>(e.data);
@@ -423,10 +441,25 @@ export class LiveSync {
     this.adopt(body.version, body.snapshot, label, event);
   }
 
+  /** The agents' presence of the open site (src/lib/live/presenceStore.ts). */
+  private get presence(): LivePresenceStore {
+    return this.rootStore.editorUI.livePresence as LivePresenceStore;
+  }
+
+  /** Frames keyed to nodes the open copy no longer has are dropped. */
+  private prunePresence() {
+    const project = this.rootStore.editorUI.currentProject;
+    if (!project || !isAlive(project)) return;
+    const ids = new Set<string>();
+    for (const page of project.pages.values()) collectIds(page.appComponentTree as IdTree, ids);
+    this.presence.pruneMissing((id) => ids.has(id));
+  }
+
   private adopt(version: number, snapshot: ProjectSnapshotOut, label: string, event: SiteVersionEvent | undefined): boolean {
     const adopted = adoptServerCopy(this.rootStore, snapshot, version, label);
     if (!adopted) return false;
     this.held = undefined;
+    this.prunePresence();
     existingAutosave(this.projectId)?.noteServerCopyAdopted();
     this.onAdopted?.(adopted, event);
     return true;
@@ -455,6 +488,17 @@ export class LiveSync {
     if (hasWriteInFlight(this.projectId)) return false;
     return this.adopt(held.version, held.snapshot, held.label, undefined);
   }
+}
+
+interface IdTree {
+  id: string;
+  children: Iterable<IdTree>;
+}
+
+function collectIds(node: IdTree | undefined, into: Set<string>): void {
+  if (!node) return;
+  into.add(node.id);
+  for (const child of node.children) collectIds(child, into);
 }
 
 function parse<T>(data: string): T | undefined {

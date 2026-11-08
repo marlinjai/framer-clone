@@ -59,23 +59,97 @@ export interface SiteVersionEvent extends SiteWriteEvent {
   catchUp?: boolean;
 }
 
-/** `state`: sent once on connect. Slices 2 and 4 fill the lists. */
+/** How an MCP tool call ended (`agent:activity` with phase `end`). */
+export type AgentOutcome = 'ok' | 'rejected' | 'site_changed' | 'failed';
+
+/**
+ * `agent:activity` (plan section 2): an MCP tool call on this site started or
+ * ended. Ids and server-written lines only: `label` is the key's name as
+ * auth-brain holds it (else the MCP client's declared name, else "Agent") and
+ * `summary` is the first summary line of a write, both capped and plain text.
+ * `agentId` is a hash of the key id, never the key id itself.
+ */
+export interface AgentActivity {
+  /** Random per call: the start and the end of one call share it. */
+  callId: string;
+  /** Stable per key, a hash of its id. */
+  agentId: string;
+  label: string;
+  /** The tool's name: 'get_page', 'apply_batch', 'generate_page', ... */
+  tool: string;
+  phase: 'start' | 'end';
+  /** On `end`. */
+  outcome?: AgentOutcome;
+  /** The page the call reads or writes, when it names one. */
+  pageId?: string;
+  /** Start: the node ids its arguments name. End: those plus the ids it created. At most LIVE_LIST_MAX. */
+  nodeIds?: string[];
+  /** The skeleton ref the call fulfils (slice 4). */
+  sectionRef?: string;
+  /** On the end of a write: its first summary line. */
+  summary?: string;
+  /** On the end of a batch: how many operations it held. */
+  changes?: number;
+  /** ISO 8601. */
+  at: string;
+}
+
+/**
+ * One line of the activity feed. A write that committed comes from its audit
+ * row (src/server/siteOps/audit.ts), so it is there again after a reload;
+ * reads and refused calls leave no row and exist only live. The words are
+ * composed by the editor (a page title is content and never travels).
+ */
+export interface LiveFeedLine {
+  /** The audit row's id, or the call id of a live line. */
+  id: string;
+  agentId: string;
+  label: string;
+  actorKind: 'key' | 'user';
+  tool: string;
+  outcome: AgentOutcome;
+  pageId?: string;
+  /** The nodes the call named or created (a click selects the ones that still exist). */
+  nodeIds?: string[];
+  /** How many operations a batch held. */
+  changes?: number;
+  /** ISO 8601. */
+  at: string;
+}
+
+/** `state`: sent once on connect. Slice 4 fills `plans`. */
 export interface SiteStateEvent {
   version: number;
   /** Live skeleton plans of the site (slice 4). */
   plans: unknown[];
-  /** Active agents and their last focus (slice 2). */
-  agents: unknown[];
-  /** The last feed lines (slice 2). */
-  feed: unknown[];
+  /**
+   * The agents active on the site and their last focus: the latest activity of
+   * each, `start` while one of its calls is still running. Only agents seen
+   * within AGENT_ACTIVE_MS: one that left is never reattached.
+   */
+  agents: AgentActivity[];
+  /** The last LIVE_FEED_MAX feed lines, newest first. */
+  feed: LiveFeedLine[];
 }
 
 /** Every event name the stream sends. */
 export const LIVE_EVENTS = {
   state: 'state',
   siteVersion: 'site:version',
+  agentActivity: 'agent:activity',
   authExpired: 'auth:expired',
 } as const;
+
+/** The feed keeps this many lines (the state event's backfill too). */
+export const LIVE_FEED_MAX = 30;
+/** The presence frame stays this long after an agent's last call ended, then fades. */
+export const AGENT_FRAME_LINGER_MS = 4_000;
+/**
+ * An agent counts as active (the top bar's "... is editing this site", the
+ * state event's agents) while a call runs and this long after its last one
+ * ended: an agent thinks between calls, and the person should still know.
+ */
+export const AGENT_ACTIVE_MS = 60_000;
 
 /** Labels and summary lines are capped like this before they leave the server. */
 export const LIVE_LABEL_MAX = 80;
@@ -87,6 +161,18 @@ export const LIVE_LIST_MAX = 200;
 export function capLiveText(text: string): string {
   const oneLine = text.replace(/\s+/g, ' ').trim();
   return oneLine.length > LIVE_LABEL_MAX ? `${oneLine.slice(0, LIVE_LABEL_MAX - 1)}…` : oneLine;
+}
+
+/**
+ * A label for the stream from text a client or an administrator chose (a key's
+ * name, an MCP client's name): control and bidirectional override characters
+ * removed, one line, capped. Undefined when nothing printable is left.
+ */
+export function sanitizeLiveLabel(text: unknown): string | undefined {
+  if (typeof text !== 'string') return undefined;
+  const printable = text.replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/g, ' ');
+  const capped = capLiveText(printable);
+  return capped ? capped : undefined;
 }
 
 /** A write event as it may travel: lists bounded, text capped. */

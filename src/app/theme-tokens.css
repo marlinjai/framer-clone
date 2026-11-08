@@ -43,6 +43,10 @@
      primary actions) and the CMS draft/published states. */
   --color-brand: var(--brand);
   --color-brand-foreground: var(--brand-foreground);
+  /* An agent working on the open site (live agent canvas): its frame, label
+     and dots. A clear blue, apart from the iris selection outline. */
+  --color-agent-presence: var(--agent-presence);
+  --color-agent-presence-foreground: var(--agent-presence-foreground);
   --color-status-published: var(--status-published);
   --color-status-draft: var(--status-draft);
   --color-status-scheduled: var(--status-scheduled);
@@ -91,6 +95,8 @@
   /* Studio brand (iris #5B5BD6) + content status palette. */
   --brand: oklch(0.543 0.179 276.7);
   --brand-foreground: oklch(0.985 0 0);
+  --agent-presence: oklch(0.6 0.2 250);
+  --agent-presence-foreground: oklch(0.985 0 0);
   --status-published: oklch(0.63 0.17 149);
   --status-draft: oklch(0.68 0.16 58);
   --status-scheduled: oklch(0.55 0.22 264);
@@ -137,6 +143,8 @@
   /* Studio brand + status, dark variants (brighter iris, white-legible). */
   --brand: oklch(0.62 0.17 278);
   --brand-foreground: oklch(0.985 0 0);
+  --agent-presence: oklch(0.68 0.17 250);
+  --agent-presence-foreground: oklch(0.145 0 0);
   --status-published: oklch(0.77 0.15 162);
   --status-draft: oklch(0.83 0.16 82);
   --status-scheduled: oklch(0.71 0.14 256);

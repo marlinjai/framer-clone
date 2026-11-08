@@ -7,7 +7,8 @@ import 'server-only';
 // dialog) only once, in `initialize`, and every later request is a new HTTP
 // request. So `initialize` answers an `Mcp-Session-Id` that carries those facts
 // itself, signed: the negotiated protocol version, whether the client declared
-// elicitation, and a fingerprint of the key it was issued to. The client sends
+// elicitation, the client's declared name (how an open editor names the agent
+// when its key has no name), and a fingerprint of the key it was issued to. The client sends
 // it back on every request (Streamable HTTP requires that), and the endpoint
 // reads the facts from it.
 //
@@ -19,12 +20,28 @@ import 'server-only';
 // none.
 
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { sanitizeLiveLabel } from '@/lib/projects/liveEvents';
 
 const SECRET = randomBytes(32);
 
 export interface SessionFacts {
   protocolVersion: string;
   elicitation: boolean;
+  /**
+   * The name the client declared at initialize (`clientInfo.name`), sanitised
+   * and capped at SESSION_CLIENT_NAME_MAX: an open editor names the agent by it
+   * when the key has no name. Text the client chose, shown as plain text only.
+   */
+  clientName?: string;
+}
+
+/** The longest client name a session id carries (the id itself stays well under 512 characters). */
+export const SESSION_CLIENT_NAME_MAX = 40;
+
+function clientNameOf(value: unknown): string | undefined {
+  const clean = sanitizeLiveLabel(value);
+  if (!clean) return undefined;
+  return clean.length > SESSION_CLIENT_NAME_MAX ? `${clean.slice(0, SESSION_CLIENT_NAME_MAX - 1)}…` : clean;
 }
 
 /** A short fingerprint of the presented key; never the key and never reversible to it. */
@@ -38,7 +55,13 @@ function sign(payload: string): string {
 
 export function issueSessionId(facts: SessionFacts, fingerprint: string): string {
   const payload = Buffer.from(
-    JSON.stringify({ v: facts.protocolVersion, e: facts.elicitation ? 1 : 0, k: fingerprint, n: randomBytes(6).toString('base64url') }),
+    JSON.stringify({
+      v: facts.protocolVersion,
+      e: facts.elicitation ? 1 : 0,
+      k: fingerprint,
+      n: randomBytes(6).toString('base64url'),
+      ...(clientNameOf(facts.clientName) ? { c: clientNameOf(facts.clientName) } : {}),
+    }),
   ).toString('base64url');
   return `${payload}.${sign(payload)}`;
 }
@@ -54,7 +77,8 @@ export function readSessionId(id: string | null, fingerprint: string): SessionFa
   try {
     const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as Record<string, unknown>;
     if (parsed.k !== fingerprint || typeof parsed.v !== 'string') return null;
-    return { protocolVersion: parsed.v, elicitation: parsed.e === 1 };
+    const clientName = clientNameOf(parsed.c);
+    return { protocolVersion: parsed.v, elicitation: parsed.e === 1, ...(clientName ? { clientName } : {}) };
   } catch {
     return null;
   }

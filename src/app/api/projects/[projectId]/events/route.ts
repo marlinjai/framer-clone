@@ -11,8 +11,13 @@
 //
 // What it sends (src/lib/projects/liveEvents.ts), ids and server-written lines only,
 // never content:
-//   - `state` once on connect: the current version (the plans, agents and feed
-//     lists stay empty until the presence and skeleton slices fill them);
+//   - `state` once on connect: the current version, the agents active on the
+//     site with their last focus (src/server/sites/livePresence.ts) and the last
+//     30 feed lines (the site's audit rows, scoped to the caller's workspace,
+//     merged with the live lines of reads and refusals); the skeleton plans stay
+//     empty until slice 4;
+//   - `agent:activity` when an MCP tool call on the site starts and ends
+//     (src/server/mcp/presence.ts);
 //   - `site:version` after every committed write of the working copy, from any
 //     writer (src/server/sites/liveBus.ts), flagged `own` on the stream of the
 //     tab that wrote it (`?tab=<id>`; tab ids themselves are never sent, so no
@@ -34,7 +39,20 @@ import { createSseStream, SSE_HEADERS, SSE_HEARTBEAT_MS } from '@/lib/ai/sse';
 import { authorizeLiveProject } from '@/server/sites/liveGuard';
 import { acquireStreamSlot, subscribeSite } from '@/server/sites/liveBus';
 import { getSiteRepository } from '@/server/sites';
-import { LIVE_EVENTS, LIVE_RECHECK_MS, LIVE_RECHECK_ON_WRITE_MS, ORIGIN_TAB_PATTERN, type SiteStateEvent, type SiteVersionEvent } from '@/lib/projects/liveEvents';
+import { presenceSnapshot } from '@/server/sites/livePresence';
+import { recentSiteOperations } from '@/server/siteOps/audit';
+import { getPrismaClient } from '@/server/db';
+import type { TenantScope } from '@/server/sites/repository';
+import {
+  LIVE_EVENTS,
+  LIVE_FEED_MAX,
+  LIVE_RECHECK_MS,
+  LIVE_RECHECK_ON_WRITE_MS,
+  ORIGIN_TAB_PATTERN,
+  type LiveFeedLine,
+  type SiteStateEvent,
+  type SiteVersionEvent,
+} from '@/lib/projects/liveEvents';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -52,6 +70,22 @@ function lastSeenVersion(req: Request): number | undefined {
   const raw = req.headers.get('last-event-id');
   if (!raw || !/^\d{1,10}$/.test(raw)) return undefined;
   return Number(raw);
+}
+
+/**
+ * The feed a newly opened editor starts with: the site's last writes from the
+ * audit table (scoped to the caller's workspace) and the live lines that leave
+ * no row (reads, refusals), newest first, LIVE_FEED_MAX at most. The audit read
+ * failing costs the backfill, never the stream.
+ */
+async function feedFor(scope: TenantScope, siteId: string, live: LiveFeedLine[]): Promise<LiveFeedLine[]> {
+  let stored: LiveFeedLine[] = [];
+  try {
+    stored = await recentSiteOperations(getPrismaClient(), scope, siteId, LIVE_FEED_MAX);
+  } catch (err) {
+    console.error(`[live] the activity feed of site ${siteId} could not be read for its stream`, err);
+  }
+  return [...stored, ...live].sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)).slice(0, LIVE_FEED_MAX);
 }
 
 async function handleGET(req: Request, { params }: Ctx): Promise<Response> {
@@ -134,7 +168,9 @@ async function handleGET(req: Request, { params }: Ctx): Promise<Response> {
     return new Response(sse.stream, { status: 200, headers: SSE_HEADERS });
   }
 
-  const state: SiteStateEvent = { version, plans: [], agents: [], feed: [] };
+  const presence = presenceSnapshot(projectId);
+  const state: SiteStateEvent = { version, plans: [], agents: presence.agents, feed: await feedFor(auth.scope, projectId, presence.feed) };
+  if (ended) return new Response(sse.stream, { status: 200, headers: SSE_HEADERS });
   sse.send(LIVE_EVENTS.state, state, version);
   const seen = lastSeenVersion(req);
   const caughtUp = waiting.some(([event, data]) => event === LIVE_EVENTS.siteVersion && (data as SiteVersionEvent).version >= version);

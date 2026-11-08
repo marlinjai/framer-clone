@@ -13,6 +13,7 @@ import { findRuleIndex, namedState, ruleLabel } from '@/lib/rules/states';
 import { revealFor, surfaceBehaviour, type PreviewValues } from '@/lib/behaviour/surfaceBehaviour';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { surfaceColorMode, surfaceColorScheme, surfaceDarkClass, type ColorScheme } from '@/lib/site/theme';
+import { LivePresenceStore } from '@/lib/live/presenceStore';
 import { PageGenDraftStore } from '@/lib/ai/pageGen/draft';
 // Removed BreakpointModel - breakpoints are now viewport nodes
 
@@ -200,6 +201,10 @@ const EditorUIStore = types.model('EditorUI', {
   // running generation, drawn on the canvas and never part of the project, so
   // never saved, published or in undo history. Its own observable store.
   pageGenDraft: new PageGenDraftStore(),
+  // The agents working on the open site (src/lib/live/presenceStore.ts), fed by
+  // the live stream: the presence frame, the activity feed and the top bar's
+  // note. Never part of the project. Its own observable store.
+  livePresence: new LivePresenceStore(),
   // Phone layout (docs/plans/2026-10-24-editor-on-phones.md, "Quick toolbar"):
   // the long-press context menu, open at a finger point (screen px), and the
   // style its Copy style took (appearance properties as resolved on the frame
