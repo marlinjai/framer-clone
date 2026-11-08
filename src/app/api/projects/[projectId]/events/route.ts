@@ -14,8 +14,10 @@
 //   - `state` once on connect: the current version, the agents active on the
 //     site with their last focus (src/server/sites/livePresence.ts) and the last
 //     30 feed lines (the site's audit rows, scoped to the caller's workspace,
-//     merged with the live lines of reads and refusals); the skeleton plans stay
-//     empty until slice 4;
+//     merged with the live lines of reads and refusals) and the skeleton plans
+//     agents announced on it (src/server/mcp/livePlans.ts), never one that ended;
+//   - `plan:update` when an agent announces, replaces, fulfils, clears or loses a
+//     skeleton plan;
 //   - `agent:activity` when an MCP tool call on the site starts and ends
 //     (src/server/mcp/presence.ts);
 //   - `site:version` after every committed write of the working copy, from any
@@ -40,6 +42,7 @@ import { authorizeLiveProject } from '@/server/sites/liveGuard';
 import { acquireStreamSlot, subscribeSite } from '@/server/sites/liveBus';
 import { getSiteRepository } from '@/server/sites';
 import { presenceSnapshot } from '@/server/sites/livePresence';
+import { plansSnapshot } from '@/server/mcp/livePlans';
 import { recentSiteOperations } from '@/server/siteOps/audit';
 import { getPrismaClient } from '@/server/db';
 import type { TenantScope } from '@/server/sites/repository';
@@ -169,7 +172,8 @@ async function handleGET(req: Request, { params }: Ctx): Promise<Response> {
   }
 
   const presence = presenceSnapshot(projectId);
-  const state: SiteStateEvent = { version, plans: [], agents: presence.agents, feed: await feedFor(auth.scope, projectId, presence.feed) };
+  // The plans announced under the scope this stream's guard verified; one whose time ran out is never sent.
+  const state: SiteStateEvent = { version, plans: plansSnapshot(projectId, auth.scope), agents: presence.agents, feed: await feedFor(auth.scope, projectId, presence.feed) };
   if (ended) return new Response(sse.stream, { status: 200, headers: SSE_HEADERS });
   sse.send(LIVE_EVENTS.state, state, version);
   const seen = lastSeenVersion(req);

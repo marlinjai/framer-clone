@@ -16,10 +16,15 @@
 //     short (no reset on start). A node still revealing keeps its timing when
 //     a newer batch names it again (rewriting its delay would restart it).
 //
-// The margin past the animation's end is generous (REVEAL_SETTLE_MS): the
-// timer runs from the start, while each element's animation starts at its
-// first style pass, which a large page with several breakpoint frames can delay.
-// Should the timer still win, the node only snaps to fully visible.
+// The timer is armed only once the batch has been painted (two animation
+// frames after start), never at start: start runs inside the adoption's
+// action, and the commit that draws the new nodes can block the main thread
+// for longer than the whole reveal (a first adoption, a slow device). A timer
+// armed at start then fired the moment that task ended and took the entries
+// away before any element had played its animation, so that write never
+// revealed. The margin past the animation's end (REVEAL_SETTLE_MS) covers an
+// element whose first style pass comes a little after the paint; should the
+// timer still win, the node only snaps to fully visible.
 //
 // Who starts a reveal decides whether one is due (an adopted agent write, a
 // generate_page result, the in-editor Generate apply); this store only plays
@@ -40,6 +45,7 @@ export class LiveRevealStore {
   private batches = new Map<string, number>();
   private batch = 0;
   private timers = new Set<ReturnType<typeof setTimeout>>();
+  private frames = new Set<number>();
 
   constructor() {
     makeObservable<LiveRevealStore, 'expire'>(this, {
@@ -72,12 +78,33 @@ export class LiveRevealStore {
       if (delay > last) last = delay;
     }
     if (ids.length === 0) return batch;
-    const timer = setTimeout(() => {
-      this.timers.delete(timer);
-      this.expire(batch, ids);
-    }, last + REVEAL_NODE_MS + REVEAL_SETTLE_MS);
-    this.timers.add(timer);
+    const arm = () => {
+      const timer = setTimeout(() => {
+        this.timers.delete(timer);
+        this.expire(batch, ids);
+      }, last + REVEAL_NODE_MS + REVEAL_SETTLE_MS);
+      this.timers.add(timer);
+    };
+    this.afterPaint(arm);
     return batch;
+  }
+
+  /** Run `fn` once the frame that draws the current changes has been painted (at once without animation frames). */
+  private afterPaint(fn: () => void): void {
+    if (typeof requestAnimationFrame !== 'function') {
+      fn();
+      return;
+    }
+    // The first callback runs before the paint of the commit's frame, the second after it.
+    const first = requestAnimationFrame(() => {
+      this.frames.delete(first);
+      const second = requestAnimationFrame(() => {
+        this.frames.delete(second);
+        fn();
+      });
+      this.frames.add(second);
+    });
+    this.frames.add(first);
   }
 
   private expire(batch: number, ids: readonly string[]): void {
@@ -92,6 +119,8 @@ export class LiveRevealStore {
   reset(): void {
     for (const timer of this.timers) clearTimeout(timer);
     this.timers.clear();
+    if (typeof cancelAnimationFrame === 'function') for (const frame of this.frames) cancelAnimationFrame(frame);
+    this.frames.clear();
     this.batches.clear();
     this.delays.clear();
   }

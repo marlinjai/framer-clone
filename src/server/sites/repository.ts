@@ -58,6 +58,7 @@ import { nextSiteRedirects, parseSiteRedirects } from '@/lib/pages/redirects';
 import { generateSubdomain } from './subdomain';
 import { parseRevisionDocument, REVISION_SCHEMA_VERSION, revisionPublishCheck } from './revision';
 import { publishSiteEvent } from './liveBus';
+import { checkPlanAnchors, hasPlans } from '@/server/mcp/livePlans';
 import { boundedWriteEvent, LIVE_EVENTS, type SiteVersionEvent, type SiteWriteEvent } from '@/lib/projects/liveEvents';
 import type { PublishCheck } from '@/lib/legal/publishCheck';
 import {
@@ -339,8 +340,12 @@ interface WorkingCopyWrite {
  * transaction resolved, never inside it, so a refused or rolled back write is
  * never announced. A failure is logged and never undoes the write.
  */
-function announceWrite(siteId: string, write: WorkingCopyWrite, event: SiteWriteEvent | undefined): void {
+function announceWrite(siteId: string, write: WorkingCopyWrite, event: SiteWriteEvent | undefined, written?: PersistedSite): void {
   if (!write.wrote) return;
+  // An agent's announced skeletons stand on a page and after a section: a write
+  // that removed either ends them (src/server/mcp/livePlans.ts). Only when the
+  // site holds a plan, so an ordinary save pays nothing.
+  if (written && hasPlans(siteId)) checkPlanAnchors(siteId, written.pages);
   try {
     const payload: SiteVersionEvent = {
       ...boundedWriteEvent(event ?? { origin: 'editor' }),
@@ -526,7 +531,7 @@ export class SiteRepository {
       (tx) => this.writeWorkingCopy(tx, scope, persisted, options),
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, ...PROJECT_WRITE_TRANSACTION },
     ));
-    announceWrite(persisted.siteId, write, options.event);
+    announceWrite(persisted.siteId, write, options.event, persisted);
     return { version: write.version };
   }
 
@@ -983,7 +988,7 @@ export class SiteRepository {
       });
       return { revision: revision.number, write };
     }, PROJECT_WRITE_TRANSACTION));
-    announceWrite(siteId, published.write, { ...options.event, origin: 'publish' });
+    announceWrite(siteId, published.write, { ...options.event, origin: 'publish' }, persisted);
     return { revision: published.revision, version: published.write.version };
   }
 

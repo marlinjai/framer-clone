@@ -11,11 +11,18 @@ import { createRootStore } from '@/stores/RootStore';
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
+/** The batch was painted: its timer runs from here (two animation frames after start). */
+function painted() {
+  vi.advanceTimersToNextFrame();
+  vi.advanceTimersToNextFrame();
+}
+
 describe('LiveRevealStore', () => {
   it('holds a batch until its last node played, then forgets it', () => {
     const store = new LiveRevealStore();
     store.start(new Map([['a', 0], ['b', 45], ['c', 90]]));
     expect(store.delayOf('b')).toBe(45);
+    painted();
     vi.advanceTimersByTime(90 + REVEAL_NODE_MS + REVEAL_SETTLE_MS - 1);
     expect(store.size).toBe(3);
     vi.advanceTimersByTime(1);
@@ -26,12 +33,28 @@ describe('LiveRevealStore', () => {
   it('a node still revealing keeps its timing when a newer batch names it again', () => {
     const store = new LiveRevealStore();
     store.start(new Map([['a', 0], ['b', 45]]));
+    painted();
+    const firstEnds = Date.now() + 45 + REVEAL_NODE_MS + REVEAL_SETTLE_MS;
     vi.advanceTimersByTime(200);
     store.start(new Map([['b', 0], ['c', 45]]));
     expect(store.delayOf('b')).toBe(45);
-    vi.advanceTimersByTime(45 + REVEAL_NODE_MS + REVEAL_SETTLE_MS - 200); // the first batch ends
+    painted();
+    const secondEnds = Date.now() + 45 + REVEAL_NODE_MS + REVEAL_SETTLE_MS;
+    vi.advanceTimersByTime(firstEnds - Date.now()); // the first batch ends
     expect([...store.delays.keys()]).toEqual(['c']);
-    vi.advanceTimersByTime(200);
+    vi.advanceTimersByTime(secondEnds - Date.now());
+    expect(store.size).toBe(0);
+  });
+
+  it('the timer runs from the first paint, so a commit that blocks longer than the reveal never takes it away unplayed', () => {
+    const store = new LiveRevealStore();
+    store.start(new Map([['a', 0]]));
+    // The adoption's render blocks the main thread: timers are due, but no frame has been painted yet.
+    vi.advanceTimersByTime(0);
+    expect(store.delayOf('a')).toBe(0);
+    painted();
+    expect(store.delayOf('a')).toBe(0);
+    vi.advanceTimersByTime(REVEAL_NODE_MS + REVEAL_SETTLE_MS);
     expect(store.size).toBe(0);
   });
 

@@ -33,6 +33,12 @@ export interface SessionFacts {
    * when the key has no name. Text the client chose, shown as plain text only.
    */
   clientName?: string;
+  /**
+   * The random part of the id, the same on every request of one session: what
+   * the session's skeleton plans are tied to, so its end (DELETE) ends them
+   * (./livePlans.ts). Only on ids read back, never chosen by the client.
+   */
+  nonce?: string;
 }
 
 /** The longest client name a session id carries (the id itself stays well under 512 characters). */
@@ -92,7 +98,8 @@ export function readSessionId(id: string | null, fingerprint: string): SessionFa
     const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as Record<string, unknown>;
     if (parsed.k !== fingerprint || typeof parsed.v !== 'string') return null;
     const clientName = clientNameOf(parsed.c);
-    return { protocolVersion: parsed.v, elicitation: parsed.e === 1, ...(clientName ? { clientName } : {}) };
+    const nonce = typeof parsed.n === 'string' && /^[A-Za-z0-9_-]{1,16}$/.test(parsed.n) ? parsed.n : undefined;
+    return { protocolVersion: parsed.v, elicitation: parsed.e === 1, ...(clientName ? { clientName } : {}), ...(nonce ? { nonce } : {}) };
   } catch {
     return null;
   }

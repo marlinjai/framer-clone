@@ -24,7 +24,9 @@ import 'server-only';
 //
 // Every tool call that names a site in the key's own scope is reported to that
 // site's open editors, at its start and its end (./presence.ts): the blue frame,
-// the label and the activity feed of the live agent canvas.
+// the label and the activity feed of the live agent canvas. Every call that names
+// a site also keeps the key's skeleton plans there alive (./livePlans.ts), and
+// DELETE (the client ending its session) ends the plans that session announced.
 
 import { authorizeKeyAction, machineAuthDenial, redactSecrets, verifyCompanyKey, type CompanyKey, type VerifiedKey } from '@/lib/auth-machine';
 import { carriesBearer, presentedBearer } from '@/lib/bearer';
@@ -34,12 +36,13 @@ import type { SiteOpsCaller } from '@/lib/siteOps/types';
 import type { ConfirmFn } from './confirmations';
 import { getApprovalStore, type ApprovalStore } from './approvals';
 import { ask, deliver, isClientResponse } from './elicitation';
-import { issueSessionId, keyFingerprint, readSessionId } from './session';
+import { issueSessionId, keyFingerprint, readSessionId, type SessionFacts } from './session';
 import {
   APPROVAL_RATE,
   findTool,
   IMAGE_RATE,
   LISTED_TOOLS,
+  PLAN_RATE,
   READ_RATE,
   runTool,
   WRITE_RATE,
@@ -49,8 +52,10 @@ import {
   type ToolResult,
 } from './tools';
 import { SERVER_INSTRUCTIONS } from './instructions';
-import { withPresence } from './presence';
+import { siteIdOf, withPresence } from './presence';
+import { endSessionPlans, touchPlans } from './livePlans';
 import { getSiteRepository } from '@/server/sites';
+import { liveAgentId } from '@/server/siteOps/audit';
 
 const SERVER_INFO = { name: 'lumitra-sites', title: 'Lumitra Sites', version: '1.0.0' };
 /** The protocol versions this endpoint speaks, newest first. */
@@ -163,17 +168,19 @@ export function createMcpHandler(deps: McpDeps) {
     writes: createPageGenRateLimiter(WRITE_RATE),
     images: createPageGenRateLimiter(IMAGE_RATE),
     approvals: createPageGenRateLimiter(APPROVAL_RATE),
+    plans: createPageGenRateLimiter(PLAN_RATE),
   };
 
-  function context(signal: AbortSignal, key: VerifiedKey, clientName: string | undefined, confirm?: ConfirmFn): ToolContext {
+  function context(signal: AbortSignal, key: VerifiedKey, session: SessionFacts | null | undefined, confirm?: ConfirmFn): ToolContext {
     return {
-      caller: keyCaller(key, clientName),
+      caller: keyCaller(key, session?.clientName),
       key: { keyId: key.keyId, tenantId: key.tenantId },
       deps: deps.siteOps ?? {},
       confirm,
       approvals,
       limits,
       signal,
+      ...(session?.nonce ? { session: session.nonce } : {}),
     };
   }
 
@@ -182,6 +189,9 @@ export function createMcpHandler(deps: McpDeps) {
    * and an end, only for a site in the key's own scope.
    */
   function runReported(tool: ToolDef, args: unknown, ctx: ToolContext, key: VerifiedKey): Promise<ToolResult> {
+    // Any call of the key keeps its skeleton plans on the site it names alive (a call naming no site, all of them);
+    // it touches only this key's own plans.
+    touchPlans(siteIdOf(args), liveAgentId(key.keyId));
     return withPresence(
       {
         tool: tool.name,
@@ -221,7 +231,7 @@ export function createMcpHandler(deps: McpDeps) {
     key: VerifiedKey,
     message: JsonRpcRequest,
     fingerprint: string,
-    clientName: string | undefined,
+    session: SessionFacts | null,
   ): Promise<{ reply: unknown; sessionId?: string } | null> {
     const id = message.id ?? null;
     const notification = message.id === undefined;
@@ -237,7 +247,7 @@ export function createMcpHandler(deps: McpDeps) {
         if (notification) return null;
         const tool = findTool(params.name);
         if (!tool) return { reply: rpcError(id, INVALID_PARAMS, `unknown tool: ${redactSecrets(String(params.name)).slice(0, ECHO_MAX)}`) };
-        const result = await runReported(tool, params.arguments, context(request.signal, key, clientName), key);
+        const result = await runReported(tool, params.arguments, context(request.signal, key, session), key);
         return { reply: rpcResult(id, result) };
       }
       default:
@@ -255,7 +265,7 @@ export function createMcpHandler(deps: McpDeps) {
    * request's abort both end the question, so nothing waits on a reader that is
    * gone and nothing is published for it.
    */
-  function streamedCall(request: Request, key: VerifiedKey, message: JsonRpcRequest, fingerprint: string, clientName: string | undefined): Response {
+  function streamedCall(request: Request, key: VerifiedKey, message: JsonRpcRequest, fingerprint: string, session: SessionFacts): Response {
     const encoder = new TextEncoder();
     const id = message.id ?? null;
     const params = message.params ?? {};
@@ -286,7 +296,7 @@ export function createMcpHandler(deps: McpDeps) {
         void (async () => {
           let result: ToolResult;
           try {
-            result = await runReported(tool, params.arguments, context(signal, key, clientName, confirm), key);
+            result = await runReported(tool, params.arguments, context(signal, key, session, confirm), key);
           } catch {
             result = { content: [{ type: 'text', text: 'the tool failed unexpectedly' }], structuredContent: { error: { code: 'internal_error', message: 'the tool failed unexpectedly' } }, isError: true };
           }
@@ -341,7 +351,7 @@ export function createMcpHandler(deps: McpDeps) {
     const acceptsStream = (request.headers.get('accept') ?? '').includes('text/event-stream');
     if (!batch && acceptsStream && isRequest(parsed) && parsed.method === 'tools/call' && parsed.id !== undefined && session?.elicitation) {
       const tool = findTool(parsed.params?.name);
-      if (tool?.confirms) return streamedCall(request, verified, parsed, fingerprint, session.clientName);
+      if (tool?.confirms) return streamedCall(request, verified, parsed, fingerprint, session);
     }
 
     const answers: unknown[] = [];
@@ -365,7 +375,7 @@ export function createMcpHandler(deps: McpDeps) {
         }
         continue;
       }
-      const reply = await answer(request, verified, message, fingerprint, session?.clientName);
+      const reply = await answer(request, verified, message, fingerprint, session);
       if (reply === null) continue;
       if (reply.sessionId) sessionId = reply.sessionId;
       answers.push(reply.reply);
@@ -378,12 +388,29 @@ export function createMcpHandler(deps: McpDeps) {
     return rpcResponse(batch ? answers : answers[0], 200, sessionId ? { 'mcp-session-id': sessionId } : {});
   }
 
-  /** This endpoint keeps no stream open for listening and no session to end. */
+  /** This endpoint keeps no stream open for listening. */
   function notAllowed(): Response {
-    return new Response(null, { status: 405, headers: { allow: 'POST', 'cache-control': 'no-store' } });
+    return new Response(null, { status: 405, headers: { allow: 'POST, DELETE', 'cache-control': 'no-store' } });
   }
 
-  return { POST, GET: notAllowed, DELETE: notAllowed };
+  /**
+   * The client ends its session (Streamable HTTP's DELETE with the session id):
+   * the skeleton plans this key announced in that session end at once on every
+   * site. The key is checked like on POST; the session id must be one issued to
+   * this key, else there is nothing of it to end. 204 either way: ending is
+   * idempotent and the endpoint keeps no session of its own to report on.
+   */
+  async function DELETE(request: Request): Promise<Response> {
+    if (!carriesBearer(request)) return machineAuthDenial({ kind: 'refused' });
+    const verified = await deps.verifyKey(request);
+    if (verified.kind !== 'key') return machineAuthDenial(verified);
+    const fingerprint = keyFingerprint(presentedBearer(request) ?? '');
+    const session = readSessionId(request.headers.get('mcp-session-id'), fingerprint);
+    if (session?.nonce) endSessionPlans(liveAgentId(verified.keyId), session.nonce);
+    return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });
+  }
+
+  return { POST, GET: notAllowed, DELETE };
 }
 
 export const mcp = createMcpHandler({ verifyKey: verifyCompanyKey });

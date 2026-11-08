@@ -130,6 +130,22 @@ export function reportAgentActivity(siteId: string, activity: AgentActivity, lin
   publishSiteEvent(siteId, LIVE_EVENTS.agentActivity, activity);
 }
 
+/**
+ * Keep a feed line that no call's end carries (a skeleton plan that ended
+ * because its agent stopped, src/server/mcp/livePlans.ts), for the `state`
+ * event. The open editors compose the same line from the event they hear, with
+ * the same id. Never throws.
+ */
+export function recordLiveFeedLine(siteId: string, line: LiveFeedLine, now: number = Date.now()): void {
+  try {
+    sweep(now);
+    const site = siteEntry(siteId, now);
+    site.feed = [line, ...site.feed.filter((l) => l.id !== line.id)].slice(0, LIVE_FEED_MAX);
+  } catch (err) {
+    console.error(`[live] a feed line of site ${siteId} could not be recorded`, err);
+  }
+}
+
 /** What a newly opened stream of the site is told: the active agents (every running call, else the last one) and the live feed lines. */
 export function presenceSnapshot(siteId: string, now: number = Date.now()): { agents: AgentActivity[]; feed: LiveFeedLine[] } {
   const sites = state().sites;

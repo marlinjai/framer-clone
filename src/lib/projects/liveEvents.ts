@@ -119,11 +119,93 @@ export interface LiveFeedLine {
   at: string;
 }
 
-/** `state`: sent once on connect. Slice 4 fills `plans`. */
+/** The shapes a skeleton section can take (plan section 3). */
+export const PLAN_SECTION_KINDS = ['hero', 'features', 'gallery', 'pricing', 'testimonials', 'faq', 'cta', 'form', 'footer', 'generic'] as const;
+export type PlanSectionKind = (typeof PLAN_SECTION_KINDS)[number];
+
+/** The bounds of the skeleton plans (plan section 3). */
+export const PLAN_LIMITS = {
+  /** Live plans one site holds at once, of every agent together. */
+  plansPerSite: 3,
+  /** Sections one plan announces. */
+  sectionsPerPlan: 20,
+  /** A section's title, in visible characters. */
+  titleMax: 60,
+  /** A plan ends this long after its agent's last call on the site (any call by the same key refreshes it). */
+  idleMs: 3 * 60_000,
+  /** And this long after it was announced, whatever the agent does. */
+  maxMs: 20 * 60_000,
+} as const;
+
+/** One announced section of a plan: what its skeleton shows, and once a batch created its ref, the node it became. */
+export interface LivePlanSection {
+  /** The ref the agent puts on the section's root node in apply_batch. */
+  ref: string;
+  /** Plain text the agent wrote, sanitised and capped at PLAN_LIMITS.titleMax; rendered as text only. */
+  title: string;
+  kind: PlanSectionKind;
+  /** The site version whose batch created the ref: the skeleton goes once the editor holds that version. */
+  fulfilledAt?: number;
+  /** The id the ref became. */
+  nodeId?: string;
+}
+
+/**
+ * `plan:update` and the `state` event's plans: the sections an agent announced
+ * before writing them (announce_sections), drawn as skeletons until each is
+ * created. Ids, refs and sanitised titles only.
+ */
+export interface LivePlan {
+  planId: string;
+  /** The hash of the announcing key's id (as in AgentActivity). */
+  agentId: string;
+  /** The agent's label (as in AgentActivity). */
+  label: string;
+  /** The page the sections go on: named at the announce, or, for a new page, the page its createPage made. */
+  pageId?: string;
+  /** A page the agent is about to create: skeletons show in a ghost page frame until the page exists. */
+  newPage?: { ref: string; title: string };
+  /** The site version whose batch created the new page (with `pageId`). */
+  pageAt?: number;
+  /** A top-level section of the page the skeletons follow; absent: the end of the page. */
+  after?: string;
+  sections: LivePlanSection[];
+  /** When the plan ends unless its agent calls again (ISO 8601). */
+  expiresAt: string;
+}
+
+/** Why a plan ended. */
+export type PlanEndReason = 'fulfilled' | 'cleared' | 'expired' | 'session_ended' | 'anchor_removed' | 'evicted';
+
+/** `plan:update`: a plan announced, partly fulfilled, replaced or ended. */
+export interface PlanUpdateEvent {
+  /** The plan as it is now (its last state when it ended). */
+  plan: LivePlan;
+  /** The plan this one replaces, in the same step (no gap between the two). */
+  replaces?: string;
+  /** Set when the plan ended. */
+  ended?: PlanEndReason;
+}
+
+/** The feed line an ended plan leaves when its agent stopped (expired, or its session ended): the same id on the server and in the editor. */
+export function stoppedPlanLineId(planId: string): string {
+  return `plan-stopped:${planId}`;
+}
+
+/** The tool name of that feed line (no real tool: the editor words it). */
+export const PLAN_STOPPED_TOOL = 'sections_stopped';
+
+/** Clean a section or page title an agent wrote: no control or bidirectional characters, one line, PLAN_LIMITS.titleMax characters. */
+export function sanitizePlanTitle(text: unknown): string | undefined {
+  const label = sanitizeLiveLabel(text);
+  return label ? capChars(label, PLAN_LIMITS.titleMax) : undefined;
+}
+
+/** `state`: sent once on connect. */
 export interface SiteStateEvent {
   version: number;
-  /** Live skeleton plans of the site (slice 4). */
-  plans: unknown[];
+  /** The live skeleton plans of the site. One that ended while the tab was away is not here, and never comes back. */
+  plans: LivePlan[];
   /**
    * The agents active on the site and their last focus: the latest activity of
    * each, `start` while one of its calls is still running. Only agents seen
@@ -139,6 +221,7 @@ export const LIVE_EVENTS = {
   state: 'state',
   siteVersion: 'site:version',
   agentActivity: 'agent:activity',
+  planUpdate: 'plan:update',
   authExpired: 'auth:expired',
 } as const;
 

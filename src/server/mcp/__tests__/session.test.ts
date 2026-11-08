@@ -13,7 +13,7 @@ const fingerprint = keyFingerprint('a-presented-key-built-for-this-test');
 describe('the session id', () => {
   it('carries the protocol version, elicitation and the client name', () => {
     const id = issueSessionId({ protocolVersion: '2025-06-18', elicitation: true, clientName: 'Claude Code' }, fingerprint);
-    expect(readSessionId(id, fingerprint)).toEqual({ protocolVersion: '2025-06-18', elicitation: true, clientName: 'Claude Code' });
+    expect(readSessionId(id, fingerprint)).toEqual({ protocolVersion: '2025-06-18', elicitation: true, clientName: 'Claude Code', nonce: expect.stringMatching(/^[A-Za-z0-9_-]{8}$/) });
   });
 
   it('sanitises the client name: control and direction characters go, one line, capped', () => {
@@ -48,7 +48,7 @@ describe('the session id', () => {
 
   it('leaves out a name that is empty after sanitising', () => {
     const id = issueSessionId({ protocolVersion: '2025-06-18', elicitation: false, clientName: '\u0000​ ' }, fingerprint);
-    expect(readSessionId(id, fingerprint)).toEqual({ protocolVersion: '2025-06-18', elicitation: false });
+    expect(readSessionId(id, fingerprint)).toEqual({ protocolVersion: '2025-06-18', elicitation: false, nonce: expect.any(String) });
   });
 
   it('reads nothing from an id of another key or a tampered one', () => {

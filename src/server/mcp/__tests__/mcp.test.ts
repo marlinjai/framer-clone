@@ -58,6 +58,9 @@ import { createMcpHandler, MAX_BODY_BYTES, PROTOCOL_VERSIONS, type McpDeps } fro
 import { APPROVAL_TTL_MS, APPROVALS_PER_KEY, ApprovalStore } from '../approvals';
 import { DATA_NOTICE, LISTED_TOOLS, OPERATION_SCHEMAS, UNEXPECTED_FAILURE, type ToolLimits } from '../tools';
 import { ELICITATION_PER_KEY, pendingCount } from '../elicitation';
+import { plansSnapshot, resetLivePlansForTests } from '../livePlans';
+import { resetLiveBusForTests, subscribeSite } from '@/server/sites/liveBus';
+import { LIVE_EVENTS, PLAN_LIMITS, type PlanUpdateEvent } from '@/lib/projects/liveEvents';
 
 const fakeCredential = (prefix: string) => `${prefix}_${randomBytes(16).toString('hex')}`;
 const fakeKey = () => fakeCredential(['sk', 'live'].join('_'));
@@ -178,6 +181,7 @@ function limitsWith(over: Partial<ToolLimits>): ToolLimits {
     writes: createPageGenRateLimiter({ maxPerWindow: 1000, windowMs: 60_000 }),
     images: createPageGenRateLimiter(),
     approvals: createPageGenRateLimiter({ maxPerWindow: 1000, windowMs: 60_000 }),
+    plans: createPageGenRateLimiter({ maxPerWindow: 1000, windowMs: 60_000 }),
     ...over,
   };
 }
@@ -212,6 +216,8 @@ let errorSpy: { mockRestore: () => void };
 let warnSpy: { mockRestore: () => void };
 
 beforeEach(() => {
+  resetLivePlansForTests();
+  resetLiveBusForTests();
   audits.rows = [];
   commerce.outcome = { ok: true };
   commerce.calls = [];
@@ -296,12 +302,14 @@ describe('protocol', () => {
     expect((await s.handler.POST(streamed)).status).toBe(413);
   });
 
-  it('answers GET and DELETE with 405, keeping no stream and no session', async () => {
+  it('answers GET with 405 (no stream to listen on), and DELETE needs the key like POST', async () => {
     const s = setup();
-    for (const res of [s.handler.GET(), s.handler.DELETE()]) {
-      expect(res.status).toBe(405);
-      expect(res.headers.get('allow')).toBe('POST');
-    }
+    const res = s.handler.GET();
+    expect(res.status).toBe(405);
+    expect(res.headers.get('allow')).toBe('POST, DELETE');
+    expect((await s.handler.DELETE(new Request('https://app.example/api/mcp', { method: 'DELETE' }))).status).toBe(401);
+    const ended = await s.handler.DELETE(new Request('https://app.example/api/mcp', { method: 'DELETE', headers: { authorization: `Bearer ${s.key}` } }));
+    expect(ended.status).toBe(204);
   });
 
   it('lists every tool with annotations and a JSON Schema, and an unknown tool is a JSON-RPC error', async () => {
@@ -309,8 +317,8 @@ describe('protocol', () => {
     const res = await s.handler.POST(post(s.key, rpc('tools/list')));
     const { result } = (await res.json()) as { result: { tools: typeof LISTED_TOOLS } };
     expect(result.tools.map((t) => t.name)).toEqual([
-      'list_sites', 'get_site', 'get_page', 'describe_vocabulary', 'create_site', 'apply_batch', 'generate_page',
-      'find_images', 'preview_url', 'publish', 'list_revisions', 'rollback',
+      'list_sites', 'get_site', 'get_page', 'describe_vocabulary', 'create_site', 'apply_batch', 'announce_sections', 'clear_sections',
+      'generate_page', 'find_images', 'preview_url', 'publish', 'list_revisions', 'rollback',
     ]);
     const byName = Object.fromEntries(result.tools.map((t) => [t.name, t]));
     for (const name of ['list_sites', 'get_site', 'get_page', 'describe_vocabulary', 'preview_url', 'list_revisions', 'find_images']) {
@@ -914,6 +922,225 @@ describe('publish confirmed through the client dialog (elicitation)', () => {
     const session = await initialize(s, { elicitation: {} });
     const res = await s.handler.POST(post(s.key, rpc('tools/call', { name: 'list_sites', arguments: {} }), { 'mcp-session-id': session }));
     expect(res.headers.get('content-type')).toBe('application/json');
+  });
+});
+
+// ---------- skeleton plans ----------
+
+describe('skeleton plans (announce_sections, clear_sections)', () => {
+  /** Every plan:update the site's open editors hear. */
+  function planEvents(siteId = 'site-1'): PlanUpdateEvent[] {
+    const heard: PlanUpdateEvent[] = [];
+    subscribeSite(siteId, (event, data) => {
+      if (event === LIVE_EVENTS.planUpdate) heard.push(data as PlanUpdateEvent);
+    });
+    return heard;
+  }
+  const three = [
+    { ref: 'hero', title: 'Hero', kind: 'hero' },
+    { ref: 'about', title: 'About us' },
+    { ref: 'faq', title: 'Questions', kind: 'faq' },
+  ];
+  const section = (ref: string) => ({ op: 'insertNodes', pageId: 'home', nodes: [{ ref, type: 'section', children: [{ type: 'p', props: { children: 'Hi' } }] }] });
+
+  it('announces on an existing page: writes nothing, moves no version, and every open editor hears the plan', async () => {
+    const s = setup();
+    const heard = planEvents();
+    const res = await call(s, 'announce_sections', { siteId: 'site-1', pageId: 'home', after: 'title', sections: three });
+    expect(res.isError).toBe(false);
+    const planId = res.structuredContent.planId as string;
+    expect(planId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(Date.parse(res.structuredContent.expiresAt as string)).toBeGreaterThan(Date.now());
+    expect(s.state.saved).toHaveLength(0);
+    expect(s.state.version).toBe(3);
+    expect(audits.rows).toHaveLength(0);
+    expect(heard).toHaveLength(1);
+    expect(heard[0].plan).toMatchObject({ planId, pageId: 'home', after: 'title', label: 'Agent' });
+    expect(heard[0].plan.sections.map((x) => [x.ref, x.title, x.kind])).toEqual([
+      ['hero', 'Hero', 'hero'],
+      ['about', 'About us', 'generic'],
+      ['faq', 'Questions', 'faq'],
+    ]);
+    // No key id travels: the agent is a hash.
+    expect(JSON.stringify(heard)).not.toContain('key_1');
+    expect(plansSnapshot('site-1', SCOPE)).toHaveLength(1);
+  });
+
+  it('refuses arguments outside the bounds and names the problem', async () => {
+    const s = setup();
+    const bad = async (args: Record<string, unknown>) => errorOf(await call(s, 'announce_sections', { siteId: 'site-1', ...args })).code;
+    const many = Array.from({ length: PLAN_LIMITS.sectionsPerPlan + 1 }, (_, i) => ({ ref: `s${i}`, title: `S${i}` }));
+    expect(await bad({ pageId: 'home', sections: many })).toBe('invalid_request');
+    expect(await bad({ pageId: 'home', sections: [] })).toBe('invalid_request');
+    expect(await bad({ pageId: 'home', sections: [{ ref: 'a', title: 'x'.repeat(PLAN_LIMITS.titleMax + 1) }] })).toBe('invalid_request');
+    expect(await bad({ pageId: 'home', sections: [{ ref: 'a', title: '​‮\u0007' }] })).toBe('invalid_request');
+    expect(await bad({ pageId: 'home', sections: [{ ref: 'has space', title: 'A' }] })).toBe('invalid_request');
+    expect(await bad({ pageId: 'home', sections: [{ ref: 'a', title: 'A', kind: 'carousel' }] })).toBe('invalid_request');
+    expect(await bad({ pageId: 'home', sections: [{ ref: 'a', title: 'A' }, { ref: 'a', title: 'B' }] })).toBe('invalid_request');
+    expect(await bad({ sections: [{ ref: 'a', title: 'A' }] })).toBe('invalid_request');
+    expect(await bad({ pageId: 'home', newPage: { ref: 'p', title: 'P' }, sections: [{ ref: 'a', title: 'A' }] })).toBe('invalid_request');
+    expect(await bad({ newPage: { ref: 'p', title: 'P' }, after: 'title', sections: [{ ref: 'a', title: 'A' }] })).toBe('invalid_request');
+    expect(await bad({ newPage: { ref: 'a', title: 'P' }, sections: [{ ref: 'a', title: 'A' }] })).toBe('invalid_request');
+    expect(await bad({ pageId: 'missing', sections: [{ ref: 'a', title: 'A' }] })).toBe('page_not_found');
+    expect(await bad({ pageId: 'home', after: 'nope', sections: [{ ref: 'a', title: 'A' }] })).toBe('invalid_request');
+    expect(plansSnapshot('site-1', SCOPE)).toHaveLength(0);
+  });
+
+  it('a site outside the key\'s scope is not found, and nothing is announced there', async () => {
+    const s = setup();
+    const heard = planEvents('site-x');
+    expect(errorOf(await call(s, 'announce_sections', { siteId: 'site-x', pageId: 'home', sections: three })).code).toBe('site_not_found');
+    expect(heard).toHaveLength(0);
+    expect(plansSnapshot('site-x', SCOPE)).toHaveLength(0);
+  });
+
+  it('a key that may not edit the site may not announce on it', async () => {
+    const s = setup({ outcome: verifiedKey('viewer') });
+    expect(errorOf(await call(s, 'announce_sections', { siteId: 'site-1', pageId: 'home', sections: three })).code).toBe('forbidden');
+  });
+
+  it('titles are plain text: control and bidirectional characters removed, one line', async () => {
+    const s = setup();
+    const heard = planEvents();
+    await call(s, 'announce_sections', { siteId: 'site-1', pageId: 'home', sections: [{ ref: 'a', title: 'Pri‮cing\n<b>x</b>' }] });
+    expect(heard[0].plan.sections[0].title).toBe('Pri cing <b>x</b>');
+  });
+
+  it(`holds at most ${PLAN_LIMITS.plansPerSite} plans per site, and a fourth is refused`, async () => {
+    const s = setup();
+    for (let i = 0; i < PLAN_LIMITS.plansPerSite; i += 1) {
+      expect((await call(s, 'announce_sections', { siteId: 'site-1', pageId: 'home', sections: [{ ref: `a${i}`, title: 'A' }] })).isError).toBe(false);
+    }
+    expect(errorOf(await call(s, 'announce_sections', { siteId: 'site-1', pageId: 'home', sections: [{ ref: 'z', title: 'Z' }] })).code).toBe('too_many_plans');
+  });
+
+  it('is limited per key: announcements and clears share their budget', async () => {
+    const s = setup({ deps: { limits: limitsWith({ plans: createPageGenRateLimiter({ maxPerWindow: 2, windowMs: 60_000 }) }) } });
+    const first = await call(s, 'announce_sections', { siteId: 'site-1', pageId: 'home', sections: [{ ref: 'a', title: 'A' }] });
+    await call(s, 'clear_sections', { siteId: 'site-1', planId: first.structuredContent.planId });
+    expect(errorOf(await call(s, 'announce_sections', { siteId: 'site-1', pageId: 'home', sections: [{ ref: 'a', title: 'A' }] })).code).toBe('rate_limited');
+  });
+
+  it('each batch fulfils the sections whose ref it created; the last one ends the plan', async () => {
+    const s = setup();
+    const heard = planEvents();
+    await call(s, 'announce_sections', { siteId: 'site-1', pageId: 'home', sections: three.slice(0, 2) });
+    const first = await call(s, 'apply_batch', { siteId: 'site-1', expectedVersion: 3, ops: [section('hero')] });
+    const heroId = (first.structuredContent.created as Record<string, string>).hero;
+    expect(heard.at(-1)?.ended).toBeUndefined();
+    expect(heard.at(-1)?.plan.sections).toEqual([
+      { ref: 'hero', title: 'Hero', kind: 'hero', fulfilledAt: 4, nodeId: heroId },
+      { ref: 'about', title: 'About us', kind: 'generic' },
+    ]);
+    // A batch that creates no announced ref changes nothing.
+    const updates = heard.length;
+    await call(s, 'apply_batch', { siteId: 'site-1', expectedVersion: 4, ops: [{ op: 'updateText', nodeId: 'title', text: 'Bread' }] });
+    expect(heard).toHaveLength(updates);
+    await call(s, 'apply_batch', { siteId: 'site-1', expectedVersion: 5, ops: [section('about')] });
+    expect(heard.at(-1)?.ended).toBe('fulfilled');
+    expect(heard.at(-1)?.plan.sections.map((x) => x.fulfilledAt)).toEqual([4, 6]);
+    expect(plansSnapshot('site-1', SCOPE)).toHaveLength(0);
+  });
+
+  it('a refused batch fulfils nothing', async () => {
+    const s = setup();
+    const heard = planEvents();
+    await call(s, 'announce_sections', { siteId: 'site-1', pageId: 'home', sections: three });
+    await call(s, 'apply_batch', { siteId: 'site-1', expectedVersion: 2, ops: [section('hero')] });
+    expect(heard).toHaveLength(1);
+    expect(plansSnapshot('site-1', SCOPE)[0].sections.every((x) => x.fulfilledAt === undefined)).toBe(true);
+  });
+
+  it("another key's batch never fulfils, and another key cannot clear or replace the plan", async () => {
+    const owner = setup();
+    const other = setup({ outcome: verifiedKey('admin', 'key_2') });
+    const heard = planEvents();
+    const announced = await call(owner, 'announce_sections', { siteId: 'site-1', pageId: 'home', sections: three });
+    const planId = announced.structuredContent.planId as string;
+    await call(other, 'apply_batch', { siteId: 'site-1', expectedVersion: 3, ops: [section('hero')] });
+    expect(heard).toHaveLength(1);
+    expect(errorOf(await call(other, 'clear_sections', { siteId: 'site-1', planId })).code).toBe('plan_not_found');
+    expect(errorOf(await call(other, 'announce_sections', { siteId: 'site-1', pageId: 'home', replaces: planId, sections: three })).code).toBe('plan_not_found');
+    expect(plansSnapshot('site-1', SCOPE).map((p) => p.planId)).toEqual([planId]);
+  });
+
+  it('clear_sections ends the plan at once; a second clear finds nothing', async () => {
+    const s = setup();
+    const heard = planEvents();
+    const announced = await call(s, 'announce_sections', { siteId: 'site-1', pageId: 'home', sections: three });
+    const planId = announced.structuredContent.planId as string;
+    const cleared = await call(s, 'clear_sections', { siteId: 'site-1', planId });
+    expect(cleared.structuredContent).toEqual({ cleared: true, planId });
+    expect(heard.at(-1)).toMatchObject({ ended: 'cleared', plan: { planId } });
+    expect(errorOf(await call(s, 'clear_sections', { siteId: 'site-1', planId })).code).toBe('plan_not_found');
+  });
+
+  it('replaces swaps a plan in one step, and a ref already created stays fulfilled', async () => {
+    const s = setup();
+    const heard = planEvents();
+    const announced = await call(s, 'announce_sections', { siteId: 'site-1', pageId: 'home', sections: three });
+    const oldId = announced.structuredContent.planId as string;
+    await call(s, 'apply_batch', { siteId: 'site-1', expectedVersion: 3, ops: [section('hero')] });
+    const replaced = await call(s, 'announce_sections', {
+      siteId: 'site-1',
+      pageId: 'home',
+      replaces: oldId,
+      sections: [three[0], { ref: 'team', title: 'Team' }, three[2]],
+    });
+    const newId = replaced.structuredContent.planId as string;
+    const swap = heard.at(-1)!;
+    expect(swap.replaces).toBe(oldId);
+    expect(swap.ended).toBeUndefined();
+    expect(swap.plan.planId).toBe(newId);
+    expect(swap.plan.sections.map((x) => [x.ref, x.fulfilledAt])).toEqual([['hero', 4], ['team', undefined], ['faq', undefined]]);
+    // The old plan ended without an end event of its own: the swap said it.
+    expect(heard.filter((e) => e.plan.planId === oldId && e.ended)).toHaveLength(0);
+    expect(plansSnapshot('site-1', SCOPE).map((p) => p.planId)).toEqual([newId]);
+    // A replace frees the old plan's slot: three plans and a replace still fit.
+    await call(s, 'announce_sections', { siteId: 'site-1', pageId: 'home', sections: [{ ref: 'x', title: 'X' }] });
+    await call(s, 'announce_sections', { siteId: 'site-1', pageId: 'home', sections: [{ ref: 'y', title: 'Y' }] });
+    expect((await call(s, 'announce_sections', { siteId: 'site-1', pageId: 'home', replaces: newId, sections: three })).isError).toBe(false);
+  });
+
+  it('a new page: its createPage ref gives the plan its page, and the sections fulfil on it', async () => {
+    const s = setup();
+    const heard = planEvents();
+    await call(s, 'announce_sections', { siteId: 'site-1', newPage: { ref: 'pricing-page', title: 'Pricing' }, sections: [three[0], three[1]] });
+    expect(heard[0].plan).toMatchObject({ newPage: { ref: 'pricing-page', title: 'Pricing' } });
+    expect(heard[0].plan.pageId).toBeUndefined();
+    const res = await call(s, 'apply_batch', {
+      siteId: 'site-1',
+      expectedVersion: 3,
+      ops: [
+        { op: 'createPage', title: 'Pricing', ref: 'pricing-page' },
+        { op: 'insertNodes', pageId: 'ref:pricing-page', nodes: [{ ref: 'hero', type: 'section', children: [] }] },
+      ],
+    });
+    const created = res.structuredContent.created as Record<string, string>;
+    const plan = heard.at(-1)!.plan;
+    expect(plan).toMatchObject({ pageId: created['pricing-page'], pageAt: 4 });
+    expect(plan.sections[0]).toMatchObject({ ref: 'hero', fulfilledAt: 4, nodeId: created.hero });
+  });
+
+  it('the end of the MCP session (DELETE) ends the plans that session announced, and only those', async () => {
+    const s = setup();
+    const heard = planEvents();
+    const session = await initialize(s, {});
+    const otherSession = await initialize(s, {});
+    await call(s, 'announce_sections', { siteId: 'site-1', pageId: 'home', sections: [three[0]] }, { 'mcp-session-id': session });
+    await call(s, 'announce_sections', { siteId: 'site-1', pageId: 'home', sections: [three[1]] }, { 'mcp-session-id': otherSession });
+    await call(s, 'announce_sections', { siteId: 'site-1', pageId: 'home', sections: [three[2]] });
+    const del = (headers: Record<string, string>) =>
+      s.handler.DELETE(new Request('https://app.lumitra.co/api/mcp', { method: 'DELETE', headers: { authorization: `Bearer ${s.key}`, ...headers } }));
+    // A forged id, or one issued to another key, ends nothing.
+    expect((await del({ 'mcp-session-id': `${session.split('.')[0]}.forged` })).status).toBe(204);
+    const stranger = fakeKey();
+    const foreign = await initialize(s, {}, '2025-06-18', stranger);
+    expect((await del({ 'mcp-session-id': foreign })).status).toBe(204);
+    expect(plansSnapshot('site-1', SCOPE)).toHaveLength(3);
+    expect((await del({ 'mcp-session-id': session })).status).toBe(204);
+    expect(heard.at(-1)).toMatchObject({ ended: 'session_ended' });
+    expect(plansSnapshot('site-1', SCOPE).map((p) => p.sections[0].ref).sort()).toEqual(['about', 'faq']);
   });
 });
 
