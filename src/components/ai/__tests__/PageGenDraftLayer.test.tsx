@@ -235,7 +235,9 @@ describe('the draft on the canvas', () => {
 
   it('the band says what happens next, and gives way to skeletons', () => {
     expect(draftBandText('writing', 0, 2)).toBeNull();
-    expect(draftBandText('checking', 0, 1)).toBeNull();
+    // A skeleton the stream never filled does not hide the check or the polish.
+    expect(draftBandText('checking', 0, 1)).toBe('Checking the page...');
+    expect(draftBandText('polishing', 0, 3)).toBe('Polishing the page...');
     expect(draftBandText('writing', 0)).toBe('Writing section 1...');
     expect(draftBandText('writing', 2)).toBe('Writing section 3...');
     expect(draftBandText('polishing', 2)).toBeNull();

@@ -53,6 +53,7 @@ describe('kindFromElement', () => {
     ['Galerie', 'section', 'gallery'],
     ['Kontakt', 'section', 'form'],
     [undefined, 'form', 'form'],
+    ['Booking', 'div', 'generic'],
     ['Closing call to action', 'section', 'cta'],
     ['Leistungen', 'section', 'features'],
     ['Anything', 'footer', 'footer'],
@@ -62,6 +63,11 @@ describe('kindFromElement', () => {
   ])('%s / %s is %s', (label, type, kind) => {
     expect(kindFromElement(label, type)).toBe(kind);
   });
+});
+
+it('a div with the form preset is a form', () => {
+  expect(kindFromElement('Booking', 'div', 'form')).toBe('form');
+  expect(kindFromElement('Booking', 'div', 'button')).toBe('generic');
 });
 
 describe('createOutlineBuilder', () => {
@@ -82,6 +88,10 @@ describe('createOutlineBuilder', () => {
     expect(b.entries()).toEqual([{ title: 'Pricing', kind: 'pricing' }]);
     // Reported again: nothing new.
     expect(b.open({ slot: 0, key: 'label', value: 'Other' })).toBe(false);
+    // A preset read later can still change the shape.
+    expect(b.open({ slot: 1, key: 'type', value: 'div' })).toBe(true);
+    expect(b.open({ slot: 1, key: 'preset', value: 'form' })).toBe(true);
+    expect(b.entries()[1]).toEqual({ title: '', kind: 'form' });
   });
 
   it('a gap (an element that opened without a readable label or type) is a generic block', () => {

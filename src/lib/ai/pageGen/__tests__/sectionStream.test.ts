@@ -244,6 +244,20 @@ describe('createSectionScanner: outline and opened elements', () => {
     expect(r.sections).toHaveLength(3);
   });
 
+  it('reads an element\'s own preset, never a child\'s', () => {
+    const r = report(['{"nodes":[{"type":"div","preset":"form","children":[{"type":"a","preset":"button"}]}]}']);
+    expect(r.opened).toEqual([
+      { slot: 0, key: 'type', value: 'div' },
+      { slot: 0, key: 'preset', value: 'form' },
+    ]);
+  });
+
+  it('keeps a full outline of escaped non-Latin titles (20 entries of 60 characters)', () => {
+    const long = Array.from({ length: 20 }, (_, i) => ({ title: 'Ж'.repeat(58) + String(i).padStart(2, '0'), kind: 'generic' }));
+    const text = `{"outline":${JSON.stringify(long).replace(/Ж/g, '\\u0416')},"nodes":[]}`;
+    expect(report([text]).outlines).toEqual([long]);
+  });
+
   it('decodes escapes in a label, also split inside the escape', () => {
     const text = '{"nodes":[{"label":"Caf\\u00e9 \\"Korn\\"","type":"section"}]}';
     for (let cut = 0; cut <= text.length; cut += 1) {

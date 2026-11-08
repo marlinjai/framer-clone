@@ -11,7 +11,7 @@
 //     short plan of the page the prompt asks for first: the canvas draws a
 //     skeleton per entry before any section is complete);
 //   - each element of the root "nodes" array the moment it OPENS and its own
-//     "label" or "type" string has been read (the fallback for a model that
+//     "label", "type" or "preset" string has been read (the fallback for a model that
 //     writes the nodes before, or without, an outline: the slot still gets a
 //     skeleton as soon as the model starts writing it);
 //   - each element of "nodes" the moment its closing brace arrives, parsed.
@@ -35,11 +35,11 @@ export interface ScannedSection {
   value: unknown;
 }
 
-/** One element of "nodes" that just opened: its own "label" or "type" was read. */
+/** One element of "nodes" that just opened: its own "label", "type" or "preset" was read. */
 export interface OpenedElement {
   slot: number;
-  /** The key that was read; an element reports each of the two at most once. */
-  key: 'label' | 'type';
+  /** The key that was read; an element reports each of the three at most once. */
+  key: ElementKey;
   value: string;
 }
 
@@ -62,6 +62,9 @@ export interface SectionScanner {
 }
 
 type Container = '{' | '[';
+
+/** The keys of an element the scanner reads as it opens. */
+export type ElementKey = 'label' | 'type' | 'preset';
 
 /** Where the scanner is relative to one root key whose value it wants ("nodes" or "outline"). */
 type KeyState =
@@ -86,12 +89,12 @@ const WHITESPACE = new Set([' ', '\t', '\n', '\r']);
  * read. The final result is never affected.
  */
 export const SCAN_LIMITS = {
-  outlineChars: 8_000,
+  outlineChars: 16_000,
   keyChars: 64,
   valueChars: 512,
 } as const;
 
-const ELEMENT_KEYS = new Set(['label', 'type']);
+const ELEMENT_KEYS = new Set<string>(['label', 'type', 'preset']);
 
 export function createSectionScanner(): SectionScanner {
   const stack: Container[] = [];
@@ -124,7 +127,7 @@ export function createSectionScanner(): SectionScanner {
   // The element's own keys (directly inside its object, never a child's).
   let elementExpectKey = false;
   let elementLastKey: string | undefined;
-  let elementAwait: 'label' | 'type' | null = null;
+  let elementAwait: ElementKey | null = null;
   let elementReported = new Set<string>();
 
   const decode = (raw: string): string | undefined => {
@@ -301,7 +304,7 @@ export function createSectionScanner(): SectionScanner {
             if (depth === 1 && nodes === 'before' && lastKey === 'nodes') nodes = 'awaitValue';
             else if (depth === 1 && outline === 'before' && lastKey === 'outline') outline = 'awaitValue';
             else if (atElementRoot && elementLastKey !== undefined && ELEMENT_KEYS.has(elementLastKey)) {
-              elementAwait = elementLastKey as 'label' | 'type';
+              elementAwait = elementLastKey as ElementKey;
             }
             break;
           case ',':

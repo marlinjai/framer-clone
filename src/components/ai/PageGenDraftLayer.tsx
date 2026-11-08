@@ -28,8 +28,8 @@
 // coming has a skeleton in its place (the live agent canvas's static shapes,
 // SkeletonBlock in src/components/live/SkeletonLayer.tsx, marked as the
 // draft's own so the presence frame never takes one for an agent's), and the
-// section of slot i takes the place of skeleton i. While skeletons show, the
-// band is not drawn: they already say what is coming. Before the first section,
+// section of slot i takes the place of skeleton i. While the model writes and
+// skeletons show, the band is not drawn: they already say what is coming. Before the first section,
 // the camera brings the first skeleton into view.
 'use client';
 
@@ -149,11 +149,13 @@ function DraftBand({ text }: { text: string }) {
 }
 
 /**
- * The band's words, or null when no band shows: skeletons stand for what is
- * coming, or the result is on its way and sections are drawn.
+ * The band's words, or null when no band shows: while the model writes,
+ * skeletons stand for what is coming; once it is done, the band says the page
+ * is being checked or polished unless sections are drawn (a skeleton the
+ * stream never filled does not hide that).
  */
 export function draftBandText(phase: PageGenDraftStore['phase'], drawn: number, skeletons = 0): string | null {
-  if (skeletons > 0) return null;
+  if (phase === 'writing' && skeletons > 0) return null;
   if (phase === 'writing') return `Writing section ${drawn + 1}...`;
   if (drawn > 0) return null;
   return phase === 'polishing' ? 'Polishing the page...' : 'Checking the page...';

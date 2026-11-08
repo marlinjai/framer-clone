@@ -279,7 +279,7 @@ export function repairMessage(problems: string[]): string {
     'Your output could not be applied. Problems:',
     ...problems.slice(0, 40).map((p) => `- ${p}`),
     '',
-    `Call ${EMIT_TOOL_NAME} again with a corrected, complete result. If the output was too long, produce fewer nodes.`,
+    `Call ${EMIT_TOOL_NAME} again with a corrected, complete result (the outline may be empty). If the output was too long, produce fewer nodes.`,
   ].join('\n');
 }
 
@@ -295,7 +295,7 @@ export function tellRepairMessage(problems: string[]): string {
     'page essentials (a primary call to action in the hero, meaningful alt texts):',
     ...problems.slice(0, 40).map((p) => `- ${p}`),
     '',
-    `Call ${EMIT_TOOL_NAME} again with the complete page, changed so that none of these remain. Keep everything`,
-    'else (content, structure, labels) as it was.',
+    `Call ${EMIT_TOOL_NAME} again with the complete page, changed so that none of these remain (the outline may be`,
+    'empty). Keep everything else (content, structure, labels) as it was.',
   ].join('\n');
 }

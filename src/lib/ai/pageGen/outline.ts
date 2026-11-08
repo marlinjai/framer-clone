@@ -15,7 +15,8 @@
 //
 // A preview hint only: the outline never reaches validation (withoutOutline),
 // the result or the saved page. Client-safe: the editor's draft keeps the
-// payload as it comes, and the MCP generate_page forwards it unchanged.
+// payload as it comes, and a caller can forward it unchanged (the MCP
+// generate_page will, with slice 6 of the plan; it passes nothing yet).
 
 import { PLAN_LIMITS, PLAN_SECTION_KINDS, sanitizePlanTitle, type PlanSectionKind } from '@/lib/projects/liveEvents';
 import type { OpenedElement } from './sectionStream';
@@ -65,11 +66,12 @@ const KIND_WORDS: ReadonlyArray<[PlanSectionKind, RegExp]> = [
   ['features', /\bfeatures?\b|\bservices?\b|\bbenefits?\b|\bofferings?\b|\bleistungen\b|\bvorteile\b|\bangebot\b/],
 ];
 
-/** The shape a section probably has, from its layer name and its tag. */
-export function kindFromElement(label: string | undefined, type: string | undefined): PlanSectionKind {
+/** The shape a section probably has, from its layer name, its tag and its preset. */
+export function kindFromElement(label: string | undefined, type: string | undefined, preset?: string): PlanSectionKind {
   const tag = (type ?? '').trim().toLowerCase();
   if (tag === 'footer') return 'footer';
-  if (tag === 'form') return 'form';
+  // A generated form is a div with the form preset (promptSections/forms.ts).
+  if (tag === 'form' || (preset ?? '').trim().toLowerCase() === 'form') return 'form';
   const text = `${label ?? ''} ${tag === 'header' ? 'header' : ''}`.toLowerCase();
   for (const [kind, words] of KIND_WORDS) if (words.test(text)) return kind;
   return 'generic';
@@ -88,7 +90,7 @@ export interface OutlineBuilder {
 
 export function createOutlineBuilder(): OutlineBuilder {
   let declared: OutlineEntry[] | undefined;
-  const opened = new Map<number, { label?: string; type?: string }>();
+  const opened = new Map<number, { label?: string; type?: string; preset?: string }>();
   let last = '[]';
 
   const merged = (): OutlineEntry[] => {
@@ -105,7 +107,7 @@ export function createOutlineBuilder(): OutlineBuilder {
       // A slot past the outline: what its element said so far, or a generic
       // block for an element that opened without a readable label or type.
       const element = opened.get(slot);
-      out.push({ title: sanitizePlanTitle(element?.label) ?? '', kind: kindFromElement(element?.label, element?.type) });
+      out.push({ title: sanitizePlanTitle(element?.label) ?? '', kind: kindFromElement(element?.label, element?.type, element?.preset) });
     }
     return out;
   };

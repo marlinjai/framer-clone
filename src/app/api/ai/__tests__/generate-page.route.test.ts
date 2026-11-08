@@ -1402,6 +1402,22 @@ describe('POST /api/ai/generate-page outline skeletons', () => {
     }
   });
 
+  it('a declared outline is capped and sanitised end to end before it is sent', async () => {
+    const declared = Array.from({ length: 25 }, (_, i) => ({ title: `S${i} \u202Eevil\u0000 ${'x'.repeat(70)}`, kind: i === 0 ? '<script>' : 'hero' }));
+    const input = { outline: declared, ...VALID_PAGE, nodes: NODES };
+    expect(JSON.stringify(declared).length).toBeLessThan(8_000);
+    anthropicState.turns = [toolTurn(input, { inputJson: fragments(input, 97) })];
+    const evs = await events(await POST(makeRequest(baseBody())));
+    const first = outlines(evs)[0].outline;
+    expect(first).toHaveLength(20);
+    expect(first[0].kind).toBe('generic');
+    expect(first[1].kind).toBe('hero');
+    for (const e of first) {
+      expect([...e.title].length).toBeLessThanOrEqual(60);
+      expect(e.title).not.toMatch(/[\u202E\u0000]/);
+    }
+  });
+
   it('fallback without an outline: each section gets its skeleton as it opens, before it is complete', async () => {
     anthropicState.turns = [toolTurn(WITHOUT_OUTLINE, { inputJson: fragments(WITHOUT_OUTLINE) })];
     const evs = await events(await POST(makeRequest(baseBody())));
