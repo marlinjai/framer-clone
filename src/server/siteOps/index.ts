@@ -71,7 +71,9 @@ import { logAiCall, startAiCallTimer } from '@/lib/ai/aiLogger';
 import { recordUsage } from '@/lib/ai/aiUsageStub';
 import { recordSiteOperation, type AuditedOp } from './audit';
 import type { SiteWriteActor } from '@/lib/projects/liveEvents';
-import { splitCreated } from '@/lib/siteOps/createdIds';
+import { refPagesOf, splitCreated } from '@/lib/siteOps/createdIds';
+import { fulfilFromBatch } from '@/server/mcp/livePlans';
+import { liveAgentId } from './audit';
 
 export type { SiteOpsCaller, SiteOpsResult } from '@/lib/siteOps/types';
 
@@ -356,6 +358,11 @@ export async function applyBatch(caller: SiteOpsCaller, input: unknown, deps: Si
       expectedVersion,
       // Open editors adopt the write and learn what it touched (ids and server-written lines only).
       event: { origin: 'mcp', actor: liveActor(caller), ops: auditedOps(ops), created: applied.created, summary: applied.summary },
+      // The skeletons this key announced and this batch wrote are fulfilled before open editors hear of the write,
+      // so an editor never adopts the copy while the skeleton still counts as unwritten.
+      ...(caller.actor.kind === 'key'
+        ? { beforeAnnounce: (v: number) => fulfilFromBatch(siteId, liveAgentId(caller.actor.id), applied.created, v, refPagesOf(ops, applied.created), splitCreated(ops, applied.created).pageIds) }
+        : {}),
     }));
   } catch (err) {
     return fromError(err, siteId);

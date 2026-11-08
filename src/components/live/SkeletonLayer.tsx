@@ -9,7 +9,8 @@
 //     after the plan's `after` section or at the end of the page. Only the page
 //     root ever hosts skeletons, and the anchor is resolved against the open
 //     copy on every draw: a section the person deleted (or moved under another)
-//     carries none, and an undo brings them back.
+//     carries none at once, and an undo brings them back until the deletion is
+//     saved (the save tells the server, which ends the plan for good).
 //   - On a new page (newPage): a ghost page frame per breakpoint beside the
 //     page's own frames, titled after the planned page, as the Generate draft
 //     does for a new page (src/components/ai/PageGenDraftLayer.tsx).

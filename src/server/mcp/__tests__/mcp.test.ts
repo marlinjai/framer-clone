@@ -123,6 +123,8 @@ function fakeRepository(version = 3) {
       if (options.expectedVersion !== undefined && options.expectedVersion !== state.version) throw new SiteChangedError(state.version);
       state.saved.push({ snapshot: isStateTreeNode(project) ? getSnapshot(project) : project, options });
       state.version = options.expectedVersion === undefined ? 1 : state.version + 1;
+      // As the real repository: after the commit, before the write is announced.
+      (options.beforeAnnounce as ((v: number) => void) | undefined)?.(state.version);
       return { version: state.version };
     }),
     publishProject: vi.fn(async (_scope: unknown, _project: unknown, options: Record<string, unknown>) => {
@@ -1006,12 +1008,39 @@ describe('skeleton plans (announce_sections, clear_sections)', () => {
     expect(heard[0].plan.sections[0].title).toBe('Pri cing <b>x</b>');
   });
 
-  it(`holds at most ${PLAN_LIMITS.plansPerSite} plans per site, and a fourth is refused`, async () => {
-    const s = setup();
+  it(`holds at most ${PLAN_LIMITS.plansPerSite} plans per site and ${PLAN_LIMITS.plansPerKeyPerSite} per key; more are refused`, async () => {
+    const keys = [setup(), setup({ outcome: verifiedKey('admin', 'key_2') })];
     for (let i = 0; i < PLAN_LIMITS.plansPerSite; i += 1) {
+      const s = keys[i % 2];
       expect((await call(s, 'announce_sections', { siteId: 'site-1', pageId: 'home', sections: [{ ref: `a${i}`, title: 'A' }] })).isError).toBe(false);
     }
-    expect(errorOf(await call(s, 'announce_sections', { siteId: 'site-1', pageId: 'home', sections: [{ ref: 'z', title: 'Z' }] })).code).toBe('too_many_plans');
+    // The first key holds two: its third is refused for the key, the second key's for the site.
+    expect(errorOf(await call(keys[0], 'announce_sections', { siteId: 'site-1', pageId: 'home', sections: [{ ref: 'z', title: 'Z' }] })).code).toBe('too_many_plans');
+    expect(errorOf(await call(keys[1], 'announce_sections', { siteId: 'site-1', pageId: 'home', sections: [{ ref: 'z', title: 'Z' }] })).code).toBe('too_many_plans');
+  });
+
+  it('fulfils before the write is announced, so an editor hears plan:update before the site:version that makes it fetch', async () => {
+    const s = setup();
+    const order: string[] = [];
+    subscribeSite('site-1', (event) => order.push(event));
+    await call(s, 'announce_sections', { siteId: 'site-1', pageId: 'home', sections: three.slice(0, 2) });
+    // The fake repository runs beforeAnnounce as the real one does; the real one then publishes site:version.
+    s.mock.saveProject.mockImplementationOnce(async (_scope: unknown, _project: unknown, options: Record<string, unknown>) => {
+      s.state.version += 1;
+      (options.beforeAnnounce as (v: number) => void)(s.state.version);
+      order.push('site:version');
+      return { version: s.state.version };
+    });
+    await call(s, 'apply_batch', { siteId: 'site-1', expectedVersion: 3, ops: [section('hero')] });
+    expect(order.filter((e) => e !== 'agent:activity')).toEqual(['plan:update', 'plan:update', 'site:version']);
+  });
+
+  it('a section written on another page fulfils nothing', async () => {
+    const s = setup();
+    const heard = planEvents();
+    await call(s, 'announce_sections', { siteId: 'site-1', newPage: { ref: 'pp', title: 'Pricing' }, sections: [three[0]] });
+    await call(s, 'apply_batch', { siteId: 'site-1', expectedVersion: 3, ops: [section('hero')] });
+    expect(heard).toHaveLength(1);
   });
 
   it('is limited per key: announcements and clears share their budget', async () => {
@@ -1096,9 +1125,8 @@ describe('skeleton plans (announce_sections, clear_sections)', () => {
     // The old plan ended without an end event of its own: the swap said it.
     expect(heard.filter((e) => e.plan.planId === oldId && e.ended)).toHaveLength(0);
     expect(plansSnapshot('site-1', SCOPE).map((p) => p.planId)).toEqual([newId]);
-    // A replace frees the old plan's slot: three plans and a replace still fit.
+    // A replace frees the old plan's slot: two plans of the key and a replace still fit.
     await call(s, 'announce_sections', { siteId: 'site-1', pageId: 'home', sections: [{ ref: 'x', title: 'X' }] });
-    await call(s, 'announce_sections', { siteId: 'site-1', pageId: 'home', sections: [{ ref: 'y', title: 'Y' }] });
     expect((await call(s, 'announce_sections', { siteId: 'site-1', pageId: 'home', replaces: newId, sections: three })).isError).toBe(false);
   });
 
@@ -1129,7 +1157,8 @@ describe('skeleton plans (announce_sections, clear_sections)', () => {
     const otherSession = await initialize(s, {});
     await call(s, 'announce_sections', { siteId: 'site-1', pageId: 'home', sections: [three[0]] }, { 'mcp-session-id': session });
     await call(s, 'announce_sections', { siteId: 'site-1', pageId: 'home', sections: [three[1]] }, { 'mcp-session-id': otherSession });
-    await call(s, 'announce_sections', { siteId: 'site-1', pageId: 'home', sections: [three[2]] });
+    // A plan announced without a session (another key, since one key holds two plans per site) is not the session's.
+    await call(setup({ outcome: verifiedKey('admin', 'key_2') }), 'announce_sections', { siteId: 'site-1', pageId: 'home', sections: [three[2]] });
     const del = (headers: Record<string, string>) =>
       s.handler.DELETE(new Request('https://app.lumitra.co/api/mcp', { method: 'DELETE', headers: { authorization: `Bearer ${s.key}`, ...headers } }));
     // A forged id, or one issued to another key, ends nothing.

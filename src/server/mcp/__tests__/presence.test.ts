@@ -91,6 +91,8 @@ function fakeRepository() {
     saveProject: vi.fn(async (_scope: unknown, _project: unknown, options: Record<string, unknown>) => {
       if (options.expectedVersion !== state.version) throw new SiteChangedError(state.version);
       state.version += 1;
+      // As the real repository: after the commit, before the write is announced.
+      (options.beforeAnnounce as ((v: number) => void) | undefined)?.(state.version);
       return { version: state.version };
     }),
     getSiteAddress: vi.fn(async () => ({ host: null, everPublished: false })),

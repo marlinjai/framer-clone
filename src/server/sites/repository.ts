@@ -58,7 +58,7 @@ import { nextSiteRedirects, parseSiteRedirects } from '@/lib/pages/redirects';
 import { generateSubdomain } from './subdomain';
 import { parseRevisionDocument, REVISION_SCHEMA_VERSION, revisionPublishCheck } from './revision';
 import { publishSiteEvent } from './liveBus';
-import { checkPlanAnchors, hasPlans } from '@/server/mcp/livePlans';
+import { checkPlanAnchors, hasPlans, noteSiteWrite } from '@/server/mcp/livePlans';
 import { boundedWriteEvent, LIVE_EVENTS, type SiteVersionEvent, type SiteWriteEvent } from '@/lib/projects/liveEvents';
 import type { PublishCheck } from '@/lib/legal/publishCheck';
 import {
@@ -325,6 +325,14 @@ export interface WorkingCopyWriteOptions {
    * names none is announced as the editor's, with no tab and no actor.
    */
   event?: SiteWriteEvent;
+  /**
+   * Run once the write committed and before open editors hear of it (save only;
+   * never for a write that wrote nothing). An MCP batch fulfils the skeleton
+   * plans it wrote here, so their `plan:update` always reaches an editor before
+   * the `site:version` that makes it fetch the new copy. A failure is logged and
+   * never undoes the write.
+   */
+  beforeAnnounce?: (version: number) => void;
 }
 
 /** What the shared working-copy write did. */
@@ -342,6 +350,8 @@ interface WorkingCopyWrite {
  */
 function announceWrite(siteId: string, write: WorkingCopyWrite, event: SiteWriteEvent | undefined, written?: PersistedSite): void {
   if (!write.wrote) return;
+  // The newest written version, so an announcement checked against an older read is refused (src/server/mcp/livePlans.ts).
+  noteSiteWrite(siteId, write.version);
   // An agent's announced skeletons stand on a page and after a section: a write
   // that removed either ends them (src/server/mcp/livePlans.ts). Only when the
   // site holds a plan, so an ordinary save pays nothing.
@@ -531,6 +541,13 @@ export class SiteRepository {
       (tx) => this.writeWorkingCopy(tx, scope, persisted, options),
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, ...PROJECT_WRITE_TRANSACTION },
     ));
+    if (write.wrote && options.beforeAnnounce) {
+      try {
+        options.beforeAnnounce(write.version);
+      } catch (err) {
+        console.error(`[live] the write of site ${persisted.siteId} at version ${write.version} could not run its pre-announcement step`, err);
+      }
+    }
     announceWrite(persisted.siteId, write, options.event, persisted);
     return { version: write.version };
   }
@@ -1264,7 +1281,8 @@ export class SiteRepository {
       const write: WorkingCopyWrite = { version: site.version + 1, versionBefore: site.version, wrote: true };
       return { result: { erasureId: audit.id, erased: erased.length, places, remaining }, write };
     }, ERASE_TRANSACTION));
-    // Open editors must load again: their copy may hold the erased value.
+    // Open editors must load again: their copy may hold the erased value. An erasure
+    // blanks values and removes no node or page, so skeleton anchors are left alone.
     announceWrite(siteId, erasure.write, { origin: 'erasure' });
     return erasure.result;
   }

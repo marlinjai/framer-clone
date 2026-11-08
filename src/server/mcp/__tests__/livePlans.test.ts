@@ -19,7 +19,9 @@ import {
   checkPlanAnchors,
   fulfilFromBatch,
   hasPlans,
+  noteSiteWrite,
   PLAN_SITES_MAX,
+  PLAN_SITES_PER_COMPANY,
   plansSnapshot,
   resetLivePlansForTests,
   sweepLivePlansForTests,
@@ -129,9 +131,9 @@ describe('tenant isolation', () => {
 
   it("fulfils only from the announcing key's own batches", () => {
     announced();
-    fulfilFromBatch('site-1', 'agent-b', { hero: 'n1' }, 5, T0);
+    fulfilFromBatch('site-1', 'agent-b', { hero: 'n1' }, 5, { hero: 'home' }, [], T0);
     expect(plansSnapshot('site-1', SCOPE, T0)[0].sections[0].fulfilledAt).toBeUndefined();
-    fulfilFromBatch('site-1', 'agent-a', { hero: 'n1', unrelated: 'n2' }, 5, T0);
+    fulfilFromBatch('site-1', 'agent-a', { hero: 'n1', unrelated: 'n2' }, 5, { hero: 'home', unrelated: 'home' }, [], T0);
     expect(plansSnapshot('site-1', SCOPE, T0)[0].sections[0]).toMatchObject({ fulfilledAt: 5, nodeId: 'n1' });
   });
 });
@@ -193,10 +195,63 @@ describe('anchors', () => {
     const pending = announced({ pageId: undefined, newPage: { ref: 'p', title: 'Pricing' } });
     checkPlanAnchors('site-1', persistedPages([{ id: 'title' }], ['about']), T0);
     expect(plansSnapshot('site-1', SCOPE, T0).map((p) => p.planId)).toEqual([pending.planId]);
-    fulfilFromBatch('site-1', 'agent-a', { p: 'pricing' }, 7, T0);
+    fulfilFromBatch('site-1', 'agent-a', { p: 'pricing' }, 7, {}, ['pricing'], T0);
     expect(plansSnapshot('site-1', SCOPE, T0)[0]).toMatchObject({ pageId: 'pricing', pageAt: 7 });
     checkPlanAnchors('site-1', persistedPages([{ id: 'title' }], ['about']), T0);
     expect(hasPlans('site-1')).toBe(false);
+  });
+});
+
+describe('review fixes', () => {
+  it('a ref created on another page, or a page ref that was no createPage, fulfils nothing', () => {
+    announced();
+    announced({ pageId: undefined, newPage: { ref: 'p', title: 'Pricing' } });
+    fulfilFromBatch('site-1', 'agent-a', { hero: 'n1', p: 'n2' }, 5, { hero: 'about', p: 'home' }, [], T0);
+    const [onHome, onNew] = plansSnapshot('site-1', SCOPE, T0);
+    expect(onHome.sections[0].fulfilledAt).toBeUndefined();
+    expect(onNew.pageId).toBeUndefined();
+  });
+
+  it('replacing a new-page plan after its page exists keeps that page (no ghost frame again) and keeps its start', () => {
+    const plan = announced({ pageId: undefined, newPage: { ref: 'p', title: 'Pricing' } });
+    fulfilFromBatch('site-1', 'agent-a', { p: 'pricing' }, 7, {}, ['pricing'], T0);
+    const again = announcePlan(input({ pageId: undefined, newPage: { ref: 'p', title: 'Pricing' }, replaces: plan.planId }), T0 + 60_000);
+    expect(again.ok && again.plan).toMatchObject({ pageId: 'pricing', pageAt: 7 });
+    // The 20 minute cap counts from the first announcement, however often it is replaced.
+    for (let t = T0; t < T0 + PLAN_LIMITS.maxMs; t += 60_000) touchPlans('site-1', 'agent-a', t);
+    expect(plansSnapshot('site-1', SCOPE, T0 + PLAN_LIMITS.maxMs)).toHaveLength(0);
+  });
+
+  it(`one key holds at most ${PLAN_LIMITS.plansPerKeyPerSite} plans on a site, leaving room for other agents`, () => {
+    for (let i = 0; i < PLAN_LIMITS.plansPerKeyPerSite; i += 1) announced();
+    expect(announcePlan(input(), T0)).toMatchObject({ ok: false, code: 'too_many_plans' });
+    expect(announcePlan(input({ agentId: 'agent-b' }), T0).ok).toBe(true);
+  });
+
+  it('refuses an announcement checked against a version a write has since passed', () => {
+    noteSiteWrite('site-1', 8);
+    expect(announcePlan(input({ checkedVersion: 7 }), T0)).toMatchObject({ ok: false, code: 'site_changed', currentVersion: 8 });
+    expect(announcePlan(input({ checkedVersion: 8 }), T0).ok).toBe(true);
+  });
+
+  it(`one company holds plans on at most ${PLAN_SITES_PER_COMPANY} sites and never pushes out another company's`, () => {
+    announced({ siteId: 'theirs', scope: OTHER });
+    for (let i = 0; i <= PLAN_SITES_PER_COMPANY; i += 1) announced({ siteId: `mine-${i}` });
+    expect(hasPlans('mine-0')).toBe(false);
+    expect(hasPlans(`mine-${PLAN_SITES_PER_COMPANY}`)).toBe(true);
+    expect(hasPlans('theirs')).toBe(true);
+  });
+
+  it('re-entry: a new plan may use the refs of a plan that already ended fulfilled, and starts unfulfilled', () => {
+    announced({ sections: [{ ref: 'hero', title: 'Hero', kind: 'hero' }] });
+    fulfilFromBatch('site-1', 'agent-a', { hero: 'n1' }, 5, { hero: 'home' }, [], T0);
+    expect(hasPlans('site-1')).toBe(false);
+    const fresh = announced({ sections: [{ ref: 'hero', title: 'Hero', kind: 'hero' }] });
+    expect(fresh.sections[0].fulfilledAt).toBeUndefined();
+  });
+
+  it('the label a plan carries is cleaned on the server too', () => {
+    expect(announced({ label: 'Cl\u202eaude' }).label).toBe('Cl aude');
   });
 });
 
@@ -204,7 +259,7 @@ describe('bounds', () => {
   it('a plan whose every section was created already ends at once', () => {
     const events = heard();
     const plan = announced();
-    fulfilFromBatch('site-1', 'agent-a', { hero: 'n1' }, 5, T0);
+    fulfilFromBatch('site-1', 'agent-a', { hero: 'n1' }, 5, { hero: 'home' }, [], T0);
     const again = announcePlan(input({ replaces: plan.planId, sections: [{ ref: 'hero', title: 'Hero', kind: 'hero' }] }), T0);
     expect(again.ok).toBe(true);
     expect(events.at(-1)).toMatchObject({ ended: 'fulfilled' });
@@ -214,7 +269,7 @@ describe('bounds', () => {
   it(`holds plans of at most ${PLAN_SITES_MAX} sites: the least recently touched one's plans end`, () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const first = heard('site-0');
-    for (let i = 0; i <= PLAN_SITES_MAX; i += 1) announced({ siteId: `site-${i}` });
+    for (let i = 0; i <= PLAN_SITES_MAX; i += 1) announced({ siteId: `site-${i}`, scope: { workspaceId: `ws_${i}`, tenantGroupId: `tg_${i}` } });
     expect(first.at(-1)).toMatchObject({ ended: 'evicted' });
     expect(hasPlans('site-0')).toBe(false);
     expect(hasPlans(`site-${PLAN_SITES_MAX}`)).toBe(true);

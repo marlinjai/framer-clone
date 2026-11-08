@@ -52,9 +52,14 @@ import {
 import type { TenantScope } from '@/server/sites/repository';
 import { publishSiteEvent } from '@/server/sites/liveBus';
 import { recordLiveFeedLine } from '@/server/sites/livePresence';
+import { sanitizeLiveLabel } from '@/lib/projects/liveEvents';
 
 /** Sites holding plans at once; past it the least recently touched site's plans end. */
 export const PLAN_SITES_MAX = 2000;
+/** Sites one company (tenant group) holds plans on at once; past it its own least recently touched site's plans end first. */
+export const PLAN_SITES_PER_COMPANY = 200;
+/** Sites whose last written version is remembered (to refuse an announcement checked against an older read). */
+export const WRITTEN_VERSIONS_MAX = 5000;
 /** How often expired plans are looked for while any plan exists. */
 export const PLAN_SWEEP_MS = 5_000;
 
@@ -70,6 +75,8 @@ interface PlanEntry {
 interface PlansState {
   /** Site id to its plans (plan id to entry), the most recently touched site last. */
   sites: Map<string, Map<string, PlanEntry>>;
+  /** Site id to the newest version a write committed (the most recently written last). */
+  written: Map<string, number>;
   timer?: ReturnType<typeof setInterval>;
 }
 
@@ -79,7 +86,7 @@ function state(): PlansState {
   const g = globalThis as unknown as Record<symbol, PlansState | undefined>;
   let s = g[KEY];
   if (!s) {
-    s = { sites: new Map() };
+    s = { sites: new Map(), written: new Map() };
     g[KEY] = s;
   }
   return s;
@@ -173,15 +180,44 @@ function sitePlans(siteId: string, create: boolean): Map<string, PlanEntry> | un
   return plans;
 }
 
-/** Make room for one more site: the least recently touched site's plans end. */
-function evictSites(keep: string, now: number): void {
+function endSite(siteId: string, now: number): void {
+  for (const entry of [...(state().sites.get(siteId)?.values() ?? [])]) end(siteId, entry, 'evicted', now);
+  state().sites.delete(siteId);
+}
+
+/**
+ * Make room after `keep` got a plan: a company over its share loses its own least
+ * recently touched site's plans first, so one company never pushes out another's;
+ * past the process bound, the least recently touched site of any company goes.
+ */
+function evictSites(keep: string, group: string, now: number): void {
   const { sites } = state();
+  const ofGroup = () => [...sites.entries()].filter(([, plans]) => [...plans.values()].some((e) => e.scope.tenantGroupId === group)).map(([id]) => id);
+  let mine = ofGroup();
+  while (mine.length > PLAN_SITES_PER_COMPANY) {
+    const oldest = mine.find((id) => id !== keep);
+    if (!oldest) break;
+    endSite(oldest, now);
+    mine = ofGroup();
+  }
   while (sites.size > PLAN_SITES_MAX) {
     const oldest = [...sites.keys()].find((id) => id !== keep);
     if (!oldest) return;
-    for (const entry of [...(sites.get(oldest)?.values() ?? [])]) end(oldest, entry, 'evicted', now);
-    sites.delete(oldest);
+    endSite(oldest, now);
   }
+}
+
+/**
+ * A write of the site's working copy committed at `version` (the repository
+ * calls this for every write, before it is announced). Bounded: the least
+ * recently written site is forgotten first.
+ */
+export function noteSiteWrite(siteId: string, version: number): void {
+  const { written } = state();
+  const before = written.get(siteId) ?? 0;
+  written.delete(siteId);
+  written.set(siteId, Math.max(before, version));
+  while (written.size > WRITTEN_VERSIONS_MAX) written.delete(written.keys().next().value as string);
 }
 
 export interface AnnounceInput {
@@ -195,13 +231,19 @@ export interface AnnounceInput {
   newPage?: { ref: string; title: string };
   after?: string;
   replaces?: string;
+  /**
+   * The site version the anchor was checked on. A write committed since (it may
+   * have removed the page or the after section before this plan existed to be
+   * checked) refuses the announcement with `site_changed`.
+   */
+  checkedVersion?: number;
   /** Titles sanitised already (sanitizePlanTitle). */
   sections: Array<{ ref: string; title: string; kind: PlanSectionKind }>;
 }
 
 export type AnnounceOutcome =
   | { ok: true; plan: LivePlan }
-  | { ok: false; code: 'plan_not_found' | 'too_many_plans'; message: string };
+  | { ok: false; code: 'plan_not_found' | 'too_many_plans' | 'site_changed'; message: string; currentVersion?: number };
 
 /**
  * Announce a plan (or replace one of the same key in the same step). A
@@ -210,6 +252,15 @@ export type AnnounceOutcome =
  */
 export function announcePlan(input: AnnounceInput, now: number = Date.now()): AnnounceOutcome {
   sweep(now);
+  const lastWrite = state().written.get(input.siteId);
+  if (input.checkedVersion !== undefined && lastWrite !== undefined && lastWrite > input.checkedVersion) {
+    return {
+      ok: false,
+      code: 'site_changed',
+      message: 'the site was written while the announcement was checked; read the page again (get_page) and announce on its current sections',
+      currentVersion: lastWrite,
+    };
+  }
   const existing = sitePlans(input.siteId, false);
   let replaced: PlanEntry | undefined;
   if (input.replaces) {
@@ -218,7 +269,15 @@ export function announcePlan(input: AnnounceInput, now: number = Date.now()): An
       return { ok: false, code: 'plan_not_found', message: 'replaces names no live plan of this key on this site (it ended, was cleared, or never existed); announce without replaces' };
     }
   }
-  const live = (existing?.size ?? 0) - (replaced ? 1 : 0);
+  const others = [...(existing?.values() ?? [])].filter((e) => e !== replaced);
+  if (others.filter((e) => e.plan.agentId === input.agentId).length >= PLAN_LIMITS.plansPerKeyPerSite) {
+    return {
+      ok: false,
+      code: 'too_many_plans',
+      message: `one key holds at most ${PLAN_LIMITS.plansPerKeyPerSite} announced plans on a site; clear one with clear_sections, replace it (replaces), or write its sections first`,
+    };
+  }
+  const live = others.length;
   if (live >= PLAN_LIMITS.plansPerSite) {
     return {
       ok: false,
@@ -231,21 +290,34 @@ export function announcePlan(input: AnnounceInput, now: number = Date.now()): An
     const done = before.get(s.ref);
     return { ref: s.ref, title: s.title, kind: s.kind, ...(done ? { fulfilledAt: done.fulfilledAt, nodeId: done.nodeId } : {}) };
   });
+  // A new page the replaced plan already saw created keeps it, so its skeletons never go back into a ghost frame.
+  const madePage =
+    input.newPage && replaced?.plan.newPage?.ref === input.newPage.ref && replaced.plan.pageId !== undefined
+      ? { pageId: replaced.plan.pageId, ...(replaced.plan.pageAt !== undefined ? { pageAt: replaced.plan.pageAt } : {}) }
+      : undefined;
   const plan: LivePlan = {
     planId: randomUUID(),
     agentId: input.agentId,
-    label: input.label,
+    label: sanitizeLiveLabel(input.label) ?? 'Agent',
     ...(input.pageId ? { pageId: input.pageId } : {}),
     ...(input.newPage ? { newPage: { ...input.newPage } } : {}),
+    ...(madePage ?? {}),
     ...(input.after ? { after: input.after } : {}),
     sections,
     expiresAt: '',
   };
-  const entry: PlanEntry = { plan, scope: { ...input.scope }, ...(input.session ? { session: input.session } : {}), createdAt: now, lastCallAt: now };
+  // A replace is the same work revised: it keeps the replaced plan's start, so replacing never outlasts the cap.
+  const entry: PlanEntry = {
+    plan,
+    scope: { ...input.scope },
+    ...(input.session ? { session: input.session } : {}),
+    createdAt: replaced ? replaced.createdAt : now,
+    lastCallAt: now,
+  };
   const plans = sitePlans(input.siteId, true)!;
   if (replaced) plans.delete(replaced.plan.planId);
   plans.set(plan.planId, entry);
-  evictSites(input.siteId, now);
+  evictSites(input.siteId, input.scope.tenantGroupId, now);
   ensureTimer();
   const out = view(entry);
   publish(input.siteId, { plan: out, ...(replaced ? { replaces: replaced.plan.planId } : {}) });
@@ -279,11 +351,21 @@ export function touchPlans(siteId: string | undefined, agentId: string, now: num
 
 /**
  * A batch of the key committed at `version` and created these refs (ref to id):
- * the sections (and new pages) of its plans on the site with those refs are
- * fulfilled. A plan with every section created ends. Refs another key created
- * fulfil nothing here.
+ * a plan's new page is fulfilled by a createPage ref (`pageIds` holds the pages
+ * the batch created), a section by a node ref created on the plan's own page
+ * (`refPages`, ref to the page it landed on). A plan with every section
+ * created ends. Refs another key created, or created on another page, fulfil
+ * nothing here. Runs before the write is announced (siteOps.applyBatch).
  */
-export function fulfilFromBatch(siteId: string, agentId: string, created: Record<string, unknown>, version: number, now: number = Date.now()): void {
+export function fulfilFromBatch(
+  siteId: string,
+  agentId: string,
+  created: Record<string, unknown>,
+  version: number,
+  refPages: Readonly<Record<string, string>>,
+  pageIds: readonly string[],
+  now: number = Date.now(),
+): void {
   sweep(now);
   const plans = state().sites.get(siteId);
   if (!plans) return;
@@ -293,7 +375,7 @@ export function fulfilFromBatch(siteId: string, agentId: string, created: Record
     let changed = false;
     if (plan.newPage && plan.pageId === undefined) {
       const pageId = created[plan.newPage.ref];
-      if (typeof pageId === 'string') {
+      if (typeof pageId === 'string' && pageIds.includes(pageId)) {
         plan.pageId = pageId;
         plan.pageAt = version;
         changed = true;
@@ -302,7 +384,7 @@ export function fulfilFromBatch(siteId: string, agentId: string, created: Record
     for (const section of plan.sections) {
       if (section.fulfilledAt !== undefined) continue;
       const nodeId = created[section.ref];
-      if (typeof nodeId !== 'string') continue;
+      if (typeof nodeId !== 'string' || plan.pageId === undefined || refPages[section.ref] !== plan.pageId) continue;
       section.fulfilledAt = version;
       section.nodeId = nodeId;
       changed = true;
@@ -397,6 +479,7 @@ export function plansSnapshot(siteId: string, scope: TenantScope, now: number = 
 export function resetLivePlansForTests(): void {
   const s = state();
   s.sites.clear();
+  s.written.clear();
   if (s.timer) clearInterval(s.timer);
   s.timer = undefined;
 }

@@ -119,6 +119,21 @@ describe('backtrack and revise', () => {
 });
 
 describe('resume', () => {
+  it('a reload while a fulfilment is pending: the skeleton stays until the version that created it arrives', () => {
+    const store = new LivePlansStore();
+    store.applyState([plan({ sections: [{ ref: 'hero', title: 'Hero', kind: 'hero', fulfilledAt: 6 }] })], 5);
+    expect(refs(store)).toEqual(['hero']);
+    store.noteVersion(6);
+    expect(store.plans.size).toBe(0);
+  });
+
+  it('a fulfilment heard after its version was adopted draws nothing at all', () => {
+    const store = new LivePlansStore();
+    store.applyState([plan()], 6);
+    store.applyUpdate({ plan: plan({ sections: [{ ref: 'hero', title: 'Hero', kind: 'hero', fulfilledAt: 6 }, plan().sections[1]] }) });
+    expect(refs(store)).toEqual(['faq']);
+  });
+
   it('a state after a reload brings the live plans, replacing what was held, with the tab version', () => {
     const store = new LivePlansStore();
     store.applyState([plan({ planId: 'old' })], 3);

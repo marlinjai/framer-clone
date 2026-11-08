@@ -127,6 +127,8 @@ export type PlanSectionKind = (typeof PLAN_SECTION_KINDS)[number];
 export const PLAN_LIMITS = {
   /** Live plans one site holds at once, of every agent together. */
   plansPerSite: 3,
+  /** Of those, live plans one key holds on one site (so one agent never takes every slot). */
+  plansPerKeyPerSite: 2,
   /** Sections one plan announces. */
   sectionsPerPlan: 20,
   /** A section's title, in visible characters. */

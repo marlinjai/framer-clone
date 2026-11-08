@@ -48,7 +48,7 @@ import type { ConfirmFn } from './confirmations';
 import { APPROVAL_TTL_MS, approvalUrl, type ApprovalStore, type ApprovalSubject } from './approvals';
 import { liveAgentId } from '@/server/siteOps/audit';
 import { PLAN_LIMITS, PLAN_SECTION_KINDS, sanitizePlanTitle } from '@/lib/projects/liveEvents';
-import { announcePlan, clearPlan, fulfilFromBatch } from './livePlans';
+import { announcePlan, clearPlan } from './livePlans';
 
 type JsonSchema = Record<string, unknown>;
 
@@ -539,12 +539,8 @@ export const TOOLS: ToolDef[] = [
       return schema;
     },
     run: (ctx, args) =>
-      limited(ctx.limits.writes, ctx, 'write', async () => {
-        const result = await applyBatch(ctx.caller, args, ctx.deps);
-        // The refs it created fulfil this key's announced sections (and new pages): their skeletons go.
-        if (result.ok) fulfilFromBatch(args.siteId, liveAgentId(ctx.key.keyId), result.value.created, result.value.version);
-        return fromResult(result);
-      }),
+      // The refs a batch creates fulfil this key's announced sections inside the write (siteOps.applyBatch).
+      limited(ctx.limits.writes, ctx, 'write', async () => fromResult(await applyBatch(ctx.caller, args, ctx.deps))),
   }),
   define({
     name: 'announce_sections',
@@ -624,9 +620,12 @@ export const TOOLS: ToolDef[] = [
             ...(args.newPage && pageTitle ? { newPage: { ref: args.newPage.ref, title: pageTitle } } : {}),
             ...(args.after ? { after: args.after } : {}),
             ...(args.replaces ? { replaces: args.replaces } : {}),
+            checkedVersion: anchor.value.version,
             sections,
           });
-          if (!outcome.ok) return errorResult({ code: outcome.code, message: outcome.message });
+          if (!outcome.ok) {
+            return errorResult({ code: outcome.code, message: outcome.message, ...(outcome.currentVersion !== undefined ? { currentVersion: outcome.currentVersion } : {}) });
+          }
           return toolResult(
             {
               planId: outcome.plan.planId,
