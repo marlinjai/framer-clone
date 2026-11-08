@@ -12,8 +12,11 @@
 import { randomBytes } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const auditCreates = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 vi.mock('@/server/db', () => ({
-  getPrismaClient: () => ({ siteOperationAudit: { create: vi.fn(async () => ({})) } }),
+  getPrismaClient: () => ({
+    siteOperationAudit: { create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => auditCreates.push(data)) },
+  }),
 }));
 vi.mock('@/server/sites/cachedResolver', () => ({
   revalidateSiteCache: () => {},
@@ -31,7 +34,7 @@ import { LIVE_EVENTS, type AgentActivity } from '@/lib/projects/liveEvents';
 import { liveAgentId } from '@/server/siteOps/audit';
 import { createMcpHandler } from '../handler';
 import { ApprovalStore } from '../approvals';
-import { focusOf, outcomeOf, resetPresenceScopeCacheForTests, siteInScope } from '../presence';
+import { focusOf, outcomeOf, REPORTS_PER_KEY, resetPresenceScopeCacheForTests, siteInScope, takeReport } from '../presence';
 
 const fakeKey = () => `${['sk', 'live'].join('_')}_${randomBytes(16).toString('hex')}`;
 const KEY_ID = `key_${randomBytes(6).toString('hex')}`;
@@ -170,9 +173,11 @@ describe('agent:activity from the MCP endpoint', () => {
     const created = Object.values(result.structuredContent.created as Record<string, string>);
     const [start, end] = activities(heard);
     expect(start).toMatchObject({ phase: 'start', tool: 'apply_batch', pageId: 'home', nodeIds: ['title', 'root'] });
-    expect(end).toMatchObject({ phase: 'end', outcome: 'ok', changes: 2, label: 'Agent' });
+    expect(end).toMatchObject({ phase: 'end', outcome: 'ok', changes: 2, label: 'Agent', written: true });
     expect(end.nodeIds).toEqual(['title', 'root', ...created]);
-    expect(end.summary).toMatch(/^set the text of title/);
+    // No summary line: those name page titles, which are content.
+    expect(end).not.toHaveProperty('summary');
+    expect(start).not.toHaveProperty('written');
     // Never the key id, never the content of the arguments.
     const wire = JSON.stringify(activities(heard));
     expect(wire).not.toContain(KEY_ID);
@@ -186,6 +191,7 @@ describe('agent:activity from the MCP endpoint', () => {
     await callTool(s, 'apply_batch', { siteId: 'site-1', expectedVersion: 1, ops: [{ op: 'removeNode', nodeId: 'title' }] });
     const ends = activities(heard).filter((a) => a.phase === 'end');
     expect(ends.map((a) => a.outcome)).toEqual(['rejected', 'site_changed']);
+    expect(ends.some((a) => a.written)).toBe(false);
     expect(s.state.version).toBe(3);
     // Neither left an audit row, so both are live feed lines for the next editor that opens.
     expect(presenceSnapshot('site-1').feed.map((l) => l.outcome)).toEqual(['site_changed', 'rejected']);
@@ -220,6 +226,32 @@ describe('agent:activity from the MCP endpoint', () => {
     expect(result.isError).toBe(true);
     expect(activities(foreign)).toEqual([]);
     expect(presenceSnapshot('site-of-another-company')).toEqual({ agents: [], feed: [] });
+  });
+
+  it('remembers a site outside the scope for a while, so made-up ids cost no read per call', async () => {
+    const s = setup();
+    await callTool(s, 'get_site', { siteId: 'made-up' });
+    await callTool(s, 'get_site', { siteId: 'made-up' });
+    expect(s.mock.getSiteVersion.mock.calls.filter((c) => c[1] === 'made-up')).toHaveLength(1);
+  });
+
+  it('reports at most REPORTS_PER_KEY calls of a key per minute; the rest run unreported', async () => {
+    for (let i = 0; i < REPORTS_PER_KEY; i += 1) expect(takeReport('agent-x', 1_000)).toBe(true);
+    expect(takeReport('agent-x', 1_000)).toBe(false);
+    expect(takeReport('agent-y', 1_000)).toBe(true);
+    expect(takeReport('agent-x', 61_000)).toBe(true);
+  });
+
+  it('shows a rate-limited call as refused, never as a failure', () => {
+    expect(outcomeOf({ content: [], isError: true, structuredContent: { error: { code: 'rate_limited' } } })).toBe('rejected');
+  });
+
+  it("puts the call's live id into the write's audit row, so the feed line keeps its id after a reload", async () => {
+    const s = setup();
+    const heard = listen('site-1');
+    await callTool(s, 'apply_batch', { siteId: 'site-1', expectedVersion: 3, ops: [{ op: 'updateText', nodeId: 'title', text: 'x' }] });
+    const [start] = activities(heard);
+    expect(auditCreates.at(-1)).toMatchObject({ actorDetail: { serviceAccountId: 'sa_1', callId: start.callId } });
   });
 
   it('confirms a site once per scope and remembers it for a few minutes', async () => {

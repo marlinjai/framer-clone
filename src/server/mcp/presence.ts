@@ -18,13 +18,22 @@ import 'server-only';
 //
 // What travels: ids (the call's random id, a hash of the key id, page and node
 // ids from the arguments and the answer), the tool's name, the outcome, the
-// agent's label (sanitised and capped) and the first summary line of a write.
-// Never the key id, never the arguments' content.
+// agent's label (sanitised and capped) and a count of operations. Never the key
+// id, never the arguments' content, never a summary line (those name page
+// titles, which are content).
+//
+// Bounded per key: a site id not in scope is remembered as such for a short
+// while (a key looping over made-up ids costs no database read per call), and a
+// key reports at most REPORTS_PER_KEY calls per minute; calls beyond that run
+// unreported, so a runaway agent cannot flood its own company's editors.
+//
+// The call id travels into the write's audit row (`SiteOpsCaller.liveCallId`),
+// so a reloaded editor's feed line for a write has the same id as the line it
+// added live, and the two never both show.
 
 import { randomUUID } from 'node:crypto';
 import {
   LIVE_LIST_MAX,
-  capLiveText,
   type AgentActivity,
   type AgentOutcome,
   type LiveFeedLine,
@@ -39,11 +48,41 @@ import type { ToolResult } from './tools';
 export const SCOPE_CONFIRM_TTL_MS = 5 * 60_000;
 /** Confirmed (workspace, site) pairs kept at once; the oldest goes first. */
 export const SCOPE_CONFIRM_MAX = 5000;
+/** How long a site found outside a scope (or unreadable) is not asked about again. */
+export const SCOPE_MISS_TTL_MS = 30_000;
+/** Calls one key reports per minute, at most; the rest run unreported. */
+export const REPORTS_PER_KEY = 120;
+const REPORT_WINDOW_MS = 60_000;
+/** Keys tracked by the report budget at once. */
+const REPORT_KEYS_MAX = 5000;
 
 /** Tools whose successful answer means a write committed (and left an audit row). */
 const WRITE_TOOLS = new Set(['apply_batch', 'generate_page', 'publish', 'rollback']);
 
-const confirmed = new Map<string, number>();
+/** (scope, site) to until when the answer holds, and the answer. */
+const confirmed = new Map<string, { until: number; inScope: boolean }>();
+/** Agent id to its report window. */
+const budgets = new Map<string, { windowStart: number; count: number }>();
+
+function remember(key: string, inScope: boolean, until: number): void {
+  confirmed.delete(key);
+  confirmed.set(key, { until, inScope });
+  while (confirmed.size > SCOPE_CONFIRM_MAX) confirmed.delete(confirmed.keys().next().value as string);
+}
+
+/** Whether the key may report one more call now (a fixed one-minute window per key). */
+export function takeReport(agentId: string, now: number = Date.now()): boolean {
+  let budget = budgets.get(agentId);
+  if (!budget || now - budget.windowStart >= REPORT_WINDOW_MS) {
+    budgets.delete(agentId);
+    budget = { windowStart: now, count: 0 };
+    budgets.set(agentId, budget);
+    while (budgets.size > REPORT_KEYS_MAX) budgets.delete(budgets.keys().next().value as string);
+  }
+  if (budget.count >= REPORTS_PER_KEY) return false;
+  budget.count += 1;
+  return true;
+}
 
 function confirmKey(scope: TenantScope, siteId: string): string {
   return `${scope.tenantGroupId}\u0000${scope.workspaceId}\u0000${siteId}`;
@@ -52,23 +91,23 @@ function confirmKey(scope: TenantScope, siteId: string): string {
 /** Whether the site is in the scope: from the cache, else the repository's scoped read. Never throws. */
 export async function siteInScope(repository: SiteRepository, scope: TenantScope, siteId: string, now: number = Date.now()): Promise<boolean> {
   const key = confirmKey(scope, siteId);
-  const until = confirmed.get(key);
-  if (until !== undefined && until > now) return true;
-  confirmed.delete(key);
+  const known = confirmed.get(key);
+  if (known && known.until > now) return known.inScope;
   try {
     await repository.getSiteVersion(scope, siteId);
   } catch {
-    // Not found in this scope, or the database could not answer: report nothing.
+    // Not found in this scope, or the database could not answer: report nothing for a while.
+    remember(key, false, now + SCOPE_MISS_TTL_MS);
     return false;
   }
-  confirmed.set(key, now + SCOPE_CONFIRM_TTL_MS);
-  while (confirmed.size > SCOPE_CONFIRM_MAX) confirmed.delete(confirmed.keys().next().value as string);
+  remember(key, true, now + SCOPE_CONFIRM_TTL_MS);
   return true;
 }
 
 /** Tests only. */
 export function resetPresenceScopeCacheForTests(): void {
   confirmed.clear();
+  budgets.clear();
 }
 
 const ID_MAX = 200;
@@ -116,12 +155,12 @@ export function focusOf(args: unknown): { pageId?: string; nodeIds: string[] } {
   return pageId ? { pageId, nodeIds } : { nodeIds };
 }
 
-/** How a tool's answer ended, from its error code. */
+/** How a tool's answer ended, from its error code. A rate limit is a refusal: nothing was written. */
 export function outcomeOf(result: ToolResult | undefined): AgentOutcome {
   if (!result) return 'failed';
   if (!result.isError) return 'ok';
   const code = record(record(result.structuredContent).error).code;
-  if (code === 'rejected') return 'rejected';
+  if (code === 'rejected' || code === 'rate_limited') return 'rejected';
   if (code === 'site_changed') return 'site_changed';
   return 'failed';
 }
@@ -135,7 +174,7 @@ function wroteOf(tool: string, result: ToolResult | undefined): boolean {
 }
 
 /** The ids an answer created or inserted, and the page it names. */
-function answerFocus(result: ToolResult | undefined): { pageId?: string; nodeIds: string[]; summary?: string } {
+function answerFocus(result: ToolResult | undefined): { pageId?: string; nodeIds: string[] } {
   if (!result || result.isError) return { nodeIds: [] };
   const s = record(result.structuredContent);
   const nodeIds = [
@@ -144,9 +183,8 @@ function answerFocus(result: ToolResult | undefined): { pageId?: string; nodeIds
   ]
     .map(idOf)
     .filter((id): id is string => !!id);
-  const first = Array.isArray(s.summary) && typeof s.summary[0] === 'string' ? capLiveText(s.summary[0]) : undefined;
   const pageId = idOf(s.pageId);
-  return { ...(pageId ? { pageId } : {}), nodeIds, ...(first ? { summary: first } : {}) };
+  return { ...(pageId ? { pageId } : {}), nodeIds };
 }
 
 export interface PresenceCall {
@@ -165,14 +203,16 @@ export interface PresenceCall {
  * after (also when the call throws). A call without a site, or naming a site
  * outside the key's scope, runs unreported.
  */
-export async function withPresence(call: PresenceCall, run: () => Promise<ToolResult>): Promise<ToolResult> {
+export async function withPresence(call: PresenceCall, run: (liveCallId?: string) => Promise<ToolResult>): Promise<ToolResult> {
   const siteId = siteIdOf(call.args);
-  if (!siteId || !(await siteInScope(call.repository, call.scope, siteId))) return run();
+  if (!siteId) return run();
+  const agentId = liveAgentId(call.keyId);
+  if (!(await siteInScope(call.repository, call.scope, siteId)) || !takeReport(agentId)) return run();
 
   const focus = focusOf(call.args);
   const base = {
     callId: randomUUID(),
-    agentId: liveAgentId(call.keyId),
+    agentId,
     label: call.label ?? 'Agent',
     tool: call.tool,
   };
@@ -187,7 +227,7 @@ export async function withPresence(call: PresenceCall, run: () => Promise<ToolRe
 
   let result: ToolResult | undefined;
   try {
-    result = await run();
+    result = await run(base.callId);
     return result;
   } finally {
     const answered = answerFocus(result);
@@ -202,8 +242,8 @@ export async function withPresence(call: PresenceCall, run: () => Promise<ToolRe
       outcome,
       ...(pageId ? { pageId } : {}),
       ...(nodeIds.length > 0 ? { nodeIds } : {}),
-      ...(answered.summary ? { summary: answered.summary } : {}),
       ...(changes !== undefined ? { changes } : {}),
+      ...(wroteOf(call.tool, result) ? { written: true } : {}),
       at: new Date().toISOString(),
     };
     // A committed write is in the audit table, which backs the feed after a reload;

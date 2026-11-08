@@ -100,6 +100,8 @@ const AgentPresenceLayer = observer(function AgentPresenceLayer() {
   const drawn = React.useRef<DrawnAgent[]>([]);
   // Per agent: the target key last drawn, and until when the move animates.
   const moves = React.useRef(new Map<string, { key: string; until: number }>());
+  // Watches the size of the elements drawn around (an adoption may replace them with new ones).
+  const resizes = React.useRef<{ observer: ResizeObserver; watched: Set<Element> } | null>(null);
 
   const next: DrawnAgent[] = targets.map(({ agent, target }) => ({
     agentId: agent.agentId,
@@ -116,9 +118,11 @@ const AgentPresenceLayer = observer(function AgentPresenceLayer() {
     const reduced = prefersReducedMotion();
     const now = Date.now();
     const keep = new Set<Element>();
+    const measured = new Set<Element>();
     for (const agent of drawn.current) {
       if (!agent.target) continue;
       const elements = targetElements(agent.target);
+      for (const element of elements) measured.add(element);
       const move = moves.current.get(agent.agentId);
       const moving = !reduced && !!move && move.until > now;
       elements.forEach((element, index) => {
@@ -161,6 +165,13 @@ const AgentPresenceLayer = observer(function AgentPresenceLayer() {
       });
     }
     for (const child of Array.from(container.children)) if (!keep.has(child)) child.remove();
+    // Follow the elements drawn now: watch new ones, let go of ones that left the page.
+    const resize = resizes.current;
+    if (resize) {
+      for (const element of measured) if (!resize.watched.has(element)) resize.observer.observe(element);
+      for (const element of resize.watched) if (!measured.has(element)) resize.observer.unobserve(element);
+      resize.watched = measured;
+    }
   }, []);
 
   // A new picture from the store: note which agents moved, then draw.
@@ -190,13 +201,18 @@ const AgentPresenceLayer = observer(function AgentPresenceLayer() {
     window.addEventListener('resize', update);
     return () => window.removeEventListener('resize', update);
   }, [update]);
-  // The section's own size changes (an adoption, the person's edit): redraw.
+  // The section's own size changes (an adoption, the person's edit): redraw. The
+  // elements watched are kept current by every draw.
   React.useEffect(() => {
     if (typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(() => update());
-    for (const agent of drawn.current) if (agent.target) for (const el of targetElements(agent.target)) observer.observe(el);
-    return () => observer.disconnect();
-  }, [signature, update]);
+    resizes.current = { observer, watched: new Set() };
+    update();
+    return () => {
+      observer.disconnect();
+      resizes.current = null;
+    };
+  }, [update]);
 
   return <div ref={containerRef} aria-hidden="true" className="pointer-events-none fixed inset-0" style={{ zIndex: 9 }} data-agent-presence-layer="" />;
 });

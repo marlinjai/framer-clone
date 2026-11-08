@@ -165,6 +165,36 @@ describe('the frame', () => {
     expect(document.querySelector('[data-agent-page-dot]')).toBeNull();
   });
 
+  it('a frame keyed to a deleted node comes back when a redo restores it', () => {
+    act(() => presence().applyActivity(activity({ nodeIds: ['pricing'] })));
+    const root = page.appComponentTree as ComponentInstance;
+    act(() => root.removeChild('pricing'));
+    expect(frames()).toHaveLength(0);
+    act(() => root.addChild(createIntrinsicComponent('pricing', 'section', {})));
+    expect(frames()).toHaveLength(1);
+  });
+
+  it('watches the size of the elements drawn now, also after the canvas replaced them', () => {
+    const watched = new Set<Element>();
+    class FakeResizeObserver {
+      constructor(readonly callback: () => void) {}
+      observe(el: Element) { watched.add(el); }
+      unobserve(el: Element) { watched.delete(el); }
+      disconnect() { watched.clear(); }
+    }
+    vi.stubGlobal('ResizeObserver', FakeResizeObserver);
+    cleanup();
+    render(<TransformProvider><NotifyHandle /><AgentPresenceLayer /></TransformProvider>);
+    act(() => presence().applyActivity(activity()));
+    const first = document.querySelector('[data-inner-component-id="hero"]')!;
+    expect(watched.has(first)).toBe(true);
+    drawCanvas({ hero: rect(100, 60), pricing: rect(100, 300) });
+    act(() => notify());
+    const second = document.querySelector('[data-inner-component-id="hero"]')!;
+    expect(watched.has(second)).toBe(true);
+    expect(watched.has(first)).toBe(false);
+  });
+
   it('frames the page frames for a call that names the page and no node', () => {
     act(() => presence().applyActivity(activity({ tool: 'get_page', nodeIds: [] })));
     const [frame] = frames();

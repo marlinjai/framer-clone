@@ -21,8 +21,12 @@
 // The four stateful-flow paths (knowledge-base standards/stateful-flow-testing.md),
 // covered by presenceStore.test.ts:
 //   1. forward: start, end, the next call moves the frame, the fade;
-//   2. backtrack and revise: nodes the person deleted (or undid) drop the frame
-//      keyed to them; a new call re-keys it;
+//   2. backtrack and revise: a frame is keyed to the call's node ids, and the
+//      layer resolves them against the open copy each time it draws
+//      (src/lib/live/presenceTarget.ts): nodes the person deleted or undid draw
+//      no frame, and come back framed if a redo brings them back. Nothing is
+//      pruned here, because the open copy can be older than the activity (a held
+//      version, a reload during a write); a new call re-keys the frame;
 //   3. resume: a reload's `state` draws the active agents again and backfills
 //      the feed; an agent that left is not in `state`;
 //   4. re-entry: after the agent finished, a new run starts with no frame left
@@ -127,7 +131,6 @@ export class LivePresenceStore {
       run: observable,
       applyState: action,
       applyActivity: action,
-      pruneMissing: action,
       setFollow: action,
       setPanelOpen: action,
       reset: action,
@@ -238,8 +241,9 @@ export class LivePresenceStore {
     if (a.phase !== 'start' && a.phase !== 'end') return;
     if (!this.markSeen(a)) return;
     const prev = this.agents.get(a.agentId);
+    // A first sight of the agent (its start may have been missed across a reconnect) begins a run either way.
+    if (!prev) this.becameActive();
     if (a.phase === 'start') {
-      if (!prev) this.becameActive();
       this.clearTimers(a.agentId);
       this.agents.set(a.agentId, {
         agentId: a.agentId,
@@ -267,25 +271,6 @@ export class LivePresenceStore {
       failed,
     });
     if (openCalls.length === 0) this.scheduleEnd(a.agentId, ageOf(a.at, this.now()), failed);
-  }
-
-  /**
-   * Drop what is keyed to nodes that no longer exist (the person deleted or
-   * undid them, or a later write removed them): a focus whose nodes are all
-   * gone frames nothing until the agent's next call.
-   */
-  pruneMissing(exists: (nodeId: string) => boolean): void {
-    for (const agent of [...this.agents.values()]) {
-      const { nodeIds } = agent.focus;
-      if (nodeIds.length === 0) continue;
-      const left = nodeIds.filter(exists);
-      if (left.length === nodeIds.length) continue;
-      this.agents.set(agent.agentId, {
-        ...agent,
-        focus: { ...agent.focus, nodeIds: left },
-        frameShown: left.length > 0 && agent.frameShown,
-      });
-    }
   }
 
   setFollow(follow: boolean): void {

@@ -494,16 +494,13 @@ describe('liveSync: presence (live agent canvas, slice 2)', () => {
     expect(presence().feed).toHaveLength(2);
   });
 
-  it('drops a frame keyed to nodes the adopted copy no longer has, and keeps one whose nodes it has', async () => {
+  it('keeps a focus on nodes this tab has not adopted yet (the layer resolves them when it draws)', async () => {
     start();
     await settle();
-    const rootId = server.snapshot.pages[homeId()].appComponentTree.id;
-    stream().emit('agent:activity', activity({ nodeIds: ['gone-node'] }));
-    stream().emit('agent:activity', activity({ agentId: 'a2', callId: 'c2', nodeIds: [rootId] }));
+    stream().emit('state', { version: server.version, plans: [], agents: [activity({ nodeIds: ['made-by-the-agent'] })], feed: [] });
     await agentWrites('one');
-    expect(presence().agents.get('a1')?.frameShown).toBe(false);
-    expect(presence().agents.get('a1')?.focus.nodeIds).toEqual([]);
-    expect(presence().agents.get('a2')?.frameShown).toBe(true);
+    expect(presence().agents.get('a1')?.focus.nodeIds).toEqual(['made-by-the-agent']);
+    expect(presence().agents.get('a1')?.frameShown).toBe(true);
   });
 
   it('forgets the presence when the editor stops following the site', () => {

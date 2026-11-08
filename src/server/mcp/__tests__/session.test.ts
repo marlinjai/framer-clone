@@ -24,6 +24,16 @@ describe('the session id', () => {
     expect(id.length).toBeLessThan(512);
   });
 
+  it('removes every invisible or direction-changing character, and never splits a character at the cap', () => {
+    for (const hidden of ['\u061c', '\u00ad', '\u{e0041}', '\u180e', '\ufff9', '\u2066', '\u200d']) {
+      const id = issueSessionId({ protocolVersion: '2025-06-18', elicitation: false, clientName: `Cl${hidden}aude` }, fingerprint);
+      expect(readSessionId(id, fingerprint)!.clientName).toBe('Cl aude');
+    }
+    const emoji = issueSessionId({ protocolVersion: '2025-06-18', elicitation: false, clientName: '\u{1f600}'.repeat(60) }, fingerprint);
+    const name = readSessionId(emoji, fingerprint)!.clientName!;
+    expect(Array.from(name).every((c) => c === '\u{1f600}' || c === '…')).toBe(true);
+  });
+
   it('leaves out a name that is empty after sanitising', () => {
     const id = issueSessionId({ protocolVersion: '2025-06-18', elicitation: false, clientName: '\u0000​ ' }, fingerprint);
     expect(readSessionId(id, fingerprint)).toEqual({ protocolVersion: '2025-06-18', elicitation: false });

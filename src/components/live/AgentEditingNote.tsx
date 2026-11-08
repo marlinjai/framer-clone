@@ -19,7 +19,9 @@ const AgentEditingNote = observer(function AgentEditingNote({ className = '' }: 
   const presence = editorUI.livePresence as LivePresenceStore | undefined;
   const note = editingNote((presence?.active ?? []).map((a) => a.label));
   return (
-    <span role="status" aria-live="polite" className={className}>
+    // A polite live region, present before the note appears so it is announced (not role="status":
+    // the save status next to it is the top bar's status).
+    <span aria-live="polite" className={className}>
       {note && (
         <span
           data-agent-editing-note=""

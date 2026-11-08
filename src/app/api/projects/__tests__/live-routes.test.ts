@@ -362,6 +362,18 @@ describe('the presence in the events stream', () => {
     await events.cancel();
   });
 
+  it("gives a write's backfilled line the id it had live (the call id kept in its row), never a forged one", async () => {
+    const callId = '5f0c1e9a-2b7d-4c3e-9f10-6a1b2c3d4e5f';
+    auditRows.rows = [
+      { id: 'row-9', actorKind: 'key', actorId: 'k', actorDetail: { callId }, operation: 'batch', ops: [], createdAt: new Date() },
+      { id: 'row-8', actorKind: 'key', actorId: 'k', actorDetail: { callId: '<script>' }, operation: 'batch', ops: [], createdAt: new Date(Date.now() - 1) },
+    ];
+    const events = eventReader(await EVENTS(req('/api/projects/site_1/events'), ctx('site_1')));
+    const state = (await events.next()).data as { feed: Array<{ id: string }> };
+    expect(state.feed.map((l) => l.id)).toEqual([callId, 'row-8']);
+    await events.cancel();
+  });
+
   it('keeps the stream when the audit rows cannot be read: the live lines alone', async () => {
     auditRows.fail = true;
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});

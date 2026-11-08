@@ -191,7 +191,8 @@ export function createMcpHandler(deps: McpDeps) {
         scope: ctx.caller.scope,
         repository: deps.siteOps?.repository ?? getSiteRepository(),
       },
-      () => runTool(tool, args, ctx),
+      // The call's live id goes into its audit row, so the editor's feed shows one line for it.
+      (liveCallId) => runTool(tool, args, liveCallId ? { ...ctx, caller: { ...ctx.caller, liveCallId } } : ctx),
     );
   }
 

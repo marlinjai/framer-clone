@@ -41,7 +41,8 @@ export const SESSION_CLIENT_NAME_MAX = 40;
 function clientNameOf(value: unknown): string | undefined {
   const clean = sanitizeLiveLabel(value);
   if (!clean) return undefined;
-  return clean.length > SESSION_CLIENT_NAME_MAX ? `${clean.slice(0, SESSION_CLIENT_NAME_MAX - 1)}…` : clean;
+  const chars = Array.from(clean);
+  return chars.length > SESSION_CLIENT_NAME_MAX ? `${chars.slice(0, SESSION_CLIENT_NAME_MAX - 1).join('')}…` : clean;
 }
 
 /** A short fingerprint of the presented key; never the key and never reversible to it. */

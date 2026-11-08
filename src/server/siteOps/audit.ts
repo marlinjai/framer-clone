@@ -33,11 +33,16 @@ export interface AuditEntry {
 
 /**
  * The audit row's actor detail: the caller's extra ids and, when it has one,
- * its display label (a key's name), so the editor's activity feed names the
- * agent again after a reload. A name, never a secret.
+ * its display label (a key's name) and the call's live id, so the editor's
+ * activity feed names the agent again after a reload and shows the write under
+ * the id it had live. A name and a random id, never a secret.
  */
 function actorDetailOf(caller: SiteOpsCaller): Record<string, string> | undefined {
-  const detail = { ...(caller.actorDetail ?? {}), ...(caller.actorLabel ? { label: caller.actorLabel } : {}) };
+  const detail = {
+    ...(caller.actorDetail ?? {}),
+    ...(caller.actorLabel ? { label: caller.actorLabel } : {}),
+    ...(caller.liveCallId ? { callId: caller.liveCallId } : {}),
+  };
   return Object.keys(detail).length > 0 ? detail : undefined;
 }
 
@@ -69,6 +74,9 @@ export async function recordSiteOperation(prisma: PrismaClient, caller: SiteOpsC
 export function liveAgentId(actorId: string): string {
   return createHash('sha256').update(`lumitra-live-agent:${actorId}`).digest('base64url').slice(0, 16);
 }
+
+/** A live call id (a random UUID). */
+const CALL_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 /** The tool an audited operation came from, as the feed names it. */
 const TOOL_OF_OPERATION: Record<string, string> = {
@@ -102,8 +110,10 @@ export async function recentSiteOperations(
     const ops = Array.isArray(row.ops) ? (row.ops as unknown as AuditedOp[]) : [];
     const nodeIds = [...new Set(ops.map((o) => o?.nodeId).filter((id): id is string => typeof id === 'string'))].slice(0, LIVE_LIST_MAX);
     const pageId = ops.find((o) => typeof o?.pageId === 'string')?.pageId;
+    const callId = typeof detail.callId === 'string' && CALL_ID_PATTERN.test(detail.callId) ? detail.callId : undefined;
     const line: LiveFeedLine = {
-      id: row.id,
+      // The id the line had live, when the write came through the MCP endpoint, else the row's.
+      id: callId ?? row.id,
       agentId: liveAgentId(row.actorId),
       label: sanitizeLiveLabel(detail.label) ?? (actorKind === 'key' ? 'Agent' : 'Someone'),
       actorKind,

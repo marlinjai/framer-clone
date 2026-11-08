@@ -65,8 +65,8 @@ export type AgentOutcome = 'ok' | 'rejected' | 'site_changed' | 'failed';
 /**
  * `agent:activity` (plan section 2): an MCP tool call on this site started or
  * ended. Ids and server-written lines only: `label` is the key's name as
- * auth-brain holds it (else the MCP client's declared name, else "Agent") and
- * `summary` is the first summary line of a write, both capped and plain text.
+ * auth-brain holds it (else the MCP client's declared name, else "Agent"),
+ * capped and plain text. No summary line: those name page titles, which are content.
  * `agentId` is a hash of the key id, never the key id itself.
  */
 export interface AgentActivity {
@@ -86,10 +86,10 @@ export interface AgentActivity {
   nodeIds?: string[];
   /** The skeleton ref the call fulfils (slice 4). */
   sectionRef?: string;
-  /** On the end of a write: its first summary line. */
-  summary?: string;
   /** On the end of a batch: how many operations it held. */
   changes?: number;
+  /** On the end: the call committed a write (its audit row carries the feed line after a reload, under the same id). */
+  written?: boolean;
   /** ISO 8601. */
   at: string;
 }
@@ -160,7 +160,9 @@ export const LIVE_LIST_MAX = 200;
 /** Cap a server-written line for the stream: one line, plain text, LIVE_LABEL_MAX characters. */
 export function capLiveText(text: string): string {
   const oneLine = text.replace(/\s+/g, ' ').trim();
-  return oneLine.length > LIVE_LABEL_MAX ? `${oneLine.slice(0, LIVE_LABEL_MAX - 1)}…` : oneLine;
+  // Counted and cut by code points, so a cap never splits a character in two.
+  const chars = Array.from(oneLine);
+  return chars.length > LIVE_LABEL_MAX ? `${chars.slice(0, LIVE_LABEL_MAX - 1).join('')}…` : oneLine;
 }
 
 /**
@@ -170,7 +172,9 @@ export function capLiveText(text: string): string {
  */
 export function sanitizeLiveLabel(text: unknown): string | undefined {
   if (typeof text !== 'string') return undefined;
-  const printable = text.replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/g, ' ');
+  // Controls, format characters (zero-width, bidirectional marks and overrides, soft hyphen, tag
+  // characters) and line or paragraph separators: nothing that hides or reorders text.
+  const printable = text.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ');
   const capped = capLiveText(printable);
   return capped ? capped : undefined;
 }

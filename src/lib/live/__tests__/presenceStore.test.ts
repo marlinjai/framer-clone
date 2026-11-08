@@ -107,20 +107,23 @@ describe('forward', () => {
 });
 
 describe('backtrack and revise', () => {
-  it('drops the frame keyed to nodes the person deleted or undid, and a new call re-keys it', () => {
+  it('keeps the node ids a call named whatever the open copy holds (the layer resolves them when it draws), and a new call re-keys the frame', () => {
     store.applyActivity(act({ nodeIds: ['new-1', 'new-2'] }));
-    store.pruneMissing((id) => id === 'new-2');
-    expect(store.framed[0].focus.nodeIds).toEqual(['new-2']);
-    store.pruneMissing(() => false);
-    expect(store.framed).toHaveLength(0);
+    // An activity about nodes this tab has not adopted yet keeps them: the copy may catch up.
+    expect(store.framed[0].focus.nodeIds).toEqual(['new-1', 'new-2']);
     store.applyActivity(act({ callId: 'c2', nodeIds: ['hero-title'] }));
-    expect(store.framed[0].focus.nodeIds).toEqual(['hero-title']);
+    expect(store.framed[0].focus).toEqual(expect.objectContaining({ callId: 'c2', nodeIds: ['hero-title'] }));
   });
 
-  it('leaves a page-level focus alone (it names no node)', () => {
-    store.applyActivity(act({ tool: 'get_page', nodeIds: [] }));
-    store.pruneMissing(() => false);
-    expect(store.framed).toHaveLength(1);
+  it('an end heard without its start (missed across a reconnect) begins a run all the same', () => {
+    store.setPanelOpen(false);
+    store.setFollow(false);
+    store.applyActivity(end({ callId: 'lost' }));
+    expect(store.everActive).toBe(true);
+    expect(store.panelOpen).toBe(true);
+    expect(store.follow).toBe(true);
+    expect(store.run).toBe(1);
+    expect(store.feed.map((l) => l.id)).toEqual(['lost']);
   });
 });
 

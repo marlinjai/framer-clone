@@ -29,8 +29,8 @@
 //
 // The stream also says who works on the site (plan section 2): the `state`
 // event's agents and feed and every `agent:activity` go to the editor's
-// presence store (src/lib/live/presenceStore.ts), and every adoption drops the
-// frames keyed to nodes the new copy no longer has.
+// presence store (src/lib/live/presenceStore.ts); the layer drops a frame whose
+// nodes the open copy does not have when it draws.
 //
 // When the stream is down (a network loss, the 429 of too many streams, a proxy
 // that buffers), the snapshot route is polled with If-None-Match every 5 s while
@@ -248,7 +248,6 @@ export class LiveSync {
       if (!state || typeof state.version !== 'number') return;
       // Who works on the site and the feed, replacing what this tab held (a reconnect sends `state` again).
       this.presence.applyState(state);
-      this.prunePresence();
       this.heard(state.version, undefined);
     });
     stream.addEventListener(LIVE_EVENTS.agentActivity, (e) => {
@@ -446,20 +445,10 @@ export class LiveSync {
     return this.rootStore.editorUI.livePresence as LivePresenceStore;
   }
 
-  /** Frames keyed to nodes the open copy no longer has are dropped. */
-  private prunePresence() {
-    const project = this.rootStore.projectStore.getProject(this.projectId);
-    if (!project || !isAlive(project)) return;
-    const ids = new Set<string>();
-    for (const page of project.pages.values()) collectIds(page.appComponentTree as IdTree, ids);
-    this.presence.pruneMissing((id) => ids.has(id));
-  }
-
   private adopt(version: number, snapshot: ProjectSnapshotOut, label: string, event: SiteVersionEvent | undefined): boolean {
     const adopted = adoptServerCopy(this.rootStore, snapshot, version, label);
     if (!adopted) return false;
     this.held = undefined;
-    this.prunePresence();
     existingAutosave(this.projectId)?.noteServerCopyAdopted();
     this.onAdopted?.(adopted, event);
     return true;
@@ -488,17 +477,6 @@ export class LiveSync {
     if (hasWriteInFlight(this.projectId)) return false;
     return this.adopt(held.version, held.snapshot, held.label, undefined);
   }
-}
-
-interface IdTree {
-  id: string;
-  children: Iterable<IdTree>;
-}
-
-function collectIds(node: IdTree | undefined, into: Set<string>): void {
-  if (!node) return;
-  into.add(node.id);
-  for (const child of node.children) collectIds(child, into);
 }
 
 function parse<T>(data: string): T | undefined {
