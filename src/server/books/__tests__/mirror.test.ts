@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CompanyKey, VerifiedKey } from '@/lib/auth-machine';
 import { BooksError } from '../errors';
 import { handleMirrorRequest, type MirrorEndpointDeps } from '../machine';
-import { toMirrorDocument, type MirrorRow } from '../repository/mirror';
+import { toMirrorDocument, TooManyMirrorDocumentsError, type MirrorRow } from '../repository/mirror';
 
 const TG = '0190a000-0000-7000-8000-0000000000aa';
 const TENANT = '0190a000-0000-7000-8000-000000000001';
@@ -108,11 +108,15 @@ describe('handleMirrorRequest', () => {
     expect(scope.tenantId).toBe(TENANT);
   });
 
-  it('passes the paging on and refuses a malformed limit', async () => {
-    await handleMirrorRequest(call('?cursor=abc&limit=50'), deps(key()));
-    expect(list.mock.calls[0][1]).toEqual({ cursor: 'abc', limit: 50 });
-    const bad = await handleMirrorRequest(call('?limit=ten'), deps(key()));
-    expect(bad.status).toBe(400);
+  it('has no pages: refuses a cursor, ignores a limit, never hands one out', async () => {
+    const withCursor = await handleMirrorRequest(call('?cursor=abc'), deps(key()));
+    expect(withCursor.status).toBe(400);
+    expect(list).not.toHaveBeenCalled();
+    // The receipts client sends limit=200; obeying it would cut the list without the client knowing.
+    const withLimit = await handleMirrorRequest(call('?limit=1'), deps(key()));
+    expect(withLimit.status).toBe(200);
+    expect(list.mock.calls[0]).toHaveLength(1);
+    expect((await withLimit.json()).nextCursor).toBeNull();
   });
 
   it('turns a key that did not verify into the machine door answers', async () => {
@@ -144,12 +148,19 @@ describe('handleMirrorRequest', () => {
   });
 
   it('maps a Books refusal to its answer and an unexpected failure to a logged 500', async () => {
-    list.mockRejectedValueOnce(new BooksError('INVALID_INPUT', 'INVALID_INPUT: cursor'));
-    expect((await handleMirrorRequest(call('?cursor=x'), deps(key()))).status).toBe(400);
+    list.mockRejectedValueOnce(new BooksError('INVALID_INPUT', 'INVALID_INPUT: max'));
+    expect((await handleMirrorRequest(call(), deps(key()))).status).toBe(400);
     list.mockRejectedValueOnce(new Error('connection reset'));
     const failed = await handleMirrorRequest(call(), deps(key()));
     expect(failed.status).toBe(500);
     expect((await failed.json()).error.code).toBe('books_failed');
     expect(console.error).toHaveBeenCalled();
+  });
+
+  it('answers a company above the cap with 422 too_many_documents, never a cut list', async () => {
+    list.mockRejectedValueOnce(new TooManyMirrorDocumentsError(10_000));
+    const res = await handleMirrorRequest(call(), deps(key()));
+    expect(res.status).toBe(422);
+    expect((await res.json()).error.code).toBe('too_many_documents');
   });
 });

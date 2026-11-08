@@ -2,7 +2,7 @@
 //
 // The read the receipts app mirrors its income from (Books plan, section
 // "Phase 4" and roadmap line "4. Existing invoices and the suite"): the
-// company's ISSUED invoices and credit notes, a page at a time, in exactly the
+// company's ISSUED invoices and credit notes, all in one answer, in exactly the
 // shape receipt-ocr-app's `parseBooksDocuments` (src/lib/tax/books-mirror.ts
 // there) reads. That parser is the contract; this file is its only producer.
 //
@@ -17,21 +17,22 @@
 //   - Amounts stay non-negative: a credit note states its own amount positive
 //     (the document type carries the sign, src/server/books/cancel.ts).
 //
-// Ordered by the moment of issue (`issued_at`, set once when a draft is issued),
-// then id, with a keyset cursor. The issue DAY is not a safe key: a draft issued
-// between two pages can carry an earlier-sorting id on the same day and would be
-// skipped. `issued_at` only grows, so a full pull walks every document once even
-// while new ones are issued.
+// All of them in ONE statement, ordered by the moment of issue (`issued_at`),
+// then id: one statement is one snapshot, so a pull is complete as of its start
+// and a document committed meanwhile arrives with the next pull. There are no
+// pages: pages read separate snapshots, and a document whose `issued_at` sorts
+// before an earlier page's end can commit after that page was read and would be
+// skipped. The answer is capped (MIRROR_MAX_DOCUMENTS) and refuses above it.
 
-import { sql } from 'kysely';
 import { z } from 'zod';
 
-import { invalid, BooksError } from '../errors';
+import { invalid } from '../errors';
 import type { TaxSummary } from '../snapshots';
 import type { BooksScope } from '../scope';
 
 /** The live statuses of an issued document. */
 export const MIRROR_STATUSES = ['issued', 'sent', 'paid', 'cancelled'] as const;
+/** The document types the mirror reads: offers are no issued invoices. */
 export const MIRROR_DOC_TYPES = ['invoice', 'credit_note'] as const;
 
 /** One issued document as the receipts app reads it (its `BooksDocument`). */
@@ -57,6 +58,7 @@ export interface MirrorDocument {
   replacesDocumentId: string | null;
 }
 
+/** One answer of the mirror read: every document, and `nextCursor` always null (no pages). */
 export interface MirrorPage {
   documents: MirrorDocument[];
   nextCursor: string | null;
@@ -69,8 +71,6 @@ export interface MirrorRow {
   status: string;
   document_number: string | null;
   issue_date: string | null;
-  /** Full-precision text of `issued_at`: the cursor key, never handed over. */
-  issued_at?: string | null;
   due_date: string | null;
   currency_code: string;
   kleinunternehmer: boolean;
@@ -112,41 +112,47 @@ export function toMirrorDocument(row: MirrorRow): MirrorDocument {
   };
 }
 
-const cursorSchema = z.object({
-  issuedAt: z.string().min(1).max(64).refine((v) => !Number.isNaN(Date.parse(v))),
-  id: z.string().min(1).max(100),
-});
-type Cursor = z.infer<typeof cursorSchema>;
+/**
+ * The most documents one answer holds. A document is about 400 bytes of JSON,
+ * so 10,000 is a few megabytes: far above any company today (the largest has
+ * about 60). Above it the read refuses (`TooManyMirrorDocumentsError`) instead
+ * of handing over a cut list as if it were complete.
+ */
+export const MIRROR_MAX_DOCUMENTS = 10_000;
 
-export function encodeMirrorCursor(c: Cursor): string {
-  return Buffer.from(JSON.stringify(c), 'utf8').toString('base64url');
-}
-
-function decodeCursor(raw: string): Cursor {
-  try {
-    return cursorSchema.parse(JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')));
-  } catch {
-    throw new BooksError('INVALID_INPUT', 'INVALID_INPUT: cursor', {
-      issues: [{ path: 'cursor', message: 'not a cursor this list returned' }],
-    });
+/** The company holds more issued documents than one answer may carry. */
+export class TooManyMirrorDocumentsError extends Error {
+  /** The cap that was exceeded. */
+  readonly max: number;
+  /** @param max the cap that was exceeded */
+  constructor(max: number) {
+    super(`books mirror: more than ${max} issued documents`);
+    this.name = 'TooManyMirrorDocumentsError';
+    this.max = max;
   }
 }
 
-export const MIRROR_PAGE_MAX = 200;
 const listInput = z.object({
-  limit: z.number().int().min(1).max(MIRROR_PAGE_MAX).default(100),
-  cursor: z.string().min(1).max(500).optional(),
+  /** Tests only: a smaller cap, to prove the refusal without thousands of rows. */
+  max: z.number().int().min(1).max(MIRROR_MAX_DOCUMENTS).default(MIRROR_MAX_DOCUMENTS),
 });
+/** What `listMirrorDocuments` takes: nothing in production, a smaller cap in tests. */
 export type ListMirrorInput = z.input<typeof listInput>;
 
-/** One page of the company's issued invoices and credit notes, in the order they were issued. */
+/**
+ * Every issued invoice and credit note of the company, in the order they were
+ * issued (`issued_at`, then id), in ONE statement. One statement reads one
+ * snapshot, so the answer is complete as of the moment it started: a document
+ * whose issue commits while the read runs is in the next pull, never skipped
+ * by a page boundary (pages read different snapshots, and a document whose
+ * `issued_at` sorts before an earlier page's end could commit after it).
+ */
 export async function listMirrorDocuments(scope: BooksScope, input: ListMirrorInput = {}): Promise<MirrorPage> {
   const parsed = listInput.safeParse(input);
   if (!parsed.success) throw invalid('INVALID_INPUT', parsed.error.issues);
-  const { limit } = parsed.data;
-  const cursor = parsed.data.cursor ? decodeCursor(parsed.data.cursor) : null;
+  const { max } = parsed.data;
 
-  let q = scope.db
+  const rows = (await scope.db
     .selectFrom('sales_document')
     .select((eb) => [
       'sales_document.id',
@@ -154,7 +160,6 @@ export async function listMirrorDocuments(scope: BooksScope, input: ListMirrorIn
       'sales_document.status',
       'sales_document.document_number',
       eb.cast<string | null>('sales_document.issue_date', 'text').as('issue_date'),
-      eb.cast<string | null>('sales_document.issued_at', 'text').as('issued_at'),
       eb.cast<string | null>('sales_document.due_date', 'text').as('due_date'),
       'sales_document.currency_code',
       'sales_document.kleinunternehmer',
@@ -167,31 +172,13 @@ export async function listMirrorDocuments(scope: BooksScope, input: ListMirrorIn
     ])
     .where('sales_document.tenant_id', '=', scope.tenantId)
     .where('sales_document.doc_type', 'in', [...MIRROR_DOC_TYPES])
-    .where('sales_document.status', 'in', [...MIRROR_STATUSES]);
-  if (cursor) {
-    // Sent as TEXT and cast in SQL (full microsecond precision, no JS Date round trip).
-    const at = sql<Date>`${cursor.issuedAt}::text::timestamptz`;
-    q = q.where((eb) =>
-      eb.or([
-        eb('sales_document.issued_at', '>', at),
-        eb.and([eb('sales_document.issued_at', '=', at), eb('sales_document.id', '>', cursor.id)]),
-      ]),
-    );
-  }
-  const rows = (await q
+    .where('sales_document.status', 'in', [...MIRROR_STATUSES])
     .orderBy('sales_document.issued_at', 'asc')
     .orderBy('sales_document.id', 'asc')
-    .limit(limit + 1)
+    .limit(max + 1)
     .execute()) as unknown as MirrorRow[];
 
-  const page = rows.slice(0, limit).map(toMirrorDocument);
-  const lastRow = rows[limit - 1];
-  if (rows.length > limit && lastRow && !lastRow.issued_at) {
-    throw new Error(`books mirror: issued document ${lastRow.id} has no issued_at`);
-  }
-  return {
-    documents: page,
-    nextCursor:
-      rows.length > limit && lastRow?.issued_at ? encodeMirrorCursor({ issuedAt: lastRow.issued_at, id: lastRow.id }) : null,
-  };
+  if (rows.length > max) throw new TooManyMirrorDocumentsError(max);
+  // The envelope keeps `nextCursor` (always null: everything is in this answer), the shape the receipts client reads.
+  return { documents: rows.map(toMirrorDocument), nextCursor: null };
 }

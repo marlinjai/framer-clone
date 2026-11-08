@@ -17,7 +17,7 @@ import { issue } from '../issue';
 import { handleMirrorRequest, type MirrorEndpointDeps } from '../machine';
 import { createDraft } from '../repository/documents';
 import { addLine } from '../repository/lines';
-import { listMirrorDocuments, type MirrorDocument } from '../repository/mirror';
+import { listMirrorDocuments, TooManyMirrorDocumentsError, type MirrorDocument } from '../repository/mirror';
 import { storeBeforeCommit } from '../render/store';
 import type { BooksScope } from '../scope';
 import { ACTOR, FakeDirectory, initCompany, newCustomer, newTenantId, openBooksEnv, scopeFor, type BooksEnv } from './booksFixtures';
@@ -106,46 +106,26 @@ describe('the Books mirror read', () => {
     }
   });
 
-  it('walks every document once across pages, oldest first', async () => {
-    const { scope } = await company();
-    const all = (await listMirrorDocuments(scope)).documents;
-    const walked: MirrorDocument[] = [];
-    let cursor: string | undefined;
-    do {
-      const page = await listMirrorDocuments(scope, { limit: 1, cursor });
-      walked.push(...page.documents);
-      cursor = page.nextCursor ?? undefined;
-    } while (cursor);
-    expect(walked.map((d) => d.id)).toEqual(all.map((d) => d.id));
-    const days = walked.map((d) => d.issueDate);
-    expect([...days].sort()).toEqual(days);
+  it('hands over every document in one answer, in the order of issue, with no next page', async () => {
+    const { scope, dir, first, second, creditNoteId } = await company();
+    // Drafts issued later, also after the documents above, in one statement's answer.
+    const { customer } = await newCustomer(scope, dir, { customerType: 'b2b' });
+    const later: string[] = [];
+    for (let i = 0; i < 3; i += 1) later.push(await issuedInvoice(scope, customer.id, 1000 + i));
+    const page = await listMirrorDocuments(scope);
+    expect(page.nextCursor).toBeNull();
+    const ids = page.documents.map((d) => d.id);
+    expect(ids).toHaveLength(6);
+    expect(new Set(ids).size).toBe(6);
+    // Issue order: the two invoices and the credit note of the cancellation, then the three later invoices.
+    expect(ids.slice(0, 3).sort()).toEqual([first, second, creditNoteId].sort());
+    expect(ids.slice(3)).toEqual(later);
   });
 
-  it('does not skip a document issued between two pages', async () => {
-    // The customer's contact lives in the company's own directory, the one its scope reads.
-    const { scope, dir } = await company();
-    const { customer } = await newCustomer(scope, dir, { customerType: 'b2b' });
-    // Drafts exist before the pull starts and are issued while it is walking.
-    const draftIds: string[] = [];
-    for (let i = 0; i < 3; i += 1) {
-      const d = await createDraft(scope, { docType: 'invoice', actorUserId: ACTOR, customerId: customer.id, serviceDate: '2026-10-01' });
-      await addLine(scope, d.document.id, { kind: 'service', title: 'Late', quantity: 1000, unitPrice: 1000 + i });
-      draftIds.push(d.document.id);
-    }
-    const first = await listMirrorDocuments(scope, { limit: 1 });
-    const seen = first.documents.map((d) => d.id);
-    for (const id of draftIds) {
-      const issued = await issue(scope, id, { actorUserId: ACTOR }, { beforeCommit: storeBeforeCommit(scope) });
-      expect(issued.document.document.id).toBe(id);
-    }
-    let cursor = first.nextCursor ?? undefined;
-    while (cursor) {
-      const page = await listMirrorDocuments(scope, { limit: 1, cursor });
-      seen.push(...page.documents.map((d) => d.id));
-      cursor = page.nextCursor ?? undefined;
-    }
-    for (const id of draftIds) expect(seen).toContain(id);
-    expect(new Set(seen).size).toBe(seen.length);
+  it('refuses a cut list: above the cap the read throws instead of answering part of the documents', async () => {
+    const { scope } = await company();
+    await expect(listMirrorDocuments(scope, { max: 2 })).rejects.toBeInstanceOf(TooManyMirrorDocumentsError);
+    expect((await listMirrorDocuments(scope, { max: 3 })).documents).toHaveLength(3);
   });
 
   it('never shows another company of the same tenant group', async () => {
@@ -171,7 +151,7 @@ describe('the Books mirror read', () => {
     const deps: MirrorEndpointDeps = {
       verify: async () => key,
       tenantDb: async () => env.appDb,
-      list: listMirrorDocuments,
+      list: (scope) => listMirrorDocuments(scope),
     };
     // A company id in the query is ignored: the key decides.
     const res = await handleMirrorRequest(

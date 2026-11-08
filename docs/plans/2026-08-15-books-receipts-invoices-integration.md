@@ -1151,8 +1151,12 @@ receipts plan `docs/plans/2026-10-14-invoicing-and-income.md`, step 4 and decisi
   carries its company's `appGrants`. Consequence: the service account's company needs both
   `sites` and `books`, as a person's session does today (`access.ts`).
 - **What it hands over.** The company's `invoice` and `credit_note` documents in a live status
-  (`issued`, `sent`, `paid`, `cancelled`), in the order they were issued (`issued_at`, then id), 100 a page (at most
-  200) with a keyset cursor, in exactly the fields the receipts parser reads
+  (`issued`, `sent`, `paid`, `cancelled`), all of them in one answer read by one statement (one
+  snapshot), in the order they were issued (`issued_at`, then id). No pages (`nextCursor` is always
+  null, a `limit` is ignored, a `cursor` refused): separate pages read separate snapshots, and a
+  document whose issue commits after a page boundary passed its `issued_at` would be skipped (the
+  CodeRabbit review of 2026-11-08). Capped at 10,000 documents, a few megabytes; above that the
+  answer is 422 `too_many_documents`, never a cut list. In exactly the fields the receipts parser reads
   (`parseBooksDocuments` there): `id, docType, status, number, issueDate, dueDate, currencyCode,
   kleinunternehmer, reverseCharge, totalCents, taxCents, taxSummary[{rateBp, netCents, taxCents}],
   correctsDocumentId, replacesDocumentId`, plus the verified `companyId` in the envelope. Never a
