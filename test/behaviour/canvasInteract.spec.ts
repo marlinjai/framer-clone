@@ -432,7 +432,8 @@ describe.each(ENGINES)('in %s', (name, engine) => {
       expect(await camera(page)).toBe(before);
     }
     await bar.getByRole('button', { name: 'Select tool' }).tap();
-    expect(await editor(page, (api) => api.tool())).toBe('select');
+    // Polled: the tool changes on the tap's handler, which can land after the tap resolves.
+    await expect.poll(() => editor(page, (api) => api.tool())).toBe('select');
     expect(crashes).toEqual([]);
     await page.close();
   });
