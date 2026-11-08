@@ -13,7 +13,7 @@ import { getSnapshot } from 'mobx-state-tree';
 import { createRootStore, getHistoryStore, type RootStoreType } from '@/stores/RootStore';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import type { PageGenHandlers, PageGenTransport } from '@/lib/ai/pageGen/client';
-import type { PageGenRequest, PageGenResultPayload, PageGenSection } from '@/lib/ai/pageGen/protocol';
+import type { PageGenOutline, PageGenRequest, PageGenResultPayload, PageGenSection } from '@/lib/ai/pageGen/protocol';
 import { validateGeneration } from '@/lib/ai/pageGen/validate';
 import { deriveBreakpointKeys } from '@/lib/ai/pageGen/schema';
 
@@ -56,7 +56,7 @@ function resultFor(req: PageGenRequest, raw: unknown, generationId = 'gen-1'): P
 
 /** The preview section the server would send for `raw` (one top-level node). */
 function sectionFor(req: PageGenRequest, raw: unknown, index: number, generationId = 'gen-1'): PageGenSection {
-  return { generationId, index, attempt: 1, node: validated(req, { nodes: [raw] }).nodes[0] };
+  return { generationId, index, slot: index, attempt: 1, node: validated(req, { nodes: [raw] }).nodes[0] };
 }
 
 const HERO = { type: 'section', label: 'Hero', children: [{ type: 'h1', props: { children: 'Fresh bread' } }] };
@@ -308,6 +308,92 @@ describe('the draft: re-entry', () => {
     await act(async () => calls[0].handlers.onResult?.(resultFor(calls[0].req, { nodes: [HERO] })));
     expect(draft().target).toBeUndefined();
     expect(screen.getByRole('alert')).toHaveTextContent('Nothing was changed');
+  });
+});
+
+describe('the outline skeletons through the dialog (live agent canvas, slice 5)', () => {
+  const outline = (generationId = 'gen-1', titles = ['Hero', 'Story', 'Footer']): PageGenOutline => ({
+    generationId,
+    attempt: 1,
+    outline: titles.map((title) => ({ title, kind: 'generic' as const })),
+  });
+  const shape = () => draft().items.map((i) => `${i.kind}:${i.slot}`);
+
+  it('forward: skeletons first, sections replace them in order, the result drops the extra skeleton', async () => {
+    const { transport, calls } = manualTransport();
+    setup(transport);
+    typeBrief('A bakery');
+    generate();
+    const req = calls[0].req;
+    act(() => calls[0].handlers.onOutline?.(outline()));
+    expect(shape()).toEqual(['skeleton:0', 'skeleton:1', 'skeleton:2']);
+    act(() => calls[0].handlers.onSection?.(sectionFor(req, HERO, 0)));
+    act(() => calls[0].handlers.onSection?.(sectionFor(req, STORY, 1)));
+    expect(shape()).toEqual(['section:0', 'section:1', 'skeleton:2']);
+    // Nothing of the outline in the project, before or after the result.
+    expect(savedJson()).not.toContain('Footer');
+    await act(async () => calls[0].handlers.onResult?.(resultFor(req, PAGE)));
+    expect(draft().items).toEqual([]);
+    expect(draft().outline).toEqual([]);
+    expect(savedJson()).not.toContain('Footer');
+    expect(getHistoryStore()!.history.length).toBe(1);
+  });
+
+  it('backtrack: a cancel drops the skeletons; a late outline of the cancelled run never reaches the next one', () => {
+    const { transport, calls } = manualTransport();
+    setup(transport);
+    typeBrief('A bakery');
+    generate();
+    act(() => calls[0].handlers.onOutline?.(outline()));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(draft().items).toEqual([]);
+    typeBrief('A florist');
+    generate();
+    act(() => calls[0].handlers.onOutline?.(outline()));
+    expect(draft().items).toEqual([]);
+    act(() => calls[1].handlers.onOutline?.(outline('gen-2', ['Flowers'])));
+    expect(shape()).toEqual(['skeleton:0']);
+  });
+
+  it('resume: a reload mid-stream rebuilds the skeletons and the sections from the collected run', async () => {
+    const { transport, calls } = manualTransport();
+    const r = manualResume();
+    const first = setup(transport, r.resume);
+    typeBrief('A bakery');
+    generate();
+    act(() => calls[0].handlers.onStarted?.('gen-1'));
+    const req = calls[0].req;
+    act(() => calls[0].handlers.onOutline?.(outline()));
+    first.unmount();
+    expect(draft().items).toEqual([]);
+
+    setup(transport, r.resume);
+    // A poll hands back the latest outline, then every section so far, on every poll.
+    act(() => {
+      r.calls[0].handlers.onOutline?.(outline());
+      r.calls[0].handlers.onSection?.(sectionFor(req, HERO, 0));
+      r.calls[0].handlers.onOutline?.(outline());
+      r.calls[0].handlers.onSection?.(sectionFor(req, HERO, 0));
+    });
+    expect(shape()).toEqual(['section:0', 'skeleton:1', 'skeleton:2']);
+    await act(async () => r.calls[0].handlers.onResult?.(resultFor(req, PAGE)));
+    expect(draft().items).toEqual([]);
+  });
+
+  it('re-entry after a refusal: the skeletons go with the error, and the next run starts clean', () => {
+    const before = savedJson();
+    const { transport, calls } = manualTransport();
+    setup(transport);
+    typeBrief('A bakery');
+    generate();
+    act(() => calls[0].handlers.onOutline?.(outline()));
+    act(() => calls[0].handlers.onError?.({ code: 'refused', message: 'The model declined.' }));
+    expect(draft().items).toEqual([]);
+    expect(savedJson()).toBe(before);
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(draft().items).toEqual([]);
+    act(() => calls[1].handlers.onOutline?.(outline('gen-2', ['Hero'])));
+    expect(shape()).toEqual(['skeleton:0']);
   });
 });
 

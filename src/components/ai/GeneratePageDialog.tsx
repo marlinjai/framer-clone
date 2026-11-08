@@ -299,6 +299,12 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
         if (!isCurrent()) return;
         if (draft.add(requestKey, section)) dispatch({ type: 'section', requestKey, count: draft.sections.length });
       },
+      // The outline: a skeleton per section still coming, until its section
+      // arrives. The latest replaces the earlier one; a collected run repeats it.
+      onOutline: (outline) => {
+        if (!isCurrent()) return;
+        draft.setOutline(requestKey, outline);
+      },
       onResult: (result) => {
         if (!isCurrent() || !project) return; // cancelled or superseded: never apply
         if (projectId) clearPendingRun(projectId);
@@ -414,7 +420,7 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
       return;
     }
     dispatch({ type: 'reset', inputs: pending.inputs });
-    // The draft is rebuilt from the run: the collection hands back every section sent so far.
+    // The draft is rebuilt from the run: the collection hands back the outline and every section sent so far.
     const controller = begin(
       pending.requestKey,
       draftTargetFor({

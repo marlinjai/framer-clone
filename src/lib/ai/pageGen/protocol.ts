@@ -7,6 +7,7 @@ import type { GeneratedNodeSnapshot } from './validate';
 import type { BreakpointInput } from './schema';
 import { MODEL_CHOICES, type ModelChoice } from '@/lib/ai/modelChoice';
 import type { SiteContext } from './promptSections/siteContext';
+import type { OutlineEntry } from './outline';
 
 /**
  * Models the page generator may run on: the slider's three steps (Fast =
@@ -74,8 +75,28 @@ export interface PageGenProgress {
 export interface PageGenSection {
   generationId: string;
   index: number;
+  /**
+   * The section's position in the model's "nodes" (the outline's slot), which
+   * can run ahead of `index` when an earlier section failed validation: the
+   * skeleton this section replaces.
+   */
+  slot: number;
   node: GeneratedNodeSnapshot;
   attempt: number;
+}
+
+/**
+ * SSE `gen:outline`: the sections the first attempt is about to write, one
+ * entry per position in its "nodes" (./outline.ts), so the editor draws a
+ * skeleton in each place before the first section is complete. Sent again,
+ * whole, each time it grows or changes (the model's outline closing, or a
+ * section opening that the outline does not cover); the latest replaces the
+ * earlier ones. A preview hint only: it is never validated, applied or saved.
+ */
+export interface PageGenOutline {
+  generationId: string;
+  attempt: number;
+  outline: OutlineEntry[];
 }
 
 /** SSE `gen:result`: a validated generation, ready to apply. */

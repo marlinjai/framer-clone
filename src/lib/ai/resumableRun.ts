@@ -20,6 +20,9 @@
 // generator's preview sections). They arrive through onSection from the stream,
 // and again from every collection poll (the running snapshot carries all of
 // them so far), so a section can arrive more than once: the caller dedupes.
+// A run may also send a partial result that replaces the previous one
+// (`events.outline`, the page generator's outline); it arrives through
+// onOutline from the stream and from every poll, the latest each time.
 
 import { parseSseFrames } from '@/lib/ai/parseSse';
 
@@ -29,12 +32,14 @@ export interface RunErrorPayload {
   retryAfterSec?: number;
 }
 
-export interface ResumableHandlers<P, R, E extends RunErrorPayload, U, S = never> {
+export interface ResumableHandlers<P, R, E extends RunErrorPayload, U, S = never, O = never> {
   /** The run's id, as soon as the server registered it (persist it to resume after a reload). */
   onStarted?: (id: string) => void;
   onProgress?: (p: P) => void;
   /** A partial result; may repeat one already delivered (see the header). Never after the outcome. */
   onSection?: (s: S) => void;
+  /** The latest replacing partial result; may repeat the one already delivered. Never after the outcome. */
+  onOutline?: (o: O) => void;
   onResult?: (r: R) => void;
   onError?: (e: E | RunErrorPayload) => void;
   onUsage?: (u: U) => void;
@@ -43,8 +48,8 @@ export interface ResumableHandlers<P, R, E extends RunErrorPayload, U, S = never
 export interface ResumableRunConfig {
   /** The POST endpoint; the run itself lives at `${url}/${id}`. */
   url: string;
-  /** SSE event names (the `usage` event is shared). `section` only for a run with partial results. */
-  events: { started: string; progress: string; result: string; error: string; section?: string };
+  /** SSE event names (the `usage` event is shared). `section` and `outline` only for a run with partial results. */
+  events: { started: string; progress: string; result: string; error: string; section?: string; outline?: string };
   /** The user-facing words for each transport failure. */
   messages: {
     cancelled: string;
@@ -61,8 +66,8 @@ export interface ResumableRunConfig {
   fetch?: typeof fetch;
 }
 
-type RunSnapshot<P, R, E, S> =
-  | { status: 'running'; progress?: P; sections?: S[] }
+type RunSnapshot<P, R, E, S, O> =
+  | { status: 'running'; progress?: P; sections?: S[]; outline?: O }
   | { status: 'done'; result: R }
   | { status: 'failed'; error: E }
   | { status: 'cancelled' };
@@ -131,12 +136,12 @@ async function errorEnvelope(response: Response, fallback: string): Promise<RunE
   return payload;
 }
 
-export function createResumableRun<Req, P, R, E extends RunErrorPayload, U, S = never>(config: ResumableRunConfig) {
+export function createResumableRun<Req, P, R, E extends RunErrorPayload, U, S = never, O = never>(config: ResumableRunConfig) {
   const pollMs = config.pollIntervalMs ?? DEFAULT_POLL_MS;
   const maxFailures = config.maxPollFailures ?? DEFAULT_MAX_POLL_FAILURES;
   const doFetch: typeof fetch = (...args) => (config.fetch ?? globalThis.fetch)(...args);
   const runUrl = (id: string) => `${config.url}/${encodeURIComponent(id)}`;
-  type Handlers = ResumableHandlers<P, R, E, U, S>;
+  type Handlers = ResumableHandlers<P, R, E, U, S, O>;
 
   /** Stop the run on the server; fire and forget (the outcome is reported locally). */
   const cancelOnServer = (id: string) => {
@@ -161,10 +166,10 @@ export function createResumableRun<Req, P, R, E extends RunErrorPayload, U, S = 
       if (response && (response.status === 401 || response.status === 403)) {
         return handlers.onError?.(await errorEnvelope(response, config.messages.gone));
       }
-      let snapshot: RunSnapshot<P, R, E, S> | undefined;
+      let snapshot: RunSnapshot<P, R, E, S, O> | undefined;
       if (response?.ok) {
         try {
-          snapshot = (await response.json()) as RunSnapshot<P, R, E, S>;
+          snapshot = (await response.json()) as RunSnapshot<P, R, E, S, O>;
         } catch {
           snapshot = undefined;
         }
@@ -184,6 +189,7 @@ export function createResumableRun<Req, P, R, E extends RunErrorPayload, U, S = 
         case 'cancelled':
           return handlers.onError?.({ code: 'cancelled', message: config.messages.cancelledElsewhere });
         default:
+          if (snapshot.outline !== undefined && snapshot.outline !== null) handlers.onOutline?.(snapshot.outline);
           if (Array.isArray(snapshot.sections)) for (const s of snapshot.sections) handlers.onSection?.(s);
           if (snapshot.progress) handlers.onProgress?.(snapshot.progress);
           polls += 1;
@@ -279,6 +285,10 @@ export function createResumableRun<Req, P, R, E extends RunErrorPayload, U, S = 
         }
         if (config.events.section && event === config.events.section) {
           handlers.onSection?.(payload as S);
+          return;
+        }
+        if (config.events.outline && event === config.events.outline) {
+          handlers.onOutline?.(payload as O);
           return;
         }
         switch (event) {

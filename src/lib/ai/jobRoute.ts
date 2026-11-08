@@ -39,7 +39,7 @@ async function owner(request: Request): Promise<{ userId: string; workspaceId: s
 
 const notFound = () => jsonError('not_found', 'this run is unknown or no longer available', 404);
 
-export function jobRouteHandlers<P, R, E, S = never>(registry: () => JobRegistry<P, R, E, S>) {
+export function jobRouteHandlers<P, R, E, S = never, O = never>(registry: () => JobRegistry<P, R, E, S, O>) {
   const GET = withAuthAvailability(async (request: Request, { params }: RouteContext): Promise<Response> => {
     const { id } = await params;
     const who = await owner(request);

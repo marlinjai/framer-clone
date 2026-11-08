@@ -14,6 +14,8 @@ import { MAP_EMBED_PROMPT } from './promptSections/mapEmbed';
 import { BASE_KEY, type BreakpointKey } from './schema';
 import type { PageGenTarget } from './protocol';
 import { siteContextText, type SiteContext } from './promptSections/siteContext';
+import { PLAN_SECTION_KINDS } from '@/lib/projects/liveEvents';
+import { OUTLINE_MAX_ENTRIES } from './outline';
 import { legalLinksText } from './promptSections/legalLinks';
 
 export const EMIT_TOOL_NAME = 'emit_page';
@@ -28,7 +30,7 @@ export const EMIT_TOOL_NAME = 'emit_page';
 // docs/plans/2026-10-23-ai-design-quality-and-image-focus.md.
 const INSTRUCTIONS = [
   'You are the page designer of framer-clone, a visual website builder. You turn a short brief into',
-  'real, editable components by calling the emit_page tool exactly once. You never answer in prose',
+  'real, editable components by calling the emit_page tool exactly once, its outline first. You never answer in prose',
   'instead of calling the tool; if the brief is unclear, make sensible choices and still call it.',
   '',
   '# Design brief',
@@ -144,15 +146,36 @@ const INSTRUCTIONS = [
  * $ref): the full node grammar is in the schema docs, and the server validates
  * and repairs every node anyway (./validate.ts), so a schema the API might
  * treat differently across models buys nothing.
+ *
+ * `outline` comes first, in the schema and in the description, so the model
+ * writes it before the nodes: the editor draws a skeleton per entry while the
+ * nodes stream (./outline.ts). Key order is not guaranteed by the API; the
+ * scanner falls back to a skeleton per section as it opens. The outline is a
+ * preview hint only: dropped before validation (withoutOutline), never saved.
+ * It costs a few dozen output tokens per run.
  */
 export function emitPageTool(): BetaTool {
   return {
     name: EMIT_TOOL_NAME,
     description:
-      'Emit the generated components. Call exactly once with every node. Nodes follow the output format in the system prompt.',
+      'Emit the generated components. Call exactly once with every node. Write "outline" first (one short entry per top-level node, in order), then the rest. Nodes follow the output format in the system prompt.',
     input_schema: {
       type: 'object',
       properties: {
+        outline: {
+          type: 'array',
+          description:
+            'Write this first: the plan of your top-level nodes, one entry per node, in order. The editor shows it while you write; it is not saved.',
+          maxItems: OUTLINE_MAX_ENTRIES,
+          items: {
+            type: 'object',
+            properties: {
+              title: { type: 'string', description: 'The section in at most five words, in the language of the page.' },
+              kind: { type: 'string', enum: [...PLAN_SECTION_KINDS], description: 'Its rough shape; generic when none fits.' },
+            },
+            required: ['title', 'kind'],
+          },
+        },
         title: { type: 'string', description: 'Page title (new pages only).' },
         description: { type: 'string', description: 'One-sentence page description for search engines (new pages only).' },
         nodes: {
@@ -171,7 +194,7 @@ export function emitPageTool(): BetaTool {
           },
         },
       },
-      required: ['nodes'],
+      required: ['outline', 'nodes'],
     },
     // Stream the (large) tool input as it is generated, so the dialog can show
     // progress. The server owns validation either way.
@@ -256,7 +279,7 @@ export function repairMessage(problems: string[]): string {
     'Your output could not be applied. Problems:',
     ...problems.slice(0, 40).map((p) => `- ${p}`),
     '',
-    `Call ${EMIT_TOOL_NAME} again with a corrected, complete result. If the output was too long, produce fewer nodes.`,
+    `Call ${EMIT_TOOL_NAME} again with a corrected, complete result (the outline may be empty). If the output was too long, produce fewer nodes.`,
   ].join('\n');
 }
 
@@ -272,7 +295,7 @@ export function tellRepairMessage(problems: string[]): string {
     'page essentials (a primary call to action in the hero, meaningful alt texts):',
     ...problems.slice(0, 40).map((p) => `- ${p}`),
     '',
-    `Call ${EMIT_TOOL_NAME} again with the complete page, changed so that none of these remain. Keep everything`,
-    'else (content, structure, labels) as it was.',
+    `Call ${EMIT_TOOL_NAME} again with the complete page, changed so that none of these remain (the outline may be`,
+    'empty). Keep everything else (content, structure, labels) as it was.',
   ].join('\n');
 }

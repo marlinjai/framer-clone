@@ -42,6 +42,7 @@ import { autoFixTells, describeFinding, detectTells, treeStats, type TellFinding
 import type {
   PageGenErrorPayload,
   PageGenModel,
+  PageGenOutline,
   PageGenProgress,
   PageGenResultPayload,
   PageGenSection,
@@ -49,6 +50,7 @@ import type {
   StockImageSummary,
 } from './protocol';
 import { createSectionScanner } from './sectionStream';
+import { createOutlineBuilder, withoutOutline } from './outline';
 import { classifyProviderError } from './providerError';
 import {
   applyStockPhotos,
@@ -106,10 +108,18 @@ export interface PageGenerationContext {
   onProgress?: (progress: PageGenProgress) => void;
   /**
    * Each top-level section of the first attempt as soon as it is complete and
-   * valid on its own (a preview the editor draws as a draft). Optional: the
-   * site operations' generatePage passes nothing and nothing is scanned.
+   * valid on its own (a preview the editor draws as a draft). Optional: without
+   * it and without onOutline nothing is scanned.
    */
   onSection?: (section: PageGenSection) => void;
+  /**
+   * The first attempt's outline (./outline.ts), whole, each time it grows or
+   * changes: the editor draws a skeleton per entry until the section of that
+   * slot arrives. The payload is client-safe, so a caller that forwards the
+   * preview elsewhere can pass it on unchanged (the MCP generate_page does not
+   * pass it yet: slice 6 of plan docs/plans/2026-11-08-live-agent-canvas.md).
+   */
+  onOutline?: (outline: PageGenOutline) => void;
 }
 
 export interface PageGenerationUsage {
@@ -275,8 +285,13 @@ export async function runPageGeneration(
       // The preview sections: first attempt only (a repair round rewrites the
       // whole page, and the draft of the first one stays up until the result).
       const sections =
-        attempt === 1 && context.onSection
-          ? sectionPreview(context.onSection, requestId, attempt, { breakpoints, allowStickyCta: false, heldAddresses, mapAddress, closedAncestor })
+        attempt === 1 && (context.onSection || context.onOutline)
+          ? sectionPreview(
+              { section: context.onSection, outline: context.onOutline },
+              requestId,
+              attempt,
+              { breakpoints, allowStickyCta: false, heldAddresses, mapAddress, closedAncestor },
+            )
           : undefined;
       stream.on('inputJson', (partialJson: string) => {
         rawInput += partialJson;
@@ -357,7 +372,9 @@ export async function runPageGeneration(
       } else if (malformedInput) {
         problems = [`the ${EMIT_TOOL_NAME} input was not valid JSON`];
       } else {
-        const outcome = validateGeneration(toolUse.input, {
+        // The outline is a preview hint: it never counts toward the size limit,
+        // reaches the result or gets saved.
+        const outcome = validateGeneration(withoutOutline(toolUse.input), {
           breakpoints,
           allowStickyCta: input.target.kind === 'newPage',
           heldAddresses,
@@ -425,40 +442,53 @@ export async function runPageGeneration(
 }
 
 /**
- * The preview of one attempt: scans the streaming tool input for complete
- * top-level sections (./sectionStream.ts), validates each one on its own and
- * sends the valid ones, numbered without gaps. A section that fails is left out
+ * The preview of one attempt: scans the streaming tool input
+ * (./sectionStream.ts) for its outline, the sections as they open, and the
+ * complete top-level sections. The outline (the model's own, filled up by each
+ * section that opens past it, ./outline.ts) is sent whole each time it
+ * changes. Each complete section is validated on its own and the valid ones
+ * are sent, numbered without gaps (`index`) and carrying their position in
+ * "nodes" (`slot`, the skeleton they replace). A section that fails is left out
  * of the preview, never repaired (the final result corrects it anyway); once
- * the sections sent reach the node budget, nothing more is sent. The page-level
- * screens (tells, essentials) run on the final result only.
+ * the sections sent reach the node budget, no more sections are sent. The
+ * page-level screens (tells, essentials) run on the final result only.
  *
  * Never throws: it runs inside the SDK's event handler, where an exception
  * would reject the stream and pass for a provider error.
  */
 function sectionPreview(
-  send: (section: PageGenSection) => void,
+  send: { section?: (section: PageGenSection) => void; outline?: (outline: PageGenOutline) => void },
   generationId: string,
   attempt: number,
   ctx: ValidateContext,
 ): { push(fragment: string): void } {
   const scanner = createSectionScanner();
+  const outline = createOutlineBuilder();
   let index = 0;
   let nodeCount = 0;
+  let sectionsStopped = !send.section;
   let stopped = false;
   return {
     push(fragment) {
       if (stopped) return;
       try {
-        for (const raw of scanner.push(fragment)) {
-          const outcome = validateGeneration({ nodes: [raw] }, ctx);
+        const step = scanner.push(fragment);
+        if (send.outline) {
+          let changed = step.outline ? outline.declare(step.outline) : false;
+          for (const element of step.opened) changed = outline.open(element) || changed;
+          if (changed) send.outline({ generationId, attempt, outline: outline.entries() });
+        }
+        if (sectionsStopped || !send.section) return;
+        for (const { slot, value } of step.sections) {
+          const outcome = validateGeneration({ nodes: [value] }, ctx);
           if (!outcome.ok) continue;
           nodeCount += outcome.result.stats.nodeCount;
           if (nodeCount > GENERATION_LIMITS.maxNodes) {
-            stopped = true;
+            sectionsStopped = true;
             return;
           }
           for (const node of outcome.result.nodes) {
-            send({ generationId, index, node, attempt });
+            send.section({ generationId, index, slot, node, attempt });
             index += 1;
           }
         }

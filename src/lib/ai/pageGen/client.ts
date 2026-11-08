@@ -11,6 +11,7 @@
 import { createResumableRun } from '@/lib/ai/resumableRun';
 import type {
   PageGenErrorPayload,
+  PageGenOutline,
   PageGenProgress,
   PageGenRequest,
   PageGenResultPayload,
@@ -27,6 +28,11 @@ export interface PageGenHandlers {
    * (a collected run sends all of them on every poll): key them by `index`.
    */
   onSection?: (s: PageGenSection) => void;
+  /**
+   * The first attempt's outline (gen:outline), whole: the latest replaces the
+   * earlier ones. A collected run sends it again on every poll.
+   */
+  onOutline?: (o: PageGenOutline) => void;
   onResult?: (r: PageGenResultPayload) => void;
   onError?: (e: PageGenErrorPayload) => void;
   onUsage?: (u: PageGenUsagePayload) => void;
@@ -47,10 +53,11 @@ const run = createResumableRun<
   PageGenResultPayload,
   PageGenErrorPayload,
   PageGenUsagePayload,
-  PageGenSection
+  PageGenSection,
+  PageGenOutline
 >({
   url: '/api/ai/generate-page',
-  events: { started: 'gen:started', progress: 'gen:progress', result: 'gen:result', error: 'gen:error', section: 'gen:section' },
+  events: { started: 'gen:started', progress: 'gen:progress', result: 'gen:result', error: 'gen:error', section: 'gen:section', outline: 'gen:outline' },
   messages: {
     cancelled: 'Generation was cancelled.',
     unreachable: 'Could not reach the server. Check your connection and try again.',

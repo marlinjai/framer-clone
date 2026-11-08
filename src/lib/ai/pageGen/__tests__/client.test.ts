@@ -24,10 +24,12 @@ function streamResponse(chunks: string[]): Response {
 }
 
 function handlers() {
-  return { onProgress: vi.fn(), onSection: vi.fn(), onResult: vi.fn(), onError: vi.fn(), onUsage: vi.fn() };
+  return { onProgress: vi.fn(), onSection: vi.fn(), onOutline: vi.fn(), onResult: vi.fn(), onError: vi.fn(), onUsage: vi.fn() };
 }
 
-const SECTION = (index: number) => ({ generationId: 'g', index, attempt: 1, node: { id: `s${index}`, type: 'section', props: {}, children: [] } });
+const SECTION = (index: number) => ({ generationId: 'g', index, slot: index, attempt: 1, node: { id: `s${index}`, type: 'section', props: {}, children: [] } });
+const OUTLINE = (n: number) => ({ generationId: 'g', attempt: 1, outline: Array.from({ length: n }, (_, i) => ({ title: `S${i}`, kind: 'generic' })) });
+const RESULT = 'event: gen:result\ndata: {"generationId":"g","nodes":[],"warnings":[],"stats":{"nodeCount":0,"maxDepth":0},"model":"m"}\n\n';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -62,6 +64,39 @@ describe('fetchPageGenTransport', () => {
     await resumePageGen('g', h);
     // Every poll sends what the run holds; the caller dedupes by index.
     expect(h.onSection.mock.calls.map(([s]) => (s as { index: number }).index)).toEqual([0, 0, 1]);
+    expect(h.onResult).toHaveBeenCalledTimes(1);
+  });
+
+  it('dispatches the outline from the stream before the sections, and never after the result', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      streamResponse([
+        `event: gen:outline\ndata: ${JSON.stringify(OUTLINE(3))}\n\nevent: gen:out`,
+        `line\ndata: ${JSON.stringify(OUTLINE(4))}\n\nevent: gen:section\ndata: ${JSON.stringify(SECTION(0))}\n\n`,
+        RESULT,
+        `event: gen:outline\ndata: ${JSON.stringify(OUTLINE(5))}\n\n`,
+      ]),
+    ));
+    const h = handlers();
+    const order: string[] = [];
+    h.onOutline.mockImplementation((o: { outline: unknown[] }) => order.push(`outline ${o.outline.length}`));
+    h.onSection.mockImplementation((s: { index: number }) => order.push(`section ${s.index}`));
+    h.onResult.mockImplementation(() => order.push('result'));
+    await fetchPageGenTransport(req, h);
+    expect(order).toEqual(['outline 3', 'outline 4', 'section 0', 'result']);
+  });
+
+  it('resume: every poll hands back the latest outline with the sections', async () => {
+    let polls = 0;
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      polls += 1;
+      if (polls === 1) return Response.json({ status: 'running', outline: OUTLINE(4) });
+      if (polls === 2) return Response.json({ status: 'running', outline: OUTLINE(4), sections: [SECTION(0)] });
+      return Response.json({ status: 'done', result: { generationId: 'g', nodes: [], warnings: [], stats: { nodeCount: 0, maxDepth: 0 }, model: 'm' } });
+    }));
+    const h = handlers();
+    await resumePageGen('g', h);
+    expect(h.onOutline).toHaveBeenCalledTimes(2);
+    expect(h.onSection).toHaveBeenCalledTimes(1);
     expect(h.onResult).toHaveBeenCalledTimes(1);
   });
 
