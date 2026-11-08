@@ -156,11 +156,11 @@ const OPENED: OpenedElement[] = ALL.flatMap((node, slot) => {
 describe('createSectionScanner: outline and opened elements', () => {
   it('numbers the sections by their position in "nodes"', () => {
     expect(report([EMIT_PAGE_INPUT_TEXT]).sections.map((x) => x.slot)).toEqual([0, 1, 2, 3]);
-    // A nested array keeps its slot, a bare value takes none.
+    // Every element of the array, section or not, keeps its position as its slot.
     const r = report(['{"nodes":[{"type":"a"},[1],7,{"type":"b"}]}']);
     expect(r.sections).toEqual([
       { slot: 0, value: { type: 'a' } },
-      { slot: 2, value: { type: 'b' } },
+      { slot: 3, value: { type: 'b' } },
     ]);
   });
 

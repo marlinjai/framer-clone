@@ -123,6 +123,8 @@ export function createSectionScanner(): SectionScanner {
   let arrayDepth = 0;
   // Slots handed out to elements so far (objects and nested arrays).
   let slots = 0;
+  // Inside a bare value (number, true, false, null) of the array, which already took its slot.
+  let bareOpen = false;
   let slot = -1;
   // The element's own keys (directly inside its object, never a child's).
   let elementExpectKey = false;
@@ -166,10 +168,10 @@ export function createSectionScanner(): SectionScanner {
         if (inString) {
           if (escape) {
             escape = false;
-            if (capture) captureRaw += ch;
+            if (capture && !captureOver) captureRaw += ch;
           } else if (ch === '\\') {
             escape = true;
-            if (capture) captureRaw += ch;
+            if (capture && !captureOver) captureRaw += ch;
           } else if (ch === '"') {
             inString = false;
             if (capture) {
@@ -192,7 +194,7 @@ export function createSectionScanner(): SectionScanner {
                 }
               }
             }
-          } else if (capture) {
+          } else if (capture && !captureOver) {
             captureRaw += ch;
           }
           if (capture && !captureOver) {
@@ -244,6 +246,8 @@ export function createSectionScanner(): SectionScanner {
         switch (ch) {
           case '"':
             inString = true;
+            // A string element is not a section, but it keeps its slot.
+            if (nodes === 'inside' && depth === arrayDepth && element === null) slots += 1;
             if (depth === 1 && expectKey) startCapture('rootKey');
             else if (atElementRoot && elementExpectKey) startCapture('elementKey');
             else if (atElementRoot && elementAwait) startCapture('elementValue');
@@ -308,6 +312,7 @@ export function createSectionScanner(): SectionScanner {
             }
             break;
           case ',':
+            if (nodes === 'inside' && depth === arrayDepth && element === null) bareOpen = false;
             if (depth === 1) {
               expectKey = true;
               lastKey = undefined;
@@ -317,7 +322,11 @@ export function createSectionScanner(): SectionScanner {
             }
             break;
           default:
-            // A bare value (number, true, false, null): nothing to read.
+            // A bare value (number, true, false, null): nothing to read, but it keeps its slot.
+            if (nodes === 'inside' && depth === arrayDepth && element === null && !bareOpen) {
+              bareOpen = true;
+              slots += 1;
+            }
             break;
         }
       }
