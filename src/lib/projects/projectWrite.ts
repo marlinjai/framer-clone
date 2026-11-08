@@ -11,6 +11,8 @@
 //     before a later step failed says so with `writtenVersion`: the server
 //     then holds exactly the sent snapshot at that version.
 
+import { editorTabId } from './tabId';
+
 export type ProjectWriteResult =
   | { kind: 'ok'; payload: Record<string, unknown>; version: number }
   | { kind: 'conflict'; currentVersion: number }
@@ -54,6 +56,8 @@ export async function postProjectWrite(
       expectedVersion,
       ...(options.requestKey ? { requestKey: options.requestKey } : {}),
       ...(options.previousRequestKeys?.length ? { previousRequestKeys: options.previousRequestKeys } : {}),
+      // The live stream tells this tab its own write apart from everyone else's (src/lib/projects/tabId.ts).
+      originTab: editorTabId(),
     });
     // A larger body goes as a normal request: it may not outlive the page,
     // which the unload warning covers.
