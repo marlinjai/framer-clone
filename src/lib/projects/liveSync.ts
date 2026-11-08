@@ -25,7 +25,11 @@
 //     is looked at again once that write settled: when it succeeded (no 409
 //     comes), the copy is adopted then;
 //   - a version that erased personal data is adopted without an undo step and
-//     clears the history, as a load does (undo must not bring erased values back).
+//     clears the history, as a load does (undo must not bring erased values back);
+//   - an agent's write the stream announced (revealsOnAdoption) plays the
+//     per-component reveal (plan section 4, src/lib/live/reveal.ts): its new
+//     nodes fade in one after another. A load, a catch-up, a poll, another
+//     person's save and "Load the newer version" appear at once.
 //
 // The stream also says who works on the site (plan section 2): the `state`
 // event's agents and feed and every `agent:activity` go to the editor's
@@ -39,6 +43,7 @@
 // signed-out state; the next time the tab is shown, one check decides whether to
 // start again.
 
+import { runInAction } from 'mobx';
 import { getSnapshot, isAlive } from 'mobx-state-tree';
 import type { RootStoreType } from '@/stores/RootStore';
 import type { ProjectSnapshotOut } from '@/models/ProjectModel';
@@ -55,6 +60,8 @@ import { existingAutosave, reloadDiscarding } from './autosave';
 import { editorTabId } from './tabId';
 import { LIVE_EVENTS, type AgentActivity, type SiteStateEvent, type SiteVersionEvent } from './liveEvents';
 import type { LivePresenceStore } from '@/lib/live/presenceStore';
+import type { LiveRevealStore } from '@/lib/live/revealStore';
+import { projectRevealRoots, revealPlan } from '@/lib/live/reveal';
 
 export const LIVE_POLL_VISIBLE_MS = 5_000;
 export const LIVE_POLL_HIDDEN_MS = 60_000;
@@ -113,6 +120,19 @@ export interface HeldVersion {
   version: number;
   snapshot: ProjectSnapshotOut;
   label: string;
+  /** The event that announced it, when one did (an automatic adoption later still knows the writer). */
+  event?: SiteVersionEvent;
+}
+
+/**
+ * Whether an adopted version plays the per-component reveal (plan section 4):
+ * only an agent's write (an MCP batch, a generated page) the stream announced.
+ * Never a catch-up after a reconnect or a version found by polling (the writer
+ * is unknown), another tab's or person's save, a publish or an erasure, and
+ * never "Load the newer version", which passes no event.
+ */
+export function revealsOnAdoption(event: SiteVersionEvent | undefined): boolean {
+  return !!event && !event.catchUp && !event.own && (event.origin === 'mcp' || event.origin === 'generate');
 }
 
 /** The history entry's name for an adopted version: who, and what in one line. */
@@ -210,6 +230,8 @@ export class LiveSync {
     this.disposeVisibility = undefined;
     this.disposeSettled?.();
     this.disposeSettled = undefined;
+    // Nor does a reveal still playing.
+    this.reveal.reset();
     this.wanted = undefined;
     this.held = undefined;
     this.setPhase('stopped');
@@ -415,7 +437,7 @@ export class LiveSync {
       return;
     }
     this.held = undefined;
-    this.take({ version: held.version, snapshot: held.snapshot }, undefined, held.label);
+    this.take({ version: held.version, snapshot: held.snapshot }, held.event, held.label);
   }
 
   /** A fetched copy: adopt it now, or hold it for the person. */
@@ -433,11 +455,11 @@ export class LiveSync {
       autosavePhase !== 'publishing' &&
       isSaved(this.projectId, getSnapshot(project) as unknown as ProjectContent);
     if (!clean) {
-      this.held = { version: body.version, snapshot: body.snapshot, label };
+      this.held = { version: body.version, snapshot: body.snapshot, label, ...(event ? { event } : {}) };
       autosave?.noteChangedElsewhere(body.version);
       return;
     }
-    this.adopt(body.version, body.snapshot, label, event);
+    this.adopt(body.version, body.snapshot, label, event, revealsOnAdoption(event));
   }
 
   /** The agents' presence of the open site (src/lib/live/presenceStore.ts). */
@@ -445,8 +467,24 @@ export class LiveSync {
     return this.rootStore.editorUI.livePresence as LivePresenceStore;
   }
 
-  private adopt(version: number, snapshot: ProjectSnapshotOut, label: string, event: SiteVersionEvent | undefined): boolean {
-    const adopted = adoptServerCopy(this.rootStore, snapshot, version, label);
+  /** The nodes revealing on the canvas (src/lib/live/revealStore.ts). */
+  private get reveal(): LiveRevealStore {
+    return this.rootStore.editorUI.liveReveal as LiveRevealStore;
+  }
+
+  /**
+   * Adopt a copy as one undo step. `reveal`: the copy's new nodes fade in one
+   * after another; the reveal is set in the same action as the adoption, so no
+   * new node is ever drawn once without it first.
+   */
+  private adopt(version: number, snapshot: ProjectSnapshotOut, label: string, event: SiteVersionEvent | undefined, reveal: boolean): boolean {
+    const adopted = runInAction(() => {
+      const result = adoptServerCopy(this.rootStore, snapshot, version, label);
+      if (result && reveal && result.created.length > 0) {
+        this.reveal.start(revealPlan(projectRevealRoots(snapshot), result.created));
+      }
+      return result;
+    });
     if (!adopted) return false;
     this.held = undefined;
     existingAutosave(this.projectId)?.noteServerCopyAdopted();
@@ -475,7 +513,8 @@ export class LiveSync {
       held = { version: answer.body.version, snapshot: answer.body.snapshot, label: held?.label ?? 'Newer version loaded' };
     }
     if (hasWriteInFlight(this.projectId)) return false;
-    return this.adopt(held.version, held.snapshot, held.label, undefined);
+    // The person asked for it: it appears at once, never as a reveal.
+    return this.adopt(held.version, held.snapshot, held.label, undefined, false);
   }
 }
 

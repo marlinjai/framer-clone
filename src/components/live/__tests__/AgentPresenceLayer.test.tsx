@@ -18,7 +18,15 @@ import type { LivePresenceStore } from '@/lib/live/presenceStore';
 let store: RootStoreType;
 vi.mock('@/hooks/useStore', () => ({ useStore: () => store }));
 
-import AgentPresenceLayer, { PRESENCE_FRAME_ATTR, PRESENCE_LABEL_ATTR, PRESENCE_MOVE_MS, frameBox } from '../AgentPresenceLayer';
+import AgentPresenceLayer, {
+  EDITOR_SIDEBAR_ATTR,
+  PRESENCE_FRAME_ATTR,
+  PRESENCE_LABEL_ATTR,
+  PRESENCE_MOVE_MS,
+  frameBox,
+  pillPlacement,
+  visibleCanvasRect,
+} from '../AgentPresenceLayer';
 import AgentPageDot from '../AgentPageDot';
 import AgentEditingNote from '../AgentEditingNote';
 
@@ -220,5 +228,77 @@ describe('the compact bar\'s editing note', () => {
     const note = document.querySelector('[data-agent-editing-note]')!;
     expect(note).toHaveAttribute('title', 'Claude is editing this site');
     expect(note).toHaveTextContent('Claude is editing this site');
+  });
+});
+
+describe('the label pill stays in the visible canvas', () => {
+  /** Editor chrome over the canvas: the top bar and the docked sidebars (EditorApp). */
+  function chrome(parts: { topbar?: DOMRect; left?: DOMRect; right?: DOMRect }) {
+    if (parts.topbar) {
+      const bar = document.createElement('header');
+      bar.setAttribute('data-editor-topbar', 'true');
+      bar.getBoundingClientRect = () => parts.topbar!;
+      document.body.appendChild(bar);
+    }
+    for (const side of ['left', 'right'] as const) {
+      const box = parts[side];
+      if (!box) continue;
+      const el = document.createElement('div');
+      el.setAttribute(EDITOR_SIDEBAR_ATTR, side);
+      el.getBoundingClientRect = () => box;
+      document.body.appendChild(el);
+    }
+  }
+  const pill = () => frames()[0].querySelector<HTMLElement>(`[${PRESENCE_LABEL_ATTR}]`)!;
+
+  it('sits above the frame\'s top left corner when that corner is in view', () => {
+    act(() => presence().applyActivity(activity()));
+    expect(pill().style.transform).toBe('translate(-2px, -22px)');
+    expect(pill().style.visibility).toBe('');
+  });
+
+  it('a full-width section at 100% zoom: moves past the left sidebar and under the top bar', () => {
+    chrome({ topbar: rect(0, 0, 1024, 64), left: rect(0, 64, 260, 704), right: rect(764, 64, 260, 704) });
+    drawCanvas({ hero: rect(0, 80, 1024, 300), pricing: rect(0, 380, 1024, 300) });
+    act(() => presence().applyActivity(activity()));
+    const box = frameBox(rect(0, 80, 1024, 300));
+    // x: just past the sidebar (260 + 8); y: no room above the frame under the top bar, so just inside its top edge.
+    expect(pill().style.transform).toBe(`translate(${268 - box.x}px, ${box.y + 2 + 4 - box.y}px)`);
+    // Pan so the frame's top goes under the top bar: the pill stays at the top of the visible canvas.
+    drawCanvas({ hero: rect(0, -100, 1024, 400), pricing: rect(0, 300, 1024, 300) });
+    act(() => notify());
+    const panned = frameBox(rect(0, -100, 1024, 400));
+    expect(pill().style.transform).toBe(`translate(${268 - panned.x}px, ${64 + 8 - panned.y}px)`);
+  });
+
+  it('is hidden with the frame when no part of the frame is in view, and comes back', () => {
+    chrome({ left: rect(0, 64, 260, 704) });
+    drawCanvas({ hero: rect(20, 100, 200, 100), pricing: rect(100, 300) });
+    act(() => presence().applyActivity(activity()));
+    expect(pill().style.visibility).toBe('hidden');
+    drawCanvas({ hero: rect(300, 100, 200, 100), pricing: rect(100, 300) });
+    act(() => notify());
+    expect(pill().style.visibility).toBe('');
+    expect(pill().style.transform).toBe('translate(-2px, -22px)');
+  });
+
+  it('pillPlacement: clamps into the visible rect, right edge included, and answers nothing off screen', () => {
+    const visible = { left: 260, top: 64, right: 764, bottom: 768 };
+    const size = { width: 120, height: 20 };
+    // In view: the default spot.
+    expect(pillPlacement({ x: 400, y: 200, width: 200, height: 100 }, visible, size)).toEqual({ left: -2, top: -22 });
+    // Its left under the sidebar: past it.
+    expect(pillPlacement({ x: 100, y: 200, width: 400, height: 100 }, visible, size)).toEqual({ left: 268 - 100, top: -22 });
+    // Its left beyond the right sidebar's edge is impossible while visible; a frame ending near it keeps the pill inside.
+    expect(pillPlacement({ x: 700, y: 200, width: 200, height: 100 }, visible, size)).toEqual({ left: 764 - 8 - 120 - 700, top: -22 });
+    // Wholly under a sidebar, above the top bar, or below the screen: nothing.
+    expect(pillPlacement({ x: 0, y: 200, width: 250, height: 100 }, visible, size)).toBeUndefined();
+    expect(pillPlacement({ x: 400, y: 0, width: 100, height: 60 }, visible, size)).toBeUndefined();
+    expect(pillPlacement({ x: 400, y: 800, width: 100, height: 60 }, visible, size)).toBeUndefined();
+  });
+
+  it('visibleCanvasRect: the window less the top bar and the docked sidebars', () => {
+    chrome({ topbar: rect(0, 0, 1024, 64), left: rect(0, 64, 260, 704), right: rect(764, 64, 260, 704) });
+    expect(visibleCanvasRect()).toEqual({ left: 260, top: 64, right: 764, bottom: window.innerHeight });
   });
 });

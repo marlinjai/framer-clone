@@ -34,6 +34,7 @@
 
 import React from 'react';
 import { runInAction } from 'mobx';
+import { revealPlanOfTrees } from '@/lib/live/reveal';
 import { observer } from 'mobx-react-lite';
 import { Sparkles, Undo2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -304,9 +305,21 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
         // The result replaces the draft in one go: the tracked apply (today's one
         // undo step) and the draft dropped in the same action, so no frame shows
         // both or neither.
+        // The sections the draft drew already revealed there, node by node: the
+        // result's first that many stay still (a preview section and its result
+        // get different ids, and the indexes of the sections sent have no gaps,
+        // so the count is what matches them). The sections the draft never drew
+        // (no stream, or the run ended before they were sent) reveal now, in the
+        // same action, so none is drawn once without its reveal.
+        const drawn = draft.sections.length;
         const outcome = runInAction(() => {
           const applied = applyResult(project, target, result, runInputs.targetKind === 'newPage' ? runInputs.pageTitle : undefined);
           draft.clear(requestKey);
+          if (applied.ok) {
+            const page = project.getPage(applied.value.pageId);
+            const fresh = page ? result.nodes.slice(drawn).map((n) => findComponent(page, n.id)) : [];
+            editorUI.liveReveal.start(revealPlanOfTrees(fresh));
+          }
           return applied;
         });
         if (!outcome.ok) {

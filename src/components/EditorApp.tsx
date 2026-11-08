@@ -353,10 +353,10 @@ export default function EditorApp({ projectSnapshot, projectVersion }: EditorApp
           {/* Docked panels and the floating toolbar. `phone:hidden` keeps them
               off a phone's screen during the server render and hydration,
               before useIsPhone can report the real width. */}
-          <div data-editor-ui="true" className="fixed top-16 left-0 bottom-0 z-90 phone:hidden">
+          <div data-editor-ui="true" data-editor-sidebar="left" className="fixed top-16 left-0 bottom-0 z-90 phone:hidden">
             <LeftSidebar />
           </div>
-          <div data-editor-ui="true" className="fixed top-16 right-0 bottom-0 z-90 phone:hidden">
+          <div data-editor-ui="true" data-editor-sidebar="right" className="fixed top-16 right-0 bottom-0 z-90 phone:hidden">
             <RightSidebar />
           </div>
           <div data-editor-ui="true" className="fixed bottom-0 left-0 right-0 z-30 phone:hidden">

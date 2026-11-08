@@ -192,3 +192,25 @@ html[data-pointer="touch"] [data-resize-direction] {
     transition: none;
   }
 }
+
+/* The per-component reveal of the live agent canvas (src/lib/live/reveal.ts):
+   a node an agent's write or a generated result just created fades in with a
+   4px rise over 180ms, ease-out, after its own delay (the inline
+   --live-reveal-delay ComponentRenderer sets). `translate` rather than
+   `transform`, so a node's own transform is never overridden; `backwards`
+   holds the start values only until the animation runs. Nothing moves under
+   reduced motion: the nodes appear at once. */
+@keyframes fc-live-reveal {
+  from {
+    opacity: 0;
+    translate: 0 4px;
+  }
+}
+[data-live-reveal] {
+  animation: fc-live-reveal 180ms ease-out var(--live-reveal-delay, 0ms) backwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-live-reveal] {
+    animation: none;
+  }
+}
