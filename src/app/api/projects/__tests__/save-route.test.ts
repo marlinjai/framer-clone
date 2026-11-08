@@ -162,7 +162,8 @@ describe('POST /api/projects/save (authorized)', () => {
       expect.objectContaining({ id: 'site_1' }),
       // The company comes from the session too, and is stamped on the site (sites.company_id).
       // The version the editor's copy was based on goes through unchanged.
-      { mustExist: true, companyId: 'tenant-1', expectedVersion: 1 },
+      // Open editors hear the write once it commits (the session has no name here).
+      { mustExist: true, companyId: 'tenant-1', expectedVersion: 1, event: { origin: 'editor', actor: { kind: 'user', label: 'Someone' } } },
     );
     // Save is non-destructive: it must NEVER flip the site to published.
     expect(publish).not.toHaveBeenCalled();
@@ -174,7 +175,7 @@ describe('POST /api/projects/save (authorized)', () => {
 
     const res = await POST(saveReq({ project: PROJECT, expectedVersion: 1, requestKey: 'k_0123456789' }));
     expect(res.status).toBe(200);
-    expect(save.mock.calls[0][2]).toEqual({ mustExist: true, companyId: 'tenant-1', expectedVersion: 1, requestKey: 'k_0123456789' });
+    expect(save.mock.calls[0][2]).toEqual({ mustExist: true, companyId: 'tenant-1', expectedVersion: 1, requestKey: 'k_0123456789', event: { origin: 'editor', actor: { kind: 'user', label: 'Someone' } } });
 
     const bad = await POST(saveReq({ project: PROJECT, expectedVersion: 1, requestKey: 'no spaces allowed' }));
     expect(bad.status).toBe(400);
@@ -192,6 +193,7 @@ describe('POST /api/projects/save (authorized)', () => {
       expectedVersion: 4,
       requestKey: 'k_new_attempt',
       previousRequestKeys: ['k_lost_one_a', 'k_lost_one_b'],
+      event: { origin: 'editor', actor: { kind: 'user', label: 'Someone' } },
     });
     const tooMany = Array.from({ length: 9 }, (_, i) => `k_lost_${i}_attempt`);
     const bad = await POST(saveReq({ project: PROJECT, expectedVersion: 4, requestKey: 'k_new_attempt', previousRequestKeys: tooMany }));

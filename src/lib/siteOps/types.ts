@@ -35,6 +35,8 @@ export interface SiteOpsCaller {
   actor: { kind: 'user' | 'key'; id: string };
   /** Extra detail for the audit row (a key's service account, say). Never a secret. */
   actorDetail?: Record<string, string>;
+  /** How an open editor names this caller on its live stream (plain text); a generic label when absent. */
+  actorLabel?: string;
   can(action: SiteOpsAction): boolean | Promise<boolean>;
 }
 

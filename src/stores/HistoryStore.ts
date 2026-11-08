@@ -30,6 +30,9 @@ const HistoryEntryModel = types.model('HistoryEntry', {
   timestamp: types.number,
   patches: types.frozen<readonly IJsonPatch[]>(),
   inversePatches: types.frozen<readonly IJsonPatch[]>(),
+  // A change adopted from outside this tab (applyRemote): its name is the
+  // writer's label and shows as it is, without a path.
+  remote: types.optional(types.boolean, false),
 });
 
 export type HistoryEntryInstance = Instance<typeof HistoryEntryModel>;
@@ -94,6 +97,7 @@ const HistoryStore = types
     // Short, human-friendly label for an entry. Leads with the action name;
     // if the action touched a single path, appends the tail of that path.
     labelFor(entry: HistoryEntryInstance): string {
+      if (entry.remote) return entry.actionName;
       const path = entry.patches[0]?.path ?? '';
       const short = shortenPath(path);
       const label = short ? `${entry.actionName} · ${short}` : entry.actionName;
@@ -121,6 +125,32 @@ const HistoryStore = types
       // title would show a name the database does not have.
       runUntracked<T>(fn: () => T): T {
         return withoutRecording(fn);
+      },
+
+      // Record a change that came from outside this tab (an agent's or another
+      // person's write, adopted by src/lib/projects/liveSync.ts) as ONE entry,
+      // labelled by who made it. Entries are patches with array indices, so a
+      // change applied outside the history would shift indices under the
+      // earlier entries and their undos would misapply; on the stack, every
+      // inverse applies to exactly the state it was recorded on. Patches are
+      // taken by hand (the middleware would record the inner actions under
+      // their own names); a change that patches nothing records nothing.
+      // Answers whether an entry was recorded.
+      applyRemote(label: string, fn: () => void): boolean {
+        if (!self.targetStore) {
+          withoutRecording(fn);
+          return false;
+        }
+        // A gesture in progress keeps its own patches; the remote change is its own step.
+        const recorder = recordPatches(self.targetStore);
+        try {
+          withoutRecording(fn);
+        } finally {
+          recorder.stop();
+        }
+        if (recorder.patches.length === 0) return false;
+        this.recordEntry(label, recorder.patches, recorder.inversePatches, true);
+        return true;
       },
 
       // Wire the middleware onto `target`. Only actions under this subtree are
@@ -184,6 +214,7 @@ const HistoryStore = types
         actionName: string,
         patches: readonly IJsonPatch[],
         inversePatches: readonly IJsonPatch[],
+        remote = false,
       ) {
         withoutRecording(() => {
           // Drop redo tail — any new action invalidates it.
@@ -198,6 +229,7 @@ const HistoryStore = types
             timestamp: Date.now(),
             patches,
             inversePatches,
+            remote,
           });
           // Trim from the front once over budget.
           let trimmed: SnapshotIn<typeof HistoryEntryModel>[] = [];
@@ -260,6 +292,9 @@ const HistoryStore = types
       clear() {
         self.history.clear();
         self.undoIdx = 0;
+        // A gesture's patches were recorded against the tree before the clear: dropped too.
+        self.batch = undefined;
+        self.displaced = undefined;
       },
 
       // ------ Gesture batching ------

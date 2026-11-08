@@ -8,6 +8,7 @@
 // schema lives here so the two routes can never drift apart.
 
 import { z } from 'zod';
+import { ORIGIN_TAB_PATTERN } from '@/lib/projects/liveEvents';
 
 // A single persisted page snapshot. We validate only the `slug` the persistence
 // layer mirrors out for URL resolution; the rest of the PageModel SnapshotOut is
@@ -57,6 +58,12 @@ export const projectSnapshotSchema = z
 const attemptKey = z.string().regex(/^[A-Za-z0-9_-]{8,100}$/);
 /** The editor's lost save attempts on the same base; a short list (the client caps it too). */
 const lostAttemptKeys = z.array(attemptKey).min(1).max(8);
+/**
+ * The random id of the editor tab that writes (src/lib/projects/liveSync.ts). It
+ * travels back on the site's live stream, so the tab knows a `site:version` is
+ * its own write and does not fetch it again. Never trusted for anything else.
+ */
+const originTab = z.string().regex(ORIGIN_TAB_PATTERN);
 
 // Publish takes these (strict: its own attempt key is refused, publishing has
 // no replay). `previousRequestKeys` names this tab's saves whose answers were
@@ -67,6 +74,7 @@ export const projectBodySchema = z
     project: projectSnapshotSchema,
     expectedVersion: z.number().int().positive().optional(),
     previousRequestKeys: lostAttemptKeys.optional(),
+    originTab: originTab.optional(),
   })
   .strict();
 
@@ -84,5 +92,6 @@ export const saveBodySchema = z
     expectedVersion: z.number().int().positive().optional(),
     requestKey: attemptKey.optional(),
     previousRequestKeys: lostAttemptKeys.optional(),
+    originTab: originTab.optional(),
   })
   .strict();

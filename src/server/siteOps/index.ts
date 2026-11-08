@@ -70,6 +70,7 @@ import { getAnthropicClient, MissingAnthropicKeyError } from '@/lib/ai/anthropic
 import { logAiCall, startAiCallTimer } from '@/lib/ai/aiLogger';
 import { recordUsage } from '@/lib/ai/aiUsageStub';
 import { recordSiteOperation, type AuditedOp } from './audit';
+import type { SiteWriteActor } from '@/lib/projects/liveEvents';
 
 export type { SiteOpsCaller, SiteOpsResult } from '@/lib/siteOps/types';
 
@@ -181,6 +182,14 @@ async function audit(caller: SiteOpsCaller, siteId: string, entry: Omit<Paramete
   } catch (err) {
     console.error(`[site-ops] audit row for ${entry.operation} on ${siteId} could not be written`, err);
   }
+}
+
+/**
+ * The writer as an open editor's live stream names it (src/lib/projects/liveEvents.ts):
+ * the caller's declared label, else a generic one. Never the key id.
+ */
+function liveActor(caller: SiteOpsCaller): SiteWriteActor {
+  return { kind: caller.actor.kind, label: caller.actorLabel ?? (caller.actor.kind === 'key' ? 'Agent' : 'Someone') };
 }
 
 function auditedOps(raw: unknown[]): AuditedOp[] {
@@ -311,6 +320,8 @@ export async function applyBatch(caller: SiteOpsCaller, input: unknown, deps: Si
       mustExist: true,
       companyId: caller.companyId,
       expectedVersion,
+      // Open editors adopt the write and learn what it touched (ids and server-written lines only).
+      event: { origin: 'mcp', actor: liveActor(caller), ops: auditedOps(ops), created: applied.created, summary: applied.summary },
     }));
   } catch (err) {
     return fromError(err, siteId);
@@ -498,6 +509,11 @@ export async function generatePage(
       mustExist: true,
       companyId: caller.companyId,
       expectedVersion: input.expectedVersion,
+      event: {
+        origin: 'generate',
+        actor: liveActor(caller),
+        ops: [{ op: `generate:${input.target.kind}`, pageId: applied.pageId }],
+      },
     }));
   } catch (err) {
     return fromError(err, input.siteId);
@@ -615,6 +631,7 @@ export async function publish(
       companyId: caller.companyId,
       publishedBy: publishedBy(caller),
       expectedVersion: input.expectedVersion,
+      event: { actor: liveActor(caller) },
     });
     const { subdomain } = await repository.ensureSiteDomain(caller.scope, input.siteId);
     revalidateSiteCache(subdomain);

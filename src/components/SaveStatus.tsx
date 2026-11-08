@@ -32,9 +32,10 @@ import { CircleDot, CloudAlert, CloudCheck, CloudOff, CloudUpload, FolderPlus, X
 import { Button } from '@/components/ui/button';
 import { useStore } from '@/hooks/useStore';
 import { isSaving, saveFailureReason, useAutosaveState, useNow, useSaveAnnouncement, useSaveStatusLabel } from '@/hooks/useAutosave';
-import { abandonWorkingCopy, existingAutosave, reloadDiscarding, type AutosaveState } from '@/lib/projects/autosave';
+import { abandonWorkingCopy, existingAutosave, type AutosaveState } from '@/lib/projects/autosave';
 import SaveAsNewProjectDialog from './SaveAsNewProjectDialog';
 import SiteChangedDialog from './SiteChangedDialog';
+import { loadNewerVersion } from '@/lib/projects/liveSync';
 
 /** Where "Sign in again" goes: the overview bounces a signed-out visit to the sign-in. */
 export const SIGN_IN_AGAIN_HREF = '/projects';
@@ -218,7 +219,7 @@ const SaveStatus = observer(() => {
         action="save"
         busy={conflict && state.retrying}
         onKeepEditing={() => controller?.dismissConflict()}
-        onLoadNewer={() => reloadDiscarding(project.id)}
+        onLoadNewer={() => void loadNewerVersion(project.id)}
         onKeepMine={() => {
           if (state.phase === 'conflict') void controller?.saveOver(state.currentVersion);
         }}

@@ -57,6 +57,8 @@ import { pickPrimaryHost } from './primaryHost';
 import { nextSiteRedirects, parseSiteRedirects } from '@/lib/pages/redirects';
 import { generateSubdomain } from './subdomain';
 import { parseRevisionDocument, REVISION_SCHEMA_VERSION, revisionPublishCheck } from './revision';
+import { publishSiteEvent } from './liveBus';
+import { boundedWriteEvent, LIVE_EVENTS, type SiteVersionEvent, type SiteWriteEvent } from '@/lib/projects/liveEvents';
 import type { PublishCheck } from '@/lib/legal/publishCheck';
 import {
   assertShapeKept,
@@ -316,6 +318,39 @@ export interface WorkingCopyWriteOptions {
    * instead of a 409: every version it moved past was this tab's own.
    */
   previousRequestKeys?: readonly string[];
+  /**
+   * Who writes, for the site's live stream (src/server/sites/liveBus.ts): open
+   * editors hear a `site:version` with it once the write commits. A write that
+   * names none is announced as the editor's, with no tab and no actor.
+   */
+  event?: SiteWriteEvent;
+}
+
+/** What the shared working-copy write did. */
+interface WorkingCopyWrite {
+  version: number;
+  /** The version before; equal to `version` when nothing was written (a repeat of a lost answer). */
+  versionBefore: number;
+  wrote: boolean;
+}
+
+/**
+ * Tell the site's open editors about a committed write. Called after the
+ * transaction resolved, never inside it, so a refused or rolled back write is
+ * never announced. A failure is logged and never undoes the write.
+ */
+function announceWrite(siteId: string, write: WorkingCopyWrite, event: SiteWriteEvent | undefined): void {
+  if (!write.wrote) return;
+  try {
+    const payload: SiteVersionEvent = {
+      ...boundedWriteEvent(event ?? { origin: 'editor' }),
+      version: write.version,
+      versionBefore: write.versionBefore,
+    };
+    publishSiteEvent(siteId, LIVE_EVENTS.siteVersion, payload);
+  } catch (err) {
+    console.error(`[live] the write of site ${siteId} at version ${write.version} could not be announced`, err);
+  }
 }
 
 export class SiteRepository {
@@ -380,6 +415,21 @@ export class SiteRepository {
    * when the site is absent OR belongs to another workspace — the two are
    * indistinguishable so existence never leaks across the boundary.
    */
+  /**
+   * The site's current version alone, scoped like a load (a site of another
+   * workspace reads as missing): what the live stream compares a reconnect's
+   * Last-Event-ID with, without loading the project.
+   */
+  async getSiteVersion(scope: TenantScope, siteId: string): Promise<number> {
+    assertScope(scope);
+    const row = await this.prisma.site.findFirst({
+      where: { id: siteId, workspaceId: scope.workspaceId },
+      select: { version: true },
+    });
+    if (!row) throw new SiteNotFoundError(siteId);
+    return row.version;
+  }
+
   async loadProject(scope: TenantScope, siteId: string): Promise<ProjectModelType> {
     return (await this.loadProjectWithVersion(scope, siteId)).project;
   }
@@ -472,24 +522,26 @@ export class SiteRepository {
     // two overlapping saves of one site must not each write a list missing
     // the other's entry. Postgres aborts one of them (P2034) instead; it is
     // retried a few times, then surfaces loudly as a failed save.
-    return withSerializationRetry(() => this.prisma.$transaction(async (tx) => {
-      const version = await this.writeWorkingCopy(tx, scope, persisted, options);
-      return { version };
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, ...PROJECT_WRITE_TRANSACTION }));
+    const write = await withSerializationRetry(() => this.prisma.$transaction(
+      (tx) => this.writeWorkingCopy(tx, scope, persisted, options),
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, ...PROJECT_WRITE_TRANSACTION },
+    ));
+    announceWrite(persisted.siteId, write, options.event);
+    return { version: write.version };
   }
 
   /**
    * The working-copy write shared by save and publish: the `sites` row and the
    * reconciled `site_pages` rows, inside the caller's transaction. Writes
    * nothing a visitor reads, apart from the one baseline freeze below. Returns
-   * the site's new version.
+   * the site's new version, the one before, and whether anything was written.
    */
   private async writeWorkingCopy(
     tx: Prisma.TransactionClient,
     scope: TenantScope,
     persisted: PersistedSite,
     options: WorkingCopyWriteOptions,
-  ): Promise<number> {
+  ): Promise<WorkingCopyWrite> {
     // Guard: if this site id already exists, it MUST be in the caller's
     // workspace. A row in another workspace means a cross-tenant collision:
     // refuse rather than overwrite or leak.
@@ -537,7 +589,7 @@ export class SiteRepository {
       existing && existing.lastWriteKey && existing.lastWriteVersion === existing.version ? existing.lastWriteKey : undefined;
     // A retry of the last write whose answer was lost: answered again, nothing written.
     if (existing && options.requestKey && latestKey === options.requestKey) {
-      return existing.version;
+      return { version: existing.version, versionBefore: existing.version, wrote: false };
     }
     // The latest write is one of this tab's lost ones (one or several in a
     // row): build on the version it produced.
@@ -750,7 +802,7 @@ export class SiteRepository {
           ? { siteId: persisted.siteId, pageId: { notIn: keepPageIds } }
           : { siteId: persisted.siteId },
     });
-    return nextVersion;
+    return { version: nextVersion, versionBefore: existing ? existing.version : 0, wrote: true };
   }
 
   /**
@@ -895,15 +947,22 @@ export class SiteRepository {
   async publishProject(
     scope: TenantScope,
     project: ProjectModelType | Parameters<typeof projectToPersisted>[0],
-    options: { companyId?: string; publishedBy?: string; expectedVersion?: number; previousRequestKeys?: readonly string[] } = {},
+    options: {
+      companyId?: string;
+      publishedBy?: string;
+      expectedVersion?: number;
+      previousRequestKeys?: readonly string[];
+      /** Who publishes, for the live stream (WorkingCopyWriteOptions.event); its origin is always `publish`. */
+      event?: Omit<SiteWriteEvent, 'origin'>;
+    } = {},
   ): Promise<{ revision: number; version: number }> {
     assertScope(scope);
     const persisted: PersistedSite = projectToPersisted(project);
     const siteId = persisted.siteId;
 
-    return withSerializationRetry(() => this.prisma.$transaction(async (tx) => {
+    const published = await withSerializationRetry(() => this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${siteId} FOR UPDATE`;
-      const version = await this.writeWorkingCopy(tx, scope, persisted, {
+      const write = await this.writeWorkingCopy(tx, scope, persisted, {
         mustExist: true,
         companyId: options.companyId,
         expectedVersion: options.expectedVersion,
@@ -922,8 +981,10 @@ export class SiteRepository {
       await tx.siteRevision.deleteMany({
         where: { siteId, number: { lte: revision.number - REVISIONS_KEPT } },
       });
-      return { revision: revision.number, version };
+      return { revision: revision.number, write };
     }, PROJECT_WRITE_TRANSACTION));
+    announceWrite(siteId, published.write, { ...options.event, origin: 'publish' });
+    return { revision: published.revision, version: published.write.version };
   }
 
   /**
@@ -1099,13 +1160,14 @@ export class SiteRepository {
     const chosen = new Set(input.chosen);
     if (chosen.size === 0) throw new NothingToEraseError();
 
-    return withSerializationRetry(() => this.prisma.$transaction(async (tx) => {
+    const erasure = await withSerializationRetry(() => this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${siteId} FOR UPDATE`;
       const where = { id: siteId, workspaceId: scope.workspaceId, tenantGroupId: scope.tenantGroupId };
       const site = await tx.site.findFirst({
         where,
         select: {
           ...WORKING_COPY_SELECT,
+          version: true,
           revisions: { orderBy: { number: 'desc' }, select: { id: true, number: true } },
         },
       });
@@ -1193,8 +1255,13 @@ export class SiteRepository {
         },
         select: { id: true },
       });
-      return { erasureId: audit.id, erased: erased.length, places, remaining };
+      // Under the row lock taken above, so the version moved by exactly one.
+      const write: WorkingCopyWrite = { version: site.version + 1, versionBefore: site.version, wrote: true };
+      return { result: { erasureId: audit.id, erased: erased.length, places, remaining }, write };
     }, ERASE_TRANSACTION));
+    // Open editors must load again: their copy may hold the erased value.
+    announceWrite(siteId, erasure.write, { origin: 'erasure' });
+    return erasure.result;
   }
 
   /** The erasures of a site, newest first (the owner's audit list). */

@@ -88,7 +88,7 @@ async function handlePOST(req: Request): Promise<Response> {
   if (!body.ok) return body.response;
   // The version lock (_schema.ts): checked here rather than in the schema so a
   // tab that predates it gets a message it can act on, not a generic 400.
-  const { expectedVersion, previousRequestKeys } = body.data;
+  const { expectedVersion, previousRequestKeys, originTab } = body.data;
   if (expectedVersion === undefined) return siteRepositoryErrorResponse(new SiteVersionRequiredError());
 
   // 5. Persist and freeze the snapshot, transition the site to published, then
@@ -109,6 +109,8 @@ async function handlePOST(req: Request): Promise<Response> {
     ({ revision, version } = await repo.publishProject(scope, project, {
       companyId,
       publishedBy: session.user.id,
+      // The site's open editors adopt the published copy; the tab that sent it knows it by its id.
+      event: { ...(originTab ? { originTab } : {}), actor: { kind: 'user', label: session.user.name || 'Someone' } },
       expectedVersion,
       // This tab's saves whose answers were lost: one of them may be the latest write.
       ...(previousRequestKeys ? { previousRequestKeys } : {}),

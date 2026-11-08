@@ -23,6 +23,8 @@ vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn(), replace: 
 import SaveStatus from '../SaveStatus';
 import EditorAutosave from '../EditorAutosave';
 import PublishButton from '../PublishButton';
+import EditorLiveSync from '../EditorLiveSync';
+import { setLiveSyncDepsForTests } from '@/lib/projects/liveSync';
 
 const fetchMock = vi.fn();
 let siteSeq = 0;
@@ -161,7 +163,7 @@ describe('Save and the version lock', () => {
     expect(sentVersion(1)).toBe(9);
   });
 
-  it('"Load the newer version" reloads the page (the server copy opens, unsaved changes go)', async () => {
+  it('"Load the newer version" without the live stream reloads the page (the server copy opens, unsaved changes go)', async () => {
     const project = openServerProject(3);
     const reload = vi.fn();
     vi.spyOn(window, 'location', 'get').mockReturnValue({ ...window.location, reload } as Location);
@@ -171,6 +173,34 @@ describe('Save and the version lock', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Load the newer version' }));
     expect(reload).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('"Load the newer version" with the live stream running takes the newer copy in place, without a reload', async () => {
+    const project = openServerProject(3);
+    const reload = vi.fn();
+    vi.spyOn(window, 'location', 'get').mockReturnValue({ ...window.location, reload } as Location);
+    const newer = ProjectModel.create(serverSnapshot(project.id));
+    newer.updateMetadata({ description: 'written by an agent' });
+    setLiveSyncDepsForTests({
+      openStream: () => null, // no EventSource: the editor polls (not reached in this test)
+      fetchDocument: async () => ({ status: 200, body: { version: 9, snapshot: getSnapshot(newer) as ProjectSnapshotOut } }),
+      isVisible: () => true,
+      onVisibilityChange: () => () => {},
+    });
+    try {
+      fetchMock.mockResolvedValueOnce(conflict(9));
+      render(<><EditorAutosave /><EditorLiveSync /><SaveStatus /></>);
+      await editAndSave(project);
+      fireEvent.click(await screen.findByRole('button', { name: 'Load the newer version' }));
+      await waitFor(() => expect(knownServerVersion(project.id)).toBe(9));
+      expect(reload).not.toHaveBeenCalled();
+      expect(store.editorUI.currentProject?.metadata.description).toBe('written by an agent');
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+      expect(screen.getByTestId('save-status').textContent).toContain('Saved');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      setLiveSyncDepsForTests(undefined);
+    }
   });
 
   it('"Save mine as a new project" keeps both: it opens the save-as dialog with the copy wording', async () => {

@@ -19,6 +19,7 @@ import { getUndoManager, getHistoryStore, getDragManager } from '@/stores/RootSt
 import { changedElsewhereMessage, openProject, pageIdFromLocation, pickPage, restoreStashedDemo } from '@/stores/openProject';
 import EditorNotice from './EditorNotice';
 import EditorAutosave from './EditorAutosave';
+import EditorLiveSync from './EditorLiveSync';
 import ComponentBreadcrumb from './ComponentBreadcrumb';
 import ComponentDialogs from './ComponentDialogs';
 import { requestCreateComponent } from '@/lib/components/editorCommands';
@@ -309,6 +310,8 @@ export default function EditorApp({ projectSnapshot, projectVersion }: EditorApp
       {/* First in the shell: the autosave lifetime (watching the project,
           committing typed text and saving when the editor closes). */}
       <EditorAutosave />
+      {/* The open site followed live: other writers' versions adopted as undo steps. */}
+      <EditorLiveSync />
       <DragManagerBinding />
       <ComponentDialogs />
 

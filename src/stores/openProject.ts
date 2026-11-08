@@ -187,11 +187,37 @@ export function discardWorkingCopy(projectId: string): void {
   openedChangedElsewhere.delete(projectId);
 }
 
+/** True while a write of this tab (autosave, Publish) is out for the project. */
+export function hasWriteInFlight(projectId: string): boolean {
+  return (writesInFlight.get(projectId) ?? 0) > 0;
+}
+
+// Told when the last write of this tab for a project settled (src/lib/projects/liveSync.ts).
+const writeSettledListeners = new Set<(projectId: string) => void>();
+
+/**
+ * Hear when no write of this tab is out any more for a project: a newer version
+ * held while it was out may be adoptable now (its answer moved the known version
+ * without a 409). Answers the unsubscribe.
+ */
+export function onWritesSettled(listener: (projectId: string) => void): () => void {
+  writeSettledListeners.add(listener);
+  return () => {
+    writeSettledListeners.delete(listener);
+  };
+}
+
 /** Autosave and Publish report a write of this tab starting (true) and ending (false). */
 export function noteWriteInFlight(projectId: string, inFlight: boolean): void {
   const count = (writesInFlight.get(projectId) ?? 0) + (inFlight ? 1 : -1);
   if (count > 0) writesInFlight.set(projectId, count);
-  else writesInFlight.delete(projectId);
+  else {
+    writesInFlight.delete(projectId);
+    // After the writer's own bookkeeping for the answer (it runs right after this call).
+    if (!inFlight) queueMicrotask(() => {
+      for (const listener of [...writeSettledListeners]) listener(projectId);
+    });
+  }
 }
 
 /**
@@ -421,6 +447,114 @@ export function openProject(
     changedDefinitions,
     changedSiteParts: changedSite,
   };
+}
+
+/** What an adoption changed, for presence and the reveal (later slices). */
+export interface AdoptedVersion {
+  /** Node ids in the adopted copy that the copy before did not have, in document order. */
+  created: string[];
+  /** Node ids in both whose own content (not their children) changed. */
+  changed: string[];
+  /** False when the adopted copy equalled the store's (nothing to undo). */
+  recorded: boolean;
+}
+
+/** Each node of a project's pages by id, keyed by its own content (its children by id only), in document order. */
+function nodeKeys(project: { pages?: unknown }): Map<string, string> {
+  const keys = new Map<string, string>();
+  const visit = (node: unknown) => {
+    if (!node || typeof node !== 'object') return;
+    const { children, ...own } = node as { id?: unknown; children?: unknown };
+    const kids = Array.isArray(children) ? children : [];
+    if (typeof own.id === 'string') {
+      keys.set(own.id, stableJson({ ...own, children: kids.map((child) => (child as { id?: unknown })?.id) }));
+    }
+    for (const child of kids) visit(child);
+  };
+  for (const page of Object.values((project.pages ?? {}) as Record<string, { appComponentTree?: unknown; canvasNodes?: unknown }>)) {
+    visit(page?.appComponentTree);
+    for (const node of Object.values((page?.canvasNodes ?? {}) as Record<string, unknown>)) visit(node);
+  }
+  return keys;
+}
+
+/**
+ * Adopt a newer server copy into the open project while the editor stays open
+ * (plan docs/plans/2026-11-08-live-agent-canvas.md, section 1): an agent's or
+ * another person's write, heard on the site's live stream. Never the load path
+ * above: a load clears the undo history and is no undo step, while an adoption
+ * keeps the history and adds exactly one entry, labelled by `label`, so undoing
+ * past it restores this tab's copy from before (and autosave then writes that,
+ * on the adopted version: the person has the last word).
+ *
+ * What it borrows from the load path is the bookkeeping: it runs as a server
+ * copy being put in place (autosave sees no edit to save), and the saved
+ * baseline and the known version move to the adopted copy at the same moment,
+ * so the next save of this tab is not refused against a write it already holds.
+ *
+ * The caller decides WHEN: only while the working copy is saved and no write
+ * of this tab is out, or when the person chose "Load the newer version" (their
+ * unsaved edits are dropped, as the dialog says). The reconcile goes through
+ * the project's identifiers, so unchanged nodes keep their identity: the
+ * selection, the open page and the panels survive. Answers null for a copy not
+ * newer than the version this tab knows (versions only go up), or a project
+ * that is not in the store.
+ */
+export function adoptServerCopy(
+  rootStore: RootStoreType,
+  snapshot: ProjectSnapshotOut,
+  version: number,
+  label: string,
+): AdoptedVersion | null {
+  const known = knownVersions.get(snapshot.id);
+  if (known !== undefined && version <= known) return null;
+  const existing = rootStore.projectStore.getProject(snapshot.id) as ProjectModelType | undefined;
+  if (!existing) return null;
+  const beforeSnapshot = getSnapshot(existing);
+  const before = nodeKeys(beforeSnapshot);
+  const history = getHistoryStore();
+  // An erasure of personal data since this copy: undoing past it would put the
+  // erased values back on screen (and a save of them is refused anyway). It is
+  // adopted like a load: no undo step, and the steps before it go too.
+  const erasedSince = (snapshot.metadata?.erasureEpoch ?? 0) > (beforeSnapshot.metadata?.erasureEpoch ?? 0);
+  let recorded = false;
+  applyingServerCopy++;
+  try {
+    const put = () => {
+      rootStore.projectStore.ingestProjectSnapshot(snapshot);
+    };
+    if (history && erasedSince) {
+      history.runUntracked(put);
+      history.clear();
+    } else if (history) recorded = history.applyRemote(label, put);
+    else put();
+  } finally {
+    applyingServerCopy--;
+  }
+  const project = rootStore.projectStore.getProject(snapshot.id) as ProjectModelType | undefined;
+  // A reconcile can emit patches that change nothing (a value replaced by an
+  // equal one): a version with this tab's content is no step to undo.
+  if (recorded && project && stableJson(getSnapshot(project)) === stableJson(beforeSnapshot)) {
+    history?.forgetLastEntry();
+    recorded = false;
+  }
+  markServerVersion(snapshot.id, snapshot, version);
+  discardedCopies.delete(snapshot.id);
+  // As on a load: what autosave compares with is the copy as the store holds it.
+  if (project) savedKeys.set(snapshot.id, savedContentKey(getSnapshot(project)));
+  // The page on screen may be gone (deleted over there): show another one.
+  if (project && rootStore.editorUI.currentProject?.id === project.id && !rootStore.editorUI.currentPage) {
+    rootStore.editorUI.setCurrentPage(pickPage(project, null).page);
+  }
+  const after = project ? nodeKeys(getSnapshot(project)) : new Map<string, string>();
+  const created: string[] = [];
+  const changed: string[] = [];
+  for (const [id, key] of after) {
+    const old = before.get(id);
+    if (old === undefined) created.push(id);
+    else if (old !== key) changed.push(id);
+  }
+  return { created, changed, recorded };
 }
 
 /** `?page=` of the current address (client only; null on the server). */

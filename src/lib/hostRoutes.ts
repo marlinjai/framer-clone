@@ -95,6 +95,8 @@ export const HOST_ROUTES: readonly HostRoute[] = [
   { route: '/api/projects/unpublish', why: 'authoring' },
   { route: '/api/projects/[projectId]', why: 'authoring' },
   { route: '/api/projects/[projectId]/revisions', why: 'authoring' },
+  { route: '/api/projects/[projectId]/events', why: 'authoring: the open editor\'s live stream (session cookie only)' },
+  { route: '/api/projects/[projectId]/document', why: 'authoring: the stored copy the open editor adopts' },
   { route: '/api/projects/[projectId]/revisions/[number]', why: 'authoring' },
   { route: '/api/projects/[projectId]/confirmations/[approvalId]', why: 'the approval page records a decision (session cookie only)' },
   { route: '/api/mcp', why: 'the Lumitra Sites MCP endpoint, company API keys only (src/server/mcp/handler.ts)' },

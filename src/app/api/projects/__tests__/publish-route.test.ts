@@ -208,7 +208,7 @@ describe('POST /api/projects/publish (authorized)', () => {
       SCOPE,
       expect.objectContaining({ id: 'site_1' }),
       // The company and the publisher come from the session too.
-      { companyId: 'tenant-1', publishedBy: 'user-1', expectedVersion: 1 },
+      { companyId: 'tenant-1', publishedBy: 'user-1', expectedVersion: 1, event: { actor: { kind: 'user', label: 'Someone' } } },
     );
     expect(ensure).toHaveBeenCalledWith(SCOPE, 'site_1');
     // The pipeline runs in order: publish -> ensureSiteDomain.
