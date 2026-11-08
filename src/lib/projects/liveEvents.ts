@@ -88,8 +88,6 @@ export interface AgentActivity {
   sectionRef?: string;
   /** On the end of a batch: how many operations it held. */
   changes?: number;
-  /** On the end: the call committed a write (its audit row carries the feed line after a reload, under the same id). */
-  written?: boolean;
   /** ISO 8601. */
   at: string;
 }
@@ -160,9 +158,18 @@ export const LIVE_LIST_MAX = 200;
 /** Cap a server-written line for the stream: one line, plain text, LIVE_LABEL_MAX characters. */
 export function capLiveText(text: string): string {
   const oneLine = text.replace(/\s+/g, ' ').trim();
-  // Counted and cut by code points, so a cap never splits a character in two.
-  const chars = Array.from(oneLine);
-  return chars.length > LIVE_LABEL_MAX ? `${chars.slice(0, LIVE_LABEL_MAX - 1).join('')}…` : oneLine;
+  return capChars(oneLine, LIVE_LABEL_MAX);
+}
+
+/**
+ * Cut text to `max` visible characters with an ellipsis, between whole
+ * characters as a reader sees them (a flag or a skin-toned emoji is one,
+ * though several code points), by code points where the runtime cannot tell.
+ */
+export function capChars(text: string, max: number): string {
+  const Segmenter = (Intl as unknown as { Segmenter?: new (l?: string, o?: { granularity: 'grapheme' }) => { segment(t: string): Iterable<{ segment: string }> } }).Segmenter;
+  const chars = Segmenter ? Array.from(new Segmenter(undefined, { granularity: 'grapheme' }).segment(text), (s) => s.segment) : Array.from(text);
+  return chars.length > max ? `${chars.slice(0, max - 1).join('')}…` : text;
 }
 
 /**
@@ -173,8 +180,9 @@ export function capLiveText(text: string): string {
 export function sanitizeLiveLabel(text: unknown): string | undefined {
   if (typeof text !== 'string') return undefined;
   // Controls, format characters (zero-width, bidirectional marks and overrides, soft hyphen, tag
-  // characters) and line or paragraph separators: nothing that hides or reorders text.
-  const printable = text.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ');
+  // characters), line or paragraph separators, private-use and unassigned code points: nothing
+  // that hides, reorders or fakes text.
+  const printable = text.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}\p{Cn}]/gu, ' ');
   const capped = capLiveText(printable);
   return capped ? capped : undefined;
 }

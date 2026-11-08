@@ -34,7 +34,7 @@ import { LIVE_EVENTS, type AgentActivity } from '@/lib/projects/liveEvents';
 import { liveAgentId } from '@/server/siteOps/audit';
 import { createMcpHandler } from '../handler';
 import { ApprovalStore } from '../approvals';
-import { focusOf, outcomeOf, REPORTS_PER_KEY, resetPresenceScopeCacheForTests, siteInScope, takeReport } from '../presence';
+import { focusOf, MISSES_PER_KEY, outcomeOf, REPORTS_PER_KEY, resetPresenceScopeCacheForTests, siteInScope, takeReport } from '../presence';
 
 const fakeKey = () => `${['sk', 'live'].join('_')}_${randomBytes(16).toString('hex')}`;
 const KEY_ID = `key_${randomBytes(6).toString('hex')}`;
@@ -173,11 +173,10 @@ describe('agent:activity from the MCP endpoint', () => {
     const created = Object.values(result.structuredContent.created as Record<string, string>);
     const [start, end] = activities(heard);
     expect(start).toMatchObject({ phase: 'start', tool: 'apply_batch', pageId: 'home', nodeIds: ['title', 'root'] });
-    expect(end).toMatchObject({ phase: 'end', outcome: 'ok', changes: 2, label: 'Agent', written: true });
+    expect(end).toMatchObject({ phase: 'end', outcome: 'ok', changes: 2, label: 'Agent' });
     expect(end.nodeIds).toEqual(['title', 'root', ...created]);
     // No summary line: those name page titles, which are content.
     expect(end).not.toHaveProperty('summary');
-    expect(start).not.toHaveProperty('written');
     // Never the key id, never the content of the arguments.
     const wire = JSON.stringify(activities(heard));
     expect(wire).not.toContain(KEY_ID);
@@ -191,7 +190,6 @@ describe('agent:activity from the MCP endpoint', () => {
     await callTool(s, 'apply_batch', { siteId: 'site-1', expectedVersion: 1, ops: [{ op: 'removeNode', nodeId: 'title' }] });
     const ends = activities(heard).filter((a) => a.phase === 'end');
     expect(ends.map((a) => a.outcome)).toEqual(['rejected', 'site_changed']);
-    expect(ends.some((a) => a.written)).toBe(false);
     expect(s.state.version).toBe(3);
     // Neither left an audit row, so both are live feed lines for the next editor that opens.
     expect(presenceSnapshot('site-1').feed.map((l) => l.outcome)).toEqual(['site_changed', 'rejected']);
@@ -233,6 +231,28 @@ describe('agent:activity from the MCP endpoint', () => {
     await callTool(s, 'get_site', { siteId: 'made-up' });
     await callTool(s, 'get_site', { siteId: 'made-up' });
     expect(s.mock.getSiteVersion.mock.calls.filter((c) => c[1] === 'made-up')).toHaveLength(1);
+  });
+
+  it('stops looking up new made-up ids after MISSES_PER_KEY misses a minute, and never evicts confirmed sites with them', async () => {
+    const s = setup();
+    await callTool(s, 'get_site', { siteId: 'site-1' });
+    for (let i = 0; i < MISSES_PER_KEY + 10; i += 1) await callTool(s, 'get_site', { siteId: `made-up-${i}` });
+    const lookups = s.mock.getSiteVersion.mock.calls.filter((c) => String(c[1]).startsWith('made-up'));
+    expect(lookups).toHaveLength(MISSES_PER_KEY);
+    // The real site is still confirmed (no new read) and still reported.
+    const heard = listen('site-1');
+    const reads = s.state.versionReads;
+    await callTool(s, 'get_site', { siteId: 'site-1' });
+    expect(s.state.versionReads).toBe(reads);
+    expect(activities(heard)).toHaveLength(2);
+  });
+
+  it('a key over its report budget causes no lookup at all', async () => {
+    const s = setup();
+    const agentId = liveAgentId(KEY_ID);
+    while (takeReport(agentId)) { /* spend the minute */ }
+    await callTool(s, 'get_site', { siteId: 'site-1' });
+    expect(s.state.versionReads).toBe(0);
   });
 
   it('reports at most REPORTS_PER_KEY calls of a key per minute; the rest run unreported', async () => {

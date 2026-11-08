@@ -32,6 +32,15 @@ describe('the session id', () => {
     const emoji = issueSessionId({ protocolVersion: '2025-06-18', elicitation: false, clientName: '\u{1f600}'.repeat(60) }, fingerprint);
     const name = readSessionId(emoji, fingerprint)!.clientName!;
     expect(Array.from(name).every((c) => c === '\u{1f600}' || c === '…')).toBe(true);
+    // A flag is two code points shown as one: never cut in half.
+    const flags = issueSessionId({ protocolVersion: '2025-06-18', elicitation: false, clientName: 'ab' + '\u{1f1e9}\u{1f1ea}'.repeat(40) }, fingerprint);
+    expect(flags.length).toBeLessThan(512);
+    const cut = readSessionId(flags, fingerprint)!.clientName!.replace(/^ab/, '').replace(/…$/, '');
+    expect(cut.length % 4).toBe(0);
+    expect(Buffer.byteLength(readSessionId(flags, fingerprint)!.clientName!)).toBeLessThanOrEqual(120);
+    // Private-use characters go too.
+    const pua = issueSessionId({ protocolVersion: '2025-06-18', elicitation: false, clientName: 'Cl\ue000aude' }, fingerprint);
+    expect(readSessionId(pua, fingerprint)!.clientName).toBe('Cl aude');
   });
 
   it('leaves out a name that is empty after sanitising', () => {

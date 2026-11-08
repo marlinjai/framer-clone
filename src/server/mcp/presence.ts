@@ -23,9 +23,12 @@ import 'server-only';
 // titles, which are content).
 //
 // Bounded per key: a site id not in scope is remembered as such for a short
-// while (a key looping over made-up ids costs no database read per call), and a
-// key reports at most REPORTS_PER_KEY calls per minute; calls beyond that run
-// unreported, so a runaway agent cannot flood its own company's editors.
+// while, a key causes at most MISSES_PER_KEY lookups that miss per minute (a key
+// sending a new made-up id on every call costs no database read per call), and
+// a key reports at most REPORTS_PER_KEY calls per minute; calls beyond that run
+// unreported and look nothing up, so a runaway agent cannot flood its own
+// company's editors. Hits and misses are cached apart, so a flood of misses
+// never evicts another company's confirmed sites.
 //
 // The call id travels into the write's audit row (`SiteOpsCaller.liveCallId`),
 // so a reloaded editor's feed line for a write has the same id as the line it
@@ -59,26 +62,44 @@ const REPORT_KEYS_MAX = 5000;
 /** Tools whose successful answer means a write committed (and left an audit row). */
 const WRITE_TOOLS = new Set(['apply_batch', 'generate_page', 'publish', 'rollback']);
 
-/** (scope, site) to until when the answer holds, and the answer. */
-const confirmed = new Map<string, { until: number; inScope: boolean }>();
+/** Lookups that found no site one key may cause per minute; beyond that it is not asked about new ids. */
+export const MISSES_PER_KEY = 20;
+
+/** (scope, site) found in scope, to until when that holds. */
+const confirmed = new Map<string, number>();
+/** (scope, site) found outside it (or unreadable), to until when that holds: kept apart, so misses never evict hits. */
+const missed = new Map<string, number>();
+/** Agent id to its window of lookups that missed. */
+const missBudgets = new Map<string, { windowStart: number; count: number }>();
 /** Agent id to its report window. */
 const budgets = new Map<string, { windowStart: number; count: number }>();
 
-function remember(key: string, inScope: boolean, until: number): void {
-  confirmed.delete(key);
-  confirmed.set(key, { until, inScope });
-  while (confirmed.size > SCOPE_CONFIRM_MAX) confirmed.delete(confirmed.keys().next().value as string);
+function remember(map: Map<string, number>, key: string, until: number): void {
+  map.delete(key);
+  map.set(key, until);
+  while (map.size > SCOPE_CONFIRM_MAX) map.delete(map.keys().next().value as string);
 }
 
-/** Whether the key may report one more call now (a fixed one-minute window per key). */
-export function takeReport(agentId: string, now: number = Date.now()): boolean {
-  let budget = budgets.get(agentId);
+/** A fixed one-minute window per key: its count now, started afresh when the window passed. */
+function windowOf(map: Map<string, { windowStart: number; count: number }>, agentId: string, now: number) {
+  let budget = map.get(agentId);
   if (!budget || now - budget.windowStart >= REPORT_WINDOW_MS) {
-    budgets.delete(agentId);
+    map.delete(agentId);
     budget = { windowStart: now, count: 0 };
-    budgets.set(agentId, budget);
-    while (budgets.size > REPORT_KEYS_MAX) budgets.delete(budgets.keys().next().value as string);
+    map.set(agentId, budget);
+    while (map.size > REPORT_KEYS_MAX) map.delete(map.keys().next().value as string);
   }
+  return budget;
+}
+
+/** Whether the key has a report left this minute (without spending it). */
+export function hasReportLeft(agentId: string, now: number = Date.now()): boolean {
+  return windowOf(budgets, agentId, now).count < REPORTS_PER_KEY;
+}
+
+/** Spend one report of the key; false when its minute is used up. */
+export function takeReport(agentId: string, now: number = Date.now()): boolean {
+  const budget = windowOf(budgets, agentId, now);
   if (budget.count >= REPORTS_PER_KEY) return false;
   budget.count += 1;
   return true;
@@ -89,25 +110,38 @@ function confirmKey(scope: TenantScope, siteId: string): string {
 }
 
 /** Whether the site is in the scope: from the cache, else the repository's scoped read. Never throws. */
-export async function siteInScope(repository: SiteRepository, scope: TenantScope, siteId: string, now: number = Date.now()): Promise<boolean> {
+export async function siteInScope(
+  repository: SiteRepository,
+  scope: TenantScope,
+  siteId: string,
+  now: number = Date.now(),
+  agentId?: string,
+): Promise<boolean> {
   const key = confirmKey(scope, siteId);
-  const known = confirmed.get(key);
-  if (known && known.until > now) return known.inScope;
+  if ((confirmed.get(key) ?? 0) > now) return true;
+  if ((missed.get(key) ?? 0) > now) return false;
+  // A key whose lookups keep missing (made-up ids) is not asked about new ids for the rest of its minute.
+  const misses = agentId ? windowOf(missBudgets, agentId, now) : undefined;
+  if (misses && misses.count >= MISSES_PER_KEY) return false;
   try {
     await repository.getSiteVersion(scope, siteId);
   } catch {
     // Not found in this scope, or the database could not answer: report nothing for a while.
-    remember(key, false, now + SCOPE_MISS_TTL_MS);
+    remember(missed, key, now + SCOPE_MISS_TTL_MS);
+    if (misses) misses.count += 1;
     return false;
   }
-  remember(key, true, now + SCOPE_CONFIRM_TTL_MS);
+  missed.delete(key);
+  remember(confirmed, key, now + SCOPE_CONFIRM_TTL_MS);
   return true;
 }
 
 /** Tests only. */
 export function resetPresenceScopeCacheForTests(): void {
   confirmed.clear();
+  missed.clear();
   budgets.clear();
+  missBudgets.clear();
 }
 
 const ID_MAX = 200;
@@ -207,7 +241,10 @@ export async function withPresence(call: PresenceCall, run: (liveCallId?: string
   const siteId = siteIdOf(call.args);
   if (!siteId) return run();
   const agentId = liveAgentId(call.keyId);
-  if (!(await siteInScope(call.repository, call.scope, siteId)) || !takeReport(agentId)) return run();
+  // Over its report budget, a key causes no lookup at all.
+  if (!hasReportLeft(agentId) || !(await siteInScope(call.repository, call.scope, siteId, Date.now(), agentId)) || !takeReport(agentId)) {
+    return run();
+  }
 
   const focus = focusOf(call.args);
   const base = {
@@ -243,7 +280,6 @@ export async function withPresence(call: PresenceCall, run: (liveCallId?: string
       ...(pageId ? { pageId } : {}),
       ...(nodeIds.length > 0 ? { nodeIds } : {}),
       ...(changes !== undefined ? { changes } : {}),
-      ...(wroteOf(call.tool, result) ? { written: true } : {}),
       at: new Date().toISOString(),
     };
     // A committed write is in the audit table, which backs the feed after a reload;

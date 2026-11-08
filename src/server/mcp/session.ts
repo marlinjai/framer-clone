@@ -20,7 +20,7 @@ import 'server-only';
 // none.
 
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { sanitizeLiveLabel } from '@/lib/projects/liveEvents';
+import { capChars, sanitizeLiveLabel } from '@/lib/projects/liveEvents';
 
 const SECRET = randomBytes(32);
 
@@ -37,12 +37,18 @@ export interface SessionFacts {
 
 /** The longest client name a session id carries (the id itself stays well under 512 characters). */
 export const SESSION_CLIENT_NAME_MAX = 40;
+/** And at most this many bytes of UTF-8, so the signed id never outgrows what readSessionId accepts. */
+export const SESSION_CLIENT_NAME_MAX_BYTES = 120;
 
 function clientNameOf(value: unknown): string | undefined {
   const clean = sanitizeLiveLabel(value);
   if (!clean) return undefined;
-  const chars = Array.from(clean);
-  return chars.length > SESSION_CLIENT_NAME_MAX ? `${chars.slice(0, SESSION_CLIENT_NAME_MAX - 1).join('')}…` : clean;
+  // Also bounded in bytes: 40 emoji or flags would push the id past the 512 characters it may have.
+  for (let max = SESSION_CLIENT_NAME_MAX; max > 1; max -= 1) {
+    const capped = capChars(clean, max);
+    if (Buffer.byteLength(capped, 'utf8') <= SESSION_CLIENT_NAME_MAX_BYTES) return capped;
+  }
+  return undefined;
 }
 
 /** A short fingerprint of the presented key; never the key and never reversible to it. */
