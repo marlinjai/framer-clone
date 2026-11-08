@@ -221,3 +221,28 @@ describe('PageGenDraftStore outline', () => {
     expect(d.skeletons.map((s) => s.slot)).toEqual([0, 1, 2, 3]);
   });
 });
+
+describe('targetOn', () => {
+  it("draws a run's draft on its own page only, and an agent's new page beside whichever page is on screen", () => {
+    const d = new PageGenDraftStore();
+    d.begin(target());
+    expect(d.targetOn('page-1')).toBeDefined();
+    expect(d.targetOn('page-2')).toBeUndefined();
+    d.begin({ ...target('agent:run'), kind: 'newPage', followsCurrentPage: true });
+    expect(d.targetOn('page-2')).toBeDefined();
+    expect(d.targetOn(undefined)).toBeUndefined();
+    // Only a new page follows the screen: a section goes where its node is.
+    d.begin({ ...target('agent:run-2'), followsCurrentPage: true });
+    expect(d.targetOn('page-2')).toBeUndefined();
+  });
+
+  it('remembers which sections the canvas drew, for the draft held now', () => {
+    const d = new PageGenDraftStore();
+    d.begin(target());
+    d.markShown(0);
+    expect(d.isShown(0)).toBe(true);
+    expect(d.isShown(1)).toBe(false);
+    d.begin(target('k2'));
+    expect(d.isShown(0)).toBe(false);
+  });
+});

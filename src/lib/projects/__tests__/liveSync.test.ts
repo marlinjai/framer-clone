@@ -36,6 +36,9 @@ import {
 } from '../liveSync';
 import type { SiteVersionEvent } from '../liveEvents';
 import { REVEAL_SETTLE_MS } from '@/lib/live/revealStore';
+import { autorun } from 'mobx';
+import { validateGeneration } from '@/lib/ai/pageGen/validate';
+import { deriveBreakpointKeys } from '@/lib/ai/pageGen/schema';
 
 class FakeStream implements LiveEventSource {
   readyState = 0;
@@ -812,6 +815,195 @@ describe('liveSync: skeleton plans (slice 4)', () => {
     stream().emit('plan:update', { plan: plan([{ ref: 'hero' }]) });
     stream().emit('state', { version: server.version, plans: [], agents: [], feed: [] });
     expect(drawn()).toEqual([]);
+    stop();
+  });
+});
+
+describe("liveSync: an agent's generate_page draft (slice 6)", () => {
+  const draft = () => store.editorUI.pageGenDraft;
+  const rootId = () => server.snapshot.pages[homeId()].appComponentTree.id;
+  const target = () => ({ kind: 'insert', pageId: homeId(), parentId: rootId() });
+  const breakpoints = () =>
+    Object.values(server.snapshot.pages[homeId()].canvasNodes ?? {})
+      .filter((n) => (n as { breakpointId?: string }).breakpointId)
+      .map((n) => ({ label: (n as { label: string }).label, minWidth: (n as { breakpointMinWidth: number }).breakpointMinWidth }));
+  /** A preview section as the generator validates it. */
+  const node = (label: string) => {
+    const out = validateGeneration({ nodes: [{ type: 'section', label, children: [{ type: 'h2', props: { children: label } }] }] }, { breakpoints: deriveBreakpointKeys(breakpoints()) });
+    if (!out.ok) throw new Error(out.errors.join('; '));
+    return out.result.nodes[0];
+  };
+  const homeChildren = (snapshot: ProjectSnapshotOut) => (snapshot.pages[homeId()].appComponentTree.children ?? []) as Array<{ id: string; children?: Array<{ id: string }> }>;
+
+  /** The server saves the result (one section per label) at the next version: gen:done first, then site:version. */
+  async function saved(runId: string, labels: string[], drawnAs: Array<number | null>, opts: { announce?: boolean } = {}) {
+    const before = new Set(homeChildren(server.snapshot).map((c) => c.id));
+    const model = ProjectModel.create(server.snapshot) as ProjectModelType;
+    const outcome = await applyOperations(model, [
+      { op: 'insertNodes', pageId: homeId(), nodes: labels.map((label) => ({ type: 'section', label, children: [{ type: 'h2', props: { children: label } }] })) },
+    ]);
+    if (!outcome.ok) throw new Error('refused');
+    const versionBefore = server.version;
+    server = { version: server.version + 1, snapshot: getSnapshot(model) as ProjectSnapshotOut };
+    const insertedIds = homeChildren(server.snapshot).map((c) => c.id).filter((id) => !before.has(id));
+    stream().emit('gen:done', { runId, status: 'saved', version: server.version, insertedIds, drawnAs });
+    if (opts.announce !== false) {
+      stream().emit('site:version', { origin: 'generate', actor: { kind: 'key', label: 'Claude' }, version: server.version, versionBefore });
+    }
+    await settle();
+    return insertedIds;
+  }
+
+  it('forward: draws the outline, then the sections; the draft goes in the same action the saved result is adopted', async () => {
+    const stop = start();
+    expect(breakpoints().length).toBeGreaterThan(0);
+    stream().emit('gen:outline', { runId: 'run-1', target: target(), outline: [{ title: 'Hero', kind: 'hero' }, { title: 'Order', kind: 'cta' }] });
+    expect(draft().target).toMatchObject({ requestKey: 'agent:run-1', kind: 'insert', pageId: homeId(), componentId: rootId(), targetIsRoot: true });
+    expect(draft().skeletons.map((s) => s.title)).toEqual(['Hero', 'Order']);
+    stream().emit('gen:section', { runId: 'run-1', target: target(), index: 0, slot: 0, node: node('Hero') });
+    stream().emit('gen:section', { runId: 'run-1', target: target(), index: 1, slot: 1, node: node('Order') });
+    expect(draft().sections.map((s) => s.index)).toEqual([0, 1]);
+    expect(draft().skeletons).toEqual([]);
+    draft().markShown(0);
+    draft().markShown(1);
+
+    // Never both on screen, never neither: watch the two together.
+    const seen: string[] = [];
+    const dispose = autorun(() => {
+      const drafted = !!draft().target;
+      const result = homeChildren(getSnapshot(project()) as unknown as ProjectSnapshotOut).length > 0;
+      seen.push(drafted && result ? 'both' : drafted ? 'draft' : result ? 'result' : 'neither');
+    });
+    holdFetch = { release: () => {} };
+    // Hero drawn exactly as saved; the second section was rewritten by a repair.
+    const inserted = await saved('run-1', ['Hero', 'Order'], [0, null]);
+    expect(draft().target).toBeDefined(); // the copy is still on its way
+    holdFetch.release();
+    holdFetch = undefined;
+    await settle();
+    dispose();
+    expect(knownServerVersion(SITE)).toBe(2);
+    expect(draft().target).toBeUndefined();
+    expect(seen).toEqual(['draft', 'result']);
+    // The hero the draft drew stays still; the rewritten section reveals.
+    const revealed = [...store.editorUI.liveReveal.delays.keys()];
+    const [hero, order] = homeChildren(working()).filter((c) => inserted.includes(c.id));
+    expect(revealed).toContain(order.id);
+    expect(revealed).not.toContain(hero.id);
+    expect(revealed.some((id) => hero.children?.some((c) => c.id === id))).toBe(false);
+    stop();
+  });
+
+  it('backtrack: a second run replaces the first draft, and the first run\'s end changes nothing', async () => {
+    const stop = start();
+    stream().emit('gen:section', { runId: 'run-1', target: target(), index: 0, slot: 0, node: node('First') });
+    stream().emit('gen:done', { runId: 'run-1', status: 'superseded' });
+    expect(draft().target).toBeUndefined();
+    stream().emit('gen:section', { runId: 'run-1', target: target(), index: 0, slot: 0, node: node('First') });
+    stream().emit('gen:outline', { runId: 'run-2', target: target(), outline: [{ title: 'Second', kind: 'generic' }] });
+    expect(draft().target?.requestKey).toBe('agent:run-2');
+    expect(draft().sections).toEqual([]);
+    stream().emit('gen:done', { runId: 'run-1', status: 'failed' });
+    expect(draft().target?.requestKey).toBe('agent:run-2');
+    stop();
+    expect(draft().target).toBeUndefined(); // nothing carries over to the next site opened
+  });
+
+  it("resume: a reload mid-run draws the state's draft again; a state without one drops it", async () => {
+    const stop = startLiveSync(SITE, store);
+    stream().open();
+    const generation = {
+      runId: 'run-1',
+      target: target(),
+      outline: [{ title: 'Hero', kind: 'hero' }, { title: 'FAQ', kind: 'faq' }],
+      sections: [{ index: 0, slot: 0, node: node('Hero') }],
+    };
+    stream().emit('state', { version: server.version, plans: [], agents: [], feed: [], generation });
+    expect(draft().sections.map((s) => s.index)).toEqual([0]);
+    expect(draft().skeletons.map((s) => s.title)).toEqual(['FAQ']);
+    // A reconnect repeats it: nothing is drawn twice.
+    stream().emit('state', { version: server.version, plans: [], agents: [], feed: [], generation });
+    expect(draft().sections).toHaveLength(1);
+    // The run ended while the stream was away.
+    stream().emit('state', { version: server.version, plans: [], agents: [], feed: [] });
+    expect(draft().target).toBeUndefined();
+    stop();
+  });
+
+  it('re-entry: a stopped or failed run drops the draft and adopts nothing; the next run starts clean', async () => {
+    const stop = start();
+    stream().emit('gen:section', { runId: 'run-1', target: target(), index: 0, slot: 0, node: node('Hero') });
+    stream().emit('gen:done', { runId: 'run-1', status: 'stopped' });
+    await settle();
+    expect(draft().target).toBeUndefined();
+    expect(fetches).toEqual([]);
+    expect(knownServerVersion(SITE)).toBe(1);
+    stream().emit('gen:outline', { runId: 'run-2', target: target(), outline: [{ title: 'Again', kind: 'hero' }] });
+    expect(draft().sections).toEqual([]);
+    expect(draft().skeletons.map((s) => s.title)).toEqual(['Again']);
+    stream().emit('gen:done', { runId: 'run-2', status: 'failed' });
+    expect(draft().target).toBeUndefined();
+    stop();
+  });
+
+  it("the person's own Generate keeps the draft; the agent's draws once it ended", async () => {
+    const stop = start();
+    draft().begin({ requestKey: 'own', kind: 'newPage', pageId: homeId(), targetIsRoot: false, title: 'Mine', breakpoints: [], viewports: [], locale: 'en' });
+    stream().emit('gen:section', { runId: 'run-1', target: target(), index: 0, slot: 0, node: node('Agent') });
+    expect(draft().target?.requestKey).toBe('own');
+    stream().emit('gen:done', { runId: 'run-1', status: 'failed' });
+    expect(draft().target?.requestKey).toBe('own'); // never drops the person's draft
+    draft().clear('own');
+    stream().emit('gen:section', { runId: 'run-2', target: target(), index: 0, slot: 0, node: node('Agent') });
+    stream().emit('gen:section', { runId: 'run-2', target: target(), index: 1, slot: 1, node: node('More') });
+    expect(draft().target?.requestKey).toBe('agent:run-2');
+    expect(draft().sections).toHaveLength(2);
+    stop();
+  });
+
+  it('a saved result held for the person (unsaved edits) leaves the draft at most 15 s', async () => {
+    const stop = start();
+    stream().emit('gen:section', { runId: 'run-1', target: target(), index: 0, slot: 0, node: node('Hero') });
+    project().getPage(homeId())!.setSlug('edited'); // unsaved work: the copy is held
+    await saved('run-1', ['Hero'], [0]);
+    expect(liveSyncFor(SITE)?.heldVersion?.version).toBe(2);
+    expect(draft().target).toBeDefined();
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(draft().target).toBeUndefined();
+    stop();
+  });
+
+  it('a new page: draft frames beside whichever page is on screen, and the result is shown once adopted while the camera follows', async () => {
+    const stop = start();
+    stream().emit('gen:outline', { runId: 'run-1', target: { kind: 'newPage', title: 'Menu' }, outline: [{ title: 'Hero', kind: 'hero' }] });
+    expect(draft().target).toMatchObject({ kind: 'newPage', title: 'Menu', followsCurrentPage: true });
+    expect(draft().target?.viewports.map((v) => v.label)).toEqual(['Desktop', 'Tablet', 'Mobile']);
+    store.editorUI.setCurrentPage(project().getPage(homeId())!);
+    expect(draft().targetOn(homeId())).toBeDefined();
+    expect(draft().targetOn('another-page')).toBeDefined();
+
+    // The server makes the new page and saves it.
+    const model = ProjectModel.create(server.snapshot) as ProjectModelType;
+    const page = model.createPage('Menu');
+    const versionBefore = server.version;
+    const outcome = await applyOperations(model, [{ op: 'insertNodes', pageId: page.id, nodes: [{ type: 'section', label: 'Hero' }] }]);
+    if (!outcome.ok) throw new Error('refused');
+    server = { version: versionBefore + 1, snapshot: getSnapshot(model) as ProjectSnapshotOut };
+    const inserted = (server.snapshot.pages[page.id].appComponentTree.children as Array<{ id: string }>).map((c) => c.id);
+    stream().emit('gen:done', { runId: 'run-1', status: 'saved', version: server.version, insertedIds: inserted, drawnAs: [null] });
+    stream().emit('site:version', { origin: 'generate', version: server.version, versionBefore });
+    await settle();
+    expect(draft().target).toBeUndefined();
+    expect(store.editorUI.currentPage?.id).toBe(page.id);
+    stop();
+  });
+
+  it('ignores malformed events and a target this copy does not have', () => {
+    const stop = start();
+    stream().emit('gen:section', { runId: '../x', target: target(), index: 0, slot: 0, node: node('A') });
+    stream().emit('gen:section', { runId: 'run-1', target: { kind: 'replace', pageId: homeId(), nodeId: 'not-here' }, index: 0, slot: 0, node: node('A') });
+    stream().emit('gen:outline', { runId: 'run-2', target: { kind: 'insert', pageId: homeId() }, outline: [] });
+    expect(draft().target).toBeUndefined();
     stop();
   });
 });

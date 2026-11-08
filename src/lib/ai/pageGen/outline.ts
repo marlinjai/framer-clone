@@ -16,7 +16,7 @@
 // A preview hint only: the outline never reaches validation (withoutOutline),
 // the result or the saved page. Client-safe: the editor's draft keeps the
 // payload as it comes, and a caller can forward it unchanged (the MCP
-// generate_page will, with slice 6 of the plan; it passes nothing yet).
+// generate_page sends it to the site's open editors, src/server/sites/liveGeneration.ts).
 
 import { PLAN_LIMITS, PLAN_SECTION_KINDS, sanitizePlanTitle, type PlanSectionKind } from '@/lib/projects/liveEvents';
 import type { OpenedElement } from './sectionStream';

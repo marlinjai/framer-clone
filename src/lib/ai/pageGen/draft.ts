@@ -43,8 +43,13 @@ export interface PageGenDraftTarget {
   /** The run it belongs to (flow.ts makeRequestKey); events for another key are dropped. */
   requestKey: string;
   kind: TargetKind;
-  /** The page the run started on: the draft is drawn only while it is on screen. */
+  /** The page the run started on: the draft is drawn only while it is on screen (unless followsCurrentPage). */
   pageId: string;
+  /**
+   * A new page an agent generates (the MCP generate_page, src/lib/live/generationDraft.ts):
+   * no page of this tab started it, so its draft frames show beside whichever page is on screen.
+   */
+  followsCurrentPage?: boolean;
   /** replace / insert: the component the draft stands in for, or is appended to. */
   componentId?: string;
   /** Whether the target is the page's root (replace then swaps its children, as the apply does). */
@@ -56,15 +61,6 @@ export interface PageGenDraftTarget {
   viewports: CapturedTarget['viewports'];
   /** The site language's shop locale, so a shop control gets its parts as the apply gives them. */
   locale: ShopLocale;
-}
-
-/**
- * What a section says, without the ids the validator minted for it (a preview
- * section and its final copy are validated apart and get different ids): equal
- * keys are the same section as the model wrote it.
- */
-export function sectionContentKey(node: GeneratedNodeSnapshot): string {
-  return JSON.stringify(node, (key, value) => (key === 'id' || key === 'parentId' ? undefined : value));
 }
 
 /** One drawn section: its place in the page and its detached tree. */
@@ -170,6 +166,11 @@ export class PageGenDraftStore {
     this.shown.add(index);
   }
 
+  /** Whether the canvas drew the section `index` of the draft held now. */
+  isShown(index: number): boolean {
+    return this.shown.has(index);
+  }
+
   /**
    * The sources of the sections the canvas really drew, as the model wrote them.
    * A section stored while another page was on screen is not among them.
@@ -245,6 +246,7 @@ export class PageGenDraftStore {
 
   /** The draft to draw on this page, if any. */
   targetOn(pageId: string | undefined): PageGenDraftTarget | undefined {
-    return pageId && this.target?.pageId === pageId ? this.target : undefined;
+    if (!pageId || !this.target) return undefined;
+    return this.target.pageId === pageId || (this.target.followsCurrentPage && this.target.kind === 'newPage') ? this.target : undefined;
   }
 }

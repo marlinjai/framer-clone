@@ -40,7 +40,7 @@ import { ensureCompanyCommerce } from '@/server/sites/companyCommerce';
 import { buildEmptyDraftSnapshot } from '@/lib/projects/newProject';
 import { projectNameSchema } from '@/lib/projectName';
 import { applyOperations, type ApplyDeps } from '@/lib/siteOps/applyOps';
-import { applyGenerated, generationTarget, type GenerateTarget } from '@/lib/siteOps/generated';
+import { applyGenerated, generationTarget, type GenerateTarget, type ResolvedTarget } from '@/lib/siteOps/generated';
 import { pageOutline, siteOverview, vocabularyFor, type PageOutline, type SiteOverview, type Vocabulary } from '@/lib/siteOps/read';
 import {
   BatchSchema,
@@ -70,7 +70,8 @@ import { getAnthropicClient, MissingAnthropicKeyError } from '@/lib/ai/anthropic
 import { logAiCall, startAiCallTimer } from '@/lib/ai/aiLogger';
 import { recordUsage } from '@/lib/ai/aiUsageStub';
 import { recordSiteOperation, type AuditedOp } from './audit';
-import type { SiteWriteActor } from '@/lib/projects/liveEvents';
+import type { GenDoneStatus, GenDraftTarget, SiteWriteActor } from '@/lib/projects/liveEvents';
+import { openLiveGeneration, type LiveGenerationRun } from '@/server/sites/liveGeneration';
 import { refPagesOf, splitCreated } from '@/lib/siteOps/createdIds';
 import { fulfilFromBatch } from '@/server/mcp/livePlans';
 import { liveAgentId } from './audit';
@@ -421,7 +422,7 @@ export interface GeneratePageInput {
   brief: string;
   target: GenerateTarget;
   model?: PageGenModel;
-  /** Stops the model call (and the spend); the result is then not saved. */
+  /** Stops the model call (and the spend); the result is then not saved and the open editors drop the draft. */
   signal?: AbortSignal;
 }
 
@@ -483,10 +484,65 @@ export async function generatePage(
   }
 
   const requestId = globalThis.crypto.randomUUID();
-  const timer = startAiCallTimer();
-  let run: Awaited<ReturnType<typeof runPageGeneration>> | undefined;
+  // The open editors of the site watch the draft build itself (plan
+  // docs/plans/2026-11-08-live-agent-canvas.md, section 3): opened only now, after
+  // the site was loaded through the caller's own scope. Every way out below ends
+  // it exactly once: `saved` from the repository's pre-announcement step, so the
+  // editor hears it before the version it fetches; anything else in the finally.
+  const live = openLiveGeneration(input.siteId, caller.scope, requestId, liveDraftTarget(target.value, input.target));
+  let ended: GenDoneStatus = 'failed';
   try {
-    run = await runPageGeneration(
+    const outcome = await runAndSaveGeneration(caller, input, deps, {
+      anthropic,
+      slot,
+      requestId,
+      brief,
+      model,
+      project,
+      version,
+      target: target.value,
+      live,
+    });
+    ended = outcome.ended;
+    return outcome.result;
+  } finally {
+    // Saved: already ended in the pre-announcement step (this call then does nothing).
+    live.end(ended);
+  }
+}
+
+/** Where the open editors draw a run's draft: ids only (the model's context stays here). */
+function liveDraftTarget(resolved: ResolvedTarget, requested: GenerateTarget): GenDraftTarget {
+  if (resolved.kind === 'newPage') return { kind: 'newPage', ...(requested.kind === 'newPage' && requested.title ? { title: requested.title } : {}) };
+  if (resolved.kind === 'replace') return { kind: 'replace', pageId: resolved.pageId!, nodeId: resolved.componentId! };
+  return { kind: 'insert', pageId: resolved.pageId!, parentId: resolved.componentId! };
+}
+
+interface GenerationRun {
+  anthropic: Anthropic;
+  slot: { release(): void };
+  requestId: string;
+  brief: string;
+  model: PageGenModel;
+  project: ProjectModelType;
+  version: number;
+  target: ResolvedTarget;
+  live: LiveGenerationRun;
+}
+
+/** generatePage past its checks: run the model, place the result and save it. Answers how the live run ended. */
+async function runAndSaveGeneration(
+  caller: SiteOpsCaller,
+  input: GeneratePageInput,
+  deps: SiteOpsDeps,
+  run: GenerationRun,
+): Promise<{ result: SiteOpsResult<GeneratePageOutcome>; ended: GenDoneStatus }> {
+  const { anthropic, slot, requestId, brief, model, project, version, live } = run;
+  const target = { value: run.target };
+  const timer = startAiCallTimer();
+  let generated: Awaited<ReturnType<typeof runPageGeneration>> | undefined;
+  try {
+    generated = await runPageGeneration(
       {
         brief,
         model,
@@ -501,49 +557,61 @@ export async function generatePage(
       {
         anthropic,
         signal: input.signal ?? new AbortController().signal,
-        userId: limiterKey,
+        userId: `${caller.actor.kind}:${caller.actor.id}`,
         workspaceId: caller.scope.workspaceId,
+        onOutline: (outline) => live.outline(outline),
+        onSection: (section) => live.section(section),
       },
       requestId,
     );
   } finally {
     slot.release();
-    if (run) {
-      const { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens } = run.usage;
+    if (generated) {
+      const limiterKey = `${caller.actor.kind}:${caller.actor.id}`;
+      const { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens } = generated.usage;
       recordUsage({ sessionId: limiterKey, inputTokens, outputTokens, cachedReadTokens: cacheReadTokens, cachedWriteTokens: cacheWriteTokens });
       logAiCall({
         requestId,
         sessionId: `site-ops-generate:${caller.scope.workspaceId}`,
         userId: limiterKey,
-        model: run.usage.model,
+        model: generated.usage.model,
         promptChars: brief.length,
         inputTokens,
         outputTokens,
         cachedReadTokens: cacheReadTokens,
         cachedWriteTokens: cacheWriteTokens,
         latencyMs: timer.latencyMs(),
-        status: run.outcome.kind === 'result' ? 'ok' : 'error',
-        ...(run.outcome.kind === 'error' ? { errorCode: String(run.outcome.error.code) } : {}),
+        status: generated.outcome.kind === 'result' ? 'ok' : 'error',
+        ...(generated.outcome.kind === 'error' ? { errorCode: String(generated.outcome.error.code) } : {}),
       });
     }
   }
 
-  if (run.outcome.kind === 'aborted') return fail({ code: 'failed', message: 'the generation was stopped; nothing was saved' });
-  if (run.outcome.kind === 'error') {
-    const { error } = run.outcome;
+  // A stop while the model streams comes back as the provider's abort error, not as `aborted`.
+  const { outcome } = generated;
+  if (outcome.kind === 'error' && outcome.error.code !== 'aborted' && input.signal?.aborted !== true) {
+    const { error } = outcome;
     if (error.code === 'rate_limited' || error.code === 'overloaded') {
-      return fail({ code: 'unavailable', message: error.message, retryAfterSec: 30 });
+      return { ended: 'failed', result: fail({ code: 'unavailable', message: error.message, retryAfterSec: 30 }) };
     }
-    return fail({ code: 'failed', message: error.message });
+    return { ended: 'failed', result: fail({ code: 'failed', message: error.message }) };
   }
-  const { payload, placed } = run.outcome;
+  if (outcome.kind !== 'result') {
+    return { ended: 'stopped', result: fail({ code: 'failed', message: 'the generation was stopped; nothing was saved' }) };
+  }
+  const { payload, placed } = outcome;
   const applied = applyGenerated(
     project,
     target.value,
     payload,
     input.target.kind === 'newPage' ? input.target.title : undefined,
   );
-  if (!applied.ok) return fail({ code: 'rejected', message: applied.reason, rejected: [{ index: 0, op: 'generatePage', reason: applied.reason }] });
+  if (!applied.ok) {
+    return {
+      ended: 'rejected',
+      result: fail({ code: 'rejected', message: applied.reason, rejected: [{ index: 0, op: 'generatePage', reason: applied.reason }] }),
+    };
+  }
   let written: number;
   try {
     ({ version: written } = await repo(deps).saveProject(caller.scope, project, {
@@ -555,10 +623,16 @@ export async function generatePage(
         actor: liveActor(caller),
         ops: [{ op: `generate:${input.target.kind}`, pageId: applied.pageId }],
       },
+      // After the commit, before the `site:version` goes out: the open editors
+      // learn that the draft ends at this version, and drop it in the same step
+      // they adopt it.
+      beforeAnnounce: (savedAt) => live.end('saved', { version: savedAt, insertedIds: applied.insertedIds, nodes: payload.nodes }),
     }));
   } catch (err) {
-    return fromError(err, input.siteId);
+    return { ended: err instanceof SiteChangedError ? 'site_changed' : 'failed', result: fromError(err, input.siteId) };
   }
+  // A write that wrote nothing (the repeat of a lost answer) runs no pre-announcement step.
+  live.end('saved', { version: written, insertedIds: applied.insertedIds, nodes: payload.nodes });
   if (placed.length > 0) triggerStockDownloads(placed);
   await audit(caller, input.siteId, {
     operation: 'generate_page',
@@ -567,15 +641,18 @@ export async function generatePage(
     versionAfter: written,
     created: { nodeIds: applied.insertedIds, pageIds: [] },
   });
-  return ok({
-    siteId: input.siteId,
-    version: written,
-    pageId: applied.pageId,
-    insertedIds: applied.insertedIds,
-    warnings: payload.warnings,
-    tells: payload.tells ?? [],
-    images: payload.images,
-  });
+  return {
+    ended: 'saved',
+    result: ok({
+      siteId: input.siteId,
+      version: written,
+      pageId: applied.pageId,
+      insertedIds: applied.insertedIds,
+      warnings: payload.warnings,
+      tells: payload.tells ?? [],
+      images: payload.images,
+    }),
+  };
 }
 
 // ---------- images ----------

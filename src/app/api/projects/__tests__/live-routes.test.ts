@@ -49,6 +49,7 @@ import { getSiteRepository as getRepositoryDirect } from '@/server/sites/reposit
 import { publishSiteEvent, resetLiveBusForTests, LIVE_STREAM_LIMITS } from '@/server/sites/liveBus';
 import { GET as EVENTS } from '../[projectId]/events/route';
 import { announcePlan, resetLivePlansForTests } from '@/server/mcp/livePlans';
+import { openLiveGeneration, resetLiveGenerationForTests } from '@/server/sites/liveGeneration';
 import { LIVE_RECHECK_MS, LIVE_RECHECK_ON_WRITE_MS } from '@/lib/projects/liveEvents';
 import { GET as DOCUMENT } from '../[projectId]/document/route';
 
@@ -122,6 +123,7 @@ beforeEach(() => {
   resetLiveBusForTests();
   resetLivePresenceForTests();
   resetLivePlansForTests();
+  resetLiveGenerationForTests();
   auditRows.rows = [];
   auditRows.fail = false;
   auditRows.calls = [];
@@ -214,6 +216,38 @@ describe('GET /api/projects/<id>/events', () => {
     publishSiteEvent('site_1', 'plan:update', { plan: { planId: 'p2' }, ended: 'cleared' });
     expect(await events.next()).toEqual({ event: 'plan:update', data: { plan: { planId: 'p2' }, ended: 'cleared' } });
     await events.cancel();
+  });
+
+  it("sends the site's running generation in `state` (never another workspace's), then its draft events in order", async () => {
+    const node = { id: 'n1', type: 'section', componentType: 'host', label: 'Hero', props: {}, children: [] } as never;
+    const run = openLiveGeneration('site_1', SCOPE, 'run-1', { kind: 'insert', pageId: 'home', parentId: 'root' });
+    run.outline({ generationId: 'run-1', attempt: 1, outline: [{ title: 'Hero', kind: 'hero' }] });
+    run.section({ generationId: 'run-1', attempt: 1, index: 0, slot: 0, node });
+    // Another company's run on another site, and a stream of this site under another scope, never mix.
+    openLiveGeneration('site_2', { workspaceId: 'ws_other', tenantGroupId: 'tg_other' }, 'run-x', { kind: 'newPage' });
+    const res = await EVENTS(req('/api/projects/site_1/events'), ctx('site_1'));
+    const events = eventReader(res);
+    const state = (await events.next()).data as { generation?: Record<string, unknown> };
+    expect(state.generation).toEqual({
+      runId: 'run-1',
+      target: { kind: 'insert', pageId: 'home', parentId: 'root' },
+      outline: [{ title: 'Hero', kind: 'hero' }],
+      sections: [{ index: 0, slot: 0, node }],
+    });
+    run.section({ generationId: 'run-1', attempt: 1, index: 1, slot: 1, node });
+    expect(await events.next()).toMatchObject({ event: 'gen:section', data: { runId: 'run-1', index: 1 } });
+    run.end('saved', { version: 8, insertedIds: ['r1'], nodes: [node] });
+    publishSiteEvent('site_1', 'site:version', { origin: 'generate', version: 8, versionBefore: 7 });
+    expect(await events.next()).toEqual({ event: 'gen:done', data: { runId: 'run-1', status: 'saved', version: 8, insertedIds: ['r1'], drawnAs: [0] } });
+    expect((await events.next()).event).toBe('site:version');
+    await events.cancel();
+
+    // A run opened under another workspace's scope on this site is not in this stream's state.
+    resetLiveGenerationForTests();
+    openLiveGeneration('site_1', { workspaceId: 'ws_other', tenantGroupId: 'tg_other' }, 'run-y', { kind: 'newPage' });
+    const again = eventReader(await EVENTS(req('/api/projects/site_1/events'), ctx('site_1')));
+    expect((await again.next()).data).not.toHaveProperty('generation');
+    await again.cancel();
   });
 
   it('sends the state on connect, then every committed write with its version as the event id', async () => {

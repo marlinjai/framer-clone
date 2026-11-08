@@ -116,8 +116,8 @@ export interface PageGenerationContext {
    * The first attempt's outline (./outline.ts), whole, each time it grows or
    * changes: the editor draws a skeleton per entry until the section of that
    * slot arrives. The payload is client-safe, so a caller that forwards the
-   * preview elsewhere can pass it on unchanged (the MCP generate_page does not
-   * pass it yet: slice 6 of plan docs/plans/2026-11-08-live-agent-canvas.md).
+   * preview elsewhere can pass it on unchanged (the MCP generate_page sends it
+   * to the site's open editors, src/server/sites/liveGeneration.ts).
    */
   onOutline?: (outline: PageGenOutline) => void;
 }

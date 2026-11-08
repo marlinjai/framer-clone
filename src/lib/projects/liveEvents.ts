@@ -6,9 +6,18 @@
 // (src/lib/projects/liveSync.ts), so both read one shape. Client-safe: types and
 // small pure helpers only.
 //
-// Nothing here carries content. An event says that a version exists and what it
-// touched (ids, operation names, server-written summary lines); the content comes
-// from the snapshot route (GET /api/projects/<id>/document), for every writer alike.
+// Nothing here carries content, with one exception. An event says that a version
+// exists and what it touched (ids, operation names, server-written summary lines);
+// the content comes from the snapshot route (GET /api/projects/<id>/document), for
+// every writer alike. The exception is the draft of an MCP generate_page that is
+// still running (`gen:outline`, `gen:section`, the `state` event's `generation`):
+// the model's preview of sections not saved yet, which the stream's guard (the
+// document route's own: `editSite` on the project in the caller's workspace)
+// lets only the site's editors see, which is never stored in the feed, the audit
+// table or presence, and which is bounded (GEN_DRAFT_LIMITS).
+
+import type { OutlineEntry } from '@/lib/ai/pageGen/outline';
+import type { GeneratedNodeSnapshot } from '@/lib/ai/pageGen/validate';
 
 /** Who wrote a version. */
 export type SiteWriteOrigin = 'editor' | 'mcp' | 'generate' | 'publish' | 'erasure';
@@ -203,6 +212,91 @@ export function sanitizePlanTitle(text: unknown): string | undefined {
   return label ? capChars(label, PLAN_LIMITS.titleMax) : undefined;
 }
 
+/**
+ * Where a running MCP generate_page puts its result, by id (plan section 3, "The
+ * MCP generate_page streams its draft"). A new page's title is the one the agent
+ * asked for, sanitised like a skeleton title; the editor draws the draft in place
+ * of, or inside, the named node, or as draft frames of a new page.
+ */
+export type GenDraftTarget =
+  | { kind: 'newPage'; title?: string }
+  | { kind: 'replace'; pageId: string; nodeId: string }
+  | { kind: 'insert'; pageId: string; parentId: string };
+
+/** `gen:outline`: the run's outline, whole, each time it changes (the latest replaces the earlier one). */
+export interface GenOutlineEvent {
+  /** Random per run. */
+  runId: string;
+  target: GenDraftTarget;
+  outline: OutlineEntry[];
+}
+
+/** One preview section of a running generation: its gapless index, its slot in the outline, and the section as the model wrote it. */
+export interface GenDraftSection {
+  index: number;
+  slot: number;
+  node: GeneratedNodeSnapshot;
+}
+
+/** `gen:section`: one preview section of the run, complete and valid on its own. */
+export interface GenSectionEvent extends GenDraftSection {
+  runId: string;
+  target: GenDraftTarget;
+}
+
+/**
+ * How a run ended. `saved`: the result was written at `version`; the editor
+ * drops the draft in the same step it adopts that version. Anything else wrote
+ * nothing and the draft goes at once: `stopped` (cancelled, or the MCP client
+ * went away), `failed` (the model or the server failed), `rejected` (the result
+ * could not be placed), `site_changed` (the site moved on meanwhile), `expired`
+ * (the run was given up on, GEN_DRAFT_LIMITS.runMaxMs), `superseded` (a newer
+ * generation on the same site took its place).
+ */
+export type GenDoneStatus = 'saved' | 'stopped' | 'failed' | 'rejected' | 'site_changed' | 'expired' | 'superseded';
+
+/** `gen:done`: the run ended. Sent before the `site:version` of its save. */
+export interface GenDoneEvent {
+  runId: string;
+  status: GenDoneStatus;
+  /** `saved`: the version the result was written at. */
+  version?: number;
+  /** `saved`: the ids of the result's top-level nodes, in page order (at most LIVE_LIST_MAX). */
+  insertedIds?: string[];
+  /**
+   * `saved`: for each of `insertedIds`, the index of the preview section it is
+   * identical to (what the model wrote, ids aside), or null. A section the
+   * editor drew and that the result kept as it was stays still when the result
+   * is adopted; everything else reveals.
+   */
+  drawnAs?: Array<number | null>;
+}
+
+/** The running generation of a site, as the `state` event carries it, so a reload mid-run draws the same draft. */
+export interface LiveGeneration {
+  runId: string;
+  target: GenDraftTarget;
+  outline: OutlineEntry[];
+  /** The preview sections sent so far, in index order. */
+  sections: GenDraftSection[];
+}
+
+/** The bounds of a running generation's draft on the stream. */
+export const GEN_DRAFT_LIMITS = {
+  /** A preview section larger than this (characters of its JSON) is not sent: its skeleton stays until the result. */
+  sectionChars: 96_000,
+  /** Characters of all preview sections of one run together; past this, later sections are not sent. */
+  runChars: 384_000,
+  /** Preview sections of one run. */
+  sectionsPerRun: 20,
+  /** Running generations kept for the `state` event, in the whole process (one per site). */
+  runsPerProcess: 200,
+  /** A run that has not ended after this long is given up on (`expired`). */
+  runMaxMs: 15 * 60_000,
+  /** How long the editor waits for the saved version before it drops the draft anyway (a copy held for the person). */
+  settleMs: 15_000,
+} as const;
+
 /** `state`: sent once on connect. */
 export interface SiteStateEvent {
   version: number;
@@ -216,6 +310,8 @@ export interface SiteStateEvent {
   agents: AgentActivity[];
   /** The last LIVE_FEED_MAX feed lines, newest first. */
   feed: LiveFeedLine[];
+  /** The MCP generate_page running on the site, if any: its draft so far. */
+  generation?: LiveGeneration;
 }
 
 /** Every event name the stream sends. */
@@ -224,6 +320,9 @@ export const LIVE_EVENTS = {
   siteVersion: 'site:version',
   agentActivity: 'agent:activity',
   planUpdate: 'plan:update',
+  genOutline: 'gen:outline',
+  genSection: 'gen:section',
+  genDone: 'gen:done',
   authExpired: 'auth:expired',
 } as const;
 

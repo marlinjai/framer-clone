@@ -15,6 +15,7 @@ import {
   revealPlan,
   revealPlanOfTrees,
   subtreeIds,
+  subtreeIdsInProject,
   type RevealTreeNode,
 } from '../reveal';
 
@@ -114,5 +115,18 @@ describe('revealPlan', () => {
 
   it('revealPlanOfTrees plans every node of whole new trees', () => {
     expect([...revealPlanOfTrees([node('s', node('t')), undefined]).keys()]).toEqual(['s', 't']);
+  });
+});
+
+describe('subtreeIdsInProject', () => {
+  it('collects the subtrees rooted at the named ids on every page, text nodes left out', () => {
+    const project = {
+      pages: {
+        a: { appComponentTree: { id: 'root', type: 'div', children: [{ id: 's1', type: 'section', children: [{ id: 'h', type: 'h2', children: [] }, { id: 't', type: '#text', children: [] }] }, { id: 's2', type: 'section', children: [] }] } },
+        b: { appComponentTree: { id: 'root-b', type: 'div', children: [{ id: 's3', type: 'section', children: [] }] }, canvasNodes: { f: { id: 'f', type: 'div', children: [] } } },
+      },
+    };
+    expect(subtreeIdsInProject(project, ['s1', 's3', 'missing'])).toEqual(['s1', 'h', 's3']);
+    expect(subtreeIdsInProject(project, [])).toEqual([]);
   });
 });

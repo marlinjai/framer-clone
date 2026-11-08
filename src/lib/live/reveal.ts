@@ -142,3 +142,23 @@ export function revealPlanOfTrees(roots: Iterable<RevealTreeNode | undefined | n
   const list = Array.from(roots);
   return revealPlan(list, subtreeIds(list));
 }
+
+/**
+ * Every id of the subtrees rooted at `rootIds` in a project snapshot (each page's
+ * tree and floating elements), depth first. Ids not found are left out.
+ */
+export function subtreeIdsInProject(project: { pages?: unknown } | undefined, rootIds: readonly string[]): string[] {
+  const wanted = new Set(rootIds);
+  const found: RevealTreeNode[] = [];
+  if (wanted.size === 0) return [];
+  const visit = (node: RevealTreeNode) => {
+    if (!node || typeof node.id !== 'string') return;
+    if (wanted.has(node.id)) {
+      found.push(node);
+      return;
+    }
+    for (const child of childrenOf(node)) visit(child);
+  };
+  for (const roots of projectRevealRoots(project)) for (const root of roots) visit(root);
+  return subtreeIds(found);
+}
