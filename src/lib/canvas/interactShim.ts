@@ -20,6 +20,7 @@
 //
 // No React, no MST.
 
+import { submitMethod } from '@/lib/renderer/blockedNodes';
 import { sitePathOfClick } from '@/lib/site/sitePath';
 
 export interface InteractFrameHooks {
@@ -86,18 +87,6 @@ function follow(event: MouseEvent, hooks: InteractFrameHooks): void {
   // A new tab, whatever the link's target, so the editor stays where it is.
   event.preventDefault();
   link.ownerDocument.defaultView?.open(url.href, '_blank', 'noopener,noreferrer');
-}
-
-/**
- * How a submit goes: the submitter's `formmethod` when it has one, else the form's method,
- * read as the browser reads the keyword (any case; a missing or unknown value is `get`).
- */
-function submitMethod(event: SubmitEvent): string {
-  const submitter = event.submitter;
-  const form = event.target instanceof HTMLFormElement ? event.target : null;
-  const value = submitter?.hasAttribute('formmethod') ? submitter.getAttribute('formmethod') : form?.getAttribute('method');
-  const method = (value ?? '').toLowerCase();
-  return method === 'post' || method === 'dialog' ? method : 'get';
 }
 
 /** Starts the frame's handling. Returns what stops it. */
