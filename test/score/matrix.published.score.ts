@@ -173,7 +173,23 @@ const NODE_REFERENCES: ReadonlySet<string> = new Set([
  * Every trigger of a tree with the tag it sits on. The generator gives each node a fresh id
  * and a reference follows it, so a reference to a node of the tree reads as `#node`.
  */
-function triggersIn(root: Made | StoredProofNode | undefined): Array<{ tag: string; trigger: string }> {
+/** The keys whose text names a state value. */
+const STATE_REFERENCES: ReadonlySet<string> = new Set(['set', 'toggle', 'step', 'get', 'map', 'state']);
+
+/** The state ids a tree declares. */
+function statesIn(root: Made | StoredProofNode | undefined): string[] {
+  if (!root) return [];
+  const own = ((root.props as { behaviour?: { state?: Array<{ id?: unknown }> } } | undefined)?.behaviour?.state ?? [])
+    .flatMap((entry) => (typeof entry?.id === 'string' ? [entry.id] : []));
+  return [...own, ...((root.children ?? []) as Array<Made | StoredProofNode>).flatMap(statesIn)];
+}
+
+/**
+ * The triggers of a tree, node references anonymous. `scopedSuffix` is what the generator
+ * appended to every state id it was given (scopeGeneratedState in validate.ts), taken off a
+ * state reference so the proof's trigger and the generated one compare as one.
+ */
+function triggersIn(root: Made | StoredProofNode | undefined, scopedSuffix = ''): Array<{ tag: string; trigger: string }> {
   if (!root) return [];
   const ids = new Set<string>();
   const collect = (node: Made | StoredProofNode): void => {
@@ -181,10 +197,18 @@ function triggersIn(root: Made | StoredProofNode | undefined): Array<{ tag: stri
     ((node.children ?? []) as Array<Made | StoredProofNode>).forEach(collect);
   };
   collect(root);
+  const unscoped = (v: string) => (scopedSuffix && v.endsWith(scopedSuffix) ? v.slice(0, -scopedSuffix.length) : v);
   const anonymous = (value: unknown): unknown => {
     if (Array.isArray(value)) return value.map(anonymous);
     if (!value || typeof value !== 'object') return value;
-    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, NODE_REFERENCES.has(k) && typeof v === 'string' && ids.has(v) ? '#node' : anonymous(v)]));
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [
+      k,
+      NODE_REFERENCES.has(k) && typeof v === 'string' && ids.has(v)
+        ? '#node'
+        : STATE_REFERENCES.has(k) && typeof v === 'string'
+          ? unscoped(v)
+          : anonymous(v),
+    ]));
   };
   const walk = (node: Made | StoredProofNode): Array<{ tag: string; trigger: string }> => {
     const behaviour = (node.props as { behaviour?: { on?: unknown[] } } | undefined)?.behaviour;
@@ -216,7 +240,9 @@ function generatedEvent(event: string, key: string): Cell {
   const tree = proofNode('proof-root', 'div', { behaviour: { state } }, ...proof.tree({ on: [trigger] }));
   const made = generate(tree as unknown as Record<string, unknown>);
   const before = triggersIn(tree);
-  const after = triggersIn(made.node);
+  // The generator scopes every state id it is given; the proof's own `hit` shows by how much.
+  const scopedHit = statesIn(made.node).find((id) => id.startsWith('hit-'));
+  const after = triggersIn(made.node, scopedHit ? scopedHit.slice('hit'.length) : '');
   const own = stableStringify(trigger);
   const host = before.find((entry) => entry.trigger === own)?.tag;
   const same = (a: { tag: string; trigger: string }, b: { tag: string; trigger: string }) => a.tag === b.tag && a.trigger === b.trigger;

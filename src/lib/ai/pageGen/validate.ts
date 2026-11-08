@@ -141,6 +141,7 @@ import {
   BEHAVIOUR_PROP,
   namesCustomCodeProp,
   PRESET_CLOSED_TAGS,
+  PRESET_NO_FLOW_PARENT_TAGS,
   CUSTOM_CODE_REASON,
   MAX_GENERATED_PRESETS,
   MAX_GENERATED_TRIGGERS,
@@ -234,9 +235,10 @@ export interface ValidateContext {
   mapAddress?: string | null;
   /**
    * For a generation placed inside an existing page: the nearest tag of PRESET_CLOSED_TAGS
-   * the generated nodes would stand under (closedAncestorOf), so a preset request among them
-   * is refused there as it is under a model-written one. Anything outside that set is
-   * ignored, since the value crosses the wire. Defaults to none: a new page.
+   * the generated nodes would stand under, or their parent when it takes no flow content
+   * (closedAncestorOf), so a preset request among them is refused there as it is under a
+   * model-written one. Anything outside those sets is ignored, since the value crosses the
+   * wire. Defaults to none: a new page.
    */
   closedAncestor?: string;
 }
@@ -671,14 +673,16 @@ class Validator {
     parentId: string | undefined,
     namespace: MarkupNamespace,
     closedAncestor: string | undefined,
+    noFlowParent: string | undefined,
   ): GeneratedNodeSnapshot[] {
     const name = raw.preset as string;
     if (namespace !== 'html') {
       this.warn(path, `preset "${name}" cannot sit inside svg or math, dropped`);
       return [];
     }
-    if (closedAncestor !== undefined) {
-      this.warn(path, `preset "${name}" cannot sit inside <${closedAncestor}>, dropped: its buttons, lists and panels are not allowed there`);
+    const refusing = closedAncestor ?? noFlowParent;
+    if (refusing !== undefined) {
+      this.warn(path, `preset "${name}" cannot sit inside <${refusing}>, dropped: its buttons, lists and panels are not allowed there`);
       return [];
     }
     for (const key of Object.keys(raw)) {
@@ -1115,7 +1119,8 @@ class Validator {
 
   /**
    * One node and its subtree. `closedAncestor` is the nearest ancestor tag a preset may not
-   * sit inside (PRESET_CLOSED_TAGS), since a preset's markup there is invalid HTML.
+   * sit inside (PRESET_CLOSED_TAGS), and `noFlowParent` the parent's tag when it takes no
+   * flow content (PRESET_NO_FLOW_PARENT_TAGS), since a preset's markup there is invalid HTML.
    */
   node(
     raw: unknown,
@@ -1124,6 +1129,7 @@ class Validator {
     parentId?: string,
     namespace: MarkupNamespace = 'html',
     closedAncestor?: string,
+    noFlowParent?: string,
   ): GeneratedNodeSnapshot[] {
     if (!isPlainObject(raw)) {
       this.fail(path, 'node must be an object');
@@ -1136,7 +1142,7 @@ class Validator {
       return [];
     }
     const behaviourPreset = behaviourPresetOf(raw.preset);
-    if (behaviourPreset) return this.presetRequest(behaviourPreset, raw, path, depth, parentId, namespace, closedAncestor);
+    if (behaviourPreset) return this.presetRequest(behaviourPreset, raw, path, depth, parentId, namespace, closedAncestor, noFlowParent);
     for (const key of Object.keys(raw)) {
       if (!NODE_KEYS.has(key) && !OWNED_KEYS.has(key)) this.warn(path, `unknown key "${key}" ignored`);
     }
@@ -1422,7 +1428,15 @@ class Validator {
           this.warn(childPath, `a #text node cannot sit directly inside <${type}>, dropped`);
           return;
         }
-        children.push(...this.node(child, childPath, depth + 1, id, childNamespace(type, namespace), closedAncestor ?? (PRESET_CLOSED_TAGS.has(type) ? type : undefined)));
+        children.push(...this.node(
+          child,
+          childPath,
+          depth + 1,
+          id,
+          childNamespace(type, namespace),
+          closedAncestor ?? (PRESET_CLOSED_TAGS.has(type) ? type : undefined),
+          PRESET_NO_FLOW_PARENT_TAGS.has(type) ? type : undefined,
+        ));
       });
       this.addToCartIntoSelector(path, children);
     }
@@ -1512,6 +1526,81 @@ function walkWithPresets(nodes: GeneratedNodeSnapshot[], presetRoots: ReadonlySe
   return out;
 }
 
+/** A state id as the parser takes one (format.ts STATE_ID). */
+const GENERATED_STATE_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+/** The keys whose text names a state value: the verbs, `get`, `map` and a condition's `state`. */
+const STATE_REFERENCE_KEYS: ReadonlySet<string> = new Set(['set', 'toggle', 'step', 'get', 'map', 'state']);
+/** Past any depth the parser accepts: what is deeper is refused anyway. */
+const MAX_STATE_SCOPE_DEPTH = 64;
+
+/**
+ * The state the model declares, scoped to this generation: every id becomes
+ * `<id>-<scope token>`, as a preset's state carries its seed, and every reference to it
+ * inside the generation follows. Without it a generation placed under a node that already
+ * declares the same id ("open", the prompt's own example) would have its declaration
+ * refused at render and its triggers and conditions bound to the page's value instead.
+ * A preset's nodes are left alone: their state already carries the preset's seed.
+ */
+function scopeGeneratedState(forest: GeneratedNodeSnapshot[], v: Validator): void {
+  const own = walkWithPresets(forest, v.presetRoots).filter(({ preset }) => preset === undefined).map(({ node }) => node);
+  const declared = new Set<string>();
+  for (const node of own) {
+    const behaviour = node.props[BEHAVIOUR_PROP];
+    if (!isPlainObject(behaviour) || !Array.isArray(behaviour.state)) continue;
+    for (const entry of behaviour.state) {
+      if (isPlainObject(entry) && typeof entry.id === 'string' && GENERATED_STATE_ID.test(entry.id)) declared.add(entry.id);
+    }
+  }
+  if (declared.size === 0) return;
+  const token = v.scopeToken();
+  const scoped = new Map([...declared].map((id) => [id, `${id.slice(0, 64 - token.length - 1)}-${token}`]));
+  const rename = (value: unknown): unknown => (typeof value === 'string' ? (scoped.get(value) ?? value) : value);
+  const rewrite = (value: unknown, depth: number): unknown => {
+    if (depth > MAX_STATE_SCOPE_DEPTH || !value || typeof value !== 'object') return value;
+    if (Array.isArray(value)) return value.map((entry) => rewrite(entry, depth + 1));
+    const out: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      if (key === 'state' && Array.isArray(entry)) {
+        // The declarations: each one's id is scoped, the rest of it is plain data.
+        out[key] = entry.map((decl) => (isPlainObject(decl) ? { ...decl, id: rename(decl.id) } : decl));
+      } else if (STATE_REFERENCE_KEYS.has(key) && typeof entry === 'string') {
+        out[key] = rename(entry);
+      } else if (key === 'cases' && isPlainObject(entry)) {
+        // A map's case names are its own text, never state ids.
+        out[key] = Object.fromEntries(Object.entries(entry).map(([name, expr]) => [name, rewrite(expr, depth + 1)]));
+      } else {
+        out[key] = rewrite(entry, depth + 1);
+      }
+    }
+    return out;
+  };
+  for (const node of own) {
+    if (node.props[BEHAVIOUR_PROP] !== undefined) node.props[BEHAVIOUR_PROP] = rewrite(node.props[BEHAVIOUR_PROP], 0);
+  }
+}
+
+/**
+ * Model-written behaviour without the marks only a preset carries: the node's own `preset`
+ * and `preset: true` on its state, triggers and bindings. A mark tells the panel and the
+ * palette that a preset made the entry, which a generation must not claim for its own.
+ */
+function withoutPresetMarks(parsed: StoredBehaviour): StoredBehaviour {
+  const unmark = <T extends { preset?: true }>(entries: T[] | undefined): T[] | undefined =>
+    entries?.map((entry) => {
+      if (!('preset' in entry)) return entry;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { preset, ...rest } = entry;
+      return rest as T;
+    });
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { preset, ...rest } = parsed;
+  const out: StoredBehaviour = { ...rest };
+  if (rest.state) out.state = unmark(rest.state);
+  if (rest.on) out.on = unmark(rest.on);
+  if (rest.bind) out.bind = unmark(rest.bind);
+  return out;
+}
+
 /** The forest without the nodes whose ids are given, and their subtrees. */
 function withoutNodes(nodes: GeneratedNodeSnapshot[], ids: ReadonlySet<string>): GeneratedNodeSnapshot[] {
   return nodes.filter((node) => !ids.has(node.id)).map((node) => (node.children.length > 0 ? { ...node, children: withoutNodes(node.children, ids) } : node));
@@ -1530,12 +1619,24 @@ function withoutNodes(nodes: GeneratedNodeSnapshot[], ids: ReadonlySet<string>):
  * wrote.
  *
  * The forest is read under a root with no id, so nothing can name it, and with no state,
- * so a value the model declares is in reach only of the nodes inside the one declaring it.
- * State the page already holds is out of reach here: a reference to it is refused.
+ * so a value the model declares is in reach only of the nodes inside the one declaring it,
+ * and a reference to state the page already holds is refused. Every id the model declares
+ * is scoped to this generation first (scopeGeneratedState), so once the result is placed
+ * under a node that declares the same id, the two are still two values and the page's
+ * read refuses neither.
  */
 function applyGeneratedBehaviour(nodes: GeneratedNodeSnapshot[], v: Validator): GeneratedNodeSnapshot[] {
   const handles = v.handleMap();
-  let forest = handles.size > 0 ? nodes.map((node) => remapBehaviourRefs(node, handles)) : nodes;
+  let forest = nodes;
+  // The model's handles name its own nodes, so only its own behaviour follows them: a
+  // handle equal to an id inside a preset must not turn the preset's references.
+  if (handles.size > 0) {
+    for (const { node, preset } of walkWithPresets(forest, v.presetRoots)) {
+      if (preset !== undefined || node.props[BEHAVIOUR_PROP] === undefined) continue;
+      node.props = remapBehaviourRefs({ type: node.type, props: node.props, children: [] } as BehaviourNode, handles).props as Record<string, unknown>;
+    }
+  }
+  scopeGeneratedState(forest, v);
 
   for (;;) {
     const read = readBehaviourTree({ type: 'div', props: {}, children: forest } as BehaviourNode);
@@ -1570,8 +1671,9 @@ function applyGeneratedBehaviour(nodes: GeneratedNodeSnapshot[], v: Validator): 
         delete node.props[BEHAVIOUR_PROP];
         continue;
       }
-      const kept: StoredBehaviour = { ...parsed };
-      const triggers = (parsed.on ?? []).filter((trigger) => {
+      // A preset's marks say the palette wrote it, which only a preset's own nodes may say.
+      const kept: StoredBehaviour = preset === undefined ? withoutPresetMarks(parsed) : { ...parsed };
+      const triggers = (kept.on ?? []).filter((trigger) => {
         const refusal = generatedTriggerRefusal(trigger, preset !== undefined);
         if (refusal) {
           v.warnings.push(`${node.label}: behaviour trigger "${trigger.id}" dropped: ${refusal}`);
@@ -2073,8 +2175,10 @@ export function validateGeneration(raw: unknown, ctx: ValidateContext): Validati
   }
 
   const parsed: GeneratedNodeSnapshot[] = [];
-  const closedAncestor = ctx.closedAncestor !== undefined && PRESET_CLOSED_TAGS.has(ctx.closedAncestor) ? ctx.closedAncestor : undefined;
-  raw.nodes.forEach((n, i) => parsed.push(...v.node(n, `nodes[${i}]`, 1, undefined, 'html', closedAncestor)));
+  const placedUnder = typeof ctx.closedAncestor === 'string' ? ctx.closedAncestor.toLowerCase() : undefined;
+  const closedAncestor = placedUnder !== undefined && PRESET_CLOSED_TAGS.has(placedUnder) ? placedUnder : undefined;
+  const noFlowParent = placedUnder !== undefined && PRESET_NO_FLOW_PARENT_TAGS.has(placedUnder) ? placedUnder : undefined;
+  raw.nodes.forEach((n, i) => parsed.push(...v.node(n, `nodes[${i}]`, 1, undefined, 'html', closedAncestor, noFlowParent)));
   v.addToCartIntoSelector('nodes', parsed);
   // Decided before any svg is dropped: a page past the limit was cut short, and must not pass for being under it.
   const overLimit = v.nodeCount > GENERATION_LIMITS.maxNodes;

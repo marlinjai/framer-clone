@@ -160,7 +160,11 @@ export function buildRequest(input: {
   // ~8k tokens of context, the same budget the edit route's page serializer uses.
   const context = component ? serializeSubtree(component, { maxTokens: 8000 }) : null;
   const closedAncestor = page && target.componentId
-    ? closedAncestorOf(page.appComponentTree as ComponentInstance, target.componentId, target.kind)
+    ? closedAncestorOf(
+      [page.appComponentTree as ComponentInstance, ...(page.canvasNodes.values() as Iterable<ComponentInstance>)],
+      target.componentId,
+      target.kind,
+    )
     : undefined;
   return { ...base, target: { kind: target.kind, context, ...(closedAncestor ? { closedAncestor } : {}) } };
 }

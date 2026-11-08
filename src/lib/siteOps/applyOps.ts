@@ -439,7 +439,11 @@ export async function applyOperations(
             ...(deps.newId ? { newId: deps.newId } : {}),
             mapAddress: address || null,
             // No preset under a button, link or the like the parent stands in (validate.ts).
-            closedAncestor: closedAncestorOf(page.appComponentTree as ComponentInstance, parent.id, 'insert'),
+            closedAncestor: closedAncestorOf(
+              [page.appComponentTree as ComponentInstance, ...(page.canvasNodes.values() as Iterable<ComponentInstance>)],
+              parent.id,
+              'insert',
+            ),
           },
         );
         if (!outcome.ok) throw new OpRefused(refusalOf(outcome));

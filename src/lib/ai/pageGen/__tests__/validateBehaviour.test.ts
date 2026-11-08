@@ -4,7 +4,13 @@
 // through. See docs/plans/2026-11-02-behaviour-model.md, "AI output".
 import { describe, expect, it } from 'vitest';
 import ComponentModel from '@/models/ComponentModel';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { readBehaviourTree, type BehaviourNode } from '@/lib/behaviour/format';
+import { startBehaviour } from '@/lib/behaviour/runtime';
+import { createVerbs, isOpen, isTextEntry, keysAnswer, pointerAt, selectionAt, viewObserver } from '@/lib/behaviour/verbs';
+import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
+import { applyBehaviour } from '@/lib/renderer/server/applyBehaviour';
+import { renderComponentNode } from '@/lib/renderer/server/renderComponentNode';
 import { carousel } from '@/lib/behaviour/presets/carousel';
 import { combobox } from '@/lib/behaviour/presets/combobox';
 import { feed } from '@/lib/behaviour/presets/feed';
@@ -28,11 +34,41 @@ const breakpoints = deriveBreakpointKeys([
   { label: 'Mobile', minWidth: 320 },
 ]);
 
-function run(nodes: unknown[]) {
+/**
+ * Every state id the model declares comes back scoped to the generation (`open` as
+ * `open-id4`, scopeGeneratedState). The tests below compare what the model wrote, so
+ * `run` takes the scope token off again; scoped() keeps it, and the tests of the scoping
+ * itself use it.
+ */
+const STATE_KEYS = new Set(['set', 'toggle', 'step', 'get', 'map', 'state']);
+const SCOPE_TOKEN = /-id\d+$/;
+function descope(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(descope);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([key, entry]) => {
+    if (key === 'state' && Array.isArray(entry)) {
+      return [key, entry.map((decl) => (decl && typeof decl === 'object' && typeof decl.id === 'string' ? { ...decl, id: decl.id.replace(SCOPE_TOKEN, '') } : decl))];
+    }
+    if (STATE_KEYS.has(key) && typeof entry === 'string') return [key, entry.replace(SCOPE_TOKEN, '')];
+    return [key, descope(entry)];
+  }));
+}
+
+function scoped(nodes: unknown[]) {
   let n = 0;
   const out = validateGeneration({ nodes }, { breakpoints, newId: () => `id${(n += 1)}` });
   if (!out.ok) throw new Error(out.errors.join('; '));
   return out.result;
+}
+
+function run(nodes: unknown[]) {
+  const result = scoped(nodes);
+  const unscope = (node: GeneratedNodeSnapshot): GeneratedNodeSnapshot => ({
+    ...node,
+    props: node.props.behaviour === undefined ? node.props : { ...node.props, behaviour: descope(node.props.behaviour) },
+    children: node.children.map(unscope),
+  });
+  return { ...result, nodes: result.nodes.map(unscope) };
 }
 
 const flag = (id: string, initial = false) => ({ id, name: id, type: 'boolean', initial });
@@ -132,6 +168,93 @@ describe('behaviour the model writes itself', () => {
     expect(triggersOf(button).map((t) => t.id)).toEqual(['press']);
     expect(behaviourOf(button)?.bind).toEqual([{ attr: 'aria-expanded', from: { get: 'open' } }]);
     expect(warnings.filter((w) => w.includes('dropped'))).toHaveLength(3);
+  });
+
+  it('scopes the state the model declares to the generation, references and all', () => {
+    const { nodes } = scoped([reveal()]);
+    const [section] = nodes;
+    const id = (behaviourOf(section)?.state as Array<{ id: string }>)[0].id;
+    expect(id).toMatch(/^open-[a-z0-9]+$/);
+    expect(triggersOf(section.children[0])[0].do).toEqual([{ toggle: id }]);
+    expect(behaviourOf(section.children[0])?.bind).toEqual([{ attr: 'aria-expanded', from: { get: id } }]);
+    expect(behaviourOf(section.children[1])?.showWhen).toEqual({ state: id, eq: true });
+    // A map's case names are its own text, never a state id.
+    const mapped = scoped([{
+      type: 'div',
+      props: { behaviour: { state: [{ id: 'mode', name: 'Mode', type: 'choice', initial: 'open', options: ['open', 'shut'] }] } },
+      children: [{ type: 'p', props: { children: 'x', behaviour: { bind: [{ attr: 'data-u-mode', from: { map: 'mode', cases: { open: 'yes', shut: 'no' } } }] } } }],
+    }]).nodes[0];
+    const modeId = (behaviourOf(mapped)?.state as Array<{ id: string }>)[0].id;
+    expect(behaviourOf(mapped.children[0])?.bind).toEqual([{ attr: 'data-u-mode', from: { map: modeId, cases: { open: 'yes', shut: 'no' } } }]);
+  });
+
+  it('keeps its own value when placed under a node that declares the same id', async () => {
+    const { nodes } = scoped([reveal()]);
+    // The page holds "open" too, above where the generation lands (the prompt's own example).
+    const page = {
+      id: 'page-root',
+      type: 'div',
+      props: { behaviour: { state: [flag('open')] } },
+      children: [{ id: 'page-flag', type: 'p', props: { children: 'Page', behaviour: { showWhen: { state: 'open', eq: true } } }, children: [] }, ...nodes],
+    };
+    expect(readBehaviourTree(page as unknown as BehaviourNode).refused).toEqual([]);
+    const compiled = applyBehaviour(page as unknown as ComponentNode);
+    document.body.innerHTML = renderToStaticMarkup(renderComponentNode(compiled.root));
+    const stop = startBehaviour({
+      container: document,
+      program: compiled.program!,
+      surface: 'preview',
+      verbs: createVerbs,
+      extras: { keysAnswer, isTextEntry, pointerAt, isOpen, viewObserver, selectionAt },
+    });
+    try {
+      const id = (behaviourOf(nodes[0])?.state as Array<{ id: string }>)[0].id;
+      const scopes = [...document.querySelectorAll('[data-fc-scope]')];
+      const pageScope = scopes.find((el) => el.hasAttribute('data-fcs-open'));
+      const ownScope = scopes.find((el) => el.hasAttribute(`data-fcs-${id}`));
+      expect(pageScope).toBeDefined();
+      expect(ownScope).toBeDefined();
+      (document.querySelector('button') as HTMLButtonElement).click();
+      expect(ownScope?.getAttribute(`data-fcs-${id}`)).toBe('true');
+      expect(pageScope?.getAttribute('data-fcs-open')).toBe('false');
+    } finally {
+      stop();
+      document.body.innerHTML = '';
+    }
+  });
+
+  it('takes off the marks only a preset may carry', () => {
+    const { nodes } = run([{
+      type: 'section',
+      props: { behaviour: { preset: { kind: 'tabs', version: 1 }, state: [{ ...flag('open'), preset: true }] } },
+      children: [{
+        type: 'button',
+        props: {
+          type: 'button',
+          children: 'Show',
+          behaviour: {
+            on: [{ id: 'press', on: 'click', do: [{ toggle: 'open' }], preset: true }],
+            bind: [{ attr: 'aria-expanded', from: { get: 'open' }, preset: true }],
+          },
+        },
+      }],
+    }]);
+    expect(behaviourOf(nodes[0])).toEqual({ state: [flag('open')] });
+    expect(behaviourOf(nodes[0].children[0])).toEqual({
+      on: [{ id: 'press', on: 'click', do: [{ toggle: 'open' }] }],
+      bind: [{ attr: 'aria-expanded', from: { get: 'open' } }],
+    });
+  });
+
+  it('refuses scope on a trigger the model wrote: it hears its own node only', () => {
+    const { nodes, warnings } = run([reveal({ on: [{ id: 'esc', on: 'keydown', scope: 'document', keys: ['Escape'], do: [{ set: 'open', value: false }] }] })]);
+    expect(triggersOf(nodes[0].children[0])).toEqual([]);
+    expect(warnings.join(' ')).toContain('scope is refused');
+    // The tooltip preset's own Escape on the document stays.
+    const tip = run([{ preset: 'tooltip', options: { label: 'Save', text: 'Saves' } }]);
+    const all = (node: GeneratedNodeSnapshot): GeneratedNodeSnapshot[] => [node, ...node.children.flatMap(all)];
+    expect(all(tip.nodes[0]).flatMap(triggersOf).some((t) => t.scope === 'document')).toBe(true);
+    expect(tip.warnings).toEqual([]);
   });
 
   it('keeps a value in reach only of the nodes inside the one declaring it', () => {
@@ -341,20 +464,32 @@ describe('behaviour presets the model asks for', () => {
   });
 
   it('drops a preset whole when any part of it does not hold where it stands', () => {
-    // The model declares the preset's own state above it, so the preset's state is refused there.
-    let n = 0;
-    const newId = () => `id${(n += 1)}`;
+    // A variant selector is a commerce island, which owns the fields under it: the tabs'
+    // own state and bindings are refused there, so the tabs go whole.
     const out = validateGeneration({
-      nodes: [{
-        type: 'div',
-        props: { behaviour: { state: [{ id: 'tabs-id2-active', name: 'Taken', type: 'number', initial: 0 }] } },
-        children: [{ preset: 'tabs', items: [{ title: 'One', body: 'First' }, { title: 'Two', body: 'Second' }], options: { label: 'S' } }],
-      }],
-    }, { breakpoints, newId });
+      nodes: [{ type: 'div', preset: 'variantSelector', children: [{ preset: 'tabs', items: [{ title: 'One', body: 'First' }, { title: 'Two', body: 'Second' }], options: { label: 'S' } }] }],
+    }, { breakpoints });
     if (!out.ok) throw new Error(out.errors.join('; '));
     expect(out.result.nodes[0].children).toEqual([]);
     expect(out.result.warnings.join(' ')).toContain('preset dropped, its behaviour does not hold here');
     expect(out.result.stats.nodeCount).toBe(1);
+  });
+
+  it('keeps a model handle from turning a preset\'s own references', () => {
+    // A node the model names with an id a preset uses inside it must not take the preset's references.
+    const tabsRequest = { preset: 'tabs', items: [{ title: 'One', body: 'First' }, { title: 'Two', body: 'Second' }], options: { label: 'S' } };
+    let n = 0;
+    const first = validateGeneration({ nodes: [tabsRequest] }, { breakpoints, newId: () => `id${(n += 1)}` });
+    if (!first.ok) throw new Error(first.errors.join('; '));
+    const all = (node: GeneratedNodeSnapshot): GeneratedNodeSnapshot[] => [node, ...node.children.flatMap(all)];
+    const inner = all(first.result.nodes[0]).slice(1).map((node) => node.id);
+    n = 0;
+    const out = validateGeneration({
+      nodes: [tabsRequest, ...inner.map((id) => ({ id, type: 'p', props: { children: 'Decoy', tabIndex: -1 } }))],
+    }, { breakpoints, newId: () => `id${(n += 1)}` });
+    if (!out.ok) throw new Error(out.errors.join('; '));
+    expect(out.result.warnings).toEqual([]);
+    expect(all(out.result.nodes[0]).map((node) => node.props.behaviour)).toEqual(all(first.result.nodes[0]).map((node) => node.props.behaviour));
   });
 
   it('keeps a preset\'s own triggers on events the model may not write itself', () => {
@@ -398,6 +533,21 @@ describe('behaviour presets the model asks for', () => {
     }
   });
 
+  it('finds a no-flow parent, a tag in any case, and a floating canvas node', () => {
+    const tree = { id: 'root', type: 'div', children: [
+      { id: 'list', type: 'ul', children: [{ id: 'item', type: 'li', children: [] }] },
+      { id: 'upper', type: 'BUTTON', children: [{ id: 'label', type: 'span', children: [] }] },
+    ] };
+    const floating = { id: 'float', type: 'button', children: [{ id: 'float-inner', type: 'span', children: [] }] };
+    expect(closedAncestorOf(tree, 'list', 'insert')).toBe('ul');
+    expect(closedAncestorOf(tree, 'item', 'insert')).toBeUndefined();
+    expect(closedAncestorOf(tree, 'item', 'replace')).toBe('ul');
+    expect(closedAncestorOf(tree, 'label', 'insert')).toBe('button');
+    expect(closedAncestorOf([tree, floating], 'float-inner', 'insert')).toBe('button');
+    expect(closedAncestorOf([tree, floating], 'float', 'insert')).toBe('button');
+    expect(closedAncestorOf(tree, 'float-inner', 'insert')).toBeUndefined();
+  });
+
   it('finds the nearest closed element a placed generation stands under', () => {
     const tree = { id: 'root', type: 'div', children: [
       { id: 'card', type: 'section', children: [{ id: 'para', type: 'p', children: [{ id: 'em', type: 'em', children: [] }] }] },
@@ -415,6 +565,28 @@ describe('behaviour presets the model asks for', () => {
     expect(closedAncestorOf(tree, 'missing', 'insert')).toBeUndefined();
   });
 
+  it.each(['ul', 'ol', 'dl', 'table', 'thead', 'tbody', 'tfoot', 'tr', 'colgroup'])('keeps a preset from being a direct child of <%s>', (tag) => {
+    const { nodes, warnings } = run([{ type: tag, children: [{ preset: 'menu-button', items: ['Copy', 'Paste'], options: { label: 'Actions' } }] }]);
+    expect(nodes[0]?.children ?? []).toEqual([]);
+    expect(warnings.join(' ')).toContain(`cannot sit inside <${tag}>`);
+  });
+
+  it('places a preset in a list item or a table cell, which take flow content again', () => {
+    const item = run([{ type: 'ul', children: [{ type: 'li', children: [{ preset: 'menu-button', items: ['Copy', 'Paste'], options: { label: 'Actions' } }] }] }]);
+    expect(item.nodes[0].children[0].children).toHaveLength(1);
+    expect(item.warnings.join(' ')).not.toContain('cannot sit inside');
+    const cell = run([{ type: 'table', children: [{ type: 'tbody', children: [{ type: 'tr', children: [{ type: 'td', children: [{ preset: 'menu-button', items: ['Copy', 'Paste'], options: { label: 'Actions' } }] }] }] }] }]);
+    const td = cell.nodes[0].children[0].children[0].children[0];
+    expect(td.children).toHaveLength(1);
+  });
+
+  it('reads a no-flow parent from the placement context, for the top-level nodes only', () => {
+    const out = validateGeneration({ nodes: [{ preset: 'menu-button', items: ['Copy', 'Paste'], options: { label: 'Actions' } }, { type: 'li', children: [{ preset: 'menu-button', items: ['Copy', 'Paste'], options: { label: 'Actions' } }] }] }, { breakpoints, closedAncestor: 'UL' });
+    if (!out.ok) throw new Error(out.errors.join('; '));
+    expect(out.result.nodes.map((node) => node.type)).toEqual(['li']);
+    expect(out.result.nodes[0].children).toHaveLength(1);
+  });
+
   it('places a preset inside a section, a list item or a div', () => {
     for (const tag of ['section', 'div', 'article']) {
       const { nodes, warnings } = run([{ type: tag, children: [{ preset: 'menu-button', items: ['Copy', 'Paste'], options: { label: 'Actions' } }] }]);
@@ -424,16 +596,12 @@ describe('behaviour presets the model asks for', () => {
   });
 
   it('says how many nodes the model wrote when it is over the limit, a dropped preset included', () => {
-    // The preset comes first so it is counted, and the model's state above it makes it not hold:
-    // it is dropped after the limit was decided, and the error must not count without it.
+    // The preset comes first so it is counted, and the variant selector around it makes it not
+    // hold: it is dropped after the limit was decided, and the error must not count without it.
     let n = 0;
     const out = validateGeneration({
       nodes: [
-        {
-          type: 'div',
-          props: { behaviour: { state: [{ id: 'tabs-id2-active', name: 'Taken', type: 'number', initial: 0 }] } },
-          children: [{ preset: 'tabs', items: [{ title: 'One', body: 'First' }, { title: 'Two', body: 'Second' }], options: { label: 'S' } }],
-        },
+        { type: 'div', preset: 'variantSelector', children: [{ preset: 'tabs', items: [{ title: 'One', body: 'First' }, { title: 'Two', body: 'Second' }], options: { label: 'S' } }] },
         ...Array.from({ length: GENERATION_LIMITS.maxNodes + 20 }, (_, i) => ({ type: 'p', props: { children: `Filler ${i}` } })),
       ],
     }, { breakpoints, newId: () => `id${(n += 1)}` });

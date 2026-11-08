@@ -61,7 +61,7 @@
 // timeout) finds each photo's subject for its crop (src/lib/ai/pageGen/focalPoints.ts);
 // it is logged as its own AI call and never fails the generation.
 
-import { PRESET_CLOSED_TAGS } from '@/lib/ai/pageGen/promptSections/behaviour';
+import { isPresetRefusingTag } from '@/lib/ai/pageGen/promptSections/behaviour';
 import { z } from 'zod';
 import type Anthropic from '@anthropic-ai/sdk';
 import { withAuthAvailability } from '@/lib/authBrainAvailability';
@@ -104,10 +104,10 @@ const BreakpointSchema = z.object({
   minWidth: z.number().int().min(0).max(10_000),
 });
 
-/** The nearest element a preset may not sit inside, one of PRESET_CLOSED_TAGS (protocol.ts). */
+/** The element that keeps a preset out of the result, one of the tags closedAncestorOf names (protocol.ts). */
 const ClosedAncestorSchema = z
   .string()
-  .refine((tag) => PRESET_CLOSED_TAGS.has(tag), 'not an element a preset is refused under')
+  .refine((tag) => isPresetRefusingTag(tag), 'not an element a preset is refused under')
   .optional();
 
 const TargetSchema = z.discriminatedUnion('kind', [

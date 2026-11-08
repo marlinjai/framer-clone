@@ -201,6 +201,23 @@ describe('applyOperations: refusals write nothing', () => {
     expect(find(project, 'hero')?.children).toHaveLength(2);
   });
 
+  it('rejects a preset inserted into a floating canvas button', async () => {
+    const snapshot = JSON.parse(JSON.stringify(getSnapshot(makeProject())));
+    snapshot.pages.home.canvasNodes.float = {
+      id: 'float',
+      type: 'button',
+      componentType: 'host',
+      props: { type: 'button' },
+      canvasX: 0,
+      canvasY: 0,
+      children: [{ id: 'float-inner', type: 'span', componentType: 'host', parentId: 'float', props: {}, children: [] }],
+    };
+    const project = ProjectModel.create(snapshot);
+    const outcome = await run(project, [{ op: 'insertNodes', pageId: 'home', parentId: 'float-inner', nodes: [{ preset: 'menu-button', items: ['Copy', 'Paste'], options: { label: 'Actions' } }] }]);
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) expect(outcome.rejected[0].reason).toContain('cannot sit inside <button>');
+  });
+
   it('rejects a handler prop and a javascript link', async () => {
     expect((await refused([{ op: 'setProps', nodeId: 'link', props: { onclick: 'alert(1)' } }]))[0].reason).toMatch(/onclick/);
     expect((await refused([{ op: 'setProps', nodeId: 'link', props: { href: 'javascript:alert(1)' } }]))[0].reason).toMatch(/href/);

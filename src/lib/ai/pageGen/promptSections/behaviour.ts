@@ -107,13 +107,15 @@ export const PERSON_TRIGGER_REFUSALS = {
   event: "a generated trigger runs on a person's click, key or input only",
   delay: 'a generated trigger runs at once: delay is refused',
   emit: 'a generated trigger fires no other trigger: emit is refused',
+  scope: 'a generated trigger hears its own node only: scope is refused',
 } as const;
 
 /**
  * Why the generator may not keep this parsed trigger, or null. A preset's triggers are the
  * palette's own and only lose `every` and a `navigate` that leaves the site; a trigger the
- * model wrote also runs only on a person's event, and never waits (`delay`) or fires
- * another trigger (`emit`), so nothing it writes runs without a person.
+ * model wrote also runs only on a person's event, hears only its own node (no `scope`),
+ * and never waits (`delay`) or fires another trigger (`emit`), so nothing it writes runs
+ * without a person.
  */
 export function generatedTriggerRefusal(trigger: Trigger, fromPreset = false): string | null {
   if (trigger.on === 'every') return 'nothing generated runs on a timer: every is refused';
@@ -122,6 +124,7 @@ export function generatedTriggerRefusal(trigger: Trigger, fromPreset = false): s
     if ('navigate' in action && leavesSite(action.navigate)) return 'a generated navigate goes to a site path or an anchor only';
   }
   if (fromPreset) return null;
+  if (trigger.scope !== undefined) return PERSON_TRIGGER_REFUSALS.scope;
   if (!GENERATED_TRIGGER_EVENTS.has(trigger.on)) {
     return `${PERSON_TRIGGER_REFUSALS.event}: "${trigger.on}" is refused`;
   }
@@ -141,6 +144,16 @@ export function generatedTriggerRefusal(trigger: Trigger, fromPreset = false): s
  */
 export const PRESET_CLOSED_TAGS: ReadonlySet<string> = new Set(['a', 'button', 'label', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'summary']);
 
+/**
+ * Elements whose content model takes no flow content, so the HTML parser moves a div, a
+ * list or a button out of them: a preset may not be their direct child. Their own children
+ * (li, td, th, dt, dd, caption) take flow content again, so the refusal stops there.
+ */
+export const PRESET_NO_FLOW_PARENT_TAGS: ReadonlySet<string> = new Set(['table', 'thead', 'tbody', 'tfoot', 'tr', 'colgroup', 'ul', 'ol', 'dl']);
+
+/** Whether a preset is refused as a child of this tag, directly or at some depth. */
+export const isPresetRefusingTag = (tag: string): boolean => PRESET_CLOSED_TAGS.has(tag) || PRESET_NO_FLOW_PARENT_TAGS.has(tag);
+
 /** A node of any tree a generation can be placed into: the editor's, the stored one, a snapshot. */
 interface PlacedNode {
   id: string;
@@ -149,12 +162,15 @@ interface PlacedNode {
 }
 
 /**
- * The nearest tag of PRESET_CLOSED_TAGS that nodes placed at `targetId` would stand under,
- * or undefined. An insert puts them inside the target, so the target counts; a replace puts
- * them where the target stands, so only its ancestors do, except for the tree's root, whose
- * children a replace takes the place of. Unknown ids give undefined.
+ * The element that keeps a preset out of nodes placed at `targetId`, or undefined: the
+ * nearest tag of PRESET_CLOSED_TAGS they would stand under at any depth, else their direct
+ * parent when it is one of PRESET_NO_FLOW_PARENT_TAGS. An insert puts them inside the
+ * target, so the target counts and is the parent; a replace puts them where the target
+ * stands, so only its ancestors do and its parent is the parent, except for a tree's root,
+ * whose children a replace takes the place of. Every root is searched (the page tree and
+ * each floating canvas node), tags compared in lower case. Unknown ids give undefined.
  */
-export function closedAncestorOf(root: PlacedNode, targetId: string, kind: 'insert' | 'replace'): string | undefined {
+export function closedAncestorOf(roots: PlacedNode | Iterable<PlacedNode>, targetId: string, kind: 'insert' | 'replace'): string | undefined {
   const path: PlacedNode[] = [];
   const find = (node: PlacedNode): boolean => {
     path.push(node);
@@ -163,12 +179,16 @@ export function closedAncestorOf(root: PlacedNode, targetId: string, kind: 'inse
     path.pop();
     return false;
   };
-  if (!find(root)) return undefined;
-  const standsUnder = kind === 'insert' || path.length === 1 ? path : path.slice(0, -1);
+  const list = Symbol.iterator in Object(roots) && !('id' in Object(roots)) ? (roots as Iterable<PlacedNode>) : [roots as PlacedNode];
+  let found = false;
+  for (const root of list) if ((found = find(root))) break;
+  if (!found) return undefined;
+  const standsUnder = (kind === 'insert' || path.length === 1 ? path : path.slice(0, -1)).map((node) => node.type.toLowerCase());
   for (let i = standsUnder.length - 1; i >= 0; i -= 1) {
-    if (PRESET_CLOSED_TAGS.has(standsUnder[i].type)) return standsUnder[i].type;
+    if (PRESET_CLOSED_TAGS.has(standsUnder[i])) return standsUnder[i];
   }
-  return undefined;
+  const parent = standsUnder.at(-1);
+  return parent !== undefined && PRESET_NO_FLOW_PARENT_TAGS.has(parent) ? parent : undefined;
 }
 
 // --- preset requests --------------------------------------------------------
