@@ -3,13 +3,24 @@ title: Live agent canvas
 description: Plan for watching an agent build a site live in the open editor, the way Paper does with its Model Context Protocol (MCP) server, with skeletons of planned sections, a blue frame and label where the agent works, and content that appears element by element. The same feel for the in-editor Generate feature.
 summary: A per-site server-sent events stream tells the open editor about every write; the editor fetches the stored copy and adopts it as one undo step labelled by the agent. A new announce_sections tool lets an agent draw skeletons before it writes, presence events drive a blue frame and an activity feed, and new nodes reveal with a short client-side stagger. Generate gets an outline first so it can draw skeletons too.
 type: plan
-status: draft
+status: in-progress
 date: 2026-11-08
 tags: [framer-clone, mcp, editor, live-sync, ai, plan]
 projects: [framer-clone]
 ---
 
 # Live agent canvas
+
+**Status:** decided, approved by Marlin 2026-11-08; in progress since 2026-11-08.
+
+## Progress
+
+- **Slice 1, live sync core:** built on branch `feat/live-sync-core`. As planned, with these details settled while building (decided, say so if you disagree):
+  - The live routes take the save route's guard chain in `src/server/sites/liveGuard.ts` and answer 404 for a project of another workspace, like the save and rename routes, rather than reusing the domain routes' guard (which answers 403).
+  - The repository reports whether a write actually wrote (`WorkingCopyWrite.wrote`), so the repeat of a save whose answer was lost, which writes nothing, announces nothing.
+  - The `state` event carries the version now; its plans, agents and feed lists stay empty until slices 2 and 4 fill them.
+  - `auth:expired` (or a 401 while polling) shows autosave's existing signed-out state; the next time the tab is shown, one fetch decides whether the stream starts again.
+  - The MCP key's label is the generic "Agent" for now: the key's auth-brain name is read in slice 2 together with presence.
 
 ## Goal
 
