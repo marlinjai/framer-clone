@@ -140,6 +140,7 @@ import { getComponentEntry } from '@/lib/componentRegistry';
 import {
   BEHAVIOUR_PROP,
   namesCustomCodeProp,
+  PRESET_CLOSED_TAGS,
   CUSTOM_CODE_REASON,
   MAX_GENERATED_PRESETS,
   MAX_GENERATED_TRIGGERS,
@@ -231,6 +232,13 @@ export interface ValidateContext {
    * location or writes a map address of its own. Defaults to none.
    */
   mapAddress?: string | null;
+  /**
+   * For a generation placed inside an existing page: the nearest tag of PRESET_CLOSED_TAGS
+   * the generated nodes would stand under (closedAncestorOf), so a preset request among them
+   * is refused there as it is under a model-written one. Anything outside that set is
+   * ignored, since the value crosses the wire. Defaults to none: a new page.
+   */
+  closedAncestor?: string;
 }
 
 /**
@@ -490,15 +498,6 @@ function attributeProblem(tag: string, name: string, text: string, namespace: Ma
   if (name === 'target' && text !== '_blank' && text !== '_self') return 'target must be _blank or _self';
   return undefined;
 }
-
-/**
- * Elements a behaviour preset may not sit inside, at any depth: interactive content (a
- * preset holds buttons and links, and one control inside another is invalid HTML) and
- * elements whose content is phrasing only (a preset holds lists and panels, which the HTML
- * parser moves out of a p or a heading). Either way the server renders markup the browser
- * reads differently, and hydration of the published page breaks.
- */
-const PRESET_CLOSED_TAGS: ReadonlySet<string> = new Set(['a', 'button', 'label', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'summary']);
 
 class Validator {
   readonly warnings: string[] = [];
@@ -2074,7 +2073,8 @@ export function validateGeneration(raw: unknown, ctx: ValidateContext): Validati
   }
 
   const parsed: GeneratedNodeSnapshot[] = [];
-  raw.nodes.forEach((n, i) => parsed.push(...v.node(n, `nodes[${i}]`, 1)));
+  const closedAncestor = ctx.closedAncestor !== undefined && PRESET_CLOSED_TAGS.has(ctx.closedAncestor) ? ctx.closedAncestor : undefined;
+  raw.nodes.forEach((n, i) => parsed.push(...v.node(n, `nodes[${i}]`, 1, undefined, 'html', closedAncestor)));
   v.addToCartIntoSelector('nodes', parsed);
   // Decided before any svg is dropped: a page past the limit was cut short, and must not pass for being under it.
   const overLimit = v.nodeCount > GENERATION_LIMITS.maxNodes;

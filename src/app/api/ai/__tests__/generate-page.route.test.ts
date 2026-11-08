@@ -1211,6 +1211,32 @@ describe('POST /api/ai/generate-page page essentials', () => {
   });
 });
 
+describe('POST /api/ai/generate-page placed under a closed element', () => {
+  const WITH_PRESET = { nodes: [{ preset: 'menu-button', items: ['Copy', 'Paste'], options: { label: 'Actions' } }, { type: 'span', label: 'Note', props: { children: 'Kept' } }] };
+  const labels = async (target: Record<string, unknown>) => {
+    anthropicState.calls = [];
+    anthropicState.turns = [toolTurn(WITH_PRESET)];
+    const evs = await events(await POST(makeRequest(baseBody({ target }))));
+    const result = evs.find((e) => e.event === 'gen:result')?.data as { nodes: Array<{ type: string }>; warnings: string[] } | undefined;
+    return result;
+  };
+
+  it('drops a preset inserted into a p or a button, and keeps it inserted into a section', async () => {
+    for (const tag of ['p', 'button']) {
+      const result = await labels({ kind: 'insert', context: { id: 'x-1', type: tag, label: tag }, closedAncestor: tag });
+      expect(result?.nodes.map((n) => n.type)).toEqual(['span']);
+      expect(result?.warnings.join(' ')).toContain(`cannot sit inside <${tag}>`);
+    }
+    const kept = await labels({ kind: 'insert', context: { id: 'x-1', type: 'section', label: 'Section' } });
+    expect(kept?.nodes).toHaveLength(2);
+  });
+
+  it('refuses a closed element that is not one', async () => {
+    const res = await POST(makeRequest(baseBody({ target: { kind: 'insert', context: { id: 'x-1', type: 'div' }, closedAncestor: 'div' } })));
+    expect(res.status).toBe(400);
+  });
+});
+
 describe('POST /api/ai/generate-page preview sections', () => {
   const STORY = {
     type: 'section',

@@ -189,6 +189,18 @@ describe('applyOperations: refusals write nothing', () => {
     expect(rejected[0].reason).toMatch(/script/);
   });
 
+  it('rejects a preset inserted into a button, and places it in a section', async () => {
+    const rejected = await refused([
+      { op: 'insertNodes', pageId: 'home', parentId: 'hero', nodes: [{ ref: 'btn', type: 'button', props: { type: 'button' } }] },
+      { op: 'insertNodes', pageId: 'home', parentId: 'ref:btn', nodes: [{ preset: 'menu-button', items: ['Copy', 'Paste'], options: { label: 'Actions' } }] },
+    ]);
+    expect(rejected[0].reason).toContain('cannot sit inside <button>');
+    const project = makeProject();
+    const outcome = await run(project, [{ op: 'insertNodes', pageId: 'home', parentId: 'hero', nodes: [{ preset: 'menu-button', items: ['Copy', 'Paste'], options: { label: 'Actions' } }] }]);
+    expect(outcome.ok).toBe(true);
+    expect(find(project, 'hero')?.children).toHaveLength(2);
+  });
+
   it('rejects a handler prop and a javascript link', async () => {
     expect((await refused([{ op: 'setProps', nodeId: 'link', props: { onclick: 'alert(1)' } }]))[0].reason).toMatch(/onclick/);
     expect((await refused([{ op: 'setProps', nodeId: 'link', props: { href: 'javascript:alert(1)' } }]))[0].reason).toMatch(/href/);

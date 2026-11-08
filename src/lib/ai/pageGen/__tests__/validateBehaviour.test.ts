@@ -19,7 +19,7 @@ import { tooltip } from '@/lib/behaviour/presets/tooltip';
 import { treegrid, treeview } from '@/lib/behaviour/presets/tree';
 import type { PresetNode } from '@/lib/behaviour/presets';
 import { GENERATION_LIMITS, deriveBreakpointKeys } from '../schema';
-import { GENERATED_TRIGGER_EVENTS, MAX_GENERATED_PRESETS, MAX_GENERATED_TRIGGERS, behaviourDocs } from '../promptSections/behaviour';
+import { GENERATED_TRIGGER_EVENTS, MAX_GENERATED_PRESETS, closedAncestorOf, MAX_GENERATED_TRIGGERS, behaviourDocs } from '../promptSections/behaviour';
 import { buildSchemaDocs } from '../schemaDocs';
 import { validateGeneration, type GeneratedNodeSnapshot } from '../validate';
 
@@ -377,6 +377,42 @@ describe('behaviour presets the model asks for', () => {
       : host([{ type: 'span', children: [request] }])]);
     expect(hostOf(deep.nodes).children[0].children).toEqual([]);
     expect(deep.warnings.join(' ')).toContain(`cannot sit inside <${tag}>`);
+  });
+
+  it('keeps a preset out of the element a generation is placed under, from the context', () => {
+    const placed = (closedAncestor?: string) => validateGeneration(
+      { nodes: [{ preset: 'menu-button', items: ['Copy', 'Paste'], options: { label: 'Actions' } }, { type: 'span', props: { children: 'Kept' } }] },
+      { breakpoints, ...(closedAncestor === undefined ? {} : { closedAncestor }) },
+    );
+    for (const tag of ['p', 'button']) {
+      const out = placed(tag);
+      if (!out.ok) throw new Error(out.errors.join('; '));
+      expect(out.result.nodes.map((node) => node.type)).toEqual(['span']);
+      expect(out.result.warnings.join(' ')).toContain(`cannot sit inside <${tag}>`);
+    }
+    // Not an element a preset is refused under (and the value crosses the wire): ignored.
+    for (const tag of [undefined, 'section', 'script']) {
+      const out = placed(tag);
+      if (!out.ok) throw new Error(out.errors.join('; '));
+      expect(out.result.nodes).toHaveLength(2);
+    }
+  });
+
+  it('finds the nearest closed element a placed generation stands under', () => {
+    const tree = { id: 'root', type: 'div', children: [
+      { id: 'card', type: 'section', children: [{ id: 'para', type: 'p', children: [{ id: 'em', type: 'em', children: [] }] }] },
+      { id: 'cta', type: 'button', children: [{ id: 'inner', type: 'span', children: [] }] },
+    ] };
+    expect(closedAncestorOf(tree, 'para', 'insert')).toBe('p');
+    expect(closedAncestorOf(tree, 'em', 'insert')).toBe('p');
+    expect(closedAncestorOf(tree, 'inner', 'insert')).toBe('button');
+    expect(closedAncestorOf(tree, 'inner', 'replace')).toBe('button');
+    expect(closedAncestorOf(tree, 'card', 'insert')).toBeUndefined();
+    // A replace takes the target's place, so the target itself does not count.
+    expect(closedAncestorOf(tree, 'para', 'replace')).toBeUndefined();
+    expect(closedAncestorOf(tree, 'cta', 'replace')).toBeUndefined();
+    expect(closedAncestorOf({ id: 'r', type: 'p', children: [] }, 'r', 'replace')).toBe('p');
+    expect(closedAncestorOf(tree, 'missing', 'insert')).toBeUndefined();
   });
 
   it('places a preset inside a section, a list item or a div', () => {

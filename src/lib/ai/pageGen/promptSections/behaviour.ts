@@ -132,6 +132,45 @@ export function generatedTriggerRefusal(trigger: Trigger, fromPreset = false): s
   return null;
 }
 
+/**
+ * Elements a behaviour preset may not sit inside, at any depth: interactive content (a
+ * preset holds buttons and links, and one control inside another is invalid HTML) and
+ * elements whose content is phrasing only (a preset holds lists and panels, which the HTML
+ * parser moves out of a p or a heading). Either way the server renders markup the browser
+ * reads differently, and hydration of the published page breaks.
+ */
+export const PRESET_CLOSED_TAGS: ReadonlySet<string> = new Set(['a', 'button', 'label', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'summary']);
+
+/** A node of any tree a generation can be placed into: the editor's, the stored one, a snapshot. */
+interface PlacedNode {
+  id: string;
+  type: string;
+  children?: Iterable<PlacedNode>;
+}
+
+/**
+ * The nearest tag of PRESET_CLOSED_TAGS that nodes placed at `targetId` would stand under,
+ * or undefined. An insert puts them inside the target, so the target counts; a replace puts
+ * them where the target stands, so only its ancestors do, except for the tree's root, whose
+ * children a replace takes the place of. Unknown ids give undefined.
+ */
+export function closedAncestorOf(root: PlacedNode, targetId: string, kind: 'insert' | 'replace'): string | undefined {
+  const path: PlacedNode[] = [];
+  const find = (node: PlacedNode): boolean => {
+    path.push(node);
+    if (node.id === targetId) return true;
+    for (const child of node.children ?? []) if (find(child)) return true;
+    path.pop();
+    return false;
+  };
+  if (!find(root)) return undefined;
+  const standsUnder = kind === 'insert' || path.length === 1 ? path : path.slice(0, -1);
+  for (let i = standsUnder.length - 1; i >= 0; i -= 1) {
+    if (PRESET_CLOSED_TAGS.has(standsUnder[i].type)) return standsUnder[i].type;
+  }
+  return undefined;
+}
+
 // --- preset requests --------------------------------------------------------
 
 /** The palette's names for its presets, which is what the model asks for. */
