@@ -30,8 +30,10 @@ import 'server-only';
 //   - session_ended: the MCP client ended its session (DELETE /api/mcp);
 //   - anchor_removed: a write of the working copy left its page, or its `after`
 //     section as a top-level section of that page, out (checkPlanAnchors);
-//   - evicted: the process holds plans of PLAN_SITES_MAX sites and a new one
-//     needs the room (the least recently touched site goes first).
+//   - evicted: a company holds plans on PLAN_SITES_PER_COMPANY sites and a new
+//     one needs the room (its own least recently touched site goes first, never
+//     another company's), or the process holds plans of PLAN_SITES_MAX sites
+//     (the least recently touched site of any company goes).
 //
 // Expiry runs on one timer while any plan exists, and every read sweeps first,
 // so a plan whose time ran out is never handed to a reconnecting editor. Kept
@@ -77,6 +79,8 @@ interface PlansState {
   sites: Map<string, Map<string, PlanEntry>>;
   /** Site id to the newest version a write committed (the most recently written last). */
   written: Map<string, number>;
+  /** When the newest of the entries `written` had to forget was written (ms), 0 when none was. */
+  forgottenAt: number;
   timer?: ReturnType<typeof setInterval>;
 }
 
@@ -86,7 +90,7 @@ function state(): PlansState {
   const g = globalThis as unknown as Record<symbol, PlansState | undefined>;
   let s = g[KEY];
   if (!s) {
-    s = { sites: new Map(), written: new Map() };
+    s = { sites: new Map(), written: new Map(), forgottenAt: 0 };
     g[KEY] = s;
   }
   return s;
@@ -212,12 +216,16 @@ function evictSites(keep: string, group: string, now: number): void {
  * calls this for every write, before it is announced). Bounded: the least
  * recently written site is forgotten first.
  */
-export function noteSiteWrite(siteId: string, version: number): void {
-  const { written } = state();
-  const before = written.get(siteId) ?? 0;
-  written.delete(siteId);
-  written.set(siteId, Math.max(before, version));
-  while (written.size > WRITTEN_VERSIONS_MAX) written.delete(written.keys().next().value as string);
+export function noteSiteWrite(siteId: string, version: number, now: number = Date.now()): void {
+  const s = state();
+  const before = s.written.get(siteId) ?? 0;
+  s.written.delete(siteId);
+  s.written.set(siteId, Math.max(before, version));
+  // A forgotten entry was written at most now: an announcement read before this moment cannot be vouched for.
+  while (s.written.size > WRITTEN_VERSIONS_MAX) {
+    s.written.delete(s.written.keys().next().value as string);
+    s.forgottenAt = now;
+  }
 }
 
 export interface AnnounceInput {
@@ -237,6 +245,8 @@ export interface AnnounceInput {
    * checked) refuses the announcement with `site_changed`.
    */
   checkedVersion?: number;
+  /** When that read started (ms): with the site's entry forgotten, a read older than the newest forgotten write is refused too. */
+  checkedAt?: number;
   /** Titles sanitised already (sanitizePlanTitle). */
   sections: Array<{ ref: string; title: string; kind: PlanSectionKind }>;
 }
@@ -253,12 +263,13 @@ export type AnnounceOutcome =
 export function announcePlan(input: AnnounceInput, now: number = Date.now()): AnnounceOutcome {
   sweep(now);
   const lastWrite = state().written.get(input.siteId);
-  if (input.checkedVersion !== undefined && lastWrite !== undefined && lastWrite > input.checkedVersion) {
+  const unknown = lastWrite === undefined && input.checkedAt !== undefined && state().forgottenAt >= input.checkedAt;
+  if ((input.checkedVersion !== undefined && lastWrite !== undefined && lastWrite > input.checkedVersion) || unknown) {
     return {
       ok: false,
       code: 'site_changed',
       message: 'the site was written while the announcement was checked; read the page again (get_page) and announce on its current sections',
-      currentVersion: lastWrite,
+      ...(lastWrite !== undefined ? { currentVersion: lastWrite } : {}),
     };
   }
   const existing = sitePlans(input.siteId, false);
@@ -480,6 +491,7 @@ export function resetLivePlansForTests(): void {
   const s = state();
   s.sites.clear();
   s.written.clear();
+  s.forgottenAt = 0;
   if (s.timer) clearInterval(s.timer);
   s.timer = undefined;
 }

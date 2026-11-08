@@ -13,6 +13,8 @@ import { getSnapshot } from 'mobx-state-tree';
 import { Prisma } from '@prisma/client';
 import ProjectModel from '@/models/ProjectModel';
 import { REVISIONS_KEPT, SiteRepository, type TenantScope } from '../repository';
+import { resetLiveBusForTests, subscribeSite } from '../liveBus';
+import { announcePlan, resetLivePlansForTests } from '@/server/mcp/livePlans';
 import {
   SiteNotFoundError,
   SiteNameConflictError,
@@ -231,6 +233,26 @@ describe('SiteRepository.saveProject', () => {
 
     const upsertArg = prisma.site.upsert.mock.calls[0][0];
     expect(upsertArg.where).toEqual({ id: 'site_save' });
+  });
+
+  it("runs beforeAnnounce after the commit, then ends skeleton plans whose page is gone, then announces the write; refuses a later announcement checked on the older read", async () => {
+    resetLiveBusForTests();
+    resetLivePlansForTests();
+    prisma.site.findUnique.mockResolvedValue({ erasureEpoch: 0, version: 1, id: 'site_save', workspaceId: 'ws_marlin' });
+    prisma.site.upsert.mockResolvedValue({});
+    prisma.sitePage.upsert.mockResolvedValue({});
+    prisma.sitePage.deleteMany.mockResolvedValue({ count: 0 });
+    const order: string[] = [];
+    subscribeSite('site_save', (event, data) => order.push(event === 'plan:update' ? `plan:${(data as { ended?: string }).ended}` : event));
+    const plan = { siteId: 'site_save', scope: SCOPE, agentId: 'agent-a', label: 'Claude', pageId: 'page-gone', sections: [{ ref: 'hero', title: 'Hero', kind: 'hero' as const }] };
+    expect(announcePlan(plan).ok).toBe(true);
+    order.length = 0;
+    const { version } = await repo.saveProject(SCOPE, makeProject(), { expectedVersion: 1, beforeAnnounce: (v) => order.push(`before:${v}`) });
+    expect(order).toEqual([`before:${version}`, 'plan:anchor_removed', 'site:version']);
+    // An announcement whose anchor was read before that write is refused.
+    expect(announcePlan({ ...plan, checkedVersion: version - 1 })).toMatchObject({ ok: false, code: 'site_changed' });
+    resetLivePlansForTests();
+    resetLiveBusForTests();
   });
 });
 

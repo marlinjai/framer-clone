@@ -608,6 +608,7 @@ export const TOOLS: ToolDef[] = [
           const pageTitle = args.newPage ? sanitizePlanTitle(args.newPage.title) : undefined;
           if (args.newPage && !pageTitle) return errorResult({ code: 'invalid_request', message: 'newPage.title has no printable characters' });
           // The site in this key's own scope, the page and the after section as named: read, never written.
+          const checkedAt = Date.now();
           const anchor = await checkPlanAnchor(ctx.caller, { siteId: args.siteId, pageId: args.pageId, after: args.after }, ctx.deps);
           if (!anchor.ok) return errorResult(anchor.error);
           const outcome = announcePlan({
@@ -621,6 +622,7 @@ export const TOOLS: ToolDef[] = [
             ...(args.after ? { after: args.after } : {}),
             ...(args.replaces ? { replaces: args.replaces } : {}),
             checkedVersion: anchor.value.version,
+            checkedAt,
             sections,
           });
           if (!outcome.ok) {

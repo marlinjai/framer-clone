@@ -22,6 +22,7 @@ import {
   noteSiteWrite,
   PLAN_SITES_MAX,
   PLAN_SITES_PER_COMPANY,
+  WRITTEN_VERSIONS_MAX,
   plansSnapshot,
   resetLivePlansForTests,
   sweepLivePlansForTests,
@@ -232,6 +233,13 @@ describe('review fixes', () => {
     noteSiteWrite('site-1', 8);
     expect(announcePlan(input({ checkedVersion: 7 }), T0)).toMatchObject({ ok: false, code: 'site_changed', currentVersion: 8 });
     expect(announcePlan(input({ checkedVersion: 8 }), T0).ok).toBe(true);
+  });
+
+  it('with the site\'s written version forgotten (the map is bounded), a read older than the newest forgotten write is refused', () => {
+    noteSiteWrite('site-1', 3, T0);
+    for (let i = 0; i < WRITTEN_VERSIONS_MAX; i += 1) noteSiteWrite(`other-${i}`, 1, T0 + 10);
+    expect(announcePlan(input({ checkedVersion: 2, checkedAt: T0 + 5 }), T0 + 20)).toMatchObject({ ok: false, code: 'site_changed' });
+    expect(announcePlan(input({ checkedVersion: 2, checkedAt: T0 + 11 }), T0 + 20).ok).toBe(true);
   });
 
   it(`one company holds plans on at most ${PLAN_SITES_PER_COMPANY} sites and never pushes out another company's`, () => {

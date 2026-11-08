@@ -34,13 +34,15 @@ export function splitCreated(ops: unknown, created: unknown): CreatedIds {
 /**
  * The page each ref of a batch landed on (ref to page id), for the skeleton
  * plans of the live agent canvas: an announced section counts as written only
- * when its ref was created on the plan's page. A node's page is its
- * insertNodes or placeComponent op's `pageId`, resolved through `created` when
- * it is `ref:<page>` (a page the same batch made). A createPage op's own ref
- * names a page, never a node, and is left out. Refs nested inside an inserted
- * tree land on the same page. Pure.
+ * when its ref was created on the plan's page AS A SECTION: a root node of an
+ * insertNodes op into the page root (no parentId, or the root's own id, which
+ * `rootOf` answers), or a placeComponent into the page root. A ref inside a tree, or one
+ * inserted into an existing section, is not a section and is left out. A
+ * node's page is its op's `pageId`, resolved through `created` when it is
+ * `ref:<page>` (a page the same batch made). A createPage op's own ref names a
+ * page, never a node, and is left out. Pure.
  */
-export function refPagesOf(ops: unknown, created: unknown): Record<string, string> {
+export function refPagesOf(ops: unknown, created: unknown, rootOf: (pageId: string) => string | undefined = () => undefined): Record<string, string> {
   const ids = (typeof created === 'object' && created !== null && !Array.isArray(created) ? created : {}) as Record<string, unknown>;
   const out: Record<string, string> = {};
   if (!Array.isArray(ops)) return out;
@@ -50,18 +52,21 @@ export function refPagesOf(ops: unknown, created: unknown): Record<string, strin
     const id = ids[value.slice(4)];
     return typeof id === 'string' ? id : undefined;
   };
-  const walk = (node: unknown, pageId: string, depth: number) => {
-    if (depth > 64 || typeof node !== 'object' || node === null) return;
-    const n = node as Record<string, unknown>;
-    if (typeof n.ref === 'string' && typeof ids[n.ref] === 'string') out[n.ref] = pageId;
-    if (Array.isArray(n.children)) for (const child of n.children) walk(child, pageId, depth + 1);
+  const take = (ref: unknown, pageId: string) => {
+    if (typeof ref === 'string' && typeof ids[ref] === 'string') out[ref] = pageId;
   };
   for (const raw of ops) {
     const op = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
     const pageId = pageOf(op.pageId);
     if (!pageId) continue;
-    if (op.op === 'insertNodes' && Array.isArray(op.nodes)) for (const node of op.nodes) walk(node, pageId, 0);
-    if (op.op === 'placeComponent' && typeof op.ref === 'string' && typeof ids[op.ref] === 'string') out[op.ref] = pageId;
+    const intoRoot = (parentId: unknown) => parentId === undefined || (typeof parentId === 'string' && parentId === rootOf(pageId));
+    if (op.op === 'insertNodes' && intoRoot(op.parentId) && Array.isArray(op.nodes)) {
+      for (const node of op.nodes) take((typeof node === 'object' && node !== null ? (node as Record<string, unknown>) : {}).ref, pageId);
+    }
+    if (op.op === 'placeComponent') {
+      const to = typeof op.to === 'object' && op.to !== null ? (op.to as Record<string, unknown>) : {};
+      if (intoRoot(to.parentId)) take(op.ref, pageId);
+    }
   }
   return out;
 }

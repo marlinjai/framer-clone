@@ -361,7 +361,7 @@ export async function applyBatch(caller: SiteOpsCaller, input: unknown, deps: Si
       // The skeletons this key announced and this batch wrote are fulfilled before open editors hear of the write,
       // so an editor never adopts the copy while the skeleton still counts as unwritten.
       ...(caller.actor.kind === 'key'
-        ? { beforeAnnounce: (v: number) => fulfilFromBatch(siteId, liveAgentId(caller.actor.id), applied.created, v, refPagesOf(ops, applied.created), splitCreated(ops, applied.created).pageIds) }
+        ? { beforeAnnounce: (v: number) => fulfilFromBatch(siteId, liveAgentId(caller.actor.id), applied.created, v, refPagesOf(ops, applied.created, (pid) => (project.pages.get(pid) as PageModelType | undefined)?.appComponentTree?.id), splitCreated(ops, applied.created).pageIds) }
         : {}),
     }));
   } catch (err) {
