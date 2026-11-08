@@ -37,6 +37,11 @@ export interface SiteOpsCaller {
   actorDetail?: Record<string, string>;
   /** How an open editor names this caller on its live stream (plain text); a generic label when absent. */
   actorLabel?: string;
+  /**
+   * The id an open editor's live stream gave this call (src/server/mcp/presence.ts),
+   * kept in the audit row so the feed line of a write has one id live and after a reload.
+   */
+  liveCallId?: string;
   can(action: SiteOpsAction): boolean | Promise<boolean>;
 }
 

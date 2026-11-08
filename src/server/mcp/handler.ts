@@ -21,6 +21,10 @@ import 'server-only';
 // then text/event-stream: the elicitation request, keepalive comments, and the
 // tool's result. The client's answer to the question arrives as its own POST and
 // is matched in ./elicitation.ts. Every other answer is plain JSON.
+//
+// Every tool call that names a site in the key's own scope is reported to that
+// site's open editors, at its start and its end (./presence.ts): the blue frame,
+// the label and the activity feed of the live agent canvas.
 
 import { authorizeKeyAction, machineAuthDenial, redactSecrets, verifyCompanyKey, type CompanyKey, type VerifiedKey } from '@/lib/auth-machine';
 import { carriesBearer, presentedBearer } from '@/lib/bearer';
@@ -40,10 +44,13 @@ import {
   runTool,
   WRITE_RATE,
   type ToolContext,
+  type ToolDef,
   type ToolLimits,
   type ToolResult,
 } from './tools';
 import { SERVER_INSTRUCTIONS } from './instructions';
+import { withPresence } from './presence';
+import { getSiteRepository } from '@/server/sites';
 
 const SERVER_INFO = { name: 'lumitra-sites', title: 'Lumitra Sites', version: '1.0.0' };
 /** The protocol versions this endpoint speaks, newest first. */
@@ -96,14 +103,25 @@ function rpcResponse(body: unknown, status = 200, extra: Record<string, string> 
   return new Response(JSON.stringify(body), { status, headers: { ...JSON_HEADERS, ...extra } });
 }
 
+/**
+ * How an open editor names the agent behind a key: the key's name as
+ * auth-brain holds it, else the name the MCP client declared at initialize
+ * (both sanitised and capped already), else nothing (the editor says "Agent").
+ */
+export function agentLabel(key: VerifiedKey, clientName?: string): string | undefined {
+  return key.keyName ?? clientName ?? undefined;
+}
+
 /** The site operations caller for a verified key: its scope and company from the verification, never from the request. */
-export function keyCaller(key: VerifiedKey): SiteOpsCaller {
+export function keyCaller(key: VerifiedKey, clientName?: string): SiteOpsCaller {
+  const label = agentLabel(key, clientName);
   return {
     scope: { ...key.scope },
     companyId: key.tenantId,
     companySlug: key.companySlug,
     actor: { kind: 'key', id: key.keyId },
     actorDetail: { serviceAccountId: key.serviceAccountId },
+    ...(label ? { actorLabel: label } : {}),
     can: (action) => authorizeKeyAction(key, action),
   };
 }
@@ -147,9 +165,9 @@ export function createMcpHandler(deps: McpDeps) {
     approvals: createPageGenRateLimiter(APPROVAL_RATE),
   };
 
-  function context(signal: AbortSignal, key: VerifiedKey, confirm?: ConfirmFn): ToolContext {
+  function context(signal: AbortSignal, key: VerifiedKey, clientName: string | undefined, confirm?: ConfirmFn): ToolContext {
     return {
-      caller: keyCaller(key),
+      caller: keyCaller(key, clientName),
       key: { keyId: key.keyId, tenantId: key.tenantId },
       deps: deps.siteOps ?? {},
       confirm,
@@ -159,11 +177,33 @@ export function createMcpHandler(deps: McpDeps) {
     };
   }
 
+  /**
+   * Run a tool and report it on its site's open editors (./presence.ts): a start
+   * and an end, only for a site in the key's own scope.
+   */
+  function runReported(tool: ToolDef, args: unknown, ctx: ToolContext, key: VerifiedKey): Promise<ToolResult> {
+    return withPresence(
+      {
+        tool: tool.name,
+        args,
+        keyId: key.keyId,
+        label: ctx.caller.actorLabel,
+        scope: ctx.caller.scope,
+        repository: deps.siteOps?.repository ?? getSiteRepository(),
+      },
+      // The call's live id goes into its audit row, so the editor's feed shows one line for it.
+      (liveCallId) => runTool(tool, args, liveCallId ? { ...ctx, caller: { ...ctx.caller, liveCallId } } : ctx),
+    );
+  }
+
   function initialize(id: JsonRpcId, params: Record<string, unknown>, fingerprint: string) {
     const asked = typeof params.protocolVersion === 'string' ? params.protocolVersion : '';
     const version = (PROTOCOL_VERSIONS as readonly string[]).includes(asked) ? asked : PROTOCOL_VERSIONS[0];
     const capabilities = (params.capabilities ?? {}) as Record<string, unknown>;
     const elicitation = version >= ELICITATION_SINCE && typeof capabilities.elicitation === 'object' && capabilities.elicitation !== null;
+    const clientInfo = params.clientInfo;
+    const clientName =
+      typeof clientInfo === 'object' && clientInfo !== null ? (clientInfo as Record<string, unknown>).name : undefined;
     return {
       reply: rpcResult(id, {
         protocolVersion: version,
@@ -171,12 +211,18 @@ export function createMcpHandler(deps: McpDeps) {
         serverInfo: SERVER_INFO,
         instructions: SERVER_INSTRUCTIONS,
       }),
-      sessionId: issueSessionId({ protocolVersion: version, elicitation }, fingerprint),
+      sessionId: issueSessionId({ protocolVersion: version, elicitation, clientName: typeof clientName === 'string' ? clientName : undefined }, fingerprint),
     };
   }
 
   /** A JSON-RPC answer to one request, or null for a notification. */
-  async function answer(request: Request, key: VerifiedKey, message: JsonRpcRequest, fingerprint: string): Promise<{ reply: unknown; sessionId?: string } | null> {
+  async function answer(
+    request: Request,
+    key: VerifiedKey,
+    message: JsonRpcRequest,
+    fingerprint: string,
+    clientName: string | undefined,
+  ): Promise<{ reply: unknown; sessionId?: string } | null> {
     const id = message.id ?? null;
     const notification = message.id === undefined;
     const params = message.params ?? {};
@@ -191,7 +237,7 @@ export function createMcpHandler(deps: McpDeps) {
         if (notification) return null;
         const tool = findTool(params.name);
         if (!tool) return { reply: rpcError(id, INVALID_PARAMS, `unknown tool: ${redactSecrets(String(params.name)).slice(0, ECHO_MAX)}`) };
-        const result = await runTool(tool, params.arguments, context(request.signal, key));
+        const result = await runReported(tool, params.arguments, context(request.signal, key, clientName), key);
         return { reply: rpcResult(id, result) };
       }
       default:
@@ -209,7 +255,7 @@ export function createMcpHandler(deps: McpDeps) {
    * request's abort both end the question, so nothing waits on a reader that is
    * gone and nothing is published for it.
    */
-  function streamedCall(request: Request, key: VerifiedKey, message: JsonRpcRequest, fingerprint: string): Response {
+  function streamedCall(request: Request, key: VerifiedKey, message: JsonRpcRequest, fingerprint: string, clientName: string | undefined): Response {
     const encoder = new TextEncoder();
     const id = message.id ?? null;
     const params = message.params ?? {};
@@ -240,7 +286,7 @@ export function createMcpHandler(deps: McpDeps) {
         void (async () => {
           let result: ToolResult;
           try {
-            result = await runTool(tool, params.arguments, context(signal, key, confirm));
+            result = await runReported(tool, params.arguments, context(signal, key, clientName, confirm), key);
           } catch {
             result = { content: [{ type: 'text', text: 'the tool failed unexpectedly' }], structuredContent: { error: { code: 'internal_error', message: 'the tool failed unexpectedly' } }, isError: true };
           }
@@ -295,7 +341,7 @@ export function createMcpHandler(deps: McpDeps) {
     const acceptsStream = (request.headers.get('accept') ?? '').includes('text/event-stream');
     if (!batch && acceptsStream && isRequest(parsed) && parsed.method === 'tools/call' && parsed.id !== undefined && session?.elicitation) {
       const tool = findTool(parsed.params?.name);
-      if (tool?.confirms) return streamedCall(request, verified, parsed, fingerprint);
+      if (tool?.confirms) return streamedCall(request, verified, parsed, fingerprint, session.clientName);
     }
 
     const answers: unknown[] = [];
@@ -319,7 +365,7 @@ export function createMcpHandler(deps: McpDeps) {
         }
         continue;
       }
-      const reply = await answer(request, verified, message, fingerprint);
+      const reply = await answer(request, verified, message, fingerprint, session?.clientName);
       if (reply === null) continue;
       if (reply.sessionId) sessionId = reply.sessionId;
       answers.push(reply.reply);

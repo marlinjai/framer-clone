@@ -10,6 +10,7 @@ import TopBar from "@/components/TopBar";
 import PhoneEditorChrome from "@/components/PhoneEditorChrome";
 import { useIsPhone } from "@/hooks/use-mobile";
 import HudSurface from "@/components/HudSurface";
+import AgentPresenceLayer, { AgentCameraFollow } from "@/components/live/AgentPresenceLayer";
 import SpacingHandlesLayer from "@/components/SpacingHandlesLayer";
 import { TransformProvider, useTransformContext } from '@/contexts/TransformContext';
 import { DropIndicatorLayer, DragGhostLayer } from '@/lib/drag';
@@ -317,6 +318,11 @@ export default function EditorApp({ projectSnapshot, projectVersion }: EditorApp
 
     <div className="relative w-screen h-screen">
       <Canvas />
+
+      {/* Where an agent works (live agent canvas): its frame and label, under the
+          selection's overlays, and the camera following it. */}
+      <AgentPresenceLayer />
+      <AgentCameraFollow />
 
       {/* Framer-style HudSurface for overlays (outside canvas) */}
       <HudSurface />

@@ -472,3 +472,43 @@ describe('adoptionLabel', () => {
     expect(adoptionLabel(undefined)).toBe('Changes made elsewhere');
   });
 });
+
+describe('liveSync: presence (live agent canvas, slice 2)', () => {
+  const presence = () => store.editorUI.livePresence;
+  const activity = (over: Record<string, unknown> = {}) => ({
+    callId: 'c1', agentId: 'a1', label: 'Claude', tool: 'apply_batch', phase: 'start', nodeIds: ['gone-node'], at: new Date().toISOString(), ...over,
+  });
+
+  it("hands the state's agents and feed and every agent:activity to the presence store", async () => {
+    start();
+    stream().emit('state', {
+      version: server.version, plans: [], agents: [activity()],
+      feed: [{ id: 'row-1', agentId: 'a1', label: 'Claude', actorKind: 'key', tool: 'apply_batch', outcome: 'ok', at: new Date().toISOString() }],
+    });
+    expect(presence().feed.map((l) => l.id)).toEqual(['row-1']);
+    expect(presence().agents.get('a1')?.openCalls).toEqual(['c1']);
+    stream().emit('agent:activity', activity({ phase: 'end', outcome: 'ok', nodeIds: [] }));
+    expect(presence().feed.map((l) => l.id)).toEqual(['c1', 'row-1']);
+    // Garbage on the stream changes nothing.
+    stream().emit('agent:activity', 'not an activity');
+    expect(presence().feed).toHaveLength(2);
+  });
+
+  it('keeps a focus on nodes this tab has not adopted yet (the layer resolves them when it draws)', async () => {
+    start();
+    await settle();
+    stream().emit('state', { version: server.version, plans: [], agents: [activity({ nodeIds: ['made-by-the-agent'] })], feed: [] });
+    await agentWrites('one');
+    expect(presence().agents.get('a1')?.focus.nodeIds).toEqual(['made-by-the-agent']);
+    expect(presence().agents.get('a1')?.frameShown).toBe(true);
+  });
+
+  it('forgets the presence when the editor stops following the site', () => {
+    const stop = start();
+    stream().emit('agent:activity', activity());
+    expect(presence().anyActive).toBe(true);
+    stop();
+    expect(presence().anyActive).toBe(false);
+    expect(presence().feed).toEqual([]);
+  });
+});

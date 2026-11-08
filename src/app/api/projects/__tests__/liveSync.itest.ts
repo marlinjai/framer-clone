@@ -121,6 +121,13 @@ function eventReader(res: Response) {
         buffer += decoder.decode(value, { stream: true });
       }
     },
+    /** The next stored write: presence (`agent:activity`) is transient and may arrive on either side of it. */
+    async nextWrite(): Promise<{ event: string; data: unknown; id?: string }> {
+      for (;;) {
+        const e = await this.next();
+        if (e.event !== 'agent:activity') return e;
+      }
+    },
     cancel: () => reader.cancel(),
   };
 }
@@ -161,11 +168,11 @@ describe('live sync against a real database', () => {
     });
     const refs = inserted.created as Record<string, string>;
 
-    const heard = await events.next();
+    const heard = await events.nextWrite();
     expect(heard.event).toBe('site:version');
     expect(heard.id).toBe('2');
     const event = heard.data as SiteVersionEvent;
-    expect(event).toMatchObject({ origin: 'mcp', version: 2, versionBefore: 1, created: refs, actor: { kind: 'key', label: 'Agent' } });
+    expect(event).toMatchObject({ origin: 'mcp', version: 2, versionBefore: 1, created: refs, actor: { kind: 'key', label: 'agent' } });
     expect(event.ops).toEqual([{ op: 'insertNodes', pageId: homePageId }]);
     // Ids and server-written lines only: never the headline's text, never the key id.
     expect(JSON.stringify(event)).not.toContain('Built live');
@@ -189,7 +196,7 @@ describe('live sync against a real database', () => {
     // A refused batch writes nothing and announces nothing: the next event is the next real write.
     await expect(tool('apply_batch', { siteId, expectedVersion: 1, ops: [{ op: 'updateText', nodeId: refs.headline, text: 'stale' }] })).rejects.toThrow(/site_changed/);
     await tool('apply_batch', { siteId, expectedVersion: 2, ops: [{ op: 'updateText', nodeId: refs.headline, text: 'Fresh' }] });
-    expect((await events.next()).id).toBe('3');
+    expect((await events.nextWrite()).id).toBe('3');
     await events.cancel();
   });
 

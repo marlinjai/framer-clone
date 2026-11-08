@@ -50,6 +50,7 @@ import ThemeButton from '@/components/site/ThemePanel';
 import FormSubmissionsButton from '@/components/forms/FormSubmissionsButton';
 import PublishedVersionsButton from '@/components/PublishedVersionsButton';
 import SaveStatus from '@/components/SaveStatus';
+import AgentEditingNote from '@/components/live/AgentEditingNote';
 import GeneratePageButton from '@/components/ai/GeneratePageDialog';
 import { PolishPageButton } from '@/components/ai/VisualReview';
 import {
@@ -400,6 +401,11 @@ const TopBar = observer(() => {
           (owner, 2026-11-04); this says Saved, Unsaved changes, Saving…, or
           why not, with Retry. Cmd/Ctrl+S saves at once. Saving never publishes. */}
       <SaveStatus />
+
+      {/* While an agent works on the site (live agent canvas): "Claude is editing
+          this site", so a person who starts editing knows a conflict may follow. */}
+      <AgentEditingNote className={`mr-2 ${wideOnly}`} />
+      <AgentEditingNote compact className="mr-1 lg:hidden" />
 
       {/* Publish: the primary rightward action. Serializes the live project
           and pushes it live via the admin-guarded publish endpoint. */}

@@ -116,6 +116,7 @@ import 'server-only';
 
 import { createHash } from 'node:crypto';
 import type { ApiKeyVerifyResponse } from '@marlinjai/auth-brain-sdk';
+import { sanitizeLiveLabel } from '@/lib/projects/liveEvents';
 import { machineAuthBrainClient } from './auth-brain-machine';
 import { isAuthServiceFailure } from './authBrainAvailability';
 import { presentedBearer } from './bearer';
@@ -176,6 +177,11 @@ export interface VerifiedKey {
   /** The company's auth-brain slug (its shop schema is named after it when a first site is created). */
   readonly companySlug: string;
   readonly keyId: string;
+  /**
+   * The key's name as auth-brain holds it, sanitised for display (an open
+   * editor names the agent by it), or undefined when the key has none.
+   */
+  readonly keyName?: string;
   readonly serviceAccountId: string;
   /** The company's sites workspace and tenant group, resolved by the server. */
   readonly scope: Readonly<TenantScope>;
@@ -615,11 +621,13 @@ async function verifyFresh(presented: string): Promise<FreshResult> {
   }
 
   const expires = verified.key?.expires_at ? Date.parse(verified.key.expires_at) : Number.NaN;
+  const keyName = sanitizeLiveLabel(verified.key?.name);
   const key: VerifiedKey = Object.freeze({
     kind: 'key' as const,
     tenantId,
     companySlug,
     keyId,
+    ...(keyName ? { keyName } : {}),
     serviceAccountId,
     scope: Object.freeze({ ...resolved.scope }),
     workspaceRole: keyWorkspaceRole(verified, tenantId, resolved.scope.workspaceId),

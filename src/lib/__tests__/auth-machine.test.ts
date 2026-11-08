@@ -232,6 +232,7 @@ describe('verifyCompanyKey: auth-brain answers', () => {
       tenantId: TENANT,
       companySlug: 'acme',
       keyId: 'key-1',
+      keyName: 'agent',
       serviceAccountId: 'sa-1',
       scope: { workspaceId: WORKSPACE, tenantGroupId: GROUP },
       workspaceRole: 'admin',
@@ -241,6 +242,19 @@ describe('verifyCompanyKey: auth-brain answers', () => {
     expect(auditLines()).toEqual([
       expect.objectContaining({ keyId: 'key-1', tenantId: TENANT, workspaceId: WORKSPACE, action: 'authenticate', outcome: 'allowed' }),
     ]);
+  });
+
+  it("reads the key's name for the live editor, sanitised and capped, and none when auth-brain has none", async () => {
+    mockVerifyApiKey.mockResolvedValueOnce({ ...verifyResponse(), key: { id: 'key-1', name: '\u202eClaude\n\u0007 agent ' + 'y'.repeat(120), expires_at: null } });
+    const named = await verifyCompanyKey(bearerRequest(fakeKey()));
+    expect(named.kind === 'key' && named.keyName).toMatch(/^Claude agent y+…$/);
+    expect(named.kind === 'key' && named.keyName!.length).toBe(80);
+    for (const name of [null, '', '\u200b\u0000 ']) {
+      mockVerifyApiKey.mockResolvedValueOnce({ ...verifyResponse(), key: { id: 'key-1', name, expires_at: null } });
+      const res = await verifyCompanyKey(bearerRequest(fakeKey()));
+      expect(res.kind).toBe('key');
+      expect(res).not.toHaveProperty('keyName');
+    }
   });
 
   it('takes the company from the verified key only, never from anything the request names', async () => {

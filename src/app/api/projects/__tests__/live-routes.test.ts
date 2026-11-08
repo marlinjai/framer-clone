@@ -29,7 +29,22 @@ vi.mock('@/server/sites/repository', async (importActual) => {
   return { ...actual, getSiteRepository: vi.fn() };
 });
 
+const auditRows = vi.hoisted(() => ({ rows: [] as Array<Record<string, unknown>>, fail: false, calls: [] as unknown[] }));
+vi.mock('@/server/db', () => ({
+  getPrismaClient: () => ({
+    siteOperationAudit: {
+      findMany: vi.fn(async (args: unknown) => {
+        auditRows.calls.push(args);
+        if (auditRows.fail) throw new Error('database down');
+        return auditRows.rows;
+      }),
+    },
+  }),
+}));
+
 import { getSiteRepository, SiteNotFoundError } from '@/server/sites';
+import { reportAgentActivity, resetLivePresenceForTests } from '@/server/sites/livePresence';
+import { liveAgentId } from '@/server/siteOps/audit';
 import { getSiteRepository as getRepositoryDirect } from '@/server/sites/repository';
 import { publishSiteEvent, resetLiveBusForTests, LIVE_STREAM_LIMITS } from '@/server/sites/liveBus';
 import { GET as EVENTS } from '../[projectId]/events/route';
@@ -104,6 +119,10 @@ function eventReader(res: Response) {
 beforeEach(() => {
   vi.clearAllMocks();
   resetLiveBusForTests();
+  resetLivePresenceForTests();
+  auditRows.rows = [];
+  auditRows.fail = false;
+  auditRows.calls = [];
   process.env.EDITOR_HOST = 'app.lumitra.co';
   version = 7;
   vi.mocked(getSiteRepository).mockReturnValue(repo as unknown as ReturnType<typeof getSiteRepository>);
@@ -299,6 +318,91 @@ describe('GET /api/projects/<id>/events', () => {
     // Unsubscribed: a later write goes nowhere and throws nothing.
     expect(() => publishSiteEvent('site_1', 'site:version', { origin: 'mcp', version: 9, versionBefore: 8 })).not.toThrow();
     errorSpy.mockRestore();
+  });
+});
+
+describe('the presence in the events stream', () => {
+  const activity = (over: Record<string, unknown> = {}) => ({
+    callId: 'call-1',
+    agentId: 'agent-a',
+    label: 'Claude',
+    tool: 'get_page',
+    phase: 'start' as const,
+    pageId: 'home',
+    at: new Date().toISOString(),
+    ...over,
+  });
+
+  it("backfills the state's feed from the site's audit rows, scoped to the caller's workspace, merged with live lines", async () => {
+    const now = Date.now();
+    auditRows.rows = [
+      {
+        id: 'row-2',
+        actorKind: 'key',
+        actorId: 'key_secret_id',
+        actorDetail: { serviceAccountId: 'sa_1', label: 'Claude' },
+        operation: 'batch',
+        ops: [{ op: 'updateText', nodeId: 'n1' }, { op: 'insertNodes', pageId: 'home' }],
+        createdAt: new Date(now - 1_000),
+      },
+      { id: 'row-1', actorKind: 'user', actorId: 'user-9', actorDetail: null, operation: 'publish', ops: null, createdAt: new Date(now - 60_000) },
+    ];
+    reportAgentActivity('site_1', activity({ callId: 'read-1', phase: 'end', outcome: 'ok', at: new Date(now - 30_000).toISOString() }), {
+      id: 'read-1', agentId: 'agent-a', label: 'Claude', actorKind: 'key', tool: 'get_page', outcome: 'ok', pageId: 'home', at: new Date(now - 30_000).toISOString(),
+    });
+    const events = eventReader(await EVENTS(req('/api/projects/site_1/events'), ctx('site_1')));
+    const state = (await events.next()).data as { agents: unknown[]; feed: Array<Record<string, unknown>> };
+    expect(auditRows.calls[0]).toMatchObject({ where: { siteId: 'site_1', workspaceId: 'ws_marlin', tenantGroupId: 'tg_lumitra' }, take: 30 });
+    expect(state.feed.map((l) => l.id)).toEqual(['row-2', 'read-1', 'row-1']);
+    expect(state.feed[0]).toMatchObject({ tool: 'apply_batch', label: 'Claude', changes: 2, nodeIds: ['n1'], pageId: 'home', agentId: liveAgentId('key_secret_id') });
+    expect(state.feed[2]).toMatchObject({ tool: 'publish', label: 'Someone', actorKind: 'user' });
+    expect(JSON.stringify(state)).not.toContain('key_secret_id');
+    expect(JSON.stringify(state)).not.toContain('sa_1');
+    expect(state.agents).toHaveLength(1);
+    await events.cancel();
+  });
+
+  it("gives a write's backfilled line the id it had live (the call id kept in its row), never a forged one", async () => {
+    const callId = '5f0c1e9a-2b7d-4c3e-9f10-6a1b2c3d4e5f';
+    auditRows.rows = [
+      { id: 'row-9', actorKind: 'key', actorId: 'k', actorDetail: { callId }, operation: 'batch', ops: [], createdAt: new Date() },
+      { id: 'row-8', actorKind: 'key', actorId: 'k', actorDetail: { callId: '<script>' }, operation: 'batch', ops: [], createdAt: new Date(Date.now() - 1) },
+    ];
+    const events = eventReader(await EVENTS(req('/api/projects/site_1/events'), ctx('site_1')));
+    const state = (await events.next()).data as { feed: Array<{ id: string }> };
+    expect(state.feed.map((l) => l.id)).toEqual([callId, 'row-8']);
+    await events.cancel();
+  });
+
+  it('keeps the stream when the audit rows cannot be read: the live lines alone', async () => {
+    auditRows.fail = true;
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    reportAgentActivity('site_1', activity({ phase: 'end', outcome: 'failed' }), {
+      id: 'call-1', agentId: 'agent-a', label: 'Claude', actorKind: 'key', tool: 'get_page', outcome: 'failed', at: new Date().toISOString(),
+    });
+    const events = eventReader(await EVENTS(req('/api/projects/site_1/events'), ctx('site_1')));
+    const state = (await events.next()).data as { feed: Array<{ id: string }> };
+    expect(state.feed.map((l) => l.id)).toEqual(['call-1']);
+    spy.mockRestore();
+    await events.cancel();
+  });
+
+  it("sends the state's active agents (a running call wins) and forwards every agent:activity of this site only", async () => {
+    reportAgentActivity('site_1', activity({ callId: 'c1' }));
+    const events = eventReader(await EVENTS(req('/api/projects/site_1/events'), ctx('site_1')));
+    const state = (await events.next()).data as { agents: Array<Record<string, unknown>> };
+    expect(state.agents).toEqual([expect.objectContaining({ callId: 'c1', phase: 'start' })]);
+    reportAgentActivity('site_2', activity({ callId: 'other-site' }));
+    reportAgentActivity('site_1', activity({ callId: 'c1', phase: 'end', outcome: 'ok' }));
+    expect(await events.next()).toEqual({ event: 'agent:activity', data: expect.objectContaining({ callId: 'c1', phase: 'end' }) });
+    await events.cancel();
+  });
+
+  it('leaves out an agent that left more than a minute ago', async () => {
+    reportAgentActivity('site_1', activity({ phase: 'end', outcome: 'ok' }), undefined, Date.now() - 120_000);
+    const events = eventReader(await EVENTS(req('/api/projects/site_1/events'), ctx('site_1')));
+    expect(((await events.next()).data as { agents: unknown[] }).agents).toEqual([]);
+    await events.cancel();
   });
 });
 

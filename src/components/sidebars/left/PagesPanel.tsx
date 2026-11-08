@@ -28,6 +28,7 @@ import React from 'react';
 import { observer } from 'mobx-react-lite';
 import { Plus, X, FileText, Search, Settings2, Trash2, Home, MoreHorizontal, Info } from 'lucide-react';
 import { useStore } from '@/hooks/useStore';
+import AgentPageDot from '@/components/live/AgentPageDot';
 import type { PageModelType } from '@/models/PageModel';
 import PageSettingsDialog from './PageSettingsDialog';
 import { ContextMenu, type MenuCloseReason } from './ContextMenu';
@@ -103,8 +104,12 @@ const PageRow = observer(({
           <FileText size={12} aria-hidden="true" className={`shrink-0 ${isActive ? 'text-brand' : 'text-muted-foreground'}`} />
         )}
         <span className="flex-1 min-w-0">
-          <span className={`block text-sm truncate text-foreground ${isActive ? 'font-medium' : ''}`}>
-            {title}
+          <span className="flex items-center gap-1.5">
+            <span className={`block text-sm truncate text-foreground ${isActive ? 'font-medium' : ''}`}>
+              {title}
+            </span>
+            {/* An agent works on this page right now (live agent canvas). */}
+            <AgentPageDot pageId={page.id} />
           </span>
           <span className="block text-[10px] text-muted-foreground truncate leading-tight">
             /{page.slug}

@@ -71,6 +71,7 @@ import { logAiCall, startAiCallTimer } from '@/lib/ai/aiLogger';
 import { recordUsage } from '@/lib/ai/aiUsageStub';
 import { recordSiteOperation, type AuditedOp } from './audit';
 import type { SiteWriteActor } from '@/lib/projects/liveEvents';
+import { splitCreated } from '@/lib/siteOps/createdIds';
 
 export type { SiteOpsCaller, SiteOpsResult } from '@/lib/siteOps/types';
 
@@ -327,7 +328,7 @@ export async function applyBatch(caller: SiteOpsCaller, input: unknown, deps: Si
     return fromError(err, siteId);
   }
   countPhotoDownloads(project, placed);
-  await audit(caller, siteId, { operation: 'batch', ops: auditedOps(ops), versionBefore: version, versionAfter: written });
+  await audit(caller, siteId, { operation: 'batch', ops: auditedOps(ops), versionBefore: version, versionAfter: written, created: splitCreated(ops, applied.created) });
   return ok({ siteId, version: written, created: applied.created, summary: applied.summary });
 }
 
@@ -524,6 +525,7 @@ export async function generatePage(
     ops: [{ op: `generate:${input.target.kind}`, pageId: applied.pageId }],
     versionBefore: version,
     versionAfter: written,
+    created: { nodeIds: applied.insertedIds, pageIds: [] },
   });
   return ok({
     siteId: input.siteId,

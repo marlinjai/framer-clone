@@ -206,7 +206,8 @@ describe('applyBatch', () => {
     expect(audits.rows).toEqual([
       expect.objectContaining({
         siteId: 'site-1', workspaceId: 'ws_a', actorKind: 'key', actorId: 'key_1', operation: 'batch',
-        actorDetail: { serviceAccountId: 'sa_1' }, versionBefore: 3, versionAfter: 4,
+        // The ids the batch created ride in the detail, apart from `ops` (the change count stays the batch's).
+        actorDetail: { serviceAccountId: 'sa_1', createdNodeIds: [expect.any(String)] }, versionBefore: 3, versionAfter: 4,
         ops: [{ op: 'insertNodes', pageId: 'home' }, { op: 'updateText', nodeId: 'title' }],
       }),
     ]);

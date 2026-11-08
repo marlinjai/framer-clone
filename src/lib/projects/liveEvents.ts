@@ -59,23 +59,106 @@ export interface SiteVersionEvent extends SiteWriteEvent {
   catchUp?: boolean;
 }
 
-/** `state`: sent once on connect. Slices 2 and 4 fill the lists. */
+/**
+ * How an MCP tool call ended (`agent:activity` with phase `end`). `awaiting_approval`:
+ * a publish or rollback is waiting for the person; `declined`: the person said no.
+ * Neither wrote anything.
+ */
+export type AgentOutcome = 'ok' | 'rejected' | 'site_changed' | 'failed' | 'awaiting_approval' | 'declined';
+
+/**
+ * `agent:activity` (plan section 2): an MCP tool call on this site started or
+ * ended. Ids and server-written lines only: `label` is the key's name as
+ * auth-brain holds it (else the MCP client's declared name, else "Agent"),
+ * capped and plain text. No summary line: those name page titles, which are content.
+ * `agentId` is a hash of the key id, never the key id itself.
+ */
+export interface AgentActivity {
+  /** Random per call: the start and the end of one call share it. */
+  callId: string;
+  /** Stable per key, a hash of its id. */
+  agentId: string;
+  label: string;
+  /** The tool's name: 'get_page', 'apply_batch', 'generate_page', ... */
+  tool: string;
+  phase: 'start' | 'end';
+  /** On `end`. */
+  outcome?: AgentOutcome;
+  /** The page the call reads or writes, when it names one. */
+  pageId?: string;
+  /** Start: the node ids its arguments name. End: those plus the ids it created. At most LIVE_LIST_MAX. */
+  nodeIds?: string[];
+  /** The skeleton ref the call fulfils (slice 4). */
+  sectionRef?: string;
+  /** On the end of a batch: how many operations it held. */
+  changes?: number;
+  /** ISO 8601. */
+  at: string;
+}
+
+/**
+ * One line of the activity feed. A write that committed comes from its audit
+ * row (src/server/siteOps/audit.ts), so it is there again after a reload;
+ * reads and refused calls leave no row and exist only live. The words are
+ * composed by the editor (a page title is content and never travels).
+ */
+export interface LiveFeedLine {
+  /** The audit row's id, or the call id of a live line. */
+  id: string;
+  agentId: string;
+  label: string;
+  actorKind: 'key' | 'user';
+  tool: string;
+  outcome: AgentOutcome;
+  pageId?: string;
+  /** The nodes the call named or created (a click selects the ones that still exist). */
+  nodeIds?: string[];
+  /** How many operations a batch held. */
+  changes?: number;
+  /** ISO 8601. */
+  at: string;
+}
+
+/** `state`: sent once on connect. Slice 4 fills `plans`. */
 export interface SiteStateEvent {
   version: number;
   /** Live skeleton plans of the site (slice 4). */
   plans: unknown[];
-  /** Active agents and their last focus (slice 2). */
-  agents: unknown[];
-  /** The last feed lines (slice 2). */
-  feed: unknown[];
+  /**
+   * The agents active on the site and their last focus: the latest activity of
+   * each, `start` while one of its calls is still running. Only agents seen
+   * within AGENT_ACTIVE_MS: one that left is never reattached.
+   */
+  agents: AgentActivity[];
+  /** The last LIVE_FEED_MAX feed lines, newest first. */
+  feed: LiveFeedLine[];
 }
 
 /** Every event name the stream sends. */
 export const LIVE_EVENTS = {
   state: 'state',
   siteVersion: 'site:version',
+  agentActivity: 'agent:activity',
   authExpired: 'auth:expired',
 } as const;
+
+/** The feed keeps this many lines (the state event's backfill too). */
+export const LIVE_FEED_MAX = 30;
+/** The presence frame stays this long after an agent's last call ended, then fades. */
+export const AGENT_FRAME_LINGER_MS = 4_000;
+/**
+ * An agent counts as active (the top bar's "... is editing this site", the
+ * state event's agents) while a call runs and this long after its last one
+ * ended: an agent thinks between calls, and the person should still know.
+ */
+export const AGENT_ACTIVE_MS = 60_000;
+
+/**
+ * A call still running after this long is treated as ended (a generation takes
+ * minutes, never this long): the server drops it from its snapshot, the editor
+ * from its picture, so a lost `end` leaves no frame behind.
+ */
+export const OPEN_CALL_MAX_MS = 15 * 60_000;
 
 /** Labels and summary lines are capped like this before they leave the server. */
 export const LIVE_LABEL_MAX = 80;
@@ -86,7 +169,57 @@ export const LIVE_LIST_MAX = 200;
 /** Cap a server-written line for the stream: one line, plain text, LIVE_LABEL_MAX characters. */
 export function capLiveText(text: string): string {
   const oneLine = text.replace(/\s+/g, ' ').trim();
-  return oneLine.length > LIVE_LABEL_MAX ? `${oneLine.slice(0, LIVE_LABEL_MAX - 1)}…` : oneLine;
+  return capChars(oneLine, LIVE_LABEL_MAX);
+}
+
+/** The most code points one visible character may keep (a flag is 2, a family emoji about 7). */
+const CLUSTER_MAX_CODE_POINTS = 8;
+
+type GraphemeSegmenter = { segment(t: string): Iterable<{ segment: string }> };
+let segmenter: GraphemeSegmenter | null | undefined;
+
+/** Visible characters as a reader sees them, by code points where the runtime cannot tell. */
+function visibleChars(text: string): string[] {
+  if (segmenter === undefined) {
+    const Segmenter = (Intl as unknown as { Segmenter?: new (l?: string, o?: { granularity: 'grapheme' }) => GraphemeSegmenter }).Segmenter;
+    segmenter = Segmenter ? new Segmenter(undefined, { granularity: 'grapheme' }) : null;
+  }
+  return segmenter ? Array.from(segmenter.segment(text), (s) => s.segment) : Array.from(text);
+}
+
+/**
+ * Text split into at most `max` visible characters (a flag or a skin-toned
+ * emoji is one, though several code points), each kept to
+ * CLUSTER_MAX_CODE_POINTS code points, so the size stays bounded however many
+ * combining marks one character carries. Never more than `max * 8` code points
+ * are looked at.
+ */
+export function boundedChars(text: string, max: number): string[] {
+  const head = Array.from(text).slice(0, max * CLUSTER_MAX_CODE_POINTS + 1).join('');
+  return visibleChars(head)
+    .slice(0, max + 1)
+    .map((c) => Array.from(c).slice(0, CLUSTER_MAX_CODE_POINTS).join(''));
+}
+
+/** Cut text to `max` visible characters with an ellipsis, between whole characters. */
+export function capChars(text: string, max: number): string {
+  const chars = boundedChars(text, max);
+  return chars.length > max ? `${chars.slice(0, max - 1).join('')}…` : chars.join('');
+}
+
+/**
+ * A label for the stream from text a client or an administrator chose (a key's
+ * name, an MCP client's name): control and bidirectional override characters
+ * removed, one line, capped. Undefined when nothing printable is left.
+ */
+export function sanitizeLiveLabel(text: unknown): string | undefined {
+  if (typeof text !== 'string') return undefined;
+  // Controls, format characters (zero-width, bidirectional marks and overrides, soft hyphen, tag
+  // characters), line or paragraph separators, private-use and unassigned code points: nothing
+  // that hides, reorders or fakes text.
+  const printable = text.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}\p{Cn}]/gu, ' ');
+  const capped = capLiveText(printable);
+  return capped ? capped : undefined;
 }
 
 /** A write event as it may travel: lists bounded, text capped. */
