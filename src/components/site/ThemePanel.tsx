@@ -74,12 +74,25 @@ function useThemeState(project: ProjectModelType) {
   const theme = project.site.theme;
   // A deep read of the snapshot: references are strings wherever they sit.
   const snapshot = getSnapshot(project);
-  const usage = tokenUsage({ pages: snapshot.pages, components: snapshot.components, document: theme.document });
+  // A colour drag rerenders on every change. Snapshots share structure, so the page and
+  // component references stay the same through a theme-only edit and the walks are skipped.
+  // The document is normalized into a new object on each read, so it is keyed by value.
+  const themeDocument = theme.document;
+  const documentKey = JSON.stringify(themeDocument);
+  const usage = React.useMemo(
+    () => tokenUsage({ pages: snapshot.pages, components: snapshot.components, document: themeDocument }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- themeDocument is keyed by value (documentKey)
+    [snapshot.pages, snapshot.components, documentKey],
+  );
+  const holdsDarkRules = React.useMemo(
+    () => holdsColorSchemeRule(snapshot.pages) || holdsColorSchemeRule(snapshot.components),
+    [snapshot.pages, snapshot.components],
+  );
   const pages = project.pagesArray.map((page) => ({
     title: page.metadata.title,
     rootRules: (page.appComponentTree?.props as { rules?: unknown } | undefined)?.rules,
   }));
-  const warnings = themeWarnings(theme, { holdsDarkRules: holdsColorSchemeRule(snapshot.pages) || holdsColorSchemeRule(snapshot.components), pages });
+  const warnings = themeWarnings(theme, { holdsDarkRules, pages });
   return { theme, usage, warnings };
 }
 
