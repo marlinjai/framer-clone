@@ -192,18 +192,28 @@ export function focusOf(args: unknown): { pageId?: string; nodeIds: string[] } {
 /** How a tool's answer ended, from its error code. A rate limit is a refusal: nothing was written. */
 export function outcomeOf(result: ToolResult | undefined): AgentOutcome {
   if (!result) return 'failed';
-  if (!result.isError) return 'ok';
+  if (!result.isError) {
+    // A publish or rollback the person has not approved (or declined) wrote nothing: not "ok".
+    const s = record(result.structuredContent);
+    if (s.declined === true) return 'declined';
+    if (s.approvalRequired === true || s.approvalPending === true) return 'awaiting_approval';
+    return 'ok';
+  }
   const code = record(record(result.structuredContent).error).code;
   if (code === 'rejected' || code === 'rate_limited') return 'rejected';
   if (code === 'site_changed') return 'site_changed';
   return 'failed';
 }
 
-/** Whether the answer reports a committed write (then the audit row carries the feed line). */
+/**
+ * Whether the answer reports a committed write that its audit row will carry
+ * (then the audit row is the feed line). An error answer never counts, even one
+ * carrying `writtenVersion`: the publish committed but a later step failed,
+ * possibly the audit row itself, so the live line stays as the fallback.
+ */
 function wroteOf(tool: string, result: ToolResult | undefined): boolean {
-  if (!result || !WRITE_TOOLS.has(tool)) return false;
+  if (!result || !WRITE_TOOLS.has(tool) || result.isError) return false;
   const s = record(result.structuredContent);
-  if (result.isError) return typeof record(s.error).writtenVersion === 'number';
   return tool === 'rollback' ? typeof s.live === 'number' : typeof s.version === 'number';
 }
 

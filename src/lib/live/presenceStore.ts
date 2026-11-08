@@ -37,6 +37,7 @@ import {
   AGENT_ACTIVE_MS,
   AGENT_FRAME_LINGER_MS,
   LIVE_FEED_MAX,
+  OPEN_CALL_MAX_MS,
   type AgentActivity,
   type LiveFeedLine,
   type SiteStateEvent,
@@ -65,6 +66,9 @@ export interface AgentPresence {
 
 /** Remembered (callId, phase) pairs, so an activity heard twice (state and stream) applies once. */
 const SEEN_MAX = 500;
+
+/** A call of an agent still running: what it works on, and the timer that gives up on it if its end never comes. */
+type OpenCall = { focus: AgentFocus; expiry: ReturnType<typeof setTimeout> };
 
 type Timers = { frame?: ReturnType<typeof setTimeout>; active?: ReturnType<typeof setTimeout> };
 
@@ -116,12 +120,14 @@ export class LivePresenceStore {
   run = 0;
 
   private timers = new Map<string, Timers>();
+  /** Per agent, its running calls in the order they started (the last is the most recent). */
+  private calls = new Map<string, Map<string, OpenCall>>();
   private seen = new Set<string>();
   private readonly now: () => number;
 
   constructor(now: () => number = Date.now) {
     this.now = now;
-    makeObservable<LivePresenceStore, 'expire' | 'hideFrame'>(this, {
+    makeObservable<LivePresenceStore, 'expire' | 'hideFrame' | 'expireCall'>(this, {
       agents: observable.shallow,
       feed: observable.ref,
       follow: observable,
@@ -136,6 +142,7 @@ export class LivePresenceStore {
       reset: action,
       expire: action,
       hideFrame: action,
+      expireCall: action,
     });
   }
 
@@ -167,6 +174,47 @@ export class LivePresenceStore {
     if (t?.frame) clearTimeout(t.frame);
     if (t?.active) clearTimeout(t.active);
     this.timers.delete(agentId);
+  }
+
+  /** Remembers a running call, and gives up on it OPEN_CALL_MAX_MS after it started (`ageMs` ago). */
+  private openCall(agentId: string, callId: string, focus: AgentFocus, ageMs: number) {
+    let calls = this.calls.get(agentId);
+    if (!calls) this.calls.set(agentId, (calls = new Map()));
+    const prev = calls.get(callId);
+    if (prev) clearTimeout(prev.expiry);
+    calls.delete(callId);
+    calls.set(callId, { focus, expiry: setTimeout(() => this.expireCall(agentId, callId), Math.max(0, OPEN_CALL_MAX_MS - ageMs)) });
+  }
+
+  /** Forgets a running call (it ended, or timed out); the calls that remain stay. */
+  private closeCall(agentId: string, callId: string) {
+    const calls = this.calls.get(agentId);
+    const call = calls?.get(callId);
+    if (!calls || !call) return;
+    clearTimeout(call.expiry);
+    calls.delete(callId);
+    if (calls.size === 0) this.calls.delete(agentId);
+  }
+
+  private clearCalls() {
+    for (const calls of this.calls.values()) for (const call of calls.values()) clearTimeout(call.expiry);
+    this.calls.clear();
+  }
+
+  /** The end of a call never came: this call alone is given up on, the agent's other running calls go on. */
+  private expireCall(agentId: string, callId: string) {
+    this.closeCall(agentId, callId);
+    const agent = this.agents.get(agentId);
+    if (!agent) return;
+    const openCalls = agent.openCalls.filter((c) => c !== callId);
+    const remaining = [...(this.calls.get(agentId)?.values() ?? [])].at(-1);
+    if (remaining) {
+      this.agents.set(agentId, { ...agent, openCalls, focus: remaining.focus });
+      return;
+    }
+    // Nothing runs any more: no frame, and the agent is no longer active.
+    this.agents.set(agentId, { ...agent, openCalls: [], frameShown: false });
+    this.expire(agentId);
   }
 
   private hideFrame(agentId: string) {
@@ -209,6 +257,7 @@ export class LivePresenceStore {
   applyState(state: Pick<SiteStateEvent, 'agents' | 'feed'>): void {
     const now = this.now();
     for (const id of [...this.timers.keys()]) this.clearTimers(id);
+    this.clearCalls();
     this.agents.clear();
     this.leadAgentId = undefined;
     const agents = Array.isArray(state.agents) ? state.agents : [];
@@ -216,6 +265,9 @@ export class LivePresenceStore {
       if (!a || typeof a.agentId !== 'string' || typeof a.callId !== 'string') continue;
       const age = ageOf(a.at, now);
       if (a.phase === 'end' && age >= AGENT_ACTIVE_MS) continue;
+      // A call the stream already reported as ended is not running, whatever this snapshot says.
+      if (a.phase === 'start' && this.seen.has(`${a.callId}:end`)) continue;
+      if (a.phase === 'start' && age >= OPEN_CALL_MAX_MS) continue;
       if (this.agents.size === 0) this.becameActive();
       this.markSeen(a);
       const running = a.phase === 'start';
@@ -228,8 +280,10 @@ export class LivePresenceStore {
         frameShown: running || (!failed && age < AGENT_FRAME_LINGER_MS),
         failed,
       });
-      if (running) this.leadAgentId = a.agentId;
-      else this.scheduleEnd(a.agentId, age, failed);
+      if (running) {
+        this.openCall(a.agentId, a.callId, focusOf(a), age);
+        this.leadAgentId = a.agentId;
+      } else this.scheduleEnd(a.agentId, age, failed);
     }
     const feed = Array.isArray(state.feed) ? state.feed : [];
     this.feed = feed.filter((l) => l && typeof l.id === 'string').slice(0, LIVE_FEED_MAX);
@@ -239,12 +293,16 @@ export class LivePresenceStore {
   applyActivity(a: AgentActivity): void {
     if (!a || typeof a.agentId !== 'string' || typeof a.callId !== 'string') return;
     if (a.phase !== 'start' && a.phase !== 'end') return;
+    // A start arriving after its own end (both happened while the first read of the site's version
+    // was under way, the snapshot already holds the end) would leave a frame nothing ever clears.
+    if (a.phase === 'start' && this.seen.has(`${a.callId}:end`)) return;
     if (!this.markSeen(a)) return;
     const prev = this.agents.get(a.agentId);
     // A first sight of the agent (its start may have been missed across a reconnect) begins a run either way.
     if (!prev) this.becameActive();
     if (a.phase === 'start') {
       this.clearTimers(a.agentId);
+      this.openCall(a.agentId, a.callId, focusOf(a), ageOf(a.at, this.now()));
       this.agents.set(a.agentId, {
         agentId: a.agentId,
         label: a.label,
@@ -258,10 +316,13 @@ export class LivePresenceStore {
     }
     // The end of a call: its feed line, then the frame.
     if (!this.feed.some((l) => l.id === a.callId)) this.feed = [feedLineOf(a), ...this.feed].slice(0, LIVE_FEED_MAX);
+    this.closeCall(a.agentId, a.callId);
     const openCalls = (prev?.openCalls ?? []).filter((c) => c !== a.callId);
     const failed = a.outcome !== undefined && a.outcome !== 'ok';
-    // The ended call is the one framed (or none was known): its answer names the created nodes too.
-    const focus = !prev || prev.focus.callId === a.callId ? focusOf(a) : prev.focus;
+    // A call still running keeps the frame: the most recent of them, not the one that just ended.
+    // Otherwise the ended call is the one framed (or none was known): its answer names the created nodes too.
+    const remaining = [...(this.calls.get(a.agentId)?.values() ?? [])].at(-1);
+    const focus = remaining ? remaining.focus : !prev || prev.focus.callId === a.callId ? focusOf(a) : prev.focus;
     this.agents.set(a.agentId, {
       agentId: a.agentId,
       label: a.label,
@@ -284,6 +345,7 @@ export class LivePresenceStore {
   /** The editor closed the site (or opened another): nothing carries over. */
   reset(): void {
     for (const id of [...this.timers.keys()]) this.clearTimers(id);
+    this.clearCalls();
     this.agents.clear();
     this.feed = [];
     this.seen.clear();

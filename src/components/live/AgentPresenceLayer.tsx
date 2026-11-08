@@ -32,7 +32,7 @@ import { observer } from 'mobx-react-lite';
 import { useStore } from '@/hooks/useStore';
 import { useTransformContext } from '@/contexts/TransformContext';
 import { revealOffset, useCameraControls, type CameraTransform } from '@/lib/canvas/cameraControls';
-import { presenceTarget, type PresencePage, type PresenceTarget } from '@/lib/live/presenceTarget';
+import { presencePagesOf, presenceTarget, type PresenceProject, type PresenceTarget } from '@/lib/live/presenceTarget';
 import { presenceLabel } from '@/lib/live/activityText';
 import type { AgentPresence, LivePresenceStore } from '@/lib/live/presenceStore';
 
@@ -77,7 +77,7 @@ export function useAgentTargets(): Array<{ agent: AgentPresence; target: Presenc
   const project = editorUI.currentProject;
   const pageId = editorUI.currentPage?.id;
   if (!presence) return [];
-  const pages = project ? (Array.from(project.pages.values()) as unknown as PresencePage[]) : [];
+  const pages = presencePagesOf(project as unknown as PresenceProject | undefined);
   return presence.active.map((agent) => {
     const target = presenceTarget(pages, agent.focus);
     return { agent, target: target && target.pageId === pageId ? target : undefined };
@@ -102,6 +102,9 @@ const AgentPresenceLayer = observer(function AgentPresenceLayer() {
   const moves = React.useRef(new Map<string, { key: string; until: number }>());
   // Watches the size of the elements drawn around (an adoption may replace them with new ones).
   const resizes = React.useRef<{ observer: ResizeObserver; watched: Set<Element> } | null>(null);
+  // Watches the canvas for layout changes the elements' own sizes do not show (a section above grew,
+  // a framed element was replaced), and the canvas root it watches.
+  const layout = React.useRef<{ observer: MutationObserver; root: Element | null } | null>(null);
 
   const next: DrawnAgent[] = targets.map(({ agent, target }) => ({
     agentId: agent.agentId,
@@ -165,6 +168,14 @@ const AgentPresenceLayer = observer(function AgentPresenceLayer() {
       });
     }
     for (const child of Array.from(container.children)) if (!keep.has(child)) child.remove();
+    // The canvas may have mounted after the layer: watch whichever root is there now.
+    const watch = layout.current;
+    const root = document.querySelector('[data-camera-transform]');
+    if (watch && root !== watch.root) {
+      watch.observer.disconnect();
+      watch.root = root;
+      if (root) watch.observer.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class', 'hidden'] });
+    }
     // Follow the elements drawn now: watch new ones, let go of ones that left the page.
     const resize = resizes.current;
     if (resize) {
@@ -214,6 +225,27 @@ const AgentPresenceLayer = observer(function AgentPresenceLayer() {
     };
   }, [update]);
 
+  // Any change inside the canvas (a section above the framed one grows, the framed element is replaced)
+  // redraws, once per frame. The layer's own writes are outside the canvas and never trigger it.
+  React.useEffect(() => {
+    if (typeof MutationObserver === 'undefined') return;
+    let raf = 0;
+    const observer = new MutationObserver(() => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        update();
+      });
+    });
+    layout.current = { observer, root: null };
+    update();
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      observer.disconnect();
+      layout.current = null;
+    };
+  }, [update]);
+
   return <div ref={containerRef} aria-hidden="true" className="pointer-events-none fixed inset-0" style={{ zIndex: 9 }} data-agent-presence-layer="" />;
 });
 
@@ -234,11 +266,16 @@ export const AgentCameraFollow = observer(function AgentCameraFollow() {
   const { editorUI } = useStore();
   const presence = editorUI.livePresence as LivePresenceStore | undefined;
   const { read, panBy } = useCameraControls();
+  const { subscribe } = useTransformContext();
   const targets = useAgentTargets();
   const lead = targets.find((t) => t.agent.agentId === presence?.leadAgentId);
   const key = lead?.agent.frameShown ? targetKey(lead.target) : '';
-  // Where this follower last left the camera; undefined until it first acts.
+  // Where this follower last left the camera, or where the camera stood when the run began (or
+  // Follow came back on): the baseline the person's moves are measured against, even before the
+  // agent's first target resolves (it may start on another page).
   const last = React.useRef<CameraTransform | undefined>(undefined);
+  const readRef = React.useRef(read);
+  readRef.current = read;
 
   // A new run, or Follow turned back on: from here on the person's moves count.
   React.useEffect(
@@ -246,10 +283,20 @@ export const AgentCameraFollow = observer(function AgentCameraFollow() {
       autorun(() => {
         // Read both, so either change starts over.
         const run = presence?.run;
-        if (presence?.follow && run !== undefined) last.current = undefined;
+        if (presence?.follow && run !== undefined) last.current = readRef.current();
       }),
     [presence],
   );
+
+  // Before any target resolves, a move by the person is still noticed.
+  React.useEffect(() => {
+    if (!presence?.follow || lead?.target) return;
+    const watch = () => {
+      if (last.current && presence.follow && !sameCamera(last.current, readRef.current())) presence.setFollow(false);
+    };
+    return subscribe(watch);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [presence, presence?.follow, !!lead?.target, subscribe]);
 
   React.useEffect(() => {
     if (!presence || !key || !lead?.target || !presence.follow) return;

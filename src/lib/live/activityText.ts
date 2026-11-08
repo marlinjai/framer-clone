@@ -41,11 +41,12 @@ export function presenceLabel(label: string, tool: string): string {
 
 /** The top bar's note for the active agents' labels. */
 export function editingNote(labels: readonly string[]): string | null {
-  const unique = [...new Set(labels.map((l) => l || 'Agent'))];
-  if (unique.length === 0) return null;
-  if (unique.length === 1) return `${unique[0]} is editing this site`;
-  if (unique.length === 2) return `${unique[0]} and ${unique[1]} are editing this site`;
-  return `${unique.length} agents are editing this site`;
+  // One entry per active agent: two agents with the same label are still two agents.
+  const names = labels.map((l) => l || 'Agent');
+  if (names.length === 0) return null;
+  if (names.length === 1) return `${names[0]} is editing this site`;
+  if (names.length === 2 && names[0] !== names[1]) return `${names[0]} and ${names[1]} are editing this site`;
+  return `${names.length} agents are editing this site`;
 }
 
 function plural(n: number, one: string, many: string): string {
@@ -76,6 +77,8 @@ function refusal(tool: string, outcome: Exclude<AgentOutcome, 'ok'>): string {
   const noun = attemptNoun(tool);
   if (outcome === 'site_changed') return `${noun} refused: site changed, re-reading`;
   if (outcome === 'rejected') return `${noun} refused, nothing written`;
+  if (outcome === 'awaiting_approval') return `${noun} waiting for your approval`;
+  if (outcome === 'declined') return `${noun} declined, nothing written`;
   return `${noun} failed`;
 }
 

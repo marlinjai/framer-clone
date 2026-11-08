@@ -22,12 +22,11 @@ import 'server-only';
 // running call older than OPEN_CALL_MAX_MS counts as ended. Kept on globalThis
 // so a development hot reload does not split reporters and readers.
 
-import { AGENT_ACTIVE_MS, LIVE_EVENTS, LIVE_FEED_MAX, type AgentActivity, type LiveFeedLine } from '@/lib/projects/liveEvents';
+import { AGENT_ACTIVE_MS, LIVE_EVENTS, LIVE_FEED_MAX, OPEN_CALL_MAX_MS, type AgentActivity, type LiveFeedLine } from '@/lib/projects/liveEvents';
 import { publishSiteEvent } from './liveBus';
 
 export const LIVE_PRESENCE_LIMITS = { sites: 2000, agentsPerSite: 20 } as const;
-/** A call still running after this long is treated as ended (a generation takes minutes, never this long). */
-export const OPEN_CALL_MAX_MS = 15 * 60_000;
+export { OPEN_CALL_MAX_MS };
 /** A site nobody reported on for this long is forgotten, its live lines with it. */
 export const SITE_IDLE_MS = 6 * 60 * 60_000;
 
@@ -131,8 +130,14 @@ export function reportAgentActivity(siteId: string, activity: AgentActivity, lin
 
 /** What a newly opened stream of the site is told: the active agents and the live feed lines. */
 export function presenceSnapshot(siteId: string, now: number = Date.now()): { agents: AgentActivity[]; feed: LiveFeedLine[] } {
-  const entry = state().sites.get(siteId);
+  const sites = state().sites;
+  const entry = sites.get(siteId);
   if (!entry) return { agents: [], feed: [] };
+  // An idle site is forgotten before it is read, so a reconnect never gets its stale lines.
+  if (now - entry.touchedAt > SITE_IDLE_MS) {
+    sites.delete(siteId);
+    return { agents: [], feed: [] };
+  }
   const agents: AgentActivity[] = [];
   for (const agent of entry.agents.values()) {
     dropStaleCalls(agent, now);

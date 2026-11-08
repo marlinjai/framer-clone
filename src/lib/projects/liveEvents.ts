@@ -59,8 +59,12 @@ export interface SiteVersionEvent extends SiteWriteEvent {
   catchUp?: boolean;
 }
 
-/** How an MCP tool call ended (`agent:activity` with phase `end`). */
-export type AgentOutcome = 'ok' | 'rejected' | 'site_changed' | 'failed';
+/**
+ * How an MCP tool call ended (`agent:activity` with phase `end`). `awaiting_approval`:
+ * a publish or rollback is waiting for the person; `declined`: the person said no.
+ * Neither wrote anything.
+ */
+export type AgentOutcome = 'ok' | 'rejected' | 'site_changed' | 'failed' | 'awaiting_approval' | 'declined';
 
 /**
  * `agent:activity` (plan section 2): an MCP tool call on this site started or
@@ -148,6 +152,13 @@ export const AGENT_FRAME_LINGER_MS = 4_000;
  * ended: an agent thinks between calls, and the person should still know.
  */
 export const AGENT_ACTIVE_MS = 60_000;
+
+/**
+ * A call still running after this long is treated as ended (a generation takes
+ * minutes, never this long): the server drops it from its snapshot, the editor
+ * from its picture, so a lost `end` leaves no frame behind.
+ */
+export const OPEN_CALL_MAX_MS = 15 * 60_000;
 
 /** Labels and summary lines are capped like this before they leave the server. */
 export const LIVE_LABEL_MAX = 80;

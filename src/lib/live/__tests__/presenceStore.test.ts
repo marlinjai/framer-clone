@@ -3,7 +3,7 @@
 // forward, backtrack and revise, resume, re-entry after completion or failure.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AGENT_ACTIVE_MS, AGENT_FRAME_LINGER_MS, LIVE_FEED_MAX, type AgentActivity, type LiveFeedLine } from '@/lib/projects/liveEvents';
+import { AGENT_ACTIVE_MS, AGENT_FRAME_LINGER_MS, LIVE_FEED_MAX, OPEN_CALL_MAX_MS, type AgentActivity, type LiveFeedLine } from '@/lib/projects/liveEvents';
 import { LivePresenceStore } from '../presenceStore';
 
 const T0 = Date.parse('2026-11-08T12:00:00Z');
@@ -203,5 +203,64 @@ describe('re-entry after completion or failure', () => {
     // The same call heard again after a reset applies (nothing remembered).
     store.applyActivity(act());
     expect(store.anyActive).toBe(true);
+  });
+});
+
+describe('calls that overlap, arrive late or never end', () => {
+  it('when a newer call ends while an older one runs, the frame goes back to the older call', () => {
+    store.applyActivity(act({ callId: 'old', nodeIds: ['hero-title'], tool: 'generate_page' }));
+    store.applyActivity(act({ callId: 'new', nodeIds: ['plan-a'], tool: 'apply_batch' }));
+    expect(store.agents.get('a1')!.focus.callId).toBe('new');
+    store.applyActivity(end({ callId: 'new', nodeIds: ['plan-a'] }));
+    const agent = store.agents.get('a1')!;
+    expect(agent.focus).toMatchObject({ callId: 'old', tool: 'generate_page', nodeIds: ['hero-title'] });
+    expect(agent.openCalls).toEqual(['old']);
+    expect(agent.frameShown).toBe(true);
+    store.applyActivity(end({ callId: 'old' }));
+    expect(store.agents.get('a1')!.openCalls).toEqual([]);
+  });
+
+  it('ignores a start whose end the stream already delivered', () => {
+    store.applyState({ agents: [], feed: [] });
+    store.applyActivity(end({ callId: 'quick' }));
+    store.applyActivity(act({ callId: 'quick' }));
+    expect(store.agents.get('a1')!.openCalls).toEqual([]);
+    vi.advanceTimersByTime(AGENT_FRAME_LINGER_MS);
+    expect(store.framed).toHaveLength(0);
+    vi.advanceTimersByTime(AGENT_ACTIVE_MS);
+    expect(store.anyActive).toBe(false);
+  });
+
+  it('a snapshot start whose end was already heard is not shown as running', () => {
+    store.applyActivity(act({ callId: 'c9' }));
+    store.applyActivity(end({ callId: 'c9' }));
+    store.applyState({ agents: [act({ callId: 'c9' })], feed: [] });
+    expect(store.agents.get('a1')).toBeUndefined();
+  });
+
+  it('gives up on a call whose end never came after OPEN_CALL_MAX_MS, and only on that call', () => {
+    store.applyActivity(act({ callId: 'lost', nodeIds: ['hero-title'] }));
+    vi.advanceTimersByTime(OPEN_CALL_MAX_MS / 2);
+    store.applyActivity(act({ callId: 'live', nodeIds: ['plan-a'] }));
+    vi.advanceTimersByTime(OPEN_CALL_MAX_MS / 2);
+    // 'lost' timed out; 'live' still runs and owns the frame.
+    const agent = store.agents.get('a1')!;
+    expect(agent.openCalls).toEqual(['live']);
+    expect(agent.focus.callId).toBe('live');
+    expect(agent.frameShown).toBe(true);
+    vi.advanceTimersByTime(OPEN_CALL_MAX_MS / 2);
+    expect(store.framed).toHaveLength(0);
+    expect(store.anyActive).toBe(false);
+  });
+
+  it('expires a call restored from a snapshot by its age, and drops one already past the limit', () => {
+    const startedAt = new Date(Date.now() - (OPEN_CALL_MAX_MS - 1000)).toISOString();
+    store.applyState({ agents: [act({ at: startedAt })], feed: [] });
+    expect(store.framed).toHaveLength(1);
+    vi.advanceTimersByTime(1000);
+    expect(store.framed).toHaveLength(0);
+    expect(store.anyActive).toBe(false);
+    store.applyState({ agents: [act({ at: new Date(Date.now() - OPEN_CALL_MAX_MS - 1).toISOString() })], feed: [] });
+    expect(store.anyActive).toBe(false);
   });
 });

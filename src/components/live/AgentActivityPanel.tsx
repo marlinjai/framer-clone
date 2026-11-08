@@ -19,11 +19,12 @@
 
 import React from 'react';
 import { observer } from 'mobx-react-lite';
-import { AlertTriangle, Check, ChevronDown, ChevronRight, Crosshair, X } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, ChevronRight, Clock, Crosshair, X } from 'lucide-react';
 import { useStore } from '@/hooks/useStore';
 import { revealOffset } from '@/lib/canvas/cameraControls';
 import { feedLineText, feedLineTime } from '@/lib/live/activityText';
 import type { LivePresenceStore } from '@/lib/live/presenceStore';
+import { presencePagesOf, type PresenceProject } from '@/lib/live/presenceTarget';
 import type { LiveFeedLine } from '@/lib/projects/liveEvents';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import type { PageModelType } from '@/models/PageModel';
@@ -46,9 +47,17 @@ export function lineTarget(
   return undefined;
 }
 
+/** The frame of a page the selection should be made in: the one already chosen if the page has it, else its first. */
+export function breakpointFor(page: PageModelType, preferred?: string): string | undefined {
+  const viewports = page.viewportNodes as Array<{ breakpointId?: string }>;
+  if (preferred && viewports.some((v) => v.breakpointId === preferred)) return preferred;
+  return viewports.find((v) => v.breakpointId)?.breakpointId;
+}
+
 function StatusMark({ outcome }: { outcome: LiveFeedLine['outcome'] }) {
   if (outcome === 'ok') return <Check size={12} aria-label="done" className="shrink-0 text-status-published" />;
   if (outcome === 'failed') return <X size={12} aria-label="failed" className="shrink-0 text-destructive" />;
+  if (outcome === 'awaiting_approval') return <Clock size={12} aria-label="waiting for approval" className="shrink-0 text-status-draft" />;
   return <AlertTriangle size={12} aria-label="refused" className="shrink-0 text-status-draft" />;
 }
 
@@ -58,14 +67,28 @@ const AgentActivityPanel = observer(function AgentActivityPanel() {
   const project = editorUI.currentProject;
   const listId = React.useId();
   if (!project || !presence || (!presence.everActive && presence.feed.length === 0)) return null;
-  const pages = Array.from(project.pages.values()) as PageModelType[];
+  const projectPages = Array.from(project.pages.values()) as PageModelType[];
+  // The pages of component definitions too: an agent can edit the one open on the canvas.
+  const pages = presencePagesOf(project as unknown as PresenceProject) as unknown as PageModelType[];
   const open = presence.panelOpen;
 
   const reveal = (line: LiveFeedLine) => {
     const target = lineTarget(pages, line);
     if (!target) return;
-    if (editorUI.currentPage?.id !== target.page.id) editorUI.setCurrentPage(target.page);
-    editorUI.setSelection(target.nodes);
+    if (editorUI.currentPage?.id !== target.page.id) {
+      if (projectPages.includes(target.page)) {
+        editorUI.setCurrentPage(target.page);
+      } else {
+        // A component definition opens the way the editor opens it, with its way back.
+        const definition = Array.from(project.components.values()).find((d) => d.page === target.page);
+        if (!definition) return;
+        editorUI.enterComponent(definition.id);
+      }
+    }
+    const current = editorUI.currentPage as PageModelType | undefined;
+    // Tree nodes need their frame as viewport context, or the canvas shows no outline and no handles.
+    const breakpointId = current ? breakpointFor(current, editorUI.currentViewportNode?.breakpointId) : undefined;
+    editorUI.setSelection(target.nodes, breakpointId);
     // Bring the first one into view on the next frame, once the page is drawn.
     requestAnimationFrame(() => {
       const element = document.querySelector(`[data-camera-transform] [data-inner-component-id="${CSS.escape(target.nodes[0].id)}"]`);
@@ -80,8 +103,8 @@ const AgentActivityPanel = observer(function AgentActivityPanel() {
   };
 
   return (
-    <section data-agent-activity-panel="" aria-label="Agent activity" className="shrink-0 border-t border-border">
-      <div className="flex h-9 items-center gap-1 px-2">
+    <section data-agent-activity-panel="" aria-label="Agent activity" className="flex min-h-9 shrink flex-col overflow-hidden border-t border-border">
+      <div className="flex h-9 shrink-0 items-center gap-1 px-2">
         <button
           type="button"
           onClick={() => presence.setPanelOpen(!open)}
@@ -107,7 +130,7 @@ const AgentActivityPanel = observer(function AgentActivityPanel() {
         </button>
       </div>
       {open && (
-        <ol id={listId} className="max-h-56 overflow-y-auto px-2 pb-2" aria-label="Agent activity, newest first">
+        <ol id={listId} className="min-h-0 max-h-[min(14rem,30vh)] overflow-y-auto px-2 pb-2" aria-label="Agent activity, newest first">
           {presence.feed.length === 0 && <li className="px-1 py-1 text-xs text-muted-foreground">Nothing yet.</li>}
           {presence.feed.map((line) => {
             const page = line.pageId ? pages.find((p) => p.id === line.pageId) : undefined;

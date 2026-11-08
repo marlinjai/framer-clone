@@ -3,7 +3,7 @@
 // its nodes are gone.
 
 import { describe, expect, it } from 'vitest';
-import { presencePageId, presenceTarget, sectionOf, type PresencePage, type PresenceTreeNode } from '../presenceTarget';
+import { presencePageId, presencePagesOf, presenceTarget, sectionOf, type PresencePage, type PresenceTreeNode } from '../presenceTarget';
 
 const node = (id: string, children: PresenceTreeNode[] = []): PresenceTreeNode => ({ id, children });
 
@@ -60,5 +60,29 @@ describe('presenceTarget', () => {
   it('names the page for the Pages panel dot', () => {
     expect(presencePageId([home, about], { nodeIds: ['person'] })).toBe('about');
     expect(presencePageId([home, about], { nodeIds: ['gone'] })).toBeUndefined();
+  });
+});
+
+describe('floating elements and component definitions', () => {
+  const withFloating: PresencePage = { ...home, floatingElements: [node('modal', [node('modal-title')])] };
+
+  it('frames a floating element holding the node, and a deleted node still frames nothing', () => {
+    expect(presenceTarget([withFloating], { nodeIds: ['modal-title'] })).toEqual({ kind: 'section', pageId: 'home', sectionId: 'modal' });
+    expect(presenceTarget([withFloating], { nodeIds: ['modal'] })).toEqual({ kind: 'section', pageId: 'home', sectionId: 'modal' });
+    expect(presenceTarget([withFloating], { nodeIds: ['gone'] })).toBeUndefined();
+    expect(presencePageId([withFloating], { nodeIds: ['modal-title'] })).toBe('home');
+  });
+
+  it('prefers the page tree when the node is there', () => {
+    expect(presenceTarget([withFloating], { nodeIds: ['plan-a'] })).toEqual({ kind: 'section', pageId: 'home', sectionId: 'pricing' });
+  });
+
+  it('searches the pages of component definitions as well as the pages', () => {
+    const definition: PresencePage = { id: 'card-def', appComponentTree: node('card-root', [node('card-body', [node('card-title')])]) };
+    const pages = presencePagesOf({ pages: new Map([['home', home]]), components: new Map([['card', { page: definition }]]) });
+    expect(pages.map((p) => p.id)).toEqual(['home', 'card-def']);
+    expect(presenceTarget(pages, { nodeIds: ['card-title'] })).toEqual({ kind: 'section', pageId: 'card-def', sectionId: 'card-body' });
+    expect(presencePagesOf({ pages: new Map([['home', home]]) })).toEqual([home]);
+    expect(presencePagesOf(undefined)).toEqual([]);
   });
 });

@@ -149,6 +149,8 @@ describe('the activity feed', () => {
     fireEvent.click(within(first).getByRole('button'));
     expect(store.editorUI.currentPage?.id).toBe(home.id);
     expect(store.editorUI.selectedComponent?.id).toBe('pricing');
+    // The tree node comes with its frame, so the canvas can outline it and show its handles.
+    expect(store.editorUI.currentViewportNode?.breakpointId).toBe(home.viewportNodes[0].breakpointId);
   });
 
   it('Follow is a toggle on the presence store', () => {
@@ -181,6 +183,21 @@ describe('the camera follows the agent', () => {
     act(() => presence().applyActivity(activity({ callId: 'c3', nodeIds: ['pricing'] })));
     await frame();
     expect(camera.read().panY).not.toBe(where.panY);
+  });
+
+  it('notices the person panning before the agent has a target on this page', async () => {
+    // The agent starts on the About page: nothing to frame on Home yet.
+    act(() => presence().applyActivity(activity({ pageId: about.id, nodeIds: ['team'] })));
+    await frame();
+    expect(presence().follow).toBe(true);
+    act(() => camera.panBy(0, 400));
+    await frame();
+    expect(presence().follow).toBe(false);
+    const where = camera.read();
+    // Its next call lands on Home: the camera stays where the person put it.
+    act(() => presence().applyActivity(activity({ callId: 'c2', nodeIds: ['pricing'] })));
+    await frame();
+    expect(camera.read()).toEqual(where);
   });
 
   it("a new run follows again even after the person moved the camera between runs", async () => {

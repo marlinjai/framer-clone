@@ -24,7 +24,9 @@ describe('activity words', () => {
 
   it('names who edits in the top bar', () => {
     expect(editingNote([])).toBeNull();
-    expect(editingNote(['Claude', 'Claude'])).toBe('Claude is editing this site');
+    expect(editingNote(['Claude', 'Claude'])).toBe('2 agents are editing this site');
+    expect(editingNote(['Claude', 'Claude', 'Codex', ''])).toBe('4 agents are editing this site');
+    expect(editingNote(['', ''])).toBe('2 agents are editing this site');
     expect(editingNote(['Claude', 'Codex'])).toBe('Claude and Codex are editing this site');
     expect(editingNote(['a', 'b', 'c'])).toBe('3 agents are editing this site');
   });

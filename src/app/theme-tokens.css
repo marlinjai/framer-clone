@@ -95,7 +95,7 @@
   /* Studio brand (iris #5B5BD6) + content status palette. */
   --brand: oklch(0.543 0.179 276.7);
   --brand-foreground: oklch(0.985 0 0);
-  --agent-presence: oklch(0.6 0.2 250);
+  --agent-presence: oklch(0.52 0.18 255);
   --agent-presence-foreground: oklch(0.985 0 0);
   --status-published: oklch(0.63 0.17 149);
   --status-draft: oklch(0.68 0.16 58);

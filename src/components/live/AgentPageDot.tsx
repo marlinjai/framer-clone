@@ -9,7 +9,7 @@
 import React from 'react';
 import { observer } from 'mobx-react-lite';
 import { useStore } from '@/hooks/useStore';
-import { presencePageId, type PresencePage } from '@/lib/live/presenceTarget';
+import { presencePageId, presencePagesOf, type PresenceProject } from '@/lib/live/presenceTarget';
 import type { LivePresenceStore } from '@/lib/live/presenceStore';
 
 /** The ids of the pages an agent's frame is on now. */
@@ -18,7 +18,7 @@ export function useAgentPageIds(): Set<string> {
   // Absent where an editor store is stubbed (tests): nothing is framed then.
   const presence = editorUI.livePresence as LivePresenceStore | undefined;
   const project = editorUI.currentProject;
-  const pages = project ? (Array.from(project.pages.values()) as unknown as PresencePage[]) : [];
+  const pages = presencePagesOf(project as unknown as PresenceProject | undefined);
   const ids = new Set<string>();
   for (const agent of presence?.framed ?? []) {
     const pageId = presencePageId(pages, agent.focus);

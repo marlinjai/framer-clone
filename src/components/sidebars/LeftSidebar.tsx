@@ -277,7 +277,7 @@ const LeftSidebar = observer(({ variant = 'docked', onComponentInserted }: LeftS
           />
 
           {/* Bottom pane: Components / Layers / Content */}
-          <div className={`flex-1 flex flex-col overflow-hidden ${isSheet ? 'min-h-[180px]' : ''}`}>
+          <div className={`flex-1 flex flex-col overflow-hidden ${isSheet ? 'min-h-[180px]' : 'min-h-[160px]'}`}>
             <div className="shrink-0 px-3 pt-3">
               <PaneTabs
                 tabs={BOTTOM_TABS}

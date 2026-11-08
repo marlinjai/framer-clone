@@ -356,4 +356,12 @@ describe('the pieces', () => {
     expect(outcomeOf(err('forbidden'))).toBe('failed');
     expect(outcomeOf(undefined)).toBe('failed');
   });
+
+  it('does not report an unapproved, pending or declined publish as done', () => {
+    const answer = (structuredContent: Record<string, unknown>) => ({ content: [], isError: false, structuredContent });
+    expect(outcomeOf(answer({ approvalRequired: true, approvalId: 'a' }))).toBe('awaiting_approval');
+    expect(outcomeOf(answer({ approvalPending: true, approvalId: 'a' }))).toBe('awaiting_approval');
+    expect(outcomeOf(answer({ confirmed: false, declined: true }))).toBe('declined');
+    expect(outcomeOf(answer({ version: 4, liveUrl: null }))).toBe('ok');
+  });
 });

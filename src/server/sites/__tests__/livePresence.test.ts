@@ -70,6 +70,10 @@ describe('reportAgentActivity and presenceSnapshot', () => {
     reportAgentActivity('old', act(), line('x'), T0);
     reportAgentActivity('other', act(), undefined, T0 + SITE_IDLE_MS + 1);
     expect(presenceSnapshot('old', T0 + SITE_IDLE_MS + 1)).toEqual({ agents: [], feed: [] });
+    // Read before anything else swept it: an idle site is dropped by the read itself.
+    reportAgentActivity('quiet', act(), line('y'), T0);
+    expect(presenceSnapshot('quiet', T0 + SITE_IDLE_MS + 1)).toEqual({ agents: [], feed: [] });
+    expect(presenceSnapshot('quiet', T0 + 1).feed).toEqual([]);
   });
 
   it('applies an activity heard twice once for the running calls', () => {
