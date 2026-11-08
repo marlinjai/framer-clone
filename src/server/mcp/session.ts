@@ -20,7 +20,7 @@ import 'server-only';
 // none.
 
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { capChars, sanitizeLiveLabel } from '@/lib/projects/liveEvents';
+import { boundedChars, sanitizeLiveLabel } from '@/lib/projects/liveEvents';
 
 const SECRET = randomBytes(32);
 
@@ -44,11 +44,18 @@ function clientNameOf(value: unknown): string | undefined {
   const clean = sanitizeLiveLabel(value);
   if (!clean) return undefined;
   // Also bounded in bytes: 40 emoji or flags would push the id past the 512 characters it may have.
-  for (let max = SESSION_CLIENT_NAME_MAX; max > 1; max -= 1) {
-    const capped = capChars(clean, max);
-    if (Buffer.byteLength(capped, 'utf8') <= SESSION_CLIENT_NAME_MAX_BYTES) return capped;
+  const chars = boundedChars(clean, SESSION_CLIENT_NAME_MAX);
+  const over = chars.length > SESSION_CLIENT_NAME_MAX;
+  let out = '';
+  let bytes = 0;
+  for (const c of chars.slice(0, over ? SESSION_CLIENT_NAME_MAX - 1 : SESSION_CLIENT_NAME_MAX)) {
+    const size = Buffer.byteLength(c, 'utf8');
+    // Room for the ellipsis (3 bytes) whenever something is cut.
+    if (bytes + size > SESSION_CLIENT_NAME_MAX_BYTES - 3) return out ? `${out}…` : undefined;
+    out += c;
+    bytes += size;
   }
-  return undefined;
+  return over ? `${out}…` : out || undefined;
 }
 
 /** A short fingerprint of the presented key; never the key and never reversible to it. */

@@ -29,3 +29,14 @@ describe('activity words', () => {
     expect(editingNote(['a', 'b', 'c'])).toBe('3 agents are editing this site');
   });
 });
+
+describe('capped stream text', () => {
+  it('stays bounded in size whatever one character carries', async () => {
+    const { capLiveText, LIVE_LABEL_MAX } = await import('@/lib/projects/liveEvents');
+    const capped = capLiveText('x' + '́'.repeat(100_000));
+    expect(Array.from(capped).length).toBeLessThanOrEqual(8);
+    const long = capLiveText('\u{1f1e9}\u{1f1ea}'.repeat(200));
+    expect(Array.from(long).length).toBeLessThanOrEqual(LIVE_LABEL_MAX * 2 + 1);
+    expect(long.endsWith('…')).toBe(true);
+  });
+});

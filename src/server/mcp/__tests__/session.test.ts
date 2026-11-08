@@ -38,6 +38,9 @@ describe('the session id', () => {
     const cut = readSessionId(flags, fingerprint)!.clientName!.replace(/^ab/, '').replace(/…$/, '');
     expect(cut.length % 4).toBe(0);
     expect(Buffer.byteLength(readSessionId(flags, fingerprint)!.clientName!)).toBeLessThanOrEqual(120);
+    // One character carrying thousands of combining marks stays small.
+    const zalgo = issueSessionId({ protocolVersion: '2025-06-18', elicitation: false, clientName: 'a' + '\u0301'.repeat(5000) }, fingerprint);
+    expect(Array.from(readSessionId(zalgo, fingerprint)!.clientName!).length).toBeLessThanOrEqual(8);
     // Private-use characters go too.
     const pua = issueSessionId({ protocolVersion: '2025-06-18', elicitation: false, clientName: 'Cl\ue000aude' }, fingerprint);
     expect(readSessionId(pua, fingerprint)!.clientName).toBe('Cl aude');

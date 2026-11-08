@@ -161,15 +161,39 @@ export function capLiveText(text: string): string {
   return capChars(oneLine, LIVE_LABEL_MAX);
 }
 
+/** The most code points one visible character may keep (a flag is 2, a family emoji about 7). */
+const CLUSTER_MAX_CODE_POINTS = 8;
+
+type GraphemeSegmenter = { segment(t: string): Iterable<{ segment: string }> };
+let segmenter: GraphemeSegmenter | null | undefined;
+
+/** Visible characters as a reader sees them, by code points where the runtime cannot tell. */
+function visibleChars(text: string): string[] {
+  if (segmenter === undefined) {
+    const Segmenter = (Intl as unknown as { Segmenter?: new (l?: string, o?: { granularity: 'grapheme' }) => GraphemeSegmenter }).Segmenter;
+    segmenter = Segmenter ? new Segmenter(undefined, { granularity: 'grapheme' }) : null;
+  }
+  return segmenter ? Array.from(segmenter.segment(text), (s) => s.segment) : Array.from(text);
+}
+
 /**
- * Cut text to `max` visible characters with an ellipsis, between whole
- * characters as a reader sees them (a flag or a skin-toned emoji is one,
- * though several code points), by code points where the runtime cannot tell.
+ * Text split into at most `max` visible characters (a flag or a skin-toned
+ * emoji is one, though several code points), each kept to
+ * CLUSTER_MAX_CODE_POINTS code points, so the size stays bounded however many
+ * combining marks one character carries. Never more than `max * 8` code points
+ * are looked at.
  */
+export function boundedChars(text: string, max: number): string[] {
+  const head = Array.from(text).slice(0, max * CLUSTER_MAX_CODE_POINTS + 1).join('');
+  return visibleChars(head)
+    .slice(0, max + 1)
+    .map((c) => Array.from(c).slice(0, CLUSTER_MAX_CODE_POINTS).join(''));
+}
+
+/** Cut text to `max` visible characters with an ellipsis, between whole characters. */
 export function capChars(text: string, max: number): string {
-  const Segmenter = (Intl as unknown as { Segmenter?: new (l?: string, o?: { granularity: 'grapheme' }) => { segment(t: string): Iterable<{ segment: string }> } }).Segmenter;
-  const chars = Segmenter ? Array.from(new Segmenter(undefined, { granularity: 'grapheme' }).segment(text), (s) => s.segment) : Array.from(text);
-  return chars.length > max ? `${chars.slice(0, max - 1).join('')}…` : text;
+  const chars = boundedChars(text, max);
+  return chars.length > max ? `${chars.slice(0, max - 1).join('')}…` : chars.join('');
 }
 
 /**
