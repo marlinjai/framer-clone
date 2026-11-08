@@ -1090,10 +1090,7 @@ const CanvasInner = observer(() => {
           // gestures above (no browser scroll, pinch or double-tap zoom here);
           // the rest of the editor keeps native panel scrolling. No iOS
           // long-press callout on images in the page.
-          // In Interact the ground leaves touch-action alone, so a finger scrolls a scroller
-          // in the page: Chromium on Linux applies an ancestor's `none` to it. The grid below
-          // takes the empty canvas's fingers there, with `none` of its own.
-          className={`w-full h-full select-none ${interact ? '' : 'touch-none '}${selectedTool === EditorTool.GRAB ? 'cursor-grab' : 'cursor-default'} relative overflow-hidden`}
+          className={`w-full h-full select-none touch-none ${selectedTool === EditorTool.GRAB ? 'cursor-grab' : 'cursor-default'} relative overflow-hidden`}
           style={{ WebkitTouchCallout: 'none' }}
           onPointerDownCapture={handlePointerDownCapture}
           onPointerMove={handlePointerMove}
@@ -1113,7 +1110,7 @@ const CanvasInner = observer(() => {
         >
           {/* Fixed grid background - stays in viewport, doesn't transform */}
           <div
-            className={`absolute inset-0 opacity-40 ${interact ? 'touch-none' : 'pointer-events-none'}`}
+            className="absolute inset-0 opacity-40 pointer-events-none"
             style={{
               backgroundImage: `
                 linear-gradient(to right, #e5e7eb 1px, transparent 1px),

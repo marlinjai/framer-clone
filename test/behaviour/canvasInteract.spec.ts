@@ -412,12 +412,22 @@ describe.each(ENGINES)('in %s', (name, engine) => {
       const scroller = inFrames(page, 'scroller').last();
       const box = await scroller.boundingBox();
       if (!box) throw new Error('the scroller has no box');
+      // At its centre: near an edge, Chromium's touch adjustment would move the finger to
+      // the clickable summary below it.
       const point = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
       // The finger has to land on the scroller itself, not off the screen or on the editor's bar.
       expect(await page.evaluate(({ x, y }) => !!document.elementFromPoint(x, y)?.closest('[data-inner-component-id="scroller"]'), point)).toBe(true);
       const before = await camera(page);
+      // Real touch events at the browser's input layer, the one Playwright's own tap uses,
+      // not a DOM dispatchEvent: Chromium turns them into a scroll as it does a finger's.
+      // Not Input.synthesizeScrollGesture: its touch source scrolls nothing in headless
+      // Chromium on Linux, even on a bare page.
       const cdp = await page.context().newCDPSession(page);
-      await cdp.send('Input.synthesizeScrollGesture', { ...point, yDistance: -40, gestureSourceType: 'touch', speed: 400 });
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] });
+      for (let step = 1; step <= 8; step++) {
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: point.x, y: point.y - step * 5 }] });
+      }
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
       await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
       expect(await camera(page)).toBe(before);
     }
