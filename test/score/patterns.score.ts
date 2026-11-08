@@ -16,7 +16,7 @@ import { validateGeneration } from '@/lib/ai/pageGen/validate';
 import { PATTERNS, treeVocabulary, type Pattern } from './patterns';
 import { BREAKPOINTS, publishedDocument, renderPublished, renderThroughPublishedPage } from './lib/published';
 import { bundleRuntime } from './lib/runtime';
-import { bundleEditor, mountOnCanvas, toSnapshot } from './lib/canvasBundle';
+import { bundleEditor, droppedOnEditor, enterInteract, mountOnCanvas, toSnapshot } from './lib/canvasBundle';
 import { ariaPatterns } from './lib/universe';
 import { writeOut } from './lib/io';
 import { rowKey, type Cell } from './lib/types';
@@ -139,15 +139,19 @@ describe('coverage matrix: WAI-ARIA Authoring Practices patterns', () => {
       }
       await page.close();
 
+      // The canvas runs a page in the Interact tool, the one mode where it is the page's.
       const mounted = await mountOnCanvas(browser, bundle, tree);
       try {
+        await enterInteract(mounted);
         await pattern.contract(mounted, mounted.locator('[data-viewport-content-id]'));
         canvas[key] = { status: 'pass' };
       } catch (error) {
+        const dropped = droppedOnEditor(tree);
+        const message = (error instanceof Error ? error.message : String(error)).split('\n')[0];
         canvas[key] = {
           status: 'fail',
           gap: renderer[key].status === 'pass' ? 'canvas-editor-context' : 'behaviour-state',
-          note: (error instanceof Error ? error.message : String(error)).split('\n')[0],
+          note: dropped.length > 0 ? `${message}: the editor surfaces drop ${dropped.join(', ')}` : message,
         };
       }
       await mounted.close();

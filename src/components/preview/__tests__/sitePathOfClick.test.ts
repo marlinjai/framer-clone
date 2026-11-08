@@ -2,7 +2,7 @@
 // preview (PreviewFrame): sitePathOfClick says which path, or null for
 // anchors, outside links and clicks that are not on a link.
 import { describe, expect, it } from 'vitest';
-import { sitePathOfClick } from '../PreviewFrame';
+import { sitePathOfClick } from '@/lib/site/sitePath';
 
 function linkWith(href: string): HTMLElement {
   const a = document.createElement('a');

@@ -43,6 +43,15 @@ interface ProbeWindow {
     undo: () => void;
     previewState: () => Record<string, unknown>;
     undoLevels: () => number;
+    setPreviewValue: (stateId: string, value: string | number | boolean | undefined) => void;
+    tool: () => string;
+    select: (componentId: string) => void;
+    /** The open project as stored, to show nothing reached it. */
+    projectJson: () => string;
+    /** A second page of the project, with this slug. */
+    addPage: (title: string) => string;
+    pageSlug: () => string | undefined;
+    notice: () => string | undefined;
   };
 }
 
@@ -130,4 +139,23 @@ const nodeById = (id: string): ComponentInstance | undefined => {
   undo: () => getUndoManager()?.undo(),
   previewState: () => ({ ...editorStore().editorUI.previewState }),
   undoLevels: () => getUndoManager()?.undoIdx ?? 0,
+  setPreviewValue: (stateId, value) => editorStore().editorUI.setPreviewValue(stateId, value),
+  tool: () => editorStore().editorUI.selectedTool,
+  select: (componentId) => {
+    const node = nodeById(componentId);
+    if (!node) throw new Error(`no node ${componentId}`);
+    editorStore().editorUI.selectComponent(node, openPage().sortedViewportNodes[0]?.breakpointId);
+  },
+  projectJson: () => {
+    const project = editorStore().editorUI.currentProject;
+    if (!project) throw new Error('the editor opened no project');
+    return JSON.stringify(getSnapshot(project));
+  },
+  addPage: (title) => {
+    const project = editorStore().editorUI.currentProject;
+    if (!project) throw new Error('the editor opened no project');
+    return project.createPage(title).slug;
+  },
+  pageSlug: () => editorStore().editorUI.currentPage?.slug,
+  notice: () => editorStore().editorUI.editorNotice?.message,
 };

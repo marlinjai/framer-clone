@@ -514,6 +514,11 @@ export interface EditorSurface extends SurfaceScheme {
   previewedPresets?: readonly { selector: string; kind: HoverKind }[];
   /** Ids of the nodes being previewed on the canvas, whose animations play. */
   previewedNodes?: readonly string[];
+  /**
+   * The page runs on this canvas (the Interact tool): pointer states and the editor's
+   * window are read for real and animations play, as in the preview.
+   */
+  running?: boolean;
   /** Every property a keyframe on the page moves, as CSS writes it. */
   animated?: ReadonlySet<string>;
   /** Inline custom properties holding an external address, per copy. Normal stays inline here, so they are cleared. */
@@ -702,7 +707,11 @@ function blocksOnCopy(
   previewed: boolean,
   animated: ReadonlySet<string>,
   scheme: SurfaceScheme = {},
+  running = false,
 ): BuiltRule {
+  // A canvas where the page runs reads the pointer and the editor's window as the preview
+  // does, which shares the same document. What the editor owns stays the editor's.
+  const reads: EditorSurfaceKind = running ? 'preview' : kind;
   let refused: string | undefined;
   const decls: string[] = [];
   const startsAnimation = 'animation' in rule.style || 'animationName' in rule.style;
@@ -722,7 +731,7 @@ function blocksOnCopy(
   if (refused !== undefined) return { refused: `the stylesheet refuses its ${refused}` };
   const answered = scheme.colorMode ? wrappersInColorMode(rule.at, scheme.colorMode, scheme.onWarning) : rule.at;
   if (answered === null) return { blocks: [] };
-  const wrappers = surfaceWrappers(answered, copy.frame, kind, previewed);
+  const wrappers = surfaceWrappers(answered, copy.frame, reads, previewed);
   if (wrappers === null || decls.length === 0) return { blocks: [] };
   const body = `{${decls.join(';')}}`;
   return {
@@ -730,7 +739,7 @@ function blocksOnCopy(
       // Every part starts with `&`, and the parser allows no other. A `when` goes straight
       // after the node, as on the published page, with no gate: a surface has none. It reads
       // only `data-fcs-*`, which the surface's renderer writes, so it is not made constant.
-      return { wrappers, text: `${copy.selector}${rule.when ?? ''}${constantConditions(part.slice(1), kind, previewed, scheme.darkClass === true)}${body}` };
+      return { wrappers, text: `${copy.selector}${rule.when ?? ''}${constantConditions(part.slice(1), reads, previewed, scheme.darkClass === true)}${body}` };
     }),
   };
 }
@@ -1146,12 +1155,13 @@ function* surfaceJobs(surface: EditorSurface, ordered: readonly BreakpointRef[])
     for (const rule of rules) {
       const live = previewed.has(rule.id);
       for (const copy of copies) {
+        const running = surface.running === true;
         // The scheme is part of the key: a switch of mode must never return the other mode's blocks.
-        const key = [surface.kind, copy.selector, copy.frame.width, copy.frame.height, live, breakpoints, moving, surface.colorMode ?? '', surface.darkClass === true].join('|');
+        const key = [surface.kind, running, copy.selector, copy.frame.width, copy.frame.height, live, breakpoints, moving, surface.colorMode ?? '', surface.darkClass === true].join('|');
         yield {
           className: node,
           rule,
-          build: () => remembered(surface.memo, rule, key, () => blocksOnCopy(surface.kind, rule, copy, ordered, live, animated, surface)),
+          build: () => remembered(surface.memo, rule, key, () => blocksOnCopy(surface.kind, rule, copy, ordered, live, animated, surface, running)),
         };
       }
     }
@@ -1248,11 +1258,12 @@ function inColorMode(options: BuildResponsiveCssOptions): { rootRules: readonly 
 function editorSheet(surface: EditorSurface, ordered: readonly BreakpointRef[], options: BuildResponsiveCssOptions): string {
   const onDropRule = options.onDropRule ?? (() => {});
   const canvas = surface.kind === 'canvas';
+  const still = canvas && surface.running !== true;
   const { texts, spent } = definitionTexts(options.definitions ?? [], onDropRule, surface);
   const parts: string[] = [...texts];
   // On the preview a preset uses the shared class of the published page, and it
   // shows on a real pointer. On the canvas it shows only when previewed.
-  const presets = canvas
+  const presets = still
     ? (surface.previewedPresets ?? []).flatMap(({ selector, kind }) => presetOnCopy(selector, kind)).join('\n')
     : serializeBlocks(HOVER_KINDS.filter(kind => (options.hoverPresets ?? []).includes(kind)).flatMap(kind => hoverPresetRules(kind)));
   if (presets) parts.push(presets);
@@ -1261,7 +1272,7 @@ function editorSheet(surface: EditorSurface, ordered: readonly BreakpointRef[], 
   const cleared = (surface.clearedVariables ?? []).filter(({ property }) => SAFE_PROPERTY.test(property) && property.startsWith('--'));
   if (cleared.length > 0) parts.push(cleared.map(({ selector, property }) => `${selector}{${property}:initial!important}`).join('\n'));
   const hasRules = surface.nodes.length > 0 || (options.definitions?.length ?? 0) > 0;
-  if (canvas && parts.length > 0) parts.push(animationsAtRest(surface.previewedNodes ?? []));
+  if (still && parts.length > 0) parts.push(animationsAtRest(surface.previewedNodes ?? []));
   // The canvas never has this: its selector would fix the editor's own fields.
   if (!canvas && hasRules) parts.push(`${PREVIEW_ROOT} ${FIELD_SIZING_GUARD.replace(/,/g, `,${PREVIEW_ROOT} `)}`);
   return withoutMarkup(parts.join('\n'), onDropRule);

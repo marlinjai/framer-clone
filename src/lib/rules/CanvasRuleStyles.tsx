@@ -43,6 +43,7 @@ export interface CanvasRuleStylesProps {
 
 export const CanvasRuleStyles = observer(({ tree, definitionTree, floating, frames, breakpoints, problems }: CanvasRuleStylesProps) => {
   const { editorUI } = useStore();
+  // In Interact the page runs: a real pointer, playing animations, and no rule previewed.
   const css = useSheet({
     kind: 'canvas',
     tree,
@@ -53,6 +54,7 @@ export const CanvasRuleStyles = observer(({ tree, definitionTree, floating, fram
     previewRule: editorUI.previewRule,
     colorMode: editorUI.frameColorMode,
     darkClass: editorUI.frameDarkClass,
+    running: editorUI.interactOn,
   }, problems);
   if (!css) return null;
   // The parser and the emitter's guards have read every stored character of this.
