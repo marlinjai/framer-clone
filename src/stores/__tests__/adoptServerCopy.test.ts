@@ -13,6 +13,7 @@ import {
   isSaved,
   knownServerVersion,
   openProject,
+  type ProjectContent,
 } from '../openProject';
 
 let store: RootStoreType;
@@ -34,6 +35,8 @@ async function agentWrites(from: ProjectSnapshotOut, ops: unknown[]): Promise<{ 
 }
 
 const homeId = (snap: ProjectSnapshotOut) => Object.values(snap.pages).find((p) => p.slug === '')!.id;
+/** The working copy in the store, as a snapshot. */
+const working = () => getSnapshot(store.projectStore.getProject('site_adopt')!) as unknown as ProjectSnapshotOut & ProjectContent;
 const root = (store: RootStoreType) => store.editorUI.currentPage!.appComponentTree as ComponentInstance;
 
 beforeEach(() => {
@@ -54,7 +57,7 @@ describe('adoptServerCopy', () => {
     expect(out?.created).toEqual([created.hero, created.title]);
     expect(knownServerVersion('site_adopt')).toBe(2);
     // The store equals what the server holds: nothing for autosave to write.
-    expect(isSaved('site_adopt', getSnapshot(store.editorUI.currentProject!))).toBe(true);
+    expect(isSaved('site_adopt', working())).toBe(true);
     const history = getHistoryStore()!;
     expect(history.history).toHaveLength(1);
     expect(history.labelFor(history.history[0])).toBe('Agent: insert 1 node');
@@ -79,23 +82,23 @@ describe('adoptServerCopy', () => {
   it('undo across an adopted version restores the exact earlier copy; redo brings the write back', async () => {
     const v1 = serverSnapshot();
     openProject(store, v1, null, 1);
-    const before = getSnapshot(store.editorUI.currentProject!);
+    const before = working();
     const { snapshot: v2 } = await agentWrites(v1, [
       { op: 'insertNodes', pageId: homeId(v1), nodes: [{ type: 'section', children: [{ type: 'h2', props: { children: 'A' } }] }] },
     ]);
     adoptServerCopy(store, v2, 2, 'Agent');
-    const adopted = getSnapshot(store.editorUI.currentProject!);
+    const adopted = working();
 
     getHistoryStore()!.undo();
-    expect(getSnapshot(store.editorUI.currentProject!)).toEqual(before);
+    expect(working()).toEqual(before);
     // The undone state is this tab's own change now: autosave writes it on version 2.
-    expect(isSaved('site_adopt', getSnapshot(store.editorUI.currentProject!))).toBe(false);
+    expect(isSaved('site_adopt', working())).toBe(false);
     expect(knownServerVersion('site_adopt')).toBe(2);
 
     getHistoryStore()!.redo();
-    expect(getSnapshot(store.editorUI.currentProject!)).toEqual(adopted);
+    expect(working()).toEqual(adopted);
     // Undo then redo leaves the copy equal to the saved one: nothing to write.
-    expect(isSaved('site_adopt', getSnapshot(store.editorUI.currentProject!))).toBe(true);
+    expect(isSaved('site_adopt', working())).toBe(true);
   });
 
   it("keeps the person's earlier undo steps applicable after an adoption", async () => {
@@ -103,16 +106,16 @@ describe('adoptServerCopy', () => {
     openProject(store, v1, null, 1);
     const project = store.editorUI.currentProject!;
     project.updateMetadata({ description: 'mine' });
-    const afterMine = getSnapshot(project);
+    const afterMine = working();
     // The server holds this tab's edit at version 2 (autosave), then the agent writes version 3.
-    const { snapshot: v3 } = await agentWrites(afterMine as ProjectSnapshotOut, [
+    const { snapshot: v3 } = await agentWrites(afterMine, [
       { op: 'insertNodes', pageId: homeId(v1), nodes: [{ type: 'p', props: { children: 'Agent' } }] },
     ]);
     adoptServerCopy(store, v3, 3, 'Agent');
 
     const history = getHistoryStore()!;
     history.undo(); // the agent's write
-    expect(getSnapshot(project)).toEqual(afterMine);
+    expect(working()).toEqual(afterMine);
     history.undo(); // the person's own edit
     expect(project.metadata.description).toBe('');
   });

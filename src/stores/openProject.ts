@@ -187,6 +187,11 @@ export function discardWorkingCopy(projectId: string): void {
   openedChangedElsewhere.delete(projectId);
 }
 
+/** True while a write of this tab (autosave, Publish) is out for the project. */
+export function hasWriteInFlight(projectId: string): boolean {
+  return (writesInFlight.get(projectId) ?? 0) > 0;
+}
+
 /** Autosave and Publish report a write of this tab starting (true) and ending (false). */
 export function noteWriteInFlight(projectId: string, inFlight: boolean): void {
   const count = (writesInFlight.get(projectId) ?? 0) + (inFlight ? 1 : -1);

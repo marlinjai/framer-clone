@@ -80,14 +80,13 @@ async function handleGET(req: Request, { params }: Ctx): Promise<Response> {
     else waiting.push([event, data]);
   });
 
-  let heartbeat: ReturnType<typeof setInterval> | undefined;
-  let recheck: ReturnType<typeof setInterval> | undefined;
+  const timers: { heartbeat?: ReturnType<typeof setInterval>; recheck?: ReturnType<typeof setInterval> } = {};
   let ended = false;
   const end = () => {
     if (ended) return;
     ended = true;
-    if (heartbeat) clearInterval(heartbeat);
-    if (recheck) clearInterval(recheck);
+    if (timers.heartbeat) clearInterval(timers.heartbeat);
+    if (timers.recheck) clearInterval(timers.recheck);
     unsubscribe();
     release();
     sse.close();
@@ -116,8 +115,10 @@ async function handleGET(req: Request, { params }: Ctx): Promise<Response> {
   for (const [event, data] of waiting.splice(0)) forward(event, data);
   ready = true;
 
-  heartbeat = setInterval(() => sse.heartbeat(), SSE_HEARTBEAT_MS);
-  recheck = setInterval(() => {
+  // The browser may already be gone (it left while the version was read): no timers then.
+  if (ended) return new Response(sse.stream, { status: 200, headers: SSE_HEADERS });
+  timers.heartbeat = setInterval(() => sse.heartbeat(), SSE_HEARTBEAT_MS);
+  timers.recheck = setInterval(() => {
     void (async () => {
       try {
         const again = await authorizeLiveProject(req, projectId);

@@ -1,13 +1,15 @@
 'use client';
 // src/components/SiteChangedDialog.tsx
 //
-// The version lock's question (src/stores/openProject.ts): a Save or Publish
-// came back 409 `site_changed`, because the project was written somewhere else
-// (another tab, a person, an agent) after this tab loaded it. Nothing was
-// written. Instead of overwriting the other work unseen, the person picks:
-//   - Load the newer version: reload the page, discarding this tab's unsaved
-//     changes (the full reload empties the in-memory store, so the server copy
-//     opens);
+// The version lock's question (src/stores/openProject.ts): the project was
+// written somewhere else (another tab, a person, an agent) while this tab has
+// unsaved changes. It opens as soon as the site's live stream announces the
+// other write (src/lib/projects/liveSync.ts), or when a Save or Publish came
+// back 409 `site_changed`. Nothing was written. Instead of overwriting the
+// other work unseen, the person picks:
+//   - Load the newer version: take the newer copy in place, discarding this
+//     tab's unsaved changes, as one undo step (so even this can be undone and
+//     saved over); the page reloads only when the copy cannot be fetched;
 //   - Keep mine: save (or publish) this tab's copy over the other one, on
 //     purpose, naming the version the server reported. Should the project move
 //     again meanwhile, the server refuses again and this dialog returns;
@@ -36,7 +38,7 @@ export interface SiteChangedDialogProps {
   busy: boolean;
   /** Close without doing anything (Keep editing, Escape, the overlay). */
   onKeepEditing: () => void;
-  /** Reload the page, discarding this tab's unsaved changes. */
+  /** Take the newer version, discarding this tab's unsaved changes. */
   onLoadNewer: () => void;
   /** Write this tab's copy over the other one. */
   onKeepMine: () => void;
@@ -65,8 +67,8 @@ export default function SiteChangedDialog({
         <DialogHeader>
           <DialogTitle>This project was changed somewhere else</DialogTitle>
           <DialogDescription>
-            Someone (another tab, another person or an agent) saved this project after this tab
-            loaded it. Nothing was {action === 'publish' ? 'published' : 'saved'}. {keepMineLabel}{' '}
+            Someone (another tab, another person or an agent) saved this project while this tab
+            has unsaved changes. Nothing was {action === 'publish' ? 'published' : 'saved'}. {keepMineLabel}{' '}
             replaces those changes with this tab&apos;s version; loading the newer version discards
             the unsaved changes in this tab.
           </DialogDescription>

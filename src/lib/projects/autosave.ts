@@ -798,6 +798,62 @@ export class AutosaveController {
     }
   }
 
+  /**
+   * The site's live stream announced a version from another writer while this
+   * tab has unsaved work or a write out (src/lib/projects/liveSync.ts): this
+   * tab's save is certain to be refused, so autosave pauses now and the dialog
+   * opens at once, instead of after the 409. Nothing is sent. A dialog the
+   * person already closed ("Keep editing") stays closed; its number moves.
+   */
+  noteChangedElsewhere(currentVersion: number): void {
+    this.clearTimers();
+    this.dirtyHint = true;
+    const state = this.state;
+    if (state.phase === 'conflict') {
+      if (state.currentVersion !== currentVersion && !state.retrying) this.setState({ ...state, currentVersion });
+      return;
+    }
+    // A write of this tab is out: its answer (the 409) opens the dialog.
+    if (this.inFlight || this.held > 0) return;
+    this.setState({ phase: 'conflict', currentVersion, dialogOpen: true, retrying: false });
+  }
+
+  /**
+   * A newer server copy was adopted into the store (src/stores/openProject.ts
+   * adoptServerCopy): automatically, or because the person chose "Load the
+   * newer version". The store now equals what the server holds at the known
+   * version, so whatever paused or waited is resolved, and an attempt whose
+   * answer was lost is settled too (the adopted copy is the newest write).
+   */
+  noteServerCopyAdopted(): void {
+    if (this.inFlight) return;
+    this.clearTimers();
+    this.attempts = 0;
+    this.failingSince = undefined;
+    this.unconfirmed = undefined;
+    this.overPending = undefined;
+    this.retryOnceOnChange = false;
+    this.debounceIsRetryOnce = false;
+    this.dirtyHint = false;
+    this.discarding = false;
+    this.setState({ phase: 'saved' });
+  }
+
+  /**
+   * The live stream ended because the session or the permission is gone: shown
+   * as the signed-out failure (with "Sign in again"), and like it, the next sign
+   * of the person being back (the tab shown again) tries once more.
+   */
+  noteSignedOut(): void {
+    if (this.inFlight || this.state.phase === 'failed') return;
+    this.clearTimers();
+    this.setState({
+      phase: 'failed',
+      message: 'Your session or your access to this project ended.',
+      status: 401,
+    });
+  }
+
   /** The other writer's version lock refused: pause like a refused save, quietly. */
   noteConflict(currentVersion: number): void {
     this.clearTimers();
