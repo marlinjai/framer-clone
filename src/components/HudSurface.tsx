@@ -1,6 +1,7 @@
 // src/components/HudSurface.tsx
 // High-performance component selection overlay using TransformContext subscription
 'use client';
+import { REVEAL_KEYFRAMES } from '@/lib/live/reveal';
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { frameHeightsKey, viewportResizeUpdate, visibleRectInFrame } from '@/lib/canvas/viewportFrame';
 import { observer } from 'mobx-react-lite';
@@ -529,6 +530,16 @@ const HudSurface = observer(() => {
       unsubscribe();
     };
   }, [subscribe, updateAllOverlays]);
+
+  // A node that just revealed (src/lib/live/reveal.ts) rose 4px into place: the
+  // overlays measured it at its start position, so they measure again.
+  useEffect(() => {
+    const onEnd = (e: AnimationEvent) => {
+      if (e.animationName === REVEAL_KEYFRAMES) updateAllOverlays();
+    };
+    document.addEventListener('animationend', onEnd);
+    return () => document.removeEventListener('animationend', onEnd);
+  }, [updateAllOverlays]);
 
   // Update cross-viewport selection when component selection changes
   useEffect(() => {

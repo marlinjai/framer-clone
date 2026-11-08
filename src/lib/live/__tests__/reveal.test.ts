@@ -7,6 +7,7 @@ import {
   REVEAL_GAP_MAX_MS,
   REVEAL_GROUP_ABOVE,
   REVEAL_NODE_MS,
+  projectRevealPlan,
   projectRevealRoots,
   revealAnimation,
   revealDelays,
@@ -90,16 +91,25 @@ describe('revealPlan', () => {
     expect([...plan.keys()]).toEqual(['big', 'x', 'y', 'z']);
   });
 
-  it('plans the trees of a project snapshot: each page tree, then its floating elements', () => {
+  it('times each page of a project snapshot on its own: its tree, then its floating elements', () => {
     const project = {
       pages: {
         home: { appComponentTree: node('root', node('a')), canvasNodes: { f: node('float', node('f-child')) } },
         about: { appComponentTree: node('root2', node('b')) },
       },
     };
-    const plan = revealPlan(projectRevealRoots(project), ['f-child', 'b', 'a']);
-    expect([...plan.keys()]).toEqual(['a', 'f-child', 'b']);
+    expect(projectRevealRoots(project)).toHaveLength(2);
+    const plan = projectRevealPlan(project, ['f-child', 'b', 'a']);
+    // b, on another page, starts at 0 too: it never delays the page on screen.
+    expect([...plan.entries()]).toEqual([['a', 0], ['f-child', 45], ['b', 0]]);
     expect(projectRevealRoots(undefined)).toEqual([]);
+    expect(projectRevealPlan(project, []).size).toBe(0);
+  });
+
+  it('leaves text nodes out of the timing: they show with their parent', () => {
+    const tree = node('root', { id: 'p', type: 'p', children: [{ id: 't1', type: '#text' }, { id: 'em', type: 'em', children: [{ id: 't2', type: '#text' }] }] });
+    expect([...revealPlan([tree], ['p', 't1', 'em', 't2']).entries()]).toEqual([['p', 0], ['em', 45]]);
+    expect(subtreeIds([tree])).toEqual(['root', 'p', 'em']);
   });
 
   it('revealPlanOfTrees plans every node of whole new trees', () => {

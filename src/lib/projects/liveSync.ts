@@ -61,7 +61,7 @@ import { editorTabId } from './tabId';
 import { LIVE_EVENTS, type AgentActivity, type SiteStateEvent, type SiteVersionEvent } from './liveEvents';
 import type { LivePresenceStore } from '@/lib/live/presenceStore';
 import type { LiveRevealStore } from '@/lib/live/revealStore';
-import { projectRevealRoots, revealPlan } from '@/lib/live/reveal';
+import { projectRevealPlan } from '@/lib/live/reveal';
 
 export const LIVE_POLL_VISIBLE_MS = 5_000;
 export const LIVE_POLL_HIDDEN_MS = 60_000;
@@ -126,7 +126,8 @@ export interface HeldVersion {
 
 /**
  * Whether an adopted version plays the per-component reveal (plan section 4):
- * only an agent's write (an MCP batch, a generated page) the stream announced.
+ * only an agent's write (a Model Context Protocol (MCP) batch, a generated
+ * page) the stream announced. The copy must also be exactly that write (see take).
  * Never a catch-up after a reconnect or a version found by polling (the writer
  * is unknown), another tab's or person's save, a publish or an erasure, and
  * never "Load the newer version", which passes no event.
@@ -459,7 +460,12 @@ export class LiveSync {
       autosave?.noteChangedElsewhere(body.version);
       return;
     }
-    this.adopt(body.version, body.snapshot, label, event, revealsOnAdoption(event));
+    // Only a copy that is exactly the announced write, on top of the copy this tab
+    // has, reveals: a fetch that also brought other writers' versions (a burst
+    // coalesced into one fetch, a poll after a failed fetch, a held copy replaced
+    // by a newer one) would otherwise reveal their nodes as the agent's.
+    const exact = !!event && event.version === body.version && event.versionBefore === known;
+    this.adopt(body.version, body.snapshot, label, event, exact && revealsOnAdoption(event));
   }
 
   /** The agents' presence of the open site (src/lib/live/presenceStore.ts). */
@@ -481,7 +487,7 @@ export class LiveSync {
     const adopted = runInAction(() => {
       const result = adoptServerCopy(this.rootStore, snapshot, version, label);
       if (result && reveal && result.created.length > 0) {
-        this.reveal.start(revealPlan(projectRevealRoots(snapshot), result.created));
+        this.reveal.start(projectRevealPlan(snapshot, result.created));
       }
       return result;
     });

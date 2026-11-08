@@ -35,6 +35,7 @@ import {
   type LiveSyncDeps,
 } from '../liveSync';
 import type { SiteVersionEvent } from '../liveEvents';
+import { REVEAL_SETTLE_MS } from '@/lib/live/revealStore';
 
 class FakeStream implements LiveEventSource {
   readyState = 0;
@@ -72,6 +73,8 @@ let visibilityListeners: Array<() => void>;
 let server: { version: number; snapshot: ProjectSnapshotOut; status?: number };
 let fetches: Array<number | undefined>;
 let holdFetch: { release: () => void } | undefined;
+/** The next fetch fails on the network. */
+let failFetch = false;
 let saves: Array<{ expectedVersion: number | undefined; snapshot: ProjectSnapshotOut }>;
 
 const deps: LiveSyncDeps = {
@@ -82,6 +85,10 @@ const deps: LiveSyncDeps = {
   },
   fetchDocument: async (_url, knownVersion): Promise<DocumentAnswer> => {
     fetches.push(knownVersion);
+    if (failFetch) {
+      failFetch = false;
+      throw new Error('network');
+    }
     if (holdFetch) {
       await new Promise<void>((resolve) => {
         holdFetch = { release: resolve };
@@ -142,6 +149,7 @@ beforeEach(() => {
   fetches = [];
   saves = [];
   holdFetch = undefined;
+  failFetch = false;
   server = { version: 1, snapshot: baseSnapshot() };
   resetAutosaveForTests({
     write: async (snapshot, expectedVersion): Promise<ProjectWriteResult> => {
@@ -559,7 +567,7 @@ describe('liveSync: the per-component reveal (live agent canvas, slice 3)', () =
     await vi.advanceTimersByTimeAsync(100);
     const second = await writes({});
     expect(entries().map(([id]) => id)).toEqual([...created, ...second]);
-    await vi.advanceTimersByTimeAsync(3 * 45 + 180 + 120 - 100);
+    await vi.advanceTimersByTimeAsync(3 * 45 + 180 + REVEAL_SETTLE_MS - 100);
     expect(entries().map(([id]) => id)).toEqual(second);
     await vi.advanceTimersByTimeAsync(200);
     expect(reveal().size).toBe(0);
@@ -656,6 +664,68 @@ describe('liveSync: the per-component reveal (live agent canvas, slice 3)', () =
     await settle();
     expect(knownServerVersion(SITE)).toBe(3);
     expect(entries().map(([id]) => id)).toEqual(created);
+  });
+
+  it('a burst coalesced into one fetch reveals nothing, in either order: the copy holds more than the agent wrote', async () => {
+    start();
+    holdFetch = { release: () => {} };
+    await writes({ origin: 'editor', actor: { kind: 'user', label: 'Sam' } }); // fetch out, held
+    await writes({}); // the agent, while it is out
+    holdFetch.release();
+    holdFetch = undefined;
+    await settle();
+    await settle();
+    expect(knownServerVersion(SITE)).toBe(3);
+    expect(reveal().size).toBe(0);
+
+    holdFetch = { release: () => {} };
+    await writes({});
+    await writes({ origin: 'editor', actor: { kind: 'user', label: 'Sam' } });
+    holdFetch.release();
+    holdFetch = undefined;
+    await settle();
+    await settle();
+    expect(knownServerVersion(SITE)).toBe(5);
+    expect(reveal().size).toBe(0);
+  });
+
+  it("a poll after a failed fetch brings the agent's write with others: no reveal", async () => {
+    start();
+    failFetch = true;
+    await writes({});
+    expect(knownServerVersion(SITE)).toBe(1);
+    stream().fail(true);
+    await writes(null); // another writer, unannounced
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_VISIBLE_MS);
+    expect(knownServerVersion(SITE)).toBe(3);
+    expect(reveal().size).toBe(0);
+  });
+
+  it('a held agent write replaced by a newer one before it was adopted: no reveal for the two together', async () => {
+    start();
+    let finish!: () => void;
+    resetAutosaveForTests({
+      write: async (snapshot, expectedVersion): Promise<ProjectWriteResult> => {
+        saves.push({ expectedVersion, snapshot: snapshot as ProjectSnapshotOut });
+        server = { version: server.version + 1, snapshot: snapshot as ProjectSnapshotOut };
+        const version = server.version;
+        await new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+        return { kind: 'ok', payload: {}, version };
+      },
+    });
+    autosaveFor(SITE).attach(project());
+    project().updateMetadata({ description: 'mine' });
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+    await writes({});
+    await writes({});
+    expect(liveSyncFor(SITE)?.heldVersion?.version).toBe(4);
+    finish();
+    await settle();
+    await settle();
+    expect(knownServerVersion(SITE)).toBe(4);
+    expect(reveal().size).toBe(0);
   });
 
   it('re-entry: stopping forgets a reveal still playing; the next run starts with none', async () => {

@@ -146,8 +146,10 @@ export function draftBandText(phase: PageGenDraftStore['phase'], drawn: number):
  * The draft's pointer rule and each drawn section's reveal. Mounted once beside
  * the canvas frames, never inside the page tree (a style element there would
  * count as a child for the page's own selectors). A section's reveal is written
- * once, when it arrives, and stays until the draft is dropped; replaying it
- * would need a new element, which a drawn section never gets.
+ * once, when it arrives, and stays until the draft is dropped. A section drawn
+ * anew (the person comes back to the run's page, which the draft is drawn on
+ * only while it is on screen) plays its reveal again, on purpose: those nodes
+ * were not on screen before.
  */
 export const DraftStyles = observer(function DraftStyles() {
   const { editorUI } = useStore();

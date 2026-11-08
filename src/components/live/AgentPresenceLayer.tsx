@@ -36,6 +36,7 @@ import { revealOffset, useCameraControls, type CameraTransform } from '@/lib/can
 import { presencePagesOf, presenceTarget, type PresenceProject, type PresenceTarget } from '@/lib/live/presenceTarget';
 import { presenceLabel } from '@/lib/live/activityText';
 import type { AgentPresence, LivePresenceStore } from '@/lib/live/presenceStore';
+import { REVEAL_KEYFRAMES } from '@/lib/live/reveal';
 
 /** The frame's border width and its gap to the element, in screen pixels. */
 export const PRESENCE_FRAME_WIDTH = 2;
@@ -75,8 +76,8 @@ export function frameBox(rect: { left: number; top: number; width: number; heigh
 export const PRESENCE_PILL_OFFSET = { left: -2, top: -22 };
 /** The least space between the pill and the edge of the visible canvas. */
 export const PRESENCE_PILL_INSET = 8;
-/** Marks the editor chrome that covers the canvas at its sides (the docked sidebars). */
-export const EDITOR_SIDEBAR_ATTR = 'data-editor-sidebar';
+/** Marks the editor chrome that covers the canvas at an edge: `left` and `right` (the docked sidebars), `bottom` (the toolbar). */
+export const EDITOR_CHROME_ATTR = 'data-editor-chrome';
 
 export interface ScreenRect {
   left: number;
@@ -86,9 +87,9 @@ export interface ScreenRect {
 }
 
 /**
- * The part of the canvas the person sees: the window, less the top bar and the
- * docked sidebars, which cover the canvas (it runs under them). On a phone
- * there are no docked sidebars, so only the top bar counts.
+ * The part of the canvas the person sees: the window, less the top bar, the
+ * docked sidebars and the bottom toolbar, which cover the canvas (it runs under
+ * them). On a phone there is no docked chrome, so only the top bar counts.
  */
 export function visibleCanvasRect(root: ParentNode = document): ScreenRect {
   const view: ScreenRect = { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
@@ -99,11 +100,13 @@ export function visibleCanvasRect(root: ParentNode = document): ScreenRect {
   }
   const topbar = root.querySelector<HTMLElement>('[data-editor-topbar]')?.getBoundingClientRect();
   if (topbar && topbar.height > 0) view.top = Math.max(view.top, topbar.bottom);
-  for (const el of Array.from(root.querySelectorAll<HTMLElement>(`[${EDITOR_SIDEBAR_ATTR}]`))) {
+  for (const el of Array.from(root.querySelectorAll<HTMLElement>(`[${EDITOR_CHROME_ATTR}]`))) {
     const r = el.getBoundingClientRect();
     if (r.width <= 0 || r.height <= 0) continue;
-    if (el.getAttribute(EDITOR_SIDEBAR_ATTR) === 'right') view.right = Math.min(view.right, r.left);
-    else view.left = Math.max(view.left, r.right);
+    const edge = el.getAttribute(EDITOR_CHROME_ATTR);
+    if (edge === 'right') view.right = Math.min(view.right, r.left);
+    else if (edge === 'bottom') view.bottom = Math.min(view.bottom, r.top);
+    else if (edge === 'left') view.left = Math.max(view.left, r.right);
   }
   return view;
 }
@@ -124,7 +127,8 @@ export function pillPlacement(
   const bottom = box.y + box.height;
   if (right <= visible.left || box.x >= visible.right || bottom <= visible.top || box.y >= visible.bottom) return undefined;
   const minX = visible.left + PRESENCE_PILL_INSET;
-  const maxX = Math.max(minX, visible.right - PRESENCE_PILL_INSET - pill.width);
+  // Never further right than where the pill still ends inside the frame (a thin sliver of a frame keeps its pill at its edge).
+  const maxX = Math.max(minX, Math.min(visible.right - PRESENCE_PILL_INSET - pill.width, right - pill.width));
   const minY = visible.top + PRESENCE_PILL_INSET;
   const maxY = Math.max(minY, visible.bottom - PRESENCE_PILL_INSET - pill.height);
   let x = box.x + PRESENCE_PILL_OFFSET.left;
@@ -241,8 +245,8 @@ const AgentPresenceLayer = observer(function AgentPresenceLayer() {
       });
     }
     for (const child of Array.from(container.children)) if (!keep.has(child)) child.remove();
-    // A sidebar resized or collapsed changes the visible canvas: the pill moves with it.
-    if (keep.size > 0) for (const el of Array.from(document.querySelectorAll(`[${EDITOR_SIDEBAR_ATTR}]`))) measured.add(el);
+    // A sidebar resized or collapsed (or the toolbar) changes the visible canvas: the pill moves with it.
+    if (keep.size > 0) for (const el of Array.from(document.querySelectorAll(`[${EDITOR_CHROME_ATTR}]`))) measured.add(el);
     // The canvas may have mounted after the layer: watch whichever root is there now.
     const watch = layout.current;
     const root = document.querySelector('[data-camera-transform]');
@@ -280,6 +284,16 @@ const AgentPresenceLayer = observer(function AgentPresenceLayer() {
     return () => cancelAnimationFrame(raf);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signature, update]);
+
+  // A node that just revealed (src/lib/live/reveal.ts) rose 4px into place: the
+  // frame was measured at its start position, so it measures again.
+  React.useEffect(() => {
+    const onEnd = (e: AnimationEvent) => {
+      if (e.animationName === REVEAL_KEYFRAMES) update(true);
+    };
+    document.addEventListener('animationend', onEnd);
+    return () => document.removeEventListener('animationend', onEnd);
+  }, [update]);
 
   // Camera moves (pan, zoom) and window resizes: redraw at once, without the move transition.
   React.useEffect(() => subscribe(() => update(true)), [subscribe, update]);

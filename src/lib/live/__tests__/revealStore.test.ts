@@ -23,13 +23,14 @@ describe('LiveRevealStore', () => {
     expect(store.delayOf('a')).toBeUndefined();
   });
 
-  it("a newer batch's entry for the same node is not removed by the older batch's timer", () => {
+  it('a node still revealing keeps its timing when a newer batch names it again', () => {
     const store = new LiveRevealStore();
     store.start(new Map([['a', 0], ['b', 45]]));
     vi.advanceTimersByTime(200);
     store.start(new Map([['b', 0], ['c', 45]]));
-    vi.advanceTimersByTime(150); // the first batch ends (45 + 180 + 120)
-    expect([...store.delays.keys()].sort()).toEqual(['b', 'c']);
+    expect(store.delayOf('b')).toBe(45);
+    vi.advanceTimersByTime(45 + REVEAL_NODE_MS + REVEAL_SETTLE_MS - 200); // the first batch ends
+    expect([...store.delays.keys()]).toEqual(['c']);
     vi.advanceTimersByTime(200);
     expect(store.size).toBe(0);
   });

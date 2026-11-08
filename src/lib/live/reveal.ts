@@ -3,7 +3,13 @@
 // The per-component reveal (plan docs/plans/2026-11-08-live-agent-canvas.md,
 // section 4): which new nodes fade in, and when. Pure and client-safe, so the
 // timing is tested without an editor; the live store (./revealStore.ts) holds
-// the result and ComponentRenderer draws it as a CSS animation.
+// the result and ComponentRenderer draws it as a Cascading Style Sheets (CSS)
+// animation.
+//
+// Only element nodes take a place in the timing: a text node renders as plain
+// text with no element to animate (it shows with its parent). Each page is
+// timed on its own, so nodes created on another page never delay or compress
+// the reveal of the page on screen.
 //
 // Timing (Emil Kowalski's rules): each node fades in with a 4px rise over
 // REVEAL_NODE_MS, ease-out; REVEAL_GAP_MAX_MS between nodes, compressed so the
@@ -18,6 +24,8 @@
 // form one group (one big section) reveals that group and its direct created
 // children, so it still unfolds rather than appearing as one block.
 
+import { isTextNodeType } from '@/lib/renderer/textNode';
+
 export const REVEAL_NODE_MS = 180;
 export const REVEAL_GAP_MAX_MS = 45;
 export const REVEAL_BATCH_MS = 600;
@@ -30,6 +38,8 @@ export const REVEAL_ATTR = 'data-live-reveal';
 /** The part of a component tree this module reads (a snapshot or a live node). */
 export interface RevealTreeNode {
   id: string;
+  /** The node's type; a text node (TEXT_NODE_TYPE) has no element of its own and is left out. */
+  type?: unknown;
   children?: readonly RevealTreeNode[] | Iterable<RevealTreeNode>;
 }
 
@@ -71,6 +81,7 @@ export function revealPlan(roots: Iterable<RevealTreeNode | undefined | null>, c
   if (wanted.size > 0) {
     const visit = (node: RevealTreeNode, parent: RevealTreeNode | undefined) => {
       if (!node || typeof node.id !== 'string') return;
+      if (isTextNodeType(node.type as string)) return;
       if (wanted.has(node.id)) {
         found.push({ id: node.id, parentId: parent?.id, parentCreated: !!parent && wanted.has(parent.id) });
       }
@@ -94,15 +105,23 @@ export function revealPlan(roots: Iterable<RevealTreeNode | undefined | null>, c
   return new Map(units.map((id, i) => [id, delays[i]]));
 }
 
-/** The trees of a project snapshot's pages (each page's tree, then its floating elements). */
-export function projectRevealRoots(project: { pages?: unknown } | undefined): RevealTreeNode[] {
-  const roots: RevealTreeNode[] = [];
+/** The trees of each page of a project snapshot (the page's tree, then its floating elements), one list per page. */
+export function projectRevealRoots(project: { pages?: unknown } | undefined): RevealTreeNode[][] {
   const pages = (project?.pages ?? {}) as Record<string, { appComponentTree?: RevealTreeNode; canvasNodes?: Record<string, RevealTreeNode> }>;
-  for (const page of Object.values(pages)) {
+  return Object.values(pages).map((page) => {
+    const roots: RevealTreeNode[] = [];
     if (page?.appComponentTree) roots.push(page.appComponentTree);
     for (const node of Object.values(page?.canvasNodes ?? {})) if (node) roots.push(node);
-  }
-  return roots;
+    return roots;
+  });
+}
+
+/** The plan of an adopted copy: each page timed on its own (projectRevealRoots), merged. */
+export function projectRevealPlan(project: { pages?: unknown } | undefined, created: readonly string[]): Map<string, number> {
+  const plan = new Map<string, number>();
+  if (created.length === 0) return plan;
+  for (const roots of projectRevealRoots(project)) for (const [id, delay] of revealPlan(roots, created)) plan.set(id, delay);
+  return plan;
 }
 
 /** Every id of the trees, depth first. */
@@ -110,6 +129,7 @@ export function subtreeIds(roots: Iterable<RevealTreeNode | undefined | null>): 
   const ids: string[] = [];
   const visit = (node: RevealTreeNode) => {
     if (!node || typeof node.id !== 'string') return;
+    if (isTextNodeType(node.type as string)) return;
     ids.push(node.id);
     for (const child of childrenOf(node)) visit(child);
   };

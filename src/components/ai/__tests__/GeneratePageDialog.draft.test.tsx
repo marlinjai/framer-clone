@@ -355,6 +355,20 @@ describe('the apply and the per-component reveal (live agent canvas, slice 3)', 
     expect(getHistoryStore()!.history.length).toBe(1);
   });
 
+  it('matches drawn sections by index: a section missing from the draft reveals, the drawn ones stay still', async () => {
+    const { transport, calls } = manualTransport();
+    setup(transport);
+    typeBrief('A bakery');
+    generate();
+    const req = calls[0].req;
+    // Section 1 never reached the draft; 0 and 2 did.
+    act(() => calls[0].handlers.onSection?.(sectionFor(req, HERO, 0)));
+    act(() => calls[0].handlers.onSection?.(sectionFor(req, HERO, 2)));
+    const result = resultFor(req, { title: 'Bakery', nodes: [HERO, STORY, HERO] });
+    await act(async () => calls[0].handlers.onResult?.(result));
+    expect([...reveal().delays.keys()]).toEqual(subtree(result.nodes[1].id));
+  });
+
   it('no stream at all: the whole result reveals, in document order', async () => {
     store.editorUI.selectComponent(container);
     const { transport, calls } = manualTransport();

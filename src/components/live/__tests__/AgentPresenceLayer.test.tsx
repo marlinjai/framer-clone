@@ -19,7 +19,7 @@ let store: RootStoreType;
 vi.mock('@/hooks/useStore', () => ({ useStore: () => store }));
 
 import AgentPresenceLayer, {
-  EDITOR_SIDEBAR_ATTR,
+  EDITOR_CHROME_ATTR,
   PRESENCE_FRAME_ATTR,
   PRESENCE_LABEL_ATTR,
   PRESENCE_MOVE_MS,
@@ -233,18 +233,18 @@ describe('the compact bar\'s editing note', () => {
 
 describe('the label pill stays in the visible canvas', () => {
   /** Editor chrome over the canvas: the top bar and the docked sidebars (EditorApp). */
-  function chrome(parts: { topbar?: DOMRect; left?: DOMRect; right?: DOMRect }) {
+  function chrome(parts: { topbar?: DOMRect; left?: DOMRect; right?: DOMRect; bottom?: DOMRect }) {
     if (parts.topbar) {
       const bar = document.createElement('header');
       bar.setAttribute('data-editor-topbar', 'true');
       bar.getBoundingClientRect = () => parts.topbar!;
       document.body.appendChild(bar);
     }
-    for (const side of ['left', 'right'] as const) {
+    for (const side of ['left', 'right', 'bottom'] as const) {
       const box = parts[side];
       if (!box) continue;
       const el = document.createElement('div');
-      el.setAttribute(EDITOR_SIDEBAR_ATTR, side);
+      el.setAttribute(EDITOR_CHROME_ATTR, side);
       el.getBoundingClientRect = () => box;
       document.body.appendChild(el);
     }
@@ -297,8 +297,24 @@ describe('the label pill stays in the visible canvas', () => {
     expect(pillPlacement({ x: 400, y: 800, width: 100, height: 60 }, visible, size)).toBeUndefined();
   });
 
-  it('visibleCanvasRect: the window less the top bar and the docked sidebars', () => {
+  it('visibleCanvasRect: the window less the top bar, the docked sidebars and the bottom toolbar', () => {
     chrome({ topbar: rect(0, 0, 1024, 64), left: rect(0, 64, 260, 704), right: rect(764, 64, 260, 704) });
     expect(visibleCanvasRect()).toEqual({ left: 260, top: 64, right: 764, bottom: window.innerHeight });
+    chrome({ bottom: rect(0, window.innerHeight - 56, 1024, 56) });
+    expect(visibleCanvasRect().bottom).toBe(window.innerHeight - 56);
+  });
+
+  it('a thin sliver of a frame past the sidebar keeps its pill at the frame, not beyond it', () => {
+    const visible = { left: 260, top: 64, right: 764, bottom: 768 };
+    // The frame ends 40px past the sidebar: the pill cannot sit wholly inside it, so it stays at the visible edge.
+    expect(pillPlacement({ x: 0, y: 200, width: 300, height: 100 }, visible, { width: 120, height: 20 })).toEqual({ left: 268, top: -22 });
+    // A wider sliver: the pill ends at the frame's right edge at most.
+    expect(pillPlacement({ x: 0, y: 200, width: 420, height: 100 }, visible, { width: 120, height: 20 })).toEqual({ left: 268, top: -22 });
+    expect(pillPlacement({ x: 600, y: 200, width: 150, height: 100 }, visible, { width: 120, height: 20 })).toEqual({ left: -2, top: -22 });
+  });
+
+  it('a frame whose top is under the bottom toolbar keeps its pill above the toolbar', () => {
+    const visible = { left: 0, top: 64, right: 1024, bottom: 712 };
+    expect(pillPlacement({ x: 100, y: 710, width: 400, height: 300 }, visible, { width: 120, height: 20 })).toEqual({ left: -2, top: 712 - 8 - 20 - 710 });
   });
 });
