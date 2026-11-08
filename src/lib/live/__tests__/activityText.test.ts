@@ -7,6 +7,12 @@ describe('activity words', () => {
   it('says what an agent does on the label', () => {
     expect(presenceLabel('Claude', 'apply_batch')).toBe('Claude · Editing');
     expect(presenceLabel('', 'get_page')).toBe('Agent · Reading');
+    expect(presenceLabel('Claude', 'announce_sections')).toBe('Claude · Planning');
+    expect(presenceLabel('Claude', 'apply_batch', 'Pricing')).toBe('Claude · Writing Pricing');
+    expect(feedLineText({ tool: 'announce_sections', outcome: 'ok' }, 'Home')).toBe('Planned the next sections on Home');
+    expect(feedLineText({ tool: 'announce_sections', outcome: 'rejected' })).toBe('Planned sections refused, nothing written');
+    expect(feedLineText({ tool: 'clear_sections', outcome: 'ok' })).toBe('Removed its planned sections');
+    expect(feedLineText({ tool: 'sections_stopped', outcome: 'ok' })).toBe('Planned sections removed: the agent stopped');
     expect(activityVerb('generate_page')).toBe('Generating');
     expect(activityVerb('something_new')).toBe('Working');
   });

@@ -23,6 +23,7 @@ import 'server-only';
 import { z } from 'zod';
 import {
   applyBatch,
+  checkPlanAnchor,
   createSite,
   describeVocabulary,
   findImages,
@@ -45,6 +46,9 @@ import type { PageGenRateLimiter } from '@/lib/ai/pageGen/rateLimit';
 import { redactSecrets } from '@/lib/auth-machine';
 import type { ConfirmFn } from './confirmations';
 import { APPROVAL_TTL_MS, approvalUrl, type ApprovalStore, type ApprovalSubject } from './approvals';
+import { liveAgentId } from '@/server/siteOps/audit';
+import { PLAN_LIMITS, PLAN_SECTION_KINDS, sanitizePlanTitle } from '@/lib/projects/liveEvents';
+import { announcePlan, clearPlan } from './livePlans';
 
 type JsonSchema = Record<string, unknown>;
 
@@ -60,6 +64,8 @@ export interface ToolContext {
   limits: ToolLimits;
   /** Aborts when the client goes away (stops a generation and its spend). */
   signal?: AbortSignal;
+  /** The MCP session's random part (./session.ts), when the client sent a session id: the skeleton plans it announces end with it. */
+  session?: string;
 }
 
 export interface ToolLimits {
@@ -68,6 +74,8 @@ export interface ToolLimits {
   images: PageGenRateLimiter;
   /** Approval requests opened (the first call of publish or rollback). */
   approvals: PageGenRateLimiter;
+  /** announce_sections and clear_sections together. */
+  plans: PageGenRateLimiter;
 }
 
 export interface ToolAnnotations {
@@ -158,6 +166,8 @@ export const WRITE_RATE = { maxPerWindow: 60, windowMs: 60_000 } as const;
 export const IMAGE_RATE = { maxPerWindow: 30, windowMs: 10 * 60_000 } as const;
 /** Approval requests a key may open (each one is a link a person is asked to act on). */
 export const APPROVAL_RATE = { maxPerWindow: 10, windowMs: 10 * 60_000 } as const;
+/** Skeleton announcements and clears per key (they write nothing, but each one draws in every open editor of the site). */
+export const PLAN_RATE = { maxPerWindow: 20, windowMs: 60_000 } as const;
 
 async function limited(
   limiter: PageGenRateLimiter,
@@ -298,6 +308,8 @@ async function allowed(ctx: ToolContext, action: SiteOpsAction): Promise<ToolRes
 // ---------- argument schemas ----------
 
 const siteId = z.string().trim().min(1).max(200).describe('The site id, from list_sites or create_site.');
+const planRef = z.string().trim().regex(/^[A-Za-z0-9_-]{1,64}$/, 'a ref is 1 to 64 letters, digits, _ or -');
+const planTitle = z.string().trim().min(1).max(PLAN_LIMITS.titleMax);
 const pageId = z.string().trim().min(1).max(200).describe('A page id, from get_site.');
 const expectedVersion = z
   .number()
@@ -526,7 +538,130 @@ export const TOOLS: ToolDef[] = [
       properties.ops = { ...properties.ops, items: { oneOf: OPERATION_SCHEMAS } };
       return schema;
     },
-    run: (ctx, args) => limited(ctx.limits.writes, ctx, 'write', async () => fromResult(await applyBatch(ctx.caller, args, ctx.deps))),
+    run: (ctx, args) =>
+      // The refs a batch creates fulfil this key's announced sections inside the write (siteOps.applyBatch).
+      limited(ctx.limits.writes, ctx, 'write', async () => fromResult(await applyBatch(ctx.caller, args, ctx.deps))),
+  }),
+  define({
+    name: 'announce_sections',
+    title: 'Announce sections',
+    description: [
+      'Before you write a page, announce the sections you are about to write: every open editor of the site draws a placeholder (a skeleton) for each one, where it will go, until a batch creates it.',
+      'Give each section the ref you will put on its root node in apply_batch (insertNodes nodes[].ref); when a committed batch creates that ref, its skeleton is replaced by the real section.',
+      'Name an existing page (pageId, and optionally after: the id of a top-level section of it the skeletons follow, else the end of the page), or newPage { ref, title } for a page you are about to create with createPage and that ref.',
+      'Writes nothing to the site, needs no expectedVersion and moves no version.',
+      `A plan ends when every section is created, with clear_sections, ${PLAN_LIMITS.idleMs / 60_000} minutes after your last call on the site (any call refreshes it; ${PLAN_LIMITS.maxMs / 60_000} minutes at most), when your session ends, or when its page or after section is deleted.`,
+      `At most ${PLAN_LIMITS.sectionsPerPlan} sections per plan, titles of at most ${PLAN_LIMITS.titleMax} characters (shown to the person as plain text), ${PLAN_LIMITS.plansPerSite} live plans per site; replaces swaps one of your plans for this one in one step, and sections that keep their ref keep their skeleton.`,
+      'Answers planId and expiresAt.',
+    ].join(' '),
+    args: z
+      .strictObject({
+        siteId,
+        pageId: pageId.optional().describe('An existing page the sections go on (from get_site). Or newPage.'),
+        newPage: z
+          .strictObject({
+            ref: planRef.describe('The ref your createPage op will carry.'),
+            title: planTitle.describe('The page title, shown on the placeholder page frame.'),
+          })
+          .optional()
+          .describe('A page you are about to create: the sections show in a placeholder page frame until createPage with this ref commits.'),
+        after: z
+          .string()
+          .trim()
+          .min(1)
+          .max(200)
+          .optional()
+          .describe('With pageId: the id of a top-level section of the page (a child of its root, from get_page) the skeletons follow. The end of the page when absent.'),
+        replaces: z.string().trim().min(1).max(200).optional().describe('The planId of one of your live plans this one replaces in one step.'),
+        sections: z
+          .array(
+            z.strictObject({
+              ref: planRef.describe("The ref you will put on this section's root node in apply_batch."),
+              title: planTitle.describe('What the person reads on the placeholder, e.g. "Pricing".'),
+              kind: z.enum(PLAN_SECTION_KINDS).optional().describe('The placeholder\'s shape; generic when absent.'),
+            }),
+          )
+          .min(1)
+          .max(PLAN_LIMITS.sectionsPerPlan)
+          .describe('The sections, in page order.'),
+      })
+      .superRefine((a, issue) => {
+        if ((a.pageId === undefined) === (a.newPage === undefined)) issue.addIssue({ code: 'custom', message: 'name exactly one of pageId and newPage' });
+        if (a.after !== undefined && a.pageId === undefined) issue.addIssue({ code: 'custom', path: ['after'], message: 'after needs pageId (a new page has no sections yet)' });
+        const refs = a.sections.map((x) => x.ref);
+        if (new Set(refs).size !== refs.length) issue.addIssue({ code: 'custom', path: ['sections'], message: 'every section needs its own ref' });
+        if (a.newPage && refs.includes(a.newPage.ref)) issue.addIssue({ code: 'custom', path: ['newPage', 'ref'], message: "the page's ref must differ from the sections' refs" });
+      }),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    run: (ctx, args) =>
+      limited(
+        ctx.limits.plans,
+        ctx,
+        'section announcement',
+        async () => {
+          const sections: Array<{ ref: string; title: string; kind: (typeof PLAN_SECTION_KINDS)[number] }> = [];
+          for (const [i, section] of args.sections.entries()) {
+            const title = sanitizePlanTitle(section.title);
+            if (!title) return errorResult({ code: 'invalid_request', message: `sections.${i}.title has no printable characters` });
+            sections.push({ ref: section.ref, title, kind: section.kind ?? 'generic' });
+          }
+          const pageTitle = args.newPage ? sanitizePlanTitle(args.newPage.title) : undefined;
+          if (args.newPage && !pageTitle) return errorResult({ code: 'invalid_request', message: 'newPage.title has no printable characters' });
+          // The site in this key's own scope, the page and the after section as named: read, never written.
+          const checkedAt = Date.now();
+          const anchor = await checkPlanAnchor(ctx.caller, { siteId: args.siteId, pageId: args.pageId, after: args.after }, ctx.deps);
+          if (!anchor.ok) return errorResult(anchor.error);
+          const outcome = announcePlan({
+            siteId: args.siteId,
+            scope: ctx.caller.scope,
+            agentId: liveAgentId(ctx.key.keyId),
+            label: ctx.caller.actorLabel ?? 'Agent',
+            ...(ctx.session ? { session: ctx.session } : {}),
+            ...(args.pageId ? { pageId: args.pageId } : {}),
+            ...(args.newPage && pageTitle ? { newPage: { ref: args.newPage.ref, title: pageTitle } } : {}),
+            ...(args.after ? { after: args.after } : {}),
+            ...(args.replaces ? { replaces: args.replaces } : {}),
+            checkedVersion: anchor.value.version,
+            checkedAt,
+            sections,
+          });
+          if (!outcome.ok) {
+            return errorResult({ code: outcome.code, message: outcome.message, ...(outcome.currentVersion !== undefined ? { currentVersion: outcome.currentVersion } : {}) });
+          }
+          return toolResult(
+            {
+              planId: outcome.plan.planId,
+              expiresAt: outcome.plan.expiresAt,
+              sections: outcome.plan.sections.length,
+              message: 'Announced. Now write one section per apply_batch, with its ref on the section\'s root node; each skeleton turns into the real section when its batch commits. Call clear_sections with planId if you change course.',
+            },
+            false,
+          );
+        },
+        false,
+      ),
+  }),
+  define({
+    name: 'clear_sections',
+    title: 'Clear announced sections',
+    description:
+      'Remove the skeletons of a plan you announced with announce_sections (when you change course or stop): open editors drop its placeholders at once. Sections already created stay. Writes nothing to the site.',
+    args: z.strictObject({ siteId, planId: z.string().trim().min(1).max(200).describe('The planId announce_sections answered.') }),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    run: (ctx, args) =>
+      limited(
+        ctx.limits.plans,
+        ctx,
+        'section announcement',
+        async () => {
+          const cleared = clearPlan(args.siteId, liveAgentId(ctx.key.keyId), args.planId);
+          if (!cleared) {
+            return errorResult({ code: 'plan_not_found', message: 'no live plan of this key with that planId on this site (it ended already: fulfilled, expired, replaced or cleared)' });
+          }
+          return toolResult({ cleared: true, planId: args.planId }, false);
+        },
+        false,
+      ),
   }),
   define({
     name: 'generate_page',

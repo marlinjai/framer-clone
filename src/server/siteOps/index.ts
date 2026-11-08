@@ -71,7 +71,9 @@ import { logAiCall, startAiCallTimer } from '@/lib/ai/aiLogger';
 import { recordUsage } from '@/lib/ai/aiUsageStub';
 import { recordSiteOperation, type AuditedOp } from './audit';
 import type { SiteWriteActor } from '@/lib/projects/liveEvents';
-import { splitCreated } from '@/lib/siteOps/createdIds';
+import { refPagesOf, splitCreated } from '@/lib/siteOps/createdIds';
+import { fulfilFromBatch } from '@/server/mcp/livePlans';
+import { liveAgentId } from './audit';
 
 export type { SiteOpsCaller, SiteOpsResult } from '@/lib/siteOps/types';
 
@@ -269,6 +271,39 @@ export async function getPage(
   }
 }
 
+/**
+ * Whether a key may announce skeleton sections where it says (the MCP tool
+ * announce_sections, src/server/mcp/livePlans.ts): `editSite`, the site in the
+ * caller's own scope (a site of another company is "not found", as for every
+ * operation), the page when one is named, and `after` as a top-level section
+ * of that page (a child of its root), where a skeleton can stand. Reads only;
+ * writes nothing.
+ */
+export async function checkPlanAnchor(
+  caller: SiteOpsCaller,
+  input: { siteId: string; pageId?: string; after?: string },
+  deps: SiteOpsDeps = {},
+): Promise<SiteOpsResult<{ version: number }>> {
+  const allowed = await permitted(caller, 'editSite');
+  if (!allowed.ok) return allowed;
+  const loaded = await load(deps, caller, input.siteId);
+  if (!loaded.ok) return loaded;
+  if (input.pageId) {
+    const page = loaded.value.project.pages.get(input.pageId) as PageModelType | undefined;
+    if (!page) return fail({ code: 'page_not_found', message: `no page "${input.pageId}" on this site` });
+    if (input.after) {
+      const root = page.appComponentTree as { children: Array<{ id: string }> } | undefined;
+      if (!root?.children.some((c) => c.id === input.after)) {
+        return fail({
+          code: 'invalid_request',
+          message: `"after" must be the id of a top-level section of the page (a child of its root, from get_page); "${input.after}" is not one`,
+        });
+      }
+    }
+  }
+  return ok({ version: loaded.value.version });
+}
+
 export async function describeVocabulary(
   caller: SiteOpsCaller,
   input: { siteId?: string } = {},
@@ -323,6 +358,11 @@ export async function applyBatch(caller: SiteOpsCaller, input: unknown, deps: Si
       expectedVersion,
       // Open editors adopt the write and learn what it touched (ids and server-written lines only).
       event: { origin: 'mcp', actor: liveActor(caller), ops: auditedOps(ops), created: applied.created, summary: applied.summary },
+      // The skeletons this key announced and this batch wrote are fulfilled before open editors hear of the write,
+      // so an editor never adopts the copy while the skeleton still counts as unwritten.
+      ...(caller.actor.kind === 'key'
+        ? { beforeAnnounce: (v: number) => fulfilFromBatch(siteId, liveAgentId(caller.actor.id), applied.created, v, refPagesOf(ops, applied.created, (pid) => (project.pages.get(pid) as PageModelType | undefined)?.appComponentTree?.id), splitCreated(ops, applied.created).pageIds) }
+        : {}),
     }));
   } catch (err) {
     return fromError(err, siteId);

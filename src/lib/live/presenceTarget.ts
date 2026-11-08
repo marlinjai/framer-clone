@@ -43,8 +43,16 @@ export function presencePagesOf(project: PresenceProject | undefined): PresenceP
   return [...pages, ...definitions.map((d) => d.page)];
 }
 
-/** What a frame is drawn around: a section of a page, or the page itself. */
-export type PresenceTarget = { kind: 'section'; pageId: string; sectionId: string } | { kind: 'page'; pageId: string };
+/**
+ * What a frame is drawn around: a section of a page, the page itself, or the
+ * skeleton of an announced section the agent is writing right now (slice 4;
+ * `skeleton` is the skeleton's key, `<agentId>:<ref>`, and `title` its section
+ * title, plain text).
+ */
+export type PresenceTarget =
+  | { kind: 'section'; pageId: string; sectionId: string }
+  | { kind: 'page'; pageId: string }
+  | { kind: 'skeleton'; pageId: string; skeleton: string; title: string };
 
 function childrenOf(node: PresenceTreeNode): PresenceTreeNode[] {
   return Array.from(node.children as Iterable<PresenceTreeNode>);

@@ -59,6 +59,7 @@ import {
 import { existingAutosave, reloadDiscarding } from './autosave';
 import { editorTabId } from './tabId';
 import { LIVE_EVENTS, type AgentActivity, type SiteStateEvent, type SiteVersionEvent } from './liveEvents';
+import type { LivePlansStore } from '@/lib/live/plansStore';
 import type { LivePresenceStore } from '@/lib/live/presenceStore';
 import type { LiveRevealStore } from '@/lib/live/revealStore';
 import { projectRevealPlan } from '@/lib/live/reveal';
@@ -225,6 +226,7 @@ export class LiveSync {
     this.closeStream();
     // Nothing of this site's agents carries over to the next one opened.
     this.presence.reset();
+    this.plans.reset();
     this.clearPoll();
     if (this.streamRetryTimer) clearTimeout(this.streamRetryTimer);
     this.streamRetryTimer = undefined;
@@ -272,6 +274,8 @@ export class LiveSync {
       if (!state || typeof state.version !== 'number') return;
       // Who works on the site and the feed, replacing what this tab held (a reconnect sends `state` again).
       this.presence.applyState(state);
+      // The live skeleton plans, against the version this tab's copy holds.
+      this.plans.applyState(state.plans, knownServerVersion(this.projectId));
       this.heard(state.version, undefined);
     });
     stream.addEventListener(LIVE_EVENTS.agentActivity, (e) => {
@@ -279,11 +283,20 @@ export class LiveSync {
       const activity = parse<AgentActivity>(e.data);
       if (activity) this.presence.applyActivity(activity);
     });
+    stream.addEventListener(LIVE_EVENTS.planUpdate, (e) => {
+      if (this.stream !== stream) return;
+      const line = this.plans.applyUpdate(parse<unknown>(e.data));
+      // The agent stopped: the feed says so (the same line the server keeps for a reload).
+      if (line) this.presence.addLine(line);
+    });
     stream.addEventListener(LIVE_EVENTS.siteVersion, (e) => {
       const event = parse<SiteVersionEvent>(e.data);
       if (!event || typeof event.version !== 'number') return;
-      // This tab's own write: its answer moves the known version.
-      if (event.own) return;
+      // This tab's own write: its answer moves the known version (and the skeletons it covers go).
+      if (event.own) {
+        this.plans.noteVersion(event.version);
+        return;
+      }
       this.heard(event.version, event);
     });
     stream.addEventListener(LIVE_EVENTS.authExpired, () => {
@@ -478,6 +491,11 @@ export class LiveSync {
     return this.rootStore.editorUI.livePresence as LivePresenceStore;
   }
 
+  /** The skeleton plans of the open site (src/lib/live/plansStore.ts). */
+  private get plans(): LivePlansStore {
+    return this.rootStore.editorUI.livePlans as LivePlansStore;
+  }
+
   /** The nodes revealing on the canvas (src/lib/live/revealStore.ts). */
   private get reveal(): LiveRevealStore {
     return this.rootStore.editorUI.liveReveal as LiveRevealStore;
@@ -494,6 +512,8 @@ export class LiveSync {
       if (result && reveal && result.created.length > 0) {
         this.reveal.start(projectRevealPlan(snapshot, result.created));
       }
+      // In the same action: a skeleton the adopted copy fulfils gives way to its real section in the same frame its reveal starts.
+      if (result) this.plans.noteVersion(version);
       return result;
     });
     if (!adopted) return false;

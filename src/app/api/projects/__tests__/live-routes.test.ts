@@ -48,6 +48,7 @@ import { liveAgentId } from '@/server/siteOps/audit';
 import { getSiteRepository as getRepositoryDirect } from '@/server/sites/repository';
 import { publishSiteEvent, resetLiveBusForTests, LIVE_STREAM_LIMITS } from '@/server/sites/liveBus';
 import { GET as EVENTS } from '../[projectId]/events/route';
+import { announcePlan, resetLivePlansForTests } from '@/server/mcp/livePlans';
 import { LIVE_RECHECK_MS, LIVE_RECHECK_ON_WRITE_MS } from '@/lib/projects/liveEvents';
 import { GET as DOCUMENT } from '../[projectId]/document/route';
 
@@ -120,6 +121,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   resetLiveBusForTests();
   resetLivePresenceForTests();
+  resetLivePlansForTests();
   auditRows.rows = [];
   auditRows.fail = false;
   auditRows.calls = [];
@@ -194,6 +196,26 @@ describe.each([
 });
 
 describe('GET /api/projects/<id>/events', () => {
+  it("sends the site's live skeleton plans in `state`, never one whose time ran out or one of another workspace, then every plan:update", async () => {
+    const plan = (over: Record<string, unknown>) =>
+      announcePlan({ siteId: 'site_1', scope: SCOPE, agentId: 'agent-a', label: 'Claude', pageId: 'home', sections: [{ ref: 'hero', title: 'Hero', kind: 'hero' }], ...over } as Parameters<typeof announcePlan>[0], Date.now());
+    const live = plan({});
+    plan({ scope: { workspaceId: 'ws_other', tenantGroupId: 'tg_other' } });
+    // Announced 20 minutes ago: past its hard cap, so it is swept before `state` is built.
+    announcePlan({ siteId: 'site_1', scope: SCOPE, agentId: 'agent-b', label: 'Old', pageId: 'home', sections: [{ ref: 'old', title: 'Old', kind: 'generic' }] }, Date.now() - 20 * 60_000);
+    const res = await EVENTS(req('/api/projects/site_1/events'), ctx('site_1'));
+    const events = eventReader(res);
+    const state = await events.next();
+    expect(state.event).toBe('state');
+    const plans = (state.data as { plans: Array<{ planId: string }> }).plans;
+    expect(live.ok && plans.map((p) => p.planId)).toEqual([live.ok ? live.plan.planId : '']);
+    // The sweep that left the old plan out of `state` also told the stream it ended (an editor that never drew it ignores that).
+    expect(await events.next()).toMatchObject({ event: 'plan:update', data: { ended: 'expired', plan: { agentId: 'agent-b' } } });
+    publishSiteEvent('site_1', 'plan:update', { plan: { planId: 'p2' }, ended: 'cleared' });
+    expect(await events.next()).toEqual({ event: 'plan:update', data: { plan: { planId: 'p2' }, ended: 'cleared' } });
+    await events.cancel();
+  });
+
   it('sends the state on connect, then every committed write with its version as the event id', async () => {
     const res = await EVENTS(req('/api/projects/site_1/events'), ctx('site_1'));
     expect(res.status).toBe(200);

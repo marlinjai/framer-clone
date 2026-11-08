@@ -29,6 +29,7 @@ import { childrenWithRepeats } from '@/lib/renderer/repeatChildren';
 import { SurfaceDomContext, withSurfaceDom } from '@/lib/behaviour/surfaceDom';
 import { ShopRepeatCopyContext } from '@/lib/commerce/shopRuntime';
 import { DraftSections, useDraftHook } from '@/components/ai/PageGenDraftLayer';
+import { SkeletonGroupView, useSkeletonGroups, withSkeletons } from '@/components/live/SkeletonLayer';
 import { REVEAL_ATTR } from '@/lib/live/reveal';
 
 interface ComponentRendererProps {
@@ -190,6 +191,9 @@ const NodeRenderer = observer(({ component, breakpointId, allBreakpoints, scope,
   // A running generation's draft meets this node (src/components/ai/PageGenDraftLayer.tsx):
   // never inside a placement's definition, which a generation does not target.
   const draftHook = useDraftHook(component.id, !!host || !!placement);
+  // An agent's announced sections not written yet (src/components/live/SkeletonLayer.tsx):
+  // only the current page's root hosts them, never a node inside a placement's definition.
+  const skeletonGroups = useSkeletonGroups(component.id, () => component.children.map((c: ComponentInstance) => c.id), !!host || !!placement);
 
   // LayersPanel eye toggle writes to canvasVisible; honour it here so hidden
   // tree children disappear from the viewport. Floating elements and viewport
@@ -393,7 +397,12 @@ const NodeRenderer = observer(({ component, breakpointId, allBreakpoints, scope,
   const draft = draftHook ? (
     <DraftSections key="pagegen-draft" breakpointId={breakpointId} allBreakpoints={allBreakpoints} scope={activeScope} />
   ) : null;
-  const children = draftHook === 'replaceChildren' ? [draft] : draftHook === 'insert' ? [...ownChildren, draft] : ownChildren;
+  const drawnChildren = draftHook === 'replaceChildren' ? [draft] : draftHook === 'insert' ? [...ownChildren, draft] : ownChildren;
+  const children = skeletonGroups
+    ? withSkeletons(drawnChildren, skeletonGroups, (group) => (
+        <SkeletonGroupView key={`live-skeletons:${group.after ?? 'end'}`} group={group} breakpointId={breakpointId} allBreakpoints={allBreakpoints} />
+      ))
+    : drawnChildren;
 
   if (placement) finalProps[DATA_PLACEMENT_ROOT] = `${frameId}-${component.id}`;
 

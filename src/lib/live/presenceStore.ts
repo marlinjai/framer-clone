@@ -138,6 +138,7 @@ export class LivePresenceStore {
       applyState: action,
       applyActivity: action,
       setFollow: action,
+      addLine: action,
       setPanelOpen: action,
       reset: action,
       expire: action,
@@ -338,6 +339,12 @@ export class LivePresenceStore {
       failed,
     });
     if (openCalls.length === 0) this.scheduleEnd(a.agentId, ageOf(a.at, this.now()), failed);
+  }
+
+  /** A feed line no call's end carries (a skeleton plan whose agent stopped), once. */
+  addLine(line: LiveFeedLine): void {
+    if (this.feed.some((l) => l.id === line.id)) return;
+    this.feed = [line, ...this.feed].slice(0, LIVE_FEED_MAX);
   }
 
   setFollow(follow: boolean): void {

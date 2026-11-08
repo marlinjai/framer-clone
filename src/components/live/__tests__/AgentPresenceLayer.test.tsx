@@ -98,6 +98,7 @@ beforeEach(() => {
 
 afterEach(() => {
   presence().reset();
+  store.editorUI.livePlans.reset();
   cleanup();
   document.body.innerHTML = '';
   vi.unstubAllGlobals();
@@ -119,6 +120,33 @@ describe('the frame', () => {
     expect(frame.querySelector(`[${PRESENCE_LABEL_ATTR}]`)!.textContent).toBe('Claude · Editing');
     expect(document.querySelector('[data-agent-page-dot]')).not.toBeNull();
     expect(screen.getByText('Claude is editing this site')).toBeInTheDocument();
+  });
+
+  it('frames the skeleton of the announced section the agent is writing, labelled with its title, then the real section', () => {
+    act(() =>
+      store.editorUI.livePlans.applyState(
+        [{ planId: 'p1', agentId: 'a1', label: 'Claude', pageId: page.id, sections: [{ ref: 'faq', title: 'Questions', kind: 'faq' }], expiresAt: '' }],
+        1,
+      ),
+    );
+    const skeleton = document.createElement('div');
+    skeleton.setAttribute('data-live-skeleton', 'a1:faq');
+    skeleton.getBoundingClientRect = () => rect(100, 600);
+    document.querySelector('[data-viewport-id]')!.appendChild(skeleton);
+    act(() => presence().applyActivity(activity({ nodeIds: [], sectionRef: 'faq' })));
+    expect(frames()[0].style.transform).toBe('translate(96px, 596px)');
+    expect(frames()[0].querySelector(`[${PRESENCE_LABEL_ATTR}]`)!.textContent).toBe('Claude · Writing Questions');
+    // The batch committed and the copy holding the section was adopted: the frame moves to the real section.
+    act(() => {
+      store.editorUI.livePlans.applyUpdate({
+        plan: { planId: 'p1', agentId: 'a1', label: 'Claude', pageId: page.id, sections: [{ ref: 'faq', title: 'Questions', kind: 'faq', fulfilledAt: 2, nodeId: 'pricing' }], expiresAt: '' },
+        ended: 'fulfilled',
+      });
+      store.editorUI.livePlans.noteVersion(2);
+      presence().applyActivity(activity({ phase: 'end', outcome: 'ok', nodeIds: ['pricing'], sectionRef: 'faq' }));
+    });
+    expect(frames()[0].style.transform).toBe('translate(96px, 296px)');
+    expect(frames()[0].querySelector(`[${PRESENCE_LABEL_ATTR}]`)!.textContent).toBe('Claude · Editing');
   });
 
   it('moves to a new section with a 200ms ease-out, and follows pan and zoom without it', () => {

@@ -68,6 +68,12 @@ pass a few `apply_batch` calls on the `expectedVersion` you last saw:
 4. **Detail pass:** images (`find_images`, keeping `data-credit-*` and writing a real `alt`),
    states as rules, motion within the rules above, copy edits.
 
+When a pass rebuilds sections with `apply_batch`, announce them first with `announce_sections`
+(per section the `ref` you will put on its root node, a short title the person reads and a `kind`;
+`after` a top-level section to place them there), then write one section per batch with its `ref`
+on the section's root node. The person watching the editor sees each placeholder turn into the
+section. Call `clear_sections` with the `planId` when you change course.
+
 For a section beyond saving, `generate_page` with a `replace` target drafts a new one from a brief
 (it runs a minute or more; read its warnings), then refine it with `apply_batch`. Put every fact,
 price, date, opening hour and offer from the old section into the brief. Afterwards, compare the
@@ -76,7 +82,8 @@ new section's text with the old section's text and restore any missing informati
 
 Handle refusals as the tools say: `rejected` lists each refused operation, fix and resend the
 batch; `site_changed` means someone else changed the site, so read again, compare, and redo the
-pass on the current version (never resend the old batch unchanged); `rate_limited` means wait
+pass on the current version (never resend the old batch unchanged, and if something you wrote is
+gone, the person may have undone it on purpose: ask before you write it again); `rate_limited` means wait
 `retryAfterSec` seconds.
 
 ## 4. Look again

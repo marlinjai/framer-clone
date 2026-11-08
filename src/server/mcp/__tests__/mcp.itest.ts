@@ -219,6 +219,17 @@ describe('the MCP endpoint against a real database', () => {
       expect((theirs.sites as Array<{ siteId: string }>).map((s) => s.siteId)).not.toContain(siteId);
       const foreign = await tool(KEY_B, 'apply_batch', { siteId, expectedVersion: 6, ops: [{ op: 'updateText', nodeId: created2.headline, text: 'hijack' }] });
       expect((foreign.structuredContent.error as { code: string }).code).toBe('site_not_found');
+
+      // Skeleton plans: the owner announces on its own site against the real database; another company's key cannot announce
+      // there, nor clear the owner's plan, and the editor stream's read with the other company's scope sees none of it.
+      const plan = await ok(KEY_A, 'announce_sections', { siteId, pageId: homePageId, sections: [{ ref: 'faq', title: 'Questions', kind: 'faq' }] });
+      const theirPlan = await tool(KEY_B, 'announce_sections', { siteId, pageId: homePageId, sections: [{ ref: 'x', title: 'X' }] });
+      expect((theirPlan.structuredContent.error as { code: string }).code).toBe('site_not_found');
+      const theirClear = await tool(KEY_B, 'clear_sections', { siteId, planId: plan.planId });
+      expect((theirClear.structuredContent.error as { code: string }).code).toBe('plan_not_found');
+      const { plansSnapshot } = await import('../livePlans');
+      expect(plansSnapshot(siteId, { workspaceId: 'not-the-owner', tenantGroupId: 'not-the-owner' })).toEqual([]);
+      expect(await ok(KEY_A, 'clear_sections', { siteId, planId: plan.planId })).toEqual({ cleared: true, planId: plan.planId });
     } finally {
       info.mockRestore();
     }

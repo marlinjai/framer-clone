@@ -47,6 +47,7 @@ import type { TenantScope } from '@/server/sites/repository';
 import { splitCreated } from '@/lib/siteOps/createdIds';
 import { liveAgentId } from '@/server/siteOps/audit';
 import { reportAgentActivity } from '@/server/sites/livePresence';
+import { sectionRefFor } from './livePlans';
 import type { ToolResult } from './tools';
 
 /** How long a site confirmed in a scope is trusted without asking the repository again. */
@@ -193,6 +194,25 @@ export function focusOf(args: unknown): { pageId?: string; nodeIds: string[] } {
   return pageId ? { pageId, nodeIds } : { nodeIds };
 }
 
+/**
+ * The refs a batch puts on the root nodes it inserts (insertNodes nodes[].ref),
+ * in order: the sections it may be writing for an announced plan.
+ */
+export function sectionRefsOf(args: unknown): string[] {
+  const refs: string[] = [];
+  const ops = record(args).ops;
+  if (!Array.isArray(ops)) return refs;
+  for (const raw of ops) {
+    const op = record(raw);
+    if (op.op !== 'insertNodes' || !Array.isArray(op.nodes)) continue;
+    for (const node of op.nodes) {
+      const ref = idOf(record(node).ref);
+      if (ref && !refs.includes(ref) && refs.length < LIVE_LIST_MAX) refs.push(ref);
+    }
+  }
+  return refs;
+}
+
 /** How a tool's answer ended, from its error code. A rate limit is a refusal: nothing was written. */
 export function outcomeOf(result: ToolResult | undefined): AgentOutcome {
   if (!result) return 'failed';
@@ -204,7 +224,8 @@ export function outcomeOf(result: ToolResult | undefined): AgentOutcome {
     return 'ok';
   }
   const code = record(record(result.structuredContent).error).code;
-  if (code === 'rejected' || code === 'rate_limited') return 'rejected';
+  // Refusals that wrote nothing (a skeleton plan refused or already gone, a page that is not there).
+  if (code === 'rejected' || code === 'rate_limited' || code === 'too_many_plans' || code === 'plan_not_found' || code === 'page_not_found') return 'rejected';
   if (code === 'site_changed') return 'site_changed';
   return 'failed';
 }
@@ -261,11 +282,14 @@ export async function withPresence(call: PresenceCall, run: (liveCallId?: string
   }
 
   const focus = focusOf(call.args);
+  // A batch writing a section this key announced: the frame goes on that section's skeleton.
+  const sectionRef = call.tool === 'apply_batch' ? sectionRefFor(siteId, agentId, sectionRefsOf(call.args)) : undefined;
   const base = {
     callId: randomUUID(),
     agentId,
     label: call.label ?? 'Agent',
     tool: call.tool,
+    ...(sectionRef ? { sectionRef } : {}),
   };
   const start: AgentActivity = {
     ...base,
