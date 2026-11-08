@@ -440,11 +440,19 @@ function parse<T>(data: string): T | undefined {
 // ---- one per open project --------------------------------------------------------
 
 const syncs = new Map<string, LiveSync>();
+let depsOverride: LiveSyncDeps | undefined;
+
+/** Tests only: the stream and the fetch every LiveSync started from now on uses. */
+export function setLiveSyncDepsForTests(deps: LiveSyncDeps | undefined): void {
+  depsOverride = deps;
+  for (const sync of syncs.values()) sync.stop();
+  syncs.clear();
+}
 
 /** Start following a project (the editor opened it). Answers the stop. */
 export function startLiveSync(projectId: string, rootStore: RootStoreType, deps?: LiveSyncDeps): () => void {
   syncs.get(projectId)?.stop();
-  const sync = new LiveSync(projectId, rootStore, deps);
+  const sync = new LiveSync(projectId, rootStore, deps ?? depsOverride);
   syncs.set(projectId, sync);
   sync.start();
   return () => {
