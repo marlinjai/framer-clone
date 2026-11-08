@@ -4,6 +4,7 @@
 // without the version is a server error (retried), never a refusal or a conflict.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { KEEPALIVE_BODY_MAX_BYTES, postProjectWrite } from '../projectWrite';
+import { editorTabId } from '../tabId';
 
 const fetchMock = vi.fn();
 beforeEach(() => {
@@ -19,7 +20,8 @@ describe('postProjectWrite', () => {
     fetchMock.mockResolvedValueOnce(ok({ version: 4 }));
     const out = await postProjectWrite('/api/projects/save', { id: 's' }, 3, 'Save failed', { requestKey: 'k_0123456789' });
     expect(out).toMatchObject({ kind: 'ok', version: 4 });
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ project: { id: 's' }, expectedVersion: 3, requestKey: 'k_0123456789' });
+    // The tab's id rides along, so the live stream tells this tab's own write apart.
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ project: { id: 's' }, expectedVersion: 3, requestKey: 'k_0123456789', originTab: editorTabId() });
     expect(fetchMock.mock.calls[0][1].keepalive).toBeUndefined();
   });
 
