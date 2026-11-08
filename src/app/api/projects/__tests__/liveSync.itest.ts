@@ -172,7 +172,7 @@ describe('live sync against a real database', () => {
     expect(heard.event).toBe('site:version');
     expect(heard.id).toBe('2');
     const event = heard.data as SiteVersionEvent;
-    expect(event).toMatchObject({ origin: 'mcp', version: 2, versionBefore: 1, created: refs, actor: { kind: 'key', label: 'Agent' } });
+    expect(event).toMatchObject({ origin: 'mcp', version: 2, versionBefore: 1, created: refs, actor: { kind: 'key', label: 'agent' } });
     expect(event.ops).toEqual([{ op: 'insertNodes', pageId: homePageId }]);
     // Ids and server-written lines only: never the headline's text, never the key id.
     expect(JSON.stringify(event)).not.toContain('Built live');
