@@ -169,7 +169,7 @@ describe('Books isolation: two companies in one tenant group schema', () => {
     const captured: string[] = [];
     const logger: KyselyPlugin = {
       transformQuery(args: PluginTransformQueryArgs): RootOperationNode {
-        captured.push(compiler.compileQuery(args.node).sql);
+        captured.push(compiler.compileQuery(args.node, args.queryId).sql);
         return args.node;
       },
       async transformResult(args: PluginTransformResultArgs): Promise<QueryResult<UnknownRow>> {
