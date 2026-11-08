@@ -55,6 +55,7 @@ build wave and stays outside this file's scope (`type: roadmap`, exempt from the
   then a page that builds itself section by section on the canvas as a detached draft that never
   enters the project tree, still one undo step (pull request 2). See
   [plan](docs/plans/2026-11-04-page-generator-ideas-and-streaming.md). (2026-11-04)
+- [ ] Live agent canvas: watch an agent build a site in the open editor, as Paper does with its MCP. A per-site server-sent events stream makes the editor follow every write (adopted as one undo step labelled by the agent), a blue frame and label show the section the agent works on with an activity feed, a new `announce_sections` tool draws skeletons of planned sections, and new nodes reveal element by element with a short client-side stagger; in-editor Generate gets an outline first so it draws skeletons too, and the MCP `generate_page` streams its draft to open editors. Six slices, about 14 to 17 agent days, draft awaiting review. See [plan](docs/plans/2026-11-08-live-agent-canvas.md). (2026-11-08)
 - [x] Motion and effects: an Effects section in the properties panel (appear on scroll, restrained
   hover states, light scroll-linked transforms such as a small image parallax), stored per
   breakpoint like any style, undoable and generatable by the AI, rendered on published pages with
