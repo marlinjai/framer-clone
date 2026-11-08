@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
 import { ERASURE_COVERAGE, ERASURE_STEPS, groupIdOfSchema } from '../commerce';
-import { parseErasureDelivery } from '../payload';
+import { MAX_ERASURE_WORKSPACE_IDS, parseErasureDelivery } from '../payload';
 import { mergeScope, parseScope } from '../public';
 import { signErasureBody, verifyErasureSignature } from '../signature';
 
@@ -57,6 +57,31 @@ describe('parseErasureDelivery', () => {
     const workspaceIds = Array.from({ length: 1001 }, (_, i) => `workspace-${i}`);
     const parsed = parseErasureDelivery(JSON.stringify({ ...base, kind: 'tenant.erased', tenant_id: tenantId, workspace_ids: workspaceIds, later: true }));
     expect(parsed).toMatchObject({ kind: 'company', erasure: { workspaceIds } });
+  });
+
+  it('accepts event and tenant ids without RFC version or variant bits, as auth-brain derives them', () => {
+    // Shaped like auth-brain's SHA-256 derived ids: version nibble 0 and variant nibble 0, which Zod 4's
+    // uuid() refuses. Uppercase hex is read too, and lowercased.
+    const derivedEventId = '3F2A9C1E-5B7D-0E4F-0A1B-2C3D4E5F6A7B';
+    const derivedTenantId = 'c0ffee00-1234-0567-0890-abcdefabcdef';
+    expect(parseErasureDelivery(JSON.stringify({ ...base, event_id: derivedEventId, kind: 'user.erased' }))).toEqual({
+      kind: 'ignored',
+      eventId: derivedEventId.toLowerCase(),
+      reason: 'user.erased: no per-user personal data is kept here',
+    });
+    expect(
+      parseErasureDelivery(
+        JSON.stringify({ ...base, event_id: derivedEventId, kind: 'tenant.erased', tenant_id: derivedTenantId, workspace_ids: ['w1'] }),
+      ),
+    ).toEqual({ kind: 'company', erasure: { eventId: derivedEventId.toLowerCase(), companyId: derivedTenantId, workspaceIds: ['w1'] } });
+  });
+
+  it('refuses a workspace list longer than any body the route accepts, quickly', () => {
+    const workspaceIds = Array.from({ length: MAX_ERASURE_WORKSPACE_IDS + 1 }, () => '');
+    const started = performance.now();
+    const parsed = parseErasureDelivery(JSON.stringify({ ...base, kind: 'tenant.erased', tenant_id: tenantId, workspace_ids: workspaceIds }));
+    expect(parsed).toMatchObject({ kind: 'invalid' });
+    expect(performance.now() - started).toBeLessThan(500);
   });
 
   it('acknowledges user.erased and unknown kinds without acting', () => {

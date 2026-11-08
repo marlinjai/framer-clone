@@ -158,6 +158,18 @@ describe('POST /api/ai/edit', () => {
     expect(data.error.code).toBe('bad_body');
   });
 
+  it('returns 400 for a selection of more than 1000 nodes, quickly and without calling the model', async () => {
+    // Every entry also fails its own check (not a string): the bound is read before the entries are.
+    const selection = Array.from({ length: 1001 }, () => 0);
+    const started = performance.now();
+    const res = await POST(makeReq({ prompt: 'p', sessionId: 's', pageId: 'pg', selection }));
+    expect(res.status).toBe(400);
+    const data = (await res.json()) as { error: { code: string } };
+    expect(data.error.code).toBe('bad_body');
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(mockGetAnthropicClient).not.toHaveBeenCalled();
+  });
+
   it('returns 401 when ANTHROPIC_API_KEY is missing', async () => {
     mockGetAnthropicClient.mockImplementation(() => {
       throw new MissingAnthropicKeyError();

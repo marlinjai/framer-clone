@@ -279,6 +279,32 @@ describe('POST /api/commerce/orders idempotency key', () => {
 });
 
 describe('POST /api/commerce/orders body contract', () => {
+  it('refuses more than 200 lines as a 400 before anything is read, quickly', async () => {
+    // Every line also fails its own check (no variantId): the bound is read before the lines are.
+    const lines = Array.from({ length: 201 }, () => ({ quantity: 0 }));
+    const started = performance.now();
+    const res = await POST(postReq({ lines }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.code).toBe('bad_body');
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(resolveLinesMock).not.toHaveBeenCalled();
+    expect(createOrderMock).not.toHaveBeenCalled();
+  });
+
+  it('still takes 200 lines', async () => {
+    const lines = Array.from({ length: 200 }, (_, i) => ({ variantId: `var_${i}`, quantity: 1 }));
+    const res = await POST(postReq({ lines }));
+    expect(res.status).toBe(201);
+    expect(createOrderMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a body over 64 KB as a 413 before parsing it', async () => {
+    const res = await POST(postReq({ lines: [{ variantId: 'var_a', quantity: 1 }], idempotencyKey: 'k'.repeat(70 * 1024) }));
+    expect(res.status).toBe(413);
+    expect((await res.json()).error.code).toBe('body_too_large');
+    expect(createOrderMock).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['a line price', { lines: [{ variantId: 'var_a', quantity: 1, price: 999 }] }],
     ['a line stock', { lines: [{ variantId: 'var_a', quantity: 1, stock: 50 }] }],

@@ -31,9 +31,12 @@ import type { SenderBlockV1 } from './snapshots';
 const nullableString = z.string().nullable().optional();
 
 
+// The lists below are bounded (above what the extraction itself allows, extract.ts): a correction from the
+// review table and the operator's JSON reach this schema too, and an oversized list is refused before its
+// entries are checked.
 const addressBlock = z.object({
   name: z.string().trim().min(1),
-  addressLines: z.array(z.string()),
+  addressLines: z.array(z.string()).max(20),
 });
 
 const recipientSchema = addressBlock.extend({
@@ -93,19 +96,19 @@ export const rawInvoiceSchema = z.object({
   /** The operator's JSON only: the original's path (the upload carries its bytes itself). */
   file: z.string().nullable().optional(),
   fileRole: z.string().nullable().optional(),
-  otherFiles: z.array(z.string()).nullable().optional(),
+  otherFiles: z.array(z.string()).max(50).nullable().optional(),
   issueDate: z.string().nullable(),
   serviceDate: z.string().nullable().optional(),
   servicePeriod: z.unknown().optional(),
   recipient: recipientSchema.nullable(),
   recipientVatId: z.string().nullable().optional(),
   sender: senderSchema.nullable(),
-  lines: z.array(lineSchema).nullable().optional(),
+  lines: z.array(lineSchema).max(500).nullable().optional(),
   total: z.number().finite().nullable(),
   currency: z.string().nullable(),
   taxTreatment: z.string().nullable(),
   /** The printed tax groups (regular taxation); null or empty when none is printed. */
-  taxAmounts: z.array(taxGroupSchema).nullable().optional(),
+  taxAmounts: z.array(taxGroupSchema).max(20).nullable().optional(),
   /** True when the line prices include VAT (gross); such invoices are not imported (a named problem). */
   pricesIncludeVat: z.boolean().nullable().optional(),
   /** The tax note as printed: the section 19 or the reverse-charge notice. */

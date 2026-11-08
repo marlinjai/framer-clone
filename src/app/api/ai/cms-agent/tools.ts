@@ -77,7 +77,8 @@ export const toolInputSchemas = {
     tableId: z.string(),
     prompt: z.string(),
     count: z.number().int().min(1).max(50),
-    targetColumns: z.array(z.string()),
+    // Model-written input: bounded like every other id list here (no collection has this many columns).
+    targetColumns: z.array(z.string()).max(200),
   }),
 
   translate_field: z.object({

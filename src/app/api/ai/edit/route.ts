@@ -42,11 +42,14 @@ import { recordUsage } from '@/lib/ai/aiUsageStub';
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
+/** The most node ids one edit names as selected: far above any real multi-select, it bounds the parse. */
+const MAX_SELECTION = 1000;
+
 const BodySchema = z.object({
   prompt: z.string().min(1, 'prompt must not be empty'),
   sessionId: z.string().min(1, 'sessionId is required'),
   pageId: z.string().min(1, 'pageId is required'),
-  selection: z.array(z.string()).optional(),
+  selection: z.array(z.string()).max(MAX_SELECTION).optional(),
 });
 
 type Body = z.infer<typeof BodySchema>;

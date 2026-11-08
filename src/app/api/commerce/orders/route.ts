@@ -3,7 +3,9 @@
 // POST /api/commerce/orders -> 201 { orderId, orderNumber, totalCents, currency, provider, confirmationEmail }
 //                              (confirmationEmail: the shop sends the buyer an order confirmation, being
 //                              connected to Lumitra Mail; the thank-you says so only then)
+//                           -> 400 bad_body: unknown keys, no lines, more than MAX_ORDER_LINES lines
 //                           -> 409 { ok: false, shortages: { variantId, needed, available }[] }
+//                           -> 413 body_too_large: a body over ORDER_BODY_MAX_BYTES; nothing is read
 //                           -> 422 order_too_large: a quantity (or the quantities of one variant added up over
 //                              its lines), a line's amount (unit price times quantity, with its VAT) or the
 //                              order total exceeds what the order's INTEGER columns store (MAX_ORDER_INTEGER),
@@ -119,9 +121,18 @@ const orderLineSchema = z
   })
   .strict();
 
+/**
+ * The most lines one order takes. A cart holds one line per variant; no shop checkout comes near this, and
+ * the bound lets an oversized anonymous body be refused before any line is checked.
+ */
+const MAX_ORDER_LINES = 200;
+
+/** The anonymous order body is intentions only (a few lines and a buyer): 64 KB is far above any real one. */
+const ORDER_BODY_MAX_BYTES = 64 * 1024;
+
 const orderBodySchema = z
   .object({
-    lines: z.array(orderLineSchema).min(1),
+    lines: z.array(orderLineSchema).min(1).max(MAX_ORDER_LINES),
     // Optional client-owned idempotency key for one checkout attempt. Bounded so
     // a malformed/oversized value is a 400, never trusted as a request_id. Stays
     // `.strict()`-compatible: a price/stock/total key is still rejected.
@@ -161,7 +172,7 @@ export async function POST(req: Request): Promise<Response> {
   const { db, tenantGroupId, companyId, site } = commerce;
   const view = { companyId, siteId: site.siteId };
 
-  const parsed = await parseBody(req, orderBodySchema);
+  const parsed = await parseBody(req, orderBodySchema, { maxBytes: ORDER_BODY_MAX_BYTES });
   if (!parsed.ok) return parsed.response;
   const { lines, idempotencyKey, buyer } = parsed.data;
   // A quantity its column cannot store is the cart's problem, said before anything is read. A variant

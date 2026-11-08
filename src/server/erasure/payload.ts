@@ -7,14 +7,22 @@
 
 import { z } from 'zod';
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/**
+ * The most workspace ids one delivery may name. The route reads at most 64 KB, and the shortest entry
+ * (`"a",`) takes 4 bytes, so a body the route accepts never holds more; the bound only keeps the parser's
+ * work independent of the body limit.
+ */
+export const MAX_ERASURE_WORKSPACE_IDS = 16_384;
 
+// `z.guid()`, never `z.uuid()`: auth-brain derives its event ids from SHA-256, so most of them carry no RFC
+// 9562 version or variant bits (15 of 16 in production on 2026-11-08), and Zod 4's `uuid()` refuses those.
+// The ids are only compared and stored, so the 8-4-4-4-12 hex format is the whole contract.
 const payloadSchema = z.object({
-  event_id: z.string().regex(UUID),
+  event_id: z.guid(),
   kind: z.string().min(1).max(100),
   user_id: z.string().max(200).optional(),
-  tenant_id: z.string().regex(UUID).optional(),
-  workspace_ids: z.array(z.string().min(1).max(200)).optional(),
+  tenant_id: z.guid().optional(),
+  workspace_ids: z.array(z.string().min(1).max(200)).max(MAX_ERASURE_WORKSPACE_IDS).optional(),
   requested_at: z.string().max(100).optional(),
 });
 
