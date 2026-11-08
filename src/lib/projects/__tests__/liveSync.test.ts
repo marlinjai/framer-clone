@@ -836,7 +836,7 @@ describe("liveSync: an agent's generate_page draft (slice 6)", () => {
   const homeChildren = (snapshot: ProjectSnapshotOut) => (snapshot.pages[homeId()].appComponentTree.children ?? []) as Array<{ id: string; children?: Array<{ id: string }> }>;
 
   /** The server saves the result (one section per label) at the next version: gen:done first, then site:version. */
-  async function saved(runId: string, labels: string[], drawnAs: Array<number | null>, opts: { announce?: boolean } = {}) {
+  async function saved(runId: string, labels: string[], drawnAs: number[][], opts: { announce?: boolean } = {}) {
     const before = new Set(homeChildren(server.snapshot).map((c) => c.id));
     const model = ProjectModel.create(server.snapshot) as ProjectModelType;
     const outcome = await applyOperations(model, [
@@ -876,7 +876,7 @@ describe("liveSync: an agent's generate_page draft (slice 6)", () => {
     });
     holdFetch = { release: () => {} };
     // Hero drawn exactly as saved; the second section was rewritten by a repair.
-    const inserted = await saved('run-1', ['Hero', 'Order'], [0, null]);
+    const inserted = await saved('run-1', ['Hero', 'Order'], [[0], []]);
     expect(draft().target).toBeDefined(); // the copy is still on its way
     holdFetch.release();
     holdFetch = undefined;
@@ -965,7 +965,7 @@ describe("liveSync: an agent's generate_page draft (slice 6)", () => {
     const stop = start();
     stream().emit('gen:section', { runId: 'run-1', target: target(), index: 0, slot: 0, node: node('Hero') });
     project().getPage(homeId())!.setSlug('edited'); // unsaved work: the copy is held
-    await saved('run-1', ['Hero'], [0]);
+    await saved('run-1', ['Hero'], [[0]]);
     expect(liveSyncFor(SITE)?.heldVersion?.version).toBe(2);
     expect(draft().target).toBeDefined();
     await vi.advanceTimersByTimeAsync(15_000);
@@ -990,11 +990,79 @@ describe("liveSync: an agent's generate_page draft (slice 6)", () => {
     if (!outcome.ok) throw new Error('refused');
     server = { version: versionBefore + 1, snapshot: getSnapshot(model) as ProjectSnapshotOut };
     const inserted = (server.snapshot.pages[page.id].appComponentTree.children as Array<{ id: string }>).map((c) => c.id);
-    stream().emit('gen:done', { runId: 'run-1', status: 'saved', version: server.version, insertedIds: inserted, drawnAs: [null] });
+    stream().emit('gen:done', { runId: 'run-1', status: 'saved', version: server.version, insertedIds: inserted, drawnAs: [[]] });
     stream().emit('site:version', { origin: 'generate', version: server.version, versionBefore });
     await settle();
     expect(draft().target).toBeUndefined();
     expect(store.editorUI.currentPage?.id).toBe(page.id);
+    stop();
+  });
+
+  it("a newer run waits while an earlier run's saved result is fetched, and is drawn in the action that adopts it", async () => {
+    const stop = start();
+    stream().emit('gen:section', { runId: 'run-1', target: target(), index: 0, slot: 0, node: node('Hero') });
+    draft().markShown(0);
+    holdFetch = { release: () => {} };
+    const inserted = await saved('run-1', ['Hero'], [[0]]);
+    // The agent goes on at once: a second generation into the section the first one made (this copy has no such node yet).
+    const intoHero = { kind: 'insert', pageId: homeId(), parentId: inserted[0] };
+    stream().emit('gen:outline', { runId: 'run-2', target: intoHero, outline: [{ title: 'Inside', kind: 'generic' }] });
+    expect(draft().target?.requestKey).toBe('agent:run-1'); // the first draft stays until its result is on screen
+    const seen: string[] = [];
+    const dispose = autorun(() => {
+      const key = draft().target?.requestKey ?? 'none';
+      const result = homeChildren(getSnapshot(project()) as unknown as ProjectSnapshotOut).length > 0;
+      seen.push(`${key}${result ? '+result' : ''}`);
+    });
+    holdFetch.release();
+    holdFetch = undefined;
+    await settle();
+    dispose();
+    // One step from the first draft to the result with the second draft: never both the first draft and its result.
+    expect(seen).toEqual(['agent:run-1', 'agent:run-2+result']);
+    expect(draft().target).toMatchObject({ componentId: inserted[0] });
+    expect([...store.editorUI.liveReveal.delays.keys()]).not.toContain(inserted[0]);
+    stop();
+  });
+
+  it('a reconnect while the saved result is fetched keeps the draft until the adoption', async () => {
+    const stop = start();
+    stream().emit('gen:section', { runId: 'run-1', target: target(), index: 0, slot: 0, node: node('Hero') });
+    holdFetch = { release: () => {} };
+    await saved('run-1', ['Hero'], [[0]]);
+    stream().emit('state', { version: server.version, plans: [], agents: [], feed: [] });
+    expect(draft().target?.requestKey).toBe('agent:run-1');
+    holdFetch.release();
+    holdFetch = undefined;
+    await settle();
+    expect(draft().target).toBeUndefined();
+    stop();
+  });
+
+  it('the stream going down drops a running draft, so a poll that adopts the result never shows both', async () => {
+    const stop = start();
+    stream().emit('gen:section', { runId: 'run-1', target: target(), index: 0, slot: 0, node: node('Hero') });
+    expect(draft().target).toBeDefined();
+    stream().fail(false);
+    expect(draft().target).toBeUndefined();
+    // The run saved while the stream was away; the poll adopts it.
+    await saved('run-1', ['Hero'], [[0]], { announce: false });
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_VISIBLE_MS);
+    await settle();
+    expect(knownServerVersion(SITE)).toBe(2);
+    expect(draft().target).toBeUndefined();
+    // Reconnected while another run goes on: its state draws that one again.
+    stream().open();
+    stream().emit('state', { version: server.version, plans: [], agents: [], feed: [], generation: { runId: 'run-2', target: target(), outline: [], sections: [{ index: 0, slot: 0, node: node('Next') }] } });
+    expect(draft().target?.requestKey).toBe('agent:run-2');
+    stop();
+  });
+
+  it('signing out drops the draft', () => {
+    const stop = start();
+    stream().emit('gen:section', { runId: 'run-1', target: target(), index: 0, slot: 0, node: node('Hero') });
+    stream().emit('auth:expired', {});
+    expect(draft().target).toBeUndefined();
     stop();
   });
 

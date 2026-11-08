@@ -293,6 +293,8 @@ export class LiveSync {
     };
     stream.onerror = () => {
       if (this.stream !== stream) return;
+      // Events can be missed from now on (an agent's draft end among them): its draft goes, the reconnect's state draws it again.
+      this.generation.streamLost();
       // Down: poll meanwhile. A stream closed for good (a refusal such as 429)
       // is tried again later; one that is reconnecting by itself is left to it.
       this.startPolling();
@@ -427,6 +429,8 @@ export class LiveSync {
   private signedOut() {
     this.closeStream();
     this.clearPoll();
+    // A signed-out tab shows no draft content it can no longer read.
+    this.generation.reset();
     this.setPhase('signed-out');
     existingAutosave(this.projectId)?.noteSignedOut();
   }
@@ -474,6 +478,7 @@ export class LiveSync {
           // The project is gone (deleted elsewhere): saving says so; nothing to follow.
           this.closeStream();
           this.clearPoll();
+          this.generation.reset();
           this.setPhase('gone');
           return;
         }

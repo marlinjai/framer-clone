@@ -264,12 +264,13 @@ export interface GenDoneEvent {
   /** `saved`: the ids of the result's top-level nodes, in page order (at most LIVE_LIST_MAX). */
   insertedIds?: string[];
   /**
-   * `saved`: for each of `insertedIds`, the index of the preview section it is
-   * identical to (what the model wrote, ids aside), or null. A section the
-   * editor drew and that the result kept as it was stays still when the result
-   * is adopted; everything else reveals.
+   * `saved`: for each of `insertedIds`, the indexes of the preview sections it
+   * is identical to (what the model wrote, ids aside), empty when none. A section
+   * the editor drew and that the result kept as it was stays still when the
+   * result is adopted (each drawn preview for one result section at most);
+   * everything else reveals. At most GEN_DRAFT_LIMITS.sectionsPerRun indexes each.
    */
-  drawnAs?: Array<number | null>;
+  drawnAs?: number[][];
 }
 
 /** The running generation of a site, as the `state` event carries it, so a reload mid-run draws the same draft. */
@@ -289,8 +290,8 @@ export const GEN_DRAFT_LIMITS = {
   runChars: 384_000,
   /** Preview sections of one run. */
   sectionsPerRun: 20,
-  /** Running generations kept for the `state` event, in the whole process (one per site). */
-  runsPerProcess: 200,
+  /** Running generations kept for the `state` event, in the whole process (one per site): at most 50 x runChars in memory. */
+  runsPerProcess: 50,
   /** A run that has not ended after this long is given up on (`expired`). */
   runMaxMs: 15 * 60_000,
   /** How long the editor waits for the saved version before it drops the draft anyway (a copy held for the person). */

@@ -46,7 +46,7 @@ import {
 } from '@/lib/projects/liveEvents';
 import { normalizeOutline, type OutlineEntry } from '@/lib/ai/pageGen/outline';
 import type { PageGenOutline, PageGenSection } from '@/lib/ai/pageGen/protocol';
-import { matchPreviewSections } from '@/lib/ai/pageGen/sectionMatch';
+import { identicalPreviews } from '@/lib/ai/pageGen/sectionMatch';
 import type { GeneratedNodeSnapshot } from '@/lib/ai/pageGen/validate';
 import type { TenantScope } from './repository';
 import { publishSiteEvent } from './liveBus';
@@ -208,13 +208,21 @@ export function openLiveGeneration(siteId: string, scope: TenantScope, runId: st
       s.sites.delete(siteId);
       const done: GenDoneEvent = { runId, status };
       if (status === 'saved' && saved) {
-        done.version = saved.version;
-        done.insertedIds = saved.insertedIds.slice(0, LIVE_LIST_MAX);
-        const matches = matchPreviewSections(
-          entry.sections.map((section) => section.node),
-          saved.nodes.slice(0, LIVE_LIST_MAX),
-        );
-        done.drawnAs = matches.map((position) => (position === null ? null : entry.sections[position].index));
+        // The extras never cost the end itself: without them the editor still drops the draft.
+        try {
+          const nodes = saved.nodes.slice(0, LIVE_LIST_MAX);
+          const indexes = entry.sections.map((section) => section.index);
+          const drawnAs = identicalPreviews(
+            entry.sections.map((section) => section.node),
+            nodes,
+          ).map((positions) => positions.map((position) => indexes[position]));
+          done.version = saved.version;
+          done.insertedIds = saved.insertedIds.slice(0, LIVE_LIST_MAX);
+          done.drawnAs = drawnAs;
+        } catch (err) {
+          done.version = saved.version;
+          console.error(`[live] the end of generation ${runId} on site ${siteId} lost its details`, err);
+        }
       }
       announceEnd(entry, done);
     },

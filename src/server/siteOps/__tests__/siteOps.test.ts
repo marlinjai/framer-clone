@@ -25,6 +25,11 @@ vi.mock('@/server/sites/cachedResolver', () => ({
     return [];
   },
 }));
+// A hook into the usage record, which runs right after the generator returned (before the result is placed).
+const usageHook = vi.hoisted(() => ({ onRecord: undefined as (() => void) | undefined }));
+vi.mock('@/lib/ai/aiUsageStub', () => ({
+  recordUsage: () => usageHook.onRecord?.(),
+}));
 const commerce = vi.hoisted(() => ({ outcome: { ok: true } as Record<string, unknown>, calls: [] as unknown[] }));
 vi.mock('@/server/sites/companyCommerce', () => ({
   ensureCompanyCommerce: async (...args: unknown[]) => {
@@ -136,6 +141,7 @@ beforeEach(() => {
   __resetStockOffersForTests();
   resetLiveBusForTests();
   resetLiveGenerationForTests();
+  usageHook.onRecord = undefined;
 });
 afterEach(() => vi.unstubAllEnvs());
 
@@ -600,6 +606,22 @@ describe('generatePage', () => {
     const again = getPageGenRateLimiter().acquire('key:key_1');
     expect(again.ok).toBe(true);
     if (again.ok) again.release();
+  });
+
+  it('a stop after the model answered (the MCP client left while photos were placed) writes nothing either', async () => {
+    const heard = listen();
+    const { repository, state } = fakeRepository(3);
+    const controller = new AbortController();
+    usageHook.onRecord = () => controller.abort();
+    const result = await generatePage(
+      caller(),
+      { siteId: 'site-1', expectedVersion: 3, brief: 'A menu', target: { kind: 'newPage' }, signal: controller.signal },
+      { repository, anthropic: streamingAnthropic(outlined) },
+    );
+    expect(result.ok ? null : result.error.message).toMatch(/stopped/);
+    expect(state.saved).toEqual([]);
+    expect(audits.rows).toEqual([]);
+    expect(heard.filter(([e]) => e === 'gen:done').map(([, d]) => d.status)).toEqual(['stopped']);
   });
 
   it('a failed model call and a refused save end the draft with their reason and write nothing', async () => {

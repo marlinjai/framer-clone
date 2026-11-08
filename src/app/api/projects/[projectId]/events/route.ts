@@ -36,7 +36,8 @@
 //     browser that reconnects sends it back as Last-Event-ID, and a site that
 //     moved on meanwhile gets one catch-up `site:version` for the current one;
 //   - `auth:expired` when the session or the permission is gone (re-checked every
-//     five minutes, and on a write heard more than 30 s after the last check),
+//     five minutes, and on a write or a draft event of a running generation heard
+//     more than 30 s after the last check),
 //     after which the stream ends and the editor does not reconnect.
 //
 // Bounds: at most 4 streams per session, 50 per site and 1,000 per process; over
@@ -122,26 +123,33 @@ async function handleGET(req: Request, { params }: Ctx): Promise<Response> {
   const tabParam = new URL(req.url).searchParams.get('tab');
   const tab = tabParam && ORIGIN_TAB_PATTERN.test(tabParam) ? tabParam : undefined;
   let lastCheck = Date.now();
-  let checking = false;
-  const check = async () => {
-    if (checking || ended) return;
-    checking = true;
-    lastCheck = Date.now();
-    try {
-      const again = await authorizeLiveProject(req, projectId);
-      // The browser may have left while the check ran.
-      if (again.ok || ended) return;
-      sse.send(LIVE_EVENTS.authExpired, {});
-      end();
-    } catch (err) {
-      // An outage is not a sign-out: the stream stays, the next check decides.
-      if (err instanceof AuthUnavailableError || err instanceof AuthzUnavailableError) return;
-      console.error(`[live] the stream of site ${projectId} could not re-check its session`, err);
-    } finally {
-      checking = false;
-    }
+  let inflight: Promise<void> | undefined;
+  /** Re-check the session and the permission; a check already running is shared. */
+  const check = (): Promise<void> => {
+    if (ended) return Promise.resolve();
+    inflight ??= (async () => {
+      lastCheck = Date.now();
+      try {
+        const again = await authorizeLiveProject(req, projectId);
+        // The browser may have left while the check ran.
+        if (again.ok || ended) return;
+        sse.send(LIVE_EVENTS.authExpired, {});
+        end();
+      } catch (err) {
+        // An outage is not a sign-out: the stream stays, the next check decides.
+        if (err instanceof AuthUnavailableError || err instanceof AuthzUnavailableError) return;
+        console.error(`[live] the stream of site ${projectId} could not re-check its session`, err);
+      } finally {
+        inflight = undefined;
+      }
+    })();
+    return inflight;
   };
-  const forward = (event: string, data: unknown) => {
+  // A running generation's draft is content: when the last check is older than
+  // LIVE_RECHECK_ON_WRITE_MS, it waits for a check, and everything after it waits
+  // too (so the order holds); a stream whose access is gone gets none of it.
+  let gated: Array<[string, unknown]> | undefined;
+  const send = (event: string, data: unknown) => {
     if (event !== LIVE_EVENTS.siteVersion) {
       sse.send(event, data);
       return;
@@ -150,6 +158,24 @@ async function handleGET(req: Request, { params }: Ctx): Promise<Response> {
     const out: SiteVersionEvent = tab && originTab === tab ? { ...rest, own: true } : rest;
     sse.send(event, out, out.version);
     if (Date.now() - lastCheck > LIVE_RECHECK_ON_WRITE_MS) void check();
+  };
+  const forward = (event: string, data: unknown) => {
+    if (gated) {
+      gated.push([event, data]);
+      return;
+    }
+    const content = event === LIVE_EVENTS.genOutline || event === LIVE_EVENTS.genSection;
+    if (content && Date.now() - lastCheck > LIVE_RECHECK_ON_WRITE_MS) {
+      const queue: Array<[string, unknown]> = [[event, data]];
+      gated = queue;
+      void check().then(() => {
+        gated = undefined;
+        if (ended) return;
+        for (const [e, d] of queue) forward(e, d);
+      });
+      return;
+    }
+    send(event, data);
   };
   // Subscribed before the version is read, so a write between the two is heard.
   const unsubscribe = subscribeSite(projectId, (event, data) => {

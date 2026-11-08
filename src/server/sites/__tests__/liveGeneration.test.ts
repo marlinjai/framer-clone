@@ -3,7 +3,7 @@
 // The running MCP generate_page's draft on the site bus (src/server/sites/liveGeneration.ts):
 // what goes out and when, the one end per run, a second run superseding the first,
 // the bounds, the scoped `state` snapshot and the expiry.
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetLiveBusForTests, subscribeSite } from '../liveBus';
 import { generationSnapshot, openLiveGeneration, resetLiveGenerationForTests } from '../liveGeneration';
 import { GEN_DRAFT_LIMITS } from '@/lib/projects/liveEvents';
@@ -76,9 +76,29 @@ describe('openLiveGeneration', () => {
     run.end('failed');
     run.section({ generationId: 'run-1', attempt: 1, index: 2, slot: 3, node: node('Late') });
     const done = heard.filter(([event]) => event === 'gen:done');
-    expect(done).toEqual([['gen:done', { runId: 'run-1', status: 'saved', version: 9, insertedIds: ['r1', 'r2', 'r3'], drawnAs: [0, null, null] }]]);
+    expect(done).toEqual([['gen:done', { runId: 'run-1', status: 'saved', version: 9, insertedIds: ['r1', 'r2', 'r3'], drawnAs: [[0], [], []] }]]);
     expect(heard.at(-1)?.[0]).toBe('gen:done');
     expect(generationSnapshot('site-1', scope)).toBeUndefined();
+  });
+
+  it('names every identical preview a result section could be (the editor knows which it drew)', () => {
+    const heard = listen();
+    const run = openLiveGeneration('site-1', scope, 'run-1', { kind: 'newPage' });
+    run.section({ generationId: 'run-1', attempt: 1, index: 0, slot: 0, node: node('Same', 'a') });
+    run.section({ generationId: 'run-1', attempt: 1, index: 1, slot: 1, node: node('Same', 'b') });
+    run.end('saved', { version: 2, insertedIds: ['r1'], nodes: [node('Same', 'c')] });
+    expect(heard.at(-1)?.[1]).toMatchObject({ drawnAs: [[0, 1]] });
+  });
+
+  it('still ends a saved run when its details cannot be worked out', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const heard = listen();
+    const run = openLiveGeneration('site-1', scope, 'run-1', { kind: 'newPage' });
+    // A value JSON cannot hold: matching the result against the previews throws.
+    run.end('saved', { version: 5, insertedIds: ['r1'], nodes: [{ big: BigInt(1) } as unknown as GeneratedNodeSnapshot] });
+    expect(heard).toEqual([['gen:done', { runId: 'run-1', status: 'saved', version: 5 }]]);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 
   it('a failed or stopped run ends without a version, and the state forgets it', () => {

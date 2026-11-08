@@ -238,7 +238,7 @@ describe('GET /api/projects/<id>/events', () => {
     expect(await events.next()).toMatchObject({ event: 'gen:section', data: { runId: 'run-1', index: 1 } });
     run.end('saved', { version: 8, insertedIds: ['r1'], nodes: [node] });
     publishSiteEvent('site_1', 'site:version', { origin: 'generate', version: 8, versionBefore: 7 });
-    expect(await events.next()).toEqual({ event: 'gen:done', data: { runId: 'run-1', status: 'saved', version: 8, insertedIds: ['r1'], drawnAs: [0] } });
+    expect(await events.next()).toEqual({ event: 'gen:done', data: { runId: 'run-1', status: 'saved', version: 8, insertedIds: ['r1'], drawnAs: [[0, 1]] } });
     expect((await events.next()).event).toBe('site:version');
     await events.cancel();
 
@@ -293,6 +293,40 @@ describe('GET /api/projects/<id>/events', () => {
     expect((await events.next()).id).toBe('8');
     expect(await events.next()).toEqual({ event: 'auth:expired', data: {} });
     expect(await events.ended()).toBe(true);
+  });
+
+  it("holds a running generation's draft until a stale check passed: a stream whose access is gone gets none of it", async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    const node = { id: 'n1', type: 'section', componentType: 'host', label: 'Hero', props: {}, children: [] } as never;
+    const fresh = eventReader(await EVENTS(req('/api/projects/site_1/events'), ctx('site_1')));
+    await fresh.next();
+    const run = openLiveGeneration('site_1', SCOPE, 'run-1', { kind: 'newPage' });
+    // Checked moments ago: the section goes out at once.
+    run.section({ generationId: 'run-1', attempt: 1, index: 0, slot: 0, node });
+    expect(await fresh.next()).toMatchObject({ event: 'gen:section', data: { index: 0 } });
+    // Access gone, last check stale: the next section waits for the check and never arrives, nor what follows it.
+    mockCan.mockResolvedValue(false);
+    vi.setSystemTime(Date.now() + LIVE_RECHECK_ON_WRITE_MS + 1);
+    run.section({ generationId: 'run-1', attempt: 1, index: 1, slot: 1, node });
+    run.end('stopped');
+    expect(await fresh.next()).toEqual({ event: 'auth:expired', data: {} });
+    expect(await fresh.ended()).toBe(true);
+  });
+
+  it('a stale check that passes sends the held draft events in their order', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    const node = { id: 'n1', type: 'section', componentType: 'host', label: 'Hero', props: {}, children: [] } as never;
+    const events = eventReader(await EVENTS(req('/api/projects/site_1/events'), ctx('site_1')));
+    await events.next();
+    const run = openLiveGeneration('site_1', SCOPE, 'run-1', { kind: 'newPage' });
+    vi.setSystemTime(Date.now() + LIVE_RECHECK_ON_WRITE_MS + 1);
+    run.outline({ generationId: 'run-1', attempt: 1, outline: [{ title: 'Hero', kind: 'hero' }] });
+    run.section({ generationId: 'run-1', attempt: 1, index: 0, slot: 0, node });
+    run.end('saved', { version: 8, insertedIds: ['r1'], nodes: [node] });
+    publishSiteEvent('site_1', 'site:version', { origin: 'generate', version: 8, versionBefore: 7 });
+    const order = [await events.next(), await events.next(), await events.next(), await events.next()].map((e) => e.event);
+    expect(order).toEqual(['gen:outline', 'gen:section', 'gen:done', 'site:version']);
+    await events.cancel();
   });
 
   it('catches a reconnect up: Last-Event-ID behind the current version gets one site:version', async () => {

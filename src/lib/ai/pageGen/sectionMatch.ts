@@ -8,7 +8,7 @@
 // differs from its preview. A matched section stays still when the result lands;
 // everything else reveals. Used by the editor's own Generate (GeneratePageDialog)
 // and by the MCP generate_page, which works the matches out on the server and
-// sends them with gen:done (src/server/sites/liveGeneration.ts). Pure, client-safe.
+// sends the candidates with gen:done (src/server/sites/liveGeneration.ts). Pure, client-safe.
 
 import type { GeneratedNodeSnapshot } from './validate';
 
@@ -31,4 +31,18 @@ export function matchPreviewSections(previews: readonly GeneratedNodeSnapshot[],
     else unused.set(key, [position]);
   });
   return results.map((node) => unused.get(sectionContentKey(node))?.shift() ?? null);
+}
+
+/**
+ * For each result section, the positions in `previews` of every preview it is
+ * identical to (empty when none). The MCP generate_page sends this, since only
+ * the editor knows which previews it actually drew.
+ */
+export function identicalPreviews(previews: readonly GeneratedNodeSnapshot[], results: readonly GeneratedNodeSnapshot[]): number[][] {
+  const byKey = new Map<string, number[]>();
+  previews.forEach((preview, position) => {
+    const key = sectionContentKey(preview);
+    byKey.set(key, [...(byKey.get(key) ?? []), position]);
+  });
+  return results.map((node) => [...(byKey.get(sectionContentKey(node)) ?? [])]);
 }

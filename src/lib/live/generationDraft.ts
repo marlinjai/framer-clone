@@ -13,7 +13,9 @@
 //     shared with the Generate dialog. While the person's own run holds it, the
 //     agent's events are only remembered here; the next one after that run ended
 //     draws the agent's draft from what was remembered. A newer agent run
-//     replaces an older one.
+//     replaces an older one that is still writing; one whose saved result is
+//     still being fetched keeps the canvas until that result is adopted, and the
+//     newer run is drawn in the same action.
 //   - **The draft ends by version, never by when an event arrives.** `gen:done`
 //     with status `saved` comes before the `site:version` of the save; the draft
 //     stays until this tab adopts that version and goes in the same MobX action
@@ -26,7 +28,10 @@
 //   - **Resume:** a `state` event replaces what is remembered: its running
 //     generation draws the same draft again (the store ignores sections it holds),
 //     and a `state` without one drops the draft unless a saved result is
-//     still being fetched.
+//     still being fetched. While the stream is down (an error, a refusal, a
+//     sign-out) events can be missed, the end among them, so the running run's
+//     draft goes at once (`streamLost`), never to stand beside a result a poll
+//     adopts; the reconnect's `state` draws it again if it still runs.
 //   - **Where it is drawn** is resolved against this tab's copy: in place of, or
 //     inside, the named node with the page's own breakpoints; a new page as draft
 //     frames beside whichever page is on screen. A target this copy does not
@@ -191,18 +196,22 @@ interface Remembered {
   sections: GenDraftSection[];
 }
 
+/** A run whose result was saved: its draft stays drawn until this tab adopts `version`. */
 interface Settling {
   runId: string;
   version: number;
   insertedIds: string[];
-  drawnAs: Array<number | null>;
+  /** For each result section, the preview sections identical to it (gen:done's drawnAs). */
+  drawnAs: number[][];
   timer: ReturnType<typeof setTimeout>;
 }
 
 export class GenerationDraft {
   private readonly deps: GenerationDraftDeps;
+  /** The run still sending events (at most one: a newer run supersedes it on the server). */
   private run: Remembered | undefined;
-  private settling: Settling | undefined;
+  /** Runs whose saved result this tab has not adopted yet, by run id. Kept apart from `run`, so a newer run never cancels an older one's ending. */
+  private readonly settling = new Map<string, Settling>();
   private watchdog: ReturnType<typeof setTimeout> | undefined;
 
   constructor(deps: GenerationDraftDeps) {
@@ -217,21 +226,23 @@ export class GenerationDraft {
     if (timer !== undefined) (this.deps.clearTimer ?? clearTimeout)(timer);
   }
 
-  /** The run being drawn or remembered, for tests and the layer's wording. */
+  /** The run being drawn or remembered, for tests. */
   get runId(): string | undefined {
     return this.run?.runId;
   }
 
-  /** A `state` event: its running generation replaces what was remembered. */
+  /** A `state` event: its running generation replaces the run remembered (a saved result still being fetched keeps its draft). */
   applyState(raw: LiveGeneration | undefined): void {
     if (!raw || !validRunId(raw.runId)) {
-      // No run on the server: a saved result still being fetched keeps its draft until it is adopted.
-      if (!this.settling) this.drop();
+      this.dropRun();
       return;
     }
-    if (this.settling?.runId === raw.runId) return;
+    if (this.settling.has(raw.runId)) return;
     const target = validTarget(raw.target);
-    if (!target) return;
+    if (!target) {
+      this.dropRun();
+      return;
+    }
     this.follow(raw.runId, target);
     if (Array.isArray(raw.outline)) this.run!.outline = raw.outline;
     for (const section of Array.isArray(raw.sections) ? raw.sections : []) this.remember(section);
@@ -239,88 +250,118 @@ export class GenerationDraft {
   }
 
   applyOutline(raw: GenOutlineEvent | undefined): void {
-    if (!raw || !validRunId(raw.runId) || !Array.isArray(raw.outline)) return;
+    if (!raw || !validRunId(raw.runId) || !Array.isArray(raw.outline) || this.settling.has(raw.runId)) return;
     const target = validTarget(raw.target);
-    if (!target || this.settling?.runId === raw.runId) return;
+    if (!target) return;
     this.follow(raw.runId, target);
     this.run!.outline = raw.outline;
     this.sync();
   }
 
   applySection(raw: GenSectionEvent | undefined): void {
-    if (!raw || !validRunId(raw.runId)) return;
+    if (!raw || !validRunId(raw.runId) || this.settling.has(raw.runId)) return;
     const target = validTarget(raw.target);
-    if (!target || this.settling?.runId === raw.runId) return;
+    if (!target) return;
     this.follow(raw.runId, target);
     this.remember(raw);
     this.sync();
   }
 
   applyDone(raw: GenDoneEvent | undefined): void {
-    if (!raw || !this.run || raw.runId !== this.run.runId || this.settling) return;
+    if (!raw || !this.run || raw.runId !== this.run.runId) return;
+    const runId = raw.runId;
     if (raw.status === 'saved' && typeof raw.version === 'number') {
       const known = this.deps.knownVersion();
       // This tab already holds the saved version (it cannot have adopted it from this run's announcement, which comes after).
       if (known !== undefined && known >= raw.version) {
-        this.drop();
+        this.dropRun();
         return;
       }
-      this.clearTimer(this.watchdog);
-      this.watchdog = undefined;
       const insertedIds = Array.isArray(raw.insertedIds) ? raw.insertedIds.filter((id): id is string => typeof id === 'string') : [];
-      const drawnAs = Array.isArray(raw.drawnAs) ? raw.drawnAs.map((d) => (Number.isInteger(d) ? (d as number) : null)) : [];
-      const runId = raw.runId;
-      this.settling = {
+      const drawnAs = Array.isArray(raw.drawnAs)
+        ? raw.drawnAs.map((d) => (Array.isArray(d) ? d.filter((i): i is number => Number.isInteger(i) && i >= 0) : []))
+        : [];
+      this.settling.set(runId, {
         runId,
         version: raw.version,
         insertedIds,
         drawnAs,
         // A copy held for the person (or a fetch that never comes): the draft goes anyway.
         timer: this.setTimer(() => {
-          if (this.settling?.runId === runId) this.drop();
+          if (!this.settling.has(runId)) return;
+          runInAction(() => {
+            this.endSettling(runId);
+            this.sync();
+          });
         }, GEN_DRAFT_LIMITS.settleMs),
-      };
+      });
+      // The run sends nothing more; its draft stays drawn under its key until the adoption.
+      this.clearTimer(this.watchdog);
+      this.watchdog = undefined;
+      this.run = undefined;
       return;
     }
-    this.drop();
+    this.dropRun();
   }
 
   /**
-   * This tab adopted `version`; call inside the adoption's MobX action. When it
-   * holds the saved result of the run being drawn, the draft goes now and the
-   * answer says which result sections stay still. Undefined otherwise.
+   * This tab adopted `version`; call inside the adoption's MobX action. Every
+   * run whose saved result this copy holds loses its draft now, and a run still
+   * waiting behind it is drawn in the same action. Answers which result sections
+   * stay still (undefined when no draft ended).
    */
   settle(version: number): SettledDraft | undefined {
-    const s = this.settling;
-    if (!s || version < s.version) return undefined;
-    const draft = this.deps.draft();
-    const key = agentDraftKey(s.runId);
-    const ours = draft?.target?.requestKey === key;
-    const stillIds: string[] = [];
-    if (ours && draft) {
-      s.insertedIds.forEach((id, i) => {
-        const drawn = s.drawnAs[i];
-        if (drawn !== null && drawn !== undefined && draft.isShown(drawn)) stillIds.push(id);
-      });
+    let answer: SettledDraft | undefined;
+    for (const s of [...this.settling.values()]) {
+      if (version < s.version) continue;
+      const draft = this.deps.draft();
+      const key = agentDraftKey(s.runId);
+      const ours = draft?.target?.requestKey === key;
+      const stillIds: string[] = [];
+      if (ours && draft) {
+        // Each drawn preview stands for one result section at most.
+        const used = new Set<number>();
+        s.insertedIds.forEach((id, i) => {
+          const match = (s.drawnAs[i] ?? []).find((index) => !used.has(index) && draft.isShown(index));
+          if (match === undefined) return;
+          used.add(match);
+          stillIds.push(id);
+        });
+      }
+      const onScreen = ours && draft?.target?.kind === 'newPage' && !!draft.targetOn(this.deps.currentPageId());
+      this.endSettling(s.runId);
+      if (ours) answer = { stillIds, ...(onScreen && s.insertedIds[0] ? { newPageNodeId: s.insertedIds[0] } : {}) };
     }
-    const onScreen = ours && draft?.target?.kind === 'newPage' && !!draft.targetOn(this.deps.currentPageId());
-    this.drop();
-    return { stillIds, ...(onScreen && s.insertedIds[0] ? { newPageNodeId: s.insertedIds[0] } : {}) };
+    if (answer) this.sync();
+    return answer;
   }
 
-  /** Forget everything (the editor closed the site). */
+  /**
+   * The stream is down (an error, a refusal, a sign-out): events of the running
+   * run can be missed, its end among them, so its draft goes now rather than
+   * stand beside a result a poll adopts. A reconnect's `state` draws it again if
+   * it still runs. A saved result still being fetched keeps its draft (its timer
+   * bounds it).
+   */
+  streamLost(): void {
+    this.dropRun();
+  }
+
+  /** Forget everything (the editor closed the site, or the person was signed out). */
   reset(): void {
-    this.drop();
+    this.dropRun();
+    for (const runId of [...this.settling.keys()]) this.endSettling(runId);
   }
 
   private follow(runId: string, target: GenDraftTarget): void {
     if (this.run?.runId !== runId) {
-      this.clearSettling();
+      // A newer run: whatever the earlier one still drew goes (it was superseded on the server).
+      this.dropRun();
       this.run = { runId, target, outline: [], sections: [] };
     }
     this.clearTimer(this.watchdog);
     this.watchdog = this.setTimer(() => {
-      if (this.run?.runId === runId && !this.settling) this.drop();
+      if (this.run?.runId === runId) this.dropRun();
     }, GEN_DRAFT_LIMITS.runMaxMs);
   }
 
@@ -332,14 +373,21 @@ export class GenerationDraft {
     run.sections = [...run.sections, section].sort((a, b) => a.index - b.index);
   }
 
-  /** Draw what is remembered, unless the person's own Generate holds the draft. */
+  /**
+   * Draw the run remembered, unless the person's own Generate holds the draft,
+   * or an earlier run's draft waits there for its saved result (this one is
+   * drawn in the action that adopts it).
+   */
   private sync(): void {
     const run = this.run;
     const draft = this.deps.draft();
     if (!run || !draft) return;
     const key = agentDraftKey(run.runId);
     const holder = draft.target?.requestKey;
-    if (holder !== undefined && holder !== key && !isAgentDraftKey(holder)) return;
+    if (holder !== undefined && holder !== key) {
+      if (!isAgentDraftKey(holder)) return;
+      if (this.settling.has(holder.slice(AGENT_KEY_PREFIX.length))) return;
+    }
     runInAction(() => {
       if (draft.target?.requestKey !== key) {
         const target = resolveAgentDraftTarget(run.runId, run.target, this.deps.project(), this.deps.currentPageId());
@@ -351,14 +399,17 @@ export class GenerationDraft {
     });
   }
 
-  private clearSettling(): void {
-    if (this.settling) this.clearTimer(this.settling.timer);
-    this.settling = undefined;
+  private endSettling(runId: string): void {
+    const s = this.settling.get(runId);
+    if (!s) return;
+    this.clearTimer(s.timer);
+    this.settling.delete(runId);
+    this.deps.draft()?.clear(agentDraftKey(runId));
   }
 
-  private drop(): void {
+  /** Drop the run still sending events, and its draft. */
+  private dropRun(): void {
     const run = this.run;
-    this.clearSettling();
     this.clearTimer(this.watchdog);
     this.watchdog = undefined;
     this.run = undefined;

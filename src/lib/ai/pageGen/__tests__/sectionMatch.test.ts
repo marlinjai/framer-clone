@@ -1,6 +1,6 @@
 // Which result sections are exactly the previews the canvas drew (../sectionMatch.ts).
 import { describe, expect, it } from 'vitest';
-import { matchPreviewSections, sectionContentKey } from '../sectionMatch';
+import { identicalPreviews, matchPreviewSections, sectionContentKey } from '../sectionMatch';
 import type { GeneratedNodeSnapshot } from '../validate';
 
 const n = (text: string, id: string): GeneratedNodeSnapshot =>
@@ -13,5 +13,11 @@ describe('matchPreviewSections', () => {
     // A repair moved B first, kept both As, and wrote a new C.
     expect(matchPreviewSections(previews, [n('B', 'r1'), n('A', 'r2'), n('C', 'r3'), n('A', 'r4'), n('A', 'r5')])).toEqual([1, 0, null, 2, null]);
     expect(matchPreviewSections([], [n('A', 'r1')])).toEqual([null]);
+  });
+});
+
+describe('identicalPreviews', () => {
+  it('lists every identical preview per result section', () => {
+    expect(identicalPreviews([n('A', 'p1'), n('B', 'p2'), n('A', 'p3')], [n('A', 'r1'), n('C', 'r2'), n('A', 'r3')])).toEqual([[0, 2], [], [0, 2]]);
   });
 });

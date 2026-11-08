@@ -596,7 +596,8 @@ async function runAndSaveGeneration(
     }
     return { ended: 'failed', result: fail({ code: 'failed', message: error.message }) };
   }
-  if (outcome.kind !== 'result') {
+  // Stopped after the model answered (the MCP client went away while photos were placed): nothing is written either.
+  if (outcome.kind !== 'result' || input.signal?.aborted === true) {
     return { ended: 'stopped', result: fail({ code: 'failed', message: 'the generation was stopped; nothing was saved' }) };
   }
   const { payload, placed } = outcome;
