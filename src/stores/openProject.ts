@@ -192,11 +192,32 @@ export function hasWriteInFlight(projectId: string): boolean {
   return (writesInFlight.get(projectId) ?? 0) > 0;
 }
 
+// Told when the last write of this tab for a project settled (src/lib/projects/liveSync.ts).
+const writeSettledListeners = new Set<(projectId: string) => void>();
+
+/**
+ * Hear when no write of this tab is out any more for a project: a newer version
+ * held while it was out may be adoptable now (its answer moved the known version
+ * without a 409). Answers the unsubscribe.
+ */
+export function onWritesSettled(listener: (projectId: string) => void): () => void {
+  writeSettledListeners.add(listener);
+  return () => {
+    writeSettledListeners.delete(listener);
+  };
+}
+
 /** Autosave and Publish report a write of this tab starting (true) and ending (false). */
 export function noteWriteInFlight(projectId: string, inFlight: boolean): void {
   const count = (writesInFlight.get(projectId) ?? 0) + (inFlight ? 1 : -1);
   if (count > 0) writesInFlight.set(projectId, count);
-  else writesInFlight.delete(projectId);
+  else {
+    writesInFlight.delete(projectId);
+    // After the writer's own bookkeeping for the answer (it runs right after this call).
+    if (!inFlight) queueMicrotask(() => {
+      for (const listener of [...writeSettledListeners]) listener(projectId);
+    });
+  }
 }
 
 /**
@@ -492,13 +513,20 @@ export function adoptServerCopy(
   const beforeSnapshot = getSnapshot(existing);
   const before = nodeKeys(beforeSnapshot);
   const history = getHistoryStore();
+  // An erasure of personal data since this copy: undoing past it would put the
+  // erased values back on screen (and a save of them is refused anyway). It is
+  // adopted like a load: no undo step, and the steps before it go too.
+  const erasedSince = (snapshot.metadata?.erasureEpoch ?? 0) > (beforeSnapshot.metadata?.erasureEpoch ?? 0);
   let recorded = false;
   applyingServerCopy++;
   try {
     const put = () => {
       rootStore.projectStore.ingestProjectSnapshot(snapshot);
     };
-    if (history) recorded = history.applyRemote(label, put);
+    if (history && erasedSince) {
+      history.runUntracked(put);
+      history.clear();
+    } else if (history) recorded = history.applyRemote(label, put);
     else put();
   } finally {
     applyingServerCopy--;

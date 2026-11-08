@@ -9,8 +9,9 @@
 // the event says a version exists, the content comes from the snapshot route.
 //
 // What happens with a newer version:
-//   - this tab's own write (its `originTab`, src/lib/projects/tabId.ts) is
-//     ignored: the write's answer already moved the version this tab knows;
+//   - this tab's own write is ignored (the stream is opened with this tab's id,
+//     src/lib/projects/tabId.ts, and flags those writes `own`): the write's
+//     answer already moved the version this tab knows;
 //   - a version not above the one this tab knows is ignored (versions only go up);
 //   - several events in a row become one fetch of the newest;
 //   - the working copy saved and no write of this tab out: the copy is adopted
@@ -20,7 +21,11 @@
 //     autosave pauses and SiteChangedDialog opens at once (this tab's save is
 //     certain to be refused). "Load the newer version" adopts the held copy
 //     (dropping this tab's unsaved edits, as the dialog says), as one undo step,
-//     without reloading the page.
+//     without reloading the page. A copy held while this tab's own write was out
+//     is looked at again once that write settled: when it succeeded (no 409
+//     comes), the copy is adopted then;
+//   - a version that erased personal data is adopted without an undo step and
+//     clears the history, as a load does (undo must not bring erased values back).
 //
 // When the stream is down (a network loss, the 429 of too many streams, a proxy
 // that buffers), the snapshot route is polled with If-None-Match every 5 s while
@@ -36,6 +41,7 @@ import {
   adoptServerCopy,
   hasWriteInFlight,
   isSaved,
+  onWritesSettled,
   knownServerVersion,
   type AdoptedVersion,
   type ProjectContent,
@@ -131,6 +137,7 @@ export class LiveSync {
   private pollTimer: ReturnType<typeof setTimeout> | undefined;
   private streamRetryTimer: ReturnType<typeof setTimeout> | undefined;
   private disposeVisibility: (() => void) | undefined;
+  private disposeSettled: (() => void) | undefined;
   /** The newest version announced by another writer, with its event. */
   private wanted: { version: number; event?: SiteVersionEvent } | undefined;
   private fetching = false;
@@ -177,6 +184,11 @@ export class LiveSync {
   start(): void {
     if (this.phaseValue !== 'stopped') return;
     this.disposeVisibility = this.deps.onVisibilityChange(() => this.visibilityChanged());
+    // A copy held while this tab's write was out: that write may have succeeded
+    // (no 409 will come), so the held copy is looked at again once it settled.
+    this.disposeSettled = onWritesSettled((projectId) => {
+      if (projectId === this.projectId) this.retake();
+    });
     this.setPhase('connecting');
     this.openStream();
   }
@@ -188,6 +200,8 @@ export class LiveSync {
     this.streamRetryTimer = undefined;
     this.disposeVisibility?.();
     this.disposeVisibility = undefined;
+    this.disposeSettled?.();
+    this.disposeSettled = undefined;
     this.wanted = undefined;
     this.held = undefined;
     this.setPhase('stopped');
@@ -197,7 +211,8 @@ export class LiveSync {
 
   private openStream() {
     this.closeStream();
-    const stream = this.deps.openStream(`${this.base}/events`);
+    // The stream knows this tab, so it flags this tab's own writes (`own`).
+    const stream = this.deps.openStream(`${this.base}/events?tab=${encodeURIComponent(editorTabId())}`);
     if (!stream) {
       this.startPolling();
       return;
@@ -227,7 +242,7 @@ export class LiveSync {
       const event = parse<SiteVersionEvent>(e.data);
       if (!event || typeof event.version !== 'number') return;
       // This tab's own write: its answer moves the known version.
-      if (event.originTab && event.originTab === editorTabId()) return;
+      if (event.own) return;
       this.heard(event.version, event);
     });
     stream.addEventListener(LIVE_EVENTS.authExpired, () => {
@@ -373,11 +388,24 @@ export class LiveSync {
     }
   }
 
+  /** Look at a held copy again: adopt it if the working copy is clean now, else keep asking the person. */
+  private retake() {
+    const held = this.held;
+    if (!held || this.phaseValue === 'stopped') return;
+    const known = knownServerVersion(this.projectId);
+    if (known !== undefined && held.version <= known) {
+      this.held = undefined;
+      return;
+    }
+    this.held = undefined;
+    this.take({ version: held.version, snapshot: held.snapshot }, undefined, held.label);
+  }
+
   /** A fetched copy: adopt it now, or hold it for the person. */
-  private take(body: { version: number; snapshot: ProjectSnapshotOut }, event?: SiteVersionEvent) {
+  private take(body: { version: number; snapshot: ProjectSnapshotOut }, event?: SiteVersionEvent, heldLabel?: string) {
     const known = knownServerVersion(this.projectId);
     if (known !== undefined && body.version <= known) return;
-    const label = adoptionLabel(event);
+    const label = heldLabel ?? adoptionLabel(event);
     const project = this.rootStore.projectStore.getProject(this.projectId);
     if (!project || !isAlive(project)) return;
     const autosave = existingAutosave(this.projectId);

@@ -14,11 +14,14 @@
 //   - `state` once on connect: the current version (the plans, agents and feed
 //     lists stay empty until the presence and skeleton slices fill them);
 //   - `site:version` after every committed write of the working copy, from any
-//     writer (src/server/sites/liveBus.ts); its SSE id is the version, so a
+//     writer (src/server/sites/liveBus.ts), flagged `own` on the stream of the
+//     tab that wrote it (`?tab=<id>`; tab ids themselves are never sent, so no
+//     editor can pass for another); its SSE id is the version, so a
 //     browser that reconnects sends it back as Last-Event-ID, and a site that
 //     moved on meanwhile gets one catch-up `site:version` for the current one;
 //   - `auth:expired` when the session or the permission is gone (re-checked every
-//     five minutes), after which the stream ends and the editor does not reconnect.
+//     five minutes, and on a write heard more than 30 s after the last check),
+//     after which the stream ends and the editor does not reconnect.
 //
 // Bounds: at most 4 streams per session, 50 per site and 1,000 per process; over
 // a bound the answer is 429 and the editor polls the snapshot route instead. The
@@ -31,13 +34,15 @@ import { createSseStream, SSE_HEADERS, SSE_HEARTBEAT_MS } from '@/lib/ai/sse';
 import { authorizeLiveProject } from '@/server/sites/liveGuard';
 import { acquireStreamSlot, subscribeSite } from '@/server/sites/liveBus';
 import { getSiteRepository } from '@/server/sites';
-import { LIVE_EVENTS, type SiteStateEvent, type SiteVersionEvent } from '@/lib/projects/liveEvents';
+import { LIVE_EVENTS, ORIGIN_TAB_PATTERN, type SiteStateEvent, type SiteVersionEvent } from '@/lib/projects/liveEvents';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /** How often an open stream checks that its session and permission still hold. */
 export const LIVE_RECHECK_MS = 5 * 60_000;
+/** A write heard longer than this after the last check triggers one more (access lost shows up within a write). */
+export const LIVE_RECHECK_ON_WRITE_MS = 30_000;
 
 type Ctx = { params: Promise<{ projectId: string }> };
 
@@ -70,9 +75,38 @@ async function handleGET(req: Request, { params }: Ctx): Promise<Response> {
   // Events heard before `state` went out wait for it, so nothing is lost or reordered.
   let ready = false;
   const waiting: Array<[string, unknown]> = [];
+  // The tab this stream belongs to (`?tab=`): its own writes are flagged `own`,
+  // and no tab id is ever sent to anyone.
+  const tabParam = new URL(req.url).searchParams.get('tab');
+  const tab = tabParam && ORIGIN_TAB_PATTERN.test(tabParam) ? tabParam : undefined;
+  let lastCheck = Date.now();
+  let checking = false;
+  const check = async () => {
+    if (checking || ended) return;
+    checking = true;
+    lastCheck = Date.now();
+    try {
+      const again = await authorizeLiveProject(req, projectId);
+      if (again.ok) return;
+      sse.send(LIVE_EVENTS.authExpired, {});
+      end();
+    } catch (err) {
+      // An outage is not a sign-out: the stream stays, the next check decides.
+      if (err instanceof AuthUnavailableError || err instanceof AuthzUnavailableError) return;
+      console.error(`[live] the stream of site ${projectId} could not re-check its session`, err);
+    } finally {
+      checking = false;
+    }
+  };
   const forward = (event: string, data: unknown) => {
-    const id = event === LIVE_EVENTS.siteVersion ? (data as SiteVersionEvent).version : undefined;
-    sse.send(event, data, id);
+    if (event !== LIVE_EVENTS.siteVersion) {
+      sse.send(event, data);
+      return;
+    }
+    const { originTab, ...rest } = data as SiteVersionEvent;
+    const out: SiteVersionEvent = tab && originTab === tab ? { ...rest, own: true } : rest;
+    sse.send(event, out, out.version);
+    if (Date.now() - lastCheck > LIVE_RECHECK_ON_WRITE_MS) void check();
   };
   // Subscribed before the version is read, so a write between the two is heard.
   const unsubscribe = subscribeSite(projectId, (event, data) => {
@@ -118,20 +152,7 @@ async function handleGET(req: Request, { params }: Ctx): Promise<Response> {
   // The browser may already be gone (it left while the version was read): no timers then.
   if (ended) return new Response(sse.stream, { status: 200, headers: SSE_HEADERS });
   timers.heartbeat = setInterval(() => sse.heartbeat(), SSE_HEARTBEAT_MS);
-  timers.recheck = setInterval(() => {
-    void (async () => {
-      try {
-        const again = await authorizeLiveProject(req, projectId);
-        if (again.ok) return;
-        sse.send(LIVE_EVENTS.authExpired, {});
-        end();
-      } catch (err) {
-        // An outage is not a sign-out: the stream stays, the next check decides.
-        if (err instanceof AuthUnavailableError || err instanceof AuthzUnavailableError) return;
-        console.error(`[live] the stream of site ${projectId} could not re-check its session`, err);
-      }
-    })();
-  }, LIVE_RECHECK_MS);
+  timers.recheck = setInterval(() => void check(), LIVE_RECHECK_MS);
 
   return new Response(sse.stream, { status: 200, headers: SSE_HEADERS });
 }

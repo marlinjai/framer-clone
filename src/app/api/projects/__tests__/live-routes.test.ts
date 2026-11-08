@@ -32,7 +32,7 @@ vi.mock('@/server/sites/repository', async (importActual) => {
 import { getSiteRepository, SiteNotFoundError } from '@/server/sites';
 import { getSiteRepository as getRepositoryDirect } from '@/server/sites/repository';
 import { publishSiteEvent, resetLiveBusForTests, LIVE_STREAM_LIMITS } from '@/server/sites/liveBus';
-import { GET as EVENTS, LIVE_RECHECK_MS } from '../[projectId]/events/route';
+import { GET as EVENTS, LIVE_RECHECK_MS, LIVE_RECHECK_ON_WRITE_MS } from '../[projectId]/events/route';
 import { GET as DOCUMENT } from '../[projectId]/document/route';
 
 const ORIGINAL_EDITOR_HOST = process.env.EDITOR_HOST;
@@ -193,6 +193,30 @@ describe('GET /api/projects/<id>/events', () => {
     publishSiteEvent('site_1', 'site:version', { origin: 'editor', version: 9, versionBefore: 8 });
     expect((await events.next()).id).toBe('9');
     await events.cancel();
+  });
+
+  it("flags the opening tab's own writes and never sends a tab id to anyone", async () => {
+    const mine = eventReader(await EVENTS(req('/api/projects/site_1/events?tab=tab_mine_0001'), ctx('site_1')));
+    const other = eventReader(await EVENTS(req('/api/projects/site_1/events?tab=tab_other_001', { cookie: 'lumitra_session=two' }), ctx('site_1')));
+    await mine.next();
+    await other.next();
+    publishSiteEvent('site_1', 'site:version', { origin: 'editor', originTab: 'tab_mine_0001', version: 8, versionBefore: 7 });
+    expect((await mine.next()).data).toEqual({ origin: 'editor', own: true, version: 8, versionBefore: 7 });
+    expect((await other.next()).data).toEqual({ origin: 'editor', version: 8, versionBefore: 7 });
+    await mine.cancel();
+    await other.cancel();
+  });
+
+  it('re-checks access on a write heard 30 s after the last check', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    const events = eventReader(await EVENTS(req('/api/projects/site_1/events'), ctx('site_1')));
+    await events.next();
+    mockCan.mockResolvedValue(false);
+    vi.setSystemTime(Date.now() + LIVE_RECHECK_ON_WRITE_MS + 1);
+    publishSiteEvent('site_1', 'site:version', { origin: 'mcp', version: 8, versionBefore: 7 });
+    expect((await events.next()).id).toBe('8');
+    expect(await events.next()).toEqual({ event: 'auth:expired', data: {} });
+    expect(await events.ended()).toBe(true);
   });
 
   it('catches a reconnect up: Last-Event-ID behind the current version gets one site:version', async () => {

@@ -200,7 +200,8 @@ describe('liveSync: forward', () => {
     project().updateMetadata({ description: 'mine' });
     await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
     expect(knownServerVersion(SITE)).toBe(2);
-    stream().emit('site:version', { origin: 'editor', originTab: editorTabId(), version: 2, versionBefore: 1 });
+    expect(stream().url).toBe(`/api/projects/${SITE}/events?tab=${editorTabId()}`);
+    stream().emit('site:version', { origin: 'editor', own: true, version: 2, versionBefore: 1 });
     await settle();
     expect(fetches).toEqual([]);
     expect(getHistoryStore()!.history).toHaveLength(1); // the person's own edit only
@@ -291,6 +292,56 @@ describe('liveSync: backtrack and revise', () => {
     finish({ kind: 'conflict', currentVersion: 2 });
     await settle();
     expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', currentVersion: 2, dialogOpen: true });
+  });
+});
+
+describe('liveSync: a write of this tab that succeeds while a newer version is held', () => {
+  it('adopts the held version once the write settled, instead of waiting for a 409 that never comes', async () => {
+    start();
+    let finish!: () => void;
+    resetAutosaveForTests({
+      write: async (snapshot, expectedVersion): Promise<ProjectWriteResult> => {
+        saves.push({ expectedVersion, snapshot: snapshot as ProjectSnapshotOut });
+        // The server commits at once; the answer is late.
+        server = { version: server.version + 1, snapshot: snapshot as ProjectSnapshotOut };
+        const version = server.version;
+        await new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+        return { kind: 'ok', payload: {}, version };
+      },
+    });
+    autosaveFor(SITE).attach(project());
+    project().updateMetadata({ description: 'mine' });
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+    // The agent writes on top of this tab's committed save, before its answer arrives.
+    await agentWrites('on top');
+    expect(liveSyncFor(SITE)?.heldVersion?.version).toBe(3);
+    expect(knownServerVersion(SITE)).toBe(1);
+
+    finish();
+    await settle();
+    await settle();
+    expect(knownServerVersion(SITE)).toBe(3);
+    expect(working()).toEqual(server.snapshot);
+    expect(liveSyncFor(SITE)?.heldVersion).toBeUndefined();
+    expect(autosaveFor(SITE).getState().phase).toBe('saved');
+  });
+});
+
+describe('liveSync: an erasure', () => {
+  it('is adopted without an undo step and clears the history, so undo cannot bring erased values back', async () => {
+    start();
+    await agentWrites('before');
+    expect(getHistoryStore()!.history).toHaveLength(1);
+    const erased = ProjectModel.create(server.snapshot) as ProjectModelType;
+    const snap = getSnapshot(erased) as ProjectSnapshotOut;
+    server = { version: server.version + 1, snapshot: { ...snap, metadata: { ...snap.metadata, erasureEpoch: 1 } } };
+    stream().emit('site:version', { origin: 'erasure', version: server.version, versionBefore: server.version - 1 });
+    await settle();
+    expect(knownServerVersion(SITE)).toBe(3);
+    expect(working().metadata.erasureEpoch).toBe(1);
+    expect(getHistoryStore()!.history).toHaveLength(0);
   });
 });
 

@@ -51,6 +51,8 @@ describe('boundedWriteEvent', () => {
     expect(out.summary![0].length).toBeLessThanOrEqual(LIVE_LABEL_MAX);
     expect(out.ops).toHaveLength(LIVE_LIST_MAX);
     expect(Object.keys(out.created!)).toHaveLength(LIVE_LIST_MAX);
+    // A ref an agent chose is capped like any text.
+    expect(Object.keys(boundedWriteEvent({ origin: 'mcp', created: { [long]: 'n1' } }).created!)[0].length).toBeLessThanOrEqual(LIVE_LABEL_MAX);
     expect(capLiveText('  a\n  b  ')).toBe('a b');
     expect(boundedWriteEvent({ origin: 'editor', actor: { kind: 'user', label: '   ' } }).actor!.label).toBe('Someone');
   });

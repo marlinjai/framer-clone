@@ -46,6 +46,12 @@ export interface SiteVersionEvent extends SiteWriteEvent {
   version: number;
   versionBefore: number;
   /**
+   * True on the stream of the tab that sent this write. The tab's id itself
+   * never travels on the stream (another editor could replay it): the route
+   * compares it with the id the stream was opened with and sends this flag.
+   */
+  own?: boolean;
+  /**
    * True when this is the catch-up a reconnect gets (Last-Event-ID behind the
    * current version): one or more writes happened while the stream was away, so
    * origin and actor are unknown and the editor treats it as a foreign write.
@@ -89,7 +95,8 @@ export function boundedWriteEvent(event: SiteWriteEvent): SiteWriteEvent {
   if (event.originTab) out.originTab = event.originTab;
   if (event.actor) out.actor = { kind: event.actor.kind, label: capLiveText(event.actor.label) || 'Someone' };
   if (event.ops) out.ops = event.ops.slice(0, LIVE_LIST_MAX);
-  if (event.created) out.created = Object.fromEntries(Object.entries(event.created).slice(0, LIVE_LIST_MAX));
+  // The keys are refs an agent chose: capped like any other text that travels.
+  if (event.created) out.created = Object.fromEntries(Object.entries(event.created).slice(0, LIVE_LIST_MAX).map(([ref, id]) => [capLiveText(ref), id]));
   if (event.summary) out.summary = event.summary.slice(0, LIVE_LIST_MAX).map(capLiveText);
   return out;
 }
