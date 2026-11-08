@@ -21,8 +21,12 @@ export const SSE_HEARTBEAT_MS = 10_000;
 export type SseStream = {
   /** The body to hand back to Next.js's `new Response(stream, ...)`. */
   stream: ReadableStream<Uint8Array>;
-  /** Send a typed SSE event. `data` is JSON-stringified. */
-  send: (event: string, data: unknown) => void;
+  /**
+   * Send a typed SSE event. `data` is JSON-stringified. `id`, when given, becomes
+   * the event's id: a browser's EventSource sends the last one back as
+   * `Last-Event-ID` when it reconnects.
+   */
+  send: (event: string, data: unknown, id?: string | number) => void;
   /** Send a comment-line heartbeat. */
   heartbeat: () => void;
   /**
@@ -67,9 +71,11 @@ export function createSseStream(): SseStream {
     }
   };
 
-  const send: SseStream['send'] = (event, data) => {
+  const send: SseStream['send'] = (event, data, id) => {
     if (closed) return;
-    const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    // An id never spans lines (that would end the field early); only plain tokens are sent.
+    const idLine = id !== undefined && /^[A-Za-z0-9_-]+$/.test(String(id)) ? `id: ${id}\n` : '';
+    const payload = `${idLine}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
     enqueue(payload);
   };
 
