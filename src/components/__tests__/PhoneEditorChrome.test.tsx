@@ -70,14 +70,14 @@ afterEach(() => {
 });
 
 describe('phone bottom bar', () => {
-  it('fits the canvas when it mounts, and every button is a 7-item bar', () => {
+  it('fits the canvas when it mounts, and every button is an 8-item bar', () => {
     seedProject();
     render(<TransformProvider><PhoneEditorChrome editorUI={store.editorUI} /></TransformProvider>);
-    expect(within(bar()).getAllByRole('button')).toHaveLength(7);
+    expect(within(bar()).getAllByRole('button')).toHaveLength(8);
     expect(barButton(/zoom 42%/)).toBeTruthy();
   });
 
-  it('Select and Hand switch the tool and show which is active', () => {
+  it('Select, Hand and Interact switch the tool and show which is active', () => {
     seedProject();
     render(<TransformProvider><PhoneEditorChrome editorUI={store.editorUI} /></TransformProvider>);
     fireEvent.click(barButton('Hand tool, pan the canvas'));
@@ -85,6 +85,10 @@ describe('phone bottom bar', () => {
     expect(barButton('Hand tool, pan the canvas').getAttribute('aria-pressed')).toBe('true');
     fireEvent.click(barButton('Select tool'));
     expect(store.editorUI.selectedTool).toBe('select');
+    fireEvent.click(barButton('Interact, use the page as a visitor'));
+    expect(store.editorUI.selectedTool).toBe('interact');
+    expect(barButton('Interact, use the page as a visitor').getAttribute('aria-pressed')).toBe('true');
+    expect(barButton('Select tool').getAttribute('aria-pressed')).toBe('false');
   });
 });
 

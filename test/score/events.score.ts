@@ -8,15 +8,22 @@
 // The page is the static output of renderPublishedPage with the runtime's chunks bundled
 // in, not a Next build: `test/behaviour` proves those two meet. Here it is what each event
 // reaches that counts, and a build per row would take an hour.
+//
+// The canvas column asks the same of the mounted editor: the real EditorApp
+// (lib/canvasBundle.ts) with the same stored tree on a page, in the Interact tool, entered
+// with its toolbar button, and the same cause. A row that passes published and fails there
+// is `canvas-editor-context`, with what stopped it.
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { chromium, type Browser, type Page } from 'playwright';
+import { chromium, type Browser, type Page, type Route } from 'playwright';
 import type { BehaviourProgram } from '@/lib/behaviour/program';
 import { GATE_GLOBAL } from '@/lib/behaviour/names';
 import { EVENT_PROOFS, NOT_PROVEN, n, type EventProof } from './lib/eventProofs';
 import { renderThroughPublishedPage } from './lib/published';
+import { bundleEditor, droppedOnEditor, enterInteract, openEditor, placeTree } from './lib/canvasBundle';
+import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { bundleRuntime, runtimeScripts } from './lib/runtime';
 import { allEntries } from './lib/universe';
 import { writeOut } from './lib/io';
@@ -77,10 +84,27 @@ async function recordClip(browser: Browser): Promise<Buffer> {
   return Buffer.from(bytes);
 }
 
-async function documentFor(event: string, proof: EventProof, runtime: string): Promise<string> {
+/** The stored page of a proof: its tree under a root holding the state the action sets. */
+function proofTree(event: string, proof: EventProof) {
   const on = { on: [{ id: 'proof', on: event, do: [{ set: 'hit', value: true }] }] };
   const state = [{ id: 'hit', name: 'hit', type: 'boolean', initial: false }, ...(proof.state ?? [])];
-  const tree = n('proof-root', 'div', { behaviour: { state } }, ...proof.tree(on));
+  return n('proof-root', 'div', { behaviour: { state } }, ...proof.tree(on));
+}
+
+/** What a proof's page fetches, the same for the published page and the editor. Undefined: not one of them. */
+function serveFixture(route: Route, pathname: string, fixtures: { wav: Buffer; webm: Buffer }): Promise<void> | 'never' | undefined {
+  // A file that never comes: the media element keeps waiting for it.
+  if (pathname === '/never.wav') return 'never';
+  if (pathname === '/clip.wav') return route.fulfill({ contentType: 'audio/wav', body: fixtures.wav });
+  if (pathname === '/clip.webm') return route.fulfill({ contentType: 'video/webm', body: fixtures.webm });
+  if (pathname === '/cues.vtt') return route.fulfill({ contentType: 'text/vtt', body: CUES });
+  if (pathname === '/pixel.gif') return route.fulfill({ contentType: 'image/gif', body: PIXEL });
+  if (pathname === '/sink') return route.fulfill({ contentType: 'text/html', body: 'Sent' });
+  return undefined;
+}
+
+async function documentFor(event: string, proof: EventProof, runtime: string): Promise<string> {
+  const tree = proofTree(event, proof);
   const { html, behaviour } = await renderThroughPublishedPage({ tree, definitions: {} });
   // Held until the proof has its route ready, and started before the cause, so the
   // boot script's buffer has no part in what is proven.
@@ -94,11 +118,13 @@ describe('every event row, from a real cause', () => {
   let runtime: string;
   let wav: Buffer;
   let webm: Buffer;
+  let editorBundle: string;
 
   beforeAll(async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] });
     runtime = await bundleRuntime();
+    editorBundle = await bundleEditor();
     wav = silence();
     webm = await recordClip(browser).catch(() => Buffer.alloc(0));
   }, 60_000);
@@ -124,14 +150,9 @@ describe('every event row, from a real cause', () => {
     await page.route(`${ORIGIN}/**`, (route) => {
       const { pathname } = new URL(route.request().url());
       if (pathname === '/') return route.fulfill({ contentType: 'text/html; charset=utf-8', body: html });
-      // A file that never comes: the media element keeps waiting for it.
-      if (pathname === '/never.wav') return undefined;
-      if (pathname === '/clip.wav') return route.fulfill({ contentType: 'audio/wav', body: wav });
-      if (pathname === '/clip.webm') return route.fulfill({ contentType: 'video/webm', body: webm });
-      if (pathname === '/cues.vtt') return route.fulfill({ contentType: 'text/vtt', body: CUES });
-      if (pathname === '/pixel.gif') return route.fulfill({ contentType: 'image/gif', body: PIXEL });
-      if (pathname === '/sink') return route.fulfill({ contentType: 'text/html', body: 'Sent' });
-      return route.fulfill({ status: 404, body: '' });
+      const served = serveFixture(route, pathname, { wav, webm });
+      if (served === 'never') return undefined;
+      return served ?? route.fulfill({ status: 404, body: '' });
     });
     try {
       await page.goto(`${ORIGIN}/`);
@@ -150,24 +171,78 @@ describe('every event row, from a real cause', () => {
     }
   };
 
+  /**
+   * The same proof on the mounted editor, in the Interact tool. A `dispatchEvent` aimed at
+   * anything inside a frame fails it; the editor's own panels may dispatch what they like.
+   */
+  const proveOnCanvas = async (event: string, proof: EventProof): Promise<Cell> => {
+    const synthetic: string[] = [];
+    const { page, crashes } = await openEditor(browser, editorBundle, { permissions: ['clipboard-read', 'clipboard-write'] }, async (opened) => {
+      await opened.exposeFunction('__synthetic', (type: string) => synthetic.push(type));
+      await opened.addInitScript(() => {
+        const { dispatchEvent } = EventTarget.prototype;
+        EventTarget.prototype.dispatchEvent = function watched(this: EventTarget, event: Event) {
+          if (this instanceof Element && this.closest('[data-viewport-content-id]')) {
+            (window as unknown as { __synthetic(type: string): void }).__synthetic(event.type);
+          }
+          return dispatchEvent.call(this, event);
+        };
+      });
+      await opened.route('**/*', (route) => {
+        const served = serveFixture(route, new URL(route.request().url()).pathname, { wav, webm });
+        if (served === 'never') return undefined;
+        return served ?? route.fallback();
+      });
+    });
+    const hit = () => page.evaluate((attribute) => document.querySelector('[data-viewport-content-id] [data-t="proof-root"]')?.getAttribute(attribute), HIT);
+    const tree = proofTree(event, proof) as unknown as ComponentNode;
+    // What the canvas does on purpose, named beside the timeout it causes.
+    const why = droppedOnEditor(tree);
+    const reason = why.length > 0 ? `: the editor surfaces drop ${why.join(', ')}` : '';
+    try {
+      await placeTree(page, crashes, tree);
+      await enterInteract(page);
+      page.setDefaultTimeout(4000);
+      const before = await hit();
+      if (before !== 'false' && before !== 'true') return { status: 'fail', gap: 'canvas-editor-context', note: 'the state did not reach the canvas' };
+      // Already true means loading was the cause, as published; the canvas draws it in Select at first values.
+      if (before === 'false') await proof.cause({ page });
+      await page.waitForFunction(([attribute]) => document.querySelector('[data-viewport-content-id] [data-t="proof-root"]')?.getAttribute(attribute) === 'true', [HIT], { timeout: PATIENCE_MS });
+      if (synthetic.length > 0) return { status: 'fail', gap: 'canvas-editor-context', note: `dispatched by script: ${synthetic[0]}` };
+      if (crashes.length > 0) return { status: 'fail', gap: 'canvas-editor-context', note: `the editor crashed: ${crashes[0].slice(0, 80)}` };
+      return { status: 'pass' };
+    } catch (error) {
+      return { status: 'fail', gap: 'canvas-editor-context', note: `in Interact, ${String((error as Error).message).split('\n')[0].slice(0, 80)}${reason}` };
+    } finally {
+      await page.context().close();
+    }
+  };
+
   it('passes nothing without its cause, which is what makes the rest mean something', async () => {
     const proof = EVENT_PROOFS.click;
     expect((await prove('click', { ...proof, cause: async () => {} })).status).toBe('fail');
     expect((await prove('click', proof)).status).toBe('pass');
-  }, 60_000);
+    expect((await proveOnCanvas('click', { ...proof, cause: async () => {} })).status).toBe('fail');
+    expect((await proveOnCanvas('click', proof)).status).toBe('pass');
+  }, 90_000);
 
   it('proves what it can and names the rest', async () => {
     const rows = allEntries().filter((entry) => entry.kind === 'html-event-handler' && !entry.excluded);
     const cells: Record<string, Cell> = {};
+    const canvas: Record<string, Cell> = {};
     for (const { id } of rows) {
       const event = id.slice(2);
       const proof = EVENT_PROOFS[event];
       const key = rowKey('html-event-handler', id);
       if (proof) cells[key] = await prove(event, proof);
       else cells[key] = { status: 'fail', gap: 'blocked-event-handlers', note: NOT_PROVEN[event] ?? 'no proof yet' };
+      // The canvas is asked what the published page answers: a row red there stays red here, for the same reason.
+      canvas[key] = proof && cells[key].status === 'pass' ? await proveOnCanvas(event, proof) : cells[key];
     }
     writeOut('events', cells);
-    fs.writeFileSync(path.join(process.env.TMPDIR ?? '/tmp', 'event-proofs.json'), JSON.stringify(cells, null, 1));
+    writeOut('events-canvas', canvas);
+    fs.writeFileSync(path.join(process.env.TMPDIR ?? '/tmp', 'event-proofs.json'), JSON.stringify({ published: cells, canvas }, null, 1));
     expect(Object.keys(cells).length).toBe(rows.length);
-  }, 600_000);
+    expect(Object.keys(canvas).length).toBe(rows.length);
+  }, 1_200_000);
 });

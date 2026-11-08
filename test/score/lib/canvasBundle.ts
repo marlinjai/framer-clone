@@ -12,6 +12,7 @@ import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { OUT_DIR } from './io';
 import { readPublishedBase } from './publishedBase';
 import { editorSheet } from './editorSheet';
+import { withoutEditorSurfaceProps } from '@/lib/renderer/blockedNodes';
 
 const ROOT = process.cwd();
 
@@ -71,6 +72,19 @@ export async function bundleEditor(entry = 'test/score/canvas/entry.tsx', name =
   return outfile;
 }
 
+/** What of a tree the editor surfaces drop on purpose (blockedNodes.ts), named in a canvas cell's note. */
+export function droppedOnEditor(root: ComponentNode): string[] {
+  const out = new Set<string>();
+  const walk = (node: ComponentNode) => {
+    const props = (node.props ?? {}) as Record<string, unknown>;
+    const kept = withoutEditorSurfaceProps(node.type, props);
+    for (const name of Object.keys(props)) if (!(name in kept)) out.add(name.toLowerCase());
+    node.children?.forEach(walk);
+  };
+  walk(root);
+  return [...out].sort();
+}
+
 /** A tree as the model stores it. A child names its parent, which is what lets it take its own pointer press on the canvas. */
 export const toSnapshot = (node: ComponentNode, parentId?: string): Record<string, unknown> => ({
   id: node.id,
@@ -88,13 +102,23 @@ export interface MountOptions {
   floating?: ComponentNode[];
 }
 
-/** The editor, loaded with nothing placed. No server behind this page: every request it makes gets an empty answer. */
-export async function openEditor(browser: Browser, bundle: string, contextOptions: Parameters<Browser['newPage']>[0] = {}): Promise<{ page: Page; crashes: string[] }> {
+/**
+ * The editor, loaded with nothing placed. No server behind this page: every request it makes
+ * gets an empty answer. `beforeLoad` runs on the new page before anything is loaded into it,
+ * for an init script or a route of its own, which Playwright tries before the empty answer.
+ */
+export async function openEditor(
+  browser: Browser,
+  bundle: string,
+  contextOptions: Parameters<Browser['newPage']>[0] = {},
+  beforeLoad?: (page: Page) => Promise<void>,
+): Promise<{ page: Page; crashes: string[] }> {
   const page = await browser.newPage({ viewport: { width: 1600, height: 1000 }, ...contextOptions });
   page.setDefaultTimeout(1500);
   const crashes: string[] = [];
   page.on('pageerror', (error) => crashes.push(error.message));
   await page.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
+  await beforeLoad?.(page);
   await page.goto('http://canvas-probe.local/');
   // The bundle leaves CSS out. The real editor sits under the same root layout as a
   // published page (its fonts and html and body classes, from the published base) and
@@ -130,6 +154,18 @@ export async function placeTree(page: Page, crashes: readonly string[], tree: Co
   await page.evaluate(([snapshot, opts]) => (window as unknown as PlaceWindow).__placeTree(snapshot, opts as never), [toSnapshot(tree), placed] as const);
   await page.locator(`[data-viewport-content-id] [data-inner-component-id="${tree.id}"]`).first().waitFor({ state: 'attached' });
   if (crashes.length > 0) throw new Error(`the editor crashed on the canvas: ${crashes[0]}`);
+}
+
+/**
+ * The Interact tool, entered with the toolbar's own button, as a person does it. Resolves
+ * once every frame runs its page (`data-surface-running`, set by useSurfaceRuntime).
+ */
+export async function enterInteract(page: Page): Promise<void> {
+  await page.getByRole('button', { name: 'Interact' }).click();
+  await page.waitForFunction(() => {
+    const frames = [...document.querySelectorAll('[data-viewport-content-id]')];
+    return frames.length > 0 && frames.every((frame) => frame.hasAttribute('data-surface-running'));
+  });
 }
 
 /** The editor open with the tree in it. */

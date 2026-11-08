@@ -107,6 +107,8 @@ export interface SurfaceSheetInput {
   colorMode?: ColorScheme;
   /** The frames carry `class="dark"`, on a site that forces `dark`. */
   darkClass?: boolean;
+  /** Canvas only: the page runs there (the Interact tool), so nothing is held still or previewed. */
+  running?: boolean;
   memo?: SurfaceMemo;
   onProblem?: (problem: SurfaceProblem) => void;
 }
@@ -163,7 +165,9 @@ function largestFrame(frames: readonly SurfaceFrameInput[], breakpoints: readonl
 
 /** The stylesheet text of one surface, or '' when nothing on the page needs one. */
 export function surfaceSheet(input: SurfaceSheetInput): string {
-  const { kind, tree, floating = [], frames, breakpoints, previewRule, memo } = input;
+  const { kind, tree, floating = [], frames, breakpoints, memo } = input;
+  const running = kind === 'canvas' && input.running === true;
+  const previewRule = running ? null : input.previewRule;
   const report = input.onProblem ?? (() => {});
   const canvas = kind === 'canvas';
   const nodes: SurfaceRulesInput[] = [];
@@ -266,10 +270,11 @@ export function surfaceSheet(input: SurfaceSheetInput): string {
 
   return buildResponsiveCss([], breakpoints, {
     definitions,
-    hoverPresets: canvas ? [] : [...presets],
+    hoverPresets: canvas && !running ? [] : [...presets],
     onDropRule: ({ className, ruleId, reason }) => report({ node: className, rule: ruleId, reason }),
     surface: {
       kind,
+      running,
       nodes,
       framesShown: safeFrames.length,
       previewedPresets,
