@@ -33,6 +33,7 @@ import {
   addFontToken,
   cleanUpUnused,
   deleteToken,
+  emittedTokenIds,
   holdsColorSchemeRule,
   liveTokens,
   parseTokenReference,
@@ -43,6 +44,7 @@ import {
   setThemeMode,
   themeWarnings,
   tokenReference,
+  tokenUseKinds,
   tokenUsage,
   tombstones,
   type DocumentKey,
@@ -95,7 +97,18 @@ function useThemeState(project: ProjectModelType) {
     rootRules: (page.appComponentTree?.props as { rules?: unknown } | undefined)?.rules,
   }));
   const warnings = themeWarnings(theme, { holdsDarkRules, pages });
-  return { theme, usage, warnings };
+  // Uses of a token the theme does not hold: nothing to edit, so each is offered a
+  // project-wide Replace (the kinds say what a use stands for, as Replace reads them).
+  const tokenIdsKey = theme.tokens.map((t) => t.id).join(',');
+  const missing = React.useMemo(() => {
+    const held = new Set(tokenIdsKey ? tokenIdsKey.split(',') : []);
+    const scanned = { pages: snapshot.pages, components: snapshot.components, document: themeDocument };
+    return [...usage]
+      .filter(([id]) => !held.has(id))
+      .map(([id, count]) => ({ id, count, kinds: tokenUseKinds(scanned, id) }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- themeDocument is keyed by value (documentKey)
+  }, [usage, tokenIdsKey, snapshot.pages, snapshot.components, documentKey]);
+  return { theme, usage, warnings, missing };
 }
 
 function usedText(count: number): string {
@@ -134,15 +147,34 @@ function NameField({ token, apply, theme }: Pick<RowProps, 'token' | 'apply' | '
   );
 }
 
-/** Replace every use of this token with another live one of its kind, in one undo step. */
-function ReplaceSelect({ token, theme, count, replace }: Pick<RowProps, 'token' | 'theme' | 'count' | 'replace'>) {
-  const others = liveTokens(theme).filter((t) => t.kind === token.kind && t.id !== token.id);
+/**
+ * Replace every use of a token with another live one of its kind, in one undo step. Only
+ * tokens the site's sheet writes are offered: a reference to one it leaves out (a colour
+ * none of whose values reads, a token past the cap) would point at nothing.
+ */
+function ReplaceSelect({
+  fromId,
+  name,
+  kinds,
+  theme,
+  count,
+  replace,
+}: {
+  fromId: string;
+  name: string;
+  kinds: ReadonlySet<string>;
+  theme: SiteTheme;
+  count: number;
+  replace: RowProps['replace'];
+}) {
+  const emitted = emittedTokenIds(theme);
+  const others = liveTokens(theme).filter((t) => kinds.has(t.kind) && t.id !== fromId && emitted.has(t.id));
   if (count === 0 || others.length === 0) return null;
   return (
     <select
-      aria-label={`Replace ${token.name || 'this token'} everywhere with`}
+      aria-label={`Replace ${name} everywhere with`}
       value=""
-      onChange={(e) => e.target.value && replace(token.id, e.target.value)}
+      onChange={(e) => e.target.value && replace(fromId, e.target.value)}
       className={`${control} w-auto max-w-[140px] cursor-pointer`}
     >
       <option value="">Replace with</option>
@@ -232,7 +264,7 @@ const TokenRow = observer(({ token, theme, count, apply, replace }: RowProps) =>
       ) : (
         <FamilySelect label={`Font of ${name}`} value={token.family} onChange={(family) => apply(setFontFamily(theme, token.id, family))} />
       )}
-      <ReplaceSelect token={token} theme={theme} count={count} replace={replace} />
+      <ReplaceSelect fromId={token.id} name={token.name || 'this token'} kinds={new Set([token.kind])} theme={theme} count={count} replace={replace} />
     </li>
   );
 });
@@ -270,7 +302,7 @@ function AddToken({ theme, apply, kind }: { theme: SiteTheme; apply: RowProps['a
 }
 
 export const ThemeForm = observer(({ project }: { project: ProjectModelType }) => {
-  const { theme, usage, warnings } = useThemeState(project);
+  const { theme, usage, warnings, missing } = useThemeState(project);
   const [message, setMessage] = React.useState<{ text: string; error: boolean } | null>(null);
 
   const apply = (edit: ThemeEdit | SiteTheme) => {
@@ -393,6 +425,27 @@ export const ThemeForm = observer(({ project }: { project: ProjectModelType }) =
         <AddToken theme={theme} apply={apply} kind="font" />
       </section>
 
+      {missing.length > 0 && (
+        <section className="flex flex-col gap-2" aria-labelledby="theme-missing-title">
+          <h3 id="theme-missing-title" className={sectionTitle}>
+            Missing
+          </h3>
+          <p className={hint}>These are used on your pages but the theme no longer holds them, so they show nothing. Replace every use of one with a token you have.</p>
+          <ul className="flex flex-col gap-1.5">
+            {missing.map(({ id, count, kinds }) => {
+              const label = kinds.size === 1 ? (kinds.has('font') ? 'Font' : 'Colour') : 'Token';
+              return (
+                <li key={id} className="flex flex-wrap items-center gap-1.5 text-xs" data-token-id={id} data-testid="theme-missing">
+                  <span className="min-w-0 flex-1 truncate text-muted-foreground">{label}: not in the theme</span>
+                  <span className={hint}>{usedText(count)}</span>
+                  <ReplaceSelect fromId={id} name={`the missing ${label.toLowerCase()}`} kinds={kinds} theme={theme} count={count} replace={replace} />
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
+
       {deleted.length > 0 && (
         <section className="flex flex-col gap-2" aria-labelledby="theme-deleted-title">
           <h3 id="theme-deleted-title" className={sectionTitle}>
@@ -406,7 +459,7 @@ export const ThemeForm = observer(({ project }: { project: ProjectModelType }) =
                   {t.kind === 'color' ? 'Colour' : 'Font'}: {t.name || 'unnamed'}
                 </span>
                 <span className={hint}>{usedText(usage.get(t.id) ?? 0)}</span>
-                <ReplaceSelect token={t} theme={theme} count={usage.get(t.id) ?? 0} replace={replace} />
+                <ReplaceSelect fromId={t.id} name={t.name || 'this token'} kinds={new Set([t.kind])} theme={theme} count={usage.get(t.id) ?? 0} replace={replace} />
               </li>
             ))}
           </ul>

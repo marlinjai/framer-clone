@@ -8,7 +8,7 @@ import { applySnapshot, getSnapshot } from 'mobx-state-tree';
 import { createRootStore, getHistoryStore, type RootStoreType } from '@/stores/RootStore';
 import type { ProjectModelType } from '@/models/ProjectModel';
 import type { ComponentInstance } from '@/models/ComponentModel';
-import { THEME_LIMITS, tokenReference, type SiteTheme } from '@/lib/site/theme';
+import { THEME_LIMITS, setColorValues, tokenReference, type SiteTheme } from '@/lib/site/theme';
 import { checkBeforePublish, hasPublishIssues } from '@/lib/legal/publishCheck';
 
 let store: RootStoreType;
@@ -420,5 +420,54 @@ describe('a token name', () => {
     project.updateTheme({ tokens: [{ id: 'ac000001', name: 'Accent', kind: 'color', light: '#112233' }], document: {} });
     render(<ThemeForm project={project} />);
     expect((screen.getByLabelText('Name of Accent') as HTMLInputElement).maxLength).toBe(THEME_LIMITS.name);
+  });
+});
+
+describe('a reference to a token the theme does not hold', () => {
+  it('is listed as Missing, and Replace points every use at a token that shows', () => {
+    project.updateTheme({ tokens: [{ id: 'ac000001', name: 'Accent', kind: 'color', light: '#112233' }], document: {} });
+    node.updateResponsiveStyle('color', tokenReference('ghost001'));
+    render(<ThemeForm project={project} />);
+    const row = screen.getByTestId('theme-missing');
+    expect(within(row).getByText('Used in 1 place')).toBeTruthy();
+    fireEvent.change(within(row).getByLabelText('Replace the missing colour everywhere with'), { target: { value: 'ac000001' } });
+    expect(nodeColour()).toBe(tokenReference('ac000001'));
+    expect(screen.queryByTestId('theme-missing')).toBeNull();
+  });
+});
+
+describe('a Replace target that the site sheet leaves out', () => {
+  const unreadable: SiteTheme = {
+    tokens: [
+      { id: 'ac000001', name: 'Accent', kind: 'color', light: '#112233' },
+      { id: 'bd000002', name: 'Unreadable', kind: 'color', light: 'url(x)', broken: true },
+      { id: 'be000003', name: 'Other', kind: 'color', light: '#445566' },
+    ],
+    document: {},
+  };
+
+  it('is not offered in the panel and is refused by the model', () => {
+    storeTheme(unreadable);
+    node.updateResponsiveStyle('color', tokenReference('ac000001'));
+    render(<ThemeForm project={project} />);
+    const options = within(screen.getByLabelText('Replace Accent everywhere with')).queryAllByRole('option');
+    expect(options.map((o) => o.textContent)).toEqual(['Replace with', 'Other']);
+    const refused = project.replaceToken('ac000001', 'bd000002');
+    expect(refused.ok).toBe(false);
+    expect(nodeColour()).toBe(tokenReference('ac000001'));
+  });
+});
+
+describe('a colour with two unreadable values', () => {
+  it('can be repaired one value at a time', () => {
+    storeTheme({ tokens: [{ id: 'pp000001', name: 'Both', kind: 'color', light: 'url(x)', dark: 'url(y)' }], document: {} });
+    const first = setColorValues(theme(), 'pp000001', { light: '#112233' });
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    expect(project.updateTheme(first.theme).ok).toBe(true);
+    const second = setColorValues(theme(), 'pp000001', { dark: '#445566' });
+    expect(second.ok && project.updateTheme(second.theme).ok).toBe(true);
+    expect(colour('Both')).toMatchObject({ light: '#112233', dark: '#445566' });
+    expect(colour('Both')).not.toHaveProperty('broken');
   });
 });

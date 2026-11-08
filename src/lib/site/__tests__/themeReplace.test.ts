@@ -121,6 +121,16 @@ describe('themeBoundsErrors', () => {
     expect(themeBoundsErrors(withLong, withLong)).toEqual([]);
     expect(themeBoundsErrors(normalizeTheme({ tokens: [colourToken(1, { name: 'x'.repeat(THEME_LIMITS.name) })] }), many(0))).toEqual([]);
   });
+
+  it('bounds a new or renamed tombstone name too, and keeps a stored one', () => {
+    const long = 'x'.repeat(THEME_LIMITS.name + 1);
+    const tomb = normalizeTheme({ tokens: [colourToken(1, { name: long, deleted: true })] });
+    expect(themeBoundsErrors(tomb, many(0))[0]).toMatch(/keep a name to 40 characters/);
+    expect(themeBoundsErrors(tomb, normalizeTheme({ tokens: [colourToken(1, { deleted: true })] }))).toHaveLength(1);
+    expect(themeBoundsErrors(tomb, tomb)).toEqual([]);
+    // Deleting a live token with a stored long name changes nothing about the name.
+    expect(themeBoundsErrors(tomb, normalizeTheme({ tokens: [colourToken(1, { name: long })] }))).toEqual([]);
+  });
 });
 
 describe('themeWarnings', () => {

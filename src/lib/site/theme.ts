@@ -808,9 +808,12 @@ export function themeBoundsErrors(next: SiteTheme, stored: SiteTheme): string[] 
   }
   const before = new Map(stored.tokens.map((t) => [t.id, t]));
   for (const token of next.tokens) {
-    if (token.deleted || token.name.length <= THEME_LIMITS.name) continue;
+    if (token.name.length <= THEME_LIMITS.name) continue;
     const old = before.get(token.id);
-    if (!old || old.deleted === true || old.name !== token.name) {
+    // A tombstone keeps its name as stored; a new one, or a changed name, is bounded too.
+    // A live token also counts as given its name when it comes back from a tombstone.
+    const given = !old || old.name !== token.name || (!token.deleted && old.deleted === true);
+    if (given) {
       errors.push(`${token.name.slice(0, THEME_LIMITS.name)}...: keep a name to ${THEME_LIMITS.name} characters.`);
     }
   }
@@ -856,15 +859,24 @@ export function validateThemeWrite(next: SiteTheme, current: SiteTheme): string[
       errors.push(`${token.name || 'A token'} cannot change from a ${KIND_LABEL[old.kind]} to a ${KIND_LABEL[token.kind]}.`);
       continue;
     }
-    if (token.deleted) continue;
+    if (token.deleted) {
+      if ((!old || old.name !== token.name) && token.name.length > THEME_LIMITS.name) {
+        errors.push(`${token.name.slice(0, THEME_LIMITS.name)}...: keep a name to ${THEME_LIMITS.name} characters.`);
+      }
+      continue;
+    }
     const named = !old || old.deleted === true || old.name !== token.name;
     if (named) {
       if (token.name.length === 0) errors.push('Give every token a name.');
       else if (token.name.length > THEME_LIMITS.name) errors.push(`${token.name.slice(0, THEME_LIMITS.name)}...: keep a name to ${THEME_LIMITS.name} characters.`);
     }
     if (token.kind === 'color') {
-      const valuesChanged = !old || old.kind !== 'color' || old.light !== token.light || old.dark !== token.dark;
-      if (valuesChanged && token.broken) errors.push(`${token.name || 'A colour'}: ${COLOR_HINT}`);
+      // Each value is judged on its own: a value left as stored never blocks the write, so
+      // a colour with two unreadable values can be repaired one value at a time.
+      const was = old && old.kind === 'color' ? old : undefined;
+      const lightBad = (!was || was.light !== token.light) && parseColorValue(token.light) === null;
+      const darkBad = token.dark !== undefined && (!was || was.dark !== token.dark) && parseColorValue(token.dark) === null;
+      if (lightBad || darkBad) errors.push(`${token.name || 'A colour'}: ${COLOR_HINT}`);
     } else {
       const familyChanged = !old || old.kind !== 'font' || old.family !== token.family;
       if (familyChanged && !isThemeFontFamily(token.family)) {

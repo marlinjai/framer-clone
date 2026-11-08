@@ -46,7 +46,7 @@ import {
   type SiteSettingsInput,
 } from '@/lib/site/siteSettings';
 import { effectiveSiteName } from '@/lib/site/siteSettings';
-import { normalizeTheme, replaceTokenReferences, tokenUseKinds, validateThemeWrite, type SiteTheme } from '@/lib/site/theme';
+import { emittedTokenIds, normalizeTheme, replaceTokenReferences, tokenUseKinds, validateThemeWrite, type SiteTheme } from '@/lib/site/theme';
 import {
   COOKIE_SETTINGS_HASH,
   COOKIE_SETTINGS_LABELS,
@@ -1313,6 +1313,9 @@ export const ProjectModel = types
       const to = theme.tokens.find((t) => t.id === toId);
       if (fromId === toId) return { ok: false, errors: ['Pick another token to replace it with.'] };
       if (!to || to.deleted) return { ok: false, errors: ['Pick a token that exists to replace it with.'] };
+      // A token the sheet leaves out (a colour none of whose values reads, one past the cap)
+      // has no CSS variable, so every use pointed at it would show nothing.
+      if (!emittedTokenIds(theme).has(toId)) return { ok: false, errors: ['That token has no readable value, so nothing would show. Pick another one.'] };
       const kindLabel = (kind: string) => (kind === 'font' ? 'font' : 'colour');
       if (from && from.kind !== to.kind) return { ok: false, errors: [`A ${kindLabel(from.kind)} can only be replaced by another ${kindLabel(from.kind)}.`] };
       const pages = [...self.pages.values(), ...[...self.components.values()].map((definition) => definition.page)];
