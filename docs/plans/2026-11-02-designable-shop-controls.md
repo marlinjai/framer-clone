@@ -3,7 +3,7 @@ type: plan
 status: in-progress
 date: 2026-11-02
 title: "Designable shop controls: every visible part of the checkout, cart, add to cart and variant selector is a real node"
-summary: "The shop controls drew their buttons, fields and messages in code with hard-coded styles, so a designer could not style, retype or translate them, and the canvas showed the checkout greyed with an unavailable message. Decided: each control's visible parts become ordinary child nodes with a role marker (data-shop-part) that the control's island reads, built from one spec. Styles, breakpoints, states, theme tokens, text editing, Layers and the AI vocabulary then work as for any node, while behaviour, data and security stay in the island. The canvas previews every state of the control with sample data. Three slices: the checkout first (built), then add to cart and the cart, then the variant selector."
+summary: "The shop controls drew their buttons, fields and messages in code with hard-coded styles, so a designer could not style, retype or translate them, and the canvas showed the checkout greyed with an unavailable message. Decided: each control's visible parts become ordinary child nodes with a role marker (data-shop-part) that the control's island reads, built from one spec. Styles, breakpoints, states, theme tokens, text editing, Layers and the AI vocabulary then work as for any node, while behaviour, data and security stay in the island. The canvas previews every state of the control with sample data. Three slices, all merged and deployed (#323, #324, #325); the locked final pay step of section 5 waits for live payments."
 tags: [framer-clone, commerce, checkout, editor, design, primitives]
 projects: [framer-clone]
 ---
@@ -200,9 +200,9 @@ assistive technology what an element is), AI (the page generator).
 
 ## Slices
 
-1. **Plan, shared parts, the checkout** (built, held for review because it touches the checkout): the spec,
+1. **Plan, shared parts, the checkout** (merged as #323): the spec,
    builder, normaliser, runtime, canvas state preview, delete guard, Layers icons, generator schema, tests.
-2. **Add to cart and the cart** (built, held until slice 1 lands): the add to cart's button with its label
+2. **Add to cart and the cart** (merged as #324): the add to cart's button with its label
    and a sold out label, and the availability error; the cart's empty message, a line template (name, price,
    quantity with its label, remove button, the low stock warning, and the loading, no longer sold and failed
    messages) drawn once per cart line with each copy reading its own line, the estimated subtotal (it must
@@ -239,7 +239,7 @@ assistive technology what an element is), AI (the page generator).
    there). Canvas states: ready, no option chosen, checking (loading), sold out and a failed
    check for the add to cart; items, empty, loading, low stock, an item no longer sold and an item that failed
    for the cart.
-3. **Variant selector** (built, held for review): an option template drawn once per product option as a
+3. **Variant selector** (merged as #325, 2026-11-04): an option template drawn once per product option as a
    radio group (its name, which must keep `{option}`) holding a choice drawn once per value as a radio
    (a native button with `role="radio"`, its text must keep `{value}`), with Hover, Selected
    (`aria-checked`) and Disabled (a value no variant has) as stored rules; one tab stop per group, the arrows, Home and End move and choose,
