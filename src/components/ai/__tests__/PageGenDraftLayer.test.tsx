@@ -14,7 +14,8 @@ import type { ComponentInstance } from '@/models/ComponentModel';
 import type { PageModelType } from '@/models/PageModel';
 import { captureTarget } from '@/lib/ai/pageGen/editorBridge';
 import { draftTargetFor, buildDraftTree } from '@/lib/ai/pageGen/draft';
-import type { PageGenSection } from '@/lib/ai/pageGen/protocol';
+import type { PageGenOutline, PageGenSection } from '@/lib/ai/pageGen/protocol';
+import { SKELETON_ATTR } from '@/components/live/SkeletonLayer';
 import { validateGeneration } from '@/lib/ai/pageGen/validate';
 import { deriveBreakpointKeys } from '@/lib/ai/pageGen/schema';
 import { createScope, pushPageFrame } from '@/lib/bindings/resolver/scope';
@@ -28,6 +29,7 @@ import {
   DRAFT_BAND_ATTR,
   DRAFT_FRAME_ATTR,
   DRAFT_SECTION_ATTR,
+  DRAFT_SKELETON_ATTR,
   DraftPageFrames,
   DraftStyles,
   draftBandText,
@@ -48,7 +50,7 @@ function breakpoints() {
 function section(raw: unknown, index: number, target: ReturnType<typeof captureTarget>): PageGenSection {
   const out = validateGeneration({ nodes: [raw] }, { breakpoints: deriveBreakpointKeys(target.breakpoints) });
   if (!out.ok) throw new Error(out.errors.join('; '));
-  return { generationId: 'g', index, attempt: 1, node: out.result.nodes[0] };
+  return { generationId: 'g', index, slot: index, attempt: 1, node: out.result.nodes[0] };
 }
 
 const HERO = {
@@ -231,11 +233,76 @@ describe('the draft on the canvas', () => {
     expect(draftRevealCss(0, { id: 'not plain' })).toBe('');
   });
 
-  it('the band says what happens next', () => {
+  it('the band says what happens next, and gives way to skeletons', () => {
+    expect(draftBandText('writing', 0, 2)).toBeNull();
+    expect(draftBandText('checking', 0, 1)).toBeNull();
     expect(draftBandText('writing', 0)).toBe('Writing section 1...');
     expect(draftBandText('writing', 2)).toBe('Writing section 3...');
     expect(draftBandText('polishing', 2)).toBeNull();
     expect(draftBandText('polishing', 0)).toBe('Polishing the page...');
     expect(draftBandText('checking', 0)).toBe('Checking the page...');
+  });
+});
+
+const OUTLINE: PageGenOutline = {
+  generationId: 'g',
+  attempt: 1,
+  outline: [
+    { title: 'Hero', kind: 'hero' },
+    { title: '', kind: 'faq' },
+    { title: 'Footer', kind: 'footer' },
+  ],
+};
+
+describe('the outline skeletons on the canvas', () => {
+  const order = (dom: HTMLElement) => {
+    const rootEl = dom.querySelector(`[data-inner-component-id="${root().id}"]`)!;
+    return Array.from(rootEl.querySelectorAll(`[${DRAFT_SECTION_ATTR}], [${DRAFT_SKELETON_ATTR}]`)).map((el) =>
+      el.hasAttribute(DRAFT_SKELETON_ATTR) ? `skeleton:${el.getAttribute(DRAFT_SKELETON_ATTR)}` : `section:${el.getAttribute(DRAFT_SECTION_ATTR)}`,
+    );
+  };
+
+  it('draws a skeleton per entry where the result will land, then section i replaces skeleton i', () => {
+    const target = startDraft('replace', root());
+    const { container: dom } = renderPage();
+    act(() => void store.editorUI.pageGenDraft.setOutline('k1', OUTLINE));
+    expect(order(dom)).toEqual(['skeleton:0', 'skeleton:1', 'skeleton:2']);
+    const first = dom.querySelector(`[${DRAFT_SKELETON_ATTR}="0"]`)!;
+    expect(first).toHaveTextContent('Hero');
+    expect(first).toHaveAttribute('aria-hidden', 'true');
+    // An entry without a title is named after its place.
+    expect(dom.querySelector(`[${DRAFT_SKELETON_ATTR}="1"]`)).toHaveTextContent('Section 2');
+    // Skeletons stand for what is coming: no band.
+    expect(dom.querySelector(`[${DRAFT_BAND_ATTR}]`)).toBeNull();
+    // The draft's own marker, never an agent plan's (the presence frame finds those).
+    expect(dom.querySelector(`[${SKELETON_ATTR}]`)).toBeNull();
+
+    act(() => void store.editorUI.pageGenDraft.add('k1', section(HERO, 0, target)));
+    expect(order(dom)).toEqual(['section:0', 'skeleton:1', 'skeleton:2']);
+    act(() => void store.editorUI.pageGenDraft.add('k1', section(HERO, 1, target)));
+    expect(order(dom)).toEqual(['section:0', 'section:1', 'skeleton:2']);
+  });
+
+  it('the result, a cancel or a failure drops every skeleton with the draft', () => {
+    startDraft('insert', root());
+    const { container: dom } = renderPage();
+    act(() => void store.editorUI.pageGenDraft.setOutline('k1', OUTLINE));
+    expect(dom.querySelectorAll(`[${DRAFT_SKELETON_ATTR}]`)).toHaveLength(3);
+    act(() => store.editorUI.pageGenDraft.clear('k1'));
+    expect(dom.querySelectorAll(`[${DRAFT_SKELETON_ATTR}]`)).toHaveLength(0);
+    expect(dom.querySelector(`[data-inner-component-id="${container.id}"]`)).toBeInTheDocument();
+  });
+
+  it('new page: the skeletons fill the draft frames before the first section', () => {
+    const target = startDraft('newPage', undefined, 'Our menu');
+    act(() => void store.editorUI.pageGenDraft.setOutline('k1', OUTLINE));
+    const right = Math.max(...target.viewports.map((v) => v.x + v.width));
+    const { container: dom } = render(<DraftPageFrames framesRight={right} />);
+    expect(dom.querySelectorAll(`[${DRAFT_SKELETON_ATTR}="0"]`)).toHaveLength(target.viewports.length);
+  });
+
+  it('the skeletons are never clickable', () => {
+    const { container: dom } = render(<DraftStyles />);
+    expect(dom.querySelector('style')!.textContent).toContain(`[${DRAFT_SKELETON_ATTR}] * { pointer-events: none !important; }`);
   });
 });

@@ -23,6 +23,14 @@
 // sections drawn here as they are and reveals only the ones never drawn. The band for the
 // section still being written has a static tint, no shimmer. The camera follows
 // a new section only while the user has not moved it since the run started.
+//
+// Skeletons: once the run's outline arrives (gen:outline), every section still
+// coming has a skeleton in its place (the live agent canvas's static shapes,
+// SkeletonBlock in src/components/live/SkeletonLayer.tsx, marked as the
+// draft's own so the presence frame never takes one for an agent's), and the
+// section of slot i takes the place of skeleton i. While skeletons show, the
+// band is not drawn: they already say what is coming. Before the first section,
+// the camera brings the first skeleton into view.
 'use client';
 
 import React from 'react';
@@ -39,6 +47,7 @@ import { PageBaseStyles } from '@/lib/site/PageBaseStyles';
 import { revealOffset, useCameraControls, type CameraTransform } from '@/lib/canvas/cameraControls';
 import GroundWrapper from '@/components/GroundWrapper';
 import { revealAnimation, revealPlanOfTrees, type RevealTreeNode } from '@/lib/live/reveal';
+import { SkeletonBlock, isNarrowBreakpoint } from '@/components/live/SkeletonLayer';
 
 /** Marks a drawn draft section (its index); the wrapper has no box of its own. */
 export const DRAFT_SECTION_ATTR = 'data-pagegen-draft-section';
@@ -46,6 +55,8 @@ export const DRAFT_SECTION_ATTR = 'data-pagegen-draft-section';
 export const DRAFT_FRAME_ATTR = 'data-pagegen-draft-frame';
 /** Marks the band of the section still being written. */
 export const DRAFT_BAND_ATTR = 'data-pagegen-draft-band';
+/** Marks a skeleton of the run's outline (its slot). */
+export const DRAFT_SKELETON_ATTR = 'data-pagegen-draft-skeleton';
 
 /** Space between the page's own frames and the draft frames of a new page. */
 const DRAFT_FRAME_GAP = 160;
@@ -53,7 +64,7 @@ const DRAFT_FRAME_GAP = 160;
 // The draft is never clickable. Each section's reveal is its own stylesheet
 // beside it (draftRevealCss, written by DraftStyles).
 const DRAFT_CSS = `
-[${DRAFT_SECTION_ATTR}], [${DRAFT_SECTION_ATTR}] *, [${DRAFT_FRAME_ATTR}], [${DRAFT_FRAME_ATTR}] * { pointer-events: none !important; }
+[${DRAFT_SECTION_ATTR}], [${DRAFT_SECTION_ATTR}] *, [${DRAFT_FRAME_ATTR}], [${DRAFT_FRAME_ATTR}] *, [${DRAFT_SKELETON_ATTR}], [${DRAFT_SKELETON_ATTR}] * { pointer-events: none !important; }
 `;
 
 /** An id that is safe inside an attribute selector of a style element as it is (generated ids are). */
@@ -137,8 +148,12 @@ function DraftBand({ text }: { text: string }) {
   );
 }
 
-/** The band's words, or null when no band shows (the result is on its way and sections are drawn). */
-export function draftBandText(phase: PageGenDraftStore['phase'], drawn: number): string | null {
+/**
+ * The band's words, or null when no band shows: skeletons stand for what is
+ * coming, or the result is on its way and sections are drawn.
+ */
+export function draftBandText(phase: PageGenDraftStore['phase'], drawn: number, skeletons = 0): string | null {
+  if (skeletons > 0) return null;
   if (phase === 'writing') return `Writing section ${drawn + 1}...`;
   if (drawn > 0) return null;
   return phase === 'polishing' ? 'Polishing the page...' : 'Checking the page...';
@@ -170,7 +185,7 @@ export interface DraftSectionsProps {
   scope?: BindingScope;
 }
 
-/** The draft's sections in page order, then the band of the one being written. */
+/** The draft's sections and the skeletons of those still coming, in page order, then the band of the one being written. */
 export const DraftSections = observer(function DraftSections({ breakpointId, allBreakpoints, scope }: DraftSectionsProps) {
   const { editorUI } = useStore();
   const draft = editorUI.pageGenDraft as PageGenDraftStore | undefined;
@@ -183,14 +198,26 @@ export const DraftSections = observer(function DraftSections({ breakpointId, all
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft, drawn]);
   if (!draft?.target) return null;
-  const band = draftBandText(draft.phase, draft.sections.length);
+  const skeletons = draft.skeletons.length;
+  const band = draftBandText(draft.phase, draft.sections.length, skeletons);
+  const narrow = skeletons > 0 && isNarrowBreakpoint(breakpointId, allBreakpoints);
   return (
     <>
-      {draft.sections.map((s) => (
-        <div key={s.index} {...{ [DRAFT_SECTION_ATTR]: String(s.index) }} aria-hidden="true" style={{ display: 'contents' }}>
-          <HeadlessComponentRenderer component={s.tree} breakpointId={breakpointId} allBreakpoints={allBreakpoints} scope={scope} />
-        </div>
-      ))}
+      {draft.items.map((item) =>
+        item.kind === 'section' ? (
+          <div key={`section-${item.section.index}`} {...{ [DRAFT_SECTION_ATTR]: String(item.section.index) }} aria-hidden="true" style={{ display: 'contents' }}>
+            <HeadlessComponentRenderer component={item.section.tree} breakpointId={breakpointId} allBreakpoints={allBreakpoints} scope={scope} />
+          </div>
+        ) : (
+          <SkeletonBlock
+            key={`skeleton-${item.slot}`}
+            title={item.skeleton.title || `Section ${item.slot + 1}`}
+            kind={item.skeleton.kind}
+            narrow={narrow}
+            attributes={{ [DRAFT_SKELETON_ATTR]: String(item.slot) }}
+          />
+        ),
+      )}
       {band && <DraftBand text={band} />}
     </>
   );
@@ -250,9 +277,10 @@ function sameCamera(a: CameraTransform, b: CameraTransform): boolean {
 }
 
 /**
- * Brings each new draft section into view, until the user moves the camera
- * themselves: from then on this run leaves the camera alone. Mounted inside
- * the canvas (it needs the camera's context); renders nothing.
+ * Brings each new draft section into view (before the first one, the first
+ * skeleton of the outline), until the user moves the camera themselves: from
+ * then on this run leaves the camera alone. Mounted inside the canvas (it needs
+ * the camera's context); renders nothing.
  */
 export const DraftCameraFollow = observer(function DraftCameraFollow() {
   const { editorUI } = useStore();
@@ -260,6 +288,10 @@ export const DraftCameraFollow = observer(function DraftCameraFollow() {
   const { read, panBy } = useCameraControls();
   const requestKey = draft?.targetOn(editorUI.currentPage?.id)?.requestKey;
   const newest = draft?.sections.at(-1)?.index;
+  const firstSkeleton = draft?.skeletons[0]?.slot;
+  // What to bring into view: the newest section, or before any the first skeleton.
+  const focus =
+    newest !== undefined ? `[${DRAFT_SECTION_ATTR}="${newest}"]` : firstSkeleton !== undefined ? `[${DRAFT_SKELETON_ATTR}="${firstSkeleton}"]` : undefined;
   // Per run: where this follower last left the camera, and whether the user took over.
   const follow = React.useRef<{ requestKey?: string; last?: CameraTransform; userMoved: boolean }>({ userMoved: false });
 
@@ -272,7 +304,7 @@ export const DraftCameraFollow = observer(function DraftCameraFollow() {
   }, [requestKey, read]);
 
   React.useEffect(() => {
-    if (!requestKey || newest === undefined) return;
+    if (!requestKey || focus === undefined) return;
     const state = follow.current;
     if (state.requestKey !== requestKey || state.userMoved) return;
     const now = read();
@@ -280,9 +312,10 @@ export const DraftCameraFollow = observer(function DraftCameraFollow() {
       state.userMoved = true;
       return;
     }
-    // The newest section in the first frame it is drawn in; its wrapper has no box, its element has.
-    const wrapper = document.querySelector(`[${DRAFT_SECTION_ATTR}="${newest}"]`);
-    const element = wrapper?.firstElementChild as HTMLElement | null | undefined;
+    // The newest section in the first frame it is drawn in (its wrapper has no
+    // box, its element has), or the skeleton itself.
+    const found = document.querySelector(focus);
+    const element = (found?.hasAttribute(DRAFT_SKELETON_ATTR) ? found : found?.firstElementChild) as HTMLElement | null | undefined;
     const ground = document.querySelector<HTMLElement>('[data-ground]');
     if (!element || !ground || typeof element.getBoundingClientRect !== 'function') return;
     const box = element.getBoundingClientRect();
@@ -291,7 +324,7 @@ export const DraftCameraFollow = observer(function DraftCameraFollow() {
     const { dx, dy } = revealOffset(box, visible, 48);
     if (dx !== 0 || dy !== 0) panBy(dx, dy);
     state.last = read();
-  }, [requestKey, newest, read, panBy]);
+  }, [requestKey, focus, read, panBy]);
 
   return null;
 });

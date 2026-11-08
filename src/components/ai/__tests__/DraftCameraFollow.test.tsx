@@ -1,5 +1,5 @@
 // DraftCameraFollow (../PageGenDraftLayer.tsx): the camera brings each new
-// draft section into view, until the user moves the camera themselves; from
+// draft section (before the first, the first skeleton of the outline) into view, until the user moves the camera themselves; from
 // then on the run leaves it alone. jsdom has no layout, so the boxes are stubbed.
 
 import '@testing-library/jest-dom/vitest';
@@ -20,7 +20,7 @@ import type { ComponentInstance } from '@/models/ComponentModel';
 let store: RootStoreType;
 vi.mock('@/hooks/useStore', () => ({ useStore: () => store }));
 
-import { DRAFT_SECTION_ATTR, DraftCameraFollow } from '../PageGenDraftLayer';
+import { DRAFT_SECTION_ATTR, DRAFT_SKELETON_ATTR, DraftCameraFollow } from '../PageGenDraftLayer';
 
 let page: PageModelType;
 let camera: ReturnType<typeof useCameraControls>;
@@ -48,7 +48,7 @@ function section(index: number): PageGenSection {
   const target = captureTarget('insert', page, page.appComponentTree as ComponentInstance);
   const out = validateGeneration({ nodes: [{ type: 'section', label: `S${index}` }] }, { breakpoints: deriveBreakpointKeys(target.breakpoints) });
   if (!out.ok) throw new Error(out.errors.join('; '));
-  return { generationId: 'g', index, attempt: 1, node: out.result.nodes[0] };
+  return { generationId: 'g', index, slot: index, attempt: 1, node: out.result.nodes[0] };
 }
 
 beforeEach(() => {
@@ -112,5 +112,18 @@ describe('DraftCameraFollow', () => {
     placeSection(0, 1200);
     act(() => void store.editorUI.pageGenDraft.add('k2', section(0)));
     expect(camera.read().panY).toBe(-300 + 800 - 48 - 1400);
+  });
+
+  it('before the first section, brings the first skeleton of the outline into view', () => {
+    const skeleton = document.createElement('div');
+    skeleton.setAttribute(DRAFT_SKELETON_ATTR, '0');
+    skeleton.getBoundingClientRect = () => rect(1000);
+    document.body.appendChild(skeleton);
+    act(() => void store.editorUI.pageGenDraft.setOutline('k1', { generationId: 'g', attempt: 1, outline: [{ title: 'Hero', kind: 'hero' }] }));
+    expect(camera.read().panY).toBe(800 - 48 - 1200);
+    // The first section then takes over.
+    placeSection(0, 1300);
+    act(() => void store.editorUI.pageGenDraft.add('k1', section(0)));
+    expect(camera.read().panY).toBe(800 - 48 - 1200 + (800 - 48 - 1500));
   });
 });

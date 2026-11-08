@@ -38,6 +38,24 @@ describe('createJobRegistry', () => {
     expect(jobs.get('r1', A)).toEqual({ status: 'done', result: 'page' });
   });
 
+  it('keeps only the latest outline of a running run, and drops it with the outcome or a cancel', () => {
+    const jobs = createJobRegistry<{ n: number }, string, { code: string; message: string }, { index: number }, { entries: number }>();
+    const job = jobs.create({ id: 'r1', ...A });
+    job.outline({ entries: 2 });
+    expect(jobs.get('r1', A)).toEqual({ status: 'running', outline: { entries: 2 } });
+    job.section({ index: 0 });
+    job.outline({ entries: 3 });
+    expect(jobs.get('r1', A)).toEqual({ status: 'running', sections: [{ index: 0 }], outline: { entries: 3 } });
+    job.succeed('page');
+    job.outline({ entries: 4 });
+    expect(jobs.get('r1', A)).toEqual({ status: 'done', result: 'page' });
+
+    const cancelled = jobs.create({ id: 'r2', ...A });
+    cancelled.outline({ entries: 1 });
+    jobs.cancel('r2', A);
+    expect(jobs.get('r2', A)).toEqual({ status: 'cancelled' });
+  });
+
   it('the first outcome wins: a late result after a cancel or a failure is not collectable', () => {
     const jobs = createJobRegistry<never, string, { code: string; message: string }>();
     const job = jobs.create({ id: 'r1', ...A });

@@ -115,7 +115,7 @@ import { parseSseFrames } from '@/lib/ai/parseSse';
 import { GENERATION_LIMITS } from '@/lib/ai/pageGen/schema';
 import { getAnthropicClient } from '@/lib/ai/anthropicClient';
 import { runPageGeneration } from '@/lib/ai/pageGen/runPageGeneration';
-import type { PageGenSection } from '@/lib/ai/pageGen/protocol';
+import type { PageGenOutline, PageGenResultPayload, PageGenSection } from '@/lib/ai/pageGen/protocol';
 
 // --- Helpers ---------------------------------------------------------------
 const authCookie = 'lumitra_session=good';
@@ -1323,6 +1323,153 @@ describe('POST /api/ai/generate-page preview sections', () => {
     const evs = await events(await POST(makeRequest(baseBody())));
     const sections = evs.filter((e) => e.event === 'gen:section').map((e) => e.data as unknown as PageGenSection);
     expect(sections.map((s) => s.node.label)).toEqual(['Hero']);
+  });
+});
+
+describe('POST /api/ai/generate-page outline skeletons', () => {
+  const STORY = { type: 'section', label: 'Story', children: [{ type: 'p', props: { children: 'Baked since 1952.' } }] };
+  const FOOTER = { type: 'footer', label: 'Footer', children: [{ type: 'p', props: { children: 'Main street 1' } }] };
+  // Valid as a page (the script is dropped with a warning) but not on its own: not previewed.
+  const SCRIPT_ONLY = { type: 'script', props: { children: 'alert(1)' } };
+  const OUTLINE = [
+    { title: 'Hero', kind: 'hero' },
+    { title: 'Script', kind: 'generic' },
+    { title: 'Story', kind: 'generic' },
+    { title: 'Footer', kind: 'footer' },
+  ];
+  const NODES = [VALID_PAGE.nodes[0], SCRIPT_ONLY, STORY, FOOTER];
+  const WITH_OUTLINE = { outline: OUTLINE, ...VALID_PAGE, nodes: NODES };
+  const WITHOUT_OUTLINE = { ...VALID_PAGE, nodes: NODES };
+
+  function fragments(input: unknown, size = 17): string[] {
+    const text = JSON.stringify(input);
+    const out: string[] = [];
+    for (let i = 0; i < text.length; i += size) out.push(text.slice(i, i + size));
+    return out;
+  }
+  const outlines = (evs: Awaited<ReturnType<typeof events>>) =>
+    evs.filter((e) => e.event === 'gen:outline').map((e) => e.data as unknown as PageGenOutline);
+  const sectionsOf = (evs: Awaited<ReturnType<typeof events>>) =>
+    evs.filter((e) => e.event === 'gen:section').map((e) => e.data as unknown as PageGenSection);
+
+  it('asks for the outline first: the first property of the tool, and required', async () => {
+    anthropicState.turns = [toolTurn(WITH_OUTLINE, { inputJson: fragments(WITH_OUTLINE) })];
+    await events(await POST(makeRequest(baseBody())));
+    const tool = (anthropicState.calls[0].params.tools as Array<{ input_schema: { properties: object; required: string[] } }>)[0];
+    expect(Object.keys(tool.input_schema.properties)[0]).toBe('outline');
+    expect(tool.input_schema.required).toContain('outline');
+  });
+
+  it('forward: sends the outline before the first section, and each section carries its slot', async () => {
+    anthropicState.turns = [toolTurn(WITH_OUTLINE, { inputJson: fragments(WITH_OUTLINE) })];
+    const evs = await events(await POST(makeRequest(baseBody())));
+    const names = evs.map((e) => e.event);
+    const sent = outlines(evs);
+    expect(sent[0].outline).toEqual(OUTLINE);
+    expect(sent.every((o) => o.attempt === 1)).toBe(true);
+    expect(names.indexOf('gen:outline')).toBeLessThan(names.indexOf('gen:section'));
+    // The script's slot (1) has no section: its skeleton stays until the result.
+    expect(sectionsOf(evs).map((x) => [x.index, x.slot, x.node.label])).toEqual([
+      [0, 0, 'Hero'],
+      [1, 2, 'Story'],
+      [2, 3, 'Footer'],
+    ]);
+    // The outline the model declared is what the editor keeps: elements opening later change nothing.
+    expect(sent).toHaveLength(1);
+  });
+
+  it('the outline never reaches the result', async () => {
+    anthropicState.turns = [toolTurn(WITH_OUTLINE, { inputJson: fragments(WITH_OUTLINE) })];
+    const evs = await events(await POST(makeRequest(baseBody())));
+    const result = evs.find((e) => e.event === 'gen:result')!.data as unknown as PageGenResultPayload;
+    expect('outline' in result).toBe(false);
+    expect(JSON.stringify(result)).not.toContain('"outline"');
+    expect(result.nodes.map((n) => n.label)).toEqual(['Hero', 'Story', 'Footer']);
+  });
+
+  it('a hostile outline costs nothing: not an array, oversized entries, junk kinds', async () => {
+    for (const outline of ['not a list', { a: 1 }, Array.from({ length: 300 }, () => ({ title: 'x'.repeat(500), kind: '<script>' }))]) {
+      const input = { outline, ...VALID_PAGE, nodes: NODES };
+      // The scripted client picks its turn by call count: one more turn per run.
+      anthropicState.turns[anthropicState.calls.length] = toolTurn(input, { inputJson: fragments(input, 211) });
+      const evs = await events(await POST(makeRequest(baseBody())));
+      const result = evs.find((e) => e.event === 'gen:result')?.data as unknown as PageGenResultPayload | undefined;
+      expect(result?.nodes.map((n) => n.label)).toEqual(['Hero', 'Story', 'Footer']);
+      for (const o of outlines(evs)) {
+        expect(o.outline.length).toBeLessThanOrEqual(20);
+        expect(o.outline.every((e) => [...e.title].length <= 60 && e.kind !== ('<script>' as never))).toBe(true);
+      }
+    }
+  });
+
+  it('fallback without an outline: each section gets its skeleton as it opens, before it is complete', async () => {
+    anthropicState.turns = [toolTurn(WITHOUT_OUTLINE, { inputJson: fragments(WITHOUT_OUTLINE) })];
+    const evs = await events(await POST(makeRequest(baseBody())));
+    const last = outlines(evs).at(-1)!;
+    expect(last.outline.map((e) => e.kind)).toEqual(['hero', 'generic', 'generic', 'footer']);
+    expect(last.outline.map((e) => e.title)).toEqual(['Hero', '', 'Story', 'Footer']);
+    // Every section's slot had its skeleton before the section arrived.
+    for (const sec of sectionsOf(evs)) {
+      const at = evs.findIndex((e) => e.event === 'gen:section' && (e.data as unknown as PageGenSection).slot === sec.slot);
+      const covered = evs.findIndex((e) => e.event === 'gen:outline' && (e.data as unknown as PageGenOutline).outline.length > sec.slot);
+      expect(covered).toBeGreaterThanOrEqual(0);
+      expect(covered).toBeLessThan(at);
+    }
+  });
+
+  it('sends no outline on the repair attempt', async () => {
+    anthropicState.turns = [
+      toolTurn(WITH_OUTLINE, { stop_reason: 'max_tokens', inputJson: fragments(WITH_OUTLINE) }),
+      toolTurn({ outline: [{ title: 'Other', kind: 'cta' }], ...VALID_PAGE }, { inputJson: fragments({ outline: [{ title: 'Other', kind: 'cta' }], ...VALID_PAGE }) }),
+    ];
+    const evs = await events(await POST(makeRequest(baseBody())));
+    expect(anthropicState.calls).toHaveLength(2);
+    expect(outlines(evs).map((o) => o.outline[0].title)).toEqual(['Hero']);
+    expect(evs.find((e) => e.event === 'gen:result')).toBeTruthy();
+  });
+
+  it('resume: a running run carries its outline for GET, and drops it once done', async () => {
+    let release: () => void = () => {};
+    const wait = new Promise<void>((r) => (release = r));
+    const text = JSON.stringify(WITH_OUTLINE);
+    const cut = text.indexOf('"title":"Bakery') > 0 ? text.indexOf('"title":"Bakery') : text.indexOf(',"nodes"');
+    anthropicState.turns = [
+      { ...(toolTurn(WITH_OUTLINE) as object), inputJsonBeforeWait: [text.slice(0, cut)], inputJson: [text.slice(cut)], wait } as Turn,
+    ];
+    const res = await POST(makeRequest(baseBody()));
+    const id = await startedId(res);
+    await res.body!.cancel();
+    await vi.waitFor(async () => {
+      const running = await getRun(id);
+      expect(running.body.status).toBe('running');
+      expect((running.body.outline as PageGenOutline | undefined)?.outline).toEqual(OUTLINE);
+      expect(running.body.sections).toBeUndefined();
+    });
+    release();
+    await vi.waitFor(async () => expect((await getRun(id)).body.status).toBe('done'));
+    expect((await getRun(id)).body.outline).toBeUndefined();
+  });
+
+  it('re-entry after a refusal: the outline was sent, then the error; nothing else', async () => {
+    anthropicState.turns = [{ ...(toolTurn(WITH_OUTLINE, { stop_reason: 'refusal', inputJson: fragments(WITH_OUTLINE) }) as object) } as Turn];
+    const evs = await events(await POST(makeRequest(baseBody())));
+    expect(outlines(evs)).toHaveLength(1);
+    expect(evs.some((e) => e.event === 'gen:error')).toBe(true);
+    expect(evs.some((e) => e.event === 'gen:result')).toBe(false);
+  });
+});
+
+describe('runPageGeneration with only an outline callback (the shape the MCP generate_page forwards)', () => {
+  it('sends the outline and no sections, and returns the same result', async () => {
+    const input = { brief: 'A bakery', model: 'HAIKU' as const, breakpoints: BREAKPOINTS, target: { kind: 'newPage' as const } };
+    const page = { outline: [{ title: 'Hero', kind: 'hero' }], ...VALID_PAGE };
+    const ctx = { anthropic: getAnthropicClient(), signal: new AbortController().signal, userId: 'u', workspaceId: 'w' };
+    const sent: PageGenOutline[] = [];
+    anthropicState.turns = [toolTurn(page, { inputJson: [JSON.stringify(page)] })];
+    const run = await runPageGeneration(input, { ...ctx, onOutline: (o) => sent.push(o) }, 'req-outline');
+    expect(run.outcome.kind).toBe('result');
+    expect(sent).toEqual([{ generationId: 'req-outline', attempt: 1, outline: [{ title: 'Hero', kind: 'hero' }] }]);
+    expect(run.outcome.kind === 'result' && 'outline' in run.outcome.payload).toBe(false);
   });
 });
 

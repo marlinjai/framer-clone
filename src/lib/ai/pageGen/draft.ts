@@ -14,18 +14,28 @@
 // arrives the dialog applies it exactly as before (one undo step) and drops the
 // draft in the same handler; cancel, failure and expiry only drop the draft.
 //
+// Before the sections, the outline (gen:outline, ./outline.ts): one skeleton
+// per section the model is about to write, in the shapes of the live agent
+// canvas (src/components/live/SkeletonLayer.tsx). The section of slot i takes
+// the place of skeleton i the moment it arrives; a skeleton nobody fills stays
+// until the result lands (the apply drops the whole draft, so outline entries
+// beyond the real sections go with it), and a section past the outline appears
+// as before. The outline is part of the draft, so a new run, a cancel, a
+// failure or a refusal drops it with the sections.
+//
 // What the draft does not show, by design: stock photos (the placeholders stay
 // until the result places them), and anything drawn from the page's expansion
 // (props.rules such as hover states, the page's web font faces): those read the
 // page itself, which the draft is not part of. It is a visual approximation that
 // lasts until the result lands.
 
-import { action, makeObservable, observable } from 'mobx';
+import { action, computed, makeObservable, observable } from 'mobx';
 import ComponentModel, { type ComponentInstance, type ComponentSnapshotIn } from '@/models/ComponentModel';
 import { shopLocaleOf, withShopParts, type ShopLocale, type ShopTreeNode } from '@/lib/commerce/parts';
 import { breakpointKeyMap, toEditorSnapshot, type PageBreakpoint } from './apply';
 import type { CapturedTarget, TargetKind } from './editorBridge';
-import type { PageGenSection } from './protocol';
+import type { PageGenOutline, PageGenSection } from './protocol';
+import { normalizeOutline, type OutlineEntry } from './outline';
 import type { GeneratedNodeSnapshot } from './validate';
 
 /** Where a draft is drawn: the run's captured target, frozen when it started. */
@@ -60,10 +70,20 @@ export function sectionContentKey(node: GeneratedNodeSnapshot): string {
 /** One drawn section: its place in the page and its detached tree. */
 export interface DraftSection {
   index: number;
+  /** Its position in the model's "nodes": the skeleton it replaces. */
+  slot: number;
   tree: ComponentInstance;
   /** The section as the model wrote it: what the apply matches a final section against. */
   source: GeneratedNodeSnapshot;
 }
+
+/** A skeleton of the outline still waiting for its section. */
+export interface DraftSkeleton extends OutlineEntry {
+  slot: number;
+}
+
+/** One thing the draft draws, in page order: a section, or the skeleton of one still coming. */
+export type DraftItem = { kind: 'section'; slot: number; section: DraftSection } | { kind: 'skeleton'; slot: number; skeleton: DraftSkeleton };
 
 /** What the canvas says about the section still being written. */
 export type DraftPhase = 'writing' | 'checking' | 'polishing';
@@ -114,6 +134,8 @@ export function buildDraftTree(section: PageGenSection, target: PageGenDraftTarg
 export class PageGenDraftStore {
   target: PageGenDraftTarget | undefined = undefined;
   sections: readonly DraftSection[] = [];
+  /** The run's outline, the latest the server sent (empty until one arrives, or when the model wrote none). */
+  outline: readonly OutlineEntry[] = [];
   phase: DraftPhase = 'writing';
   /** Indexes of the sections the canvas actually drew (not merely received). Not observable: read once, at the apply. */
   private shown = new Set<number>();
@@ -122,9 +144,13 @@ export class PageGenDraftStore {
     makeObservable(this, {
       target: observable.ref,
       sections: observable.ref,
+      outline: observable.ref,
       phase: observable,
+      skeletons: computed,
+      items: computed,
       begin: action,
       add: action,
+      setOutline: action,
       setPhase: action,
       clear: action,
     });
@@ -134,6 +160,7 @@ export class PageGenDraftStore {
   begin(target: PageGenDraftTarget): void {
     this.target = target;
     this.sections = [];
+    this.outline = [];
     this.shown = new Set();
     this.phase = 'writing';
   }
@@ -163,8 +190,39 @@ export class PageGenDraftStore {
     if (this.sections.some((s) => s.index === section.index)) return false;
     const tree = buildDraftTree(section, target);
     if (!tree) return false;
-    this.sections = [...this.sections, { index: section.index, tree, source: section.node }].sort((a, b) => a.index - b.index);
+    const slot = Number.isInteger(section.slot) && section.slot >= 0 ? section.slot : section.index;
+    this.sections = [...this.sections, { index: section.index, slot, tree, source: section.node }].sort((a, b) => a.index - b.index);
     return true;
+  }
+
+  /**
+   * Take the outline of the run `requestKey` (the latest replaces the earlier
+   * one; a collected run repeats it on every poll). Entries are sanitised again
+   * here, whatever sent them. Returns whether the outline changed.
+   */
+  setOutline(requestKey: string, payload: PageGenOutline): boolean {
+    if (!this.target || this.target.requestKey !== requestKey) return false;
+    if (!payload || !Array.isArray(payload.outline)) return false;
+    const next = normalizeOutline(payload.outline);
+    if (JSON.stringify(next) === JSON.stringify(this.outline)) return false;
+    this.outline = next;
+    return true;
+  }
+
+  /** The outline's skeletons whose section has not arrived (or was refused by the editor), in page order. */
+  get skeletons(): DraftSkeleton[] {
+    const filled = new Set(this.sections.map((s) => s.slot));
+    return this.outline.map((entry, slot) => ({ ...entry, slot })).filter((s) => !filled.has(s.slot));
+  }
+
+  /** Sections and skeletons together, in page order (by slot, then by index). */
+  get items(): DraftItem[] {
+    const items: DraftItem[] = [
+      ...this.sections.map((section) => ({ kind: 'section' as const, slot: section.slot, section })),
+      ...this.skeletons.map((skeleton) => ({ kind: 'skeleton' as const, slot: skeleton.slot, skeleton })),
+    ];
+    const order = (item: DraftItem) => (item.kind === 'section' ? item.section.index : -1);
+    return items.sort((a, b) => a.slot - b.slot || order(a) - order(b));
   }
 
   setPhase(requestKey: string, phase: DraftPhase): void {
@@ -180,6 +238,7 @@ export class PageGenDraftStore {
     if (requestKey !== undefined && this.target?.requestKey !== requestKey) return;
     this.target = undefined;
     this.sections = [];
+    this.outline = [];
     this.shown = new Set();
     this.phase = 'writing';
   }

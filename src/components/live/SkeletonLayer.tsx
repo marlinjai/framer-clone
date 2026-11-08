@@ -22,6 +22,10 @@
 // sanitised and capped (sanitizePlanTitle) and rendered as a React text node,
 // never into an attribute, a selector or a style.
 //
+// The Generate draft draws its outline's skeletons with the same block
+// (SkeletonBlock), under its own marker, so the presence frame never takes one
+// of them for an agent's.
+//
 // Static shapes per kind (hero, features, gallery, ...), sized to the
 // breakpoint, in a neutral tint that reads on a light and a dark frame. No
 // shimmer and no pulse: the motion rules forbid perpetual animation, and the
@@ -221,11 +225,16 @@ export function SkeletonShape({ kind, narrow }: { kind: PlanSectionKind; narrow:
   }
 }
 
-/** One skeleton: the section's title (plain text) and its shape. */
-export function SkeletonSection({ agentId, section, narrow, leaving }: { agentId: string; section: LivePlanSection; narrow: boolean; leaving: boolean }) {
+/**
+ * The block every skeleton is drawn as: the section's title (plain text) above
+ * its static shape. `attributes` mark what it belongs to (an agent's plan, or
+ * the Generate draft, src/components/ai/PageGenDraftLayer.tsx), so each layer
+ * finds only its own; the block itself carries no marker.
+ */
+export function SkeletonBlock({ title, kind, narrow, attributes }: { title: string; kind: PlanSectionKind; narrow: boolean; attributes: Record<string, string> }) {
   return (
     <div
-      {...{ [SKELETON_ATTR]: skeletonKey(agentId, section.ref), ...(leaving ? { [SKELETON_LEAVING_ATTR]: '' } : {}) }}
+      {...attributes}
       aria-hidden="true"
       style={{
         boxSizing: 'border-box',
@@ -240,10 +249,22 @@ export function SkeletonSection({ agentId, section, narrow, leaving }: { agentId
       }}
     >
       <div style={{ font: '500 12px/1.4 system-ui, sans-serif', letterSpacing: '0.02em', color: 'rgba(110, 110, 110, 0.95)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-        {section.title}
+        {title}
       </div>
-      <SkeletonShape kind={section.kind} narrow={narrow} />
+      <SkeletonShape kind={kind} narrow={narrow} />
     </div>
+  );
+}
+
+/** One skeleton of an agent's plan. */
+export function SkeletonSection({ agentId, section, narrow, leaving }: { agentId: string; section: LivePlanSection; narrow: boolean; leaving: boolean }) {
+  return (
+    <SkeletonBlock
+      title={section.title}
+      kind={section.kind}
+      narrow={narrow}
+      attributes={{ [SKELETON_ATTR]: skeletonKey(agentId, section.ref), ...(leaving ? { [SKELETON_LEAVING_ATTR]: '' } : {}) }}
+    />
   );
 }
 
