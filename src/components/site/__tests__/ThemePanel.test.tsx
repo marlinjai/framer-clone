@@ -333,6 +333,14 @@ describe('a reference that shows nothing still leads back to a plain colour', ()
     expect(nodeColour()).toBe('#112233');
   });
 
+  it('a colour whose light value does not read detaches to its dark value in the light editor', () => {
+    storeTheme({ tokens: [{ id: 'll000001', name: 'Dark only', kind: 'color', light: 'url(x)', dark: '#445566' }], document: {} });
+    node.updateResponsiveStyle('color', tokenReference('ll000001'));
+    const field = render(<NodeColour />);
+    fireEvent.click(within(field.container).getByRole('button', { name: 'Detach' }));
+    expect(nodeColour()).toBe('#445566');
+  });
+
   it('a colour with no readable value shows Broken, and Detach writes #000000', () => {
     storeTheme({ tokens: [{ id: 'bb000001', name: 'Bad', kind: 'color', light: 'url(x)' }], document: {} });
     node.updateResponsiveStyle('color', tokenReference('bb000001'));

@@ -109,11 +109,15 @@ export const ColorInput = observer(function ColorInput({ label, value, onChange,
   // Counted as unsaved, and committed by Cmd+S, leaving and unmount (useOpenDraft).
   const draftState = useOpenDraft(() => commitText());
 
-  // The plain colour a reference becomes when it is detached: what it shows now, or
-  // DETACH_FALLBACK when it shows nothing (missing, or no value that reads).
+  // The plain colour a reference becomes when it is detached: what it shows now, else
+  // what it shows in the other scheme (a light value that does not read), else
+  // DETACH_FALLBACK when it shows nothing at all (missing, or no value that reads).
   const detachedValue = () => {
-    const resolved = resolveTokenRefs(value, theme, scheme);
-    return resolved !== value ? resolved : DETACH_FALLBACK;
+    for (const s of [scheme, scheme === 'dark' ? 'light' : 'dark'] as const) {
+      const resolved = resolveTokenRefs(value, theme, s);
+      if (resolved !== value) return resolved;
+    }
+    return DETACH_FALLBACK;
   };
 
   const tokenPicker =

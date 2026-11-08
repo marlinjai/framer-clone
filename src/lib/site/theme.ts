@@ -98,8 +98,9 @@ export const EMPTY_THEME: SiteTheme = { tokens: [], document: {} };
 
 /**
  * Caps, so the stored blob never grows without bound and the sheet on every page stays
- * bounded. Enforced at write (validateThemeWrite). A stored blob over a cap still loads
- * whole, and themeCss emits up to the cap and warns.
+ * bounded. Enforced at write: in the editor (validateThemeWrite) and again by the server
+ * on every save (themeBoundsErrors). A stored blob over a cap still loads whole, and
+ * themeCss emits up to the cap and warns.
  */
 export const THEME_LIMITS = {
   liveTokens: 200,
@@ -950,7 +951,11 @@ export function tokenUseKinds(value: unknown, id: string): Set<'color' | 'font'>
   return kinds;
 }
 
-/** A reference's state: a live token, a tombstone, a colour that no longer parses, or nothing at all. */
+/**
+ * A reference's state: a live token, a tombstone, a colour none of whose values reads (so
+ * the sheet holds nothing for it), or nothing at all. A colour with one unreadable value
+ * still shows and stays live or deleted; colorPartialProblem says what it shows.
+ */
 export type ReferenceState = 'live' | 'deleted' | 'broken' | 'missing';
 
 /**
