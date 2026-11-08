@@ -33,6 +33,9 @@ interface ColorInputProps {
   tokens?: boolean;
 }
 
+/** What a detached reference writes when it shows no colour at all. */
+const DETACH_FALLBACK = '#000000';
+
 /**
  * The native color picker only accepts "#rrggbb". Expand "#rgb", pass a valid
  * hex through, and report anything else (rgba(), named colors) as null so the
@@ -47,10 +50,12 @@ export function toPickerHex(value: string): string | null {
 }
 
 /**
- * A drag on the native picker is one undo step: every change while the picker has focus
- * joins one history batch, written when focus leaves it or the field goes away. Only a
- * batch this field started is written: when another gesture already holds one (a drag,
- * a resize), the field joins nothing and closes nothing.
+ * A drag on the native picker is one undo step: the first change opens one history batch,
+ * every later change joins it, and it is written when focus leaves the picker or the field
+ * goes away. Focus alone opens nothing, so a picker merely focused never holds a batch that
+ * would block another edit or swallow it into a colour step. Only a batch this field started
+ * is written: when another gesture already holds one (a drag, a resize), the field joins
+ * nothing and closes nothing.
  */
 function useColourGesture(): { start: () => void; end: () => void } {
   const owned = useRef(false);
@@ -104,6 +109,13 @@ export const ColorInput = observer(function ColorInput({ label, value, onChange,
   // Counted as unsaved, and committed by Cmd+S, leaving and unmount (useOpenDraft).
   const draftState = useOpenDraft(() => commitText());
 
+  // The plain colour a reference becomes when it is detached: what it shows now, or
+  // DETACH_FALLBACK when it shows nothing (missing, or no value that reads).
+  const detachedValue = () => {
+    const resolved = resolveTokenRefs(value, theme, scheme);
+    return resolved !== value ? resolved : DETACH_FALLBACK;
+  };
+
   const tokenPicker =
     colours.length > 0 ? (
       <select
@@ -111,6 +123,8 @@ export const ColorInput = observer(function ColorInput({ label, value, onChange,
         value={tokenId ?? ''}
         onChange={(e) => {
           if (e.target.value) onChange(tokenReference(e.target.value));
+          // Other: back to a plain colour, the one the reference shows now.
+          else if (tokenId) onChange(detachedValue());
         }}
         className={cn(FIELD_CONTROL, 'w-auto max-w-[96px] flex-none cursor-pointer truncate text-xs')}
         title="Use a site colour"
@@ -153,16 +167,20 @@ export const ColorInput = observer(function ColorInput({ label, value, onChange,
               aria-hidden
             />
             <span className={cn('truncate text-xs', state === 'live' ? 'text-foreground' : 'text-destructive')}>{text}</span>
-            {literal && (
-              <button
-                type="button"
-                className="ml-auto flex-none rounded px-1 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground"
-                onClick={() => onChange(literal)}
-                title="Write this colour's current value here, so it no longer follows the site colour"
-              >
-                Detach
-              </button>
-            )}
+            {/* Always offered: a missing or broken colour (a component pasted from another
+                site) must still lead back to a plain colour, also with no live colours. */}
+            <button
+              type="button"
+              className="ml-auto flex-none rounded px-1 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground"
+              onClick={() => onChange(detachedValue())}
+              title={
+                literal
+                  ? "Write this colour's current value here, so it no longer follows the site colour"
+                  : `This colour shows nothing: write ${DETACH_FALLBACK} here instead, so it no longer follows the site colour`
+              }
+            >
+              Detach
+            </button>
           </div>
           {tokenPicker}
         </div>
@@ -189,9 +207,9 @@ export const ColorInput = observer(function ColorInput({ label, value, onChange,
               type="color"
               aria-label={name ? `${name} color picker` : 'Color picker'}
               value={pickerHex}
-              onFocus={gesture.start}
               onBlur={gesture.end}
               onChange={(e) => {
+                gesture.start();
                 setLocalValue(e.target.value);
                 onChange(e.target.value);
               }}

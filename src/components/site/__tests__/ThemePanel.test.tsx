@@ -300,3 +300,117 @@ describe('re-entry', () => {
     expect(theme().tokens).toHaveLength(1);
   });
 });
+
+/** Stores a theme as a saved row would hold it, past the write checks (a value no build accepts now). */
+function storeTheme(raw: unknown) {
+  const saved = getSnapshot(project) as unknown as { siteSettings: Record<string, unknown> };
+  applySnapshot(project, { ...(saved as object), siteSettings: { ...saved.siteSettings, theme: raw } } as never);
+  node = (project.findPageBySlug('')!.appComponentTree as ComponentInstance).children[0] as ComponentInstance;
+}
+
+describe('a reference that shows nothing still leads back to a plain colour', () => {
+  it('a missing colour with no live colours offers Detach, which writes #000000', () => {
+    node.updateResponsiveStyle('color', tokenReference('ghost001'));
+    const field = render(<NodeColour />);
+    expect(within(field.container).queryByLabelText(/site colour/i)).toBeNull();
+    fireEvent.click(within(field.container).getByRole('button', { name: 'Detach' }));
+    expect(nodeColour()).toBe('#000000');
+  });
+
+  it('a missing colour beside live colours goes back through Other too', () => {
+    project.updateTheme({ tokens: [{ id: 'ac000001', name: 'Accent', kind: 'color', light: '#112233' }], document: {} });
+    node.updateResponsiveStyle('color', tokenReference('ghost001'));
+    const field = render(<NodeColour />);
+    fireEvent.change(within(field.container).getByLabelText(/site colour/i), { target: { value: '' } });
+    expect(nodeColour()).toBe('#000000');
+  });
+
+  it('Other on a live colour writes the value it shows', () => {
+    project.updateTheme({ tokens: [{ id: 'ac000001', name: 'Accent', kind: 'color', light: '#112233' }], document: {} });
+    node.updateResponsiveStyle('color', tokenReference('ac000001'));
+    const field = render(<NodeColour />);
+    fireEvent.change(within(field.container).getByLabelText(/site colour/i), { target: { value: '' } });
+    expect(nodeColour()).toBe('#112233');
+  });
+
+  it('a colour with no readable value shows Broken, and Detach writes #000000', () => {
+    storeTheme({ tokens: [{ id: 'bb000001', name: 'Bad', kind: 'color', light: 'url(x)' }], document: {} });
+    node.updateResponsiveStyle('color', tokenReference('bb000001'));
+    const field = render(<NodeColour />);
+    expect(within(field.container).getByText('Broken colour: Bad')).toBeTruthy();
+    fireEvent.click(within(field.container).getByRole('button', { name: 'Detach' }));
+    expect(nodeColour()).toBe('#000000');
+  });
+});
+
+describe('a colour whose dark value cannot be read', () => {
+  it('is not called broken, and the publish check says the light value shows in both', () => {
+    storeTheme({ tokens: [{ id: 'pp000001', name: 'Half', kind: 'color', light: '#112233', dark: 'url(x)' }], document: {} });
+    node.updateResponsiveStyle('color', tokenReference('pp000001'));
+    const field = render(<NodeColour />);
+    expect(within(field.container).getByRole('group', { name: 'Text: Half' })).toBeTruthy();
+    render(<ThemeForm project={project} />);
+    expect(screen.getByText(/dark value cannot be read, so the light value shows in both/)).toBeTruthy();
+    const page = project.findPageBySlug('')!;
+    const check = checkBeforePublish(
+      project.site.business,
+      [{ id: page.id, slug: page.slug, metadata: { title: page.metadata.title }, snapshot: getSnapshot(page) as never }],
+      { definitions: project.definitions, refused: [] },
+      project.site.theme,
+    );
+    expect(check.tokens![0].message).toMatch(/Half: its dark value cannot be read, so the light value shows in both/);
+    expect(check.tokens![0].message).not.toMatch(/shows nothing/);
+  });
+});
+
+describe('a colour picker opens its undo step on the first change, not on focus', () => {
+  it('focus alone holds no batch, so another edit is its own step', () => {
+    project.updateTheme({ tokens: [{ id: 'ac000001', name: 'Accent', kind: 'color', light: '#000000' }], document: {} });
+    render(<ThemeForm project={project} />);
+    const row = document.querySelector('[data-token-id="ac000001"]') as HTMLElement;
+    const picker = within(row).getAllByLabelText(/color picker/)[0];
+    const steps = history().history.length;
+    fireEvent.focus(picker);
+    expect(history().batch).toBeUndefined();
+    node.updateResponsiveStyle('color', '#222222');
+    expect(history().history.length).toBe(steps + 1);
+    fireEvent.change(picker, { target: { value: '#111111' } });
+    expect(history().batch?.name).toBe('Colour');
+    fireEvent.blur(picker);
+    expect(history().batch).toBeUndefined();
+    expect(history().history.length).toBe(steps + 2);
+  });
+});
+
+describe('Replace of a reference whose token is gone', () => {
+  it('refuses a font for a colour use, and takes a colour', () => {
+    project.updateTheme({
+      tokens: [
+        { id: 'ac000001', name: 'Accent', kind: 'color', light: '#112233' },
+        { id: 'fo000001', name: 'Display', kind: 'font', family: 'system' },
+      ],
+      document: {},
+    });
+    node.updateResponsiveStyle('color', tokenReference('ghost001'));
+    const refused = project.replaceToken('ghost001', 'fo000001');
+    expect(refused.ok).toBe(false);
+    expect(nodeColour()).toBe(tokenReference('ghost001'));
+    expect(project.replaceToken('ghost001', 'ac000001').ok).toBe(true);
+    expect(nodeColour()).toBe(tokenReference('ac000001'));
+  });
+
+  it('refuses a colour for a font use', () => {
+    project.updateTheme({ tokens: [{ id: 'ac000001', name: 'Accent', kind: 'color', light: '#112233' }], document: {} });
+    node.updateResponsiveStyle('fontFamily', tokenReference('ghost002'));
+    expect(project.replaceToken('ghost002', 'ac000001').ok).toBe(false);
+    expect((node.props.style as Record<string, unknown>).fontFamily).toBe(tokenReference('ghost002'));
+  });
+});
+
+describe('a token name', () => {
+  it('takes no more characters than the theme allows', () => {
+    project.updateTheme({ tokens: [{ id: 'ac000001', name: 'Accent', kind: 'color', light: '#112233' }], document: {} });
+    render(<ThemeForm project={project} />);
+    expect((screen.getByLabelText('Name of Accent') as HTMLInputElement).maxLength).toBe(THEME_LIMITS.name);
+  });
+});

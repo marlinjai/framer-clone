@@ -23,6 +23,7 @@ import {
   SiteDeleteConfirmationError,
   InvalidTenantScopeError,
   InvalidPageSlugError,
+  InvalidSiteThemeError,
   SubdomainAllocationError,
 } from '../errors';
 
@@ -327,6 +328,31 @@ describe('SiteRepository.saveProject slug rules and redirects', () => {
     movedHome.pages.home.slug = 'start';
     await expect(repo.saveProject(SCOPE, movedHome as never, { expectedVersion: 1 })).rejects.toMatchObject({ reason: 'home_locked' });
     expect(prisma.site.upsert).not.toHaveBeenCalled();
+  });
+
+  it('refuses a theme past the token cap or with an over-long name, and writes nothing', async () => {
+    existingSite({ stored: {}, published: false });
+    const withTheme = (theme: unknown) => {
+      const snap = snapshot({}) as unknown as Record<string, unknown>;
+      return { ...snap, siteSettings: { theme } } as never;
+    };
+    const tooMany = { tokens: Array.from({ length: 201 }, (_, i) => ({ id: `t${String(i).padStart(7, '0')}`, name: `C ${i}`, kind: 'color', light: '#000000' })), document: {} };
+    const err = await repo.saveProject(SCOPE, withTheme(tooMany), { expectedVersion: 1 }).catch((e) => e);
+    expect(err).toBeInstanceOf(InvalidSiteThemeError);
+    expect(err.status).toBe(400);
+    expect(err.code).toBe('invalid_site_theme');
+    const longName = { tokens: [{ id: 'aa000001', name: 'x'.repeat(41), kind: 'color', light: '#000000' }], document: {} };
+    await expect(repo.saveProject(SCOPE, withTheme(longName), { expectedVersion: 1 })).rejects.toBeInstanceOf(InvalidSiteThemeError);
+    expect(prisma.site.upsert).not.toHaveBeenCalled();
+    expect(prisma.site.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('saves a theme within the caps', async () => {
+    existingSite({ stored: {}, published: false });
+    const snap = snapshot({}) as unknown as Record<string, unknown>;
+    const theme = { tokens: [{ id: 'aa000001', name: 'x'.repeat(40), kind: 'color', light: '#000000' }], document: {} };
+    await repo.saveProject(SCOPE, { ...snap, siteSettings: { theme } } as never, { expectedVersion: 1 });
+    expect(prisma.site.upsert).toHaveBeenCalledTimes(1);
   });
 
   it('accepts an unchanged legacy slug that predates the rules', async () => {

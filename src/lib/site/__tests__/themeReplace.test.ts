@@ -2,8 +2,14 @@
 // Replace's walk, a reference's state, and what the panel warns about.
 import { describe, expect, it } from 'vitest';
 import {
+  THEME_LIMITS,
+  colorPartialProblem,
+  colorReadability,
   holdsColorSchemeRule,
+  normalizeTheme,
   referenceState,
+  themeBoundsErrors,
+  tokenUseKinds,
   replaceTokenReferences,
   themeWarnings,
   tokenReference,
@@ -55,6 +61,65 @@ describe('referenceState', () => {
     expect(referenceState(theme(), 'bb000002')).toBe('deleted');
     expect(referenceState(theme(), 'cc000003')).toBe('broken');
     expect(referenceState(theme(), 'zz000009')).toBe('missing');
+  });
+
+  it('follows what the sheet emits: broken only when no value reads, a partial failure stays live', () => {
+    const stored = normalizeTheme({
+      tokens: [
+        { id: 'dd000001', name: 'Dark bad', kind: 'color', light: '#111111', dark: 'url(x)' },
+        { id: 'dd000002', name: 'Light bad', kind: 'color', light: 'url(x)', dark: '#222222' },
+        { id: 'dd000003', name: 'Both bad', kind: 'color', light: 'url(x)', dark: 'rgb(1 2)' },
+        { id: 'dd000004', name: 'Fine', kind: 'color', light: '#111111', dark: '#222222' },
+      ],
+    });
+    const token = (id: string) => stored.tokens.find((t) => t.id === id)!;
+    expect(colorReadability(token('dd000001'))).toBe('dark-unreadable');
+    expect(colorReadability(token('dd000002'))).toBe('light-unreadable');
+    expect(colorReadability(token('dd000003'))).toBe('unreadable');
+    expect(colorReadability(token('dd000004'))).toBe('ok');
+    expect(referenceState(stored, 'dd000001')).toBe('live');
+    expect(referenceState(stored, 'dd000002')).toBe('live');
+    expect(referenceState(stored, 'dd000003')).toBe('broken');
+    expect(colorPartialProblem(token('dd000001'))).toMatch(/light value shows in both/);
+    expect(colorPartialProblem(token('dd000002'))).toMatch(/shows nothing in light mode and its dark value in dark mode/);
+    expect(colorPartialProblem(token('dd000003'))).toBeNull();
+    expect(colorPartialProblem(token('dd000004'))).toBeNull();
+  });
+});
+
+describe('tokenUseKinds', () => {
+  it('reads a use under fontFamily as a font, at any depth, and any other use as a colour', () => {
+    const ref = tokenReference('zz000009');
+    expect([...tokenUseKinds({ style: { fontFamily: { base: ref } } }, 'zz000009')]).toEqual(['font']);
+    expect([...tokenUseKinds({ rules: [{ style: { color: ref } }] }, 'zz000009')]).toEqual(['color']);
+    expect(tokenUseKinds({ style: { color: ref, fontFamily: ref } }, 'zz000009').size).toBe(2);
+    expect(tokenUseKinds({ style: { color: A } }, 'zz000009').size).toBe(0);
+  });
+});
+
+describe('themeBoundsErrors', () => {
+  const colourToken = (i: number, extra: Record<string, unknown> = {}) => ({ id: `t${String(i).padStart(7, '0')}`, name: `C ${i}`, kind: 'color' as const, light: '#000000', ...extra });
+  const many = (count: number, extra: Record<string, unknown> = {}) => normalizeTheme({ tokens: Array.from({ length: count }, (_, i) => colourToken(i, extra)) });
+
+  it('refuses a theme that grows past the live or deleted cap', () => {
+    expect(themeBoundsErrors(many(THEME_LIMITS.liveTokens + 1), many(0))).toEqual([`A site holds at most ${THEME_LIMITS.liveTokens} tokens.`]);
+    expect(themeBoundsErrors(many(THEME_LIMITS.tombstones + 1, { deleted: true }), many(0))[0]).toMatch(/deleted tokens/);
+    expect(themeBoundsErrors(many(THEME_LIMITS.liveTokens), many(0))).toEqual([]);
+  });
+
+  it('lets a stored count over a cap stay or shrink', () => {
+    const over = many(THEME_LIMITS.liveTokens + 5);
+    expect(themeBoundsErrors(over, over)).toEqual([]);
+    expect(themeBoundsErrors(many(THEME_LIMITS.liveTokens + 2), over)).toEqual([]);
+  });
+
+  it('refuses a new or renamed name past the limit, and keeps a stored one', () => {
+    const long = 'x'.repeat(THEME_LIMITS.name + 1);
+    const withLong = normalizeTheme({ tokens: [colourToken(1, { name: long })] });
+    expect(themeBoundsErrors(withLong, many(0))[0]).toMatch(/keep a name to 40 characters/);
+    expect(themeBoundsErrors(withLong, normalizeTheme({ tokens: [colourToken(1)] }))).toHaveLength(1);
+    expect(themeBoundsErrors(withLong, withLong)).toEqual([]);
+    expect(themeBoundsErrors(normalizeTheme({ tokens: [colourToken(1, { name: 'x'.repeat(THEME_LIMITS.name) })] }), many(0))).toEqual([]);
   });
 });
 

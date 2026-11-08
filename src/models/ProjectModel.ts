@@ -46,7 +46,7 @@ import {
   type SiteSettingsInput,
 } from '@/lib/site/siteSettings';
 import { effectiveSiteName } from '@/lib/site/siteSettings';
-import { normalizeTheme, replaceTokenReferences, validateThemeWrite, type SiteTheme } from '@/lib/site/theme';
+import { normalizeTheme, replaceTokenReferences, tokenUseKinds, validateThemeWrite, type SiteTheme } from '@/lib/site/theme';
 import {
   COOKIE_SETTINGS_HASH,
   COOKIE_SETTINGS_LABELS,
@@ -1313,16 +1313,22 @@ export const ProjectModel = types
       const to = theme.tokens.find((t) => t.id === toId);
       if (fromId === toId) return { ok: false, errors: ['Pick another token to replace it with.'] };
       if (!to || to.deleted) return { ok: false, errors: ['Pick a token that exists to replace it with.'] };
-      if (from && from.kind !== to.kind) return { ok: false, errors: [`A ${from.kind === 'font' ? 'font' : 'colour'} can only be replaced by another ${from.kind === 'font' ? 'font' : 'colour'}.`] };
+      const kindLabel = (kind: string) => (kind === 'font' ? 'font' : 'colour');
+      if (from && from.kind !== to.kind) return { ok: false, errors: [`A ${kindLabel(from.kind)} can only be replaced by another ${kindLabel(from.kind)}.`] };
       const pages = [...self.pages.values(), ...[...self.components.values()].map((definition) => definition.page)];
-      const seen = new Set<ComponentInstance>();
-      for (const page of pages) {
-        for (const node of nodesOfPage(page as PageModelType)) {
-          if (seen.has(node)) continue;
-          seen.add(node);
-          node.replaceTokenReference(fromId, toId);
-        }
+      const nodes = new Set<ComponentInstance>();
+      for (const page of pages) for (const node of nodesOfPage(page as PageModelType)) nodes.add(node);
+      if (!from) {
+        // The token is gone, so each use says what it stands for: a font use takes a
+        // font, a colour use a colour. A use of the other kind refuses the whole Replace.
+        const kinds = new Set<'color' | 'font'>();
+        for (const node of nodes) tokenUseKinds(node.props, fromId).forEach((kind) => kinds.add(kind));
+        for (const definition of self.components.values()) tokenUseKinds(definition.inputs, fromId).forEach((kind) => kinds.add(kind));
+        tokenUseKinds(theme.document, fromId).forEach((kind) => kinds.add(kind));
+        const other = [...kinds].find((kind) => kind !== to.kind);
+        if (other) return { ok: false, errors: [`This reference is used as a ${kindLabel(other)}, so it can only be replaced by a ${kindLabel(other)}.`] };
       }
+      for (const node of nodes) node.replaceTokenReference(fromId, toId);
       for (const definition of self.components.values()) {
         const inputs = replaceTokenReferences(definition.inputs, fromId, toId);
         if (inputs !== definition.inputs) definition.setInputs(inputs as never);

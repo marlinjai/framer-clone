@@ -26,7 +26,9 @@ import type { ProjectModelType } from '@/models/ProjectModel';
 import { ColorInput } from '@/components/sidebars/right/primitives/ColorInput';
 import { FONT_CATEGORIES, FONT_LIBRARY } from '@/lib/fonts/registry';
 import {
+  THEME_LIMITS,
   THEME_MODES,
+  colorPartialProblem,
   addColorToken,
   addFontToken,
   cleanUpUnused,
@@ -120,7 +122,7 @@ function NameField({ token, apply, theme }: Pick<RowProps, 'token' | 'apply' | '
     <input
       aria-label={`Name of ${token.name || 'this token'}`}
       value={draft}
-      maxLength={60}
+      maxLength={THEME_LIMITS.name}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
       onKeyDown={(e) => {
@@ -177,6 +179,8 @@ function FamilySelect({ value, onChange, label }: { value: string; onChange: (fa
 
 const TokenRow = observer(({ token, theme, count, apply, replace }: RowProps) => {
   const name = token.name || 'unnamed';
+  const partialProblem = colorPartialProblem(token);
+  const storedText = token.kind === 'color' ? `${token.light || 'empty'}${token.dark !== undefined ? `, dark ${token.dark || 'empty'}` : ''}` : '';
   return (
     <li className="flex flex-col gap-1.5 rounded-md border border-border p-2" data-token-id={token.id} data-testid="theme-token">
       <div className="flex items-center gap-1.5">
@@ -196,7 +200,9 @@ const TokenRow = observer(({ token, theme, count, apply, replace }: RowProps) =>
         <>
           {token.broken && (
             <p className="text-[11px] text-destructive">
-              This colour holds a value that cannot be read ({token.light || 'empty'}{token.dark !== undefined ? `, dark ${token.dark || 'empty'}` : ''}), so it shows nothing. Set a new value.
+              {partialProblem
+                ? `This colour holds a value that cannot be read (${storedText}): ${partialProblem}. Set a new value.`
+                : `This colour holds no value that can be read (${storedText}), so it shows nothing. Set a new value.`}
             </p>
           )}
           <div className="grid grid-cols-2 gap-1.5">

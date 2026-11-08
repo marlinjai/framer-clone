@@ -34,6 +34,7 @@ import {
 } from './snapshot';
 import {
   InvalidPageSlugError,
+  InvalidSiteThemeError,
   InvalidTenantScopeError,
   SiteDeleteConfirmationError,
   SiteGoneError,
@@ -49,6 +50,8 @@ import {
   SiteImageMissingError,
 } from './errors';
 import { namedSiteImages } from '@/lib/site/siteImages';
+import { normalizeSiteSettings } from '@/lib/site/siteSettings';
+import { themeBoundsErrors } from '@/lib/site/theme';
 import { findProjectSlugProblem } from '@/lib/pages/slug';
 import { pickPrimaryHost } from './primaryHost';
 import { nextSiteRedirects, parseSiteRedirects } from '@/lib/pages/redirects';
@@ -566,6 +569,14 @@ export class SiteRepository {
     );
     if (problem) throw new InvalidPageSlugError(problem.pageId, problem.code, problem.message);
 
+    // `theme` and `head` the body lacked (a tab built before they existed) keep
+    // what the row stores: the column is one blob, replaced whole below.
+    // Theme caps (THEME_LIMITS), checked against the stored theme: the editor's own
+    // check never runs for a request built by hand. A count already over a cap may stay.
+    const siteSettings = mergeKeptSiteSettings(persisted.siteSettings, existing?.siteSettings);
+    const themeProblems = themeBoundsErrors(siteSettings.theme, normalizeSiteSettings(existing?.siteSettings).theme);
+    if (themeProblems.length > 0) throw new InvalidSiteThemeError(themeProblems);
+
     // Uploaded images (src/lib/site/siteImages.ts): each one the settings or a
     // page names must be stored for THIS site, or a visitor would get a broken
     // icon or sharing image. Read in this transaction, so an image deleted by a
@@ -624,10 +635,6 @@ export class SiteRepository {
     const componentsColumn = persisted.components
       ? { components: persisted.components as unknown as Prisma.InputJsonValue }
       : {};
-
-    // `theme` and `head` the body lacked (a tab built before they existed) keep
-    // what the row stores: the column is one blob, replaced whole below.
-    const siteSettings = mergeKeptSiteSettings(persisted.siteSettings, existing?.siteSettings);
 
     const updateData = {
       description: persisted.description,

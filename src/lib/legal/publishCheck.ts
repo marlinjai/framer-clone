@@ -22,7 +22,7 @@ import { literalPageTree, type LiteralPageSource } from '@/lib/renderer/server/s
 import { LEGAL_KINDS, findLegalPage, type LegalKind, type LegalPageLike } from './legalPages';
 import { findPlaceholders } from './templates';
 import { treesHoldMapEmbed } from '@/lib/mapEmbed/mapEmbed';
-import { findToken, referenceState, tokenUsage, type SiteTheme } from '@/lib/site/theme';
+import { colorPartialProblem, findToken, referenceState, tokenUsage, type SiteTheme } from '@/lib/site/theme';
 
 interface NodeLike {
   props?: { children?: unknown } | null;
@@ -157,14 +157,21 @@ function countPlaceholders(root: NodeLike | null | undefined): number {
 function tokenProblem(value: unknown, theme: SiteTheme): string | null {
   let missing = 0;
   const broken: string[] = [];
+  const partial: string[] = [];
   for (const id of tokenUsage(value).keys()) {
     const state = referenceState(theme, id);
     if (state === 'missing') missing += 1;
     else if (state === 'broken') broken.push(findToken(theme, id)?.name || 'unnamed');
+    else {
+      const token = findToken(theme, id);
+      const problem = token ? colorPartialProblem(token) : null;
+      if (problem) partial.push(`the colour ${token?.name || 'unnamed'}: ${problem}`);
+    }
   }
   const parts: string[] = [];
   if (missing > 0) parts.push(`${missing === 1 ? 'a site colour or font it uses no longer exists' : `${missing} site colours or fonts it uses no longer exist`}, so ${missing === 1 ? 'it shows' : 'they show'} nothing`);
-  if (broken.length > 0) parts.push(`the colour ${broken.join(', ')} has a value that cannot be read, so it shows nothing`);
+  if (broken.length > 0) parts.push(`the colour ${broken.join(', ')} has no value that can be read, so it shows nothing`);
+  parts.push(...partial);
   return parts.length > 0 ? parts.join('; ') : null;
 }
 
