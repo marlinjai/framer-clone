@@ -29,6 +29,7 @@ import { effectDomForBreakpoint, hoverPresetClass, resolveEffects, storedEffects
 import { isStickyCta } from '@/lib/stickyCta/stickyCta';
 import { childrenWithRepeats } from './repeatChildren';
 import { SurfaceDomContext, withSurfaceDom } from '@/lib/behaviour/surfaceDom';
+import { ShopRepeatCopyContext } from '@/lib/commerce/shopRuntime';
 
 /**
  * True inside HeadlessPageRenderer, which draws the page's sticky call to
@@ -64,6 +65,8 @@ const HeadlessComponentRenderer = observer(({
   const runLinksAllowed = React.useContext(RunLinksContext);
   // What the behaviour pass wrote, so the runtime PreviewFrame starts finds the page it expects.
   const surfaceDom = React.useContext(SurfaceDomContext);
+  // Inside a later copy of a repeated shop part, only the first copy carries the selection identity.
+  const inRepeatCopy = React.useContext(ShopRepeatCopyContext);
 
   // A placement draws what the published page compiles: its expansion as a detached
   // tree, so no third way of drawing a component appears. The live tree around it
@@ -137,7 +140,7 @@ const HeadlessComponentRenderer = observer(({
   const children = childrenWithRepeats(component.children, activeScope, renderNode, false);
 
   return createComponentElement(component, finalProps, children, (resolvedAttributes as any).children, {
-    identity: { breakpointId, componentId: component.id },
+    identity: { breakpointId, componentId: component.id, copy: inRepeatCopy },
     scope: activeScope,
     renderNode,
     // Preview/headless/static-emit surface: data renderers render nothing for

@@ -22,6 +22,22 @@ describe('createJobRegistry', () => {
     expect(jobs.get('nope', A)).toBeUndefined();
   });
 
+  it('keeps the sections of a running run beside its progress, and drops them with the outcome', () => {
+    const jobs = createJobRegistry<{ n: number }, string, { code: string; message: string }, { index: number }>();
+    const job = jobs.create({ id: 'r1', ...A });
+    job.section({ index: 0 });
+    job.progress({ n: 1 });
+    job.section({ index: 1 });
+    expect(jobs.get('r1', A)).toEqual({ status: 'running', progress: { n: 1 }, sections: [{ index: 0 }, { index: 1 }] });
+    // A snapshot is a copy: a later section does not change one already handed out.
+    const before = jobs.get('r1', A);
+    job.section({ index: 2 });
+    expect(before).toMatchObject({ sections: [{ index: 0 }, { index: 1 }] });
+    job.succeed('page');
+    job.section({ index: 3 });
+    expect(jobs.get('r1', A)).toEqual({ status: 'done', result: 'page' });
+  });
+
   it('the first outcome wins: a late result after a cancel or a failure is not collectable', () => {
     const jobs = createJobRegistry<never, string, { code: string; message: string }>();
     const job = jobs.create({ id: 'r1', ...A });

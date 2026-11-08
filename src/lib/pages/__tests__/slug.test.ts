@@ -50,7 +50,7 @@ describe('validateSlugFormat', () => {
     (slug) => expect(codeOf(slug)).toBe('invalid_characters'),
   );
 
-  it.each(['api', 'api/v1', 'projects', 'preview', 'static', 'images', 'home', 'index', 'favicon', 'robots', 'sitemap'])(
+  it.each(['api', 'api/v1', 'projects', 'preview', 'static', 'images', 'home', 'index', 'favicon', 'robots', 'sitemap', 'site-images'])(
     'refuses the reserved path %s',
     (slug) => expect(codeOf(slug)).toBe('reserved'),
   );

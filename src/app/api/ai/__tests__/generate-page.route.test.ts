@@ -14,6 +14,8 @@ type Turn =
       stop_reason: string;
       stop_details?: unknown;
       inputJson?: string[];
+      /** Fragments streamed before `wait` holds the turn (a run seen mid-stream). */
+      inputJsonBeforeWait?: string[];
       wait?: Promise<void>;
     }
   | { throws: unknown; currentUsage?: Record<string, number> };
@@ -54,6 +56,7 @@ vi.mock('@/lib/ai/anthropicClient', async (importActual) => {
           },
           finalMessage: async () => {
             if ('throws' in turn) throw turn.throws;
+            for (const chunk of turn.inputJsonBeforeWait ?? []) handlers.inputJson?.(chunk, {});
             if (turn.wait) {
               // Like the SDK: an aborted signal rejects the pending stream.
               await Promise.race([
@@ -110,6 +113,9 @@ import { __resetPageGenRateLimiterForTests, PAGE_GEN_RATE } from '@/lib/ai/pageG
 import { __resetPageGenJobsForTests } from '@/lib/ai/pageGen/jobs';
 import { parseSseFrames } from '@/lib/ai/parseSse';
 import { GENERATION_LIMITS } from '@/lib/ai/pageGen/schema';
+import { getAnthropicClient } from '@/lib/ai/anthropicClient';
+import { runPageGeneration } from '@/lib/ai/pageGen/runPageGeneration';
+import type { PageGenSection } from '@/lib/ai/pageGen/protocol';
 
 // --- Helpers ---------------------------------------------------------------
 const authCookie = 'lumitra_session=good';
@@ -1202,5 +1208,114 @@ describe('POST /api/ai/generate-page page essentials', () => {
     );
     result = evs.find((e) => e.event === 'gen:result')!.data as { nodes: Array<{ label: string; props: Record<string, unknown> }> };
     expect(result.nodes.map((n) => n.label)).toEqual(['Hero']);
+  });
+});
+
+describe('POST /api/ai/generate-page preview sections', () => {
+  const STORY = {
+    type: 'section',
+    label: 'Story',
+    props: { style: { padding: '48px' } },
+    children: [{ type: 'p', props: { children: 'Baked since 1952, with "real" butter {and} love.' } }],
+  };
+  const FOOTER = { type: 'footer', label: 'Footer', children: [{ type: 'p', props: { children: 'Main street 1' } }] };
+  // Valid as a page (the script is dropped with a warning) but not on its own:
+  // a section with nothing usable left is not previewed.
+  const SCRIPT_ONLY = { type: 'script', props: { children: 'alert(1)' } };
+  const PAGE = { ...VALID_PAGE, nodes: [VALID_PAGE.nodes[0], SCRIPT_ONLY, STORY, FOOTER] };
+
+  /** The tool input as the model streams it, in small fragments. */
+  function fragments(input: unknown, size = 23): string[] {
+    const text = JSON.stringify(input);
+    const out: string[] = [];
+    for (let i = 0; i < text.length; i += size) out.push(text.slice(i, i + size));
+    return out;
+  }
+
+  it('sends each valid section of the first attempt in order, before the result', async () => {
+    anthropicState.turns = [toolTurn(PAGE, { inputJson: fragments(PAGE) })];
+    const evs = await events(await POST(makeRequest(baseBody())));
+    const names = evs.map((e) => e.event);
+    const sections = evs.filter((e) => e.event === 'gen:section').map((e) => e.data as unknown as PageGenSection);
+    const generationId = (evs[0].data as { generationId: string }).generationId;
+    expect(sections.map((s) => s.index)).toEqual([0, 1, 2]);
+    expect(sections.map((s) => s.node.label)).toEqual(['Hero', 'Story', 'Footer']);
+    expect(sections.every((s) => s.attempt === 1 && s.generationId === generationId)).toBe(true);
+    // Validated: fresh ids and parent ids, like a result.
+    expect(sections[0].node.children[0].parentId).toBe(sections[0].node.id);
+    expect(names.lastIndexOf('gen:section')).toBeLessThan(names.indexOf('gen:result'));
+  });
+
+  it('sends nothing on the repair attempt', async () => {
+    anthropicState.turns = [
+      // Cut off: the first attempt's sections were previewed, then it is repaired.
+      toolTurn(PAGE, { stop_reason: 'max_tokens', inputJson: fragments(PAGE) }),
+      toolTurn({ ...VALID_PAGE, nodes: [VALID_PAGE.nodes[0], STORY] }, { inputJson: fragments({ nodes: [VALID_PAGE.nodes[0], STORY] }) }),
+    ];
+    const evs = await events(await POST(makeRequest(baseBody())));
+    const sections = evs.filter((e) => e.event === 'gen:section').map((e) => e.data as unknown as PageGenSection);
+    expect(anthropicState.calls).toHaveLength(2);
+    expect(sections).toHaveLength(3);
+    expect(sections.every((s) => s.attempt === 1)).toBe(true);
+    expect(evs.some((e) => e.event === 'gen:progress' && e.data.phase === 'repairing')).toBe(true);
+    expect(evs.find((e) => e.event === 'gen:result')).toBeTruthy();
+  });
+
+  it('keeps the sections of a running run for GET, and drops them once it is done', async () => {
+    let release: () => void = () => {};
+    const wait = new Promise<void>((r) => (release = r));
+    // Everything up to the end of the Story section streams before the hold.
+    const text = JSON.stringify(PAGE);
+    const cut = text.indexOf(JSON.stringify(STORY)) + JSON.stringify(STORY).length;
+    anthropicState.turns = [
+      { ...(toolTurn(PAGE) as object), inputJsonBeforeWait: [text.slice(0, cut)], inputJson: [text.slice(cut)], wait } as Turn,
+    ];
+    const res = await POST(makeRequest(baseBody()));
+    const id = await startedId(res);
+    await res.body!.cancel();
+    await vi.waitFor(async () => {
+      const running = await getRun(id);
+      expect(running.body.status).toBe('running');
+      expect((running.body.sections as PageGenSection[] | undefined)?.map((s) => s.node.label)).toEqual(['Hero', 'Story']);
+    });
+    release();
+    await vi.waitFor(async () => expect((await getRun(id)).body.status).toBe('done'));
+    expect((await getRun(id)).body.sections).toBeUndefined();
+  });
+
+  it('a section over the node budget stops the preview, the result is unaffected', async () => {
+    const big = {
+      type: 'section',
+      label: 'Big',
+      children: Array.from({ length: GENERATION_LIMITS.maxNodes - 2 }, (_, i) => ({ type: 'p', props: { children: `Item ${i}` } })),
+    };
+    const page = { ...VALID_PAGE, nodes: [VALID_PAGE.nodes[0], big, STORY] };
+    anthropicState.turns = [toolTurn(page, { inputJson: fragments(page, 400) })];
+    const evs = await events(await POST(makeRequest(baseBody())));
+    const sections = evs.filter((e) => e.event === 'gen:section').map((e) => e.data as unknown as PageGenSection);
+    expect(sections.map((s) => s.node.label)).toEqual(['Hero']);
+  });
+});
+
+describe('runPageGeneration without a section callback (the site operations path)', () => {
+  it('scans nothing and returns the same result', async () => {
+    const input = {
+      brief: 'A bakery',
+      model: 'HAIKU' as const,
+      breakpoints: BREAKPOINTS,
+      target: { kind: 'newPage' as const },
+    };
+    const json = JSON.stringify(VALID_PAGE);
+    const ctx = { anthropic: getAnthropicClient(), signal: new AbortController().signal, userId: 'u', workspaceId: 'w' };
+    anthropicState.turns = [toolTurn(VALID_PAGE, { inputJson: [json] })];
+    const plain = await runPageGeneration(input, ctx, 'req-plain');
+    const sent: PageGenSection[] = [];
+    anthropicState.turns.push(toolTurn(VALID_PAGE, { inputJson: [json] }));
+    const previewed = await runPageGeneration(input, { ...ctx, onSection: (s) => sent.push(s) }, 'req-preview');
+    expect(plain.outcome.kind).toBe('result');
+    expect(previewed.outcome.kind).toBe('result');
+    expect(sent).toHaveLength(1);
+    const labels = (o: typeof plain.outcome) => (o.kind === 'result' ? o.payload.nodes.map((n) => n.label) : []);
+    expect(labels(plain.outcome)).toEqual(labels(previewed.outcome));
   });
 });

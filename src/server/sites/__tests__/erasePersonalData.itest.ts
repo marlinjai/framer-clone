@@ -21,7 +21,6 @@ import { randomUUID } from 'node:crypto';
 import { getPrismaClient } from '@/server/db';
 import {
   ErasePreviewStaleError,
-  getSiteRepository,
   NothingToEraseError,
   SiteErasedSinceLoadError,
   SiteNotFoundError,
@@ -29,6 +28,7 @@ import {
 } from '@/server/sites';
 import { ERASE_LIMITS, EraseQueryError, REDACTED_SEGMENT } from '@/server/sites/erase';
 import { resolvePublishedSiteByKey, type PublishedSite } from '@/server/sites/publicResolver';
+import { latestVersionRepository } from './latestVersionRepository';
 
 const TENANT_GROUP = '018f9c10-0000-7000-8000-0000000052e1';
 const VALUE = 'Max Mustermann';
@@ -69,7 +69,7 @@ function project(who: string, over: { slug?: string; erasureEpoch?: number } = {
 }
 
 async function subdomainOf(): Promise<string> {
-  return (await getSiteRepository().ensureSiteDomain(scope, siteId)).subdomain;
+  return (await latestVersionRepository().ensureSiteDomain(scope, siteId)).subdomain;
 }
 
 async function visit(): Promise<PublishedSite | null> {
@@ -99,7 +99,7 @@ function allShown(preview: { matches: Array<{ id: string; blocked: string | null
 }
 
 async function erase(over: { replacement?: string; chosen?: string[]; token?: string } = {}) {
-  const repo = getSiteRepository();
+  const repo = latestVersionRepository();
   const preview = await repo.searchPersonalData(scope, siteId, QUERY);
   return repo.erasePersonalData(scope, siteId, {
     query: QUERY,
@@ -117,7 +117,7 @@ beforeAll(() => {
 beforeEach(async () => {
   siteId = randomUUID();
   scope = { workspaceId: `ws_erase_${randomUUID().slice(0, 8)}`, tenantGroupId: TENANT_GROUP };
-  await getSiteRepository().saveProject(scope, project('Erika Muster'));
+  await latestVersionRepository().saveProject(scope, project('Erika Muster'));
 });
 
 afterAll(async () => {
@@ -128,7 +128,7 @@ afterAll(async () => {
 
 describe('forward: search, erase, proof', () => {
   it('finds the value in every kept version and the working copy, then erases exactly it', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.publishProject(scope, project(VALUE), { publishedBy: 'user-a' });
     await repo.publishProject(scope, project('Erika Muster'), { publishedBy: 'user-b' });
     await repo.publishProject(scope, project(VALUE), { publishedBy: 'user-a' });
@@ -148,6 +148,7 @@ describe('forward: search, erase, proof', () => {
 
     const before = await revisions();
     const working = JSON.stringify(await prisma.site.findUniqueOrThrow({ where: { id: siteId }, select: { siteSettings: true } }));
+    const versionBefore = (await repo.loadProjectWithVersion(scope, siteId)).version;
 
     const result = await repo.erasePersonalData(scope, siteId, {
       query: QUERY,
@@ -197,10 +198,13 @@ describe('forward: search, erase, proof', () => {
     const loaded = getSnapshot(await repo.loadProject(scope, siteId));
     expect(JSON.stringify(loaded)).not.toContain(VALUE);
     expect(loaded.metadata.erasureEpoch).toBe(1);
+    // The erase moved the version lock too (rollbacks do not): an agent holding
+    // the version from before must load again before it writes.
+    expect((await repo.loadProjectWithVersion(scope, siteId)).version).toBe(versionBefore + 1);
   });
 
   it('writes one audit row with the places and never the value', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.publishProject(scope, project(VALUE));
     const result = await erase();
 
@@ -224,7 +228,7 @@ describe('forward: search, erase, proof', () => {
   });
 
   it('keeps the matches left out and the blocked ones, and reports them as remaining', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     // `mustermann` in a page address is blocked; everything else may go.
     await repo.publishProject(scope, project(VALUE, { slug: 'team-mustermann' }));
     const query = { value: 'Mustermann', caseSensitive: false };
@@ -272,7 +276,7 @@ describe('forward: search, erase, proof', () => {
 
 describe('backtrack: something changed since the preview', () => {
   it('a publish in between: refused, nothing changed; a new search then erases', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.publishProject(scope, project(VALUE));
     const stale = await repo.searchPersonalData(scope, siteId, QUERY);
     await repo.publishProject(scope, project(VALUE), {});
@@ -287,7 +291,7 @@ describe('backtrack: something changed since the preview', () => {
   });
 
   it('a save in between that changed the working copy: refused', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.publishProject(scope, project(VALUE));
     const stale = await repo.searchPersonalData(scope, siteId, QUERY);
     await repo.saveProject(scope, project(`${VALUE} and ${VALUE}`), { mustExist: true });
@@ -297,7 +301,7 @@ describe('backtrack: something changed since the preview', () => {
 
 describe('resume: a failed erase changes nothing and is repeated', () => {
   it('a failure at the last write rolls every rewritten revision back', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.publishProject(scope, project(VALUE));
     await repo.publishProject(scope, project(VALUE));
     const preview = await repo.searchPersonalData(scope, siteId, QUERY);
@@ -331,7 +335,7 @@ describe('resume: a failed erase changes nothing and is repeated', () => {
 
 describe('re-entry: a second erase of the same value', () => {
   it('finds nothing to erase and changes nothing', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.publishProject(scope, project(VALUE));
     await erase();
     const before = await everything();
@@ -344,7 +348,7 @@ describe('re-entry: a second erase of the same value', () => {
   });
 
   it('a later erase of another value works on the rewritten history', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.publishProject(scope, project(VALUE));
     await erase();
     const other = { value: 'Erika', caseSensitive: false };
@@ -359,7 +363,7 @@ describe('re-entry: a second erase of the same value', () => {
 
 describe('editor tabs loaded before an erase', () => {
   it('their Save and Publish are refused and write nothing; a reloaded tab saves', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.publishProject(scope, project(VALUE));
     await erase();
     const before = await everything();
@@ -373,12 +377,12 @@ describe('editor tabs loaded before an erase', () => {
     expect(await everything()).toBe(before);
 
     const reloaded = getSnapshot(await repo.loadProject(scope, siteId));
-    await expect(repo.publishProject(scope, reloaded as never)).resolves.toEqual({ revision: 2 });
+    await expect(repo.publishProject(scope, reloaded as never)).resolves.toMatchObject({ revision: 2 });
     expect(JSON.stringify(await visit())).not.toContain(VALUE);
   });
 
   it('a save racing an erase never leaves the value behind an erase that succeeded', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.publishProject(scope, project(VALUE));
     for (let round = 0; round < 3; round++) {
       const preview = await repo.searchPersonalData(scope, siteId, QUERY);
@@ -401,7 +405,7 @@ describe('editor tabs loaded before an erase', () => {
   });
 
   it('a publish racing an erase never freezes the value behind an erase that succeeded', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.publishProject(scope, project(VALUE));
     const preview = await repo.searchPersonalData(scope, siteId, QUERY);
     const [erased, published] = await Promise.allSettled([
@@ -422,14 +426,14 @@ describe('editor tabs loaded before an erase', () => {
 
 describe('bounds and isolation', () => {
   it('refuses a replacement that holds the value, and a value too short', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.publishProject(scope, project(VALUE));
     await expect(erase({ replacement: `former ${VALUE}` })).rejects.toBeInstanceOf(EraseQueryError);
     await expect(repo.searchPersonalData(scope, siteId, { value: 'Ma', caseSensitive: false })).rejects.toBeInstanceOf(EraseQueryError);
   });
 
   it('another workspace reads the site as missing and changes nothing', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.publishProject(scope, project(VALUE));
     const foreign = { workspaceId: 'ws_someone_else', tenantGroupId: TENANT_GROUP };
     const preview = await repo.searchPersonalData(scope, siteId, QUERY);
@@ -443,7 +447,7 @@ describe('bounds and isolation', () => {
 
 describe('the review of #283: only what was shown and ticked, protected places, the audit path', () => {
   it('never erases more than one preview lists, however many matches there are', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     const many = Array.from({ length: 350 }, () => VALUE).join(', ');
     await repo.publishProject(scope, project(many));
     const preview = await repo.searchPersonalData(scope, siteId, QUERY);
@@ -456,7 +460,7 @@ describe('the review of #283: only what was shown and ticked, protected places, 
   });
 
   it('refuses an id the preview did not offer for erasing, and changes nothing', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.publishProject(scope, project(VALUE, { slug: 'team-mustermann' }));
     const query = { value: 'Mustermann', caseSensitive: false };
     const preview = await repo.searchPersonalData(scope, siteId, query);
@@ -471,7 +475,7 @@ describe('the review of #283: only what was shown and ticked, protected places, 
   });
 
   it('keeps a key holding the value out of the audit row', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     const withMap = project(VALUE) as unknown as { pages: { home: { appComponentTree: { props: Record<string, unknown> } } } };
     // Keys the whole-word search would not find (a genitive, a slug form) are masked all the same.
     withMap.pages.home.appComponentTree.props.people = {
@@ -493,7 +497,7 @@ describe('the review of #283: only what was shown and ticked, protected places, 
   });
 
   it('reports a value in a domain or an A/B test, and never rewrites it there', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.publishProject(scope, project('Erika Muster'));
     await prisma.siteDomain.create({
       data: { siteId, workspaceId: scope.workspaceId, tenantGroupId: scope.tenantGroupId, hostname: 'max-mustermann.example' },
@@ -511,7 +515,7 @@ describe('the review of #283: only what was shown and ticked, protected places, 
   });
 
   it('refuses a tab whose counter is ahead of the server', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.publishProject(scope, project(VALUE));
     await erase();
     await expect(repo.saveProject(scope, project(VALUE, { erasureEpoch: 99 }), { mustExist: true })).rejects.toBeInstanceOf(
@@ -521,7 +525,7 @@ describe('the review of #283: only what was shown and ticked, protected places, 
   });
 
   it('leaves no residue around an empty replacement', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.saveProject(scope, project('Erika Muster'), { mustExist: true });
     await prisma.site.update({
       where: { id: siteId },

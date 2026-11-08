@@ -12,12 +12,13 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { PrismaClient } from '@prisma/client';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { getPrismaClient } from '@/server/db';
-import { getSiteRepository, SiteNotFoundError, SiteRevisionNotFoundError, type TenantScope } from '@/server/sites';
+import { SiteChangedError, SiteNotFoundError, SiteRevisionNotFoundError, type TenantScope } from '@/server/sites';
 import { REVISIONS_KEPT } from '@/server/sites/repository';
 import { REVISION_SCHEMA_VERSION } from '@/server/sites/revision';
 import { resolvePublishedSiteByKey, type PublishedSite } from '@/server/sites/publicResolver';
 import { findRedirectTarget } from '@/lib/pages/redirects';
 import { siteInfo } from '@/server/commerce/mail/runtime';
+import { latestVersionRepository } from './latestVersionRepository';
 
 const TENANT_GROUP = '018f9c10-0000-7000-8000-0000000052b1';
 
@@ -71,7 +72,7 @@ function textOf(site: PublishedSite | null, pageId = 'home'): unknown {
 }
 
 async function subdomainOf(): Promise<string> {
-  return (await getSiteRepository().ensureSiteDomain(scope, siteId)).subdomain;
+  return (await latestVersionRepository().ensureSiteDomain(scope, siteId)).subdomain;
 }
 
 async function visit(): Promise<PublishedSite | null> {
@@ -89,7 +90,7 @@ beforeAll(() => {
 beforeEach(async () => {
   siteId = randomUUID();
   scope = { workspaceId: `ws_copy_${randomUUID().slice(0, 8)}`, tenantGroupId: TENANT_GROUP };
-  await getSiteRepository().saveProject(scope, project('first draft'));
+  await latestVersionRepository().saveProject(scope, project('first draft'));
 });
 
 afterAll(async () => {
@@ -97,10 +98,26 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
+/**
+ * The races below are about revisions and row locks, not the version lock: each
+ * racer that loses the version check writes again over what is stored then, as
+ * a person choosing "save mine over it" would. The lock itself is proven in
+ * versionLock.itest.ts.
+ */
+async function overwriting<T>(write: () => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await write();
+    } catch (err) {
+      if (!(err instanceof SiteChangedError) || attempt >= 10) throw err;
+    }
+  }
+}
+
 describe('publish freezes what visitors read', () => {
   it('a save after a publish changes the working copy and nothing a visitor reads', async () => {
-    const repo = getSiteRepository();
-    await expect(repo.publishProject(scope, project('published'))).resolves.toEqual({ revision: 1 });
+    const repo = latestVersionRepository();
+    await expect(repo.publishProject(scope, project('published'))).resolves.toMatchObject({ revision: 1 });
     await repo.saveProject(scope, project('saved, not published'), { mustExist: true });
 
     const site = await visit();
@@ -113,15 +130,15 @@ describe('publish freezes what visitors read', () => {
   });
 
   it('the next publish brings the saved work live', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.publishProject(scope, project('v1'));
     await repo.saveProject(scope, project('v2'), { mustExist: true });
-    await expect(repo.publishProject(scope, project('v2'))).resolves.toEqual({ revision: 2 });
+    await expect(repo.publishProject(scope, project('v2'))).resolves.toMatchObject({ revision: 2 });
     expect(textOf(await visit())).toBe('v2');
   });
 
   it('a page added or deleted in a save is not live until published', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.publishProject(scope, project('v1'));
     const withoutAbout = { ...(project('v1') as object), pages: { home: page('home', '', 'v1') } };
     await repo.saveProject(scope, withoutAbout as never, { mustExist: true });
@@ -129,7 +146,7 @@ describe('publish freezes what visitors read', () => {
   });
 
   it('freezes settings, name and the analytics binding with the pages', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.publishProject(scope, project('v1', {
       siteSettings: { siteName: 'Live name', language: 'de' },
       lumitra: { enabled: true, projectId: 'p-live', apiKeyRef: 'REF_LIVE' },
@@ -149,7 +166,7 @@ describe('publish freezes what visitors read', () => {
   });
 
   it('freezes redirects: a save that drops one leaves it working for visitors', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.publishProject(scope, project('v1'));
     await subdomainOf();
     await repo.publishProject(scope, project('v2', { slug: 'about-us' }));
@@ -163,7 +180,7 @@ describe('publish freezes what visitors read', () => {
   });
 
   it('holds components beside pages, and rolls them back together (decision 12)', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.publishProject(scope, project('v1', { components: { nav: nav('Nav one') } }));
     await repo.publishProject(scope, project('v2', { components: { nav: nav('Nav two') } }));
     expect((await visit())?.components.nav?.name).toBe('Nav two');
@@ -174,7 +191,7 @@ describe('publish freezes what visitors read', () => {
   });
 
   it('a publish from a tab older than the column freezes the definitions the column holds', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.saveProject(scope, project('v1', { components: { nav: nav('Stored nav') } }), { mustExist: true });
     // No `components` key: the column keeps what it holds, and that is what freezes.
     await repo.publishProject(scope, project('v1'));
@@ -189,7 +206,7 @@ describe('publish freezes what visitors read', () => {
   });
 
   it('freezes the theme and head a save from an older tab kept', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     const theme = { tokens: [{ id: 'ab12cd34', name: 'Ink', kind: 'color', light: '#111111' }], document: {} };
     const head = [{ kind: 'meta', name: 'author', content: 'Bakery' }];
     await repo.saveProject(scope, project('v1', { siteSettings: { theme, head } }), { mustExist: true });
@@ -206,12 +223,12 @@ describe('publish freezes what visitors read', () => {
   });
 
   it('a site published with no components key holds none', async () => {
-    await getSiteRepository().publishProject(scope, project('v1'));
+    await latestVersionRepository().publishProject(scope, project('v1'));
     expect((await visit())?.components).toEqual({});
   });
 
   it('serves the same revision on a custom domain, connected before or after the publish', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.publishProject(scope, project('published'));
     const hostname = `www.${randomUUID().slice(0, 8)}.example`;
     await prisma.siteDomain.create({
@@ -237,7 +254,7 @@ describe('publish freezes what visitors read', () => {
   });
 
   it('a failed publish changes nothing', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.publishProject(scope, project('v1'));
     const bad = project('never live', { slug: 'Not A Slug' });
     await expect(repo.publishProject(scope, bad)).rejects.toThrow();
@@ -246,10 +263,10 @@ describe('publish freezes what visitors read', () => {
   });
 
   it('two publishes at once get distinct numbers and the site points at one of them', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     const results = await Promise.all([
-      repo.publishProject(scope, project('left')),
-      repo.publishProject(scope, project('right')),
+      overwriting(() => repo.publishProject(scope, project('left'))),
+      overwriting(() => repo.publishProject(scope, project('right'))),
     ]);
     expect(results.map((r) => r.revision).sort()).toEqual([1, 2]);
     const site = await visit();
@@ -258,13 +275,13 @@ describe('publish freezes what visitors read', () => {
   });
 
   it('writes the schema version into the document', async () => {
-    await getSiteRepository().publishProject(scope, project('v1'));
+    await latestVersionRepository().publishProject(scope, project('v1'));
     const row = await prisma.siteRevision.findFirstOrThrow({ where: { siteId } });
     expect(row.document).toMatchObject({ schemaVersion: REVISION_SCHEMA_VERSION });
   });
 
   it('publishes of unrelated sites at once do not fail each other', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     const sites: string[] = [];
     for (let i = 0; i < 16; i++) {
       siteId = randomUUID();
@@ -281,19 +298,19 @@ describe('publish freezes what visitors read', () => {
   });
 
   it('one save racing two publishes leaves a revision holding one publish, never the save', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     for (let round = 0; round < 5; round++) {
       await Promise.all([
-        repo.publishProject(scope, project('left')),
-        repo.saveProject(scope, project('the save'), { mustExist: true }),
-        repo.publishProject(scope, project('right')),
+        overwriting(() => repo.publishProject(scope, project('left'))),
+        overwriting(() => repo.saveProject(scope, project('the save'), { mustExist: true })),
+        overwriting(() => repo.publishProject(scope, project('right'))),
       ]);
       expect(['left', 'right']).toContain(textOf(await visit()));
     }
   });
 
   it('a body near the limit publishes, on a site from before revisions too', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     const pages: Record<string, unknown> = {};
     for (let i = 0; i < 100; i++) {
       // Hex of random bytes: poorly compressible, 95 KB a page.
@@ -304,20 +321,20 @@ describe('publish freezes what visitors read', () => {
     await prisma.site.update({ where: { id: siteId }, data: { status: 'published' } });
 
     // A baseline and a publish, two full documents in one transaction.
-    await expect(repo.publishProject(scope, big)).resolves.toEqual({ revision: 2 });
+    await expect(repo.publishProject(scope, big)).resolves.toMatchObject({ revision: 2 });
   }, 60_000);
 
   it('a save racing a publish never lands in the revision', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await Promise.all([
-      repo.publishProject(scope, project('published')),
-      repo.saveProject(scope, project('saved at the same moment'), { mustExist: true }),
+      overwriting(() => repo.publishProject(scope, project('published'))),
+      overwriting(() => repo.saveProject(scope, project('saved at the same moment'), { mustExist: true })),
     ]);
     expect(textOf(await visit())).toBe('published');
   });
 
   it('keeps the newest revisions only, and numbers are never reused', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     const total = REVISIONS_KEPT + 2;
     for (let i = 1; i <= total; i++) await repo.publishProject(scope, project(`v${i}`));
 
@@ -332,7 +349,7 @@ describe('publish freezes what visitors read', () => {
 
 describe('rollback', () => {
   it('serves the earlier revision on a cache miss and leaves the working copy alone', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.publishProject(scope, project('good', { siteSettings: { siteName: 'Good' } }));
     await repo.publishProject(scope, project('bad', { siteSettings: { siteName: 'Bad' } }));
     await repo.saveProject(scope, project('work in progress'), { mustExist: true });
@@ -348,7 +365,7 @@ describe('rollback', () => {
   });
 
   it('can go forward again, and a later publish gets the next number', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.publishProject(scope, project('v1'));
     await repo.publishProject(scope, project('v2'));
     await repo.rollbackToRevision(scope, siteId, 1);
@@ -356,12 +373,12 @@ describe('rollback', () => {
     expect(textOf(await visit())).toBe('v2');
 
     await repo.rollbackToRevision(scope, siteId, 1);
-    await expect(repo.publishProject(scope, project('v3'))).resolves.toEqual({ revision: 3 });
+    await expect(repo.publishProject(scope, project('v3'))).resolves.toMatchObject({ revision: 3 });
     expect(textOf(await visit())).toBe('v3');
   });
 
   it('brings an unpublished site back online with that revision', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.publishProject(scope, project('v1'));
     await repo.unpublishProject(scope, siteId);
     expect(await visit()).toBeNull();
@@ -372,7 +389,7 @@ describe('rollback', () => {
   });
 
   it('checks the frozen version, not the draft', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.publishProject(scope, project('v1', { siteSettings: { business: { legalName: 'Bakery GmbH' } } }));
     await repo.saveProject(scope, project('v2'), { mustExist: true });
     await expect(repo.checkRevision(scope, siteId, 1)).resolves.toMatchObject({ missingImpressum: true });
@@ -382,14 +399,14 @@ describe('rollback', () => {
   });
 
   it('refuses a number this site does not have, changing nothing', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.publishProject(scope, project('v1'));
     await expect(repo.rollbackToRevision(scope, siteId, 9)).rejects.toBeInstanceOf(SiteRevisionNotFoundError);
     expect(textOf(await visit())).toBe('v1');
   });
 
   it("refuses a revision of another site, and another workspace's site", async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.publishProject(scope, project('mine'));
     const mine = { scope, siteId };
 
@@ -438,7 +455,7 @@ describe('a site published before revisions existed', () => {
   });
 
   it('serves its components column, and its first save freezes that as the baseline', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await legacySite('legacy content');
     await prisma.site.update({ where: { id: siteId }, data: { components: { nav: nav('Legacy nav') } } });
     expect((await visit())?.components.nav?.name).toBe('Legacy nav');
@@ -451,7 +468,7 @@ describe('a site published before revisions existed', () => {
   });
 
   it('freezes what it serves at the first save: visitors keep it, the save is kept as the working copy', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await legacySite('legacy content');
     await repo.saveProject(scope, project('first edit', { siteSettings: { siteName: 'Edited' } }), { mustExist: true });
 
@@ -471,9 +488,9 @@ describe('a site published before revisions existed', () => {
   });
 
   it('its first publish keeps the old content as a version to go back to', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await legacySite('legacy content');
-    await expect(repo.publishProject(scope, project('new', { }), { publishedBy: 'user-1' })).resolves.toEqual({ revision: 2 });
+    await expect(repo.publishProject(scope, project('new', { }), { publishedBy: 'user-1' })).resolves.toMatchObject({ revision: 2 });
     expect(textOf(await visit())).toBe('new');
     expect((await repo.listRevisions(scope, siteId)).revisions).toMatchObject([
       { number: 2, kind: 'publish', publishedBy: 'user-1' },
@@ -542,7 +559,7 @@ describe('a site published before revisions existed', () => {
 
   it('lists no versions until then', async () => {
     await legacySite('legacy content');
-    await expect(getSiteRepository().listRevisions(scope, siteId)).resolves.toEqual({
+    await expect(latestVersionRepository().listRevisions(scope, siteId)).resolves.toEqual({
       status: 'published',
       live: null,
       revisions: [],
@@ -550,23 +567,23 @@ describe('a site published before revisions existed', () => {
   });
 
   it('a site saved as a draft is never frozen by a save', async () => {
-    await getSiteRepository().saveProject(scope, project('draft'), { mustExist: true });
+    await latestVersionRepository().saveProject(scope, project('draft'), { mustExist: true });
     expect(await prisma.siteRevision.count({ where: { siteId } })).toBe(0);
   });
 });
 
 describe('unpublish and delete', () => {
   it('unpublish takes the site offline; a republish freezes the next version', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.publishProject(scope, project('v1'));
     await repo.unpublishProject(scope, siteId);
     expect(await visit()).toBeNull();
-    await expect(repo.publishProject(scope, project('v2'))).resolves.toEqual({ revision: 2 });
+    await expect(repo.publishProject(scope, project('v2'))).resolves.toMatchObject({ revision: 2 });
     expect(textOf(await visit())).toBe('v2');
   });
 
   it('a live revision cannot be deleted on its own: the site never falls through to its drafts', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.publishProject(scope, project('v1'));
     const { publishedRevisionId } = await storedSite();
     await expect(prisma.siteRevision.delete({ where: { id: publishedRevisionId! } })).rejects.toThrow();
@@ -574,7 +591,7 @@ describe('unpublish and delete', () => {
   });
 
   it('deleting the site removes its revisions', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.publishProject(scope, project('v1'));
     await repo.deleteSite(scope, siteId, { confirmName: 'Bakery' });
     expect(await prisma.siteRevision.count({ where: { siteId } })).toBe(0);

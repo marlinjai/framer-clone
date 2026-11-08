@@ -15,7 +15,10 @@
 //     runs reserve end to end on a real Kysely instance whose driver answers
 //     each compiled query from a script instead of a database,
 //   - the input guards fire before any query (non-positive / fractional
-//     quantities, an empty kit, a zero adjust delta).
+//     quantities, an empty kit, a zero adjust delta),
+//   - a backorder reservation that would take the reserved quantity past its
+//     INTEGER column is a typed ReservationOverflowError with nothing written
+//     (the UPDATE carries the ceiling), never Postgres' 22003.
 //
 // Everything that depends on Postgres semantics (the guarded UPDATE, the races,
 // the effects, the policy branch) is proven against a live tenant schema in
@@ -39,6 +42,7 @@ import type { CommerceDB } from '../../db-types';
 import {
   applyInventoryEffect,
   isRequestIdUniqueViolation,
+  ReservationOverflowError,
   reserve,
   reserveKit,
   reserveTransaction,
@@ -230,5 +234,73 @@ describe('an unrelated duplicate-key error propagates unchanged out of reserve',
     await expect(reserveWithRetry(db, TG, args)).rejects.toBe(pkViolation);
     expect(transactionCount()).toBe(1);
     expect(statements.some((q) => /from "reservation"/.test(q))).toBe(false);
+  });
+});
+
+describe('a backorder reservation past the reserved quantity column', () => {
+  // A backorder variant: policy lookup, location check, idempotency pre-check, then
+  // the guarded UPDATE, which carries the column's ceiling and matches no row when
+  // the reserved quantity would pass it; the level read that follows tells that
+  // apart from a missing level row.
+  const MAX = 2_147_483_647;
+  function backorderAnswer(level: { stocked_quantity: number; reserved_quantity: number } | undefined) {
+    return (sqlText: string): QueryResult<unknown> => {
+      if (/from "product_variant"/.test(sqlText)) {
+        return { rows: [{ manage_inventory: true, allow_backorder: true }] };
+      }
+      if (/from "stock_location"/.test(sqlText)) return { rows: [{ id: 'loc-1' }] };
+      if (/from "stock_movement"/.test(sqlText)) return { rows: [] };
+      if (/^\s*UPDATE/i.test(sqlText)) return { rows: [], numAffectedRows: BigInt(0) };
+      if (/from "inventory_level"/.test(sqlText)) return { rows: level ? [level] : [] };
+      throw new Error(`unscripted statement: ${sqlText}`);
+    };
+  }
+  const args = {
+    inventoryItemId: 'inv-1',
+    variantId: 'var-1',
+    locationId: 'loc-1',
+    needed: 2,
+    requestId: 'req-overflow',
+  };
+
+  it('refuses with a typed ReservationOverflowError and writes nothing', async () => {
+    const { db, statements } = scriptedDb(backorderAnswer({ stocked_quantity: 0, reserved_quantity: MAX - 1 }));
+    const caught = await reserve(db, TG, args).catch((e: unknown) => e);
+    expect(caught).toBeInstanceOf(ReservationOverflowError);
+    expect(caught).toMatchObject({ inventoryItemId: 'inv-1', reserved: MAX - 1, needed: 2 });
+    // The ceiling is in the UPDATE itself, so the database never computes the sum past it.
+    const update = statements.find((q) => /^\s*UPDATE/i.test(q));
+    expect(update).toMatch(/reserved_quantity <= \$\d+/);
+    expect(statements.some((q) => /insert into "stock_movement"/.test(q))).toBe(false);
+    expect(statements.some((q) => /insert into "reservation"/.test(q))).toBe(false);
+  });
+
+  it('a backorder without a level row still fails as the data-integrity error it is', async () => {
+    const { db } = scriptedDb(backorderAnswer(undefined));
+    const caught = await reserve(db, TG, args).catch((e: unknown) => e);
+    expect(caught).not.toBeInstanceOf(ReservationOverflowError);
+    expect((caught as Error).message).toMatch(/no inventory_level row/);
+  });
+
+  it('reserveKit refuses a backorder component past the ceiling before any write', async () => {
+    const answer = (sqlText: string): QueryResult<unknown> => {
+      if (/from "product_variant"/.test(sqlText)) {
+        return { rows: [{ manage_inventory: true, allow_backorder: true }] };
+      }
+      if (/from "stock_location"/.test(sqlText)) return { rows: [{ id: 'loc-1' }] };
+      if (/from "stock_movement"/.test(sqlText)) return { rows: [] };
+      if (/FOR UPDATE/.test(sqlText)) {
+        return { rows: [{ inventory_item_id: 'inv-1', stocked_quantity: 0, reserved_quantity: MAX }] };
+      }
+      throw new Error(`unscripted statement: ${sqlText}`);
+    };
+    const { db, statements } = scriptedDb(answer);
+    const caught = await reserveKit(db, TG, {
+      components: [{ inventoryItemId: 'inv-1', variantId: 'var-1', requiredQuantity: 1 }],
+      locationId: 'loc-1',
+      requestId: 'kit-overflow',
+    }).catch((e: unknown) => e);
+    expect(caught).toBeInstanceOf(ReservationOverflowError);
+    expect(statements.some((q) => /^\s*UPDATE/i.test(q))).toBe(false);
   });
 });

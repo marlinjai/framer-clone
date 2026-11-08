@@ -60,7 +60,7 @@ function DemoPreview() {
         <h1 className="text-base font-medium text-gray-100">Nothing to preview</h1>
         <p className="max-w-md text-sm">
           The demo project lives only in the browser tab it was made in, and is gone after a full
-          reload. To keep your work, use Save in the editor: it saves the demo as a new project.
+          reload. To keep your work, use Keep as project in the editor: it makes the demo a project of its own.
         </p>
         {/* Plain anchors on purpose: a full document load drops this layout's editor stylesheet, which a client-side navigation would carry onto a published page. */}
         {/* eslint-disable @next/next/no-html-link-for-pages */}

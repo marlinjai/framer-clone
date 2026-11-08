@@ -12,7 +12,31 @@ import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { assertEditorHostConfigured, EDITOR_HOST_MISSING_MESSAGE } from '../editorHost';
+import { assertEditorHostConfigured, EDITOR_HOST_MISSING_MESSAGE, isEditorHost } from '../editorHost';
+
+describe('isEditorHost: the localhost carve-out is for development only', () => {
+  it('counts localhost and 127.0.0.1 as the editor host outside production', () => {
+    for (const nodeEnv of ['development', 'test', undefined]) {
+      for (const host of ['localhost:3000', 'LOCALHOST', '127.0.0.1:3000']) {
+        expect(isEditorHost(host, 'app.lumitra.co', nodeEnv), `${nodeEnv} ${host}`).toBe(true);
+      }
+    }
+  });
+
+  it('never counts localhost or 127.0.0.1 as the editor host in production', () => {
+    for (const host of ['localhost', 'localhost:3000', '127.0.0.1', '127.0.0.1:3000']) {
+      expect(isEditorHost(host, 'app.lumitra.co', 'production'), host).toBe(false);
+    }
+  });
+
+  it('keeps the configured editor host and the unset rule in every environment', () => {
+    for (const nodeEnv of ['production', 'development']) {
+      expect(isEditorHost('App.Lumitra.co:443', 'app.lumitra.co', nodeEnv)).toBe(true);
+      expect(isEditorHost('acme.sites.lumitra.co', 'app.lumitra.co', nodeEnv)).toBe(false);
+      expect(isEditorHost('acme.sites.lumitra.co', undefined, nodeEnv)).toBe(true);
+    }
+  });
+});
 
 describe('assertEditorHostConfigured', () => {
   it.each([

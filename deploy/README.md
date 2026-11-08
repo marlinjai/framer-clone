@@ -30,9 +30,23 @@ arm64 runner.
 | `<label>.PUBLIC_SITE_BASE_HOST` (production: `<label>.sites.lumitra.co`) | the published site whose `SiteDomain.subdomain` is `<label>`, if that site is `published`; anything else is a 404 |
 
 With `EDITOR_HOST` unset, every host counts as the editor host (local
-development). Phase 1 of the RUNBOOK has explicit records for `app.lumitra.co` and
+development). `localhost` and `127.0.0.1` count as the editor host only outside
+production: in production they are published hosts, so a server action that Next
+forwards between workers (that hop arrives as `Host: localhost:<port>`) gets a 404;
+keep each server action imported by the pages that call it. Phase 1 of the RUNBOOK has explicit records for `app.lumitra.co` and
 `demo.sites.lumitra.co`; phase 2 adds the `*.sites.lumitra.co` wildcard so every
 publish gets a live address.
+
+**No cache may sit in front of site hosts without a purge.** Every one of these
+records, and the custom-domain target, is DNS only (`proxied = false` in the infra
+repository's `deployments/framer-clone/main.tf`), and custom domains must point at
+the origin's address. Uploaded site images (`/site-images/*`, the favicon and
+sharing images) are served `public, max-age=31536000, immutable`, and deleting an
+unused one is correct only because nothing between the visitor and this app keeps a
+copy. Turning on Cloudflare proxying, or any other edge cache, for `*.sites.lumitra.co`,
+`demo.sites.lumitra.co` or customer domains therefore needs a purge of
+`/site-images/<file>` on every host of the site whenever an image is deleted
+(`DELETE /api/projects/<id>/images/<sha256>`), before or together with that change.
 
 ### Who can use the editor
 
@@ -226,6 +240,7 @@ says where each comes from.
 | `COMMERCE_APP_DATABASE_URL` | yes | Same database as `commerce_app`; every commerce read and write at runtime |
 | `COMMERCE_OWNER_DATABASE_URL` | yes | Same database as `commerce_ddl` (never a superuser, refused at start), a direct connection; the start step and first-project provisioning, so it is in the server process environment. The start fails without it, and project creation answers 500 `commerce_not_configured`. |
 | `COMMERCE_MIGRATE_STATEMENT_TIMEOUT_MS` | no | Bound on each commerce migration statement at container start, in whole milliseconds; unset or `0` means no limit (the default) |
+| `SITES_ERASURE_WEBHOOK_SECRET` | for erasure | The secret auth-brain signs its `tenant.erased` webhook with (HMAC-SHA256 over the raw body), shared with auth-brain's registration of `POST /api/internal/erasure`. Unset means that endpoint answers 503 and deletes nothing, so auth-brain keeps retrying. After setting it in Infisical, restart or redeploy the app before registering the webhook; the running process keeps its old environment until then. The erasure runs on `COMMERCE_OWNER_DATABASE_URL` (plan `docs/plans/2026-11-05-company-erasure-consumer.md`) |
 | `EDITOR_HOST` | yes | Host that serves the editor (`app.lumitra.co`); every other host is treated as a published site. With `NODE_ENV=production` the container refuses to start when it is unset or blank (`boot.sh`, and again in `src/instrumentation.ts`) |
 | `PUBLIC_SITE_BASE_HOST` | yes | Parent domain of published sites (`sites.lumitra.co`); the label in front of it selects the site |
 | `AUTH_BRAIN_URL` | no | auth-brain base URL for session checks and the login redirect; defaults to `https://auth.lumitra.co` |
@@ -390,6 +405,25 @@ during that window and either republish it, or clear `published_revision_id` for
 path (it serves its rows until its next save or publish freezes them). Which sites: `status = 'published'` with
 `updated_at` after the noted time.
 
+## Migration rollbacks
+
+`20261104000000_site_last_write_key` (the editor autosave's attempt keys, plan
+`docs/plans/2026-11-04-editor-autosave.md`) adds two nullable columns, `sites.last_write_key` and `sites.last_write_version`. Older code ignores them, so a
+code rollback needs nothing. To take the columns out as well, after the application runs the previous image:
+
+```sql
+ALTER TABLE "sites" DROP COLUMN "last_write_key", DROP COLUMN "last_write_version";
+```
+
+then tell Prisma the migration is no longer applied, so the next deploy applies it again:
+
+```sh
+pnpm exec prisma migrate resolve --rolled-back 20261104000000_site_last_write_key
+```
+
+The same `migrate resolve --rolled-back <name>` clears a migration Prisma marked as failed (error P3009 at boot), once
+its partial effect has been undone by hand; until then every later deploy refuses to migrate.
+
 ## Erasing personal data: one container only
 
 The owner's erase tool (plan `docs/plans/2026-11-01-immutable-published-copy.md`, "Erasing personal data from the
@@ -403,6 +437,11 @@ serving its cached copy of the site, the erased value included, with no time lim
 running instances. Before scaling out, add one (a shared cache handler for Next, for example on Redis, plus a broadcast
 for the in-memory trees), or restart every replica after each erase. The same limit already applied to publish and
 rollback, where it only delays an update; for an erase it is a privacy failure.
+
+The company erasure (`POST /api/internal/erasure`, plan `docs/plans/2026-11-05-company-erasure-consumer.md`) has the
+same limit: its rows are gone for every container, but only the container that received auth-brain's delivery
+purges its cached copies of the company's sites (at once and again five seconds later). With a second replica, that
+replica keeps serving the erased company's cached pages until it restarts.
 
 Migration `20261102230000_site_erasures` is additive. Erase only once every container runs the new code: an older
 container neither refuses Save from editor tabs loaded before the erase nor knows the new cache key.

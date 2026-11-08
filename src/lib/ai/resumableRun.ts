@@ -15,6 +15,11 @@
 // the run here (the editor unmounted, the run stays collectable); dropping a
 // dead stream internally never stops anything. Every path ends in exactly one
 // onResult or onError.
+//
+// A run may send partial results before its outcome (`events.section`, the page
+// generator's preview sections). They arrive through onSection from the stream,
+// and again from every collection poll (the running snapshot carries all of
+// them so far), so a section can arrive more than once: the caller dedupes.
 
 import { parseSseFrames } from '@/lib/ai/parseSse';
 
@@ -24,10 +29,12 @@ export interface RunErrorPayload {
   retryAfterSec?: number;
 }
 
-export interface ResumableHandlers<P, R, E extends RunErrorPayload, U> {
+export interface ResumableHandlers<P, R, E extends RunErrorPayload, U, S = never> {
   /** The run's id, as soon as the server registered it (persist it to resume after a reload). */
   onStarted?: (id: string) => void;
   onProgress?: (p: P) => void;
+  /** A partial result; may repeat one already delivered (see the header). Never after the outcome. */
+  onSection?: (s: S) => void;
   onResult?: (r: R) => void;
   onError?: (e: E | RunErrorPayload) => void;
   onUsage?: (u: U) => void;
@@ -36,8 +43,8 @@ export interface ResumableHandlers<P, R, E extends RunErrorPayload, U> {
 export interface ResumableRunConfig {
   /** The POST endpoint; the run itself lives at `${url}/${id}`. */
   url: string;
-  /** SSE event names (the `usage` event is shared). */
-  events: { started: string; progress: string; result: string; error: string };
+  /** SSE event names (the `usage` event is shared). `section` only for a run with partial results. */
+  events: { started: string; progress: string; result: string; error: string; section?: string };
   /** The user-facing words for each transport failure. */
   messages: {
     cancelled: string;
@@ -54,8 +61,8 @@ export interface ResumableRunConfig {
   fetch?: typeof fetch;
 }
 
-type RunSnapshot<P, R, E> =
-  | { status: 'running'; progress?: P }
+type RunSnapshot<P, R, E, S> =
+  | { status: 'running'; progress?: P; sections?: S[] }
   | { status: 'done'; result: R }
   | { status: 'failed'; error: E }
   | { status: 'cancelled' };
@@ -124,12 +131,12 @@ async function errorEnvelope(response: Response, fallback: string): Promise<RunE
   return payload;
 }
 
-export function createResumableRun<Req, P, R, E extends RunErrorPayload, U>(config: ResumableRunConfig) {
+export function createResumableRun<Req, P, R, E extends RunErrorPayload, U, S = never>(config: ResumableRunConfig) {
   const pollMs = config.pollIntervalMs ?? DEFAULT_POLL_MS;
   const maxFailures = config.maxPollFailures ?? DEFAULT_MAX_POLL_FAILURES;
   const doFetch: typeof fetch = (...args) => (config.fetch ?? globalThis.fetch)(...args);
   const runUrl = (id: string) => `${config.url}/${encodeURIComponent(id)}`;
-  type Handlers = ResumableHandlers<P, R, E, U>;
+  type Handlers = ResumableHandlers<P, R, E, U, S>;
 
   /** Stop the run on the server; fire and forget (the outcome is reported locally). */
   const cancelOnServer = (id: string) => {
@@ -154,10 +161,10 @@ export function createResumableRun<Req, P, R, E extends RunErrorPayload, U>(conf
       if (response && (response.status === 401 || response.status === 403)) {
         return handlers.onError?.(await errorEnvelope(response, config.messages.gone));
       }
-      let snapshot: RunSnapshot<P, R, E> | undefined;
+      let snapshot: RunSnapshot<P, R, E, S> | undefined;
       if (response?.ok) {
         try {
-          snapshot = (await response.json()) as RunSnapshot<P, R, E>;
+          snapshot = (await response.json()) as RunSnapshot<P, R, E, S>;
         } catch {
           snapshot = undefined;
         }
@@ -177,6 +184,7 @@ export function createResumableRun<Req, P, R, E extends RunErrorPayload, U>(conf
         case 'cancelled':
           return handlers.onError?.({ code: 'cancelled', message: config.messages.cancelledElsewhere });
         default:
+          if (Array.isArray(snapshot.sections)) for (const s of snapshot.sections) handlers.onSection?.(s);
           if (snapshot.progress) handlers.onProgress?.(snapshot.progress);
           polls += 1;
           await sleep(polls > POLLS_BEFORE_BACKOFF ? pollMs * 2 : pollMs, signal);
@@ -267,6 +275,10 @@ export function createResumableRun<Req, P, R, E extends RunErrorPayload, U>(conf
         }
         if (settled) {
           if (event === 'usage') handlers.onUsage?.(payload as U);
+          return;
+        }
+        if (config.events.section && event === config.events.section) {
+          handlers.onSection?.(payload as S);
           return;
         }
         switch (event) {

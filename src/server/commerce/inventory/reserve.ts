@@ -48,6 +48,8 @@ import { randomUUID } from 'node:crypto';
 import { sql, type Insertable, type IsolationLevel, type Kysely } from 'kysely';
 import { tenantSchemaRef } from '@marlinjai/tenant-db';
 
+import { MAX_ORDER_INTEGER } from '@/lib/commerce/dto';
+
 import type { CommerceDB, ReservationTable, StockMovementTable } from '../db-types';
 
 /**
@@ -82,6 +84,34 @@ export class InventoryShortageError extends Error {
     this.name = 'InventoryShortageError';
     this.shortages = shortages;
   }
+}
+
+/**
+ * Thrown when a backorder reservation would take a level's reserved quantity past
+ * what its 32-bit INTEGER column stores (MAX_ORDER_INTEGER). A backorder drops the
+ * availability guard, so nothing else bounds the sum: two large lines of one
+ * variant, or two large orders, would otherwise make Postgres raise 22003
+ * (numeric_value_out_of_range) on the UPDATE. Nothing is written; createOrder turns
+ * it into the order's OrderTooLargeError (a 422 order_too_large at the route).
+ */
+export class ReservationOverflowError extends Error {
+  readonly code = 'RESERVATION_OVERFLOW';
+  constructor(
+    readonly inventoryItemId: string,
+    readonly locationId: string,
+    readonly reserved: number,
+    readonly needed: number,
+  ) {
+    super(
+      `reserve(backorder): reserving ${needed} more of ${inventoryItemId} @ ${locationId} (reserved ${reserved}) exceeds the stored maximum`,
+    );
+    this.name = 'ReservationOverflowError';
+  }
+}
+
+/** True when `needed` more on top of `reserved` would not fit the reserved quantity's INTEGER column. */
+function overflowsReserved(reserved: number, needed: number): boolean {
+  return reserved > MAX_ORDER_INTEGER - needed;
 }
 
 /**
@@ -347,7 +377,9 @@ async function readAvailable(
  * migration 006 dropped the DB CHECK, so the loser of a race re-evaluates against the
  * winner's committed row and matches ZERO rows. For a BACKORDER variant
  * (allowBackorder true) the predicate is DROPPED, so reserved may exceed stocked
- * and available goes negative (this is the feature, not a bug). Raw fragment;
+ * and available goes negative (this is the feature, not a bug); it keeps only the
+ * ceiling of the reserved quantity's INTEGER column, so a sum past it matches ZERO
+ * rows instead of raising 22003 (the caller reports ReservationOverflowError). Raw fragment;
  * the tenant table is named via `tenantSchemaRef(tgId)`; every value is bound.
  * Returns the matched-row count as a BIGINT (compare to BigInt(0)).
  */
@@ -360,6 +392,9 @@ async function guardedReserveUpdate(
   allowBackorder: boolean,
 ): Promise<bigint> {
   const schema = tenantSchemaRef(tgId);
+  // The backorder ceiling is computed here and bound as ONE value: `$1 - $2` of two
+  // untyped parameters is not something Postgres can always type.
+  const backorderCeiling = MAX_ORDER_INTEGER - needed;
   const result = allowBackorder
     ? await sql`
         UPDATE ${schema}.inventory_level
@@ -368,6 +403,7 @@ async function guardedReserveUpdate(
                updated_at = CURRENT_TIMESTAMP
          WHERE inventory_item_id = ${inventoryItemId}
            AND location_id = ${locationId}
+           AND reserved_quantity <= ${backorderCeiling}
       `.execute(trx)
     : await sql`
         UPDATE ${schema}.inventory_level
@@ -537,8 +573,13 @@ export async function reserve(
   );
   if (matched === BigInt(0)) {
     if (policy.allowBackorder) {
-      // Case B never returns a shortage; zero rows means the level row is missing
-      // for a managed variant — a data-integrity problem, surfaced loudly.
+      // Case B never returns a shortage. Zero rows means either the reserved quantity
+      // would pass its column's ceiling (a typed refusal, nothing written) or the level
+      // row is missing for a managed variant: a data-integrity problem, surfaced loudly.
+      const level = await readLevel(trx, inventoryItemId, locationId);
+      if (level) {
+        throw new ReservationOverflowError(inventoryItemId, locationId, level.reservedQuantity, args.needed);
+      }
       throw new Error(
         `reserve(backorder): no inventory_level row for ${inventoryItemId} @ ${locationId}`,
       );
@@ -663,9 +704,15 @@ export async function reserveKit(
   const locked = await lockLevelsAscending(trx, tgId, locationId, itemIds);
   const shortages: Shortage[] = [];
   for (const component of componentsAscending) {
-    if (component.allowBackorder) continue; // Case B never short.
     const needed = component.requiredQuantity * multiplier;
     const row = locked.get(component.inventoryItemId);
+    if (component.allowBackorder) {
+      // Case B is never short, but its reserved quantity must still fit its column.
+      if (row && overflowsReserved(row.reservedQuantity, needed)) {
+        throw new ReservationOverflowError(component.inventoryItemId, locationId, row.reservedQuantity, needed);
+      }
+      continue;
+    }
     const available = row ? row.stockedQuantity - row.reservedQuantity : 0;
     if (available < needed) {
       shortages.push({ inventoryItemId: component.inventoryItemId, locationId, needed, available });
@@ -690,7 +737,8 @@ export async function reserveKit(
         component.allowBackorder,
       );
       if (matched === BigInt(0)) {
-        // Unreachable under the held FOR UPDATE locks; surface loudly.
+        // Unreachable under the held FOR UPDATE locks (Phase 1 refused a shortage and a
+        // backorder past the reserved quantity's ceiling); surface loudly.
         throw new Error(
           `reserveKit: guarded update matched zero rows for ${component.inventoryItemId} despite a held lock`,
         );

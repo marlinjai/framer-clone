@@ -181,7 +181,7 @@ export function isBlockedTag(tag: unknown, foreign: ForeignContent = false): boo
 const NODE_SETTINGS: ReadonlySet<string> = new Set(['query', 'bindings', 'effects', 'rules', 'behaviour', 'instance', 'fieldName']);
 
 /** Settings the renderers read from the node. Off the element, as they should be, so nothing to report. */
-const isSettingsProp = (name: string): boolean =>
+export const isSettingsProp = (name: string): boolean =>
   FORM_CONFIG_PROPS.has(name) || (STICKY_CTA_PROP_KEYS as readonly string[]).includes(name) ||
   (MAP_EMBED_PROP_KEYS as readonly string[]).includes(name) || NODE_SETTINGS.has(name);
 

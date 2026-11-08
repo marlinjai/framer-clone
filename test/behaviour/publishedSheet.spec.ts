@@ -86,8 +86,8 @@ async function publish(port: string, { analytics = false, siteSettings }: { anal
     ...(analytics ? { lumitra: { enabled: true } } : {}),
     ...(siteSettings ? { siteSettings } : {}),
   };
-  await repo.saveProject(SCOPE, project as never);
-  await repo.publishProject(SCOPE, project as never);
+  const saved = await repo.saveProject(SCOPE, project as never);
+  await repo.publishProject(SCOPE, project as never, { expectedVersion: saved.version });
   const { subdomain } = await repo.ensureSiteDomain(SCOPE, siteId);
   return `http://${subdomain}.sites.localhost:${port}`;
 }
@@ -125,8 +125,11 @@ beforeAll(async () => {
     { name: 'default-404', url: `${browserBase}/${randomBytes(4).toString('hex')}`, status: 404, ready: 'body' },
     { name: 'unknown-host-404', url: `http://nobody-${randomBytes(4).toString('hex')}.sites.localhost:${port}/`, status: 404, ready: 'body' },
   );
-  editorUrl = `http://localhost:${port}/`;
-  browser = await chromium.launch();
+  // The server runs in production with EDITOR_HOST=editor.invalid (test/behaviour/setup.ts), where
+  // localhost is a published host, so the editor is reached under its own host name, which the
+  // browser maps to the loopback address.
+  editorUrl = `http://editor.invalid:${port}/`;
+  browser = await chromium.launch({ args: ['--host-resolver-rules=MAP editor.invalid 127.0.0.1'] });
   if (SHOTS) fs.mkdirSync(SHOTS, { recursive: true });
 }, 120_000);
 

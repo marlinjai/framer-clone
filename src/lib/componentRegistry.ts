@@ -61,6 +61,7 @@ import type { BindableSlotMeta } from '@/lib/bindings/types';
 import { FORM_KIND_ATTR, DEFAULT_FORM_NAME, DEFAULT_SUCCESS_MESSAGE, type FieldType } from '@/lib/forms/definition';
 import { DEFAULT_STICKY_CTA, STICKY_CTA_ATTR, STICKY_CTA_MARKER } from '@/lib/stickyCta/stickyCta';
 import { MAP_EMBED_ATTR, MAP_EMBED_MARKER } from '@/lib/mapEmbed/mapEmbed';
+import { ADD_TO_CART_CONTROL_STYLE, CART_CONTROL_STYLE, CHECKOUT_CONTROL_STYLE, VARIANT_CONTROL_STYLE } from '@/lib/commerce/parts';
 
 export type ComponentCategory = 'basic' | 'layout' | 'data' | 'commerce' | 'form' | 'interactive';
 
@@ -759,23 +760,16 @@ export const COMPONENT_REGISTRY: Record<string, ComponentRegistryEntry> = {
     icon: SlidersIcon,
     iconClassName: 'bg-indigo-100 text-indigo-600',
     htmlType: 'div',
+    // Its option template, choice buttons and availability messages arrive as part
+    // nodes in the site language (src/lib/commerce/parts.ts). No data-source slot:
+    // the selector reads its product from the surrounding product frame (pushed by
+    // an enclosing product-detail) and re-pushes the SELECTED variant so descendant
+    // `{{variant.*}}` re-resolve to the choice.
     defaultProps: {
       'data-component-kind': 'variant-selector',
-      style: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '8px',
-        padding: '12px',
-        minHeight: '60px',
-        border: '1px dashed #d1d5db',
-        borderRadius: '8px',
-        backgroundColor: '#f9fafb',
-      },
+      style: { ...VARIANT_CONTROL_STYLE },
     },
-    defaultSize: { width: 280, height: 120 },
-    // No data-source slot: the selector reads its product from the surrounding
-    // product frame (pushed by an enclosing product-detail) and re-pushes the
-    // SELECTED variant so descendant `{{variant.*}}` re-resolve to the choice.
+    defaultSize: { width: 320, height: 140 },
   },
   addToCart: {
     id: 'addToCart',
@@ -785,20 +779,14 @@ export const COMPONENT_REGISTRY: Record<string, ComponentRegistryEntry> = {
     icon: CirclePlusIcon,
     iconClassName: 'bg-indigo-100 text-indigo-600',
     htmlType: 'div',
+    // Its button, labels and error arrive as part nodes in the site language
+    // (src/lib/commerce/parts.ts). The selected variant comes from the
+    // VariantSelector via React context; the label binds like any text, on its part.
     defaultProps: {
       'data-component-kind': 'add-to-cart',
-      label: 'Add to cart',
-      style: {
-        display: 'inline-flex',
-        padding: '4px',
-      },
+      style: { ...ADD_TO_CART_CONTROL_STYLE },
     },
-    defaultSize: { width: 160, height: 48 },
-    bindableSlots: {
-      // The button label is bindable (e.g. bind to `{{product.title}}`); the
-      // selected variant comes from the VariantSelector via React context.
-      label: { label: 'Label', allowedModes: ['read'], scopeHint: 'any' },
-    },
+    defaultSize: { width: 200, height: 48 },
   },
   cartView: {
     id: 'cartView',
@@ -808,25 +796,14 @@ export const COMPONENT_REGISTRY: Record<string, ComponentRegistryEntry> = {
     icon: ShoppingCartIcon,
     iconClassName: 'bg-indigo-100 text-indigo-600',
     htmlType: 'div',
+    // Its empty message, line template, subtotal and notice arrive as part nodes in
+    // the site language (src/lib/commerce/parts.ts); the lines come from the client
+    // cart (React context), so there is no data-source slot.
     defaultProps: {
       'data-component-kind': 'cart-view',
-      style: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '8px',
-        padding: '16px',
-        minHeight: '120px',
-        border: '1px dashed #d1d5db',
-        borderRadius: '8px',
-        backgroundColor: '#f9fafb',
-      },
+      style: { ...CART_CONTROL_STYLE },
     },
     defaultSize: { width: 400, height: 280 },
-    bindableSlots: {
-      // The empty-cart message is bindable text; the lines come from the client
-      // cart (React context), so there is no data-source slot.
-      emptyContent: { label: 'Empty message', allowedModes: ['read'], scopeHint: 'any' },
-    },
   },
   checkoutButton: {
     id: 'checkoutButton',
@@ -836,20 +813,15 @@ export const COMPONENT_REGISTRY: Record<string, ComponentRegistryEntry> = {
     icon: CreditCardIcon,
     iconClassName: 'bg-indigo-100 text-indigo-600',
     htmlType: 'div',
+    // Its button, payment step and messages arrive as child nodes, each a part the
+    // designer styles and retypes (src/lib/commerce/parts.ts, added by
+    // PageModel.insertRegistryComponent in the site language). What they do stays
+    // the island's, so there is no label prop and no bindable slot here.
     defaultProps: {
       'data-component-kind': 'checkout-button',
-      label: 'Checkout',
-      style: {
-        display: 'inline-flex',
-        padding: '4px',
-      },
+      style: { ...CHECKOUT_CONTROL_STYLE },
     },
-    defaultSize: { width: 160, height: 48 },
-    bindableSlots: {
-      // The button label is bindable text; checkout posts the client cart
-      // (React context) to the order-create route, so there is no source slot.
-      label: { label: 'Label', allowedModes: ['read'], scopeHint: 'any' },
-    },
+    defaultSize: { width: 360, height: 48 },
   },
 
   ...FORM_COMPONENTS,

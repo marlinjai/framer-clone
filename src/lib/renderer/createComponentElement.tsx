@@ -50,6 +50,8 @@ import { formKindOf } from '@/lib/forms/definition';
 import { createStickyCtaElement } from '@/lib/renderer/stickyCta/stickyCtaElement';
 import { isMapEmbed } from '@/lib/mapEmbed/mapEmbed';
 import { createMapEmbedElement } from '@/lib/renderer/mapEmbed/mapEmbedElement';
+import { shopPartRoleOf } from '@/lib/commerce/parts';
+import { ShopPartElement } from '@/lib/commerce/shopRuntime';
 
 // The six Track C commerce kinds. Disjoint from the CMS kinds, so the commerce
 // branch in createComponentElement can claim them without touching the CMS path.
@@ -93,7 +95,10 @@ export interface CreateComponentElementOptions {
   // receive these as props and must spread them onto their root element to
   // make the attributes visible in the DOM (an unwritten contract for entries
   // in `window.__componentRegistry`).
-  identity?: { breakpointId: string; componentId: string };
+  // `copy`: the node is drawn inside the second or a later copy of a repeated shop
+  // part (a cart line), so it keeps its style hook but not its selection identity,
+  // which only the first copy carries (ShopRepeatCopyContext).
+  identity?: { breakpointId: string; componentId: string; copy?: boolean };
 
   // Binding scope active for this node. Threaded by both host renderers so
   // BOUND data components (Collection / RecordView) can resolve their source
@@ -211,7 +216,7 @@ export function createComponentElement(
     ? {
         ...safeProps,
         'data-component-id': `${identity.breakpointId}-${identity.componentId}`,
-        'data-inner-component-id': identity.componentId,
+        ...(identity.copy ? {} : { 'data-inner-component-id': identity.componentId }),
       }
     : safeProps;
 
@@ -227,6 +232,24 @@ export function createComponentElement(
     // both run on the editor's origin, and nothing there contacts Google.
     if (isMapEmbed(component.props)) {
       return createMapEmbedElement(propsWithIdentity, options?.mode === 'editor' ? 'editor' : 'preview', undefined, finalProps);
+    }
+
+    // A shop part (src/lib/commerce/parts.ts): drawn as the control around it says,
+    // on the canvas in the previewed state with sample data, in the Preview live.
+    // Before the void-tag check: an input part is drawn by its role.
+    const shopRole = shopPartRoleOf(component.props);
+    if (shopRole) {
+      return (
+        <ShopPartElement
+          role={shopRole}
+          tag={String(component.type)}
+          domProps={propsWithIdentity}
+          storedText={rawTextChildren}
+          content={children.length > 0 ? children : undefined}
+          surface={options?.mode === 'editor' ? 'editor' : 'preview'}
+          linksAllowed={options?.runLinksAllowed !== false}
+        />
+      );
     }
 
     // Form components (data-form-kind): static on the canvas and in the preview,
@@ -279,11 +302,15 @@ export function createComponentElement(
             scope={scope}
             hostType={hostType}
             hostProps={propsWithIdentity}
-            mode={mode}
-          />,
+            surface={mode === 'editor' ? 'canvas' : 'live'}
+          >
+            {children}
+          </CartView>,
         );
       }
       if (dataKind === 'checkout-button') {
+        // Its parts are its child nodes, drawn by this surface's renderer: on the
+        // canvas in the state the editor previews, in the Preview live.
         return guarded(
           'checkout-button',
           <CheckoutButton
@@ -291,7 +318,10 @@ export function createComponentElement(
             scope={scope}
             hostType={hostType}
             hostProps={propsWithIdentity}
-          />,
+            surface={mode === 'editor' ? 'canvas' : 'live'}
+          >
+            {children}
+          </CheckoutButton>,
         );
       }
       if (dataKind === 'add-to-cart') {
@@ -302,8 +332,10 @@ export function createComponentElement(
             scope={scope}
             hostType={hostType}
             hostProps={propsWithIdentity}
-            mode={mode}
-          />,
+            surface={mode === 'editor' ? 'canvas' : 'live'}
+          >
+            {children}
+          </AddToCartButton>,
         );
       }
       if (dataKind === 'variant-selector' && renderNode) {
@@ -315,7 +347,7 @@ export function createComponentElement(
             renderNode={renderNode}
             hostType={hostType}
             hostProps={propsWithIdentity}
-            mode={mode}
+            surface={mode === 'editor' ? 'canvas' : 'live'}
           />,
         );
       }

@@ -6,7 +6,7 @@
 //
 // Under 1024px wide the bar is compact (plan
 // docs/plans/2026-10-24-editor-on-phones.md): back link, the project name
-// (truncating; the page name is hidden), Save, Preview, Publish and a More
+// (truncating; the page name is hidden), the save status, Preview, Publish and a More
 // menu that holds Generate, Polish, Domains, Site settings, Form submissions
 // and History. Undo and redo stay reachable in the bottom bar on every size.
 // The switch is CSS only (`lg:`), so the bar is right from the first paint.
@@ -49,7 +49,7 @@ import SiteSettingsButton from '@/components/site/SiteSettingsDialog';
 import ThemeButton from '@/components/site/ThemePanel';
 import FormSubmissionsButton from '@/components/forms/FormSubmissionsButton';
 import PublishedVersionsButton from '@/components/PublishedVersionsButton';
-import SaveButton from '@/components/SaveButton';
+import SaveStatus from '@/components/SaveStatus';
 import GeneratePageButton from '@/components/ai/GeneratePageDialog';
 import { PolishPageButton } from '@/components/ai/VisualReview';
 import {
@@ -112,10 +112,11 @@ const HistoryList = observer(() => {
           return (
             <button
               key={entry.id}
+              aria-current={isCurrent ? 'true' : undefined}
               onClick={() => history.jumpTo(originalIdx + 1)}
               className={`w-full flex items-start gap-2 text-left px-2 py-1.5 rounded text-xs transition-colors ${
                 isCurrent
-                  ? 'bg-brand/10 border-l-2 border-brand'
+                  ? 'bg-brand/10 forced-colors:outline forced-colors:outline-2 forced-colors:-outline-offset-2'
                   : isApplied
                     ? 'text-foreground hover:bg-accent'
                     : 'text-muted-foreground hover:bg-accent'
@@ -135,9 +136,10 @@ const HistoryList = observer(() => {
       )}
       <button
         onClick={() => history.jumpTo(0)}
+        aria-current={history.undoIdx === 0 ? 'true' : undefined}
         className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs italic ${
           history.undoIdx === 0
-            ? 'bg-brand/10 border-l-2 border-brand text-foreground'
+            ? 'bg-brand/10 text-foreground forced-colors:outline forced-colors:outline-2 forced-colors:-outline-offset-2'
             : 'text-muted-foreground hover:bg-accent'
         }`}
       >
@@ -386,7 +388,7 @@ const TopBar = observer(() => {
       <ColorModeSwitch className={`mr-2 ${wideOnly}`} />
 
       {/* Generate: AI page / section generation (plan ai-driven-page-generation).
-          Applies as one undoable action; Save persists it like any other edit. */}
+          Applies as one undoable action, saved at once like any other edit. */}
       <GeneratePageButton {...control('generate')} triggerClassName={wideOnly} />
 
       {/* Polish with AI: measure the open page's layout and let a vision model
@@ -394,9 +396,10 @@ const TopBar = observer(() => {
           2026-10-23-ai-design-quality-round-2, decision 4). */}
       <PolishPageButton {...control('polish')} triggerClassName={wideOnly} />
 
-      {/* Save: persist the working copy WITHOUT publishing (MT-10). Sits just
-          before Publish so the non-destructive action reads first. */}
-      <SaveButton />
+      {/* The save status: the editor saves by itself and has no Save button
+          (owner, 2026-11-04); this says Saved, Unsaved changes, Saving…, or
+          why not, with Retry. Cmd/Ctrl+S saves at once. Saving never publishes. */}
+      <SaveStatus />
 
       {/* Publish: the primary rightward action. Serializes the live project
           and pushes it live via the admin-guarded publish endpoint. */}

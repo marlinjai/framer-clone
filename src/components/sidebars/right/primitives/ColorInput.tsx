@@ -1,6 +1,7 @@
 'use client';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { observer } from 'mobx-react-lite';
+import { useOpenDraft } from '@/hooks/useOpenDraft';
 import { cn } from '@/lib/utils';
 import { useStore } from '@/hooks/useStore';
 import { getHistoryStore } from '@/stores/RootStore';
@@ -95,10 +96,13 @@ export const ColorInput = observer(function ColorInput({ label, value, onChange,
   const pickerHex = toPickerHex(localValue) ?? toPickerHex(value || '') ?? '#000000';
 
   const commitText = () => {
+    draftState.settled();
     const next = localValue.trim();
     if (next && next !== value) onChange(next);
     else if (!next) setLocalValue(value || '#ffffff');
   };
+  // Counted as unsaved, and committed by Cmd+S, leaving and unmount (useOpenDraft).
+  const draftState = useOpenDraft(() => commitText());
 
   const tokenPicker =
     colours.length > 0 ? (
@@ -200,7 +204,10 @@ export const ColorInput = observer(function ColorInput({ label, value, onChange,
             type="text"
             aria-label={ariaLabel}
             value={localValue}
-            onChange={(e) => setLocalValue(e.target.value)}
+            onChange={(e) => {
+              draftState.edited();
+              setLocalValue(e.target.value);
+            }}
             onBlur={commitText}
             onKeyDown={(e) => {
               if (e.key === 'Enter') commitText();

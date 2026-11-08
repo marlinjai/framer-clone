@@ -15,3 +15,43 @@ export class UnknownVariantError extends Error {
     this.name = 'UnknownVariantError';
   }
 }
+
+/**
+ * An order whose quantity, line amount or total exceeds what its INTEGER columns
+ * store (MAX_ORDER_INTEGER in src/lib/commerce/dto.ts), whose backorder would take
+ * the reserved stock past its column, or whose total is more than its payment
+ * provider takes in one charge (maxChargeAmount, payment/provider.ts): caused by
+ * the cart (a huge quantity times its price), not a server fault, and nothing of it
+ * is kept. The orders route answers it with 422 `order_too_large`.
+ */
+export class OrderTooLargeError extends Error {
+  readonly code = 'ORDER_TOO_LARGE';
+  constructor(
+    /** The line that went over, or null when only the order's sum did. */
+    readonly variantId: string | null,
+    readonly label: string,
+    readonly value: number,
+  ) {
+    super(`order too large: ${label} ${value} exceeds the stored maximum${variantId ? ` (variant ${variantId})` : ''}`);
+    this.name = 'OrderTooLargeError';
+  }
+}
+
+/**
+ * A paid order whose total is below the least its payment provider takes in one
+ * charge (minChargeAmount, payment/provider.ts; Stripe: 0.50 EUR): the payment
+ * would be refused when it starts, after the order already held its stock. Caused
+ * by the cart, not a server fault, and nothing of it is kept. A free order (total
+ * 0) opens no payment and is never refused for it. The orders route answers it
+ * with 422 `order_too_small`.
+ */
+export class OrderTooSmallError extends Error {
+  readonly code = 'ORDER_TOO_SMALL';
+  constructor(
+    readonly total: number,
+    readonly minimum: number,
+  ) {
+    super(`order too small: total ${total} is below the payment minimum ${minimum}`);
+    this.name = 'OrderTooSmallError';
+  }
+}

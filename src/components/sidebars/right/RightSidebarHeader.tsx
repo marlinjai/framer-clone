@@ -3,23 +3,18 @@
 //
 // Two rendering modes:
 //   Expanded: leading collapse chevron + type tile + element name + settings icon.
+//             The tile's icon is the one the node's Layers row shows
+//             (src/components/sidebars/layerIcon.ts). The page's root reads as
+//             "Page" with its breakpoint, as the breakpoint row in Layers does.
 //   Collapsed: only the expand chevron (centered in the 48px strip), matching the
 //              left sidebar pattern so the user always has a way back.
 'use client';
 import React from 'react';
 import { observer } from 'mobx-react-lite';
-import { Settings2, Type, Square, ImageIcon, ChevronRight, ChevronLeft } from 'lucide-react';
+import { Settings2, Square, ChevronRight, ChevronLeft } from 'lucide-react';
 import { useStore } from '@/hooks/useStore';
 import type { ComponentInstance } from '@/models/ComponentModel';
-
-/** Pick an icon for the selected element's type. */
-function ElementTypeIcon({ component }: { component: ComponentInstance }) {
-  switch (component.type) {
-    case 'img': return <ImageIcon size={13} />;
-    case 'button': return <Square size={13} />;
-    default: return <Type size={13} />;
-  }
-}
+import { breakpointRefsOf, isPageBody, layerIconOf, viewportIconOf, type LayerIconBreakpoint } from '../layerIcon';
 
 /**
  * RightSidebarHeader
@@ -41,8 +36,21 @@ const RightSidebarHeader = observer(({ variant = 'docked' }: { variant?: 'docked
   const selectedComponent = editorUI.selectedComponent;
   const selectedViewportNode = editorUI.selectedViewportNode;
 
-  const target = selectedComponent || selectedViewportNode;
-  const title = target ? target.displayName : 'Properties';
+  const target: ComponentInstance | undefined = selectedComponent || selectedViewportNode || undefined;
+  const page = editorUI.currentPage;
+  const pageBody = isPageBody(selectedComponent ?? undefined, page, editorUI.inComponent);
+  const title = pageBody ? 'Page' : target ? target.displayName : 'Properties';
+  // The page body is styled per breakpoint: say which one the panel edits.
+  const breakpointName = pageBody ? selectedViewportNode?.label : undefined;
+  const at: LayerIconBreakpoint | undefined = selectedViewportNode?.breakpointId && page
+    ? {
+        breakpointId: selectedViewportNode.breakpointId,
+        breakpoints: breakpointRefsOf(page),
+      }
+    : undefined;
+  const TileIcon = pageBody
+    ? viewportIconOf(selectedViewportNode?.label)
+    : target ? layerIconOf(target, at) : Square;
 
   // Collapsed: render just the expand button so the user is never dead-ended.
   if (isCollapsed) {
@@ -79,11 +87,7 @@ const RightSidebarHeader = observer(({ variant = 'docked' }: { variant?: 'docked
         <span
           className="w-[22px] h-[22px] rounded-[6px] bg-brand/12 text-brand flex items-center justify-center flex-none"
         >
-          {target ? (
-            <ElementTypeIcon component={target} />
-          ) : (
-            <Square size={13} />
-          )}
+          <TileIcon size={13} />
         </span>
 
         {/* Element name: 13px, weight 600, truncate */}
@@ -93,6 +97,11 @@ const RightSidebarHeader = observer(({ variant = 'docked' }: { variant?: 'docked
         >
           {title}
         </span>
+        {breakpointName && (
+          <span className="text-muted-foreground truncate flex-none" style={{ fontSize: '12px' }}>
+            {breakpointName}
+          </span>
+        )}
       </div>
 
       {/* Settings icon */}

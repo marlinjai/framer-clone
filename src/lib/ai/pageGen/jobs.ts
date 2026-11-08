@@ -2,12 +2,13 @@
 //
 // The page generator's runs (src/lib/ai/jobRegistry.ts): a generation keeps
 // running when the phone switches apps, and the editor collects it through
-// GET /api/ai/generate-page/[id].
+// GET /api/ai/generate-page/[id], preview sections included while it runs.
 
 import { createJobRegistry, type JobRegistry } from '@/lib/ai/jobRegistry';
-import type { PageGenErrorPayload, PageGenProgress, PageGenResultPayload } from './protocol';
+import type { PageGenErrorPayload, PageGenProgress, PageGenResultPayload, PageGenSection } from './protocol';
 
-export type PageGenJobs = JobRegistry<PageGenProgress, PageGenResultPayload, PageGenErrorPayload>;
+/** A running generation also keeps its preview sections, so a client that collects it rebuilds the draft. */
+export type PageGenJobs = JobRegistry<PageGenProgress, PageGenResultPayload, PageGenErrorPayload, PageGenSection>;
 
 let _jobs: PageGenJobs | null = null;
 

@@ -18,6 +18,7 @@
 // undoable step like any other edit and is saved and published with the page.
 
 import React, { useEffect, useState } from 'react';
+import { useOpenDraft } from '@/hooks/useOpenDraft';
 import { observer } from 'mobx-react-lite';
 import { ClipboardList } from 'lucide-react';
 import type { ComponentInstance } from '@/models/ComponentModel';
@@ -162,6 +163,12 @@ const OptionsEditor = ({ component }: { component: ComponentInstance }) => {
   const [draft, setDraft] = useState(stored.join('\n'));
   const storedText = stored.join('\n');
   useEffect(() => setDraft(storedText), [storedText, component.id]);
+  const commit = () => {
+    draftState.settled();
+    component.setProps({ options: readOptions(draft) });
+  };
+  // Counted as unsaved, and committed by Cmd+S, leaving and unmount (useOpenDraft).
+  const draftState = useOpenDraft(() => commit());
   return (
     <div className="flex flex-col gap-1.5">
       <label htmlFor={`options-${component.id}`} className="text-[11px] leading-none text-muted-foreground">
@@ -171,8 +178,11 @@ const OptionsEditor = ({ component }: { component: ComponentInstance }) => {
         id={`options-${component.id}`}
         value={draft}
         rows={4}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={() => component.setProps({ options: readOptions(draft) })}
+        onChange={(e) => {
+          draftState.edited();
+          setDraft(e.target.value);
+        }}
+        onBlur={commit}
         className={`${FIELD_CONTROL} h-auto py-1.5`}
       />
     </div>

@@ -342,3 +342,40 @@ export function activeScopeDenial(error: ScopeResolutionError): {
   }
   return { code: 'no_active_company', message: 'no active company' };
 }
+
+/**
+ * Why a company API key's company could not be mapped to a sites workspace.
+ *
+ *   - `no_sites_workspace`: the company has no workspace at all.
+ *   - `ambiguous_workspace`: the company has several workspaces. A session
+ *     picks among them by slug `main`, then the oldest (companyWorkspaceId),
+ *     but the structure a key resolves through (src/lib/openfgaRead.ts) carries
+ *     neither slug nor creation date, so the key is refused instead of
+ *     guessing. Every company has exactly one workspace today.
+ *   - `company_structure_invalid`: the company hangs off no tenant group, or
+ *     off several, which a healthy company never does.
+ */
+export type KeyScopeError = 'no_sites_workspace' | 'ambiguous_workspace' | 'company_structure_invalid';
+
+export type KeyScopeResult = { ok: true; scope: TenantScope } | { ok: false; error: KeyScopeError };
+
+/**
+ * The scope a company API key acts in (docs/plans/2026-11-02-lumitra-sites-agent-plugin.md,
+ * decision 3): the workspace and tenant group of the key's OWN company, read by
+ * the server from OpenFGA's structural edges for the company id of the
+ * VERIFIED key. Nothing the request names (a workspace, a company, a site) is
+ * an input here, so a key can never reach another company's workspace. The
+ * `sites` grant is checked by the caller (src/lib/auth-machine.ts) before this
+ * runs, exactly as resolveScopeForCompanyWorkspace checks it for a session.
+ */
+export function resolveScopeForKey(structure: {
+  groupIds: readonly string[];
+  workspaceIds: readonly string[];
+}): KeyScopeResult {
+  const groups = structure.groupIds.filter((id) => typeof id === 'string' && id.length > 0);
+  if (groups.length !== 1) return { ok: false, error: 'company_structure_invalid' };
+  const workspaces = structure.workspaceIds.filter((id) => typeof id === 'string' && id.length > 0);
+  if (workspaces.length === 0) return { ok: false, error: 'no_sites_workspace' };
+  if (workspaces.length > 1) return { ok: false, error: 'ambiguous_workspace' };
+  return { ok: true, scope: { workspaceId: workspaces[0], tenantGroupId: groups[0] } };
+}

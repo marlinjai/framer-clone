@@ -1,7 +1,7 @@
 // fetchPageGenTransport: every path ends in exactly one result or one error.
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchPageGenTransport } from '../client';
+import { fetchPageGenTransport, resumePageGen } from '../client';
 import type { PageGenRequest } from '../protocol';
 
 const req: PageGenRequest = {
@@ -24,12 +24,47 @@ function streamResponse(chunks: string[]): Response {
 }
 
 function handlers() {
-  return { onProgress: vi.fn(), onResult: vi.fn(), onError: vi.fn(), onUsage: vi.fn() };
+  return { onProgress: vi.fn(), onSection: vi.fn(), onResult: vi.fn(), onError: vi.fn(), onUsage: vi.fn() };
 }
+
+const SECTION = (index: number) => ({ generationId: 'g', index, attempt: 1, node: { id: `s${index}`, type: 'section', props: {}, children: [] } });
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe('fetchPageGenTransport', () => {
+  it('dispatches preview sections from the stream, before the result', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      streamResponse([
+        `event: gen:section\ndata: ${JSON.stringify(SECTION(0))}\n\nevent: gen:sec`,
+        `tion\ndata: ${JSON.stringify(SECTION(1))}\n\n`,
+        'event: gen:result\ndata: {"generationId":"g","nodes":[],"warnings":[],"stats":{"nodeCount":0,"maxDepth":0},"model":"m"}\n\n',
+        // A section after the outcome is never delivered.
+        `event: gen:section\ndata: ${JSON.stringify(SECTION(2))}\n\n`,
+      ]),
+    ));
+    const h = handlers();
+    const order: string[] = [];
+    h.onSection.mockImplementation((s: { index: number }) => order.push(`section ${s.index}`));
+    h.onResult.mockImplementation(() => order.push('result'));
+    await fetchPageGenTransport(req, h);
+    expect(order).toEqual(['section 0', 'section 1', 'result']);
+  });
+
+  it('resume: rebuilds the sections from the running snapshot, then the result', async () => {
+    let polls = 0;
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      polls += 1;
+      if (polls === 1) return Response.json({ status: 'running', sections: [SECTION(0)], progress: { phase: 'generating', receivedChars: 10, attempt: 1 } });
+      if (polls === 2) return Response.json({ status: 'running', sections: [SECTION(0), SECTION(1)] });
+      return Response.json({ status: 'done', result: { generationId: 'g', nodes: [], warnings: [], stats: { nodeCount: 0, maxDepth: 0 }, model: 'm' } });
+    }));
+    const h = handlers();
+    await resumePageGen('g', h);
+    // Every poll sends what the run holds; the caller dedupes by index.
+    expect(h.onSection.mock.calls.map(([s]) => (s as { index: number }).index)).toEqual([0, 0, 1]);
+    expect(h.onResult).toHaveBeenCalledTimes(1);
+  });
+
   it('dispatches progress, result and usage across split chunks', async () => {
     vi.stubGlobal('fetch', vi.fn(async () =>
       streamResponse([

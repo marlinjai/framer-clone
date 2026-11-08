@@ -76,15 +76,20 @@ describe('007_books structure', () => {
     `;
     expect(triggers.map((t) => t.tgname)).toEqual([
       'document_number_counter_monotonic',
+      // 029_company_erasure: each delete guard's DELETE half, which lets only the schema owner erasing that
+      // company through.
+      'document_number_counter_monotonic_delete',
       'document_number_counter_no_truncate',
       // A draft that never had a number can be deleted with its lines and events.
       'sales_document_draft_delete',
       'sales_document_event_append_only',
+      'sales_document_event_append_only_delete',
       'sales_document_event_no_truncate',
       'sales_document_guard',
       // 009_books_import: an import commits only with its stored original.
       'sales_document_import_complete',
       'sales_document_line_guard',
+      'sales_document_line_guard_delete',
       'sales_document_line_no_truncate',
       'sales_document_no_truncate',
       // 011_books_replacement: a replacement is issued only with the cancellation it replaces.

@@ -88,6 +88,24 @@ export class InvalidPageSlugError extends SiteRepositoryError {
 }
 
 /**
+ * The settings or a page name an uploaded image (`/site-images/<sha256>.<ext>`)
+ * this site does not store: typed by hand, copied from another site, or deleted
+ * since it was chosen. Nothing was written. 422.
+ */
+export class SiteImageMissingError extends SiteRepositoryError {
+  readonly path: string;
+
+  constructor(path: string) {
+    super(
+      'site_image_missing',
+      `The image ${path} is not stored for this site (it may have been deleted). Upload the image again, or remove it from the settings, then save.`,
+      422,
+    );
+    this.path = path;
+  }
+}
+
+/**
  * A rename lost a race: the caller named the project it expected to rename
  * (`expectedName`), and the stored name is different, because someone renamed
  * it in the meantime. Nothing was written. Carries the current name so the
@@ -167,6 +185,41 @@ export class SiteErasedSinceLoadError extends SiteRepositoryError {
 }
 
 /**
+ * A Save or Publish based on an older version of the working copy than the one
+ * stored: something else (another tab, an agent, an erase) wrote the project
+ * after the caller loaded it, and writing now would overwrite that work unseen.
+ * Nothing was written. Carries the stored version, so the caller can decide to
+ * save over it explicitly by sending that number. 409.
+ */
+export class SiteChangedError extends SiteRepositoryError {
+  readonly currentVersion: number;
+
+  constructor(currentVersion: number) {
+    super(
+      'site_changed',
+      'This project was changed somewhere else since this tab loaded it. Nothing was saved.',
+      409,
+    );
+    this.currentVersion = currentVersion;
+  }
+}
+
+/**
+ * A Save or Publish that names no `expectedVersion` for a site that already
+ * exists. Every write of an existing site's working copy must say which
+ * version it was based on; there is no "newest wins" path. 400.
+ */
+export class SiteVersionRequiredError extends SiteRepositoryError {
+  constructor() {
+    super(
+      'version_required',
+      'This editor tab is older than the server and cannot save safely. Reload the page to continue.',
+      400,
+    );
+  }
+}
+
+/**
  * An erase whose preview no longer matches what is stored: a publish, a save, a
  * rollback or another erase came in between. Nothing changed. 409.
  */
@@ -190,6 +243,9 @@ export class NothingToEraseError extends SiteRepositoryError {
 export function siteRepositoryErrorResponse(err: SiteRepositoryError): Response {
   if (err instanceof SiteNameConflictError || err instanceof SiteDeleteConfirmationError) {
     return jsonError(err.code, err.message, err.status, { currentName: err.currentName });
+  }
+  if (err instanceof SiteChangedError) {
+    return jsonError(err.code, err.message, err.status, { currentVersion: err.currentVersion });
   }
   return jsonError(err.code, err.message, err.status);
 }

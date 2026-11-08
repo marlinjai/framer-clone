@@ -69,6 +69,7 @@ const EXPECTED_MIGRATION_IDS = [
   '026_order_request_key',
   '027_receipt_tax_country',
   '028_checkout_request',
+  '029_company_erasure',
 ];
 
 const EXPECTED_ENUMS: Record<string, string[]> = {

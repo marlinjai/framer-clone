@@ -49,133 +49,31 @@ import {
   SiteRepositoryError,
 } from '@/server/sites';
 import ProjectModel, { type ProjectSnapshotOut } from '@/models/ProjectModel';
-import { createIntrinsicComponent } from '@/models/ComponentModel';
 import { jsonError, readBodyText, PROJECT_BODY_MAX_BYTES } from '@/lib/api/respond';
 import { projectNameSchema } from '@/lib/projectName';
 import { pageSnapshotSchema } from './_schema';
 import { parseModelComponents } from '@/models/ComponentDefinitionModel';
-import { defaultViewportSnapshots, withDefaultViewports } from '@/lib/canvas/defaultViewports';
-import {
-  commerceSlugFor,
-  CommerceTenantSuspendedError,
-  ensureCommerceTenant,
-} from '@/server/commerce/provisioning/provision';
-import { AppRoleSearchPathError } from '@marlinjai/tenant-db';
-import { CommerceLockTimeoutError } from '@/server/commerce/provisioning/ownerSql';
+import { withDefaultViewports } from '@/lib/canvas/defaultViewports';
+import { ensureCompanyCommerce } from '@/server/sites/companyCommerce';
+import { buildEmptyDraftSnapshot } from '@/lib/projects/newProject';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
- * CM-11, the commerce-tenant ONBOARD HOOK.
- *
- * framer-clone does NOT mint tenant-groups: the workspace -> tenant -> tenant_group
- * hierarchy is owned by auth-brain and arrives on the verified session (scope.ts).
- * So provisioning is hooked at the first framer-clone path that (a) has a
- * server-verified `tenantGroupId` AND (b) owns commerce DDL: the project/site
- * create path. The first time a tenant-group creates a project here, its
- * `tg_<id>` commerce schema is stood up (migrations + `commerce_app` grants +
- * a read-only check of the `ext`-locked backstop) on the OWNER connection, out-of-band from the
- * request's app-role pool. Every later project of an already provisioned company
- * costs one registry read and nothing else (`ensureCommerceTenant`: no lock, no
- * DDL, no role check); only a miss runs the full provision, under the global
- * provisioning lock with bounded waits (as long as the queue of companies
- * provisioning moves, at most about 40 s, but 10 s behind one stuck provision;
- * 30 s per statement).
- *
- * The registry slug is `commerceSlugFor(tenant group, display slug)`: the
- * display slug plus the tenant-group id, so two companies whose auth-brain slugs
- * collide never block each other on the UNIQUE `tenant_groups.slug`.
- *
- * It runs BEFORE the site row is written, and a failure fails the request with
- * a named code, with the cause in the server log:
- *  - 500 `commerce_not_configured` when COMMERCE_OWNER_DATABASE_URL is unset. A
- *    production container cannot even start without it (deploy/boot.sh), so
- *    this only catches a miswired environment, loudly, instead of creating
- *    projects whose shop would fail later.
- *  - 403 `commerce_suspended` when an operator suspended the company's commerce
- *    (`tenant_groups.status = 'suspended'`). Provisioning would set it active
- *    again, so it is never attempted; 403 rather than 500 because nothing is
- *    broken and a retry cannot succeed: the refusal is a decision about this
- *    company, lifted only by an operator.
- *  - 500 `commerce_misconfigured` when the app role commerce_app's default
- *    search_path is not exactly `ext` (tenant-db AppRoleSearchPathError).
- *    Provisioning only verifies that value, never sets it (the owner role may
- *    not alter roles), so a retry cannot succeed until an administrator runs
- *    the repair command the error names, which goes to the server log only; the
- *    container start step refuses to start on the same condition, so this
- *    catches a value changed after the start.
- *  - 500 `commerce_provision_failed` when provisioning throws anything else (database down, a
- *    tenant group id that is not a UUID, a migration error).
- *  - 503 `commerce_busy` with Retry-After when the provisioning lock was not
- *    granted (CommerceLockTimeoutError: one provision held it too long, or the
- *    queue of companies provisioning outlasted the wait): nothing is broken and
- *    the same request succeeds a moment later.
- * Provisioning first means a failure leaves NOTHING behind: no site row whose
- * company has no commerce schema, no "created but broken" project, and a retry
- * of the same request is clean. The connection details stay out of the
- * response; the log carries them.
- *
- * FLAG (deferral): there is no job/outbox seam in framer-clone to defer the DDL
- * to, so the first provision runs inline in this request. If a background-job
- * seam lands later, move this off the request path.
+ * CM-11, the commerce-tenant onboard hook (src/server/sites/companyCommerce.ts,
+ * where its rules are written down), answered as the route's error envelope:
+ * null when the company's shop schema stands, else the Response to return.
  */
 async function ensureCommerceProvisioned(
   tenantGroupId: string,
   displaySlug: string | undefined,
 ): Promise<Response | null> {
-  if (!process.env.COMMERCE_OWNER_DATABASE_URL) {
-    console.error(
-      `[commerce] cannot provision tenant_group ${tenantGroupId}: COMMERCE_OWNER_DATABASE_URL is not set`,
-    );
-    return jsonError(
-      'commerce_not_configured',
-      'the shop database is not configured on this server; no project was created',
-      500,
-    );
-  }
-  try {
-    await ensureCommerceTenant({ tenantGroupId, slug: commerceSlugFor(tenantGroupId, displaySlug) });
-    return null;
-  } catch (err) {
-    if (err instanceof CommerceTenantSuspendedError) {
-      console.error(`[commerce] project create refused: commerce for tenant_group ${tenantGroupId} is suspended`);
-      return jsonError(
-        'commerce_suspended',
-        "this company's shop is suspended; no project was created. Contact support to lift the suspension.",
-        403,
-      );
-    }
-    if (err instanceof AppRoleSearchPathError) {
-      console.error(
-        `[commerce] cannot provision tenant_group ${tenantGroupId}: the app role is misconfigured (${err.problem}). ${err.message}`,
-      );
-      return jsonError(
-        'commerce_misconfigured',
-        'the shop database on this server needs an administrator to fix it; no project was created',
-        500,
-      );
-    }
-    if (err instanceof CommerceLockTimeoutError) {
-      console.error(`[commerce] provisioning for tenant_group ${tenantGroupId} waited too long: ${err.message}`);
-      const busy = jsonError(
-        'commerce_busy',
-        'several companies are setting up their shop right now; no project was created, try again in a moment',
-        503,
-      );
-      busy.headers.set('retry-after', '10');
-      return busy;
-    }
-    console.error(
-      `[commerce] ensureCommerceTenant failed for tenant_group ${tenantGroupId}:`,
-      err,
-    );
-    return jsonError(
-      'commerce_provision_failed',
-      'setting up the shop for this company failed; no project was created, try again',
-      500,
-    );
-  }
+  const outcome = await ensureCompanyCommerce(tenantGroupId, displaySlug);
+  if (outcome.ok) return null;
+  const res = jsonError(outcome.code, outcome.message, outcome.status);
+  if (outcome.retryAfterSec !== undefined) res.headers.set('retry-after', String(outcome.retryAfterSec));
+  return res;
 }
 
 // What the client may influence: a display name and, optionally, the PAGES and
@@ -222,47 +120,6 @@ function buildSnapshotFromPages(
     pages: repaired as never,
     components: components as never,
   });
-  return getSnapshot(project) as ProjectSnapshotOut;
-}
-
-/**
- * Build a MINIMAL valid draft ProjectModel snapshot: one home page (`slug: ''`)
- * whose app tree is a single empty `div` root, no canvas/viewport nodes. We
- * round-trip through `ProjectModel.create(...)` + `getSnapshot(...)` so the
- * result is GUARANTEED to be a structurally valid SnapshotOut (the same shape
- * saveProject/projectToPersisted read) rather than a hand-built shape that could
- * silently drift from the model.
- */
-function buildEmptyDraftSnapshot(
-  siteId: string,
-  name: string,
-  now: number,
-): ProjectSnapshotOut {
-  const pageId = crypto.randomUUID();
-  const rootId = `root-${crypto.randomUUID()}`;
-
-  const project = ProjectModel.create({
-    id: siteId,
-    metadata: { title: name, description: '', createdAt: now, updatedAt: now },
-    // A new project starts in German (src/lib/site/siteSettings.ts); projects
-    // saved before Site settings existed keep `en`.
-    siteSettings: NEW_PROJECT_SITE_SETTINGS,
-    pages: {
-      [pageId]: {
-        id: pageId,
-        slug: '',
-        metadata: { title: name, description: '' },
-        appComponentTree: getSnapshot(
-          createIntrinsicComponent(rootId, 'div', {}),
-        ),
-        // The three default breakpoint frames, as a page made in the editor
-        // gets them. (An empty map left the home page of every new project
-        // without frames: nothing on the canvas, no Preview.)
-        canvasNodes: defaultViewportSnapshots(),
-      },
-    },
-  });
-
   return getSnapshot(project) as ProjectSnapshotOut;
 }
 

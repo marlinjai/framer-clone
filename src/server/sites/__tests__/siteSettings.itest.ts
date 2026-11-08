@@ -13,10 +13,11 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { PrismaClient } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { getPrismaClient } from '@/server/db';
-import { getSiteRepository, type TenantScope } from '@/server/sites';
+import { type TenantScope } from '@/server/sites';
 import { resolvePublishedSiteByKey } from '@/server/sites/publicResolver';
 import { loadSitePrimaryHost } from '@/server/sites/primaryHost';
 import { normalizeSiteSettings } from '@/lib/site/siteSettings';
+import { latestVersionRepository } from './latestVersionRepository';
 
 const SCOPE: TenantScope = {
   workspaceId: `ws_settings_${randomUUID().slice(0, 8)}`,
@@ -54,7 +55,7 @@ afterAll(async () => {
 
 describe('site settings on a real database', () => {
   it('a row without settings reads as the defaults, language en', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.saveProject(SCOPE, project());
     await prisma.site.update({ where: { id: SITE_ID }, data: { siteSettings: {} } });
     const loaded = await repo.loadProject(SCOPE, SITE_ID);
@@ -63,7 +64,7 @@ describe('site settings on a real database', () => {
   });
 
   it('saves, loads and resolves the settings unchanged', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     const settings = normalizeSiteSettings({
       siteName: 'Bäckerei Müller',
       language: 'de',
@@ -92,7 +93,7 @@ describe('site settings on a real database', () => {
   });
 
   it('a later save replaces the whole object, and a malformed stored value is normalized on read', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     await repo.saveProject(SCOPE, project({ language: 'fr' }), { mustExist: true });
     const loaded = await repo.loadProject(SCOPE, SITE_ID);
     expect(loaded.site.language).toBe('fr');
@@ -106,7 +107,7 @@ describe('site settings on a real database', () => {
   });
 
   it('keeps the stored theme and head items through a save from a tab that predates them, and an explicit empty one clears them', async () => {
-    const repo = getSiteRepository();
+    const repo = latestVersionRepository();
     const theme = {
       mode: 'system',
       tokens: [
