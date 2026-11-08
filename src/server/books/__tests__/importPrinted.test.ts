@@ -11,7 +11,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { importTaxFields, numberValueFor, recordNumberValue, recordWarnings } from '../importInvoices';
-import { mapPrintedInvoice } from '../importPrinted';
+import { mapPrintedInvoice, rawInvoiceSchema } from '../importPrinted';
 
 const NOW = new Date('2026-10-20T10:00:00Z');
 
@@ -237,5 +237,38 @@ describe('VAT that does not add up', () => {
     expect(recordWarnings(bySummary)).toContainEqual({ code: 'line_tax_rounded_to_summary', count: 1 });
     // More than a cent per line is a misreading.
     expect(issue(printed({ lines: two, total: 23.88, taxAmounts: [{ rate: 19, net: 20.06, tax: 3.70 }] })).reason).toBe('tax_summary_mismatch');
+  });
+});
+
+describe('list bounds', () => {
+  it('refuses more than 500 lines before checking them, quickly', () => {
+    // Every line also fails its own check (no lineTotal): the bound is read before the lines are.
+    const started = performance.now();
+    expect(issue(printed({ lines: Array.from({ length: 100_000 }, () => ({ description: 'x' })) }))).toEqual({
+      kind: 'error',
+      reason: 'invalid_field:lines',
+    });
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
+  it('refuses more than 20 address lines, 20 tax groups or 50 other files', () => {
+    const recipient = printed().recipient as Record<string, unknown>;
+    expect(issue(printed({ recipient: { ...recipient, addressLines: Array.from({ length: 21 }, () => 'x') } })).reason).toBe(
+      'invalid_field:recipient.addressLines',
+    );
+    expect(issue(printed({ taxAmounts: Array.from({ length: 21 }, () => ({ rate: 19, tax: 1 })) })).reason).toBe('invalid_field:taxAmounts');
+    expect(issue(printed({ otherFiles: Array.from({ length: 51 }, () => 'f.pdf') })).reason).toBe('invalid_field:otherFiles');
+  });
+
+  it('still reads 500 lines, 20 address lines, 20 tax groups and 50 other files', () => {
+    const line = (printed().lines as unknown[])[0];
+    const recipient = printed().recipient as Record<string, unknown>;
+    const atTheBounds = printed({
+      lines: Array.from({ length: 500 }, () => line),
+      recipient: { ...recipient, addressLines: Array.from({ length: 20 }, () => 'x') },
+      taxAmounts: Array.from({ length: 20 }, () => ({ rate: 19, tax: 1 })),
+      otherFiles: Array.from({ length: 50 }, () => 'f.pdf'),
+    });
+    expect(rawInvoiceSchema.safeParse(atTheBounds).success).toBe(true);
   });
 });

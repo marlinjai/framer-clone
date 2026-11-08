@@ -38,7 +38,7 @@ import {
   type SiteOpsDeps,
 } from '@/server/siteOps';
 import { GENERIC_LIBRARY_FAILURE } from '@/server/siteOps';
-import { MAX_BATCH_OPS, type SiteOpsAction, type SiteOpsCaller, type SiteOpsError, type SiteOpsResult } from '@/lib/siteOps/types';
+import { MAX_BATCH_OPS, MAX_INSERT_NODES, type SiteOpsAction, type SiteOpsCaller, type SiteOpsError, type SiteOpsResult } from '@/lib/siteOps/types';
 import { OUTLINE_DEFAULT_CHARS, OUTLINE_MAX_CHARS } from '@/lib/siteOps/read';
 import { GENERATION_LIMITS } from '@/lib/ai/pageGen/schema';
 import { PAGE_GEN_MODELS } from '@/lib/ai/pageGen/protocol';
@@ -391,6 +391,7 @@ export const OPERATION_SCHEMAS: JsonSchema[] = [
     nodes: {
       type: 'array',
       minItems: 1,
+      maxItems: MAX_INSERT_NODES,
       items: { type: 'object', description: 'A node in the generation format: { type, props?, children?, ref?, imageQuery? }.' },
     },
   }, ['pageId', 'nodes']),

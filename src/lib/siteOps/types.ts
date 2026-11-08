@@ -73,6 +73,8 @@ export const fail = <T = never>(error: SiteOpsError): SiteOpsResult<T> => ({ ok:
 
 /** The most operations one batch may hold. */
 export const MAX_BATCH_OPS = 200;
+/** The most top-level nodes one insertNodes operation takes (each may carry its own children). */
+export const MAX_INSERT_NODES = 200;
 
 const id = z.string().trim().min(1).max(200);
 const ref = z.string().trim().regex(/^[A-Za-z0-9_-]{1,64}$/, 'a ref is 1 to 64 letters, digits, _ or -');
@@ -111,7 +113,7 @@ export const OperationSchema = z.discriminatedUnion('op', [
     /** Position among the parent's children; appended when absent. */
     index: z.number().int().min(0).optional(),
     /** Nodes in the generation format (describeVocabulary), each with an optional `ref`. */
-    nodes: z.array(z.unknown()).min(1),
+    nodes: z.array(z.unknown()).min(1).max(MAX_INSERT_NODES),
   }),
   z.strictObject({
     op: z.literal('updateStyle'),
