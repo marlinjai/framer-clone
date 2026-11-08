@@ -76,6 +76,23 @@ describe('reportAgentActivity and presenceSnapshot', () => {
     expect(presenceSnapshot('quiet', T0 + 1).feed).toEqual([]);
   });
 
+  it('a newly opened stream gets every running call of an agent, in the order they started', () => {
+    reportAgentActivity('s1', act({ callId: 'gen', tool: 'generate_page' }), undefined, T0);
+    reportAgentActivity('s1', act({ callId: 'read' }), undefined, T0 + 1);
+    expect(presenceSnapshot('s1', T0 + 2).agents.map((a) => a.callId)).toEqual(['gen', 'read']);
+    reportAgentActivity('s1', act({ callId: 'read', phase: 'end', outcome: 'ok' }), undefined, T0 + 3);
+    expect(presenceSnapshot('s1', T0 + 4).agents.map((a) => a.callId)).toEqual(['gen']);
+    reportAgentActivity('s1', act({ callId: 'gen', phase: 'end', outcome: 'ok' }), undefined, T0 + 5);
+    expect(presenceSnapshot('s1', T0 + 6).agents.map((a) => `${a.callId}:${a.phase}`)).toEqual(['gen:end']);
+  });
+
+  it('keeps at most callsPerAgent running calls of one agent', () => {
+    for (let i = 0; i <= LIVE_PRESENCE_LIMITS.callsPerAgent; i += 1) reportAgentActivity('s1', act({ callId: `c${i}` }), undefined, T0 + i);
+    const ids = presenceSnapshot('s1', T0 + 100).agents.map((a) => a.callId);
+    expect(ids).toHaveLength(LIVE_PRESENCE_LIMITS.callsPerAgent);
+    expect(ids).not.toContain('c0');
+  });
+
   it('applies an activity heard twice once for the running calls', () => {
     reportAgentActivity('s1', act(), undefined, T0);
     reportAgentActivity('s1', act(), undefined, T0);

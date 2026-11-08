@@ -202,6 +202,33 @@ describe('agent:activity from the MCP endpoint', () => {
     expect(presenceSnapshot('site-1').feed.map((l) => l.tool)).toEqual(['get_site']);
   });
 
+  it('never publishes a made-up id: text that is not an id is dropped, and a refused call repeats none of its arguments\' ids', async () => {
+    const s = setup();
+    const heard = listen('site-1');
+    await callTool(s, 'apply_batch', {
+      siteId: 'site-1',
+      expectedVersion: 3,
+      ops: [{ op: 'removeNode', nodeId: 'my password is hunter2 and the api key' }, { op: 'removeNode', nodeId: 'nope' }],
+    });
+    const [start, end] = activities(heard);
+    expect(start.nodeIds).toEqual(['nope']);
+    expect(end).toMatchObject({ outcome: 'rejected' });
+    expect(end.nodeIds).toBeUndefined();
+    expect(JSON.stringify(activities(heard))).not.toContain('hunter2');
+    expect(presenceSnapshot('site-1').feed[0].nodeIds).toBeUndefined();
+  });
+
+  it('reports a page a batch created as the page, not as a node', async () => {
+    const s = setup();
+    const heard = listen('site-1');
+    const result = await callTool(s, 'apply_batch', { siteId: 'site-1', expectedVersion: 3, ops: [{ op: 'createPage', title: 'Pricing', ref: 'pricing' }] });
+    expect(result.isError).toBe(false);
+    const created = (result.structuredContent.created as Record<string, string>).pricing;
+    const end = activities(heard).find((a) => a.phase === 'end')!;
+    expect(end.pageId).toBe(created);
+    expect(end.nodeIds ?? []).not.toContain(created);
+  });
+
   it('reports invalid arguments as failed', async () => {
     const s = setup();
     const heard = listen('site-1');

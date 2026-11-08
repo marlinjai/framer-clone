@@ -9,7 +9,8 @@
 // audit rows; reads exist only live (src/lib/live/presenceStore.ts).
 //
 // Clicking a line whose nodes still exist opens their page, selects them and
-// brings them into view; a line whose nodes are all gone is plain text. The
+// brings them into view; a line that names only a page opens the page; a line
+// whose nodes are all gone is plain text. The
 // Follow toggle turns the camera's following of the agent back on.
 //
 // It stays out of the way: absent until an agent was active in this session or
@@ -36,8 +37,9 @@ export function lineTarget(
 ): { page: PageModelType; nodes: ComponentInstance[] } | undefined {
   const all = Array.from(pages);
   const ids = line.nodeIds ?? [];
-  if (ids.length === 0) return undefined;
   const named = line.pageId ? all.find((p) => p.id === line.pageId) : undefined;
+  // A line that names a page and no node (a page read, a page created) opens the page.
+  if (ids.length === 0) return named ? { page: named, nodes: [] } : undefined;
   for (const page of named ? [named, ...all.filter((p) => p !== named)] : all) {
     const nodes = ids
       .map((id) => page.findComponent(id))
@@ -85,6 +87,7 @@ const AgentActivityPanel = observer(function AgentActivityPanel() {
         editorUI.enterComponent(definition.id);
       }
     }
+    if (target.nodes.length === 0) return;
     const current = editorUI.currentPage as PageModelType | undefined;
     // Tree nodes need their frame as viewport context, or the canvas shows no outline and no handles.
     const breakpointId = current ? breakpointFor(current, editorUI.currentViewportNode?.breakpointId) : undefined;

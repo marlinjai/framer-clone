@@ -115,7 +115,8 @@ const AgentPresenceLayer = observer(function AgentPresenceLayer() {
   }));
   const signature = next.map((d) => `${d.agentId}|${d.key}|${d.shown ? 1 : 0}|${d.label}`).join('\n');
 
-  const update = React.useCallback(() => {
+  // `immediate`: a camera move or resize. The frame tracks the canvas at once, whatever section move is under way.
+  const update = React.useCallback((immediate = false) => {
     const container = containerRef.current;
     if (!container) return;
     const reduced = prefersReducedMotion();
@@ -127,7 +128,7 @@ const AgentPresenceLayer = observer(function AgentPresenceLayer() {
       const elements = targetElements(agent.target);
       for (const element of elements) measured.add(element);
       const move = moves.current.get(agent.agentId);
-      const moving = !reduced && !!move && move.until > now;
+      const moving = !immediate && !reduced && !!move && move.until > now;
       elements.forEach((element, index) => {
         const rect = element.getBoundingClientRect();
         if (rect.width === 0 && rect.height === 0) return;
@@ -201,16 +202,17 @@ const AgentPresenceLayer = observer(function AgentPresenceLayer() {
     drawn.current = next;
     update();
     // The adopted copy may still be laying out: measure once more on the next frame.
-    const raf = requestAnimationFrame(update);
+    const raf = requestAnimationFrame(() => update());
     return () => cancelAnimationFrame(raf);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signature, update]);
 
   // Camera moves (pan, zoom) and window resizes: redraw at once, without the move transition.
-  React.useEffect(() => subscribe(update), [subscribe, update]);
+  React.useEffect(() => subscribe(() => update(true)), [subscribe, update]);
   React.useEffect(() => {
-    window.addEventListener('resize', update);
-    return () => window.removeEventListener('resize', update);
+    const onResize = () => update(true);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
   }, [update]);
   // The section's own size changes (an adoption, the person's edit): redraw. The
   // elements watched are kept current by every draw.

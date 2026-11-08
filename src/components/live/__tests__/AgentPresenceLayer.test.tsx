@@ -210,3 +210,15 @@ describe('the frame', () => {
     expect(screen.queryByText(/is editing this site/)).toBeNull();
   });
 });
+
+describe('the compact bar\'s editing note', () => {
+  it('is a dot that carries the sentence for a tooltip and a screen reader, only while an agent is active', () => {
+    cleanup();
+    render(<AgentEditingNote compact />);
+    expect(document.querySelector('[data-agent-editing-note]')).toBeNull();
+    act(() => presence().applyActivity({ callId: 'c1', agentId: 'a1', label: 'Claude', tool: 'apply_batch', phase: 'start', at: new Date().toISOString() }));
+    const note = document.querySelector('[data-agent-editing-note]')!;
+    expect(note).toHaveAttribute('title', 'Claude is editing this site');
+    expect(note).toHaveTextContent('Claude is editing this site');
+  });
+});

@@ -25,7 +25,7 @@ import 'server-only';
 import { AGENT_ACTIVE_MS, LIVE_EVENTS, LIVE_FEED_MAX, OPEN_CALL_MAX_MS, type AgentActivity, type LiveFeedLine } from '@/lib/projects/liveEvents';
 import { publishSiteEvent } from './liveBus';
 
-export const LIVE_PRESENCE_LIMITS = { sites: 2000, agentsPerSite: 20 } as const;
+export const LIVE_PRESENCE_LIMITS = { sites: 2000, agentsPerSite: 20, callsPerAgent: 10 } as const;
 export { OPEN_CALL_MAX_MS };
 /** A site nobody reported on for this long is forgotten, its live lines with it. */
 export const SITE_IDLE_MS = 6 * 60 * 60_000;
@@ -115,6 +115,8 @@ export function reportAgentActivity(siteId: string, activity: AgentActivity, lin
     agent.seenAt = now;
     if (activity.phase === 'start') {
       agent.open.set(activity.callId, { startedAt: now, activity });
+      // Bounded: the oldest running call is given up on first.
+      while (agent.open.size > LIVE_PRESENCE_LIMITS.callsPerAgent) agent.open.delete(agent.open.keys().next().value as string);
     } else {
       agent.open.delete(activity.callId);
     }
@@ -128,7 +130,7 @@ export function reportAgentActivity(siteId: string, activity: AgentActivity, lin
   publishSiteEvent(siteId, LIVE_EVENTS.agentActivity, activity);
 }
 
-/** What a newly opened stream of the site is told: the active agents and the live feed lines. */
+/** What a newly opened stream of the site is told: the active agents (every running call, else the last one) and the live feed lines. */
 export function presenceSnapshot(siteId: string, now: number = Date.now()): { agents: AgentActivity[]; feed: LiveFeedLine[] } {
   const sites = state().sites;
   const entry = sites.get(siteId);
@@ -142,9 +144,10 @@ export function presenceSnapshot(siteId: string, now: number = Date.now()): { ag
   for (const agent of entry.agents.values()) {
     dropStaleCalls(agent, now);
     if (agent.open.size === 0 && now - agent.seenAt > AGENT_ACTIVE_MS) continue;
-    // A call still running wins (the latest one started): the frame shows where the agent is now.
-    const running = [...agent.open.values()].at(-1)?.activity;
-    agents.push(running ?? agent.last);
+    // Every call still running travels (in the order they started, the latest last): the editor keeps
+    // them all, so one ending does not take the frame or the editing note while another goes on.
+    if (agent.open.size > 0) for (const call of agent.open.values()) agents.push(call.activity);
+    else agents.push(agent.last);
   }
   return { agents, feed: [...entry.feed] };
 }

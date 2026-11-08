@@ -19,7 +19,8 @@ import 'server-only';
 // What travels: ids (the call's random id, a hash of the key id, page and node
 // ids from the arguments and the answer), the tool's name, the outcome, the
 // agent's label (sanitised and capped) and a count of operations. Never the key
-// id, never the arguments' content, never a summary line (those name page
+// id, never the arguments' content (ids pass a strict shape check, and an end
+// repeats the arguments' ids only for a call the site accepted), never a summary line (those name page
 // titles, which are content).
 //
 // Bounded per key: a site id not in scope is remembered as such for a short
@@ -43,6 +44,7 @@ import {
 } from '@/lib/projects/liveEvents';
 import type { SiteRepository } from '@/server/sites';
 import type { TenantScope } from '@/server/sites/repository';
+import { splitCreated } from '@/lib/siteOps/createdIds';
 import { liveAgentId } from '@/server/siteOps/audit';
 import { reportAgentActivity } from '@/server/sites/livePresence';
 import type { ToolResult } from './tools';
@@ -144,13 +146,15 @@ export function resetPresenceScopeCacheForTests(): void {
   missBudgets.clear();
 }
 
-const ID_MAX = 200;
+const ID_MAX = 100;
+/** What an id looks like (generated ids are letters, digits, `-` and `_`): prose or a pasted secret does not pass. */
+const ID_SHAPE = /^[A-Za-z0-9_-]+$/;
 
 function idOf(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const id = value.trim();
   // A `ref:` names something the same batch creates: its real id comes with the answer.
-  if (!id || id.length > ID_MAX || id.startsWith('ref:')) return undefined;
+  if (!id || id.length > ID_MAX || !ID_SHAPE.test(id)) return undefined;
   return id;
 }
 
@@ -217,17 +221,17 @@ function wroteOf(tool: string, result: ToolResult | undefined): boolean {
   return tool === 'rollback' ? typeof s.live === 'number' : typeof s.version === 'number';
 }
 
-/** The ids an answer created or inserted, and the page it names. */
-function answerFocus(result: ToolResult | undefined): { pageId?: string; nodeIds: string[] } {
+/**
+ * The ids an answer created or inserted, and the page it names (or the first
+ * page the batch created: a `createPage` op's ref maps to a page id, not a node's).
+ * These come from the server's own answer, never from the arguments.
+ */
+function answerFocus(result: ToolResult | undefined, args: unknown): { pageId?: string; nodeIds: string[] } {
   if (!result || result.isError) return { nodeIds: [] };
   const s = record(result.structuredContent);
-  const nodeIds = [
-    ...Object.values(record(s.created)),
-    ...(Array.isArray(s.insertedIds) ? s.insertedIds : []),
-  ]
-    .map(idOf)
-    .filter((id): id is string => !!id);
-  const pageId = idOf(s.pageId);
+  const created = splitCreated(record(args).ops, s.created);
+  const nodeIds = [...created.nodeIds, ...(Array.isArray(s.insertedIds) ? s.insertedIds : [])].map(idOf).filter((id): id is string => !!id);
+  const pageId = idOf(s.pageId) ?? created.pageIds.map(idOf).find((id): id is string => !!id);
   return { ...(pageId ? { pageId } : {}), nodeIds };
 }
 
@@ -277,10 +281,14 @@ export async function withPresence(call: PresenceCall, run: (liveCallId?: string
     result = await run(base.callId);
     return result;
   } finally {
-    const answered = answerFocus(result);
+    const answered = answerFocus(result, call.args);
     const outcome = outcomeOf(result);
-    const nodeIds = [...new Set([...focus.nodeIds, ...answered.nodeIds])].slice(0, LIVE_LIST_MAX);
-    const pageId = focus.pageId ?? answered.pageId;
+    // The ids in the arguments are the caller's words: only a call the site accepted vouches for them
+    // (a rejected or failed one may name anything), so only then do they travel again in the end and
+    // the feed line. The answer's own ids always can.
+    const named = outcome === 'ok' ? focus : { nodeIds: [] as string[] };
+    const nodeIds = [...new Set([...named.nodeIds, ...answered.nodeIds])].slice(0, LIVE_LIST_MAX);
+    const pageId = ('pageId' in named ? named.pageId : undefined) ?? answered.pageId;
     const ops = record(call.args).ops;
     const changes = Array.isArray(ops) ? ops.length : undefined;
     const end: AgentActivity = {

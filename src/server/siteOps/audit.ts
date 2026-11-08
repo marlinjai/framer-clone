@@ -29,6 +29,8 @@ export interface AuditEntry {
   versionBefore?: number;
   versionAfter?: number;
   revision?: number;
+  /** The ids the write created (the server's own, never the caller's words): so the feed can open them after a reload. */
+  created?: { nodeIds: string[]; pageIds: string[] };
 }
 
 /**
@@ -37,17 +39,21 @@ export interface AuditEntry {
  * activity feed names the agent again after a reload and shows the write under
  * the id it had live. A name and a random id, never a secret.
  */
-function actorDetailOf(caller: SiteOpsCaller): Record<string, string> | undefined {
-  const detail = {
+function actorDetailOf(caller: SiteOpsCaller, entry: AuditEntry): Record<string, unknown> | undefined {
+  const created = entry.created;
+  const detail: Record<string, unknown> = {
     ...(caller.actorDetail ?? {}),
     ...(caller.actorLabel ? { label: caller.actorLabel } : {}),
     ...(caller.liveCallId ? { callId: caller.liveCallId } : {}),
+    // Kept apart from `ops`, so the count of operations a line shows stays the batch's.
+    ...(created && created.nodeIds.length > 0 ? { createdNodeIds: created.nodeIds.slice(0, LIVE_LIST_MAX) } : {}),
+    ...(created && created.pageIds.length > 0 ? { createdPageIds: created.pageIds.slice(0, LIVE_LIST_MAX) } : {}),
   };
   return Object.keys(detail).length > 0 ? detail : undefined;
 }
 
 export async function recordSiteOperation(prisma: PrismaClient, caller: SiteOpsCaller, entry: AuditEntry): Promise<void> {
-  const actorDetail = actorDetailOf(caller);
+  const actorDetail = actorDetailOf(caller, entry);
   await prisma.siteOperationAudit.create({
     data: {
       siteId: entry.siteId,
@@ -108,8 +114,11 @@ export async function recentSiteOperations(
     const actorKind = row.actorKind === 'user' ? 'user' : 'key';
     const detail = (row.actorDetail ?? {}) as Record<string, unknown>;
     const ops = Array.isArray(row.ops) ? (row.ops as unknown as AuditedOp[]) : [];
-    const nodeIds = [...new Set(ops.map((o) => o?.nodeId).filter((id): id is string => typeof id === 'string'))].slice(0, LIVE_LIST_MAX);
-    const pageId = ops.find((o) => typeof o?.pageId === 'string')?.pageId;
+    const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : []);
+    const nodeIds = [
+      ...new Set([...ops.map((o) => o?.nodeId).filter((id): id is string => typeof id === 'string'), ...strings(detail.createdNodeIds)]),
+    ].slice(0, LIVE_LIST_MAX);
+    const pageId = ops.find((o) => typeof o?.pageId === 'string')?.pageId ?? strings(detail.createdPageIds)[0];
     const callId = typeof detail.callId === 'string' && CALL_ID_PATTERN.test(detail.callId) ? detail.callId : undefined;
     const line: LiveFeedLine = {
       // The id the line had live, when the write came through the MCP endpoint, else the row's.

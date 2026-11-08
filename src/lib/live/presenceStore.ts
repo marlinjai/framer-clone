@@ -240,10 +240,11 @@ export class LivePresenceStore {
     this.timers.set(agentId, timers);
   }
 
-  private becameActive() {
+  private becameActive(continuing = false) {
     // A run starts while nobody worked on the site: the camera follows again,
-    // and the panel opens by itself the first time in this session.
-    if (this.agents.size === 0) {
+    // and the panel opens by itself the first time in this session. A reconnect
+    // that finds the same agents goes on with the run, and with the person's choice.
+    if (this.agents.size === 0 && !continuing) {
       this.follow = true;
       this.run += 1;
     }
@@ -256,6 +257,8 @@ export class LivePresenceStore {
   /** The `state` event of a (re)connect: the active agents and the feed, replacing what was held. */
   applyState(state: Pick<SiteStateEvent, 'agents' | 'feed'>): void {
     const now = this.now();
+    // Agents were here before this snapshot: it continues the run (a reconnect), it does not begin one.
+    const continuing = this.agents.size > 0;
     for (const id of [...this.timers.keys()]) this.clearTimers(id);
     this.clearCalls();
     this.agents.clear();
@@ -268,7 +271,10 @@ export class LivePresenceStore {
       // A call the stream already reported as ended is not running, whatever this snapshot says.
       if (a.phase === 'start' && this.seen.has(`${a.callId}:end`)) continue;
       if (a.phase === 'start' && age >= OPEN_CALL_MAX_MS) continue;
-      if (this.agents.size === 0) this.becameActive();
+      const prev = this.agents.get(a.agentId);
+      // A snapshot lists every call still running; an agent with one running has no use for its last ended one.
+      if (a.phase === 'end' && prev && prev.openCalls.length > 0) continue;
+      if (this.agents.size === 0) this.becameActive(continuing);
       this.markSeen(a);
       const running = a.phase === 'start';
       const failed = a.phase === 'end' && a.outcome !== undefined && a.outcome !== 'ok';
@@ -276,7 +282,7 @@ export class LivePresenceStore {
         agentId: a.agentId,
         label: a.label,
         focus: focusOf(a),
-        openCalls: running ? [a.callId] : [],
+        openCalls: running ? [...(prev?.openCalls ?? []).filter((c) => c !== a.callId), a.callId] : [],
         frameShown: running || (!failed && age < AGENT_FRAME_LINGER_MS),
         failed,
       });

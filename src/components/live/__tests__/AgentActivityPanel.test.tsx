@@ -153,6 +153,13 @@ describe('the activity feed', () => {
     expect(store.editorUI.currentViewportNode?.breakpointId).toBe(home.viewportNodes[0].breakpointId);
   });
 
+  it('a line that names only a page opens that page', () => {
+    act(() => presence().applyState({ agents: [], feed: [line({ id: 'l3', tool: 'get_page', pageId: about.id })] }));
+    fireEvent.click(screen.getByRole('button', { name: /Agent activity/ }));
+    fireEvent.click(within(screen.getAllByRole('listitem')[0]).getByRole('button'));
+    expect(store.editorUI.currentPage?.id).toBe(about.id);
+  });
+
   it('Follow is a toggle on the presence store', () => {
     act(() => presence().applyActivity(activity()));
     const follow = screen.getByRole('button', { name: 'Follow' });

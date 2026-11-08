@@ -405,6 +405,7 @@ const TopBar = observer(() => {
       {/* While an agent works on the site (live agent canvas): "Claude is editing
           this site", so a person who starts editing knows a conflict may follow. */}
       <AgentEditingNote className={`mr-2 ${wideOnly}`} />
+      <AgentEditingNote compact className="mr-1 lg:hidden" />
 
       {/* Publish: the primary rightward action. Serializes the live project
           and pushes it live via the admin-guarded publish endpoint. */}

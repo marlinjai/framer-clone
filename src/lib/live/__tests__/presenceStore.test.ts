@@ -264,3 +264,32 @@ describe('calls that overlap, arrive late or never end', () => {
     expect(store.anyActive).toBe(false);
   });
 });
+
+describe('a reconnect that continues the run', () => {
+  it('keeps the person\'s Follow choice and the run, and holds every running call of the snapshot', () => {
+    store.applyActivity(act({ callId: 'gen', tool: 'generate_page' }));
+    store.applyActivity(act({ callId: 'read', tool: 'get_page', nodeIds: ['plan-a'] }));
+    const run = store.run;
+    store.setFollow(false);
+    store.applyState({
+      agents: [act({ callId: 'gen', tool: 'generate_page' }), act({ callId: 'read', tool: 'get_page', nodeIds: ['plan-a'] })],
+      feed: [],
+    });
+    expect(store.follow).toBe(false);
+    expect(store.run).toBe(run);
+    expect(store.agents.get('a1')!.openCalls).toEqual(['gen', 'read']);
+    expect(store.agents.get('a1')!.focus.callId).toBe('read');
+    // The read ends: the generation still runs, frame and note stay.
+    store.applyActivity(end({ callId: 'read' }));
+    expect(store.agents.get('a1')!.focus.callId).toBe('gen');
+    expect(store.framed).toHaveLength(1);
+  });
+
+  it('a snapshot after everyone left is a new run', () => {
+    store.setFollow(false);
+    const run = store.run;
+    store.applyState({ agents: [act()], feed: [] });
+    expect(store.follow).toBe(true);
+    expect(store.run).toBe(run + 1);
+  });
+});
