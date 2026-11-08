@@ -36,6 +36,8 @@ import { revealOffset, useCameraControls, type CameraTransform } from '@/lib/can
 import { presencePagesOf, presenceTarget, type PresenceProject, type PresenceTarget } from '@/lib/live/presenceTarget';
 import { presenceLabel } from '@/lib/live/activityText';
 import type { AgentPresence, LivePresenceStore } from '@/lib/live/presenceStore';
+import type { LivePlansStore } from '@/lib/live/plansStore';
+import { SKELETON_ATTR, skeletonKey } from '@/components/live/SkeletonLayer';
 import { REVEAL_KEYFRAMES } from '@/lib/live/reveal';
 
 /** The frame's border width and its gap to the element, in screen pixels. */
@@ -56,14 +58,17 @@ export function prefersReducedMotion(): boolean {
 /** A stable key of a target (the move animates only when it changes). */
 export function targetKey(target: PresenceTarget | undefined): string {
   if (!target) return '';
+  if (target.kind === 'skeleton') return `skeleton:${target.pageId}:${target.skeleton}`;
   return target.kind === 'section' ? `section:${target.pageId}:${target.sectionId}` : `page:${target.pageId}`;
 }
 
 /** The canvas elements a target is drawn around, in document order. */
 export function targetElements(target: PresenceTarget, root: ParentNode = document): HTMLElement[] {
   if (target.kind === 'page') return Array.from(root.querySelectorAll<HTMLElement>('[data-camera-transform] [data-viewport-id]'));
-  const escaped = typeof CSS !== 'undefined' && typeof CSS.escape === 'function' ? CSS.escape(target.sectionId) : target.sectionId.replace(/"/g, '\\"');
-  return Array.from(root.querySelectorAll<HTMLElement>(`[data-camera-transform] [data-inner-component-id="${escaped}"]`));
+  const id = target.kind === 'skeleton' ? target.skeleton : target.sectionId;
+  const escaped = typeof CSS !== 'undefined' && typeof CSS.escape === 'function' ? CSS.escape(id) : id.replace(/"/g, '\\"');
+  const attr = target.kind === 'skeleton' ? SKELETON_ATTR : 'data-inner-component-id';
+  return Array.from(root.querySelectorAll<HTMLElement>(`[data-camera-transform] [${attr}="${escaped}"]`));
 }
 
 /** The frame's box around an element's screen rect: PRESENCE_FRAME_GAP outside it, border included. */
@@ -144,11 +149,18 @@ export function pillPlacement(
 export function useAgentTargets(): Array<{ agent: AgentPresence; target: PresenceTarget | undefined }> {
   const { editorUI } = useStore();
   const presence = editorUI.livePresence as LivePresenceStore | undefined;
+  const plans = editorUI.livePlans as LivePlansStore | undefined;
   const project = editorUI.currentProject;
   const pageId = editorUI.currentPage?.id;
   if (!presence) return [];
   const pages = presencePagesOf(project as unknown as PresenceProject | undefined);
   return presence.active.map((agent) => {
+    // Writing an announced section whose skeleton is still drawn here: the frame goes on that skeleton.
+    const filling = plans?.skeletonOf(agent.agentId, agent.focus.sectionRef);
+    if (filling && pageId && (filling.plan.pageId === pageId || plans?.inGhostFrame(filling.plan))) {
+      const target: PresenceTarget = { kind: 'skeleton', pageId, skeleton: skeletonKey(filling.plan.agentId, filling.section.ref), title: filling.section.title };
+      return { agent, target };
+    }
     const target = presenceTarget(pages, agent.focus);
     return { agent, target: target && target.pageId === pageId ? target : undefined };
   });
@@ -180,7 +192,7 @@ const AgentPresenceLayer = observer(function AgentPresenceLayer() {
     agentId: agent.agentId,
     key: targetKey(target),
     shown: agent.frameShown,
-    label: presenceLabel(agent.label, agent.focus.tool),
+    label: presenceLabel(agent.label, agent.focus.tool, target?.kind === 'skeleton' ? target.title : undefined),
     target,
   }));
   const signature = next.map((d) => `${d.agentId}|${d.key}|${d.shown ? 1 : 0}|${d.label}`).join('\n');

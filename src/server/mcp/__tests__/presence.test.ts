@@ -33,6 +33,7 @@ import { presenceSnapshot, resetLivePresenceForTests } from '@/server/sites/live
 import { LIVE_EVENTS, type AgentActivity } from '@/lib/projects/liveEvents';
 import { liveAgentId } from '@/server/siteOps/audit';
 import { createMcpHandler } from '../handler';
+import { resetLivePlansForTests } from '../livePlans';
 import { ApprovalStore } from '../approvals';
 import { focusOf, MISSES_PER_KEY, outcomeOf, REPORTS_PER_KEY, resetPresenceScopeCacheForTests, siteInScope, takeReport } from '../presence';
 
@@ -132,6 +133,7 @@ const activities = (heard: Array<{ event: string; data: AgentActivity }>) =>
   heard.filter((h) => h.event === LIVE_EVENTS.agentActivity).map((h) => h.data);
 
 beforeEach(() => {
+  resetLivePlansForTests();
   resetLiveBusForTests();
   resetLivePresenceForTests();
   resetPresenceScopeCacheForTests();
@@ -181,6 +183,31 @@ describe('agent:activity from the MCP endpoint', () => {
     const wire = JSON.stringify(activities(heard));
     expect(wire).not.toContain(KEY_ID);
     expect(wire).not.toContain('secret');
+  });
+
+  it('names the announced section a batch writes (sectionRef), so the frame goes on its skeleton; never another key\'s', async () => {
+    const s = setup();
+    const heard = listen('site-1');
+    await callTool(s, 'announce_sections', { siteId: 'site-1', pageId: 'home', sections: [{ ref: 'pricing', title: 'Pricing', kind: 'pricing' }] });
+    const announce = activities(heard);
+    expect(announce.map((a) => [a.tool, a.phase, a.outcome])).toEqual([['announce_sections', 'start', undefined], ['announce_sections', 'end', 'ok']]);
+    // A batch of another key with the same ref fulfils and frames nothing of this plan.
+    const other = setup(verifiedKey({ keyId: 'key_other' }));
+    await callTool(other, 'apply_batch', { siteId: 'site-1', expectedVersion: 3, ops: [{ op: 'insertNodes', pageId: 'home', nodes: [{ type: 'section', ref: 'pricing' }] }] });
+    expect(activities(heard).slice(2).every((a) => a.sectionRef === undefined)).toBe(true);
+    heard.length = 0;
+    // (Each setup has its own fake repository, so this one is still at version 3.)
+    await callTool(s, 'apply_batch', { siteId: 'site-1', expectedVersion: 3, ops: [{ op: 'insertNodes', pageId: 'home', nodes: [{ type: 'section', ref: 'pricing' }] }] });
+    const [start, end] = activities(heard);
+    expect(start).toMatchObject({ phase: 'start', sectionRef: 'pricing' });
+    expect(end).toMatchObject({ phase: 'end', outcome: 'ok', sectionRef: 'pricing' });
+    expect(heard.some((h) => h.event === LIVE_EVENTS.planUpdate)).toBe(true);
+  });
+
+  it('a refused announcement shows as refused, never as a failure', () => {
+    for (const code of ['too_many_plans', 'plan_not_found', 'page_not_found']) {
+      expect(outcomeOf({ content: [], structuredContent: { error: { code, message: 'x' } }, isError: true })).toBe('rejected');
+    }
   });
 
   it('reports a refused batch as rejected and a stale one as site_changed, with nothing written', async () => {

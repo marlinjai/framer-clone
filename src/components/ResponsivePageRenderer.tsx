@@ -51,6 +51,8 @@ import { pageForSitePath } from '@/lib/site/sitePath';
 import { SurfaceDomContext, useStableSurfaceDom } from '@/lib/behaviour/surfaceDom';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { DraftPageFrames, DraftStyles } from '@/components/ai/PageGenDraftLayer';
+import { SkeletonPageFrames, SkeletonStyles } from '@/components/live/SkeletonLayer';
+import type { PageGenDraftStore } from '@/lib/ai/pageGen/draft';
 
 // Parse a CSS length into pixels for GroundWrapper sizing. Accepts a raw
 // number or a `<n>px` string. Anything else (e.g. '100%', 'auto',
@@ -190,6 +192,21 @@ const ResponsivePageRenderer = observer(() => {
     minWidth: viewport.breakpointMinWidth!,
     label: viewport.label!,
   }));
+  // Where the page's own frames end, and where a planned new page's ghost frames go beside them.
+  const framesLeft = Math.min(...viewportNodes.map(v => v.canvasX ?? 0));
+  const framesRight = Math.max(...viewportNodes.map(v => (v.canvasX ?? 0) + (v.viewportWidth ?? FRAME_FALLBACK_WIDTH)));
+  const framesSpan = framesRight - framesLeft;
+  const ghostFrames = viewportNodes.map(v => ({
+    breakpointId: v.breakpointId!,
+    x: v.canvasX ?? 0,
+    y: v.canvasY ?? 0,
+    width: v.viewportWidth ?? FRAME_FALLBACK_WIDTH,
+    height: v.viewportHeight ?? FRAME_FALLBACK_HEIGHT,
+    label: v.label ?? '',
+    minWidth: v.breakpointMinWidth ?? 0,
+  }));
+  // A new page the Generate draft is writing takes the place beside the frames first.
+  const draftNewPage = (rootStore.editorUI.pageGenDraft as PageGenDraftStore | undefined)?.targetOn(page.id)?.kind === 'newPage';
 
 
   // Root binding scope: a page frame carrying route params. The editor canvas
@@ -249,9 +266,12 @@ const ResponsivePageRenderer = observer(() => {
       <DraftStyles />
       {/* 3. A new page being generated: its draft frames beside these (never part of the project). */}
       <DraftPageFrames
-        framesRight={Math.max(...viewportNodes.map(v => (v.canvasX ?? 0) + (v.viewportWidth ?? FRAME_FALLBACK_WIDTH)))}
+        framesRight={framesRight}
         scope={rootScope}
       />
+      {/* 4. Agents' announced sections not written yet (never part of the project), and planned new pages beside the frames. */}
+      <SkeletonStyles />
+      <SkeletonPageFrames frames={ghostFrames} occupiedRight={draftNewPage ? framesRight + 160 + framesSpan : framesRight} />
     </>
   );
 });

@@ -7,7 +7,7 @@
 // page title is content and never travels on the stream; the editor reads it
 // from its own copy. Pure.
 
-import type { AgentOutcome, LiveFeedLine } from '@/lib/projects/liveEvents';
+import { PLAN_STOPPED_TOOL, type AgentOutcome, type LiveFeedLine } from '@/lib/projects/liveEvents';
 
 const READ_TOOLS = new Set(['get_site', 'get_page', 'describe_vocabulary', 'list_revisions', 'preview_url']);
 
@@ -29,13 +29,17 @@ export function activityVerb(tool: string): string {
       return 'Rolling back';
     case 'preview_url':
       return 'Previewing';
+    case 'announce_sections':
+    case 'clear_sections':
+      return 'Planning';
     default:
       return isReadTool(tool) ? 'Reading' : 'Working';
   }
 }
 
-/** The presence label: "Claude · Editing". */
-export function presenceLabel(label: string, tool: string): string {
+/** The presence label: "Claude · Editing", or "Claude · Writing Pricing" on the skeleton of an announced section it fills. */
+export function presenceLabel(label: string, tool: string, sectionTitle?: string): string {
+  if (sectionTitle) return `${label || 'Agent'} · Writing ${sectionTitle}`;
   return `${label || 'Agent'} · ${activityVerb(tool)}`;
 }
 
@@ -68,6 +72,10 @@ function attemptNoun(tool: string): string {
       return 'Publishing';
     case 'rollback':
       return 'Rollback';
+    case 'announce_sections':
+      return 'Planned sections';
+    case 'clear_sections':
+      return 'Clearing planned sections';
     default:
       return 'A request';
   }
@@ -106,6 +114,12 @@ export function feedLineText(line: Pick<LiveFeedLine, 'tool' | 'outcome' | 'chan
       return 'Put an earlier version live';
     case 'create_site':
       return 'Created the site';
+    case 'announce_sections':
+      return `Planned the next sections${onPage(pageTitle)}`;
+    case 'clear_sections':
+      return 'Removed its planned sections';
+    case PLAN_STOPPED_TOOL:
+      return 'Planned sections removed: the agent stopped';
     default:
       return 'Worked on the site';
   }

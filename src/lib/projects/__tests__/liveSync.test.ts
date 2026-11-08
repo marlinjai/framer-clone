@@ -567,7 +567,8 @@ describe('liveSync: the per-component reveal (live agent canvas, slice 3)', () =
     await vi.advanceTimersByTimeAsync(100);
     const second = await writes({});
     expect(entries().map(([id]) => id)).toEqual([...created, ...second]);
-    await vi.advanceTimersByTimeAsync(3 * 45 + 180 + REVEAL_SETTLE_MS - 100);
+    // Each batch's timer runs from its first paint, two animation frames (2 x 16 ms) after it started.
+    await vi.advanceTimersByTimeAsync(3 * 45 + 180 + REVEAL_SETTLE_MS - 100 + 32);
     expect(entries().map(([id]) => id)).toEqual(second);
     await vi.advanceTimersByTimeAsync(200);
     expect(reveal().size).toBe(0);
@@ -758,5 +759,59 @@ describe('liveSync: the per-component reveal (live agent canvas, slice 3)', () =
     expect(revealsOnAdoption(e({ own: true }))).toBe(false);
     for (const origin of ['editor', 'publish', 'erasure'] as const) expect(revealsOnAdoption(e({ origin }))).toBe(false);
     expect(revealsOnAdoption(undefined)).toBe(false);
+  });
+});
+
+describe('liveSync: skeleton plans (slice 4)', () => {
+  const plans = () => store.editorUI.livePlans;
+  const drawn = () => plans().onPage(homeId()).flatMap((p) => p.sections.map((s) => s.ref));
+  const plan = (sections: Array<{ ref: string; fulfilledAt?: number }>, planId = 'plan-1') => ({
+    planId,
+    agentId: 'agent-a',
+    label: 'Claude',
+    pageId: homeId(),
+    sections: sections.map((s) => ({ title: s.ref, kind: 'generic', ...s })),
+    expiresAt: '',
+  });
+
+  it('draws the plans of `state`, and a section leaves in the same action as the adoption of the version that created it', async () => {
+    const stop = startLiveSync(SITE, store);
+    stream().open();
+    stream().emit('state', { version: server.version, plans: [plan([{ ref: 'hero' }, { ref: 'faq' }])], agents: [], feed: [] });
+    expect(drawn()).toEqual(['hero', 'faq']);
+    // The batch commits at version 2: the plan update comes before the copy is adopted.
+    const versionBefore = server.version;
+    stream().emit('plan:update', { plan: plan([{ ref: 'hero', fulfilledAt: versionBefore + 1 }, { ref: 'faq' }]) });
+    expect(drawn()).toEqual(['hero', 'faq']);
+    holdFetch = { release: () => {} };
+    await agentWrites('hero');
+    expect(drawn()).toEqual(['hero', 'faq']); // the copy is still on its way
+    holdFetch.release();
+    holdFetch = undefined;
+    await settle();
+    expect(knownServerVersion(SITE)).toBe(versionBefore + 1);
+    expect(drawn()).toEqual(['faq']);
+    stop();
+    expect(plans().plans.size).toBe(0); // nothing carries over to the next site opened
+  });
+
+  it("an agent that stopped leaves its line in the feed; this tab's own save moves the version a held plan waits for", async () => {
+    const stop = start();
+    stream().emit('plan:update', { plan: plan([{ ref: 'hero' }]) });
+    stream().emit('plan:update', { plan: plan([{ ref: 'hero' }]), ended: 'expired' });
+    expect(store.editorUI.livePresence.feed[0]).toMatchObject({ id: 'plan-stopped:plan-1', tool: 'sections_stopped' });
+    stream().emit('plan:update', { plan: plan([{ ref: 'cta', fulfilledAt: 2 }], 'plan-2') });
+    expect(drawn()).toContain('cta');
+    stream().emit('site:version', { origin: 'editor', own: true, version: 2, versionBefore: 1 });
+    expect(drawn()).not.toContain('cta');
+    stop();
+  });
+
+  it('a reconnect replaces the plans with those of its `state`: one that ended meanwhile never comes back', async () => {
+    const stop = start();
+    stream().emit('plan:update', { plan: plan([{ ref: 'hero' }]) });
+    stream().emit('state', { version: server.version, plans: [], agents: [], feed: [] });
+    expect(drawn()).toEqual([]);
+    stop();
   });
 });
