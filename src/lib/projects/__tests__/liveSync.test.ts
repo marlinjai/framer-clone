@@ -26,6 +26,7 @@ import {
   LIVE_POLL_VISIBLE_MS,
   LIVE_STREAM_RETRY_MS,
   loadNewerVersion,
+  revealsOnAdoption,
   liveSyncFor,
   setLiveSyncDepsForTests,
   startLiveSync,
@@ -34,6 +35,7 @@ import {
   type LiveSyncDeps,
 } from '../liveSync';
 import type { SiteVersionEvent } from '../liveEvents';
+import { REVEAL_SETTLE_MS } from '@/lib/live/revealStore';
 
 class FakeStream implements LiveEventSource {
   readyState = 0;
@@ -71,6 +73,8 @@ let visibilityListeners: Array<() => void>;
 let server: { version: number; snapshot: ProjectSnapshotOut; status?: number };
 let fetches: Array<number | undefined>;
 let holdFetch: { release: () => void } | undefined;
+/** The next fetch fails on the network. */
+let failFetch = false;
 let saves: Array<{ expectedVersion: number | undefined; snapshot: ProjectSnapshotOut }>;
 
 const deps: LiveSyncDeps = {
@@ -81,6 +85,10 @@ const deps: LiveSyncDeps = {
   },
   fetchDocument: async (_url, knownVersion): Promise<DocumentAnswer> => {
     fetches.push(knownVersion);
+    if (failFetch) {
+      failFetch = false;
+      throw new Error('network');
+    }
     if (holdFetch) {
       await new Promise<void>((resolve) => {
         holdFetch = { release: resolve };
@@ -141,6 +149,7 @@ beforeEach(() => {
   fetches = [];
   saves = [];
   holdFetch = undefined;
+  failFetch = false;
   server = { version: 1, snapshot: baseSnapshot() };
   resetAutosaveForTests({
     write: async (snapshot, expectedVersion): Promise<ProjectWriteResult> => {
@@ -510,5 +519,244 @@ describe('liveSync: presence (live agent canvas, slice 2)', () => {
     stop();
     expect(presence().anyActive).toBe(false);
     expect(presence().feed).toEqual([]);
+  });
+});
+
+describe('liveSync: the per-component reveal (live agent canvas, slice 3)', () => {
+  const reveal = () => store.editorUI.liveReveal;
+  /** The ids of the page's nodes in document order. */
+  const pageIds = (snapshot: ProjectSnapshotOut) => {
+    const ids: string[] = [];
+    const visit = (n: { id: string; children?: unknown[] }) => {
+      ids.push(n.id);
+      for (const c of (n.children ?? []) as Array<{ id: string; children?: unknown[] }>) visit(c);
+    };
+    visit(Object.values(snapshot.pages).find((p) => p.slug === '')!.appComponentTree as never);
+    return ids;
+  };
+
+  /** A writer adds a section with a heading, a text and a button; answers the four new ids in document order. */
+  async function writes(event: Partial<SiteVersionEvent> | null): Promise<string[]> {
+    const before = new Set(pageIds(server.snapshot));
+    const model = ProjectModel.create(server.snapshot) as ProjectModelType;
+    const outcome = await applyOperations(model, [
+      {
+        op: 'insertNodes',
+        pageId: homeId(),
+        nodes: [{ type: 'section', children: [{ type: 'h2', props: { children: 'Title' } }, { type: 'p', props: { children: 'Text' } }, { type: 'button', props: { children: 'Go' } }] }],
+      },
+    ]);
+    if (!outcome.ok) throw new Error('refused');
+    const versionBefore = server.version;
+    server = { version: server.version + 1, snapshot: getSnapshot(model) as ProjectSnapshotOut };
+    if (event) stream().emit('site:version', { origin: 'mcp', actor: { kind: 'key', label: 'Claude' }, version: server.version, versionBefore, ...event });
+    await settle();
+    return pageIds(server.snapshot).filter((id) => !before.has(id));
+  }
+  const entries = () => [...reveal().delays.entries()];
+
+  it('forward: an agent batch reveals its new nodes in document order, 45 ms apart, then forgets them', async () => {
+    start();
+    const created = await writes({});
+    expect(created).toHaveLength(4);
+    expect(entries()).toEqual(created.map((id, i) => [id, i * 45]));
+    // Set in the same action as the adoption: every new node of the copy has its delay.
+    expect(pageIds(working()).filter((id) => created.includes(id))).toEqual(created);
+
+    // A second batch inside the first's window does not cut the first short.
+    await vi.advanceTimersByTimeAsync(100);
+    const second = await writes({});
+    expect(entries().map(([id]) => id)).toEqual([...created, ...second]);
+    await vi.advanceTimersByTimeAsync(3 * 45 + 180 + REVEAL_SETTLE_MS - 100);
+    expect(entries().map(([id]) => id)).toEqual(second);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(reveal().size).toBe(0);
+  });
+
+  it("a generated page's result reveals too", async () => {
+    start();
+    const created = await writes({ origin: 'generate' });
+    expect(entries().map(([id]) => id)).toEqual(created);
+  });
+
+  it("never for another tab's or person's save, a publish or an erasure", async () => {
+    start();
+    await writes({ origin: 'editor', actor: { kind: 'user', label: 'Sam' } });
+    await writes({ origin: 'publish' });
+    expect(knownServerVersion(SITE)).toBe(3);
+    expect(reveal().size).toBe(0);
+  });
+
+  it('never for a catch-up, a reconnect state or a poll: the writer is not known', async () => {
+    start();
+    await writes({ catchUp: true });
+    expect(knownServerVersion(SITE)).toBe(2);
+    await writes(null);
+    stream().fail(false);
+    stream().open();
+    stream().emit('state', { version: server.version, plans: [], agents: [], feed: [] });
+    await settle();
+    expect(knownServerVersion(SITE)).toBe(3);
+    stream().fail(true);
+    await writes(null);
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_VISIBLE_MS);
+    expect(knownServerVersion(SITE)).toBe(4);
+    expect(reveal().size).toBe(0);
+  });
+
+  it('never on the first load or for the person\'s own edits', async () => {
+    start();
+    await settle();
+    expect(reveal().size).toBe(0);
+    project().updateMetadata({ description: 'mine' });
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+    stream().emit('site:version', { origin: 'editor', own: true, version: server.version, versionBefore: server.version - 1 });
+    await settle();
+    expect(saves).toHaveLength(1);
+    expect(reveal().size).toBe(0);
+  });
+
+  it('backtrack: "Load the newer version" appears at once, though an agent wrote it', async () => {
+    vi.stubGlobal('location', { ...window.location, reload: vi.fn() });
+    start();
+    project().updateMetadata({ description: 'unsaved' });
+    await writes({});
+    expect(liveSyncFor(SITE)?.heldVersion?.event?.origin).toBe('mcp');
+    await loadNewerVersion(SITE);
+    expect(knownServerVersion(SITE)).toBe(2);
+    expect(reveal().size).toBe(0);
+    vi.unstubAllGlobals();
+  });
+
+  it('backtrack: undo removes the nodes (their entries are inert); a redo after the reveal ended appears at once', async () => {
+    start();
+    const created = await writes({});
+    getHistoryStore()!.undo();
+    expect(pageIds(working()).some((id) => created.includes(id))).toBe(false);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(reveal().size).toBe(0);
+    getHistoryStore()!.redo();
+    expect(pageIds(working()).filter((id) => created.includes(id))).toEqual(created);
+    expect(reveal().size).toBe(0);
+  });
+
+  it('a held agent write adopted once this tab\'s own write settled reveals as it is adopted', async () => {
+    start();
+    let finish!: () => void;
+    resetAutosaveForTests({
+      write: async (snapshot, expectedVersion): Promise<ProjectWriteResult> => {
+        saves.push({ expectedVersion, snapshot: snapshot as ProjectSnapshotOut });
+        server = { version: server.version + 1, snapshot: snapshot as ProjectSnapshotOut };
+        const version = server.version;
+        await new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+        return { kind: 'ok', payload: {}, version };
+      },
+    });
+    autosaveFor(SITE).attach(project());
+    project().updateMetadata({ description: 'mine' });
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+    const created = await writes({});
+    expect(reveal().size).toBe(0);
+    finish();
+    await settle();
+    await settle();
+    expect(knownServerVersion(SITE)).toBe(3);
+    expect(entries().map(([id]) => id)).toEqual(created);
+  });
+
+  it('a burst coalesced into one fetch reveals nothing, in either order: the copy holds more than the agent wrote', async () => {
+    start();
+    holdFetch = { release: () => {} };
+    await writes({ origin: 'editor', actor: { kind: 'user', label: 'Sam' } }); // fetch out, held
+    await writes({}); // the agent, while it is out
+    holdFetch.release();
+    holdFetch = undefined;
+    await settle();
+    await settle();
+    expect(knownServerVersion(SITE)).toBe(3);
+    expect(reveal().size).toBe(0);
+
+    holdFetch = { release: () => {} };
+    await writes({});
+    await writes({ origin: 'editor', actor: { kind: 'user', label: 'Sam' } });
+    holdFetch.release();
+    holdFetch = undefined;
+    await settle();
+    await settle();
+    expect(knownServerVersion(SITE)).toBe(5);
+    expect(reveal().size).toBe(0);
+  });
+
+  it("a poll after a failed fetch brings the agent's write with others: no reveal", async () => {
+    start();
+    failFetch = true;
+    await writes({});
+    expect(knownServerVersion(SITE)).toBe(1);
+    stream().fail(true);
+    await writes(null); // another writer, unannounced
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_VISIBLE_MS);
+    expect(knownServerVersion(SITE)).toBe(3);
+    expect(reveal().size).toBe(0);
+  });
+
+  it("the poll that retries a failed fetch of exactly the agent's write: catch-up, no reveal", async () => {
+    start();
+    failFetch = true;
+    await writes({});
+    expect(knownServerVersion(SITE)).toBe(1);
+    stream().fail(true);
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_VISIBLE_MS);
+    expect(knownServerVersion(SITE)).toBe(2);
+    expect(reveal().size).toBe(0);
+  });
+
+  it('a held agent write replaced by a newer one before it was adopted: no reveal for the two together', async () => {
+    start();
+    let finish!: () => void;
+    resetAutosaveForTests({
+      write: async (snapshot, expectedVersion): Promise<ProjectWriteResult> => {
+        saves.push({ expectedVersion, snapshot: snapshot as ProjectSnapshotOut });
+        server = { version: server.version + 1, snapshot: snapshot as ProjectSnapshotOut };
+        const version = server.version;
+        await new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+        return { kind: 'ok', payload: {}, version };
+      },
+    });
+    autosaveFor(SITE).attach(project());
+    project().updateMetadata({ description: 'mine' });
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+    await writes({});
+    await writes({});
+    expect(liveSyncFor(SITE)?.heldVersion?.version).toBe(4);
+    finish();
+    await settle();
+    await settle();
+    expect(knownServerVersion(SITE)).toBe(4);
+    expect(reveal().size).toBe(0);
+  });
+
+  it('re-entry: stopping forgets a reveal still playing; the next run starts with none', async () => {
+    const stop = start();
+    await writes({});
+    expect(reveal().size).toBe(4);
+    stop();
+    expect(reveal().size).toBe(0);
+    start();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(reveal().size).toBe(0);
+  });
+
+  it('revealsOnAdoption: only an announced agent write', () => {
+    const e = (over: Partial<SiteVersionEvent>): SiteVersionEvent => ({ origin: 'mcp', version: 2, versionBefore: 1, ...over });
+    expect(revealsOnAdoption(e({}))).toBe(true);
+    expect(revealsOnAdoption(e({ origin: 'generate' }))).toBe(true);
+    expect(revealsOnAdoption(e({ catchUp: true }))).toBe(false);
+    expect(revealsOnAdoption(e({ own: true }))).toBe(false);
+    for (const origin of ['editor', 'publish', 'erasure'] as const) expect(revealsOnAdoption(e({ origin }))).toBe(false);
+    expect(revealsOnAdoption(undefined)).toBe(false);
   });
 });

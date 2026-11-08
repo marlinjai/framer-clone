@@ -310,3 +310,119 @@ describe('the draft: re-entry', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Nothing was changed');
   });
 });
+
+describe('the apply and the per-component reveal (live agent canvas, slice 3)', () => {
+  const reveal = () => store.editorUI.liveReveal;
+  // The canvas drawing the draft (DraftSections marks what it drew): the dialog tests mount no canvas.
+  const drawn = () => store.editorUI.pageGenDraft.sections.forEach((s) => store.editorUI.pageGenDraft.markShown(s.index));
+  const subtree = (id: string) => {
+    const ids: string[] = [];
+    const walk = (n: ComponentInstance) => {
+      ids.push(n.id);
+      for (const c of n.children) walk(c as ComponentInstance);
+    };
+    const find = (n: ComponentInstance): ComponentInstance | undefined =>
+      n.id === id ? n : n.children.map((c: unknown) => find(c as ComponentInstance)).find(Boolean);
+    walk(find(root())!);
+    return ids;
+  };
+
+  it('sections the draft drew stay still; the result applies without a second reveal', async () => {
+    const { transport, calls } = manualTransport();
+    setup(transport);
+    typeBrief('A bakery');
+    generate();
+    const req = calls[0].req;
+    act(() => calls[0].handlers.onSection?.(sectionFor(req, HERO, 0)));
+    act(() => calls[0].handlers.onSection?.(sectionFor(req, STORY, 1)));
+    drawn();
+    await act(async () => calls[0].handlers.onResult?.(resultFor(req, PAGE)));
+    expect(page().metadata.title).toBe('Bakery');
+    expect(reveal().size).toBe(0);
+  });
+
+  it('a section the draft never drew reveals node by node as the result lands', async () => {
+    const { transport, calls } = manualTransport();
+    setup(transport);
+    typeBrief('A bakery');
+    generate();
+    const req = calls[0].req;
+    act(() => calls[0].handlers.onSection?.(sectionFor(req, HERO, 0)));
+    drawn();
+    const result = resultFor(req, PAGE);
+    await act(async () => calls[0].handlers.onResult?.(result));
+    const story = subtree(result.nodes[1].id);
+    expect(story).toHaveLength(2);
+    expect([...reveal().delays.entries()]).toEqual(story.map((id, i) => [id, i * 45]));
+    // Volatile: never in what a save sends, never a step of its own in the history.
+    expect(savedJson()).not.toContain('liveReveal');
+    expect(getHistoryStore()!.history.length).toBe(1);
+  });
+
+  it('a section stored but never drawn (another page was on screen) reveals when the result lands', async () => {
+    const { transport, calls } = manualTransport();
+    setup(transport);
+    typeBrief('A bakery');
+    generate();
+    const req = calls[0].req;
+    act(() => calls[0].handlers.onSection?.(sectionFor(req, HERO, 0)));
+    act(() => calls[0].handlers.onSection?.(sectionFor(req, STORY, 1)));
+    // Only the first was drawn.
+    store.editorUI.pageGenDraft.markShown(0);
+    const result = resultFor(req, PAGE);
+    await act(async () => calls[0].handlers.onResult?.(result));
+    expect([...reveal().delays.keys()]).toEqual(subtree(result.nodes[1].id));
+  });
+
+  it('a repair that reorders sections: what was drawn stays still by content, the unseen one reveals', async () => {
+    const { transport, calls } = manualTransport();
+    setup(transport);
+    typeBrief('A bakery');
+    generate();
+    const req = calls[0].req;
+    act(() => calls[0].handlers.onSection?.(sectionFor(req, HERO, 0)));
+    drawn();
+    // The final page puts a section the preview never showed first.
+    const result = resultFor(req, { title: 'Bakery', nodes: [STORY, HERO] });
+    await act(async () => calls[0].handlers.onResult?.(result));
+    expect([...reveal().delays.keys()]).toEqual(subtree(result.nodes[0].id));
+  });
+
+  it('matches drawn sections by content: a section missing from the draft reveals, the drawn ones stay still', async () => {
+    const { transport, calls } = manualTransport();
+    setup(transport);
+    typeBrief('A bakery');
+    generate();
+    const req = calls[0].req;
+    // Section 1 never reached the draft; 0 and 2 did.
+    act(() => calls[0].handlers.onSection?.(sectionFor(req, HERO, 0)));
+    act(() => calls[0].handlers.onSection?.(sectionFor(req, HERO, 2)));
+    drawn();
+    const result = resultFor(req, { title: 'Bakery', nodes: [HERO, STORY, HERO] });
+    await act(async () => calls[0].handlers.onResult?.(result));
+    expect([...reveal().delays.keys()]).toEqual(subtree(result.nodes[1].id));
+  });
+
+  it('no stream at all: the whole result reveals, in document order', async () => {
+    store.editorUI.selectComponent(container);
+    const { transport, calls } = manualTransport();
+    setup(transport);
+    fireEvent.click(screen.getByRole('button', { name: 'Replace selection' }));
+    typeBrief('Two sections');
+    generate();
+    const req = calls[0].req;
+    const result = resultFor(req, { nodes: [HERO, STORY] });
+    await act(async () => calls[0].handlers.onResult?.(result));
+    const ids = [...subtree(result.nodes[0].id), ...subtree(result.nodes[1].id)];
+    expect([...reveal().delays.keys()]).toEqual(ids);
+  });
+
+  it('a failed run reveals nothing', () => {
+    const { transport, calls } = manualTransport();
+    setup(transport);
+    typeBrief('A bakery');
+    generate();
+    act(() => calls[0].handlers.onError?.({ code: 'model_failed', message: 'nope' } as never));
+    expect(reveal().size).toBe(0);
+  });
+});

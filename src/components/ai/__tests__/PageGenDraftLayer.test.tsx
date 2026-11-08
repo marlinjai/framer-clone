@@ -32,6 +32,7 @@ import {
   DraftStyles,
   draftBandText,
   draftHookFor,
+  draftRevealCss,
 } from '../PageGenDraftLayer';
 
 let page: PageModelType;
@@ -169,6 +170,19 @@ describe('the draft on the canvas', () => {
     expect(dom.querySelector(`[data-inner-component-id="${container.id}"]`)).toBeInTheDocument();
   });
 
+  it('only a section the canvas drew counts as shown: one stored while the run page is off screen does not', () => {
+    const target = startDraft('insert', root());
+    const draft = store.editorUI.pageGenDraft;
+    // Stored with nothing mounted (another page on screen): received, not drawn.
+    act(() => void draft.add('k1', section(HERO, 0, target)));
+    expect(draft.shownSources()).toEqual([]);
+    // Mounted: the section is drawn, and the apply may leave it still.
+    renderPage();
+    expect(draft.shownSources()).toHaveLength(1);
+    act(() => void draft.add('k1', section(HERO, 1, target)));
+    expect(draft.shownSources()).toHaveLength(2);
+  });
+
   it('new page: draft frames titled after the requested page, beside the real frames', () => {
     const target = startDraft('newPage', undefined, 'Our menu');
     act(() => void store.editorUI.pageGenDraft.add('k1', section(HERO, 0, target)));
@@ -184,13 +198,37 @@ describe('the draft on the canvas', () => {
     expect(dom.querySelectorAll(`[${DRAFT_SECTION_ATTR}="0"]`)).toHaveLength(target.viewports.length);
   });
 
-  it('motion: a 200ms ease-out fade and 8px rise, none with reduced motion, no shimmer', () => {
+  it('motion: each drawn section reveals node by node, 180ms ease-out, none with reduced motion, no shimmer', () => {
+    const target = startDraft('insert', root());
     const { container: dom } = render(<DraftStyles />);
-    const css = dom.querySelector('style[data-pagegen-draft-styles]')!.textContent!;
-    expect(css).toContain('200ms ease-out');
-    expect(css).toContain('translateY(8px)');
+    expect(dom.querySelector('style[data-pagegen-draft-styles]')!.textContent).not.toMatch(/animation|shimmer|infinite/);
+    expect(dom.querySelector('style[data-pagegen-draft-reveal]')).toBeNull();
+    act(() => void store.editorUI.pageGenDraft.add('k1', section(HERO, 0, target)));
+    const tree = store.editorUI.pageGenDraft.sections[0].tree;
+    const ids = [tree.id, ...tree.children.map((c: ComponentInstance) => c.id)];
+    const css = dom.querySelector('style[data-pagegen-draft-reveal="0"]')!.textContent!;
+    expect(css).toBe(draftRevealCss(0, tree));
+    // Document order, 45 ms apart, scoped to the section's wrapper.
+    ids.forEach((id, i) => {
+      expect(css).toContain(`[${DRAFT_SECTION_ATTR}="0"] [data-inner-component-id="${id}"], [${DRAFT_SECTION_ATTR}="0"] [data-component-id$="-${id}"] { animation: fc-live-reveal 180ms ease-out ${i * 45}ms backwards; }`);
+    });
     expect(css).toMatch(/prefers-reduced-motion: reduce\)\s*\{[^}]*animation: none/);
     expect(css).not.toMatch(/shimmer|infinite/);
+    // A second section gets its own; the first is not rewritten (it would replay).
+    const first = dom.querySelector('style[data-pagegen-draft-reveal="0"]');
+    act(() => void store.editorUI.pageGenDraft.add('k1', section(HERO, 1, target)));
+    expect(dom.querySelector('style[data-pagegen-draft-reveal="0"]')).toBe(first);
+    expect(dom.querySelector('style[data-pagegen-draft-reveal="1"]')).not.toBeNull();
+    act(() => store.editorUI.pageGenDraft.clear('k1'));
+    expect(dom.querySelector('style[data-pagegen-draft-reveal]')).toBeNull();
+  });
+
+  it('a section reveal leaves out an id that is not plain rather than writing it into a selector', () => {
+    const css = draftRevealCss(2, { id: 'sec', children: [{ id: 'bad"] { x: y } [a="' }, { id: 'ok_1' }] });
+    expect(css).toContain('[data-inner-component-id="sec"]');
+    expect(css).toContain('[data-inner-component-id="ok_1"], [data-pagegen-draft-section="2"] [data-component-id$="-ok_1"] { animation: fc-live-reveal 180ms ease-out 90ms backwards; }');
+    expect(css).not.toContain('bad');
+    expect(draftRevealCss(0, { id: 'not plain' })).toBe('');
   });
 
   it('the band says what happens next', () => {

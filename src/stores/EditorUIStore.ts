@@ -13,6 +13,7 @@ import { findRuleIndex, namedState, ruleLabel } from '@/lib/rules/states';
 import { revealFor, surfaceBehaviour, type PreviewValues } from '@/lib/behaviour/surfaceBehaviour';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { surfaceColorMode, surfaceColorScheme, surfaceDarkClass, type ColorScheme } from '@/lib/site/theme';
+import { LiveRevealStore } from '@/lib/live/revealStore';
 import { LivePresenceStore } from '@/lib/live/presenceStore';
 import { PageGenDraftStore } from '@/lib/ai/pageGen/draft';
 // Removed BreakpointModel - breakpoints are now viewport nodes
@@ -205,6 +206,10 @@ const EditorUIStore = types.model('EditorUI', {
   // the live stream: the presence frame, the activity feed and the top bar's
   // note. Never part of the project. Its own observable store.
   livePresence: new LivePresenceStore(),
+  // The nodes revealing on the canvas now (src/lib/live/revealStore.ts): node id
+  // to delay, after an adopted agent write or a generated result. Never part of
+  // the project: never saved, never in undo history. Its own observable store.
+  liveReveal: new LiveRevealStore(),
   // Phone layout (docs/plans/2026-10-24-editor-on-phones.md, "Quick toolbar"):
   // the long-press context menu, open at a finger point (screen px), and the
   // style its Copy style took (appearance properties as resolved on the frame

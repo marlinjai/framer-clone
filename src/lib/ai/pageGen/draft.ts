@@ -26,6 +26,7 @@ import { shopLocaleOf, withShopParts, type ShopLocale, type ShopTreeNode } from 
 import { breakpointKeyMap, toEditorSnapshot, type PageBreakpoint } from './apply';
 import type { CapturedTarget, TargetKind } from './editorBridge';
 import type { PageGenSection } from './protocol';
+import type { GeneratedNodeSnapshot } from './validate';
 
 /** Where a draft is drawn: the run's captured target, frozen when it started. */
 export interface PageGenDraftTarget {
@@ -47,10 +48,21 @@ export interface PageGenDraftTarget {
   locale: ShopLocale;
 }
 
+/**
+ * What a section says, without the ids the validator minted for it (a preview
+ * section and its final copy are validated apart and get different ids): equal
+ * keys are the same section as the model wrote it.
+ */
+export function sectionContentKey(node: GeneratedNodeSnapshot): string {
+  return JSON.stringify(node, (key, value) => (key === 'id' || key === 'parentId' ? undefined : value));
+}
+
 /** One drawn section: its place in the page and its detached tree. */
 export interface DraftSection {
   index: number;
   tree: ComponentInstance;
+  /** The section as the model wrote it: what the apply matches a final section against. */
+  source: GeneratedNodeSnapshot;
 }
 
 /** What the canvas says about the section still being written. */
@@ -103,6 +115,8 @@ export class PageGenDraftStore {
   target: PageGenDraftTarget | undefined = undefined;
   sections: readonly DraftSection[] = [];
   phase: DraftPhase = 'writing';
+  /** Indexes of the sections the canvas actually drew (not merely received). Not observable: read once, at the apply. */
+  private shown = new Set<number>();
 
   constructor() {
     makeObservable(this, {
@@ -120,7 +134,21 @@ export class PageGenDraftStore {
   begin(target: PageGenDraftTarget): void {
     this.target = target;
     this.sections = [];
+    this.shown = new Set();
     this.phase = 'writing';
+  }
+
+  /** Record that the canvas drew the section `index` (the run's page was on screen). */
+  markShown(index: number): void {
+    this.shown.add(index);
+  }
+
+  /**
+   * The sources of the sections the canvas really drew, as the model wrote them.
+   * A section stored while another page was on screen is not among them.
+   */
+  shownSources(): GeneratedNodeSnapshot[] {
+    return this.sections.filter((s) => this.shown.has(s.index)).map((s) => s.source);
   }
 
   /**
@@ -135,7 +163,7 @@ export class PageGenDraftStore {
     if (this.sections.some((s) => s.index === section.index)) return false;
     const tree = buildDraftTree(section, target);
     if (!tree) return false;
-    this.sections = [...this.sections, { index: section.index, tree }].sort((a, b) => a.index - b.index);
+    this.sections = [...this.sections, { index: section.index, tree, source: section.node }].sort((a, b) => a.index - b.index);
     return true;
   }
 
@@ -152,6 +180,7 @@ export class PageGenDraftStore {
     if (requestKey !== undefined && this.target?.requestKey !== requestKey) return;
     this.target = undefined;
     this.sections = [];
+    this.shown = new Set();
     this.phase = 'writing';
   }
 

@@ -16,8 +16,11 @@
 // panel, which reads the project. It is drawn only while the page the run
 // started on is on screen.
 //
-// Motion (Emil Kowalski's rules): each section enters with a 200ms ease-out
-// fade and an 8px rise; nothing moves with reduced motion. The band for the
+// Motion (Emil Kowalski's rules): each section enters node by node, the
+// per-component reveal of the live agent canvas (src/lib/live/reveal.ts): a
+// 180ms ease-out fade with a 4px rise per node, in document order, the whole
+// section within 600ms; nothing moves with reduced motion. The apply keeps the
+// sections drawn here as they are and reveals only the ones never drawn. The band for the
 // section still being written has a static tint, no shimmer. The camera follows
 // a new section only while the user has not moved it since the run started.
 'use client';
@@ -35,6 +38,7 @@ import { surfaceFrameAttributes } from '@/lib/site/surfaceTheme';
 import { PageBaseStyles } from '@/lib/site/PageBaseStyles';
 import { revealOffset, useCameraControls, type CameraTransform } from '@/lib/canvas/cameraControls';
 import GroundWrapper from '@/components/GroundWrapper';
+import { revealAnimation, revealPlanOfTrees, type RevealTreeNode } from '@/lib/live/reveal';
 
 /** Marks a drawn draft section (its index); the wrapper has no box of its own. */
 export const DRAFT_SECTION_ATTR = 'data-pagegen-draft-section';
@@ -46,15 +50,41 @@ export const DRAFT_BAND_ATTR = 'data-pagegen-draft-band';
 /** Space between the page's own frames and the draft frames of a new page. */
 const DRAFT_FRAME_GAP = 160;
 
-// Fade and rise on the section's own element (the wrapper is display: contents).
-// `backwards` holds the start values only until the animation runs, so the
-// section's own styles (a transform of its own) win once it has entered.
+// The draft is never clickable. Each section's reveal is its own stylesheet
+// beside it (draftRevealCss, written by DraftStyles).
 const DRAFT_CSS = `
-@keyframes fc-pagegen-section-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-[${DRAFT_SECTION_ATTR}] > * { animation: fc-pagegen-section-in 200ms ease-out backwards; }
-@media (prefers-reduced-motion: reduce) { [${DRAFT_SECTION_ATTR}] > * { animation: none; } }
 [${DRAFT_SECTION_ATTR}], [${DRAFT_SECTION_ATTR}] *, [${DRAFT_FRAME_ATTR}], [${DRAFT_FRAME_ATTR}] * { pointer-events: none !important; }
 `;
+
+/** An id that is safe inside an attribute selector of a style element as it is (generated ids are). */
+const PLAIN_ID = /^[A-Za-z0-9_-]{1,128}$/;
+
+/**
+ * The reveal of one draft section, as a stylesheet: each node of its tree (by
+ * `data-inner-component-id`, inside the section's wrapper) fades in after its
+ * delay (src/lib/live/reveal.ts). `backwards` holds the start values only until
+ * the animation runs, and `translate` leaves a node's own transform alone.
+ * Nothing moves under reduced motion. An id that is not plain is left out (its
+ * node appears at once) rather than escaped into a selector.
+ */
+export function draftRevealCss(index: number, tree: RevealTreeNode): string {
+  const scope = `[${DRAFT_SECTION_ATTR}="${Math.trunc(index)}"]`;
+  const rules: string[] = [];
+  for (const [id, delay] of revealPlanOfTrees([tree])) {
+    if (!PLAIN_ID.test(id)) continue;
+    // A repeated copy (a second cart line) carries no inner id, only the style
+    // hook `<breakpoint>-<id>`, so it matches on that and reveals with the first.
+    rules.push(`${scope} [data-inner-component-id="${id}"], ${scope} [data-component-id$="-${id}"] { animation: ${revealAnimation(delay)}; }`);
+  }
+  if (rules.length === 0) return '';
+  return `${rules.join('\n')}\n@media (prefers-reduced-motion: reduce) { ${scope} [data-inner-component-id], ${scope} [data-component-id] { animation: none !important; } }`;
+}
+
+/** A draft section's reveal stylesheet, written once per section tree. */
+function DraftSectionReveal({ index, tree }: { index: number; tree: RevealTreeNode }) {
+  const css = React.useMemo(() => draftRevealCss(index, tree), [index, tree]);
+  return css ? <style data-pagegen-draft-reveal={String(index)}>{css}</style> : null;
+}
 
 /** How the draft meets a canvas node: nothing, in its place, as its children, or after its children. */
 export type DraftHook = 'replace' | 'replaceChildren' | 'insert' | null;
@@ -115,13 +145,24 @@ export function draftBandText(phase: PageGenDraftStore['phase'], drawn: number):
 }
 
 /**
- * The draft's motion and pointer rules. Mounted once beside the canvas frames,
- * never inside the page tree (a style element there would count as a child for
- * the page's own selectors). Static text.
+ * The draft's pointer rule and each drawn section's reveal. Mounted once beside
+ * the canvas frames, never inside the page tree (a style element there would
+ * count as a child for the page's own selectors). A section's reveal is written
+ * once, when it arrives, and stays until the draft is dropped. A section drawn
+ * anew (the person comes back to the run's page, which the draft is drawn on
+ * only while it is on screen) plays its reveal again, on purpose: those nodes
+ * were not on screen before.
  */
-export function DraftStyles() {
-  return <style data-pagegen-draft-styles="">{DRAFT_CSS}</style>;
-}
+export const DraftStyles = observer(function DraftStyles() {
+  const { editorUI } = useStore();
+  const draft = editorUI.pageGenDraft as PageGenDraftStore | undefined;
+  return (
+    <>
+      <style data-pagegen-draft-styles="">{DRAFT_CSS}</style>
+      {draft?.sections.map((s) => <DraftSectionReveal key={s.index} index={s.index} tree={s.tree} />)}
+    </>
+  );
+});
 
 export interface DraftSectionsProps {
   breakpointId: string;
@@ -133,6 +174,14 @@ export interface DraftSectionsProps {
 export const DraftSections = observer(function DraftSections({ breakpointId, allBreakpoints, scope }: DraftSectionsProps) {
   const { editorUI } = useStore();
   const draft = editorUI.pageGenDraft as PageGenDraftStore | undefined;
+  const indexes = draft?.target ? draft.sections.map((s) => s.index) : [];
+  const drawn = indexes.join(',');
+  // What the canvas really drew (a section stored while another page was on
+  // screen is not drawn): the apply reveals the rest.
+  React.useEffect(() => {
+    for (const index of indexes) draft?.markShown(index);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft, drawn]);
   if (!draft?.target) return null;
   const band = draftBandText(draft.phase, draft.sections.length);
   return (

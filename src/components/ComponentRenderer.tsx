@@ -29,6 +29,7 @@ import { childrenWithRepeats } from '@/lib/renderer/repeatChildren';
 import { SurfaceDomContext, withSurfaceDom } from '@/lib/behaviour/surfaceDom';
 import { ShopRepeatCopyContext } from '@/lib/commerce/shopRuntime';
 import { DraftSections, useDraftHook } from '@/components/ai/PageGenDraftLayer';
+import { REVEAL_ATTR } from '@/lib/live/reveal';
 
 interface ComponentRendererProps {
   component: ComponentInstance;
@@ -395,6 +396,22 @@ const NodeRenderer = observer(({ component, breakpointId, allBreakpoints, scope,
   const children = draftHook === 'replaceChildren' ? [draft] : draftHook === 'insert' ? [...ownChildren, draft] : ownChildren;
 
   if (placement) finalProps[DATA_PLACEMENT_ROOT] = `${frameId}-${component.id}`;
+
+  // Just created by an agent's write or a generated result: fade in after this
+  // node's delay (src/lib/live/revealStore.ts). Keyed to the page's own node
+  // (the placement, never the nodes inside its definition). Never in Interact,
+  // never on the text being typed into.
+  const revealId = placement ? placement.id : host ? undefined : component.id;
+  const revealDelay = revealId && !interact && !isEditing ? editorUI.liveReveal.delayOf(revealId) : undefined;
+  // A node with an animation of its own authored keeps it: the reveal would
+  // override (or be overridden by) its animation properties, so the node
+  // appears without one.
+  const authoredStyle = finalProps.style as Record<string, unknown> | undefined;
+  const ownAnimation = !!authoredStyle && Object.keys(authoredStyle).some((k) => /^animation/i.test(k));
+  if (revealDelay !== undefined && !ownAnimation) {
+    finalProps[REVEAL_ATTR] = '';
+    finalProps.style = { ...(finalProps.style as Record<string, unknown> | undefined), '--live-reveal-delay': `${revealDelay}ms` };
+  }
 
   const element = createComponentElement(
     component,

@@ -44,7 +44,7 @@ const Toolbar = observer(({ editorUI }: ToolbarProps) => {
   const modKey = isMac ? '⌘' : 'Ctrl';
 
   return (
-    <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-50">
+    <div data-editor-chrome="bottom" className="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-50">
       {/* A pointer click on a tool does not keep focus on it: Space presses
           a focused button, so a clicked Undo would otherwise take the next
           hold-Space pan as a second undo. Tab still reaches every button. */}

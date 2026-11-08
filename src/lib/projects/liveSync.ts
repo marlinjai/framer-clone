@@ -25,7 +25,11 @@
 //     is looked at again once that write settled: when it succeeded (no 409
 //     comes), the copy is adopted then;
 //   - a version that erased personal data is adopted without an undo step and
-//     clears the history, as a load does (undo must not bring erased values back).
+//     clears the history, as a load does (undo must not bring erased values back);
+//   - an agent's write the stream announced (revealsOnAdoption) plays the
+//     per-component reveal (plan section 4, src/lib/live/reveal.ts): its new
+//     nodes fade in one after another. A load, a catch-up, a poll, another
+//     person's save and "Load the newer version" appear at once.
 //
 // The stream also says who works on the site (plan section 2): the `state`
 // event's agents and feed and every `agent:activity` go to the editor's
@@ -39,6 +43,7 @@
 // signed-out state; the next time the tab is shown, one check decides whether to
 // start again.
 
+import { runInAction } from 'mobx';
 import { getSnapshot, isAlive } from 'mobx-state-tree';
 import type { RootStoreType } from '@/stores/RootStore';
 import type { ProjectSnapshotOut } from '@/models/ProjectModel';
@@ -55,6 +60,8 @@ import { existingAutosave, reloadDiscarding } from './autosave';
 import { editorTabId } from './tabId';
 import { LIVE_EVENTS, type AgentActivity, type SiteStateEvent, type SiteVersionEvent } from './liveEvents';
 import type { LivePresenceStore } from '@/lib/live/presenceStore';
+import type { LiveRevealStore } from '@/lib/live/revealStore';
+import { projectRevealPlan } from '@/lib/live/reveal';
 
 export const LIVE_POLL_VISIBLE_MS = 5_000;
 export const LIVE_POLL_HIDDEN_MS = 60_000;
@@ -113,6 +120,20 @@ export interface HeldVersion {
   version: number;
   snapshot: ProjectSnapshotOut;
   label: string;
+  /** The event that announced it, when one did (an automatic adoption later still knows the writer). */
+  event?: SiteVersionEvent;
+}
+
+/**
+ * Whether an adopted version plays the per-component reveal (plan section 4):
+ * only an agent's write (a Model Context Protocol (MCP) batch, a generated
+ * page) the stream announced. The copy must also be exactly that write (see take).
+ * Never a catch-up after a reconnect or a version found by polling (the writer
+ * is unknown), another tab's or person's save, a publish or an erasure, and
+ * never "Load the newer version", which passes no event.
+ */
+export function revealsOnAdoption(event: SiteVersionEvent | undefined): boolean {
+  return !!event && !event.catchUp && !event.own && (event.origin === 'mcp' || event.origin === 'generate');
 }
 
 /** The history entry's name for an adopted version: who, and what in one line. */
@@ -145,7 +166,8 @@ export class LiveSync {
   private disposeVisibility: (() => void) | undefined;
   private disposeSettled: (() => void) | undefined;
   /** The newest version announced by another writer, with its event. */
-  private wanted: { version: number; event?: SiteVersionEvent } | undefined;
+  /** `retry`: an earlier fetch for it failed, so the copy that arrives is catch-up, never a live adoption. */
+  private wanted: { version: number; event?: SiteVersionEvent; retry?: boolean } | undefined;
   private fetching = false;
   /** Something was announced while a fetch was out: one more fetch follows it. */
   private again = false;
@@ -210,6 +232,8 @@ export class LiveSync {
     this.disposeVisibility = undefined;
     this.disposeSettled?.();
     this.disposeSettled = undefined;
+    // Nor does a reveal still playing.
+    this.reveal.reset();
     this.wanted = undefined;
     this.held = undefined;
     this.setPhase('stopped');
@@ -377,6 +401,8 @@ export class LiveSync {
           answer = await this.deps.fetchDocument(`${this.base}/document`, knownServerVersion(this.projectId));
         } catch {
           // A network failure: the stream reconnects (or the poll comes back) and asks again.
+          // That later copy is catch-up: it appears at once, never as the agent's live write.
+          if (this.wanted) this.wanted = { ...this.wanted, retry: true };
           return;
         }
         if (this.phaseValue === 'stopped') return;
@@ -395,7 +421,9 @@ export class LiveSync {
           const wanted = this.wanted;
           const covers = !!wanted && answer.body.version >= wanted.version;
           if (covers) this.wanted = undefined;
-          this.take(answer.body, covers ? wanted?.event : undefined);
+          this.take(answer.body, covers ? wanted?.event : undefined, undefined, !wanted?.retry);
+        } else if (this.wanted && answer.status !== 304) {
+          this.wanted = { ...this.wanted, retry: true };
         }
         // 304: nothing newer than this tab's copy. Anything else: a passing
         // failure; the next event or poll asks again.
@@ -415,11 +443,11 @@ export class LiveSync {
       return;
     }
     this.held = undefined;
-    this.take({ version: held.version, snapshot: held.snapshot }, undefined, held.label);
+    this.take({ version: held.version, snapshot: held.snapshot }, held.event, held.label);
   }
 
   /** A fetched copy: adopt it now, or hold it for the person. */
-  private take(body: { version: number; snapshot: ProjectSnapshotOut }, event?: SiteVersionEvent, heldLabel?: string) {
+  private take(body: { version: number; snapshot: ProjectSnapshotOut }, event?: SiteVersionEvent, heldLabel?: string, live = true) {
     const known = knownServerVersion(this.projectId);
     if (known !== undefined && body.version <= known) return;
     const label = heldLabel ?? adoptionLabel(event);
@@ -433,11 +461,16 @@ export class LiveSync {
       autosavePhase !== 'publishing' &&
       isSaved(this.projectId, getSnapshot(project) as unknown as ProjectContent);
     if (!clean) {
-      this.held = { version: body.version, snapshot: body.snapshot, label };
+      this.held = { version: body.version, snapshot: body.snapshot, label, ...(event && live ? { event } : {}) };
       autosave?.noteChangedElsewhere(body.version);
       return;
     }
-    this.adopt(body.version, body.snapshot, label, event);
+    // Only a copy that is exactly the announced write, on top of the copy this tab
+    // has, reveals: a fetch that also brought other writers' versions (a burst
+    // coalesced into one fetch, a poll after a failed fetch, a held copy replaced
+    // by a newer one) would otherwise reveal their nodes as the agent's.
+    const exact = live && !!event && event.version === body.version && event.versionBefore === known;
+    this.adopt(body.version, body.snapshot, label, event, exact && revealsOnAdoption(event));
   }
 
   /** The agents' presence of the open site (src/lib/live/presenceStore.ts). */
@@ -445,8 +478,24 @@ export class LiveSync {
     return this.rootStore.editorUI.livePresence as LivePresenceStore;
   }
 
-  private adopt(version: number, snapshot: ProjectSnapshotOut, label: string, event: SiteVersionEvent | undefined): boolean {
-    const adopted = adoptServerCopy(this.rootStore, snapshot, version, label);
+  /** The nodes revealing on the canvas (src/lib/live/revealStore.ts). */
+  private get reveal(): LiveRevealStore {
+    return this.rootStore.editorUI.liveReveal as LiveRevealStore;
+  }
+
+  /**
+   * Adopt a copy as one undo step. `reveal`: the copy's new nodes fade in one
+   * after another; the reveal is set in the same action as the adoption, so no
+   * new node is ever drawn once without it first.
+   */
+  private adopt(version: number, snapshot: ProjectSnapshotOut, label: string, event: SiteVersionEvent | undefined, reveal: boolean): boolean {
+    const adopted = runInAction(() => {
+      const result = adoptServerCopy(this.rootStore, snapshot, version, label);
+      if (result && reveal && result.created.length > 0) {
+        this.reveal.start(projectRevealPlan(snapshot, result.created));
+      }
+      return result;
+    });
     if (!adopted) return false;
     this.held = undefined;
     existingAutosave(this.projectId)?.noteServerCopyAdopted();
@@ -475,7 +524,8 @@ export class LiveSync {
       held = { version: answer.body.version, snapshot: answer.body.snapshot, label: held?.label ?? 'Newer version loaded' };
     }
     if (hasWriteInFlight(this.projectId)) return false;
-    return this.adopt(held.version, held.snapshot, held.label, undefined);
+    // The person asked for it: it appears at once, never as a reveal.
+    return this.adopt(held.version, held.snapshot, held.label, undefined, false);
   }
 }
 
