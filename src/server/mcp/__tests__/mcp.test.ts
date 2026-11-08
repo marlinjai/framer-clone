@@ -458,6 +458,14 @@ describe('writes', () => {
     expect(commerce.calls[0]).toEqual(['tg_a', 'acme']);
     expect(s.state.saved[0].options).toMatchObject({ companyId: 'tenant-a' });
     expect(audits.rows[0]).toMatchObject({ operation: 'create_site', actorKind: 'key', actorId: 'key_1' });
+    // No name on the key and no client name: no label stored, the editor says "Agent".
+    expect(audits.rows[0].actorDetail).toEqual({ serviceAccountId: 'sa_1' });
+  });
+
+  it("stores the agent's label in the audit row, so the editor's feed names it again after a reload", async () => {
+    const s = setup({ outcome: Object.freeze({ ...verifiedKey(), keyName: 'Claude' }) });
+    await call(s, 'create_site', { name: 'Agent site' });
+    expect(audits.rows[0].actorDetail).toEqual({ serviceAccountId: 'sa_1', label: 'Claude' });
   });
 
   it('create_site answers the shop refusal and writes nothing', async () => {

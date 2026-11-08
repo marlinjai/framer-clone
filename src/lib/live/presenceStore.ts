@@ -108,6 +108,8 @@ export class LivePresenceStore {
   everActive = false;
   /** The agent that started a call most recently: the one the camera follows. */
   leadAgentId: string | undefined = undefined;
+  /** Counts the runs (an agent becoming active while none was): the camera's "moved by the person" starts over with each. */
+  run = 0;
 
   private timers = new Map<string, Timers>();
   private seen = new Set<string>();
@@ -122,6 +124,7 @@ export class LivePresenceStore {
       panelOpen: observable,
       everActive: observable,
       leadAgentId: observable,
+      run: observable,
       applyState: action,
       applyActivity: action,
       pruneMissing: action,
@@ -189,7 +192,10 @@ export class LivePresenceStore {
   private becameActive() {
     // A run starts while nobody worked on the site: the camera follows again,
     // and the panel opens by itself the first time in this session.
-    if (this.agents.size === 0) this.follow = true;
+    if (this.agents.size === 0) {
+      this.follow = true;
+      this.run += 1;
+    }
     if (!this.everActive) {
       this.everActive = true;
       this.panelOpen = true;

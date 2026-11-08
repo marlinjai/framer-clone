@@ -1,0 +1,307 @@
+// @vitest-environment node
+//
+// Agent presence from the MCP endpoint (src/server/mcp/presence.ts, plan
+// docs/plans/2026-11-08-live-agent-canvas.md, section 2): every tool call that
+// names a site in the key's scope reports `agent:activity` on that site's bus,
+// at its start and its end, with the right ids and outcome, and never the key
+// id or the arguments' content. Driven through the real handler and the real
+// site operations library over a fake repository, like mcp.test.ts.
+//
+// Fake keys are built at run time (knowledge-base standards/test-credentials.md).
+
+import { randomBytes } from 'node:crypto';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('@/server/db', () => ({
+  getPrismaClient: () => ({ siteOperationAudit: { create: vi.fn(async () => ({})) } }),
+}));
+vi.mock('@/server/sites/cachedResolver', () => ({
+  revalidateSiteCache: () => {},
+  revalidateCustomHostsForSiteId: async () => [],
+}));
+
+import ProjectModel, { type ProjectModelType } from '@/models/ProjectModel';
+import { defaultViewportSnapshots } from '@/lib/canvas/defaultViewports';
+import { SiteChangedError, SiteNotFoundError, type SiteRepository } from '@/server/sites';
+import { __resetPageGenRateLimiterForTests } from '@/lib/ai/pageGen/rateLimit';
+import type { VerifiedKey } from '@/lib/auth-machine';
+import { resetLiveBusForTests, subscribeSite } from '@/server/sites/liveBus';
+import { presenceSnapshot, resetLivePresenceForTests } from '@/server/sites/livePresence';
+import { LIVE_EVENTS, type AgentActivity } from '@/lib/projects/liveEvents';
+import { liveAgentId } from '@/server/siteOps/audit';
+import { createMcpHandler } from '../handler';
+import { ApprovalStore } from '../approvals';
+import { focusOf, outcomeOf, resetPresenceScopeCacheForTests, siteInScope } from '../presence';
+
+const fakeKey = () => `${['sk', 'live'].join('_')}_${randomBytes(16).toString('hex')}`;
+const KEY_ID = `key_${randomBytes(6).toString('hex')}`;
+const SCOPE = { workspaceId: 'ws_a', tenantGroupId: 'tg_a' };
+
+function verifiedKey(extra: Partial<VerifiedKey> = {}): VerifiedKey {
+  return Object.freeze({
+    kind: 'key' as const,
+    tenantId: 'tenant-a',
+    companySlug: 'acme',
+    keyId: KEY_ID,
+    serviceAccountId: 'sa_1',
+    scope: Object.freeze({ ...SCOPE }),
+    workspaceRole: 'admin' as const,
+    appGrants: Object.freeze(['sites']),
+    ...extra,
+  });
+}
+
+function storedProject(): ProjectModelType {
+  return ProjectModel.create({
+    id: 'site-1',
+    metadata: { title: 'Bakery', description: '', createdAt: 1, updatedAt: 1 },
+    pages: {
+      home: {
+        id: 'home',
+        slug: '',
+        metadata: { title: 'Home', description: '' },
+        appComponentTree: {
+          id: 'root', type: 'div', componentType: 'host', props: {}, children: [
+            { id: 'title', type: 'h1', componentType: 'host', parentId: 'root', props: { children: 'Secret launch copy' }, children: [] },
+          ],
+        },
+        canvasNodes: defaultViewportSnapshots(),
+      },
+    },
+  });
+}
+
+function fakeRepository() {
+  const state = { version: 3, versionReads: 0 };
+  const repository = {
+    listSites: vi.fn(async () => []),
+    getSiteVersion: vi.fn(async (_scope: unknown, siteId: string) => {
+      state.versionReads += 1;
+      if (siteId !== 'site-1') throw new SiteNotFoundError(siteId);
+      return state.version;
+    }),
+    loadProjectWithVersion: vi.fn(async (_scope: unknown, siteId: string) => {
+      if (siteId !== 'site-1') throw new SiteNotFoundError(siteId);
+      return { project: storedProject(), version: state.version };
+    }),
+    saveProject: vi.fn(async (_scope: unknown, _project: unknown, options: Record<string, unknown>) => {
+      if (options.expectedVersion !== state.version) throw new SiteChangedError(state.version);
+      state.version += 1;
+      return { version: state.version };
+    }),
+    getSiteAddress: vi.fn(async () => ({ host: null, everPublished: false })),
+  };
+  return { repository: repository as unknown as SiteRepository, state, mock: repository };
+}
+
+function setup(key: VerifiedKey = verifiedKey()) {
+  const { repository, state, mock } = fakeRepository();
+  const handler = createMcpHandler({
+    verifyKey: vi.fn(async () => key),
+    siteOps: { repository, publicBaseHost: 'sites.example', editorHost: 'app.example' },
+    approvals: new ApprovalStore(),
+  });
+  return { handler, state, mock, bearer: fakeKey() };
+}
+
+let nextId = 1;
+function post(bearer: string, body: unknown, headers: Record<string, string> = {}): Request {
+  return new Request('https://app.lumitra.co/api/mcp', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', accept: 'application/json', authorization: `Bearer ${bearer}`, ...headers },
+    body: JSON.stringify(body),
+  });
+}
+
+async function callTool(s: ReturnType<typeof setup>, name: string, args: Record<string, unknown>, headers: Record<string, string> = {}) {
+  const res = await s.handler.POST(post(s.bearer, { jsonrpc: '2.0', id: nextId++, method: 'tools/call', params: { name, arguments: args } }, headers));
+  return ((await res.json()) as { result: { isError: boolean; structuredContent: Record<string, unknown> } }).result;
+}
+
+/** Every event a site's bus carried while `fn` ran. */
+function listen(siteId: string): Array<{ event: string; data: AgentActivity }> {
+  const heard: Array<{ event: string; data: AgentActivity }> = [];
+  subscribeSite(siteId, (event, data) => heard.push({ event, data: data as AgentActivity }));
+  return heard;
+}
+
+const activities = (heard: Array<{ event: string; data: AgentActivity }>) =>
+  heard.filter((h) => h.event === LIVE_EVENTS.agentActivity).map((h) => h.data);
+
+beforeEach(() => {
+  resetLiveBusForTests();
+  resetLivePresenceForTests();
+  resetPresenceScopeCacheForTests();
+  __resetPageGenRateLimiterForTests();
+  vi.spyOn(console, 'info').mockImplementation(() => {});
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+describe('agent:activity from the MCP endpoint', () => {
+  it('reports a read with a start and an end that share the call id, with the page it names', async () => {
+    const s = setup(verifiedKey({ keyName: 'Claude' }));
+    const heard = listen('site-1');
+    await callTool(s, 'get_page', { siteId: 'site-1', pageId: 'home' });
+    const [start, end] = activities(heard);
+    expect(start).toMatchObject({ phase: 'start', tool: 'get_page', label: 'Claude', pageId: 'home' });
+    expect(end).toMatchObject({ phase: 'end', tool: 'get_page', outcome: 'ok', label: 'Claude', pageId: 'home' });
+    expect(start.callId).toBe(end.callId);
+    expect(start.agentId).toBe(liveAgentId(KEY_ID));
+    expect(start.agentId).not.toContain(KEY_ID);
+    expect(Date.parse(end.at)).not.toBeNaN();
+  });
+
+  it('reports a batch with the nodes it names, then those plus the created ids, the count and the first summary line', async () => {
+    const s = setup();
+    const heard = listen('site-1');
+    const result = await callTool(s, 'apply_batch', {
+      siteId: 'site-1',
+      expectedVersion: 3,
+      ops: [
+        { op: 'updateText', nodeId: 'title', text: 'Very secret new words' },
+        { op: 'insertNodes', pageId: 'home', parentId: 'root', nodes: [{ type: 'p', ref: 'intro', props: { children: 'More secret words' } }] },
+      ],
+    });
+    expect(result.isError).toBe(false);
+    const created = Object.values(result.structuredContent.created as Record<string, string>);
+    const [start, end] = activities(heard);
+    expect(start).toMatchObject({ phase: 'start', tool: 'apply_batch', pageId: 'home', nodeIds: ['title', 'root'] });
+    expect(end).toMatchObject({ phase: 'end', outcome: 'ok', changes: 2, label: 'Agent' });
+    expect(end.nodeIds).toEqual(['title', 'root', ...created]);
+    expect(end.summary).toMatch(/^set the text of title/);
+    // Never the key id, never the content of the arguments.
+    const wire = JSON.stringify(activities(heard));
+    expect(wire).not.toContain(KEY_ID);
+    expect(wire).not.toContain('secret');
+  });
+
+  it('reports a refused batch as rejected and a stale one as site_changed, with nothing written', async () => {
+    const s = setup();
+    const heard = listen('site-1');
+    await callTool(s, 'apply_batch', { siteId: 'site-1', expectedVersion: 3, ops: [{ op: 'removeNode', nodeId: 'nope' }] });
+    await callTool(s, 'apply_batch', { siteId: 'site-1', expectedVersion: 1, ops: [{ op: 'removeNode', nodeId: 'title' }] });
+    const ends = activities(heard).filter((a) => a.phase === 'end');
+    expect(ends.map((a) => a.outcome)).toEqual(['rejected', 'site_changed']);
+    expect(s.state.version).toBe(3);
+    // Neither left an audit row, so both are live feed lines for the next editor that opens.
+    expect(presenceSnapshot('site-1').feed.map((l) => l.outcome)).toEqual(['site_changed', 'rejected']);
+  });
+
+  it('keeps a committed write out of the live feed (its audit row stands in) but reads in it', async () => {
+    const s = setup();
+    await callTool(s, 'get_site', { siteId: 'site-1' });
+    await callTool(s, 'apply_batch', { siteId: 'site-1', expectedVersion: 3, ops: [{ op: 'updateText', nodeId: 'title', text: 'x' }] });
+    expect(presenceSnapshot('site-1').feed.map((l) => l.tool)).toEqual(['get_site']);
+  });
+
+  it('reports invalid arguments as failed', async () => {
+    const s = setup();
+    const heard = listen('site-1');
+    await callTool(s, 'get_page', { siteId: 'site-1' });
+    expect(activities(heard).at(-1)).toMatchObject({ phase: 'end', outcome: 'failed' });
+  });
+
+  it('reports nothing for calls without a site', async () => {
+    const s = setup();
+    const heard = listen('site-1');
+    await callTool(s, 'list_sites', {});
+    await callTool(s, 'describe_vocabulary', {});
+    expect(activities(heard)).toEqual([]);
+  });
+
+  it('reports nothing, not even an end, for a site outside the key\'s scope', async () => {
+    const s = setup();
+    const foreign = listen('site-of-another-company');
+    const result = await callTool(s, 'get_site', { siteId: 'site-of-another-company' });
+    expect(result.isError).toBe(true);
+    expect(activities(foreign)).toEqual([]);
+    expect(presenceSnapshot('site-of-another-company')).toEqual({ agents: [], feed: [] });
+  });
+
+  it('confirms a site once per scope and remembers it for a few minutes', async () => {
+    const s = setup();
+    await callTool(s, 'get_site', { siteId: 'site-1' });
+    await callTool(s, 'get_site', { siteId: 'site-1' });
+    expect(s.state.versionReads).toBe(1);
+    // Another workspace is asked again.
+    const repo = s.mock as unknown as SiteRepository;
+    expect(await siteInScope(repo, { workspaceId: 'ws_b', tenantGroupId: 'tg_b' }, 'site-1')).toBe(true);
+    expect(s.state.versionReads).toBe(2);
+  });
+
+  it('a repository that cannot answer reports nothing and still runs the call', async () => {
+    const s = setup();
+    s.mock.getSiteVersion.mockRejectedValueOnce(new Error('database down'));
+    const heard = listen('site-1');
+    const result = await callTool(s, 'get_site', { siteId: 'site-1' });
+    expect(result.isError).toBe(false);
+    expect(activities(heard)).toEqual([]);
+  });
+
+  it('names the agent by the MCP client when the key has no name, sanitised, from the signed session id', async () => {
+    const s = setup();
+    const init = await s.handler.POST(
+      post(s.bearer, { jsonrpc: '2.0', id: nextId++, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'Claude‮ Code\n', version: '1' } } }),
+    );
+    const session = init.headers.get('mcp-session-id')!;
+    const heard = listen('site-1');
+    await callTool(s, 'get_site', { siteId: 'site-1' }, { 'mcp-session-id': session });
+    expect(activities(heard)[0].label).toBe('Claude Code');
+  });
+
+  it("prefers the key's own name over the client's", async () => {
+    const s = setup(verifiedKey({ keyName: 'Marketing bot' }));
+    const init = await s.handler.POST(
+      post(s.bearer, { jsonrpc: '2.0', id: nextId++, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'Claude Code', version: '1' } } }),
+    );
+    const heard = listen('site-1');
+    await callTool(s, 'get_site', { siteId: 'site-1' }, { 'mcp-session-id': init.headers.get('mcp-session-id')! });
+    expect(activities(heard)[0].label).toBe('Marketing bot');
+  });
+
+  it('an agent still working is in the state a newly opened editor gets', async () => {
+    const s = setup();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    s.mock.getSiteAddress.mockImplementationOnce(async () => {
+      await gate;
+      return { host: null, everPublished: false };
+    });
+    const pending = callTool(s, 'get_site', { siteId: 'site-1' });
+    await vi.waitFor(() => expect(presenceSnapshot('site-1').agents).toHaveLength(1));
+    expect(presenceSnapshot('site-1').agents[0]).toMatchObject({ phase: 'start', tool: 'get_site' });
+    release();
+    await pending;
+    expect(presenceSnapshot('site-1').agents[0]).toMatchObject({ phase: 'end', outcome: 'ok' });
+  });
+});
+
+describe('the pieces', () => {
+  it('reads the page and node ids of every argument shape, never a ref and never content', () => {
+    expect(focusOf({ siteId: 's', target: { kind: 'replace', pageId: 'p1', nodeId: 'n1' } })).toEqual({ pageId: 'p1', nodeIds: ['n1'] });
+    expect(focusOf({ target: { kind: 'insert', pageId: 'p1', parentId: 'n2' } })).toEqual({ pageId: 'p1', nodeIds: ['n2'] });
+    expect(
+      focusOf({
+        ops: [
+          { op: 'moveNode', nodeId: 'a', to: { siblingId: 'b', position: 'after' } },
+          { op: 'insertNodes', pageId: 'p2', parentId: 'ref:intro', nodes: [{ text: 'content' }] },
+          { op: 'updateText', nodeId: 'a', text: 'content' },
+        ],
+      }),
+    ).toEqual({ pageId: 'p2', nodeIds: ['a', 'b'] });
+    expect(focusOf('not an object')).toEqual({ nodeIds: [] });
+  });
+
+  it('reads the outcome from the error code', () => {
+    const err = (code: string) => ({ content: [], isError: true, structuredContent: { error: { code } } });
+    expect(outcomeOf({ content: [], isError: false, structuredContent: {} })).toBe('ok');
+    expect(outcomeOf(err('rejected'))).toBe('rejected');
+    expect(outcomeOf(err('site_changed'))).toBe('site_changed');
+    expect(outcomeOf(err('forbidden'))).toBe('failed');
+    expect(outcomeOf(undefined)).toBe('failed');
+  });
+});

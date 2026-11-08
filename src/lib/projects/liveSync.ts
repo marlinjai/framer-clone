@@ -448,7 +448,7 @@ export class LiveSync {
 
   /** Frames keyed to nodes the open copy no longer has are dropped. */
   private prunePresence() {
-    const project = this.rootStore.editorUI.currentProject;
+    const project = this.rootStore.projectStore.getProject(this.projectId);
     if (!project || !isAlive(project)) return;
     const ids = new Set<string>();
     for (const page of project.pages.values()) collectIds(page.appComponentTree as IdTree, ids);

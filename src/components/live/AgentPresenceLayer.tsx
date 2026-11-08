@@ -224,11 +224,13 @@ export const AgentCameraFollow = observer(function AgentCameraFollow() {
   // Where this follower last left the camera; undefined until it first acts.
   const last = React.useRef<CameraTransform | undefined>(undefined);
 
-  // Follow turned on (a new run, or the toggle): from here on the person's moves count.
+  // A new run, or Follow turned back on: from here on the person's moves count.
   React.useEffect(
     () =>
       autorun(() => {
-        if (presence?.follow) last.current = undefined;
+        // Read both, so either change starts over.
+        const run = presence?.run;
+        if (presence?.follow && run !== undefined) last.current = undefined;
       }),
     [presence],
   );
