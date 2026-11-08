@@ -14,6 +14,7 @@
 // refused here with a message and never stored (src/lib/styles/customEditor.ts).
 
 import React, { memo, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useOpenDraft } from '@/hooks/useOpenDraft';
 import { observer } from 'mobx-react-lite';
 import { getParent, hasParent } from 'mobx-state-tree';
 import { Braces, ChevronDown, X } from 'lucide-react';
@@ -56,7 +57,7 @@ const TEXT_BUTTON =
   'h-7 flex-none rounded-[6px] border border-border px-2.5 text-[11px] text-foreground transition-colors ' +
   'hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand';
 
-const LOCKED_TAG: ReadonlySet<ComponentCategory> = new Set(['form', 'formField', 'formSubmit', 'stickyCta']);
+const LOCKED_TAG: ReadonlySet<ComponentCategory> = new Set(['form', 'formField', 'formSubmit', 'stickyCta', 'mapEmbed']);
 
 interface CustomSectionProps {
   component: ComponentInstance;
@@ -162,8 +163,11 @@ function ValueRow({ name, value, placeholder, note, source, onCommit, onRemove, 
   }, [value]);
 
   const commit = () => {
+    draftState.settled();
     if (draft !== value) setError(onCommit(draft));
   };
+  // Counted as unsaved, and committed by Cmd+S, leaving and unmount (useOpenDraft).
+  const draftState = useOpenDraft(() => commit());
 
   return (
     <PropertyRow label={name} source={source} group>
@@ -174,11 +178,15 @@ function ValueRow({ name, value, placeholder, note, source, onCommit, onRemove, 
           placeholder={placeholder}
           aria-label={`${name} value`}
           aria-invalid={error ? true : undefined}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => {
+            draftState.edited();
+            setDraft(e.target.value);
+          }}
           onBlur={commit}
           onKeyDown={(e) => {
             if (e.key === 'Enter') commit();
             if (e.key === 'Escape') {
+              draftState.settled();
               setDraft(value);
               setError(null);
             }

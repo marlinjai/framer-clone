@@ -89,6 +89,7 @@ const CATEGORY_PROPS: Partial<Record<ComponentCategory, readonly string[]>> = {
   formField: FORM_FIELD_PROPS,
   formSubmit: ['loadingLabel'],
   stickyCta: ['ctaLabel', 'ctaHref', 'buttonBackground', 'buttonTextColor', 'buttonRadius'],
+  mapEmbed: ['mapUrl', 'mapAddress', 'mapTitle'],
 };
 
 /** The props with a control of their own in this category's sections. */

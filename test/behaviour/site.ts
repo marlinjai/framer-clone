@@ -26,17 +26,29 @@ const stored = (slug: string, tree: StoredNode) => ({
   canvasNodes: frames,
 });
 
+export interface PublishOptions {
+  /** Turns analytics on, so the real consent banner asks about it. */
+  analytics?: boolean;
+  /** Saved and frozen with the publish. */
+  siteSettings?: Record<string, unknown>;
+  /** The pages to publish instead of PAGES, one per slug. */
+  pages?: Readonly<Record<string, () => StoredNode>>;
+  /** The site language (Site settings), `en` when not given; joins `siteSettings`. */
+  language?: string;
+}
+
 /**
  * The origin of a published site holding every page, one page per slug. With `analytics`,
  * the real consent banner shows; `siteSettings` is saved and frozen with the publish.
  */
 export async function publishPages(
   port: string,
-  { analytics = false, siteSettings }: { analytics?: boolean; siteSettings?: Record<string, unknown> } = {},
+  { analytics = false, siteSettings, pages: only, language }: PublishOptions = {},
 ): Promise<string> {
   const repo = getSiteRepository();
   const siteId = randomUUID();
-  const pages = { home: stored('', PAGES.plain()), ...Object.fromEntries(Object.entries(PAGES).map(([slug, tree]) => [slug, stored(slug, tree())])) };
+  const source = only ?? PAGES;
+  const pages = { home: stored('', PAGES.plain()), ...Object.fromEntries(Object.entries(source).map(([slug, tree]) => [slug, stored(slug, tree())])) };
   const project = {
     id: siteId,
     metadata: { title: 'Behaviour', description: '', createdAt: 1, updatedAt: 2 },
@@ -44,10 +56,10 @@ export async function publishPages(
     components: COMPONENTS,
     // Publish freezes the binding with the pages, so it travels in the project.
     ...(analytics ? { lumitra: { enabled: true } } : {}),
-    ...(siteSettings ? { siteSettings } : {}),
+    ...(siteSettings || language ? { siteSettings: { ...(siteSettings ?? {}), ...(language ? { language } : {}) } } : {}),
   };
-  await repo.saveProject(SCOPE, project as never);
-  await repo.publishProject(SCOPE, project as never);
+  const saved = await repo.saveProject(SCOPE, project as never);
+  await repo.publishProject(SCOPE, project as never, { expectedVersion: saved.version });
   const { subdomain } = await repo.ensureSiteDomain(SCOPE, siteId);
   return `http://${subdomain}.sites.localhost:${port}`;
 }

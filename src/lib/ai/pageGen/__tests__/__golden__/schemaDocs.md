@@ -173,8 +173,8 @@ library default of its kind; a plain system stack (system-ui, Georgia, ...) is k
 
 ### preset "addToCart" (Add to cart, category commerce)
 - type: div
-- data component "add-to-cart": renders a placeholder until the user binds it in the properties panel (bindable: label). Use it only when the brief clearly asks for this kind of content; never add children to it.
-- defaults: {"data-component-kind":"add-to-cart","label":"Add to cart","style":{"display":"inline-flex","padding":"4px"}}
+- shop control "add-to-cart": the page adds its parts (buttons, fields, messages) as child nodes in the site language, which the user then styles. Use it only when the brief clearly asks for it; never add children to it. On a product page with options, put it INSIDE the variant selector: it adds the chosen variant only there (one written beside the selector is moved into it).
+- defaults: {"data-component-kind":"add-to-cart","style":{"alignItems":"flex-start","display":"flex","flexDirection":"column","gap":"4px","padding":"4px"}}
 ### preset "button" (Button, category basic)
 - type: button
 - defaults: {"children":"Button","style":{"alignItems":"center","backgroundColor":"#111827","border":"none","borderRadius":"6px","color":"white","cursor":"pointer","display":"inline-flex","fontFamily":"inherit","fontSize":"14px","fontWeight":500,"justifyContent":"center","padding":"8px 16px"}}
@@ -183,12 +183,12 @@ library default of its kind; a plain system stack (system-ui, Georgia, ...) is k
 - defaults: {"style":{"backgroundColor":"white","border":"1px solid #e5e7eb","borderRadius":"12px","boxShadow":"0 1px 3px rgba(0, 0, 0, 0.08)","display":"flex","flexDirection":"column","gap":"8px","minHeight":"160px","padding":"20px","width":"280px"}}
 ### preset "cartView" (Cart, category commerce)
 - type: div
-- data component "cart-view": renders a placeholder until the user binds it in the properties panel (bindable: emptyContent). Use it only when the brief clearly asks for this kind of content; never add children to it.
-- defaults: {"data-component-kind":"cart-view","style":{"backgroundColor":"#f9fafb","border":"1px dashed #d1d5db","borderRadius":"8px","display":"flex","flexDirection":"column","gap":"8px","minHeight":"120px","padding":"16px"}}
+- shop control "cart-view": the page adds its parts (buttons, fields, messages) as child nodes in the site language, which the user then styles. Use it only when the brief clearly asks for it; never add children to it.
+- defaults: {"data-component-kind":"cart-view","style":{"backgroundColor":"#ffffff","border":"1px solid #e5e7eb","borderRadius":"8px","display":"flex","flexDirection":"column","gap":"8px","padding":"16px"}}
 ### preset "checkoutButton" (Checkout, category commerce)
 - type: div
-- data component "checkout-button": renders a placeholder until the user binds it in the properties panel (bindable: label). Use it only when the brief clearly asks for this kind of content; never add children to it.
-- defaults: {"data-component-kind":"checkout-button","label":"Checkout","style":{"display":"inline-flex","padding":"4px"}}
+- shop control "checkout-button": the page adds its parts (buttons, fields, messages) as child nodes in the site language, which the user then styles. Use it only when the brief clearly asks for it; never add children to it.
+- defaults: {"data-component-kind":"checkout-button","style":{"alignItems":"flex-start","display":"flex","flexDirection":"column","gap":"8px","padding":"4px"}}
 ### preset "collection" (Collection, category data)
 - type: div
 - data component "collection": renders a placeholder until the user binds it in the properties panel (bindable: collection, filter, limit, sort). Use it only when the brief clearly asks for this kind of content; never add children to it.
@@ -244,6 +244,9 @@ library default of its kind; a plain system stack (system-ui, Georgia, ...) is k
 ### preset "link" (Link, category basic)
 - type: a
 - defaults: {"children":"Link","href":"/","style":{"color":"#111827","display":"inline-block","fontFamily":"inherit","fontSize":"16px","padding":"4px","textDecoration":"underline"}}
+### preset "mapEmbed" (Google Map, category basic)
+- type: div
+- defaults: {"data-map-embed":"google","style":{"borderRadius":"8px","height":"360px","overflow":"hidden","width":"100%"}}
 ### preset "productDetail" (Product detail, category commerce)
 - type: div
 - data component "product-detail": renders a placeholder until the user binds it in the properties panel (bindable: product). Use it only when the brief clearly asks for this kind of content; never add children to it.
@@ -272,8 +275,8 @@ library default of its kind; a plain system stack (system-ui, Georgia, ...) is k
 - defaults: {"children":"Text","style":{"color":"#111827","fontFamily":"inherit","fontSize":"16px","margin":0,"padding":"8px"}}
 ### preset "variantSelector" (Variant selector, category commerce)
 - type: div
-- data component "variant-selector": renders a placeholder until the user binds it in the properties panel. Use it only when the brief clearly asks for this kind of content; never add children to it.
-- defaults: {"data-component-kind":"variant-selector","style":{"backgroundColor":"#f9fafb","border":"1px dashed #d1d5db","borderRadius":"8px","display":"flex","flexDirection":"column","gap":"8px","minHeight":"60px","padding":"12px"}}
+- shop control "variant-selector": the page adds its parts (buttons, fields, messages) as child nodes in the site language, which the user then styles. Use it only when the brief clearly asks for it. Put the add to cart and any price bound to the variant ({{variant.price.*}}) INSIDE it, as its children: they follow the visitor's choice only there. Never write its parts.
+- defaults: {"data-component-kind":"variant-selector","style":{"display":"flex","flexDirection":"column","gap":"8px","padding":"12px"}}
 
 ## Style keys
 

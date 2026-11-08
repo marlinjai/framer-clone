@@ -36,6 +36,11 @@ import FormIsland, { FormFieldIsland, FormSubmitIsland } from '../forms/FormIsla
 import { formKindOf } from '@/lib/forms/definition';
 import { isStickyCta } from '@/lib/stickyCta/stickyCta';
 import { createStickyCtaElement } from '../stickyCta/stickyCtaElement';
+import { isMapEmbed, MAP_EMBED_PROP_KEYS, stripMapEmbedProps } from '@/lib/mapEmbed/mapEmbed';
+import MapEmbedIsland from '../mapEmbed/MapEmbedIsland';
+import { shopPartRoleOf } from '@/lib/commerce/parts';
+import { applyBindings } from '@/lib/bindings/resolver/applyBindings';
+import { ShopPartElement } from '@/lib/commerce/shopRuntime';
 
 /** The four interactive commerce kinds emitted as client islands (never baked
  *  server-side). Mirrors INTERACTIVE_COMMERCE_KINDS in hydrateBindings. */
@@ -156,6 +161,13 @@ export function renderNodeChildren(
   return ownTextThenChildren((node.props as any)?.children, rendered, createRunElement, !inLink) as React.ReactNode;
 }
 
+/** A node's child nodes without its own text (a shop part draws its text itself). */
+function renderNodeChildrenOnly(node: ComponentNode, scope: BindingScope, foreign: ForeignContent, inLink: boolean): React.ReactNode {
+  const children = node.children ?? [];
+  if (children.length === 0) return undefined;
+  return children.map((child, index) => renderComponentNode(child, scope, child.id ?? index, foreign, inLink));
+}
+
 /**
  * Render one hydrated ComponentNode to a React element. `scope` is threaded to
  * any interactive island so its descendants re-resolve `{{variant.*}}` /
@@ -192,6 +204,36 @@ export function renderComponentNode(
   // moved it to the end of the page and its stylesheet pins it on phones.
   if (isStickyCta(node.props)) {
     return createStickyCtaElement(nodeDomProps(node), 'published', key, node.props as Record<string, unknown>);
+  }
+
+  // A Google Maps embed: a placeholder until the visitor consents, then the frame,
+  // drawn by its island from an address it rebuilds (src/lib/mapEmbed/mapEmbed.ts).
+  if (isMapEmbed(node.props)) {
+    const source = (node.props ?? {}) as Record<string, unknown>;
+    const config = Object.fromEntries(MAP_EMBED_PROP_KEYS.filter((name) => name in source).map((name) => [name, source[name]]));
+    return <MapEmbedIsland key={key} domProps={stripMapEmbedProps(nodeDomProps(node))} config={config} />;
+  }
+
+  // A shop part (src/lib/commerce/parts.ts): drawn as its control's island says
+  // (shown or not, its text, its behaviour). Outside its control it draws nothing.
+  const shopRole = shopPartRoleOf(node.props);
+  if (shopRole) {
+    const partTag = resolveHtmlTag(node.type) ?? 'div';
+    // Inside an island nothing hydrated its text binding: a label bound to the
+    // product ({{product.title}}) reads the frames the island sits in here.
+    const partText = node.bindings?.children ? applyBindings(node, node.props ?? {}, scope).resolvedProps.children : (node.props as any)?.children;
+    return (
+      <ShopPartElement
+        key={key}
+        role={shopRole}
+        tag={partTag}
+        domProps={nodeDomProps(node)}
+        storedText={partText}
+        content={isVoidTag(partTag) ? undefined : renderNodeChildrenOnly(node, scope, contentBelow(partTag, foreign), inLink || !runLinksAllowedIn(partTag))}
+        surface="preview"
+        linksAllowed={!inLink}
+      />
+    );
   }
 
   const dataKind = (node.props as any)?.['data-component-kind'];

@@ -1289,6 +1289,29 @@ The review (`2026-11-02-behaviour-model-review.md`, "Slice B3 and B4", probes be
 
 **Not proven:** a real model writing any of this. Every figure above is what the validator does with output written to the prompt's examples; whether the prompt makes a model write it, and how often it writes the untaught forms, needs real generations, which this slice does not run. The AI event cells say the generator keeps a trigger, not that it runs: that is the published column's proof.
 
+## Decided in slice B13
+
+**The preset trees did not round trip before this slice, only their JSON did.** Import read `behaviour` as an opaque prop, and JSX carries no node ids, so a tree came back with every reference pointing at an id no node held. Keyed by place, as the published comparison keys both sides, 11 of the 13 preset patterns had every node reference refused (`no node pattern-tabs-list exists`), and `radix-tabs` compared two pages broken the same way. B7 and B8 counted those as passing; they passed the JSON comparison and nothing more.
+
+**The score's run:** on the B8 base, `roundTrip` 137 to 160: nodes to JSX to nodes 126 of 126 to 141 of 141, JSX to render 11 of 18 to 19 of 26 (the 7 that fail are the named `import-dynamic-logic` gaps, unchanged), every other number unchanged. Rebased on `main` after theme slice T2 (which added four corpus fixtures), B9 and components slice 11, whose floor reads `roundTrip` 141, the run reads 145 of 145 and 19 of 26, so `roundTrip` 141 to 164, and the four new fixtures also publish the same page and program after the trip. Format 1,815, `renderer` 1,788, canvas 1,635, panel 1,232 and AI 1,433 equal `main`'s floor. `--update-baseline`, now per row (#292), added the 23 new case ids to `roundTrip` in `baseline.json` (141 to 164 ids) and nothing else, and `check:score-floor` holds.
+
+**What the new cases add,** each of which fails if import skips the parser, checked by running the score with `settleBehaviour` removed (15 cases fail) and with `nodeId` not written (26 fail, the 13 preset patterns and `radix-tabs` among them):
+
+- A state (a boolean and a choice), and a trigger that toggles state above it, binds `aria-expanded`, and focuses a node that holds no behaviour of its own. Both publish the same page and program on both sides, and the page holds `data-fcs-*`, `data-fc-n` and the named node.
+- A kept id equal to another node's place, so neither takes the other's key.
+- Ten refused entries, each between two triggers that stand: a reference to no node, state not in reach, a `{{binding}}`, an unknown event, a `javascript:` address, `navigate` on no press, a repeated trigger id, a state declared twice, an unknown field, a `noScript` that is neither. Each comes back as exactly one line with the parser's reason, the rest of the behaviour is exactly what stood, and the page equals the one the stored tree publishes.
+- Eight pieces of JSX reported and not carried: behaviour that is no object, triggers that are no list, behaviour on a text run, a node named but not carried, an id that keys no node, an id on two nodes, an id on a text run, an id that is no text. And two exports refused: behaviour on a text node, a stored prop named `nodeId`.
+
+**Also decided while building it, say so if you disagree:**
+
+- **A node's id travels as a second named prop, `nodeId`,** beside `behaviour`, deviating from "React import and export", which names only `behaviour`. Behaviour keys nodes by id and JSX has no slot for one, so without it no trigger naming a node survives import. It is written only where behaviour needs it: on a node holding behaviour, and on a node whose id some behaviour string equals. That set is read from every string, valid or not, so it does not depend on what parses; a string that only happens to equal an id carries that id, which costs nothing. Every other node still has no id in the normalised form, as before. Real React output, where this becomes the element's own `id` or a key, is step 7's.
+- **Import keeps what the parser rebuilt, not the stored value minus the refused entries,** unlike `rules`, which keeps stored entries by index. A behaviour refusal can be a field rather than a list entry, and keeping the rebuilt value means nothing the parser did not accept travels on. For every preset the rebuilt value equals the stored one, key order aside, measured before deciding.
+- **The published comparison now includes the program,** and the 13 behaviour-built patterns go through it rather than through the JSON comparison alone.
+- **`derived` in `src/lib/behaviour/presets/nodes.ts` no longer writes `behaviour: {}`,** a file outside this slice's row. The stored shape says absent when empty; the round trip surfaced it on the tree grid's last row, whose empty object the parser rightly turned into nothing. `presets.test.ts` holds, since `behaviourOf` already reads an absent behaviour as empty.
+- **A duplicate `nodeId` is reported and the second node keyed by its place,** so two nodes never share a key; behaviour naming that id reads the first node, and the report says so.
+
+**Unproven:** import of hooks (`useState`, handlers) is step 7's and has no case here. The cases prove the stored form survives the trip through the parser and publishes the same; they do not run the page in a browser, which the patterns' own published proofs do.
+
 ## Review findings not adopted
 
 Everything in findings 1 to 22 is applied except the following, each decided by code or a test. M1 to M10 are recorded above with the review's defaults.

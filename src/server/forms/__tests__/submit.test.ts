@@ -13,7 +13,7 @@ import type { CommerceDB } from '@/server/commerce/db-types';
 import type { PublishedSite } from '@/server/sites/publicResolver';
 import { MIN_FILL_MS, handleFormSubmit, locateForm, type SubmitDeps } from '../submit';
 import { createFormRateLimiter, clientIpOf } from '../rateLimit';
-import type { NewFormSubmission } from '../repository';
+import { FormSiteUnavailableError, type NewFormSubmission } from '../repository';
 
 const TG = '018f9c10-0000-7000-8000-0000000000f1';
 const NOW = 1_800_000_000_000;
@@ -205,6 +205,14 @@ describe('JSON (the island)', () => {
     expect((await handleFormSubmit(jsonPost(body({ formId: 'nope' })), h.deps)).status).toBe(404);
     const blocked = harness({ resolveSite: async () => ({ ok: false, response: Response.json({ error: { code: 'forbidden' } }, { status: 403 }) }) });
     expect((await handleFormSubmit(jsonPost(body()), blocked.deps)).status).toBe(403);
+  });
+
+  it('a site erased after resolution returns 404 without reporting a successful submission', async () => {
+    const h = harness({ store: async () => { throw new FormSiteUnavailableError(); } });
+    const response = await handleFormSubmit(jsonPost({ formId: 'form-1', values: VALID, elapsedMs: 5000 }), h.deps);
+    expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({ error: { code: 'form_not_found' } });
+    expect(h.stored).toEqual([]);
   });
 
   it('a storage failure is a loud 500 with a generic message, logged', async () => {

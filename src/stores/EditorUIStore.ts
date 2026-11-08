@@ -12,6 +12,8 @@ import { isDefinitionRule, storedRulesOf } from '@/lib/rules/rules';
 import { findRuleIndex, namedState, ruleLabel } from '@/lib/rules/states';
 import { revealFor, surfaceBehaviour, type PreviewValues } from '@/lib/behaviour/surfaceBehaviour';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
+import { surfaceColorMode, surfaceColorScheme, surfaceDarkClass, type ColorScheme } from '@/lib/site/theme';
+import { PageGenDraftStore } from '@/lib/ai/pageGen/draft';
 // Removed BreakpointModel - breakpoints are now viewport nodes
 
 // Available tools in our design editor (expanded from basic ToolStore)
@@ -149,6 +151,9 @@ const EditorUIStore = types.model('EditorUI', {
   // The product a product page shows while designing (src/lib/commerce/productPreview.tsx),
   // by handle; undefined means the first in the catalogue. Never saved with the project.
   previewProductHandle: undefined as string | undefined,
+  // The state each shop control shows on the canvas (src/lib/commerce/parts.ts), by
+  // the control's node id; absent means its first state. Never saved with the project.
+  shopPreviewStates: {} as Readonly<Record<string, string>>,
   isResizing: false,
   // One rule shown on every copy of its node as though it applied (a state on
   // the canvas is otherwise dead). `ruleId` is a stored rule's id or a named state,
@@ -171,6 +176,12 @@ const EditorUIStore = types.model('EditorUI', {
   // navigation and no server round trip. The editor's own keyboard shortcuts
   // stand down while it is open. Editor session only.
   previewOpen: false,
+  // Which of a `system` site's two modes the canvas and the preview show
+  // (docs/plans/2026-11-02-theme-and-head.md, "The mode on the canvas"). A forced
+  // site shows its own mode and a site with no choice shows light, whatever this
+  // holds. Editor session only: never saved, never in undo history, so switching
+  // changes no project byte and a reload opens on light.
+  previewColorMode: 'light' as ColorScheme,
   // The way back out of the definitions open on the canvas, outermost first. A nested
   // definition adds one. Volatile on purpose: a reload opens on a real page.
   componentTrail: [] as readonly ComponentReturn[],
@@ -178,6 +189,10 @@ const EditorUIStore = types.model('EditorUI', {
   componentRequest: null as ComponentRequest | null,
   // Registered by Canvas while it is mounted.
   canvasCamera: undefined as CanvasCamera | undefined,
+  // The page generator's draft (src/lib/ai/pageGen/draft.ts): the sections of a
+  // running generation, drawn on the canvas and never part of the project, so
+  // never saved, published or in undo history. Its own observable store.
+  pageGenDraft: new PageGenDraftStore(),
   // Phone layout (docs/plans/2026-10-24-editor-on-phones.md, "Quick toolbar"):
   // the long-press context menu, open at a finger point (screen px), and the
   // style its Copy style took (appearance properties as resolved on the frame
@@ -203,6 +218,25 @@ const EditorUIStore = types.model('EditorUI', {
   /** True while the editor shows the browser-only demo project. */
   get isUnsavedDemo(): boolean {
     return self.demoProjectId !== undefined && self.currentProject?.id === self.demoProjectId;
+  },
+
+  /** The scheme the canvas and the preview show for the open site. */
+  get frameColorScheme(): ColorScheme {
+    return surfaceColorScheme(self.currentProject?.site.theme, self.previewColorMode);
+  },
+
+  /**
+   * The mode a surface answers `prefers-color-scheme` with: the frame's scheme on a
+   * forced or `system` site, undefined on a site with no choice, whose dark rules stay
+   * as stored (dead on the canvas until previewed, the real system's on the preview).
+   */
+  get frameColorMode(): ColorScheme | undefined {
+    return surfaceColorMode(self.currentProject?.site.theme, self.previewColorMode);
+  },
+
+  /** True when the frames carry `class="dark"`: only on a site that forces `dark`. */
+  get frameDarkClass(): boolean {
+    return surfaceDarkClass(self.currentProject?.site.theme);
   },
 
   /** True while a definition is open on the canvas. */
@@ -245,6 +279,12 @@ const EditorUIStore = types.model('EditorUI', {
     self.previewProductHandle = handle;
   },
 
+  /** The state a shop control shows on the canvas (ShopPreviewBar). */
+  setShopPreviewState(controlId: string, state: string) {
+    if (self.shopPreviewStates[controlId] === state) return;
+    self.shopPreviewStates = { ...self.shopPreviewStates, [controlId]: state };
+  },
+
   /** Shows one rule on every copy of its node, or none. */
   setPreviewRule(preview: { componentId: string; ruleId: string } | null) {
     self.previewRule = preview;
@@ -268,6 +308,11 @@ const EditorUIStore = types.model('EditorUI', {
     if (self.editorNotice?.kind === 'previewState') self.editorNotice = undefined;
   },
 
+  /** Which mode a `system` site's frames show. Writes nothing to the project. */
+  setPreviewColorMode(mode: ColorScheme) {
+    self.previewColorMode = mode === 'dark' ? 'dark' : 'light';
+  },
+
   /** Shows or hides the preview over the editor (PreviewOverlay). */
   setPreviewOpen(open: boolean) {
     self.previewOpen = open;
@@ -287,6 +332,7 @@ const EditorUIStore = types.model('EditorUI', {
     if (self.currentProject?.id !== project?.id) {
       self.editorNotice = undefined;
       self.previewProductHandle = undefined;
+      self.shopPreviewStates = {};
       self.editingComponent = undefined;
       self.selectedViewportNode = undefined;
       self.selectedComponents.clear();

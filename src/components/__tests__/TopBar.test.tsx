@@ -11,6 +11,7 @@
 // short-circuits), keeping the test focused on the navigation chrome.
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { PageGenDraftStore } from '@/lib/ai/pageGen/draft';
 import { render, cleanup, fireEvent, screen } from '@testing-library/react';
 import TopBar from '../TopBar';
 
@@ -38,7 +39,7 @@ vi.mock('next/link', () => ({
 
 const setPreviewOpen = vi.fn();
 let currentStore: {
-  editorUI: { currentProject: unknown; currentPage: unknown; setPreviewOpen: (open: boolean) => void };
+  editorUI: { currentProject: unknown; currentPage: unknown; setPreviewOpen: (open: boolean) => void; pageGenDraft: PageGenDraftStore };
 };
 vi.mock('@/hooks/useStore', () => ({
   useStore: () => currentStore,
@@ -56,6 +57,8 @@ beforeEach(() => {
       currentProject: { id: 'site_1', metadata: { title: 'Demo' } },
       currentPage: null,
       setPreviewOpen,
+      // The Generate dialog in the top bar reads the page generator's draft.
+      pageGenDraft: new PageGenDraftStore(),
     },
   };
 });

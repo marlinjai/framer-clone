@@ -357,6 +357,9 @@ importers:
       eslint-config-next:
         specifier: 15.5.28
         version: 15.5.28(eslint@9.39.3(jiti@2.6.1))(typescript@5.9.3)
+      framer-plugin:
+        specifier: 3.10.3
+        version: 3.10.3(react-dom@19.1.9(react@19.1.9))(react@19.1.9)
       husky:
         specifier: ^9.1.7
         version: 9.1.7
@@ -4167,6 +4170,13 @@ packages:
 
   fraction.js@5.3.4:
     resolution: {integrity: sha512-1X1NTtiJphryn/uLQz3whtY6jK3fTqoE3ohKs0tT+Ujr1W59oopxmoEh7Lu5p6vBaPbgoM0bzveAW4Qi5RyWDQ==}
+
+  framer-plugin@3.10.3:
+    resolution: {integrity: sha512-lZ0lnfQxyjoqg8W5dlE55PexS4osKus61eeWJnM+Ke1OaUpBzUXcSB+ud6uuNHQE55kYXTUs7AyTeW5hatJuHw==}
+    deprecated: 'framer-plugin has been deprecated. Please use @framer/plugin from now on. Learn more: https://www.framer.com/developers/changelog'
+    peerDependencies:
+      react: ^18.2.0
+      react-dom: ^18.2.0
 
   fs-constants@1.0.0:
     resolution: {integrity: sha512-y6OAwoSIf7FyjMIv94u+b5rdheZEjzR63GTyZJm5qh4Bi+2YgwLCcI/fPFZkL5PSixOt6ZNKm+w+Hfp/Bciwow==}
@@ -10328,6 +10338,11 @@ snapshots:
   format@0.2.2: {}
 
   fraction.js@5.3.4: {}
+
+  framer-plugin@3.10.3(react-dom@19.1.9(react@19.1.9))(react@19.1.9):
+    dependencies:
+      react: 19.1.9
+      react-dom: 19.1.9(react@19.1.9)
 
   fs-constants@1.0.0: {}
 

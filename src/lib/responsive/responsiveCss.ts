@@ -69,8 +69,8 @@
 //   :root{scroll-behavior:auto}
 //   }
 //
-// A real page's `body` sets its own colours and font (the base layer of globals.css
-// and the site layout), and they would paint over what the document set. So a rule
+// A real page's `body` sets its own colours and font (the base layer of the site
+// sheet, src/app/(site)/site.css, and the site layout), and they would paint over what the document set. So a rule
 // setting one of those hands it back, under the same conditions, in constant text:
 //
 //   :root{color:#1d4ed8}
@@ -491,8 +491,21 @@ export interface SurfaceRulesInput {
 /** Results kept per parsed rule, so a rule edit rebuilds one entry and not the page. */
 export type SurfaceMemo = WeakMap<object, Map<string, unknown>>;
 
+/** What a surface's frames show of the site's colour mode. */
+export interface SurfaceScheme {
+  /**
+   * The frame's scheme, set only on a site with a colour mode: a forced site's mode, or
+   * the previewed one on a `system` site. Absent, `prefers-color-scheme` stays as stored.
+   */
+  colorMode?: ColorScheme;
+  /** The frame carries `class="dark"`, which only a site forcing `dark` does. */
+  darkClass?: boolean;
+  /** Called for a wrapper that reads the colour scheme in a form the mode cannot answer. */
+  onWarning?: (warning: string) => void;
+}
+
 /** An editor surface to write the sheet for, in place of the published page. */
-export interface EditorSurface {
+export interface EditorSurface extends SurfaceScheme {
   kind: EditorSurfaceKind;
   nodes: readonly SurfaceRulesInput[];
   /** How many copies a tree node has: the page caps count rules, and a copy repeats them. */
@@ -675,6 +688,11 @@ function remembered<T>(memo: SurfaceMemo | undefined, owner: object, key: string
  * states are rewritten, and the block is omitted when the frame rules it out. A refusal
  * comes first and does not depend on the frame, so a rule the published page drops is
  * dropped here on every frame, even for a property the canvas would have left out.
+ *
+ * On a site with a colour mode, the frame's scheme answers `prefers-color-scheme`
+ * first (src/lib/rules/colorMode.ts), so what is left reads the frame or the real
+ * environment and never the editor's machine for the colour scheme. A forced `dark`
+ * frame also answers `&:is(.dark *)` (constantConditions).
  */
 function blocksOnCopy(
   kind: EditorSurfaceKind,
@@ -683,6 +701,7 @@ function blocksOnCopy(
   ordered: readonly BreakpointRef[],
   previewed: boolean,
   animated: ReadonlySet<string>,
+  scheme: SurfaceScheme = {},
 ): BuiltRule {
   let refused: string | undefined;
   const decls: string[] = [];
@@ -701,7 +720,9 @@ function blocksOnCopy(
     decls.push(startsAnimation && animated.has(property) ? decl : asImportant(decl));
   }
   if (refused !== undefined) return { refused: `the stylesheet refuses its ${refused}` };
-  const wrappers = surfaceWrappers(rule.at, copy.frame, kind, previewed);
+  const answered = scheme.colorMode ? wrappersInColorMode(rule.at, scheme.colorMode, scheme.onWarning) : rule.at;
+  if (answered === null) return { blocks: [] };
+  const wrappers = surfaceWrappers(answered, copy.frame, kind, previewed);
   if (wrappers === null || decls.length === 0) return { blocks: [] };
   const body = `{${decls.join(';')}}`;
   return {
@@ -709,7 +730,7 @@ function blocksOnCopy(
       // Every part starts with `&`, and the parser allows no other. A `when` goes straight
       // after the node, as on the published page, with no gate: a surface has none. It reads
       // only `data-fcs-*`, which the surface's renderer writes, so it is not made constant.
-      return { wrappers, text: `${copy.selector}${rule.when ?? ''}${constantConditions(part.slice(1), kind, previewed)}${body}` };
+      return { wrappers, text: `${copy.selector}${rule.when ?? ''}${constantConditions(part.slice(1), kind, previewed, scheme.darkClass === true)}${body}` };
     }),
   };
 }
@@ -1125,11 +1146,12 @@ function* surfaceJobs(surface: EditorSurface, ordered: readonly BreakpointRef[])
     for (const rule of rules) {
       const live = previewed.has(rule.id);
       for (const copy of copies) {
-        const key = [surface.kind, copy.selector, copy.frame.width, copy.frame.height, live, breakpoints, moving].join('|');
+        // The scheme is part of the key: a switch of mode must never return the other mode's blocks.
+        const key = [surface.kind, copy.selector, copy.frame.width, copy.frame.height, live, breakpoints, moving, surface.colorMode ?? '', surface.darkClass === true].join('|');
         yield {
           className: node,
           rule,
-          build: () => remembered(surface.memo, rule, key, () => blocksOnCopy(surface.kind, rule, copy, ordered, live, animated)),
+          build: () => remembered(surface.memo, rule, key, () => blocksOnCopy(surface.kind, rule, copy, ordered, live, animated, surface)),
         };
       }
     }

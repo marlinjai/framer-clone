@@ -47,7 +47,8 @@ import type { PageModelType } from '@/models/PageModel';
 import type { ProjectModelType } from '@/models/ProjectModel';
 import { useSiteAddress } from '@/contexts/SiteAddressContext';
 import { suggestSlug, tidySlugInput, validateSlug, SLUG_MAX_LENGTH } from '@/lib/pages/slug';
-import { isHttpsUrl } from '@/lib/site/siteSettings';
+import { IMAGE_REFERENCE_ERROR, isImageReference } from '@/lib/site/siteSettings';
+import { SiteImageField } from '@/components/site/SiteImageField';
 import { HomeChangeSummary } from './SetHomePageDialog';
 
 /** Search engines show roughly this many characters of a description. */
@@ -137,7 +138,7 @@ const PageSettingsForm = observer(({
   const titleError = saveErrors.title ?? nameError;
   const cleanOgImage = ogImage.trim();
   const ogImageError =
-    saveErrors.ogImage ?? (cleanOgImage && !isHttpsUrl(cleanOgImage) ? 'Enter a full https:// address of an image.' : undefined);
+    saveErrors.ogImage ?? (cleanOgImage && !isImageReference(cleanOgImage) ? IMAGE_REFERENCE_ERROR : undefined);
   const visibleOgImageError = showErrors.ogImage || saveErrors.ogImage ? ogImageError : undefined;
   // A 404 page is never indexed, whatever its own switch says.
   const effectiveNoIndex = noIndex || notFoundPage;
@@ -402,37 +403,22 @@ const PageSettingsForm = observer(({
           </p>
         </div>
 
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor="page-settings-og-image" className={fieldLabel}>
-            Sharing image
-          </label>
-          <input
-            id="page-settings-og-image"
-            ref={ogImageRef}
-            value={ogImage}
-            placeholder="https://"
-            autoComplete="off"
-            spellCheck={false}
-            onChange={(e) => {
-              setOgImage(e.target.value);
-              setAnnouncement('');
-              setSaveErrors((s) => ({ ...s, ogImage: undefined }));
-            }}
-            onBlur={() => setShowErrors((s) => ({ ...s, ogImage: true }))}
-            aria-invalid={visibleOgImageError ? true : undefined}
-            aria-describedby={visibleOgImageError ? 'page-settings-og-image-error' : 'page-settings-og-image-hint'}
-            className={`${inputBase} ${visibleOgImageError ? inputBad : inputOk}`}
-          />
-          {visibleOgImageError ? (
-            <p id="page-settings-og-image-error" className="text-[11px] text-destructive" aria-live="polite">
-              {visibleOgImageError}
-            </p>
-          ) : (
-            <p id="page-settings-og-image-hint" className="text-[11px] text-muted-foreground">
-              Shown when this page is shared. Leave empty to use the sharing image from Site settings.
-            </p>
-          )}
-        </div>
+        <SiteImageField
+          projectId={project.id}
+          kind="sharing"
+          inputId="page-settings-og-image"
+          inputRef={ogImageRef}
+          label="Sharing image"
+          value={ogImage}
+          onChange={(v) => {
+            setOgImage(v);
+            setAnnouncement('');
+            setSaveErrors((s) => ({ ...s, ogImage: undefined }));
+          }}
+          onBlur={() => setShowErrors((s) => ({ ...s, ogImage: true }))}
+          error={visibleOgImageError}
+          hintText="Shown when this page is shared. Leave empty to use the sharing image from Site settings."
+        />
 
         <div className="flex flex-col gap-2">
           <label className="flex items-start gap-2 text-sm">

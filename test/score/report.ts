@@ -12,6 +12,7 @@ import type { ImportRun, ImportScoreOut } from './import/types';
 import {
   ACCEPTED_NOT_TAUGHT,
   GAPS,
+  KIND_LABEL,
   ROW_KINDS,
   SURFACES,
   rowKey,
@@ -45,25 +46,6 @@ interface PanelDetail {
 }
 
 type Counts = { pass: number; fail: number; notTested: number; total: number };
-
-const KIND_LABEL: Record<RowKind, string> = {
-  'html-element': 'HTML elements',
-  'html-global-attribute': 'HTML global attributes',
-  'html-element-attribute': 'HTML attributes of single elements',
-  'html-event-handler': 'HTML event handler attributes',
-  'svg-element': 'SVG elements',
-  'svg-attribute': 'SVG attributes',
-  'mathml-element': 'MathML elements',
-  'mathml-attribute': 'MathML attributes',
-  'css-property': 'CSS properties',
-  'css-value': 'CSS value types, functions and units',
-  'css-selector': 'CSS selectors',
-  'css-at-rule': 'CSS at-rules',
-  'css-media-feature': 'CSS media features',
-  'aria-pattern': 'WAI-ARIA patterns',
-  component: 'Reusable component promises',
-  'page-item': 'Page-level items: a site theme',
-};
 
 const SURFACE_LABEL: Record<Surface, string> = {
   format: 'Format stores it',
@@ -585,7 +567,7 @@ export function renderReport(score: Score): string {
     '- **Whether a panel control is any good.** A key counts as editable when a control changed it, whatever range or units that control offers. Only the properties panel and the palette are covered: the quick toolbar, context menus and the Layers panel were searched for tag changes and none found, not driven.',
     '- **The whole published page.** The corpus uses `applyResponsiveStyles` and `renderComponentNode`, without `hydrateBindings`, effects, the sticky bar, or the consent and font wrappers, and only in Chromium. The page around it is real: the sheet of a production build (`test/score/data/published-base.css`, refreshed by `pnpm score:refresh-base`), and the mounted editor sits on the same sheet. Its utilities also follow classes in `test` and `docs`, which the deployed image does not scan, so it can hold a few the live sheet lacks.',
     '- **WAI-ARIA conformance.** A contract is the primary keyboard path of a pattern, not its whole page in the Guide.',
-    '- **Page-level items:** head tags, design tokens and page-wide scripts (gap 5 of the plan) have no rows, and script and style elements are excluded with a reason.',
+    '- **Page-level items:** a site theme has rows (`test/score/pageItems.score.ts`): format, published in Chromium, and the canvas on the mounted editor, its theme set through the project and measured on the frame, with what lies outside the frames checked unchanged. The preview, the panel (slice T4) and the AI (slice T5) are not measured, and neither is WebKit on the canvas. Head tags and page-wide scripts have no rows yet, and script and style elements are excluded with a reason.',
     '- **Script on the BusBasis pages.** A frozen page holds no script, so menus, modals, filters and the gallery cannot run on the original. They stand under "needs" as failures rather than as compared states. A page is frozen in one state: logged out, no cart, the first visit.',
     '- **React import beyond static JSX and Tailwind.** Props as inputs, `cva` tables, entries, hooks, Radix and the AI rebuild step of the plan are not built, so the real components read "not imported", honestly. The import score runs in Chromium only, on the default frames, and with no dark mode state.',
   );

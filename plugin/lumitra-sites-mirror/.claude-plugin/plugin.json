@@ -1,0 +1,14 @@
+{
+  "name": "lumitra-sites",
+  "displayName": "Lumitra Sites",
+  "version": "0.1.0",
+  "description": "Build, edit and publish websites in Lumitra Sites (app.lumitra.co) from Claude Code: small validated batches with a version lock, a browser check of the preview, and publishing only with the person's own approval.",
+  "author": {
+    "name": "Marlin Jai Pohl",
+    "url": "https://lumitra.co"
+  },
+  "homepage": "https://app.lumitra.co",
+  "repository": "https://github.com/marlinjai/lumitra-sites-plugin",
+  "license": "MIT",
+  "keywords": ["lumitra", "website-builder", "landing-page", "web-design", "mcp", "sites"]
+}

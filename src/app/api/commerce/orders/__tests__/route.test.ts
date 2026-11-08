@@ -16,7 +16,9 @@
 //     re-submit dedupes to the same order), and generates a server key otherwise,
 //   - keeps the body INTENTIONS-ONLY (a client-sent price/stock/total is a 400),
 //   - bounds the idempotency key (a too-short value is a 400),
-//   - surfaces faults as error envelopes, never a swallowed empty 200.
+//   - surfaces faults as error envelopes, never a swallowed empty 200,
+//   - answers an order too large for its INTEGER columns with a typed 422 order_too_large,
+//   - answers a paid order below the payment provider's minimum charge with a typed 422 order_too_small.
 //
 // The Dockerized `.itest.ts` suites prove the same route against live Postgres
 // (route.itest.ts) and across two tenant groups (routes.isolation.itest.ts).
@@ -61,7 +63,7 @@ import { hasShopMail } from '@/server/commerce/mail/connection';
 import { createOrder } from '@/server/commerce/order/createOrder';
 import { commerceTenantDbChecked } from '@/server/commerce/db';
 import { sweepExpiredPayments } from '@/server/commerce/payment/payments';
-import { UnknownVariantError } from '@/server/commerce/repository/errors';
+import { OrderTooLargeError, OrderTooSmallError, UnknownVariantError } from '@/server/commerce/repository/errors';
 import { readOrderTotal, resolveOrderLines } from '@/server/commerce/repository/storefront';
 import { resolvePublishedSite } from '@/server/sites/publicResolver';
 import { DEMO_COMPANY_ID } from '@/lib/renderer/server/demoTenant';
@@ -346,5 +348,97 @@ describe('POST /api/commerce/orders body contract', () => {
     const res = await POST(postReq({ lines: [{ variantId: 'var_a', quantity: 1 }] }));
     expect(res.status).toBe(500);
     expect((await res.json()).error.code).toBe('commerce_order_failed');
+  });
+});
+
+describe('POST /api/commerce/orders a paid order below the payment minimum', () => {
+  it('a total below what the provider takes in one charge (createOrder refuses it): a typed 422 order_too_small, never a 500', async () => {
+    createOrderMock.mockRejectedValue(new OrderTooSmallError(49, 50));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = await POST(postReq({ lines: [{ variantId: 'var_a', quantity: 1 }] }));
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({
+      error: {
+        code: 'order_too_small',
+        message: 'the order total is below the minimum the payment provider accepts; add items and check out again',
+      },
+    });
+    // A buyer's problem, not a fault: nothing is logged as one, and no order is read back.
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+    expect(readTotalMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /api/commerce/orders an order too large to store', () => {
+  const TOO_LARGE = {
+    error: {
+      code: 'order_too_large',
+      message: 'the order is larger than one order can hold; lower a quantity and check out again',
+      variantId: 'var_a',
+    },
+  };
+
+  it('a line amount over the INTEGER ceiling (createOrder refuses it): a typed 422, never a 500 or a 409', async () => {
+    createOrderMock.mockRejectedValue(new OrderTooLargeError('var_a', 'line base amount', 2_147_483_647 * 100));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = await POST(postReq({ lines: [{ variantId: 'var_a', quantity: 2_147_483_647 }] }));
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual(TOO_LARGE);
+    // A buyer's problem, not a fault: nothing is logged as one.
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+    expect(readTotalMock).not.toHaveBeenCalled();
+  });
+
+  it('an order total over the ceiling names no line', async () => {
+    createOrderMock.mockRejectedValue(new OrderTooLargeError(null, 'order total', 2_147_483_648));
+    const res = await POST(postReq({ lines: [{ variantId: 'var_a', quantity: 1 }] }));
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toEqual({ code: 'order_too_large', message: TOO_LARGE.error.message });
+  });
+
+  it('a quantity its column cannot store: the same 422, before anything is read or ordered', async () => {
+    const res = await POST(postReq({ lines: [{ variantId: 'var_a', quantity: 2_147_483_648 }] }));
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual(TOO_LARGE);
+    expect(resolveLinesMock).not.toHaveBeenCalled();
+    expect(createOrderMock).not.toHaveBeenCalled();
+  });
+
+  it('one variant on two lines whose quantities add up past the column: the same 422, before anything is read', async () => {
+    const res = await POST(
+      postReq({
+        lines: [
+          { variantId: 'var_a', quantity: 2_147_483_647 },
+          { variantId: 'var_a', quantity: 2_147_483_647 },
+        ],
+      }),
+    );
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual(TOO_LARGE);
+    expect(resolveLinesMock).not.toHaveBeenCalled();
+    expect(createOrderMock).not.toHaveBeenCalled();
+  });
+
+  it('a backorder whose reserved stock would pass its column (createOrder refuses it): a 422, never a 500', async () => {
+    createOrderMock.mockRejectedValue(new OrderTooLargeError('var_a', 'reserved quantity', 2_147_483_648));
+    const res = await POST(postReq({ lines: [{ variantId: 'var_a', quantity: 2 }] }));
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual(TOO_LARGE);
+  });
+
+  it('a total over what the payment provider takes in one charge (createOrder refuses it): the same 422, naming no line', async () => {
+    createOrderMock.mockRejectedValue(new OrderTooLargeError(null, 'order total over the payment maximum', 100_000_000));
+    const res = await POST(postReq({ lines: [{ variantId: 'var_a', quantity: 1 }] }));
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toEqual({ code: 'order_too_large', message: TOO_LARGE.error.message });
+    expect(readTotalMock).not.toHaveBeenCalled();
+  });
+
+  it('the largest quantity a line stores still goes through to createOrder', async () => {
+    const res = await POST(postReq({ lines: [{ variantId: 'var_a', quantity: 2_147_483_647 }] }));
+    expect(res.status).toBe(201);
+    expect(createOrderMock.mock.calls[0][2].lines[0].quantity).toBe(2_147_483_647);
   });
 });

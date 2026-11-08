@@ -67,6 +67,8 @@ vi.mock('@/server/sites/requestSite', () => ({
   resolveSiteForRequest: async () => null,
   getPrimaryHostForRequest: async () => null,
 }));
+// The site sheet, which a build compiles; nothing here reads it.
+vi.mock('@/app/(site)/site.css', () => ({}));
 
 describe('the published site base font', () => {
   it('falls back to the system stack, never to the editor chrome face', async () => {

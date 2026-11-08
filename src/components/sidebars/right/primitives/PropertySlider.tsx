@@ -1,5 +1,6 @@
 'use client';
 import React, { useState, useEffect, useCallback } from 'react';
+import { useOpenDraft } from '@/hooks/useOpenDraft';
 import { cn } from '@/lib/utils';
 import { FIELD_CONTROL, FIELD_LABEL, useFieldIdentity } from './field';
 
@@ -45,6 +46,8 @@ export function PropertySlider({
     if (next !== value) onChange(next);
     else setLocalInput(String(Math.round(value * displayMultiplier)));
   }, [onChange, displayMultiplier, min, max, value]);
+  // Counted as unsaved, and committed by Cmd+S, leaving and unmount (useOpenDraft).
+  const draftState = useOpenDraft(() => commitInput(localInput));
 
   // Fill percentage for the track
   const fillPct = max === min ? 0 : ((value - min) / (max - min)) * 100;
@@ -95,11 +98,18 @@ export function PropertySlider({
           value={localInput + suffix}
           onChange={(e) => {
             const raw = e.target.value.replace(suffix, '').trim();
+            draftState.edited();
             setLocalInput(raw);
           }}
-          onBlur={() => commitInput(localInput)}
+          onBlur={() => {
+            draftState.settled();
+            commitInput(localInput);
+          }}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') commitInput(localInput);
+            if (e.key === 'Enter') {
+              draftState.settled();
+              commitInput(localInput);
+            }
           }}
           className={cn(FIELD_CONTROL, 'w-[52px] flex-none px-1.5 text-center font-mono tabular-nums')}
         />

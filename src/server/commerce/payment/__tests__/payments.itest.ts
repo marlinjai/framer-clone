@@ -405,6 +405,21 @@ describe('paying an order and its receipt', () => {
     expect(shop.refunds).toEqual([]);
   });
 
+  it('late on a backorder whose reserved stock is full meanwhile: refunded like stock gone, never a failing event', async () => {
+    const ring = await stockedRing(0);
+    await env.ownerDb.updateTable('product_variant').set({ allow_backorder: true }).where('id', '=', ring.variantId).execute();
+    const orderId = await placeOrder(ring);
+    expect((await settle(event(orderId, 'checkout_cancelled'))).status).toBe('cancelled');
+    // Other orders reserve the backorder up to what the column stores.
+    await env.ownerDb.updateTable('inventory_level').set({ reserved_quantity: 2_147_483_647 }).where('inventory_item_id', '=', ring.item).execute();
+
+    const outcome = await settle(event(orderId, 'payment_succeeded'));
+    expect(outcome).toMatchObject({ status: 'refunded', receiptDocumentId: null });
+    expect(await payment(orderId)).toMatchObject({ status: 'refunded', failure_code: 'stock_gone' });
+    expect(shop.refunds).toEqual([`demo_pi_${orderId}`]);
+    expect(await reserved(ring.item)).toBe(2_147_483_647);
+  });
+
   it('declined, then paid in the same checkout: the paid payment keeps no closing time or decline code', async () => {
     const ring = await stockedRing(2);
     const orderId = await placeOrder(ring);

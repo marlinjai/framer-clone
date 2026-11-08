@@ -65,7 +65,7 @@ beforeEach(() => {
   const product = p.createPage('Product');
   product.setSlug('products/:handle');
   productId = product.id;
-  openProject(store, getSnapshot(p) as ProjectSnapshotOut, bakeryId);
+  openProject(store, getSnapshot(p) as ProjectSnapshotOut, bakeryId, 1);
 });
 afterEach(() => {
   cleanup();

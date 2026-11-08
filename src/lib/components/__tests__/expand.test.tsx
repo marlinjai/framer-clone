@@ -13,9 +13,9 @@ import { snapshotToComponentNode } from '@/lib/renderer/server/snapshotToCompone
 import { componentSnapshotToNode } from '@/lib/renderer/server/componentSnapshot';
 import type { BreakpointRef } from '@/lib/responsive/cascade';
 import { FIXTURES } from '../../../../test/score/corpus/fixtures';
-import { BREAKPOINTS } from '../../../../test/score/lib/published';
+import { BREAKPOINTS, renderThroughPublishedPage } from '../../../../test/score/lib/published';
 import { parseComponents, type ComponentDefinitions } from '../definition';
-import { createRenderBudget, expandPlacements } from '../expand';
+import { compiledEventName, createRenderBudget, expandPlacements } from '../expand';
 import { COMPONENT_LIMITS, MISSING_TYPE } from '../placement';
 import { surfaceSheet, type SurfaceNode } from '@/lib/rules/surfaceSheet';
 import { detachedExpansion } from '@/lib/renderer/detachedExpansion';
@@ -110,8 +110,12 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/** Whether a tree holds a `#component` placement anywhere. The corpus's reusable-component fixtures do. */
+const hasPlacement = (node: ComponentNode): boolean =>
+  node.type === '#component' || (node.children ?? []).some(hasPlacement);
+
 describe('a page without placements', () => {
-  it.each(FIXTURES.map(f => [f.id, f] as const))('%s comes back by reference', (_, fixture) => {
+  it.each(FIXTURES.filter(f => !hasPlacement(f.tree())).map(f => [f.id, f] as const))('%s comes back by reference', (_, fixture) => {
     const tree = fixture.tree();
     expect(expandPlacements(tree, {}, BREAKPOINTS)).toBe(tree);
   });
@@ -677,6 +681,167 @@ describe('pointer states', () => {
     const { html } = await publish(page([{ id: 'n', type: 'div', props: { 'data-u-c-btn': 'btn', 'data-fc-c': 'btn' } }]), {});
     expect(html).toContain('data-u-c-btn="btn"');
     expect(html).not.toContain('data-fc-c');
+  });
+});
+
+describe('custom states', () => {
+  const stateRule = (state: string, style: Node) => ({ id: `state-${state}`, componentState: state, selector: '&', style });
+  const MENU_STATES = [{ id: 'open', name: 'Open', kind: 'custom' }, { id: 'pinned', name: 'Pinned', kind: 'custom' }];
+  const menu = (extra: Node = {}) => definition('menu', {
+    id: 'm-root', type: 'nav', props: { rules: [stateRule('open', { background: 'black' })] },
+    children: [{ id: 'm-links', type: 'ul', props: { style: { display: 'none' }, rules: [stateRule('open', { display: 'flex' }), stateRule('pinned', { display: 'grid' })] } }],
+  }, { states: MENU_STATES, ...extra });
+  const S = 'cs-menu';
+  const whole = (tree: Node[], definitions: ComponentDefinitions, rows?: Record<string, unknown>[]) =>
+    renderThroughPublishedPage({ tree: { id: 'page', type: 'main', props: {}, children: tree }, definitions, rows }).then(r => r.html);
+
+  it('makes the placement root a scope holding one choice, and each state a when rule', async () => {
+    const expanded = expandPlacements(page([placement('p1', 'menu')]), definitionsOf(menu()), BREAKPOINTS);
+    const root = expanded.children![0];
+    expect((root.props as Node).behaviour).toEqual({ state: [{ id: S, name: 'State', type: 'choice', initial: 'primary', options: ['primary', 'open', 'pinned'] }] });
+    expect((root.children![0].props as Node).rules).toEqual([
+      { id: 'state-0', selector: '&', style: { display: 'flex' }, when: { state: S, eq: 'open' } },
+      { id: 'state-1', selector: '&', style: { display: 'grid' }, when: { state: S, eq: 'pinned' } },
+    ]);
+    expect(JSON.stringify(expanded)).not.toContain('componentState');
+  });
+
+  it('starts each placement in its own state, and a hundred rows share one block', async () => {
+    const html = await whole([placement('p1', 'menu', { state: 'open' }), placement('p2', 'menu')], definitionsOf(menu()));
+    expect(html).toContain(`<nav data-fcs-${S}="open"`);
+    expect(html).toContain(`<nav data-fcs-${S}="primary"`);
+    expect(html).toContain(`.fc_r-m-links.fc_r-m-links:where([data-fcs-${S}="open"] *, [data-fcs-${S}="open"]){display:flex}`);
+    const rows = Array.from({ length: 100 }, (_, i) => ({ tier: i % 2 ? 'pinned' : 'open' }));
+    const listed = await whole([collection(placement('p', 'menu', {}, { state: read('{{row.tier}}') }))], definitionsOf(menu()), rows);
+    expect(listed.match(new RegExp(`<nav data-fcs-${S}="pinned"`, "g"))).toHaveLength(50);
+    expect(listed.match(new RegExp(`<nav data-fcs-${S}="open"`, "g"))).toHaveLength(50);
+    expect(listed.match(/\{display:grid\}/g)).toHaveLength(1);
+  });
+
+  it('starts in primary on a state it does not have, with one warning', async () => {
+    const html = await whole([placement('p1', 'menu', { state: 'gone' }), placement('p2', 'menu', { state: 'hover' })], definitionsOf(menu()));
+    expect(html.match(new RegExp(`<nav data-fcs-${S}="primary"`, "g"))).toHaveLength(2);
+    expect(vi.mocked(console.warn).mock.calls.some(call => String(call[0]).includes('starts in primary: gone'))).toBe(true);
+  });
+
+  it('orders custom and pointer states by the list, whatever the kind', () => {
+    const stored = definition('menu', { id: 'm', type: 'nav', props: { rules: [stateRule('open', { color: 'red' }), stateRule('hover', { color: 'blue' })] } }, {
+      states: [{ id: 'hover', name: 'Hover', kind: 'hover' }, MENU_STATES[0]],
+    });
+    const root = expandPlacements(page([placement('p1', 'menu')]), definitionsOf(stored), BREAKPOINTS).children![0];
+    expect(((root.props as Node).rules as Node[]).map(rule => rule.style)).toEqual([{ color: 'blue' }, { color: 'red' }]);
+    expect((root.props as Node)['data-u-c-menu']).toBe('menu');
+  });
+
+  it('writes the no-script state again behind the gate down, which a page with a trigger keeps', async () => {
+    const definitions = definitionsOf(menu({ noScriptState: 'open' }));
+    const expanded = expandPlacements(page([placement('p1', 'menu')]), definitions, BREAKPOINTS);
+    expect((expanded.children![0].children![0].props as Node).rules).toContainEqual({ id: 'state-0-no-script', selector: '&', style: { display: 'flex' }, gate: 'off' });
+    const trigger = { id: 't', type: 'button', props: { children: 'x', behaviour: { state: [{ id: 'on', name: 'On', type: 'boolean', initial: false }], on: [{ id: 'c', on: 'click', do: [{ toggle: 'on' }] }] } } };
+    const html = await whole([trigger, placement('p1', 'menu')], definitions);
+    expect(html).toContain('.fc_r-m-links.fc_r-m-links:where(html:not([data-fc-b]) *){display:flex}');
+    // Without a trigger nothing can change, so the server's state stands and the copy is not needed.
+    expect(await whole([placement('p1', 'menu')], definitions)).not.toContain('html:not([data-fc-b])');
+  });
+
+  it('a raw reader sees the literal state, and primary for one from data', () => {
+    const definitions = definitionsOf(menu());
+    const literal = expandPlacements(page([placement('p1', 'menu', { state: 'open' }), placement('p2', 'menu', {}, { state: read('{{row.tier}}') })]), definitions, BREAKPOINTS, { literalInputs: true });
+    const initial = (node: ComponentNode) => (((node.props as Node).behaviour as Node).state as Node[])[0].initial;
+    expect(literal.children!.map(initial)).toEqual(['open', 'primary']);
+  });
+});
+
+describe('interactions', () => {
+  const stateRule = (state: string, style: Node) => ({ id: `state-${state}`, componentState: state, selector: '&', style });
+  const S = 'cs-menu';
+  const menu = definition('menu', {
+    id: 'm-root', type: 'nav', props: {},
+    children: [
+      { id: 'm-toggle', type: 'button', props: { type: 'button', children: 'Menu', behaviour: {
+        on: [{ id: 'open', on: 'click', do: [{ set: S, value: 'open' }] }, { id: 'go', on: 'click', do: [{ emit: 'input-chosen' }] }],
+      } } },
+      { id: 'm-links', type: 'ul', props: { style: { display: 'none' }, rules: [stateRule('open', { display: 'flex' })] } },
+    ],
+  }, {
+    states: [{ id: 'open', name: 'Open', kind: 'custom' }],
+    inputs: [{ id: 'chosen', name: 'Chosen', type: 'event' }],
+  });
+  const whole = (tree: Node[], definitions: ComponentDefinitions) =>
+    renderThroughPublishedPage({ tree: { id: 'page', type: 'main', props: {}, children: tree }, definitions });
+
+  it('renames an Event input per definition, on the emit and on the placement listening for it', () => {
+    const expanded = expandPlacements(page([
+      placement('p1', 'menu', { behaviour: { on: [{ id: 'l', on: 'custom:input-chosen', do: [{ navigate: '/one' }] }] } }),
+    ]), definitionsOf(menu), BREAKPOINTS);
+    const root = expanded.children![0];
+    const name = compiledEventName('menu', 'chosen');
+    expect(name).toMatch(/^ev-[a-z0-9]+$/);
+    const toggle = root.children![0].props as Node;
+    expect(JSON.stringify(toggle.behaviour)).toContain(`{"emit":"${name}"}`);
+    expect(((root.props as Node).behaviour as Node).on).toEqual([{ id: 'l', on: `custom:${name}`, do: [{ navigate: '/one' }] }]);
+  });
+
+  it('keeps an inner component\'s event from an outer placement listening for an input of the same id', () => {
+    const outer = definition('outer', { id: 'o', type: 'div', props: { behaviour: { on: [{ id: 'e', on: 'click', do: [{ emit: 'input-chosen' }] }] } }, children: [
+      placement('in', 'menu', { behaviour: { on: [{ id: 'l', on: 'custom:input-chosen', do: [{ navigate: '/inner' }] }] } }),
+    ] }, { inputs: [{ id: 'chosen', name: 'Chosen', type: 'event' }] });
+    const expanded = expandPlacements(page([
+      placement('p1', 'outer', { behaviour: { on: [{ id: 'l', on: 'custom:input-chosen', do: [{ navigate: '/outer' }] }] } }),
+    ]), definitionsOf(outer, menu), BREAKPOINTS);
+    const outerName = compiledEventName('outer', 'chosen');
+    const innerName = compiledEventName('menu', 'chosen');
+    expect(outerName).not.toBe(innerName);
+    const text = JSON.stringify(expanded);
+    expect(text).toContain(`"on":"custom:${outerName}","do":[{"navigate":"/outer"}]`);
+    expect(text).toContain(`"on":"custom:${innerName}","do":[{"navigate":"/inner"}]`);
+    expect(text).not.toContain('input-chosen');
+  });
+
+  it('passes only on and showWhen of a placement, and leaves a listener for no event input as stored', () => {
+    const expanded = expandPlacements(page([placement('p1', 'menu', { behaviour: {
+      on: [{ id: 'x', on: 'custom:input-other', do: [{ navigate: '/x' }] }],
+      showWhen: { state: S, eq: 'open' },
+      state: [{ id: 'sneaky', name: 'S', type: 'boolean', initial: true }],
+    } })]), definitionsOf(menu), BREAKPOINTS);
+    const behaviour = (expanded.children![0].props as Node).behaviour as Node;
+    expect(behaviour.on).toEqual([{ id: 'x', on: 'custom:input-other', do: [{ navigate: '/x' }] }]);
+    expect(behaviour.showWhen).toEqual({ state: S, eq: 'open' });
+    expect((behaviour.state as Node[]).map(state => state.id)).toEqual([S]);
+  });
+
+  it('exposes the state through aria, and hides the script-only button with the no-script state', async () => {
+    const navbar = definition('menu', {
+      id: 'm-root', type: 'nav', props: {},
+      children: [
+        { id: 'm-toggle', type: 'button', props: { type: 'button', children: 'Menu', behaviour: {
+          on: [{ id: 'open', on: 'click', do: [{ step: S, wrap: true }] }],
+          bind: [{ attr: 'aria-expanded', from: { eq: [{ get: S }, 'open'] } }],
+        } } },
+        { id: 'm-links', type: 'ul', props: { style: { display: 'none' }, rules: [stateRule('open', { display: 'flex' })] } },
+      ],
+    }, { states: [{ id: 'open', name: 'Open', kind: 'custom' }], noScriptState: 'open' });
+    const { html } = await whole([placement('p1', 'menu'), placement('p2', 'menu', { state: 'open' })], definitionsOf(navbar));
+    expect(vi.mocked(console.warn).mock.calls.filter(call => String(call[0]).startsWith('applyBehaviour'))).toEqual([]);
+    expect(html).toMatch(/<button[^>]*aria-expanded="false"/);
+    expect(html).toMatch(/<button[^>]*aria-expanded="true"/);
+    expect(html).toContain('.fc_r-m-toggle.fc_r-m-toggle:where(html:not([data-fc-b]) *){display:none !important}');
+    expect(html).toContain('.fc_r-m-links.fc_r-m-links:where(html:not([data-fc-b]) *){display:flex}');
+  });
+
+  it('reaches the published program: the click sets the state, and each placement has its own trigger', async () => {
+    const { html, behaviour } = await whole([
+      placement('p1', 'menu', { behaviour: { on: [{ id: 'l', on: 'custom:input-chosen', do: [{ set: S, value: 'primary' }] }] } }),
+      placement('p2', 'menu', { behaviour: { on: [{ id: 'c', on: 'click', do: [{ navigate: '/two' }] }] } }),
+    ], definitionsOf(menu));
+    expect(vi.mocked(console.warn).mock.calls.filter(call => String(call[0]).startsWith('applyBehaviour'))).toEqual([]);
+    const program = JSON.stringify(behaviour);
+    expect(program).toContain(`{"set":"${S}","value":"open"}`);
+    expect(program).toContain(`"on":"custom:${compiledEventName('menu', 'chosen')}","do":[{"set":"${S}","value":"primary"}]`);
+    expect(program).toContain('{"navigate":"/two"}');
+    expect(html).toContain('data-fc-v="1"');
+    expect(html).toContain(`data-fcs-${S}="primary"`);
+    expect(html).toContain('data-fc-n="m-toggle"');
   });
 });
 

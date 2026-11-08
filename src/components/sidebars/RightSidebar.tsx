@@ -7,10 +7,11 @@ import { useStore } from '@/hooks/useStore';
 import RightSidebarHeader from './right/RightSidebarHeader';
 import StateSwitch from './right/StateSwitch';
 import { getComponentCategory, SECTION_MAP, type SectionId } from './right/sectionConfig';
-import { SizeSection, PositionSection, StylesSection, LayoutSection, TypographySection, ImageSection, DataSourceSection, EffectsSection, FormSection, StickyCtaSection, TextContentSection, LinkSection, CustomSection, ComponentSection } from './right/sections';
+import { SizeSection, PositionSection, StylesSection, LayoutSection, TypographySection, ImageSection, DataSourceSection, EffectsSection, FormSection, StickyCtaSection, MapEmbedSection, TextContentSection, LinkSection, CustomSection, ComponentSection } from './right/sections';
 import { ComponentInstance } from '@/models/ComponentModel';
 import { InputsSection } from './right/sections/InputsSection';
 import { RepeatSection } from './right/sections/RepeatSection';
+import { ShopPartNote, ShopStyleNote, isLockedShopText } from './right/sections/ShopPartNote';
 
 const SECTION_COMPONENTS: Record<SectionId, React.ComponentType<{ component: ComponentInstance; breakpointId?: string }>> = {
   component: ComponentSection,
@@ -23,6 +24,7 @@ const SECTION_COMPONENTS: Record<SectionId, React.ComponentType<{ component: Com
   effects: EffectsSection,
   form: FormSection,
   stickyCta: StickyCtaSection,
+  mapEmbed: MapEmbedSection,
   link: LinkSection,
   custom: CustomSection,
 };
@@ -96,7 +98,12 @@ const RightSidebar = observer(({ variant = 'docked' }: RightSidebarProps) => {
                 {/* Text first for every element that holds its own text: on a
                     phone this field is the dependable way to change text (a
                     form field always opens the keyboard). Null otherwise. */}
-                {category !== 'placement' && <TextContentSection component={target} breakpointId={breakpointId} />}
+                {isLockedShopText(target) ? (
+                  <ShopPartNote component={target} />
+                ) : (
+                  category !== 'placement' && <TextContentSection component={target} breakpointId={breakpointId} />
+                )}
+                <ShopStyleNote component={target} />
                 {sections.map((sectionId) => {
                   const SectionComponent = SECTION_COMPONENTS[sectionId];
                   return (

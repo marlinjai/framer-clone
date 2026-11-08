@@ -9,6 +9,11 @@
 // reach the sheet, and a refused rule must come back reported, not carried. JSX to
 // render has no rule case but the reports: its reference is React, which has no sheet,
 // and the real emission of one CSS block is step 7 of the complete primitives plan.
+//
+// Behaviour is JSON too, and it names nodes by id. So a tree with behaviour publishes the
+// same page and the same program after the trip, a behaviour case must reach the page, and
+// a refused entry must come back reported and left out, never carried and never lost with
+// its neighbours. Import of hooks (`useState` and the rest) is step 7's.
 
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
@@ -151,12 +156,99 @@ const REPORTED_JSX: Array<{ id: string; jsx: string; line: RegExp }> = [
   { id: 'rules on a text run', jsx: `<p><TextRun rules={[{ id: 'r', selector: '&', style: {} }]}>{"x"}</TextRun></p>`, line: /rules on a text node/ },
 ];
 
+/** A behaviour with one bad entry, beside entries that stand: `KEPT_BEHAVIOUR` is what must come back. */
+const OPEN_STATE = { id: 'host-open', name: 'Open', type: 'boolean', initial: false };
+const PRESS = { id: 'before', on: 'click', do: [{ toggle: 'host-open' }] };
+const ESCAPE = { id: 'after', on: 'keydown', keys: ['Escape'], do: [{ set: 'host-open', value: false }] };
+const KEPT_BEHAVIOUR = { state: [OPEN_STATE], on: [PRESS, ESCAPE] };
+const withBadTrigger = (bad: unknown) => ({ state: [OPEN_STATE], on: [PRESS, bad, ESCAPE] });
+
+/** `page`: what the published page and its program must hold, written here and not read from the code under test. */
+const BEHAVIOUR_CASES: Array<{ id: string; node: ComponentNode; page: RegExp[] }> = [
+  {
+    id: 'a state',
+    node: {
+      id: 'acc',
+      type: 'div',
+      props: { behaviour: { state: [{ id: 'acc-open', name: 'Open', type: 'boolean', initial: true }, { id: 'acc-tab', name: 'Tab', type: 'choice', initial: 'one', options: ['one', 'two'] }] } } as never,
+      children: [{ type: 'p', props: { children: 'x' } as never }],
+    },
+    page: [/data-fcs-acc-open="true"/, /data-fcs-acc-tab="one"/],
+  },
+  {
+    id: 'a trigger naming another node',
+    node: {
+      id: 'disc',
+      type: 'div',
+      props: { behaviour: { state: [{ id: 'disc-open', name: 'Open', type: 'boolean', initial: false }] } } as never,
+      children: [
+        {
+          id: 'disc-button',
+          type: 'button',
+          props: {
+            type: 'button',
+            children: 'More',
+            behaviour: {
+              on: [{ id: 'press', on: 'click', do: [{ toggle: 'disc-open' }, { focus: 'disc-target' }] }],
+              bind: [{ attr: 'aria-expanded', from: { get: 'disc-open' } }],
+            },
+          } as never,
+        },
+        { id: 'disc-panel', type: 'div', props: { children: 'Panel', behaviour: { showWhen: { state: 'disc-open', eq: true } } } as never },
+        // Named by the trigger and holding no behaviour: only `nodeId` carries its id.
+        { id: 'disc-target', type: 'a', props: { href: '#more', children: 'Read on' } as never },
+      ],
+    },
+    page: [/data-fc-n="disc-button"/, /aria-expanded="false"/, /data-fc-n="disc-target"/, /"disc-target"/],
+  },
+  {
+    // The carried id is what another node's place would be: neither may take the other's key.
+    id: 'an id that is also a place',
+    node: {
+      type: 'div',
+      props: {} as never,
+      children: [
+        { type: 'p', props: { children: 'first' } as never },
+        { id: 'n-0', type: 'button', props: { type: 'button', children: 'Go', behaviour: { state: [OPEN_STATE], on: [PRESS] } } as never },
+      ],
+    },
+    page: [/<button[^>]*data-fc-n="n-0"/, /<p>first<\/p>/],
+  },
+];
+
+const REFUSED_BEHAVIOUR: Array<{ id: string; behaviour: Record<string, unknown>; reason: RegExp }> = [
+  { id: 'a trigger naming no node', behaviour: withBadTrigger({ id: 'bad', on: 'click', do: [{ focus: 'ghost' }] }), reason: /ghost/ },
+  { id: 'a trigger on state not in reach', behaviour: withBadTrigger({ id: 'bad', on: 'click', do: [{ toggle: 'elsewhere' }] }), reason: /elsewhere/ },
+  { id: 'a binding inside behaviour', behaviour: withBadTrigger({ id: 'bad', on: 'click', do: [{ set: 'host-open', value: '{{row.title}}' }] }), reason: /a \{\{binding\}\} cannot stand inside behaviour/ },
+  { id: 'an event that is not one', behaviour: withBadTrigger({ id: 'bad', on: 'not-an-event', do: [{ toggle: 'host-open' }] }), reason: /not-an-event/ },
+  { id: 'navigation to a script address', behaviour: withBadTrigger({ id: 'bad', on: 'click', do: [{ navigate: 'javascript:alert(1)' }] }), reason: /navigate needs a safe literal address/ },
+  { id: 'navigation on no press', behaviour: withBadTrigger({ id: 'bad', on: 'focus', do: [{ navigate: '/next' }] }), reason: /navigate runs only from/ },
+  { id: 'a repeated trigger id', behaviour: withBadTrigger({ ...PRESS, do: [{ toggle: 'host-open' }, { toggle: 'host-open' }] }), reason: /same id/ },
+  { id: 'a state declared twice', behaviour: { ...KEPT_BEHAVIOUR, state: [OPEN_STATE, { ...OPEN_STATE, initial: true }] }, reason: /declared twice/ },
+  { id: 'a field the format does not have', behaviour: { ...KEPT_BEHAVIOUR, onClick: 'alert(1)' }, reason: /onClick is not a behaviour field/ },
+  { id: 'noScript that is neither', behaviour: { ...KEPT_BEHAVIOUR, noScript: 'maybe' }, reason: /noScript is show or hide/ },
+];
+
+/** JSX whose behaviour, or the id it names, the format cannot hold: the report is the pass. */
+const REPORTED_BEHAVIOUR_JSX: Array<{ id: string; jsx: string; line: RegExp }> = [
+  { id: 'behaviour that is no object', jsx: `<button behaviour="toggle">Go</button>`, line: /refused behaviour on <button>: behaviour is an object/ },
+  { id: 'triggers that are not a list', jsx: `<button behaviour={{ on: { id: 't', on: 'click', do: [] } }}>Go</button>`, line: /refused behaviour on on <button>: on is a list/ },
+  { id: 'behaviour on a text run', jsx: `<p><TextRun behaviour={{ state: [{ id: 's', name: 'S', type: 'boolean', initial: false }] }}>{"x"}</TextRun></p>`, line: /no element of its own/ },
+  { id: 'a node named but not carried', jsx: `<div><button behaviour={{ on: [{ id: 't', on: 'click', do: [{ focus: 'panel' }] }] }}>Go</button><div>Panel</div></div>`, line: /refused behaviour on #0 on <button>: .*panel/ },
+  { id: 'an id that keys no node', jsx: `<button nodeId="a.b" behaviour={{ state: [{ id: 's', name: 'S', type: 'boolean', initial: false }] }}>Go</button>`, line: /refused behaviour on <button> a\.b: a node with no stable id holds no behaviour/ },
+  { id: 'an id on two nodes', jsx: `<div><p nodeId="a">x</p><p nodeId="a">y</p></div>`, line: /nodeId a names a second node/ },
+  { id: 'an id on a text run', jsx: `<p><TextRun nodeId="t">{"x"}</TextRun></p>`, line: /nodeId on a text node/ },
+  { id: 'an id that is no text', jsx: `<p nodeId={7}>x</p>`, line: /nodeId is not text/ },
+];
+
 /** Must be refused, not converted: the plan's rule for an island nobody recognises. */
 const MUST_REFUSE: Array<{ id: string; node: ComponentNode }> = [
   { id: 'unknown island', node: { type: 'div', props: { 'data-component-kind': 'not-a-real-kind' } as never } },
   { id: 'a function prop', node: { type: 'div', props: { onClick: () => {} } as never } },
   { id: 'a style on a text node', node: { type: 'p', props: {}, children: [{ type: '#text', props: { children: 'x', style: { color: 'red' } } as never }] } },
   { id: 'a rule on a text node', node: { type: 'p', props: {}, children: [{ type: '#text', props: { children: 'x', rules: [{ id: 'r', selector: '&', style: { color: 'red' } }] } as never }] } },
+  { id: 'behaviour on a text node', node: { type: 'p', props: {}, children: [{ id: 't', type: '#text', props: { children: 'x', behaviour: { state: [OPEN_STATE] } } as never }] } },
+  { id: 'a stored prop named nodeId', node: { type: 'div', props: { nodeId: 'x' } as never } },
 ];
 
 const JSX_CASES: Array<{ id: string; jsx: string }> = [
@@ -203,10 +295,11 @@ function nodesCase(id: string, node: ComponentNode): RoundTripCase {
   return { ...base, pass: false, gap: 'roundtrip-not-representable', detail: `${before.slice(0, 160)} became ${after.slice(0, 160)}` };
 }
 
-/** The whole published page, through the behaviour pass, with ids that do not depend on the side of the trip. */
+/** The whole published page and the program it runs, through the behaviour pass, with ids that do not depend on the side of the trip. */
 function publish(node: ComponentNode): string {
-  const { html, css } = renderPublished(applyBehaviour(withPlaceIds(node)).root);
-  return `${html}\n${css}`;
+  const { root, program } = applyBehaviour(withPlaceIds(node));
+  const { html, css } = renderPublished(root);
+  return `${html}\n${css}\n${JSON.stringify(program)}`;
 }
 
 /** The case and, past the JSON, the same page on both sides, holding what `sheet` names. */
@@ -230,6 +323,34 @@ function refusedRuleCase(id: string, rule: unknown, reason: RegExp): RoundTripCa
   const kept = JSON.stringify((node?.props as { rules?: unknown } | undefined)?.rules);
   if (leftOver.length === 1 && /^refused rule /.test(leftOver[0]) && reason.test(leftOver[0]) && kept === JSON.stringify([before, after])) return { ...base, pass: true };
   return { ...base, pass: false, gap: 'unclassified', detail: `kept ${kept?.slice(0, 160)}`, leftOver };
+}
+
+/**
+ * The refused entry comes back as one line with the parser's reason, the rest of the
+ * behaviour stands as it was, and the page is the one the stored tree publishes, which
+ * leaves that entry out as well: not carried, and nothing lost beside it.
+ */
+function refusedBehaviourCase(id: string, behaviour: Record<string, unknown>, reason: RegExp): RoundTripCase {
+  const base = { id: `refused behaviour: ${id}`, direction: 'nodes-jsx-nodes' as const };
+  const stored: ComponentNode = { id: 'host', type: 'button', props: { type: 'button', children: 'Open', behaviour } as never };
+  const { node, leftOver } = jsxToNodes(nodesToJsx(stored));
+  const kept = JSON.stringify(normalise({ type: 'i', props: { behaviour: (node?.props as { behaviour?: unknown } | undefined)?.behaviour } as never }));
+  const expected = JSON.stringify(normalise({ type: 'i', props: { behaviour: KEPT_BEHAVIOUR } as never }));
+  const lined = leftOver.length === 1 && /^refused behaviour /.test(leftOver[0]) && reason.test(leftOver[0]);
+  if (!lined || kept !== expected) return { ...base, pass: false, gap: 'unclassified', detail: `kept ${kept.slice(0, 160)}`, leftOver };
+  const before = publish(stored);
+  const after = publish(node as ComponentNode);
+  if (before !== after) return { ...base, pass: false, gap: 'roundtrip-not-representable', detail: `published ${before.slice(0, 160)} became ${after.slice(0, 160)}` };
+  return { ...base, pass: true };
+}
+
+/** JSX with behaviour, or a node id, the format cannot hold: one line, and no behaviour carried. */
+function reportedBehaviourCase(id: string, jsx: string, line: RegExp): RoundTripCase {
+  const base = { id: `reported: ${id}`, direction: 'jsx-nodes-render' as const };
+  const { node, leftOver } = jsxToNodes(jsx);
+  const held = JSON.stringify(node).includes('"behaviour"');
+  if (node && leftOver.length === 1 && line.test(leftOver[0]) && !held) return { ...base, pass: true };
+  return { ...base, pass: false, gap: 'unclassified', detail: `carried: ${held}`, leftOver };
 }
 
 function reportedCase(id: string, jsx: string, line: RegExp): RoundTripCase {
@@ -263,13 +384,19 @@ describe('round trip', () => {
     vi.spyOn(Date, 'now').mockReturnValue(0);
     const cases: RoundTripCase[] = [];
     for (const fixture of FIXTURES) cases.push(publishedCase(`corpus: ${fixture.id}`, fixture.tree()));
-    for (const pattern of PATTERNS) cases.push(nodesCase(`pattern: ${pattern.id}`, pattern.tree()));
+    // A tree built from a preset runs behaviour, so it must publish the same program after the trip.
+    for (const pattern of PATTERNS) {
+      const id = `pattern: ${pattern.id}`;
+      cases.push(pattern.built === 'behaviour' ? publishedCase(id, pattern.tree()) : nodesCase(id, pattern.tree()));
+    }
     for (const entry of Object.values(COMPONENT_REGISTRY)) {
       cases.push(nodesCase(`preset: ${entry.id}`, { type: entry.htmlType, props: entry.defaultProps as never }));
     }
     for (const { id, node } of SYNTHETIC) cases.push(nodesCase(`synthetic: ${id}`, node));
     for (const { id, node, sheet } of RULE_CASES) cases.push(publishedCase(`rules: ${id}`, node, sheet));
     for (const { id, rule, reason } of REFUSED_RULES) cases.push(refusedRuleCase(id, rule, reason));
+    for (const { id, node, page } of BEHAVIOUR_CASES) cases.push(publishedCase(`behaviour: ${id}`, node, page));
+    for (const { id, behaviour, reason } of REFUSED_BEHAVIOUR) cases.push(refusedBehaviourCase(id, behaviour, reason));
     for (const { id, node } of MUST_REFUSE) {
       let refused = false;
       try {
@@ -281,6 +408,7 @@ describe('round trip', () => {
     }
     for (const { id, jsx } of JSX_CASES) cases.push(jsxCase(id, jsx));
     for (const { id, jsx, line } of REPORTED_JSX) cases.push(reportedCase(id, jsx, line));
+    for (const { id, jsx, line } of REPORTED_BEHAVIOUR_JSX) cases.push(reportedBehaviourCase(id, jsx, line));
     expect(cases.length).toBeGreaterThan(40);
     writeOut('roundtrip', cases);
   });

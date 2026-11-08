@@ -364,6 +364,7 @@ describe('DELETE /api/projects/<id> outcome for a published project', () => {
             metadata: { title: 'Scratch', description: '', createdAt: 1, updatedAt: 2 },
             pages: {},
           },
+          expectedVersion: 1,
         }),
       }),
     );

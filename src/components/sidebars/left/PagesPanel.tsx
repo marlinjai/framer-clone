@@ -76,7 +76,7 @@ const PageRow = observer(({
     <div
       data-testid={`page-row-${page.id}`}
       className={`group flex items-center gap-1 pr-1 rounded transition-colors ${
-        isActive ? 'bg-brand/10 border-l-2 border-brand' : 'hover:bg-accent border-l-2 border-transparent'
+        isActive ? 'bg-brand/10' : 'hover:bg-accent'
       }`}
       onContextMenu={onContextMenu}
       onDoubleClick={e => {

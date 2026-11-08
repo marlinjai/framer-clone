@@ -8,8 +8,9 @@
 // - General: public site name (blank uses the project title), language (the
 //   published `<html lang>` and the AI generator's copy language), browser
 //   title template, and the 404 page.
-// - Sharing: favicon and default Open Graph image (https URLs, previewed), and
-//   the twitter card type.
+// - Sharing: favicon and default Open Graph image (uploaded, or an https
+//   address; previewed, with size warnings, src/components/site/SiteImageField.tsx),
+//   and the twitter card type.
 // - Motion: site-wide smooth scrolling (Lenis), off by default.
 // - Business and contact: legal name, address, phone, email, opening hours as
 //   rows, VAT ID, register entry, managing directors. Shown in search engine
@@ -50,7 +51,6 @@ import {
   applyTitleTemplate,
   effectiveSiteName,
   effectiveTitleTemplate,
-  isHttpsUrl,
   normalizeSiteSettings,
   validateSiteSettings,
   type OpeningHoursRow,
@@ -59,6 +59,13 @@ import {
   type Weekday,
 } from '@/lib/site/siteSettings';
 import { LEGAL_KINDS, LEGAL_TITLES, findLegalPage, legalLanguage, type LegalKind } from '@/lib/legal/legalPages';
+import { mapsPrivacyCheck } from '@/lib/legal/publishCheck';
+import { literalPageTree } from '@/lib/renderer/server/snapshotToComponentNode';
+import { getSnapshot } from 'mobx-state-tree';
+import { GoogleMapsPrivacyHint } from './GoogleMapsPrivacyHint';
+import { SiteImageField } from './SiteImageField';
+import { SiteImageLibrary } from './SiteImageLibrary';
+import { namedSiteImages } from '@/lib/site/siteImages';
 
 const fieldLabel = 'text-[11px] font-semibold uppercase tracking-wide text-muted-foreground';
 const inputBase =
@@ -139,29 +146,6 @@ function TextField({ name, label, value, onChange, error, hintText, placeholder,
   );
 }
 
-/** A small preview of an image URL, with an honest note when it does not load. */
-function ImagePreview({ url, label, square }: { url: string; label: string; square?: boolean }) {
-  const [failed, setFailed] = React.useState(false);
-  React.useEffect(() => setFailed(false), [url]);
-  if (!isHttpsUrl(url)) return null;
-  if (failed) {
-    return (
-      <p className="text-[11px] text-destructive" data-testid={`preview-failed-${label}`}>
-        This image could not be loaded. Check that the address opens the image itself.
-      </p>
-    );
-  }
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={url}
-      alt={`${label} preview`}
-      onError={() => setFailed(true)}
-      className={`rounded border border-border bg-muted object-contain ${square ? 'h-8 w-8' : 'h-16 w-28'}`}
-    />
-  );
-}
-
 /** Button labels per legal page kind (editor chrome is English). */
 const LEGAL_ACTION_NAMES: Record<LegalKind, string> = {
   impressum: 'Impressum',
@@ -182,6 +166,8 @@ const SiteSettingsForm = observer(({ project, onClose }: { project: ProjectModel
   const [submitted, setSubmitted] = React.useState(false);
   const [saveErrors, setSaveErrors] = React.useState<SiteSettingsErrors>({});
   const [announcement, setAnnouncement] = React.useState('');
+  const [libraryOpen, setLibraryOpen] = React.useState(false);
+  const [libraryVersion, setLibraryVersion] = React.useState(0);
 
   const candidate: SiteSettings = normalizeSiteSettings({
     ...draft,
@@ -209,6 +195,13 @@ const SiteSettingsForm = observer(({ project, onClose }: { project: ProjectModel
       openingHours: draft.business.openingHours.map((r, i) => (i === index ? { ...r, ...patch } : r)),
     });
   };
+
+  // Uploaded images this editor names, saved or not (the draft, the stored settings, every page's sharing image):
+  // the list never offers them for deletion.
+  const namedHere = new Set([
+    ...namedSiteImages(draft, []).keys(),
+    ...namedSiteImages(project.site, project.pagesArray.map((p) => p.metadata.ogImage)).keys(),
+  ]);
 
   const siteName = effectiveSiteName(candidate, project.metadata.title);
   const titlePreview = applyTitleTemplate(effectiveTitleTemplate(candidate, siteName), 'About us');
@@ -260,6 +253,11 @@ const SiteSettingsForm = observer(({ project, onClose }: { project: ProjectModel
   const legalLang = legalLanguage(candidate.language);
   const legalPages = LEGAL_KINDS.map((kind) => ({ kind, page: findLegalPage(project.pagesArray, kind) }));
   const analyticsOn = project.lumitra.enabled;
+  // A Google Maps embed anywhere on the site: the privacy policy must name it.
+  const mapsCheck = mapsPrivacyCheck(project.pagesArray, (id) => {
+    const page = project.getPage(id);
+    return page ? (literalPageTree(getSnapshot(page), project.definitions).root as never) : null;
+  });
 
   const languageSelectValue = customLanguage ? 'other' : draft.language;
 
@@ -358,36 +356,44 @@ const SiteSettingsForm = observer(({ project, onClose }: { project: ProjectModel
 
         <section className="flex flex-col gap-4" aria-labelledby="site-settings-sharing">
           <h3 id="site-settings-sharing" className={sectionTitle}>Icon and sharing</h3>
-          <div className="flex items-end gap-3">
-            <div className="min-w-0 flex-1">
-              <TextField
-                name="faviconUrl"
-                label="Favicon"
-                value={draft.faviconUrl}
-                onChange={(v) => update({ faviconUrl: v.trim() })}
-                onBlur={touch('faviconUrl')}
-                error={visible('faviconUrl')}
-                placeholder="https://"
-                hintText="Address of a square PNG or SVG, at least 180 by 180 pixels. Empty: no site icon."
-              />
-            </div>
-            <ImagePreview url={candidate.faviconUrl} label="Favicon" square />
-          </div>
-          <div className="flex items-end gap-3">
-            <div className="min-w-0 flex-1">
-              <TextField
-                name="ogImageUrl"
-                label="Sharing image"
-                value={draft.ogImageUrl}
-                onChange={(v) => update({ ogImageUrl: v.trim() })}
-                onBlur={touch('ogImageUrl')}
-                error={visible('ogImageUrl')}
-                placeholder="https://"
-                hintText="Shown when a page is shared on social media or in chats, unless the page has its own. 1200 by 630 pixels works everywhere."
-              />
-            </div>
-            <ImagePreview url={candidate.ogImageUrl} label="Sharing image" />
-          </div>
+          <SiteImageField
+            projectId={project.id}
+            kind="favicon"
+            inputId={fieldId('faviconUrl')}
+            label="Favicon"
+            value={draft.faviconUrl}
+            onChange={(v) => update({ faviconUrl: v })}
+            onBlur={touch('faviconUrl')}
+            error={visible('faviconUrl')}
+            square
+            hintText="A square image, at least 180 by 180 pixels (512 by 512 works everywhere). Empty: no site icon."
+            onUploaded={() => setLibraryVersion((n) => n + 1)}
+          />
+          <SiteImageField
+            projectId={project.id}
+            kind="sharing"
+            inputId={fieldId('ogImageUrl')}
+            label="Sharing image"
+            value={draft.ogImageUrl}
+            onChange={(v) => update({ ogImageUrl: v })}
+            onBlur={touch('ogImageUrl')}
+            error={visible('ogImageUrl')}
+            hintText="Shown when a page is shared on social media or in chats, unless the page has its own. 1200 by 630 pixels works everywhere."
+            onUploaded={() => setLibraryVersion((n) => n + 1)}
+          />
+          <details
+            className="flex flex-col gap-2"
+            data-testid="site-image-library-section"
+            onToggle={(e) => setLibraryOpen(e.currentTarget.open)}
+          >
+            <summary className={`${fieldLabel} cursor-pointer select-none`}>Uploaded images</summary>
+            {/* Loaded only when opened: most visits to the settings never need the list. */}
+            {libraryOpen && (
+              <div className="mt-2">
+                <SiteImageLibrary projectId={project.id} namedHere={namedHere} version={libraryVersion} />
+              </div>
+            )}
+          </details>
           <div className="flex flex-col gap-1.5">
             <label htmlFor={fieldId('twitterCard')} className={fieldLabel}>Card on X (Twitter)</label>
             <select
@@ -592,9 +598,25 @@ const SiteSettingsForm = observer(({ project, onClose }: { project: ProjectModel
             <p className="text-[12px] text-foreground">
               {analyticsOn
                 ? 'Shown to visitors, because analytics is on (once the deploy has an analytics key configured). The analytics script loads only after a visitor accepts; declining loads nothing. Visitors can change their choice from the cookie settings link in the footer.'
-                : 'Not shown: nothing on your site stores data on visitors\' devices that needs consent (analytics is off).'}
+                : mapsCheck
+                  ? 'Asks about Google Maps on pages with a map, and the map\'s "Load map" button opens it too: the map loads only after a visitor accepts there. Declining loads nothing. Visitors can change their choice from the cookie settings link in the footer of every page.'
+                  : 'Not shown: nothing on your site stores data on visitors\' devices that needs consent (analytics is off).'}
             </p>
+            {analyticsOn && mapsCheck && (
+              <p className="text-[12px] text-foreground">
+                The banner asks about analytics and Google Maps separately, so a visitor can allow one and not the other.
+              </p>
+            )}
           </div>
+          {mapsCheck && (
+            <GoogleMapsPrivacyHint
+              className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-amber-950"
+              language={candidate.language}
+              check={mapsCheck}
+              onCreatePrivacy={() => openOrCreateLegal('privacy')}
+              onOpenPrivacy={() => openOrCreateLegal('privacy')}
+            />
+          )}
         </section>
       </DialogBody>
       <DialogFooter>

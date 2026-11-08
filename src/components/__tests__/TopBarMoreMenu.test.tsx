@@ -61,7 +61,7 @@ vi.mock('@/components/domains/DomainsButton', () => ({ __esModule: true, default
 vi.mock('@/components/site/SiteSettingsDialog', () => ({ __esModule: true, default: stub('Site settings') }));
 vi.mock('@/components/forms/FormSubmissionsButton', () => ({ __esModule: true, default: stub('Form submissions') }));
 vi.mock('@/components/PublishedVersionsButton', () => ({ __esModule: true, default: stub('Published versions') }));
-vi.mock('@/components/SaveButton', () => ({ __esModule: true, default: () => <button type="button">Save</button> }));
+vi.mock('@/components/SaveStatus', () => ({ __esModule: true, default: () => <span role="status">Saved</span> }));
 vi.mock('@/components/PublishButton', () => ({ __esModule: true, default: () => <button type="button">Publish</button> }));
 
 beforeEach(() => {
@@ -82,11 +82,14 @@ const openMore = () => {
 };
 
 describe('compact top bar', () => {
-  it('keeps Save, Preview and Publish visible and hides the rest behind More below 1024px', () => {
+  it('keeps the save status, Preview and Publish visible and hides the rest behind More below 1024px', () => {
     render(<TopBar />);
-    for (const name of ['Save', 'Publish', 'Preview', 'More actions']) {
+    for (const name of ['Publish', 'Preview', 'More actions']) {
       expect(screen.getByRole('button', { name })).toBeTruthy();
     }
+    // The editor saves by itself: a status, and no Save button on either bar or in More.
+    expect(screen.getByRole('status').textContent).toBe('Saved');
+    expect(screen.queryByRole('button', { name: /^save/i })).toBeNull();
     // The wide-only triggers carry the class that hides them in the compact bar.
     for (const label of ['Generate', 'Polish', 'Published versions', 'Domains', 'Site settings', 'Form submissions']) {
       expect(screen.getByRole('button', { name: `${label} button` }).className).toContain('max-lg:hidden');

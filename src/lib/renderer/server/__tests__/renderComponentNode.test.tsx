@@ -50,7 +50,8 @@ function stubDataSource(): CommerceDataSource {
     getProductByHandle: async () => null,
     listVariants: async () => [variant],
     getVariant: async () => variant,
-    getPrices: async () => [],
+    // The variant has a price: an add to cart in a selector adds no variant without one.
+    getPrices: async () => [{ variantId: 'v1', amountCents: 1500, currency: 'EUR' }],
     getAvailability: async () => availability,
     subscribe: () => () => {},
   } as unknown as CommerceDataSource;

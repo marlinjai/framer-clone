@@ -22,15 +22,18 @@ const EditorApp = dynamic(() => import('@/components/EditorApp'), { ssr: false }
 
 export default function EditorMount({
   projectSnapshot,
+  projectVersion,
   site,
 }: {
   projectSnapshot: ProjectSnapshotOut;
+  /** The site version read with the snapshot (the version lock). */
+  projectVersion: number;
   /** Where the published site lives (page settings URL preview). */
   site?: SiteAddress;
 }) {
   return (
     <SiteAddressProvider initial={site}>
-      <EditorApp projectSnapshot={projectSnapshot} />
+      <EditorApp projectSnapshot={projectSnapshot} projectVersion={projectVersion} />
     </SiteAddressProvider>
   );
 }

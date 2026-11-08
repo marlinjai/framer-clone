@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Component collection</title>
+<style>
+  .page { font: 16px/1.5 Arial, sans-serif; color: #111827; padding: 32px; }
+  .title { font-size: 28px; line-height: 1.2; margin: 0 0 24px; }
+  .list { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+  .card { border: 1px solid #e5e7eb; border-radius: 12px; padding: 20px; background: #fff; }
+  .card-badge { display: inline-block; margin: 0 0 8px; padding: 2px 8px; border-radius: 999px; background: #dcfce7; color: #166534; font-size: 12px; font-weight: 700; }
+  .card-title { margin: 0 0 4px; font-size: 20px; line-height: 1.3; }
+  .card-copy { margin: 0; color: #4b5563; }
+  @media (max-width: 1279.98px) {
+    .list { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 767.98px) {
+    .page { padding: 16px; }
+    .list { grid-template-columns: 1fr; gap: 16px; }
+    .card { padding: 16px; }
+  }
+</style>
+</head>
+<body style="margin:0">
+<main class="page" data-parity-id="page">
+  <h1 class="title" data-parity-id="title">Upcoming events</h1>
+  <div class="list" data-parity-id="list">
+    <article class="card" data-parity-id="card">
+      <h3 class="card-title" data-parity-id="card-title">Spring market</h3>
+      <p class="card-copy" data-parity-id="card-copy">Local growers in the courtyard.</p>
+    </article>
+    <article class="card" data-parity-id="card">
+      <span class="card-badge" data-parity-id="card-badge">Featured</span>
+      <h3 class="card-title" data-parity-id="card-title">Night of open studios</h3>
+      <p class="card-copy" data-parity-id="card-copy">Every door on the street open until midnight.</p>
+    </article>
+    <article class="card" data-parity-id="card">
+      <h3 class="card-title" data-parity-id="card-title">Repair cafe</h3>
+      <p class="card-copy" data-parity-id="card-copy">Bring what is broken, leave with it fixed.</p>
+    </article>
+  </div>
+</main>
+</body>
+</html>

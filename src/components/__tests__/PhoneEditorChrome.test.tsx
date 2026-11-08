@@ -30,7 +30,7 @@ vi.mock('../sidebars/right/sections', () => {
   const Stub = () => <div data-testid="section" />;
   return {
     SizeSection: Stub, PositionSection: Stub, StylesSection: Stub, LayoutSection: Stub, TypographySection: Stub,
-    ImageSection: Stub, DataSourceSection: Stub, EffectsSection: Stub, FormSection: Stub, StickyCtaSection: Stub,
+    ImageSection: Stub, DataSourceSection: Stub, EffectsSection: Stub, FormSection: Stub, StickyCtaSection: Stub, MapEmbedSection: Stub,
     TextContentSection: Stub, LinkSection: Stub, CustomSection: Stub, ComponentSection: Stub,
   };
 });

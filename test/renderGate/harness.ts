@@ -43,7 +43,11 @@ const ORIGIN = 'https://harness.test';
 const ALLOWED_LOADS: ReadonlySet<string> = new Set(['image', 'media', 'texttrack']);
 // React adds its own image preload next to an img, which loads only what the img would.
 // A live form opens with its own spinner sheet (FormIsland).
-const EMBEDS = '[data-fc-consent-accept],[data-fc-consent-decline],[data-fc-sticky-cta-link],script,style:not(form[data-form-id] > style:first-child),iframe,frame,frameset,object,embed,fencedframe,portal,link:not([rel=preload][as=image]),meta,base,webview';
+// A map box's own placeholder holds the load button (src/lib/renderer/mapEmbed), in its light copy or its
+// shadow tree; anywhere else it is forged, and the frame is never in a rendered page at all: it
+// exists only after consent.
+const EMBEDS = '[data-fc-consent-accept],[data-fc-consent-decline],[data-fc-sticky-cta-link],[data-fc-map-frame],' +
+  '[data-fc-map-load]:not([data-map-embed] > [data-fc-map-placeholder] > [data-fc-map-load]):not([data-fc-map-root] > [data-fc-map-placeholder] > [data-fc-map-load]),script,style:not(form[data-form-id] > style:first-child),iframe,frame,frameset,object,embed,fencedframe,portal,link:not([rel=preload][as=image]),meta,base,webview';
 
 const CANARY = 'https://canary.invalid';
 
@@ -161,6 +165,15 @@ const isOwn = (url: string) => url.startsWith(ORIGIN) || url.startsWith(`blob:${
 
 const probeOfRequest = (url: string): string | undefined => /\/(p\d+)/.exec(url)?.[1];
 
+/**
+ * A map box's "Open in Google Maps" (src/lib/mapEmbed): a plain link a visitor follows
+ * without consent, as any author's https link. Its address is built by the renderer,
+ * so a click on it is the one navigation to Google a page may make. Nothing else of
+ * Google is: a fetch, a frame or any other address there is still a finding.
+ */
+const MAPS_SEARCH_LINK = /^https:\/\/www\.google\.com\/maps\/search\/\?api=1&query=[^&#]*$/;
+const isMapsSearchClick = (request: Request) => request.isNavigationRequest() && MAPS_SEARCH_LINK.test(request.url());
+
 export async function runBatch(browser: Browser, browserName: string, surface: Surface, probes: readonly Probe[], batch: string, bundle: string): Promise<Finding[]> {
   const byId = new Map(probes.map((p) => [p.id, p]));
   const what = (id: string) => byId.get(id)?.what ?? id;
@@ -207,7 +220,11 @@ export async function runBatch(browser: Browser, browserName: string, surface: S
         for (const el of Array.from(root.querySelectorAll('*'))) {
           const shadow = shadowOf.call(el);
           if (shadow) {
-            found.push(`${probe} shadow-root`);
+            // A map box's island puts the platform's own placeholder in a shadow root, out of
+            // reach of stored rules (src/lib/renderer/mapEmbed). Any other shadow root, and
+            // anything that runs, fetches or embeds inside this one, is still a finding.
+            const mapsOwn = el.getAttribute('data-map-embed') === 'google' && shadow.firstElementChild?.hasAttribute('data-fc-map-root') && shadow.childElementCount === 1;
+            if (!mapsOwn) found.push(`${probe} shadow-root`);
             visit(shadow, probe);
           }
           if (Element.prototype.getAttribute.call(el, 'style')?.includes(styleHost) || getComputedStyle(el).backgroundImage.includes(styleHost)) found.push(`${probe} style`);
@@ -263,6 +280,7 @@ export async function runBatch(browser: Browser, browserName: string, surface: S
       const probe = probeOfRequest(request.url());
       const url = request.url();
       if (url.startsWith(CANARY) || url.startsWith(`${STYLE_HOST}/canary-`)) return;
+      if (index >= loaded && isMapsSearchClick(request)) return;
       if (!url.startsWith(FOREIGN) && !isOwn(url)) add(probe ?? 'unknown', 'fetch', url);
       if (request.isNavigationRequest()) {
         // A plain form submits to the page it is on, and a path stays on the site.

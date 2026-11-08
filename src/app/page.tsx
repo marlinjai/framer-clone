@@ -8,13 +8,24 @@
 // stylesheets first, then `cms-grid-theme.css` pins the --dt-* tokens to the
 // light Studio-iris theme (the `.light` class on <html> opts out of the engine's
 // dark-glass auto-switch; the theme file re-pins as belt-and-suspenders).
+// The editor's own sheet comes first, as when the root layout carried it (a
+// published site's `/` is rewritten into `(site)` by src/middleware.ts, so this
+// route is only ever the editor).
+import './globals.css';
 import '@marlinjai/data-table-react/dist/styles/variables.css';
 import '@marlinjai/data-table-react/dist/styles/base.css';
 import './cms-grid-theme.css';
 import dynamic from 'next/dynamic';
 
 const EditorApp = dynamic(() => import('../components/EditorApp'), { ssr: false });
+// The demo itself never autosaves; projects of this tab opened before still warn.
+const UnsavedWorkGuard = dynamic(() => import('../components/UnsavedWorkGuard'), { ssr: false });
 
 export default function Page() {
-  return <EditorApp />;
+  return (
+    <>
+      <EditorApp />
+      <UnsavedWorkGuard />
+    </>
+  );
 }

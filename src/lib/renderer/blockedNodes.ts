@@ -15,6 +15,7 @@ import { DOM_MEMBER_NAMES } from '@/lib/renderer/domMemberNames.generated';
 import { isOtherSpelling, isRenderedAttribute, isRenderedTag } from '@/lib/renderer/renderVocabulary';
 import { TEXT_NODE_TYPE } from '@/lib/renderer/textNode';
 import { STICKY_CTA_PROP_KEYS } from '@/lib/stickyCta/stickyCta';
+import { MAP_EMBED_PROP_KEYS } from '@/lib/mapEmbed/mapEmbed';
 import { SAFE_PROPERTY, UNSAFE_VALUE, cssValueText, holdsTopLayerValue, isContainedValue } from '@/lib/responsive/responsiveCss';
 import { withCappedZIndex } from '@/lib/styles/stacking';
 import { isPlatformVariable } from '@/lib/rules/rootProperties';
@@ -180,8 +181,9 @@ export function isBlockedTag(tag: unknown, foreign: ForeignContent = false): boo
 const NODE_SETTINGS: ReadonlySet<string> = new Set(['query', 'bindings', 'effects', 'rules', 'behaviour', 'instance', 'fieldName']);
 
 /** Settings the renderers read from the node. Off the element, as they should be, so nothing to report. */
-const isSettingsProp = (name: string): boolean =>
-  FORM_CONFIG_PROPS.has(name) || (STICKY_CTA_PROP_KEYS as readonly string[]).includes(name) || NODE_SETTINGS.has(name);
+export const isSettingsProp = (name: string): boolean =>
+  FORM_CONFIG_PROPS.has(name) || (STICKY_CTA_PROP_KEYS as readonly string[]).includes(name) ||
+  (MAP_EMBED_PROP_KEYS as readonly string[]).includes(name) || NODE_SETTINGS.has(name);
 
 /**
  * Whether a prop must not reach the DOM. React drops some of this for a known

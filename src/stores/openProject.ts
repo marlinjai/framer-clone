@@ -8,15 +8,32 @@
 // not saved yet (a page just generated with AI). Whether it does is decided by
 // comparing three versions of the project's PAGES, reusable COMPONENTS, and the
 // site's THEME and HEAD items (each reaches every page, so a stale copy of one
-// written back by a Save overwrites a change made elsewhere on every page):
+// written back by a save overwrites a change made elsewhere on every page):
 //   - the baseline: what this tab last loaded from, or saved to, the server;
 //   - the server copy just loaded;
 //   - the working copy in the store.
 // Server unchanged since the baseline: keep the working copy. Server changed
 // (saved in another tab, by someone else) and the working copy unchanged:
 // take the server copy. Both changed: keep the working copy and report a
-// conflict, so the editor can warn before a Save overwrites the other work.
+// conflict, so the editor can warn before a save overwrites the other work.
 // The name always follows the server (the rename action owns it).
+//
+// The version lock rides along: the server numbers every write of the working
+// copy, and this tab remembers the number of the copy it last loaded or saved.
+// A save (autosave) and Publish send it as `expectedVersion`, and a server that moved on
+// refuses them with 409 `site_changed` (SiteChangedDialog asks what to do). A
+// moved number counts as a change on the server here too, so an untouched tab
+// takes the newer copy, and a tab that keeps its own unsaved work keeps its OLD
+// number: its next save must be refused, never silently win. Versions only go
+// up, so a LOWER number than this tab's is a stale read (the client router
+// cache replaying an older editor payload, on Back after Preview): nothing of
+// it is adopted, neither the content nor the number.
+//
+// Autosave (src/lib/projects/autosave.ts) asks this file two more things:
+// whether the working copy still equals what the server holds (`isSaved`,
+// comparing every saved part, not only the ones a load compares), and whether
+// a change it sees came from a load putting the server copy in place
+// (`isApplyingServerCopy`), which is never a change to save.
 //
 // Undo history belongs to one project: it is cleared whenever the project
 // shown changes or is (re)loaded, and loading itself is never an undo step.
@@ -33,6 +50,7 @@ import { getHistoryStore } from '@/stores/RootStore';
 import { takeStashedDemoProject } from '@/lib/projects/demoStash';
 import { withDefaultViewports } from '@/lib/canvas/defaultViewports';
 import { normalizeSiteSettings } from '@/lib/site/siteSettings';
+import { componentsWithShopParts, pageWithShopParts } from '@/lib/commerce/parts';
 
 export interface OpenedProject {
   project: ProjectModelType | undefined;
@@ -43,19 +61,19 @@ export interface OpenedProject {
   keptWorkingCopy: boolean;
   /**
    * True when the project was changed elsewhere since this tab loaded or
-   * saved it, while this tab has unsaved changes too: a Save here would
+   * saved it, while this tab has unsaved changes too: a save here would
    * overwrite the other work.
    */
   changedElsewhere: boolean;
   /**
    * The names of the reusable components changed elsewhere, when
-   * `changedElsewhere`: a Save here would put the old ones back on every page
+   * `changedElsewhere`: a save here would put the old ones back on every page
    * placing them, which a person cannot see by looking at the page in hand.
    */
   changedDefinitions: string[];
   /**
    * The site-wide parts changed elsewhere, when `changedElsewhere`: the theme and the
-   * site's head items, which a Save here would put back as this tab holds them.
+   * site's head items, which a save here would put back as this tab holds them.
    */
   changedSiteParts: SitePart[];
 }
@@ -74,6 +92,9 @@ export interface ProjectContent {
   components?: unknown;
   /** Only its `theme` and `head` are compared; the rest follows the dialog's own save. */
   siteSettings?: unknown;
+  /** Compared by `isSaved` only (autosave), with the analytics binding and the description. */
+  lumitra?: unknown;
+  metadata?: unknown;
 }
 
 /** Key-order independent JSON, so a database round trip compares equal. */
@@ -88,11 +109,11 @@ function stableJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
-/** The content compared: every page, as the server would store it. */
-function pagesContent(pages: unknown): string {
+/** The content compared: every page, as the server's load path repairs it (frames, shop parts). */
+function pagesContent(pages: unknown, language: string): string {
   const repaired: Record<string, unknown> = {};
   for (const [id, page] of Object.entries((pages ?? {}) as Record<string, object>)) {
-    repaired[id] = withDefaultViewports(page as { id?: unknown; canvasNodes?: unknown });
+    repaired[id] = pageWithShopParts(withDefaultViewports(page as { id?: unknown; canvasNodes?: unknown }), language);
   }
   return stableJson(repaired);
 }
@@ -105,11 +126,11 @@ interface VersionContent {
 }
 
 function versionContent({ pages, components, siteSettings }: ProjectContent): VersionContent {
-  const definitions = Object.entries((components ?? {}) as Record<string, unknown>);
+  const definitions = Object.entries(componentsWithShopParts((components ?? {}) as Record<string, unknown>, normalizeSiteSettings(siteSettings).language));
   // Normalized, as the server stores it, so a database round trip compares equal.
   const settings = normalizeSiteSettings(siteSettings);
   return {
-    pages: pagesContent(pages),
+    pages: pagesContent(pages, settings.language),
     components: Object.fromEntries(definitions.map(([id, definition]) => [id, stableJson(definition)])),
     site: { theme: stableJson(settings.theme), head: stableJson(settings.head) },
   };
@@ -137,13 +158,137 @@ function definitionName(components: unknown, id: string): string | undefined {
 
 // project id -> content of the last server version this tab knows.
 const baselines = new Map<string, VersionContent>();
+// project id -> the site version (sites.version) of that same server copy.
+const knownVersions = new Map<string, number>();
+// project id -> every saved part of that same server copy, as `savedContentKey`
+// writes it: what autosave compares the working copy with.
+const savedKeys = new Map<string, string>();
+// project id -> the server version a load found while this tab kept unsaved
+// work of its own (`changedElsewhere`): autosave stays paused until one write
+// is chosen on purpose, instead of meeting the refusal 1.5 s later.
+const openedChangedElsewhere = new Map<string, number>();
+// Above zero while a load puts the server copy into the store.
+let applyingServerCopy = 0;
+// project id -> writes of this tab (autosave, Publish) out right now. A load
+// meanwhile (Preview mounting, coming back to the editor) may already see the
+// version that write produces: that is no change made elsewhere.
+const writesInFlight = new Map<string, number>();
 
-/** Record that the server now holds exactly this project (after a load or a save). */
-export function markServerVersion(projectId: string, project: ProjectContent): void {
-  baselines.set(projectId, versionContent(project));
+// project ids whose working copy this tab gave up on purpose ("Save mine as a
+// new project" kept it elsewhere): the next load takes the server copy.
+const discardedCopies = new Set<string>();
+
+/**
+ * Forget this tab's working copy of a project: it now lives on as another
+ * project, so coming back opens the server's copy, without a warning.
+ */
+export function discardWorkingCopy(projectId: string): void {
+  discardedCopies.add(projectId);
+  openedChangedElsewhere.delete(projectId);
 }
 
-/** The warning for `changedElsewhere`, naming the components and site parts a Save would overwrite. */
+/** Autosave and Publish report a write of this tab starting (true) and ending (false). */
+export function noteWriteInFlight(projectId: string, inFlight: boolean): void {
+  const count = (writesInFlight.get(projectId) ?? 0) + (inFlight ? 1 : -1);
+  if (count > 0) writesInFlight.set(projectId, count);
+  else writesInFlight.delete(projectId);
+}
+
+/**
+ * Every part of a project a save writes, except the name (the rename route
+ * owns it) and volatile state (never in a snapshot): the compared parts as a
+ * load compares them, plus the whole site settings, the analytics binding and
+ * the description.
+ */
+function savedContentKey(project: ProjectContent, version: VersionContent = versionContent(project)): string {
+  const metadata = (project.metadata ?? {}) as { description?: unknown };
+  return stableJson({
+    pages: version.pages,
+    components: version.components,
+    settings: stableJson(normalizeSiteSettings(project.siteSettings)),
+    lumitra: stableJson(project.lumitra ?? null),
+    description: metadata.description ?? '',
+  });
+}
+
+/**
+ * What a project is compared by, computed once: autosave takes it when the
+ * debounce fires and hands the same value to `isSaved` and, after the write,
+ * to `markServerVersion`, so a large project is serialised once per save.
+ */
+export interface SavedContent {
+  readonly version: VersionContent;
+  readonly key: string;
+}
+
+export function savedContentOf(project: ProjectContent): SavedContent {
+  const version = versionContent(project);
+  return { version, key: savedContentKey(project, version) };
+}
+
+/**
+ * Record that the server now holds exactly this project, at this site version
+ * (after a load, a save or a publish). `content` is `savedContentOf(project)`
+ * when the caller already has it.
+ */
+export function markServerVersion(
+  projectId: string,
+  project: ProjectContent,
+  version: number,
+  content: SavedContent = savedContentOf(project),
+): void {
+  baselines.set(projectId, content.version);
+  knownVersions.set(projectId, version);
+  savedKeys.set(projectId, content.key);
+  openedChangedElsewhere.delete(projectId);
+}
+
+/**
+ * True when the working copy holds exactly what the server last held for this
+ * tab (loaded, saved or published), name and volatile state aside. False when
+ * this tab never had a server copy of the project. Takes the project or its
+ * `savedContentOf`.
+ */
+export function isSaved(projectId: string, project: ProjectContent | SavedContent): boolean {
+  const saved = savedKeys.get(projectId);
+  if (saved === undefined) return false;
+  const key = 'key' in project && typeof project.key === 'string' ? project.key : savedContentKey(project as ProjectContent);
+  return saved === key;
+}
+
+/**
+ * The server version a load reported while this tab kept its own unsaved work
+ * over a newer server copy (`OpenedProject.changedElsewhere`), until a write
+ * of this tab succeeds. Undefined otherwise.
+ */
+export function changedElsewhereVersion(projectId: string): number | undefined {
+  return openedChangedElsewhere.get(projectId);
+}
+
+/** True while a load puts the server copy into the store (not a change to save). */
+export function isApplyingServerCopy(): boolean {
+  return applyingServerCopy > 0;
+}
+
+function applyingServer(fn: () => void) {
+  applyingServerCopy++;
+  try {
+    untracked(fn);
+  } finally {
+    applyingServerCopy--;
+  }
+}
+
+/**
+ * The site version this tab's copy is based on: what a save and Publish send as
+ * `expectedVersion`. Undefined when this tab never loaded the project from the
+ * server (the server then refuses the write with `version_required`).
+ */
+export function knownServerVersion(projectId: string): number | undefined {
+  return knownVersions.get(projectId);
+}
+
+/** The warning for `changedElsewhere`, naming the components and site parts a save would overwrite. */
 export function changedElsewhereMessage(
   changedDefinitions: readonly string[],
   changedSite: readonly SitePart[] = [],
@@ -177,7 +322,9 @@ function untracked(fn: () => void) {
 export function openProject(
   rootStore: RootStoreType,
   snapshot: ProjectSnapshotOut,
-  requestedPageId?: string | null,
+  requestedPageId: string | null | undefined,
+  /** The site version the loader read together with `snapshot`. */
+  serverVersion: number,
 ): OpenedProject {
   const previousProjectId = rootStore.editorUI.currentProject?.id;
   const existing = rootStore.projectStore.getProject(snapshot.id) as ProjectModelType | undefined;
@@ -185,22 +332,41 @@ export function openProject(
   const baseline = baselines.get(snapshot.id);
 
   let keep = false;
+  // A working copy given up on purpose is never kept.
+  const discarded = discardedCopies.delete(snapshot.id);
+  let ownWrite = false;
+  let staleRead = false;
   let changedElsewhere = false;
   let changedDefinitions: string[] = [];
   let changedSite: SitePart[] = [];
-  if (existing) {
+  if (existing && !discarded) {
     const working = getSnapshot(existing);
     const workingContent = versionContent(working);
     // An erase of personal data moves the epoch, and this tab's copy may still
     // hold the erased value anywhere (also in parts not compared here), so it
     // counts as a change on the server: an untouched tab takes the server copy,
-    // and one with unsaved work is warned (its Save is refused with an older epoch).
+    // and one with unsaved work is warned (its save is refused with an older epoch).
     const erasedSince = (snapshot.metadata?.erasureEpoch ?? 0) > (working.metadata?.erasureEpoch ?? 0);
-    const serverChanged = erasedSince || (baseline !== undefined && !sameVersion(serverContent, baseline));
-    const workingChanged = baseline === undefined || !sameVersion(workingContent, baseline);
-    if (!serverChanged) keep = true; // nothing new on the server: keep this tab's work
+    // Any write the server numbered since this tab's copy (also one that left the
+    // compared parts as they were, such as the site's description) is a change.
+    const known = knownVersions.get(snapshot.id);
+    // Versions only go up: a lower one is an old read, never news.
+    staleRead = known !== undefined && serverVersion < known;
+    const versionMoved = known !== undefined && known !== serverVersion;
+    const serverChanged =
+      erasedSince || versionMoved || (baseline !== undefined && !sameVersion(serverContent, baseline));
+    // Every part a save writes counts (also legal details, sharing texts, the
+    // language, the analytics binding, the description), not only the parts
+    // compared with the server: a load must never drop an unsaved edit of them.
+    const workingChanged = baseline === undefined || !sameVersion(workingContent, baseline) || !isSaved(snapshot.id, working);
+    // This tab's own write is out: what the load read may be that write. Keep
+    // the work and the version as they are; the write's answer sets the new
+    // version, and if someone else wrote instead, that answer is the 409.
+    ownWrite = (writesInFlight.get(snapshot.id) ?? 0) > 0 && !erasedSince;
+    if (staleRead && !erasedSince) keep = true; // an old read: this tab's copy and number stand
+    else if (ownWrite || !serverChanged) keep = true; // nothing new on the server: keep this tab's work
     else if (workingChanged) {
-      keep = true; // both changed: keep the work here, warn before a Save
+      keep = true; // both changed: keep the work here, warn before a save
       changedElsewhere = true;
       // A definition deleted over there is only named by this tab's copy.
       // Compared with this tab's baseline; without one (only an erase tells the
@@ -218,16 +384,26 @@ export function openProject(
   if (keep && existing) {
     project = existing;
     const serverName = snapshot.metadata?.title;
-    if (typeof serverName === 'string' && serverName !== existing.metadata.title) {
-      untracked(() => existing.updateMetadata({ title: serverName }));
+    if (!staleRead && typeof serverName === 'string' && serverName !== existing.metadata.title) {
+      applyingServer(() => existing.updateMetadata({ title: serverName }));
     }
+    // Nothing new on the server: this copy is based on the server's version. When
+    // the server DID change, the old number stays, so its next save gets the 409.
+    if (ownWrite || staleRead) {
+      // Neither adopted nor flagged: the write in flight decides, or the read was old.
+    } else if (!changedElsewhere) knownVersions.set(snapshot.id, serverVersion);
+    else openedChangedElsewhere.set(snapshot.id, serverVersion);
   } else {
     let id = snapshot.id;
-    untracked(() => {
+    applyingServer(() => {
       id = rootStore.projectStore.ingestProjectSnapshot(snapshot);
     });
     project = rootStore.projectStore.getProject(id) as ProjectModelType | undefined;
-    markServerVersion(snapshot.id, snapshot);
+    markServerVersion(snapshot.id, snapshot, serverVersion);
+    // What autosave compares with is the copy as the store holds it (with the
+    // defaults and repairs the model adds on the way in), so opening a project
+    // never reads as a change.
+    if (project) savedKeys.set(snapshot.id, savedContentKey(getSnapshot(project)));
   }
 
   rootStore.editorUI.setCurrentProject(project);

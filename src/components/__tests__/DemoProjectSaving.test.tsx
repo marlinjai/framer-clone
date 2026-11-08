@@ -1,4 +1,4 @@
-// Save and Publish versus the browser-only demo project (`/`), on a REAL root
+// Saving (the save status, Cmd+S) and Publish versus the browser-only demo project (`/`), on a REAL root
 // store (the singleton every route of a tab shares).
 //
 // The owner's bug: visiting `/` set a demo flag on the shared UI state that
@@ -8,7 +8,7 @@
 // is the current one, in either order of visits.
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, render, cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import { getSnapshot } from 'mobx-state-tree';
 import { createRootStore, type RootStoreType } from '@/stores/RootStore';
 import { openProject } from '@/stores/openProject';
@@ -18,7 +18,10 @@ let store: RootStoreType;
 vi.mock('@/hooks/useStore', () => ({ useStore: () => store }));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn(), replace: vi.fn() }) }));
 
-import SaveButton from '../SaveButton';
+import SaveStatus from '../SaveStatus';
+import EditorAutosave from '../EditorAutosave';
+import { resetAutosaveForTests } from '@/lib/projects/autosave';
+import { handleSaveShortcut } from '@/lib/projects/saveShortcut';
 import PublishButton from '../PublishButton';
 
 const fetchMock = vi.fn();
@@ -37,10 +40,16 @@ function visitDemo() {
 function openServerProject(id = 'site_real') {
   const p = ProjectModel.create({ id, metadata: { title: 'Untitled Project', description: '' }, pages: {} });
   p.createPage('test page');
-  return openProject(store, getSnapshot(p) as ProjectSnapshotOut).project!;
+  return openProject(store, getSnapshot(p) as ProjectSnapshotOut, null, 1).project!;
 }
 
+const pressSave = () =>
+  act(() => {
+    handleSaveShortcut(new KeyboardEvent('keydown', { key: 's', metaKey: true, cancelable: true }), store.editorUI);
+  });
+
 beforeEach(() => {
+  resetAutosaveForTests();
   store = createRootStore();
   fetchMock.mockReset();
   fetchMock.mockResolvedValue(new Response(JSON.stringify({ siteId: 'site_real', savedPages: [''] }), { status: 200 }));
@@ -52,23 +61,28 @@ afterEach(() => {
 });
 
 describe('demo state belongs to the demo project', () => {
-  it('visiting `/` first, then opening a dashboard project: Save calls the save route', async () => {
+  it('visiting `/` first, then opening a dashboard project: a change is saved through the save route', async () => {
     visitDemo();
-    openServerProject();
+    const project = openServerProject();
     expect(store.editorUI.isUnsavedDemo).toBe(false);
-    render(<SaveButton />);
-    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+    render(<><EditorAutosave /><SaveStatus /></>);
+    expect(screen.queryByRole('button', { name: 'Keep as project' })).toBeNull();
+    await waitFor(() => expect(screen.getByTestId('save-status').textContent).toBe('Saved'));
+    act(() => project.updateMetadata({ description: 'real work' }));
+    pressSave();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/projects/save', expect.anything()));
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('a dashboard project first, then `/`: the demo is the demo again (Save offers a new project)', async () => {
+  it('a dashboard project first, then `/`: the demo is the demo again ("Keep as project", nothing sent)', async () => {
     openServerProject();
-    visitDemo();
+    const demo = visitDemo();
     expect(store.editorUI.isUnsavedDemo).toBe(true);
-    render(<SaveButton />);
-    fireEvent.click(screen.getByRole('button', { name: /save/i }));
-    expect(await screen.findByRole('dialog', { name: 'Save as a new project' })).toBeTruthy();
+    render(<><EditorAutosave /><SaveStatus /></>);
+    act(() => demo.updateMetadata({ description: 'demo work' }));
+    pressSave();
+    fireEvent.click(screen.getByRole('button', { name: 'Keep as project' }));
+    expect(await screen.findByRole('dialog', { name: 'Keep as project' })).toBeTruthy();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -81,12 +95,12 @@ describe('demo state belongs to the demo project', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/projects/publish', expect.anything()));
   });
 
-  it('in the demo, Publish points at Save instead of calling the server', () => {
+  it('in the demo, Publish points at "Keep as project" instead of calling the server', () => {
     visitDemo();
     render(<PublishButton />);
     fireEvent.click(screen.getByRole('button', { name: /publish/i }));
     expect(screen.getByRole('alert').textContent).toBe(
-      'This demo project exists only in this browser. Save it as a project first (Save), then publish it from there.',
+      'This demo project exists only in this browser. Keep it as a project first (Keep as project), then publish it from there.',
     );
     expect(fetchMock).not.toHaveBeenCalled();
   });

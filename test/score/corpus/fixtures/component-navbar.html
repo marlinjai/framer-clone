@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Component navbar</title>
+<script>document.documentElement.classList.add('js');</script>
+<style>
+  .page { font: 16px/1.5 Arial, sans-serif; color: #111827; margin: 0; }
+  .navbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; padding: 16px 24px; background: #fff; color: #111827; border-bottom: 1px solid #e5e7eb; }
+  .navbar[data-tone="dark"] { background: #111827; color: #f9fafb; border-bottom-color: #374151; }
+  .logo { font-weight: 700; font-size: 20px; color: inherit; text-decoration: none; }
+  .menu-button { border: 1px solid currentColor; border-radius: 6px; background: none; color: inherit; padding: 6px 12px; font: inherit; cursor: pointer; }
+  .menu-button:focus-visible { outline: 3px solid #f59e0b; outline-offset: 2px; }
+  .menu { display: none; flex-basis: 100%; flex-direction: row; gap: 24px; padding-top: 12px; }
+  .navbar.is-open .menu { display: flex; }
+  .menu a { color: inherit; text-decoration: none; }
+  .content { padding: 32px 24px; }
+  .content h1 { margin: 0 0 8px; font-size: 32px; line-height: 1.2; }
+  .content p { margin: 0; }
+  @media (max-width: 767.98px) {
+    .navbar { padding: 12px 16px; }
+    .menu { flex-direction: column; gap: 8px; }
+    .content { padding: 24px 16px; }
+    .content h1 { font-size: 24px; }
+  }
+  /* Without a script nothing could open the menu: show the links and drop the button. */
+  html:not(.js) .menu { display: flex; }
+  html:not(.js) .menu-button { display: none; }
+</style>
+</head>
+<body style="margin:0">
+<div class="page" data-parity-id="page">
+  <header class="navbar" data-tone="dark" data-parity-id="navbar">
+    <a class="logo" href="/" data-parity-id="logo">Lumen</a>
+    <button class="menu-button" type="button" aria-expanded="false" aria-controls="site-menu" data-parity-id="menu-button">Menu</button>
+    <nav class="menu" id="site-menu" aria-label="Main" data-parity-id="menu">
+      <a href="/rooms" data-parity-id="link-rooms">Rooms</a>
+      <a href="/events" data-parity-id="link-events">Events</a>
+      <a href="/contact" data-parity-id="link-contact">Contact</a>
+    </nav>
+  </header>
+  <main class="content" data-parity-id="content">
+    <h1 data-parity-id="heading">Welcome</h1>
+    <p data-parity-id="copy">A guest house in the old town.</p>
+  </main>
+</div>
+<script>
+  const navbar = document.querySelector('.navbar');
+  const button = navbar.querySelector('.menu-button');
+  const setOpen = (open) => {
+    navbar.classList.toggle('is-open', open);
+    button.setAttribute('aria-expanded', String(open));
+  };
+  button.addEventListener('click', () => setOpen(!navbar.classList.contains('is-open')));
+  button.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && navbar.classList.contains('is-open')) setOpen(false);
+  });
+</script>
+</body>
+</html>

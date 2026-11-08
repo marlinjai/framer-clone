@@ -14,53 +14,23 @@
 
 import type { PageModelType } from '@/models/PageModel';
 import type { ComponentInstance } from '@/models/ComponentModel';
+import { keyedBreakpoints, rekeyResponsive, type KeyedBreakpoint } from '@/lib/siteOps/breakpoints';
 import { serializeSubtree, type SerializedComponent } from '@/lib/ai/serializers/subtree';
-import { deriveBreakpointKeys, BASE_KEY } from '@/lib/ai/pageGen/schema';
 import { getHistoryStore } from '@/stores/RootStore';
 import type { HistoryStoreInstance } from '@/stores/HistoryStore';
 import { indexReviewTree, validateReviewOps } from './ops';
 import { REVIEW_LIMITS, type RejectedOp, type ReviewOp, type ReviewTreeNode } from './protocol';
 
-export interface ReviewBreakpoint {
-  /** The breakpoint id responsive maps are keyed by. */
-  id: string;
-  /** The viewport node that renders it (its frame's data-viewport-content-id). */
-  viewportId: string;
-  label: string;
-  minWidth: number;
-  /** The key the model uses ("desktop", "phone"). */
-  key: string;
-}
+/** A page breakpoint with its review key (src/lib/siteOps/breakpoints.ts). */
+export type ReviewBreakpoint = KeyedBreakpoint;
 
 /** The page's breakpoints, largest first, with their review keys. */
 export function reviewBreakpoints(page: PageModelType): ReviewBreakpoint[] {
-  const frames = (page.viewportNodes as ComponentInstance[])
-    .filter((v) => v.breakpointId)
-    .map((v) => ({
-      id: v.breakpointId as string,
-      viewportId: v.id as string,
-      label: (v.label as string | undefined) ?? '',
-      minWidth: (v.breakpointMinWidth as number | undefined) ?? 0,
-    }))
-    .sort((a, b) => b.minWidth - a.minWidth);
-  const keys = deriveBreakpointKeys(frames.map(({ label, minWidth }) => ({ label, minWidth })));
-  return frames.map((f, i) => ({ ...f, key: keys[i].key }));
+  return keyedBreakpoints(page);
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
-
-/** Re-key one responsive map from breakpoint ids to keys (unknown ids are left out). */
-function rekey(value: unknown, idToKey: Map<string, string>): unknown {
-  if (!isObj(value)) return value;
-  const keys = Object.keys(value);
-  if (!keys.some((k) => k === BASE_KEY || idToKey.has(k))) return value;
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(value)) {
-    if (k === BASE_KEY) out[BASE_KEY] = v;
-    else if (idToKey.has(k)) out[idToKey.get(k)!] = v;
-  }
-  return out;
-}
+const rekey = rekeyResponsive;
 
 function toReviewNode(n: SerializedComponent, idToKey: Map<string, string>): ReviewTreeNode {
   const props: Record<string, unknown> = {};

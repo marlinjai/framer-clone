@@ -88,7 +88,7 @@ describe('POST /api/projects/save guard', () => {
     const save = vi.fn();
     installRepo({ saveProject: save, publishProject: vi.fn() });
 
-    const res = await POST(saveReq({ project: PROJECT }, { cookie: null }));
+    const res = await POST(saveReq({ project: PROJECT, expectedVersion: 1 }, { cookie: null }));
 
     expect(res.status).toBe(401);
     expect((await res.json()).error.code).toBe('unauthorized');
@@ -101,7 +101,7 @@ describe('POST /api/projects/save guard', () => {
     const save = vi.fn();
     installRepo({ saveProject: save, publishProject: vi.fn() });
 
-    const res = await POST(saveReq({ project: PROJECT }));
+    const res = await POST(saveReq({ project: PROJECT, expectedVersion: 1 }));
 
     expect(res.status).toBe(403);
     expect((await res.json()).error.code).toBe('forbidden');
@@ -123,7 +123,7 @@ describe('POST /api/projects/save guard', () => {
     const publish = vi.fn();
     installRepo({ saveProject: save, publishProject: publish });
 
-    const res = await POST(saveReq({ project: PROJECT }));
+    const res = await POST(saveReq({ project: PROJECT, expectedVersion: 1 }));
 
     expect(res.status).toBe(503);
     expect((await res.json()).error.code).toBe('authz_unavailable');
@@ -141,16 +141,18 @@ describe('POST /api/projects/save (authorized)', () => {
   });
 
   it('persists the snapshot through saveProject under the session scope and NEVER publishes', async () => {
-    const save = vi.fn().mockResolvedValue(undefined);
+    const save = vi.fn().mockResolvedValue({ version: 2 });
     const publish = vi.fn().mockResolvedValue(undefined);
     installRepo({ saveProject: save, publishProject: publish });
 
-    const res = await POST(saveReq({ project: PROJECT }));
+    const res = await POST(saveReq({ project: PROJECT, expectedVersion: 1 }));
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       siteId: 'site_1',
       savedPages: ['', 'about'],
+      // The version lock: the new version, for the editor's next write.
+      version: 2,
     });
     // Scope comes from the SERVER session, not the body.
     // ...and only UPDATES an existing site: it never creates (or re-creates a
@@ -159,27 +161,59 @@ describe('POST /api/projects/save (authorized)', () => {
       SCOPE,
       expect.objectContaining({ id: 'site_1' }),
       // The company comes from the session too, and is stamped on the site (sites.company_id).
-      { mustExist: true, companyId: 'tenant-1' },
+      // The version the editor's copy was based on goes through unchanged.
+      { mustExist: true, companyId: 'tenant-1', expectedVersion: 1 },
     );
     // Save is non-destructive: it must NEVER flip the site to published.
     expect(publish).not.toHaveBeenCalled();
   });
 
-  it('does not claim a status in the success envelope (save leaves it untouched)', async () => {
-    const save = vi.fn().mockResolvedValue(undefined);
+  it('passes the attempt key through, and refuses a malformed one without saving', async () => {
+    const save = vi.fn().mockResolvedValue({ version: 2 });
     installRepo({ saveProject: save, publishProject: vi.fn() });
 
-    const res = await POST(saveReq({ project: PROJECT }));
+    const res = await POST(saveReq({ project: PROJECT, expectedVersion: 1, requestKey: 'k_0123456789' }));
+    expect(res.status).toBe(200);
+    expect(save.mock.calls[0][2]).toEqual({ mustExist: true, companyId: 'tenant-1', expectedVersion: 1, requestKey: 'k_0123456789' });
+
+    const bad = await POST(saveReq({ project: PROJECT, expectedVersion: 1, requestKey: 'no spaces allowed' }));
+    expect(bad.status).toBe(400);
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes the lost attempts\' keys through with the new one, and refuses a list too long', async () => {
+    const save = vi.fn().mockResolvedValue({ version: 7 });
+    installRepo({ saveProject: save, publishProject: vi.fn() });
+    const res = await POST(saveReq({ project: PROJECT, expectedVersion: 4, requestKey: 'k_new_attempt', previousRequestKeys: ['k_lost_one_a', 'k_lost_one_b'] }));
+    expect(res.status).toBe(200);
+    expect(save.mock.calls[0][2]).toEqual({
+      mustExist: true,
+      companyId: 'tenant-1',
+      expectedVersion: 4,
+      requestKey: 'k_new_attempt',
+      previousRequestKeys: ['k_lost_one_a', 'k_lost_one_b'],
+    });
+    const tooMany = Array.from({ length: 9 }, (_, i) => `k_lost_${i}_attempt`);
+    const bad = await POST(saveReq({ project: PROJECT, expectedVersion: 4, requestKey: 'k_new_attempt', previousRequestKeys: tooMany }));
+    expect(bad.status).toBe(400);
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not claim a status in the success envelope (save leaves it untouched)', async () => {
+    const save = vi.fn().mockResolvedValue({ version: 2 });
+    installRepo({ saveProject: save, publishProject: vi.fn() });
+
+    const res = await POST(saveReq({ project: PROJECT, expectedVersion: 1 }));
     const json = await res.json();
 
     expect(json).not.toHaveProperty('status');
   });
 
   it('preserves the full opaque page snapshot when saving (no field stripping)', async () => {
-    const save = vi.fn().mockResolvedValue(undefined);
+    const save = vi.fn().mockResolvedValue({ version: 2 });
     installRepo({ saveProject: save, publishProject: vi.fn() });
 
-    await POST(saveReq({ project: PROJECT }));
+    await POST(saveReq({ project: PROJECT, expectedVersion: 1 }));
 
     const savedProject = save.mock.calls[0][1];
     expect(savedProject.pages.page_home.appComponentTree).toEqual({ kind: 'frame' });
@@ -201,7 +235,7 @@ describe('POST /api/projects/save (authorized)', () => {
     const publish = vi.fn();
     installRepo({ saveProject: save, publishProject: publish });
 
-    const res = await POST(saveReq({ project: PROJECT }));
+    const res = await POST(saveReq({ project: PROJECT, expectedVersion: 1 }));
 
     expect(res.status).toBe(404);
     expect((await res.json()).error.code).toBe('site_not_found');
@@ -221,7 +255,7 @@ describe('POST /api/projects/save slug rules (real repository)', () => {
     );
     const prisma = {
       site: {
-        findUnique: vi.fn(async () => ({ id: 'site_1', workspaceId: 'ws_marlin', redirects: [], erasureEpoch: 0 })),
+        findUnique: vi.fn(async () => ({ id: 'site_1', workspaceId: 'ws_marlin', redirects: [], erasureEpoch: 0, version: 1 })),
         upsert: vi.fn(async () => ({})),
         // The editor's Save only UPDATEs an existing site (mustExist).
         updateMany: vi.fn(async () => ({ count: 1 })),
@@ -250,7 +284,7 @@ describe('POST /api/projects/save slug rules (real repository)', () => {
     ['a leading slash', '/about'],
   ])('400s invalid_page_slug for %s and writes nothing', async (_label, slug) => {
     const prisma = await installRealRepo({ page_home: '', page_about: 'about' });
-    const body = { project: { ...PROJECT, pages: { ...PROJECT.pages, page_about: { slug } } } };
+    const body = { project: { ...PROJECT, pages: { ...PROJECT.pages, page_about: { slug } } }, expectedVersion: 1 };
 
     const res = await POST(saveReq(body));
 
@@ -263,7 +297,7 @@ describe('POST /api/projects/save slug rules (real repository)', () => {
 
   it('400s a request that drops the home page', async () => {
     const prisma = await installRealRepo({ page_home: '', page_about: 'about' });
-    const body = { project: { ...PROJECT, pages: { page_about: { slug: 'about' } } } };
+    const body = { project: { ...PROJECT, pages: { page_about: { slug: 'about' } } }, expectedVersion: 1 };
 
     const res = await POST(saveReq(body));
 
@@ -275,7 +309,7 @@ describe('POST /api/projects/save slug rules (real repository)', () => {
 
   it('saves a valid slug change and records the old path as a redirect', async () => {
     const prisma = await installRealRepo({ page_home: '', page_about: 'about' });
-    const body = { project: { ...PROJECT, pages: { ...PROJECT.pages, page_about: { slug: 'about-us' } } } };
+    const body = { project: { ...PROJECT, pages: { ...PROJECT.pages, page_about: { slug: 'about-us' } } }, expectedVersion: 1 };
 
     const res = await POST(saveReq(body));
 
@@ -296,7 +330,7 @@ describe('save of a deleted project', () => {
     const publish = vi.fn();
     installRepo({ saveProject: save, publishProject: publish });
 
-    const res = await POST(saveReq({ project: PROJECT }));
+    const res = await POST(saveReq({ project: PROJECT, expectedVersion: 1 }));
 
     expect(res.status).toBe(404);
     const body = await res.json();
@@ -314,9 +348,74 @@ describe('save body size', () => {
     mockCan.mockResolvedValue(true);
     const save = vi.fn();
     installRepo({ saveProject: save, publishProject: vi.fn() });
-    const huge = { project: { ...PROJECT, pad: 'x'.repeat(10 * 1024 * 1024 + 1) } };
+    const huge = { project: { ...PROJECT, pad: 'x'.repeat(10 * 1024 * 1024 + 1) }, expectedVersion: 1 };
     const res = await POST(saveReq(huge));
     expect(res.status).toBe(413);
     expect(save).not.toHaveBeenCalled();
+  });
+});
+
+// The version lock (src/app/api/projects/_schema.ts): a save names the version
+// its snapshot was based on, and there is no silent "newest wins" save.
+describe('save version lock', () => {
+  beforeEach(() => {
+    mockVerifySession.mockResolvedValue(makeSession());
+    mockCan.mockResolvedValue(true);
+  });
+
+  it('a body without expectedVersion is refused with 400 version_required, and nothing is saved', async () => {
+    const save = vi.fn();
+    installRepo({ saveProject: save, publishProject: vi.fn() });
+
+    const res = await POST(saveReq({ project: PROJECT }));
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error.code).toBe('version_required');
+    expect(body.error.message).toMatch(/Reload the page/);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('a stale version answers 409 site_changed carrying the current version', async () => {
+    const { SiteChangedError } = await import('@/server/sites');
+    const save = vi.fn().mockRejectedValue(new SiteChangedError(9));
+    installRepo({ saveProject: save, publishProject: vi.fn() });
+
+    const res = await POST(saveReq({ project: PROJECT, expectedVersion: 4 }));
+
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error).toMatchObject({ code: 'site_changed', currentVersion: 9 });
+    expect(body.error.message).toMatch(/changed somewhere else/);
+  });
+
+  it('with the real repository: a stale version writes nothing at all', async () => {
+    const { SiteRepository } = await vi.importActual<typeof import('@/server/sites/repository')>(
+      '@/server/sites/repository',
+    );
+    const prisma = {
+      site: {
+        findUnique: vi.fn(async () => ({ id: 'site_1', workspaceId: 'ws_marlin', redirects: [], erasureEpoch: 0, version: 6 })),
+        upsert: vi.fn(async () => ({})),
+        updateMany: vi.fn(async () => ({ count: 1 })),
+      },
+      sitePage: {
+        findMany: vi.fn(async () => []),
+        upsert: vi.fn(async () => ({})),
+        deleteMany: vi.fn(async () => ({ count: 0 })),
+      },
+      siteDomain: { findFirst: vi.fn(async () => null) },
+      $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma)),
+    };
+    getRepoMock.mockReturnValue(new SiteRepository(prisma as never) as ReturnType<typeof getSiteRepository>);
+
+    const res = await POST(saveReq({ project: PROJECT, expectedVersion: 5 }));
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).error.currentVersion).toBe(6);
+    expect(prisma.site.updateMany).not.toHaveBeenCalled();
+    expect(prisma.site.upsert).not.toHaveBeenCalled();
+    expect(prisma.sitePage.upsert).not.toHaveBeenCalled();
+    expect(prisma.sitePage.deleteMany).not.toHaveBeenCalled();
   });
 });

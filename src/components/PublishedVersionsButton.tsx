@@ -87,6 +87,8 @@ function ConfirmMakeLive({ confirm, online, onConfirm, onCancel }: {
       {typeof check === 'object' && hasPublishIssues(check) && (
         <ul className="list-disc space-y-1 pl-5 text-sm">
           {check.missingImpressum && <li>This version has business data but no Impressum page.</li>}
+          {check.maps?.status === 'no-privacy-page' && <li>This version embeds Google Maps but has no privacy policy.</li>}
+          {check.maps?.status === 'not-named' && <li>This version embeds Google Maps, and its privacy policy does not name it.</li>}
           {check.placeholders.map((issue) => (
             <li key={issue.pageId}>
               {issue.title} still has {issue.count} {issue.count === 1 ? 'placeholder' : 'placeholders'}.
@@ -186,7 +188,7 @@ function VersionsPanel({ projectId }: { projectId: string }) {
     return (
       <p className="text-sm text-muted-foreground">
         {online
-          ? 'This site went live before versions were kept. Its first version is recorded with your next Save or Publish.'
+          ? 'This site went live before versions were kept. Its first version is recorded with the next save (the editor saves by itself) or Publish.'
           : 'Nothing published yet. Each Publish is kept here.'}
       </p>
     );

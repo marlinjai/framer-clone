@@ -5,16 +5,21 @@
 // which persists it and flips the site to `published`.
 //
 // Outcomes surface LOUDLY and never silently no-op:
-//   - in-flight: the button shows "Publishing..." and is disabled,
+//   - in-flight: the button shows "Publishing…" and is disabled,
 //   - success: a brief confirmation (how many pages went live),
+//   - conflict: the project was saved somewhere else since this tab loaded it
+//     (409 `site_changed`, the version lock): SiteChangedDialog asks whether to
+//     load the newer version, publish this one over it, or keep both (autosave
+//     stops for the project too, until a write of this tab succeeds),
 //   - failure: the structured server error message (or a network-error
 //     message), shown until the next attempt.
 //
 // Before publishing it checks the legal pages (src/lib/legal/publishCheck.ts):
 // a site with business data but no Impressum, or a legal page that still
-// holds [placeholders], gets an in-page notice first (never a browser
-// dialog) with a one-click "Create Impressum" (or "Open <page>") and
-// "Publish anyway". A warning, not a gate.
+// holds [placeholders], or a Google Maps embed the privacy policy does not
+// name, gets an in-page notice first (never a browser dialog) with a one-click
+// "Create Impressum" (or "Open <page>", "Create privacy policy"), the suggested
+// Google Maps wording, and "Publish anyway". A warning, not a gate.
 'use client';
 
 import React from 'react';
@@ -23,10 +28,16 @@ import { getSnapshot } from 'mobx-state-tree';
 import { UploadCloud } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useStore } from '@/hooks/useStore';
-import { markServerVersion, type ProjectContent } from '@/stores/openProject';
+import { knownServerVersion, markServerVersion, type ProjectContent } from '@/stores/openProject';
+import { postProjectWrite } from '@/lib/projects/projectWrite';
+import { abandonWorkingCopy, existingAutosave, reloadDiscarding } from '@/lib/projects/autosave';
+import SiteChangedDialog from './SiteChangedDialog';
+import SaveAsNewProjectDialog from './SaveAsNewProjectDialog';
 import { useSiteAddress } from '@/contexts/SiteAddressContext';
 import { TopBarStatus } from './TopBarStatus';
 import { checkBeforePublish, hasPublishIssues, type PublishCheck } from '@/lib/legal/publishCheck';
+import type { LegalKind } from '@/lib/legal/legalPages';
+import { GoogleMapsPrivacyHint } from '@/components/site/GoogleMapsPrivacyHint';
 
 type PublishState =
   | { kind: 'idle' }
@@ -42,7 +53,9 @@ type PublishState =
       liveLabel: string | null;
     }
   | { kind: 'error'; message: string }
-  | { kind: 'confirm'; check: PublishCheck };
+  | { kind: 'confirm'; check: PublishCheck }
+  // Refused by the version lock: the server is at `currentVersion`.
+  | { kind: 'conflict'; currentVersion: number; retrying: boolean };
 
 const PublishButton = observer(() => {
   const rootStore = useStore();
@@ -50,8 +63,12 @@ const PublishButton = observer(() => {
   const { address, setAddress } = useSiteAddress();
   const isUnsavedDemo = rootStore.editorUI.isUnsavedDemo === true;
   const [state, setState] = React.useState<PublishState>({ kind: 'idle' });
+  const [saveAsOpen, setSaveAsOpen] = React.useState(false);
 
-  const publish = React.useCallback(async (skipChecks = false) => {
+  // `overVersion`: publish over the server's copy on purpose ("Publish mine
+  // anyway"), naming the version the refusal reported. The legal checks already
+  // ran for this attempt then.
+  const publish = React.useCallback(async (skipChecks = false, overVersion?: number) => {
     if (!project) {
       setState({ kind: 'error', message: 'No project to publish.' });
       return;
@@ -61,12 +78,15 @@ const PublishButton = observer(() => {
     if (isUnsavedDemo) {
       setState({
         kind: 'error',
-        message: 'This demo project exists only in this browser. Save it as a project first (Save), then publish it from there.',
+        message: 'This demo project exists only in this browser. Keep it as a project first (Keep as project), then publish it from there.',
       });
       return;
     }
-    if (!skipChecks) {
-      const check = checkBeforePublish(
+    // The legal check reads the working copy as it is now. It runs again inside
+    // `write`, on the snapshot that is sent, because an edit made while a save was
+    // in flight can add an issue after this first run (the publish route does not check).
+    const runCheck = () =>
+      checkBeforePublish(
         project.site.business,
         project.pagesArray.map((p) => ({
           id: p.id,
@@ -76,35 +96,69 @@ const PublishButton = observer(() => {
         })),
         { definitions: project.definitions, refused: project.refusedComponents },
       );
+    if (!skipChecks) {
+      const check = runCheck();
       if (hasPublishIssues(check)) {
         setState({ kind: 'confirm', check });
         return;
       }
     }
-    setState({ kind: 'publishing' });
-    try {
+    setState((prev) =>
+      overVersion !== undefined && prev.kind === 'conflict' ? { ...prev, retrying: true } : { kind: 'publishing' },
+    );
+    // Autosave (src/lib/projects/autosave.ts) is held while this runs: a save in
+    // flight finishes first and none starts meanwhile, so the version lock sees
+    // one writer from this tab. The snapshot is taken after that wait.
+    const autosave = existingAutosave(project.id);
+    const write = async () => {
+      if (!skipChecks) {
+        const recheck = runCheck();
+        if (hasPublishIssues(recheck)) return { recheck };
+      }
       const snapshot = getSnapshot(project);
       // The edits refused up to this snapshot are the ones this publish leaves out.
       const acknowledged = [...project.refusedComponents];
-      const res = await fetch('/api/projects/publish', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ project: snapshot }),
+      // A save of this tab whose answer was lost (and whose settling retry failed
+      // too) may be the latest write: name it, on the base it was made on (the
+      // known version, or the one a lost "Save mine over it" named), so Publish
+      // builds on it instead of meeting it as someone else's change (the server
+      // checks the key is bound to the current version).
+      const pending = overVersion === undefined ? autosave?.lostAttempts() : undefined;
+      const expectedVersion = overVersion ?? pending?.expectedVersion ?? knownServerVersion(project.id);
+      const lost = pending?.keys ?? [];
+      const result = await postProjectWrite('/api/projects/publish', snapshot, expectedVersion, 'Publish failed', {
+        ...(lost.length > 0 ? { previousRequestKeys: lost } : {}),
       });
-      const payload: unknown = await res.json().catch(() => null);
-      if (!res.ok) {
-        const message =
-          (payload as { error?: { message?: string } } | null)?.error?.message ??
-          `Publish failed (${res.status}).`;
-        setState({ kind: 'error', message });
+      if (result.kind === 'conflict') autosave?.noteConflict(result.currentVersion);
+      else if (result.kind === 'error' && result.writtenVersion !== undefined) {
+        markServerVersion(project.id, snapshot as ProjectContent, result.writtenVersion);
+      } else if (result.kind === 'ok') {
+        // The server now holds exactly this project, at this version (see openProject).
+        markServerVersion(project.id, snapshot as ProjectContent, result.version);
+      }
+      return { result, acknowledged };
+    };
+    try {
+      const outcome = autosave ? await autosave.exclusive(write) : await write();
+      if (outcome.recheck) {
+        // An edit during the wait added an issue: nothing was sent, ask first.
+        setState({ kind: 'confirm', check: outcome.recheck });
         return;
       }
-      // The server now holds exactly this project (see openProject).
-      markServerVersion(project.id, snapshot as ProjectContent);
+      const { result, acknowledged } = outcome;
+      if (result.kind === 'conflict') {
+        setState({ kind: 'conflict', currentVersion: result.currentVersion, retrying: false });
+        return;
+      }
+      if (result.kind === 'error') {
+        // Published, but a later step failed: this snapshot is what the server
+        // holds (marked inside `write`), so the next save (autosave) must not meet it as
+        // someone else's change.
+        setState({ kind: 'error', message: result.message });
+        return;
+      }
       project.clearRefusedEdits(acknowledged);
-      const ok = payload as
-        | { publishedPages?: unknown; liveUrl?: unknown; subdomain?: unknown }
-        | null;
+      const ok = result.payload as { publishedPages?: unknown; liveUrl?: unknown; subdomain?: unknown };
       const published = ok?.publishedPages;
       const count = Array.isArray(published) ? published.length : 0;
       // Prefer the absolute liveUrl; in local dev (no base host) the server
@@ -138,11 +192,11 @@ const PublishButton = observer(() => {
     }
   }, [project, address.host, setAddress, isUnsavedDemo]);
 
-  const publishing = state.kind === 'publishing';
+  const publishing = state.kind === 'publishing' || (state.kind === 'conflict' && state.retrying);
 
-  const createImpressum = () => {
+  const createLegal = (kind: LegalKind) => {
     if (!project) return;
-    const { page } = project.createLegalPage('impressum');
+    const { page } = project.createLegalPage(kind);
     rootStore.editorUI.setCurrentPage(page);
     setState({ kind: 'idle' });
   };
@@ -194,12 +248,40 @@ const PublishButton = observer(() => {
       {state.kind === 'confirm' && (
         <PublishLegalNotice
           check={state.check}
-          onCreateImpressum={createImpressum}
+          language={project?.site.language ?? 'en'}
+          onCreateLegal={createLegal}
           onOpenPage={openPage}
           onPublishAnyway={() => void publish(true)}
           onCancel={() => setState({ kind: 'idle' })}
         />
       )}
+      <SiteChangedDialog
+        open={state.kind === 'conflict'}
+        action="publish"
+        busy={state.kind === 'conflict' && state.retrying}
+        onKeepEditing={() => setState({ kind: 'idle' })}
+        onLoadNewer={() => reloadDiscarding(project?.id)}
+        onKeepMine={() => {
+          if (state.kind === 'conflict') void publish(true, state.currentVersion);
+        }}
+        onSaveAsNew={() => {
+          setState({ kind: 'idle' });
+          setSaveAsOpen(true);
+        }}
+      />
+      {/* Mounted only while asked for: it is the conflict's "keep both" choice. */}
+      {project && !isUnsavedDemo && saveAsOpen ? (
+        <SaveAsNewProjectDialog
+          open={saveAsOpen}
+          onOpenChange={setSaveAsOpen}
+          defaultName={`${project.metadata.title || 'Untitled Project'} (copy)`}
+          getSnapshot={() => getSnapshot(project) as unknown as { pages: Record<string, unknown>; components: Record<string, unknown> }}
+          currentPageId={rootStore.editorUI.currentPage?.id}
+          description="Keeps both versions: this tab's pages and components become a new project in your company, and it opens in the editor. Nothing is published; the project changed elsewhere stays as it is."
+          // The original's working copy now lives on as the new project: give it up here.
+          onSaved={() => abandonWorkingCopy(project.id)}
+        />
+      ) : null}
       <Button
         type="button"
         variant="brand"
@@ -209,7 +291,7 @@ const PublishButton = observer(() => {
         title="Publish this site"
       >
         <UploadCloud size={16} />
-        {publishing ? 'Publishing...' : 'Publish'}
+        {publishing ? 'Publishing…' : 'Publish'}
       </Button>
     </div>
   );
@@ -219,7 +301,9 @@ PublishButton.displayName = 'PublishButton';
 
 interface PublishLegalNoticeProps {
   check: PublishCheck;
-  onCreateImpressum: () => void;
+  /** The site language, for the suggested Google Maps wording. */
+  language: string;
+  onCreateLegal: (kind: LegalKind) => void;
   onOpenPage: (pageId: string) => void;
   onPublishAnyway: () => void;
   onCancel: () => void;
@@ -230,12 +314,13 @@ interface PublishLegalNoticeProps {
  * and "Publish anyway". Takes focus when it appears (the owner just clicked
  * Publish and must read it) and closes on Escape.
  */
-function PublishLegalNotice({ check, onCreateImpressum, onOpenPage, onPublishAnyway, onCancel }: PublishLegalNoticeProps) {
+function PublishLegalNotice({ check, language, onCreateLegal, onOpenPage, onPublishAnyway, onCancel }: PublishLegalNoticeProps) {
   const ref = React.useRef<HTMLDivElement>(null);
   React.useEffect(() => {
     ref.current?.focus();
   }, []);
   const first = check.placeholders[0] ?? check.components.find((issue) => issue.pageId !== undefined);
+  const maps = check.maps && check.maps.status !== 'named' ? check.maps : null;
   return (
     <div
       ref={ref}
@@ -257,7 +342,9 @@ function PublishLegalNotice({ check, onCreateImpressum, onOpenPage, onPublishAny
       <p id="publish-legal-title" className="text-[13px] font-semibold">
         {check.missingImpressum
           ? 'Your site has no Impressum yet'
-          : check.placeholders.length > 0
+          : maps
+            ? 'Your privacy policy must name Google Maps'
+            : check.placeholders.length > 0
             ? 'Your legal pages still have placeholders'
             : 'Some components will not show'}
       </p>
@@ -267,6 +354,14 @@ function PublishLegalNotice({ check, onCreateImpressum, onOpenPage, onPublishAny
             German law requires an Impressum on a business website. Create one from your business details in one click,
             then review it.
           </p>
+        )}
+        {maps && (
+          <GoogleMapsPrivacyHint
+            language={language}
+            check={maps}
+            onCreatePrivacy={() => onCreateLegal('privacy')}
+            onOpenPrivacy={maps.privacyPageId ? () => onOpenPage(maps.privacyPageId as string) : undefined}
+          />
         )}
         {check.placeholders.length > 0 && (
           <ul className="list-disc pl-4">
@@ -295,7 +390,7 @@ function PublishLegalNotice({ check, onCreateImpressum, onOpenPage, onPublishAny
           Publish anyway
         </Button>
         {check.missingImpressum ? (
-          <Button type="button" variant="brand" size="sm" onClick={onCreateImpressum}>
+          <Button type="button" variant="brand" size="sm" onClick={() => onCreateLegal('impressum')}>
             Create Impressum
           </Button>
         ) : first?.pageId ? (

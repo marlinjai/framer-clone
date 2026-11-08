@@ -25,8 +25,8 @@
 
 import type { PublishedPageRow } from '@/server/sites/publicResolver';
 import { literalPage, type ExpandableSite } from '@/lib/components/expandedPages';
-import { absoluteUrl, pagePath } from './publishedHead';
-import { isHttpsUrl, type SiteSettings } from './siteSettings';
+import { absoluteUrl, iconHref, iconMimeType, pagePath } from './publishedHead';
+import type { SiteSettings } from './siteSettings';
 
 export const SITEMAP_LIMITS = {
   perDynamicPage: 1000,
@@ -80,8 +80,10 @@ export function buildWebManifest(settings: SiteSettings, siteName: string): Reco
     start_url: '/',
     display: 'browser',
   };
-  if (isHttpsUrl(settings.faviconUrl)) {
-    manifest.icons = [{ src: settings.faviconUrl, sizes: 'any' }];
+  const icon = iconHref(settings.faviconUrl);
+  if (icon) {
+    const type = iconMimeType(settings.faviconUrl);
+    manifest.icons = [{ src: icon, sizes: 'any', ...(type ? { type } : {}) }];
   }
   return manifest;
 }

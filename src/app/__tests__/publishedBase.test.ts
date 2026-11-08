@@ -9,7 +9,7 @@ import { RESET_PSEUDO_ELEMENTS } from '@/lib/site/pageBase';
 import { publishedBaseInputs, readPublishedBase } from '../../../test/score/lib/publishedBase';
 
 describe('the published base in the score', () => {
-  it('was generated from the current globals.css, layouts and compilers', () => {
+  it('was generated from the current site sheet, layouts and compilers', () => {
     expect(readPublishedBase().meta.inputs, 'a base input changed: run pnpm score:refresh-base and commit the result').toEqual(publishedBaseInputs());
   });
 

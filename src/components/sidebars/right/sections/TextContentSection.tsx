@@ -19,12 +19,14 @@ import { Type } from 'lucide-react';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import type { BindableSlotMeta } from '@/lib/bindings/types';
 import { getBindableSlotsFor } from '@/lib/componentRegistry';
+import { shopPartRoleOf } from '@/lib/commerce/parts';
 import { isTextBound, textNodesOf, textRunLabel } from '@/lib/renderer/textContent';
 import { cn } from '@/lib/utils';
 import { CollapsibleSection, FIELD_LABEL } from '../primitives';
 import BindingControl from '../BindingControl';
 import { owningDefinition } from '@/lib/bindings/scopeIntrospection';
 import { getRegistryIdForNode } from '../registryId';
+import { registerOpenDraft } from '@/lib/projects/openDrafts';
 
 interface TextContentFieldProps {
   node: ComponentInstance;
@@ -74,6 +76,17 @@ export const TextContentField = observer(({ node, label = 'Text content', varian
     () => () => {
       if (dirty.current) latest.current.commit(latest.current.draft);
     },
+    [],
+  );
+
+  // Typing not committed yet counts as unsaved work for the unload warning, and
+  // Cmd+S (or leaving the page) commits it first (src/lib/projects/openDrafts.ts).
+  React.useEffect(
+    () =>
+      registerOpenDraft({
+        isDirty: () => dirty.current,
+        commit: () => latest.current.commit(latest.current.draft),
+      }),
     [],
   );
 
@@ -150,7 +163,10 @@ interface TextNodeRowProps {
 
 const TextNodeRow = observer(({ node, label }: TextNodeRowProps) => {
   const registryId = getRegistryIdForNode(node);
-  const slotMeta = registryId ? getBindableSlotsFor(registryId).children : undefined;
+  // A shop part's label (the add-to-cart label, the cart's empty message) binds like any
+  // text: its node is a plain tag, so the registry has no slot for it.
+  const shopPartText = !!shopPartRoleOf(node.props);
+  const slotMeta = (registryId ? getBindableSlotsFor(registryId).children : undefined) ?? (shopPartText ? FALLBACK_META : undefined);
   const bound = isTextBound(node);
   // Inside a component's definition any text can become an input (Make input).
   const inDefinition = owningDefinition(node) !== undefined;

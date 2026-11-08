@@ -35,9 +35,10 @@ function freePort(): Promise<number> {
 
 /** Resolves when this server answers; rejects as soon as it exits, so a dead start is never waited out. */
 async function waitForServer(child: ChildProcess, port: number, log: string): Promise<void> {
-  let exited: number | null | undefined;
-  child.once('exit', (code) => {
-    exited = code;
+  let exited: string | undefined;
+  // A process killed by a signal exits with code null and a signal name, so both are reported.
+  child.once('exit', (code, signal) => {
+    exited = signal ? `signal ${signal}` : `code ${code}`;
   });
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {

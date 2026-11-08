@@ -13,10 +13,15 @@
 //   - buildBusinessJsonLd: schema.org LocalBusiness (or Organization without a
 //     complete address) from the business data.
 //
-// Every URL the owner typed is re-checked here (isHttpsUrl) so a bad value is
-// left out, never emitted.
+// Every image the owner set is re-checked here so a bad value is left out,
+// never emitted. An image is an https URL typed by hand or the path of an
+// uploaded one (`/site-images/<sha256>.<ext>`, src/lib/site/siteImages.ts):
+// icons keep that path relative, so a visitor on any of the site's hosts loads
+// the icon from the host they are on; Open Graph, twitter and JSON-LD images
+// are made absolute on the primary host, since crawlers need full addresses.
 
 import type { Metadata } from 'next';
+import { parseSiteImagePath } from './siteImages';
 import {
   WEEKDAYS,
   effectiveTitleTemplate,
@@ -49,6 +54,31 @@ export interface PageHeadInput {
 
 /** The path of the web manifest route (src/app/site.webmanifest/route.ts). */
 export const SITE_MANIFEST_PATH = '/site.webmanifest';
+
+/**
+ * An icon address for the head and the manifest: an https URL as typed, an
+ * uploaded image's path as it is (relative, served on every host of the site),
+ * or undefined for anything else.
+ */
+export function iconHref(value: string): string | undefined {
+  if (isHttpsUrl(value)) return value;
+  return parseSiteImagePath(value) ? value : undefined;
+}
+
+/** The MIME type of an uploaded icon (`image/png`, `image/x-icon`), or undefined for a typed URL. */
+export function iconMimeType(value: string): string | undefined {
+  return parseSiteImagePath(value)?.contentType;
+}
+
+/**
+ * An absolute image address for crawlers (Open Graph, twitter, JSON-LD): an
+ * https URL as typed, an uploaded image's path on the primary host, or
+ * undefined (anything else, or an upload on a site without a primary host).
+ */
+export function sharedImageUrl(value: string, primaryHost: string | null): string | undefined {
+  if (isHttpsUrl(value)) return value;
+  return parseSiteImagePath(value) ? absoluteUrl(primaryHost, value) : undefined;
+}
 
 /** https://<host> for a primary host, or undefined. */
 export function originOf(primaryHost: string | null): string | undefined {
@@ -112,22 +142,26 @@ export function siteLayoutMetadata(input: SiteHeadInput): Metadata {
   };
   const origin = originOf(primaryHost);
   if (origin) metadata.metadataBase = new URL(origin);
-  if (isHttpsUrl(settings.faviconUrl)) {
+  const icon = iconHref(settings.faviconUrl);
+  if (icon) {
+    const type = iconMimeType(settings.faviconUrl);
     metadata.icons = {
-      icon: [{ url: settings.faviconUrl }],
-      apple: [{ url: settings.faviconUrl }],
+      icon: [{ url: icon, ...(type ? { type } : {}) }],
+      // Apple's home screen icon must be a raster image it can scale: an uploaded ICO is left out.
+      ...(type === 'image/x-icon' ? {} : { apple: [{ url: icon }] }),
     };
   }
   const locale = ogLocale(settings);
+  const image = sharedImageUrl(settings.ogImageUrl, primaryHost);
   metadata.openGraph = {
     type: 'website',
     ...(siteName ? { siteName } : {}),
     ...(locale ? { locale } : {}),
-    ...(isHttpsUrl(settings.ogImageUrl) ? { images: [{ url: settings.ogImageUrl }] } : {}),
+    ...(image ? { images: [{ url: image }] } : {}),
   };
   metadata.twitter = {
     card: settings.twitterCard,
-    ...(isHttpsUrl(settings.ogImageUrl) ? { images: [settings.ogImageUrl] } : {}),
+    ...(image ? { images: [image] } : {}),
   };
   return metadata;
 }
@@ -171,11 +205,7 @@ export function pageMetadata(input: PageMetadataInput): Metadata {
   const canonical = page.canonicalUrl || computedUrl;
   if (canonical) metadata.alternates = { canonical };
 
-  const image = isHttpsUrl(page.ogImage)
-    ? page.ogImage
-    : isHttpsUrl(settings.ogImageUrl)
-      ? settings.ogImageUrl
-      : undefined;
+  const image = sharedImageUrl(page.ogImage, primaryHost) ?? sharedImageUrl(settings.ogImageUrl, primaryHost);
   const ogTitle = page.ogTitle || fullTitle;
   const ogDescription = page.ogDescription || page.description;
   const locale = ogLocale(settings);
@@ -235,8 +265,10 @@ export function buildBusinessJsonLd(input: SiteHeadInput): Record<string, unknow
   if (b.phone) data.telephone = b.phone;
   if (b.email) data.email = b.email;
   if (b.vatId) data.vatID = b.vatId;
-  if (isHttpsUrl(settings.ogImageUrl)) data.image = settings.ogImageUrl;
-  if (isHttpsUrl(settings.faviconUrl)) data.logo = settings.faviconUrl;
+  const image = sharedImageUrl(settings.ogImageUrl, primaryHost);
+  if (image) data.image = image;
+  const logo = sharedImageUrl(settings.faviconUrl, primaryHost);
+  if (logo) data.logo = logo;
   if (local) {
     data.address = {
       '@type': 'PostalAddress',

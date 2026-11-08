@@ -138,3 +138,58 @@ describe('buildBusinessJsonLd', () => {
     expect(JSON.parse(text).name).toBe('</script><script>alert(1)</script>');
   });
 });
+
+describe('uploaded images (/site-images/<sha256>.<ext>)', () => {
+  const sha = 'b'.repeat(64);
+  const favicon = `/site-images/${sha}.png`;
+  const icoIcon = `/site-images/${sha}.ico`;
+  const sharing = `/site-images/${sha}.jpg`;
+  const pageImage = `/site-images/${'c'.repeat(64)}.webp`;
+
+  it('keeps an uploaded icon relative with its type, and makes the sharing image absolute on the primary host', () => {
+    const m = siteLayoutMetadata({ settings: settings({ faviconUrl: favicon, ogImageUrl: sharing }), siteName: 'A', primaryHost: 'www.baeckerei.de' });
+    expect(m.icons).toEqual({ icon: [{ url: favicon, type: 'image/png' }], apple: [{ url: favicon }] });
+    expect(m.openGraph).toMatchObject({ images: [{ url: `https://www.baeckerei.de${sharing}` }] });
+    expect(m.twitter).toMatchObject({ images: [`https://www.baeckerei.de${sharing}`] });
+  });
+
+  it('leaves an uploaded ICO out of the Apple touch icon', () => {
+    const m = siteLayoutMetadata({ settings: settings({ faviconUrl: icoIcon }), siteName: 'A', primaryHost: 'a.test' });
+    expect(m.icons).toEqual({ icon: [{ url: icoIcon, type: 'image/x-icon' }] });
+  });
+
+  it('prefers the page upload over the site default, both absolute', () => {
+    const base = { settings: settings({ ogImageUrl: sharing }), siteName: 'A', primaryHost: 'shop.example.com', path: '/t' };
+    const m = pageMetadata({ ...base, page: { ...emptyPage, title: 'T', ogImage: pageImage } });
+    expect(m.openGraph).toMatchObject({ images: [{ url: `https://shop.example.com${pageImage}` }] });
+    expect(m.twitter).toMatchObject({ images: [`https://shop.example.com${pageImage}`] });
+    const fallback = pageMetadata({ ...base, page: { ...emptyPage, title: 'T' } });
+    expect(fallback.openGraph).toMatchObject({ images: [{ url: `https://shop.example.com${sharing}` }] });
+  });
+
+  it('emits no sharing image for an upload when no primary host is known (crawlers need a full address)', () => {
+    const m = siteLayoutMetadata({ settings: settings({ faviconUrl: favicon, ogImageUrl: sharing }), siteName: 'A', primaryHost: null });
+    expect(m.icons).toBeDefined();
+    expect((m.openGraph as { images?: unknown }).images).toBeUndefined();
+  });
+
+  it('leaves out a path that only looks like an upload', () => {
+    const m = siteLayoutMetadata({
+      settings: settings({ faviconUrl: '/site-images/x.png', ogImageUrl: `/site-images/${sha}.svg` }),
+      siteName: 'A',
+      primaryHost: 'a.test',
+    });
+    expect(m.icons).toBeUndefined();
+    expect((m.openGraph as { images?: unknown }).images).toBeUndefined();
+  });
+
+  it('puts absolute upload addresses into the JSON-LD', () => {
+    const data = buildBusinessJsonLd({
+      settings: settings({ faviconUrl: favicon, ogImageUrl: sharing, business: { phone: '+49 89 1234567' } }),
+      siteName: 'A',
+      primaryHost: 'a.test',
+    });
+    expect(data?.logo).toBe(`https://a.test${favicon}`);
+    expect(data?.image).toBe(`https://a.test${sharing}`);
+  });
+});

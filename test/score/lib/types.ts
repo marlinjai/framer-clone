@@ -39,6 +39,26 @@ export const ROW_KINDS = [
 ] as const;
 export type RowKind = (typeof ROW_KINDS)[number];
 
+/** How a kind is named in the reports. */
+export const KIND_LABEL: Record<RowKind, string> = {
+  'html-element': 'HTML elements',
+  'html-global-attribute': 'HTML global attributes',
+  'html-element-attribute': 'HTML attributes of single elements',
+  'html-event-handler': 'HTML event handler attributes',
+  'svg-element': 'SVG elements',
+  'svg-attribute': 'SVG attributes',
+  'mathml-element': 'MathML elements',
+  'mathml-attribute': 'MathML attributes',
+  'css-property': 'CSS properties',
+  'css-value': 'CSS value types, functions and units',
+  'css-selector': 'CSS selectors',
+  'css-at-rule': 'CSS at-rules',
+  'css-media-feature': 'CSS media features',
+  'aria-pattern': 'WAI-ARIA patterns',
+  component: 'Reusable component promises',
+  'page-item': 'Page-level items: a site theme',
+};
+
 /** One entry of the authoritative lists. */
 export interface Entry {
   kind: RowKind;

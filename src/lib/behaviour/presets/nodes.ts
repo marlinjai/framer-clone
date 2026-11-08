@@ -16,7 +16,7 @@
 //
 // PURE: no React, no MST.
 
-import { remapBehaviourRefs, type Binding, type StateValue, type StoredBehaviour, type Trigger, type Action } from '../format';
+import { compactBehaviour, remapBehaviourRefs, type Binding, type StateValue, type StoredBehaviour, type Trigger, type Action } from '../format';
 import { renewCopyIds } from '@/lib/renderer/idRefs';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 
@@ -58,7 +58,8 @@ export type Derived = Omit<StoredBehaviour, 'state' | 'on' | 'bind'> & {
 
 /**
  * The node with its generated entries replaced by `derive`, and everything a person added
- * kept. Generated entries go first, so a person's trigger runs after them.
+ * kept. Generated entries go first, so a person's trigger runs after them. A node left with
+ * nothing has no `behaviour` at all, as the stored shape asks, rather than an empty one.
  */
 export function derived(node: PresetNode, derive: Derived): PresetNode {
   const before = behaviourOf(node);
@@ -73,7 +74,10 @@ export function derived(node: PresetNode, derive: Derived): PresetNode {
     if (list.length > 0) merged[name] = list;
     else delete merged[name];
   }
-  return withProps(node, { behaviour: merged });
+  const rest: Record<string, unknown> = { ...propsOf(node) };
+  delete rest.behaviour;
+  const behaviour = compactBehaviour(merged);
+  return { ...node, props: (behaviour ? { ...rest, behaviour } : rest) as PresetNode['props'] };
 }
 
 /** The id of a generated state on this node, or what the first derive calls it. */

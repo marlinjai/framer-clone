@@ -61,9 +61,8 @@ import { MISSING_TYPE, serializedBytes } from '@/lib/components/placement';
 import {
   bakeInputBindings,
   createRenderBudget,
+  openPlacement,
   placementInstanceOf,
-  resolveInputValues,
-  withoutInstance,
   type RenderBudget,
 } from '@/lib/components/expand';
 import { repeatedCopies, repeatInputId, withoutRepeat } from '@/lib/components/repeat';
@@ -71,7 +70,6 @@ import {
   createScope,
   lookup,
   pushAvailabilityFrame,
-  pushInputFrame,
   pushItemFrame,
   pushPageFrame,
   pushProductFrame,
@@ -301,8 +299,9 @@ async function hydrateNode(
   repos: HydrationContext,
 ): Promise<ComponentNode | null> {
   const instance = placementInstanceOf(stored.props);
-  const scope = instance ? pushInputFrame(outerScope, resolveInputValues(instance, outerScope, repos.budget)) : outerScope;
-  const placed = instance ? withoutInstance(stored) : stored;
+  const opened = instance ? openPlacement(stored, instance, outerScope, repos.budget) : { node: stored, scope: outerScope };
+  const { scope } = opened;
+  const placed = opened.node;
   // A repeat is expanded by whatever holds the node (repeatScopes). One reached
   // any other way, a Collection's row template say, renders once, never as a marker.
   if (repeatInputId(placed.props)) repos.budget.warn(`a repeat for "${repeatInputId(placed.props)}" can only sit inside an element`);
@@ -360,8 +359,7 @@ function bakeIsland(node: ComponentNode, scope: BindingScope, budget: RenderBudg
   const baked = bakeInputBindings(node, scope);
   const children = node.children?.flatMap((outer) => repeatScopes(outer, scope, budget).flatMap(({ node: child, scope: at }) => {
     const instance = placementInstanceOf(child.props);
-    const childScope = instance ? pushInputFrame(at, resolveInputValues(instance, at, budget)) : at;
-    const stored = instance ? withoutInstance(child) : child;
+    const { node: stored, scope: childScope } = instance ? openPlacement(child, instance, at, budget) : { node: child, scope: at };
     return isHiddenByBinding(stored, childScope) ? [] : [bakeIsland(stored, childScope, budget)];
   }));
   const same = !children || (children.length === node.children?.length && children.every((child, i) => child === node.children?.[i]));

@@ -298,8 +298,8 @@ describe('the section map', () => {
         expect(SECTION_STYLE_KEYS[section as keyof typeof SECTION_STYLE_KEYS], `${section} ${key}`).toContain(key);
       }
     }
-    const owned = new Set(['link', 'image', 'form', 'formField', 'formSubmit', 'stickyCta'].flatMap((c) => [...ownedProps(c as 'link')]));
-    for (const file of ['LinkSection.tsx', 'ImageSection.tsx', 'FormSection.tsx', 'StickyCtaSection.tsx']) {
+    const owned = new Set(['link', 'image', 'form', 'formField', 'formSubmit', 'stickyCta', 'mapEmbed'].flatMap((c) => [...ownedProps(c as 'link')]));
+    for (const file of ['LinkSection.tsx', 'ImageSection.tsx', 'FormSection.tsx', 'StickyCtaSection.tsx', 'MapEmbedSection.tsx']) {
       for (const match of source(file).matchAll(/setProps\(\{ ([A-Za-z]+):/g)) {
         expect([...owned], `${file} ${match[1]}`).toContain(match[1]);
       }

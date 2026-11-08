@@ -429,3 +429,18 @@ export function inputExpressionFor(input: Pick<InputDefinition, 'id' | 'type'>, 
   if (input.type === 'image' && slot === 'alt') return `{{input.${input.id}.alt}}`;
   return `{{input.${input.id}}}`;
 }
+
+// ---------- event inputs ----------
+
+/**
+ * The stored name of an Event input: a trigger in the definition does
+ * `{ emit: 'input-<id>' }`, and a placement listens with
+ * `{ on: 'custom:input-<id>' }`. Expansion gives each pair a name of its own per
+ * definition (see `compileEvents` in expand.ts), because an emitted event runs up
+ * every node around it, and an outer component with an input of the same id
+ * would otherwise answer an inner one's.
+ */
+/** The input id an emitted or listened-for name stands for, or undefined. */
+export function eventInputOf(name: unknown): string | undefined {
+  return typeof name === 'string' && name.startsWith('input-') ? name.slice('input-'.length) : undefined;
+}
