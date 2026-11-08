@@ -234,3 +234,50 @@ describe('validateReviewOps on a text node', () => {
     expect(rejected[0].reason).toContain('no element to style');
   });
 });
+
+describe('custom code and behaviour, never written by the review', () => {
+  it('refuses an operation naming customCode, always, as a property or a key at any depth', () => {
+    const { ops, rejected } = validateReviewOps(
+      [
+        style({ property: 'customCode', value: 'x' }),
+        { ...style({}), customCode: { sha256: 'a', title: 'b' } },
+        { op: 'update_text', nodeId: 'h1', text: 'Ride', reason: 'r', extra: [{ customCode: true }] },
+        { op: 'update_props', nodeId: 'h1', props: { customCode: { sha256: 'a', title: 'b' } } },
+      ],
+      ctx(),
+    );
+    expect(ops).toEqual([]);
+    expect(rejected.map((r) => r.index)).toEqual([0, 1, 2, 3]);
+    for (const refusal of rejected) expect(refusal.reason).toContain('custom code is never written by a generator');
+  });
+
+  it('refuses customCode in any spelling, and at any depth', () => {
+    let deep: Record<string, unknown> = { CustomCode: true };
+    for (let i = 0; i < 40; i += 1) deep = { nested: [deep] };
+    const { ops, rejected } = validateReviewOps(
+      [
+        style({ property: 'customcode', value: 'x' }),
+        style({ property: 'CustomCode', value: 'x' }),
+        { ...style({}), CUSTOMCODE: { sha256: 'a', title: 'b' } },
+        { op: 'update_props', nodeId: 'h1', props: { custom_code: 'x' } },
+        { op: 'update_text', nodeId: 'h1', text: 'Ride', reason: 'r', extra: deep },
+        { ...style({}), Property: 'customCode' },
+      ],
+      ctx(),
+    );
+    expect(ops).toEqual([]);
+    expect(rejected.map((r) => r.index)).toEqual([0, 1, 2, 3, 4, 5]);
+    for (const refusal of rejected) expect(refusal.reason).toContain('custom code is never written by a generator');
+  });
+
+  it('has no operation that writes behaviour', () => {
+    const { ops, rejected } = validateReviewOps(
+      [style({ property: 'behaviour', value: '{}' }), { op: 'update_behaviour', nodeId: 'h1', behaviour: { on: [] } }],
+      ctx(),
+    );
+    expect(ops).toEqual([]);
+    expect(rejected).toHaveLength(2);
+    expect(rejected[0].reason).toContain('not supported by the editor');
+    expect(rejected[1].reason).toContain('unknown operation');
+  });
+});

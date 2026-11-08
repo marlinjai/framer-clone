@@ -137,6 +137,23 @@ describe('captureTarget / buildRequest', () => {
     expect(JSON.stringify(req.target)).toContain(container.id);
   });
 
+  it('sends the closed element a result would stand under, so no preset is placed there', () => {
+    const container = tree().children[0] as ComponentInstance;
+    const placed = applyResult(project, captureTarget('insert', page, container), result({ nodes: [
+      { type: 'p', children: [{ type: 'em', children: [{ type: '#text', props: { children: 'Fresh' } }] }] },
+      { type: 'button', props: { type: 'button' }, children: [{ type: 'span', children: [{ type: '#text', props: { children: 'Go' } }] }] },
+    ] }, captureTarget('insert', page, container)));
+    expect(placed.ok).toBe(true);
+    const [para, button] = container.children as ComponentInstance[];
+    const request = (kind: 'insert' | 'replace', selected: ComponentInstance) =>
+      buildRequest({ brief: 'x', model: 'HAIKU', target: captureTarget(kind, page, selected), project }).target;
+    expect(request('insert', para)).toMatchObject({ kind: 'insert', closedAncestor: 'p' });
+    expect(request('insert', para.children[0] as ComponentInstance)).toMatchObject({ closedAncestor: 'p' });
+    expect(request('replace', button.children[0] as ComponentInstance)).toMatchObject({ kind: 'replace', closedAncestor: 'button' });
+    expect(request('insert', container)).not.toHaveProperty('closedAncestor');
+    expect(request('replace', para)).not.toHaveProperty('closedAncestor');
+  });
+
   it('explains why a target is unavailable', () => {
     expect(describeTargetAvailability('replace', page, undefined)).toMatchObject({ ok: false });
     const viewport = page.viewportNodes[0] as ComponentInstance;

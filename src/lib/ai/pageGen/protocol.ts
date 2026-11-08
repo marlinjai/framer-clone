@@ -21,9 +21,13 @@ export const DEFAULT_PAGE_GEN_MODEL: PageGenModel = 'SONNET';
 export type PageGenTarget =
   | { kind: 'newPage'; title?: string }
   /** Replace the selected component (the app-tree root: replace its children). */
-  | { kind: 'replace'; context: unknown }
+  | { kind: 'replace'; context: unknown; closedAncestor?: string }
   /** Append inside the selected container. */
-  | { kind: 'insert'; context: unknown };
+  | { kind: 'insert'; context: unknown; closedAncestor?: string };
+
+// `closedAncestor` is the nearest element the result would stand under that a behaviour
+// preset may not sit inside (closedAncestorOf in promptSections/behaviour.ts), so the
+// validator refuses a preset there. Absent when there is none.
 
 export interface PageGenRequest {
   brief: string;

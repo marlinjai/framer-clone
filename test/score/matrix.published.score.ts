@@ -11,6 +11,8 @@ import { cssPropertyName, maxWidthBelow } from '@/lib/responsive/responsiveCss';
 import { CSS_PROP_SET } from '@/lib/styles/cssPropSet';
 import { deriveBreakpointKeys } from '@/lib/ai/pageGen/schema';
 import { TAUGHT_RULE_ROWS } from '@/lib/ai/pageGen/promptSections/rules';
+import { PERSON_TRIGGER_REFUSALS, TAUGHT_EVENT_ROWS } from '@/lib/ai/pageGen/promptSections/behaviour';
+import { stableStringify } from '@/lib/ai/serializers/normalize';
 import { validateGeneration } from '@/lib/ai/pageGen/validate';
 import { isBlockedTag } from '@/lib/renderer/blockedNodes';
 import { COMPONENT_REGISTRY } from '@/lib/componentRegistry';
@@ -44,6 +46,7 @@ import {
   type Namespace,
   type NodeShape,
 } from './lib/universe';
+import { EVENT_PROOFS, NOT_PROVEN, n as proofNode, type StoredProofNode } from './lib/eventProofs';
 import { writeOut } from './lib/io';
 import { ACCEPTED_NOT_TAUGHT, rowKey, type Cell, type Entry, type GapId, type SurfaceResults } from './lib/types';
 
@@ -158,10 +161,105 @@ function probeElementAttribute(namespace: Namespace, id: string, key: string): v
   else results.ai[key] = fail(CSS_PROP_SET.has(sample.prop) ? 'attribute-read-as-style' : 'ai-attribute-allowlist', made.warnings[0]);
 }
 
+type Made = NonNullable<ReturnType<typeof generate>['node']>;
+
+/** The keys whose value names a node, as remapBehaviourRefs in src/lib/behaviour/format.ts reads them. */
+const NODE_REFERENCES: ReadonlySet<string> = new Set([
+  'focus', 'rove', 'dialog', 'popover', 'details', 'media', 'fullscreen', 'pictureInPicture', 'scroll', 'form',
+  'setProp', 'filter', 'effect', 'of', 'active', 'owner',
+]);
+
+/** The keys whose text names a state value. */
+const STATE_REFERENCES: ReadonlySet<string> = new Set(['set', 'toggle', 'step', 'get', 'map', 'state']);
+
+/** The state ids a tree declares. */
+function statesIn(root: Made | StoredProofNode | undefined): string[] {
+  if (!root) return [];
+  const own = ((root.props as { behaviour?: { state?: Array<{ id?: unknown }> } } | undefined)?.behaviour?.state ?? [])
+    .flatMap((entry) => (typeof entry?.id === 'string' ? [entry.id] : []));
+  return [...own, ...((root.children ?? []) as Array<Made | StoredProofNode>).flatMap(statesIn)];
+}
+
+/**
+ * Every trigger of a tree with the tag it sits on. The generator gives each node a fresh id
+ * and a reference follows it, so a reference to a node of the tree reads as `#node`.
+ * `scopedSuffix` is what the generator appended to every state id it was given
+ * (scopeGeneratedState in validate.ts), taken off a state reference so the proof's trigger
+ * and the generated one compare as one.
+ */
+function triggersIn(root: Made | StoredProofNode | undefined, scopedSuffix = ''): Array<{ tag: string; trigger: string }> {
+  if (!root) return [];
+  const ids = new Set<string>();
+  const collect = (node: Made | StoredProofNode): void => {
+    ids.add(node.id);
+    ((node.children ?? []) as Array<Made | StoredProofNode>).forEach(collect);
+  };
+  collect(root);
+  const unscoped = (v: string) => (scopedSuffix && v.endsWith(scopedSuffix) ? v.slice(0, -scopedSuffix.length) : v);
+  const anonymous = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(anonymous);
+    if (!value || typeof value !== 'object') return value;
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [
+      k,
+      NODE_REFERENCES.has(k) && typeof v === 'string' && ids.has(v)
+        ? '#node'
+        : STATE_REFERENCES.has(k) && typeof v === 'string'
+          ? unscoped(v)
+          : anonymous(v),
+    ]));
+  };
+  const walk = (node: Made | StoredProofNode): Array<{ tag: string; trigger: string }> => {
+    const behaviour = (node.props as { behaviour?: { on?: unknown[] } } | undefined)?.behaviour;
+    return [
+      ...(behaviour?.on ?? []).map((trigger) => ({ tag: node.type, trigger: stableStringify(anonymous(trigger)) })),
+      ...((node.children ?? []) as Array<Made | StoredProofNode>).flatMap(walk),
+    ];
+  };
+  return walk(root);
+}
+
+/**
+ * The AI cell of an event row: the generator is given the stored page of the row's proof in
+ * events.score.ts, the trigger on that event included, and must give it back. Its trigger
+ * has to come back unchanged on the same tag, and so does every other trigger the proof
+ * stores, since the row's cause depends on them. Acceptance alone earns the cell: the prompt
+ * teaches only a press, so every other row says `accepted, not taught`. A trigger the model
+ * writes runs on a person's click, key or input only, so a row whose proof stores any other
+ * trigger is `ai-trigger-refused`, a safety decision. A row with no proof stays red for the
+ * reason the other columns give.
+ */
+const TRIGGER_REFUSALS: readonly string[] = Object.values(PERSON_TRIGGER_REFUSALS);
+
+function generatedEvent(event: string, key: string): Cell {
+  const proof = EVENT_PROOFS[event];
+  if (!proof) return fail('blocked-event-handlers', NOT_PROVEN[event] ?? 'no proof yet');
+  const trigger = { id: 'proof', on: event, do: [{ set: 'hit', value: true }] };
+  const state = [{ id: 'hit', name: 'hit', type: 'boolean', initial: false }, ...(proof.state ?? [])];
+  const tree = proofNode('proof-root', 'div', { behaviour: { state } }, ...proof.tree({ on: [trigger] }));
+  const made = generate(tree as unknown as Record<string, unknown>);
+  const before = triggersIn(tree);
+  // The generator scopes every state id it is given; the proof's own `hit` shows by how much.
+  const scopedHit = statesIn(made.node).find((id) => id.startsWith('hit-'));
+  const after = triggersIn(made.node, scopedHit ? scopedHit.slice('hit'.length) : '');
+  const own = stableStringify(trigger);
+  const host = before.find((entry) => entry.trigger === own)?.tag;
+  const same = (a: { tag: string; trigger: string }, b: { tag: string; trigger: string }) => a.tag === b.tag && a.trigger === b.trigger;
+  const kept = after.some((entry) => same(entry, { tag: host ?? '', trigger: own }));
+  if (kept && before.every((entry) => after.some((other) => same(entry, other)))) {
+    return pass(TAUGHT_EVENT_ROWS.has(key.slice(key.indexOf(':') + 1)) ? undefined : ACCEPTED_NOT_TAUGHT);
+  }
+  // The proof's own `data-t` markers are refused too, and say nothing about the row.
+  const lost = made.warnings.find((warning) => /behaviour|tag "|is a preset/.test(warning)) ?? made.warnings.find((warning) => !warning.includes('"data-t"'));
+  if (!findNode(made.node, host ?? '')) return fail('ai-tag-allowlist', lost);
+  const refused = made.warnings.find((warning) => TRIGGER_REFUSALS.some((reason) => warning.includes(reason)));
+  if (refused) return fail('ai-trigger-refused', refused);
+  return fail('blocked-event-handlers', lost ?? 'the generator did not keep the trigger');
+}
+
 /**
  * A stored handler is a string of code, and reaching the page would be the failure, so
  * this throws. Whether the event works is a different question, asked in events.score.ts,
- * whose cells replace these two in report.ts.
+ * whose cells replace these two in report.ts. The AI cell is generatedEvent's.
  */
 function probeEventHandler(id: string, key: string): void {
   const camel = `on${id[2].toUpperCase()}${id.slice(3)}`;
@@ -170,8 +268,10 @@ function probeEventHandler(id: string, key: string): void {
   if (reached) throw new Error(`a stored ${id} string reached the page`);
   results.format[key] = fail('blocked-event-handlers', 'no proof ran');
   results.renderer[key] = fail('blocked-event-handlers', 'no proof ran');
-  const kept = attempts.some((props) => Object.keys(props)[0] in (generate({ type: 'div', props }).node?.props ?? {}));
-  results.ai[key] = kept ? pass() : fail('blocked-event-handlers');
+  if (attempts.some((props) => Object.keys(props)[0] in (generate({ type: 'div', props }).node?.props ?? {}))) {
+    throw new Error(`the generator kept a stored ${id} string`);
+  }
+  results.ai[key] = generatedEvent(id.slice(2), key);
 }
 
 /** A representative value on a host property, both ways a declaration reaches a page. */

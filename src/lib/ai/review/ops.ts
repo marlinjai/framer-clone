@@ -26,6 +26,11 @@
 //     children, no child components), at most maxTextChars.
 //   - remove_node: at most REVIEW_LIMITS.maxRemovals per review; later
 //     operations on a removed node or inside it are refused.
+//   - Custom code is never written here: an operation that names `customCode` anywhere,
+//     as a property or as a key, is refused with that reason, always. The review reads
+//     the page, and a page's content can carry instructions; only a person writes code,
+//     through the guarded route (docs/plans/2026-11-02-behaviour-model.md, "AI output").
+//     No operation writes `behaviour` either: it is no style key and no text.
 //   - The plan's tells (docs/plans/2026-10-23-ai-design-quality-round-2.md)
 //     the review must never introduce, where a single value shows them,
 //     checked by the tells screen's own single-value rules (styleValueTell,
@@ -38,6 +43,7 @@ import { cssUrlsIn } from '@/lib/responsive/responsiveCss';
 import { GENERATION_LIMITS, isAcceptedStyleKey, isSafeSrc, styleKeyFrom } from '@/lib/ai/pageGen/schema';
 import { clampedZIndex, styleValueBreaksOut, styleValueProblem } from '@/lib/ai/pageGen/validate';
 import { motionValueProblem } from '@/lib/ai/pageGen/promptSections/rules';
+import { CUSTOM_CODE_REASON, namesCustomCodeProp } from '@/lib/ai/pageGen/promptSections/behaviour';
 import { styleValueTell, textTell } from '@/lib/ai/pageGen/tells';
 import { REVIEW_LIMITS, type RejectedOp, type ReviewOp, type ReviewTreeNode } from './protocol';
 
@@ -87,6 +93,30 @@ export function indexReviewTree(tree: ReviewTreeNode): Map<string, IndexedNode> 
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 
+/**
+ * Whether an operation names custom code, as a key or as the property it writes, at any
+ * depth and in any spelling (namesCustomCodeProp). Walked with a stack rather than by
+ * recursion, so no depth is too deep to look at and no nesting overflows the call stack.
+ */
+function namesCustomCode(value: unknown): boolean {
+  const pending: unknown[] = [value];
+  const seen = new Set<object>();
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (!current || typeof current !== 'object' || seen.has(current)) continue;
+    seen.add(current);
+    if (Array.isArray(current)) {
+      pending.push(...current);
+      continue;
+    }
+    for (const [key, entry] of Object.entries(current)) {
+      if (namesCustomCodeProp(key) || (key.toLowerCase() === 'property' && namesCustomCodeProp(entry))) return true;
+      pending.push(entry);
+    }
+  }
+  return false;
+}
+
 /** Why a style value is refused, or null when it is fine. */
 function reviewValueProblem(property: string, value: string, node: IndexedNode): string | null {
   if (value.length > GENERATION_LIMITS.maxStyleValueChars) return `value longer than ${GENERATION_LIMITS.maxStyleValueChars} characters`;
@@ -129,6 +159,7 @@ export function validateReviewOps(raw: unknown, ctx: OpValidationContext): { ops
     const reject = (reason: string) => rejected.push({ index, reason });
     if (index >= REVIEW_LIMITS.maxOps) return reject(`more than ${REVIEW_LIMITS.maxOps} operations`);
     if (!isObj(item)) return reject('not an object');
+    if (namesCustomCode(item)) return reject(CUSTOM_CODE_REASON);
     const nodeId = typeof item.nodeId === 'string' ? item.nodeId : '';
     const node = ctx.nodes.get(nodeId);
     if (!node) return reject(`unknown node id ${JSON.stringify(item.nodeId)}`);

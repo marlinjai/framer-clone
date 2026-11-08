@@ -28,6 +28,7 @@
 //
 // Pure apart from the injected photo resolver; client-safe.
 
+import { closedAncestorOf } from '@/lib/ai/pageGen/promptSections/behaviour';
 import { SHOP_PART_ATTR } from '@/lib/commerce/parts';
 import { getSnapshot, recordPatches } from 'mobx-state-tree';
 import ProjectModel, { type ProjectModelType } from '@/models/ProjectModel';
@@ -437,6 +438,12 @@ export async function applyOperations(
             breakpoints: asBreakpointKeys(keyed),
             ...(deps.newId ? { newId: deps.newId } : {}),
             mapAddress: address || null,
+            // No preset under a button, link or the like the parent stands in (validate.ts).
+            closedAncestor: closedAncestorOf(
+              [page.appComponentTree as ComponentInstance, ...(page.canvasNodes.values() as Iterable<ComponentInstance>)],
+              parent.id,
+              'insert',
+            ),
           },
         );
         if (!outcome.ok) throw new OpRefused(refusalOf(outcome));

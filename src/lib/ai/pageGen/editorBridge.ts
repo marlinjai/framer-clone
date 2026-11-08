@@ -24,6 +24,7 @@ import {
 } from './apply';
 import type { PageGenModel, PageGenRequest, PageGenResultPayload } from './protocol';
 import { siteContextFromSettings } from './promptSections/siteContext';
+import { closedAncestorOf } from './promptSections/behaviour';
 
 export type TargetKind = 'newPage' | 'replace' | 'insert';
 
@@ -158,7 +159,14 @@ export function buildRequest(input: {
   const component = page && target.componentId ? findInPage(page, target.componentId) : undefined;
   // ~8k tokens of context, the same budget the edit route's page serializer uses.
   const context = component ? serializeSubtree(component, { maxTokens: 8000 }) : null;
-  return { ...base, target: { kind: target.kind, context } };
+  const closedAncestor = page && target.componentId
+    ? closedAncestorOf(
+      [page.appComponentTree as ComponentInstance, ...(page.canvasNodes.values() as Iterable<ComponentInstance>)],
+      target.componentId,
+      target.kind,
+    )
+    : undefined;
+  return { ...base, target: { kind: target.kind, context, ...(closedAncestor ? { closedAncestor } : {}) } };
 }
 
 function findInPage(page: PageModelType, id: string): ComponentInstance | undefined {

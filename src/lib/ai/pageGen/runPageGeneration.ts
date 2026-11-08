@@ -244,6 +244,8 @@ export async function runPageGeneration(
     const heldAddresses = addressesHeldBy(input.target.kind === 'newPage' ? null : input.target.context);
     // A Google map shows the business address of the Site settings, or is dropped.
     const mapAddress = input.siteContext ? siteAddressOf(input.siteContext) : null;
+    // Where an inserted or replacing result stands: no preset under a button, link or the like.
+    const closedAncestor = input.target.kind === 'newPage' ? undefined : input.target.closedAncestor;
 
     while (usage.attempts < MAX_ATTEMPTS) {
       usage.attempts += 1;
@@ -274,7 +276,7 @@ export async function runPageGeneration(
       // whole page, and the draft of the first one stays up until the result).
       const sections =
         attempt === 1 && context.onSection
-          ? sectionPreview(context.onSection, requestId, attempt, { breakpoints, allowStickyCta: false, heldAddresses, mapAddress })
+          ? sectionPreview(context.onSection, requestId, attempt, { breakpoints, allowStickyCta: false, heldAddresses, mapAddress, closedAncestor })
           : undefined;
       stream.on('inputJson', (partialJson: string) => {
         rawInput += partialJson;
@@ -360,6 +362,7 @@ export async function runPageGeneration(
           allowStickyCta: input.target.kind === 'newPage',
           heldAddresses,
           mapAddress,
+          closedAncestor,
         });
         if (outcome.ok) {
           const screened = screenTells(outcome.result, breakpoints, essentials);
