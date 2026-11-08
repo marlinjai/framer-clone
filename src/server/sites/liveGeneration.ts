@@ -26,8 +26,10 @@ import 'server-only';
 // stored anywhere but here, for the length of the run. Bounded
 // (GEN_DRAFT_LIMITS): a section over `sectionChars`, or past `runChars` or
 // `sectionsPerRun`, is not sent and its skeleton stays until the result; at most
-// `runsPerProcess` runs are kept (the least recently touched one is given up on
-// first), and a run older than `runMaxMs` is given up on (`expired`).
+// `runsPerCompany` runs of one company (its own least recently touched one is
+// given up on first, so it never pushes out another company's) and
+// `runsPerProcess` in all are kept, and a run older than `runMaxMs` is given up
+// on (`expired`).
 //
 // Kept on globalThis so a development hot reload does not split writers and readers.
 
@@ -150,6 +152,12 @@ export function openLiveGeneration(siteId: string, scope: TenantScope, runId: st
     touchedAt: now,
   };
   s.sites.set(siteId, entry);
+  // A company over its share gives up its own least recently touched run first, never another company's.
+  const own = [...s.sites.values()].filter((other) => sameScope(other.scope, entry.scope));
+  for (const oldest of own.slice(0, Math.max(0, own.length - GEN_DRAFT_LIMITS.runsPerCompany))) {
+    s.sites.delete(oldest.siteId);
+    announceEnd(oldest, { runId: oldest.runId, status: 'expired' });
+  }
   while (s.sites.size > GEN_DRAFT_LIMITS.runsPerProcess) {
     const [oldestSite, oldest] = s.sites.entries().next().value as [string, RunEntry];
     s.sites.delete(oldestSite);

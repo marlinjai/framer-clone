@@ -292,6 +292,8 @@ export const GEN_DRAFT_LIMITS = {
   sectionsPerRun: 20,
   /** Running generations kept for the `state` event, in the whole process (one per site): at most 50 x runChars in memory. */
   runsPerProcess: 50,
+  /** Of those, the runs of one company (its own least recently touched goes first, never another company's). */
+  runsPerCompany: 10,
   /** A run that has not ended after this long is given up on (`expired`). */
   runMaxMs: 15 * 60_000,
   /** How long the editor waits for the saved version before it drops the draft anyway (a copy held for the person). */

@@ -156,9 +156,21 @@ describe('openLiveGeneration', () => {
 
     const now = Date.now();
     const evicted = listen('site-0');
-    for (let i = 0; i <= GEN_DRAFT_LIMITS.runsPerProcess; i += 1) openLiveGeneration(`site-${i}`, scope, `run-${i}`, { kind: 'newPage' }, now);
-    expect(generationSnapshot('site-0', scope, now)).toBeUndefined();
+    // One run per company: the process bound gives up the least recently touched, whoever's it is.
+    for (let i = 0; i <= GEN_DRAFT_LIMITS.runsPerProcess; i += 1) openLiveGeneration(`site-${i}`, { workspaceId: `ws_${i}`, tenantGroupId: `tg_${i}` }, `run-${i}`, { kind: 'newPage' }, now);
+    expect(generationSnapshot('site-0', { workspaceId: 'ws_0', tenantGroupId: 'tg_0' }, now)).toBeUndefined();
     expect(evicted).toEqual([['gen:done', { runId: 'run-0', status: 'expired' }]]);
-    expect(generationSnapshot(`site-${GEN_DRAFT_LIMITS.runsPerProcess}`, scope, now)?.runId).toBe(`run-${GEN_DRAFT_LIMITS.runsPerProcess}`);
+    const last = GEN_DRAFT_LIMITS.runsPerProcess;
+    expect(generationSnapshot(`site-${last}`, { workspaceId: `ws_${last}`, tenantGroupId: `tg_${last}` }, now)?.runId).toBe(`run-${last}`);
+  });
+
+  it("a company over its share gives up its own oldest run, never another company's", () => {
+    const now = Date.now();
+    openLiveGeneration('other-site', other, 'run-other', { kind: 'newPage' }, now);
+    const first = listen('busy-0');
+    for (let i = 0; i <= GEN_DRAFT_LIMITS.runsPerCompany; i += 1) openLiveGeneration(`busy-${i}`, scope, `busy-run-${i}`, { kind: 'newPage' }, now);
+    expect(first).toEqual([['gen:done', { runId: 'busy-run-0', status: 'expired' }]]);
+    expect(generationSnapshot('busy-1', scope, now)?.runId).toBe('busy-run-1');
+    expect(generationSnapshot('other-site', other, now)?.runId).toBe('run-other');
   });
 });

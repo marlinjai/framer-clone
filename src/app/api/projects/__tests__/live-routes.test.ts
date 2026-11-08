@@ -313,6 +313,35 @@ describe('GET /api/projects/<id>/events', () => {
     expect(await fresh.ended()).toBe(true);
   });
 
+  it('a stale check that never answers lets the held draft events go after 10 s, as an outage does', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval', 'setTimeout', 'clearTimeout'] });
+    const node = { id: 'n1', type: 'section', componentType: 'host', label: 'Hero', props: {}, children: [] } as never;
+    const events = eventReader(await EVENTS(req('/api/projects/site_1/events'), ctx('site_1')));
+    await events.next();
+    mockVerifySession.mockImplementation(() => new Promise(() => {}));
+    const run = openLiveGeneration('site_1', SCOPE, 'run-1', { kind: 'newPage' });
+    vi.setSystemTime(Date.now() + LIVE_RECHECK_ON_WRITE_MS + 1);
+    run.section({ generationId: 'run-1', attempt: 1, index: 0, slot: 0, node });
+    publishSiteEvent('site_1', 'site:version', { origin: 'mcp', version: 8, versionBefore: 7 });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect((await events.next()).event).toBe('gen:section');
+    expect((await events.next()).event).toBe('site:version');
+    await events.cancel();
+  });
+
+  it('ends the stream when more than 500 events pile up behind a check', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    const node = { id: 'n1', type: 'section', componentType: 'host', label: 'Hero', props: {}, children: [] } as never;
+    const events = eventReader(await EVENTS(req('/api/projects/site_1/events'), ctx('site_1')));
+    await events.next();
+    mockVerifySession.mockImplementation(() => new Promise(() => {}));
+    const run = openLiveGeneration('site_1', SCOPE, 'run-1', { kind: 'newPage' });
+    vi.setSystemTime(Date.now() + LIVE_RECHECK_ON_WRITE_MS + 1);
+    run.section({ generationId: 'run-1', attempt: 1, index: 0, slot: 0, node });
+    for (let v = 8; v < 520; v += 1) publishSiteEvent('site_1', 'site:version', { origin: 'mcp', version: v, versionBefore: v - 1 });
+    expect(await events.ended()).toBe(true);
+  });
+
   it('a stale check that passes sends the held draft events in their order', async () => {
     vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
     const node = { id: 'n1', type: 'section', componentType: 'host', label: 'Hero', props: {}, children: [] } as never;

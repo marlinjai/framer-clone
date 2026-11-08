@@ -204,6 +204,8 @@ interface Settling {
   /** For each result section, the preview sections identical to it (gen:done's drawnAs). */
   drawnAs: number[][];
   timer: ReturnType<typeof setTimeout>;
+  /** What the run drew, so a run that saved while it waited behind an earlier one is still drawn once that one's result shows. */
+  remembered: Remembered;
 }
 
 export class GenerationDraft {
@@ -213,6 +215,8 @@ export class GenerationDraft {
   /** Runs whose saved result this tab has not adopted yet, by run id. Kept apart from `run`, so a newer run never cancels an older one's ending. */
   private readonly settling = new Map<string, Settling>();
   private watchdog: ReturnType<typeof setTimeout> | undefined;
+  /** The stream went down: events may have been missed, so the next adoption drops the running draft. */
+  private unsynced = false;
 
   constructor(deps: GenerationDraftDeps) {
     this.deps = deps;
@@ -233,6 +237,7 @@ export class GenerationDraft {
 
   /** A `state` event: its running generation replaces the run remembered (a saved result still being fetched keeps its draft). */
   applyState(raw: LiveGeneration | undefined): void {
+    this.unsynced = false;
     if (!raw || !validRunId(raw.runId)) {
       this.dropRun();
       return;
@@ -286,6 +291,7 @@ export class GenerationDraft {
         version: raw.version,
         insertedIds,
         drawnAs,
+        remembered: this.run,
         // A copy held for the person (or a fetch that never comes): the draft goes anyway.
         timer: this.setTimer(() => {
           if (!this.settling.has(runId)) return;
@@ -312,6 +318,12 @@ export class GenerationDraft {
    */
   settle(version: number): SettledDraft | undefined {
     let answer: SettledDraft | undefined;
+    let ended = false;
+    // Events were missed while the stream was down: the running draft cannot know whether this copy holds its result.
+    if (this.unsynced && this.run) {
+      this.dropRun();
+      ended = true;
+    }
     for (const s of [...this.settling.values()]) {
       if (version < s.version) continue;
       const draft = this.deps.draft();
@@ -330,25 +342,28 @@ export class GenerationDraft {
       }
       const onScreen = ours && draft?.target?.kind === 'newPage' && !!draft.targetOn(this.deps.currentPageId());
       this.endSettling(s.runId);
+      ended = true;
       if (ours) answer = { stillIds, ...(onScreen && s.insertedIds[0] ? { newPageNodeId: s.insertedIds[0] } : {}) };
     }
-    if (answer) this.sync();
+    if (ended) this.sync();
     return answer;
   }
 
   /**
-   * The stream is down (an error, a refusal, a sign-out): events of the running
-   * run can be missed, its end among them, so its draft goes now rather than
-   * stand beside a result a poll adopts. A reconnect's `state` draws it again if
-   * it still runs. A saved result still being fetched keeps its draft (its timer
-   * bounds it).
+   * The stream is down (an error or a refusal): events of the running run can
+   * be missed, its end among them. Its draft stays (a brief reconnect redraws
+   * nothing) until the reconnect's `state` says whether the run still goes on,
+   * or until this tab adopts a version first (a poll), which drops it in the
+   * adoption's action, so it never stands beside a result. A saved result still
+   * being fetched keeps its draft (its timer bounds it).
    */
   streamLost(): void {
-    this.dropRun();
+    this.unsynced = true;
   }
 
   /** Forget everything (the editor closed the site, or the person was signed out). */
   reset(): void {
+    this.unsynced = false;
     this.dropRun();
     for (const runId of [...this.settling.keys()]) this.endSettling(runId);
   }
@@ -379,7 +394,8 @@ export class GenerationDraft {
    * drawn in the action that adopts it).
    */
   private sync(): void {
-    const run = this.run;
+    // The run still writing, else the newest run whose saved result waits and was never drawn (it saved behind an earlier one).
+    const run = this.run ?? [...this.settling.values()].at(-1)?.remembered;
     const draft = this.deps.draft();
     if (!run || !draft) return;
     const key = agentDraftKey(run.runId);

@@ -73,6 +73,11 @@ export const dynamic = 'force-dynamic';
 
 type Ctx = { params: Promise<{ projectId: string }> };
 
+/** How long draft events wait for an access check before they go anyway (an outage is not a sign-out). */
+const GATE_CHECK_MS = 10_000;
+/** Events held behind such a check at most; past this the stream ends and the editor reconnects. */
+const GATE_QUEUE_MAX = 500;
+
 /** The bound "per session" counts streams of one session cookie, never its value. */
 function sessionKey(req: Request, userId: string): string {
   const cookie = /(?:^|;\s*)lumitra_session=([^;]+)/.exec(req.headers.get('cookie') ?? '')?.[1];
@@ -147,7 +152,10 @@ async function handleGET(req: Request, { params }: Ctx): Promise<Response> {
   };
   // A running generation's draft is content: when the last check is older than
   // LIVE_RECHECK_ON_WRITE_MS, it waits for a check, and everything after it waits
-  // too (so the order holds); a stream whose access is gone gets none of it.
+  // too (so the order holds); a stream whose access is gone gets none of it. A
+  // check that does not answer within GATE_CHECK_MS lets the queue go, as an
+  // outage does (an outage is not a sign-out); a queue that grows past
+  // GATE_QUEUE_MAX ends the stream, and the editor reconnects.
   let gated: Array<[string, unknown]> | undefined;
   const send = (event: string, data: unknown) => {
     if (event !== LIVE_EVENTS.siteVersion) {
@@ -162,13 +170,19 @@ async function handleGET(req: Request, { params }: Ctx): Promise<Response> {
   const forward = (event: string, data: unknown) => {
     if (gated) {
       gated.push([event, data]);
+      if (gated.length > GATE_QUEUE_MAX) end();
       return;
     }
     const content = event === LIVE_EVENTS.genOutline || event === LIVE_EVENTS.genSection;
     if (content && Date.now() - lastCheck > LIVE_RECHECK_ON_WRITE_MS) {
       const queue: Array<[string, unknown]> = [[event, data]];
       gated = queue;
-      void check().then(() => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const waited = new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, GATE_CHECK_MS);
+      });
+      void Promise.race([check(), waited]).then(() => {
+        clearTimeout(timer);
         gated = undefined;
         if (ended) return;
         for (const [e, d] of queue) forward(e, d);

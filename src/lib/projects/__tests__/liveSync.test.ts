@@ -1039,22 +1039,54 @@ describe("liveSync: an agent's generate_page draft (slice 6)", () => {
     stop();
   });
 
-  it('the stream going down drops a running draft, so a poll that adopts the result never shows both', async () => {
+  it('the stream going down keeps the draft until the reconnect says, and a poll that adopts the result never shows both', async () => {
     const stop = start();
     stream().emit('gen:section', { runId: 'run-1', target: target(), index: 0, slot: 0, node: node('Hero') });
-    expect(draft().target).toBeDefined();
     stream().fail(false);
-    expect(draft().target).toBeUndefined();
-    // The run saved while the stream was away; the poll adopts it.
+    // A brief drop redraws nothing: the draft stays while the stream reconnects.
+    expect(draft().target?.requestKey).toBe('agent:run-1');
+    stream().open();
+    stream().emit('state', { version: server.version, plans: [], agents: [], feed: [], generation: { runId: 'run-1', target: target(), outline: [], sections: [{ index: 0, slot: 0, node: node('Hero') }] } });
+    expect(draft().target?.requestKey).toBe('agent:run-1');
+    expect(draft().sections).toHaveLength(1);
+
+    // Down again, and the run saves meanwhile: its end is missed, the poll adopts the result.
+    stream().fail(false);
+    const seen: string[] = [];
+    const dispose = autorun(() => {
+      const drafted = !!draft().target;
+      const result = homeChildren(getSnapshot(project()) as unknown as ProjectSnapshotOut).length > 0;
+      seen.push(drafted && result ? 'both' : drafted ? 'draft' : result ? 'result' : 'neither');
+    });
     await saved('run-1', ['Hero'], [[0]], { announce: false });
     await vi.advanceTimersByTimeAsync(LIVE_POLL_VISIBLE_MS);
     await settle();
+    dispose();
     expect(knownServerVersion(SITE)).toBe(2);
-    expect(draft().target).toBeUndefined();
-    // Reconnected while another run goes on: its state draws that one again.
+    expect(seen).toEqual(['draft', 'result']);
+    // Reconnected while another run goes on: its state draws that one.
     stream().open();
     stream().emit('state', { version: server.version, plans: [], agents: [], feed: [], generation: { runId: 'run-2', target: target(), outline: [], sections: [{ index: 0, slot: 0, node: node('Next') }] } });
     expect(draft().target?.requestKey).toBe('agent:run-2');
+    stop();
+  });
+
+  it('a run that saved while it waited behind an earlier one is drawn once the earlier result shows', async () => {
+    const stop = start();
+    stream().emit('gen:section', { runId: 'run-1', target: target(), index: 0, slot: 0, node: node('Hero') });
+    holdFetch = { release: () => {} };
+    await saved('run-1', ['Hero'], [[0]]);
+    stream().emit('gen:section', { runId: 'run-2', target: target(), index: 0, slot: 0, node: node('Second') });
+    // Run 2 saves too (version 3) before version 2 was adopted.
+    stream().emit('gen:done', { runId: 'run-2', status: 'saved', version: server.version + 1, insertedIds: ['later'], drawnAs: [[0]] });
+    expect(draft().target?.requestKey).toBe('agent:run-1');
+    const release = holdFetch.release;
+    holdFetch = undefined;
+    release();
+    await settle();
+    expect(knownServerVersion(SITE)).toBe(2);
+    expect(draft().target?.requestKey).toBe('agent:run-2');
+    expect(draft().sections).toHaveLength(1);
     stop();
   });
 
