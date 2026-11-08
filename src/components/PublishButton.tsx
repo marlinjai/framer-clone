@@ -95,6 +95,7 @@ const PublishButton = observer(() => {
           snapshot: getSnapshot(p),
         })),
         { definitions: project.definitions, refused: project.refusedComponents },
+        project.site.theme,
       );
     if (!skipChecks) {
       const check = runCheck();
@@ -319,7 +320,7 @@ function PublishLegalNotice({ check, language, onCreateLegal, onOpenPage, onPubl
   React.useEffect(() => {
     ref.current?.focus();
   }, []);
-  const first = check.placeholders[0] ?? check.components.find((issue) => issue.pageId !== undefined);
+  const first = check.placeholders[0] ?? check.components.find((issue) => issue.pageId !== undefined) ?? check.tokens?.find((issue) => issue.pageId !== undefined);
   const maps = check.maps && check.maps.status !== 'named' ? check.maps : null;
   return (
     <div
@@ -346,7 +347,9 @@ function PublishLegalNotice({ check, language, onCreateLegal, onOpenPage, onPubl
             ? 'Your privacy policy must name Google Maps'
             : check.placeholders.length > 0
             ? 'Your legal pages still have placeholders'
-            : 'Some components will not show'}
+            : check.components.length > 0
+              ? 'Some components will not show'
+              : 'Some site colours or fonts will not show'}
       </p>
       <div id="publish-legal-text" className="flex flex-col gap-1.5">
         {check.missingImpressum && (
@@ -377,6 +380,15 @@ function PublishLegalNotice({ check, language, onCreateLegal, onOpenPage, onPubl
             {check.components.map((issue) => (
               <li key={`${issue.pageId ?? issue.title}:${issue.message}`}>
                 {issue.title}: {issue.message}
+              </li>
+            ))}
+          </ul>
+        )}
+        {(check.tokens?.length ?? 0) > 0 && (
+          <ul className="list-disc pl-4" data-testid="publish-token-issues">
+            {check.tokens!.map((issue) => (
+              <li key={`${issue.pageId ?? issue.title}:${issue.message}`}>
+                {issue.title}: {issue.message}. Open Theme to replace it.
               </li>
             ))}
           </ul>

@@ -46,7 +46,7 @@ import {
   type SiteSettingsInput,
 } from '@/lib/site/siteSettings';
 import { effectiveSiteName } from '@/lib/site/siteSettings';
-import { normalizeTheme, validateThemeWrite, type SiteTheme } from '@/lib/site/theme';
+import { emittedTokenIds, normalizeTheme, replaceTokenReferences, tokenUseKinds, validateThemeWrite, type SiteTheme } from '@/lib/site/theme';
 import {
   COOKIE_SETTINGS_HASH,
   COOKIE_SETTINGS_LABELS,
@@ -1297,6 +1297,47 @@ export const ProjectModel = types
       if (errors.length > 0) return { ok: false, errors };
       if (JSON.stringify(settings.theme) === JSON.stringify(next)) return { ok: true };
       self.siteSettings = { ...settings, theme: next };
+      self.metadata.updatedAt = new Date();
+      return { ok: true };
+    },
+
+    // The Theme panel's Replace: every reference to `fromId`, on every page, floating
+    // element, definition (its nodes and its input defaults) and in the theme's document
+    // block, points at `toId`, a live token of the same kind. ONE action, so one undo
+    // step restores every reference. The token replaced stays as it is (a tombstone
+    // stays a tombstone), so Clean up can remove it once nothing uses it.
+    replaceToken(fromId: string, toId: string): ThemeResult {
+      const settings = normalizeSiteSettings(self.siteSettings);
+      const theme = settings.theme;
+      const from = theme.tokens.find((t) => t.id === fromId);
+      const to = theme.tokens.find((t) => t.id === toId);
+      if (fromId === toId) return { ok: false, errors: ['Pick another token to replace it with.'] };
+      if (!to || to.deleted) return { ok: false, errors: ['Pick a token that exists to replace it with.'] };
+      // A token the sheet leaves out (a colour none of whose values reads, one past the cap)
+      // has no CSS variable, so every use pointed at it would show nothing.
+      if (!emittedTokenIds(theme).has(toId)) return { ok: false, errors: ['That token has no readable value, so nothing would show. Pick another one.'] };
+      const kindLabel = (kind: string) => (kind === 'font' ? 'font' : 'colour');
+      if (from && from.kind !== to.kind) return { ok: false, errors: [`A ${kindLabel(from.kind)} can only be replaced by another ${kindLabel(from.kind)}.`] };
+      const pages = [...self.pages.values(), ...[...self.components.values()].map((definition) => definition.page)];
+      const nodes = new Set<ComponentInstance>();
+      for (const page of pages) for (const node of nodesOfPage(page as PageModelType)) nodes.add(node);
+      if (!from) {
+        // The token is gone, so each use says what it stands for: a font use takes a
+        // font, a colour use a colour. A use of the other kind refuses the whole Replace.
+        const kinds = new Set<'color' | 'font'>();
+        for (const node of nodes) tokenUseKinds(node.props, fromId).forEach((kind) => kinds.add(kind));
+        for (const definition of self.components.values()) tokenUseKinds(definition.inputs, fromId).forEach((kind) => kinds.add(kind));
+        tokenUseKinds(theme.document, fromId).forEach((kind) => kinds.add(kind));
+        const other = [...kinds].find((kind) => kind !== to.kind);
+        if (other) return { ok: false, errors: [`This reference is used as a ${kindLabel(other)}, so it can only be replaced by a ${kindLabel(other)}.`] };
+      }
+      for (const node of nodes) node.replaceTokenReference(fromId, toId);
+      for (const definition of self.components.values()) {
+        const inputs = replaceTokenReferences(definition.inputs, fromId, toId);
+        if (inputs !== definition.inputs) definition.setInputs(inputs as never);
+      }
+      const document = replaceTokenReferences(theme.document, fromId, toId);
+      if (document !== theme.document) self.siteSettings = { ...settings, theme: { ...theme, document } };
       self.metadata.updatedAt = new Date();
       return { ok: true };
     },

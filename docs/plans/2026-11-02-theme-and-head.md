@@ -105,7 +105,7 @@ interface DocumentStyles {
 ```
 
 Caps: 200 live tokens and 500 tombstones, because `siteSettings.ts` promises a stored blob never grows without bound. **They are enforced at write:** `updateTheme`, the AI apply and the import
-placing refuse what would pass one. At the tombstone cap Delete is refused with a pointer to Detach and Replace, which empty a tombstone of uses, and to Clean up, which then removes it. The name is plain text, emitted nowhere in CSS.
+placing refuse what would pass one, and the server's `saveProject` refuses it again (`themeBoundsErrors`, `InvalidSiteThemeError`, 400) together with a new or renamed name over 40 characters, so a request built by hand cannot grow the blob either; a stored count over a cap may stay or shrink. At the tombstone cap Delete is refused with a pointer to Detach and Replace, which empty a tombstone of uses, and to Clean up, which then removes it. The name is plain text, emitted nowhere in CSS.
 **`normalizeTheme` on read keeps what is stored,** so a frozen revision never loses a referenced token: it drops only a token whose id fails its pattern, since no reference can name it, and
 a blob over a cap, forged or older, emits the first tokens up to the cap and logs a warning.
 
@@ -169,7 +169,7 @@ definitions, placement overrides, inputs **and `theme.document`**, because a ref
 `normalizeTheme` runs on what a frozen revision holds, and a revision stays live for up to 30 versions. So if a later build read a stored value more strictly, or a family left `FONT_LIBRARY`, dropping the token
 would kill every reference on a live page, with no publish to warn at, and the next save would make that permanent. So:
 
-- **A colour token whose value stops parsing keeps its id and stored text and gains `broken: true`.** The stored text is never emitted, and is kept only up to 256 characters, beyond which it is replaced by nothing. References behave as missing, the panel shows it with its text, and `checkBeforePublish` names it.
+- **A colour token whose value stops parsing keeps its id and stored text and gains `broken: true`.** The stored text is never emitted, and is kept only up to 256 characters, beyond which it is replaced by nothing. When no value of the token reads, the sheet holds nothing for it, its references show as broken and behave as missing, the panel shows it with its text, and `checkBeforePublish` names it. When only one value fails, the sheet still emits the other (an unreadable dark value means the light one shows in both schemes, an unreadable light value means nothing in light and the dark value in dark), so its references stay live and the panel and `checkBeforePublish` say exactly that (`colorReadability`, `colorPartialProblem`, PR #306 review).
 - **`broken` is recomputed on every read** from the stored text, and a stored flag is ignored. So a value an older container marked during a rollout reads as valid again under the build that accepts it.
 - **A font token with an unknown family emits `SYSTEM_FONT_STACK`,** so text stays readable, and the panel shows it.
 - **The grammar only widens.** A test holds a list of accepted values, and removing one fails it.
@@ -656,6 +656,15 @@ T6 cannot come earlier: before T2 no sheet exists, so every alias dangles, which
 - B: a token edit after a reference repaints, with the node unchanged. Undo through each. Replace followed by undo restores each reference.
 - R: the app has no `beforeunload` warning and this adds none. Reload brings back the tab's working copy, and `changedElsewhere` names the theme if it moved meanwhile. A published copy keeps the old theme while the draft moves on.
 - E: delete, then re-create the name: a new id, and the tombstone untouched. Delete the last token. Publish, then republish, is the same sheet. A forged dangling reference shows Missing, and `checkBeforePublish` names it. Clean up says what it did not scan.
+
+**T4 as built, decided while building, say so if you disagree.**
+
+- **The panel is a dialog from the top bar,** beside Site settings (a palette button on the wide bar, Theme in the compact bar's More menu), `src/components/site/ThemePanel.tsx`. Unlike Site settings it edits live: every control is one `updateTheme` call, so the canvas repaints behind it and each edit is its own undo step. A refusal changes nothing and is said in the dialog's live region.
+- **A colour gesture is one undo step everywhere,** not only in the panel: `ColorInput`'s native picker opens a history batch on focus and writes it on blur, so a drag through many values is one step on any colour field.
+- **Picking a token on a node** is a small "Site colour" select beside the colour field, on Fill, Text and Border in Styles, and a "Site fonts" group in Typography's font select. A reference shows as the token's chip, with its value resolved in the frame's mode, and Detach writes that literal. The other colour fields (forms, the sticky bar, component inputs) do not offer tokens: their values pass their own checks, which a reference is not written for.
+- **Replace is one project action,** `ProjectModel.replaceToken`, which rewrites the reference in every node's props (pages, floating elements, definitions), every definition's input defaults and the theme's document block, using the same walk as the usage count, so whatever was counted is replaced. The token replaced is left as it is, so Clean up can then remove a tombstone.
+- **The publish warning** is `tokens` on `checkBeforePublish`: a page whose expanded tree refers to a token the theme does not hold (or that the sheet leaves out over a cap) or to a colour that no longer parses, and the same for the document block. The server's check of a frozen revision reads that revision's theme.
+- **What was not proven here:** "publish, and the live page shows it, only after publishing" needs a signed-in project and the server, which this run did not have; the demo editor cannot publish. The rest was proven in the browser on the demo editor and by the unit and score tests.
 
 **T5, the AI.** As specified above.
 

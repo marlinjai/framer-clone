@@ -88,6 +88,21 @@ export class InvalidPageSlugError extends SiteRepositoryError {
 }
 
 /**
+ * The saved theme breaks a cap (src/lib/site/theme.ts, THEME_LIMITS): more live or
+ * deleted tokens than a site holds, or a token name longer than the limit. The editor
+ * refuses the same before it ever saves, so this is the server's own guarantee against a
+ * request built by hand. Nothing is written. 400.
+ */
+export class InvalidSiteThemeError extends SiteRepositoryError {
+  readonly problems: string[];
+
+  constructor(problems: string[]) {
+    super('invalid_site_theme', `The site's colours and fonts cannot be saved: ${problems.join(' ')}`, 400);
+    this.problems = problems;
+  }
+}
+
+/**
  * The settings or a page name an uploaded image (`/site-images/<sha256>.<ext>`)
  * this site does not store: typed by hand, copied from another site, or deleted
  * since it was chosen. Nothing was written. 422.

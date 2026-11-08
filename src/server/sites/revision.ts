@@ -12,6 +12,7 @@
 import type { PageSnapshotOut } from '@/models/PageModel';
 import { parseSiteRedirects, type SiteRedirect } from '@/lib/pages/redirects';
 import { normalizeSiteSettings, type SiteSettings } from '@/lib/site/siteSettings';
+import { normalizeTheme } from '@/lib/site/theme';
 import { checkBeforePublish, type PublishCheck, type PublishCheckPage } from '@/lib/legal/publishCheck';
 import { parseComponents } from '@/lib/components/definition';
 
@@ -120,5 +121,5 @@ export function revisionPublishCheck(document: SiteRevisionDocument): PublishChe
   // The frozen definitions, read as a visitor's render reads them: one that cannot
   // be read is reported, exactly as the editor's check reports it.
   const { definitions, refused } = parseComponents(document.components);
-  return checkBeforePublish(document.siteSettings.business, pages, { definitions, refused });
+  return checkBeforePublish(document.siteSettings.business, pages, { definitions, refused }, normalizeTheme(document.siteSettings.theme));
 }

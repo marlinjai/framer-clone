@@ -98,8 +98,9 @@ export const EMPTY_THEME: SiteTheme = { tokens: [], document: {} };
 
 /**
  * Caps, so the stored blob never grows without bound and the sheet on every page stays
- * bounded. Enforced at write (validateThemeWrite). A stored blob over a cap still loads
- * whole, and themeCss emits up to the cap and warns.
+ * bounded. Enforced at write: in the editor (validateThemeWrite) and again by the server
+ * on every save (themeBoundsErrors). A stored blob over a cap still loads whole, and
+ * themeCss emits up to the cap and warns.
  */
 export const THEME_LIMITS = {
   liveTokens: 200,
@@ -789,6 +790,37 @@ export function setDocumentStyle(theme: SiteTheme, key: DocumentKey, value: stri
 // ---------------------------------------------------------------------------
 
 /**
+ * The caps a save must hold, checked by the server against what the row stores, so a
+ * request built by hand cannot grow the blob past them (validateThemeWrite runs only in
+ * the editor). Like validateThemeWrite it never blocks a stored value: a count over a cap
+ * may stay or shrink but not grow, and a name over the limit is refused only when this
+ * write gives it (a new token, a rename, a token back from a tombstone).
+ */
+export function themeBoundsErrors(next: SiteTheme, stored: SiteTheme): string[] {
+  const errors: string[] = [];
+  const nextLive = liveTokens(next).length;
+  const nextDead = tombstones(next).length;
+  if (nextLive > THEME_LIMITS.liveTokens && nextLive > liveTokens(stored).length) {
+    errors.push(`A site holds at most ${THEME_LIMITS.liveTokens} tokens.`);
+  }
+  if (nextDead > THEME_LIMITS.tombstones && nextDead > tombstones(stored).length) {
+    errors.push(`A site keeps at most ${THEME_LIMITS.tombstones} deleted tokens.`);
+  }
+  const before = new Map(stored.tokens.map((t) => [t.id, t]));
+  for (const token of next.tokens) {
+    if (token.name.length <= THEME_LIMITS.name) continue;
+    const old = before.get(token.id);
+    // A tombstone keeps its name as stored; a new one, or a changed name, is bounded too.
+    // A live token also counts as given its name when it comes back from a tombstone.
+    const given = !old || old.name !== token.name || (!token.deleted && old.deleted === true);
+    if (given) {
+      errors.push(`${token.name.slice(0, THEME_LIMITS.name)}...: keep a name to ${THEME_LIMITS.name} characters.`);
+    }
+  }
+  return errors;
+}
+
+/**
  * Every reason `next` may not replace `current`, in plain language. Empty when it may.
  * Both are normalized themes. A stored oddity that is unchanged (a broken value, an unknown
  * family, a name made long by an older build, a duplicate name) never blocks an unrelated
@@ -827,15 +859,24 @@ export function validateThemeWrite(next: SiteTheme, current: SiteTheme): string[
       errors.push(`${token.name || 'A token'} cannot change from a ${KIND_LABEL[old.kind]} to a ${KIND_LABEL[token.kind]}.`);
       continue;
     }
-    if (token.deleted) continue;
+    if (token.deleted) {
+      if ((!old || old.name !== token.name) && token.name.length > THEME_LIMITS.name) {
+        errors.push(`${token.name.slice(0, THEME_LIMITS.name)}...: keep a name to ${THEME_LIMITS.name} characters.`);
+      }
+      continue;
+    }
     const named = !old || old.deleted === true || old.name !== token.name;
     if (named) {
       if (token.name.length === 0) errors.push('Give every token a name.');
       else if (token.name.length > THEME_LIMITS.name) errors.push(`${token.name.slice(0, THEME_LIMITS.name)}...: keep a name to ${THEME_LIMITS.name} characters.`);
     }
     if (token.kind === 'color') {
-      const valuesChanged = !old || old.kind !== 'color' || old.light !== token.light || old.dark !== token.dark;
-      if (valuesChanged && token.broken) errors.push(`${token.name || 'A colour'}: ${COLOR_HINT}`);
+      // Each value is judged on its own: a value left as stored never blocks the write, so
+      // a colour with two unreadable values can be repaired one value at a time.
+      const was = old && old.kind === 'color' ? old : undefined;
+      const lightBad = (!was || was.light !== token.light) && parseColorValue(token.light) === null;
+      const darkBad = token.dark !== undefined && (!was || was.dark !== token.dark) && parseColorValue(token.dark) === null;
+      if (lightBad || darkBad) errors.push(`${token.name || 'A colour'}: ${COLOR_HINT}`);
     } else {
       const familyChanged = !old || old.kind !== 'font' || old.family !== token.family;
       if (familyChanged && !isThemeFontFamily(token.family)) {
@@ -863,4 +904,154 @@ export function validateThemeWrite(next: SiteTheme, current: SiteTheme): string[
     }
   }
   return [...new Set(errors)];
+}
+
+// ---------------------------------------------------------------------------
+// Replace, reference states and what the panel warns about (slice T4)
+// ---------------------------------------------------------------------------
+
+/**
+ * `value` with every reference to `fromId` pointing at `toId` instead, at any depth:
+ * the same walk as tokenUsage, so whatever the count found, Replace rewrites. A string
+ * without the reference, and every object holding none, is returned as it is.
+ */
+export function replaceTokenReferences<T>(value: T, fromId: string, toId: string): T {
+  const from = tokenReference(fromId);
+  const to = tokenReference(toId);
+  const walk = (item: unknown): unknown => {
+    if (typeof item === 'string') return item.includes(from) ? item.split(from).join(to) : item;
+    if (Array.isArray(item)) {
+      const next = item.map(walk);
+      return next.some((v, i) => v !== item[i]) ? next : item;
+    }
+    if (item && typeof item === 'object') {
+      let changed = false;
+      const next: Record<string, unknown> = {};
+      for (const [key, v] of Object.entries(item as Record<string, unknown>)) {
+        const w = walk(v);
+        if (w !== v) changed = true;
+        // Defined, never assigned: a stored `__proto__` key stays an own data key.
+        Object.defineProperty(next, key, { value: w, enumerable: true, writable: true, configurable: true });
+      }
+      return changed ? next : item;
+    }
+    return item;
+  };
+  return walk(value) as T;
+}
+
+/**
+ * The kinds the uses of `id` in `value` stand for: a use under a `fontFamily` key (a
+ * node's style at any breakpoint or state, the document block) is a font, any other use a
+ * colour. Read where the token itself is gone, so a Replace still knows what a use needs.
+ */
+export function tokenUseKinds(value: unknown, id: string): Set<'color' | 'font'> {
+  const kinds = new Set<'color' | 'font'>();
+  const reference = tokenReference(id);
+  const stack: Array<{ item: unknown; font: boolean }> = [{ item: value, font: false }];
+  const seen = new Set<object>();
+  while (stack.length > 0) {
+    const { item, font } = stack.pop()!;
+    if (typeof item === 'string') {
+      if (item.includes(reference)) kinds.add(font ? 'font' : 'color');
+    } else if (item && typeof item === 'object' && !seen.has(item)) {
+      seen.add(item);
+      if (Array.isArray(item)) for (const v of item) stack.push({ item: v, font });
+      else for (const [key, v] of Object.entries(item as Record<string, unknown>)) stack.push({ item: v, font: font || key === 'fontFamily' });
+    }
+  }
+  return kinds;
+}
+
+/**
+ * A reference's state: a live token, a tombstone, a colour none of whose values reads (so
+ * the sheet holds nothing for it), or nothing at all. A colour with one unreadable value
+ * still shows and stays live or deleted; colorPartialProblem says what it shows.
+ */
+export type ReferenceState = 'live' | 'deleted' | 'broken' | 'missing';
+
+/**
+ * What a colour token's sheet entry actually holds, from colorValues: every value reads;
+ * the dark value does not read (the light one shows in both schemes); the light value does
+ * not read (dark shows its own value, light shows nothing); or nothing reads at all.
+ */
+export type ColorReadability = 'ok' | 'dark-unreadable' | 'light-unreadable' | 'unreadable';
+
+export function colorReadability(token: ThemeToken): ColorReadability {
+  // A font always emits (an unknown family is the system stack).
+  if (token.kind !== 'color') return 'ok';
+  const { light, dark } = colorValues(token);
+  if (light === null && dark === null) return 'unreadable';
+  if (light === null) return 'light-unreadable';
+  if (token.dark !== undefined && parseColorValue(token.dark) === null) return 'dark-unreadable';
+  return 'ok';
+}
+
+/** A partial failure in plain words, or null when every value reads or none does. */
+export function colorPartialProblem(token: ThemeToken): string | null {
+  const state = colorReadability(token);
+  if (state === 'dark-unreadable') return 'its dark value cannot be read, so the light value shows in both light and dark mode';
+  if (state === 'light-unreadable') return 'its light value cannot be read, so it shows nothing in light mode and its dark value in dark mode';
+  return null;
+}
+
+export function referenceState(theme: SiteTheme, id: string): ReferenceState {
+  const token = findToken(theme, id);
+  if (!token) return 'missing';
+  // Broken only when the sheet holds nothing for it; a partial failure still shows.
+  if (colorReadability(token) === 'unreadable') return 'broken';
+  // Over a cap the sheet leaves a token out, so its references behave as missing.
+  if (!emittedTokenIds(theme).has(id)) return 'missing';
+  return token.deleted ? 'deleted' : 'live';
+}
+
+/** True when a stored value holds a `prefers-color-scheme` condition anywhere. */
+export function holdsColorSchemeRule(value: unknown): boolean {
+  const stack: unknown[] = [value];
+  const seen = new Set<object>();
+  while (stack.length > 0) {
+    const item = stack.pop();
+    if (typeof item === 'string') {
+      if (item.includes('prefers-color-scheme')) return true;
+    } else if (item && typeof item === 'object' && !seen.has(item)) {
+      seen.add(item);
+      stack.push(...(Array.isArray(item) ? item : Object.values(item as Record<string, unknown>)));
+    }
+  }
+  return false;
+}
+
+/** A page as the warnings read it: its title and its root's stored rules. */
+export interface ThemeWarningPage {
+  title: string;
+  rootRules: unknown;
+}
+
+/**
+ * What the Theme panel warns about, in plain language: dark styles on a site that has not
+ * chosen a mode (they follow each visitor's system while the colours stay light), a dark or
+ * system site with no page background (the page shows the editor's own palette), and a page
+ * whose own colour scheme disagrees with a forced mode (the page's rule wins there).
+ */
+export function themeWarnings(theme: SiteTheme, site: { holdsDarkRules: boolean; pages: readonly ThemeWarningPage[] }): string[] {
+  const out: string[] = [];
+  if (theme.mode === undefined && site.holdsDarkRules) {
+    out.push("Some elements have dark mode styles, but no mode is chosen: they follow each visitor's system while your colours stay light. Choose System, Light or Dark.");
+  }
+  if ((theme.mode === 'system' || theme.mode === 'dark') && !theme.document.backgroundColor) {
+    out.push("Pick a page background: without one, a dark page shows the editor's own dark palette rather than your colours.");
+  }
+  const forced = theme.mode === 'light' || theme.mode === 'dark' ? theme.mode : undefined;
+  if (!forced) return out;
+  for (const page of site.pages) {
+    const rules = Array.isArray(page.rootRules) ? (page.rootRules as unknown[]) : [];
+    const disagrees = rules.some((rule) => {
+      if (!isRecord(rule) || rule.selector !== ':root' || !isRecord(rule.style)) return false;
+      const stored = rule.style.colorScheme;
+      const values = isRecord(stored) ? Object.values(stored) : [stored];
+      return values.some((v) => typeof v === 'string' && v.trim() !== '' && v.trim().split(/\s+/).some((word) => word !== forced && word !== 'only'));
+    });
+    if (disagrees) out.push(`The page ${page.title || 'Untitled'} sets its own colour scheme, which wins over the site's ${forced} mode on that page.`);
+  }
+  return out;
 }

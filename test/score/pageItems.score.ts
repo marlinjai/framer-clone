@@ -4,8 +4,8 @@
 // and the reader again, a page through renderPublishedPage and the layout's sheets, then
 // Chromium computes what a visitor sees; and the canvas is the real EditorApp in Chromium
 // (lib/canvasBundle.ts), its theme set through the project's own updateTheme, measured on
-// the frame a person looks at. The panel and AI columns are slices T4 and T5: nothing
-// measures them here, so report.ts fails them under the theme gap.
+// the frame a person looks at. The panel column is pageItems.panel.jsdom.score.tsx; the
+// AI column is slice T5, and report.ts fails it under the theme gap until then.
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';

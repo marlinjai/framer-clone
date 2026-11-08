@@ -27,6 +27,8 @@ import { createHash } from 'node:crypto';
 import { parseComponents } from '@/lib/components/definition';
 import { readBehaviourTree, type BehaviourNode } from '@/lib/behaviour/format';
 import { ID_FRAGMENT_NAMES, isIdReference } from '@/lib/renderer/idRefs';
+import { normalizeSiteSettings } from '@/lib/site/siteSettings';
+import { themeBoundsErrors } from '@/lib/site/theme';
 import { parseRevisionDocument } from './revision';
 
 /** Bounds of a search. */
@@ -655,6 +657,12 @@ export function assertShapeKept(before: unknown, after: unknown, options: { revi
     }
   }
   if (pageKeys(before) !== pageKeys(after)) throw new EraseShapeError('pages or slugs changed');
+  // A replacement inside a token name may not push the name past the theme's bounds,
+  // the check a save holds (themeBoundsErrors), judged against the theme as it was.
+  if (isRecord(before) && isRecord(after)) {
+    const themeProblems = themeBoundsErrors(normalizeSiteSettings(after.siteSettings).theme, normalizeSiteSettings(before.siteSettings).theme);
+    if (themeProblems.length > 0) throw new EraseShapeError(`theme bounds: ${themeProblems.join(' ')}`);
+  }
   const beforeComponents = isRecord(before) ? before.components : undefined;
   const afterComponents = isRecord(after) ? after.components : undefined;
   const wasRefused = refusedIds(beforeComponents);

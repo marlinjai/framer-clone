@@ -85,6 +85,7 @@ describe('revisionPublishCheck', () => {
       maps: null,
       placeholders: [{ kind: 'privacy', pageId: 'privacy', title: 'Datenschutz', count: 1 }],
       components: [],
+      tokens: [],
     });
   });
 
@@ -101,6 +102,24 @@ describe('revisionPublishCheck', () => {
       maps: null,
       placeholders: [],
       components: [],
+      tokens: [],
     });
+  });
+
+  it('names a site colour the frozen theme does not hold, on the page that uses it', () => {
+    const page = {
+      pageId: 'home',
+      slug: '',
+      snapshot: {
+        id: 'home',
+        metadata: { title: 'Home' },
+        appComponentTree: { id: 'r', type: 'div', componentType: 'host', props: {}, children: [{ id: 'p', type: 'p', componentType: 'host', props: { style: { color: 'var(--fc-t-ghost001)' } }, children: [] }] },
+      },
+    };
+    const doc = parseRevisionDocument({ schemaVersion, pages: [page], siteSettings: { theme: { tokens: [], document: {} } } });
+    const tokens = revisionPublishCheck(doc).tokens ?? [];
+    expect(JSON.stringify(page.snapshot)).toContain('ghost001');
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0]).toMatchObject({ pageId: page.pageId, message: expect.stringMatching(/no longer exists/) });
   });
 });

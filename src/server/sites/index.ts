@@ -30,6 +30,7 @@ export {
   SiteDeleteConfirmationError,
   InvalidTenantScopeError,
   InvalidPageSlugError,
+  InvalidSiteThemeError,
   SiteRevisionNotFoundError,
   SiteErasedSinceLoadError,
   SiteChangedError,

@@ -475,6 +475,17 @@ describe('assertShapeKept', () => {
     ).toThrow(EraseShapeError);
   });
 
+  it('refuses a rewrite that pushes a theme token name past the theme bounds', () => {
+    const doc = (name: string) => ({
+      pages: [],
+      siteSettings: { theme: { tokens: [{ id: 'aa000001', name, kind: 'color', light: '#111111' }], document: {} } },
+    });
+    expect(() => assertShapeKept(doc('Max'), doc('x'.repeat(41)), { revision: false })).toThrow(/theme bounds/);
+    expect(() => assertShapeKept(doc('Max'), doc('[entfernt]'), { revision: false })).not.toThrow();
+    // A name already past the limit may stay as it is.
+    expect(() => assertShapeKept(doc('x'.repeat(41)), doc('x'.repeat(41)), { revision: false })).not.toThrow();
+  });
+
   it('refuses behaviour that ran before and would not after', () => {
     const tree = (toggle: string) => ({
       id: 'item', type: 'div',
