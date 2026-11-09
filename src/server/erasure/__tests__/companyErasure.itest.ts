@@ -58,7 +58,7 @@ import { ensureReceipt } from '@/server/commerce/payment/receipt';
 import { insertFormSubmission, type NewFormSubmission } from '@/server/forms/repository';
 import { resolvePublishedSite } from '@/server/sites/publicResolver';
 import { cachedDocument, documentEpoch, rememberDocument } from '@/server/sites/liveDocumentCache';
-import { generationSnapshot, openLiveGeneration } from '@/server/sites/liveGeneration';
+import { endLiveGenerationOfSite, generationSnapshot, openLiveGeneration } from '@/server/sites/liveGeneration';
 
 import { ERASURE_COVERAGE, ERASURE_MIGRATION_ID, eraseCompanyCommerce } from '../commerce';
 import { COMMERCE_ERASURE_BATCH_SIZE } from '../commerceSteps';
@@ -440,6 +440,7 @@ describe('erasing one company of a shared tenant group', () => {
     expect(cachedDocument(scopeB, b.siteId, 1)).toBe('{"of":"b"}');
     expect(generationSnapshot(a.siteId, scopeA)).toBeUndefined();
     expect(generationSnapshot(b.siteId, scopeB)).toBeDefined();
+    endLiveGenerationOfSite(b.siteId, 'stopped');
 
     // The published site is gone (its host resolves to nothing, so it answers 404) and its caches were
     // invalidated; the other company's site still resolves. The schema stays.

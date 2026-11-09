@@ -14,7 +14,7 @@ import { Prisma } from '@prisma/client';
 import ProjectModel from '@/models/ProjectModel';
 import { REVISIONS_KEPT, SiteRepository, type TenantScope } from '../repository';
 import { cachedDocument, documentEpoch, rememberDocument, resetLiveDocumentCacheForTests } from '../liveDocumentCache';
-import { generationSnapshot, openLiveGeneration } from '../liveGeneration';
+import { endLiveGenerationOfSite, generationSnapshot, openLiveGeneration } from '../liveGeneration';
 import { resetLiveBusForTests, subscribeSite } from '../liveBus';
 import { announcePlan, resetLivePlansForTests } from '@/server/mcp/livePlans';
 import {
@@ -918,11 +918,21 @@ describe('SiteRepository.deleteSite', () => {
     rememberDocument(SCOPE, 'site_1', 4, '{"kept":true}', documentEpoch());
     openLiveGeneration('site_1', SCOPE, 'run-del', { kind: 'newPage' });
     expect(generationSnapshot('site_1', SCOPE)).toBeDefined();
+    const heard: Array<[string, unknown]> = [];
+    const off = subscribeSite('site_1', (event, data) => heard.push([event, data]));
     prisma.site.findFirst.mockResolvedValue(siteRow('draft'));
     prisma.site.deleteMany.mockResolvedValue({ count: 1 });
-    await repo.deleteSite(SCOPE, 'site_1');
-    expect(cachedDocument(SCOPE, 'site_1', 4)).toBeUndefined();
-    expect(generationSnapshot('site_1', SCOPE)).toBeUndefined();
+    try {
+      await repo.deleteSite(SCOPE, 'site_1');
+      expect(cachedDocument(SCOPE, 'site_1', 4)).toBeUndefined();
+      expect(generationSnapshot('site_1', SCOPE)).toBeUndefined();
+      // The site's open editors hear the run end.
+      expect(heard).toContainEqual(['gen:done', expect.objectContaining({ runId: 'run-del', status: 'site_changed' })]);
+    } finally {
+      off();
+      // Never left running for a later test, even when the delete failed.
+      endLiveGenerationOfSite('site_1', 'stopped');
+    }
   });
 
   it('locks, reads and deletes scoped by id, workspace AND tenant group, in one transaction', async () => {

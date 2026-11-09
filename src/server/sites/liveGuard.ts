@@ -38,8 +38,8 @@ import 'server-only';
 // never remembered, and steps 0, 2 and 4 run on every call (step 4 reads the
 // version fresh, which the document route's ETag and body cache depend on). The
 // price is revocation latency: an `editSite` taken away is still accepted for up
-// to 30 s by these routes (as a signed-out session already is through the
-// client's own cache); a stream notices at its next re-check after that. The map
+// to 30 s by these routes (as a signed-out or expired session already is
+// through the client's own cache, on every guarded route); a stream notices at its next re-check after that. The map
 // is bounded (LIVE_GUARD_MEMO_MAX entries, the oldest goes first).
 
 import { createHash } from 'node:crypto';

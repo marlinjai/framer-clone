@@ -29,7 +29,8 @@
 // A stream created with `armed: false` queues its opening burst (written
 // before the Response is even handed back, so before anything can be read)
 // without counting it: `arm()` starts the bound, which then allows the
-// bytes still unread from that burst on top of `maxQueuedBytes`.
+// burst's bytes on top of `maxQueuedBytes`, an allowance that shrinks as the
+// reader reads (to the unread bytes at each write, never below them).
 
 const ENCODER = new TextEncoder();
 
