@@ -64,7 +64,7 @@ export function breakpointFor(page: PageModelType, preferred?: string): string |
 const WARNING_CLASS = 'text-amber-700 dark:text-status-draft';
 
 /** The line's status mark: an image with its name, so a screen reader says it in the line. */
-export function StatusMark({ outcome }: { outcome: LiveFeedLine['outcome'] }) {
+function StatusMark({ outcome }: { outcome: LiveFeedLine['outcome'] }) {
   if (outcome === 'ok') return <Check size={12} role="img" aria-label="Done" className="mt-0.5 shrink-0 text-status-published" />;
   if (outcome === 'failed') return <X size={12} role="img" aria-label="Failed" className="mt-0.5 shrink-0 text-destructive" />;
   if (outcome === 'awaiting_approval') return <Clock size={12} role="img" aria-label="Needs your approval" className={`mt-0.5 shrink-0 ${WARNING_CLASS}`} />;

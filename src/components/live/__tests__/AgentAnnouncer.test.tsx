@@ -79,6 +79,15 @@ describe('the agent announcer', () => {
     expect(heard()).toHaveLength(before);
   });
 
+  it('says nothing finished when a sign-out clears the agents and the feed', () => {
+    render(<AgentAnnouncer />);
+    act(() => presence().applyActivity(activity({ tool: 'apply_batch' })));
+    act(() => presence().applyActivity(activity({ tool: 'apply_batch', phase: 'end', outcome: 'ok', changes: 2 })));
+    const before = heard().length;
+    act(() => presence().reset());
+    expect(heard()).toHaveLength(before);
+  });
+
   it('says so when the camera stops following because the person moved it, not when they press Follow', () => {
     render(<AgentAnnouncer />);
     act(() => presence().applyActivity(activity()));

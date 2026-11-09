@@ -4,10 +4,11 @@
 // activity feed can name a page an agent deleted ("Deleted the page ‘About’")
 // after the page left the open copy. A title is content and never travels on
 // the live stream (src/lib/projects/liveEvents.ts): only what this editor saw
-// itself is remembered, in memory, for this tab. A page deleted before this
+// itself is remembered, in memory, for this tab. Keyed by the project's id, so
+// an adoption that replaces the project's model keeps what was remembered. A page deleted before this
 // editor saw it has no title here, and the feed says "Deleted a page".
 
-const memory = new WeakMap<object, Map<string, string>>();
+const memory = new Map<string, Map<string, string>>();
 
 interface TitledPage {
   id: string;
@@ -15,11 +16,11 @@ interface TitledPage {
 }
 
 /** Remember the current titles of these pages of a project. */
-export function rememberPageTitles(project: object, pages: Iterable<TitledPage>): void {
-  let titles = memory.get(project);
+export function rememberPageTitles(project: { id: string }, pages: Iterable<TitledPage>): void {
+  let titles = memory.get(project.id);
   if (!titles) {
     titles = new Map();
-    memory.set(project, titles);
+    memory.set(project.id, titles);
   }
   for (const page of pages) {
     const title = page.metadata?.title;
@@ -28,6 +29,6 @@ export function rememberPageTitles(project: object, pages: Iterable<TitledPage>)
 }
 
 /** The last title this editor saw for a page of a project, if any. */
-export function rememberedPageTitle(project: object, pageId: string): string | undefined {
-  return memory.get(project)?.get(pageId);
+export function rememberedPageTitle(project: { id: string }, pageId: string): string | undefined {
+  return memory.get(project.id)?.get(pageId);
 }

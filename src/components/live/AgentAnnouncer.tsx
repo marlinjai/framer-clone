@@ -25,7 +25,7 @@ import React from 'react';
 import { reaction } from 'mobx';
 import { observer } from 'mobx-react-lite';
 import { useStore } from '@/hooks/useStore';
-import { editingNote, feedLineAnnouncement, followOffAnnouncement, needsAttention, runSummary } from '@/lib/live/activityText';
+import { activityMode, editingNote, feedLineAnnouncement, followOffAnnouncement, needsAttention, runSummary } from '@/lib/live/activityText';
 import { rememberPageTitles } from '@/lib/live/pageTitleMemory';
 import type { LivePresenceStore } from '@/lib/live/presenceStore';
 import type { LiveFeedLine } from '@/lib/projects/liveEvents';
@@ -33,7 +33,11 @@ import type { LiveFeedLine } from '@/lib/projects/liveEvents';
 /** How many messages the region keeps (older ones were spoken already). */
 const KEPT = 4;
 
-/** The presence stores whose Follow the person just turned off with the toggle (that change is not announced). */
+/**
+ * The presence stores whose Follow the person just changed with the toggle (that change is not
+ * announced: the toggle's pressed state is). A side channel between the toggle and this
+ * announcer rather than a field on the presence store, which the sync work owns.
+ */
 const toggledByPerson = new WeakSet<object>();
 
 /** Called by the Follow toggle before it changes Follow, so the change is not announced a second time. */
@@ -47,6 +51,7 @@ interface PageLike {
 }
 
 interface ProjectLike {
+  id: string;
   pages: { values(): Iterable<PageLike> };
 }
 
@@ -87,10 +92,12 @@ const AgentAnnouncer = observer(function AgentAnnouncer() {
         (feed) => {
           const fresh = feed.filter((l) => !seen.has(l.id)).reverse();
           for (const line of fresh) {
-            seen.add(line.id);
             if (presence.anyActive) runLines.push(line);
             if (needsAttention(line)) say(feedLineAnnouncement(line));
           }
+          // Only the lines still in the feed (it is capped; one that left never comes back).
+          seen.clear();
+          for (const l of feed) seen.add(l.id);
         },
       ),
       reaction(
@@ -101,23 +108,26 @@ const AgentAnnouncer = observer(function AgentAnnouncer() {
             runLines = [];
             return;
           }
-          const summary = runSummary(runLines);
+          // A sign-out clears the feed with the agents: nothing finished then.
+          const summary = presence.feed.length > 0 ? runSummary(runLines) : null;
           runLines = [];
           announced = 'none';
           if (summary) say(summary);
         },
       ),
       reaction(
-        () => editingNote(presence.active.map((a) => ({ label: a.label, tool: a.focus.tool }))),
-        (note) => {
-          if (!note) return;
-          const kind = note.endsWith('editing this site') ? 'editing' : 'reading';
+        () => {
+          const agents = presence.active.map((a) => ({ label: a.label, tool: a.focus.tool }));
+          return { mode: activityMode(agents), note: editingNote(agents) };
+        },
+        ({ mode, note }) => {
+          if (!mode || !note) return;
           // Once when the run begins, once more when it starts editing; never back to reading.
-          if (announced === kind || announced === 'editing') return;
-          announced = kind;
+          if (announced === mode || announced === 'editing') return;
+          announced = mode;
           say(note);
         },
-        { fireImmediately: true },
+        { fireImmediately: true, equals: (a, b) => a.note === b.note },
       ),
       reaction(
         () => presence.follow,

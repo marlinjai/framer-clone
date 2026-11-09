@@ -2,6 +2,7 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+  activityMode,
   activityVerb,
   editingNote,
   feedLineAnnouncement,
@@ -78,6 +79,9 @@ describe('activity words', () => {
     expect(editingNote([a(''), a('')])).toBe('2 agents are editing this site');
     expect(editingNote([a('Claude', 'get_site'), a('Codex', 'get_page')])).toBe('Claude and Codex are reading this site');
     expect(editingNote([a('Claude', 'get_site'), a('Codex')])).toBe('Claude and Codex are editing this site');
+    expect(activityMode([])).toBeUndefined();
+    expect(activityMode([a('Claude', 'get_page')])).toBe('reading');
+    expect(activityMode([a('Claude', 'get_page'), a('Codex', 'publish')])).toBe('editing');
   });
 
   it('announces only what needs attention, with the agent first', () => {

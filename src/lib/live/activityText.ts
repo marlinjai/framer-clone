@@ -58,10 +58,16 @@ function whoOf(labels: readonly string[]): string {
  * site" as soon as one writes (a conflict may follow then).
  */
 export function editingNote(agents: ReadonlyArray<{ label: string; tool: string }>): string | null {
-  if (agents.length === 0) return null;
+  const mode = activityMode(agents);
+  if (!mode) return null;
   const who = whoOf(agents.map((a) => a.label));
-  const verb = agents.some((a) => !isReadTool(a.tool)) ? 'editing' : 'reading';
-  return `${who} ${agents.length === 1 ? 'is' : 'are'} ${verb} this site`;
+  return `${who} ${agents.length === 1 ? 'is' : 'are'} ${mode} this site`;
+}
+
+/** Whether the active agents only read, or one of them edits; undefined while none is active. */
+export function activityMode(agents: ReadonlyArray<{ tool: string }>): 'reading' | 'editing' | undefined {
+  if (agents.length === 0) return undefined;
+  return agents.some((a) => !isReadTool(a.tool)) ? 'editing' : 'reading';
 }
 
 function plural(n: number, one: string, many: string): string {
