@@ -1,11 +1,11 @@
 {
-  "generatedAt": "2026-11-09T00:45:23.157Z",
+  "generatedAt": "2026-11-09T01:14:05.230Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 636,
+  "durationSeconds": 629,
   "matrix": {
     "surfaces": {
       "format": {
@@ -7007,7 +7007,7 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.0006005593893768298,
+            "ratio": 0,
             "elementsCompared": 754,
             "elementsDiffering": 0,
             "differences": 0,
@@ -7121,7 +7121,7 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.0006405799340749897,
+            "ratio": 0,
             "elementsCompared": 761,
             "elementsDiffering": 0,
             "differences": 0,
@@ -7141,7 +7141,7 @@
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 7.785251619332336e-7,
             "elementsCompared": 761,
             "elementsDiffering": 0,
             "differences": 0,
