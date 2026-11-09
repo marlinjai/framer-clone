@@ -16,6 +16,18 @@ export function isReadTool(tool: string): boolean {
   return READ_TOOLS.has(tool);
 }
 
+/** The tools that plan sections: they draw skeletons and write nothing to the site. */
+const PLAN_TOOLS = new Set(['announce_sections', 'clear_sections']);
+
+/** Whether a tool writes to the site (neither a read nor a plan). */
+export function writesSite(tool: string): boolean {
+  return !READ_TOOLS.has(tool) && !PLAN_TOOLS.has(tool);
+}
+
+/** What the active agents do, from least to most likely to conflict with the person's edits. */
+export type ActivityMode = 'reading' | 'planning' | 'editing';
+export const ACTIVITY_MODE_RANK: Record<ActivityMode, number> = { reading: 0, planning: 1, editing: 2 };
+
 /** What the presence label says the agent does: "Reading", "Editing", ... */
 export function activityVerb(tool: string): string {
   switch (tool) {
@@ -54,23 +66,27 @@ function whoOf(labels: readonly string[]): string {
 
 /**
  * The top bar's note for the active agents: "Claude is reading this site"
- * while every active agent's latest call only reads, "Claude is editing this
- * site" as soon as one writes (a conflict may follow then).
+ * while every active agent's latest call only reads, "Claude is planning
+ * changes to this site" while one plans sections (nothing written yet),
+ * "Claude is editing this site" as soon as one writes (a conflict may follow then).
  */
 export function editingNote(agents: ReadonlyArray<{ label: string; tool: string }>, edited = false): string | null {
   const mode = activityMode(agents, edited);
   if (!mode) return null;
   const who = whoOf(agents.map((a) => a.label));
-  return `${who} ${agents.length === 1 ? 'is' : 'are'} ${mode} this site`;
+  const verb = agents.length === 1 ? 'is' : 'are';
+  return mode === 'planning' ? `${who} ${verb} planning changes to this site` : `${who} ${verb} ${mode} this site`;
 }
 
 /**
- * Whether the active agents only read, or one of them edits; undefined while none is active.
- * `edited`: an agent wrote earlier in this run, so it stays "editing" while it reads in between.
+ * What the active agents do: only read, plan sections, or edit; undefined while none is active.
+ * `edited`: an agent wrote to the site earlier in this run, so it stays "editing" while it reads
+ * or plans in between.
  */
-export function activityMode(agents: ReadonlyArray<{ tool: string }>, edited = false): 'reading' | 'editing' | undefined {
+export function activityMode(agents: ReadonlyArray<{ tool: string }>, edited = false): ActivityMode | undefined {
   if (agents.length === 0) return undefined;
-  return edited || agents.some((a) => !isReadTool(a.tool)) ? 'editing' : 'reading';
+  if (edited || agents.some((a) => writesSite(a.tool))) return 'editing';
+  return agents.some((a) => PLAN_TOOLS.has(a.tool)) ? 'planning' : 'reading';
 }
 
 function plural(n: number, one: string, many: string): string {
@@ -202,9 +218,9 @@ export function needsAttention(line: Pick<LiveFeedLine, 'outcome'>): boolean {
   return line.outcome !== 'ok' && line.outcome !== 'site_changed';
 }
 
-/** A line as a screen reader hears it when it arrives: the agent first. */
-export function feedLineAnnouncement(line: FeedLineWords, pageTitle?: string, deletedTitles: ReadonlyArray<string | undefined> = []): string {
-  return `${line.label || 'Agent'}: ${feedLineText(line, pageTitle, deletedTitles)}`;
+/** A line that needs attention as a screen reader hears it when it arrives: the agent first. */
+export function feedLineAnnouncement(line: FeedLineWords): string {
+  return `${line.label || 'Agent'}: ${feedLineText(line)}`;
 }
 
 /** The writes besides batches a run summary names, once each (planned sections change nothing on the site). */

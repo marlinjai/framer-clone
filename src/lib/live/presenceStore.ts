@@ -33,7 +33,7 @@
 //      over, and the camera follows again.
 
 import { action, makeObservable, observable } from 'mobx';
-import { isReadTool } from '@/lib/live/activityText';
+import { writesSite } from '@/lib/live/activityText';
 import { forgetPageTitles } from '@/lib/live/pageTitleMemory';
 import {
   AGENT_ACTIVE_MS,
@@ -302,7 +302,7 @@ export class LivePresenceStore {
       // A snapshot lists every call still running; an agent with one running has no use for its last ended one.
       if (a.phase === 'end' && prev && prev.openCalls.length > 0) continue;
       if (this.agents.size === 0) this.becameActive(continuing);
-      if (!isReadTool(a.tool)) this.runEdited = true;
+      if (writesSite(a.tool)) this.runEdited = true;
       this.markSeen(a);
       const running = a.phase === 'start';
       const failed = a.phase === 'end' && a.outcome !== undefined && a.outcome !== 'ok';
@@ -334,7 +334,7 @@ export class LivePresenceStore {
     const prev = this.agents.get(a.agentId);
     // A first sight of the agent (its start may have been missed across a reconnect) begins a run either way.
     if (!prev) this.becameActive();
-    if (!isReadTool(a.tool)) this.runEdited = true;
+    if (writesSite(a.tool)) this.runEdited = true;
     if (a.phase === 'start') {
       this.clearTimers(a.agentId);
       this.openCall(a.agentId, a.callId, focusOf(a), ageOf(a.at, this.now()));

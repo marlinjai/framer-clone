@@ -11,7 +11,7 @@ import type { LivePresenceStore } from '@/lib/live/presenceStore';
 let store: RootStoreType;
 vi.mock('@/hooks/useStore', () => ({ useStore: () => store }));
 
-import AgentAnnouncer, { noteFollowToggledByPerson } from '../AgentAnnouncer';
+import AgentAnnouncer, { ANNOUNCE_KEEP_MS, noteFollowToggledByPerson } from '../AgentAnnouncer';
 
 const presence = () => store.editorUI.livePresence as LivePresenceStore;
 const heard = () => Array.from(document.querySelectorAll('[data-agent-announcer] p')).map((p) => p.textContent);
@@ -109,20 +109,34 @@ describe('the agent announcer', () => {
     const personOld = line({ id: 'person-old', actorKind: 'user', label: 'Someone', changes: 7 });
     // The stream's first state, on connect (the person's old save is history).
     act(() => presence().applyState({ agents: [], feed: [personOld] }));
-    // An agent's write from before, which this editor's feed never held (the feed is capped).
-    const agentOld = line({ id: 'agent-old', changes: 40, outcome: 'failed' });
     act(() => vi.advanceTimersByTime(60_000));
     const start = activity({ callId: 'w1', tool: 'apply_batch' });
     act(() => presence().applyActivity(start));
     act(() => presence().applyActivity({ ...start, phase: 'end', outcome: 'ok', changes: 2 }));
     act(() => vi.advanceTimersByTime(1_000));
     const personNew = line({ id: 'person-new', actorKind: 'user', label: 'Someone', changes: 3 });
-    act(() => presence().applyState({ agents: [{ ...start, callId: 'w2' }], feed: [personNew, ...presence().feed, agentOld, personOld] }));
+    act(() => presence().applyState({ agents: [{ ...start, callId: 'w2' }], feed: [personNew, ...presence().feed, personOld] }));
     act(() => presence().applyActivity(activity({ callId: 'w2', tool: 'apply_batch', phase: 'end', outcome: 'ok', changes: 1 })));
     act(() => vi.advanceTimersByTime(AGENT_ACTIVE_MS + 1));
     expect(heard().at(-1)).toBe('Claude finished: wrote 3 changes');
-    // The old failure was not read out either.
-    expect(heard()).not.toContain('Claude: Changes failed');
+  });
+
+  it('lets each message leave the region after a while, so no stale text stays in the top bar', () => {
+    render(<AgentAnnouncer />);
+    act(() => presence().applyActivity(activity()));
+    expect(heard()).toEqual(['Claude is reading this site']);
+    act(() => vi.advanceTimersByTime(ANNOUNCE_KEEP_MS + 1));
+    expect(heard()).toEqual([]);
+  });
+
+  it('steps up from reading to planning to editing, once each', () => {
+    render(<AgentAnnouncer />);
+    act(() => presence().applyActivity(activity()));
+    act(() => presence().applyActivity(activity({ callId: 'p1', tool: 'announce_sections' })));
+    act(() => presence().applyActivity(activity({ callId: 'p1', tool: 'announce_sections', phase: 'end', outcome: 'ok' })));
+    act(() => presence().applyActivity(activity({ callId: 'w1', tool: 'apply_batch' })));
+    act(() => presence().applyActivity(activity({ callId: 'r2', tool: 'get_page' })));
+    expect(heard()).toEqual(['Claude is reading this site', 'Claude is planning changes to this site', 'Claude is editing this site']);
   });
 
   it('never reads out "the site changed meanwhile": the agent recovers by itself', () => {

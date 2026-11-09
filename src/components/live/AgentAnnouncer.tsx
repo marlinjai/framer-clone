@@ -6,8 +6,8 @@
 // activity panel is collapsed or the sidebar is closed:
 //
 // - once when an agent run begins, the top bar's note ("Claude is reading this
-//   site"), and once more if the run moves from reading to editing (the moment
-//   a conflict may follow). Never again within the run.
+//   site"), and once more each time the run steps up to planning or to editing
+//   (the moment a conflict may follow). Never again within the run.
 // - each refusal, approval needed and failure as it arrives ("Claude: Publishing
 //   needs your approval"). Successful steps are not announced one by one.
 // - at most one summary when the run ends ("Claude finished: wrote 6 changes").
@@ -25,13 +25,13 @@ import React from 'react';
 import { reaction } from 'mobx';
 import { observer } from 'mobx-react-lite';
 import { useStore } from '@/hooks/useStore';
-import { activityMode, editingNote, feedLineAnnouncement, followOffAnnouncement, needsAttention, runSummary } from '@/lib/live/activityText';
+import { ACTIVITY_MODE_RANK, activityMode, editingNote, type ActivityMode, feedLineAnnouncement, followOffAnnouncement, needsAttention, runSummary } from '@/lib/live/activityText';
 import { rememberPageTitles } from '@/lib/live/pageTitleMemory';
 import type { LivePresenceStore } from '@/lib/live/presenceStore';
 import type { LiveFeedLine } from '@/lib/projects/liveEvents';
 
-/** How many messages the region keeps (older ones were spoken already). */
-const KEPT = 4;
+/** How long a message stays in the region: long enough to be spoken, gone before it is stale text in the top bar. */
+export const ANNOUNCE_KEEP_MS = 10_000;
 
 /**
  * The presence stores whose Follow the person just changed with the toggle (that change is not
@@ -45,16 +45,8 @@ export function noteFollowToggledByPerson(presence: object): void {
   toggledByPerson.add(presence);
 }
 
-/** A line's time in milliseconds, or -Infinity when unreadable. */
-function atOf(line: Pick<LiveFeedLine, 'at'>): number {
-  const t = Date.parse(line.at);
-  return Number.isFinite(t) ? t : -Infinity;
-}
-
-/** The newest time among these lines. */
-function newestOf(lines: ReadonlyArray<Pick<LiveFeedLine, 'at'>>): number {
-  return lines.reduce((max, l) => Math.max(max, atOf(l)), -Infinity);
-}
+/** How many line ids the announcer remembers (the feed holds LIVE_FEED_MAX). */
+const SEEN_MAX = 500;
 
 interface PageLike {
   id: string;
@@ -73,10 +65,24 @@ const AgentAnnouncer = observer(function AgentAnnouncer() {
   const [messages, setMessages] = React.useState<Array<{ id: number; text: string }>>([]);
   const counter = React.useRef(0);
 
+  const timers = React.useRef(new Set<ReturnType<typeof setTimeout>>());
   const say = React.useCallback((text: string) => {
     counter.current += 1;
     const id = counter.current;
-    setMessages((prev) => [...prev, { id, text }].slice(-KEPT));
+    setMessages((prev) => [...prev, { id, text }]);
+    // Each message leaves after a while, so a screen reader browsing the top bar later never meets old news.
+    const timer = setTimeout(() => {
+      timers.current.delete(timer);
+      setMessages((prev) => prev.filter((m) => m.id !== id));
+    }, ANNOUNCE_KEEP_MS);
+    timers.current.add(timer);
+  }, []);
+  React.useEffect(() => {
+    const pending = timers.current;
+    return () => {
+      for (const t of pending) clearTimeout(t);
+      pending.clear();
+    };
   }, []);
 
   // The project's page titles, kept while the titles change, so a page deleted later can be named.
@@ -93,16 +99,24 @@ const AgentAnnouncer = observer(function AgentAnnouncer() {
     if (!presence) return;
     // Lines there already are history, not news; so is every line the first `state` event since
     // the last reset brings (the backfill after a reload or after another site opened), which comes
-    // after this mounts. A later `state` is a reconnect: its lines newer than any seen before
-    // happened during the gap, and are news.
-    let seen = new Set(presence.feed.map((l) => l.id));
-    let newestAt = newestOf(presence.feed);
+    // after this mounts. A later `state` is a reconnect: its lines never seen before happened
+    // during the gap, and are news. Every id seen is kept (capped well above the feed's size), so a
+    // line that scrolled out of the capped feed is not news when a reconnect brings it back.
+    const seen = new Set<string>();
+    const see = (lines: readonly LiveFeedLine[]) => {
+      for (const l of lines) {
+        seen.delete(l.id);
+        seen.add(l.id);
+      }
+      while (seen.size > SEEN_MAX) seen.delete(seen.values().next().value as string);
+    };
+    see(presence.feed);
     let state = presence.stateApplied;
     let resets = presence.resets;
     let wasActive = presence.anyActive;
     let runLines: LiveFeedLine[] = [];
-    // What the run's note announced: nothing yet, reading, or editing.
-    let announced: 'none' | 'reading' | 'editing' = 'none';
+    // What the run's note announced: nothing yet, or the mode it said.
+    let announced: ActivityMode | 'none' = 'none';
 
     const disposers = [
       // One reaction for the feed and the run, so a run that ends with a reconnect counts the
@@ -118,19 +132,17 @@ const AgentAnnouncer = observer(function AgentAnnouncer() {
             // A sign-out or another site: nothing finished, nothing carries over.
             runLines = [];
             announced = 'none';
-            newestAt = -Infinity;
+            seen.clear();
           } else {
             const history = fromState && presence.statesSinceReset === 1;
-            const fresh = history ? [] : feed.filter((l) => !seen.has(l.id) && (!fromState || atOf(l) > newestAt)).reverse();
+            const fresh = history ? [] : feed.filter((l) => !seen.has(l.id)).reverse();
             for (const line of fresh) {
               // Only the agents' own lines count in their run (a person's save is not theirs).
               if ((wasActive || active) && line.actorKind === 'key') runLines.push(line);
               if (needsAttention(line)) say(feedLineAnnouncement(line));
             }
           }
-          // Only the lines still in the feed (it is capped; one that left never comes back).
-          seen = new Set(feed.map((l) => l.id));
-          newestAt = Math.max(newestAt, newestOf(feed));
+          see(feed);
           if (wasActive && !active && !reset) {
             const summary = runSummary(runLines);
             runLines = [];
@@ -147,8 +159,8 @@ const AgentAnnouncer = observer(function AgentAnnouncer() {
         },
         ({ mode, note }) => {
           if (!mode || !note) return;
-          // Once when the run begins, once more when it starts editing; never back to reading.
-          if (announced === mode || announced === 'editing') return;
+          // Once when the run begins, once more each time it steps up (to planning, to editing); never back down.
+          if (announced !== 'none' && ACTIVITY_MODE_RANK[mode] <= ACTIVITY_MODE_RANK[announced]) return;
           announced = mode;
           say(note);
         },

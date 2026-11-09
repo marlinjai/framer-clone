@@ -78,7 +78,10 @@ describe('activity words', () => {
     expect(editingNote([])).toBeNull();
     expect(editingNote([a('Claude', 'get_page')])).toBe('Claude is reading this site');
     expect(editingNote([a('Claude')])).toBe('Claude is editing this site');
-    expect(editingNote([a('Claude', 'announce_sections')])).toBe('Claude is editing this site');
+    // Planning sections writes nothing to the site yet.
+    expect(editingNote([a('Claude', 'announce_sections')])).toBe('Claude is planning changes to this site');
+    expect(editingNote([a('Claude', 'get_page'), a('Codex', 'clear_sections')])).toBe('Claude and Codex are planning changes to this site');
+    expect(activityMode([a('Claude', 'announce_sections')])).toBe('planning');
     expect(editingNote([a('Claude'), a('Claude')])).toBe('2 agents are editing this site');
     expect(editingNote([a('Claude'), a('Claude'), a('Codex'), a('')])).toBe('4 agents are editing this site');
     expect(editingNote([a(''), a('')])).toBe('2 agents are editing this site');
