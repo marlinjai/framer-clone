@@ -146,7 +146,7 @@ describe('EditorNotice: an agent\'s new page (H2)', () => {
     act(() => store.editorUI.setEditorNotice({ kind: 'newPage', pageId: about.id, message: 'New page ‘About’ is ready.' }));
     expect(screen.getByText('New page ‘About’ is ready.')).toBeTruthy();
     // Named by the page, so a list of buttons says which page it opens.
-    fireEvent.click(screen.getByRole('button', { name: 'Open the page About' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open it: the page About' }));
     expect(store.editorUI.currentPage?.id).toBe(about.id);
     expect(store.editorUI.editorNotice).toBeUndefined();
   });

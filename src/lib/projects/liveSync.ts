@@ -44,7 +44,8 @@
 // that version (or a newer one), so the draft and the saved result never show
 // together. The result's sections the draft already drew exactly as saved do not
 // reveal again; the rest does. A new page the person watched being drafted is
-// shown once it is adopted, while the camera still follows the agent.
+// shown once it is adopted when its draft frames were in view and the person is
+// not in the middle of something; otherwise a notice offers it (showGeneratedPage).
 //
 // When the stream is down (a network loss, the 429 of too many streams, a proxy
 // that buffers), the snapshot route is polled with If-None-Match every 5 s while
@@ -73,8 +74,9 @@
 // on top of the agent's copy instead is its own follow-up, ROADMAP.md.)
 
 import { runInAction } from 'mobx';
-import { isEditing, isInteracting, onEditingSettled } from '@/lib/live/editingInProgress';
-import { getSnapshot, isAlive } from 'mobx-state-tree';
+import { isEditing, isInteracting, lastFieldInputAt, onEditingSettled } from '@/lib/live/editingInProgress';
+import { getHistoryStore } from '@/stores/RootStore';
+import { getSnapshot, isAlive, onPatch } from 'mobx-state-tree';
 import type { RootStoreType } from '@/stores/RootStore';
 import type { ProjectSnapshotOut } from '@/models/ProjectModel';
 import {
@@ -122,6 +124,8 @@ export const LIVE_HEARTBEAT_MS = SSE_HEARTBEAT_MS;
 export const LIVE_WATCHDOG_MS = Math.round(LIVE_HEARTBEAT_MS * 2.5);
 /** The waits before a failed fetch of the stored copy is tried again while the stream is live; the last repeats. */
 export const LIVE_FETCH_RETRY_MS = [2_000, 5_000, 15_000] as const;
+/** An open edit idle this long (no change, no key) stops holding a newer copy when this tab has unsaved work: the dialog asks. */
+export const LIVE_EDIT_HOLD_IDLE_MS = 60_000;
 /** "Load the newer version" while a write of this tab is out waits this long for it to settle. */
 export const LOAD_NEWER_WRITE_WAIT_MS = 10_000;
 /** The first reconnect after a stream ended (closed by the server, a network drop) waits this long, plus up to as much again at random; it doubles with each failure in a row. */
@@ -432,6 +436,7 @@ export class LiveSync {
     stream.onopen = () => {
       if (this.stream !== stream) return;
       this.clearPoll();
+      this.clearStreamRetry();
       this.streamRefusals = 0;
       // The reconnect back-off starts over only once this stream proved it stays
       // (a heartbeat long, or its first ping): a server that accepts and ends
@@ -567,7 +572,8 @@ export class LiveSync {
       this.closeStream();
       this.clearFetchRetry();
       this.startPolling();
-      this.openStream();
+      // On the same jittered, doubling wait as any ended stream (one that pings once and stalls again backs off).
+      this.reconnectLater();
     }, LIVE_WATCHDOG_MS);
   }
 
@@ -651,11 +657,19 @@ export class LiveSync {
     if (answer.status === 200 || answer.status === 304) {
       this.setPhase('connecting');
       if (answer.body) this.take(answer.body);
+      this.clearStreamRetry();
       this.openStream();
     }
   }
 
+  /** Forget a pending stream retry (a refusal's or a reconnect's): the next end starts its own wait. */
+  private clearStreamRetry() {
+    if (this.streamRetryTimer) clearTimeout(this.streamRetryTimer);
+    this.streamRetryTimer = undefined;
+  }
+
   private signedOut() {
+    this.clearStreamRetry();
     this.closeStream();
     this.clearPoll();
     this.clearFetchRetry();
@@ -753,10 +767,30 @@ export class LiveSync {
   /** A copy held while the person edits: looked at again as soon as the editing settled. */
   private waitForEditing() {
     if (this.disposeEditing) return;
-    this.disposeEditing = onEditingSettled(this.rootStore, () => {
-      if (!this.held?.whileEditing || isEditing(this.rootStore)) return;
-      this.retake();
+    const project = this.rootStore.projectStore.getProject(this.projectId);
+    let lastChange = Date.now();
+    const stopWatching = project && isAlive(project) ? onPatch(project, () => (lastChange = Date.now())) : undefined;
+    const stopSettled = onEditingSettled(this.rootStore, () => {
+      const held = this.held;
+      if (!held?.whileEditing) return;
+      if (!isEditing(this.rootStore)) {
+        this.retake();
+        return;
+      }
+      // An open edit idle for long (a text edit left open, a gesture that never ended): unsaved work of this tab
+      // would wait with it, unsaved, for good. Past LIVE_EDIT_HOLD_IDLE_MS it is asked about as any unsaved work is.
+      const idle = Date.now() - Math.max(lastChange, lastFieldInputAt());
+      if (idle < LIVE_EDIT_HOLD_IDLE_MS) return;
+      const current = this.rootStore.projectStore.getProject(this.projectId);
+      if (!current || !isAlive(current) || isSaved(this.projectId, getSnapshot(current) as unknown as ProjectContent)) return;
+      if (getHistoryStore()?.batch) console.warn('[live] a gesture has stayed open for over a minute; asking about the newer version now');
+      this.setHeld({ ...held, whileEditing: undefined });
+      existingAutosave(this.projectId)?.noteChangedElsewhere(held.version);
     });
+    this.disposeEditing = () => {
+      stopSettled();
+      stopWatching?.();
+    };
   }
 
   private stopWaitingForEditing() {
@@ -869,8 +903,9 @@ export class LiveSync {
       ui.setCurrentPage(page);
       return;
     }
-    // A state preview's badge is the way out of that preview: never replaced. The page waits in the Pages panel then.
-    if (ui.editorNotice?.kind === 'previewState') return;
+    // Another notice the person may not have read yet (a refusal, a state preview's badge, which is the way out of
+    // that preview) is never replaced; the page waits in the Pages panel then.
+    if (ui.editorNotice && ui.editorNotice.kind !== 'newPage') return;
     ui.setEditorNotice({ kind: 'newPage', pageId: page.id, message: `New page \u2018${page.metadata.title}\u2019 is ready.` });
   }
 

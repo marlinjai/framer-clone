@@ -188,6 +188,8 @@ export class AutosaveController {
   private debounceTimer: ReturnType<typeof setTimeout> | undefined;
   private maxWaitTimer: ReturnType<typeof setTimeout> | undefined;
   private deferredByLiveSync = false;
+  /** A refusal came back during a live hold: its dialog opens once the hold ends. */
+  private conflictWaitsForLiveHold = false;
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
   private inFlight: Promise<void> | undefined;
   /** A change arrived while a request was out (or Publish held the controller). */
@@ -558,7 +560,9 @@ export class AutosaveController {
       this.attempts = 0;
       this.failingSince = undefined;
       this.dirtyHint = true;
-      this.setState({ phase: 'conflict', currentVersion: result.currentVersion, dialogOpen: true, retrying: false });
+      // During a live hold for the person's editing, the dialog waits for the edit to settle (never under the cursor).
+      if (this.deferredByLiveSync) this.conflictWaitsForLiveHold = true;
+      this.setState({ phase: 'conflict', currentVersion: result.currentVersion, dialogOpen: !this.deferredByLiveSync, retrying: false });
       return;
     }
     if (result.kind === 'error') {
@@ -739,14 +743,23 @@ export class AutosaveController {
    * resizes (src/lib/projects/liveSync.ts). A save now would go out on the old
    * version and be refused, opening the dialog under the cursor (a long resize
    * reaches the 10 s maximum wait). So the debounce waits, without any dialog,
-   * until the hold ends; the live sync then adopts, replays or asks. Cmd+S and
-   * the save on leaving the page still save.
+   * until the hold ends; the live sync then adopts or asks. A save already out
+   * when the hold began and refused meanwhile keeps its dialog closed until then
+   * too. Cmd+S and the save on leaving the page still save.
    */
   deferWhileLiveHeld(defer: boolean): void {
     if (this.deferredByLiveSync === defer) return;
     this.deferredByLiveSync = defer;
-    if (defer) this.clearDebounce();
-    else if (this.state.phase === 'unsaved' && !this.inFlight && this.held === 0) this.schedule();
+    if (defer) {
+      this.clearDebounce();
+      return;
+    }
+    if (this.conflictWaitsForLiveHold) {
+      this.conflictWaitsForLiveHold = false;
+      if (this.state.phase === 'conflict' && !this.state.dialogOpen) this.setState({ ...this.state, dialogOpen: true });
+      return;
+    }
+    if (this.state.phase === 'unsaved' && !this.inFlight && this.held === 0) this.schedule();
   }
 
   // ---- other writers of this tab (Publish) -----------------------------------

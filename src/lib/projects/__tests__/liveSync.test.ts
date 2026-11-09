@@ -28,6 +28,7 @@ import {
   LIVE_HEARTBEAT_MS,
   LIVE_WATCHDOG_MS,
   LOAD_NEWER_WRITE_WAIT_MS,
+  LIVE_EDIT_HOLD_IDLE_MS,
   pagesRemovedBy,
   restoredPagesSentence,
   LIVE_POLL_HIDDEN_MS,
@@ -1454,6 +1455,65 @@ describe('liveSync: an edit settles after an agent write was held for it', () =>
     expect(knownServerVersion(SITE)).toBe(2);
   });
 
+  it('a save already out when a gesture holds a copy: its refusal keeps the dialog closed until the gesture ends', async () => {
+    start();
+    await agentWrites('first');
+    const node = homeChild(0);
+    let finish!: (result: ProjectWriteResult) => void;
+    resetAutosaveForTests({
+      write: () =>
+        new Promise<ProjectWriteResult>((resolve) => {
+          finish = resolve;
+        }),
+    });
+    autosaveFor(SITE).attach(project());
+    const history = getHistoryStore()!;
+    store.editorUI.startResize({} as never);
+    history.startBatch('Resize');
+    node.setTextContent('moving');
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS); // a save goes out on version 2
+    await agentWrites('agent'); // held for the gesture
+    finish({ kind: 'conflict', currentVersion: server.version });
+    await settle();
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: false });
+    history.commitBatch();
+    store.editorUI.endResize();
+    await settle();
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: true });
+  });
+
+  it('unsaved work from before an open edit: asked once the edit settles, never during it', async () => {
+    start();
+    await agentWrites('first');
+    project().updateMetadata({ description: 'unsaved before' });
+    const draft = openDraft();
+    // Held for the open edit, though the copy was already unsaved: the dialog waits for it.
+    await agentWrites('agent');
+    draft.cancel();
+    await settle();
+    expect(autosaveFor(SITE).getState().phase).toBe('conflict');
+  });
+
+  it('a held edit with earlier unsaved work, idle past the limit: asked then', async () => {
+    start();
+    await agentWrites('first');
+    const node = homeChild(0);
+    const history = getHistoryStore()!;
+    store.editorUI.startResize({} as never);
+    history.startBatch('Resize');
+    node.setTextContent('moved once');
+    await agentWrites('agent');
+    expect(liveSyncFor(SITE)?.heldVersion).toMatchObject({ whileEditing: true });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await vi.advanceTimersByTimeAsync(LIVE_EDIT_HOLD_IDLE_MS - 2_000);
+    expect(autosaveFor(SITE).getState().phase).not.toBe('conflict');
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: true });
+    expect(warn).toHaveBeenCalled();
+    history.commitBatch();
+    store.editorUI.endResize();
+  });
+
   it('stopping while a copy is held for editing gives autosave back: the next run saves edits again', async () => {
     const stop = start();
     const draft = openDraft();
@@ -1502,6 +1562,16 @@ describe('liveSync: the new page notice and other notices (review of PR #353)', 
     const pageId = await newPageSaved('run-1');
     expect(project().getPage(pageId)).toBeDefined();
     expect(store.editorUI.editorNotice).toMatchObject({ kind: 'previewState' });
+    stop();
+  });
+
+  it('never replaces a notice the person may not have read yet (a refusal)', async () => {
+    const stop = start();
+    store.editorUI.setCurrentPage(project().getPage(homeId())!);
+    store.editorUI.setEditorNotice({ kind: 'refused', message: 'That edit was refused.' });
+    stream().emit('gen:outline', { runId: 'run-1', target: { kind: 'newPage', title: 'Menu' }, outline: [{ title: 'Hero', kind: 'hero' }] });
+    await newPageSaved('run-1');
+    expect(store.editorUI.editorNotice).toMatchObject({ kind: 'refused' });
     stop();
   });
 
@@ -1611,8 +1681,11 @@ describe('liveSync: a silent stream and a tab shown again (F3)', () => {
     expect(streams).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(1);
     expect(first.closed).toBe(true);
-    expect(streams).toHaveLength(2);
     expect(liveSyncFor(SITE)?.phase).toBe('polling');
+    // Reopened on the same jittered back-off as any ended stream.
+    expect(streams).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(LIVE_RECONNECT_MS);
+    expect(streams).toHaveLength(2);
     stream().open();
     expect(liveSyncFor(SITE)?.phase).toBe('live');
   });
@@ -1726,6 +1799,25 @@ describe('liveSync: the server simply closes the stream (a re-check timeout, an 
     expect(streams).toHaveLength(count + 1);
     stream().open();
     expect(liveSyncFor(SITE)?.phase).toBe('live');
+  });
+});
+
+describe('liveSync: a refusal timer never outlives a sign-out', () => {
+  it('refused, signed out, back and live: the next drop reconnects after the short wait, not the old refusal\'s', async () => {
+    start();
+    stream().fail(true); // refused: a retry a minute away
+    server.status = 401;
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_VISIBLE_MS); // the poll is told: signed out
+    expect(liveSyncFor(SITE)?.phase).toBe('signed-out');
+    server.status = undefined;
+    for (const listener of visibilityListeners) listener();
+    await settle();
+    stream().open();
+    expect(liveSyncFor(SITE)?.phase).toBe('live');
+    const count = streams.length;
+    stream().fail(false);
+    await vi.advanceTimersByTimeAsync(LIVE_RECONNECT_MS);
+    expect(streams).toHaveLength(count + 1);
   });
 });
 

@@ -42,6 +42,12 @@ function listenForFieldInput() {
   document.addEventListener('input', note, true);
 }
 
+/** When a key was last pressed or text input made in an editable field (the canvas's text editor counts), in Date.now() time. */
+export function lastFieldInputAt(): number {
+  listenForFieldInput();
+  return lastFieldInput;
+}
+
 /** Tests only: forget the last field input. */
 export function resetFieldInputForTests(): void {
   lastFieldInput = Number.NEGATIVE_INFINITY;
