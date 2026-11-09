@@ -13,6 +13,7 @@ import { getSnapshot } from 'mobx-state-tree';
 import { Prisma } from '@prisma/client';
 import ProjectModel from '@/models/ProjectModel';
 import { REVISIONS_KEPT, SiteRepository, type TenantScope } from '../repository';
+import { cachedDocument, documentEpoch, rememberDocument, resetLiveDocumentCacheForTests } from '../liveDocumentCache';
 import { resetLiveBusForTests, subscribeSite } from '../liveBus';
 import { announcePlan, resetLivePlansForTests } from '@/server/mcp/livePlans';
 import {
@@ -549,6 +550,18 @@ describe('SiteRepository.saveProject leaves the name to the rename action', () =
 });
 
 describe('SiteRepository.renameSite', () => {
+  it("forgets the document route's kept copy (the name is in it and moves no version); a refused rename keeps it", async () => {
+    resetLiveDocumentCacheForTests();
+    rememberDocument(SCOPE, 'site_1', 4, '{"old":"name"}', documentEpoch());
+    prisma.site.updateMany.mockResolvedValueOnce({ count: 0 });
+    prisma.site.findFirst.mockResolvedValueOnce(null);
+    await repo.renameSite(SCOPE, 'site_1', 'New name').catch(() => {});
+    expect(cachedDocument(SCOPE, 'site_1', 4)).toBe('{"old":"name"}');
+    prisma.site.updateMany.mockResolvedValueOnce({ count: 1 });
+    await repo.renameSite(SCOPE, 'site_1', 'New name');
+    expect(cachedDocument(SCOPE, 'site_1', 4)).toBeUndefined();
+  });
+
   it('renames scoped by id AND workspace_id', async () => {
     prisma.site.updateMany.mockResolvedValue({ count: 1 });
     const out = await repo.renameSite(SCOPE, 'site_1', 'New name');
@@ -897,6 +910,15 @@ describe('SiteRepository.deleteSite', () => {
   beforeEach(() => {
     // The row lock taken first (an UPDATE of the row's own write timestamp).
     prisma.site.updateMany.mockResolvedValue({ count: 1 });
+  });
+
+  it("forgets the document route's kept copy of a deleted site", async () => {
+    resetLiveDocumentCacheForTests();
+    rememberDocument(SCOPE, 'site_1', 4, '{"kept":true}', documentEpoch());
+    prisma.site.findFirst.mockResolvedValue(siteRow('draft'));
+    prisma.site.deleteMany.mockResolvedValue({ count: 1 });
+    await repo.deleteSite(SCOPE, 'site_1');
+    expect(cachedDocument(SCOPE, 'site_1', 4)).toBeUndefined();
   });
 
   it('locks, reads and deletes scoped by id, workspace AND tenant group, in one transaction', async () => {

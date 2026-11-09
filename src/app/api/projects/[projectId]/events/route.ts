@@ -44,7 +44,7 @@
 // Access re-checks fail closed (decided 2026-11-09, plan section "Decisions"):
 // once a check is due, EVERY event waits behind it (site:version, plan:update,
 // agent:activity, gen:*), so nothing reaches a stream whose access may be gone.
-// A check that does not answer within CHECK_TIMEOUT_MS, or that meets an
+// A check that does not answer within LIVE_CHECK_TIMEOUT_MS, or that meets an
 // auth-brain or OpenFGA outage (or any other error), ends the stream without
 // `auth:expired` and drops what it held: the editor reconnects, meets the guard
 // (503 during an outage) and falls back to the guarded document route.
@@ -69,8 +69,11 @@ import { recentSiteOperations } from '@/server/siteOps/audit';
 import { getPrismaClient } from '@/server/db';
 import type { TenantScope } from '@/server/sites/repository';
 import {
+  LIVE_CHECK_TIMEOUT_MS,
   LIVE_EVENTS,
   LIVE_FEED_MAX,
+  LIVE_PING_EVENT,
+  LIVE_SSE_MAX_QUEUED_BYTES,
   LIVE_RECHECK_MS,
   LIVE_RECHECK_ON_WRITE_MS,
   ORIGIN_TAB_PATTERN,
@@ -84,14 +87,8 @@ export const dynamic = 'force-dynamic';
 
 type Ctx = { params: Promise<{ projectId: string }> };
 
-/** How long an access check may take; past it the stream ends (fail closed) and the editor reconnects. */
-export const CHECK_TIMEOUT_MS = 10_000;
-/** Events held behind such a check at most; past this the stream ends and the editor reconnects. */
+/** Events held behind an access check at most; past this the stream ends and the editor reconnects. */
 const GATE_QUEUE_MAX = 500;
-/** Unread bytes a stream holds for a browser that stopped reading before it is cut off (it reconnects). */
-export const LIVE_SSE_MAX_QUEUED_BYTES = 1024 * 1024;
-/** The named heartbeat event; the editor's watchdog listens for exactly this name. */
-export const LIVE_PING_EVENT = 'ping';
 
 /** The bound "per session" counts streams of one session cookie, never its value. */
 function sessionKey(req: Request, userId: string): string {
@@ -157,12 +154,12 @@ async function handleGET(req: Request, { params }: Ctx): Promise<Response> {
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         const deadline = new Promise<'timeout'>((resolve) => {
-          timer = setTimeout(() => resolve('timeout'), CHECK_TIMEOUT_MS);
+          timer = setTimeout(() => resolve('timeout'), LIVE_CHECK_TIMEOUT_MS);
         });
         const again = await Promise.race([authorizeLiveProject(req, projectId), deadline]);
         if (ended) return;
         if (again === 'timeout') {
-          console.warn(`[live] the stream of site ${projectId} ends: its access check did not answer within ${CHECK_TIMEOUT_MS} ms`);
+          console.warn(`[live] the stream of site ${projectId} ends: its access check did not answer within ${LIVE_CHECK_TIMEOUT_MS} ms`);
           end();
           return;
         }

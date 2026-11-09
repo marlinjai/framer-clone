@@ -50,9 +50,8 @@ import { publishSiteEvent, resetLiveBusForTests, LIVE_STREAM_LIMITS } from '@/se
 import { GET as EVENTS } from '../[projectId]/events/route';
 import { announcePlan, resetLivePlansForTests } from '@/server/mcp/livePlans';
 import { openLiveGeneration, resetLiveGenerationForTests } from '@/server/sites/liveGeneration';
-import { LIVE_RECHECK_MS, LIVE_RECHECK_ON_WRITE_MS } from '@/lib/projects/liveEvents';
+import { LIVE_CHECK_TIMEOUT_MS, LIVE_PING_EVENT, LIVE_RECHECK_MS, LIVE_RECHECK_ON_WRITE_MS } from '@/lib/projects/liveEvents';
 import { GET as DOCUMENT } from '../[projectId]/document/route';
-import { CHECK_TIMEOUT_MS, LIVE_PING_EVENT } from '../[projectId]/events/route';
 import { SSE_HEARTBEAT_MS } from '@/lib/ai/sse';
 import { LIVE_GUARD_MEMO_MS, resetLiveGuardMemoForTests } from '@/server/sites/liveGuard';
 import { forgetSiteDocuments, resetLiveDocumentCacheForTests } from '@/server/sites/liveDocumentCache';
@@ -371,7 +370,7 @@ describe('GET /api/projects/<id>/events', () => {
     vi.setSystemTime(Date.now() + LIVE_RECHECK_ON_WRITE_MS + 1);
     run.section({ generationId: 'run-1', attempt: 1, index: 0, slot: 0, node });
     publishSiteEvent('site_1', 'site:version', { origin: 'mcp', version: 8, versionBefore: 7 });
-    await vi.advanceTimersByTimeAsync(CHECK_TIMEOUT_MS);
+    await vi.advanceTimersByTimeAsync(LIVE_CHECK_TIMEOUT_MS);
     // Ended without a single further event: the editor reconnects and meets the guard.
     await expect(events.next()).rejects.toThrow('stream ended');
     expect(warn).toHaveBeenCalled();
