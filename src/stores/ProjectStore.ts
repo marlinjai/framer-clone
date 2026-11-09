@@ -1,7 +1,7 @@
 // src/stores/ProjectStore.ts  
 // Domain store for managing projects collection
 import { parseModelComponents } from '@/models/ComponentDefinitionModel';
-import { types, Instance } from 'mobx-state-tree';
+import { types, Instance, applySnapshot } from 'mobx-state-tree';
 import ProjectModel, { ProjectModelType, ProjectSnapshotIn } from '../models/ProjectModel';
 import { v4 as uuidv4 } from 'uuid';
 import { createIntrinsicComponent, createFloatingCanvasComponent, createViewportNode } from '@/models/ComponentModel';
@@ -249,11 +249,78 @@ const ProjectStore = types.model('ProjectStore', {
     return snapshot.id;
   },
 
+  // Put a newer server copy of an open project in place, touching only what
+  // differs from `before` (the open copy's snapshot): `next` is the server copy
+  // with every unchanged part replaced by `before`'s own object
+  // (src/lib/projects/structuralSharing.ts), so a part that is the same object
+  // is skipped, and of the pages only those added, removed or changed are
+  // reconciled. A full `projects.set` would walk (and instantiate) every page
+  // of the site for a one-node change. Falls back to ingestProjectSnapshot for
+  // a project not in the store.
+  adoptProjectSnapshot(next: ProjectSnapshotIn, before: ProjectSnapshotIn): string {
+    const project = self.projects.get(next.id);
+    if (!project) return this.ingestProjectSnapshot(next);
+    const target = project as unknown as Record<string, unknown>;
+    const nextParts = next as unknown as Record<string, unknown>;
+    const beforeParts = before as unknown as Record<string, unknown>;
+    const keys = new Set([...Object.keys(nextParts), ...Object.keys(beforeParts)]);
+    // Refuse a malformed copy before anything is touched (a page whose id differs from its key
+    // would throw in `pages.set` after another page was already removed).
+    for (const [id, page] of Object.entries((nextParts.pages ?? {}) as Record<string, { id?: unknown }>)) {
+      if (page && page.id !== id) throw new Error(`adoptProjectSnapshot: page keyed ${id} carries id ${String(page.id)}`);
+    }
+    try {
+      for (const key of keys) {
+        if (key === 'id' || nextParts[key] === beforeParts[key]) continue;
+        if (key === 'pages') {
+          const pages = project.pages;
+          const nextPages = (nextParts.pages ?? {}) as Record<string, unknown>;
+          const beforePages = (beforeParts.pages ?? {}) as Record<string, unknown>;
+          for (const id of Object.keys(beforePages)) if (!(id in nextPages)) pages.delete(id);
+          for (const [id, page] of Object.entries(nextPages)) {
+            if (page !== beforePages[id]) pages.set(id, withStoredDates(pages.get(id), page) as never);
+          }
+          continue;
+        }
+        // Any other part (components through their processor, the settings, the metadata): assigned whole.
+        target[key] = key === 'metadata' ? withStoredDates(project.metadata as never, nextParts[key]) : nextParts[key];
+      }
+    } catch (error) {
+      // All or nothing: a failure part-way puts the whole working copy back as it was.
+      applySnapshot(project, before as never);
+      throw error;
+    }
+    // Always from the incoming components: the server may have removed the last refused definition, which leaves
+    // both component maps equal (empty) while the stored refusals are stale.
+    project.replaceLoadRefusals(parseModelComponents(next.components).refused);
+    return next.id;
+  },
+
   // Remove a project
   removeProject(projectId: string) {
     self.projects.delete(projectId);
   },
 }))
+
+/**
+ * A page (or the project's metadata) snapshot with the stored node's own Date objects where the time is
+ * the same: MobX-State-Tree keeps a date only when handed that very object, so
+ * an equal timestamp would otherwise be replaced (a patch, and an undo step part).
+ */
+function withStoredDates(stored: { createdAt?: Date; updatedAt?: Date } | undefined, page: unknown): unknown {
+  if (!stored || !page || typeof page !== 'object') return page;
+  const snapshot = page as { createdAt?: unknown; updatedAt?: unknown };
+  const same = (date: Date | undefined, value: unknown) =>
+    date instanceof Date && (value instanceof Date ? value.getTime() === date.getTime() : value === date.getTime());
+  const createdAt = same(stored.createdAt, snapshot.createdAt);
+  const updatedAt = same(stored.updatedAt, snapshot.updatedAt);
+  if (!createdAt && !updatedAt) return page;
+  return {
+    ...snapshot,
+    ...(createdAt ? { createdAt: stored.createdAt } : {}),
+    ...(updatedAt ? { updatedAt: stored.updatedAt } : {}),
+  };
+}
 
 // TypeScript types
 export type ProjectStoreType = Instance<typeof ProjectStore>;

@@ -37,6 +37,8 @@ import React from 'react';
 import { computed } from 'mobx';
 import { observer } from 'mobx-react-lite';
 import { useStore } from '@/hooks/useStore';
+import { useInteracting } from '@/hooks/useInteracting';
+import { onPersonTookOver } from '@/lib/live/editingInProgress';
 import HeadlessComponentRenderer from '@/lib/renderer/HeadlessComponentRenderer';
 import type { BindingScope } from '@/lib/bindings/resolver/scope';
 import { GENERATED_PAGE_ROOT_STYLE } from '@/lib/ai/pageGen/apply';
@@ -288,12 +290,17 @@ function sameCamera(a: CameraTransform, b: CameraTransform): boolean {
 
 /**
  * Brings each new draft section into view (before the first one, the first
- * skeleton of the outline), until the user moves the camera themselves: from
- * then on this run leaves the camera alone. Mounted inside the canvas (it needs
- * the camera's context); renders nothing.
+ * skeleton of the outline), until the user moves the camera themselves, selects
+ * something else or starts a text edit: from then on this run leaves the camera
+ * alone. While the person drags, resizes, draws a marquee, edits text or has the
+ * focus in a field it waits, and catches up once they stop
+ * (src/lib/live/editingInProgress.ts). Mounted inside the canvas (it needs the
+ * camera's context); renders nothing.
  */
 export const DraftCameraFollow = observer(function DraftCameraFollow() {
-  const { editorUI } = useStore();
+  const rootStore = useStore();
+  const { editorUI } = rootStore;
+  const interacting = useInteracting(rootStore);
   const draft = editorUI.pageGenDraft as PageGenDraftStore | undefined;
   const { read, panBy } = useCameraControls();
   const requestKey = draft?.targetOn(editorUI.currentPage?.id)?.requestKey;
@@ -313,8 +320,17 @@ export const DraftCameraFollow = observer(function DraftCameraFollow() {
     if (follow.current.requestKey !== requestKey) follow.current = { requestKey, last: read(), userMoved: false };
   }, [requestKey, read]);
 
+  // The person took over (another selection, a text edit): this run leaves the camera alone.
+  React.useEffect(
+    () =>
+      onPersonTookOver(rootStore, () => {
+        follow.current.userMoved = true;
+      }),
+    [rootStore],
+  );
+
   React.useEffect(() => {
-    if (!requestKey || focus === undefined) return;
+    if (!requestKey || focus === undefined || interacting) return;
     const state = follow.current;
     if (state.requestKey !== requestKey || state.userMoved) return;
     const now = read();
@@ -334,7 +350,7 @@ export const DraftCameraFollow = observer(function DraftCameraFollow() {
     const { dx, dy } = revealOffset(box, visible, 48);
     if (dx !== 0 || dy !== 0) panBy(dx, dy);
     state.last = read();
-  }, [requestKey, focus, read, panBy]);
+  }, [requestKey, focus, read, panBy, interacting]);
 
   return null;
 });

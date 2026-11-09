@@ -42,6 +42,7 @@
 // page (empty slug), else the first page; `missingPageId` reports a requested
 // page that does not exist here (typically never saved, after a reload).
 
+import { runInAction } from 'mobx';
 import { getSnapshot } from 'mobx-state-tree';
 import type { ProjectSnapshotOut, ProjectModelType } from '@/models/ProjectModel';
 import type { PageModelType } from '@/models/PageModel';
@@ -51,6 +52,7 @@ import { takeStashedDemoProject } from '@/lib/projects/demoStash';
 import { withDefaultViewports } from '@/lib/canvas/defaultViewports';
 import { normalizeSiteSettings } from '@/lib/site/siteSettings';
 import { componentsWithShopParts, pageWithShopParts } from '@/lib/commerce/parts';
+import { shareUnchanged } from '@/lib/projects/structuralSharing';
 
 export interface OpenedProject {
   project: ProjectModelType | undefined;
@@ -158,6 +160,8 @@ function definitionName(components: unknown, id: string): string | undefined {
 
 // project id -> content of the last server version this tab knows.
 const baselines = new Map<string, VersionContent>();
+// project id -> the page ids of that same server copy (what another writer can have deleted).
+const serverPageIds = new Map<string, ReadonlySet<string>>();
 // project id -> the site version (sites.version) of that same server copy.
 const knownVersions = new Map<string, number>();
 // project id -> every saved part of that same server copy, as `savedContentKey`
@@ -264,6 +268,7 @@ export function markServerVersion(
   content: SavedContent = savedContentOf(project),
 ): void {
   baselines.set(projectId, content.version);
+  serverPageIds.set(projectId, new Set(Object.keys((project.pages ?? {}) as Record<string, unknown>)));
   knownVersions.set(projectId, version);
   savedKeys.set(projectId, content.key);
   openedChangedElsewhere.delete(projectId);
@@ -303,6 +308,11 @@ function applyingServer(fn: () => void) {
   } finally {
     applyingServerCopy--;
   }
+}
+
+/** The page ids of the last server copy this tab knows (loaded, saved, adopted), if any. */
+export function knownServerPageIds(projectId: string): ReadonlySet<string> | undefined {
+  return serverPageIds.get(projectId);
 }
 
 /**
@@ -449,6 +459,28 @@ export function openProject(
   };
 }
 
+/**
+ * Measurement only (src/lib/projects/__tests__/adoption.perf.test.ts): told how
+ * long each phase of an adoption took, in milliseconds. Unset in the editor, where
+ * the phases cost one comparison each.
+ */
+export type AdoptionProfiler = (phase: string, ms: number) => void;
+let adoptionProfiler: AdoptionProfiler | undefined;
+
+export function setAdoptionProfilerForTests(profiler: AdoptionProfiler | undefined): void {
+  adoptionProfiler = profiler;
+}
+
+function timed<T>(phase: string, fn: () => T): T {
+  if (!adoptionProfiler) return fn();
+  const start = performance.now();
+  try {
+    return fn();
+  } finally {
+    adoptionProfiler(phase, performance.now() - start);
+  }
+}
+
 /** What an adoption changed, for presence and the reveal (later slices). */
 export interface AdoptedVersion {
   /** Node ids in the adopted copy that the copy before did not have, in document order. */
@@ -459,23 +491,44 @@ export interface AdoptedVersion {
   recorded: boolean;
 }
 
-/** Each node of a project's pages by id, keyed by its own content (its children by id only), in document order. */
-function nodeKeys(project: { pages?: unknown }): Map<string, string> {
-  const keys = new Map<string, string>();
+/** Each node of a project's pages by id, as its snapshot object, in document order. */
+function nodesById(project: { pages?: unknown }): Map<string, Record<string, unknown>> {
+  const nodes = new Map<string, Record<string, unknown>>();
   const visit = (node: unknown) => {
     if (!node || typeof node !== 'object') return;
-    const { children, ...own } = node as { id?: unknown; children?: unknown };
-    const kids = Array.isArray(children) ? children : [];
-    if (typeof own.id === 'string') {
-      keys.set(own.id, stableJson({ ...own, children: kids.map((child) => (child as { id?: unknown })?.id) }));
-    }
-    for (const child of kids) visit(child);
+    const own = node as { id?: unknown; children?: unknown };
+    if (typeof own.id === 'string') nodes.set(own.id, node as Record<string, unknown>);
+    if (Array.isArray(own.children)) for (const child of own.children) visit(child);
   };
   for (const page of Object.values((project.pages ?? {}) as Record<string, { appComponentTree?: unknown; canvasNodes?: unknown }>)) {
     visit(page?.appComponentTree);
     for (const node of Object.values((page?.canvasNodes ?? {}) as Record<string, unknown>)) visit(node);
   }
-  return keys;
+  return nodes;
+}
+
+/** A node's own content (its children by id only), for telling a changed node from one whose descendant changed. */
+function ownKey(node: Record<string, unknown>): string {
+  const { children, ...own } = node;
+  const kids = Array.isArray(children) ? children : [];
+  return stableJson({ ...own, children: kids.map((child) => (child as { id?: unknown })?.id) });
+}
+
+/**
+ * The nodes created and changed between two snapshots of a project. The adoption
+ * keeps every unchanged node's snapshot object (structural sharing), so only
+ * nodes whose object differs are serialised to compare their own content.
+ */
+function nodeChanges(before: { pages?: unknown }, after: { pages?: unknown }): { created: string[]; changed: string[] } {
+  const old = nodesById(before);
+  const created: string[] = [];
+  const changed: string[] = [];
+  for (const [id, node] of nodesById(after)) {
+    const prev = old.get(id);
+    if (!prev) created.push(id);
+    else if (prev !== node && ownKey(prev) !== ownKey(node)) changed.push(id);
+  }
+  return { created, changed };
 }
 
 /**
@@ -510,8 +563,22 @@ export function adoptServerCopy(
   if (known !== undefined && version <= known) return null;
   const existing = rootStore.projectStore.getProject(snapshot.id) as ProjectModelType | undefined;
   if (!existing) return null;
+  // One MobX batch for the whole adoption (LiveSync already runs it in one; a
+  // direct call gets its own): inside a batch every node's snapshot is computed
+  // once and stays the same object, so the reconcile skips each subtree the
+  // shared copy hands back unchanged (MobX-State-Tree compares a node's current
+  // snapshot with the incoming one by reference first).
+  return runInAction(() => adoptObserved(rootStore, existing, snapshot, version, label));
+}
+
+function adoptObserved(
+  rootStore: RootStoreType,
+  existing: ProjectModelType,
+  snapshot: ProjectSnapshotOut,
+  version: number,
+  label: string,
+): AdoptedVersion {
   const beforeSnapshot = getSnapshot(existing);
-  const before = nodeKeys(beforeSnapshot);
   const history = getHistoryStore();
   // An erasure of personal data since this copy: undoing past it would put the
   // erased values back on screen (and a save of them is refused anyway). It is
@@ -520,40 +587,40 @@ export function adoptServerCopy(
   let recorded = false;
   applyingServerCopy++;
   try {
+    // The open copy's own objects wherever the content is unchanged: the reconcile
+    // then patches only what the writer changed (src/lib/projects/structuralSharing.ts).
+    const shared = timed('share', () => shareUnchanged(beforeSnapshot, snapshot));
     const put = () => {
-      rootStore.projectStore.ingestProjectSnapshot(snapshot);
+      timed('ingest', () => rootStore.projectStore.adoptProjectSnapshot(shared, beforeSnapshot as never));
     };
     if (history && erasedSince) {
       history.runUntracked(put);
       history.clear();
-    } else if (history) recorded = history.applyRemote(label, put);
+    } else if (history) recorded = timed('applyRemote', () => history.applyRemote(label, put));
     else put();
   } finally {
     applyingServerCopy--;
   }
   const project = rootStore.projectStore.getProject(snapshot.id) as ProjectModelType | undefined;
+  const afterSnapshot = project ? getSnapshot(project) : undefined;
   // A reconcile can emit patches that change nothing (a value replaced by an
-  // equal one): a version with this tab's content is no step to undo.
-  if (recorded && project && stableJson(getSnapshot(project)) === stableJson(beforeSnapshot)) {
+  // equal one): a version with this tab's content is no step to undo. Every
+  // unchanged part is the same object, so this walk serialises nothing.
+  if (recorded && afterSnapshot && timed('noopCompare', () => shareUnchanged(beforeSnapshot, afterSnapshot) === beforeSnapshot)) {
     history?.forgetLastEntry();
     recorded = false;
   }
-  markServerVersion(snapshot.id, snapshot, version);
+  timed('markServerVersion', () => markServerVersion(snapshot.id, snapshot, version));
   discardedCopies.delete(snapshot.id);
   // As on a load: what autosave compares with is the copy as the store holds it.
-  if (project) savedKeys.set(snapshot.id, savedContentKey(getSnapshot(project)));
+  if (afterSnapshot) timed('savedKey', () => savedKeys.set(snapshot.id, savedContentKey(afterSnapshot)));
   // The page on screen may be gone (deleted over there): show another one.
   if (project && rootStore.editorUI.currentProject?.id === project.id && !rootStore.editorUI.currentPage) {
     rootStore.editorUI.setCurrentPage(pickPage(project, null).page);
   }
-  const after = project ? nodeKeys(getSnapshot(project)) : new Map<string, string>();
-  const created: string[] = [];
-  const changed: string[] = [];
-  for (const [id, key] of after) {
-    const old = before.get(id);
-    if (old === undefined) created.push(id);
-    else if (old !== key) changed.push(id);
-  }
+  const { created, changed } = afterSnapshot
+    ? timed('nodeChanges', () => nodeChanges(beforeSnapshot, afterSnapshot))
+    : { created: [], changed: [] };
   return { created, changed, recorded };
 }
 

@@ -16,12 +16,20 @@ import { getSnapshot } from 'mobx-state-tree';
 import { createRootStore, getHistoryStore, type RootStoreType } from '@/stores/RootStore';
 import ProjectModel, { type ProjectModelType, type ProjectSnapshotOut } from '@/models/ProjectModel';
 import { applyOperations } from '@/lib/siteOps/applyOps';
-import { knownServerVersion, openProject } from '@/stores/openProject';
+import { knownServerPageIds, knownServerVersion, noteWriteInFlight, openProject } from '@/stores/openProject';
 import { autosaveFor, resetAutosaveForTests, AUTOSAVE_DEBOUNCE_MS } from '../autosave';
 import type { ProjectWriteResult } from '../projectWrite';
 import { editorTabId } from '../tabId';
 import {
   adoptionLabel,
+  heldWriter,
+  LIVE_FETCH_RETRY_MS,
+  LIVE_RECONNECT_MS,
+  LIVE_HEARTBEAT_MS,
+  LIVE_WATCHDOG_MS,
+  LOAD_NEWER_WRITE_WAIT_MS,
+  pagesRemovedBy,
+  restoredPagesSentence,
   LIVE_POLL_HIDDEN_MS,
   LIVE_POLL_VISIBLE_MS,
   LIVE_STREAM_RETRY_MS,
@@ -34,7 +42,10 @@ import {
   type LiveEventSource,
   type LiveSyncDeps,
 } from '../liveSync';
-import type { SiteVersionEvent } from '../liveEvents';
+import { LIVE_PING_EVENT, type SiteVersionEvent } from '../liveEvents';
+import { registerOpenDraft } from '../openDrafts';
+import { EDITING_RECHECK_MS } from '@/lib/live/editingInProgress';
+import { GEN_DRAFT_LIMITS } from '../liveEvents';
 import { REVEAL_SETTLE_MS } from '@/lib/live/revealStore';
 import { autorun } from 'mobx';
 import { validateGeneration } from '@/lib/ai/pageGen/validate';
@@ -102,6 +113,7 @@ const deps: LiveSyncDeps = {
     return { status: 200, body: { version: server.version, snapshot: server.snapshot } };
   },
   isVisible: () => visible,
+  random: () => 0,
   onVisibilityChange: (listener) => {
     visibilityListeners.push(listener);
     return () => {
@@ -173,6 +185,12 @@ afterEach(() => {
   resetAutosaveForTests();
   vi.useRealTimers();
 });
+
+/** The stream ended (closed by the server, a drop): this tab reopens it after its own back-off (random 0 in these tests), and it opens. */
+async function reconnect() {
+  await vi.advanceTimersByTimeAsync(LIVE_RECONNECT_MS);
+  stream().open();
+}
 
 function start() {
   const stop = startLiveSync(SITE, store);
@@ -386,8 +404,8 @@ describe('liveSync: resume', () => {
   it("a reconnect's state brings a newer version in one fetch; a lower one is ignored", async () => {
     start();
     await agentWrites('while away', false);
-    stream().fail(false); // reconnecting by itself
-    stream().open();
+    stream().fail(false); // closed by the server: reopened after this tab's back-off
+    await reconnect();
     stream().emit('state', { version: server.version, plans: [], agents: [], feed: [] });
     await settle();
     expect(fetches).toEqual([1]);
@@ -597,7 +615,7 @@ describe('liveSync: the per-component reveal (live agent canvas, slice 3)', () =
     expect(knownServerVersion(SITE)).toBe(2);
     await writes(null);
     stream().fail(false);
-    stream().open();
+    await reconnect();
     stream().emit('state', { version: server.version, plans: [], agents: [], feed: [] });
     await settle();
     expect(knownServerVersion(SITE)).toBe(3);
@@ -973,7 +991,7 @@ describe("liveSync: an agent's generate_page draft (slice 6)", () => {
     stop();
   });
 
-  it('a new page: draft frames beside whichever page is on screen, and the result is shown once adopted while the camera follows', async () => {
+  it('a new page: draft frames beside whichever page is on screen; with its frames out of view the result waits behind a notice, though the camera follows', async () => {
     const stop = start();
     stream().emit('gen:outline', { runId: 'run-1', target: { kind: 'newPage', title: 'Menu' }, outline: [{ title: 'Hero', kind: 'hero' }] });
     expect(draft().target).toMatchObject({ kind: 'newPage', title: 'Menu', followsCurrentPage: true });
@@ -994,7 +1012,10 @@ describe("liveSync: an agent's generate_page draft (slice 6)", () => {
     stream().emit('site:version', { origin: 'generate', version: server.version, versionBefore });
     await settle();
     expect(draft().target).toBeUndefined();
-    expect(store.editorUI.currentPage?.id).toBe(page.id);
+    // Following the agent alone no longer switches the page (decided 2026-11-09): the frames were not in view.
+    expect(store.editorUI.livePresence.follow).toBe(true);
+    expect(store.editorUI.currentPage?.id).toBe(homeId());
+    expect(store.editorUI.editorNotice).toMatchObject({ kind: 'newPage', pageId: page.id, message: 'New page \u2018Menu\u2019 is ready.' });
     stop();
   });
 
@@ -1045,7 +1066,7 @@ describe("liveSync: an agent's generate_page draft (slice 6)", () => {
     stream().fail(false);
     // A brief drop redraws nothing: the draft stays while the stream reconnects.
     expect(draft().target?.requestKey).toBe('agent:run-1');
-    stream().open();
+    await reconnect();
     stream().emit('state', { version: server.version, plans: [], agents: [], feed: [], generation: { runId: 'run-1', target: target(), outline: [], sections: [{ index: 0, slot: 0, node: node('Hero') }] } });
     expect(draft().target?.requestKey).toBe('agent:run-1');
     expect(draft().sections).toHaveLength(1);
@@ -1201,6 +1222,775 @@ describe("liveSync: an agent's generate_page draft (slice 6)", () => {
     stream().emit('gen:section', { runId: 'run-1', target: { kind: 'replace', pageId: homeId(), nodeId: 'not-here' }, index: 0, slot: 0, node: node('A') });
     stream().emit('gen:outline', { runId: 'run-2', target: { kind: 'insert', pageId: homeId() }, outline: [] });
     expect(draft().target).toBeUndefined();
+    stop();
+  });
+});
+
+
+// ---- hardening (review of 2026-11-09: stateflow F1 to F7, UX H1 and H2) --------------
+
+/** The server's copy after any change by another writer, announced on the stream (or not). */
+async function serverWrites(change: (model: ProjectModelType) => void | Promise<void>, event: Partial<SiteVersionEvent> | null = {}): Promise<void> {
+  const model = ProjectModel.create(server.snapshot) as ProjectModelType;
+  await change(model);
+  const versionBefore = server.version;
+  server = { version: versionBefore + 1, snapshot: getSnapshot(model) as ProjectSnapshotOut };
+  if (event) stream().emit('site:version', { origin: 'mcp', actor: { kind: 'key', label: 'Claude' }, version: server.version, versionBefore, ...event });
+  await settle();
+}
+
+/** An open draft (the canvas's inline editor, a panel field) whose dirtiness the test controls. */
+function openDraft(onCommit: () => void = () => {}) {
+  let dirty = true;
+  const unregister = registerOpenDraft({ isDirty: () => dirty, commit: () => onCommit() });
+  return {
+    commitAndClose: () => {
+      onCommit();
+      dirty = false;
+      unregister();
+    },
+    cancel: () => {
+      dirty = false;
+      unregister();
+    },
+  };
+}
+
+describe('liveSync: an agent writes while the person types (F1)', () => {
+  it('forward: an open text draft holds the copy without the dialog; once the draft closes clean, the copy is adopted', async () => {
+    start();
+    const draft = openDraft();
+    await agentWrites('agent');
+    expect(knownServerVersion(SITE)).toBe(1);
+    expect(liveSyncFor(SITE)?.heldVersion).toMatchObject({ version: 2, whileEditing: true });
+    // Nothing unsaved yet: no dialog, autosave untouched.
+    expect(autosaveFor(SITE).getState().phase).toBe('saved');
+    draft.cancel();
+    await settle();
+    expect(knownServerVersion(SITE)).toBe(2);
+    expect(working()).toEqual(server.snapshot);
+    expect(liveSyncFor(SITE)?.heldVersion).toBeUndefined();
+  });
+
+  it('backtrack: the draft commits a site setting (not a node value it can replay on top), so the dialog opens, nothing merged', async () => {
+    start();
+    const draft = openDraft(() => project().updateMetadata({ description: 'typed' }));
+    await agentWrites('agent');
+    draft.commitAndClose();
+    await settle();
+    expect(working().metadata.description).toBe('typed');
+    expect(knownServerVersion(SITE)).toBe(1);
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', currentVersion: 2, dialogOpen: true });
+    expect(liveSyncFor(SITE)?.heldVersion).toMatchObject({ version: 2 });
+    expect(liveSyncFor(SITE)?.heldVersion?.whileEditing).toBeUndefined();
+  });
+
+  it('the page being typed on is deleted by the agent: the typing lands, the dialog names the page keeping mine restores', async () => {
+    // A second page, saved on the server and adopted.
+    start();
+    let aboutId = '';
+    await serverWrites((m) => {
+      aboutId = m.createPage('About').id;
+    });
+    expect(project().getPage(aboutId)).toBeDefined();
+    store.editorUI.setCurrentPage(project().getPage(aboutId)!);
+    const draft = openDraft(() => project().getPage(aboutId)!.updateMetadata?.({ description: 'typed on About' }));
+    await serverWrites(async (m) => {
+      const outcome = await applyOperations(m, [{ op: 'deletePage', pageId: aboutId }]);
+      if (!outcome.ok) throw new Error('refused');
+    });
+    // Held: the page is still on screen with the draft in it.
+    expect(project().getPage(aboutId)).toBeDefined();
+    expect(store.editorUI.currentPage?.id).toBe(aboutId);
+    draft.commitAndClose();
+    await settle();
+    const sync = liveSyncFor(SITE)!;
+    expect(autosaveFor(SITE).getState().phase).toBe('conflict');
+    expect(pagesRemovedBy(sync.heldVersion, working(), knownServerPageIds(SITE))).toEqual(['About']);
+    expect(restoredPagesSentence(pagesRemovedBy(sync.heldVersion, working(), knownServerPageIds(SITE)), heldWriter(sync.heldVersion), 'save')).toBe(
+      'Saving yours restores the page ‘About’ that Claude deleted.',
+    );
+    // Load the newer version: the page goes and another one is shown.
+    await loadNewerVersion(SITE);
+    expect(project().getPage(aboutId)).toBeUndefined();
+    expect(store.editorUI.currentPage?.id).toBe(homeId());
+  });
+
+  it("a text edit open on the canvas holds the copy; ending it adopts at once (no wait for the fallback)", async () => {
+    start();
+    const node = project().getPage(homeId())!.appComponentTree;
+    store.editorUI.beginTextEdit(node);
+    await agentWrites('agent');
+    expect(knownServerVersion(SITE)).toBe(1);
+    store.editorUI.endTextEdit();
+    await settle();
+    expect(knownServerVersion(SITE)).toBe(2);
+  });
+
+  it('a drag (a batched gesture) or a resize holds the copy until it ends', async () => {
+    start();
+    const history = getHistoryStore()!;
+    history.startBatch('Move');
+    await agentWrites('during drag');
+    expect(knownServerVersion(SITE)).toBe(1);
+    history.commitBatch();
+    await settle();
+    expect(knownServerVersion(SITE)).toBe(2);
+
+    store.editorUI.startResize({} as never);
+    await agentWrites('during resize');
+    expect(knownServerVersion(SITE)).toBe(2);
+    store.editorUI.endResize();
+    await settle();
+    expect(knownServerVersion(SITE)).toBe(3);
+  });
+
+  it('a draft whose owner never announces it settled is looked at again by the fallback', async () => {
+    start();
+    let dirty = true;
+    registerOpenDraft({ isDirty: () => dirty, commit: () => {} });
+    await agentWrites('agent');
+    expect(knownServerVersion(SITE)).toBe(1);
+    dirty = false; // reverted without a word
+    await vi.advanceTimersByTimeAsync(EDITING_RECHECK_MS);
+    expect(knownServerVersion(SITE)).toBe(2);
+  });
+
+  it('a newer write while held replaces the held copy, still without the dialog', async () => {
+    start();
+    const draft = openDraft();
+    await agentWrites('one');
+    await agentWrites('two');
+    expect(liveSyncFor(SITE)?.heldVersion).toMatchObject({ version: 3, whileEditing: true });
+    draft.cancel();
+    await settle();
+    expect(knownServerVersion(SITE)).toBe(3);
+  });
+
+  it('resume: a held copy does not survive stopping; the next run fetches again and holds again while the typing goes on', async () => {
+    const stop = start();
+    const draft = openDraft();
+    await agentWrites('agent');
+    stop();
+    expect(liveSyncFor(SITE)).toBeUndefined();
+    start();
+    await settle();
+    expect(liveSyncFor(SITE)?.heldVersion).toMatchObject({ version: 2, whileEditing: true });
+    draft.cancel();
+    await settle();
+    expect(knownServerVersion(SITE)).toBe(2);
+  });
+
+  it('re-entry: after one held copy was adopted, the next write while typing is held again', async () => {
+    start();
+    const first = openDraft();
+    await agentWrites('one');
+    first.cancel();
+    await settle();
+    expect(knownServerVersion(SITE)).toBe(2);
+    const second = openDraft();
+    await agentWrites('two');
+    expect(knownServerVersion(SITE)).toBe(2);
+    second.cancel();
+    await settle();
+    expect(knownServerVersion(SITE)).toBe(3);
+  });
+});
+
+describe('liveSync: an edit settles after an agent write was held for it', () => {
+  const homeChild = (i: number) => project().getPage(homeId())!.appComponentTree.children[i] as unknown as { id: string; setTextContent(text: string): void };
+
+  it('typing committed while the copy was held: the dialog opens once it settled (never while typing), nothing merged; Load the newer version adopts', async () => {
+    start();
+    await agentWrites('first');
+    const node = homeChild(0);
+    const draft = openDraft(() => node.setTextContent('typed by the person'));
+    await agentWrites('second');
+    expect(autosaveFor(SITE).getState().phase).not.toBe('conflict'); // still typing
+    draft.commitAndClose();
+    await settle();
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', currentVersion: 3, dialogOpen: true });
+    expect(JSON.stringify(working())).toContain('typed by the person');
+    expect(JSON.stringify(working())).not.toContain('"second"');
+    await loadNewerVersion(SITE);
+    expect(knownServerVersion(SITE)).toBe(3);
+    expect(JSON.stringify(working())).toContain('second');
+  });
+
+  it('a resize writing on every move, with an agent write mid-gesture: nothing adopted under the cursor, the dialog once it ends', async () => {
+    start();
+    await agentWrites('first');
+    const node = homeChild(0);
+    const history = getHistoryStore()!;
+    store.editorUI.startResize({} as never);
+    history.startBatch('Resize');
+    node.setTextContent('moving');
+    await agentWrites('agent');
+    expect(liveSyncFor(SITE)?.heldVersion).toMatchObject({ whileEditing: true });
+    for (let i = 0; i < 3; i++) {
+      node.setTextContent(`moving ${i}`);
+      await vi.advanceTimersByTimeAsync(500);
+    }
+    expect(autosaveFor(SITE).getState().phase).not.toBe('conflict');
+    expect(JSON.stringify(working())).not.toContain('"agent"');
+    history.commitBatch();
+    store.editorUI.endResize();
+    await settle();
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: true });
+    expect(JSON.stringify(working())).toContain('moving 2');
+  });
+
+  it('still editing when a write of this tab settles: the copy keeps waiting, nothing adopted under the cursor', async () => {
+    start();
+    const draft = openDraft();
+    await agentWrites('agent');
+    noteWriteInFlight(SITE, true);
+    noteWriteInFlight(SITE, false);
+    await settle();
+    expect(knownServerVersion(SITE)).toBe(1);
+    expect(liveSyncFor(SITE)?.heldVersion).toMatchObject({ whileEditing: true });
+    draft.cancel();
+    await settle();
+    expect(knownServerVersion(SITE)).toBe(2);
+  });
+
+  it('unsaved work from before an open edit: asked once the edit settles, never during it', async () => {
+    start();
+    await agentWrites('first');
+    project().updateMetadata({ description: 'unsaved before' });
+    const draft = openDraft();
+    // Held for the open edit, though the copy was already unsaved: the dialog waits for it.
+    await agentWrites('agent');
+    draft.cancel();
+    await settle();
+    expect(autosaveFor(SITE).getState().phase).toBe('conflict');
+  });
+
+  it('a page made here and not saved yet is never named as deleted by the agent', async () => {
+    start();
+    project().createPage('Pricing'); // unsaved, the agent never saw it
+    await agentWrites('elsewhere');
+    const sync = liveSyncFor(SITE)!;
+    expect(autosaveFor(SITE).getState().phase).toBe('conflict');
+    expect(pagesRemovedBy(sync.heldVersion, working(), knownServerPageIds(SITE))).toEqual([]);
+  });
+});
+
+describe('liveSync: the new page notice and other notices (review of PR #353)', () => {
+  async function newPageSaved(runId: string): Promise<string> {
+    const model = ProjectModel.create(server.snapshot) as ProjectModelType;
+    const page = model.createPage('Menu');
+    const versionBefore = server.version;
+    const outcome = await applyOperations(model, [{ op: 'insertNodes', pageId: page.id, nodes: [{ type: 'section', label: 'Hero' }] }]);
+    if (!outcome.ok) throw new Error('refused');
+    server = { version: versionBefore + 1, snapshot: getSnapshot(model) as ProjectSnapshotOut };
+    const inserted = (server.snapshot.pages[page.id].appComponentTree.children as Array<{ id: string }>).map((c) => c.id);
+    stream().emit('gen:done', { runId, status: 'saved', version: server.version, insertedIds: inserted, drawnAs: [[]] });
+    stream().emit('site:version', { origin: 'generate', version: server.version, versionBefore });
+    await settle();
+    return page.id;
+  }
+
+  it('never replaces a state preview badge (the way out of the preview)', async () => {
+    const stop = start();
+    store.editorUI.setCurrentPage(project().getPage(homeId())!);
+    store.editorUI.setEditorNotice({ kind: 'previewState', message: 'Previewing Hover' });
+    stream().emit('gen:outline', { runId: 'run-1', target: { kind: 'newPage', title: 'Menu' }, outline: [{ title: 'Hero', kind: 'hero' }] });
+    const pageId = await newPageSaved('run-1');
+    expect(project().getPage(pageId)).toBeDefined();
+    expect(store.editorUI.editorNotice).toMatchObject({ kind: 'previewState' });
+    stop();
+  });
+
+  it('never replaces a notice the person may not have read yet (a refusal)', async () => {
+    const stop = start();
+    store.editorUI.setCurrentPage(project().getPage(homeId())!);
+    store.editorUI.setEditorNotice({ kind: 'refused', message: 'That edit was refused.' });
+    stream().emit('gen:outline', { runId: 'run-1', target: { kind: 'newPage', title: 'Menu' }, outline: [{ title: 'Hero', kind: 'hero' }] });
+    await newPageSaved('run-1');
+    expect(store.editorUI.editorNotice).toMatchObject({ kind: 'refused' });
+    stop();
+  });
+
+  it('goes once the new page is shown by any route (the Pages panel too)', async () => {
+    const stop = start();
+    store.editorUI.setCurrentPage(project().getPage(homeId())!);
+    stream().emit('gen:outline', { runId: 'run-1', target: { kind: 'newPage', title: 'Menu' }, outline: [{ title: 'Hero', kind: 'hero' }] });
+    const pageId = await newPageSaved('run-1');
+    expect(store.editorUI.editorNotice).toMatchObject({ kind: 'newPage', pageId });
+    store.editorUI.setCurrentPage(project().getPage(pageId)!);
+    expect(store.editorUI.editorNotice).toBeUndefined();
+    stop();
+  });
+});
+
+describe('liveSync: a failed fetch while the stream is live (F2)', () => {
+  it('a drop and a reconnect start the back-off over: the next failure is retried after 2 s', async () => {
+    start();
+    server.status = 500;
+    stream().emit('site:version', { origin: 'mcp', version: 2, versionBefore: 1 });
+    await settle();
+    await vi.advanceTimersByTimeAsync(2_000);
+    await vi.advanceTimersByTimeAsync(5_000); // two retries spent
+    const spent = fetches.length;
+    stream().fail(false);
+    server.status = undefined;
+    await reconnect();
+    server.status = 500;
+    stream().emit('site:version', { origin: 'mcp', version: 3, versionBefore: 2 });
+    await settle();
+    const afterFailure = fetches.length;
+    expect(afterFailure).toBeGreaterThan(spent);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(fetches.length).toBe(afterFailure + 1);
+    server.status = undefined;
+  });
+
+  it('is tried again after 2 s; the copy is catch-up (no reveal) and adopted', async () => {
+    start();
+    failFetch = true;
+    await agentWrites('agent');
+    expect(knownServerVersion(SITE)).toBe(1);
+    expect(fetches).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(LIVE_FETCH_RETRY_MS[0]);
+    expect(fetches).toHaveLength(2);
+    expect(knownServerVersion(SITE)).toBe(2);
+    expect(store.editorUI.liveReveal.size).toBe(0);
+  });
+
+  it('backs off: 2 s, then 5 s, then every 15 s, and starts over after a success', async () => {
+    start();
+    const event = await agentWrites('agent', false);
+    server.status = 500;
+    stream().emit('site:version', event);
+    await settle();
+    expect(fetches).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(fetches).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(fetches).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetches).toHaveLength(3);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(fetches).toHaveLength(4);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(fetches).toHaveLength(5);
+    server.status = undefined;
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(knownServerVersion(SITE)).toBe(2);
+    // The next failure starts at 2 s again.
+    const again = await agentWrites('again', false);
+    server.status = 500;
+    stream().emit('site:version', again);
+    await settle();
+    const count = fetches.length;
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(fetches).toHaveLength(count + 1);
+  });
+
+  it('stopping clears the retry: nothing is fetched afterwards', async () => {
+    const stop = start();
+    failFetch = true;
+    await agentWrites('agent');
+    stop();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetches).toHaveLength(1);
+  });
+
+  it('the stream going down hands the retry to polling (no double fetch)', async () => {
+    start();
+    failFetch = true;
+    await agentWrites('agent');
+    stream().fail(true);
+    await vi.advanceTimersByTimeAsync(LIVE_FETCH_RETRY_MS[0]);
+    expect(fetches).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_VISIBLE_MS);
+    expect(knownServerVersion(SITE)).toBe(2);
+  });
+});
+
+describe('liveSync: a silent stream and a tab shown again (F3)', () => {
+  it('a stream that sent pings and then nothing for 2.5 heartbeats is reopened, polling meanwhile', async () => {
+    start();
+    const first = stream();
+    first.emit(LIVE_PING_EVENT, {});
+    await vi.advanceTimersByTimeAsync(LIVE_WATCHDOG_MS - 1);
+    expect(streams).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(first.closed).toBe(true);
+    expect(liveSyncFor(SITE)?.phase).toBe('polling');
+    // Reopened on the same jittered back-off as any ended stream.
+    expect(streams).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(LIVE_RECONNECT_MS);
+    expect(streams).toHaveLength(2);
+    stream().open();
+    expect(liveSyncFor(SITE)?.phase).toBe('live');
+  });
+
+  it('every event keeps a pinging stream alive', async () => {
+    start();
+    stream().emit(LIVE_PING_EVENT, {});
+    await vi.advanceTimersByTimeAsync(LIVE_WATCHDOG_MS - 1_000);
+    stream().emit('agent:activity', { agentId: 'a', label: 'Claude', tool: 'x', at: new Date().toISOString() });
+    await vi.advanceTimersByTimeAsync(LIVE_WATCHDOG_MS - 1_000);
+    expect(streams).toHaveLength(1);
+  });
+
+  it('an older server that sends no ping arms no watchdog', async () => {
+    start();
+    await vi.advanceTimersByTimeAsync(LIVE_WATCHDOG_MS * 4);
+    expect(streams).toHaveLength(1);
+    expect(liveSyncFor(SITE)?.phase).toBe('live');
+  });
+
+  it('a tab shown again while live asks once for the newest copy', async () => {
+    start();
+    await agentWrites('missed while hidden', false);
+    expect(knownServerVersion(SITE)).toBe(1);
+    for (const listener of visibilityListeners) listener();
+    await settle();
+    expect(knownServerVersion(SITE)).toBe(2);
+  });
+});
+
+describe('liveSync: the server simply closes the stream (a re-check timeout, an auth outage, a slow reader)', () => {
+  it('closed by the server: polls the document route meanwhile, reopens on its own jittered back-off (never the browser\'s fixed retry)', async () => {
+    const random = vi.fn(() => 0.5);
+    setLiveSyncDepsForTests({ ...deps, random });
+    start();
+    stream().emit(LIVE_PING_EVENT, {});
+    const first = stream();
+    first.fail(false); // the server ended it, no auth:expired
+    const sync = liveSyncFor(SITE)!;
+    expect(sync.phase).toBe('polling');
+    expect(sync.wasLive).toBe(true);
+    expect(first.closed).toBe(true); // the browser's own reconnect is not left to run
+    expect(autosaveFor(SITE).getState().phase).toBe('saved'); // not signed out
+    // 2 s plus half again at random: 3 s.
+    await vi.advanceTimersByTimeAsync(LIVE_RECONNECT_MS * 1.5 - 1);
+    expect(streams).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(streams).toHaveLength(2);
+    await agentWrites('while closed', false);
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_VISIBLE_MS);
+    expect(knownServerVersion(SITE)).toBe(2);
+    // It ends again before opening: the next wait doubles (6 s).
+    stream().fail(false);
+    await vi.advanceTimersByTimeAsync(LIVE_RECONNECT_MS * 3 - 1);
+    expect(streams).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(streams).toHaveLength(3);
+    stream().open();
+    expect(sync.phase).toBe('live');
+    // Ended again right after opening (a server that accepts and drops): the wait keeps doubling (12 s).
+    stream().fail(false);
+    await vi.advanceTimersByTimeAsync(LIVE_RECONNECT_MS * 6 - 1);
+    expect(streams).toHaveLength(3);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(streams).toHaveLength(4);
+    // This one keeps going (its pings come): the next end starts at the short wait once more.
+    stream().open();
+    stream().emit(LIVE_PING_EVENT, {});
+    await vi.advanceTimersByTimeAsync(LIVE_HEARTBEAT_MS);
+    stream().emit(LIVE_PING_EVENT, {});
+    stream().fail(false);
+    await vi.advanceTimersByTimeAsync(LIVE_RECONNECT_MS * 1.5);
+    expect(streams).toHaveLength(5);
+  });
+
+  it('a stream that pings once and stalls keeps backing off (a ping alone does not start the wait over)', async () => {
+    start();
+    const waits: number[] = [];
+    for (let round = 0; round < 3; round++) {
+      stream().open();
+      // As the server does: the first ping a heartbeat after the stream opened, then nothing.
+      await vi.advanceTimersByTimeAsync(LIVE_HEARTBEAT_MS);
+      stream().emit(LIVE_PING_EVENT, {});
+      const count = streams.length;
+      await vi.advanceTimersByTimeAsync(LIVE_WATCHDOG_MS); // silent: reopened after the back-off
+      const at = Date.now();
+      while (streams.length === count) await vi.advanceTimersByTimeAsync(100);
+      waits.push(Date.now() - at);
+    }
+    expect(waits[1]).toBeGreaterThan(waits[0]);
+    expect(waits[2]).toBeGreaterThan(waits[1]);
+  });
+
+  it('from a server that sends no ping, staying up 2.5 heartbeats starts the back-off over', async () => {
+    start();
+    stream().fail(false);
+    await vi.advanceTimersByTimeAsync(LIVE_RECONNECT_MS);
+    stream().fail(false); // ended before opening: the next wait would be 4 s
+    await vi.advanceTimersByTimeAsync(LIVE_RECONNECT_MS * 2);
+    stream().open();
+    await vi.advanceTimersByTimeAsync(LIVE_WATCHDOG_MS);
+    const count = streams.length;
+    stream().fail(false);
+    await vi.advanceTimersByTimeAsync(LIVE_RECONNECT_MS);
+    expect(streams).toHaveLength(count + 1);
+  });
+
+  it('many editors closed at once come back spread out, by their random share', async () => {
+    const waits: number[] = [];
+    for (const r of [0, 0.25, 0.5, 0.99]) {
+      setLiveSyncDepsForTests({ ...deps, random: () => r });
+      streams = [];
+      const stop = start();
+      stream().fail(false);
+      const at = Date.now();
+      while (streams.length < 2) await vi.advanceTimersByTimeAsync(100);
+      waits.push(Date.now() - at);
+      stop();
+    }
+    expect(new Set(waits).size).toBe(4);
+    expect(Math.min(...waits)).toBeGreaterThanOrEqual(LIVE_RECONNECT_MS);
+    expect(Math.max(...waits)).toBeLessThanOrEqual(LIVE_RECONNECT_MS * 2 + 100);
+  });
+
+  it('the reconnect refused (closed for good): polling goes on and a new stream is tried after the back-off', async () => {
+    start();
+    stream().fail(true);
+    expect(liveSyncFor(SITE)?.phase).toBe('polling');
+    const count = streams.length;
+    await vi.advanceTimersByTimeAsync(LIVE_STREAM_RETRY_MS);
+    expect(streams).toHaveLength(count + 1);
+    stream().open();
+    expect(liveSyncFor(SITE)?.phase).toBe('live');
+  });
+});
+
+describe('liveSync: a refusal timer never outlives a sign-out', () => {
+  it('refused, signed out, back and live: the next drop reconnects after the short wait, not the old refusal\'s', async () => {
+    start();
+    stream().fail(true); // refused: a retry a minute away
+    server.status = 401;
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_VISIBLE_MS); // the poll is told: signed out
+    expect(liveSyncFor(SITE)?.phase).toBe('signed-out');
+    server.status = undefined;
+    for (const listener of visibilityListeners) listener();
+    await settle();
+    stream().open();
+    expect(liveSyncFor(SITE)?.phase).toBe('live');
+    const count = streams.length;
+    stream().fail(false);
+    await vi.advanceTimersByTimeAsync(LIVE_RECONNECT_MS);
+    expect(streams).toHaveLength(count + 1);
+  });
+});
+
+describe('liveSync: stream refusals back off with jitter (F7)', () => {
+  it('waits 1, then 2 minutes, plus the random share', async () => {
+    const random = vi.fn(() => 0.5);
+    setLiveSyncDepsForTests({ ...deps, random });
+    start();
+    stream().fail(true);
+    const count = streams.length;
+    await vi.advanceTimersByTimeAsync(LIVE_STREAM_RETRY_MS * 1.125 - 1);
+    expect(streams).toHaveLength(count);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(streams).toHaveLength(count + 1);
+    stream().fail(true);
+    await vi.advanceTimersByTimeAsync(LIVE_STREAM_RETRY_MS * 2 * 1.125 - 1);
+    expect(streams).toHaveLength(count + 1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(streams).toHaveLength(count + 2);
+    // Open: the next refusal waits a minute again.
+    stream().open();
+    stream().fail(true);
+    await vi.advanceTimersByTimeAsync(LIVE_STREAM_RETRY_MS * 1.125);
+    expect(streams).toHaveLength(count + 3);
+  });
+});
+
+describe('liveSync: skeletons and drafts while the stream is down (F5, H1)', () => {
+  const plan = (expiresAt: string) => ({
+    planId: 'plan-1',
+    agentId: 'agent-a',
+    label: 'Claude',
+    pageId: homeId(),
+    sections: [{ ref: 'hero', title: 'Hero', kind: 'hero' }],
+    expiresAt,
+  });
+
+  it('a plan past its deadline goes at the next poll while the stream is down', async () => {
+    startLiveSync(SITE, store);
+    stream().open();
+    stream().emit('state', { version: server.version, plans: [plan(new Date(Date.now() + 10_000).toISOString())], agents: [], feed: [] });
+    expect(store.editorUI.livePlans.plans.size).toBe(1);
+    stream().fail(true);
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_VISIBLE_MS);
+    expect(store.editorUI.livePlans.plans.size).toBe(1);
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_VISIBLE_MS * 2);
+    expect(store.editorUI.livePlans.plans.size).toBe(0);
+  });
+
+  it('signing out drops the skeletons', () => {
+    startLiveSync(SITE, store);
+    stream().open();
+    stream().emit('state', { version: server.version, plans: [plan('')], agents: [], feed: [] });
+    expect(store.editorUI.livePlans.plans.size).toBe(1);
+    stream().emit('auth:expired', {});
+    expect(store.editorUI.livePlans.plans.size).toBe(0);
+  });
+
+  it('wasLive tells a lost connection from a browser that only polls; a draft dropped while down is reported until the stream is back', async () => {
+    start();
+    const sync = liveSyncFor(SITE)!;
+    expect(sync.wasLive).toBe(true);
+    stream().emit('gen:outline', { runId: 'run-1', target: { kind: 'insert', pageId: homeId(), parentId: server.snapshot.pages[homeId()].appComponentTree.id }, outline: [{ title: 'Hero', kind: 'hero' }] });
+    expect(store.editorUI.pageGenDraft.target).toBeDefined();
+    const heard = vi.fn();
+    sync.subscribe(heard);
+    stream().fail(false);
+    expect(sync.draftLost).toBe(false);
+    await vi.advanceTimersByTimeAsync(GEN_DRAFT_LIMITS.unsyncedMs);
+    expect(store.editorUI.pageGenDraft.target).toBeUndefined();
+    expect(sync.draftLost).toBe(true);
+    expect(heard).toHaveBeenCalled();
+    stream().open();
+    expect(sync.draftLost).toBe(false);
+  });
+});
+
+describe('liveSync: Load the newer version while a write of this tab is out (F6)', () => {
+  it('waits for the write; when the write settled and the held copy was adopted meanwhile, nothing reloads', async () => {
+    const reload = vi.fn();
+    vi.stubGlobal('location', { ...window.location, reload });
+    start();
+    let finish!: () => void;
+    resetAutosaveForTests({
+      write: async (snapshot, expectedVersion): Promise<ProjectWriteResult> => {
+        saves.push({ expectedVersion, snapshot: snapshot as ProjectSnapshotOut });
+        server = { version: server.version + 1, snapshot: snapshot as ProjectSnapshotOut };
+        const version = server.version;
+        await new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+        return { kind: 'ok', payload: {}, version };
+      },
+    });
+    autosaveFor(SITE).attach(project());
+    project().updateMetadata({ description: 'mine' });
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+    await agentWrites('on top');
+    expect(liveSyncFor(SITE)?.heldVersion?.version).toBe(3);
+    const loading = loadNewerVersion(SITE);
+    finish();
+    await settle();
+    await loading;
+    expect(reload).not.toHaveBeenCalled();
+    expect(knownServerVersion(SITE)).toBe(3);
+    expect(working()).toEqual(server.snapshot);
+    vi.unstubAllGlobals();
+  });
+
+  it('a write that never settles: after the wait it reloads as before', async () => {
+    const reload = vi.fn();
+    vi.stubGlobal('location', { ...window.location, reload });
+    start();
+    let finish!: (result: ProjectWriteResult) => void;
+    resetAutosaveForTests({
+      write: () =>
+        new Promise<ProjectWriteResult>((resolve) => {
+          finish = resolve;
+        }),
+    });
+    autosaveFor(SITE).attach(project());
+    project().updateMetadata({ description: 'mine' });
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+    await agentWrites('agent');
+    const loading = loadNewerVersion(SITE);
+    await vi.advanceTimersByTimeAsync(LOAD_NEWER_WRITE_WAIT_MS);
+    await loading;
+    expect(reload).toHaveBeenCalled();
+    // The write answers at last (no write of this tab stays out for the next test).
+    finish({ kind: 'conflict', currentVersion: server.version });
+    await settle();
+    vi.unstubAllGlobals();
+  });
+});
+
+describe('liveSync: an agent\'s new page while the person works (H2)', () => {
+  /** The server makes a new page from the run's draft and saves it. */
+  async function newPage(runId: string): Promise<string> {
+    const model = ProjectModel.create(server.snapshot) as ProjectModelType;
+    const page = model.createPage('Menu');
+    const versionBefore = server.version;
+    const outcome = await applyOperations(model, [{ op: 'insertNodes', pageId: page.id, nodes: [{ type: 'section', label: 'Hero' }] }]);
+    if (!outcome.ok) throw new Error('refused');
+    server = { version: versionBefore + 1, snapshot: getSnapshot(model) as ProjectSnapshotOut };
+    const inserted = (server.snapshot.pages[page.id].appComponentTree.children as Array<{ id: string }>).map((c) => c.id);
+    stream().emit('gen:done', { runId, status: 'saved', version: server.version, insertedIds: inserted, drawnAs: [[]] });
+    stream().emit('site:version', { origin: 'generate', version: server.version, versionBefore });
+    await settle();
+    return page.id;
+  }
+
+  function frameInView(): () => void {
+    const rect = (left: number, top: number, width: number, height: number) =>
+      ({ left, top, width, height, right: left + width, bottom: top + height, x: left, y: top, toJSON: () => ({}) }) as DOMRect;
+    const ground = document.createElement('div');
+    ground.setAttribute('data-ground', '');
+    ground.getBoundingClientRect = () => rect(0, 0, 1000, 800);
+    const frame = document.createElement('div');
+    frame.setAttribute('data-pagegen-draft-frame', 'bp');
+    frame.getBoundingClientRect = () => rect(100, 100, 800, 600);
+    document.body.append(ground, frame);
+    return () => {
+      ground.remove();
+      frame.remove();
+    };
+  }
+
+  it('frames in view but a marquee is being drawn: the page stays, a notice offers the new page, and Open it is the person\'s', async () => {
+    const stop = start();
+    store.editorUI.setCurrentPage(project().getPage(homeId())!);
+    stream().emit('gen:outline', { runId: 'run-1', target: { kind: 'newPage', title: 'Menu' }, outline: [{ title: 'Hero', kind: 'hero' }] });
+    const remove = frameInView();
+    store.editorUI.setMarqueeActive(true);
+    const pageId = await newPage('run-1');
+    store.editorUI.setMarqueeActive(false);
+    remove();
+    expect(store.editorUI.currentPage?.id).toBe(homeId());
+    expect(store.editorUI.editorNotice).toMatchObject({ kind: 'newPage', pageId });
+    stop();
+  });
+
+  it('frames in view but the focus is in a field: the page stays', async () => {
+    const stop = start();
+    store.editorUI.setCurrentPage(project().getPage(homeId())!);
+    stream().emit('gen:outline', { runId: 'run-1', target: { kind: 'newPage', title: 'Menu' }, outline: [{ title: 'Hero', kind: 'hero' }] });
+    const remove = frameInView();
+    const input = document.createElement('input');
+    document.body.append(input);
+    input.focus();
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+    await newPage('run-1');
+    input.remove();
+    remove();
+    expect(store.editorUI.currentPage?.id).toBe(homeId());
+    expect(store.editorUI.editorNotice?.kind).toBe('newPage');
+    stop();
+  });
+
+  it('a draft open when the result comes: the adoption waits for it, and then the page is not switched under the person', async () => {
+    const stop = start();
+    store.editorUI.setCurrentPage(project().getPage(homeId())!);
+    stream().emit('gen:outline', { runId: 'run-1', target: { kind: 'newPage', title: 'Menu' }, outline: [{ title: 'Hero', kind: 'hero' }] });
+    const remove = frameInView();
+    const draft = openDraft();
+    const pageId = await newPage('run-1');
+    expect(project().getPage(pageId)).toBeUndefined();
+    const input = document.createElement('input');
+    document.body.append(input);
+    input.focus(); // still in the field the draft was typed in
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+    draft.cancel();
+    await settle();
+    expect(project().getPage(pageId)).toBeDefined();
+    expect(store.editorUI.currentPage?.id).toBe(homeId());
+    input.remove();
+    remove();
     stop();
   });
 });

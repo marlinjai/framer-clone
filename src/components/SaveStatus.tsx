@@ -12,7 +12,9 @@
 //   - Not saved, with the reason and Retry (and "Sign in again" in a new tab
 //     when signed out: navigating this tab would lose the very work at stake);
 //   - Changed elsewhere (the version lock refused, 409 `site_changed`): a
-//     button that reopens SiteChangedDialog.
+//     button that reopens SiteChangedDialog;
+//   - beside it, whether the editor still follows the site live
+//     (src/components/live/LiveConnectionStatus.tsx).
 // A screen reader hears only what matters (useSaveAnnouncement, one polite
 // live region that is always present): a failure, the version lock's refusal,
 // and the first "Saved" after one of them, never each Unsaved and Saved of
@@ -36,6 +38,7 @@ import { abandonWorkingCopy, existingAutosave, type AutosaveState } from '@/lib/
 import SaveAsNewProjectDialog from './SaveAsNewProjectDialog';
 import SiteChangedDialog from './SiteChangedDialog';
 import { loadNewerVersion } from '@/lib/projects/liveSync';
+import LiveConnectionStatus from './live/LiveConnectionStatus';
 
 /** Where "Sign in again" goes: the overview bounces a signed-out visit to the sign-in. */
 export const SIGN_IN_AGAIN_HREF = '/projects';
@@ -213,6 +216,8 @@ const SaveStatus = observer(() => {
           Retry
         </Button>
       )}
+      {/* Whether the editor still follows the site live (review finding H1). */}
+      <LiveConnectionStatus projectId={project.id} />
       {saveAsDialog}
       <SiteChangedDialog
         open={conflict && state.dialogOpen}

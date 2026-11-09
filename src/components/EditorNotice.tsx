@@ -4,7 +4,8 @@
 // One dismissable message above the canvas (editorUI.editorNotice), set when a
 // project opens: the project was changed elsewhere while this tab has unsaved
 // work (a Save here would overwrite it), or the page asked for in the address
-// does not exist. The live region is always present, so the message is
+// does not exist. Also when an agent's new page is ready while the person works
+// elsewhere (src/lib/projects/liveSync.ts): Open it shows that page. The live region is always present, so the message is
 // announced when it appears.
 //
 // It is also the badge of a state preview (editorUI.previewState): the canvas shows a
@@ -38,6 +39,33 @@ const EditorNotice = observer(() => {
               className="shrink-0 rounded border border-amber-400 px-2 py-0.5 font-medium hover:bg-amber-100"
             >
               Load the newer version
+            </button>
+          ) : null}
+          {notice.kind === 'newPage' && notice.pageId ? (
+            <button
+              type="button"
+              // The visible words first (Label in Name), then which page.
+              aria-label={`Open it: the page ${editorUI.currentProject?.getPage(notice.pageId)?.metadata.title ?? ''}`.trim()}
+              onClick={() => {
+                const page = editorUI.currentProject?.getPage(notice.pageId!);
+                if (page) editorUI.setCurrentPage(page);
+                editorUI.setEditorNotice(undefined);
+                // The button goes with the notice: the focus moves to the page's row in the Pages panel, or else to the canvas.
+                requestAnimationFrame(() => {
+                  const row = document.querySelector<HTMLElement>('button[aria-current="page"]');
+                  if (row) {
+                    row.focus();
+                    return;
+                  }
+                  const canvas = document.querySelector<HTMLElement>('[data-ground]');
+                  if (!canvas) return;
+                  if (!canvas.hasAttribute('tabindex')) canvas.setAttribute('tabindex', '-1');
+                  canvas.focus({ preventScroll: true });
+                });
+              }}
+              className="shrink-0 rounded border border-amber-400 px-2 py-0.5 font-medium hover:bg-amber-100"
+            >
+              Open it
             </button>
           ) : null}
           {notice.kind === 'previewState' ? (

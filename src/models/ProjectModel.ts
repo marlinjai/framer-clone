@@ -200,6 +200,9 @@ export type SiteSettingsResult = { ok: true } | { ok: false; errors: SiteSetting
 /** The outcome of ProjectModel.updateTheme. */
 export type ThemeResult = { ok: true } | { ok: false; errors: string[] };
 
+/** Site settings the siteSettings processor produced (complete, so never normalized again). */
+const normalizedSiteSettings = new WeakSet<object>();
+
 // Project metadata model
 const ProjectMetadataModel = types.model('ProjectMetadata', {
   title: types.string,
@@ -329,7 +332,15 @@ export const ProjectModel = types
     // value is always complete and a snapshot round-trips unchanged.
     siteSettings: types.optional(
       types.snapshotProcessor(types.frozen<SiteSettings>(), {
-        preProcessor: (raw: SiteSettingsInput | undefined) => normalizeSiteSettings(raw),
+        // A value this processor already produced is complete: kept as it is, so
+        // an adopted copy whose settings did not change keeps the stored object
+        // (no patch, no re-render of what reads the theme).
+        preProcessor: (raw: SiteSettingsInput | undefined) => {
+          if (raw && normalizedSiteSettings.has(raw as object)) return raw as SiteSettings;
+          const normalized = normalizeSiteSettings(raw);
+          normalizedSiteSettings.add(normalized);
+          return normalized;
+        },
       }),
       {},
     ),
