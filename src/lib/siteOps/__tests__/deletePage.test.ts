@@ -13,8 +13,9 @@
 // The refusals are the editor's own (ProjectModel.pageDeleteRefusal, used by the Pages panel).
 
 import { describe, expect, it } from 'vitest';
-import { getSnapshot } from 'mobx-state-tree';
+import { getSnapshot, types } from 'mobx-state-tree';
 import ProjectModel, { type ProjectModelType } from '@/models/ProjectModel';
+import PageModel from '@/models/PageModel';
 import { defaultViewportSnapshots } from '@/lib/canvas/defaultViewports';
 import { applyOperations } from '../applyOps';
 import { countLinksToPage } from '../pageLinks';
@@ -260,8 +261,11 @@ describe('deletePage: what the answer and the outcome say', () => {
     project.updatePageSettings('contact', { title: 'Shop item', slug: 'shop/:handle', description: '' });
     const first = await applyOperations(project, [{ op: 'deletePage', pageId: 'about' }]);
     expect(first.ok && first.summary[0]).toContain('it was the product page; product links now open /shop/<handle>');
+    expect(first.ok && first.summary[0]).toContain('1 link(s) on the site still lead to it');
     const second = await applyOperations(project, [{ op: 'createPage', title: 'Extra' }, { op: 'deletePage', pageId: 'contact' }]);
     expect(second.ok && second.summary[1]).toContain('no longer open a product');
+    expect(second.ok && second.summary[1]).toContain('no other link (a page link or a form) leads to it');
+    expect(second.ok && second.summary[1]).not.toContain('no link on the site leads to it');
   });
 
   it('a page whose slug only looks like a product path is not the product page', async () => {
@@ -288,6 +292,25 @@ describe('deletePage: two home pages', () => {
     ]);
     // Links to / still reach the remaining home page: only the form that sends visitors to this page counts.
     expect(outcome.ok && outcome.summary[1]).toContain('1 link(s) on the site still lead to it');
+  });
+});
+
+describe('a refused batch on a project inside an editor store', () => {
+  it('keeps the references the store holds to its pages (the order is not restored there)', async () => {
+    const Holder = types.model('Holder', { project: ProjectModel, current: types.maybe(types.safeReference(PageModel)) });
+    const holder = Holder.create({ project: getSnapshot(makeProject()), current: 'about' });
+    const rejected = await applyOperations(holder.project, [
+      { op: 'deletePage', pageId: 'about' },
+      { op: 'updateText', nodeId: 'missing', text: 'x' },
+    ]);
+    expect(rejected.ok).toBe(false);
+    expect(holder.project.pages.has('about')).toBe(true);
+    // The take-back recreated the page; a page that was not moved keeps its reference.
+    const Holder2 = types.model('Holder2', { project: ProjectModel, current: types.maybe(types.safeReference(PageModel)) });
+    const h2 = Holder2.create({ project: getSnapshot(makeProject()), current: 'contact' });
+    await applyOperations(h2.project, [{ op: 'deletePage', pageId: 'about' }, { op: 'updateText', nodeId: 'missing', text: 'x' }]);
+    expect(h2.current?.id).toBe('contact');
+    expect(Array.from(h2.project.pages.keys())).toEqual(['home', 'contact', 'about']);
   });
 });
 

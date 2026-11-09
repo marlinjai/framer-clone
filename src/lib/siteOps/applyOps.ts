@@ -416,7 +416,8 @@ export async function applyOperations(
     restoreOrder();
     return { ok: false, rejected: [{ index: -1, op: 'batch', reason: problem }] };
   }
-  const kept = Object.fromEntries(Object.entries(created).filter(([, id]) => !goneIds.has(id)));
+  // A shop part that left its control lives on under a renewed id: check that one.
+  const kept = Object.fromEntries(Object.entries(created).filter(([, id]) => !goneIds.has(renewed[id] ?? id)));
   return { ok: true, created: kept, summary, deletedPages };
 
   // ---------- one operation ----------
@@ -488,7 +489,9 @@ export async function applyOperations(
         deletedPages.push({ index: currentIndex, pageId, slug, title });
         parts.push(
           links === 0
-            ? 'no link on the site leads to it'
+            ? wasProductPage
+              ? 'no other link (a page link or a form) leads to it'
+              : 'no link on the site leads to it'
             : `${links} link(s) on the site still lead to it (a link to its address now finds no page, a form sending visitors there shows its message instead): change or remove them`,
         );
         return parts.join('; ');

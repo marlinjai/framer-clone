@@ -167,8 +167,8 @@ describe('adoptServerCopy', () => {
     expect(store.editorUI.currentPage?.id).toBe(homeId(v1));
     // The selection on the deleted page is gone: what is selected now stands on the page shown.
     const homeRoot = (store.editorUI.currentPage!.appComponentTree as ComponentInstance).id;
-    expect(store.editorUI.selectedComponent?.id ?? homeRoot).toBe(homeRoot);
-    expect(store.editorUI.selectedComponents.every((c) => c?.id === homeRoot)).toBe(true);
+    expect(store.editorUI.selectedComponent?.id).toBe(homeRoot);
+    expect(store.editorUI.selectedComponents.map((c) => c?.id)).toEqual([homeRoot]);
     expect(isSaved('site_adopt', working())).toBe(true);
     // One undo step brings the page back in this tab (the next autosave writes it again).
     getHistoryStore()!.undo();
