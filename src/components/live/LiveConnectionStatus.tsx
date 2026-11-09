@@ -76,6 +76,8 @@ export default function LiveConnectionStatus({ projectId }: { projectId: string 
     >
       {tone !== 'none' ? <Radio size={14} aria-hidden className="shrink-0" /> : null}
       <span className="lg:max-w-[260px] lg:truncate max-md:sr-only">{text}</span>
+      {/* A small screen keeps a short word in sight (a tooltip cannot be opened by touch); the full text is read out above. */}
+      {tone !== 'none' ? <span aria-hidden className="whitespace-nowrap md:hidden">{tone === 'paused' ? 'Paused' : 'Back'}</span> : null}
     </span>
   );
 }

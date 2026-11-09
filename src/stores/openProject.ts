@@ -160,6 +160,8 @@ function definitionName(components: unknown, id: string): string | undefined {
 
 // project id -> content of the last server version this tab knows.
 const baselines = new Map<string, VersionContent>();
+// project id -> the page ids of that same server copy (what another writer can have deleted).
+const serverPageIds = new Map<string, ReadonlySet<string>>();
 // project id -> the site version (sites.version) of that same server copy.
 const knownVersions = new Map<string, number>();
 // project id -> every saved part of that same server copy, as `savedContentKey`
@@ -266,6 +268,7 @@ export function markServerVersion(
   content: SavedContent = savedContentOf(project),
 ): void {
   baselines.set(projectId, content.version);
+  serverPageIds.set(projectId, new Set(Object.keys((project.pages ?? {}) as Record<string, unknown>)));
   knownVersions.set(projectId, version);
   savedKeys.set(projectId, content.key);
   openedChangedElsewhere.delete(projectId);
@@ -305,6 +308,11 @@ function applyingServer(fn: () => void) {
   } finally {
     applyingServerCopy--;
   }
+}
+
+/** The page ids of the last server copy this tab knows (loaded, saved, adopted), if any. */
+export function knownServerPageIds(projectId: string): ReadonlySet<string> | undefined {
+  return serverPageIds.get(projectId);
 }
 
 /**

@@ -100,10 +100,12 @@ describe('LiveConnectionStatus (H1)', () => {
     act(() => vi.advanceTimersByTime(LIVE_PAUSED_GRACE_MS - 1));
     expect(region.textContent).toBe('');
     act(() => vi.advanceTimersByTime(1));
-    expect(region.textContent).toBe(LIVE_PAUSED_TEXT);
+    expect(region.textContent).toContain(LIVE_PAUSED_TEXT);
+    // A short word stays in sight on a small screen (touch cannot open a tooltip).
+    expect(region.querySelector('[aria-hidden="true"].md\\:hidden')?.textContent).toBe('Paused');
 
     act(() => stream().open());
-    expect(region.textContent).toBe(LIVE_BACK_TEXT);
+    expect(region.textContent).toContain(LIVE_BACK_TEXT);
     act(() => vi.advanceTimersByTime(LIVE_BACK_MS));
     expect(region.textContent).toBe('');
   });

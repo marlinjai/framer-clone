@@ -28,6 +28,7 @@ import { getSnapshot, isAlive } from 'mobx-state-tree';
 import { useStore } from '@/hooks/useStore';
 import { useLiveSyncState } from '@/hooks/useLiveSyncState';
 import { heldWriter, pagesRemovedBy, restoredPagesSentence } from '@/lib/projects/liveSync';
+import { knownServerPageIds } from '@/stores/openProject';
 import {
   Dialog,
   DialogContent,
@@ -68,7 +69,7 @@ export default function SiteChangedDialog({
   const project = editorUI.currentProject;
   const { held } = useLiveSyncState(project?.id);
   const restored = open && project && isAlive(project)
-    ? restoredPagesSentence(pagesRemovedBy(held, getSnapshot(project) as { pages?: unknown }), heldWriter(held), action)
+    ? restoredPagesSentence(pagesRemovedBy(held, getSnapshot(project) as { pages?: unknown }, knownServerPageIds(project.id)), heldWriter(held), action)
     : '';
   return (
     <Dialog

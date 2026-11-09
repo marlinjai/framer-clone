@@ -424,6 +424,8 @@ const EditorUIStore = types.model('EditorUI', {
 
   // Page selection
   setCurrentPage(page?: PageModelType) {
+    // The agent's new page offered by a notice, shown by any route: the notice has done its job.
+    if (self.editorNotice?.kind === 'newPage' && page && self.editorNotice.pageId === page.id) self.editorNotice = undefined;
     // Leaving a definition from the Pages panel: its own page comes back as it was.
     if (self.componentTrail.length > 0) {
       if (page?.id === self.componentTrail[0].pageId) {

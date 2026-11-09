@@ -4,7 +4,7 @@ import ProjectModel, { type ProjectModelType, type ProjectSnapshotOut } from '@/
 import { getSnapshot } from 'mobx-state-tree';
 import { openProject } from '@/stores/openProject';
 import { registerOpenDraft } from '@/lib/projects/openDrafts';
-import { isEditing, isInteracting, onEditingSettled, onPersonTookOver } from '../editingInProgress';
+import { FIELD_TYPING_IDLE_MS, focusInField, isEditing, isInteracting, onEditingSettled, onPersonTookOver, resetFieldInputForTests } from '../editingInProgress';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import { applyOperations } from '@/lib/siteOps/applyOps';
 
@@ -48,7 +48,8 @@ describe('isEditing and isInteracting', () => {
     expect(isEditing(store)).toBe(false);
   });
 
-  it('a marquee or the focus in a field is interacting, not editing', () => {
+  it('a marquee, or typing in a field, is interacting, not editing', () => {
+    resetFieldInputForTests();
     store.editorUI.setMarqueeActive(true);
     expect(isEditing(store)).toBe(false);
     expect(isInteracting(store)).toBe(true);
@@ -56,7 +57,12 @@ describe('isEditing and isInteracting', () => {
     const input = document.createElement('textarea');
     document.body.append(input);
     input.focus();
+    // A cursor merely in a field (left there after Enter) holds nothing.
+    expect(isInteracting(store)).toBe(false);
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }));
     expect(isInteracting(store)).toBe(true);
+    // Quiet for a while: no longer typing, though the cursor is still there.
+    expect(focusInField(Date.now() + FIELD_TYPING_IDLE_MS)).toBe(false);
     input.remove();
     expect(isInteracting(store)).toBe(false);
   });

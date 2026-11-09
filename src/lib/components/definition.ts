@@ -260,7 +260,7 @@ export function parseComponents(raw: unknown): ParsedComponents {
       }
       const definition = stored as ComponentDefinition;
       kept += 1;
-      const page = definition.page.id !== undefined ? withDefaultViewports(definition.page) : withDefaultViewports({ ...definition.page, id });
+      const page = definition.page.id != null ? withDefaultViewports(definition.page) : withDefaultViewports({ ...definition.page, id });
       // A definition that needs no repair stays the stored object itself, so an
       // adopted copy whose definition did not change reconciles as a no-op.
       definitions[id] = page === definition.page && definition.inputs && definition.states

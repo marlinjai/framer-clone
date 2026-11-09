@@ -69,7 +69,9 @@
 
 import { runInAction } from 'mobx';
 import { isEditing, isInteracting, onEditingSettled } from '@/lib/live/editingInProgress';
-import { getSnapshot, isAlive } from 'mobx-state-tree';
+import { applyPatch, getSnapshot, isAlive, recordPatches, resolvePath, type IPatchRecorder } from 'mobx-state-tree';
+import { getHistoryStore } from '@/stores/RootStore';
+import { shareUnchanged } from './structuralSharing';
 import type { RootStoreType } from '@/stores/RootStore';
 import type { ProjectSnapshotOut } from '@/models/ProjectModel';
 import {
@@ -219,11 +221,16 @@ export function adoptionLabel(event: SiteVersionEvent | undefined): string {
  * see on the page in hand. Empty without a held copy (a 409 reached without one
  * names no pages: this tab never saw that copy).
  */
-export function pagesRemovedBy(held: HeldVersion | undefined, working: { pages?: unknown } | undefined): string[] {
-  if (!held || !working) return [];
+export function pagesRemovedBy(
+  held: HeldVersion | undefined,
+  working: { pages?: unknown } | undefined,
+  /** The pages of the last server copy this tab knows: a page made here and not saved yet was never the writer's to delete. */
+  serverPageIds: ReadonlySet<string> | undefined,
+): string[] {
+  if (!held || !working || !serverPageIds) return [];
   const kept = (held.snapshot.pages ?? {}) as Record<string, unknown>;
   return Object.entries((working.pages ?? {}) as Record<string, { metadata?: { title?: string } }>)
-    .filter(([id]) => !(id in kept))
+    .filter(([id]) => serverPageIds.has(id) && !(id in kept))
     .map(([id, page]) => page?.metadata?.title || id)
     .sort((a, b) => a.localeCompare(b));
 }
@@ -255,6 +262,7 @@ export class LiveSync {
   private disposeVisibility: (() => void) | undefined;
   private disposeSettled: (() => void) | undefined;
   private disposeEditing: (() => void) | undefined;
+  private editRecording: { recorder: IPatchRecorder; undoIdx: number; length: number } | undefined;
   private fetchRetryTimer: ReturnType<typeof setTimeout> | undefined;
   private fetchRetries = 0;
   private watchdogTimer: ReturnType<typeof setTimeout> | undefined;
@@ -321,9 +329,97 @@ export class LiveSync {
   private setHeld(held: HeldVersion | undefined) {
     if (this.held === held) return;
     this.held = held;
-    if (held?.whileEditing) this.waitForEditing();
-    else this.stopWaitingForEditing();
+    if (held?.whileEditing) {
+      this.waitForEditing();
+      this.recordEdit();
+    } else {
+      this.stopWaitingForEditing();
+      this.stopRecordingEdit();
+    }
     this.notify();
+  }
+
+  /**
+   * While a copy is held for the person's editing, what that editing changes is
+   * recorded, so that once it settled the edit can go on top of the agent's copy
+   * instead of opening the dialog (rebaseEdit).
+   */
+  private recordEdit() {
+    if (this.editRecording) return;
+    const project = this.rootStore.projectStore.getProject(this.projectId);
+    const history = getHistoryStore();
+    if (!project || !isAlive(project) || !history) return;
+    this.editRecording = { recorder: recordPatches(project), undoIdx: history.undoIdx, length: history.history.length };
+  }
+
+  private stopRecordingEdit() {
+    this.editRecording?.recorder.stop();
+    this.editRecording = undefined;
+  }
+
+  /**
+   * The person's settled edit, made while the agent's copy was held, put on top
+   * of that copy: undo it (one history entry, the only one since the hold), adopt
+   * the copy, apply the edit again. Only for edits that replace values of nodes
+   * (text, props, styles, a resize) on nodes the copy still has, whose edited
+   * value the agent left as it was. Anything else (a move, a node or page the
+   * agent removed, the same value edited on both sides, a page or site setting)
+   * answers false, and the dialog asks as before.
+   */
+  private rebaseEdit(held: HeldVersion): boolean {
+    const recording = this.editRecording;
+    const history = getHistoryStore();
+    const project = this.rootStore.projectStore.getProject(this.projectId);
+    if (!recording || !history || !project || !isAlive(project)) return false;
+    recording.recorder.stop();
+    // Exactly one new entry, on top (no redo tail): the person's edit, and nothing else.
+    if (history.undoIdx !== recording.undoIdx + 1 || history.history.length !== recording.length + 1) return false;
+    const { patches, inversePatches } = recording.recorder;
+    const edits: Array<{ nodeId: string; field: string; value: unknown }> = [];
+    const heldNodes = nodesOf(held.snapshot);
+    for (let i = 0; i < patches.length; i++) {
+      const patch = patches[i];
+      const parts = patch.path.split('/');
+      const field = parts.pop() ?? '';
+      // A page's own timestamps move with any edit on it: not part of the edit.
+      if (field === 'updatedAt' || field === 'createdAt') continue;
+      if (patch.op !== 'replace' || !field) return false;
+      let node: unknown;
+      try {
+        node = resolvePath(project, parts.join('/'));
+      } catch {
+        return false;
+      }
+      const nodeId = (node as { id?: unknown } | undefined)?.id;
+      if (typeof nodeId !== 'string' || !node || typeof node !== 'object' || !('props' in node) || !('componentType' in node)) return false;
+      const agentNode = heldNodes.get(nodeId);
+      if (!agentNode) return false;
+      // The agent changed the same value: a real conflict, the person decides.
+      const before = inversePatches[i].value;
+      if (shareUnchanged(before, agentNode[field]) !== before && !(before === undefined && agentNode[field] === undefined)) return false;
+      edits.push({ nodeId, field, value: patch.value });
+    }
+    if (edits.length === 0) return false;
+    history.undo();
+    if (!isSaved(this.projectId, getSnapshot(project) as unknown as ProjectContent)) {
+      history.redo();
+      return false;
+    }
+    this.stopRecordingEdit();
+    if (!this.adopt(held.version, held.snapshot, held.label, undefined, false)) {
+      history.redo();
+      return false;
+    }
+    // The edit again, as one step of the person's own (autosave saves it on the adopted version).
+    const adopted = this.rootStore.projectStore.getProject(this.projectId);
+    if (!adopted) return true;
+    runInAction(() => {
+      for (const edit of edits) {
+        const node = findNode(adopted, edit.nodeId);
+        if (node) applyPatch(node, { op: 'replace', path: `/${edit.field}`, value: edit.value });
+      }
+    });
+    return true;
   }
 
   private notify() {
@@ -417,6 +513,8 @@ export class LiveSync {
     stream.onerror = () => {
       if (this.stream !== stream) return;
       this.clearWatchdog();
+      // Polling asks from now on; a later failure while live starts its back-off at 2 s again.
+      this.clearFetchRetry();
       // Events can be missed from now on (an agent's draft end among them): its draft goes, the reconnect's state draws it again.
       this.generation.streamLost();
       // Down: poll meanwhile. A stream closed for good (a refusal such as 429)
@@ -513,6 +611,7 @@ export class LiveSync {
       // Silent for two and a half heartbeats: held open by something that passes nothing. Reopen; poll meanwhile.
       this.generation.streamLost();
       this.closeStream();
+      this.clearFetchRetry();
       this.startPolling();
       this.openStream();
     }, LIVE_WATCHDOG_MS);
@@ -691,6 +790,8 @@ export class LiveSync {
       this.setHeld(undefined);
       return;
     }
+    // A settled edit made while the agent's copy waited goes on top of it, when it can.
+    if (held.whileEditing && !hasWriteInFlight(this.projectId) && this.rebaseEdit(held)) return;
     this.setHeld(undefined);
     this.take({ version: held.version, snapshot: held.snapshot }, held.event, held.label);
   }
@@ -813,6 +914,8 @@ export class LiveSync {
       ui.setCurrentPage(page);
       return;
     }
+    // A state preview's badge is the way out of that preview: never replaced. The page waits in the Pages panel then.
+    if (ui.editorNotice?.kind === 'previewState') return;
     ui.setEditorNotice({ kind: 'newPage', pageId: page.id, message: `New page \u2018${page.metadata.title}\u2019 is ready.` });
   }
 
@@ -853,6 +956,52 @@ export class LiveSync {
     // The person asked for it: it appears at once, never as a reveal.
     return this.adopt(held.version, held.snapshot, held.label, undefined, false);
   }
+}
+
+/** Every node of a snapshot's pages and components by id. */
+function nodesOf(snapshot: ProjectSnapshotOut): Map<string, Record<string, unknown>> {
+  const out = new Map<string, Record<string, unknown>>();
+  const visit = (node: unknown) => {
+    if (!node || typeof node !== 'object') return;
+    const n = node as { id?: unknown; children?: unknown };
+    if (typeof n.id === 'string') out.set(n.id, node as Record<string, unknown>);
+    if (Array.isArray(n.children)) n.children.forEach(visit);
+  };
+  const pages = [
+    ...Object.values((snapshot.pages ?? {}) as Record<string, unknown>),
+    ...Object.values((snapshot.components ?? {}) as Record<string, { page?: unknown }>).map((d) => d?.page),
+  ] as Array<{ appComponentTree?: unknown; canvasNodes?: Record<string, unknown> } | undefined>;
+  for (const page of pages) {
+    visit(page?.appComponentTree);
+    for (const node of Object.values(page?.canvasNodes ?? {})) visit(node);
+  }
+  return out;
+}
+
+/** A node of the open project by id (in any page or component). */
+function findNode(project: unknown, id: string): object | undefined {
+  const pages = [
+    ...((project as { pagesArray?: PageModelType[] }).pagesArray ?? []),
+    ...Array.from(((project as { components?: Map<string, { page: PageModelType }> }).components ?? new Map()).values()).map((d) => d.page),
+  ];
+  const visit = (node: { id: string; children?: unknown[] } | undefined): object | undefined => {
+    if (!node) return undefined;
+    if (node.id === id) return node;
+    for (const child of (node.children ?? []) as Array<{ id: string; children?: unknown[] }>) {
+      const found = visit(child);
+      if (found) return found;
+    }
+    return undefined;
+  };
+  for (const page of pages) {
+    const found = visit(page.appComponentTree as never);
+    if (found) return found;
+    for (const node of page.canvasNodes.values()) {
+      const inCanvas = visit(node as never);
+      if (inCanvas) return inCanvas;
+    }
+  }
+  return undefined;
 }
 
 /** Resolves true once no write of this tab is out for the project, false after `ms`. */
@@ -900,21 +1049,23 @@ export function subscribeLiveSync(projectId: string, listener: () => void): () =
   if (!set) projectListeners.set(projectId, (set = new Set()));
   set.add(listener);
   let unsubscribeSync = syncs.get(projectId)?.subscribe(listener);
-  const onSyncChange = () => {
+  const onSyncChange = (changed: string) => {
+    if (changed !== projectId) return;
     unsubscribeSync?.();
     unsubscribeSync = syncs.get(projectId)?.subscribe(listener);
   };
   syncChangeListeners.add(onSyncChange);
   return () => {
     set?.delete(listener);
+    if (set?.size === 0) projectListeners.delete(projectId);
     syncChangeListeners.delete(onSyncChange);
     unsubscribeSync?.();
   };
 }
 
-const syncChangeListeners = new Set<() => void>();
+const syncChangeListeners = new Set<(projectId: string) => void>();
 function syncsChanged(projectId: string) {
-  for (const listener of [...syncChangeListeners]) listener();
+  for (const listener of [...syncChangeListeners]) listener(projectId);
   notifyAll(projectId);
 }
 
