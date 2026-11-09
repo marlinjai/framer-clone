@@ -20,7 +20,8 @@ import type { ComponentInstance } from '@/models/ComponentModel';
 let store: RootStoreType;
 vi.mock('@/hooks/useStore', () => ({ useStore: () => store }));
 
-import { DRAFT_SECTION_ATTR, DRAFT_SKELETON_ATTR, DraftCameraFollow } from '../PageGenDraftLayer';
+import { DraftCameraFollow } from '../PageGenDraftLayer';
+import { DRAFT_SECTION_ATTR, DRAFT_SKELETON_ATTR } from '@/lib/ai/pageGen/draftAttributes';
 
 let page: PageModelType;
 let camera: ReturnType<typeof useCameraControls>;

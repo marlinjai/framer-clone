@@ -48,15 +48,7 @@ import { revealOffset, useCameraControls, type CameraTransform } from '@/lib/can
 import GroundWrapper from '@/components/GroundWrapper';
 import { revealAnimation, revealPlanOfTrees, type RevealTreeNode } from '@/lib/live/reveal';
 import { SkeletonBlock, isNarrowBreakpoint } from '@/components/live/SkeletonLayer';
-
-/** Marks a drawn draft section (its index); the wrapper has no box of its own. */
-export const DRAFT_SECTION_ATTR = 'data-pagegen-draft-section';
-/** Marks a draft frame of a new page. */
-export const DRAFT_FRAME_ATTR = 'data-pagegen-draft-frame';
-/** Marks the band of the section still being written. */
-export const DRAFT_BAND_ATTR = 'data-pagegen-draft-band';
-/** Marks a skeleton of the run's outline (its slot). */
-export const DRAFT_SKELETON_ATTR = 'data-pagegen-draft-skeleton';
+import { DRAFT_BAND_ATTR, DRAFT_FRAME_ATTR, DRAFT_SECTION_ATTR, DRAFT_SKELETON_ATTR } from '@/lib/ai/pageGen/draftAttributes';
 
 /** Space between the page's own frames and the draft frames of a new page. */
 const DRAFT_FRAME_GAP = 160;

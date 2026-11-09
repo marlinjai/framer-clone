@@ -1109,6 +1109,65 @@ describe("liveSync: an agent's generate_page draft (slice 6)", () => {
     stop();
   });
 
+  /** The server makes a new page from the run's draft and saves it: gen:done, then site:version. Answers the new page's id. */
+  async function newPageSaved(runId: string): Promise<string> {
+    const model = ProjectModel.create(server.snapshot) as ProjectModelType;
+    const page = model.createPage('Menu');
+    const versionBefore = server.version;
+    const outcome = await applyOperations(model, [{ op: 'insertNodes', pageId: page.id, nodes: [{ type: 'section', label: 'Hero' }] }]);
+    if (!outcome.ok) throw new Error('refused');
+    server = { version: versionBefore + 1, snapshot: getSnapshot(model) as ProjectSnapshotOut };
+    const inserted = (server.snapshot.pages[page.id].appComponentTree.children as Array<{ id: string }>).map((c) => c.id);
+    stream().emit('gen:done', { runId, status: 'saved', version: server.version, insertedIds: inserted, drawnAs: [[]] });
+    stream().emit('site:version', { origin: 'generate', version: server.version, versionBefore });
+    await settle();
+    return page.id;
+  }
+
+  /** A canvas and one draft frame in the document, the frame inside the canvas's box or outside it. */
+  function drawFrame(visible: boolean): () => void {
+    const rect = (left: number, top: number, width: number, height: number) =>
+      ({ left, top, width, height, right: left + width, bottom: top + height, x: left, y: top, toJSON: () => ({}) }) as DOMRect;
+    const ground = document.createElement('div');
+    ground.setAttribute('data-ground', '');
+    ground.getBoundingClientRect = () => rect(0, 0, 1000, 800);
+    const frame = document.createElement('div');
+    frame.setAttribute('data-pagegen-draft-frame', 'bp');
+    frame.getBoundingClientRect = () => (visible ? rect(600, 100, 800, 600) : rect(2400, 100, 800, 600));
+    document.body.append(ground, frame);
+    return () => {
+      ground.remove();
+      frame.remove();
+    };
+  }
+
+  it('a new page whose draft frames are in view is shown once adopted, though the person moved the camera', async () => {
+    const stop = start();
+    store.editorUI.setCurrentPage(project().getPage(homeId())!);
+    stream().emit('gen:outline', { runId: 'run-1', target: { kind: 'newPage', title: 'Menu' }, outline: [{ title: 'Hero', kind: 'hero' }] });
+    store.editorUI.livePresence.setFollow(false);
+    const remove = drawFrame(true);
+    const pageId = await newPageSaved('run-1');
+    remove();
+    expect(draft().target).toBeUndefined();
+    expect(store.editorUI.currentPage?.id).toBe(pageId);
+    stop();
+  });
+
+  it('a new page drafted out of view while the person looks elsewhere waits in the Pages panel', async () => {
+    const stop = start();
+    store.editorUI.setCurrentPage(project().getPage(homeId())!);
+    stream().emit('gen:outline', { runId: 'run-1', target: { kind: 'newPage', title: 'Menu' }, outline: [{ title: 'Hero', kind: 'hero' }] });
+    store.editorUI.livePresence.setFollow(false);
+    const remove = drawFrame(false);
+    const pageId = await newPageSaved('run-1');
+    remove();
+    expect(draft().target).toBeUndefined();
+    expect(project().getPage(pageId)).toBeDefined();
+    expect(store.editorUI.currentPage?.id).toBe(homeId());
+    stop();
+  });
+
   it('ignores malformed events and a target this copy does not have', () => {
     const stop = start();
     stream().emit('gen:section', { runId: '../x', target: target(), index: 0, slot: 0, node: node('A') });

@@ -179,6 +179,8 @@ export interface GenerationDraftDeps {
   currentPageId: () => string | undefined;
   /** The version this tab's copy holds. */
   knownVersion: () => number | undefined;
+  /** Whether the draft's frames are visible in the canvas right now (the person is looking at them). */
+  draftInView?: () => boolean;
   setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
   clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
 }
@@ -189,6 +191,8 @@ export interface SettledDraft {
   stillIds: string[];
   /** The result's first top-level id when the draft was a new page on screen (the editor may show that page). */
   newPageNodeId?: string;
+  /** Whether that new page's draft frames were visible in the canvas when the result was adopted. */
+  inView?: boolean;
 }
 
 interface Remembered {
@@ -322,11 +326,9 @@ export class GenerationDraft {
    */
   settle(version: number): SettledDraft | undefined {
     let answer: SettledDraft | undefined;
-    let ended = false;
     // Events were missed while the stream was down: the running draft cannot know whether this copy holds its result.
     if (this.unsynced && this.run) {
       this.dropRun();
-      ended = true;
     }
     for (const s of [...this.settling.values()]) {
       if (version < s.version) continue;
@@ -345,9 +347,10 @@ export class GenerationDraft {
         });
       }
       const onScreen = ours && draft?.target?.kind === 'newPage' && !!draft.targetOn(this.deps.currentPageId());
+      // Read before the draft goes: the frames are still drawn inside this action.
+      const inView = onScreen && (this.deps.draftInView?.() ?? false);
       this.endSettling(s.runId);
-      ended = true;
-      if (ours) answer = { stillIds, ...(onScreen && s.insertedIds[0] ? { newPageNodeId: s.insertedIds[0] } : {}) };
+      if (ours) answer = { stillIds, ...(onScreen && s.insertedIds[0] ? { newPageNodeId: s.insertedIds[0], inView } : {}) };
     }
     // Also when nothing ended: a target this copy did not have before may exist after the adoption.
     this.sync();

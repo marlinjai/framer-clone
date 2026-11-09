@@ -25,11 +25,8 @@ vi.mock('@/hooks/useStore', () => ({ useStore: () => store }));
 
 import ComponentRenderer from '@/components/ComponentRenderer';
 import HeadlessComponentRenderer from '@/lib/renderer/HeadlessComponentRenderer';
+import { DRAFT_BAND_ATTR, DRAFT_FRAME_ATTR, DRAFT_SECTION_ATTR, DRAFT_SKELETON_ATTR } from '@/lib/ai/pageGen/draftAttributes';
 import {
-  DRAFT_BAND_ATTR,
-  DRAFT_FRAME_ATTR,
-  DRAFT_SECTION_ATTR,
-  DRAFT_SKELETON_ATTR,
   DraftPageFrames,
   DraftStyles,
   draftBandText,
