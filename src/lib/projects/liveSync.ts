@@ -82,6 +82,7 @@ import {
   type ProjectContent,
 } from '@/stores/openProject';
 import { existingAutosave, reloadDiscarding } from './autosave';
+import { SSE_HEARTBEAT_MS } from '@/lib/ai/sse';
 import { editorTabId } from './tabId';
 import {
   LIVE_EVENTS,
@@ -109,8 +110,8 @@ export const LIVE_STREAM_RETRY_MS = 60_000;
 export const LIVE_STREAM_RETRY_MAX_MS = 8 * 60_000;
 /** The share of a retry wait added at random, so tabs refused together do not come back together. */
 export const LIVE_STREAM_RETRY_JITTER = 0.25;
-/** The server's `ping` comes this often (src/lib/ai/sse.ts). */
-export const LIVE_HEARTBEAT_MS = 10_000;
+/** The server's `ping` comes this often (the server's own constant, src/lib/ai/sse.ts). */
+export const LIVE_HEARTBEAT_MS = SSE_HEARTBEAT_MS;
 /** A stream that sent pings before and nothing for this long is reopened. */
 export const LIVE_WATCHDOG_MS = Math.round(LIVE_HEARTBEAT_MS * 2.5);
 /** The waits before a failed fetch of the stored copy is tried again while the stream is live; the last repeats. */
