@@ -22,13 +22,14 @@
 'use client';
 
 import React from 'react';
-import { reaction } from 'mobx';
+import { observable, reaction, runInAction } from 'mobx';
 import { observer } from 'mobx-react-lite';
 import { useStore } from '@/hooks/useStore';
 import { ACTIVITY_MODE_RANK, activityMode, editingNote, type ActivityMode, feedLineAnnouncement, followOffAnnouncement, needsAttention, runSummary } from '@/lib/live/activityText';
 import { rememberPageTitles } from '@/lib/live/pageTitleMemory';
 import type { LivePresenceStore } from '@/lib/live/presenceStore';
 import type { LiveFeedLine } from '@/lib/projects/liveEvents';
+import { liveSyncFor, type LiveSync } from '@/lib/projects/liveSync';
 
 /** How long a message stays in the region: long enough to be spoken, gone before it is stale text in the top bar. */
 export const ANNOUNCE_KEEP_MS = 10_000;
@@ -114,6 +115,27 @@ const AgentAnnouncer = observer(function AgentAnnouncer() {
     let state = presence.stateApplied;
     let resets = presence.resets;
     let wasActive = presence.anyActive;
+
+    // Whether the live stream is up. While it is down (a dropped connection, an expired session),
+    // the store's timers still let the agents lapse, which is not the end of their run: the run is
+    // held open, and the next `state` decides (no agent active then: the run ended in the gap, and
+    // its summary counts the gap's lines). Without a live sync (tests, the demo) it counts as up.
+    const streamUp = observable.box(true);
+    // Back up after being down: the stream opens before its first `state`, which is what tells.
+    let awaitingState = false;
+    let wasUp = true;
+    let sync: LiveSync | undefined;
+    let unsubscribe: (() => void) | undefined;
+    const attach = () => {
+      const current = liveSyncFor(project?.id);
+      if (current !== sync) {
+        unsubscribe?.();
+        sync = current;
+        unsubscribe = sync?.subscribe(() => runInAction(() => streamUp.set(!sync || sync.phase === 'live')));
+      }
+      runInAction(() => streamUp.set(!sync || sync.phase === 'live'));
+    };
+    attach();
     let runLines: LiveFeedLine[] = [];
     // What the run's note announced: nothing yet, or the mode it said.
     let announced: ActivityMode | 'none' = 'none';
@@ -122,14 +144,19 @@ const AgentAnnouncer = observer(function AgentAnnouncer() {
       // One reaction for the feed and the run, so a run that ends with a reconnect counts the
       // gap's lines before its summary is spoken.
       reaction(
-        () => ({ feed: presence.feed, active: presence.anyActive, states: presence.stateApplied, resets: presence.resets }),
-        ({ feed, active }) => {
+        () => ({ feed: presence.feed, active: presence.anyActive, states: presence.stateApplied, resets: presence.resets, up: streamUp.get() }),
+        ({ feed, active, up }) => {
+          // The sync may have started (or restarted) after this mounted.
+          attach();
+          if (!up || !wasUp) awaitingState = true;
+          wasUp = up;
           const reset = presence.resets !== resets;
           resets = presence.resets;
           const fromState = presence.stateApplied !== state;
           state = presence.stateApplied;
+          if (fromState && up) awaitingState = false;
           if (reset) {
-            // A sign-out or another site: nothing finished, nothing carries over.
+            // The live sync stopped (another site opened, the editor left): nothing finished, nothing carries over.
             runLines = [];
             announced = 'none';
             seen.clear();
@@ -143,13 +170,17 @@ const AgentAnnouncer = observer(function AgentAnnouncer() {
             }
           }
           see(feed);
-          if (wasActive && !active && !reset) {
+          const settled = up && !awaitingState;
+          if (wasActive && !active && !reset && settled) {
             const summary = runSummary(runLines);
             runLines = [];
             announced = 'none';
             if (summary) say(summary);
+            wasActive = false;
+          } else {
+            // A run whose agents lapsed while the stream is down stays open.
+            wasActive = active || (wasActive && !settled && !reset);
           }
-          wasActive = active;
         },
       ),
       reaction(
@@ -177,8 +208,11 @@ const AgentAnnouncer = observer(function AgentAnnouncer() {
         },
       ),
     ];
-    return () => disposers.forEach((d) => d());
-  }, [presence, say]);
+    return () => {
+      disposers.forEach((d) => d());
+      unsubscribe?.();
+    };
+  }, [presence, project?.id, say]);
 
   return (
     <div aria-live="polite" className="sr-only" data-agent-announcer="">

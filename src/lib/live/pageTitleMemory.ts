@@ -28,7 +28,7 @@ export function rememberPageTitles(project: { id: string }, pages: Iterable<Titl
   }
 }
 
-/** Forget every remembered title (a sign-out, another site opened). */
+/** Forget every remembered title (the live sync stopped: another site opened, the editor left). */
 export function forgetPageTitles(): void {
   memory.clear();
 }

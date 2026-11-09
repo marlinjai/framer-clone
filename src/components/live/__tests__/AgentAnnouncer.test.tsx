@@ -11,6 +11,22 @@ import type { LivePresenceStore } from '@/lib/live/presenceStore';
 let store: RootStoreType;
 vi.mock('@/hooks/useStore', () => ({ useStore: () => store }));
 
+// The live sync of the open site, as the announcer sees it: its phase, and a way to hear it change.
+class FakeSync {
+  phase = 'live';
+  private listeners = new Set<() => void>();
+  subscribe(listener: () => void) {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+  setPhase(phase: string) {
+    this.phase = phase;
+    for (const l of [...this.listeners]) l();
+  }
+}
+let sync: FakeSync | undefined;
+vi.mock('@/lib/projects/liveSync', () => ({ liveSyncFor: () => sync }));
+
 import AgentAnnouncer, { ANNOUNCE_KEEP_MS, noteFollowToggledByPerson } from '../AgentAnnouncer';
 
 const presence = () => store.editorUI.livePresence as LivePresenceStore;
@@ -35,6 +51,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  sync = undefined;
   presence().reset();
   cleanup();
   vi.useRealTimers();
@@ -121,6 +138,54 @@ describe('the agent announcer', () => {
     expect(heard().at(-1)).toBe('Claude finished: wrote 3 changes');
   });
 
+  it('holds a run open while the stream is down, and sums it up with the gap once a reconnect shows it ended', () => {
+    sync = new FakeSync();
+    render(<AgentAnnouncer />);
+    act(() => presence().applyState({ agents: [], feed: [] }));
+    act(() => presence().applyActivity(activity({ callId: 'w1', tool: 'apply_batch' })));
+    act(() => presence().applyActivity(activity({ callId: 'w1', tool: 'apply_batch', phase: 'end', outcome: 'ok', changes: 2 })));
+    act(() => sync!.setPhase('polling'));
+    // The agents lapse in the store while the stream is down: not the end of the run.
+    act(() => vi.advanceTimersByTime(AGENT_ACTIVE_MS + 1));
+    expect(heard().some((t) => t?.includes('finished'))).toBe(false);
+    const before = [...presence().feed];
+    // The stream opens first, then its state arrives (the order liveSync follows).
+    act(() => sync!.setPhase('live'));
+    expect(heard().some((t) => t?.includes('finished'))).toBe(false);
+    act(() => presence().applyState({ agents: [], feed: [line({ id: 'gap1', changes: 5 }), ...before] }));
+    expect(heard().filter((t) => t?.includes('finished'))).toEqual(['Claude finished: wrote 7 changes']);
+  });
+
+  it('a reconnect that finds the agent still working goes on with the run, without announcing it again', () => {
+    sync = new FakeSync();
+    render(<AgentAnnouncer />);
+    act(() => presence().applyState({ agents: [], feed: [] }));
+    const start = activity({ callId: 'w1', tool: 'apply_batch' });
+    act(() => presence().applyActivity(start));
+    act(() => presence().applyActivity({ ...start, phase: 'end', outcome: 'ok', changes: 2 }));
+    act(() => sync!.setPhase('connecting'));
+    act(() => vi.advanceTimersByTime(AGENT_ACTIVE_MS + 1));
+    // The stream opens before its first state: nothing is decided yet.
+    act(() => sync!.setPhase('live'));
+    expect(heard()).toEqual([]);
+    act(() => presence().applyState({ agents: [{ ...start, callId: 'w2', at: new Date().toISOString() }], feed: [...presence().feed] }));
+    // The run goes on: its note is not announced again.
+    expect(heard()).toEqual([]);
+    act(() => presence().applyActivity({ ...start, callId: 'w2', phase: 'end', outcome: 'ok', changes: 1, at: new Date().toISOString() }));
+    act(() => vi.advanceTimersByTime(AGENT_ACTIVE_MS + 1));
+    expect(heard()).toEqual(['Claude finished: wrote 3 changes']);
+  });
+
+  it('says nothing finished after the session expired (signed out)', () => {
+    sync = new FakeSync();
+    render(<AgentAnnouncer />);
+    act(() => presence().applyActivity(activity({ tool: 'apply_batch' })));
+    act(() => presence().applyActivity(activity({ tool: 'apply_batch', phase: 'end', outcome: 'ok', changes: 2 })));
+    act(() => sync!.setPhase('signed-out'));
+    act(() => vi.advanceTimersByTime(AGENT_ACTIVE_MS + 1));
+    expect(heard().some((t) => t?.includes('finished'))).toBe(false);
+  });
+
   it('lets each message leave the region after a while, so no stale text stays in the top bar', () => {
     render(<AgentAnnouncer />);
     act(() => presence().applyActivity(activity()));
@@ -190,7 +255,7 @@ describe('the agent announcer', () => {
     expect(heard()).toHaveLength(before);
   });
 
-  it('says nothing finished when a sign-out clears the agents and the feed', () => {
+  it('says nothing finished when the live sync stops (another site opened) and clears the agents and the feed', () => {
     render(<AgentAnnouncer />);
     act(() => presence().applyActivity(activity({ tool: 'apply_batch' })));
     act(() => presence().applyActivity(activity({ tool: 'apply_batch', phase: 'end', outcome: 'ok', changes: 2 })));

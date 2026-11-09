@@ -130,7 +130,7 @@ export class LivePresenceStore {
   stateApplied = 0;
   /** The `state` events applied since the last reset: the one that makes it 1 brings history. */
   statesSinceReset = 0;
-  /** Counts the resets (a sign-out, another site opened). */
+  /** Counts the resets (the live sync stopped: another site opened, the editor left). */
   resets = 0;
   /**
    * An agent wrote (or started a call that writes) during this run: the top bar keeps saying
