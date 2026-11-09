@@ -225,7 +225,10 @@ export function SkeletonShape({ kind, narrow }: { kind: PlanSectionKind; narrow:
   }
 }
 
-/** The skeleton title's chip: dark grey on near white, whatever the page's background is. */
+/**
+ * The skeleton title's chip: dark grey on near white, whatever the page's background is. A long
+ * title wraps rather than being cut: a skeleton takes no pointer, so a tooltip could not show it.
+ */
 export const SKELETON_TITLE_STYLE: React.CSSProperties = {
   alignSelf: 'flex-start',
   maxWidth: '100%',
@@ -236,9 +239,8 @@ export const SKELETON_TITLE_STYLE: React.CSSProperties = {
   color: '#404040',
   font: '500 12px/1.4 system-ui, sans-serif',
   letterSpacing: '0.02em',
-  whiteSpace: 'nowrap',
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
+  whiteSpace: 'normal',
+  overflowWrap: 'anywhere',
 };
 
 /**

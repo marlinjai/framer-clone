@@ -100,6 +100,7 @@ describe('the skeleton title', () => {
     const title = getByText('Pricing');
     expect(title.style.background).toBe('rgba(255, 255, 255, 0.92)');
     expect(title.style.color).toBe('rgb(64, 64, 64)');
-    expect(title.style.textOverflow).toBe('ellipsis');
+    // A long title wraps (a skeleton takes no pointer, so no tooltip could show the rest).
+    expect(title.style.whiteSpace).toBe('normal');
   });
 });

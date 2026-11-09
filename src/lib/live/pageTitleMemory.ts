@@ -10,6 +10,9 @@
 
 const memory = new Map<string, Map<string, string>>();
 
+/** How many titles are kept per project (the most recently seen): enough for every page a feed can name. */
+export const PAGE_TITLES_MAX = 500;
+
 interface TitledPage {
   id: string;
   metadata?: { title?: string };
@@ -24,8 +27,11 @@ export function rememberPageTitles(project: { id: string }, pages: Iterable<Titl
   }
   for (const page of pages) {
     const title = page.metadata?.title;
+    // Seen again: it moves to the newest end. A title cleared is forgotten, never shown stale.
+    titles.delete(page.id);
     if (typeof title === 'string' && title.trim()) titles.set(page.id, title);
   }
+  while (titles.size > PAGE_TITLES_MAX) titles.delete(titles.keys().next().value as string);
 }
 
 /** Forget every remembered title (the live sync stopped: another site opened, the editor left). */

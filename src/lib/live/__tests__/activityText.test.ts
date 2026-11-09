@@ -47,9 +47,9 @@ describe('activity words', () => {
   });
 
   it('words refusals, approvals and failures without jargon', () => {
-    expect(feedLineText({ tool: 'generate_page', outcome: 'site_changed' })).toBe('Generated content not saved: the site changed meanwhile, reading it again');
-    expect(feedLineText({ tool: 'apply_batch', outcome: 'site_changed' })).toBe('Changes not written: the site changed meanwhile, reading it again');
-    expect(feedLineText({ tool: 'publish', outcome: 'site_changed' })).toBe('Publishing stopped: the site changed meanwhile, reading it again');
+    expect(feedLineText({ tool: 'generate_page', outcome: 'site_changed' })).toBe('Generated content not saved: the site changed meanwhile');
+    expect(feedLineText({ tool: 'apply_batch', outcome: 'site_changed' })).toBe('Changes not written: the site changed meanwhile');
+    expect(feedLineText({ tool: 'publish', outcome: 'site_changed' })).toBe('Publishing stopped: the site changed meanwhile');
     expect(feedLineText({ tool: 'apply_batch', outcome: 'rejected' })).toBe('Changes refused, nothing written');
     expect(feedLineText({ tool: 'publish', outcome: 'failed' })).toBe('Publishing failed');
     expect(feedLineText({ tool: 'publish', outcome: 'awaiting_approval' })).toBe('Publishing needs your approval');

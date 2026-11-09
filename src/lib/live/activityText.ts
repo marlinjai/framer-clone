@@ -146,7 +146,8 @@ function notDone(tool: string): string {
 
 function refusal(tool: string, outcome: Exclude<AgentOutcome, 'ok'>): string {
   const noun = attemptNoun(tool);
-  if (outcome === 'site_changed') return `${notDone(tool)}: the site changed meanwhile, reading it again`;
+  // No promise of a retry: the agent decides that, and may stop.
+  if (outcome === 'site_changed') return `${notDone(tool)}: the site changed meanwhile`;
   if (outcome === 'rejected') return `${noun} refused, nothing written`;
   if (outcome === 'awaiting_approval') return `${noun} needs your approval`;
   if (outcome === 'declined') return `${noun} declined, nothing changed`;

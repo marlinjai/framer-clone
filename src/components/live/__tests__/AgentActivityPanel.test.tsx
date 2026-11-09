@@ -126,7 +126,7 @@ describe('the activity feed', () => {
     const items = within(panel).getAllByRole('listitem').map((li) => li.textContent);
     expect(items[0]).toContain('Wrote 4 changes on \u2018Home\u2019');
     expect(items[1]).toContain('Read the page \u2018About\u2019');
-    expect(items[2]).toContain('Changes not written: the site changed meanwhile, reading it again');
+    expect(items[2]).toContain('Changes not written: the site changed meanwhile');
     expect(items.every((t) => t?.includes('Claude'))).toBe(true);
   });
 
