@@ -187,10 +187,6 @@ export class AutosaveController {
 
   private debounceTimer: ReturnType<typeof setTimeout> | undefined;
   private maxWaitTimer: ReturnType<typeof setTimeout> | undefined;
-  private deferredByLiveSync = false;
-  private editGateTimer: ReturnType<typeof setInterval> | undefined;
-  /** A refusal came back during a live hold: its dialog opens once the hold ends. */
-  private conflictWaitsForLiveHold = false;
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
   private inFlight: Promise<void> | undefined;
   /** A change arrived while a request was out (or Publish held the controller). */
@@ -225,8 +221,6 @@ export class AutosaveController {
   };
 
   private setState(next: AutosaveState) {
-    // A dialog waiting for the person's edit to end has nothing to open once the conflict is gone.
-    if (next.phase !== 'conflict') this.conflictWaitsForLiveHold = false;
     this.stamp++;
     this.state = next;
     for (const listener of [...this.listeners]) listener();
@@ -374,18 +368,12 @@ export class AutosaveController {
   }
 
   private schedule() {
-    // Held for the person's editing by the live sync: nothing goes out until the hold ends.
-    if (this.deferredByLiveSync) return;
     if (this.debounceTimer) clearTimeout(this.debounceTimer);
     this.debounceTimer = setTimeout(() => this.fire(), AUTOSAVE_DEBOUNCE_MS);
     if (!this.maxWaitTimer) this.maxWaitTimer = setTimeout(() => this.fire(), AUTOSAVE_MAX_WAIT_MS);
   }
 
   private fire() {
-    if (this.deferredByLiveSync) {
-      this.clearDebounce();
-      return;
-    }
     const once = this.debounceIsRetryOnce;
     this.debounceIsRetryOnce = false;
     this.clearDebounce();
@@ -401,8 +389,6 @@ export class AutosaveController {
 
   private clearTimers() {
     this.clearDebounce();
-    if (this.editGateTimer) clearInterval(this.editGateTimer);
-    this.editGateTimer = undefined;
     if (this.retryTimer) clearTimeout(this.retryTimer);
     this.retryTimer = undefined;
   }
@@ -565,15 +551,7 @@ export class AutosaveController {
       this.attempts = 0;
       this.failingSince = undefined;
       this.dirtyHint = true;
-      // While the person is in the middle of an edit (a live hold, or the edit gate the
-      // live sync installs, for a refusal that beats the agent's copy), the dialog waits
-      // for the edit to settle: never under the cursor.
-      const later = this.deferredByLiveSync || this.editInProgress();
-      this.setState({ phase: 'conflict', currentVersion: result.currentVersion, dialogOpen: !later, retrying: false });
-      if (later) {
-        this.conflictWaitsForLiveHold = true;
-        this.openWhenEditEnds();
-      }
+      this.setState({ phase: 'conflict', currentVersion: result.currentVersion, dialogOpen: true, retrying: false });
       return;
     }
     if (result.kind === 'error') {
@@ -649,14 +627,11 @@ export class AutosaveController {
 
   /** "Keep editing": the dialog closes, autosave stays paused. */
   dismissConflict(): void {
-    // "Keep editing" is the person's answer: a dialog waiting for an edit to end does not come back by itself.
-    this.conflictWaitsForLiveHold = false;
     if (this.state.phase === 'conflict' && !this.state.retrying) this.setState({ ...this.state, dialogOpen: false });
   }
 
   /** Reopen the dialog (the status's "Changed elsewhere", or Cmd+S). */
   openConflict(): void {
-    this.conflictWaitsForLiveHold = false;
     if (this.state.phase === 'conflict') this.setState({ ...this.state, dialogOpen: true });
   }
 
@@ -750,53 +725,6 @@ export class AutosaveController {
   dismissMessage(): void {
     const state = this.state;
     if (state.phase === 'failed' || state.phase === 'retrying') this.setState({ ...state, hidden: true });
-  }
-
-  /**
-   * The live sync holds an agent's newer copy while the person types, drags or
-   * resizes (src/lib/projects/liveSync.ts). A save now would go out on the old
-   * version and be refused, opening the dialog under the cursor (a long resize
-   * reaches the 10 s maximum wait). So the debounce waits, without any dialog,
-   * until the hold ends; the live sync then adopts or asks. A save already out
-   * when the hold began and refused meanwhile keeps its dialog closed until then
-   * too. Cmd+S and the save on leaving the page still save.
-   */
-  /** Whether the person is in the middle of an edit, as the live sync sees it (setEditInProgressCheck). */
-  private editInProgress(): boolean {
-    return editInProgressChecks.get(this.projectId)?.() ?? false;
-  }
-
-  /** A refusal's dialog waiting without a live hold: opened once no edit is in progress (looked at every 500 ms). */
-  private openWhenEditEnds() {
-    if (this.editGateTimer) return;
-    this.editGateTimer = setInterval(() => {
-      if (!this.conflictWaitsForLiveHold || this.state.phase !== 'conflict') {
-        clearInterval(this.editGateTimer);
-        this.editGateTimer = undefined;
-        return;
-      }
-      // A live hold took over: it opens the dialog when it ends.
-      if (this.deferredByLiveSync || this.editInProgress()) return;
-      clearInterval(this.editGateTimer);
-      this.editGateTimer = undefined;
-      this.conflictWaitsForLiveHold = false;
-      if (!this.state.dialogOpen) this.setState({ ...this.state, dialogOpen: true });
-    }, 500);
-  }
-
-  deferWhileLiveHeld(defer: boolean): void {
-    if (this.deferredByLiveSync === defer) return;
-    this.deferredByLiveSync = defer;
-    if (defer) {
-      this.clearDebounce();
-      return;
-    }
-    if (this.conflictWaitsForLiveHold) {
-      this.conflictWaitsForLiveHold = false;
-      if (this.state.phase === 'conflict' && !this.state.dialogOpen) this.setState({ ...this.state, dialogOpen: true });
-      return;
-    }
-    if (this.state.phase === 'unsaved' && !this.inFlight && this.held === 0) this.schedule();
   }
 
   // ---- other writers of this tab (Publish) -----------------------------------
@@ -1084,16 +1012,6 @@ export function abandonWorkingCopy(projectId: string): void {
 }
 
 /** The controller of a project, created on first use. */
-// project id -> whether the person is mid-edit (src/lib/live/editingInProgress.ts), installed by the
-// live sync, which may start before the project's autosave controller exists.
-const editInProgressChecks = new Map<string, () => boolean>();
-
-/** The live sync tells autosave how to see that the person is mid-edit; undefined removes it. */
-export function setEditInProgressCheck(projectId: string, check: (() => boolean) | undefined): void {
-  if (check) editInProgressChecks.set(projectId, check);
-  else editInProgressChecks.delete(projectId);
-}
-
 export function autosaveFor(projectId: string): AutosaveController {
   let controller = controllers.get(projectId);
   if (!controller) {

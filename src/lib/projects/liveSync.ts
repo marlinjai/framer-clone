@@ -67,16 +67,15 @@
 //
 // While the person types, edits text on the canvas, drags or resizes
 // (src/lib/live/editingInProgress.ts), a newer copy is held without the dialog:
-// adopting it would replace what is under the cursor. Autosave waits meanwhile
-// (a save on the old version would be refused, opening the dialog mid-gesture).
-// It is looked at again once the editing settled: adopted when the copy is still
+// adopting it would replace what is under the cursor. (Autosave goes on as
+// before: a save it sends on the old version meanwhile is refused and opens the
+// dialog, as it always did.) It is looked at again once the editing settled: adopted when the copy is still
 // saved, else the dialog opens as for any unsaved work. (Putting a settled edit
 // on top of the agent's copy instead is its own follow-up, ROADMAP.md.)
 
 import { runInAction } from 'mobx';
-import { isEditing, isInteracting, lastFieldInputAt, onEditingSettled } from '@/lib/live/editingInProgress';
-import { getHistoryStore } from '@/stores/RootStore';
-import { getSnapshot, isAlive, onPatch } from 'mobx-state-tree';
+import { isEditing, isInteracting, onEditingSettled } from '@/lib/live/editingInProgress';
+import { getSnapshot, isAlive } from 'mobx-state-tree';
 import type { RootStoreType } from '@/stores/RootStore';
 import type { ProjectSnapshotOut } from '@/models/ProjectModel';
 import {
@@ -88,7 +87,7 @@ import {
   type AdoptedVersion,
   type ProjectContent,
 } from '@/stores/openProject';
-import { existingAutosave, reloadDiscarding, setEditInProgressCheck } from './autosave';
+import { existingAutosave, reloadDiscarding } from './autosave';
 import { SSE_HEARTBEAT_MS } from '@/lib/ai/sse';
 import { editorTabId } from './tabId';
 import {
@@ -124,8 +123,6 @@ export const LIVE_HEARTBEAT_MS = SSE_HEARTBEAT_MS;
 export const LIVE_WATCHDOG_MS = Math.round(LIVE_HEARTBEAT_MS * 2.5);
 /** The waits before a failed fetch of the stored copy is tried again while the stream is live; the last repeats. */
 export const LIVE_FETCH_RETRY_MS = [2_000, 5_000, 15_000] as const;
-/** An open edit idle this long (no change, no key) stops holding a newer copy when this tab has unsaved work: the dialog asks. */
-export const LIVE_EDIT_HOLD_IDLE_MS = 60_000;
 /** "Load the newer version" while a write of this tab is out waits this long for it to settle. */
 export const LOAD_NEWER_WRITE_WAIT_MS = 10_000;
 /** The first reconnect after a stream ended (closed by the server, a network drop) waits this long, plus up to as much again at random; it doubles with each failure in a row. */
@@ -344,7 +341,6 @@ export class LiveSync {
     this.held = held;
     if (held?.whileEditing) this.waitForEditing();
     else this.stopWaitingForEditing();
-    existingAutosave(this.projectId)?.deferWhileLiveHeld(!!held?.whileEditing);
     this.notify();
   }
 
@@ -375,8 +371,6 @@ export class LiveSync {
 
   start(): void {
     if (this.phaseValue !== 'stopped') return;
-    // A refusal that comes back mid-edit, before this sync holds the agent's copy, waits for the edit too.
-    setEditInProgressCheck(this.projectId, () => isEditing(this.rootStore));
     this.disposeVisibility = this.deps.onVisibilityChange(() => this.visibilityChanged());
     // A copy held while this tab's write was out: that write may have succeeded
     // (no 409 will come), so the held copy is looked at again once it settled.
@@ -409,9 +403,6 @@ export class LiveSync {
     this.generation.reset();
     this.wanted = undefined;
     this.held = undefined;
-    // Autosave outlives this sync: never leave it waiting for a hold that is gone.
-    existingAutosave(this.projectId)?.deferWhileLiveHeld(false);
-    setEditInProgressCheck(this.projectId, undefined);
     this.wasLiveValue = false;
     this.draftLostValue = false;
     this.setPhase('stopped');
@@ -443,15 +434,16 @@ export class LiveSync {
       this.clearStreamRetry();
       this.streamRefusals = 0;
       // The reconnect back-off starts over only once this stream proved it stays:
-      // its second ping, or, from a server that sends none, staying up a heartbeat.
+      // its second ping, or, from a server that sends none, staying up 2.5 heartbeats.
       // A server that accepts and ends streams, or a stream that pings once and
       // stalls, keeps every tab backing off instead of returning every 2 s.
       this.pingsSinceOpen = 0;
       this.clearStable();
+      // Past the watchdog's span (2.5 heartbeats): a server that pings has sent its first one by then.
       this.stableTimer = setTimeout(() => {
         this.stableTimer = undefined;
-        if (this.stream === stream && !this.heartbeatSeen) this.reconnects = 0;
-      }, LIVE_HEARTBEAT_MS);
+        if (this.stream === stream && this.pingsSinceOpen === 0) this.reconnects = 0;
+      }, LIVE_WATCHDOG_MS);
       this.setPhase('live');
     };
     stream.onerror = () => {
@@ -774,30 +766,10 @@ export class LiveSync {
   /** A copy held while the person edits: looked at again as soon as the editing settled. */
   private waitForEditing() {
     if (this.disposeEditing) return;
-    const project = this.rootStore.projectStore.getProject(this.projectId);
-    let lastChange = Date.now();
-    const stopWatching = project && isAlive(project) ? onPatch(project, () => (lastChange = Date.now())) : undefined;
-    const stopSettled = onEditingSettled(this.rootStore, () => {
-      const held = this.held;
-      if (!held?.whileEditing) return;
-      if (!isEditing(this.rootStore)) {
-        this.retake();
-        return;
-      }
-      // An open edit idle for long (a text edit left open, a gesture that never ended): unsaved work of this tab
-      // would wait with it, unsaved, for good. Past LIVE_EDIT_HOLD_IDLE_MS it is asked about as any unsaved work is.
-      const idle = Date.now() - Math.max(lastChange, lastFieldInputAt());
-      if (idle < LIVE_EDIT_HOLD_IDLE_MS) return;
-      const current = this.rootStore.projectStore.getProject(this.projectId);
-      if (!current || !isAlive(current) || isSaved(this.projectId, getSnapshot(current) as unknown as ProjectContent)) return;
-      if (getHistoryStore()?.batch) console.warn('[live] a gesture has stayed open for over a minute; asking about the newer version now');
-      this.setHeld({ ...held, whileEditing: undefined });
-      existingAutosave(this.projectId)?.noteChangedElsewhere(held.version);
+    this.disposeEditing = onEditingSettled(this.rootStore, () => {
+      if (!this.held?.whileEditing || isEditing(this.rootStore)) return;
+      this.retake();
     });
-    this.disposeEditing = () => {
-      stopSettled();
-      stopWatching?.();
-    };
   }
 
   private stopWaitingForEditing() {
@@ -822,8 +794,8 @@ export class LiveSync {
     const keep = { version: body.version, snapshot: body.snapshot, label, ...(event && live ? { event } : {}) };
     if (isEditing(this.rootStore)) {
       // Typing, a text edit, a drag or a resize is open (a resize writes on every
-      // move, so the copy may already differ): no dialog under the cursor, and no
-      // adoption replacing what the person works on. Looked at once it settled.
+      // move, so the copy may already differ): no adoption replacing what the
+      // person works on, and no dialog from this copy. Looked at once it settled.
       this.setHeld({ ...keep, whileEditing: true });
       // Already in conflict (an earlier refusal): only the version it names moves.
       if (autosavePhase === 'conflict') autosave?.noteChangedElsewhere(body.version);

@@ -24,10 +24,11 @@ The live agent canvas (shipped; the editor follows every write of an agent) hold
 
 ## State of the work
 
-The implementation and its tests are on branch `feat/live-replay-on-top` (built in #353, taken out of it on 2026-11-09). Open before it can land, from review round four:
+The implementation and its tests are on branch `feat/live-replay-on-top` (built in #353, taken out of it on 2026-11-09). The autosave deferral (point 3) is at #353's commit 0de7c711. Open before it can land, from review round four:
 
 1. A merged save refused (409) because the agent wrote again: the replay again only works when the agent's copy arrives before the refusal; in the common ordering the refusal comes first and the dialog opens. Keep the replay mark when a refusal settles with nothing held, and replay once the copy arrives.
 2. Cmd+S right after typing commits the draft and saves in the same step, before the replay can run, so the dialog opens. While a copy is held for editing, Cmd+S should replay first, then save.
-3. Fresh reviews of its own, on a branch from main that carries only the replay.
+3. Deferring autosave while a copy is held for the person's editing, so a save on the old version is never sent and refused mid-gesture (today the dialog can still open under the cursor then, as before the live canvas). Built in #353 and taken out after two review rounds; the last found that a later `noteChangedElsewhere` cleared the wait for the edit to end, so the dialog could never open, that the wait had no idle limit, and that a stop() of one sync could remove another's edit check. The code is on the same branch (`deferWhileLiveHeld`, `setEditInProgressCheck` in `src/lib/projects/autosave.ts`).
+4. Fresh reviews of its own, on a branch from main that carries only these.
 
 It must not block the deploy of the live agent canvas hardening (#350, #351, #353).
