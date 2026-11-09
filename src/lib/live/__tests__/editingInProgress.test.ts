@@ -92,4 +92,15 @@ describe('onPersonTookOver', () => {
     store.editorUI.selectComponent(child(1));
     expect(tookOver).toHaveBeenCalledTimes(2);
   });
+
+  it('a page switch, which selects the new page root by itself, is not taking over', () => {
+    const project = store.editorUI.currentProject!;
+    const other = project.createPage('Other');
+    const tookOver = vi.fn();
+    const stop = onPersonTookOver(store, tookOver);
+    store.editorUI.setCurrentPage(other);
+    expect(store.editorUI.selectedComponent?.id).toBe(other.appComponentTree.id);
+    expect(tookOver).not.toHaveBeenCalled();
+    stop();
+  });
 });

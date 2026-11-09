@@ -79,16 +79,22 @@ function selectionKey(rootStore: RootStoreType): string {
 /**
  * Call `listener` when the person takes over from a camera follower: they
  * select something else (a selection that only shrinks, as when an agent's
- * write removes a selected node, does not count) or start a text edit.
+ * write removes a selected node, does not count, nor the page root a page
+ * switch selects by itself) or start a text edit.
  * Answers the unsubscribe.
  */
 export function onPersonTookOver(rootStore: RootStoreType, listener: () => void): () => void {
   const disposeSelection = reaction(
-    () => selectionKey(rootStore),
+    () => ({ page: rootStore.editorUI.currentPage?.id, key: selectionKey(rootStore) }),
     (next, prev) => {
-      const before = new Set(prev.split('|').filter(Boolean));
-      if (next.split('|').filter(Boolean).some((id) => !before.has(id))) listener();
+      // Showing another page selects its root by itself (setCurrentPage): the
+      // switch to an agent's new page, or away from a page an agent deleted, is
+      // not the person taking over.
+      if (next.page !== prev.page) return;
+      const before = new Set(prev.key.split('|').filter(Boolean));
+      if (next.key.split('|').filter(Boolean).some((id) => !before.has(id))) listener();
     },
+    { equals: (a, b) => a.page === b.page && a.key === b.key },
   );
   const disposeEdit = reaction(
     () => rootStore.editorUI.editingComponent?.id,

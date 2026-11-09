@@ -42,7 +42,7 @@
 // page (empty slug), else the first page; `missingPageId` reports a requested
 // page that does not exist here (typically never saved, after a reload).
 
-import { reaction } from 'mobx';
+import { runInAction } from 'mobx';
 import { getSnapshot } from 'mobx-state-tree';
 import type { ProjectSnapshotOut, ProjectModelType } from '@/models/ProjectModel';
 import type { PageModelType } from '@/models/PageModel';
@@ -555,16 +555,12 @@ export function adoptServerCopy(
   if (known !== undefined && version <= known) return null;
   const existing = rootStore.projectStore.getProject(snapshot.id) as ProjectModelType | undefined;
   if (!existing) return null;
-  // Kept observed for the whole adoption, so every node's snapshot is computed
-  // once and stays the same object: the reconcile then skips each subtree the
+  // One MobX batch for the whole adoption (LiveSync already runs it in one; a
+  // direct call gets its own): inside a batch every node's snapshot is computed
+  // once and stays the same object, so the reconcile skips each subtree the
   // shared copy hands back unchanged (MobX-State-Tree compares a node's current
   // snapshot with the incoming one by reference first).
-  const keepSnapshots = reaction(() => getSnapshot(existing), () => {});
-  try {
-    return adoptObserved(rootStore, existing, snapshot, version, label);
-  } finally {
-    keepSnapshots();
-  }
+  return runInAction(() => adoptObserved(rootStore, existing, snapshot, version, label));
 }
 
 function adoptObserved(

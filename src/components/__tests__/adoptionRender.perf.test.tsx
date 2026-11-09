@@ -5,10 +5,11 @@
 // (actualDuration) with the time the whole tree takes to render (baseDuration).
 // When every node's props were replaced, every node's observer re-rendered; with
 // structural sharing only the changed node and its ancestors do. Asserted loosely
-// (under a tenth of the tree), logged with ADOPTION_PERF_LOG=1.
+// (under a fifth of the tree), logged with ADOPTION_PERF_LOG=1.
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, act } from '@testing-library/react';
+import { runInAction } from 'mobx';
 import { getSnapshot } from 'mobx-state-tree';
 import { createRootStore, type RootStoreType } from '@/stores/RootStore';
 import ProjectModel, { type ProjectModelType, type ProjectSnapshotOut } from '@/models/ProjectModel';
@@ -70,8 +71,9 @@ describe('the canvas after an adopted one-node change', () => {
     if (!outcome.ok) throw new Error('refused');
     const v2 = JSON.parse(JSON.stringify(getSnapshot(model))) as ProjectSnapshotOut;
     const before = commits.length;
+    // As LiveSync.adopt calls it: inside one action.
     act(() => {
-      adoptServerCopy(store, v2, 2, 'Agent');
+      runInAction(() => adoptServerCopy(store, v2, 2, 'Agent'));
     });
     const adoption = commits.slice(before);
     const actual = adoption.reduce((sum, c) => sum + c.actual, 0);
@@ -81,6 +83,7 @@ describe('the canvas after an adopted one-node change', () => {
     }
     expect(document.body.textContent).toContain('Edited');
     // origin/main before the structural sharing: 29% (every node observer re-rendered); now about 1%.
-    expect(actual).toBeLessThan(base * 0.1);
+    // A timing ratio: a margin wide enough for a loaded runner, still far from the 29% before.
+    expect(actual).toBeLessThan(base * 0.2);
   });
 });

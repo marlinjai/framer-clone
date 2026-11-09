@@ -10,6 +10,7 @@
 // It cannot measure the canvas render after an adoption (no DOM here); fewer
 // replaced values is the argument for that half.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { runInAction } from 'mobx';
 import { getSnapshot, onPatch } from 'mobx-state-tree';
 import { createRootStore, getHistoryStore, type RootStoreType } from '@/stores/RootStore';
 import ProjectModel, { type ProjectModelType, type ProjectSnapshotOut } from '@/models/ProjectModel';
@@ -129,7 +130,8 @@ function adopt(snapshot: ProjectSnapshotOut, version: number): Measured {
   isSaved(SITE, getSnapshot(project()) as unknown as ProjectContent);
   const cleanCheckMs = performance.now() - t0;
   const t1 = performance.now();
-  const out = adoptServerCopy(store, snapshot, version, 'Agent');
+  // As LiveSync.adopt calls it: inside one action.
+  const out = runInAction(() => adoptServerCopy(store, snapshot, version, 'Agent'));
   const ms = performance.now() - t1;
   stop();
   if (!out) throw new Error('not adopted');
