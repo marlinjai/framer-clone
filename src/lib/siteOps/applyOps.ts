@@ -2,7 +2,7 @@
 //
 // Apply one batch of site operations (./types.ts) to a ProjectModel, all or
 // nothing. Every operation maps onto an editor action that already exists
-// (ProjectModel.createPage, updatePageSettings, updateTheme, placeComponent;
+// (ProjectModel.createPage, updatePageSettings, removePage, updateTheme, placeComponent;
 // PageModel.moveTreeComponent, deleteComponent; ComponentModel
 // updateResponsiveStyle, setRuleStyle, setTextContent, setProps, addRule), so a
 // batch can do nothing the editor could not, and each value passes the same rules
@@ -30,7 +30,7 @@
 
 import { closedAncestorOf } from '@/lib/ai/pageGen/promptSections/behaviour';
 import { SHOP_PART_ATTR } from '@/lib/commerce/parts';
-import { getSnapshot, recordPatches } from 'mobx-state-tree';
+import { getRoot, getSnapshot, isAlive, recordPatches } from 'mobx-state-tree';
 import ProjectModel, { type ProjectModelType } from '@/models/ProjectModel';
 import type { PageModelType, InsertTarget } from '@/models/PageModel';
 import ComponentModel, { type ComponentInstance, type ComponentSnapshotIn, type NewRule } from '@/models/ComponentModel';
@@ -39,6 +39,7 @@ import { isPlacementType } from '@/lib/components/placement';
 import { isTextNodeType, TEXT_NODE_TYPE } from '@/lib/renderer/textNode';
 import { isVoidTag } from '@/lib/drag/voidTags';
 import { PROJECT_BODY_MAX_BYTES } from '@/lib/api/respond';
+import { isProductPageSlug, productPagePath } from '@/lib/pages/slug';
 import { BASE_KEY, isAcceptedStyleKey, styleKeyFrom, type BreakpointKey } from '@/lib/ai/pageGen/schema';
 import { validateGeneration, type GeneratedNodeSnapshot, type ImageRequest } from '@/lib/ai/pageGen/validate';
 import { breakpointKeyMap, toEditorSnapshot } from '@/lib/ai/pageGen/apply';
@@ -48,6 +49,7 @@ import { indexReviewTree, validateReviewOps } from '@/lib/ai/review/ops';
 import type { ReviewTreeNode } from '@/lib/ai/review/protocol';
 import { keyedBreakpoints, type KeyedBreakpoint } from './breakpoints';
 import { foreignContentOf, renderGateProblem, type GateNode } from './gate';
+import { countLinksToPage } from './pageLinks';
 import { MAX_BATCH_OPS, OperationSchema, type Operation, type RejectedOperation } from './types';
 
 /** The prefix of a reference to something an earlier operation created. */
@@ -78,11 +80,22 @@ export interface ApplyDeps {
   newId?: () => string;
 }
 
+/** A page a deletePage operation removed: what the audit row keeps of it (never its content). */
+export interface DeletedPage {
+  /** The operation's index in the batch. */
+  index: number;
+  pageId: string;
+  slug: string;
+  title: string;
+}
+
 export type ApplyOutcome =
   | {
       ok: true;
+      /** Every ref the batch gave, with its id; a page (or a node on a page) a later operation deleted is left out. */
       created: Record<string, string>;
       summary: string[];
+      deletedPages: DeletedPage[];
     }
   | { ok: false; rejected: RejectedOperation[] };
 
@@ -238,6 +251,13 @@ function nodeAtPath(input: unknown[], output: GeneratedNodeSnapshot[], path: num
   return found;
 }
 
+/** Every node id in a tree snapshot, into `into`. */
+function collectIds(tree: unknown, into: Set<string>, depth = 0): void {
+  if (!isObj(tree) || depth > 500) return;
+  if (typeof tree.id === 'string') into.add(tree.id);
+  if (Array.isArray(tree.children)) for (const child of tree.children) collectIds(child, into, depth + 1);
+}
+
 // ---------- the gates over a whole result ----------
 
 /** A node a write created or changed, on its page. */
@@ -254,6 +274,7 @@ export interface TouchedNode {
  */
 export function projectGateProblem(project: ProjectModelType, touched: readonly TouchedNode[]): string | null {
   for (const { page, nodeId } of touched) {
+    if (!isAlive(page)) continue; // its page was deleted by a later operation of the batch
     const node = page.findComponent(nodeId) as ComponentInstance | undefined;
     if (!node) continue; // removed by a later operation of the batch
     const problem = renderGateProblem(getSnapshot(node) as unknown as GateNode, foreignContentOf(ancestorTypes(page, node)));
@@ -307,10 +328,23 @@ export async function applyOperations(
   const touched: TouchedNode[] = [];
   const recorder = recordPatches(project);
   const refusedEdits = () => project.refusedComponents.filter((entry) => entry.edit).length;
+  // The pages in the order the Pages panel lists them. Taking back a deletePage puts the
+  // page back at the end of the map, so a refused batch restores this order too, on a
+  // project loaded for the batch (the server's). On a project inside an editor's store
+  // the reorder would clear the references the editor holds to the moved pages (the
+  // page on screen, the selection), so there the order is left as the take-back puts it.
+  const pageOrder = Array.from(project.pages.keys());
+  const restoreOrder = (): void => {
+    if (getRoot(project) === project) project.restorePageOrder(pageOrder);
+  };
   const undo = (): void => {
     recorder.stop();
     recorder.undo();
+    restoreOrder();
   };
+  // Pages a deletePage removed, and every id that stood on them (left out of `created`).
+  const deletedPages: DeletedPage[] = [];
+  const goneIds = new Set<string>();
 
   // A shop part that leaves its control lands under a new id; the id it had stays good for
   // the rest of the batch, so a later operation need not know the new one.
@@ -351,8 +385,10 @@ export async function applyOperations(
     return { kind: 'sibling', siblingId, position: to.position };
   };
 
+  let currentIndex = 0;
   for (let index = 0; index < ops.length; index++) {
     const op = ops[index];
+    currentIndex = index;
     const before = refusedEdits();
     try {
       summary.push(await applyOne(op));
@@ -377,9 +413,12 @@ export async function applyOperations(
   recorder.stop();
   if (problem) {
     recorder.undo();
+    restoreOrder();
     return { ok: false, rejected: [{ index: -1, op: 'batch', reason: problem }] };
   }
-  return { ok: true, created, summary };
+  // A shop part that left its control lives on under a renewed id: check that one.
+  const kept = Object.fromEntries(Object.entries(created).filter(([, id]) => !goneIds.has(renewed[id] ?? id)));
+  return { ok: true, created: kept, summary, deletedPages };
 
   // ---------- one operation ----------
 
@@ -412,6 +451,50 @@ export async function applyOperations(
         });
         if (!result.ok) throw new OpRefused(Object.values(result.errors).filter(Boolean).join(' '));
         return `updated the settings of page "${page.metadata.title}" (/${page.slug})`;
+      }
+
+      case 'deletePage': {
+        // Only a page of the site: a component definition's page is never one (pageFor would find it).
+        const pageId = resolveId(op.pageId);
+        const page = project.pages.get(pageId) as PageModelType | undefined;
+        if (!page) throw new OpRefused(`unknown page id ${JSON.stringify(op.pageId)}`);
+        const refusal = project.pageDeleteRefusal(page.id);
+        if (refusal === 'last_page') throw new OpRefused('the last page of a site cannot be deleted; create another page first');
+        if (refusal === 'home_page') {
+          throw new OpRefused('the home page cannot be deleted: the site serves it at its root address. Make another page the home page in the editor first, or change its content instead');
+        }
+        if (refusal) throw new OpRefused(`unknown page id ${JSON.stringify(op.pageId)}`);
+        const { title } = page.metadata;
+        const { slug } = page;
+        const wasNotFoundPage = project.site.notFoundPageId === page.id;
+        const pagesBefore = Array.from(project.pages.values(), (p) => p.slug);
+        // The page shop links open (the first product page by slug, productPagePath).
+        const wasProductPage = isProductPageSlug(slug) && productPagePath(pagesBefore) === `/${slug.slice(0, slug.lastIndexOf('/'))}`;
+        goneIds.add(page.id);
+        collectIds(getSnapshot(page.appComponentTree), goneIds);
+        // removePage also clears the 404 page setting when it named this page, as in the editor.
+        project.removePage(page.id);
+        const trees = pagesOf(project).map((p) => getSnapshot(p.appComponentTree));
+        const links = countLinksToPage(trees, { pageId, slug });
+        const parts = [`deleted page "${title}" (/${slug}, ${pageId})`];
+        if (wasNotFoundPage) parts.push('it was the page for unknown addresses, which now show the default not-found page');
+        if (wasProductPage) {
+          const next = productPagePath(Array.from(project.pages.values(), (p) => p.slug));
+          parts.push(
+            next
+              ? `it was the product page; product links now open ${next}/<handle>`
+              : 'it was the product page: product links on the site (shop grids, product cards) no longer open a product until a product page exists again',
+          );
+        }
+        deletedPages.push({ index: currentIndex, pageId, slug, title });
+        parts.push(
+          links === 0
+            ? wasProductPage
+              ? 'no other link (a page link or a form) leads to it'
+              : 'no link on the site leads to it'
+            : `${links} link(s) on the site still lead to it (a link to its address now finds no page, a form sending visitors there shows its message instead): change or remove them`,
+        );
+        return parts.join('; ');
       }
 
       case 'insertNodes': {

@@ -233,8 +233,8 @@ const PagesPanel = observer(() => {
   // The home page (empty slug) is what the published site serves at its root,
   // so deleting it would leave the site's address answering 404. It cannot be
   // deleted (an extra empty-slug page in an older project can).
-  const canDeletePage = (pageId: string) =>
-    project.pages.size > 1 && !project.isSlugLocked(pageId);
+  // The same rule an agent's deletePage passes (ProjectModel.pageDeleteRefusal).
+  const canDeletePage = (pageId: string) => project.pageDeleteRefusal(pageId) === null;
   // Choosing to delete a page that cannot be deleted explains why, in place
   // (touch screens have no hover tooltip), with the way forward.
   const explainDeleteBlocked = (pageId: string, returnTo: HTMLElement | null) => {

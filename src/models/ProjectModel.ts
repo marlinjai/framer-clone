@@ -4,6 +4,7 @@ import { defaultViewportSnapshots } from '@/lib/canvas/defaultViewports';
 import {
   addDisposer,
   addMiddleware,
+  detach,
   getRoot,
   getSnapshot,
   recordPatches,
@@ -1172,6 +1173,25 @@ export const ProjectModel = types
       self.metadata.updatedAt = new Date();
     },
 
+    // Put the pages back in `order` (their ids; the Pages panel lists them in map
+    // order) by moving the same page nodes (detached and put back, never
+    // recreated). Taking back a removePage through its patches re-adds the page
+    // at the end; the site operations' all-or-nothing take-back (src/lib/siteOps/
+    // applyOps.ts) calls this after it, on a project loaded for the batch. Not for
+    // a project inside the editor's store: moving a page clears every safe
+    // reference to it (the page on screen, the selection) and records history.
+    // Ids not in the project are skipped; a no-op when the order already matches.
+    restorePageOrder(order: readonly string[]) {
+      const now = Array.from(self.pages.keys());
+      const wanted = order.filter(id => self.pages.has(id));
+      const first = wanted.findIndex((id, i) => now[i] !== id);
+      if (first < 0) return;
+      for (const id of wanted.slice(first)) {
+        const page = self.pages.get(id);
+        if (page) self.pages.put(detach(page));
+      }
+    },
+
     // Rename a page's visible title. Title doesn't have a uniqueness
     // constraint so this just passes through to the page.
     renamePage(pageId: string, title: string): boolean {
@@ -1512,6 +1532,20 @@ export const ProjectModel = types
     isSlugLocked(pageId: string): boolean {
       const page = self.pages.get(pageId);
       return !!page && page.slug === '' && homePageCount(self.pages.values()) <= 1;
+    },
+
+    // Why removePage(pageId) must not run, or null when it may. The Pages panel
+    // and the site operations' deletePage (src/lib/siteOps/applyOps.ts) share
+    // this one rule, so an agent cannot leave a site the editor would refuse:
+    // the last page cannot go (a site always has a page), and neither can the
+    // home page (empty slug), which the published site serves at its root (an
+    // extra empty-slug page in an older project can go).
+    pageDeleteRefusal(pageId: string): 'not_found' | 'last_page' | 'home_page' | null {
+      if (!self.pages.has(pageId)) return 'not_found';
+      if (self.pages.size <= 1) return 'last_page';
+      const page = self.pages.get(pageId);
+      if (page && page.slug === '' && homePageCount(self.pages.values()) <= 1) return 'home_page';
+      return null;
     },
 
     // True when setHomePage(pageId) would accept the page: it exists, is not

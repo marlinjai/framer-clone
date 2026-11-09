@@ -40,7 +40,7 @@ import { revalidateCustomHostsForSiteId, revalidateSiteCache } from '@/server/si
 import { ensureCompanyCommerce } from '@/server/sites/companyCommerce';
 import { buildEmptyDraftSnapshot } from '@/lib/projects/newProject';
 import { projectNameSchema } from '@/lib/projectName';
-import { applyOperations, type ApplyDeps } from '@/lib/siteOps/applyOps';
+import { applyOperations, type ApplyDeps, type DeletedPage } from '@/lib/siteOps/applyOps';
 import { applyGenerated, generationTarget, type GenerateTarget, type ResolvedTarget } from '@/lib/siteOps/generated';
 import { pageOutline, siteOverview, vocabularyFor, type PageOutline, type SiteOverview, type Vocabulary } from '@/lib/siteOps/read';
 import {
@@ -197,12 +197,20 @@ function liveActor(caller: SiteOpsCaller): SiteWriteActor {
   return { kind: caller.actor.kind, label: caller.actorLabel ?? (caller.actor.kind === 'key' ? 'Agent' : 'Someone') };
 }
 
-function auditedOps(raw: unknown[]): AuditedOp[] {
-  return raw.map((op) => {
+/**
+ * The operations of a batch by name and id. For the audit row, a deleted page is
+ * recorded by its resolved id, slug and title (`deleted`), since its row is gone
+ * after the write; never its content.
+ */
+function auditedOps(raw: unknown[], deleted: readonly DeletedPage[] = []): AuditedOp[] {
+  const byIndex = new Map(deleted.map((d) => [d.index, d]));
+  return raw.map((op, index) => {
     const o = (op ?? {}) as Record<string, unknown>;
     const out: AuditedOp = { op: typeof o.op === 'string' ? o.op : 'unknown' };
     if (typeof o.nodeId === 'string') out.nodeId = o.nodeId;
     if (typeof o.pageId === 'string') out.pageId = o.pageId;
+    const gone = byIndex.get(index);
+    if (gone) Object.assign(out, { pageId: gone.pageId, slug: gone.slug.slice(0, 200), title: gone.title.slice(0, 120) });
     return out;
   });
 }
@@ -370,7 +378,7 @@ export async function applyBatch(caller: SiteOpsCaller, input: unknown, deps: Si
     return fromError(err, siteId);
   }
   countPhotoDownloads(project, placed);
-  await audit(caller, siteId, { operation: 'batch', ops: auditedOps(ops), versionBefore: version, versionAfter: written, created: splitCreated(ops, applied.created) });
+  await audit(caller, siteId, { operation: 'batch', ops: auditedOps(ops, applied.deletedPages), versionBefore: version, versionAfter: written, created: splitCreated(ops, applied.created) });
   return ok({ siteId, version: written, created: applied.created, summary: applied.summary });
 }
 

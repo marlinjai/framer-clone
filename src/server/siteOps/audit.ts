@@ -20,6 +20,9 @@ export interface AuditedOp {
   op: string;
   nodeId?: string;
   pageId?: string;
+  /** A deletePage's page as it was (its row is gone after the write): the address and the title, never content. */
+  slug?: string;
+  title?: string;
 }
 
 export interface AuditEntry {

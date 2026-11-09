@@ -235,6 +235,89 @@ describe('the MCP endpoint against a real database', () => {
     }
   });
 
+  it('deletePage through apply_batch: the row goes, links are counted, refusals write nothing, the published page stays', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    try {
+      const created = await ok(KEY_A, 'create_site', { name: 'MCP delete page' });
+      const siteId = created.siteId as string;
+      const homePageId = created.homePageId as string;
+      const rows = () => prisma.sitePage.findMany({ where: { siteId }, select: { pageId: true, slug: true }, orderBy: { slug: 'asc' } });
+
+      // A page created with a ref and linked from the home page, in one batch.
+      const made = await ok(KEY_A, 'apply_batch', {
+        siteId,
+        expectedVersion: 1,
+        ops: [
+          { op: 'createPage', title: 'About', slug: 'about', ref: 'about' },
+          { op: 'insertNodes', pageId: homePageId, nodes: [{ type: 'a', props: { href: '/about', children: 'About us' } }] },
+        ],
+      });
+      const aboutId = (made.created as Record<string, string>).about;
+      expect(await rows()).toEqual([{ pageId: homePageId, slug: '' }, { pageId: aboutId, slug: 'about' }].sort((a, b) => a.slug.localeCompare(b.slug)));
+
+      // Published: visitors get the revision, which the next deletes never touch.
+      const ask = await ok(KEY_A, 'publish', { siteId, expectedVersion: 2 });
+      await approve(siteId, ask.approvalId);
+      const published = await ok(KEY_A, 'publish', { siteId, expectedVersion: 2, approvalId: ask.approvalId });
+      expect(published.version).toBe(3);
+
+      // A skeleton plan on the page: deleting the page ends it.
+      await ok(KEY_A, 'announce_sections', { siteId, pageId: aboutId, sections: [{ ref: 'team', title: 'Team', kind: 'generic' }] });
+      const { plansSnapshot } = await import('../livePlans');
+      const scope = { workspaceId: 'mcp_ws_a', tenantGroupId: GROUP_A };
+      expect(plansSnapshot(siteId, scope)).toHaveLength(1);
+
+      // Refused, and nothing written: the home page, another company's key, an unknown page.
+      for (const [key, pageId, code] of [
+        [KEY_A, homePageId, 'rejected'],
+        [KEY_B, aboutId, 'site_not_found'],
+        [KEY_A, 'no-such-page', 'rejected'],
+      ] as const) {
+        const refused = await tool(key, 'apply_batch', { siteId, expectedVersion: 3, ops: [{ op: 'deletePage', pageId }] });
+        expect(refused.isError).toBe(true);
+        expect((refused.structuredContent.error as { code: string }).code).toBe(code);
+      }
+      const home = await tool(KEY_A, 'apply_batch', { siteId, expectedVersion: 3, ops: [{ op: 'deletePage', pageId: homePageId }] });
+      expect(JSON.stringify(home.structuredContent)).toContain('the home page cannot be deleted');
+      expect((await prisma.site.findUniqueOrThrow({ where: { id: siteId }, select: { version: true } })).version).toBe(3);
+      expect(await rows()).toHaveLength(2);
+
+      // The same version then deletes (re-entry): the row is gone, the answer counts the link.
+      const deleted = await ok(KEY_A, 'apply_batch', { siteId, expectedVersion: 3, ops: [{ op: 'deletePage', pageId: aboutId }] });
+      expect(deleted.version).toBe(4);
+      expect((deleted.summary as string[])[0]).toContain('1 link(s) on the site still lead to it');
+      expect(await rows()).toEqual([{ pageId: homePageId, slug: '' }]);
+      expect(plansSnapshot(siteId, scope)).toEqual([]);
+      const site = await ok(KEY_A, 'get_site', { siteId });
+      expect((site.pages as Array<{ id: string }>).map((p) => p.id)).toEqual([homePageId]);
+
+      // The published revision still holds the page until the next publish.
+      const revision = await prisma.siteRevision.findFirstOrThrow({ where: { siteId, number: published.revision as number } });
+      expect(JSON.stringify(revision.document)).toContain(aboutId);
+
+      // Backtrack: created and deleted in one batch writes no row; deleted and re-created takes the address again.
+      await ok(KEY_A, 'apply_batch', { siteId, expectedVersion: 4, ops: [{ op: 'createPage', title: 'Scratch', ref: 's' }, { op: 'deletePage', pageId: 'ref:s' }] });
+      expect(await rows()).toHaveLength(1);
+      const again = await ok(KEY_A, 'apply_batch', { siteId, expectedVersion: 5, ops: [{ op: 'createPage', title: 'About', slug: 'about', ref: 'a' }] });
+      const againId = (again.created as Record<string, string>).a;
+      expect(againId).not.toBe(aboutId);
+      expect(await rows()).toContainEqual({ pageId: againId, slug: 'about' });
+
+      // Audited like every batch, by name and id.
+      const audits = await prisma.siteOperationAudit.findMany({ where: { siteId, operation: 'batch' }, orderBy: { createdAt: 'asc' } });
+      // A deleted page's row is gone, so the audit keeps its resolved id, slug and title (never its content).
+      const deleteRow = audits.find((a) => a.versionBefore === 3)!;
+      expect(deleteRow.ops).toEqual([{ op: 'deletePage', pageId: aboutId, slug: 'about', title: 'About' }]);
+      expect([deleteRow.versionAfter, deleteRow.actorId]).toEqual([4, 'mcp-key-a']);
+      // A delete by ref is audited under the page id it resolved to.
+      const refRow = audits.find((a) => a.versionBefore === 4)!;
+      expect((refRow.ops as Array<{ op: string; pageId?: string; title?: string }>)[1]).toMatchObject({ op: 'deletePage', title: 'Scratch' });
+      expect((refRow.ops as Array<{ pageId?: string }>)[1].pageId).not.toMatch(/^ref:/);
+    } finally {
+      info.mockRestore();
+    }
+  });
+
   it('a session cookie without a key gets 401 and writes nothing; an unknown key gets 401', async () => {
     const before = await prisma.site.count({ where: { tenantGroupId: GROUP_A } });
     const cookieOnly = await POST(post(null, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'create_site', arguments: {} } }, { cookie: 'lumitra_session=sess_a' }));
