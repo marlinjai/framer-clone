@@ -31,6 +31,8 @@ import React from 'react';
 import { autorun } from 'mobx';
 import { observer } from 'mobx-react-lite';
 import { useStore } from '@/hooks/useStore';
+import { useInteracting } from '@/hooks/useInteracting';
+import { onPersonTookOver } from '@/lib/live/editingInProgress';
 import { useTransformContext } from '@/contexts/TransformContext';
 import { revealOffset, useCameraControls, type CameraTransform } from '@/lib/canvas/cameraControls';
 import { presencePagesOf, presenceTarget, type PresenceProject, type PresenceTarget } from '@/lib/live/presenceTarget';
@@ -389,10 +391,15 @@ function sameCamera(a: CameraTransform, b: CameraTransform): boolean {
 /**
  * Brings the lead agent's frame into view when it moves, while the person has
  * not moved the camera since the agent's activity began (or since they turned
- * Follow back on). Renders nothing.
+ * Follow back on). Waits while the person drags, resizes, draws a marquee, edits
+ * text or has the focus in a field, and catches up once they stop; selecting
+ * something else or starting a text edit turns Follow off, as moving the camera
+ * does (src/lib/live/editingInProgress.ts). Renders nothing.
  */
 export const AgentCameraFollow = observer(function AgentCameraFollow() {
-  const { editorUI } = useStore();
+  const rootStore = useStore();
+  const { editorUI } = rootStore;
+  const interacting = useInteracting(rootStore);
   const presence = editorUI.livePresence as LivePresenceStore | undefined;
   const { read, panBy } = useCameraControls();
   const { subscribe } = useTransformContext();
@@ -417,6 +424,14 @@ export const AgentCameraFollow = observer(function AgentCameraFollow() {
     [presence],
   );
 
+  // The person took over (another selection, a text edit): the camera is theirs.
+  React.useEffect(() => {
+    if (!presence) return;
+    return onPersonTookOver(rootStore, () => {
+      if (presence.follow) presence.setFollow(false);
+    });
+  }, [presence, rootStore]);
+
   // Before any target resolves, a move by the person is still noticed.
   React.useEffect(() => {
     if (!presence?.follow || lead?.target) return;
@@ -428,7 +443,8 @@ export const AgentCameraFollow = observer(function AgentCameraFollow() {
   }, [presence, presence?.follow, !!lead?.target, subscribe]);
 
   React.useEffect(() => {
-    if (!presence || !key || !lead?.target || !presence.follow) return;
+    // While the person works, the camera stays put; this runs again once they stop.
+    if (!presence || !key || !lead?.target || !presence.follow || interacting) return;
     const now = read();
     if (last.current && !sameCamera(last.current, now)) {
       // The person moved the camera since the frame last moved: leave it to them.
@@ -450,7 +466,7 @@ export const AgentCameraFollow = observer(function AgentCameraFollow() {
     });
     return () => cancelAnimationFrame(raf);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, presence?.follow]);
+  }, [key, presence?.follow, interacting]);
 
   return null;
 });

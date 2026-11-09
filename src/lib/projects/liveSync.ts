@@ -48,12 +48,27 @@
 //
 // When the stream is down (a network loss, the 429 of too many streams, a proxy
 // that buffers), the snapshot route is polled with If-None-Match every 5 s while
-// the tab is visible and every 60 s while hidden, until the stream is back. On
+// the tab is visible and every 60 s while hidden, until the stream is back. A
+// stream refused for good is tried again after 1, 2, 4 then 8 minutes, each a
+// little later at random so tabs do not come back at once. The server sends a
+// `ping` every LIVE_HEARTBEAT_MS; once one arrived, a stream silent for
+// LIVE_WATCHDOG_MS (a proxy that holds it open without passing anything) is
+// reopened. A server that sends no ping arms no watchdog. A fetch of the stored
+// copy that fails while the stream is live is tried again after 2, 5 and then
+// every 15 s until one arrives (nothing else would ask again). On
 // `auth:expired` (or a 401 while polling) everything stops and autosave shows the
 // signed-out state; the next time the tab is shown, one check decides whether to
-// start again.
+// start again. A tab shown again while live asks once for the newest copy (a
+// hidden tab's stream may have been throttled).
+//
+// While the person types, edits text on the canvas, drags or resizes
+// (src/lib/live/editingInProgress.ts), a newer copy is held without the dialog:
+// adopting it would replace what is under the cursor. It is looked at again
+// once the editing settled: adopted when the copy is still saved, else the
+// dialog opens as for any unsaved work.
 
 import { runInAction } from 'mobx';
+import { isEditing, isInteracting, onEditingSettled } from '@/lib/live/editingInProgress';
 import { getSnapshot, isAlive } from 'mobx-state-tree';
 import type { RootStoreType } from '@/stores/RootStore';
 import type { ProjectSnapshotOut } from '@/models/ProjectModel';
@@ -88,8 +103,22 @@ import { projectRevealPlan, subtreeIdsInProject } from '@/lib/live/reveal';
 
 export const LIVE_POLL_VISIBLE_MS = 5_000;
 export const LIVE_POLL_HIDDEN_MS = 60_000;
-/** How long after a stream that closed for good (a refusal) a new one is tried. */
+/** How long after a stream that closed for good (a refusal) a new one is tried; it doubles with each refusal in a row. */
 export const LIVE_STREAM_RETRY_MS = 60_000;
+/** The longest wait before a new stream is tried. */
+export const LIVE_STREAM_RETRY_MAX_MS = 8 * 60_000;
+/** The share of a retry wait added at random, so tabs refused together do not come back together. */
+export const LIVE_STREAM_RETRY_JITTER = 0.25;
+/** The server's `ping` comes this often (src/lib/ai/sse.ts). */
+export const LIVE_HEARTBEAT_MS = 10_000;
+/** A stream that sent pings before and nothing for this long is reopened. */
+export const LIVE_WATCHDOG_MS = Math.round(LIVE_HEARTBEAT_MS * 2.5);
+/** The waits before a failed fetch of the stored copy is tried again while the stream is live; the last repeats. */
+export const LIVE_FETCH_RETRY_MS = [2_000, 5_000, 15_000] as const;
+/** "Load the newer version" while a write of this tab is out waits this long for it to settle. */
+export const LOAD_NEWER_WRITE_WAIT_MS = 10_000;
+/** The stream's heartbeat event name (a named event, so the client sees it; a comment it would not). */
+export const LIVE_PING_EVENT = 'ping';
 
 /** The part of a browser EventSource this module uses. */
 export interface LiveEventSource {
@@ -116,6 +145,8 @@ export interface LiveSyncDeps {
   isVisible(): boolean;
   /** Called for every visibility change, answers the unsubscribe. */
   onVisibilityChange(listener: () => void): () => void;
+  /** A number in [0, 1) for the retry jitter (Math.random by default). */
+  random?: () => number;
 }
 
 export const browserLiveSyncDeps: LiveSyncDeps = {
@@ -145,6 +176,8 @@ export interface HeldVersion {
   label: string;
   /** The event that announced it, when one did (an automatic adoption later still knows the writer). */
   event?: SiteVersionEvent;
+  /** Held only because the person is editing (no dialog): looked at again once the editing settled. */
+  whileEditing?: boolean;
 }
 
 /**
@@ -179,6 +212,38 @@ export function adoptionLabel(event: SiteVersionEvent | undefined): string {
   }
 }
 
+/**
+ * The pages this tab's copy has that a held newer copy removed, by title (review
+ * finding F4): "Save mine over it" would bring them back, which the person cannot
+ * see on the page in hand. Empty without a held copy (a 409 reached without one
+ * names no pages: this tab never saw that copy).
+ */
+export function pagesRemovedBy(held: HeldVersion | undefined, working: { pages?: unknown } | undefined): string[] {
+  if (!held || !working) return [];
+  const kept = (held.snapshot.pages ?? {}) as Record<string, unknown>;
+  return Object.entries((working.pages ?? {}) as Record<string, { metadata?: { title?: string } }>)
+    .filter(([id]) => !(id in kept))
+    .map(([id, page]) => page?.metadata?.title || id)
+    .sort((a, b) => a.localeCompare(b));
+}
+
+/** Who wrote a held copy, for the dialog's sentence about removed pages. */
+export function heldWriter(held: HeldVersion | undefined): string {
+  const event = held?.event;
+  if (event?.actor?.label) return event.actor.label;
+  if (event && (event.origin === 'mcp' || event.origin === 'generate')) return 'the agent';
+  return 'someone else';
+}
+
+/** The dialog's sentence: what "keep mine" brings back. Empty when it brings back no page. */
+export function restoredPagesSentence(titles: readonly string[], writer: string, action: 'save' | 'publish'): string {
+  if (titles.length === 0) return '';
+  const quoted = titles.map((t) => `\u2018${t}\u2019`);
+  const list = quoted.length === 1 ? quoted[0] : `${quoted.slice(0, -1).join(', ')} and ${quoted.at(-1)}`;
+  const verb = action === 'publish' ? 'Publishing' : 'Saving';
+  return `${verb} yours restores the ${titles.length === 1 ? 'page' : 'pages'} ${list} that ${writer} deleted.`;
+}
+
 export class LiveSync {
   readonly projectId: string;
   private readonly rootStore: RootStoreType;
@@ -188,6 +253,16 @@ export class LiveSync {
   private streamRetryTimer: ReturnType<typeof setTimeout> | undefined;
   private disposeVisibility: (() => void) | undefined;
   private disposeSettled: (() => void) | undefined;
+  private disposeEditing: (() => void) | undefined;
+  private fetchRetryTimer: ReturnType<typeof setTimeout> | undefined;
+  private fetchRetries = 0;
+  private watchdogTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The open stream sent a ping: its silence now means it is stuck. */
+  private heartbeatSeen = false;
+  /** Streams refused in a row (the retry wait doubles). */
+  private streamRefusals = 0;
+  private wasLiveValue = false;
+  private draftLostValue = false;
   /** The newest version announced by another writer, with its event. */
   /** `retry`: an earlier fetch for it failed, so the copy that arrives is catch-up, never a live adoption. */
   private wanted: { version: number; event?: SiteVersionEvent; retry?: boolean } | undefined;
@@ -215,6 +290,11 @@ export class LiveSync {
       currentPageId: () => rootStore.editorUI.currentPage?.id,
       knownVersion: () => knownServerVersion(projectId),
       draftInView: () => !rootStore.editorUI.previewOpen && draftFramesInView(),
+      onDraftLost: () => {
+        if (this.draftLostValue) return;
+        this.draftLostValue = true;
+        this.notify();
+      },
     });
   }
 
@@ -227,6 +307,28 @@ export class LiveSync {
     return this.held;
   }
 
+  /** The stream was live at least once in this run: a fall to polling is a lost connection, not a browser without streams. */
+  get wasLive(): boolean {
+    return this.wasLiveValue;
+  }
+
+  /** An agent's streamed draft was dropped while the stream was down (cleared once it is back). */
+  get draftLost(): boolean {
+    return this.draftLostValue;
+  }
+
+  private setHeld(held: HeldVersion | undefined) {
+    if (this.held === held) return;
+    this.held = held;
+    if (held?.whileEditing) this.waitForEditing();
+    else this.stopWaitingForEditing();
+    this.notify();
+  }
+
+  private notify() {
+    for (const listener of [...this.listeners]) listener();
+  }
+
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
     return () => {
@@ -237,7 +339,11 @@ export class LiveSync {
   private setPhase(phase: LiveSyncPhase) {
     if (this.phaseValue === phase) return;
     this.phaseValue = phase;
-    for (const listener of [...this.listeners]) listener();
+    if (phase === 'live') {
+      this.wasLiveValue = true;
+      this.draftLostValue = false;
+    }
+    this.notify();
   }
 
   private get base(): string {
@@ -262,8 +368,11 @@ export class LiveSync {
     this.presence.reset();
     this.plans.reset();
     this.clearPoll();
+    this.clearFetchRetry();
     if (this.streamRetryTimer) clearTimeout(this.streamRetryTimer);
     this.streamRetryTimer = undefined;
+    this.streamRefusals = 0;
+    this.stopWaitingForEditing();
     this.disposeVisibility?.();
     this.disposeVisibility = undefined;
     this.disposeSettled?.();
@@ -273,6 +382,8 @@ export class LiveSync {
     this.generation.reset();
     this.wanted = undefined;
     this.held = undefined;
+    this.wasLiveValue = false;
+    this.draftLostValue = false;
     this.setPhase('stopped');
   }
 
@@ -287,14 +398,24 @@ export class LiveSync {
       return;
     }
     this.stream = stream;
+    this.heartbeatSeen = false;
     this.setPhase(this.phaseValue === 'polling' ? 'polling' : 'connecting');
+    // Anything heard on this stream: it is alive (the watchdog starts over, once pings proved the server sends them).
+    const on = (type: string, listener: (event: { data: string }) => void) =>
+      stream.addEventListener(type, (e) => {
+        if (this.stream !== stream) return;
+        this.heardFromStream();
+        listener(e);
+      });
     stream.onopen = () => {
       if (this.stream !== stream) return;
       this.clearPoll();
+      this.streamRefusals = 0;
       this.setPhase('live');
     };
     stream.onerror = () => {
       if (this.stream !== stream) return;
+      this.clearWatchdog();
       // Events can be missed from now on (an agent's draft end among them): its draft goes, the reconnect's state draws it again.
       this.generation.streamLost();
       // Down: poll meanwhile. A stream closed for good (a refusal such as 429)
@@ -305,8 +426,12 @@ export class LiveSync {
         this.retryStreamLater();
       }
     };
-    stream.addEventListener(LIVE_EVENTS.state, (e) => {
-      if (this.stream !== stream) return;
+    on(LIVE_PING_EVENT, () => {
+      // The server sends heartbeats: from now on its silence is a stuck stream.
+      this.heartbeatSeen = true;
+      this.armWatchdog();
+    });
+    on(LIVE_EVENTS.state, (e) => {
       const state = parse<SiteStateEvent>(e.data);
       if (!state || typeof state.version !== 'number') return;
       // Who works on the site and the feed, replacing what this tab held (a reconnect sends `state` again).
@@ -317,30 +442,25 @@ export class LiveSync {
       this.generation.applyState(state.generation);
       this.heard(state.version, undefined);
     });
-    stream.addEventListener(LIVE_EVENTS.agentActivity, (e) => {
-      if (this.stream !== stream) return;
+    on(LIVE_EVENTS.agentActivity, (e) => {
       const activity = parse<AgentActivity>(e.data);
       if (activity) this.presence.applyActivity(activity);
     });
-    stream.addEventListener(LIVE_EVENTS.planUpdate, (e) => {
-      if (this.stream !== stream) return;
+    on(LIVE_EVENTS.planUpdate, (e) => {
       const line = this.plans.applyUpdate(parse<unknown>(e.data));
       // The agent stopped: the feed says so (the same line the server keeps for a reload).
       if (line) this.presence.addLine(line);
     });
-    stream.addEventListener(LIVE_EVENTS.genOutline, (e) => {
-      if (this.stream !== stream) return;
+    on(LIVE_EVENTS.genOutline, (e) => {
       this.generation.applyOutline(parse<GenOutlineEvent>(e.data));
     });
-    stream.addEventListener(LIVE_EVENTS.genSection, (e) => {
-      if (this.stream !== stream) return;
+    on(LIVE_EVENTS.genSection, (e) => {
       this.generation.applySection(parse<GenSectionEvent>(e.data));
     });
-    stream.addEventListener(LIVE_EVENTS.genDone, (e) => {
-      if (this.stream !== stream) return;
+    on(LIVE_EVENTS.genDone, (e) => {
       this.generation.applyDone(parse<GenDoneEvent>(e.data));
     });
-    stream.addEventListener(LIVE_EVENTS.siteVersion, (e) => {
+    on(LIVE_EVENTS.siteVersion, (e) => {
       const event = parse<SiteVersionEvent>(e.data);
       if (!event || typeof event.version !== 'number') return;
       // This tab's own write: its answer moves the known version (and the skeletons it covers go).
@@ -350,13 +470,13 @@ export class LiveSync {
       }
       this.heard(event.version, event);
     });
-    stream.addEventListener(LIVE_EVENTS.authExpired, () => {
-      if (this.stream !== stream) return;
+    on(LIVE_EVENTS.authExpired, () => {
       this.signedOut();
     });
   }
 
   private closeStream() {
+    this.clearWatchdog();
     const stream = this.stream;
     this.stream = null;
     if (!stream) return;
@@ -367,10 +487,58 @@ export class LiveSync {
 
   private retryStreamLater() {
     if (this.streamRetryTimer) return;
+    // 1, 2, 4, then 8 minutes after refusals in a row, plus up to a quarter more at random.
+    const base = Math.min(LIVE_STREAM_RETRY_MS * 2 ** this.streamRefusals, LIVE_STREAM_RETRY_MAX_MS);
+    const wait = Math.round(base * (1 + LIVE_STREAM_RETRY_JITTER * (this.deps.random ?? Math.random)()));
+    this.streamRefusals++;
     this.streamRetryTimer = setTimeout(() => {
       this.streamRetryTimer = undefined;
       if (this.phaseValue === 'polling') this.openStream();
-    }, LIVE_STREAM_RETRY_MS);
+    }, wait);
+  }
+
+  // ---- the heartbeat watchdog ------------------------------------------------
+
+  private heardFromStream() {
+    if (this.heartbeatSeen) this.armWatchdog();
+  }
+
+  private armWatchdog() {
+    this.clearWatchdog();
+    const stream = this.stream;
+    this.watchdogTimer = setTimeout(() => {
+      this.watchdogTimer = undefined;
+      if (!stream || this.stream !== stream) return;
+      // Silent for two and a half heartbeats: held open by something that passes nothing. Reopen; poll meanwhile.
+      this.generation.streamLost();
+      this.closeStream();
+      this.startPolling();
+      this.openStream();
+    }, LIVE_WATCHDOG_MS);
+  }
+
+  private clearWatchdog() {
+    if (this.watchdogTimer) clearTimeout(this.watchdogTimer);
+    this.watchdogTimer = undefined;
+  }
+
+  // ---- a failed fetch while live ---------------------------------------------
+
+  private retryFetchLater() {
+    if (this.fetchRetryTimer || this.phaseValue !== 'live') return;
+    const wait = LIVE_FETCH_RETRY_MS[Math.min(this.fetchRetries, LIVE_FETCH_RETRY_MS.length - 1)];
+    this.fetchRetries++;
+    this.fetchRetryTimer = setTimeout(() => {
+      this.fetchRetryTimer = undefined;
+      // Polling asks by itself; a stopped or signed-out tab asks nothing.
+      if (this.phaseValue === 'live' && this.wanted) void this.fetchNewest();
+    }, wait);
+  }
+
+  private clearFetchRetry() {
+    if (this.fetchRetryTimer) clearTimeout(this.fetchRetryTimer);
+    this.fetchRetryTimer = undefined;
+    this.fetchRetries = 0;
   }
 
   // ---- polling ---------------------------------------------------------------
@@ -397,13 +565,18 @@ export class LiveSync {
 
   private async poll() {
     if (this.phaseValue !== 'polling') return;
+    // Their `expired` update may never come while the stream is down.
+    this.plans.dropExpired(Date.now());
     await this.fetchNewest();
     if (this.phaseValue === 'polling') this.schedulePoll();
   }
 
   private visibilityChanged() {
     if (!this.deps.isVisible()) return;
-    if (this.phaseValue === 'polling') {
+    if (this.phaseValue === 'live') {
+      // A hidden tab's stream may have been throttled or cut without an error: ask once.
+      void this.fetchNewest();
+    } else if (this.phaseValue === 'polling') {
       // Shown again: look now, then keep the visible pace.
       this.clearPoll();
       void this.poll();
@@ -431,8 +604,10 @@ export class LiveSync {
   private signedOut() {
     this.closeStream();
     this.clearPoll();
-    // A signed-out tab shows no draft content it can no longer read.
+    this.clearFetchRetry();
+    // A signed-out tab shows no draft content or plans it can no longer read.
     this.generation.reset();
+    this.plans.reset();
     this.setPhase('signed-out');
     existingAutosave(this.projectId)?.noteSignedOut();
   }
@@ -466,9 +641,11 @@ export class LiveSync {
         try {
           answer = await this.deps.fetchDocument(`${this.base}/document`, knownServerVersion(this.projectId));
         } catch {
-          // A network failure: the stream reconnects (or the poll comes back) and asks again.
+          // A network failure: polling asks again by itself; a live stream may say nothing
+          // more for a long time, so the fetch is tried again after a while.
           // That later copy is catch-up: it appears at once, never as the agent's live write.
           if (this.wanted) this.wanted = { ...this.wanted, retry: true };
+          this.retryFetchLater();
           return;
         }
         if (this.phaseValue === 'stopped') return;
@@ -484,6 +661,7 @@ export class LiveSync {
           this.setPhase('gone');
           return;
         }
+        if (answer.status === 200 || answer.status === 304) this.clearFetchRetry();
         if (answer.status === 200 && answer.body) {
           const wanted = this.wanted;
           const covers = !!wanted && answer.body.version >= wanted.version;
@@ -491,6 +669,9 @@ export class LiveSync {
           this.take(answer.body, covers ? wanted?.event : undefined, undefined, !wanted?.retry);
         } else if (this.wanted && answer.status !== 304) {
           this.wanted = { ...this.wanted, retry: true };
+          this.retryFetchLater();
+        } else if (answer.status === 304 && this.wanted && this.wanted.version <= (knownServerVersion(this.projectId) ?? 0)) {
+          this.wanted = undefined;
         }
         // 304: nothing newer than this tab's copy. Anything else: a passing
         // failure; the next event or poll asks again.
@@ -506,11 +687,25 @@ export class LiveSync {
     if (!held || this.phaseValue === 'stopped') return;
     const known = knownServerVersion(this.projectId);
     if (known !== undefined && held.version <= known) {
-      this.held = undefined;
+      this.setHeld(undefined);
       return;
     }
-    this.held = undefined;
+    this.setHeld(undefined);
     this.take({ version: held.version, snapshot: held.snapshot }, held.event, held.label);
+  }
+
+  /** A copy held while the person edits: looked at again as soon as the editing settled. */
+  private waitForEditing() {
+    if (this.disposeEditing) return;
+    this.disposeEditing = onEditingSettled(this.rootStore, () => {
+      if (!this.held?.whileEditing || isEditing(this.rootStore)) return;
+      this.retake();
+    });
+  }
+
+  private stopWaitingForEditing() {
+    this.disposeEditing?.();
+    this.disposeEditing = undefined;
   }
 
   /** A fetched copy: adopt it now, or hold it for the person. */
@@ -527,9 +722,16 @@ export class LiveSync {
       autosavePhase !== 'conflict' &&
       autosavePhase !== 'publishing' &&
       isSaved(this.projectId, getSnapshot(project) as unknown as ProjectContent);
+    const keep = { version: body.version, snapshot: body.snapshot, label, ...(event && live ? { event } : {}) };
     if (!clean) {
-      this.held = { version: body.version, snapshot: body.snapshot, label, ...(event && live ? { event } : {}) };
+      this.setHeld(keep);
       autosave?.noteChangedElsewhere(body.version);
+      return;
+    }
+    if (isEditing(this.rootStore)) {
+      // Typing, a text edit, a drag or a resize is open: nothing unsaved yet (no
+      // dialog), but adopting now would replace what the person works on.
+      this.setHeld({ ...keep, whileEditing: true });
       return;
     }
     // Only a copy that is exactly the announced write, on top of the copy this tab
@@ -561,10 +763,13 @@ export class LiveSync {
    * new node is ever drawn once without it first.
    */
   private adopt(version: number, snapshot: ProjectSnapshotOut, label: string, event: SiteVersionEvent | undefined, reveal: boolean): boolean {
+    // Where an ending draft is drawn, read before the adoption writes anything (a
+    // layout read after the writes would force the browser to lay out mid-action).
+    const framesInView = this.generation.settlesAt(version) ? !this.rootStore.editorUI.previewOpen && draftFramesInView() : undefined;
     const adopted = runInAction(() => {
       const result = adoptServerCopy(this.rootStore, snapshot, version, label);
       // In the same action: an agent's draft whose saved result this copy holds goes in the frame the result appears.
-      const settled = result ? this.generation.settle(version) : undefined;
+      const settled = result ? this.generation.settle(version, framesInView) : undefined;
       if (result && reveal && result.created.length > 0) {
         // The sections the draft already drew exactly as saved stay still; the rest reveals.
         const still = settled && settled.stillIds.length > 0 ? new Set(subtreeIdsInProject(snapshot, settled.stillIds)) : undefined;
@@ -577,29 +782,37 @@ export class LiveSync {
       return result;
     });
     if (!adopted) return false;
-    this.held = undefined;
+    this.setHeld(undefined);
     existingAutosave(this.projectId)?.noteServerCopyAdopted();
     this.onAdopted?.(adopted, event);
     return true;
   }
 
   /**
-   * A new page whose draft the person watched is shown once it is adopted: when
-   * its draft frames were visible in the canvas at that moment, or while the
-   * camera still follows the agent. The camera stays where it is and the new
-   * page's frames take the default places, where the page that was open stood,
-   * so the result is on screen. A person looking elsewhere keeps their page; the
-   * new page waits in the Pages panel.
+   * A new page whose draft the person watched is shown once it is adopted, only
+   * when its draft frames were visible in the canvas at that moment and the
+   * person is not in the middle of something (typing, a text edit, a drag, a
+   * resize, a marquee, typing in a field: src/lib/live/editingInProgress.ts).
+   * The camera stays where it is and the new page's frames take the default
+   * places, where the page that was open stood, so the result is on screen.
+   * Otherwise the page on screen stays and a notice offers the new page ("New
+   * page 'X' is ready." with Open it); it also waits in the Pages panel.
    */
   private showGeneratedPage(settled: SettledDraft) {
     const nodeId = settled.newPageNodeId;
-    if (!nodeId || (!settled.inView && !this.presence.follow)) return;
+    if (!nodeId) return;
     const project = this.rootStore.projectStore.getProject(this.projectId);
     if (!project || !isAlive(project)) return;
     const page = (project.pagesArray as PageModelType[]).find((p) =>
       (p.appComponentTree.children as Array<{ id: string }>).some((child) => child.id === nodeId),
     );
-    if (page && this.rootStore.editorUI.currentPage?.id !== page.id) this.rootStore.editorUI.setCurrentPage(page);
+    const ui = this.rootStore.editorUI;
+    if (!page || ui.currentPage?.id === page.id) return;
+    if (settled.inView && !isInteracting(this.rootStore)) {
+      ui.setCurrentPage(page);
+      return;
+    }
+    ui.setEditorNotice({ kind: 'newPage', pageId: page.id, message: `New page \u2018${page.metadata.title}\u2019 is ready.` });
   }
 
   /**
@@ -608,6 +821,19 @@ export class LiveSync {
    * there was nothing newer to adopt (the caller then reloads the page).
    */
   async loadNewer(): Promise<boolean> {
+    // A write of this tab out: its answer decides what is newest (a success moves
+    // the known version, a refusal names the newer one). Wait for it, a while.
+    if (hasWriteInFlight(this.projectId)) {
+      const settled = await waitForWrites(this.projectId, LOAD_NEWER_WRITE_WAIT_MS);
+      if (!settled || this.phaseValue === 'stopped') return false;
+      // The retake after the write may already have adopted the held copy (or a newer one): nothing left to load.
+      const known = knownServerVersion(this.projectId);
+      if (!this.held && existingAutosave(this.projectId)?.getState().phase !== 'conflict') return true;
+      if (this.held && known !== undefined && this.held.version <= known) {
+        this.setHeld(undefined);
+        return true;
+      }
+    }
     let held = this.held;
     const conflict = existingAutosave(this.projectId)?.getState();
     const wanted = conflict?.phase === 'conflict' ? conflict.currentVersion : undefined;
@@ -628,6 +854,23 @@ export class LiveSync {
   }
 }
 
+/** Resolves true once no write of this tab is out for the project, false after `ms`. */
+function waitForWrites(projectId: string, ms: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const dispose = onWritesSettled((settledId) => {
+      if (settledId !== projectId || hasWriteInFlight(projectId)) return;
+      clearTimeout(timer);
+      dispose();
+      // After the live sync's own look at a held copy (its listener was registered first).
+      queueMicrotask(() => resolve(true));
+    });
+    const timer = setTimeout(() => {
+      dispose();
+      resolve(false);
+    }, ms);
+  });
+}
+
 function parse<T>(data: string): T | undefined {
   try {
     return JSON.parse(data) as T;
@@ -640,6 +883,39 @@ function parse<T>(data: string): T | undefined {
 
 const syncs = new Map<string, LiveSync>();
 let depsOverride: LiveSyncDeps | undefined;
+const projectListeners = new Map<string, Set<() => void>>();
+
+function notifyAll(projectId: string) {
+  for (const listener of [...(projectListeners.get(projectId) ?? [])]) listener();
+}
+
+/**
+ * Hear every change of the live sync of a project: one starting or stopping,
+ * its phase, its held copy, a dropped draft. For the editor's top bar, which
+ * renders before the sync starts. Answers the unsubscribe.
+ */
+export function subscribeLiveSync(projectId: string, listener: () => void): () => void {
+  let set = projectListeners.get(projectId);
+  if (!set) projectListeners.set(projectId, (set = new Set()));
+  set.add(listener);
+  let unsubscribeSync = syncs.get(projectId)?.subscribe(listener);
+  const onSyncChange = () => {
+    unsubscribeSync?.();
+    unsubscribeSync = syncs.get(projectId)?.subscribe(listener);
+  };
+  syncChangeListeners.add(onSyncChange);
+  return () => {
+    set?.delete(listener);
+    syncChangeListeners.delete(onSyncChange);
+    unsubscribeSync?.();
+  };
+}
+
+const syncChangeListeners = new Set<() => void>();
+function syncsChanged(projectId: string) {
+  for (const listener of [...syncChangeListeners]) listener();
+  notifyAll(projectId);
+}
 
 /** Tests only: the stream and the fetch every LiveSync started from now on uses. */
 export function setLiveSyncDepsForTests(deps: LiveSyncDeps | undefined): void {
@@ -653,10 +929,14 @@ export function startLiveSync(projectId: string, rootStore: RootStoreType, deps?
   syncs.get(projectId)?.stop();
   const sync = new LiveSync(projectId, rootStore, deps ?? depsOverride);
   syncs.set(projectId, sync);
+  syncsChanged(projectId);
   sync.start();
   return () => {
     sync.stop();
-    if (syncs.get(projectId) === sync) syncs.delete(projectId);
+    if (syncs.get(projectId) === sync) {
+      syncs.delete(projectId);
+      syncsChanged(projectId);
+    }
   };
 }
 

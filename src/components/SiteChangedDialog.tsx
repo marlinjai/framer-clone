@@ -17,9 +17,17 @@
 //     become a project of their own (SaveAsNewProjectDialog);
 //   - Keep editing: close, nothing happens; autosave stays paused and the top
 //     bar's "Changed elsewhere" (or Cmd+S) asks again.
+// When the newer copy is held by the live sync, the dialog names the pages that
+// copy removed and "keep mine" would bring back ("Saving yours restores the page
+// 'X' that the agent deleted."). A 409 met without a held copy names none: this
+// tab never saw that copy.
 // Shared by SaveStatus (autosave) and PublishButton, which own the request itself.
 
 import React from 'react';
+import { getSnapshot, isAlive } from 'mobx-state-tree';
+import { useStore } from '@/hooks/useStore';
+import { useLiveSyncState } from '@/hooks/useLiveSyncState';
+import { heldWriter, pagesRemovedBy, restoredPagesSentence } from '@/lib/projects/liveSync';
 import {
   Dialog,
   DialogContent,
@@ -56,6 +64,12 @@ export default function SiteChangedDialog({
   onSaveAsNew,
 }: SiteChangedDialogProps) {
   const keepMineLabel = action === 'publish' ? 'Publish mine anyway' : 'Save mine over it';
+  const { editorUI } = useStore();
+  const project = editorUI.currentProject;
+  const { held } = useLiveSyncState(project?.id);
+  const restored = open && project && isAlive(project)
+    ? restoredPagesSentence(pagesRemovedBy(held, getSnapshot(project) as { pages?: unknown }), heldWriter(held), action)
+    : '';
   return (
     <Dialog
       open={open}
@@ -71,6 +85,7 @@ export default function SiteChangedDialog({
             has unsaved changes. Nothing was {action === 'publish' ? 'published' : 'saved'}. {keepMineLabel}{' '}
             replaces those changes with this tab&apos;s version; loading the newer version discards
             the unsaved changes in this tab.
+            {restored ? ` ${restored}` : ''}
           </DialogDescription>
         </DialogHeader>
         <p role="status" aria-live="polite" className="sr-only">

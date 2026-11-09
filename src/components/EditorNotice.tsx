@@ -4,7 +4,8 @@
 // One dismissable message above the canvas (editorUI.editorNotice), set when a
 // project opens: the project was changed elsewhere while this tab has unsaved
 // work (a Save here would overwrite it), or the page asked for in the address
-// does not exist. The live region is always present, so the message is
+// does not exist. Also when an agent's new page is ready while the person works
+// elsewhere (src/lib/projects/liveSync.ts): Open it shows that page. The live region is always present, so the message is
 // announced when it appears.
 //
 // It is also the badge of a state preview (editorUI.previewState): the canvas shows a
@@ -38,6 +39,19 @@ const EditorNotice = observer(() => {
               className="shrink-0 rounded border border-amber-400 px-2 py-0.5 font-medium hover:bg-amber-100"
             >
               Load the newer version
+            </button>
+          ) : null}
+          {notice.kind === 'newPage' && notice.pageId ? (
+            <button
+              type="button"
+              onClick={() => {
+                const page = editorUI.currentProject?.getPage(notice.pageId!);
+                if (page) editorUI.setCurrentPage(page);
+                editorUI.setEditorNotice(undefined);
+              }}
+              className="shrink-0 rounded border border-amber-400 px-2 py-0.5 font-medium hover:bg-amber-100"
+            >
+              Open it
             </button>
           ) : null}
           {notice.kind === 'previewState' ? (

@@ -181,6 +181,8 @@ export interface GenerationDraftDeps {
   knownVersion: () => number | undefined;
   /** Whether the draft's frames are visible in the canvas right now (the person is looking at them). */
   draftInView?: () => boolean;
+  /** A draft dropped because the stream stayed down (its end may have been missed). */
+  onDraftLost?: () => void;
   setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
   clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
 }
@@ -324,7 +326,13 @@ export class GenerationDraft {
    * waiting behind it is drawn in the same action. Answers which result sections
    * stay still (undefined when no draft ended).
    */
-  settle(version: number): SettledDraft | undefined {
+  /** Whether adopting this version ends a run's draft (its saved result is in it): the caller then reads where the draft is drawn before adopting. */
+  settlesAt(version: number): boolean {
+    for (const s of this.settling.values()) if (version >= s.version) return true;
+    return false;
+  }
+
+  settle(version: number, framesInView?: boolean): SettledDraft | undefined {
     let answer: SettledDraft | undefined;
     // Events were missed while the stream was down: the running draft cannot know whether this copy holds its result.
     if (this.unsynced && this.run) {
@@ -348,7 +356,9 @@ export class GenerationDraft {
       }
       const onScreen = ours && draft?.target?.kind === 'newPage' && !!draft.targetOn(this.deps.currentPageId());
       // Read before the draft goes: the frames are still drawn inside this action.
-      const inView = onScreen && (this.deps.draftInView?.() ?? false);
+      // The caller reads the layout before its action when it can (no layout read
+      // after the adoption's writes): `framesInView`.
+      const inView = onScreen && (framesInView ?? this.deps.draftInView?.() ?? false);
       this.endSettling(s.runId);
       if (ours) answer = { stillIds, ...(onScreen && s.insertedIds[0] ? { newPageNodeId: s.insertedIds[0], inView } : {}) };
     }
@@ -374,7 +384,11 @@ export class GenerationDraft {
     if (!runId) return;
     this.clearTimer(this.watchdog);
     this.watchdog = this.setTimer(() => {
-      if (this.run?.runId === runId && this.unsynced) this.dropRun();
+      if (this.run?.runId === runId && this.unsynced) {
+        this.dropRun();
+        // The person watched it: the top bar says it shows again once the connection is back.
+        this.deps.onDraftLost?.();
+      }
     }, GEN_DRAFT_LIMITS.unsyncedMs);
   }
 

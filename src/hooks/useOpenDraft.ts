@@ -13,7 +13,7 @@
 'use client';
 
 import React from 'react';
-import { registerOpenDraft } from '@/lib/projects/openDrafts';
+import { noteOpenDraftsChanged, registerOpenDraft } from '@/lib/projects/openDrafts';
 
 export interface OpenDraftState {
   /** The person typed: the field holds a draft. */
@@ -32,7 +32,9 @@ export function useOpenDraft(commit: () => void): OpenDraftState {
         dirty.current = true;
       },
       settled: () => {
+        if (!dirty.current) return;
         dirty.current = false;
+        noteOpenDraftsChanged();
       },
     }),
     [],

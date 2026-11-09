@@ -122,6 +122,7 @@ export class LivePlansStore {
       applyState: action,
       applyUpdate: action,
       noteVersion: action,
+      dropExpired: action,
       reset: action,
       drop: action,
       prune: action,
@@ -231,6 +232,18 @@ export class LivePlansStore {
     if (version <= this.version) return;
     this.version = version;
     this.prune();
+  }
+
+  /**
+   * Plans whose server deadline (`expiresAt`) passed. Polled while the stream is
+   * down: their `expired` update may never reach this tab, so their skeletons
+   * would stand until the stream is back (PLAN_HELD_MAX_MS at most).
+   */
+  dropExpired(now: number): void {
+    for (const [planId, held] of [...this.plans]) {
+      const deadline = Date.parse(held.plan.expiresAt);
+      if (Number.isFinite(deadline) && deadline <= now) this.drop(planId);
+    }
   }
 
   reset(): void {

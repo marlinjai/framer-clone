@@ -58,8 +58,10 @@ export function whilePanelWritesRule<T>(write: () => T): T {
 
 /** 'refused': an action the editor would not carry out, and why. */
 export interface EditorNoticeState {
-  kind: 'changedElsewhere' | 'missingPage' | 'refused' | 'previewState';
+  kind: 'changedElsewhere' | 'missingPage' | 'refused' | 'previewState' | 'newPage';
   message: string;
+  /** `newPage`: the page an agent generated, which Open it shows (src/lib/projects/liveSync.ts). */
+  pageId?: string;
 }
 
 /** The canvas position, read and written through Canvas, which owns it. */
@@ -161,6 +163,9 @@ const EditorUIStore = types.model('EditorUI', {
   // the control's node id; absent means its first state. Never saved with the project.
   shopPreviewStates: {} as Readonly<Record<string, string>>,
   isResizing: false,
+  // A marquee rectangle is being drawn on the canvas (Canvas.tsx): the live
+  // canvas's camera followers wait for it (src/lib/live/editingInProgress.ts).
+  marqueeActive: false,
   // One rule shown on every copy of its node as though it applied (a state on
   // the canvas is otherwise dead). `ruleId` is a stored rule's id or a named state,
   // and the sheet expands it through src/lib/rules/states.ts, so Pressed shows Hover
@@ -641,6 +646,10 @@ const EditorUIStore = types.model('EditorUI', {
   endResize() {
     self.isResizing = false;
     self.resizeData = undefined;
+  },
+
+  setMarqueeActive(active: boolean) {
+    if (self.marqueeActive !== active) self.marqueeActive = active;
   },
 
   openPhoneContextMenu(point: { x: number; y: number }) {

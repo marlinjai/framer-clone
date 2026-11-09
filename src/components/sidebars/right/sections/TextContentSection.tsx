@@ -26,7 +26,7 @@ import { CollapsibleSection, FIELD_LABEL } from '../primitives';
 import BindingControl from '../BindingControl';
 import { owningDefinition } from '@/lib/bindings/scopeIntrospection';
 import { getRegistryIdForNode } from '../registryId';
-import { registerOpenDraft } from '@/lib/projects/openDrafts';
+import { noteOpenDraftsChanged, registerOpenDraft } from '@/lib/projects/openDrafts';
 
 interface TextContentFieldProps {
   node: ComponentInstance;
@@ -62,8 +62,10 @@ export const TextContentField = observer(({ node, label = 'Text content', varian
 
   const commit = React.useCallback(
     (value: string) => {
+      const was = dirty.current;
       dirty.current = false;
       if (value !== textOf(node)) node.setTextContent(value);
+      if (was) noteOpenDraftsChanged();
     },
     [node],
   );
@@ -110,6 +112,7 @@ export const TextContentField = observer(({ node, label = 'Text content', varian
     } else if (e.key === 'Escape') {
       e.preventDefault();
       dirty.current = false;
+      noteOpenDraftsChanged();
       setDraft(textOf(node));
       // Blur after the revert has rendered, so the blur commits nothing.
       const el = e.currentTarget;

@@ -383,6 +383,7 @@ const CanvasInner = observer(() => {
       if (!engaged) {
         if (!pastThreshold(start, current, threshold)) return;
         engaged = true;
+        rootStore.editorUI.setMarqueeActive(true);
       }
       box = boxFromPoints(start, current);
       drawMarquee(box);
@@ -417,6 +418,7 @@ const CanvasInner = observer(() => {
       window.removeEventListener('pointercancel', onCancel);
       window.removeEventListener('keydown', onKey, true);
       hideMarquee();
+      if (engaged) rootStore.editorUI.setMarqueeActive(false);
       if (marqueeCleanupRef.current === cleanup) marqueeCleanupRef.current = null;
     }
 
@@ -425,7 +427,7 @@ const CanvasInner = observer(() => {
     window.addEventListener('pointercancel', onCancel);
     window.addEventListener('keydown', onKey, true);
     marqueeCleanupRef.current = cleanup;
-  }, [applyMarquee, drawMarquee, hideMarquee]);
+  }, [applyMarquee, drawMarquee, hideMarquee, rootStore.editorUI]);
 
   // End a marquee left running when the canvas unmounts (page switch).
   useEffect(() => () => marqueeCleanupRef.current?.(), []);

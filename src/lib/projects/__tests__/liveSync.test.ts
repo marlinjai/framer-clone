@@ -102,6 +102,7 @@ const deps: LiveSyncDeps = {
     return { status: 200, body: { version: server.version, snapshot: server.snapshot } };
   },
   isVisible: () => visible,
+  random: () => 0,
   onVisibilityChange: (listener) => {
     visibilityListeners.push(listener);
     return () => {
@@ -973,7 +974,7 @@ describe("liveSync: an agent's generate_page draft (slice 6)", () => {
     stop();
   });
 
-  it('a new page: draft frames beside whichever page is on screen, and the result is shown once adopted while the camera follows', async () => {
+  it('a new page: draft frames beside whichever page is on screen; with its frames out of view the result waits behind a notice, though the camera follows', async () => {
     const stop = start();
     stream().emit('gen:outline', { runId: 'run-1', target: { kind: 'newPage', title: 'Menu' }, outline: [{ title: 'Hero', kind: 'hero' }] });
     expect(draft().target).toMatchObject({ kind: 'newPage', title: 'Menu', followsCurrentPage: true });
@@ -994,7 +995,10 @@ describe("liveSync: an agent's generate_page draft (slice 6)", () => {
     stream().emit('site:version', { origin: 'generate', version: server.version, versionBefore });
     await settle();
     expect(draft().target).toBeUndefined();
-    expect(store.editorUI.currentPage?.id).toBe(page.id);
+    // Following the agent alone no longer switches the page (decided 2026-11-09): the frames were not in view.
+    expect(store.editorUI.livePresence.follow).toBe(true);
+    expect(store.editorUI.currentPage?.id).toBe(homeId());
+    expect(store.editorUI.editorNotice).toMatchObject({ kind: 'newPage', pageId: page.id, message: 'New page \u2018Menu\u2019 is ready.' });
     stop();
   });
 

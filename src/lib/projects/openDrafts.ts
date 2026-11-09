@@ -7,7 +7,10 @@
 // draft registers here, so that
 //   - the unload warning counts it as unsaved work (UnsavedWorkGuard),
 //   - Cmd/Ctrl+S commits it before saving (saveShortcut.ts),
-//   - the save on leaving the page commits it first.
+//   - the save on leaving the page commits it first,
+//   - the live sync holds an agent's newer copy until the typing settled
+//     (src/lib/live/editingInProgress.ts): adopting it would replace the node
+//     under the cursor.
 
 export type CommitHow = 'end' | 'keep';
 
@@ -24,13 +27,33 @@ export interface OpenDraft {
 }
 
 const drafts = new Set<OpenDraft>();
+const changeListeners = new Set<() => void>();
 
 /** Register an open draft; answers the function that removes it. */
 export function registerOpenDraft(draft: OpenDraft): () => void {
   drafts.add(draft);
   return () => {
-    drafts.delete(draft);
+    if (drafts.delete(draft)) noteOpenDraftsChanged();
   };
+}
+
+/**
+ * Hear when a draft may have settled (removed, committed or reverted): whoever
+ * waits for the typing to end looks again. Answers the unsubscribe.
+ */
+export function onOpenDraftsChanged(listener: () => void): () => void {
+  changeListeners.add(listener);
+  return () => {
+    changeListeners.delete(listener);
+  };
+}
+
+/** A draft committed or reverted (its owner calls this; removing one and commitOpenDrafts do it themselves). */
+export function noteOpenDraftsChanged(): void {
+  // After the owner's own state update (a commit writes the node first).
+  queueMicrotask(() => {
+    for (const listener of [...changeListeners]) listener();
+  });
 }
 
 /** True while any draft holds typing the project tree does not have yet. */
@@ -49,4 +72,5 @@ export function commitOpenDrafts(how: CommitHow = 'end'): void {
       console.error('[editor] an open text draft could not be committed:', err);
     }
   }
+  noteOpenDraftsChanged();
 }
