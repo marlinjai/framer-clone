@@ -503,6 +503,23 @@ describe('GET /api/projects/<id>/events', () => {
     for (const events of open) await events.cancel();
   });
 
+  it('cuts off a browser that stops reading once 1 MiB waits unread, as a disconnect (AbortError)', async () => {
+    const res = await EVENTS(req('/api/projects/site_1/events'), ctx('site_1'));
+    const reader = res.body!.getReader();
+    // The state arrives; then the browser stops reading.
+    await reader.read();
+    const big = 'x'.repeat(300_000);
+    for (let i = 0; i < 6; i++) publishSiteEvent('site_1', 'plan:update', { plan: { planId: `p${i}`, note: big } });
+    // The queue was dropped: what is left is the disconnect, and the slot is free again.
+    const failure = await reader.read().catch((e: unknown) => e);
+    expect(failure).toMatchObject({ name: 'AbortError' });
+    for (let i = 0; i < LIVE_STREAM_LIMITS.perSession; i++) {
+      const again = await EVENTS(req('/api/projects/site_1/events'), ctx('site_1'));
+      expect(again.status).toBe(200);
+      await eventReader(again).cancel();
+    }
+  });
+
   it('answers 429 over the per-site bound', async () => {
     const open: Array<ReturnType<typeof eventReader>> = [];
     for (let i = 0; i < LIVE_STREAM_LIMITS.perSite; i++) {
@@ -686,16 +703,21 @@ describe('the kept document body', () => {
 });
 
 describe('the guard memo', () => {
-  it('reuses a verified session and an allowed editSite for 30 s, then asks again', async () => {
+  it('reuses an allowed editSite for 30 s, then asks again; the session is verified on every request', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     await DOCUMENT(req('/api/projects/site_1/document'), ctx('site_1'));
     await DOCUMENT(req('/api/projects/site_1/document'), ctx('site_1'));
-    expect(mockVerifySession).toHaveBeenCalledTimes(1);
+    expect(mockVerifySession).toHaveBeenCalledTimes(2);
     expect(mockCan).toHaveBeenCalledTimes(1);
     vi.setSystemTime(Date.now() + LIVE_GUARD_MEMO_MS + 1);
     await DOCUMENT(req('/api/projects/site_1/document'), ctx('site_1'));
-    expect(mockVerifySession).toHaveBeenCalledTimes(2);
     expect(mockCan).toHaveBeenCalledTimes(2);
+  });
+
+  it('refuses a signed-out session even while its editSite is remembered', async () => {
+    await DOCUMENT(req('/api/projects/site_1/document'), ctx('site_1'));
+    mockVerifySession.mockResolvedValueOnce(null);
+    expect((await DOCUMENT(req('/api/projects/site_1/document'), ctx('site_1'))).status).toBe(401);
   });
 
   it('never remembers a no: a refused editSite is asked again on the next request', async () => {
@@ -711,7 +733,6 @@ describe('the guard memo', () => {
   it('keys by the session cookie: another session asks again', async () => {
     await DOCUMENT(req('/api/projects/site_1/document'), ctx('site_1'));
     await DOCUMENT(req('/api/projects/site_1/document', { cookie: 'lumitra_session=someone-else' }), ctx('site_1'));
-    expect(mockVerifySession).toHaveBeenCalledTimes(2);
     expect(mockCan).toHaveBeenCalledTimes(2);
   });
 
@@ -735,18 +756,6 @@ describe('the guard memo', () => {
     expect(other.status).toBe(403);
     expect(mockCan).toHaveBeenCalledTimes(2);
     expect(mockCan.mock.calls[1]).toContainEqual(expect.objectContaining({ workspaceId: 'ws_other' }));
-    // The session itself was verified once.
-    expect(mockVerifySession).toHaveBeenCalledTimes(1);
-  });
-
-  it('never reuses a session past its own expiry', async () => {
-    vi.useFakeTimers({ toFake: ['Date'] });
-    const soon = new Date(Date.now() + 1000).toISOString();
-    mockVerifySession.mockResolvedValue({ ...makeSession(), session: { expires_at: soon } });
-    await DOCUMENT(req('/api/projects/site_1/document'), ctx('site_1'));
-    vi.setSystemTime(Date.now() + 2000);
-    await DOCUMENT(req('/api/projects/site_1/document'), ctx('site_1'));
-    expect(mockVerifySession).toHaveBeenCalledTimes(2);
   });
 
   it('is never used for a machine request (a Bearer header), which has no session here at all', async () => {

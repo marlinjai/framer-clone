@@ -14,6 +14,7 @@ import { Prisma } from '@prisma/client';
 import ProjectModel from '@/models/ProjectModel';
 import { REVISIONS_KEPT, SiteRepository, type TenantScope } from '../repository';
 import { cachedDocument, documentEpoch, rememberDocument, resetLiveDocumentCacheForTests } from '../liveDocumentCache';
+import { generationSnapshot, openLiveGeneration } from '../liveGeneration';
 import { resetLiveBusForTests, subscribeSite } from '../liveBus';
 import { announcePlan, resetLivePlansForTests } from '@/server/mcp/livePlans';
 import {
@@ -912,13 +913,16 @@ describe('SiteRepository.deleteSite', () => {
     prisma.site.updateMany.mockResolvedValue({ count: 1 });
   });
 
-  it("forgets the document route's kept copy of a deleted site", async () => {
+  it("forgets the document route's kept copy of a deleted site and ends its running generation", async () => {
     resetLiveDocumentCacheForTests();
     rememberDocument(SCOPE, 'site_1', 4, '{"kept":true}', documentEpoch());
+    openLiveGeneration('site_1', SCOPE, 'run-del', { kind: 'newPage' });
+    expect(generationSnapshot('site_1', SCOPE)).toBeDefined();
     prisma.site.findFirst.mockResolvedValue(siteRow('draft'));
     prisma.site.deleteMany.mockResolvedValue({ count: 1 });
     await repo.deleteSite(SCOPE, 'site_1');
     expect(cachedDocument(SCOPE, 'site_1', 4)).toBeUndefined();
+    expect(generationSnapshot('site_1', SCOPE)).toBeUndefined();
   });
 
   it('locks, reads and deletes scoped by id, workspace AND tenant group, in one transaction', async () => {

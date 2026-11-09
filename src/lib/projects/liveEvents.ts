@@ -444,6 +444,6 @@ export const LIVE_SSE_MAX_QUEUED_BYTES = 1024 * 1024;
 /**
  * The live stream's heartbeat: a named event with `{}` as data, sent every
  * SSE_HEARTBEAT_MS (src/lib/ai/sse.ts), so the editor can tell a stream that
- * went silent from a quiet one. Its watchdog listens for exactly this name.
+ * went silent from a quiet one. A client watchdog listens for exactly this name.
  */
 export const LIVE_PING_EVENT = 'ping';

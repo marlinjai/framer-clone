@@ -121,10 +121,15 @@ export function createSseStream(options: SseStreamOptions = {}): SseStream {
   const enqueue = (s: string) => {
     if (closed || !controller) return;
     const desired = controller.desiredSize;
-    // desiredSize is maxQueuedBytes minus the unread bytes.
-    if (armed && desired !== null && maxQueuedBytes - desired >= maxQueuedBytes + burst) {
-      overflow();
-      return;
+    if (armed && desired !== null) {
+      // desiredSize is maxQueuedBytes minus the unread bytes.
+      const queued = maxQueuedBytes - desired;
+      // The burst's allowance shrinks as the reader takes it, and never grows back.
+      burst = Math.min(burst, queued);
+      if (queued >= maxQueuedBytes + burst) {
+        overflow();
+        return;
+      }
     }
     try {
       controller.enqueue(ENCODER.encode(s));

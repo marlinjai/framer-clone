@@ -26,20 +26,21 @@ import 'server-only';
 //
 // Memo (decided 2026-11-09, plan section "Decisions"): an open editor calls this
 // for its stream, for every re-check of that stream and for every document
-// fetch after a write, and several tabs of one session do it at once. So steps
-// 1 and 3 remember a YES for at most LIVE_GUARD_MEMO_MS (30 s):
-//   - step 1 by the SHA-256 of the session cookie (never the cookie itself, and
-//     never longer than the session's own expiry), the verified session kept;
-//   - step 3 by that hash plus the workspace step 2 resolved from the verified
-//     session (the company-selector cookie only picks among the session's own
-//     companies, and its choice is part of the key, so it never aliases).
-// Nothing a client sends is ever a key on its own, a NO or an outage is never
-// remembered, and steps 0, 2 and 4 run on every call (step 4 reads the version
-// fresh, which the document route's ETag and body cache depend on). The price
-// is revocation latency: a session signed out, or an `editSite` taken away, is
-// still accepted for up to 30 s by these routes (a stream notices at its next
-// re-check after that). Both maps are bounded (LIVE_GUARD_MEMO_MAX entries, the
-// oldest goes first).
+// fetch after a write, and several tabs of one session do it at once. Step 1 is
+// already cached by the auth-brain client for 30 s (src/lib/auth-brain.ts,
+// `cacheTtlMs`); step 3, the OpenFGA check, is not, so this module remembers an
+// allowed `editSite` for at most LIVE_GUARD_MEMO_MS (30 s), keyed by the SHA-256
+// of the session cookie (never the cookie itself) plus the workspace step 2
+// resolved from the verified session (the company-selector cookie only picks
+// among the session's own companies, and its choice is part of the key, so it
+// never aliases). Step 1 still runs first on every call, so a session auth-brain
+// no longer accepts is refused before the memo is asked. A NO or an outage is
+// never remembered, and steps 0, 2 and 4 run on every call (step 4 reads the
+// version fresh, which the document route's ETag and body cache depend on). The
+// price is revocation latency: an `editSite` taken away is still accepted for up
+// to 30 s by these routes (as a signed-out session already is through the
+// client's own cache); a stream notices at its next re-check after that. The map
+// is bounded (LIVE_GUARD_MEMO_MAX entries, the oldest goes first).
 
 import { createHash } from 'node:crypto';
 import type { SessionVerifyResponse } from '@marlinjai/auth-brain-sdk';
@@ -54,35 +55,24 @@ import { activeScopeDenial, resolveActiveScope } from './scope';
 import { SiteNotFoundError } from './errors';
 import type { TenantScope } from './repository';
 
-/** How long a verified session and an allowed `editSite` are remembered, at most. */
+/** How long an allowed `editSite` is remembered, at most. */
 export const LIVE_GUARD_MEMO_MS = 30_000;
-/** Entries each memo keeps at once; the oldest goes first. */
+/** Entries the memo keeps at once; the oldest goes first. */
 export const LIVE_GUARD_MEMO_MAX = 5000;
 
 const SESSION_COOKIE = 'lumitra_session';
 
-interface GuardMemo {
-  sessions: Map<string, { session: SessionVerifyResponse; until: number }>;
-  access: Map<string, number>;
-}
-
 const MEMO_KEY = Symbol.for('lumitra.liveGuardMemo');
 
-function memo(): GuardMemo {
-  const g = globalThis as unknown as Record<symbol, GuardMemo | undefined>;
+/** `${cookie hash}:${workspaceId}` to until when its yes holds, least recently stored first. */
+function memo(): Map<string, number> {
+  const g = globalThis as unknown as Record<symbol, Map<string, number> | undefined>;
   let m = g[MEMO_KEY];
   if (!m) {
-    m = { sessions: new Map(), access: new Map() };
+    m = new Map();
     g[MEMO_KEY] = m;
   }
   return m;
-}
-
-/** Most recently stored last, so the first key is the one to evict. */
-function remember<V>(map: Map<string, V>, key: string, value: V): void {
-  map.delete(key);
-  map.set(key, value);
-  while (map.size > LIVE_GUARD_MEMO_MAX) map.delete(map.keys().next().value as string);
 }
 
 /** The memo key of the request's session: a hash of its cookie, or null when it has none (or is a machine request). */
@@ -92,41 +82,27 @@ function sessionHash(req: Request): string | null {
   return cookie ? createHash('sha256').update(cookie).digest('base64url') : null;
 }
 
-/** Step 1, remembered: a verified session is reused for LIVE_GUARD_MEMO_MS, never past its own expiry. */
-async function verifiedSession(req: Request, hash: string | null, now: number): Promise<SessionVerifyResponse | null> {
-  const m = memo();
-  if (hash) {
-    const hit = m.sessions.get(hash);
-    if (hit && hit.until > now) return hit.session;
-    if (hit) m.sessions.delete(hash);
-  }
-  const session = await getVerifiedSession(req);
-  if (session && hash) {
-    const expires = Date.parse(session.session?.expires_at ?? '');
-    const until = Math.min(now + LIVE_GUARD_MEMO_MS, Number.isFinite(expires) ? expires : Infinity);
-    if (until > now) remember(m.sessions, hash, { session, until });
-  }
-  return session;
-}
-
 /** Step 3, remembered: an allowed `editSite` on the workspace is reused for LIVE_GUARD_MEMO_MS. */
 async function mayEdit(userId: string, workspaceId: string, hash: string | null, now: number): Promise<boolean> {
   const m = memo();
   const key = hash ? `${hash}:${workspaceId}` : null;
   if (key) {
-    const until = m.access.get(key);
+    const until = m.get(key);
     if (until !== undefined && until > now) return true;
-    if (until !== undefined) m.access.delete(key);
+    if (until !== undefined) m.delete(key);
   }
   const allowed = await checkWorkspaceAccess(userId, workspaceId, 'editSite');
-  if (allowed && key) remember(m.access, key, now + LIVE_GUARD_MEMO_MS);
+  if (allowed && key) {
+    m.delete(key);
+    m.set(key, now + LIVE_GUARD_MEMO_MS);
+    while (m.size > LIVE_GUARD_MEMO_MAX) m.delete(m.keys().next().value as string);
+  }
   return allowed;
 }
 
-/** Tests only: forget every remembered session and permission. */
+/** Tests only: forget every remembered permission. */
 export function resetLiveGuardMemoForTests(): void {
-  memo().sessions.clear();
-  memo().access.clear();
+  memo().clear();
 }
 
 export type LiveProjectResult =
@@ -146,9 +122,7 @@ export async function authorizeLiveProject(
   if (!isEditorHost(req.headers.get('host'))) {
     return { ok: false, response: jsonError('not_found', 'not found', 404) };
   }
-  const now = Date.now();
-  const hash = sessionHash(req);
-  const session = await verifiedSession(req, hash, now);
+  const session = await getVerifiedSession(req);
   if (!session) return { ok: false, response: jsonError('unauthorized', 'authentication required', 401) };
 
   const scopeResult = resolveActiveScope(session, readCompanySelectors(req));
@@ -158,7 +132,7 @@ export async function authorizeLiveProject(
   }
   const { scope } = scopeResult;
 
-  const allowed = await mayEdit(session.user.id, scope.workspaceId, hash, now);
+  const allowed = await mayEdit(session.user.id, scope.workspaceId, sessionHash(req), Date.now());
   if (!allowed) return { ok: false, response: jsonError('forbidden', 'Forbidden', 403) };
 
   try {

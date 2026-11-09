@@ -1536,8 +1536,9 @@ export class SiteRepository {
         hostnames: [...hostnames],
       };
     });
-    // A deleted site's content is not kept in memory either.
+    // A deleted site's content is not kept in memory either: no kept copy, no running draft.
     forgetSiteDocuments(siteId);
+    endLiveGenerationOfSite(siteId, 'site_changed');
     return deleted;
   }
 }

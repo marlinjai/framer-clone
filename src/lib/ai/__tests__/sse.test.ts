@@ -186,6 +186,21 @@ describe('createSseStream backpressure', () => {
     expect(sse.signal.aborted).toBe(true);
   });
 
+  it('shrinks the burst allowance as the reader takes it: a reader that read the burst and then stalls is cut off at the bound', async () => {
+    const sse = createSseStream({ maxQueuedBytes: 1024, armed: false });
+    for (let i = 0; i < 5; i++) sse.send('state', { part: 'b'.repeat(400) });
+    sse.arm();
+    const reader = sse.stream.getReader();
+    for (let i = 0; i < 5; i++) await reader.read();
+    // Burst read: the bound alone applies now.
+    sse.send('token', { delta: 'c'.repeat(400) });
+    sse.send('token', { delta: 'c'.repeat(400) });
+    sse.send('token', { delta: 'c'.repeat(400) });
+    expect(sse.signal.aborted).toBe(false);
+    sse.send('token', { delta: 'c'.repeat(400) });
+    expect(sse.signal.aborted).toBe(true);
+  });
+
   it('defaults to SSE_MAX_QUEUED_BYTES and refuses a bound that is not positive', () => {
     expect(SSE_MAX_QUEUED_BYTES).toBe(4 * 1024 * 1024);
     expect(() => createSseStream({ maxQueuedBytes: 0 })).toThrow(RangeError);
