@@ -164,6 +164,23 @@ describe('openLiveGeneration', () => {
     expect(generationSnapshot(`site-${last}`, { workspaceId: `ws_${last}`, tenantGroupId: `tg_${last}` }, now)?.runId).toBe(`run-${last}`);
   });
 
+  it('past the process bound, the company holding the most runs gives up its oldest one', () => {
+    const now = Date.now();
+    const busy = { workspaceId: 'ws_busy', tenantGroupId: 'tg_busy' };
+    const lonely = listen('lonely');
+    openLiveGeneration('lonely', other, 'run-lonely', { kind: 'newPage' }, now);
+    const busyFirst = listen('busy-0');
+    for (let i = 0; i < GEN_DRAFT_LIMITS.runsPerCompany; i += 1) openLiveGeneration(`busy-${i}`, busy, `busy-${i}`, { kind: 'newPage' }, now);
+    for (let i = 0; GEN_DRAFT_LIMITS.runsPerCompany + 1 + i < GEN_DRAFT_LIMITS.runsPerProcess; i += 1) {
+      openLiveGeneration(`solo-${i}`, { workspaceId: `ws_s${i}`, tenantGroupId: `tg_s${i}` }, `solo-${i}`, { kind: 'newPage' }, now);
+    }
+    // One more company arrives with the process full.
+    openLiveGeneration('newcomer', { workspaceId: 'ws_new', tenantGroupId: 'tg_new' }, 'run-new', { kind: 'newPage' }, now);
+    expect(busyFirst).toEqual([['gen:done', { runId: 'busy-0', status: 'expired' }]]);
+    expect(lonely).toEqual([]);
+    expect(generationSnapshot('lonely', other, now)?.runId).toBe('run-lonely');
+  });
+
   it("a company over its share gives up its own oldest run, never another company's", () => {
     const now = Date.now();
     openLiveGeneration('other-site', other, 'run-other', { kind: 'newPage' }, now);

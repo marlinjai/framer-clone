@@ -73,8 +73,8 @@ export const dynamic = 'force-dynamic';
 
 type Ctx = { params: Promise<{ projectId: string }> };
 
-/** How long draft events wait for an access check before they go anyway (an outage is not a sign-out). */
-const GATE_CHECK_MS = 10_000;
+/** How long an access check may take; past it, it counts as an outage (never a sign-out) and held draft events go. */
+const CHECK_TIMEOUT_MS = 10_000;
 /** Events held behind such a check at most; past this the stream ends and the editor reconnects. */
 const GATE_QUEUE_MAX = 500;
 
@@ -134,10 +134,15 @@ async function handleGET(req: Request, { params }: Ctx): Promise<Response> {
     if (ended) return Promise.resolve();
     inflight ??= (async () => {
       lastCheck = Date.now();
+      let timer: ReturnType<typeof setTimeout> | undefined;
       try {
-        const again = await authorizeLiveProject(req, projectId);
-        // The browser may have left while the check ran.
-        if (again.ok || ended) return;
+        // A check that does not answer in time counts as an outage, and the next one really runs again.
+        const deadline = new Promise<'timeout'>((resolve) => {
+          timer = setTimeout(() => resolve('timeout'), CHECK_TIMEOUT_MS);
+        });
+        const again = await Promise.race([authorizeLiveProject(req, projectId), deadline]);
+        // Timed out, or the browser left while the check ran.
+        if (again === 'timeout' || again.ok || ended) return;
         sse.send(LIVE_EVENTS.authExpired, {});
         end();
       } catch (err) {
@@ -145,6 +150,7 @@ async function handleGET(req: Request, { params }: Ctx): Promise<Response> {
         if (err instanceof AuthUnavailableError || err instanceof AuthzUnavailableError) return;
         console.error(`[live] the stream of site ${projectId} could not re-check its session`, err);
       } finally {
+        clearTimeout(timer);
         inflight = undefined;
       }
     })();
@@ -153,7 +159,7 @@ async function handleGET(req: Request, { params }: Ctx): Promise<Response> {
   // A running generation's draft is content: when the last check is older than
   // LIVE_RECHECK_ON_WRITE_MS, it waits for a check, and everything after it waits
   // too (so the order holds); a stream whose access is gone gets none of it. A
-  // check that does not answer within GATE_CHECK_MS lets the queue go, as an
+  // check that does not answer within CHECK_TIMEOUT_MS lets the queue go, as an
   // outage does (an outage is not a sign-out); a queue that grows past
   // GATE_QUEUE_MAX ends the stream, and the editor reconnects.
   let gated: Array<[string, unknown]> | undefined;
@@ -177,12 +183,7 @@ async function handleGET(req: Request, { params }: Ctx): Promise<Response> {
     if (content && Date.now() - lastCheck > LIVE_RECHECK_ON_WRITE_MS) {
       const queue: Array<[string, unknown]> = [[event, data]];
       gated = queue;
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const waited = new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, GATE_CHECK_MS);
-      });
-      void Promise.race([check(), waited]).then(() => {
-        clearTimeout(timer);
+      void check().then(() => {
         gated = undefined;
         if (ended) return;
         for (const [e, d] of queue) forward(e, d);

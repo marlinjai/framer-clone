@@ -1071,6 +1071,17 @@ describe("liveSync: an agent's generate_page draft (slice 6)", () => {
     stop();
   });
 
+  it('a draft whose stream stays down with no state for a minute goes (the run may have failed meanwhile)', async () => {
+    const stop = start();
+    stream().emit('gen:section', { runId: 'run-1', target: target(), index: 0, slot: 0, node: node('Hero') });
+    stream().fail(true);
+    await vi.advanceTimersByTimeAsync(59_000);
+    expect(draft().target).toBeDefined();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(draft().target).toBeUndefined();
+    stop();
+  });
+
   it('a run that saved while it waited behind an earlier one is drawn once the earlier result shows', async () => {
     const stop = start();
     stream().emit('gen:section', { runId: 'run-1', target: target(), index: 0, slot: 0, node: node('Hero') });

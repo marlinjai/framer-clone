@@ -355,10 +355,19 @@ export class GenerationDraft {
    * nothing) until the reconnect's `state` says whether the run still goes on,
    * or until this tab adopts a version first (a poll), which drops it in the
    * adoption's action, so it never stands beside a result. A saved result still
-   * being fetched keeps its draft (its timer bounds it).
+   * being fetched keeps its draft (its timer bounds it). Should neither come
+   * within GEN_DRAFT_LIMITS.unsyncedMs (a run that failed while the stream
+   * stays down, after a refusal), the draft goes then.
    */
   streamLost(): void {
     this.unsynced = true;
+    // A run that failed meanwhile never brings an adoption: without a `state` soon, its draft goes.
+    const runId = this.run?.runId;
+    if (!runId) return;
+    this.clearTimer(this.watchdog);
+    this.watchdog = this.setTimer(() => {
+      if (this.run?.runId === runId && this.unsynced) this.dropRun();
+    }, GEN_DRAFT_LIMITS.unsyncedMs);
   }
 
   /** Forget everything (the editor closed the site, or the person was signed out). */

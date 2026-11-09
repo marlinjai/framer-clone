@@ -296,6 +296,8 @@ export const GEN_DRAFT_LIMITS = {
   runsPerCompany: 10,
   /** A run that has not ended after this long is given up on (`expired`). */
   runMaxMs: 15 * 60_000,
+  /** How long the editor keeps a running draft while its stream is down and no `state` has said whether the run goes on. */
+  unsyncedMs: 60_000,
   /** How long the editor waits for the saved version before it drops the draft anyway (a copy held for the person). */
   settleMs: 15_000,
 } as const;

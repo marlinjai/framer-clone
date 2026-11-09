@@ -326,7 +326,14 @@ describe('GET /api/projects/<id>/events', () => {
     await vi.advanceTimersByTimeAsync(10_000);
     expect((await events.next()).event).toBe('gen:section');
     expect((await events.next()).event).toBe('site:version');
-    await events.cancel();
+    // The timed-out check is not reused: the next one really runs, and finds the access gone.
+    const calls = mockVerifySession.mock.calls.length;
+    mockVerifySession.mockResolvedValue(makeSession());
+    mockCan.mockResolvedValue(false);
+    vi.setSystemTime(Date.now() + LIVE_RECHECK_ON_WRITE_MS + 1);
+    run.section({ generationId: 'run-1', attempt: 1, index: 1, slot: 1, node });
+    expect(await events.next()).toEqual({ event: 'auth:expired', data: {} });
+    expect(mockVerifySession.mock.calls.length).toBeGreaterThan(calls);
   });
 
   it('ends the stream when more than 500 events pile up behind a check', async () => {

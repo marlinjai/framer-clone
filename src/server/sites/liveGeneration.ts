@@ -27,9 +27,9 @@ import 'server-only';
 // (GEN_DRAFT_LIMITS): a section over `sectionChars`, or past `runChars` or
 // `sectionsPerRun`, is not sent and its skeleton stays until the result; at most
 // `runsPerCompany` runs of one company (its own least recently touched one is
-// given up on first, so it never pushes out another company's) and
-// `runsPerProcess` in all are kept, and a run older than `runMaxMs` is given up
-// on (`expired`).
+// given up on first) and `runsPerProcess` in all (past it, the company holding
+// the most runs gives up its least recently touched one) are kept, and a run
+// older than `runMaxMs` is given up on (`expired`).
 //
 // Kept on globalThis so a development hot reload does not split writers and readers.
 
@@ -84,6 +84,10 @@ function state(): GenerationState {
 
 function sameScope(a: TenantScope, b: TenantScope): boolean {
   return a.workspaceId === b.workspaceId && a.tenantGroupId === b.tenantGroupId;
+}
+
+function scopeKey(scope: TenantScope): string {
+  return `${scope.workspaceId}\u0000${scope.tenantGroupId}`;
 }
 
 function announceEnd(entry: RunEntry, done: GenDoneEvent): void {
@@ -158,9 +162,13 @@ export function openLiveGeneration(siteId: string, scope: TenantScope, runId: st
     s.sites.delete(oldest.siteId);
     announceEnd(oldest, { runId: oldest.runId, status: 'expired' });
   }
+  // Past the process bound, the company holding the most runs gives up its least recently touched one.
   while (s.sites.size > GEN_DRAFT_LIMITS.runsPerProcess) {
-    const [oldestSite, oldest] = s.sites.entries().next().value as [string, RunEntry];
-    s.sites.delete(oldestSite);
+    const counts = new Map<string, number>();
+    for (const run of s.sites.values()) counts.set(scopeKey(run.scope), (counts.get(scopeKey(run.scope)) ?? 0) + 1);
+    const most = Math.max(...counts.values());
+    const oldest = [...s.sites.values()].find((run) => counts.get(scopeKey(run.scope)) === most)!;
+    s.sites.delete(oldest.siteId);
     announceEnd(oldest, { runId: oldest.runId, status: 'expired' });
   }
 
