@@ -169,8 +169,8 @@ export function resetPresenceScopeCacheForTests(): void {
 }
 
 const ID_MAX = 100;
-/** What an id looks like (generated ids are letters, digits, `-` and `_`): prose or a pasted secret does not pass. */
-const ID_SHAPE = /^[A-Za-z0-9_-]+$/;
+/** What an id looks like (letters, digits, `-`, `_` and `.`, as in `page.about`): prose or a pasted secret does not pass. */
+const ID_SHAPE = /^[A-Za-z0-9_.-]+$/;
 
 function idOf(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;

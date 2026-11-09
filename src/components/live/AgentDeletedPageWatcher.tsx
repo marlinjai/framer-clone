@@ -16,7 +16,9 @@
 // It tells the agent's delete from any other way the open page can go: the page
 // left in a recorded remote step, and an agent's feed line names it among the
 // pages it deleted (the line and the adoption can come in either order, within
-// DELETED_PAGE_LINE_WAIT_MS of each other; a line explains one deletion only).
+// DELETED_PAGE_LINE_WAIT_MS of each other, judged on the server's own stamps (the line's time
+// against the adopted project's updatedAt) so a browser clock that runs fast or slow changes
+// nothing; a line explains one deletion, and a redo of that same step brings its notice back).
 // A person deleting a page in this tab, or another person's save, shows nothing
 // here. Renders nothing.
 'use client';
@@ -28,6 +30,7 @@ import { getHistoryStore } from '@/stores/RootStore';
 import { deletedOpenPageNotice } from '@/lib/live/activityText';
 import type { LivePresenceStore } from '@/lib/live/presenceStore';
 import type { LiveFeedLine } from '@/lib/projects/liveEvents';
+import type { EditorNoticeState } from '@/stores/EditorUIStore';
 
 /** How long a deleted open page waits for the agent's feed line that names it. */
 export const DELETED_PAGE_LINE_WAIT_MS = 30_000;
@@ -36,7 +39,10 @@ interface Gone {
   pageId: string;
   title: string | undefined;
   historyEntryId: string;
+  /** This tab's clock: when the page left, for how long its line is waited for. */
   at: number;
+  /** The server's clock: the adopted project's updatedAt, what the line's time is compared with. */
+  serverAt: number;
 }
 
 /** A line's time in milliseconds, or -Infinity when unreadable. */
@@ -45,16 +51,21 @@ function atOf(line: Pick<LiveFeedLine, 'at'>): number {
   return Number.isFinite(t) ? t : -Infinity;
 }
 
-/** The recent agent line that deleted this page and explains no other deletion yet, if the feed holds one. */
-function deletingLine(feed: readonly LiveFeedLine[], pageId: string, used: ReadonlySet<string>, now: number): LiveFeedLine | undefined {
+/** The agent line that deleted this page, close to the server's stamp of the adopted write, and explains no other deletion yet, if the feed holds one. */
+function deletingLine(feed: readonly LiveFeedLine[], page: Gone, used: ReadonlySet<string>): LiveFeedLine | undefined {
   return feed.find(
     (l) =>
       l.actorKind === 'key' &&
       l.outcome === 'ok' &&
       !used.has(l.id) &&
-      l.deletedPageIds?.includes(pageId) &&
-      Math.abs(now - atOf(l)) <= DELETED_PAGE_LINE_WAIT_MS,
+      l.deletedPageIds?.includes(page.pageId) &&
+      Math.abs(page.serverAt - atOf(l)) <= DELETED_PAGE_LINE_WAIT_MS,
   );
+}
+
+/** The notice that was showing while this one is up, kept so a preview's badge and reset action survive it. */
+function previewOf(notice: EditorNoticeState | undefined): string | undefined {
+  return notice?.kind === 'previewState' ? notice.message : notice?.preview;
 }
 
 export default function AgentDeletedPageWatcher() {
@@ -64,17 +75,21 @@ export default function AgentDeletedPageWatcher() {
     const presence = editorUI.livePresence as LivePresenceStore | undefined;
     if (!presence) return;
     let gone: Gone | undefined;
-    // The lines that explained a deletion already: one line, one notice.
+    // The lines that explained a deletion already: one line, one deletion.
     const used = new Set<string>();
+    // Which agent explained which history entry: a redo of that step deletes the page again, and says so again.
+    const explained = new Map<string, { pageId: string; label: string }>();
 
-    const show = (line: LiveFeedLine, page: Gone) => {
+    const show = (label: string, page: Gone) => {
       gone = undefined;
-      used.add(line.id);
+      explained.set(page.historyEntryId, { pageId: page.pageId, label });
+      const preview = previewOf(editorUI.editorNotice);
       editorUI.setEditorNotice({
         kind: 'pageDeleted',
-        message: deletedOpenPageNotice(line.label, page.title),
+        message: deletedOpenPageNotice(label, page.title),
         pageId: page.pageId,
         historyEntryId: page.historyEntryId,
+        ...(preview ? { preview } : {}),
       });
     };
 
@@ -93,10 +108,21 @@ export default function AgentDeletedPageWatcher() {
           const history = getHistoryStore();
           const entry = history && history.undoIdx > 0 ? history.history[history.undoIdx - 1] : undefined;
           if (!entry?.remote) return;
-          const page: Gone = { pageId: before.pageId, title: before.title || undefined, historyEntryId: entry.id, at: Date.now() };
-          const line = deletingLine(presence.feed, page.pageId, used, page.at);
-          if (line) show(line, page);
-          else gone = page;
+          const stamp = project.metadata.updatedAt;
+          const page: Gone = {
+            pageId: before.pageId,
+            title: before.title || undefined,
+            historyEntryId: entry.id,
+            at: Date.now(),
+            serverAt: stamp instanceof Date ? stamp.getTime() : Number.NaN,
+          };
+          const again = explained.get(entry.id);
+          if (again && again.pageId === page.pageId) return show(again.label, page);
+          const line = deletingLine(presence.feed, page, used);
+          if (line) {
+            used.add(line.id);
+            show(line.label, page);
+          } else gone = page;
         },
       ),
       // The agent's line may come after the adoption.
@@ -104,12 +130,16 @@ export default function AgentDeletedPageWatcher() {
         () => presence.feed,
         (feed) => {
           if (!gone) return;
-          if (Date.now() - gone.at > DELETED_PAGE_LINE_WAIT_MS) {
+          // Past the wait, or the page came back before its line did: nothing left to explain.
+          if (Date.now() - gone.at > DELETED_PAGE_LINE_WAIT_MS || editorUI.currentProject?.getPage(gone.pageId)) {
             gone = undefined;
             return;
           }
-          const line = deletingLine(feed, gone.pageId, used, Date.now());
-          if (line) show(line, gone);
+          const line = deletingLine(feed, gone, used);
+          if (line) {
+            used.add(line.id);
+            show(line.label, gone);
+          }
         },
       ),
       // The page came back, by any undo: it opens again and the notice goes.
@@ -123,7 +153,8 @@ export default function AgentDeletedPageWatcher() {
           if (!pageId) return;
           const page = editorUI.currentProject?.getPage(pageId);
           if (page) editorUI.setCurrentPage(page);
-          editorUI.setEditorNotice(undefined);
+          const preview = previewOf(editorUI.editorNotice);
+          editorUI.setEditorNotice(preview ? { kind: 'previewState', message: preview } : undefined);
         },
       ),
     ];

@@ -115,7 +115,8 @@ const EditorNotice = observer(() => {
               Undo
             </button>
           ) : null}
-          {notice.kind === 'previewState' ? (
+          {notice.preview ? <span>{notice.preview}</span> : null}
+          {notice.kind === 'previewState' || notice.preview ? (
             <button
               type="button"
               onClick={() => editorUI.clearPreviewState()}
@@ -126,7 +127,11 @@ const EditorNotice = observer(() => {
           ) : null}
           <button
             type="button"
-            onClick={() => (notice.kind === 'previewState' ? editorUI.clearPreviewState() : editorUI.setEditorNotice(undefined))}
+            onClick={() => {
+              // Closing a preview's badge ends the preview, wherever the badge sits.
+              if (notice.kind === 'previewState' || notice.preview) editorUI.clearPreviewState();
+              if (notice.kind !== 'previewState') editorUI.setEditorNotice(undefined);
+            }}
             aria-label="Dismiss notice"
             className="shrink-0 rounded px-1 hover:bg-amber-100"
           >

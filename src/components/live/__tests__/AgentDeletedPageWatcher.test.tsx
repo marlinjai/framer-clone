@@ -210,4 +210,60 @@ describe('an agent deletes the open page', () => {
     expect(store.editorUI.currentPage?.id).toBe(homeId);
     expect(store.editorUI.editorNotice).toBeUndefined();
   });
+
+  it('is not fooled by a browser clock far ahead of the server (the line is judged on the server\'s stamps)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const v2 = await agentWrites(v1, [{ op: 'deletePage', pageId: aboutId }]);
+    // The server wrote both the page's removal and the line; this browser runs ten minutes fast.
+    const serverNow = Date.now();
+    vi.setSystemTime(serverNow + 10 * 60_000);
+    act(() => {
+      adoptServerCopy(store, v2, 2, 'Claude: delete a page');
+    });
+    act(() => presence().applyActivity(deleteEnd(aboutId, { at: new Date(serverNow).toISOString() })));
+    expect(screen.getByRole('status')).toHaveTextContent('Claude deleted the page ‘About’.');
+    expect(undoButton()).toBeInTheDocument();
+  });
+
+  it('brings the notice back when the same step is redone, and still never blames a later delete', async () => {
+    await agentDeletesAbout();
+    fireEvent.click(screen.getByRole('button', { name: 'Undo: bring the page back' }));
+    expect(store.editorUI.editorNotice).toBeUndefined();
+    act(() => getHistoryStore()!.redo());
+    expect(project().pages.has(aboutId)).toBe(false);
+    expect(screen.getByRole('status')).toHaveTextContent('Claude deleted the page ‘About’.');
+    expect(undoButton()).toBeInTheDocument();
+  });
+
+  it('keeps a preview badge and its reset action beside the notice', async () => {
+    const v2 = await agentWrites(v1, [{ op: 'deletePage', pageId: aboutId }]);
+    act(() => {
+      adoptServerCopy(store, v2, 2, 'Claude: delete a page');
+    });
+    act(() => {
+      store.editorUI.setPreviewValue('state-1', 'open');
+      store.editorUI.setEditorNotice({ kind: 'previewState', message: 'Previewing Menu so this layer shows. The page itself is unchanged.' });
+    });
+    act(() => presence().applyActivity(deleteEnd(aboutId)));
+    expect(screen.getByRole('status')).toHaveTextContent('Claude deleted the page ‘About’.');
+    expect(screen.getByRole('status')).toHaveTextContent('Previewing Menu');
+    fireEvent.click(screen.getByRole('button', { name: 'Show first values' }));
+    expect(store.editorUI.previewState).toEqual({});
+    expect(screen.getByRole('status')).toHaveTextContent('Claude deleted the page ‘About’.');
+    expect(screen.getByRole('status')).not.toHaveTextContent('Previewing Menu');
+    expect(undoButton()).toBeInTheDocument();
+  });
+
+  it('drops a pending deletion when the page comes back before the agent\'s line does', async () => {
+    const v2 = await agentWrites(v1, [{ op: 'deletePage', pageId: aboutId }]);
+    act(() => {
+      adoptServerCopy(store, v2, 2, 'Claude: delete a page');
+    });
+    act(() => getHistoryStore()!.undo());
+    const homeId = pageIdOf(v1, 'Home');
+    act(() => store.editorUI.setCurrentPage(project().getPage(homeId)));
+    act(() => presence().applyActivity(deleteEnd(aboutId)));
+    expect(store.editorUI.editorNotice).toBeUndefined();
+    expect(store.editorUI.currentPage?.id).toBe(homeId);
+  });
 });
