@@ -584,11 +584,12 @@ export class LiveSync {
   }
 
   /**
-   * A new page whose draft the person watched is shown once it is adopted, in
-   * place of its draft frames (the new page's frames stand where they stood):
-   * when those frames were visible in the canvas at that moment, or while the
-   * camera still follows the agent. A person looking elsewhere keeps the page on
-   * screen; the new page waits in the Pages panel.
+   * A new page whose draft the person watched is shown once it is adopted: when
+   * its draft frames were visible in the canvas at that moment, or while the
+   * camera still follows the agent. The camera stays where it is and the new
+   * page's frames take the default places, where the page that was open stood,
+   * so the result is on screen. A person looking elsewhere keeps their page; the
+   * new page waits in the Pages panel.
    */
   private showGeneratedPage(settled: SettledDraft) {
     const nodeId = settled.newPageNodeId;
