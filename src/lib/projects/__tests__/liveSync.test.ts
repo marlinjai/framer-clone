@@ -1482,6 +1482,90 @@ describe('liveSync: an edit settles after an agent write was held for it', () =>
     expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: true });
   });
 
+  it('a second agent write mid-gesture, after a refusal: the dialog still waits for the gesture', async () => {
+    start();
+    await agentWrites('first');
+    const node = homeChild(0);
+    let finish!: (result: ProjectWriteResult) => void;
+    resetAutosaveForTests({
+      write: () =>
+        new Promise<ProjectWriteResult>((resolve) => {
+          finish = resolve;
+        }),
+    });
+    autosaveFor(SITE).attach(project());
+    const history = getHistoryStore()!;
+    store.editorUI.startResize({} as never);
+    history.startBatch('Resize');
+    node.setTextContent('moving');
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+    await agentWrites('agent one');
+    finish({ kind: 'conflict', currentVersion: server.version });
+    await settle();
+    await agentWrites('agent two');
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: false, currentVersion: server.version });
+    history.commitBatch();
+    store.editorUI.endResize();
+    await settle();
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: true, currentVersion: server.version });
+  });
+
+  it('a refusal that comes back mid-gesture before the agent\'s copy is held: the dialog waits for the gesture too', async () => {
+    start();
+    await agentWrites('first');
+    const node = homeChild(0);
+    let finish!: (result: ProjectWriteResult) => void;
+    resetAutosaveForTests({
+      write: () =>
+        new Promise<ProjectWriteResult>((resolve) => {
+          finish = resolve;
+        }),
+    });
+    autosaveFor(SITE).attach(project());
+    node.setTextContent('before the gesture');
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS); // the save goes out
+    const history = getHistoryStore()!;
+    store.editorUI.startResize({} as never);
+    history.startBatch('Resize');
+    await agentWrites('agent', false); // the agent wrote; no event yet
+    finish({ kind: 'conflict', currentVersion: server.version });
+    await settle();
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: false });
+    history.commitBatch();
+    store.editorUI.endResize();
+    await vi.advanceTimersByTimeAsync(600);
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: true });
+  });
+
+  it('"Keep editing" during a hold is the person\'s answer: the dialog does not come back when the gesture ends', async () => {
+    start();
+    await agentWrites('first');
+    const node = homeChild(0);
+    let finish!: (result: ProjectWriteResult) => void;
+    resetAutosaveForTests({
+      write: () =>
+        new Promise<ProjectWriteResult>((resolve) => {
+          finish = resolve;
+        }),
+    });
+    autosaveFor(SITE).attach(project());
+    const history = getHistoryStore()!;
+    store.editorUI.startResize({} as never);
+    history.startBatch('Resize');
+    node.setTextContent('moving');
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+    await agentWrites('agent');
+    finish({ kind: 'conflict', currentVersion: server.version });
+    await settle();
+    autosaveFor(SITE).openConflict(); // the person opens it from the status...
+    autosaveFor(SITE).dismissConflict(); // ...and keeps editing
+    history.commitBatch();
+    store.editorUI.endResize();
+    await settle();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: false });
+  });
+
   it('unsaved work from before an open edit: asked once the edit settles, never during it', async () => {
     start();
     await agentWrites('first');
@@ -1751,22 +1835,40 @@ describe('liveSync: the server simply closes the stream (a re-check timeout, an 
     expect(streams).toHaveLength(3);
     await vi.advanceTimersByTimeAsync(1);
     expect(streams).toHaveLength(4);
-    // This one stays up a heartbeat: the next end starts at the short wait once more.
+    // This one keeps going (its pings come): the next end starts at the short wait once more.
     stream().open();
+    stream().emit(LIVE_PING_EVENT, {});
     await vi.advanceTimersByTimeAsync(LIVE_HEARTBEAT_MS);
+    stream().emit(LIVE_PING_EVENT, {});
     stream().fail(false);
     await vi.advanceTimersByTimeAsync(LIVE_RECONNECT_MS * 1.5);
     expect(streams).toHaveLength(5);
   });
 
-  it('a ping proves the stream stays: the back-off starts over at once', async () => {
+  it('a stream that pings once and stalls keeps backing off (a ping alone does not start the wait over)', async () => {
+    start();
+    const waits: number[] = [];
+    for (let round = 0; round < 3; round++) {
+      stream().open();
+      stream().emit(LIVE_PING_EVENT, {});
+      const count = streams.length;
+      await vi.advanceTimersByTimeAsync(LIVE_WATCHDOG_MS); // silent: reopened after the back-off
+      const at = Date.now();
+      while (streams.length === count) await vi.advanceTimersByTimeAsync(100);
+      waits.push(Date.now() - at);
+    }
+    expect(waits[1]).toBeGreaterThan(waits[0]);
+    expect(waits[2]).toBeGreaterThan(waits[1]);
+  });
+
+  it('from a server that sends no ping, staying up a heartbeat starts the back-off over', async () => {
     start();
     stream().fail(false);
     await vi.advanceTimersByTimeAsync(LIVE_RECONNECT_MS);
-    stream().fail(false); // ended before opening: next wait 4 s
+    stream().fail(false); // ended before opening: the next wait would be 4 s
     await vi.advanceTimersByTimeAsync(LIVE_RECONNECT_MS * 2);
     stream().open();
-    stream().emit(LIVE_PING_EVENT, {});
+    await vi.advanceTimersByTimeAsync(LIVE_HEARTBEAT_MS);
     const count = streams.length;
     stream().fail(false);
     await vi.advanceTimersByTimeAsync(LIVE_RECONNECT_MS);

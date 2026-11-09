@@ -88,7 +88,7 @@ import {
   type AdoptedVersion,
   type ProjectContent,
 } from '@/stores/openProject';
-import { existingAutosave, reloadDiscarding } from './autosave';
+import { existingAutosave, reloadDiscarding, setEditInProgressCheck } from './autosave';
 import { SSE_HEARTBEAT_MS } from '@/lib/ai/sse';
 import { editorTabId } from './tabId';
 import {
@@ -282,6 +282,7 @@ export class LiveSync {
   /** Streams that ended in a row without staying up (the reconnect wait doubles). */
   private reconnects = 0;
   private stableTimer: ReturnType<typeof setTimeout> | undefined;
+  private pingsSinceOpen = 0;
   private wasLiveValue = false;
   private draftLostValue = false;
   /** The newest version announced by another writer, with its event. */
@@ -374,6 +375,8 @@ export class LiveSync {
 
   start(): void {
     if (this.phaseValue !== 'stopped') return;
+    // A refusal that comes back mid-edit, before this sync holds the agent's copy, waits for the edit too.
+    setEditInProgressCheck(this.projectId, () => isEditing(this.rootStore));
     this.disposeVisibility = this.deps.onVisibilityChange(() => this.visibilityChanged());
     // A copy held while this tab's write was out: that write may have succeeded
     // (no 409 will come), so the held copy is looked at again once it settled.
@@ -408,6 +411,7 @@ export class LiveSync {
     this.held = undefined;
     // Autosave outlives this sync: never leave it waiting for a hold that is gone.
     existingAutosave(this.projectId)?.deferWhileLiveHeld(false);
+    setEditInProgressCheck(this.projectId, undefined);
     this.wasLiveValue = false;
     this.draftLostValue = false;
     this.setPhase('stopped');
@@ -438,13 +442,15 @@ export class LiveSync {
       this.clearPoll();
       this.clearStreamRetry();
       this.streamRefusals = 0;
-      // The reconnect back-off starts over only once this stream proved it stays
-      // (a heartbeat long, or its first ping): a server that accepts and ends
-      // streams at once keeps every tab backing off instead of returning every 2 s.
+      // The reconnect back-off starts over only once this stream proved it stays:
+      // its second ping, or, from a server that sends none, staying up a heartbeat.
+      // A server that accepts and ends streams, or a stream that pings once and
+      // stalls, keeps every tab backing off instead of returning every 2 s.
+      this.pingsSinceOpen = 0;
       this.clearStable();
       this.stableTimer = setTimeout(() => {
         this.stableTimer = undefined;
-        if (this.stream === stream) this.reconnects = 0;
+        if (this.stream === stream && !this.heartbeatSeen) this.reconnects = 0;
       }, LIVE_HEARTBEAT_MS);
       this.setPhase('live');
     };
@@ -468,8 +474,9 @@ export class LiveSync {
     on(LIVE_PING_EVENT, () => {
       // The server sends heartbeats: from now on its silence is a stuck stream.
       this.heartbeatSeen = true;
-      this.clearStable();
-      this.reconnects = 0;
+      // Two pings: a stream that keeps going, so the reconnect back-off starts over.
+      this.pingsSinceOpen++;
+      if (this.pingsSinceOpen >= 2) this.reconnects = 0;
       this.armWatchdog();
     });
     on(LIVE_EVENTS.state, (e) => {
@@ -813,11 +820,13 @@ export class LiveSync {
       autosavePhase !== 'publishing' &&
       isSaved(this.projectId, getSnapshot(project) as unknown as ProjectContent);
     const keep = { version: body.version, snapshot: body.snapshot, label, ...(event && live ? { event } : {}) };
-    if (isEditing(this.rootStore) && autosavePhase !== 'conflict') {
+    if (isEditing(this.rootStore)) {
       // Typing, a text edit, a drag or a resize is open (a resize writes on every
       // move, so the copy may already differ): no dialog under the cursor, and no
       // adoption replacing what the person works on. Looked at once it settled.
       this.setHeld({ ...keep, whileEditing: true });
+      // Already in conflict (an earlier refusal): only the version it names moves.
+      if (autosavePhase === 'conflict') autosave?.noteChangedElsewhere(body.version);
       return;
     }
     if (!clean) {
