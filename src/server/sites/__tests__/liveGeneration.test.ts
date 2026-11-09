@@ -5,7 +5,7 @@
 // the bounds, the scoped `state` snapshot and the expiry.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetLiveBusForTests, subscribeSite } from '../liveBus';
-import { generationSnapshot, openLiveGeneration, resetLiveGenerationForTests } from '../liveGeneration';
+import { endLiveGenerationOfSite, generationSnapshot, openLiveGeneration, resetLiveGenerationForTests } from '../liveGeneration';
 import { GEN_DRAFT_LIMITS } from '@/lib/projects/liveEvents';
 import type { GeneratedNodeSnapshot } from '@/lib/ai/pageGen/validate';
 
@@ -189,5 +189,41 @@ describe('openLiveGeneration', () => {
     expect(first).toEqual([['gen:done', { runId: 'busy-run-0', status: 'expired' }]]);
     expect(generationSnapshot('busy-1', scope, now)?.runId).toBe('busy-run-1');
     expect(generationSnapshot('other-site', other, now)?.runId).toBe('run-other');
+  });
+});
+
+describe('a run given up on by the clock, and one ended from outside', () => {
+  it('expires on its own clock, clears what it kept, sends nothing more, and never touches a newer run', () => {
+    vi.useFakeTimers();
+    try {
+      const heard = listen();
+      const run = openLiveGeneration('site-1', scope, 'run-old', { kind: 'newPage' });
+      run.section({ generationId: 'run-old', attempt: 1, index: 0, slot: 0, node: node('Old') });
+      vi.advanceTimersByTime(GEN_DRAFT_LIMITS.runMaxMs + 1);
+      expect(heard.map(([event, data]) => [event, data.status])).toContainEqual(['gen:done', 'expired']);
+      expect(generationSnapshot('site-1', scope)).toBeUndefined();
+      const before = heard.length;
+      run.section({ generationId: 'run-old', attempt: 1, index: 1, slot: 1, node: node('Late') });
+      expect(heard.length).toBe(before);
+      // A run opened later keeps its own clock: the first one's timer is gone.
+      const next = openLiveGeneration('site-1', scope, 'run-new', { kind: 'newPage' });
+      vi.advanceTimersByTime(GEN_DRAFT_LIMITS.runMaxMs - 1000);
+      expect(generationSnapshot('site-1', scope)?.runId).toBe('run-new');
+      next.end('failed');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('endLiveGenerationOfSite ends the run once, drops its content and stops its later previews', () => {
+    const heard = listen();
+    const run = openLiveGeneration('site-1', scope, 'run-1', { kind: 'newPage' });
+    run.section({ generationId: 'run-1', attempt: 1, index: 0, slot: 0, node: node('Hello') });
+    endLiveGenerationOfSite('site-1', 'site_changed');
+    endLiveGenerationOfSite('site-1', 'site_changed');
+    run.section({ generationId: 'run-1', attempt: 1, index: 1, slot: 1, node: node('After') });
+    expect(heard.filter(([event]) => event === 'gen:done')).toEqual([['gen:done', { runId: 'run-1', status: 'site_changed' }]]);
+    expect(heard.filter(([event]) => event === 'gen:section')).toHaveLength(1);
+    expect(generationSnapshot('site-1', scope)).toBeUndefined();
   });
 });

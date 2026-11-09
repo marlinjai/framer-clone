@@ -58,6 +58,7 @@ import { nextSiteRedirects, parseSiteRedirects } from '@/lib/pages/redirects';
 import { generateSubdomain } from './subdomain';
 import { parseRevisionDocument, REVISION_SCHEMA_VERSION, revisionPublishCheck } from './revision';
 import { publishSiteEvent } from './liveBus';
+import { endLiveGenerationOfSite } from './liveGeneration';
 import { checkPlanAnchors, hasPlans, noteSiteWrite } from '@/server/mcp/livePlans';
 import { boundedWriteEvent, LIVE_EVENTS, type SiteVersionEvent, type SiteWriteEvent } from '@/lib/projects/liveEvents';
 import type { PublishCheck } from '@/lib/legal/publishCheck';
@@ -333,6 +334,20 @@ export interface WorkingCopyWriteOptions {
    * never undoes the write.
    */
   beforeAnnounce?: (version: number) => void;
+  /**
+   * Save only: when it aborts before the transaction commits, the write rolls
+   * back and the save throws SaveAbortedError (nothing is written, nothing is
+   * announced). An abort after the commit changes nothing.
+   */
+  signal?: AbortSignal;
+}
+
+/** A save whose signal aborted before its transaction committed: nothing was written. */
+export class SaveAbortedError extends Error {
+  constructor() {
+    super('the save was aborted before it committed; nothing was written');
+    this.name = 'SaveAbortedError';
+  }
 }
 
 /** What the shared working-copy write did. */
@@ -538,7 +553,13 @@ export class SiteRepository {
     // the other's entry. Postgres aborts one of them (P2034) instead; it is
     // retried a few times, then surfaces loudly as a failed save.
     const write = await withSerializationRetry(() => this.prisma.$transaction(
-      (tx) => this.writeWorkingCopy(tx, scope, persisted, options),
+      async (tx) => {
+        if (options.signal?.aborted) throw new SaveAbortedError();
+        const written = await this.writeWorkingCopy(tx, scope, persisted, options);
+        // Thrown inside the transaction, so an abort that came while it waited rolls the write back.
+        if (options.signal?.aborted) throw new SaveAbortedError();
+        return written;
+      },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, ...PROJECT_WRITE_TRANSACTION },
     ));
     if (write.wrote && options.beforeAnnounce) {
@@ -1283,6 +1304,9 @@ export class SiteRepository {
     }, ERASE_TRANSACTION));
     // Open editors must load again: their copy may hold the erased value. An erasure
     // blanks values and removes no node or page, so skeleton anchors are left alone.
+    // A generate_page still running drafted from the copy before the erasure: its
+    // previews could repeat the erased value, so the run ends here and sends no more.
+    endLiveGenerationOfSite(siteId, 'site_changed');
     announceWrite(siteId, erasure.write, { origin: 'erasure' });
     return erasure.result;
   }

@@ -193,12 +193,14 @@ export const DraftSections = observer(function DraftSections({ breakpointId, all
   const draft = editorUI.pageGenDraft as PageGenDraftStore | undefined;
   const indexes = draft?.target ? draft.sections.map((s) => s.index) : [];
   const drawn = indexes.join(',');
+  // A newer run that replaces a draft with the same section indexes is a new request: its shown set starts empty.
+  const requestKey = draft?.target?.requestKey;
   // What the canvas really drew (a section stored while another page was on
   // screen is not drawn): the apply reveals the rest.
   React.useEffect(() => {
     for (const index of indexes) draft?.markShown(index);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft, drawn]);
+  }, [draft, drawn, requestKey]);
   if (!draft?.target) return null;
   const skeletons = draft.skeletons.length;
   const band = draftBandText(draft.phase, draft.sections.length, skeletons);

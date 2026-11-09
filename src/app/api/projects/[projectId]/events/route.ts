@@ -173,6 +173,8 @@ async function handleGET(req: Request, { params }: Ctx): Promise<Response> {
     sse.send(event, out, out.version);
     if (Date.now() - lastCheck > LIVE_RECHECK_ON_WRITE_MS) void check();
   };
+  /** Whether a draft event must wait for a check: one is running (its answer is not in yet), or the last one is old. */
+  const checkDue = () => inflight !== undefined || Date.now() - lastCheck > LIVE_RECHECK_ON_WRITE_MS;
   const forward = (event: string, data: unknown) => {
     if (gated) {
       gated.push([event, data]);
@@ -180,7 +182,7 @@ async function handleGET(req: Request, { params }: Ctx): Promise<Response> {
       return;
     }
     const content = event === LIVE_EVENTS.genOutline || event === LIVE_EVENTS.genSection;
-    if (content && Date.now() - lastCheck > LIVE_RECHECK_ON_WRITE_MS) {
+    if (content && checkDue()) {
       const queue: Array<[string, unknown]> = [[event, data]];
       gated = queue;
       void check().then(() => {
@@ -195,7 +197,11 @@ async function handleGET(req: Request, { params }: Ctx): Promise<Response> {
   // Subscribed before the version is read, so a write between the two is heard.
   const unsubscribe = subscribeSite(projectId, (event, data) => {
     if (ready) forward(event, data);
-    else waiting.push([event, data]);
+    else {
+      waiting.push([event, data]);
+      // Bounded like the gate: a read that stalls cannot hold draft content without limit.
+      if (waiting.length > GATE_QUEUE_MAX) end();
+    }
   });
 
   const timers: { heartbeat?: ReturnType<typeof setInterval>; recheck?: ReturnType<typeof setInterval> } = {};
@@ -205,6 +211,8 @@ async function handleGET(req: Request, { params }: Ctx): Promise<Response> {
     ended = true;
     if (timers.heartbeat) clearInterval(timers.heartbeat);
     if (timers.recheck) clearInterval(timers.recheck);
+    waiting.length = 0;
+    gated = undefined;
     unsubscribe();
     release();
     sse.close();
@@ -225,6 +233,12 @@ async function handleGET(req: Request, { params }: Ctx): Promise<Response> {
   const presence = presenceSnapshot(projectId);
   // The plans announced under the scope this stream's guard verified; one whose time ran out is never sent.
   const feed = await feedFor(auth.scope, projectId, presence.feed);
+  // The draft is content: when the initialization took long enough for access to have changed,
+  // the same gate as for draft events applies before it is read and sent.
+  if (checkDue()) {
+    await check();
+    if (ended) return new Response(sse.stream, { status: 200, headers: SSE_HEADERS });
+  }
   // Read after the feed's await, so a run that ended meanwhile is not drawn again (its gen:done is in `waiting`).
   const generation = generationSnapshot(projectId, auth.scope);
   const state: SiteStateEvent = { version, plans: plansSnapshot(projectId, auth.scope), agents: presence.agents, feed, ...(generation ? { generation } : {}) };

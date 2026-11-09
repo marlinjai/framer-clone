@@ -68,6 +68,8 @@ export function isAgentDraftKey(key: string | undefined): boolean {
 }
 
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
+/** A persisted page or node id (an imported one can read `page.home` or `root:home`): up to 200 characters without whitespace or control characters, as the MCP tools take them. */
+const PERSISTED_ID = /^[^\s\u0000-\u001f\u007f]{1,200}$/;
 
 function validTarget(raw: unknown): GenDraftTarget | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
@@ -76,9 +78,9 @@ function validTarget(raw: unknown): GenDraftTarget | undefined {
     const title = sanitizePlanTitle(t.title);
     return title ? { kind: 'newPage', title } : { kind: 'newPage' };
   }
-  if (typeof t.pageId !== 'string' || !ID.test(t.pageId)) return undefined;
-  if (t.kind === 'replace' && typeof t.nodeId === 'string' && ID.test(t.nodeId)) return { kind: 'replace', pageId: t.pageId, nodeId: t.nodeId };
-  if (t.kind === 'insert' && typeof t.parentId === 'string' && ID.test(t.parentId)) return { kind: 'insert', pageId: t.pageId, parentId: t.parentId };
+  if (typeof t.pageId !== 'string' || !PERSISTED_ID.test(t.pageId)) return undefined;
+  if (t.kind === 'replace' && typeof t.nodeId === 'string' && PERSISTED_ID.test(t.nodeId)) return { kind: 'replace', pageId: t.pageId, nodeId: t.nodeId };
+  if (t.kind === 'insert' && typeof t.parentId === 'string' && PERSISTED_ID.test(t.parentId)) return { kind: 'insert', pageId: t.pageId, parentId: t.parentId };
   return undefined;
 }
 
@@ -305,6 +307,8 @@ export class GenerationDraft {
       this.clearTimer(this.watchdog);
       this.watchdog = undefined;
       this.run = undefined;
+      // The person's Generate may have released the store meanwhile: draw what was remembered while the saved copy is pending.
+      this.sync();
       return;
     }
     this.dropRun();
@@ -345,7 +349,8 @@ export class GenerationDraft {
       ended = true;
       if (ours) answer = { stillIds, ...(onScreen && s.insertedIds[0] ? { newPageNodeId: s.insertedIds[0] } : {}) };
     }
-    if (ended) this.sync();
+    // Also when nothing ended: a target this copy did not have before may exist after the adoption.
+    this.sync();
     return answer;
   }
 

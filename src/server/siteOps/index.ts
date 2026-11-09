@@ -35,6 +35,7 @@ import {
   type SiteRevisionList,
   type SiteSummary,
 } from '@/server/sites';
+import { SaveAbortedError } from '@/server/sites/repository';
 import { revalidateCustomHostsForSiteId, revalidateSiteCache } from '@/server/sites/cachedResolver';
 import { ensureCompanyCommerce } from '@/server/sites/companyCommerce';
 import { buildEmptyDraftSnapshot } from '@/lib/projects/newProject';
@@ -627,9 +628,14 @@ async function runAndSaveGeneration(
       // After the commit, before the `site:version` goes out: the open editors
       // learn that the draft ends at this version, and drop it in the same step
       // they adopt it.
+      signal: input.signal,
       beforeAnnounce: (savedAt) => live.end('saved', { version: savedAt, insertedIds: applied.insertedIds, nodes: payload.nodes }),
     }));
   } catch (err) {
+    // Stopped while the save waited for its transaction: it rolled back, nothing was written.
+    if (err instanceof SaveAbortedError) {
+      return { ended: 'stopped', result: fail({ code: 'failed', message: 'the generation was stopped; nothing was saved' }) };
+    }
     return { ended: err instanceof SiteChangedError ? 'site_changed' : 'failed', result: fromError(err, input.siteId) };
   }
   // A write that wrote nothing (the repeat of a lost answer) runs no pre-announcement step.

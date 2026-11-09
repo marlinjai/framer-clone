@@ -63,6 +63,8 @@ interface RunEntry {
   chars: number;
   startedAt: number;
   touchedAt: number;
+  /** Gives the run up when its time is out, whether or not anything else touches the site. */
+  expiry?: ReturnType<typeof setTimeout>;
 }
 
 interface GenerationState {
@@ -91,6 +93,8 @@ function scopeKey(scope: TenantScope): string {
 }
 
 function announceEnd(entry: RunEntry, done: GenDoneEvent): void {
+  if (entry.expiry !== undefined) clearTimeout(entry.expiry);
+  entry.expiry = undefined;
   publishSiteEvent(entry.siteId, LIVE_EVENTS.genDone, done);
 }
 
@@ -103,6 +107,17 @@ function sweep(now: number): void {
       announceEnd(entry, { runId: entry.runId, status: 'expired' });
     }
   }
+}
+
+/** End the running generation of a site from outside (its content went stale: personal data was erased). Nothing more of it is sent. */
+export function endLiveGenerationOfSite(siteId: string, status: GenDoneStatus): void {
+  const { sites } = state();
+  const entry = sites.get(siteId);
+  if (!entry) return;
+  sites.delete(siteId);
+  entry.sections = [];
+  entry.outline = [];
+  announceEnd(entry, { runId: entry.runId, status });
 }
 
 /** The target as it travels: ids, and a new page's title sanitised. */
@@ -156,6 +171,16 @@ export function openLiveGeneration(siteId: string, scope: TenantScope, runId: st
     touchedAt: now,
   };
   s.sites.set(siteId, entry);
+  // Expires on its own clock: a stalled run is given up on and its retained content cleared
+  // without waiting for another request. Only this entry: a newer run on the site is never touched.
+  entry.expiry = setTimeout(() => {
+    if (state().sites.get(siteId) !== entry) return;
+    state().sites.delete(siteId);
+    entry.sections = [];
+    entry.outline = [];
+    announceEnd(entry, { runId, status: 'expired' });
+  }, GEN_DRAFT_LIMITS.runMaxMs);
+  entry.expiry.unref?.();
   // A company over its share gives up its own least recently touched run first, never another company's.
   const own = [...s.sites.values()].filter((other) => sameScope(other.scope, entry.scope));
   for (const oldest of own.slice(0, Math.max(0, own.length - GEN_DRAFT_LIMITS.runsPerCompany))) {
