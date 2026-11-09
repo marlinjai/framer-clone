@@ -416,21 +416,25 @@ export class LiveSync {
     if (!adopted) return true;
     const targets = edits.map((edit) => ({ edit, node: findNode(adopted, edit.nodeId) }));
     const applied: Array<{ node: object; field: string; before: unknown }> = [];
+    const entriesBefore = history.history.length;
     try {
       // Every node is in the adopted copy (checked against it above); all or nothing all the same.
       if (targets.some((t) => !t.node)) throw new Error('a node of the edit is not in the adopted copy');
       runInAction(() => {
         for (const { edit, node } of targets) {
           const before = (node as Record<string, unknown>)[edit.field];
-          applyPatch(node!, { op: 'replace', path: `/${edit.field}`, value: edit.value });
+          replayApply(node!, edit.field, edit.value);
           applied.push({ node: node!, field: edit.field, before });
         }
       });
     } catch (err) {
-      // Half an edit is never left (nor saved): back to the adopted copy as it came, and the person is told.
-      runInAction(() => {
-        for (const { node, field, before } of applied.reverse()) applyPatch(node, { op: 'replace', path: `/${field}`, value: before });
-      });
+      // Half an edit is never left (nor saved, nor an undo step): back to the adopted copy as it came, and the person is told.
+      history.runUntracked(() =>
+        runInAction(() => {
+          for (const { node, field, before } of applied.reverse()) applyPatch(node, { op: 'replace', path: `/${field}`, value: before });
+        }),
+      );
+      while (history.history.length > entriesBefore) history.forgetLastEntry();
       console.error('[live] an edit could not be put on top of the newer version:', err);
       this.rootStore.editorUI.setEditorNotice({
         kind: 'refused',
@@ -976,6 +980,17 @@ export class LiveSync {
     // The person asked for it: it appears at once, never as a reveal.
     return this.adopt(held.version, held.snapshot, held.label, undefined, false);
   }
+}
+
+/** How a replayed edit writes one value (tests make it fail to prove the rollback). */
+let replayApply = (node: object, field: string, value: unknown): void => {
+  applyPatch(node, { op: 'replace', path: `/${field}`, value });
+};
+const defaultReplayApply = replayApply;
+
+/** Tests only: replace how a replayed edit writes one value; undefined restores it. */
+export function setReplayApplyForTests(apply: ((node: object, field: string, value: unknown) => void) | undefined): void {
+  replayApply = apply ?? defaultReplayApply;
 }
 
 /** Every node of a snapshot's pages and components by id. */

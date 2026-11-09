@@ -12,7 +12,7 @@
 //   4. re-entry: after auth:expired nothing reconnects until the tab is shown
 //      and one check passes; a project gone stops following.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { getSnapshot } from 'mobx-state-tree';
+import { applyPatch, getSnapshot } from 'mobx-state-tree';
 import { createRootStore, getHistoryStore, type RootStoreType } from '@/stores/RootStore';
 import ProjectModel, { type ProjectModelType, type ProjectSnapshotOut } from '@/models/ProjectModel';
 import { applyOperations } from '@/lib/siteOps/applyOps';
@@ -36,6 +36,7 @@ import {
   revealsOnAdoption,
   liveSyncFor,
   setLiveSyncDepsForTests,
+  setReplayApplyForTests,
   startLiveSync,
   type DocumentAnswer,
   type LiveEventSource,
@@ -1433,6 +1434,52 @@ describe('liveSync: a settled edit goes on top of the agent\'s copy (review of P
     expect(knownServerVersion(SITE)).toBe(5);
     const text = JSON.stringify(working());
     for (const part of ['typed by the person', 'second', 'third']) expect(text).toContain(part);
+  });
+
+  it('a replay that fails on its second node is taken back whole: the agent\'s copy exactly, nothing saved, a notice, no half step', async () => {
+    start();
+    await agentWrites('one');
+    await agentWrites('two');
+    const [a, b] = [homeChild(0), homeChild(1)];
+    // One edit of two nodes, one undo step (as a gesture batches it).
+    const draft = openDraft(() => {
+      const history = getHistoryStore()!;
+      history.startBatch('Edit');
+      a.setTextContent('person A');
+      b.setTextContent('person B');
+      history.commitBatch();
+    });
+    await agentWrites('three');
+    let calls = 0;
+    setReplayApplyForTests((node, field, value) => {
+      calls++;
+      if (calls === 2) throw new Error('injected');
+      // The real write for the first node.
+      applyPatch(node, { op: 'replace', path: `/${field}`, value });
+    });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const historyBefore = getHistoryStore()!.history.length;
+    try {
+      draft.commitAndClose();
+      await settle();
+    } finally {
+      setReplayApplyForTests(undefined);
+    }
+    expect(calls).toBe(2);
+    expect(error).toHaveBeenCalled();
+    // Exactly the agent's copy: neither person edit kept.
+    expect(working()).toEqual(server.snapshot);
+    expect(knownServerVersion(SITE)).toBe(server.version);
+    // The person's step gave way to the held write's adoption: exactly one new step, the agent's, and no half step of the replay.
+    const history = getHistoryStore()!;
+    expect(history.history.length).toBe(historyBefore + 1);
+    expect(history.undoIdx).toBe(history.history.length);
+    expect(history.canRedo).toBe(false);
+    expect(history.labelFor(history.history[history.history.length - 1])).toContain('Claude');
+    expect(store.editorUI.editorNotice).toMatchObject({ kind: 'refused' });
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS * 2);
+    expect(saves).toEqual([]);
+    expect(autosaveFor(SITE).getState().phase).toBe('saved');
   });
 
   it('the agent changed the same text: a real conflict, the dialog asks', async () => {
