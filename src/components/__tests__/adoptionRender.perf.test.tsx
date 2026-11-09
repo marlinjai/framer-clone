@@ -66,9 +66,11 @@ describe('the canvas after an adopted one-node change', () => {
       </React.Profiler>,
     );
     const target = ((v1.pages[page.id].appComponentTree.children![5] as { children: Array<{ id: string }> }).children[0]).id;
-    // Three adoptions, the best kept: one pause of the runner must not decide a timing ratio.
+    // Three adoptions: the first is asserted on its own (a first adoption that re-rendered the whole tree must
+    // not hide behind cheap later ones), and the best of the three too, so one pause of the runner does not decide a ratio.
     let snapshot = v1;
     let actual = Number.POSITIVE_INFINITY;
+    let first = Number.NaN;
     let base = commits[0].base;
     let renders = 0;
     for (let i = 0; i < 3; i++) {
@@ -83,16 +85,19 @@ describe('the canvas after an adopted one-node change', () => {
       });
       const adoption = commits.slice(before);
       renders = adoption.length;
-      actual = Math.min(actual, adoption.reduce((sum, c) => sum + c.actual, 0));
+      const cost = adoption.reduce((sum, c) => sum + c.actual, 0);
+      if (i === 0) first = cost;
+      actual = Math.min(actual, cost);
       base = Math.max(base, ...adoption.map((c) => c.base));
     }
     const adoption = { length: renders };
     if (process.env.ADOPTION_PERF_LOG) {
-      process.stderr.write(`[adoption render] ${adoption.length} commit(s), re-rendered ${actual.toFixed(1)} ms of a ${base.toFixed(1)} ms tree (${((actual / base) * 100).toFixed(0)}%)\n`);
+      process.stderr.write(`[adoption render] ${adoption.length} commit(s), re-rendered ${actual.toFixed(1)} ms of a ${base.toFixed(1)} ms tree (${((actual / base) * 100).toFixed(0)}%), the first adoption ${first.toFixed(1)} ms\n`);
     }
     expect(document.body.textContent).toContain('Edited 2');
     // origin/main before the structural sharing: 29% (every node observer re-rendered); now about 1%.
     // A timing ratio: a margin wide enough for a loaded runner, still far from the 29% before.
+    expect(first).toBeLessThan(base * 0.2);
     expect(actual).toBeLessThan(base * 0.2);
   });
 });

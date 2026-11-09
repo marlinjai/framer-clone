@@ -106,6 +106,13 @@ afterEach(() => {
 
 const project = () => store.projectStore.getProject(SITE) as ProjectModelType;
 
+/** Every node id under a node snapshot or instance (children included). */
+function idsUnder(node: { id: string; children?: unknown[] }, out = new Set<string>()): Set<string> {
+  out.add(node.id);
+  for (const child of (node.children ?? []) as Array<typeof node>) idsUnder(child, out);
+  return out;
+}
+
 function propsById(): Map<string, unknown> {
   const out = new Map<string, unknown>();
   const visit = (node: { id: string; props: unknown; children?: unknown[] }) => {
@@ -192,6 +199,8 @@ describe('adoption cost on a site of about 400 nodes', () => {
     const v2 = await serverAfter(v1, [{ op: 'deletePage', pageId: last.id }]);
     const m = adopt(v2, 2);
     log('one page deleted', m);
+    // The cheap count must not hide a skipped deletion.
+    expect(project().pagesArray.some((p) => p.id === last.id)).toBe(false);
     expect(m.patches).toBeLessThanOrEqual(2);
     expect(m.replacedProps).toBe(0);
   });
@@ -205,6 +214,12 @@ describe('adoption cost on a site of about 400 nodes', () => {
     ]);
     const m = adopt(v2, 2);
     log('one section inserted', m);
+    // The cheap count must not hide a skipped insert: the section and its child are in the open copy.
+    const beforeIds = idsUnder(home.appComponentTree as never);
+    const added = [...idsUnder(v2.pages[home.id].appComponentTree as never)].filter((id) => !beforeIds.has(id));
+    expect(added.length).toBeGreaterThanOrEqual(2);
+    const openIds = idsUnder(project().pages.get(home.id)!.appComponentTree as never);
+    for (const id of added) expect(openIds.has(id)).toBe(true);
     expect(m.patches).toBeLessThanOrEqual(3);
     expect(m.replacedProps).toBe(0);
   });

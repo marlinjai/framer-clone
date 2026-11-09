@@ -1,7 +1,7 @@
 // src/stores/ProjectStore.ts  
 // Domain store for managing projects collection
 import { parseModelComponents } from '@/models/ComponentDefinitionModel';
-import { types, Instance } from 'mobx-state-tree';
+import { types, Instance, applySnapshot } from 'mobx-state-tree';
 import ProjectModel, { ProjectModelType, ProjectSnapshotIn } from '../models/ProjectModel';
 import { v4 as uuidv4 } from 'uuid';
 import { createIntrinsicComponent, createFloatingCanvasComponent, createViewportNode } from '@/models/ComponentModel';
@@ -264,24 +264,35 @@ const ProjectStore = types.model('ProjectStore', {
     const nextParts = next as unknown as Record<string, unknown>;
     const beforeParts = before as unknown as Record<string, unknown>;
     const keys = new Set([...Object.keys(nextParts), ...Object.keys(beforeParts)]);
-    for (const key of keys) {
-      if (key === 'id' || nextParts[key] === beforeParts[key]) continue;
-      if (key === 'pages') {
-        const pages = project.pages;
-        const nextPages = (nextParts.pages ?? {}) as Record<string, unknown>;
-        const beforePages = (beforeParts.pages ?? {}) as Record<string, unknown>;
-        for (const id of Object.keys(beforePages)) if (!(id in nextPages)) pages.delete(id);
-        for (const [id, page] of Object.entries(nextPages)) {
-          if (page !== beforePages[id]) pages.set(id, withStoredDates(pages.get(id), page) as never);
+    // Refuse a malformed copy before anything is touched (a page whose id differs from its key
+    // would throw in `pages.set` after another page was already removed).
+    for (const [id, page] of Object.entries((nextParts.pages ?? {}) as Record<string, { id?: unknown }>)) {
+      if (page && page.id !== id) throw new Error(`adoptProjectSnapshot: page keyed ${id} carries id ${String(page.id)}`);
+    }
+    try {
+      for (const key of keys) {
+        if (key === 'id' || nextParts[key] === beforeParts[key]) continue;
+        if (key === 'pages') {
+          const pages = project.pages;
+          const nextPages = (nextParts.pages ?? {}) as Record<string, unknown>;
+          const beforePages = (beforeParts.pages ?? {}) as Record<string, unknown>;
+          for (const id of Object.keys(beforePages)) if (!(id in nextPages)) pages.delete(id);
+          for (const [id, page] of Object.entries(nextPages)) {
+            if (page !== beforePages[id]) pages.set(id, withStoredDates(pages.get(id), page) as never);
+          }
+          continue;
         }
-        continue;
+        // Any other part (components through their processor, the settings, the metadata): assigned whole.
+        target[key] = key === 'metadata' ? withStoredDates(project.metadata as never, nextParts[key]) : nextParts[key];
       }
-      // Any other part (components through their processor, the settings, the metadata): assigned whole.
-      target[key] = key === 'metadata' ? withStoredDates(project.metadata as never, nextParts[key]) : nextParts[key];
+    } catch (error) {
+      // All or nothing: a failure part-way puts the whole working copy back as it was.
+      applySnapshot(project, before as never);
+      throw error;
     }
-    if (nextParts.components !== beforeParts.components) {
-      project.replaceLoadRefusals(parseModelComponents(next.components).refused);
-    }
+    // Always from the incoming components: the server may have removed the last refused definition, which leaves
+    // both component maps equal (empty) while the stored refusals are stale.
+    project.replaceLoadRefusals(parseModelComponents(next.components).refused);
     return next.id;
   },
 

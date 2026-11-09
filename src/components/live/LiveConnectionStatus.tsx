@@ -5,8 +5,8 @@
 // beside the save status in the top bar. Says nothing while all is well. When a
 // stream that was live goes down for more than a moment (LIVE_PAUSED_GRACE_MS, so
 // a reconnect by itself does not flash), "Live updates paused, reconnecting…",
-// and where an agent's streamed draft was dropped meanwhile, that it shows again
-// once the connection is back. Once the stream is back, "Live updates back" for
+// and where an agent's streamed draft was dropped meanwhile, that it may not show
+// again (a generation that ended meanwhile leaves no draft to restore). Once the stream is back, "Live updates back" for
 // LIVE_BACK_MS. While an agent's newer version waits for the person's open edit
 // (a text edit can stay open idle for long), it says so quietly. One polite live region that is always present, so a screen
 // reader hears each change once.
@@ -22,7 +22,7 @@ export const LIVE_BACK_MS = 4_000;
 
 export const LIVE_PAUSED_TEXT = 'Live updates paused, reconnecting…';
 export const LIVE_BACK_TEXT = 'Live updates back';
-export const LIVE_DRAFT_LOST_TEXT = "The agent's draft will show again once the connection is back.";
+export const LIVE_DRAFT_LOST_TEXT = "The agent's draft may not show again if its generation has ended meanwhile.";
 /** A newer version of the site waits while the person edits (src/lib/live/editingInProgress.ts): said quietly, so a long idle edit does not hide it. */
 export const LIVE_WAITING_TEXT = 'A newer version of the site is waiting until you finish editing.';
 
@@ -55,6 +55,7 @@ export function useLiveConnectionMessage(projectId: string | undefined): { text:
     }
     // Stopped, signed out (the save status says so) or gone: nothing to say here.
     setPaused(false);
+    setBack(false);
     return undefined;
   }, [down, state.phase]);
 

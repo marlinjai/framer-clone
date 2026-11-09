@@ -49,4 +49,15 @@ describe('shareUnchanged', () => {
     expect(() => shareUnchanged(old, next)).not.toThrow();
     expect(next.a.v).toBe(2);
   });
+
+  it('keeps an own __proto__ key of the incoming JSON as an own key, and does not read the old prototype', () => {
+    const old = { a: { v: 1 } };
+    const next = JSON.parse('{"a":{"v":1},"__proto__":{"polluted":true}}');
+    const out = shareUnchanged(old, next) as Record<string, unknown>;
+    expect(Object.keys(out)).toEqual(['a', '__proto__']);
+    expect(Object.getPrototypeOf(out)).toBe(Object.prototype);
+    expect(Object.prototype.hasOwnProperty.call(out, '__proto__')).toBe(true);
+    expect(out.a).toBe(old.a);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
 });

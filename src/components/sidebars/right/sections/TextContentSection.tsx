@@ -136,6 +136,8 @@ export const TextContentField = observer(({ node, label = 'Text content', varian
     onBlur: (e: React.FocusEvent<HTMLTextAreaElement | HTMLInputElement>) => {
       focused.current = false;
       if (dirty.current) commit(e.currentTarget.value);
+      // A clean draft follows the node (an Escape that released a held copy may have changed the text before this blur).
+      else setDraft(textOf(node));
     },
     onKeyDown,
   };

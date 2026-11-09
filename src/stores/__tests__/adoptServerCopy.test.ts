@@ -185,4 +185,20 @@ describe('adoptServerCopy', () => {
     expect(store.editorUI.currentPage).toBe(page);
     expect(store.projectStore.getProject('site_adopt')!.pages.size).toBe(1);
   });
+
+  it('a malformed copy (a page whose id differs from its key) throws before anything is touched: the working copy stays whole', async () => {
+    const v1 = serverSnapshot();
+    openProject(store, v1, null, 1);
+    const aboutId = Object.values(v1.pages).find((p) => p.metadata.title === 'About')!.id;
+    const bad = JSON.parse(JSON.stringify(v1)) as ProjectSnapshotOut;
+    // The copy removes About and carries Home under another key.
+    delete bad.pages[aboutId];
+    const homeKey = homeId(bad);
+    bad.pages['other_key'] = { ...bad.pages[homeKey], metadata: { ...bad.pages[homeKey].metadata, title: 'Changed' } };
+    delete bad.pages[homeKey];
+    const before = JSON.stringify(working());
+    expect(() => adoptServerCopy(store, bad, 2, 'Agent')).toThrow();
+    expect(JSON.stringify(working())).toBe(before);
+    expect(knownServerVersion('site_adopt')).toBe(1);
+  });
 });

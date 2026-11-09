@@ -31,6 +31,8 @@ export function useInteracting(rootStore: RootStoreType): boolean {
     document.addEventListener('focusin', onFocus);
     document.addEventListener('focusout', onFocus);
     document.addEventListener('input', onFocus, true);
+    // Arrow, Home and End keys move through a field without an input event, yet still note the typing time.
+    document.addEventListener('keydown', onFocus, true);
     look();
     return () => {
       disposeReaction();
@@ -38,6 +40,7 @@ export function useInteracting(rootStore: RootStoreType): boolean {
       document.removeEventListener('focusin', onFocus);
       document.removeEventListener('focusout', onFocus);
       document.removeEventListener('input', onFocus, true);
+      document.removeEventListener('keydown', onFocus, true);
       if (idle) clearTimeout(idle);
     };
   }, [rootStore]);

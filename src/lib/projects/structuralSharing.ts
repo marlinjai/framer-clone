@@ -17,6 +17,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
+function hasOwn(value: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
 /** Old array items by their string `id`, when every item has one (a node's children). */
 function byId(items: readonly unknown[]): Map<string, unknown> | undefined {
   const out = new Map<string, unknown>();
@@ -59,9 +63,10 @@ export function shareUnchanged<T extends Json>(old: unknown, next: T): T {
     let same = keys.length === definedKeys(old).length;
     const out: Record<string, unknown> = {};
     for (const key of Object.keys(next)) {
-      const shared = shareUnchanged(old[key], next[key]);
-      out[key] = shared;
-      if (next[key] !== undefined && shared !== old[key]) same = false;
+      const shared = shareUnchanged(hasOwn(old, key) ? old[key] : undefined, next[key]);
+      // defineProperty, not assignment: an own `__proto__` key of the JSON must stay an own key, not set the prototype.
+      Object.defineProperty(out, key, { value: shared, enumerable: true, writable: true, configurable: true });
+      if (next[key] !== undefined && shared !== (hasOwn(old, key) ? old[key] : undefined)) same = false;
     }
     return (same ? old : out) as T;
   }

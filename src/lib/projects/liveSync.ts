@@ -589,8 +589,9 @@ export class LiveSync {
     this.fetchRetries++;
     this.fetchRetryTimer = setTimeout(() => {
       this.fetchRetryTimer = undefined;
-      // Polling asks by itself; a stopped or signed-out tab asks nothing.
-      if (this.phaseValue === 'live' && this.wanted) void this.fetchNewest();
+      // Polling asks by itself; a stopped or signed-out tab asks nothing. A failed catch-up (a visibility
+      // look that named no version) is retried too: the conditional fetch answers 304 when nothing is newer.
+      if (this.phaseValue === 'live') void this.fetchNewest();
     }, wait);
   }
 
@@ -656,6 +657,8 @@ export class LiveSync {
     if (answer.status === 200 || answer.status === 304) {
       this.setPhase('connecting');
       if (answer.body) this.take(answer.body);
+      // A copy held when the session expired is looked at again now that reading works.
+      else this.retake();
       this.clearStreamRetry();
       this.openStream();
     }
@@ -751,7 +754,8 @@ export class LiveSync {
   /** Look at a held copy again: adopt it if the working copy is clean now, else keep asking the person. */
   private retake() {
     const held = this.held;
-    if (!held || this.phaseValue === 'stopped') return;
+    // Signed out: adopting would turn the failed save into a saved one while the sign-in action disappears; checkBack looks again.
+    if (!held || this.phaseValue === 'stopped' || this.phaseValue === 'signed-out') return;
     const known = knownServerVersion(this.projectId);
     if (known !== undefined && held.version <= known) {
       this.setHeld(undefined);
@@ -854,10 +858,21 @@ export class LiveSync {
       return result;
     });
     if (!adopted) return false;
+    this.clearNoticeOfRemovedPage();
     this.setHeld(undefined);
     existingAutosave(this.projectId)?.noteServerCopyAdopted();
     this.onAdopted?.(adopted, event);
     return true;
+  }
+
+  /** The "New page is ready" notice names a page the adopted copy no longer has (an agent deleted it): Open it would open nothing. */
+  private clearNoticeOfRemovedPage() {
+    const ui = this.rootStore.editorUI;
+    const notice = ui.editorNotice;
+    if (notice?.kind !== 'newPage') return;
+    const project = this.rootStore.projectStore.getProject(this.projectId);
+    if (!project || !isAlive(project)) return;
+    if (!(project.pagesArray as PageModelType[]).some((p) => p.id === notice.pageId)) ui.setEditorNotice(undefined);
   }
 
   /**
@@ -880,13 +895,14 @@ export class LiveSync {
     );
     const ui = this.rootStore.editorUI;
     if (!page || ui.currentPage?.id === page.id) return;
+    // Another notice the person may not have read yet (a refusal, a state preview's badge, which is the way out of
+    // that preview) is never replaced, and the page is not switched to either (a switch clears a preview and its
+    // badge); the page waits in the Pages panel then.
+    if (ui.editorNotice && ui.editorNotice.kind !== 'newPage') return;
     if (settled.inView && !isInteracting(this.rootStore)) {
       ui.setCurrentPage(page);
       return;
     }
-    // Another notice the person may not have read yet (a refusal, a state preview's badge, which is the way out of
-    // that preview) is never replaced; the page waits in the Pages panel then.
-    if (ui.editorNotice && ui.editorNotice.kind !== 'newPage') return;
     ui.setEditorNotice({ kind: 'newPage', pageId: page.id, message: `New page \u2018${page.metadata.title}\u2019 is ready.` });
   }
 
@@ -895,6 +911,10 @@ export class LiveSync {
    * dropping this tab's unsaved edits, as one undo step. Answers false when
    * there was nothing newer to adopt (the caller then reloads the page).
    */
+  get isStopped(): boolean {
+    return this.phaseValue === 'stopped';
+  }
+
   async loadNewer(): Promise<boolean> {
     // A write of this tab out: its answer decides what is newest (a success moves
     // the known version, a refusal names the newer one). Wait for it, a while.
@@ -920,7 +940,7 @@ export class LiveSync {
       } catch {
         return false;
       }
-      if (answer.status !== 200 || !answer.body) return false;
+      if (answer.status !== 200 || !answer.body || this.phaseValue === 'stopped') return false;
       held = { version: answer.body.version, snapshot: answer.body.snapshot, label: held?.label ?? 'Newer version loaded' };
     }
     if (hasWriteInFlight(this.projectId)) return false;
@@ -1029,6 +1049,8 @@ export function liveSyncFor(projectId: string | undefined): LiveSync | undefined
 export async function loadNewerVersion(projectId: string | undefined): Promise<void> {
   const sync = liveSyncFor(projectId);
   if (sync && (await sync.loadNewer())) return;
+  // Its sync stopped meanwhile (another project was opened, the editor left): reloading would reload that other editor.
+  if (sync?.isStopped) return;
   reloadDiscarding(projectId);
 }
 
