@@ -79,6 +79,7 @@ import {
 } from './liveEvents';
 import { GenerationDraft, type SettledDraft } from '@/lib/live/generationDraft';
 import type { PageGenDraftStore } from '@/lib/ai/pageGen/draft';
+import { DRAFT_FRAME_ATTR } from '@/lib/ai/pageGen/draftAttributes';
 import type { PageModelType } from '@/models/PageModel';
 import type { LivePlansStore } from '@/lib/live/plansStore';
 import type { LivePresenceStore } from '@/lib/live/presenceStore';
@@ -213,6 +214,7 @@ export class LiveSync {
       },
       currentPageId: () => rootStore.editorUI.currentPage?.id,
       knownVersion: () => knownServerVersion(projectId),
+      draftInView: () => !rootStore.editorUI.previewOpen && draftFramesInView(),
     });
   }
 
@@ -582,13 +584,15 @@ export class LiveSync {
   }
 
   /**
-   * A new page the person watched being drafted (its draft frames were on screen)
-   * is shown once it is adopted, while the camera still follows the agent (the
-   * person has not taken over the camera since the agent's run began).
+   * A new page whose draft the person watched is shown once it is adopted, in
+   * place of its draft frames (the new page's frames stand where they stood):
+   * when those frames were visible in the canvas at that moment, or while the
+   * camera still follows the agent. A person looking elsewhere keeps the page on
+   * screen; the new page waits in the Pages panel.
    */
   private showGeneratedPage(settled: SettledDraft) {
     const nodeId = settled.newPageNodeId;
-    if (!nodeId || !this.presence.follow) return;
+    if (!nodeId || (!settled.inView && !this.presence.follow)) return;
     const project = this.rootStore.projectStore.getProject(this.projectId);
     if (!project || !isAlive(project)) return;
     const page = (project.pagesArray as PageModelType[]).find((p) =>
@@ -668,4 +672,18 @@ export async function loadNewerVersion(projectId: string | undefined): Promise<v
   const sync = liveSyncFor(projectId);
   if (sync && (await sync.loadNewer())) return;
   reloadDiscarding(projectId);
+}
+
+/** Whether a draft frame of a new page is visible in the canvas (any part of it inside the canvas's box) and the document itself is showing. The open Preview covering the canvas is the caller's check. */
+export function draftFramesInView(): boolean {
+  if (typeof document === 'undefined') return false;
+  // A hidden tab shows nothing, whatever its frames' rectangles say.
+  if (document.visibilityState === 'hidden') return false;
+  const ground = document.querySelector<HTMLElement>('[data-ground]');
+  if (!ground) return false;
+  const view = ground.getBoundingClientRect();
+  return Array.from(document.querySelectorAll<HTMLElement>(`[${DRAFT_FRAME_ATTR}]`)).some((frame) => {
+    const box = frame.getBoundingClientRect();
+    return box.width > 0 && box.height > 0 && box.right > view.left && box.left < view.right && box.bottom > view.top && box.top < view.bottom;
+  });
 }
