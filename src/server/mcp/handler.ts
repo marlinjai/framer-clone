@@ -52,7 +52,7 @@ import {
   type ToolResult,
 } from './tools';
 import { SERVER_INSTRUCTIONS } from './instructions';
-import { siteIdOf, withPresence } from './presence';
+import { siteIdOf, withPresence, type PermittedFn } from './presence';
 import { endSessionPlans, touchPlans } from './livePlans';
 import { getSiteRepository } from '@/server/sites';
 import { liveAgentId } from '@/server/siteOps/audit';
@@ -161,6 +161,21 @@ async function readBounded(request: Request): Promise<string | null> {
   return new TextDecoder().decode(Buffer.concat(chunks));
 }
 
+/** A permission check that also tells `permitted` each action it allowed (sync stays sync). */
+function reportingPermission(can: SiteOpsCaller['can'], permitted: PermittedFn): SiteOpsCaller['can'] {
+  return (action) => {
+    const answer = can(action);
+    if (typeof answer === 'boolean') {
+      if (answer) permitted(action);
+      return answer;
+    }
+    return answer.then((yes) => {
+      if (yes) permitted(action);
+      return yes;
+    });
+  };
+}
+
 export function createMcpHandler(deps: McpDeps) {
   const approvals = deps.approvals ?? getApprovalStore();
   const limits: ToolLimits = deps.limits ?? {
@@ -201,8 +216,14 @@ export function createMcpHandler(deps: McpDeps) {
         scope: ctx.caller.scope,
         repository: deps.siteOps?.repository ?? getSiteRepository(),
       },
-      // The call's live id goes into its audit row, so the editor's feed shows one line for it.
-      (liveCallId) => runTool(tool, args, liveCallId ? { ...ctx, caller: { ...ctx.caller, liveCallId } } : ctx),
+      // The call's live id goes into its audit row, so the editor's feed shows one line for it;
+      // its permission checks tell the presence report when a write's start may go out.
+      (liveCallId, permitted) => {
+        if (!liveCallId && !permitted) return runTool(tool, args, ctx);
+        const caller = { ...ctx.caller, ...(liveCallId ? { liveCallId } : {}) };
+        if (permitted) caller.can = reportingPermission(ctx.caller.can.bind(ctx.caller), permitted);
+        return runTool(tool, args, { ...ctx, caller });
+      },
     );
   }
 

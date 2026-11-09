@@ -316,6 +316,15 @@ Order: 1 first (everything else rides on the stream). Then 2 and 3, which make a
 9. **The reveal is client-side only**: 180 ms per node, 45 ms apart, a batch done within 600 ms, nothing under reduced motion; no per-node server events.
 10. **The MCP `generate_page` streams its draft to open editors**, reusing the existing draft layer.
 
+Added by the server hardening pass (2026-11-09, after four fresh reviews of the shipped slices):
+
+11. **The stream's access re-checks fail closed.** Once a re-check is due (the last one is older than 30 s, or one is running), every event waits behind it: `site:version`, `plan:update`, `agent:activity` and the `gen:*` draft events alike, so nothing reaches a stream whose access may be gone. A re-check that does not answer within 10 s, or that meets an auth-brain or OpenFGA outage, ends the stream without `auth:expired` and drops what it held; the editor reconnects, meets the guard (503 during an outage) and falls back to the guarded document route. A clear "no" still says `auth:expired`, and the editor stops. Before, an outage or a timeout let the held events go (fail open).
+12. **The live guard remembers a yes for at most 30 s**: the verified session by the SHA-256 of its cookie (never past the session's own expiry), and an allowed `editSite` by that hash plus the workspace the guard resolved from the verified session. A no or an outage is never remembered, and the host check, the company resolution and the scoped version read run on every request. The price is revocation latency: a signed-out session or a removed `editSite` is still accepted by the events and document routes for up to 30 s (a stream notices at its next re-check after that).
+13. **The document route keeps the serialized copy per (workspace, site, version)**, 64 bodies and 32 MiB at most, so every editor fetching the same new version after a write costs one load and one serialization. A rename (the one write that changes the copy without a new version), an erasure and a delete forget the site; a load that raced such a forget is not kept.
+14. **"Company" in the per-company bounds is the tenant group**, as the skeleton plans already had it: at most 200 live streams per company (of 1,000 per process) and 200 sites with agent presence per company (of 2,000), its own least recently touched site going first, never another company's.
+15. **A stream is cut off once 1 MiB waits unread for its browser** (4 MiB for the AI routes' streams), counted in bytes; the browser reconnects or polls. The heartbeat of the live stream is a named `ping` event with `{}` as data, so the editor can watch for a stream that went silent.
+16. **An MCP write tool's `agent:activity` start goes out only after its permission check passed** (`editSite` for `apply_batch`, `generate_page`, `announce_sections` and `clear_sections`, `publishSite` for `publish` and `rollback`); a refused call shows only its end and feed line. Reads report their start at once.
+
 Nothing here needs Marlin's input to start; the colour of the agent frame and the feed's place in the sidebar are visual calls he can change on the first browser check.
 
 ## 7. With more than one container
@@ -325,4 +334,5 @@ The bus is a process-local `EventEmitter`, the plans and the read-only feed line
 - **Events** go through Postgres `LISTEN`/`NOTIFY` on one channel per site (or one channel with the site id in the payload). Every replica listens and fans out to its own streams. Payloads stay small (ids and summaries, well under Postgres's 8,000-byte limit), which they already are by design. No new infrastructure: the app already talks to Postgres through Prisma.
 - **Plans and feed state** move to a small `site_live_plans` table with `expires_at`, read by `state` and swept by a periodic job; reads in the feed stay best-effort per replica, writes come from the audit table anyway.
 - **Streams need no sticky sessions**: any replica can serve any editor, since every replica receives every event.
+- **The guard memo and the document body cache** (decisions 12 and 13) stay per replica; the forget a rename, an erasure or a delete triggers then has to travel on the same channel as the events, so every replica drops its kept copy.
 - Nothing in the client changes.

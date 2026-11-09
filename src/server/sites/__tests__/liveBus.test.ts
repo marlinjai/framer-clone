@@ -25,14 +25,29 @@ describe('liveBus', () => {
   });
 
   it('counts stream slots per session, per site and per process, and a release is idempotent', () => {
-    const releases = Array.from({ length: LIVE_STREAM_LIMITS.perSession }, () => acquireStreamSlot('a', 's1')!);
-    expect(acquireStreamSlot('a', 's1')).toBeNull();
-    expect(acquireStreamSlot('b', 's1')).toBeNull(); // the session bound spans sites
+    const releases = Array.from({ length: LIVE_STREAM_LIMITS.perSession }, () => acquireStreamSlot('a', 's1', 'c1')!);
+    expect(acquireStreamSlot('a', 's1', 'c1')).toBeNull();
+    expect(acquireStreamSlot('b', 's1', 'c1')).toBeNull(); // the session bound spans sites
     releases[0]();
     releases[0]();
-    const again = acquireStreamSlot('a', 's1');
+    const again = acquireStreamSlot('a', 's1', 'c1');
     expect(again).not.toBeNull();
-    expect(acquireStreamSlot('a', 's1')).toBeNull();
+    expect(acquireStreamSlot('a', 's1', 'c1')).toBeNull();
+  });
+
+  it("bounds one company's share of the process, and another company still gets a slot", () => {
+    const { perCompany, perSession, perSite } = LIVE_STREAM_LIMITS;
+    const releases: Array<() => void> = [];
+    // Spread over sessions and sites so only the company bound is reached.
+    for (let i = 0; i < perCompany; i++) {
+      const slot = acquireStreamSlot(`site${Math.floor(i / perSite)}`, `s${Math.floor(i / perSession)}`, 'busy');
+      expect(slot).not.toBeNull();
+      releases.push(slot!);
+    }
+    expect(acquireStreamSlot('fresh-site', 'fresh-session', 'busy')).toBeNull();
+    expect(acquireStreamSlot('fresh-site', 'fresh-session', 'other')).not.toBeNull();
+    releases[0]();
+    expect(acquireStreamSlot('fresh-site', 'another-session', 'busy')).not.toBeNull();
   });
 });
 
@@ -55,5 +70,16 @@ describe('boundedWriteEvent', () => {
     expect(Object.keys(boundedWriteEvent({ origin: 'mcp', created: { [long]: 'n1' } }).created!)[0].length).toBeLessThanOrEqual(LIVE_LABEL_MAX);
     expect(capLiveText('  a\n  b  ')).toBe('a b');
     expect(boundedWriteEvent({ origin: 'editor', actor: { kind: 'user', label: '   ' } }).actor!.label).toBe('Someone');
+  });
+
+  it('strips bidirectional overrides and invisible characters from the actor label and the summary lines', () => {
+    const out = boundedWriteEvent({
+      origin: 'mcp',
+      actor: { kind: 'key', label: 'Bot\u202Egnp.exe\u200B' },
+      summary: ['Page \u2066Home\u2069 changed', '\u202E\u200B'],
+    });
+    expect(out.actor!.label).toBe('Bot gnp.exe');
+    expect(out.summary).toEqual(['Page Home changed']);
+    expect(boundedWriteEvent({ origin: 'mcp', actor: { kind: 'key', label: '\u202E' } }).actor!.label).toBe('Someone');
   });
 });

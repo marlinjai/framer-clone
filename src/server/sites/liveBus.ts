@@ -13,7 +13,9 @@ import 'server-only';
 // plan's section 7: Postgres LISTEN/NOTIFY), and its callers stay as they are.
 //
 // The bus also counts the open streams, for the bounds the route enforces: at
-// most 4 per session, 50 per site and 1,000 per process.
+// most 4 per session, 50 per site, 200 per company (its tenant group, so one
+// company's editors can never take the whole process's share from the others)
+// and 1,000 per process.
 //
 // Kept on globalThis so a development hot reload does not split publishers and
 // subscribers across two copies of this module.
@@ -22,12 +24,13 @@ import { EventEmitter } from 'node:events';
 
 export type LiveListener = (event: string, data: unknown) => void;
 
-export const LIVE_STREAM_LIMITS = { perSession: 4, perSite: 50, perProcess: 1000 } as const;
+export const LIVE_STREAM_LIMITS = { perSession: 4, perSite: 50, perCompany: 200, perProcess: 1000 } as const;
 
 interface BusState {
   emitter: EventEmitter;
   perSite: Map<string, number>;
   perSession: Map<string, number>;
+  perCompany: Map<string, number>;
   total: number;
 }
 
@@ -40,7 +43,7 @@ function state(): BusState {
     const emitter = new EventEmitter();
     // One listener per open stream; the per-process bound keeps this finite.
     emitter.setMaxListeners(0);
-    s = { emitter, perSite: new Map(), perSession: new Map(), total: 0 };
+    s = { emitter, perSite: new Map(), perSession: new Map(), perCompany: new Map(), total: 0 };
     g[KEY] = s;
   }
   return s;
@@ -67,31 +70,42 @@ export function subscribeSite(siteId: string, listener: LiveListener): () => voi
   };
 }
 
+function decrement(map: Map<string, number>, key: string): void {
+  const left = (map.get(key) ?? 1) - 1;
+  if (left > 0) map.set(key, left);
+  else map.delete(key);
+}
+
 /**
- * Take a stream slot for a session on a site. Answers the release (idempotent),
- * or null when a bound is reached (the route answers 429).
+ * Take a stream slot for a session of a company (its tenant group id, from the
+ * scope the route's guard verified) on a site. Answers the release
+ * (idempotent), or null when a bound is reached (the route answers 429).
  */
-export function acquireStreamSlot(siteId: string, sessionKey: string): (() => void) | null {
+export function acquireStreamSlot(siteId: string, sessionKey: string, companyKey: string): (() => void) | null {
   const s = state();
   const site = s.perSite.get(siteId) ?? 0;
   const session = s.perSession.get(sessionKey) ?? 0;
-  if (s.total >= LIVE_STREAM_LIMITS.perProcess || site >= LIVE_STREAM_LIMITS.perSite || session >= LIVE_STREAM_LIMITS.perSession) {
+  const company = s.perCompany.get(companyKey) ?? 0;
+  if (
+    s.total >= LIVE_STREAM_LIMITS.perProcess ||
+    site >= LIVE_STREAM_LIMITS.perSite ||
+    session >= LIVE_STREAM_LIMITS.perSession ||
+    company >= LIVE_STREAM_LIMITS.perCompany
+  ) {
     return null;
   }
   s.total += 1;
   s.perSite.set(siteId, site + 1);
   s.perSession.set(sessionKey, session + 1);
+  s.perCompany.set(companyKey, company + 1);
   let released = false;
   return () => {
     if (released) return;
     released = true;
     s.total -= 1;
-    const siteLeft = (s.perSite.get(siteId) ?? 1) - 1;
-    if (siteLeft > 0) s.perSite.set(siteId, siteLeft);
-    else s.perSite.delete(siteId);
-    const sessionLeft = (s.perSession.get(sessionKey) ?? 1) - 1;
-    if (sessionLeft > 0) s.perSession.set(sessionKey, sessionLeft);
-    else s.perSession.delete(sessionKey);
+    decrement(s.perSite, siteId);
+    decrement(s.perSession, sessionKey);
+    decrement(s.perCompany, companyKey);
   };
 }
 
@@ -101,5 +115,6 @@ export function resetLiveBusForTests(): void {
   s.emitter.removeAllListeners();
   s.perSite.clear();
   s.perSession.clear();
+  s.perCompany.clear();
   s.total = 0;
 }

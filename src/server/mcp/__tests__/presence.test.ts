@@ -258,6 +258,40 @@ describe('agent:activity from the MCP endpoint', () => {
     expect(end.nodeIds ?? []).not.toContain(created);
   });
 
+  it("reports a write's start only after its permission check passed: a refused write shows only its end and feed line", async () => {
+    // A viewer may read, never edit or publish.
+    const s = setup(verifiedKey({ workspaceRole: 'viewer' }));
+    const heard = listen('site-1');
+    await callTool(s, 'apply_batch', { siteId: 'site-1', expectedVersion: 3, ops: [{ op: 'updateText', nodeId: 'title', text: 'x' }] });
+    await callTool(s, 'publish', { siteId: 'site-1', expectedVersion: 3 });
+    const seen = activities(heard);
+    expect(seen.map((a) => [a.tool, a.phase])).toEqual([['apply_batch', 'end'], ['publish', 'end']]);
+    expect(seen.every((a) => a.outcome !== 'ok')).toBe(true);
+    // Neither is drawn as running for a newly opened editor, both are feed lines.
+    const snapshot = presenceSnapshot('site-1');
+    expect(snapshot.agents.every((a) => a.phase === 'end')).toBe(true);
+    expect(snapshot.feed.map((l) => l.tool)).toEqual(['publish', 'apply_batch']);
+    // Its reads still report a start at once.
+    heard.length = 0;
+    await callTool(s, 'get_site', { siteId: 'site-1' });
+    expect(activities(heard).map((a) => a.phase)).toEqual(['start', 'end']);
+  });
+
+  it('reports an allowed write with its start before the write commits and its end after', async () => {
+    const s = setup();
+    const heard = listen('site-1');
+    let startBeforeSave = false;
+    s.mock.saveProject.mockImplementationOnce(async (_scope: unknown, _project: unknown, options: Record<string, unknown>) => {
+      startBeforeSave = activities(heard).some((a) => a.phase === 'start' && a.tool === 'apply_batch');
+      s.state.version += 1;
+      (options.beforeAnnounce as ((v: number) => void) | undefined)?.(s.state.version);
+      return { version: s.state.version };
+    });
+    await callTool(s, 'apply_batch', { siteId: 'site-1', expectedVersion: 3, ops: [{ op: 'updateText', nodeId: 'title', text: 'x' }] });
+    expect(startBeforeSave).toBe(true);
+    expect(activities(heard).map((a) => a.phase)).toEqual(['start', 'end']);
+  });
+
   it('reports invalid arguments as failed', async () => {
     const s = setup();
     const heard = listen('site-1');

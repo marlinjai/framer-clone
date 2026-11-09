@@ -31,6 +31,12 @@ import 'server-only';
 // company's editors. Hits and misses are cached apart, so a flood of misses
 // never evicts another company's confirmed sites.
 //
+// A write tool's start is reported only once the call passed its permission
+// check (the caller's `can` answered yes for the action the tool needs, see
+// START_AFTER), so a key without the right paints no "working here" frame into
+// the editor for a call that is refused; its end (with the refusal as the
+// outcome and the feed line) still travels. A read reports its start at once.
+//
 // The call id travels into the write's audit row (`SiteOpsCaller.liveCallId`),
 // so a reloaded editor's feed line for a write has the same id as the line it
 // added live, and the two never both show.
@@ -49,6 +55,7 @@ import { liveAgentId } from '@/server/siteOps/audit';
 import { reportAgentActivity } from '@/server/sites/livePresence';
 import { sectionRefFor } from './livePlans';
 import type { ToolResult } from './tools';
+import type { SiteOpsAction } from '@/lib/siteOps/types';
 
 /** How long a site confirmed in a scope is trusted without asking the repository again. */
 export const SCOPE_CONFIRM_TTL_MS = 5 * 60_000;
@@ -64,6 +71,20 @@ const REPORT_KEYS_MAX = 5000;
 
 /** Tools whose successful answer means a write committed (and left an audit row). */
 const WRITE_TOOLS = new Set(['apply_batch', 'generate_page', 'publish', 'rollback']);
+
+/**
+ * The tools whose start waits for their permission check: the action the
+ * caller's `can` must allow before the start is reported. Every other tool
+ * that names a site is a read and reports its start at once.
+ */
+export const START_AFTER: Readonly<Record<string, SiteOpsAction>> = {
+  apply_batch: 'editSite',
+  generate_page: 'editSite',
+  announce_sections: 'editSite',
+  clear_sections: 'editSite',
+  publish: 'publishSite',
+  rollback: 'publishSite',
+};
 
 /** Lookups that found no site one key may cause per minute; beyond that it is not asked about new ids. */
 export const MISSES_PER_KEY = 20;
@@ -268,11 +289,22 @@ export interface PresenceCall {
 }
 
 /**
- * Run a tool call and report it on its site's stream: a start before, an end
- * after (also when the call throws). A call without a site, or naming a site
- * outside the key's scope, runs unreported.
+ * Told by the call's permission checks that `action` was allowed. The caller
+ * wraps its `can` with it (handler.ts), so the start of a write tool goes out
+ * only after the check it needs passed.
  */
-export async function withPresence(call: PresenceCall, run: (liveCallId?: string) => Promise<ToolResult>): Promise<ToolResult> {
+export type PermittedFn = (action: SiteOpsAction) => void;
+
+/**
+ * Run a tool call and report it on its site's stream: a start (before a read,
+ * after the permission check of a write, START_AFTER), an end after (also when
+ * the call throws). A call without a site, or naming a site outside the key's
+ * scope, runs unreported.
+ */
+export async function withPresence(
+  call: PresenceCall,
+  run: (liveCallId?: string, permitted?: PermittedFn) => Promise<ToolResult>,
+): Promise<ToolResult> {
   const siteId = siteIdOf(call.args);
   if (!siteId) return run();
   const agentId = liveAgentId(call.keyId);
@@ -291,18 +323,29 @@ export async function withPresence(call: PresenceCall, run: (liveCallId?: string
     tool: call.tool,
     ...(sectionRef ? { sectionRef } : {}),
   };
-  const start: AgentActivity = {
-    ...base,
-    phase: 'start',
-    ...(focus.pageId ? { pageId: focus.pageId } : {}),
-    ...(focus.nodeIds.length > 0 ? { nodeIds: focus.nodeIds } : {}),
-    at: new Date().toISOString(),
+  const company = call.scope.tenantGroupId;
+  let started = false;
+  const reportStart = () => {
+    if (started) return;
+    started = true;
+    const start: AgentActivity = {
+      ...base,
+      phase: 'start',
+      ...(focus.pageId ? { pageId: focus.pageId } : {}),
+      ...(focus.nodeIds.length > 0 ? { nodeIds: focus.nodeIds } : {}),
+      at: new Date().toISOString(),
+    };
+    reportAgentActivity(siteId, company, start);
   };
-  reportAgentActivity(siteId, start);
+  const needs = START_AFTER[call.tool];
+  if (!needs) reportStart();
+  const permitted: PermittedFn = (action) => {
+    if (action === needs) reportStart();
+  };
 
   let result: ToolResult | undefined;
   try {
-    result = await run(base.callId);
+    result = await run(base.callId, needs ? permitted : undefined);
     return result;
   } finally {
     const answered = answerFocus(result, call.args);
@@ -340,6 +383,8 @@ export async function withPresence(call: PresenceCall, run: (liveCallId?: string
           ...(changes !== undefined ? { changes } : {}),
           at: end.at,
         };
-    reportAgentActivity(siteId, end, line);
+    // Nothing after the end may draw the frame again.
+    started = true;
+    reportAgentActivity(siteId, company, end, line);
   }
 }

@@ -415,11 +415,18 @@ export function sanitizeLiveLabel(text: unknown): string | undefined {
 export function boundedWriteEvent(event: SiteWriteEvent): SiteWriteEvent {
   const out: SiteWriteEvent = { origin: event.origin };
   if (event.originTab) out.originTab = event.originTab;
-  if (event.actor) out.actor = { kind: event.actor.kind, label: capLiveText(event.actor.label) || 'Someone' };
+  // The actor's label and the summary lines are names someone chose (a key's, a user's, a page's):
+  // stripped of control and bidirectional characters like any other label, so none can reorder the line.
+  if (event.actor) out.actor = { kind: event.actor.kind, label: sanitizeLiveLabel(event.actor.label) ?? 'Someone' };
   if (event.ops) out.ops = event.ops.slice(0, LIVE_LIST_MAX);
   // The keys are refs an agent chose: capped like any other text that travels.
   if (event.created) out.created = Object.fromEntries(Object.entries(event.created).slice(0, LIVE_LIST_MAX).map(([ref, id]) => [capLiveText(ref), id]));
-  if (event.summary) out.summary = event.summary.slice(0, LIVE_LIST_MAX).map(capLiveText);
+  if (event.summary) {
+    out.summary = event.summary
+      .slice(0, LIVE_LIST_MAX)
+      .map((line) => sanitizeLiveLabel(line))
+      .filter((line): line is string => line !== undefined);
+  }
   return out;
 }
 
