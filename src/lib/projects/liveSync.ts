@@ -66,19 +66,15 @@
 //
 // While the person types, edits text on the canvas, drags or resizes
 // (src/lib/live/editingInProgress.ts), a newer copy is held without the dialog:
-// adopting it would replace what is under the cursor. Autosave waits meanwhile.
+// adopting it would replace what is under the cursor. Autosave waits meanwhile
+// (a save on the old version would be refused, opening the dialog mid-gesture).
 // It is looked at again once the editing settled: adopted when the copy is still
-// saved; when the settled edit only replaced values of nodes the agent left
-// alone, the edit is replayed on top of the copy (rebaseEdit); else the dialog
-// opens as for any unsaved work.
+// saved, else the dialog opens as for any unsaved work. (Putting a settled edit
+// on top of the agent's copy instead is its own follow-up, ROADMAP.md.)
 
 import { runInAction } from 'mobx';
 import { isEditing, isInteracting, onEditingSettled } from '@/lib/live/editingInProgress';
-import { applyPatch, getSnapshot, isAlive, resolvePath, type IJsonPatch } from 'mobx-state-tree';
-import ProjectModel from '@/models/ProjectModel';
-import { COMPONENT_LIMITS, serializedBytes } from '@/lib/components/placement';
-import { getHistoryStore } from '@/stores/RootStore';
-import { shareUnchanged } from './structuralSharing';
+import { getSnapshot, isAlive } from 'mobx-state-tree';
 import type { RootStoreType } from '@/stores/RootStore';
 import type { ProjectSnapshotOut } from '@/models/ProjectModel';
 import {
@@ -191,8 +187,6 @@ export interface HeldVersion {
   event?: SiteVersionEvent;
   /** Held only because the person is editing (no dialog): looked at again once the editing settled. */
   whileEditing?: boolean;
-  /** Held while the save of a replayed edit is out (no dialog yet): its answer decides; a refusal replays the edit again on the newer copy, as often as the agent keeps writing first. */
-  afterReplay?: boolean;
 }
 
 /**
@@ -274,9 +268,6 @@ export class LiveSync {
   private disposeVisibility: (() => void) | undefined;
   private disposeSettled: (() => void) | undefined;
   private disposeEditing: (() => void) | undefined;
-  private editMark: HistoryMark | undefined;
-  /** Where the history stood before a replayed edit, until its save settled. */
-  private replayMark: HistoryMark | undefined;
   private fetchRetryTimer: ReturnType<typeof setTimeout> | undefined;
   private fetchRetries = 0;
   private watchdogTimer: ReturnType<typeof setTimeout> | undefined;
@@ -284,8 +275,9 @@ export class LiveSync {
   private heartbeatSeen = false;
   /** Streams refused in a row (the retry wait doubles). */
   private streamRefusals = 0;
-  /** Streams that ended in a row without opening again (the reconnect wait doubles). */
+  /** Streams that ended in a row without staying up (the reconnect wait doubles). */
   private reconnects = 0;
+  private stableTimer: ReturnType<typeof setTimeout> | undefined;
   private wasLiveValue = false;
   private draftLostValue = false;
   /** The newest version announced by another writer, with its event. */
@@ -345,116 +337,10 @@ export class LiveSync {
   private setHeld(held: HeldVersion | undefined) {
     if (this.held === held) return;
     this.held = held;
-    if (held?.whileEditing) {
-      this.waitForEditing();
-      this.markEdit();
-    } else {
-      this.stopWaitingForEditing();
-      if (!held) this.editMark = undefined;
-    }
+    if (held?.whileEditing) this.waitForEditing();
+    else this.stopWaitingForEditing();
     existingAutosave(this.projectId)?.deferWhileLiveHeld(!!held?.whileEditing);
     this.notify();
-  }
-
-  /**
-   * Where the undo history stood when a copy was first held for the person's
-   * editing: the edit that settles is the one entry after it, which rebaseEdit
-   * can put on top of the agent's copy instead of opening the dialog.
-   */
-  private markEdit() {
-    if (this.editMark) return;
-    this.editMark = historyMark();
-  }
-
-  /**
-   * The person's settled edit, made while the agent's copy was held, put on top
-   * of that copy: undo it (the one history entry since `mark`), adopt the copy,
-   * apply the edit again as one step under its own name, and save at once. Only
-   * for edits that replace values of nodes (text, props, styles, a resize, also
-   * the same value several times, as a resize does) on nodes the copy still has,
-   * whose first edited value the agent left as it was. It is tried on a scratch
-   * copy of the agent's version first (also the size limit of a reusable
-   * component), so nothing is undone unless the replay will apply. Anything else
-   * (a move, a node or page the agent removed, the same value edited on both
-   * sides, a page or site setting) answers false, and the dialog asks as before.
-   */
-  private rebaseEdit(held: HeldVersion, mark: HistoryMark | undefined): boolean {
-    const history = getHistoryStore();
-    const project = this.rootStore.projectStore.getProject(this.projectId);
-    if (!mark || !history || !project || !isAlive(project)) return false;
-    // Exactly one new entry, on top (no redo tail): the person's edit, and nothing
-    // else. Compared by entry, not by count: a redo tail the edit dropped, or the
-    // oldest entry trimmed at the history's limit, changes the counts, not this.
-    if (history.undoIdx !== history.history.length || history.undoIdx < 1) return false;
-    const below = history.history[history.undoIdx - 2]?.id;
-    if (below !== mark.topId) return false;
-    const entry = history.history[history.undoIdx - 1];
-    if (entry.id === mark.topId) return false;
-    if (entry.remote) return false;
-    // Recorded again under the entry's own action name, so the history names it as before.
-    const label = entry.actionName;
-    const edits = replayableEdits(this.rootStore.projectStore, entry.patches, entry.inversePatches, nodesOf(held.snapshot));
-    if (!edits) return false;
-    // A dry run on the agent's version: the values must apply, and no reusable component may outgrow its limit.
-    if (!replaysCleanly(held.snapshot, edits)) return false;
-    history.undo();
-    if (!isSaved(this.projectId, getSnapshot(project) as unknown as ProjectContent)) {
-      history.redo();
-      return false;
-    }
-    if (!this.adopt(held.version, held.snapshot, held.label, undefined, false)) {
-      history.redo();
-      return false;
-    }
-    const adopted = this.rootStore.projectStore.getProject(this.projectId);
-    if (!adopted) {
-      this.editLost(new Error('the project left the store during the replay'));
-      return true;
-    }
-    const targets = edits.map((edit) => ({ edit, node: findNode(adopted, edit.nodeId) }));
-    const applied: Array<{ node: object; field: string; before: unknown }> = [];
-    const entriesBefore = history.history.length;
-    try {
-      if (targets.some((t) => !t.node)) throw new Error('a node of the edit is not in the adopted copy');
-      // One undo step, under the edit's own name.
-      history.applyRemote(
-        label,
-        () =>
-          runInAction(() => {
-            for (const { edit, node } of targets) {
-              const before = (node as Record<string, unknown>)[edit.field];
-              replayApply(node!, edit.field, edit.value);
-              applied.push({ node: node!, field: edit.field, before });
-            }
-          }),
-        false,
-      );
-    } catch (err) {
-      // Half an edit is never left (nor saved, nor an undo step): back to the adopted copy as it came, and the person is told.
-      history.runUntracked(() =>
-        runInAction(() => {
-          for (const { node, field, before } of applied.reverse()) applyPatch(node, { op: 'replace', path: `/${field}`, value: before });
-        }),
-      );
-      while (history.history.length > entriesBefore) history.forgetLastEntry();
-      this.editLost(err);
-      return true;
-    }
-    // Until the merged copy is saved: an agent write meanwhile can be met by another replay (see take).
-    this.replayMark = { topId: history.history[history.undoIdx - 2]?.id };
-    void existingAutosave(this.projectId)?.saveNow();
-    return true;
-  }
-
-  /** The person's edit could not be kept on top of the newer version: logged, and the person is told (a state preview ends so the notice can show). */
-  private editLost(err: unknown) {
-    console.error('[live] an edit could not be put on top of the newer version:', err);
-    const ui = this.rootStore.editorUI;
-    if (ui.editorNotice?.kind === 'previewState') ui.clearPreviewState();
-    ui.setEditorNotice({
-      kind: 'refused',
-      message: 'Your last edit could not be kept on top of the newer version of the site and was taken back. Please make it again.',
-    });
   }
 
   private notify() {
@@ -490,8 +376,6 @@ export class LiveSync {
     this.disposeSettled = onWritesSettled((projectId) => {
       if (projectId !== this.projectId) return;
       this.retake();
-      // The merged copy's save settled with nothing held for it: no further replay can follow it.
-      if (!this.held?.afterReplay && !hasWriteInFlight(this.projectId)) this.replayMark = undefined;
     });
     this.setPhase('connecting');
     this.openStream();
@@ -509,8 +393,6 @@ export class LiveSync {
     this.streamRefusals = 0;
     this.reconnects = 0;
     this.stopWaitingForEditing();
-    this.editMark = undefined;
-    this.replayMark = undefined;
     this.disposeVisibility?.();
     this.disposeVisibility = undefined;
     this.disposeSettled?.();
@@ -520,6 +402,8 @@ export class LiveSync {
     this.generation.reset();
     this.wanted = undefined;
     this.held = undefined;
+    // Autosave outlives this sync: never leave it waiting for a hold that is gone.
+    existingAutosave(this.projectId)?.deferWhileLiveHeld(false);
     this.wasLiveValue = false;
     this.draftLostValue = false;
     this.setPhase('stopped');
@@ -549,7 +433,14 @@ export class LiveSync {
       if (this.stream !== stream) return;
       this.clearPoll();
       this.streamRefusals = 0;
-      this.reconnects = 0;
+      // The reconnect back-off starts over only once this stream proved it stays
+      // (a heartbeat long, or its first ping): a server that accepts and ends
+      // streams at once keeps every tab backing off instead of returning every 2 s.
+      this.clearStable();
+      this.stableTimer = setTimeout(() => {
+        this.stableTimer = undefined;
+        if (this.stream === stream) this.reconnects = 0;
+      }, LIVE_HEARTBEAT_MS);
       this.setPhase('live');
     };
     stream.onerror = () => {
@@ -572,6 +463,8 @@ export class LiveSync {
     on(LIVE_PING_EVENT, () => {
       // The server sends heartbeats: from now on its silence is a stuck stream.
       this.heartbeatSeen = true;
+      this.clearStable();
+      this.reconnects = 0;
       this.armWatchdog();
     });
     on(LIVE_EVENTS.state, (e) => {
@@ -618,8 +511,14 @@ export class LiveSync {
     });
   }
 
+  private clearStable() {
+    if (this.stableTimer) clearTimeout(this.stableTimer);
+    this.stableTimer = undefined;
+  }
+
   private closeStream() {
     this.clearWatchdog();
+    this.clearStable();
     const stream = this.stream;
     this.stream = null;
     if (!stream) return;
@@ -775,9 +674,6 @@ export class LiveSync {
     if (known !== undefined && version <= known) return;
     if (this.held && version <= this.held.version) return;
     if (!this.wanted || version > this.wanted.version) this.wanted = { version, event };
-    // The person edits as the newer version is announced: where the history stands
-    // now marks their edit, should it settle before the copy has arrived.
-    if (isEditing(this.rootStore) && !this.editMark) this.editMark = historyMark();
     void this.fetchNewest();
   }
 
@@ -848,22 +744,8 @@ export class LiveSync {
       this.setHeld(undefined);
       return;
     }
-    // Still editing (a write of this tab settled meanwhile, a refused merged save
-    // came back): never adopt or replay under the cursor; look again once it settled.
-    if (isEditing(this.rootStore)) {
-      if (!held.whileEditing) {
-        if (held.afterReplay) this.editMark = this.replayMark;
-        this.replayMark = undefined;
-        this.setHeld({ ...held, afterReplay: undefined, whileEditing: true });
-      }
-      return;
-    }
-    // A settled edit made while the agent's copy waited goes on top of it, when it can.
-    const project = this.rootStore.projectStore.getProject(this.projectId);
-    const unsaved = !!project && isAlive(project) && !isSaved(this.projectId, getSnapshot(project) as unknown as ProjectContent);
-    const mark = held.afterReplay ? this.replayMark : held.whileEditing ? this.editMark : undefined;
-    if (held.afterReplay) this.replayMark = undefined;
-    if (mark && unsaved && !hasWriteInFlight(this.projectId) && this.rebaseEdit(held, mark)) return;
+    // Still editing (a write of this tab settled meanwhile): never adopt under the cursor; look again once it settled.
+    if (held.whileEditing && isEditing(this.rootStore)) return;
     this.setHeld(undefined);
     this.take({ version: held.version, snapshot: held.snapshot }, held.event, held.label);
   }
@@ -904,19 +786,7 @@ export class LiveSync {
       this.setHeld({ ...keep, whileEditing: true });
       return;
     }
-    if (!clean && this.editMark && !hasWriteInFlight(this.projectId) && autosavePhase !== 'conflict') {
-      // An edit that settled while this copy was being fetched (marked when it was announced).
-      const mark = this.editMark;
-      this.editMark = undefined;
-      if (this.rebaseEdit(keep, mark)) return;
-    }
     if (!clean) {
-      if (this.replayMark && hasWriteInFlight(this.projectId)) {
-        // The save of a replayed edit is out: it may land first (then this copy is
-        // adopted after it) or be refused (then the edit is replayed once more).
-        this.setHeld({ ...keep, afterReplay: true });
-        return;
-      }
       this.setHeld(keep);
       autosave?.noteChangedElsewhere(body.version);
       return;
@@ -1041,147 +911,6 @@ export class LiveSync {
     // The person asked for it: it appears at once, never as a reveal.
     return this.adopt(held.version, held.snapshot, held.label, undefined, false);
   }
-}
-
-/** How a replayed edit writes one value (tests make it fail to prove the rollback). */
-let replayApply = (node: object, field: string, value: unknown): void => {
-  applyPatch(node, { op: 'replace', path: `/${field}`, value });
-};
-const defaultReplayApply = replayApply;
-
-/** Tests only: replace how a replayed edit writes one value; undefined restores it. */
-export function setReplayApplyForTests(apply: ((node: object, field: string, value: unknown) => void) | undefined): void {
-  replayApply = apply ?? defaultReplayApply;
-}
-
-/**
- * The person's history entry as values of nodes to set again, by node id and
- * field: the first old value (compared with the agent's copy) and the last new
- * one (what the edit left). Null when anything in it is not such a value, or a
- * node is not in the agent's copy, or the agent changed the same value.
- */
-function replayableEdits(
-  root: object,
-  patches: readonly IJsonPatch[],
-  inversePatches: readonly IJsonPatch[],
-  agentNodes: Map<string, Record<string, unknown>>,
-): Array<{ nodeId: string; field: string; value: unknown }> | null {
-  const byKey = new Map<string, { nodeId: string; field: string; before: unknown; value: unknown }>();
-  for (let i = 0; i < patches.length; i++) {
-    const patch = patches[i];
-    const parts = patch.path.split('/');
-    const field = parts.pop() ?? '';
-    // A page's own timestamps move with any edit on it: not part of the edit.
-    if (field === 'updatedAt' || field === 'createdAt') continue;
-    if (patch.op !== 'replace' || !field) return null;
-    let node: unknown;
-    try {
-      node = resolvePath(root, parts.join('/'));
-    } catch {
-      return null;
-    }
-    const nodeId = (node as { id?: unknown } | undefined)?.id;
-    if (typeof nodeId !== 'string' || !node || typeof node !== 'object' || !('props' in node) || !('componentType' in node)) return null;
-    const key = `${nodeId}\u0000${field}`;
-    const known = byKey.get(key);
-    if (known) known.value = patch.value;
-    else byKey.set(key, { nodeId, field, before: inversePatches[i]?.value, value: patch.value });
-  }
-  const edits = [...byKey.values()];
-  if (edits.length === 0) return null;
-  for (const edit of edits) {
-    const agentNode = agentNodes.get(edit.nodeId);
-    if (!agentNode) return null;
-    const agentValue = agentNode[edit.field];
-    // The agent changed the same value: a real conflict, the person decides.
-    const same = edit.before === undefined ? agentValue === undefined : shareUnchanged(edit.before, agentValue) === edit.before;
-    if (!same) return null;
-  }
-  return edits.map(({ nodeId, field, value }) => ({ nodeId, field, value }));
-}
-
-/** The edit applied to a scratch copy of the agent's version: true when every value applies and no reusable component outgrows its limit. */
-function replaysCleanly(snapshot: ProjectSnapshotOut, edits: Array<{ nodeId: string; field: string; value: unknown }>): boolean {
-  try {
-    const scratch = ProjectModel.create(snapshot);
-    // The reusable components the edit touches, with their size before it (the model's own rule: one already too big may stay so, never grow).
-    // A definition over the limit never loads (parseComponents refuses it on every path into the model), so this only ever meets growth past it.
-    const touched = new Map<string, number>();
-    for (const [id, definition] of scratch.components) {
-      const ids = nodesOf({ pages: { p: getSnapshot(definition.page) } } as unknown as ProjectSnapshotOut);
-      if (edits.some((edit) => ids.has(edit.nodeId))) touched.set(id, serializedBytes(getSnapshot(definition)));
-    }
-    for (const edit of edits) {
-      const node = findNode(scratch, edit.nodeId);
-      if (!node) return false;
-      applyPatch(node, { op: 'replace', path: `/${edit.field}`, value: edit.value });
-    }
-    for (const [id, before] of touched) {
-      const definition = scratch.components.get(id);
-      const after = definition ? serializedBytes(getSnapshot(definition)) : 0;
-      if (after > COMPONENT_LIMITS.definitionBytes && after > before) return false;
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Where the undo history stands: the id of its top entry (undefined when empty). */
-interface HistoryMark {
-  topId: string | undefined;
-}
-
-function historyMark(): HistoryMark | undefined {
-  const history = getHistoryStore();
-  if (!history) return undefined;
-  return { topId: history.history[history.undoIdx - 1]?.id };
-}
-
-/** Every node of a snapshot's pages and components by id. */
-function nodesOf(snapshot: ProjectSnapshotOut): Map<string, Record<string, unknown>> {
-  const out = new Map<string, Record<string, unknown>>();
-  const visit = (node: unknown) => {
-    if (!node || typeof node !== 'object') return;
-    const n = node as { id?: unknown; children?: unknown };
-    if (typeof n.id === 'string') out.set(n.id, node as Record<string, unknown>);
-    if (Array.isArray(n.children)) n.children.forEach(visit);
-  };
-  const pages = [
-    ...Object.values((snapshot.pages ?? {}) as Record<string, unknown>),
-    ...Object.values((snapshot.components ?? {}) as Record<string, { page?: unknown }>).map((d) => d?.page),
-  ] as Array<{ appComponentTree?: unknown; canvasNodes?: Record<string, unknown> } | undefined>;
-  for (const page of pages) {
-    visit(page?.appComponentTree);
-    for (const node of Object.values(page?.canvasNodes ?? {})) visit(node);
-  }
-  return out;
-}
-
-/** A node of the open project by id (in any page or component). */
-function findNode(project: unknown, id: string): object | undefined {
-  const pages = [
-    ...((project as { pagesArray?: PageModelType[] }).pagesArray ?? []),
-    ...Array.from(((project as { components?: Map<string, { page: PageModelType }> }).components ?? new Map()).values()).map((d) => d.page),
-  ];
-  const visit = (node: { id: string; children?: unknown[] } | undefined): object | undefined => {
-    if (!node) return undefined;
-    if (node.id === id) return node;
-    for (const child of (node.children ?? []) as Array<{ id: string; children?: unknown[] }>) {
-      const found = visit(child);
-      if (found) return found;
-    }
-    return undefined;
-  };
-  for (const page of pages) {
-    const found = visit(page.appComponentTree as never);
-    if (found) return found;
-    for (const node of page.canvasNodes.values()) {
-      const inCanvas = visit(node as never);
-      if (inCanvas) return inCanvas;
-    }
-  }
-  return undefined;
 }
 
 /** Resolves true once no write of this tab is out for the project, false after `ms`. */

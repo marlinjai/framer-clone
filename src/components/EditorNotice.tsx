@@ -44,10 +44,13 @@ const EditorNotice = observer(() => {
           {notice.kind === 'newPage' && notice.pageId ? (
             <button
               type="button"
+              aria-label={`Open the page ${editorUI.currentProject?.getPage(notice.pageId)?.metadata.title ?? ''}`.trim()}
               onClick={() => {
                 const page = editorUI.currentProject?.getPage(notice.pageId!);
                 if (page) editorUI.setCurrentPage(page);
                 editorUI.setEditorNotice(undefined);
+                // The button goes with the notice: the focus moves to the page's row in the Pages panel, when it shows.
+                requestAnimationFrame(() => document.querySelector<HTMLElement>('button[aria-current="page"]')?.focus());
               }}
               className="shrink-0 rounded border border-amber-400 px-2 py-0.5 font-medium hover:bg-amber-100"
             >

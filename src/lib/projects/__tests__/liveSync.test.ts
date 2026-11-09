@@ -12,7 +12,7 @@
 //   4. re-entry: after auth:expired nothing reconnects until the tab is shown
 //      and one check passes; a project gone stops following.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { applyPatch, getSnapshot } from 'mobx-state-tree';
+import { getSnapshot } from 'mobx-state-tree';
 import { createRootStore, getHistoryStore, type RootStoreType } from '@/stores/RootStore';
 import ProjectModel, { type ProjectModelType, type ProjectSnapshotOut } from '@/models/ProjectModel';
 import { applyOperations } from '@/lib/siteOps/applyOps';
@@ -25,6 +25,7 @@ import {
   heldWriter,
   LIVE_FETCH_RETRY_MS,
   LIVE_RECONNECT_MS,
+  LIVE_HEARTBEAT_MS,
   LIVE_WATCHDOG_MS,
   LOAD_NEWER_WRITE_WAIT_MS,
   pagesRemovedBy,
@@ -36,7 +37,6 @@ import {
   revealsOnAdoption,
   liveSyncFor,
   setLiveSyncDepsForTests,
-  setReplayApplyForTests,
   startLiveSync,
   type DocumentAnswer,
   type LiveEventSource,
@@ -1397,332 +1397,27 @@ describe('liveSync: an agent writes while the person types (F1)', () => {
   });
 });
 
-describe('liveSync: a settled edit goes on top of the agent\'s copy (review of PR #353)', () => {
-  const homeChild = (i: number) => project().getPage(homeId())!.appComponentTree.children[i] as unknown as { id: string; setTextContent(text: string): void; props: { children?: unknown } };
-
-  it('typing committed on a node the agent left alone: no dialog, both changes kept, saved on the agent\'s version', async () => {
-    start();
-    await agentWrites('first');
-    const node = homeChild(0);
-    const draft = openDraft(() => node.setTextContent('typed by the person'));
-    await agentWrites('second'); // held while the person types
-    expect(knownServerVersion(SITE)).toBe(2);
-    draft.commitAndClose();
-    await settle();
-    expect(autosaveFor(SITE).getState().phase).not.toBe('conflict');
-    expect(JSON.stringify(working())).toContain('typed by the person');
-    expect(JSON.stringify(working())).toContain('second');
-    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
-    // One save, based on the agent's version 3; the server is at 4 with both changes.
-    expect(saves.map((save) => save.expectedVersion)).toEqual([3]);
-    expect(knownServerVersion(SITE)).toBe(4);
-    expect(JSON.stringify(server.snapshot)).toContain('typed by the person');
-    expect(JSON.stringify(server.snapshot)).toContain('second');
-    // Undo takes the person's edit back, then the agent's write: two steps, in that order.
-    getHistoryStore()!.undo();
-    expect(JSON.stringify(working())).not.toContain('typed by the person');
-    expect(JSON.stringify(working())).toContain('second');
-  });
-
-  it('the merged copy is saved at once on the agent\'s version; another agent write right after it is adopted, no dialog', async () => {
-    start();
-    await agentWrites('first');
-    const node = homeChild(0);
-    const draft = openDraft(() => node.setTextContent('typed by the person'));
-    await agentWrites('second');
-    draft.commitAndClose();
-    await settle();
-    // Saved without waiting for the debounce, on version 3 (the agent's), never on 2.
-    expect(saves.map((save) => save.expectedVersion)).toEqual([3]);
-    expect(knownServerVersion(SITE)).toBe(4);
-    await agentWrites('third');
-    expect(autosaveFor(SITE).getState().phase).not.toBe('conflict');
-    expect(knownServerVersion(SITE)).toBe(5);
-    const text = JSON.stringify(working());
-    for (const part of ['typed by the person', 'second', 'third']) expect(text).toContain(part);
-  });
-
-  it('a replay that fails on its second node is taken back whole: the agent\'s copy exactly, nothing saved, a notice, no half step', async () => {
-    start();
-    await agentWrites('one');
-    await agentWrites('two');
-    const [a, b] = [homeChild(0), homeChild(1)];
-    // One edit of two nodes, one undo step (as a gesture batches it).
-    const draft = openDraft(() => {
-      const history = getHistoryStore()!;
-      history.startBatch('Edit');
-      a.setTextContent('person A');
-      b.setTextContent('person B');
-      history.commitBatch();
-    });
-    await agentWrites('three');
-    let calls = 0;
-    setReplayApplyForTests((node, field, value) => {
-      calls++;
-      if (calls === 2) throw new Error('injected');
-      // The real write for the first node.
-      applyPatch(node, { op: 'replace', path: `/${field}`, value });
-    });
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const historyBefore = getHistoryStore()!.history.length;
-    try {
-      draft.commitAndClose();
-      await settle();
-    } finally {
-      setReplayApplyForTests(undefined);
-    }
-    expect(calls).toBe(2);
-    expect(error).toHaveBeenCalled();
-    // Exactly the agent's copy: neither person edit kept.
-    expect(working()).toEqual(server.snapshot);
-    expect(knownServerVersion(SITE)).toBe(server.version);
-    // The person's step gave way to the held write's adoption: exactly one new step, the agent's, and no half step of the replay.
-    const history = getHistoryStore()!;
-    expect(history.history.length).toBe(historyBefore + 1);
-    expect(history.undoIdx).toBe(history.history.length);
-    expect(history.canRedo).toBe(false);
-    expect(history.labelFor(history.history[history.history.length - 1])).toContain('Claude');
-    expect(store.editorUI.editorNotice).toMatchObject({ kind: 'refused' });
-    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS * 2);
-    expect(saves).toEqual([]);
-    expect(autosaveFor(SITE).getState().phase).toBe('saved');
-  });
-
-  it('a resize writing on every move, with the agent saving mid-gesture: no dialog under the cursor, the resize replayed on top', async () => {
-    start();
-    await agentWrites('one');
-    await agentWrites('two');
-    const node = homeChild(0);
-    const history = getHistoryStore()!;
-    store.editorUI.startResize({} as never);
-    history.startBatch('Resize');
-    node.setTextContent('move 1'); // the copy differs from the saved one from the first move on
-    await agentWrites('during the gesture');
-    expect(autosaveFor(SITE).getState().phase).not.toBe('conflict');
-    expect(liveSyncFor(SITE)?.heldVersion).toMatchObject({ whileEditing: true });
-    node.setTextContent('move 2'); // the same value written again
-    node.setTextContent('final size');
-    history.commitBatch();
-    store.editorUI.endResize();
-    await settle();
-    expect(autosaveFor(SITE).getState().phase).not.toBe('conflict');
-    const text = JSON.stringify(working());
-    expect(text).toContain('final size');
-    expect(text).toContain('during the gesture');
-    expect(text).not.toContain('move 1');
-  });
-
-  it('an edit of two nodes is replayed as one undo step under its own name; the next undo takes back the agent\'s write', async () => {
-    start();
-    await agentWrites('one');
-    await agentWrites('two');
-    const [a, b] = [homeChild(0), homeChild(1)];
-    const history = getHistoryStore()!;
-    const draft = openDraft(() => {
-      history.startBatch('Edit text');
-      a.setTextContent('person A');
-      b.setTextContent('person B');
-      history.commitBatch();
-    });
-    await agentWrites('three');
-    draft.commitAndClose();
-    await settle();
-    const last = history.history[history.history.length - 1];
-    expect(history.labelFor(last)).toContain('Edit text');
-    expect(last.remote).toBe(false);
-    history.undo();
-    expect(JSON.stringify(working())).not.toContain('person A');
-    expect(JSON.stringify(working())).not.toContain('person B');
-    expect(JSON.stringify(working())).toContain('three');
-    history.undo();
-    expect(JSON.stringify(working())).not.toContain('three');
-  });
-
-  it('still editing when the look again comes (one edit committed, the next draft already open): nothing replayed or adopted under the cursor', async () => {
-    start();
-    await agentWrites('first');
-    const node = homeChild(0);
-    const first = openDraft(() => node.setTextContent('first edit'));
-    await agentWrites('agent');
-    // The first edit commits and the person is already typing the next one, in the same moment.
-    first.commitAndClose();
-    const second = openDraft();
-    noteWriteInFlight(SITE, true);
-    noteWriteInFlight(SITE, false); // a write of this tab settling asks for a look too
-    await settle();
-    expect(knownServerVersion(SITE)).toBe(2);
-    expect(liveSyncFor(SITE)?.heldVersion).toMatchObject({ whileEditing: true });
-    expect(JSON.stringify(working())).not.toContain('"agent"');
-    second.cancel();
-    await settle();
-    // Settled now: the first edit goes on top of the agent's copy.
-    expect(autosaveFor(SITE).getState().phase).not.toBe('conflict');
-    expect(JSON.stringify(working())).toContain('first edit');
-    expect(knownServerVersion(SITE)).toBeGreaterThanOrEqual(3);
-  });
-
-  it('the merged save refused because the agent wrote again first: the edit is replayed once more, no dialog', async () => {
-    start();
-    await agentWrites('first');
-    const node = homeChild(0);
-    let gate: (() => void) | undefined;
-    resetAutosaveForTests({
-      write: async (snapshot, expectedVersion): Promise<ProjectWriteResult> => {
-        await new Promise<void>((resolve) => {
-          gate = resolve;
-        });
-        saves.push({ expectedVersion, snapshot: snapshot as ProjectSnapshotOut });
-        if (expectedVersion !== server.version) return { kind: 'conflict', currentVersion: server.version };
-        server = { version: server.version + 1, snapshot: snapshot as ProjectSnapshotOut };
-        return { kind: 'ok', payload: {}, version: server.version };
-      },
-    });
-    autosaveFor(SITE).attach(project());
-    const draft = openDraft(() => node.setTextContent('typed by the person'));
-    await agentWrites('second');
-    draft.commitAndClose();
-    await settle(); // replayed on 3, its save is out
-    const opened: boolean[] = [];
-    const watch = setInterval(() => opened.push(autosaveFor(SITE).getState().phase === 'conflict'), 1);
-    await agentWrites('third'); // lands first: the save will be refused
-    expect(autosaveFor(SITE).getState().phase).not.toBe('conflict');
-    gate!();
-    await settle();
-    await settle();
-    // Refused on 3, replayed on 4, saved there.
-    gate?.();
-    await settle();
-    await settle();
-    expect(saves.map((save) => save.expectedVersion)).toEqual([3, 4]);
-    expect(autosaveFor(SITE).getState().phase).toBe('saved');
-    clearInterval(watch);
-    // The refusal was met by the replay in the same moment: the dialog never stood open in between.
-    expect(autosaveFor(SITE).getState()).not.toMatchObject({ dialogOpen: true });
-    const text = JSON.stringify(server.snapshot);
-    for (const part of ['typed by the person', 'second', 'third']) expect(text).toContain(part);
-  });
-
-  it('a replay that would push a reusable component over its size limit is never tried: the dialog asks, nothing undone', async () => {
-    type TextNode = { id: string; props: { children?: unknown }; children?: TextNode[]; setTextContent(t: string): void };
-    /** The node of a component definition whose text is `text`. */
-    const inDefinition = (m: ProjectModelType, text: string): TextNode => {
-      const visit = (node: TextNode): TextNode | undefined =>
-        node.props?.children === text ? node : (node.children ?? []).map(visit).find(Boolean);
-      for (const def of m.components.values()) {
-        const found = visit((def as unknown as { page: { appComponentTree: TextNode } }).page.appComponentTree);
-        if (found) return found;
-      }
-      throw new Error(`no node with ${text}`);
-    };
-    start();
-    // A component of two text nodes, saved and adopted.
-    await serverWrites(async (m) => {
-      const home = m.pagesArray.find((page) => page.slug === '')!;
-      const outcome = await applyOperations(m, [{ op: 'insertNodes', pageId: home.id, nodes: [{ type: 'div', children: [{ type: 'p', props: { children: 'A' } }, { type: 'p', props: { children: 'B' } }] }] }]);
-      if (!outcome.ok) throw new Error('refused');
-      const made = m.createComponentFromSelection(home.id, [(home.appComponentTree.children[0] as { id: string }).id], 'Block');
-      if (!made.ok) throw new Error('component');
-    });
-    const a = inDefinition(project(), 'A');
-    const big = 'x'.repeat(150 * 1024);
-    // The agent grows B, the person grows A: each fine alone, too big together.
-    const draft = openDraft(() => a.setTextContent(big));
-    await serverWrites((m) => inDefinition(m, 'B').setTextContent(big));
-    expect(liveSyncFor(SITE)?.heldVersion).toMatchObject({ whileEditing: true });
-    const historyBefore = getHistoryStore()!.history.length;
-    draft.commitAndClose();
-    await settle();
-    expect(autosaveFor(SITE).getState().phase).toBe('conflict');
-    // Nothing undone: the person's edit stands, as its own step.
-    expect(inDefinition(project(), big).id).toBe(a.id);
-    expect(getHistoryStore()!.history.length).toBe(historyBefore + 1);
-  });
-
-  it('the agent changed the same text: a real conflict, the dialog asks', async () => {
-    start();
-    await agentWrites('first');
-    const node = homeChild(0);
-    const draft = openDraft(() => node.setTextContent('typed by the person'));
-    await serverWrites(async (m) => {
-      const outcome = await applyOperations(m, [{ op: 'updateText', nodeId: node.id, text: 'rewritten by the agent' }]);
-      if (!outcome.ok) throw new Error('refused');
-    });
-    draft.commitAndClose();
-    await settle();
-    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', currentVersion: 3 });
-    expect(JSON.stringify(working())).toContain('typed by the person');
-  });
-
-  it('the agent deleted the node being typed in: the dialog asks', async () => {
-    start();
-    await agentWrites('first');
-    const node = homeChild(0);
-    const draft = openDraft(() => node.setTextContent('typed by the person'));
-    await serverWrites(async (m) => {
-      const outcome = await applyOperations(m, [{ op: 'removeNode', nodeId: node.id }]);
-      if (!outcome.ok) throw new Error('refused');
-    });
-    draft.commitAndClose();
-    await settle();
-    expect(autosaveFor(SITE).getState().phase).toBe('conflict');
-  });
-
-  it('a page made here and not saved yet is never named as deleted by the agent', async () => {
-    start();
-    project().createPage('Pricing'); // unsaved, the agent never saw it
-    await agentWrites('elsewhere');
-    const sync = liveSyncFor(SITE)!;
-    expect(autosaveFor(SITE).getState().phase).toBe('conflict');
-    expect(pagesRemovedBy(sync.heldVersion, working(), knownServerPageIds(SITE))).toEqual([]);
-  });
-});
-
-describe('liveSync: replay edge cases (third review of PR #353)', () => {
+describe('liveSync: an edit settles after an agent write was held for it', () => {
   const homeChild = (i: number) => project().getPage(homeId())!.appComponentTree.children[i] as unknown as { id: string; setTextContent(text: string): void };
 
-  it('a refused merged save comes back while the person types again: nothing replayed or adopted under the cursor, then it settles', async () => {
+  it('typing committed while the copy was held: the dialog opens once it settled (never while typing), nothing merged; Load the newer version adopts', async () => {
     start();
     await agentWrites('first');
     const node = homeChild(0);
-    let gate: (() => void) | undefined;
-    resetAutosaveForTests({
-      write: async (snapshot, expectedVersion): Promise<ProjectWriteResult> => {
-        await new Promise<void>((resolve) => {
-          gate = resolve;
-        });
-        saves.push({ expectedVersion, snapshot: snapshot as ProjectSnapshotOut });
-        if (expectedVersion !== server.version) return { kind: 'conflict', currentVersion: server.version };
-        server = { version: server.version + 1, snapshot: snapshot as ProjectSnapshotOut };
-        return { kind: 'ok', payload: {}, version: server.version };
-      },
-    });
-    autosaveFor(SITE).attach(project());
-    const first = openDraft(() => node.setTextContent('typed'));
+    const draft = openDraft(() => node.setTextContent('typed by the person'));
     await agentWrites('second');
-    first.commitAndClose();
-    await settle(); // replayed on 3, its save out
-    await agentWrites('third'); // lands first: the save will be refused
-    const typing = openDraft();
-    gate!();
+    expect(autosaveFor(SITE).getState().phase).not.toBe('conflict'); // still typing
+    draft.commitAndClose();
     await settle();
-    await settle();
-    // Still typing: held for it, nothing adopted.
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', currentVersion: 3, dialogOpen: true });
+    expect(JSON.stringify(working())).toContain('typed by the person');
+    expect(JSON.stringify(working())).not.toContain('"second"');
+    await loadNewerVersion(SITE);
     expect(knownServerVersion(SITE)).toBe(3);
-    expect(liveSyncFor(SITE)?.heldVersion).toMatchObject({ version: 4, whileEditing: true });
-    expect(JSON.stringify(working())).not.toContain('"third"');
-    typing.cancel();
-    await settle();
-    // Settled: the edit replayed on 4, saved there.
-    gate!();
-    await settle();
-    await settle();
-    expect(saves.map((save) => save.expectedVersion)).toEqual([3, 4]);
-    const text = JSON.stringify(server.snapshot);
-    for (const part of ['typed', 'second', 'third']) expect(text).toContain(part);
-    expect(autosaveFor(SITE).getState().phase).toBe('saved');
+    expect(JSON.stringify(working())).toContain('second');
   });
 
-  it('a resize longer than the autosave maximum wait, with an agent write held: nothing saved mid-gesture, no dialog', async () => {
+  it('a resize writing on every move, past the autosave maximum wait, with an agent write held: nothing saved and no dialog mid-gesture, the dialog once it ends', async () => {
     start();
     await agentWrites('first');
     const node = homeChild(0);
@@ -1731,6 +1426,7 @@ describe('liveSync: replay edge cases (third review of PR #353)', () => {
     history.startBatch('Resize');
     node.setTextContent('moving');
     await agentWrites('agent');
+    expect(liveSyncFor(SITE)?.heldVersion).toMatchObject({ whileEditing: true });
     for (let i = 0; i < 15; i++) {
       node.setTextContent(`moving ${i}`);
       await vi.advanceTimersByTimeAsync(1_000);
@@ -1740,122 +1436,46 @@ describe('liveSync: replay edge cases (third review of PR #353)', () => {
     history.commitBatch();
     store.editorUI.endResize();
     await settle();
-    expect(autosaveFor(SITE).getState().phase).not.toBe('conflict');
-    expect(JSON.stringify(working())).toContain('moving 14');
-    expect(JSON.stringify(working())).toContain('agent');
-    expect(saves.map((save) => save.expectedVersion)).toEqual([3]);
-  });
-
-  it('an edit made after an undo (a redo tail dropped) still replays', async () => {
-    start();
-    await agentWrites('first');
-    const node = homeChild(0);
-    node.setTextContent('earlier');
-    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
-    getHistoryStore()!.undo(); // a redo step now waits
-    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
-    const draft = openDraft(() => node.setTextContent('after undo'));
-    await agentWrites('agent');
-    draft.commitAndClose();
-    await settle();
-    expect(autosaveFor(SITE).getState().phase).not.toBe('conflict');
-    expect(JSON.stringify(working())).toContain('after undo');
-    expect(JSON.stringify(working())).toContain('agent');
-  });
-
-  it('an edit made with the history at its limit (the oldest entry trimmed) still replays', async () => {
-    start();
-    await agentWrites('first');
-    const node = homeChild(0);
-    for (let i = 0; i < 505; i++) project().updateMetadata({ description: `d${i}` });
-    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
-    expect(getHistoryStore()!.history.length).toBe(500);
-    const draft = openDraft(() => node.setTextContent('at the limit'));
-    await agentWrites('agent');
-    draft.commitAndClose();
-    await settle();
-    expect(autosaveFor(SITE).getState().phase).not.toBe('conflict');
-    expect(JSON.stringify(working())).toContain('at the limit');
-    expect(JSON.stringify(working())).toContain('agent');
-  });
-
-  it('an edit committed while the announced copy is still being fetched replays, no dialog', async () => {
-    start();
-    await agentWrites('first');
-    const node = homeChild(0);
-    const draft = openDraft(() => node.setTextContent('committed during the fetch'));
-    holdFetch = { release: () => {} };
-    await agentWrites('agent'); // announced, its fetch held
-    draft.commitAndClose();
-    await settle();
-    holdFetch.release();
-    holdFetch = undefined;
-    await settle();
-    expect(autosaveFor(SITE).getState().phase).not.toBe('conflict');
-    expect(JSON.stringify(working())).toContain('committed during the fetch');
-    expect(JSON.stringify(working())).toContain('agent');
-  });
-
-  it('after the merged save landed, an ordinary unsaved edit meeting an agent write opens the dialog at once', async () => {
-    start();
-    await agentWrites('first');
-    const node = homeChild(0);
-    const draft = openDraft(() => node.setTextContent('typed'));
-    await agentWrites('second');
-    draft.commitAndClose();
-    await settle();
-    expect(saves.map((save) => save.expectedVersion)).toEqual([3]); // the merged save landed
-    // An ordinary save out when the agent writes: the usual dialog, not a replay hold.
-    let finish!: (result: ProjectWriteResult) => void;
-    resetAutosaveForTests({
-      write: () =>
-        new Promise<ProjectWriteResult>((resolve) => {
-          finish = resolve;
-        }),
-    });
-    autosaveFor(SITE).attach(project());
-    project().updateMetadata({ description: 'later' });
-    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
-    await agentWrites('third');
-    // Held as any unsaved work is (not as a replay's), and the refusal opens the dialog as it always did.
-    expect(liveSyncFor(SITE)?.heldVersion).toBeDefined();
-    expect(liveSyncFor(SITE)?.heldVersion?.afterReplay).toBeUndefined();
-    finish({ kind: 'conflict', currentVersion: server.version });
-    await settle();
     expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: true });
-    expect(JSON.stringify(working())).toContain('later');
+    expect(saves).toEqual([]);
   });
 
-  it('an edit inside a reusable component replays on top of the agent\'s copy', async () => {
-    type TextNode = { id: string; props: { children?: unknown }; children?: TextNode[]; setTextContent(t: string): void };
-    const inDefinitions = (m: ProjectModelType, text: string): TextNode => {
-      const visit = (node: TextNode): TextNode | undefined => (node.props?.children === text ? node : (node.children ?? []).map(visit).find(Boolean));
-      for (const def of m.components.values()) {
-        const found = visit((def as unknown as { page: { appComponentTree: TextNode } }).page.appComponentTree);
-        if (found) return found;
-      }
-      throw new Error(`no node with ${text}`);
-    };
+  it('still editing when a write of this tab settles: the copy keeps waiting, nothing adopted under the cursor', async () => {
     start();
-    await serverWrites(async (m) => {
-      const home = m.pagesArray.find((page) => page.slug === '')!;
-      const outcome = await applyOperations(m, [
-        { op: 'insertNodes', pageId: home.id, nodes: [{ type: 'div', children: [{ type: 'p', props: { children: 'Inside' } }] }, { type: 'div', children: [{ type: 'p', props: { children: 'huge-text-marker' } }] }] },
-      ]);
-      if (!outcome.ok) throw new Error('refused');
-      const [one, two] = home.appComponentTree.children as unknown as Array<{ id: string }>;
-      if (!m.createComponentFromSelection(home.id, [one.id], 'Small').ok) throw new Error('component');
-      if (!m.createComponentFromSelection(home.id, [m.pagesArray.find((p) => p.slug === '')!.appComponentTree.children[1].id], 'Huge').ok) throw new Error('component');
-      void two;
-    });
-    const inside = inDefinitions(project(), 'Inside');
-    const draft = openDraft(() => inside.setTextContent('edited inside'));
-    await agentWrites('agent elsewhere');
-    draft.commitAndClose();
+    const draft = openDraft();
+    await agentWrites('agent');
+    noteWriteInFlight(SITE, true);
+    noteWriteInFlight(SITE, false);
     await settle();
-    expect(autosaveFor(SITE).getState().phase).not.toBe('conflict');
-    expect(JSON.stringify(working())).toContain('edited inside');
-    expect(JSON.stringify(working())).toContain('agent elsewhere');
+    expect(knownServerVersion(SITE)).toBe(1);
+    expect(liveSyncFor(SITE)?.heldVersion).toMatchObject({ whileEditing: true });
+    draft.cancel();
+    await settle();
+    expect(knownServerVersion(SITE)).toBe(2);
+  });
+
+  it('stopping while a copy is held for editing gives autosave back: the next run saves edits again', async () => {
+    const stop = start();
+    const draft = openDraft();
+    await agentWrites('agent');
+    expect(liveSyncFor(SITE)?.heldVersion).toMatchObject({ whileEditing: true });
+    stop();
+    draft.cancel();
+    start();
+    await settle();
+    project().updateMetadata({ description: 'after the restart' });
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+    expect(saves).toHaveLength(1);
+    expect(autosaveFor(SITE).getState().phase).toBe('saved');
+  });
+
+  it('a page made here and not saved yet is never named as deleted by the agent', async () => {
+    start();
+    project().createPage('Pricing'); // unsaved, the agent never saw it
+    await agentWrites('elsewhere');
+    const sync = liveSyncFor(SITE)!;
+    expect(autosaveFor(SITE).getState().phase).toBe('conflict');
+    expect(pagesRemovedBy(sync.heldVersion, working(), knownServerPageIds(SITE))).toEqual([]);
   });
 });
 
@@ -2052,10 +1672,32 @@ describe('liveSync: the server simply closes the stream (a re-check timeout, an 
     expect(streams).toHaveLength(3);
     stream().open();
     expect(sync.phase).toBe('live');
-    // Open again: the next end starts at the short wait once more.
+    // Ended again right after opening (a server that accepts and drops): the wait keeps doubling (12 s).
+    stream().fail(false);
+    await vi.advanceTimersByTimeAsync(LIVE_RECONNECT_MS * 6 - 1);
+    expect(streams).toHaveLength(3);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(streams).toHaveLength(4);
+    // This one stays up a heartbeat: the next end starts at the short wait once more.
+    stream().open();
+    await vi.advanceTimersByTimeAsync(LIVE_HEARTBEAT_MS);
     stream().fail(false);
     await vi.advanceTimersByTimeAsync(LIVE_RECONNECT_MS * 1.5);
-    expect(streams).toHaveLength(4);
+    expect(streams).toHaveLength(5);
+  });
+
+  it('a ping proves the stream stays: the back-off starts over at once', async () => {
+    start();
+    stream().fail(false);
+    await vi.advanceTimersByTimeAsync(LIVE_RECONNECT_MS);
+    stream().fail(false); // ended before opening: next wait 4 s
+    await vi.advanceTimersByTimeAsync(LIVE_RECONNECT_MS * 2);
+    stream().open();
+    stream().emit(LIVE_PING_EVENT, {});
+    const count = streams.length;
+    stream().fail(false);
+    await vi.advanceTimersByTimeAsync(LIVE_RECONNECT_MS);
+    expect(streams).toHaveLength(count + 1);
   });
 
   it('many editors closed at once come back spread out, by their random share', async () => {

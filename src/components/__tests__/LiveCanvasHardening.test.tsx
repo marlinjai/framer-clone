@@ -11,7 +11,7 @@ import ProjectModel, { type ProjectModelType, type ProjectSnapshotOut } from '@/
 import { openProject } from '@/stores/openProject';
 import { autosaveFor, resetAutosaveForTests } from '@/lib/projects/autosave';
 import { LIVE_RECONNECT_MS, setLiveSyncDepsForTests, startLiveSync, type LiveEventSource, type LiveSyncDeps } from '@/lib/projects/liveSync';
-import LiveConnectionStatus, { LIVE_BACK_MS, LIVE_PAUSED_GRACE_MS, LIVE_PAUSED_TEXT, LIVE_BACK_TEXT } from '../live/LiveConnectionStatus';
+import LiveConnectionStatus, { LIVE_BACK_MS, LIVE_PAUSED_GRACE_MS, LIVE_PAUSED_TEXT, LIVE_BACK_TEXT, LIVE_WAITING_TEXT } from '../live/LiveConnectionStatus';
 import EditorNotice from '../EditorNotice';
 import SiteChangedDialog from '../SiteChangedDialog';
 
@@ -145,9 +145,39 @@ describe('EditorNotice: an agent\'s new page (H2)', () => {
     render(<EditorNotice />);
     act(() => store.editorUI.setEditorNotice({ kind: 'newPage', pageId: about.id, message: 'New page ‘About’ is ready.' }));
     expect(screen.getByText('New page ‘About’ is ready.')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Open it' }));
+    // Named by the page, so a list of buttons says which page it opens.
+    fireEvent.click(screen.getByRole('button', { name: 'Open the page About' }));
     expect(store.editorUI.currentPage?.id).toBe(about.id);
     expect(store.editorUI.editorNotice).toBeUndefined();
+  });
+});
+
+describe('LiveConnectionStatus: a newer version waiting for the person\'s edit', () => {
+  it('says so quietly while a copy is held for an open edit, and stops once it is adopted', async () => {
+    let dirty = true;
+    const { registerOpenDraft } = await import('@/lib/projects/openDrafts');
+    const unregister = registerOpenDraft({ isDirty: () => dirty, commit: () => {} });
+    render(<LiveConnectionStatus projectId={site} />);
+    act(() => {
+      startLiveSync(site, store);
+      stream().open();
+      stream().emit('state', { version: 1, plans: [], agents: [], feed: [] });
+    });
+    const model = ProjectModel.create(server.snapshot) as ProjectModelType;
+    model.updateMetadata({ description: 'agent' });
+    server = { version: 2, snapshot: getSnapshot(model) as ProjectSnapshotOut };
+    await act(async () => {
+      stream().emit('site:version', { origin: 'mcp', version: 2, versionBefore: 1 });
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const region = screen.getByTestId('live-connection-status');
+    expect(region.textContent).toContain(LIVE_WAITING_TEXT);
+    await act(async () => {
+      dirty = false;
+      unregister();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(region.textContent).toBe('');
   });
 });
 

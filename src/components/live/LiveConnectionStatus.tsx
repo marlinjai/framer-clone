@@ -7,7 +7,8 @@
 // a reconnect by itself does not flash), "Live updates paused, reconnecting…",
 // and where an agent's streamed draft was dropped meanwhile, that it shows again
 // once the connection is back. Once the stream is back, "Live updates back" for
-// LIVE_BACK_MS. One polite live region that is always present, so a screen
+// LIVE_BACK_MS. While an agent's newer version waits for the person's open edit
+// (a text edit can stay open idle for long), it says so quietly. One polite live region that is always present, so a screen
 // reader hears each change once.
 'use client';
 
@@ -22,6 +23,8 @@ export const LIVE_BACK_MS = 4_000;
 export const LIVE_PAUSED_TEXT = 'Live updates paused, reconnecting…';
 export const LIVE_BACK_TEXT = 'Live updates back';
 export const LIVE_DRAFT_LOST_TEXT = "The agent's draft will show again once the connection is back.";
+/** A newer version of the site waits while the person edits (src/lib/live/editingInProgress.ts): said quietly, so a long idle edit does not hide it. */
+export const LIVE_WAITING_TEXT = 'A newer version of the site is waiting until you finish editing.';
 
 /** Down after having been live: the connection was lost (a browser without streams only ever polls). */
 function isDown(state: LiveSyncState): boolean {
@@ -29,7 +32,7 @@ function isDown(state: LiveSyncState): boolean {
 }
 
 /** The message for the state, with the grace before "paused" and the linger of "back". */
-export function useLiveConnectionMessage(projectId: string | undefined): { text: string; tone: 'paused' | 'back' | 'none' } {
+export function useLiveConnectionMessage(projectId: string | undefined): { text: string; tone: 'paused' | 'back' | 'waiting' | 'none' } {
   const state = useLiveSyncState(projectId);
   const down = isDown(state);
   const [paused, setPaused] = React.useState(false);
@@ -57,6 +60,7 @@ export function useLiveConnectionMessage(projectId: string | undefined): { text:
 
   if (paused && down) return { text: state.draftLost ? `${LIVE_PAUSED_TEXT} ${LIVE_DRAFT_LOST_TEXT}` : LIVE_PAUSED_TEXT, tone: 'paused' };
   if (back) return { text: LIVE_BACK_TEXT, tone: 'back' };
+  if (state.held?.whileEditing) return { text: LIVE_WAITING_TEXT, tone: 'waiting' };
   return { text: '', tone: 'none' };
 }
 
@@ -78,7 +82,7 @@ export default function LiveConnectionStatus({ projectId }: { projectId: string 
       {tone !== 'none' ? <Radio size={14} aria-hidden className="shrink-0" /> : null}
       <span className="lg:max-w-[260px] lg:truncate max-md:sr-only">{text}</span>
       {/* A small screen keeps a short word in sight (a tooltip cannot be opened by touch); the full text is read out above. */}
-      {tone !== 'none' ? <span aria-hidden className="whitespace-nowrap md:hidden">{tone === 'paused' ? 'Paused' : 'Back'}</span> : null}
+      {tone !== 'none' ? <span aria-hidden className="whitespace-nowrap md:hidden">{tone === 'paused' ? 'Paused' : tone === 'waiting' ? 'Newer version waiting' : 'Back'}</span> : null}
     </span>
   );
 }
