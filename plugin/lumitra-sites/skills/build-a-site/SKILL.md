@@ -175,6 +175,7 @@ same way.
   (60 a minute, one at a time), and one generation per key runs at a time.
 - `announce_sections` takes at most 20 sections; a site holds at most 3 announced plans at once,
   and announcements and clears are limited to 20 a minute per key.
-- Deleting sites or domains is not possible through these tools.
+- Deleting sites or domains is not possible through these tools; a page can go with `deletePage`
+  (never the home page or the last page).
 - The draft is shared with the editor: a person editing the same site at the same time makes your
   next write answer `site_changed`, which is the version lock working, not an error to work around.

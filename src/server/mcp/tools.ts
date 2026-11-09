@@ -384,6 +384,9 @@ export const OPERATION_SCHEMAS: JsonSchema[] = [
     noIndex: { type: 'boolean' },
     notFoundPage: { type: 'boolean', description: 'Make this the page visitors see for an unknown address.' },
   }, ['pageId']),
+  op('deletePage', "Delete a page of the draft, as the editor's Pages panel does. Refused for the home page (it lives at the site's root address) and the last page. Links to it stay: the answer counts the ones on the site that still lead to it, so fix them next. Visitors keep seeing the published page until the next publish.", {
+    pageId: idArg('The page'),
+  }, ['pageId']),
   op('insertNodes', 'Insert a node tree in the generation format (describe_vocabulary). Blocked tags or props refuse the operation; nothing is dropped silently.', {
     pageId: idArg('The page'),
     parentId: { type: 'string', description: 'The container to insert into; the page root when absent. May be "ref:<name>".' },
@@ -522,11 +525,11 @@ export const TOOLS: ToolDef[] = [
     title: 'Edit a site',
     description: [
       `Apply a batch of 1 to ${MAX_BATCH_OPS} edit operations to a site's working copy, in order, all or nothing, saved on expectedVersion.`,
-      'Operations: createPage, updatePageSettings, insertNodes, updateStyle, updateText, setProps, moveNode, removeNode, addRule, setTheme, placeComponent (describe_vocabulary explains each).',
+      'Operations: createPage, updatePageSettings, deletePage, insertNodes, updateStyle, updateText, setProps, moveNode, removeNode, addRule, setTheme, placeComponent (describe_vocabulary explains each).',
       'A node or page an operation creates can carry "ref"; later operations of the batch name it as "ref:<name>", and the answer maps each ref to its new id.',
       'Answers the new `version` (name it in the next write), the created ids and one summary line per operation.',
       'Refusals write nothing: site_changed (with currentVersion: read again, then redo the batch on it) or rejected (each refused operation with its index and reason; fix those and resend the whole batch).',
-      'This edits the draft only; visitors see nothing until publish. removeNode deletes content from the draft.',
+      'This edits the draft only; visitors see nothing until publish (a deleted page stays live until the next publish). removeNode deletes content and deletePage a whole page from the draft, with no confirmation step: an open editor can undo it, otherwise only a published version still holds it, so delete only what the person asked to go.',
     ].join(' '),
     args: z.strictObject({
       siteId,

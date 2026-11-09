@@ -105,6 +105,11 @@ export const OperationSchema = z.discriminatedUnion('op', [
     noIndex: z.boolean().optional(),
     notFoundPage: z.boolean().optional(),
   }),
+  /**
+   * Delete a page of the working copy, as the Pages panel does: never the home
+   * page or the last page. Links to its address stay (the answer counts them).
+   */
+  z.strictObject({ op: z.literal('deletePage'), pageId: id }),
   z.strictObject({
     op: z.literal('insertNodes'),
     pageId: id,
