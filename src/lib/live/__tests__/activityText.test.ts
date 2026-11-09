@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   activityMode,
   activityVerb,
+  deletedOpenPageNotice,
   editingNote,
   feedLineAnnouncement,
   feedLineText,
@@ -104,6 +105,11 @@ describe('activity words', () => {
     expect(needsAttention({ outcome: 'site_changed' })).toBe(false);
     expect(feedLineAnnouncement({ tool: 'publish', outcome: 'awaiting_approval', label: 'Claude' })).toBe('Claude: Publishing needs your approval');
     expect(feedLineAnnouncement({ tool: 'publish', outcome: 'failed' })).toBe('Agent: Publishing failed');
+  });
+
+  it('says who deleted the page that was open', () => {
+    expect(deletedOpenPageNotice('Claude', 'About')).toBe(`Claude deleted the page ${L}About${R}.`);
+    expect(deletedOpenPageNotice('', undefined)).toBe('An agent deleted the page you had open.');
   });
 
   it('names the agent the camera follows', () => {

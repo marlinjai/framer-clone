@@ -52,6 +52,7 @@ import PublishedVersionsButton from '@/components/PublishedVersionsButton';
 import SaveStatus from '@/components/SaveStatus';
 import AgentEditingNote from '@/components/live/AgentEditingNote';
 import AgentAnnouncer from '@/components/live/AgentAnnouncer';
+import AgentDeletedPageWatcher from '@/components/live/AgentDeletedPageWatcher';
 import GeneratePageButton from '@/components/ai/GeneratePageDialog';
 import { PolishPageButton } from '@/components/ai/VisualReview';
 import {
@@ -407,8 +408,10 @@ const TopBar = observer(() => {
           this site", so a person who starts editing knows a conflict may follow. */}
       <AgentEditingNote className={`mr-2 ${wideOnly}`} />
       <AgentEditingNote compact className="mr-1 lg:hidden" />
-      {/* What a screen reader hears of the agents: the note once per run, refusals, the run's summary. */}
+      {/* What a screen reader hears of the agents: the note when they become active, refusals, approvals needed and failures. */}
       <AgentAnnouncer />
+      {/* An agent deleted the open page: a notice above the canvas, with Undo. */}
+      <AgentDeletedPageWatcher />
 
       {/* Publish: the primary rightward action. Serializes the live project
           and pushes it live via the admin-guarded publish endpoint. */}

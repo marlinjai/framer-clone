@@ -237,6 +237,20 @@ describe('the camera follows the agent', () => {
     expect(camera.read().panY).not.toBe(where.panY);
   });
 
+  it('leaves Follow on when the person pans or selects with no agent working, and follows the next run', async () => {
+    expect(presence().anyActive).toBe(false);
+    act(() => camera.panBy(0, 400));
+    await frame();
+    expect(presence().follow).toBe(true);
+    act(() => store.editorUI.setSelection([home.findComponent('hero')!]));
+    await frame();
+    expect(presence().follow).toBe(true);
+    // The next run is followed from where the person left the camera.
+    act(() => presence().applyActivity(activity({ nodeIds: ['pricing'] })));
+    await frame();
+    expect(camera.read().panY).toBeLessThan(-1000);
+  });
+
   it('notices the person panning before the agent has a target on this page', async () => {
     // The agent starts on the About page: nothing to frame on Home yet.
     act(() => presence().applyActivity(activity({ pageId: about.id, nodeIds: ['team'] })));

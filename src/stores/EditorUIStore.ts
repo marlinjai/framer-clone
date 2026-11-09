@@ -58,10 +58,15 @@ export function whilePanelWritesRule<T>(write: () => T): T {
 
 /** 'refused': an action the editor would not carry out, and why. */
 export interface EditorNoticeState {
-  kind: 'changedElsewhere' | 'missingPage' | 'refused' | 'previewState' | 'newPage';
+  kind: 'changedElsewhere' | 'missingPage' | 'refused' | 'previewState' | 'newPage' | 'pageDeleted';
   message: string;
-  /** `newPage`: the page an agent generated, which Open it shows (src/lib/projects/liveSync.ts). */
+  /**
+   * `newPage`: the page an agent generated, which Open it shows (src/lib/projects/liveSync.ts).
+   * `pageDeleted`: the page an agent deleted while it was open, which Undo brings back.
+   */
   pageId?: string;
+  /** `pageDeleted`: the history entry of that agent's step; Undo is offered while it is the last one applied. */
+  historyEntryId?: string;
 }
 
 /** The canvas position, read and written through Canvas, which owns it. */

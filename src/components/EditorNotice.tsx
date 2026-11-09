@@ -5,8 +5,10 @@
 // project opens: the project was changed elsewhere while this tab has unsaved
 // work (a Save here would overwrite it), or the page asked for in the address
 // does not exist. Also when an agent's new page is ready while the person works
-// elsewhere (src/lib/projects/liveSync.ts): Open it shows that page. The live region is always present, so the message is
-// announced when it appears.
+// elsewhere (src/lib/projects/liveSync.ts): Open it shows that page. And when an
+// agent deleted the page that was open (src/components/live/AgentDeletedPageWatcher.tsx):
+// Undo brings it back while that step is the last one applied. The live region is
+// always present, so the message is announced when it appears.
 //
 // It is also the badge of a state preview (editorUI.previewState): the canvas shows a
 // state at another value than its first, so a layer hidden by it can be edited. Closing
@@ -16,6 +18,17 @@ import React from 'react';
 import { observer } from 'mobx-react-lite';
 import { useStore } from '@/hooks/useStore';
 import { reloadDiscarding } from '@/lib/projects/autosave';
+import { getHistoryStore } from '@/stores/RootStore';
+
+/**
+ * Whether the agent's step that deleted the open page is still the last one applied: then its
+ * ordinary undo brings the page back (src/components/live/AgentDeletedPageWatcher.tsx).
+ */
+export function canUndoAgentDelete(historyEntryId: string | undefined): boolean {
+  const history = getHistoryStore();
+  if (!history || !historyEntryId || history.undoIdx === 0) return false;
+  return history.history[history.undoIdx - 1]?.id === historyEntryId;
+}
 
 const EditorNotice = observer(() => {
   const { editorUI } = useStore();
@@ -66,6 +79,25 @@ const EditorNotice = observer(() => {
               className="shrink-0 rounded border border-amber-400 px-2 py-0.5 font-medium hover:bg-amber-100"
             >
               Open it
+            </button>
+          ) : null}
+          {notice.kind === 'pageDeleted' && notice.pageId && canUndoAgentDelete(notice.historyEntryId) ? (
+            <button
+              type="button"
+              // The visible word first (Label in Name), then what it does.
+              aria-label="Undo: bring the page back"
+              onClick={() => {
+                if (!canUndoAgentDelete(notice.historyEntryId)) return;
+                getHistoryStore()?.undo();
+                const page = editorUI.currentProject?.getPage(notice.pageId!);
+                if (page) editorUI.setCurrentPage(page);
+                editorUI.setEditorNotice(undefined);
+                // The button goes with the notice: the focus moves to the page's row in the Pages panel, when it shows.
+                requestAnimationFrame(() => document.querySelector<HTMLElement>('button[aria-current="page"]')?.focus());
+              }}
+              className="shrink-0 rounded border border-amber-400 px-2 py-0.5 font-medium hover:bg-amber-100"
+            >
+              Undo
             </button>
           ) : null}
           {notice.kind === 'previewState' ? (

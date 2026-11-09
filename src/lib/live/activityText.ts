@@ -232,6 +232,12 @@ export function feedLineAnnouncement(line: FeedLineWords): string {
   return `${line.label || 'Agent'}: ${feedLineText(line)}`;
 }
 
+/** The notice when an agent's write deleted the page this editor had open: "Claude deleted the page 'About'." */
+export function deletedOpenPageNotice(label: string | undefined, title: string | undefined): string {
+  const who = label || 'An agent';
+  return title ? `${who} deleted the page ${quoted(title)}.` : `${who} deleted the page you had open.`;
+}
+
 /** What the person hears when the camera stops following because they moved it. */
 export function followOffAnnouncement(label: string | undefined): string {
   return `Stopped following ${label || 'the agent'}. Turn Follow back on to follow again.`;
