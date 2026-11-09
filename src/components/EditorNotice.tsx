@@ -89,7 +89,11 @@ const EditorNotice = observer(() => {
               aria-label={`Open it: the page ${editorUI.currentProject?.getPage(notice.pageId)?.metadata.title ?? ''}`.trim()}
               onClick={() => {
                 const page = editorUI.currentProject?.getPage(notice.pageId!);
-                if (page) editorUI.setCurrentPage(page);
+                if (page) {
+                  editorUI.setCurrentPage(page);
+                  // The camera may look at an empty part of the canvas: bring the new page's frames into view.
+                  editorUI.requestPageFit();
+                }
                 editorUI.setEditorNotice(undefined);
                 // The button goes with the notice: the focus moves to the page's row in the Pages panel, or else to the canvas.
                 focusOpenPage();

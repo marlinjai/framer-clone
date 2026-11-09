@@ -25,6 +25,8 @@ import {
   heldWriter,
   LIVE_FETCH_RETRY_MS,
   LIVE_RECONNECT_MS,
+  LIVE_PROBE_TIMEOUT_MS,
+  probeStreamWith,
   LIVE_HEARTBEAT_MS,
   LIVE_WATCHDOG_MS,
   LOAD_NEWER_WRITE_WAIT_MS,
@@ -1775,6 +1777,179 @@ describe('liveSync: a refusal timer never outlives a sign-out', () => {
     stream().fail(false);
     await vi.advanceTimersByTimeAsync(LIVE_RECONNECT_MS);
     expect(streams).toHaveLength(count + 1);
+  });
+});
+
+describe('liveSync: a stream closed for good is asked why (network or refusal)', () => {
+  type Answer = 'network' | 'throw' | { status: number; contentType: string };
+  let probeAnswer: Answer;
+  let probes: Array<{ url: string; signal: AbortSignal }>;
+  let releaseProbe: (() => void) | undefined;
+  const stream200 = { status: 200, contentType: 'text/event-stream; charset=utf-8' };
+  const probing = (hold = false): LiveSyncDeps => ({
+    ...deps,
+    probeStream: async (url, signal) => {
+      probes.push({ url, signal });
+      if (hold) await new Promise<void>((resolve) => (releaseProbe = resolve));
+      if (probeAnswer === 'throw') throw new Error('probe');
+      return probeAnswer;
+    },
+  });
+  beforeEach(() => {
+    probes = [];
+    releaseProbe = undefined;
+  });
+  /** The stream closes for good and the probe (after its random wait, 0 here) answers. */
+  async function closedForGood() {
+    stream().fail(true);
+    await settle();
+  }
+
+  it('no answer (the network is down, the request blocked): the quick reconnect, 2 s', async () => {
+    probeAnswer = 'network';
+    setLiveSyncDepsForTests(probing());
+    start();
+    await closedForGood();
+    expect(probes).toHaveLength(1);
+    expect(probes[0].url).toContain('/events?tab=');
+    const count = streams.length;
+    await vi.advanceTimersByTimeAsync(LIVE_RECONNECT_MS - 1);
+    expect(streams).toHaveLength(count);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(streams).toHaveLength(count + 1);
+    stream().open();
+    expect(liveSyncFor(SITE)?.phase).toBe('live');
+  });
+
+  it('a probe that throws counts as no answer', async () => {
+    probeAnswer = 'throw';
+    setLiveSyncDepsForTests(probing());
+    start();
+    await closedForGood();
+    const count = streams.length;
+    await vi.advanceTimersByTimeAsync(LIVE_RECONNECT_MS);
+    expect(streams).toHaveLength(count + 1);
+  });
+
+  it('a real stream answer (200, text/event-stream): the quick reconnect', async () => {
+    probeAnswer = stream200;
+    setLiveSyncDepsForTests(probing());
+    start();
+    await closedForGood();
+    const count = streams.length;
+    await vi.advanceTimersByTimeAsync(LIVE_RECONNECT_MS);
+    expect(streams).toHaveLength(count + 1);
+  });
+
+  for (const answer of [
+    { status: 429, contentType: 'application/json' },
+    { status: 503, contentType: 'application/json' },
+    { status: 403, contentType: 'application/json' },
+    { status: 401, contentType: 'application/json' },
+    { status: 404, contentType: 'application/json' },
+    { status: 204, contentType: '' },
+    { status: 200, contentType: 'text/html' }, // a captive portal or a proxy page
+  ]) {
+    it(`${answer.status} ${answer.contentType || '(no body)'}: the long wait, a minute, polling meanwhile`, async () => {
+      probeAnswer = answer;
+      setLiveSyncDepsForTests(probing());
+      start();
+      await closedForGood();
+      expect(['polling', 'signed-out', 'gone']).toContain(liveSyncFor(SITE)?.phase);
+      const count = streams.length;
+      await vi.advanceTimersByTimeAsync(LIVE_RECONNECT_MS * 4);
+      expect(streams).toHaveLength(count);
+    });
+  }
+
+  it('refusals in a row are not probed again (a probe costs the server what a stream does)', async () => {
+    probeAnswer = { status: 503, contentType: 'application/json' };
+    setLiveSyncDepsForTests(probing());
+    start();
+    await closedForGood();
+    expect(probes).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(LIVE_STREAM_RETRY_MS); // the retry: another refusal
+    stream().fail(true);
+    await settle();
+    expect(probes).toHaveLength(1);
+  });
+
+  it('stopping aborts a probe out and ignores its answer', async () => {
+    probeAnswer = 'network';
+    setLiveSyncDepsForTests(probing(true));
+    const stop = start();
+    await closedForGood();
+    expect(probes[0].signal.aborted).toBe(false);
+    stop();
+    expect(probes[0].signal.aborted).toBe(true);
+    const count = streams.length;
+    releaseProbe!();
+    await settle();
+    await vi.advanceTimersByTimeAsync(LIVE_STREAM_RETRY_MS * 2);
+    expect(streams).toHaveLength(count);
+  });
+
+  it('signed out while a probe is out: aborted, and its answer starts nothing', async () => {
+    probeAnswer = 'network';
+    setLiveSyncDepsForTests(probing(true));
+    start();
+    await closedForGood();
+    server.status = 401;
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_VISIBLE_MS); // the poll is told: signed out
+    expect(liveSyncFor(SITE)?.phase).toBe('signed-out');
+    expect(probes[0].signal.aborted).toBe(true);
+    const count = streams.length;
+    releaseProbe!();
+    await settle();
+    await vi.advanceTimersByTimeAsync(LIVE_RECONNECT_MS * 4);
+    expect(streams).toHaveLength(count);
+    server.status = undefined;
+  });
+
+  it('a self-reconnecting stream (not closed for good) is not probed', async () => {
+    probeAnswer = { status: 429, contentType: '' };
+    setLiveSyncDepsForTests(probing());
+    start();
+    stream().fail(false);
+    await settle();
+    expect(probes).toEqual([]);
+    const count = streams.length;
+    await vi.advanceTimersByTimeAsync(LIVE_RECONNECT_MS);
+    expect(streams).toHaveLength(count + 1);
+  });
+});
+
+describe('probeStreamWith (the browser probe)', () => {
+  it('answers the status and content type, and aborts the request once they arrived', async () => {
+    let seen: AbortSignal | undefined;
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      seen = init?.signal ?? undefined;
+      return new Response('', { status: 429, headers: { 'content-type': 'application/json' } });
+    }) as unknown as typeof fetch;
+    const answer = await probeStreamWith(fetchImpl, '/api/projects/x/events', new AbortController().signal);
+    expect(answer).toEqual({ status: 429, contentType: 'application/json' });
+    expect(seen?.aborted).toBe(true);
+  });
+
+  it('no answer within the timeout, or a failed request, is a network failure', async () => {
+    const hanging = ((_url: string, init?: RequestInit) =>
+      new Promise((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(new Error('aborted'))))) as unknown as typeof fetch;
+    const pending = probeStreamWith(hanging, '/e', new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(LIVE_PROBE_TIMEOUT_MS);
+    expect(await pending).toBe('network');
+    const failing = (async () => {
+      throw new TypeError('Failed to fetch');
+    }) as unknown as typeof fetch;
+    expect(await probeStreamWith(failing, '/e', new AbortController().signal)).toBe('network');
+  });
+
+  it('the caller aborting ends the request', async () => {
+    const caller = new AbortController();
+    const hanging = ((_url: string, init?: RequestInit) =>
+      new Promise((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(new Error('aborted'))))) as unknown as typeof fetch;
+    const pending = probeStreamWith(hanging, '/e', caller.signal);
+    caller.abort();
+    expect(await pending).toBe('network');
   });
 });
 

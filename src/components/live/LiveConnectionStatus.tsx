@@ -4,19 +4,23 @@
 // docs/plans/2026-11-08-live-agent-canvas.md; review finding H1 of 2026-11-09),
 // beside the save status in the top bar. Says nothing while all is well. When a
 // stream that was live goes down for more than a moment (LIVE_PAUSED_GRACE_MS, so
-// a reconnect by itself does not flash), "Live updates paused, reconnecting…",
-// and where an agent's streamed draft was dropped meanwhile, that it may not show
-// again (a generation that ended meanwhile leaves no draft to restore). Once the stream is back, "Live updates back" for
-// LIVE_BACK_MS. While an agent's newer version waits for the person's open edit
-// (a text edit can stay open idle for long), it says so quietly. One polite live region that is always present, so a screen
-// reader hears each change once.
+// a reconnect by itself does not flash), "Live updates paused, reconnecting…".
+// How long until "back" depends on why it went down (src/lib/projects/liveSync.ts):
+// a network drop or a stream the server ended reconnects within seconds (2 to 4 s,
+// doubling); only a stream the server refused (429, 503, 403) waits 1 to 8 minutes.
+// Where an agent's streamed draft was dropped meanwhile, it says that the draft
+// may not show again (a generation that ended meanwhile leaves no draft to
+// restore). Once the stream is back, "Live updates back" for LIVE_BACK_MS. While
+// an agent's newer version waits for the person's open edit (a text edit can stay
+// open idle for long), it says so quietly. One polite live region that is always
+// present, so a screen reader hears each change once.
 'use client';
 
 import React from 'react';
 import { Radio } from 'lucide-react';
 import { useLiveSyncState, type LiveSyncState } from '@/hooks/useLiveSyncState';
 
-/** Longer than one reconnect on the live sync's own back-off (2 to 4 s, src/lib/projects/liveSync.ts), so a clean reconnect says nothing. */
+/** Longer than one quick reconnect (2 to 4 s after a network drop or a stream the server ended, src/lib/projects/liveSync.ts), so a clean reconnect says nothing. */
 export const LIVE_PAUSED_GRACE_MS = 6_000;
 export const LIVE_BACK_MS = 4_000;
 

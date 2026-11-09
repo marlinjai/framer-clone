@@ -50,11 +50,13 @@
 // When the stream is down (a network loss, the 429 of too many streams, a proxy
 // that buffers), the snapshot route is polled with If-None-Match every 5 s while
 // the tab is visible and every 60 s while hidden, until the stream is back. A
-// stream that ended (closed by the server, a network drop) is reopened by this
-// tab after 2 to 4 s (doubling with each failure in a row, up to a minute), never
-// by the browser's own fixed retry, so editors whose streams the server ended
-// together do not all come back together. A stream refused is tried again after
-// 1, 2, 4 then 8 minutes, each a little later at random. The server sends a
+// stream that ended (closed by the server, a network drop, a request that got
+// no answer) is reopened by this tab after 2 to 4 s (doubling with each failure
+// in a row, up to a minute), never by the browser's own fixed retry, so editors
+// whose streams the server ended together do not all come back together. Only a
+// stream the server refused (an HTTP 429, 503, 403 and the like, found by asking
+// the route once: probeStream, since an EventSource never shows the status) is
+// tried again after 1, 2, 4 then 8 minutes, each a little later at random. The server sends a
 // `ping` every LIVE_HEARTBEAT_MS; once one arrived, a stream silent for
 // LIVE_WATCHDOG_MS (a proxy that holds it open without passing anything) is
 // reopened. A server that sends no ping arms no watchdog. A fetch of the stored
@@ -157,6 +159,54 @@ export interface LiveSyncDeps {
   onVisibilityChange(listener: () => void): () => void;
   /** A number in [0, 1) for the retry jitter (Math.random by default). */
   random?: () => number;
+  /**
+   * Ask the stream route once, without keeping a stream, why a stream closed for
+   * good: its HTTP status, or 'network' when no answer came (the network is down,
+   * the request was blocked). An EventSource never shows the status itself.
+   * Without it, every close for good counts as a refusal.
+   */
+  probeStream?: (url: string, signal: AbortSignal) => Promise<ProbeAnswer>;
+}
+
+/** What asking the stream route once found: no answer at all, or its status and content type. */
+export type ProbeAnswer = 'network' | { status: number; contentType: string };
+
+/** How long a probe of the stream route may take before it counts as a network failure. */
+export const LIVE_PROBE_TIMEOUT_MS = 8_000;
+/** A probe waits up to this long at random first, so tabs whose streams failed together do not all ask at once. */
+export const LIVE_PROBE_SPREAD_MS = 1_000;
+
+/**
+ * Whether a probe's answer means streams are refused (wait long) rather than the
+ * network failing (reconnect soon). Only a real stream answer (200 with
+ * text/event-stream) counts as "the failure is gone": a 204, or a 200 page from a
+ * captive portal or a proxy, fails the stream again, so it waits long too.
+ */
+export function probeMeansRefusal(answer: ProbeAnswer): boolean {
+  if (answer === 'network') return false;
+  return !(answer.status === 200 && answer.contentType.toLowerCase().startsWith('text/event-stream'));
+}
+
+/**
+ * The browser's probe: a GET of the stream route aborted as soon as its status
+ * line arrives (or after LIVE_PROBE_TIMEOUT_MS, or when `signal` aborts).
+ * Aborting releases the server's stream as closing an EventSource does.
+ */
+export async function probeStreamWith(fetchImpl: typeof fetch, url: string, signal: AbortSignal): Promise<ProbeAnswer> {
+  const abort = new AbortController();
+  const stop = () => abort.abort();
+  signal.addEventListener('abort', stop);
+  const timer = setTimeout(stop, LIVE_PROBE_TIMEOUT_MS);
+  try {
+    const res = await fetchImpl(url, { cache: 'no-store', signal: abort.signal, headers: { accept: 'text/event-stream' } });
+    return { status: res.status, contentType: res.headers.get('content-type') ?? '' };
+  } catch {
+    return 'network';
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener('abort', stop);
+    abort.abort();
+  }
 }
 
 export const browserLiveSyncDeps: LiveSyncDeps = {
@@ -175,6 +225,7 @@ export const browserLiveSyncDeps: LiveSyncDeps = {
     document.addEventListener('visibilitychange', listener);
     return () => document.removeEventListener('visibilitychange', listener);
   },
+  probeStream: (url, signal) => probeStreamWith(fetch, url, signal),
 };
 
 export type LiveSyncPhase = 'connecting' | 'live' | 'polling' | 'signed-out' | 'gone' | 'stopped';
@@ -280,6 +331,9 @@ export class LiveSync {
   private reconnects = 0;
   private stableTimer: ReturnType<typeof setTimeout> | undefined;
   private pingsSinceOpen = 0;
+  /** Counts probes, so an answer that comes after a newer one (or a stop) is ignored. */
+  private probeRun: number | undefined;
+  private probeAbort: AbortController | undefined;
   private wasLiveValue = false;
   private draftLostValue = false;
   /** The newest version announced by another writer, with its event. */
@@ -393,6 +447,7 @@ export class LiveSync {
     this.streamRetryTimer = undefined;
     this.streamRefusals = 0;
     this.reconnects = 0;
+    this.cancelProbe();
     this.stopWaitingForEditing();
     this.disposeVisibility?.();
     this.disposeVisibility = undefined;
@@ -456,11 +511,14 @@ export class LiveSync {
       // Down: poll meanwhile, and reconnect on this tab's own jittered back-off,
       // never the browser's: when the server ends every stream at once (its
       // checks failing closed, a restart), the browser would bring every editor
-      // back after the same fixed delay. A refusal (such as 429 or 503) waits longer.
-      const refused = stream.readyState === CLOSED;
+      // back after the same fixed delay. A stream closed for good is either a
+      // refusal (an HTTP 429, 503, 403: wait long) or a network failure (no
+      // answer at all: reconnect soon); the EventSource cannot tell, so the
+      // route is asked once (probeStream).
+      const closedForGood = stream.readyState === CLOSED;
       this.startPolling();
       this.closeStream();
-      if (refused) this.retryStreamLater();
+      if (closedForGood) void this.retryAfterProbe();
       else this.reconnectLater();
     };
     on(LIVE_PING_EVENT, () => {
@@ -529,6 +587,45 @@ export class LiveSync {
     stream.onopen = null;
     stream.onerror = null;
     stream.close();
+  }
+
+  /**
+   * A stream closed for good: ask the route why, then the quick reconnect (no
+   * answer, or a real stream answer) or the long wait (a refusal). Not asked
+   * again while refusals come in a row (each probe costs the server the same
+   * checks a stream does, during an outage too), and asked after a short random
+   * wait, so tabs whose streams failed together do not all ask at once.
+   */
+  private async retryAfterProbe() {
+    const probe = this.deps.probeStream;
+    if (!probe || this.streamRefusals > 0) {
+      this.retryStreamLater();
+      return;
+    }
+    this.cancelProbe();
+    const run = this.probeRun = (this.probeRun ?? 0) + 1;
+    const abort = new AbortController();
+    this.probeAbort = abort;
+    let answer: ProbeAnswer;
+    try {
+      await new Promise((resolve) => setTimeout(resolve, Math.round(LIVE_PROBE_SPREAD_MS * (this.deps.random ?? Math.random)())));
+      if (run !== this.probeRun) return;
+      answer = await probe(`${this.base}/events?tab=${encodeURIComponent(editorTabId())}`, abort.signal);
+    } catch {
+      answer = 'network';
+    }
+    if (this.probeAbort === abort) this.probeAbort = undefined;
+    // Stopped, signed out, or another stream opened meanwhile: this answer is old.
+    if (run !== this.probeRun || this.phaseValue !== 'polling' || this.stream) return;
+    if (probeMeansRefusal(answer)) this.retryStreamLater();
+    else this.reconnectLater();
+  }
+
+  /** A probe out is no longer wanted (stopped, signed out): its request is aborted and its answer ignored. */
+  private cancelProbe() {
+    this.probeRun = (this.probeRun ?? 0) + 1;
+    this.probeAbort?.abort();
+    this.probeAbort = undefined;
   }
 
   private reconnectLater() {
@@ -672,6 +769,7 @@ export class LiveSync {
 
   private signedOut() {
     this.clearStreamRetry();
+    this.cancelProbe();
     this.closeStream();
     this.clearPoll();
     this.clearFetchRetry();

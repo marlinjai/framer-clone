@@ -150,6 +150,15 @@ describe('EditorNotice: an agent\'s new page (H2)', () => {
     expect(store.editorUI.currentPage?.id).toBe(about.id);
     expect(store.editorUI.editorNotice).toBeUndefined();
   });
+
+  it('Open it asks the canvas to bring the new page into view (the camera may look at empty canvas)', () => {
+    const about = project().pagesArray.find((p) => p.metadata.title === 'About')!;
+    render(<EditorNotice />);
+    act(() => store.editorUI.setEditorNotice({ kind: 'newPage', pageId: about.id, message: 'New page ‘About’ is ready.' }));
+    const before = store.editorUI.pageFitRequest;
+    fireEvent.click(screen.getByRole('button', { name: 'Open it: the page About' }));
+    expect(store.editorUI.pageFitRequest).toBe(before + 1);
+  });
 });
 
 describe('LiveConnectionStatus: a newer version waiting for the person\'s edit', () => {
