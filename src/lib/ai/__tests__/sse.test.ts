@@ -144,8 +144,9 @@ describe('createSseStream backpressure', () => {
     expect(() => sse.send('token', { delta: 'late' })).not.toThrow();
     expect(() => sse.heartbeat()).not.toThrow();
     expect(() => sse.close()).not.toThrow();
-    // The queue was dropped: the reader sees an error, not the backlog.
-    await expect(sse.stream.getReader().read()).rejects.toThrow(/fell behind/);
+    // The queue was dropped: the reader sees an AbortError (a client disconnect to Next.js), not the backlog.
+    const failure = await sse.stream.getReader().read().catch((e: unknown) => e);
+    expect(failure).toMatchObject({ name: 'AbortError', message: expect.stringMatching(/fell behind/) });
   });
 
   it('lets one event larger than the bound through to a stream that is read', async () => {
@@ -167,6 +168,22 @@ describe('createSseStream backpressure', () => {
     expect(sse.signal.aborted).toBe(false);
     sse.close();
     expect((await reader.read()).done).toBe(true);
+  });
+
+  it('does not count an opening burst written before arm(), and bounds what comes after it', () => {
+    const sse = createSseStream({ maxQueuedBytes: 1024, armed: false });
+    // Larger than the bound, in several events, before anything can read.
+    for (let i = 0; i < 5; i++) sse.send('state', { part: 'b'.repeat(400) });
+    expect(sse.signal.aborted).toBe(false);
+    sse.arm();
+    sse.arm(); // idempotent
+    // Room for the bound on top of the burst still unread.
+    sse.send('token', { delta: 'c'.repeat(400) });
+    sse.send('token', { delta: 'c'.repeat(400) });
+    sse.send('token', { delta: 'c'.repeat(400) });
+    expect(sse.signal.aborted).toBe(false);
+    sse.send('token', { delta: 'c'.repeat(400) });
+    expect(sse.signal.aborted).toBe(true);
   });
 
   it('defaults to SSE_MAX_QUEUED_BYTES and refuses a bound that is not positive', () => {

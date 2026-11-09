@@ -23,7 +23,13 @@
 // no-op. One event may overshoot the bound, so a single large event never
 // ends a stream that is being read; a reader that stops reading costs at most
 // the bound plus one event. The client reconnects (or polls) as it does after
-// any dropped connection.
+// any dropped connection. The stream errors with an AbortError, which Next.js
+// treats as a client disconnect rather than a failed response.
+//
+// A stream created with `armed: false` queues its opening burst (written
+// before the Response is even handed back, so before anything can be read)
+// without counting it: `arm()` starts the bound, which then allows the
+// bytes still unread from that burst on top of `maxQueuedBytes`.
 
 const ENCODER = new TextEncoder();
 
@@ -38,6 +44,8 @@ export interface SseStreamOptions {
   maxQueuedBytes?: number;
   /** Send heartbeats as this named event with `{}` as data, instead of as comment lines. */
   heartbeatEvent?: string;
+  /** False: the bound starts only with arm(), so an opening burst written before the Response exists is not cut off (default true). */
+  armed?: boolean;
 }
 
 export type SseStream = {
@@ -51,6 +59,8 @@ export type SseStream = {
   send: (event: string, data: unknown, id?: string | number) => void;
   /** Send a heartbeat: a comment line, or the `heartbeatEvent` the stream was created with. */
   heartbeat: () => void;
+  /** Start the bound of a stream created with `armed: false` (idempotent); what is queued now is allowed on top of it. */
+  arm: () => void;
   /**
    * Close the stream. If `err` is provided, emit an `error` event with
    * `{ message, code }` first so the client sees a structured envelope
@@ -75,6 +85,9 @@ export function createSseStream(options: SseStreamOptions = {}): SseStream {
     : `: heartbeat\n\n`;
   let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
   let closed = false;
+  let armed = options.armed ?? true;
+  /** Unread bytes of the opening burst at arm(): allowed on top of maxQueuedBytes. */
+  let burst = 0;
   const disconnected = new AbortController();
 
   const stream = new ReadableStream<Uint8Array>(
@@ -98,7 +111,7 @@ export function createSseStream(options: SseStreamOptions = {}): SseStream {
     closed = true;
     controller = null;
     try {
-      c?.error(new Error('the reader fell behind the stream'));
+      c?.error(new DOMException('the reader fell behind the stream', 'AbortError'));
     } catch {
       // already closed or errored; ignore
     }
@@ -107,8 +120,9 @@ export function createSseStream(options: SseStreamOptions = {}): SseStream {
 
   const enqueue = (s: string) => {
     if (closed || !controller) return;
-    const queued = controller.desiredSize;
-    if (queued !== null && queued <= 0) {
+    const desired = controller.desiredSize;
+    // desiredSize is maxQueuedBytes minus the unread bytes.
+    if (armed && desired !== null && maxQueuedBytes - desired >= maxQueuedBytes + burst) {
       overflow();
       return;
     }
@@ -127,6 +141,13 @@ export function createSseStream(options: SseStreamOptions = {}): SseStream {
     const idLine = id !== undefined && /^[A-Za-z0-9_-]+$/.test(String(id)) ? `id: ${id}\n` : '';
     const payload = `${idLine}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
     enqueue(payload);
+  };
+
+  const arm: SseStream['arm'] = () => {
+    if (armed) return;
+    armed = true;
+    const desired = controller?.desiredSize;
+    burst = desired == null ? 0 : Math.max(0, maxQueuedBytes - desired);
   };
 
   const heartbeat: SseStream['heartbeat'] = () => {
@@ -153,7 +174,7 @@ export function createSseStream(options: SseStreamOptions = {}): SseStream {
     controller = null;
   };
 
-  return { stream, send, heartbeat, close, signal: disconnected.signal };
+  return { stream, send, heartbeat, arm, close, signal: disconnected.signal };
 }
 
 /**

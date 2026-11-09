@@ -17,6 +17,8 @@ import 'server-only';
 // references to an address the editor was given (`file_url`), not bytes stored here; the rows go.
 
 import { Prisma, type PrismaClient } from '@prisma/client';
+import { forgetSiteDocuments } from '@/server/sites/liveDocumentCache';
+import { endLiveGenerationOfSite } from '@/server/sites/liveGeneration';
 
 /** What an erasure found to delete, kept on the ledger row so a retry still knows it once the rows are gone. */
 export interface ErasureScope {
@@ -150,11 +152,18 @@ export async function eraseCompanyPublic(
       const sites = await tx.site.deleteMany({ where: { id: { in: ids } } });
       return {
         scope: current,
+        deletedSiteIds: ids,
         rows: { sites: sites.count, siteErasures: siteErasures.count, siteOperationAudits: siteOperationAudits.count,
           agentRuns: agentRuns.count, cmsTables, cmsRows: cmsRows.count },
       };
     }, PUBLIC_ERASURE_TRANSACTION);
     if (!batch) return null;
+    // After the commit: what this process still holds of the erased sites' content goes too (the
+    // document route's kept copies and a running generation's draft), not only what the database held.
+    for (const siteId of batch.deletedSiteIds) {
+      forgetSiteDocuments(siteId);
+      endLiveGenerationOfSite(siteId, 'site_changed');
+    }
     scope = batch.scope;
     for (const key of Object.keys(rows) as (keyof PublicErasureResult)[]) rows[key] += batch.rows[key];
     if (Object.values(batch.rows).every((count) => count === 0)) return { scope, rows };

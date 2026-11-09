@@ -491,6 +491,18 @@ describe('GET /api/projects/<id>/events', () => {
     for (const events of open.slice(1)) await events.cancel();
   });
 
+  it('counts a duplicated session cookie under the one the guard verified (the last), like the guard reads it', async () => {
+    const open: Array<ReturnType<typeof eventReader>> = [];
+    for (let i = 0; i < LIVE_STREAM_LIMITS.perSession; i++) {
+      const res = await EVENTS(req('/api/projects/site_1/events', { cookie: `lumitra_session=decoy${i}; lumitra_session=real` }), ctx('site_1'));
+      expect(res.status).toBe(200);
+      open.push(eventReader(res));
+    }
+    const refused = await EVENTS(req('/api/projects/site_1/events', { cookie: 'lumitra_session=real' }), ctx('site_1'));
+    expect(refused.status).toBe(429);
+    for (const events of open) await events.cancel();
+  });
+
   it('answers 429 over the per-site bound', async () => {
     const open: Array<ReturnType<typeof eventReader>> = [];
     for (let i = 0; i < LIVE_STREAM_LIMITS.perSite; i++) {

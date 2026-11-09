@@ -58,6 +58,7 @@
 import { createHash } from 'node:crypto';
 import { withAuthAvailability, AuthUnavailableError, AuthzUnavailableError } from '@/lib/authBrainAvailability';
 import { jsonError } from '@/lib/api/respond';
+import { readRequestCookie } from '@/lib/activeCompanyCookie';
 import { createSseStream, SSE_HEADERS, SSE_HEARTBEAT_MS } from '@/lib/ai/sse';
 import { authorizeLiveProject } from '@/server/sites/liveGuard';
 import { acquireStreamSlot, subscribeSite } from '@/server/sites/liveBus';
@@ -92,7 +93,8 @@ const GATE_QUEUE_MAX = 500;
 
 /** The bound "per session" counts streams of one session cookie, never its value. */
 function sessionKey(req: Request, userId: string): string {
-  const cookie = /(?:^|;\s*)lumitra_session=([^;]+)/.exec(req.headers.get('cookie') ?? '')?.[1];
+  // Read like the guard reads it, so a duplicated cookie is counted under the session that was verified.
+  const cookie = readRequestCookie(req, 'lumitra_session');
   return cookie ? createHash('sha256').update(cookie).digest('base64url').slice(0, 22) : `user:${userId}`;
 }
 
@@ -131,7 +133,9 @@ async function handleGET(req: Request, { params }: Ctx): Promise<Response> {
     return refused;
   }
 
-  const sse = createSseStream({ maxQueuedBytes: LIVE_SSE_MAX_QUEUED_BYTES, heartbeatEvent: LIVE_PING_EVENT });
+  // Armed only when the Response is handed back: the opening burst (state, catch-up, what arrived
+  // meanwhile) is queued before anything can read it, so it must not count against the bound.
+  const sse = createSseStream({ maxQueuedBytes: LIVE_SSE_MAX_QUEUED_BYTES, heartbeatEvent: LIVE_PING_EVENT, armed: false });
   // Events heard before `state` went out wait for it, so nothing is lost or reordered.
   let ready = false;
   const waiting: Array<[string, unknown]> = [];
@@ -170,7 +174,7 @@ async function handleGET(req: Request, { params }: Ctx): Promise<Response> {
         if (err instanceof AuthUnavailableError || err instanceof AuthzUnavailableError) {
           console.warn(`[live] the stream of site ${projectId} ends: its access check met an outage (${err.name})`);
         } else {
-          console.error(`[live] the stream of site ${projectId} ends: it could not re-check its session`, err instanceof Error ? err.name : err);
+          console.error(`[live] the stream of site ${projectId} ends: it could not re-check its session`, err);
         }
         end();
       } finally {
@@ -279,6 +283,7 @@ async function handleGET(req: Request, { params }: Ctx): Promise<Response> {
   if (ended) return new Response(sse.stream, { status: 200, headers: SSE_HEADERS });
   timers.heartbeat = setInterval(() => sse.heartbeat(), SSE_HEARTBEAT_MS);
   timers.recheck = setInterval(() => void check(), LIVE_RECHECK_MS);
+  sse.arm();
 
   return new Response(sse.stream, { status: 200, headers: SSE_HEADERS });
 }

@@ -277,6 +277,14 @@ describe('agent:activity from the MCP endpoint', () => {
     expect(activities(heard).map((a) => a.phase)).toEqual(['start', 'end']);
   });
 
+  it('reports clear_sections with a start at once: it asks no permission, it only ends the key\'s own plans', async () => {
+    const s = setup();
+    const announced = await callTool(s, 'announce_sections', { siteId: 'site-1', pageId: 'home', sections: [{ ref: 'faq', title: 'FAQ', kind: 'faq' }] });
+    const heard = listen('site-1');
+    await callTool(s, 'clear_sections', { siteId: 'site-1', planId: announced.structuredContent.planId as string });
+    expect(activities(heard).map((a) => [a.tool, a.phase, a.outcome])).toEqual([['clear_sections', 'start', undefined], ['clear_sections', 'end', 'ok']]);
+  });
+
   it('reports an allowed write with its start before the write commits and its end after', async () => {
     const s = setup();
     const heard = listen('site-1');

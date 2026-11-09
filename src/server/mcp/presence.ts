@@ -75,13 +75,13 @@ const WRITE_TOOLS = new Set(['apply_batch', 'generate_page', 'publish', 'rollbac
 /**
  * The tools whose start waits for their permission check: the action the
  * caller's `can` must allow before the start is reported. Every other tool
- * that names a site is a read and reports its start at once.
+ * that names a site reports its start at once: the reads, and clear_sections,
+ * which asks no permission (it only ever ends the calling key's own plans).
  */
 export const START_AFTER: Readonly<Record<string, SiteOpsAction>> = {
   apply_batch: 'editSite',
   generate_page: 'editSite',
   announce_sections: 'editSite',
-  clear_sections: 'editSite',
   publish: 'publishSite',
   rollback: 'publishSite',
 };

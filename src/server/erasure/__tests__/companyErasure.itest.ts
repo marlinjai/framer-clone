@@ -57,6 +57,7 @@ import { demoProvider } from '@/server/commerce/payment/provider';
 import { ensureReceipt } from '@/server/commerce/payment/receipt';
 import { insertFormSubmission, type NewFormSubmission } from '@/server/forms/repository';
 import { resolvePublishedSite } from '@/server/sites/publicResolver';
+import { cachedDocument, documentEpoch, rememberDocument } from '@/server/sites/liveDocumentCache';
 
 import { ERASURE_COVERAGE, ERASURE_MIGRATION_ID, eraseCompanyCommerce } from '../commerce';
 import { COMMERCE_ERASURE_BATCH_SIZE } from '../commerceSteps';
@@ -417,6 +418,11 @@ describe('erasing one company of a shared tenant group', () => {
     const empty = Object.entries(before).filter(([, n]) => n === 0).map(([t]) => t);
     expect(empty).toEqual([]);
     expect(await resolvePublishedSite(a.host, env.fx.prisma)).not.toBeNull();
+    // An open editor's document route kept each company's copy in this process.
+    const scopeA = { workspaceId: a.workspaceId, tenantGroupId: env.tgId };
+    const scopeB = { workspaceId: b.workspaceId, tenantGroupId: env.tgId };
+    rememberDocument(scopeA, a.siteId, 1, '{"of":"a"}', documentEpoch());
+    rememberDocument(scopeB, b.siteId, 1, '{"of":"b"}', documentEpoch());
 
     const outcome = await eraseCompany({ eventId: randomUUID(), companyId: a.id, workspaceIds: [a.legacyWorkspaceId] }, prodLikeDeps());
     // Only the group's schema held anything of the company: the other suites' schemas were read, never locked.
@@ -425,6 +431,9 @@ describe('erasing one company of a shared tenant group', () => {
     const after = await countsOf(a.id, workspacesA);
     expect(Object.entries(after).filter(([, n]) => n !== 0)).toEqual([]);
     expect(await countsOf(b.id, [b.workspaceId, b.legacyWorkspaceId])).toEqual(beforeB);
+    // The erased company's kept copy is gone from memory too; the other company's stays.
+    expect(cachedDocument(scopeA, a.siteId, 1)).toBeUndefined();
+    expect(cachedDocument(scopeB, b.siteId, 1)).toBe('{"of":"b"}');
 
     // The published site is gone (its host resolves to nothing, so it answers 404) and its caches were
     // invalidated; the other company's site still resolves. The schema stays.
