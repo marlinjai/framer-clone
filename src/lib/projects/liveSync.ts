@@ -36,6 +36,16 @@
 // presence store (src/lib/live/presenceStore.ts); the layer drops a frame whose
 // nodes the open copy does not have when it draws.
 //
+// While an agent's generate_page runs, the stream carries its draft (plan section
+// 3): `gen:outline`, `gen:section` and `gen:done` (and the `state` event's running
+// generation) go to src/lib/live/generationDraft.ts, which draws them with the
+// editor's own Generate draft. `gen:done` of a saved result comes before the
+// `site:version` of its save, and the draft goes inside the adoption's action of
+// that version (or a newer one), so the draft and the saved result never show
+// together. The result's sections the draft already drew exactly as saved do not
+// reveal again; the rest does. A new page the person watched being drafted is
+// shown once it is adopted, while the camera still follows the agent.
+//
 // When the stream is down (a network loss, the 429 of too many streams, a proxy
 // that buffers), the snapshot route is polled with If-None-Match every 5 s while
 // the tab is visible and every 60 s while hidden, until the stream is back. On
@@ -58,11 +68,22 @@ import {
 } from '@/stores/openProject';
 import { existingAutosave, reloadDiscarding } from './autosave';
 import { editorTabId } from './tabId';
-import { LIVE_EVENTS, type AgentActivity, type SiteStateEvent, type SiteVersionEvent } from './liveEvents';
+import {
+  LIVE_EVENTS,
+  type AgentActivity,
+  type GenDoneEvent,
+  type GenOutlineEvent,
+  type GenSectionEvent,
+  type SiteStateEvent,
+  type SiteVersionEvent,
+} from './liveEvents';
+import { GenerationDraft, type SettledDraft } from '@/lib/live/generationDraft';
+import type { PageGenDraftStore } from '@/lib/ai/pageGen/draft';
+import type { PageModelType } from '@/models/PageModel';
 import type { LivePlansStore } from '@/lib/live/plansStore';
 import type { LivePresenceStore } from '@/lib/live/presenceStore';
 import type { LiveRevealStore } from '@/lib/live/revealStore';
-import { projectRevealPlan } from '@/lib/live/reveal';
+import { projectRevealPlan, subtreeIdsInProject } from '@/lib/live/reveal';
 
 export const LIVE_POLL_VISIBLE_MS = 5_000;
 export const LIVE_POLL_HIDDEN_MS = 60_000;
@@ -177,11 +198,22 @@ export class LiveSync {
   private listeners = new Set<() => void>();
   /** For later slices (presence, reveal): what each adoption created and changed. */
   onAdopted: ((adopted: AdoptedVersion, event: SiteVersionEvent | undefined) => void) | undefined;
+  /** The draft of an agent's generate_page running on the site (src/lib/live/generationDraft.ts). */
+  private readonly generation: GenerationDraft;
 
   constructor(projectId: string, rootStore: RootStoreType, deps: LiveSyncDeps = browserLiveSyncDeps) {
     this.projectId = projectId;
     this.rootStore = rootStore;
     this.deps = deps;
+    this.generation = new GenerationDraft({
+      draft: () => rootStore.editorUI.pageGenDraft as PageGenDraftStore | undefined,
+      project: () => {
+        const project = rootStore.projectStore.getProject(projectId);
+        return project && isAlive(project) ? project : undefined;
+      },
+      currentPageId: () => rootStore.editorUI.currentPage?.id,
+      knownVersion: () => knownServerVersion(projectId),
+    });
   }
 
   get phase(): LiveSyncPhase {
@@ -234,8 +266,9 @@ export class LiveSync {
     this.disposeVisibility = undefined;
     this.disposeSettled?.();
     this.disposeSettled = undefined;
-    // Nor does a reveal still playing.
+    // Nor does a reveal still playing, or an agent's draft.
     this.reveal.reset();
+    this.generation.reset();
     this.wanted = undefined;
     this.held = undefined;
     this.setPhase('stopped');
@@ -260,6 +293,8 @@ export class LiveSync {
     };
     stream.onerror = () => {
       if (this.stream !== stream) return;
+      // Events can be missed from now on (an agent's draft end among them): its draft goes, the reconnect's state draws it again.
+      this.generation.streamLost();
       // Down: poll meanwhile. A stream closed for good (a refusal such as 429)
       // is tried again later; one that is reconnecting by itself is left to it.
       this.startPolling();
@@ -276,6 +311,8 @@ export class LiveSync {
       this.presence.applyState(state);
       // The live skeleton plans, against the version this tab's copy holds.
       this.plans.applyState(state.plans, knownServerVersion(this.projectId));
+      // An agent's generation running on the site: its draft so far (a reload mid-run draws it again).
+      this.generation.applyState(state.generation);
       this.heard(state.version, undefined);
     });
     stream.addEventListener(LIVE_EVENTS.agentActivity, (e) => {
@@ -288,6 +325,18 @@ export class LiveSync {
       const line = this.plans.applyUpdate(parse<unknown>(e.data));
       // The agent stopped: the feed says so (the same line the server keeps for a reload).
       if (line) this.presence.addLine(line);
+    });
+    stream.addEventListener(LIVE_EVENTS.genOutline, (e) => {
+      if (this.stream !== stream) return;
+      this.generation.applyOutline(parse<GenOutlineEvent>(e.data));
+    });
+    stream.addEventListener(LIVE_EVENTS.genSection, (e) => {
+      if (this.stream !== stream) return;
+      this.generation.applySection(parse<GenSectionEvent>(e.data));
+    });
+    stream.addEventListener(LIVE_EVENTS.genDone, (e) => {
+      if (this.stream !== stream) return;
+      this.generation.applyDone(parse<GenDoneEvent>(e.data));
     });
     stream.addEventListener(LIVE_EVENTS.siteVersion, (e) => {
       const event = parse<SiteVersionEvent>(e.data);
@@ -380,6 +429,8 @@ export class LiveSync {
   private signedOut() {
     this.closeStream();
     this.clearPoll();
+    // A signed-out tab shows no draft content it can no longer read.
+    this.generation.reset();
     this.setPhase('signed-out');
     existingAutosave(this.projectId)?.noteSignedOut();
   }
@@ -427,6 +478,7 @@ export class LiveSync {
           // The project is gone (deleted elsewhere): saving says so; nothing to follow.
           this.closeStream();
           this.clearPoll();
+          this.generation.reset();
           this.setPhase('gone');
           return;
         }
@@ -509,11 +561,17 @@ export class LiveSync {
   private adopt(version: number, snapshot: ProjectSnapshotOut, label: string, event: SiteVersionEvent | undefined, reveal: boolean): boolean {
     const adopted = runInAction(() => {
       const result = adoptServerCopy(this.rootStore, snapshot, version, label);
+      // In the same action: an agent's draft whose saved result this copy holds goes in the frame the result appears.
+      const settled = result ? this.generation.settle(version) : undefined;
       if (result && reveal && result.created.length > 0) {
-        this.reveal.start(projectRevealPlan(snapshot, result.created));
+        // The sections the draft already drew exactly as saved stay still; the rest reveals.
+        const still = settled && settled.stillIds.length > 0 ? new Set(subtreeIdsInProject(snapshot, settled.stillIds)) : undefined;
+        const created = still ? result.created.filter((id) => !still.has(id)) : result.created;
+        if (created.length > 0) this.reveal.start(projectRevealPlan(snapshot, created));
       }
       // In the same action: a skeleton the adopted copy fulfils gives way to its real section in the same frame its reveal starts.
       if (result) this.plans.noteVersion(version);
+      if (settled) this.showGeneratedPage(settled);
       return result;
     });
     if (!adopted) return false;
@@ -521,6 +579,22 @@ export class LiveSync {
     existingAutosave(this.projectId)?.noteServerCopyAdopted();
     this.onAdopted?.(adopted, event);
     return true;
+  }
+
+  /**
+   * A new page the person watched being drafted (its draft frames were on screen)
+   * is shown once it is adopted, while the camera still follows the agent (the
+   * person has not taken over the camera since the agent's run began).
+   */
+  private showGeneratedPage(settled: SettledDraft) {
+    const nodeId = settled.newPageNodeId;
+    if (!nodeId || !this.presence.follow) return;
+    const project = this.rootStore.projectStore.getProject(this.projectId);
+    if (!project || !isAlive(project)) return;
+    const page = (project.pagesArray as PageModelType[]).find((p) =>
+      (p.appComponentTree.children as Array<{ id: string }>).some((child) => child.id === nodeId),
+    );
+    if (page && this.rootStore.editorUI.currentPage?.id !== page.id) this.rootStore.editorUI.setCurrentPage(page);
   }
 
   /**

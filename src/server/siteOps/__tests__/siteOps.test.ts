@@ -25,6 +25,11 @@ vi.mock('@/server/sites/cachedResolver', () => ({
     return [];
   },
 }));
+// A hook into the usage record, which runs right after the generator returned (before the result is placed).
+const usageHook = vi.hoisted(() => ({ onRecord: undefined as (() => void) | undefined }));
+vi.mock('@/lib/ai/aiUsageStub', () => ({
+  recordUsage: () => usageHook.onRecord?.(),
+}));
 const commerce = vi.hoisted(() => ({ outcome: { ok: true } as Record<string, unknown>, calls: [] as unknown[] }));
 vi.mock('@/server/sites/companyCommerce', () => ({
   ensureCompanyCommerce: async (...args: unknown[]) => {
@@ -39,6 +44,8 @@ import { SiteChangedError, SiteNotFoundError, type SiteRepository } from '@/serv
 import { __resetPageGenRateLimiterForTests, getPageGenRateLimiter } from '@/lib/ai/pageGen/rateLimit';
 import { __resetStockImageCacheForTests, __resetStockOffersForTests } from '@/lib/ai/pageGen/stockImages';
 import type { SiteOpsCaller } from '@/lib/siteOps/types';
+import { publishSiteEvent, resetLiveBusForTests, subscribeSite } from '@/server/sites/liveBus';
+import { generationSnapshot, resetLiveGenerationForTests } from '@/server/sites/liveGeneration';
 import {
   applyBatch,
   createSite,
@@ -102,6 +109,9 @@ function fakeRepository(version = 3) {
       if (options.expectedVersion !== undefined && options.expectedVersion !== state.version) throw new SiteChangedError(state.version);
       state.saved.push({ snapshot: isStateTreeNode(project) ? getSnapshot(project) : project, options });
       state.version = options.expectedVersion === undefined ? 1 : state.version + 1;
+      // As the repository does: the pre-announcement step, then the announcement.
+      (options.beforeAnnounce as ((v: number) => void) | undefined)?.(state.version);
+      publishSiteEvent('site-1', 'site:version', { version: state.version });
       return { version: state.version };
     }),
     publishProject: vi.fn(async (_scope: unknown, _project: unknown, options: Record<string, unknown>) => {
@@ -129,6 +139,9 @@ beforeEach(() => {
   __resetPageGenRateLimiterForTests();
   __resetStockImageCacheForTests();
   __resetStockOffersForTests();
+  resetLiveBusForTests();
+  resetLiveGenerationForTests();
+  usageHook.onRecord = undefined;
 });
 afterEach(() => vi.unstubAllEnvs());
 
@@ -462,5 +475,220 @@ describe('generatePage', () => {
     const busy = await generatePage(caller(), { siteId: 'site-1', expectedVersion: 5, brief: 'x', target: { kind: 'newPage' } }, { repository, anthropic });
     expect(busy.ok ? null : busy.error.code).toBe('rate_limited');
     if (held.ok) held.release();
+  });
+
+  // The model as a stream: the tool input arrives in fragments (as the SDK hands
+  // them to the inputJson listener) before the final message; `gate` holds the
+  // stream open until the test lets it finish, and the request's signal stops it.
+  function streamingAnthropic(input: unknown, gate?: Promise<void>) {
+    return () =>
+      ({
+        beta: {
+          messages: {
+            stream: (_params: unknown, options: { signal?: AbortSignal }) => {
+              const listeners: Array<(fragment: string) => void> = [];
+              const json = JSON.stringify(input);
+              return {
+                on(event: string, listener: (fragment: string) => void) {
+                  if (event === 'inputJson') listeners.push(listener);
+                  return this;
+                },
+                currentMessage: undefined,
+                finalMessage: async () => {
+                  for (let i = 0; i < json.length; i += 40) for (const listener of listeners) listener(json.slice(i, i + 40));
+                  if (gate) {
+                    await new Promise<void>((resolve, reject) => {
+                      options.signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true });
+                      void gate.then(resolve);
+                    });
+                  }
+                  return {
+                    content: [{ type: 'tool_use', id: 'tu_1', name: 'emit_page', input }],
+                    stop_reason: 'tool_use',
+                    stop_details: null,
+                    usage: { input_tokens: 10, output_tokens: 20, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+                  };
+                },
+              };
+            },
+          },
+        },
+      }) as never;
+  }
+
+  const outlined = {
+    outline: [{ title: 'Hero', kind: 'hero' }, { title: 'Order', kind: 'cta' }],
+    title: 'Menu',
+    description: 'What we bake',
+    nodes: [
+      { type: 'section', label: 'Hero', children: [{ type: 'h1', props: { children: 'Our bread' } }] },
+      { type: 'section', label: 'Order', children: [{ type: 'p', props: { children: 'Order by noon for the next morning.' } }] },
+    ],
+  };
+
+  function listen() {
+    const heard: Array<[string, Record<string, unknown>]> = [];
+    subscribeSite('site-1', (event, data) => heard.push([event, data as Record<string, unknown>]));
+    return heard;
+  }
+
+  it("streams the draft to the site's editors and ends it before the version of its save", async () => {
+    const heard = listen();
+    const { repository } = fakeRepository(3);
+    const result = await generatePage(
+      caller(),
+      { siteId: 'site-1', expectedVersion: 3, brief: 'A menu page for a bakery', target: { kind: 'newPage', title: 'Menu' } },
+      { repository, anthropic: streamingAnthropic(outlined) },
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const events = heard.map(([event]) => event);
+    expect(events[0]).toBe('gen:outline');
+    expect(events.filter((e) => e === 'gen:section')).toHaveLength(2);
+    // The draft ends at the saved version, before the announcement that makes an editor fetch it.
+    expect(events.slice(-2)).toEqual(['gen:done', 'site:version']);
+    const runIds = new Set(heard.filter(([e]) => e.startsWith('gen:')).map(([, d]) => d.runId));
+    expect(runIds.size).toBe(1);
+    const outline = heard.find(([e]) => e === 'gen:outline')![1];
+    expect(outline.target).toEqual({ kind: 'newPage', title: 'Menu' });
+    expect((outline.outline as unknown[]).length).toBe(2);
+    // The model's context (the wire target's serialised subtree) never travels.
+    expect(JSON.stringify(heard)).not.toContain('context');
+    const done = heard.find(([e]) => e === 'gen:done')![1];
+    expect(done).toMatchObject({ status: 'saved', version: 4, insertedIds: result.value.insertedIds });
+    expect((done.drawnAs as unknown[]).length).toBe(result.value.insertedIds.length);
+    expect(generationSnapshot('site-1', scope)).toBeUndefined();
+  });
+
+  it('names an insert by its resolved parent, and a reload mid-run gets the draft so far from the state', async () => {
+    const heard = listen();
+    const { repository } = fakeRepository(3);
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    const running = generatePage(
+      caller(),
+      { siteId: 'site-1', expectedVersion: 3, brief: 'Two sections', target: { kind: 'insert', pageId: 'home' } },
+      { repository, anthropic: streamingAnthropic(outlined, gate) },
+    );
+    await vi.waitFor(() => expect(heard.filter(([e]) => e === 'gen:section')).toHaveLength(2));
+    const snapshot = generationSnapshot('site-1', scope);
+    expect(snapshot?.target).toEqual({ kind: 'insert', pageId: 'home', parentId: 'root' });
+    expect(snapshot?.outline).toHaveLength(2);
+    expect(snapshot?.sections.map((s) => s.index)).toEqual([0, 1]);
+    // Another company's stream sees nothing of it.
+    expect(generationSnapshot('site-1', { workspaceId: 'ws_b', tenantGroupId: 'tg_b' })).toBeUndefined();
+    open();
+    expect((await running).ok).toBe(true);
+    expect(generationSnapshot('site-1', scope)).toBeUndefined();
+  });
+
+  it('a run stopped mid-generation (the MCP client went away) drops the draft, writes nothing and frees the slot', async () => {
+    const heard = listen();
+    const { repository, state } = fakeRepository(3);
+    const controller = new AbortController();
+    const running = generatePage(
+      caller(),
+      { siteId: 'site-1', expectedVersion: 3, brief: 'A menu', target: { kind: 'newPage' }, signal: controller.signal },
+      { repository, anthropic: streamingAnthropic(outlined, new Promise(() => {})) },
+    );
+    await vi.waitFor(() => expect(heard.some(([e]) => e === 'gen:section')).toBe(true));
+    controller.abort();
+    const result = await running;
+    expect(result.ok ? null : result.error.code).toBe('failed');
+    expect(state.saved).toEqual([]);
+    expect(audits.rows).toEqual([]);
+    const done = heard.filter(([e]) => e === 'gen:done');
+    expect(done).toHaveLength(1);
+    expect(done[0][1]).toMatchObject({ status: 'stopped' });
+    expect(done[0][1].version).toBeUndefined();
+    expect(heard.some(([e]) => e === 'site:version')).toBe(false);
+    expect(generationSnapshot('site-1', scope)).toBeUndefined();
+    const again = getPageGenRateLimiter().acquire('key:key_1');
+    expect(again.ok).toBe(true);
+    if (again.ok) again.release();
+  });
+
+  it('a stop after the model answered (the MCP client left while photos were placed) writes nothing either', async () => {
+    const heard = listen();
+    const { repository, state } = fakeRepository(3);
+    const controller = new AbortController();
+    usageHook.onRecord = () => controller.abort();
+    const result = await generatePage(
+      caller(),
+      { siteId: 'site-1', expectedVersion: 3, brief: 'A menu', target: { kind: 'newPage' }, signal: controller.signal },
+      { repository, anthropic: streamingAnthropic(outlined) },
+    );
+    expect(result.ok ? null : result.error.message).toMatch(/stopped/);
+    expect(state.saved).toEqual([]);
+    expect(audits.rows).toEqual([]);
+    expect(heard.filter(([e]) => e === 'gen:done').map(([, d]) => d.status)).toEqual(['stopped']);
+  });
+
+  it('a failed model call and a refused save end the draft with their reason and write nothing', async () => {
+    const heard = listen();
+    const { repository, state } = fakeRepository(3);
+    const failing = () =>
+      ({
+        beta: {
+          messages: {
+            stream: () => ({
+              on() {
+                return this;
+              },
+              currentMessage: undefined,
+              finalMessage: async () => {
+                throw Object.assign(new Error('boom'), { status: 500 });
+              },
+            }),
+          },
+        },
+      }) as never;
+    const failed = await generatePage(caller(), { siteId: 'site-1', expectedVersion: 3, brief: 'x', target: { kind: 'newPage' } }, { repository, anthropic: failing });
+    expect(failed.ok).toBe(false);
+    expect(heard.filter(([e]) => e === 'gen:done').map(([, d]) => d.status)).toEqual(['failed']);
+
+    // The site moves on while the model writes: the save is refused.
+    heard.length = 0;
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    const running = generatePage(
+      caller(),
+      { siteId: 'site-1', expectedVersion: 3, brief: 'A menu', target: { kind: 'newPage' } },
+      { repository, anthropic: streamingAnthropic(outlined, gate) },
+    );
+    await vi.waitFor(() => expect(heard.some(([e]) => e === 'gen:section')).toBe(true));
+    state.version = 5;
+    open();
+    const changed = await running;
+    expect(changed.ok ? null : changed.error.code).toBe('site_changed');
+    expect(state.saved).toEqual([]);
+    expect(heard.filter(([e]) => e === 'gen:done').map(([, d]) => d.status)).toEqual(['site_changed']);
+  });
+
+  it('a second generation on the site replaces the first one\'s draft', async () => {
+    const heard = listen();
+    const { repository } = fakeRepository(3);
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    const first = generatePage(
+      caller(),
+      { siteId: 'site-1', expectedVersion: 3, brief: 'First', target: { kind: 'newPage' } },
+      { repository, anthropic: streamingAnthropic(outlined, gate) },
+    );
+    await vi.waitFor(() => expect(heard.some(([e]) => e === 'gen:section')).toBe(true));
+    const firstRun = heard[0][1].runId;
+    // Another key of the same company starts its own on the same site.
+    const second = generatePage(
+      { ...caller(), actor: { kind: 'key', id: 'key_2' } },
+      { siteId: 'site-1', expectedVersion: 3, brief: 'Second', target: { kind: 'newPage' } },
+      { repository, anthropic: streamingAnthropic(outlined, gate) },
+    );
+    await vi.waitFor(() => expect(heard.some(([e, d]) => e === 'gen:section' && d.runId !== firstRun)).toBe(true));
+    expect(heard.find(([e, d]) => e === 'gen:done' && d.runId === firstRun)?.[1].status).toBe('superseded');
+    expect(generationSnapshot('site-1', scope)?.runId).not.toBe(firstRun);
+    open();
+    await Promise.all([first, second]);
+    // The superseded run's own end sends nothing more.
+    expect(heard.filter(([e, d]) => e === 'gen:done' && d.runId === firstRun)).toHaveLength(1);
   });
 });

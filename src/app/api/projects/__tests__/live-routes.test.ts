@@ -49,6 +49,7 @@ import { getSiteRepository as getRepositoryDirect } from '@/server/sites/reposit
 import { publishSiteEvent, resetLiveBusForTests, LIVE_STREAM_LIMITS } from '@/server/sites/liveBus';
 import { GET as EVENTS } from '../[projectId]/events/route';
 import { announcePlan, resetLivePlansForTests } from '@/server/mcp/livePlans';
+import { openLiveGeneration, resetLiveGenerationForTests } from '@/server/sites/liveGeneration';
 import { LIVE_RECHECK_MS, LIVE_RECHECK_ON_WRITE_MS } from '@/lib/projects/liveEvents';
 import { GET as DOCUMENT } from '../[projectId]/document/route';
 
@@ -122,6 +123,7 @@ beforeEach(() => {
   resetLiveBusForTests();
   resetLivePresenceForTests();
   resetLivePlansForTests();
+  resetLiveGenerationForTests();
   auditRows.rows = [];
   auditRows.fail = false;
   auditRows.calls = [];
@@ -216,6 +218,38 @@ describe('GET /api/projects/<id>/events', () => {
     await events.cancel();
   });
 
+  it("sends the site's running generation in `state` (never another workspace's), then its draft events in order", async () => {
+    const node = { id: 'n1', type: 'section', componentType: 'host', label: 'Hero', props: {}, children: [] } as never;
+    const run = openLiveGeneration('site_1', SCOPE, 'run-1', { kind: 'insert', pageId: 'home', parentId: 'root' });
+    run.outline({ generationId: 'run-1', attempt: 1, outline: [{ title: 'Hero', kind: 'hero' }] });
+    run.section({ generationId: 'run-1', attempt: 1, index: 0, slot: 0, node });
+    // Another company's run on another site, and a stream of this site under another scope, never mix.
+    openLiveGeneration('site_2', { workspaceId: 'ws_other', tenantGroupId: 'tg_other' }, 'run-x', { kind: 'newPage' });
+    const res = await EVENTS(req('/api/projects/site_1/events'), ctx('site_1'));
+    const events = eventReader(res);
+    const state = (await events.next()).data as { generation?: Record<string, unknown> };
+    expect(state.generation).toEqual({
+      runId: 'run-1',
+      target: { kind: 'insert', pageId: 'home', parentId: 'root' },
+      outline: [{ title: 'Hero', kind: 'hero' }],
+      sections: [{ index: 0, slot: 0, node }],
+    });
+    run.section({ generationId: 'run-1', attempt: 1, index: 1, slot: 1, node });
+    expect(await events.next()).toMatchObject({ event: 'gen:section', data: { runId: 'run-1', index: 1 } });
+    run.end('saved', { version: 8, insertedIds: ['r1'], nodes: [node] });
+    publishSiteEvent('site_1', 'site:version', { origin: 'generate', version: 8, versionBefore: 7 });
+    expect(await events.next()).toEqual({ event: 'gen:done', data: { runId: 'run-1', status: 'saved', version: 8, insertedIds: ['r1'], drawnAs: [[0, 1]] } });
+    expect((await events.next()).event).toBe('site:version');
+    await events.cancel();
+
+    // A run opened under another workspace's scope on this site is not in this stream's state.
+    resetLiveGenerationForTests();
+    openLiveGeneration('site_1', { workspaceId: 'ws_other', tenantGroupId: 'tg_other' }, 'run-y', { kind: 'newPage' });
+    const again = eventReader(await EVENTS(req('/api/projects/site_1/events'), ctx('site_1')));
+    expect((await again.next()).data).not.toHaveProperty('generation');
+    await again.cancel();
+  });
+
   it('sends the state on connect, then every committed write with its version as the event id', async () => {
     const res = await EVENTS(req('/api/projects/site_1/events'), ctx('site_1'));
     expect(res.status).toBe(200);
@@ -259,6 +293,76 @@ describe('GET /api/projects/<id>/events', () => {
     expect((await events.next()).id).toBe('8');
     expect(await events.next()).toEqual({ event: 'auth:expired', data: {} });
     expect(await events.ended()).toBe(true);
+  });
+
+  it("holds a running generation's draft until a stale check passed: a stream whose access is gone gets none of it", async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    const node = { id: 'n1', type: 'section', componentType: 'host', label: 'Hero', props: {}, children: [] } as never;
+    const fresh = eventReader(await EVENTS(req('/api/projects/site_1/events'), ctx('site_1')));
+    await fresh.next();
+    const run = openLiveGeneration('site_1', SCOPE, 'run-1', { kind: 'newPage' });
+    // Checked moments ago: the section goes out at once.
+    run.section({ generationId: 'run-1', attempt: 1, index: 0, slot: 0, node });
+    expect(await fresh.next()).toMatchObject({ event: 'gen:section', data: { index: 0 } });
+    // Access gone, last check stale: the next section waits for the check and never arrives, nor what follows it.
+    mockCan.mockResolvedValue(false);
+    vi.setSystemTime(Date.now() + LIVE_RECHECK_ON_WRITE_MS + 1);
+    run.section({ generationId: 'run-1', attempt: 1, index: 1, slot: 1, node });
+    run.end('stopped');
+    expect(await fresh.next()).toEqual({ event: 'auth:expired', data: {} });
+    expect(await fresh.ended()).toBe(true);
+  });
+
+  it('a stale check that never answers lets the held draft events go after 10 s, as an outage does', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval', 'setTimeout', 'clearTimeout'] });
+    const node = { id: 'n1', type: 'section', componentType: 'host', label: 'Hero', props: {}, children: [] } as never;
+    const events = eventReader(await EVENTS(req('/api/projects/site_1/events'), ctx('site_1')));
+    await events.next();
+    mockVerifySession.mockImplementation(() => new Promise(() => {}));
+    const run = openLiveGeneration('site_1', SCOPE, 'run-1', { kind: 'newPage' });
+    vi.setSystemTime(Date.now() + LIVE_RECHECK_ON_WRITE_MS + 1);
+    run.section({ generationId: 'run-1', attempt: 1, index: 0, slot: 0, node });
+    publishSiteEvent('site_1', 'site:version', { origin: 'mcp', version: 8, versionBefore: 7 });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect((await events.next()).event).toBe('gen:section');
+    expect((await events.next()).event).toBe('site:version');
+    // The timed-out check is not reused: the next one really runs, and finds the access gone.
+    const calls = mockVerifySession.mock.calls.length;
+    mockVerifySession.mockResolvedValue(makeSession());
+    mockCan.mockResolvedValue(false);
+    vi.setSystemTime(Date.now() + LIVE_RECHECK_ON_WRITE_MS + 1);
+    run.section({ generationId: 'run-1', attempt: 1, index: 1, slot: 1, node });
+    expect(await events.next()).toEqual({ event: 'auth:expired', data: {} });
+    expect(mockVerifySession.mock.calls.length).toBeGreaterThan(calls);
+  });
+
+  it('ends the stream when more than 500 events pile up behind a check', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    const node = { id: 'n1', type: 'section', componentType: 'host', label: 'Hero', props: {}, children: [] } as never;
+    const events = eventReader(await EVENTS(req('/api/projects/site_1/events'), ctx('site_1')));
+    await events.next();
+    mockVerifySession.mockImplementation(() => new Promise(() => {}));
+    const run = openLiveGeneration('site_1', SCOPE, 'run-1', { kind: 'newPage' });
+    vi.setSystemTime(Date.now() + LIVE_RECHECK_ON_WRITE_MS + 1);
+    run.section({ generationId: 'run-1', attempt: 1, index: 0, slot: 0, node });
+    for (let v = 8; v < 520; v += 1) publishSiteEvent('site_1', 'site:version', { origin: 'mcp', version: v, versionBefore: v - 1 });
+    expect(await events.ended()).toBe(true);
+  });
+
+  it('a stale check that passes sends the held draft events in their order', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    const node = { id: 'n1', type: 'section', componentType: 'host', label: 'Hero', props: {}, children: [] } as never;
+    const events = eventReader(await EVENTS(req('/api/projects/site_1/events'), ctx('site_1')));
+    await events.next();
+    const run = openLiveGeneration('site_1', SCOPE, 'run-1', { kind: 'newPage' });
+    vi.setSystemTime(Date.now() + LIVE_RECHECK_ON_WRITE_MS + 1);
+    run.outline({ generationId: 'run-1', attempt: 1, outline: [{ title: 'Hero', kind: 'hero' }] });
+    run.section({ generationId: 'run-1', attempt: 1, index: 0, slot: 0, node });
+    run.end('saved', { version: 8, insertedIds: ['r1'], nodes: [node] });
+    publishSiteEvent('site_1', 'site:version', { origin: 'generate', version: 8, versionBefore: 7 });
+    const order = [await events.next(), await events.next(), await events.next(), await events.next()].map((e) => e.event);
+    expect(order).toEqual(['gen:outline', 'gen:section', 'gen:done', 'site:version']);
+    await events.cancel();
   });
 
   it('catches a reconnect up: Last-Event-ID behind the current version gets one site:version', async () => {

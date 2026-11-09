@@ -90,7 +90,8 @@ import {
 } from '@/lib/ai/pageGen/flow';
 import { GENERATION_LIMITS } from '@/lib/ai/pageGen/schema';
 import type { PageGenProgress, StockImageSummary } from '@/lib/ai/pageGen/protocol';
-import { draftTargetFor, sectionContentKey, type DraftPhase, type PageGenDraftTarget } from '@/lib/ai/pageGen/draft';
+import { matchPreviewSections } from '@/lib/ai/pageGen/sectionMatch';
+import { draftTargetFor, type DraftPhase, type PageGenDraftTarget } from '@/lib/ai/pageGen/draft';
 import { PageGenProgressPanel } from '@/components/ai/PageGenProgressPanel';
 import {
   DEFAULT_REVIEW_SETTINGS,
@@ -318,18 +319,7 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
         // Everything else (no stream, a section stored while another page was on
         // screen, one the editor refused, one a repair rewrote) reveals now, in
         // the same action, so none is drawn once without its reveal.
-        const seen = new Map<string, number>();
-        for (const source of draft.shownSources()) {
-          const key = sectionContentKey(source);
-          seen.set(key, (seen.get(key) ?? 0) + 1);
-        }
-        const drawnBefore = result.nodes.map((n) => {
-          const key = sectionContentKey(n);
-          const left = seen.get(key) ?? 0;
-          if (left === 0) return false;
-          seen.set(key, left - 1);
-          return true;
-        });
+        const drawnBefore = matchPreviewSections(draft.shownSources(), result.nodes).map((match) => match !== null);
         const outcome = runInAction(() => {
           const applied = applyResult(project, target, result, runInputs.targetKind === 'newPage' ? runInputs.pageTitle : undefined);
           draft.clear(requestKey);
