@@ -69,7 +69,9 @@
 
 import { runInAction } from 'mobx';
 import { isEditing, isInteracting, onEditingSettled } from '@/lib/live/editingInProgress';
-import { applyPatch, getSnapshot, isAlive, recordPatches, resolvePath, type IPatchRecorder } from 'mobx-state-tree';
+import { applyPatch, getSnapshot, isAlive, resolvePath, type IJsonPatch } from 'mobx-state-tree';
+import ProjectModel from '@/models/ProjectModel';
+import { COMPONENT_LIMITS, serializedBytes } from '@/lib/components/placement';
 import { getHistoryStore } from '@/stores/RootStore';
 import { shareUnchanged } from './structuralSharing';
 import type { RootStoreType } from '@/stores/RootStore';
@@ -181,6 +183,8 @@ export interface HeldVersion {
   event?: SiteVersionEvent;
   /** Held only because the person is editing (no dialog): looked at again once the editing settled. */
   whileEditing?: boolean;
+  /** Held while the save of a replayed edit is out (no dialog yet): its answer decides, and a refusal replays once more. */
+  afterReplay?: boolean;
 }
 
 /**
@@ -262,7 +266,9 @@ export class LiveSync {
   private disposeVisibility: (() => void) | undefined;
   private disposeSettled: (() => void) | undefined;
   private disposeEditing: (() => void) | undefined;
-  private editRecording: { recorder: IPatchRecorder; undoIdx: number; length: number } | undefined;
+  private editMark: { undoIdx: number; length: number } | undefined;
+  /** Where the history stood before a replayed edit, until its save settled. */
+  private replayMark: { undoIdx: number; length: number } | undefined;
   private fetchRetryTimer: ReturnType<typeof setTimeout> | undefined;
   private fetchRetries = 0;
   private watchdogTimer: ReturnType<typeof setTimeout> | undefined;
@@ -331,102 +337,82 @@ export class LiveSync {
     this.held = held;
     if (held?.whileEditing) {
       this.waitForEditing();
-      this.recordEdit();
+      this.markEdit();
     } else {
       this.stopWaitingForEditing();
-      this.stopRecordingEdit();
+      if (!held) this.editMark = undefined;
     }
     this.notify();
   }
 
   /**
-   * While a copy is held for the person's editing, what that editing changes is
-   * recorded, so that once it settled the edit can go on top of the agent's copy
-   * instead of opening the dialog (rebaseEdit).
+   * Where the undo history stood when a copy was first held for the person's
+   * editing: the edit that settles is the one entry after it, which rebaseEdit
+   * can put on top of the agent's copy instead of opening the dialog.
    */
-  private recordEdit() {
-    if (this.editRecording) return;
-    const project = this.rootStore.projectStore.getProject(this.projectId);
+  private markEdit() {
+    if (this.editMark) return;
     const history = getHistoryStore();
-    if (!project || !isAlive(project) || !history) return;
-    this.editRecording = { recorder: recordPatches(project), undoIdx: history.undoIdx, length: history.history.length };
-  }
-
-  private stopRecordingEdit() {
-    this.editRecording?.recorder.stop();
-    this.editRecording = undefined;
+    if (!history) return;
+    this.editMark = { undoIdx: history.undoIdx, length: history.history.length };
+    this.replayMark = undefined;
   }
 
   /**
    * The person's settled edit, made while the agent's copy was held, put on top
-   * of that copy: undo it (one history entry, the only one since the hold), adopt
-   * the copy, apply the edit again. Only for edits that replace values of nodes
-   * (text, props, styles, a resize) on nodes the copy still has, whose edited
-   * value the agent left as it was. Anything else (a move, a node or page the
-   * agent removed, the same value edited on both sides, a page or site setting)
-   * answers false, and the dialog asks as before.
+   * of that copy: undo it (the one history entry since `mark`), adopt the copy,
+   * apply the edit again as one step under its own name, and save at once. Only
+   * for edits that replace values of nodes (text, props, styles, a resize, also
+   * the same value several times, as a resize does) on nodes the copy still has,
+   * whose first edited value the agent left as it was. It is tried on a scratch
+   * copy of the agent's version first (also the size limit of a reusable
+   * component), so nothing is undone unless the replay will apply. Anything else
+   * (a move, a node or page the agent removed, the same value edited on both
+   * sides, a page or site setting) answers false, and the dialog asks as before.
    */
-  private rebaseEdit(held: HeldVersion): boolean {
-    const recording = this.editRecording;
+  private rebaseEdit(held: HeldVersion, mark: { undoIdx: number; length: number } | undefined): boolean {
     const history = getHistoryStore();
     const project = this.rootStore.projectStore.getProject(this.projectId);
-    if (!recording || !history || !project || !isAlive(project)) return false;
-    recording.recorder.stop();
+    if (!mark || !history || !project || !isAlive(project)) return false;
     // Exactly one new entry, on top (no redo tail): the person's edit, and nothing else.
-    if (history.undoIdx !== recording.undoIdx + 1 || history.history.length !== recording.length + 1) return false;
-    const { patches, inversePatches } = recording.recorder;
-    const edits: Array<{ nodeId: string; field: string; value: unknown }> = [];
-    const heldNodes = nodesOf(held.snapshot);
-    for (let i = 0; i < patches.length; i++) {
-      const patch = patches[i];
-      const parts = patch.path.split('/');
-      const field = parts.pop() ?? '';
-      // A page's own timestamps move with any edit on it: not part of the edit.
-      if (field === 'updatedAt' || field === 'createdAt') continue;
-      if (patch.op !== 'replace' || !field) return false;
-      let node: unknown;
-      try {
-        node = resolvePath(project, parts.join('/'));
-      } catch {
-        return false;
-      }
-      const nodeId = (node as { id?: unknown } | undefined)?.id;
-      if (typeof nodeId !== 'string' || !node || typeof node !== 'object' || !('props' in node) || !('componentType' in node)) return false;
-      const agentNode = heldNodes.get(nodeId);
-      if (!agentNode) return false;
-      // The agent changed the same value: a real conflict, the person decides.
-      const before = inversePatches[i].value;
-      if (shareUnchanged(before, agentNode[field]) !== before && !(before === undefined && agentNode[field] === undefined)) return false;
-      edits.push({ nodeId, field, value: patch.value });
-    }
-    if (edits.length === 0) return false;
+    if (history.undoIdx !== mark.undoIdx + 1 || history.history.length !== mark.length + 1) return false;
+    const entry = history.history[history.undoIdx - 1];
+    if (entry.remote) return false;
+    // Recorded again under the entry's own action name, so the history names it as before.
+    const label = entry.actionName;
+    const edits = replayableEdits(this.rootStore.projectStore, entry.patches, entry.inversePatches, nodesOf(held.snapshot));
+    if (!edits) return false;
+    // A dry run on the agent's version: the values must apply, and no reusable component may outgrow its limit.
+    if (!replaysCleanly(held.snapshot, edits)) return false;
     history.undo();
     if (!isSaved(this.projectId, getSnapshot(project) as unknown as ProjectContent)) {
       history.redo();
       return false;
     }
-    this.stopRecordingEdit();
     if (!this.adopt(held.version, held.snapshot, held.label, undefined, false)) {
       history.redo();
       return false;
     }
-    // The edit again, as one step of the person's own, saved at once on the adopted
-    // version (the window in which another agent write could meet it unsaved stays short).
     const adopted = this.rootStore.projectStore.getProject(this.projectId);
     if (!adopted) return true;
     const targets = edits.map((edit) => ({ edit, node: findNode(adopted, edit.nodeId) }));
     const applied: Array<{ node: object; field: string; before: unknown }> = [];
     const entriesBefore = history.history.length;
     try {
-      // Every node is in the adopted copy (checked against it above); all or nothing all the same.
       if (targets.some((t) => !t.node)) throw new Error('a node of the edit is not in the adopted copy');
-      runInAction(() => {
-        for (const { edit, node } of targets) {
-          const before = (node as Record<string, unknown>)[edit.field];
-          replayApply(node!, edit.field, edit.value);
-          applied.push({ node: node!, field: edit.field, before });
-        }
-      });
+      // One undo step, under the edit's own name.
+      history.applyRemote(
+        label,
+        () =>
+          runInAction(() => {
+            for (const { edit, node } of targets) {
+              const before = (node as Record<string, unknown>)[edit.field];
+              replayApply(node!, edit.field, edit.value);
+              applied.push({ node: node!, field: edit.field, before });
+            }
+          }),
+        false,
+      );
     } catch (err) {
       // Half an edit is never left (nor saved, nor an undo step): back to the adopted copy as it came, and the person is told.
       history.runUntracked(() =>
@@ -438,10 +424,12 @@ export class LiveSync {
       console.error('[live] an edit could not be put on top of the newer version:', err);
       this.rootStore.editorUI.setEditorNotice({
         kind: 'refused',
-        message: "Your last edit could not be kept on top of the newer version of the site and was taken back. Please make it again.",
+        message: 'Your last edit could not be kept on top of the newer version of the site and was taken back. Please make it again.',
       });
       return true;
     }
+    // Until the merged copy is saved: an agent write meanwhile can be met by one more replay (see take).
+    this.replayMark = { undoIdx: history.undoIdx - 1, length: history.history.length - 1 };
     void existingAutosave(this.projectId)?.saveNow();
     return true;
   }
@@ -494,6 +482,8 @@ export class LiveSync {
     this.streamRetryTimer = undefined;
     this.streamRefusals = 0;
     this.stopWaitingForEditing();
+    this.editMark = undefined;
+    this.replayMark = undefined;
     this.disposeVisibility?.();
     this.disposeVisibility = undefined;
     this.disposeSettled?.();
@@ -814,8 +804,14 @@ export class LiveSync {
       this.setHeld(undefined);
       return;
     }
+    // Still editing (a write of this tab settled meanwhile): never adopt under the cursor.
+    if (held.whileEditing && isEditing(this.rootStore)) return;
     // A settled edit made while the agent's copy waited goes on top of it, when it can.
-    if (held.whileEditing && !hasWriteInFlight(this.projectId) && this.rebaseEdit(held)) return;
+    const project = this.rootStore.projectStore.getProject(this.projectId);
+    const unsaved = !!project && isAlive(project) && !isSaved(this.projectId, getSnapshot(project) as unknown as ProjectContent);
+    const mark = held.afterReplay ? this.replayMark : held.whileEditing ? this.editMark : undefined;
+    if (held.afterReplay) this.replayMark = undefined;
+    if (mark && unsaved && !hasWriteInFlight(this.projectId) && this.rebaseEdit(held, mark)) return;
     this.setHeld(undefined);
     this.take({ version: held.version, snapshot: held.snapshot }, held.event, held.label);
   }
@@ -849,15 +845,22 @@ export class LiveSync {
       autosavePhase !== 'publishing' &&
       isSaved(this.projectId, getSnapshot(project) as unknown as ProjectContent);
     const keep = { version: body.version, snapshot: body.snapshot, label, ...(event && live ? { event } : {}) };
-    if (!clean) {
-      this.setHeld(keep);
-      autosave?.noteChangedElsewhere(body.version);
+    if (isEditing(this.rootStore) && autosavePhase !== 'conflict') {
+      // Typing, a text edit, a drag or a resize is open (a resize writes on every
+      // move, so the copy may already differ): no dialog under the cursor, and no
+      // adoption replacing what the person works on. Looked at once it settled.
+      this.setHeld({ ...keep, whileEditing: true });
       return;
     }
-    if (isEditing(this.rootStore)) {
-      // Typing, a text edit, a drag or a resize is open: nothing unsaved yet (no
-      // dialog), but adopting now would replace what the person works on.
-      this.setHeld({ ...keep, whileEditing: true });
+    if (!clean) {
+      if (this.replayMark && hasWriteInFlight(this.projectId)) {
+        // The save of a replayed edit is out: it may land first (then this copy is
+        // adopted after it) or be refused (then the edit is replayed once more).
+        this.setHeld({ ...keep, afterReplay: true });
+        return;
+      }
+      this.setHeld(keep);
+      autosave?.noteChangedElsewhere(body.version);
       return;
     }
     // Only a copy that is exactly the announced write, on top of the copy this tab
@@ -991,6 +994,70 @@ const defaultReplayApply = replayApply;
 /** Tests only: replace how a replayed edit writes one value; undefined restores it. */
 export function setReplayApplyForTests(apply: ((node: object, field: string, value: unknown) => void) | undefined): void {
   replayApply = apply ?? defaultReplayApply;
+}
+
+/**
+ * The person's history entry as values of nodes to set again, by node id and
+ * field: the first old value (compared with the agent's copy) and the last new
+ * one (what the edit left). Null when anything in it is not such a value, or a
+ * node is not in the agent's copy, or the agent changed the same value.
+ */
+function replayableEdits(
+  root: object,
+  patches: readonly IJsonPatch[],
+  inversePatches: readonly IJsonPatch[],
+  agentNodes: Map<string, Record<string, unknown>>,
+): Array<{ nodeId: string; field: string; value: unknown }> | null {
+  const byKey = new Map<string, { nodeId: string; field: string; before: unknown; value: unknown }>();
+  for (let i = 0; i < patches.length; i++) {
+    const patch = patches[i];
+    const parts = patch.path.split('/');
+    const field = parts.pop() ?? '';
+    // A page's own timestamps move with any edit on it: not part of the edit.
+    if (field === 'updatedAt' || field === 'createdAt') continue;
+    if (patch.op !== 'replace' || !field) return null;
+    let node: unknown;
+    try {
+      node = resolvePath(root, parts.join('/'));
+    } catch {
+      return null;
+    }
+    const nodeId = (node as { id?: unknown } | undefined)?.id;
+    if (typeof nodeId !== 'string' || !node || typeof node !== 'object' || !('props' in node) || !('componentType' in node)) return null;
+    const key = `${nodeId}\u0000${field}`;
+    const known = byKey.get(key);
+    if (known) known.value = patch.value;
+    else byKey.set(key, { nodeId, field, before: inversePatches[i]?.value, value: patch.value });
+  }
+  const edits = [...byKey.values()];
+  if (edits.length === 0) return null;
+  for (const edit of edits) {
+    const agentNode = agentNodes.get(edit.nodeId);
+    if (!agentNode) return null;
+    const agentValue = agentNode[edit.field];
+    // The agent changed the same value: a real conflict, the person decides.
+    const same = edit.before === undefined ? agentValue === undefined : shareUnchanged(edit.before, agentValue) === edit.before;
+    if (!same) return null;
+  }
+  return edits.map(({ nodeId, field, value }) => ({ nodeId, field, value }));
+}
+
+/** The edit applied to a scratch copy of the agent's version: true when every value applies and no reusable component outgrows its limit. */
+function replaysCleanly(snapshot: ProjectSnapshotOut, edits: Array<{ nodeId: string; field: string; value: unknown }>): boolean {
+  try {
+    const scratch = ProjectModel.create(snapshot);
+    for (const edit of edits) {
+      const node = findNode(scratch, edit.nodeId);
+      if (!node) return false;
+      applyPatch(node, { op: 'replace', path: `/${edit.field}`, value: edit.value });
+    }
+    for (const [, definition] of scratch.components) {
+      if (serializedBytes(getSnapshot(definition)) > COMPONENT_LIMITS.definitionBytes) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Every node of a snapshot's pages and components by id. */

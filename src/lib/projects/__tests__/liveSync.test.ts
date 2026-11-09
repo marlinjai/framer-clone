@@ -16,7 +16,7 @@ import { applyPatch, getSnapshot } from 'mobx-state-tree';
 import { createRootStore, getHistoryStore, type RootStoreType } from '@/stores/RootStore';
 import ProjectModel, { type ProjectModelType, type ProjectSnapshotOut } from '@/models/ProjectModel';
 import { applyOperations } from '@/lib/siteOps/applyOps';
-import { knownServerPageIds, knownServerVersion, openProject } from '@/stores/openProject';
+import { knownServerPageIds, knownServerVersion, noteWriteInFlight, openProject } from '@/stores/openProject';
 import { autosaveFor, resetAutosaveForTests, AUTOSAVE_DEBOUNCE_MS } from '../autosave';
 import type { ProjectWriteResult } from '../projectWrite';
 import { editorTabId } from '../tabId';
@@ -1480,6 +1480,151 @@ describe('liveSync: a settled edit goes on top of the agent\'s copy (review of P
     await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS * 2);
     expect(saves).toEqual([]);
     expect(autosaveFor(SITE).getState().phase).toBe('saved');
+  });
+
+  it('a resize writing on every move, with the agent saving mid-gesture: no dialog under the cursor, the resize replayed on top', async () => {
+    start();
+    await agentWrites('one');
+    await agentWrites('two');
+    const node = homeChild(0);
+    const history = getHistoryStore()!;
+    store.editorUI.startResize({} as never);
+    history.startBatch('Resize');
+    node.setTextContent('move 1'); // the copy differs from the saved one from the first move on
+    await agentWrites('during the gesture');
+    expect(autosaveFor(SITE).getState().phase).not.toBe('conflict');
+    expect(liveSyncFor(SITE)?.heldVersion).toMatchObject({ whileEditing: true });
+    node.setTextContent('move 2'); // the same value written again
+    node.setTextContent('final size');
+    history.commitBatch();
+    store.editorUI.endResize();
+    await settle();
+    expect(autosaveFor(SITE).getState().phase).not.toBe('conflict');
+    const text = JSON.stringify(working());
+    expect(text).toContain('final size');
+    expect(text).toContain('during the gesture');
+    expect(text).not.toContain('move 1');
+  });
+
+  it('an edit of two nodes is replayed as one undo step under its own name; the next undo takes back the agent\'s write', async () => {
+    start();
+    await agentWrites('one');
+    await agentWrites('two');
+    const [a, b] = [homeChild(0), homeChild(1)];
+    const history = getHistoryStore()!;
+    const draft = openDraft(() => {
+      history.startBatch('Edit text');
+      a.setTextContent('person A');
+      b.setTextContent('person B');
+      history.commitBatch();
+    });
+    await agentWrites('three');
+    draft.commitAndClose();
+    await settle();
+    const last = history.history[history.history.length - 1];
+    expect(history.labelFor(last)).toContain('Edit text');
+    expect(last.remote).toBe(false);
+    history.undo();
+    expect(JSON.stringify(working())).not.toContain('person A');
+    expect(JSON.stringify(working())).not.toContain('person B');
+    expect(JSON.stringify(working())).toContain('three');
+    history.undo();
+    expect(JSON.stringify(working())).not.toContain('three');
+  });
+
+  it('still editing when the look again comes (one edit committed, the next draft already open): nothing replayed or adopted under the cursor', async () => {
+    start();
+    await agentWrites('first');
+    const node = homeChild(0);
+    const first = openDraft(() => node.setTextContent('first edit'));
+    await agentWrites('agent');
+    // The first edit commits and the person is already typing the next one, in the same moment.
+    first.commitAndClose();
+    const second = openDraft();
+    noteWriteInFlight(SITE, true);
+    noteWriteInFlight(SITE, false); // a write of this tab settling asks for a look too
+    await settle();
+    expect(knownServerVersion(SITE)).toBe(2);
+    expect(liveSyncFor(SITE)?.heldVersion).toMatchObject({ whileEditing: true });
+    expect(JSON.stringify(working())).not.toContain('"agent"');
+    second.cancel();
+    await settle();
+    // Settled now: the first edit goes on top of the agent's copy.
+    expect(autosaveFor(SITE).getState().phase).not.toBe('conflict');
+    expect(JSON.stringify(working())).toContain('first edit');
+    expect(knownServerVersion(SITE)).toBeGreaterThanOrEqual(3);
+  });
+
+  it('the merged save refused because the agent wrote again first: the edit is replayed once more, no dialog', async () => {
+    start();
+    await agentWrites('first');
+    const node = homeChild(0);
+    let gate: (() => void) | undefined;
+    resetAutosaveForTests({
+      write: async (snapshot, expectedVersion): Promise<ProjectWriteResult> => {
+        await new Promise<void>((resolve) => {
+          gate = resolve;
+        });
+        saves.push({ expectedVersion, snapshot: snapshot as ProjectSnapshotOut });
+        if (expectedVersion !== server.version) return { kind: 'conflict', currentVersion: server.version };
+        server = { version: server.version + 1, snapshot: snapshot as ProjectSnapshotOut };
+        return { kind: 'ok', payload: {}, version: server.version };
+      },
+    });
+    autosaveFor(SITE).attach(project());
+    const draft = openDraft(() => node.setTextContent('typed by the person'));
+    await agentWrites('second');
+    draft.commitAndClose();
+    await settle(); // replayed on 3, its save is out
+    await agentWrites('third'); // lands first: the save will be refused
+    expect(autosaveFor(SITE).getState().phase).not.toBe('conflict');
+    gate!();
+    await settle();
+    await settle();
+    // Refused on 3, replayed on 4, saved there.
+    gate?.();
+    await settle();
+    await settle();
+    expect(saves.map((save) => save.expectedVersion)).toEqual([3, 4]);
+    expect(autosaveFor(SITE).getState().phase).toBe('saved');
+    const text = JSON.stringify(server.snapshot);
+    for (const part of ['typed by the person', 'second', 'third']) expect(text).toContain(part);
+  });
+
+  it('a replay that would push a reusable component over its size limit is never tried: the dialog asks, nothing undone', async () => {
+    type TextNode = { id: string; props: { children?: unknown }; children?: TextNode[]; setTextContent(t: string): void };
+    /** The node of a component definition whose text is `text`. */
+    const inDefinition = (m: ProjectModelType, text: string): TextNode => {
+      const visit = (node: TextNode): TextNode | undefined =>
+        node.props?.children === text ? node : (node.children ?? []).map(visit).find(Boolean);
+      for (const def of m.components.values()) {
+        const found = visit((def as unknown as { page: { appComponentTree: TextNode } }).page.appComponentTree);
+        if (found) return found;
+      }
+      throw new Error(`no node with ${text}`);
+    };
+    start();
+    // A component of two text nodes, saved and adopted.
+    await serverWrites(async (m) => {
+      const home = m.pagesArray.find((page) => page.slug === '')!;
+      const outcome = await applyOperations(m, [{ op: 'insertNodes', pageId: home.id, nodes: [{ type: 'div', children: [{ type: 'p', props: { children: 'A' } }, { type: 'p', props: { children: 'B' } }] }] }]);
+      if (!outcome.ok) throw new Error('refused');
+      const made = m.createComponentFromSelection(home.id, [(home.appComponentTree.children[0] as { id: string }).id], 'Block');
+      if (!made.ok) throw new Error('component');
+    });
+    const a = inDefinition(project(), 'A');
+    const big = 'x'.repeat(150 * 1024);
+    // The agent grows B, the person grows A: each fine alone, too big together.
+    const draft = openDraft(() => a.setTextContent(big));
+    await serverWrites((m) => inDefinition(m, 'B').setTextContent(big));
+    expect(liveSyncFor(SITE)?.heldVersion).toMatchObject({ whileEditing: true });
+    const historyBefore = getHistoryStore()!.history.length;
+    draft.commitAndClose();
+    await settle();
+    expect(autosaveFor(SITE).getState().phase).toBe('conflict');
+    // Nothing undone: the person's edit stands, as its own step.
+    expect(inDefinition(project(), big).id).toBe(a.id);
+    expect(getHistoryStore()!.history.length).toBe(historyBefore + 1);
   });
 
   it('the agent changed the same text: a real conflict, the dialog asks', async () => {
