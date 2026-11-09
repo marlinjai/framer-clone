@@ -480,6 +480,8 @@ describe('the pieces', () => {
       }),
     ).toEqual({ ids: ['p1', 'p2'], count: 4 });
     expect(deletedPagesOf({ ops: 'nope' })).toEqual({ ids: [], count: 0 });
+    // An id with a dot (`page.about`) is a real id, and travels.
+    expect(deletedPagesOf({ ops: [{ op: 'deletePage', pageId: 'page.about' }] })).toEqual({ ids: ['page.about'], count: 1 });
     // A page the same batch created, deleted by its ref: its id comes from the answer.
     expect(deletedPagesOf({ ops: [{ op: 'createPage', ref: 'tmp' }, { op: 'deletePage', pageId: 'ref:tmp' }] }, { tmp: 'p-tmp' })).toEqual({ ids: ['p-tmp'], count: 1 });
     expect(deletedPagesOf(undefined)).toEqual({ ids: [], count: 0 });

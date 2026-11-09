@@ -464,23 +464,25 @@ export const AgentCameraFollow = observer(function AgentCameraFollow() {
     [presence],
   );
 
-  // The person took over (another selection, a text edit): the camera is theirs.
+  // The person took over (another selection, a text edit) while an agent works: the camera is theirs.
+  // With no agent active there is nothing being followed, so Follow stays as it is.
   React.useEffect(() => {
     if (!presence) return;
     return onPersonTookOver(rootStore, () => {
-      if (presence.follow) presence.setFollow(false);
+      if (presence.follow && presence.anyActive) presence.setFollow(false);
     });
   }, [presence, rootStore]);
 
-  // Before any target resolves, a move by the person is still noticed.
+  // Before any target resolves, a move by the person is still noticed, while an agent works.
+  const anyActive = !!presence?.anyActive;
   React.useEffect(() => {
-    if (!presence?.follow || lead?.target) return;
+    if (!presence?.follow || lead?.target || !anyActive) return;
     const watch = () => {
-      if (last.current && presence.follow && !sameCamera(last.current, readRef.current())) presence.setFollow(false);
+      if (last.current && presence.follow && presence.anyActive && !sameCamera(last.current, readRef.current())) presence.setFollow(false);
     };
     return subscribe(watch);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [presence, presence?.follow, !!lead?.target, subscribe]);
+  }, [presence, presence?.follow, !!lead?.target, anyActive, subscribe]);
 
   React.useEffect(() => {
     // While the person works, the camera stays put; this runs again once they stop.

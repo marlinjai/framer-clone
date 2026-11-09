@@ -58,10 +58,17 @@ export function whilePanelWritesRule<T>(write: () => T): T {
 
 /** 'refused': an action the editor would not carry out, and why. */
 export interface EditorNoticeState {
-  kind: 'changedElsewhere' | 'missingPage' | 'refused' | 'previewState' | 'newPage';
+  kind: 'changedElsewhere' | 'missingPage' | 'refused' | 'previewState' | 'newPage' | 'pageDeleted';
   message: string;
-  /** `newPage`: the page an agent generated, which Open it shows (src/lib/projects/liveSync.ts). */
+  /**
+   * `newPage`: the page an agent generated, which Open it shows (src/lib/projects/liveSync.ts).
+   * `pageDeleted`: the page an agent deleted while it was open, which Undo brings back.
+   */
   pageId?: string;
+  /** `pageDeleted`: the history entry of that agent's step; Undo is offered while it is the last one applied. */
+  historyEntryId?: string;
+  /** `pageDeleted`: the message of a state preview that was showing, kept with its Show first values action. */
+  preview?: string;
 }
 
 /** The canvas position, read and written through Canvas, which owns it. */
@@ -341,6 +348,7 @@ const EditorUIStore = types.model('EditorUI', {
   clearPreviewState() {
     if (Object.keys(self.previewState).length > 0) self.previewState = {};
     if (self.editorNotice?.kind === 'previewState') self.editorNotice = undefined;
+    else if (self.editorNotice?.preview) self.editorNotice = { ...self.editorNotice, preview: undefined };
   },
 
   /** Which mode a `system` site's frames show. Writes nothing to the project. */
