@@ -95,6 +95,7 @@ describe('LiveConnectionStatus (H1)', () => {
     expect(region.getAttribute('role')).toBe('status');
     expect(region.textContent).toBe('');
 
+    // The server simply closes the stream (no auth:expired); the browser reconnects by itself.
     act(() => stream().fail());
     act(() => vi.advanceTimersByTime(LIVE_PAUSED_GRACE_MS - 1));
     expect(region.textContent).toBe('');

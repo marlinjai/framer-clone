@@ -1495,6 +1495,37 @@ describe('liveSync: a silent stream and a tab shown again (F3)', () => {
   });
 });
 
+describe('liveSync: the server simply closes the stream (a re-check timeout, an auth outage, a slow reader)', () => {
+  it('reconnecting by itself: polls the document route meanwhile, and is live again once reopened', async () => {
+    start();
+    stream().emit(LIVE_PING_EVENT, {});
+    stream().fail(false); // closed by the server, no auth:expired: the browser reconnects by itself
+    const sync = liveSyncFor(SITE)!;
+    expect(sync.phase).toBe('polling');
+    expect(sync.wasLive).toBe(true);
+    expect(autosaveFor(SITE).getState().phase).toBe('saved'); // not signed out
+    await agentWrites('while closed', false);
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_VISIBLE_MS);
+    expect(knownServerVersion(SITE)).toBe(2);
+    // The watchdog was cleared with the error: no second stream is forced open meanwhile.
+    await vi.advanceTimersByTimeAsync(LIVE_WATCHDOG_MS);
+    expect(streams).toHaveLength(1);
+    stream().open();
+    expect(sync.phase).toBe('live');
+  });
+
+  it('the reconnect refused (closed for good): polling goes on and a new stream is tried after the back-off', async () => {
+    start();
+    stream().fail(true);
+    expect(liveSyncFor(SITE)?.phase).toBe('polling');
+    const count = streams.length;
+    await vi.advanceTimersByTimeAsync(LIVE_STREAM_RETRY_MS);
+    expect(streams).toHaveLength(count + 1);
+    stream().open();
+    expect(liveSyncFor(SITE)?.phase).toBe('live');
+  });
+});
+
 describe('liveSync: stream refusals back off with jitter (F7)', () => {
   it('waits 1, then 2 minutes, plus the random share', async () => {
     const random = vi.fn(() => 0.5);
