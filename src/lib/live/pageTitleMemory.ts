@@ -28,6 +28,11 @@ export function rememberPageTitles(project: { id: string }, pages: Iterable<Titl
   }
 }
 
+/** Forget every remembered title (a sign-out, another site opened). */
+export function forgetPageTitles(): void {
+  memory.clear();
+}
+
 /** The last title this editor saw for a page of a project, if any. */
 export function rememberedPageTitle(project: { id: string }, pageId: string): string | undefined {
   return memory.get(project.id)?.get(pageId);

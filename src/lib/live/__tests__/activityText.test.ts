@@ -95,6 +95,7 @@ describe('activity words', () => {
   it('announces only what needs attention, with the agent first', () => {
     expect(needsAttention({ outcome: 'ok' })).toBe(false);
     expect(needsAttention({ outcome: 'awaiting_approval' })).toBe(true);
+    expect(needsAttention({ outcome: 'site_changed' })).toBe(false);
     expect(feedLineAnnouncement({ tool: 'publish', outcome: 'awaiting_approval', label: 'Claude' })).toBe('Claude: Publishing needs your approval');
     expect(feedLineAnnouncement({ tool: 'publish', outcome: 'failed' })).toBe('Agent: Publishing failed');
   });
@@ -109,6 +110,8 @@ describe('activity words', () => {
     // Refusals are not repeated, planned sections change nothing on the site.
     expect(runSummary([line({ outcome: 'rejected', changes: 3 }), line({ tool: 'announce_sections' })])).toBe('Claude finished without changing anything');
     expect(runSummary([line({ changes: 1 }), line({ agentId: 'a2', label: 'Codex', changes: 1 })])).toBe('Claude and Codex finished: wrote 2 changes');
+    // A batch with no count is counted the way its feed line reads.
+    expect(runSummary([line({})])).toBe('Claude finished: edited the site');
     // A failure may have come after a write committed: never "without changing anything" then.
     expect(runSummary([line({ outcome: 'failed', changes: 2 })])).toBe('Claude finished: 1 step failed');
     expect(runSummary([line({ changes: 3 }), line({ outcome: 'failed', tool: 'publish' }), line({ outcome: 'failed' })])).toBe('Claude finished: wrote 3 changes and 2 steps failed');

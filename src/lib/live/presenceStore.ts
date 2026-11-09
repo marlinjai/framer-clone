@@ -34,6 +34,7 @@
 
 import { action, makeObservable, observable } from 'mobx';
 import { isReadTool } from '@/lib/live/activityText';
+import { forgetPageTitles } from '@/lib/live/pageTitleMemory';
 import {
   AGENT_ACTIVE_MS,
   AGENT_FRAME_LINGER_MS,
@@ -127,6 +128,8 @@ export class LivePresenceStore {
    * reconnect, whose new lines happened during the gap.
    */
   stateApplied = 0;
+  /** The `state` events applied since the last reset: the one that makes it 1 brings history. */
+  statesSinceReset = 0;
   /** Counts the resets (a sign-out, another site opened). */
   resets = 0;
   /**
@@ -152,6 +155,7 @@ export class LivePresenceStore {
       leadAgentId: observable,
       run: observable,
       stateApplied: observable,
+      statesSinceReset: observable,
       resets: observable,
       runEdited: observable,
       applyState: action,
@@ -278,6 +282,7 @@ export class LivePresenceStore {
   /** The `state` event of a (re)connect: the active agents and the feed, replacing what was held. */
   applyState(state: Pick<SiteStateEvent, 'agents' | 'feed'>): void {
     this.stateApplied += 1;
+    this.statesSinceReset += 1;
     const now = this.now();
     // Agents were here before this snapshot: it continues the run (a reconnect), it does not begin one.
     const continuing = this.agents.size > 0;
@@ -381,6 +386,9 @@ export class LivePresenceStore {
   /** The editor closed the site (or opened another): nothing carries over. */
   reset(): void {
     this.resets += 1;
+    this.statesSinceReset = 0;
+    // The titles this editor saw of the last site's pages (they were only ever kept in memory).
+    forgetPageTitles();
     this.runEdited = false;
     for (const id of [...this.timers.keys()]) this.clearTimers(id);
     this.clearCalls();

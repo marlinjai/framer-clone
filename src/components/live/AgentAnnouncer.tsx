@@ -35,14 +35,25 @@ const KEPT = 4;
 
 /**
  * The presence stores whose Follow the person just changed with the toggle (that change is not
- * announced: the toggle's pressed state is). A side channel between the toggle and this
- * announcer rather than a field on the presence store, which the sync work owns.
+ * announced: the toggle's pressed state is). A one-shot flag between two components, not state
+ * of the canvas, so it stays out of the presence store.
  */
 const toggledByPerson = new WeakSet<object>();
 
 /** Called by the Follow toggle before it changes Follow, so the change is not announced a second time. */
 export function noteFollowToggledByPerson(presence: object): void {
   toggledByPerson.add(presence);
+}
+
+/** A line's time in milliseconds, or -Infinity when unreadable. */
+function atOf(line: Pick<LiveFeedLine, 'at'>): number {
+  const t = Date.parse(line.at);
+  return Number.isFinite(t) ? t : -Infinity;
+}
+
+/** The newest time among these lines. */
+function newestOf(lines: ReadonlyArray<Pick<LiveFeedLine, 'at'>>): number {
+  return lines.reduce((max, l) => Math.max(max, atOf(l)), -Infinity);
 }
 
 interface PageLike {
@@ -80,51 +91,53 @@ const AgentAnnouncer = observer(function AgentAnnouncer() {
 
   React.useEffect(() => {
     if (!presence) return;
-    // Lines there already are history, not news; so is every line the first `state` event brings
-    // (the backfill after a reload or after another site opened), which comes after this mounts.
-    // A later `state` is a reconnect: its new lines happened during the gap and are news.
-    const seen = new Set(presence.feed.map((l) => l.id));
+    // Lines there already are history, not news; so is every line the first `state` event since
+    // the last reset brings (the backfill after a reload or after another site opened), which comes
+    // after this mounts. A later `state` is a reconnect: its lines newer than any seen before
+    // happened during the gap, and are news.
+    let seen = new Set(presence.feed.map((l) => l.id));
+    let newestAt = newestOf(presence.feed);
     let state = presence.stateApplied;
     let resets = presence.resets;
-    let historyNext = presence.feed.length === 0;
+    let wasActive = presence.anyActive;
     let runLines: LiveFeedLine[] = [];
     // What the run's note announced: nothing yet, reading, or editing.
     let announced: 'none' | 'reading' | 'editing' = 'none';
 
     const disposers = [
+      // One reaction for the feed and the run, so a run that ends with a reconnect counts the
+      // gap's lines before its summary is spoken.
       reaction(
-        () => presence.feed,
-        (feed) => {
-          if (presence.resets !== resets) {
-            resets = presence.resets;
-            seen.clear();
-            historyNext = true;
-          }
+        () => ({ feed: presence.feed, active: presence.anyActive, states: presence.stateApplied, resets: presence.resets }),
+        ({ feed, active }) => {
+          const reset = presence.resets !== resets;
+          resets = presence.resets;
           const fromState = presence.stateApplied !== state;
           state = presence.stateApplied;
-          const history = fromState && historyNext;
-          if (fromState) historyNext = false;
-          const fresh = history ? [] : feed.filter((l) => !seen.has(l.id)).reverse();
-          for (const line of fresh) {
-            if (presence.anyActive) runLines.push(line);
-            if (needsAttention(line)) say(feedLineAnnouncement(line));
+          if (reset) {
+            // A sign-out or another site: nothing finished, nothing carries over.
+            runLines = [];
+            announced = 'none';
+            newestAt = -Infinity;
+          } else {
+            const history = fromState && presence.statesSinceReset === 1;
+            const fresh = history ? [] : feed.filter((l) => !seen.has(l.id) && (!fromState || atOf(l) > newestAt)).reverse();
+            for (const line of fresh) {
+              // Only the agents' own lines count in their run (a person's save is not theirs).
+              if ((wasActive || active) && line.actorKind === 'key') runLines.push(line);
+              if (needsAttention(line)) say(feedLineAnnouncement(line));
+            }
           }
           // Only the lines still in the feed (it is capped; one that left never comes back).
-          seen.clear();
-          for (const l of feed) seen.add(l.id);
-        },
-      ),
-      reaction(
-        () => presence.anyActive,
-        (active) => {
-          // A new run's lines were cleared when the last one ended (a line can come just before
-          // this flips, when a call's end is the first thing heard of its agent).
-          if (active) return;
-          // A sign-out clears the feed with the agents: nothing finished then.
-          const summary = presence.feed.length > 0 ? runSummary(runLines) : null;
-          runLines = [];
-          announced = 'none';
-          if (summary) say(summary);
+          seen = new Set(feed.map((l) => l.id));
+          newestAt = Math.max(newestAt, newestOf(feed));
+          if (wasActive && !active && !reset) {
+            const summary = runSummary(runLines);
+            runLines = [];
+            announced = 'none';
+            if (summary) say(summary);
+          }
+          wasActive = active;
         },
       ),
       reaction(

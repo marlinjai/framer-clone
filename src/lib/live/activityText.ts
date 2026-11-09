@@ -192,9 +192,14 @@ export function feedLineText(line: FeedLineWords, pageTitle?: string, deletedTit
   }
 }
 
-/** Whether a line asks for the person's attention when it arrives: a refusal, an approval needed, a failure. */
+/**
+ * Whether a line asks for the person's attention when it arrives: a refusal, an approval needed,
+ * a decline, a failure. Not "the site changed meanwhile": that is ordinary concurrency the agent
+ * recovers from by itself (it reads again and retries), and it can repeat often while the person
+ * edits too. The feed still shows it.
+ */
 export function needsAttention(line: Pick<LiveFeedLine, 'outcome'>): boolean {
-  return line.outcome !== 'ok';
+  return line.outcome !== 'ok' && line.outcome !== 'site_changed';
 }
 
 /** A line as a screen reader hears it when it arrives: the agent first. */
@@ -235,7 +240,9 @@ export function runSummary(
     if (l.tool === 'apply_batch') {
       const d = deletedCount(l);
       deleted += d;
-      changes += Math.max(0, (l.changes ?? 1) - d);
+      // Counted like the feed line: a batch with no count is "edited the site", not a number.
+      if (l.changes === undefined && d === 0) steps.add('edited the site');
+      else changes += Math.max(0, (l.changes ?? d) - d);
     } else if (RUN_STEPS[l.tool]) {
       steps.add(RUN_STEPS[l.tool]);
     }

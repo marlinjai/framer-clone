@@ -71,9 +71,66 @@ describe('the agent announcer', () => {
 
   it('announces what needs attention from a reconnect, which happened during the gap', () => {
     render(<AgentAnnouncer />);
-    act(() => presence().applyState({ agents: [], feed: [line({ id: 'old', outcome: 'failed' })] }));
-    act(() => presence().applyState({ agents: [], feed: [line({ id: 'gap', outcome: 'awaiting_approval', tool: 'publish' }), line({ id: 'old', outcome: 'failed' })] }));
+    const old = line({ id: 'old', outcome: 'failed' });
+    act(() => presence().applyState({ agents: [], feed: [old] }));
+    act(() => vi.advanceTimersByTime(5_000));
+    act(() => presence().applyState({ agents: [], feed: [line({ id: 'gap', outcome: 'awaiting_approval', tool: 'publish' }), old] }));
     expect(heard()).toEqual(['Claude: Publishing needs your approval']);
+  });
+
+  it('treats a reconnect as news also when it mounted after the first state', () => {
+    const old = line({ id: 'old', outcome: 'failed' });
+    act(() => presence().applyState({ agents: [], feed: [old] }));
+    render(<AgentAnnouncer />);
+    act(() => vi.advanceTimersByTime(5_000));
+    act(() => presence().applyState({ agents: [], feed: [line({ id: 'gap', outcome: 'declined', tool: 'publish' }), old] }));
+    expect(heard()).toEqual(['Claude: Publishing declined, nothing changed']);
+  });
+
+  it('a run that ends with a reconnect counts the gap before its summary, failures included', () => {
+    render(<AgentAnnouncer />);
+    // The stream's first state, on connect.
+    act(() => presence().applyState({ agents: [], feed: [] }));
+    act(() => presence().applyActivity(activity({ callId: 'w1', tool: 'apply_batch' })));
+    act(() => presence().applyActivity(activity({ callId: 'w1', tool: 'apply_batch', phase: 'end', outcome: 'ok', changes: 2 })));
+    const before = [...presence().feed];
+    act(() => vi.advanceTimersByTime(5_000));
+    act(() =>
+      presence().applyState({
+        agents: [],
+        feed: [line({ id: 'gap2', outcome: 'failed', tool: 'publish' }), line({ id: 'gap1', changes: 5 }), ...before],
+      }),
+    );
+    expect(heard().slice(-2)).toEqual(['Claude: Publishing failed', 'Claude finished: wrote 7 changes and 1 step failed']);
+  });
+
+  it('a reconnect during a run never counts old lines or a person\'s save in the agent\'s summary', () => {
+    render(<AgentAnnouncer />);
+    const personOld = line({ id: 'person-old', actorKind: 'user', label: 'Someone', changes: 7 });
+    // The stream's first state, on connect (the person's old save is history).
+    act(() => presence().applyState({ agents: [], feed: [personOld] }));
+    // An agent's write from before, which this editor's feed never held (the feed is capped).
+    const agentOld = line({ id: 'agent-old', changes: 40, outcome: 'failed' });
+    act(() => vi.advanceTimersByTime(60_000));
+    const start = activity({ callId: 'w1', tool: 'apply_batch' });
+    act(() => presence().applyActivity(start));
+    act(() => presence().applyActivity({ ...start, phase: 'end', outcome: 'ok', changes: 2 }));
+    act(() => vi.advanceTimersByTime(1_000));
+    const personNew = line({ id: 'person-new', actorKind: 'user', label: 'Someone', changes: 3 });
+    act(() => presence().applyState({ agents: [{ ...start, callId: 'w2' }], feed: [personNew, ...presence().feed, agentOld, personOld] }));
+    act(() => presence().applyActivity(activity({ callId: 'w2', tool: 'apply_batch', phase: 'end', outcome: 'ok', changes: 1 })));
+    act(() => vi.advanceTimersByTime(AGENT_ACTIVE_MS + 1));
+    expect(heard().at(-1)).toBe('Claude finished: wrote 3 changes');
+    // The old failure was not read out either.
+    expect(heard()).not.toContain('Claude: Changes failed');
+  });
+
+  it('never reads out "the site changed meanwhile": the agent recovers by itself', () => {
+    render(<AgentAnnouncer />);
+    act(() => presence().applyActivity(activity({ tool: 'apply_batch' })));
+    const before = heard().length;
+    act(() => presence().applyActivity(activity({ tool: 'apply_batch', phase: 'end', outcome: 'site_changed' })));
+    expect(heard()).toHaveLength(before);
   });
 
   it('counts a call whose end is the first thing heard of its agent in the summary', () => {
