@@ -293,3 +293,51 @@ describe('a reconnect that continues the run', () => {
     expect(store.run).toBe(run + 1);
   });
 });
+
+describe('the run\'s editing latch and the state counters', () => {
+  const line = (over: Partial<LiveFeedLine>): LiveFeedLine => ({ id: 'l1', agentId: 'a1', label: 'Claude', actorKind: 'key', tool: 'apply_batch', outcome: 'ok', at: new Date(Date.now()).toISOString(), ...over });
+
+  it('latches on a write to the site, never on a read, a plan or a publish, and starts over with a new run', () => {
+    store.applyActivity(act({ tool: 'get_page' }));
+    store.applyActivity(act({ callId: 'p', tool: 'announce_sections' }));
+    store.applyActivity(act({ callId: 'pub', tool: 'publish' }));
+    expect(store.runEdited).toBe(false);
+    store.applyActivity(act({ callId: 'w', tool: 'apply_batch' }));
+    expect(store.runEdited).toBe(true);
+    // Reads in between keep it.
+    store.applyActivity(end({ callId: 'w', tool: 'apply_batch' }));
+    store.applyActivity(act({ callId: 'r', tool: 'get_page' }));
+    expect(store.runEdited).toBe(true);
+    // Everyone leaves, a new run begins: it starts over.
+    for (const id of ['c1', 'p', 'pub', 'r']) store.applyActivity(end({ callId: id, tool: 'get_page' }));
+    vi.advanceTimersByTime(AGENT_ACTIVE_MS + 1);
+    expect(store.anyActive).toBe(false);
+    store.applyActivity(act({ callId: 'n', tool: 'get_site', at: new Date(Date.now()).toISOString() }));
+    expect(store.runEdited).toBe(false);
+  });
+
+  it('keeps "editing" after a reload or a long gap when an agent active now wrote recently', () => {
+    store.applyActivity(act({ callId: 'w', tool: 'apply_batch' }));
+    store.applyActivity(end({ callId: 'w', tool: 'apply_batch' }));
+    const write = line({ id: 'w', changes: 4 });
+    // The stream was away for two minutes: the agent lapsed here.
+    vi.advanceTimersByTime(2 * 60_000);
+    expect(store.anyActive).toBe(false);
+    store.applyState({ agents: [act({ callId: 'r', tool: 'get_page', at: new Date(Date.now()).toISOString() })], feed: [write] });
+    expect(store.runEdited).toBe(true);
+    // A write long ago does not latch a new run.
+    store.reset();
+    vi.advanceTimersByTime(60 * 60_000);
+    store.applyState({ agents: [act({ callId: 'r2', tool: 'get_page', at: new Date(Date.now()).toISOString() })], feed: [write] });
+    expect(store.runEdited).toBe(false);
+  });
+
+  it('counts state events since the last reset, and the resets', () => {
+    expect([store.stateApplied, store.statesSinceReset, store.resets]).toEqual([0, 0, 0]);
+    store.applyState({ agents: [], feed: [] });
+    store.applyState({ agents: [], feed: [] });
+    expect([store.stateApplied, store.statesSinceReset]).toEqual([2, 2]);
+    store.reset();
+    expect([store.stateApplied, store.statesSinceReset, store.resets]).toEqual([2, 0, 1]);
+  });
+});

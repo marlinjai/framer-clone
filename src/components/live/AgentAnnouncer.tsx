@@ -5,34 +5,62 @@
 // region that is always mounted (in the top bar), so nothing is lost while the
 // activity panel is collapsed or the sidebar is closed:
 //
-// - once when an agent run begins, the top bar's note ("Claude is reading this
-//   site"), and once more each time the run steps up to planning or to editing
-//   (the moment a conflict may follow). Never again within the run.
-// - each refusal, approval needed and failure as it arrives ("Claude: Publishing
-//   needs your approval"). Successful steps are not announced one by one.
-// - at most one summary when the run ends ("Claude finished: wrote 6 changes").
+// - once when agents become active, the top bar's note ("Claude is reading this
+//   site"), and once more each time it steps up (to planning or changing what
+//   visitors see, then to editing: the moment a conflict may follow). Never back
+//   down while the agents stay active.
+// - each refusal, approval needed, decline and failure as it arrives ("Claude:
+//   Publishing needs your approval"). Successful steps are not announced: the
+//   feed lists them, and a summary of a run proved unreliable across reloads
+//   and reconnects (decided in #351: announce what needs attention only).
 // - the camera no longer following the agent because the person moved it.
 //   Turning Follow off with the toggle is not announced: its pressed state is.
 //
-// Lines already in the feed when it mounts (the backfill after a reload, the
-// state event of a reconnect) are never announced. Being always mounted, it
-// also keeps the project's page titles (src/lib/live/pageTitleMemory.ts) while
-// the activity panel is not drawn, so the feed can still name a page an agent
-// deletes.
+// Lines already in the feed when it mounts, and every line of the first `state`
+// event since the last reset (the backfill after a reload, or after another
+// site opened), are history and never announced. A later `state` is a
+// reconnect: a line it brings is news only when this tab never saw it and it is
+// from around the gap or later.
+//
+// While a modal dialog hides the rest of the page from assistive technology
+// (aria-hidden on everything outside it), messages wait and are spoken once the
+// region is exposed again, so nothing that needs attention is lost.
+//
+// Being always mounted, it also keeps the project's page titles
+// (src/lib/live/pageTitleMemory.ts) while the activity panel is not drawn, so
+// the feed can still name a page an agent deletes.
 'use client';
 
 import React from 'react';
-import { observable, reaction, runInAction } from 'mobx';
+import { reaction } from 'mobx';
 import { observer } from 'mobx-react-lite';
 import { useStore } from '@/hooks/useStore';
-import { ACTIVITY_MODE_RANK, activityMode, editingNote, type ActivityMode, feedLineAnnouncement, followOffAnnouncement, needsAttention, runSummary } from '@/lib/live/activityText';
+import {
+  ACTIVITY_MODE_RANK,
+  activityMode,
+  editingNote,
+  feedLineAnnouncement,
+  followOffAnnouncement,
+  needsAttention,
+  type ActivityMode,
+} from '@/lib/live/activityText';
 import { rememberPageTitles } from '@/lib/live/pageTitleMemory';
 import type { LivePresenceStore } from '@/lib/live/presenceStore';
 import type { LiveFeedLine } from '@/lib/projects/liveEvents';
-import { liveSyncFor, type LiveSync } from '@/lib/projects/liveSync';
 
 /** How long a message stays in the region: long enough to be spoken, gone before it is stale text in the top bar. */
 export const ANNOUNCE_KEEP_MS = 10_000;
+
+/** How many line ids the announcer remembers (the feed holds LIVE_FEED_MAX). */
+const SEEN_MAX = 500;
+
+/**
+ * How far before the newest line seen a reconnect's unseen line may be and still count as the
+ * gap's: a write that committed just before another agent's line this tab already showed. Older
+ * unseen lines (the feed this tab held was capped, or a server restart dropped the in-memory lines
+ * that pushed them out) are history.
+ */
+export const GAP_ALLOWANCE_MS = 2 * 60_000;
 
 /**
  * The presence stores whose Follow the person just changed with the toggle (that change is not
@@ -46,15 +74,6 @@ export function noteFollowToggledByPerson(presence: object): void {
   toggledByPerson.add(presence);
 }
 
-/** How many line ids the announcer remembers (the feed holds LIVE_FEED_MAX). */
-const SEEN_MAX = 500;
-
-/**
- * How far before the newest line seen a reconnect's unseen line may be and still count as the
- * gap's: a write that committed just before another agent's line this tab already showed.
- */
-export const GAP_ALLOWANCE_MS = 2 * 60_000;
-
 /** A line's time in milliseconds, or -Infinity when unreadable. */
 function atOf(line: Pick<LiveFeedLine, 'at'>): number {
   const t = Date.parse(line.at);
@@ -64,6 +83,11 @@ function atOf(line: Pick<LiveFeedLine, 'at'>): number {
 /** The newest time among these lines. */
 function newestOf(lines: ReadonlyArray<Pick<LiveFeedLine, 'at'>>): number {
   return lines.reduce((max, l) => Math.max(max, atOf(l)), -Infinity);
+}
+
+/** Whether a modal dialog hides this element from assistive technology. */
+function hiddenByModal(element: Element | null): boolean {
+  return !!element?.closest('[aria-hidden="true"]');
 }
 
 interface PageLike {
@@ -80,11 +104,14 @@ const AgentAnnouncer = observer(function AgentAnnouncer() {
   const { editorUI } = useStore();
   const presence = editorUI.livePresence as LivePresenceStore | undefined;
   const project = editorUI.currentProject as unknown as ProjectLike | undefined;
+  const regionRef = React.useRef<HTMLDivElement>(null);
   const [messages, setMessages] = React.useState<Array<{ id: number; text: string }>>([]);
   const counter = React.useRef(0);
-
   const timers = React.useRef(new Set<ReturnType<typeof setTimeout>>());
-  const say = React.useCallback((text: string) => {
+  // Messages that arrived while a modal dialog hid the region.
+  const waiting = React.useRef<string[]>([]);
+
+  const show = React.useCallback((text: string) => {
     counter.current += 1;
     const id = counter.current;
     setMessages((prev) => [...prev, { id, text }]);
@@ -95,6 +122,15 @@ const AgentAnnouncer = observer(function AgentAnnouncer() {
     }, ANNOUNCE_KEEP_MS);
     timers.current.add(timer);
   }, []);
+
+  const say = React.useCallback(
+    (text: string) => {
+      if (hiddenByModal(regionRef.current)) waiting.current.push(text);
+      else show(text);
+    },
+    [show],
+  );
+
   React.useEffect(() => {
     const pending = timers.current;
     return () => {
@@ -102,6 +138,19 @@ const AgentAnnouncer = observer(function AgentAnnouncer() {
       pending.clear();
     };
   }, []);
+
+  // A modal dialog closed (its aria-hidden left the page): the messages that waited are spoken.
+  React.useEffect(() => {
+    if (typeof MutationObserver === 'undefined') return;
+    const observer = new MutationObserver(() => {
+      if (waiting.current.length === 0 || hiddenByModal(regionRef.current)) return;
+      const texts = waiting.current;
+      waiting.current = [];
+      for (const text of texts) show(text);
+    });
+    observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['aria-hidden'] });
+    return () => observer.disconnect();
+  }, [show]);
 
   // The project's page titles, kept while the titles change, so a page deleted later can be named.
   React.useEffect(() => {
@@ -115,11 +164,8 @@ const AgentAnnouncer = observer(function AgentAnnouncer() {
 
   React.useEffect(() => {
     if (!presence) return;
-    // Lines there already are history, not news; so is every line the first `state` event since
-    // the last reset brings (the backfill after a reload or after another site opened), which comes
-    // after this mounts. A later `state` is a reconnect: its lines never seen before happened
-    // during the gap, and are news. Every id seen is kept (capped well above the feed's size), so a
-    // line that scrolled out of the capped feed is not news when a reconnect brings it back.
+    // Every id seen is kept (capped well above the feed's size), so a line that scrolled out of the
+    // capped feed is not news when a reconnect brings it back.
     const seen = new Set<string>();
     const see = (lines: readonly LiveFeedLine[]) => {
       for (const l of lines) {
@@ -129,91 +175,41 @@ const AgentAnnouncer = observer(function AgentAnnouncer() {
       while (seen.size > SEEN_MAX) seen.delete(seen.values().next().value as string);
     };
     see(presence.feed);
-    // The newest line time seen (server times), and when the current run began.
+    // The newest line time seen (server times).
     let newestAt = newestOf(presence.feed);
-    let runStartAt = -Infinity;
     let state = presence.stateApplied;
     let resets = presence.resets;
-    let wasActive = presence.anyActive;
-
-    // Whether the live stream is up. While it is down (a dropped connection, an expired session),
-    // the store's timers still let the agents lapse, which is not the end of their run: the run is
-    // held open, and the next `state` decides (no agent active then: the run ended in the gap, and
-    // its summary counts the gap's lines). Without a live sync (tests, the demo) it counts as up.
-    const streamUp = observable.box(true);
-    // Back up after being down: the stream opens before its first `state`, which is what tells.
-    let awaitingState = false;
-    let wasUp = true;
-    let sync: LiveSync | undefined;
-    let unsubscribe: (() => void) | undefined;
-    const attach = () => {
-      const current = liveSyncFor(project?.id);
-      if (current !== sync) {
-        unsubscribe?.();
-        sync = current;
-        unsubscribe = sync?.subscribe(() => runInAction(() => streamUp.set(!sync || sync.phase === 'live')));
-      }
-      runInAction(() => streamUp.set(!sync || sync.phase === 'live'));
-    };
-    attach();
-    let runLines: LiveFeedLine[] = [];
-    // What the run's note announced: nothing yet, or the mode it said.
+    // What the note announced while the agents are active: nothing yet, or the mode it said.
     let announced: ActivityMode | 'none' = 'none';
 
     const disposers = [
-      // One reaction for the feed and the run, so a run that ends with a reconnect counts the
-      // gap's lines before its summary is spoken.
       reaction(
-        () => ({ feed: presence.feed, active: presence.anyActive, states: presence.stateApplied, resets: presence.resets, up: streamUp.get() }),
-        ({ feed, active }) => {
-          // The sync may have started (or restarted, also for the same site) after this mounted:
-          // whether the stream is up is read from the current one.
-          attach();
-          const up = streamUp.get();
-          if (!up || !wasUp) awaitingState = true;
-          wasUp = up;
+        () => ({ feed: presence.feed, states: presence.stateApplied, resets: presence.resets }),
+        ({ feed }) => {
           const reset = presence.resets !== resets;
           resets = presence.resets;
           const fromState = presence.stateApplied !== state;
           state = presence.stateApplied;
-          if (fromState && up) awaitingState = false;
           if (reset) {
-            // The live sync stopped (another site opened, the editor left): nothing finished, nothing carries over.
-            runLines = [];
-            announced = 'none';
+            // The live sync stopped (another site opened, the editor left): nothing carries over.
             seen.clear();
             newestAt = -Infinity;
+            announced = 'none';
           } else {
             const history = fromState && presence.statesSinceReset === 1;
-            // A reconnect's `state` can carry old lines this tab never held (the feed it had was
-            // capped, or a server restart dropped the in-memory lines that pushed them out): only an
-            // unseen line from around the gap or later is news, and only one from this run counts in it.
             const gapFrom = newestAt - GAP_ALLOWANCE_MS;
-            const runFrom = runStartAt - GAP_ALLOWANCE_MS;
             const fresh = history ? [] : feed.filter((l) => !seen.has(l.id) && (!fromState || atOf(l) >= gapFrom)).reverse();
-            for (const line of fresh) {
-              // Only the agents' own lines count in their run (a person's save is not theirs).
-              const inRun = !fromState || atOf(line) >= runFrom;
-              if ((wasActive || active) && line.actorKind === 'key' && inRun) runLines.push(line);
-              if (needsAttention(line)) say(feedLineAnnouncement(line));
-            }
+            for (const line of fresh) if (needsAttention(line)) say(feedLineAnnouncement(line));
           }
           see(feed);
           newestAt = Math.max(newestAt, newestOf(feed));
-          // A run begins: lines from before it never count in it (this clock against the server's,
-          // within the allowance).
-          if (active && !wasActive) runStartAt = Date.now();
-          const settled = up && !awaitingState;
-          if (wasActive && !active && !reset && settled) {
-            const summary = runSummary(runLines);
-            runLines = [];
-            announced = 'none';
-            if (summary) say(summary);
-            wasActive = false;
-          } else {
-            // A run whose agents lapsed while the stream is down stays open.
-            wasActive = active || (wasActive && !settled && !reset);
-          }
+        },
+      ),
+      // The agents left: the next time they are active, the note is announced again.
+      reaction(
+        () => presence.anyActive,
+        (active) => {
+          if (!active) announced = 'none';
         },
       ),
       reaction(
@@ -223,7 +219,7 @@ const AgentAnnouncer = observer(function AgentAnnouncer() {
         },
         ({ mode, note }) => {
           if (!mode || !note) return;
-          // Once when the run begins, once more each time it steps up (to planning, to editing); never back down.
+          // Once when they become active, once more each time it steps up; never back down.
           if (announced !== 'none' && ACTIVITY_MODE_RANK[mode] <= ACTIVITY_MODE_RANK[announced]) return;
           announced = mode;
           say(note);
@@ -241,14 +237,11 @@ const AgentAnnouncer = observer(function AgentAnnouncer() {
         },
       ),
     ];
-    return () => {
-      disposers.forEach((d) => d());
-      unsubscribe?.();
-    };
-  }, [presence, project?.id, say]);
+    return () => disposers.forEach((d) => d());
+  }, [presence, say]);
 
   return (
-    <div aria-live="polite" className="sr-only" data-agent-announcer="">
+    <div ref={regionRef} aria-live="polite" className="sr-only" data-agent-announcer="">
       {messages.map((m) => (
         <p key={m.id}>{m.text}</p>
       ))}

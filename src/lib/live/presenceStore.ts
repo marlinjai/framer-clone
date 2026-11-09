@@ -66,6 +66,9 @@ export interface AgentPresence {
   failed: boolean;
 }
 
+/** How recent an active agent's write must be for a reload or reconnect to keep its run "editing". */
+export const RUN_EDIT_WINDOW_MS = 10 * 60_000;
+
 /** Remembered (callId, phase) pairs, so an activity heard twice (state and stream) applies once. */
 const SEEN_MAX = 500;
 
@@ -321,6 +324,14 @@ export class LivePresenceStore {
     }
     const feed = Array.isArray(state.feed) ? state.feed : [];
     this.feed = feed.filter((l) => l && typeof l.id === 'string').slice(0, LIVE_FEED_MAX);
+    // An agent active now that wrote to the site a little while ago is still in the run it wrote in
+    // (a reload, or a reconnect after a gap longer than AGENT_ACTIVE_MS that let it lapse here): the
+    // top bar keeps saying "editing" while it reads in between.
+    if (!this.runEdited && this.agents.size > 0) {
+      this.runEdited = this.feed.some(
+        (l) => l.outcome === 'ok' && writesSite(l.tool) && this.agents.has(l.agentId) && ageOf(l.at, now) <= RUN_EDIT_WINDOW_MS,
+      );
+    }
   }
 
   /** One `agent:activity` from the stream. Applied once per call and phase. */

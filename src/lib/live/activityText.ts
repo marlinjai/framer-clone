@@ -19,14 +19,17 @@ export function isReadTool(tool: string): boolean {
 /** The tools that plan sections: they draw skeletons and write nothing to the site. */
 const PLAN_TOOLS = new Set(['announce_sections', 'clear_sections']);
 
-/** Whether a tool writes to the site (neither a read nor a plan). */
+/** The tools that change what visitors see (the published site), never the copy the person edits. */
+const PUBLISH_TOOLS = new Set(['publish', 'rollback']);
+
+/** Whether a tool writes to the copy the person edits (neither a read, a plan nor a publish): a conflict may follow. */
 export function writesSite(tool: string): boolean {
-  return !READ_TOOLS.has(tool) && !PLAN_TOOLS.has(tool);
+  return !READ_TOOLS.has(tool) && !PLAN_TOOLS.has(tool) && !PUBLISH_TOOLS.has(tool);
 }
 
 /** What the active agents do, from least to most likely to conflict with the person's edits. */
-export type ActivityMode = 'reading' | 'planning' | 'editing';
-export const ACTIVITY_MODE_RANK: Record<ActivityMode, number> = { reading: 0, planning: 1, editing: 2 };
+export type ActivityMode = 'reading' | 'planning' | 'publishing' | 'editing';
+export const ACTIVITY_MODE_RANK: Record<ActivityMode, number> = { reading: 0, planning: 1, publishing: 1, editing: 2 };
 
 /** What the presence label says the agent does: "Reading", "Editing", ... */
 export function activityVerb(tool: string): string {
@@ -38,7 +41,7 @@ export function activityVerb(tool: string): string {
     case 'publish':
       return 'Publishing';
     case 'rollback':
-      return 'Restoring a version';
+      return 'Putting an earlier version live';
     case 'preview_url':
       return 'Previewing';
     case 'announce_sections':
@@ -68,14 +71,18 @@ function whoOf(labels: readonly string[]): string {
  * The top bar's note for the active agents: "Claude is reading this site"
  * while every active agent's latest call only reads, "Claude is planning
  * changes to this site" while one plans sections (nothing written yet),
- * "Claude is editing this site" as soon as one writes (a conflict may follow then).
+ * "Claude is changing what visitors see" while one publishes or puts an earlier
+ * version live (the copy the person edits stays as it is), "Claude is editing
+ * this site" as soon as one writes to that copy (a conflict may follow then).
  */
 export function editingNote(agents: ReadonlyArray<{ label: string; tool: string }>, edited = false): string | null {
   const mode = activityMode(agents, edited);
   if (!mode) return null;
   const who = whoOf(agents.map((a) => a.label));
   const verb = agents.length === 1 ? 'is' : 'are';
-  return mode === 'planning' ? `${who} ${verb} planning changes to this site` : `${who} ${verb} ${mode} this site`;
+  if (mode === 'planning') return `${who} ${verb} planning changes to this site`;
+  if (mode === 'publishing') return `${who} ${verb} changing what visitors see`;
+  return `${who} ${verb} ${mode} this site`;
 }
 
 /**
@@ -86,6 +93,7 @@ export function editingNote(agents: ReadonlyArray<{ label: string; tool: string 
 export function activityMode(agents: ReadonlyArray<{ tool: string }>, edited = false): ActivityMode | undefined {
   if (agents.length === 0) return undefined;
   if (edited || agents.some((a) => writesSite(a.tool))) return 'editing';
+  if (agents.some((a) => PUBLISH_TOOLS.has(a.tool))) return 'publishing';
   return agents.some((a) => PLAN_TOOLS.has(a.tool)) ? 'planning' : 'reading';
 }
 
@@ -112,7 +120,7 @@ function attemptNoun(tool: string): string {
     case 'publish':
       return 'Publishing';
     case 'rollback':
-      return 'Restoring an earlier version';
+      return 'Putting an earlier version live';
     case 'announce_sections':
       return 'Planned sections';
     case 'clear_sections':
@@ -221,56 +229,6 @@ export function needsAttention(line: Pick<LiveFeedLine, 'outcome'>): boolean {
 /** A line that needs attention as a screen reader hears it when it arrives: the agent first. */
 export function feedLineAnnouncement(line: FeedLineWords): string {
   return `${line.label || 'Agent'}: ${feedLineText(line)}`;
-}
-
-/** The writes besides batches a run summary names, once each (planned sections change nothing on the site). */
-const RUN_STEPS: Record<string, string> = {
-  generate_page: 'generated content',
-  publish: 'published the site',
-  rollback: 'put an earlier version live',
-  create_site: 'created the site',
-};
-
-/**
- * The one sentence a run ends with (the agents became inactive): what the
- * run's lines wrote, in total. "Claude finished: wrote 6 changes and deleted 1
- * page", "Claude finished: 1 step failed", "Claude finished without changing
- * anything". Refusals are not repeated (each was announced when it arrived and
- * wrote nothing). Null for a run with no line.
- */
-export function runSummary(
-  lines: ReadonlyArray<Pick<LiveFeedLine, 'agentId' | 'label' | 'tool' | 'outcome'> & Partial<Pick<LiveFeedLine, 'changes' | 'deletedPageIds' | 'deletedPages'>>>,
-): string | null {
-  if (lines.length === 0) return null;
-  const agents = new Map<string, string>();
-  for (const l of lines) if (!agents.has(l.agentId)) agents.set(l.agentId, l.label);
-  const who = whoOf([...agents.values()]);
-  let changes = 0;
-  let deleted = 0;
-  let failed = 0;
-  const steps = new Set<string>();
-  for (const l of lines) {
-    // A failure may have come after a write committed: the summary never claims nothing changed then.
-    if (l.outcome === 'failed') failed += 1;
-    if (l.outcome !== 'ok' || isReadTool(l.tool)) continue;
-    if (l.tool === 'apply_batch') {
-      const d = deletedCount(l);
-      deleted += d;
-      // Counted like the feed line: a batch with no count is "edited the site", not a number.
-      if (l.changes === undefined && d === 0) steps.add('edited the site');
-      else changes += Math.max(0, (l.changes ?? d) - d);
-    } else if (RUN_STEPS[l.tool]) {
-      steps.add(RUN_STEPS[l.tool]);
-    }
-  }
-  const parts: string[] = [];
-  if (changes > 0) parts.push(`wrote ${plural(changes, 'change', 'changes')}`);
-  if (deleted > 0) parts.push(`deleted ${plural(deleted, 'page', 'pages')}`);
-  parts.push(...steps);
-  if (failed > 0) parts.push(`${plural(failed, 'step', 'steps')} failed`);
-  if (parts.length === 0) return `${who} finished without changing anything`;
-  const last = parts.pop()!;
-  return `${who} finished: ${parts.length > 0 ? `${parts.join(', ')} and ${last}` : last}`;
 }
 
 /** What the person hears when the camera stops following because they moved it. */
