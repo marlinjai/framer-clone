@@ -410,15 +410,35 @@ export class LiveSync {
       history.redo();
       return false;
     }
-    // The edit again, as one step of the person's own (autosave saves it on the adopted version).
+    // The edit again, as one step of the person's own, saved at once on the adopted
+    // version (the window in which another agent write could meet it unsaved stays short).
     const adopted = this.rootStore.projectStore.getProject(this.projectId);
     if (!adopted) return true;
-    runInAction(() => {
-      for (const edit of edits) {
-        const node = findNode(adopted, edit.nodeId);
-        if (node) applyPatch(node, { op: 'replace', path: `/${edit.field}`, value: edit.value });
-      }
-    });
+    const targets = edits.map((edit) => ({ edit, node: findNode(adopted, edit.nodeId) }));
+    const applied: Array<{ node: object; field: string; before: unknown }> = [];
+    try {
+      // Every node is in the adopted copy (checked against it above); all or nothing all the same.
+      if (targets.some((t) => !t.node)) throw new Error('a node of the edit is not in the adopted copy');
+      runInAction(() => {
+        for (const { edit, node } of targets) {
+          const before = (node as Record<string, unknown>)[edit.field];
+          applyPatch(node!, { op: 'replace', path: `/${edit.field}`, value: edit.value });
+          applied.push({ node: node!, field: edit.field, before });
+        }
+      });
+    } catch (err) {
+      // Half an edit is never left (nor saved): back to the adopted copy as it came, and the person is told.
+      runInAction(() => {
+        for (const { node, field, before } of applied.reverse()) applyPatch(node, { op: 'replace', path: `/${field}`, value: before });
+      });
+      console.error('[live] an edit could not be put on top of the newer version:', err);
+      this.rootStore.editorUI.setEditorNotice({
+        kind: 'refused',
+        message: "Your last edit could not be kept on top of the newer version of the site and was taken back. Please make it again.",
+      });
+      return true;
+    }
+    void existingAutosave(this.projectId)?.saveNow();
     return true;
   }
 

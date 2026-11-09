@@ -1403,17 +1403,36 @@ describe('liveSync: a settled edit goes on top of the agent\'s copy (review of P
     draft.commitAndClose();
     await settle();
     expect(autosaveFor(SITE).getState().phase).not.toBe('conflict');
-    expect(knownServerVersion(SITE)).toBe(3);
     expect(JSON.stringify(working())).toContain('typed by the person');
     expect(JSON.stringify(working())).toContain('second');
     await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+    // One save, based on the agent's version 3; the server is at 4 with both changes.
     expect(saves.map((save) => save.expectedVersion)).toEqual([3]);
+    expect(knownServerVersion(SITE)).toBe(4);
     expect(JSON.stringify(server.snapshot)).toContain('typed by the person');
     expect(JSON.stringify(server.snapshot)).toContain('second');
     // Undo takes the person's edit back, then the agent's write: two steps, in that order.
     getHistoryStore()!.undo();
     expect(JSON.stringify(working())).not.toContain('typed by the person');
     expect(JSON.stringify(working())).toContain('second');
+  });
+
+  it('the merged copy is saved at once on the agent\'s version; another agent write right after it is adopted, no dialog', async () => {
+    start();
+    await agentWrites('first');
+    const node = homeChild(0);
+    const draft = openDraft(() => node.setTextContent('typed by the person'));
+    await agentWrites('second');
+    draft.commitAndClose();
+    await settle();
+    // Saved without waiting for the debounce, on version 3 (the agent's), never on 2.
+    expect(saves.map((save) => save.expectedVersion)).toEqual([3]);
+    expect(knownServerVersion(SITE)).toBe(4);
+    await agentWrites('third');
+    expect(autosaveFor(SITE).getState().phase).not.toBe('conflict');
+    expect(knownServerVersion(SITE)).toBe(5);
+    const text = JSON.stringify(working());
+    for (const part of ['typed by the person', 'second', 'third']) expect(text).toContain(part);
   });
 
   it('the agent changed the same text: a real conflict, the dialog asks', async () => {
