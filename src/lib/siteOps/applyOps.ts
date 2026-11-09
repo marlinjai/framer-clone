@@ -2,7 +2,7 @@
 //
 // Apply one batch of site operations (./types.ts) to a ProjectModel, all or
 // nothing. Every operation maps onto an editor action that already exists
-// (ProjectModel.createPage, updatePageSettings, updateTheme, placeComponent;
+// (ProjectModel.createPage, updatePageSettings, removePage, updateTheme, placeComponent;
 // PageModel.moveTreeComponent, deleteComponent; ComponentModel
 // updateResponsiveStyle, setRuleStyle, setTextContent, setProps, addRule), so a
 // batch can do nothing the editor could not, and each value passes the same rules
@@ -30,7 +30,7 @@
 
 import { closedAncestorOf } from '@/lib/ai/pageGen/promptSections/behaviour';
 import { SHOP_PART_ATTR } from '@/lib/commerce/parts';
-import { getSnapshot, recordPatches } from 'mobx-state-tree';
+import { getSnapshot, isAlive, recordPatches } from 'mobx-state-tree';
 import ProjectModel, { type ProjectModelType } from '@/models/ProjectModel';
 import type { PageModelType, InsertTarget } from '@/models/PageModel';
 import ComponentModel, { type ComponentInstance, type ComponentSnapshotIn, type NewRule } from '@/models/ComponentModel';
@@ -48,6 +48,7 @@ import { indexReviewTree, validateReviewOps } from '@/lib/ai/review/ops';
 import type { ReviewTreeNode } from '@/lib/ai/review/protocol';
 import { keyedBreakpoints, type KeyedBreakpoint } from './breakpoints';
 import { foreignContentOf, renderGateProblem, type GateNode } from './gate';
+import { countLinksToPage } from './pageLinks';
 import { MAX_BATCH_OPS, OperationSchema, type Operation, type RejectedOperation } from './types';
 
 /** The prefix of a reference to something an earlier operation created. */
@@ -254,6 +255,7 @@ export interface TouchedNode {
  */
 export function projectGateProblem(project: ProjectModelType, touched: readonly TouchedNode[]): string | null {
   for (const { page, nodeId } of touched) {
+    if (!isAlive(page)) continue; // its page was deleted by a later operation of the batch
     const node = page.findComponent(nodeId) as ComponentInstance | undefined;
     if (!node) continue; // removed by a later operation of the batch
     const problem = renderGateProblem(getSnapshot(node) as unknown as GateNode, foreignContentOf(ancestorTypes(page, node)));
@@ -307,9 +309,13 @@ export async function applyOperations(
   const touched: TouchedNode[] = [];
   const recorder = recordPatches(project);
   const refusedEdits = () => project.refusedComponents.filter((entry) => entry.edit).length;
+  // The pages in the order the Pages panel lists them. Taking back a deletePage puts the
+  // page back at the end of the map, so a refused batch restores this order too.
+  const pageOrder = Array.from(project.pages.keys());
   const undo = (): void => {
     recorder.stop();
     recorder.undo();
+    project.restorePageOrder(pageOrder);
   };
 
   // A shop part that leaves its control lands under a new id; the id it had stays good for
@@ -377,6 +383,7 @@ export async function applyOperations(
   recorder.stop();
   if (problem) {
     recorder.undo();
+    project.restorePageOrder(pageOrder);
     return { ok: false, rejected: [{ index: -1, op: 'batch', reason: problem }] };
   }
   return { ok: true, created, summary };
@@ -412,6 +419,34 @@ export async function applyOperations(
         });
         if (!result.ok) throw new OpRefused(Object.values(result.errors).filter(Boolean).join(' '));
         return `updated the settings of page "${page.metadata.title}" (/${page.slug})`;
+      }
+
+      case 'deletePage': {
+        // Only a page of the site: a component definition's page is never one (pageFor would find it).
+        const pageId = resolveId(op.pageId);
+        const page = project.pages.get(pageId) as PageModelType | undefined;
+        if (!page) throw new OpRefused(`unknown page id ${JSON.stringify(op.pageId)}`);
+        const refusal = project.pageDeleteRefusal(page.id);
+        if (refusal === 'last_page') throw new OpRefused('the last page of a site cannot be deleted; create another page first');
+        if (refusal === 'home_page') {
+          throw new OpRefused('the home page cannot be deleted: the site serves it at its root address. Make another page the home page in the editor first, or change its content instead');
+        }
+        if (refusal) throw new OpRefused(`unknown page id ${JSON.stringify(op.pageId)}`);
+        const { title } = page.metadata;
+        const { slug } = page;
+        const wasNotFoundPage = project.site.notFoundPageId === page.id;
+        // removePage also clears the 404 page setting when it named this page, as in the editor.
+        project.removePage(page.id);
+        const trees = pagesOf(project).map((p) => getSnapshot(p.appComponentTree));
+        const links = countLinksToPage(trees, { pageId, slug });
+        const parts = [`deleted page "${title}" (/${slug}, ${pageId})`];
+        if (wasNotFoundPage) parts.push('it was the page for unknown addresses, which now show the default not-found page');
+        parts.push(
+          links === 0
+            ? 'no link on the site leads to it'
+            : `${links} link(s) on the site still lead to it (a link to its address now finds no page, a form sending visitors there shows its message instead): change or remove them`,
+        );
+        return parts.join('; ');
       }
 
       case 'insertNodes': {

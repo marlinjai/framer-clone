@@ -150,4 +150,33 @@ describe('adoptServerCopy', () => {
     adoptServerCopy(store, { ...v1, pages }, 2, 'Someone');
     expect(store.editorUI.currentPage?.id).toBe(homeId(v1));
   });
+
+  it("an agent's deletePage of the page on screen moves the editor to another page, as one undo step", async () => {
+    const v1 = serverSnapshot();
+    const aboutId = Object.values(v1.pages).find((p) => p.metadata.title === 'About')!.id;
+    openProject(store, v1, aboutId, 1);
+    expect(store.editorUI.currentPage?.id).toBe(aboutId);
+    const { snapshot: v2 } = await agentWrites(v1, [{ op: 'deletePage', pageId: aboutId }]);
+
+    const out = adoptServerCopy(store, v2, 2, 'Agent: delete a page');
+
+    expect(out?.recorded).toBe(true);
+    expect(store.projectStore.getProject('site_adopt')!.pages.has(aboutId)).toBe(false);
+    expect(store.editorUI.currentPage?.id).toBe(homeId(v1));
+    expect(isSaved('site_adopt', working())).toBe(true);
+    // One undo step brings the page back in this tab (the next autosave writes it again).
+    getHistoryStore()!.undo();
+    expect(store.projectStore.getProject('site_adopt')!.pages.has(aboutId)).toBe(true);
+  });
+
+  it("an agent's deletePage of another page leaves the page on screen alone", async () => {
+    const v1 = serverSnapshot();
+    const aboutId = Object.values(v1.pages).find((p) => p.metadata.title === 'About')!.id;
+    openProject(store, v1, homeId(v1), 1);
+    const page = store.editorUI.currentPage!;
+    const { snapshot: v2 } = await agentWrites(v1, [{ op: 'deletePage', pageId: aboutId }]);
+    adoptServerCopy(store, v2, 2, 'Agent');
+    expect(store.editorUI.currentPage).toBe(page);
+    expect(store.projectStore.getProject('site_adopt')!.pages.size).toBe(1);
+  });
 });

@@ -240,6 +240,9 @@ breakpoint without its own value.
 Operations:
 - {op:"createPage", title, slug?, description?, ref?}
 - {op:"updatePageSettings", pageId, title?, slug?, description?, ogImage?, noIndex?, notFoundPage?}
+- {op:"deletePage", pageId}: deletes a page of the draft (never the home page or the last page); pageId may be
+  "ref:name". The answer counts the links on the site that still lead to it. The published site keeps it until the
+  next publish.
 - {op:"insertNodes", pageId, parentId?, index?, nodes:[...]}: nodes in the generation format below, each with an
   optional ref. parentId defaults to the page root; index defaults to the end. An imageQuery on an img or a
   container places a credited stock photo.
