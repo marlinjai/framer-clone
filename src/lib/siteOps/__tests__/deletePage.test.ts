@@ -234,7 +234,84 @@ describe('deletePage: refusals write nothing (re-entry)', () => {
   });
 });
 
+describe('deletePage: what the answer and the outcome say', () => {
+  it('leaves a page, and the nodes on it, that the batch deleted out of created, and reports the deleted page', async () => {
+    const project = makeProject();
+    const outcome = await applyOperations(project, [
+      { op: 'createPage', title: 'Scratch', ref: 'scratch' },
+      { op: 'insertNodes', pageId: 'ref:scratch', nodes: [{ ref: 'hero', type: 'section' }] },
+      { op: 'insertNodes', pageId: 'home', nodes: [{ ref: 'kept', type: 'section' }] },
+      { op: 'deletePage', pageId: 'ref:scratch' },
+      { op: 'deletePage', pageId: 'contact' },
+    ]);
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(Object.keys(outcome.created)).toEqual(['kept']);
+    expect(outcome.deletedPages.map(({ index, slug, title }) => ({ index, slug, title }))).toEqual([
+      { index: 3, slug: 'scratch', title: 'Scratch' },
+      { index: 4, slug: 'contact', title: 'Contact' },
+    ]);
+    expect(outcome.deletedPages[1].pageId).toBe('contact');
+  });
+
+  it('says when the deleted page was the product page, and which product page takes over', async () => {
+    const project = makeProject();
+    project.updatePageSettings('about', { title: 'Product', slug: 'products/:handle', description: '' });
+    project.updatePageSettings('contact', { title: 'Shop item', slug: 'shop/:handle', description: '' });
+    const first = await applyOperations(project, [{ op: 'deletePage', pageId: 'about' }]);
+    expect(first.ok && first.summary[0]).toContain('it was the product page; product links now open /shop/<handle>');
+    const second = await applyOperations(project, [{ op: 'createPage', title: 'Extra' }, { op: 'deletePage', pageId: 'contact' }]);
+    expect(second.ok && second.summary[1]).toContain('no longer open a product');
+  });
+
+  it('a page whose slug only looks like a product path is not the product page', async () => {
+    const project = makeProject();
+    project.updatePageSettings('about', { title: 'Products', slug: 'products/list', description: '' });
+    const outcome = await applyOperations(project, [{ op: 'deletePage', pageId: 'about' }]);
+    expect(outcome.ok && outcome.summary[0]).not.toContain('product page');
+  });
+});
+
+describe('deletePage: two home pages', () => {
+  it('deletes one of two empty-slug pages and refuses the second in the same batch', async () => {
+    const project = makeProject();
+    project.pages.get('about')!.setSlug('');
+    const rejected = await refusedOn(project, [
+      { op: 'deletePage', pageId: 'about' },
+      { op: 'deletePage', pageId: 'home' },
+    ]);
+    expect(rejected[0]).toMatchObject({ index: 1 });
+    expect(rejected[0].reason).toContain('the home page cannot be deleted');
+    const outcome = await applyOperations(project, [
+      { op: 'insertNodes', pageId: 'contact', nodes: [{ type: 'a', props: { href: '/', children: 'Home' } }, { type: 'a', props: { href: '/#top', children: 'Top' } }] },
+      { op: 'deletePage', pageId: 'about' },
+    ]);
+    // Links to / still reach the remaining home page: only the form that sends visitors to this page counts.
+    expect(outcome.ok && outcome.summary[1]).toContain('1 link(s) on the site still lead to it');
+  });
+});
+
+describe('ProjectModel.restorePageOrder', () => {
+  it('puts the pages back in the given order, keeping the same page nodes', () => {
+    const project = makeProject();
+    const about = project.pages.get('about')!;
+    project.restorePageOrder(['contact', 'about', 'home']);
+    expect(Array.from(project.pages.keys())).toEqual(['contact', 'about', 'home']);
+    expect(project.pages.get('about')).toBe(about);
+    project.restorePageOrder(['home', 'nope', 'about', 'contact']);
+    expect(Array.from(project.pages.keys())).toEqual(['home', 'about', 'contact']);
+    const before = snap(project);
+    project.restorePageOrder(['home', 'about', 'contact']);
+    expect(snap(project)).toBe(before);
+  });
+});
+
 describe('countLinksToPage', () => {
+  it('counts a form whose page id carries whitespace, as the form settings read it', () => {
+    const trees = [tree('r', [{ id: 'f', type: 'form', componentType: 'host', props: { successBehavior: 'redirect', redirectPageId: ' p ' }, children: [] }])];
+    expect(countLinksToPage(trees, { pageId: 'p', slug: 'thanks' })).toBe(1);
+  });
+
   it('counts nothing but forms for a dynamic page', () => {
     const trees = [
       tree('r', [

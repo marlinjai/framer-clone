@@ -1174,10 +1174,12 @@ export const ProjectModel = types
     },
 
     // Put the pages back in `order` (their ids; the Pages panel lists them in map
-    // order) by moving the same page nodes, never recreating them, so an open
-    // editor keeps every page and selection it holds. Taking back a removePage
-    // through its patches re-adds the page at the end; the site operations'
-    // all-or-nothing take-back (src/lib/siteOps/applyOps.ts) calls this after it.
+    // order) by moving the same page nodes (detached and put back, never
+    // recreated). Taking back a removePage through its patches re-adds the page
+    // at the end; the site operations' all-or-nothing take-back (src/lib/siteOps/
+    // applyOps.ts) calls this after it, on a project loaded for the batch. Not for
+    // a project inside the editor's store: moving a page clears every safe
+    // reference to it (the page on screen, the selection) and records history.
     // Ids not in the project are skipped; a no-op when the order already matches.
     restorePageOrder(order: readonly string[]) {
       const now = Array.from(self.pages.keys());

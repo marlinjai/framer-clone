@@ -305,9 +305,14 @@ describe('the MCP endpoint against a real database', () => {
 
       // Audited like every batch, by name and id.
       const audits = await prisma.siteOperationAudit.findMany({ where: { siteId, operation: 'batch' }, orderBy: { createdAt: 'asc' } });
-      expect(audits.map((a) => a.ops)).toContainEqual([{ op: 'deletePage', pageId: aboutId }]);
-      const deleteRow = audits.find((a) => JSON.stringify(a.ops) === JSON.stringify([{ op: 'deletePage', pageId: aboutId }]))!;
-      expect([deleteRow.versionBefore, deleteRow.versionAfter, deleteRow.actorId]).toEqual([3, 4, 'mcp-key-a']);
+      // A deleted page's row is gone, so the audit keeps its resolved id, slug and title (never its content).
+      const deleteRow = audits.find((a) => a.versionBefore === 3)!;
+      expect(deleteRow.ops).toEqual([{ op: 'deletePage', pageId: aboutId, slug: 'about', title: 'About' }]);
+      expect([deleteRow.versionAfter, deleteRow.actorId]).toEqual([4, 'mcp-key-a']);
+      // A delete by ref is audited under the page id it resolved to.
+      const refRow = audits.find((a) => a.versionBefore === 4)!;
+      expect((refRow.ops as Array<{ op: string; pageId?: string; title?: string }>)[1]).toMatchObject({ op: 'deletePage', title: 'Scratch' });
+      expect((refRow.ops as Array<{ pageId?: string }>)[1].pageId).not.toMatch(/^ref:/);
     } finally {
       info.mockRestore();
     }

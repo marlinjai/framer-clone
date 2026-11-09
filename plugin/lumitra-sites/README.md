@@ -151,7 +151,8 @@ A publish can be undone: `rollback` serves an earlier published version again.
   call.
 - Every write names the version it was based on. If anyone changed the site since, it is refused
   with `site_changed` and nothing is written; the agent reads again and redoes the change.
-- Deleting sites or domains is not possible through the server.
+- Deleting sites or domains is not possible through the server. Pages can be deleted (`deletePage`),
+  never the home page or the last page.
 - The preview link needs an editor sign-in at app.lumitra.co; an agent without a signed-in browser
   hands the link to you.
 

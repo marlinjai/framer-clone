@@ -529,7 +529,7 @@ export const TOOLS: ToolDef[] = [
       'A node or page an operation creates can carry "ref"; later operations of the batch name it as "ref:<name>", and the answer maps each ref to its new id.',
       'Answers the new `version` (name it in the next write), the created ids and one summary line per operation.',
       'Refusals write nothing: site_changed (with currentVersion: read again, then redo the batch on it) or rejected (each refused operation with its index and reason; fix those and resend the whole batch).',
-      'This edits the draft only; visitors see nothing until publish (a deleted page stays live until the next publish). removeNode deletes content and deletePage a whole page from the draft, with no confirmation step: delete only what the person asked to go.',
+      'This edits the draft only; visitors see nothing until publish (a deleted page stays live until the next publish). removeNode deletes content and deletePage a whole page from the draft, with no confirmation step: an open editor can undo it, otherwise only a published version still holds it, so delete only what the person asked to go.',
     ].join(' '),
     args: z.strictObject({
       siteId,

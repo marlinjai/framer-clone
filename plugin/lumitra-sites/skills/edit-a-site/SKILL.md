@@ -62,10 +62,12 @@ none, writes the base value every breakpoint inherits.
   with the `planId` if you change course.
 - `removeNode` deletes the node and everything inside it from the draft. Check the outline before
   you remove, and remove only what the person asked to go.
-- `deletePage` deletes a whole page from the draft, in one step the person can undo in the editor.
+- `deletePage` deletes a whole page from the draft. An editor that has the site open can undo it
+  in one step; otherwise only a published version still holds the page, so treat it as final.
   Delete only a page the person asked to go. The home page and the last page cannot be deleted.
-  The answer counts the links on the site that still lead to the deleted page: fix or remove them
-  in your next batch. The published site keeps the page until the next publish.
+  The answer counts the links on the site that still lead to the deleted page (and says when it
+  was the product page or the page for unknown addresses): fix or remove those links in your next
+  batch. The published site keeps the page until the next publish.
 - New stock photos come from `find_images`; keep their `data-credit-*` attributes and write an
   `alt` that says what the photo shows.
 - Motion: add an appear effect only where the site already uses that kind of motion, never on

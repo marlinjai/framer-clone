@@ -15,7 +15,9 @@
 //     is gone.
 //
 // A dynamic page (`products/:handle`) has no single address, so only the forms
-// count for it. Pure and client-safe; works on plain snapshots.
+// count for it (deletePage says separately when the product page went). Links
+// written as a full address of the site's own domain are not counted: the trees
+// do not know that domain. Pure and client-safe; works on plain snapshots.
 
 import { linkPathOfSlug } from '@/lib/forms/paths';
 
@@ -52,7 +54,10 @@ function internalHrefKey(href: string): string | null {
 
 /** How many links in `trees` lead to the page with this id and slug. */
 export function countLinksToPage(trees: readonly unknown[], page: { pageId: string; slug: string }): number {
-  const address = linkPathOfSlug(page.slug);
+  // An empty slug is the root address; the only empty-slug page that can be deleted
+  // is an extra one, and the root still serves the remaining home page, so links to
+  // `/` do not count.
+  const address = page.slug.trim() === '' ? null : linkPathOfSlug(page.slug);
   const target = address === null ? null : pathKey(address);
   let count = 0;
   const walk = (raw: unknown, depth: number): void => {
@@ -61,7 +66,8 @@ export function countLinksToPage(trees: readonly unknown[], page: { pageId: stri
     const props = isObj(node.props) ? node.props : undefined;
     if (props) {
       if (target !== null && typeof props.href === 'string' && internalHrefKey(props.href) === target) count++;
-      if (props.successBehavior === 'redirect' && props.redirectPageId === page.pageId) count++;
+      // Trimmed as the form settings read it (readFormSettings, src/lib/forms/definition.ts).
+      if (props.successBehavior === 'redirect' && typeof props.redirectPageId === 'string' && props.redirectPageId.trim() === page.pageId) count++;
     }
     if (Array.isArray(node.children)) for (const child of node.children) walk(child, depth + 1);
   };
