@@ -1778,6 +1778,106 @@ describe('liveSync: a refusal timer never outlives a sign-out', () => {
   });
 });
 
+describe('liveSync: a stream closed for good is asked why (network or refusal)', () => {
+  let probeAnswer: number | 'network' | 'throw';
+  let probes: string[];
+  let releaseProbe: (() => void) | undefined;
+  const probing = (hold = false): LiveSyncDeps => ({
+    ...deps,
+    probeStream: async (url) => {
+      probes.push(url);
+      if (hold) await new Promise<void>((resolve) => (releaseProbe = resolve));
+      if (probeAnswer === 'throw') throw new Error('probe');
+      return probeAnswer;
+    },
+  });
+  beforeEach(() => {
+    probes = [];
+    releaseProbe = undefined;
+  });
+
+  it('no answer (the network is down, the request blocked): the quick reconnect, 2 s', async () => {
+    probeAnswer = 'network';
+    setLiveSyncDepsForTests(probing());
+    start();
+    stream().fail(true);
+    await settle();
+    expect(probes).toHaveLength(1);
+    expect(probes[0]).toContain('/events?tab=');
+    const count = streams.length;
+    await vi.advanceTimersByTimeAsync(LIVE_RECONNECT_MS - 1);
+    expect(streams).toHaveLength(count);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(streams).toHaveLength(count + 1);
+    stream().open();
+    expect(liveSyncFor(SITE)?.phase).toBe('live');
+  });
+
+  it('a probe that throws counts as no answer', async () => {
+    probeAnswer = 'throw';
+    setLiveSyncDepsForTests(probing());
+    start();
+    stream().fail(true);
+    await settle();
+    const count = streams.length;
+    await vi.advanceTimersByTimeAsync(LIVE_RECONNECT_MS);
+    expect(streams).toHaveLength(count + 1);
+  });
+
+  it('an answer that would open a stream now (200): the quick reconnect', async () => {
+    probeAnswer = 200;
+    setLiveSyncDepsForTests(probing());
+    start();
+    stream().fail(true);
+    await settle();
+    const count = streams.length;
+    await vi.advanceTimersByTimeAsync(LIVE_RECONNECT_MS);
+    expect(streams).toHaveLength(count + 1);
+  });
+
+  for (const status of [429, 503, 403]) {
+    it(`a refusal (${status}): the long wait, a minute, polling meanwhile`, async () => {
+      probeAnswer = status;
+      setLiveSyncDepsForTests(probing());
+      start();
+      stream().fail(true);
+      await settle();
+      expect(liveSyncFor(SITE)?.phase).toBe('polling');
+      const count = streams.length;
+      await vi.advanceTimersByTimeAsync(LIVE_RECONNECT_MS * 4);
+      expect(streams).toHaveLength(count);
+      await vi.advanceTimersByTimeAsync(LIVE_STREAM_RETRY_MS - LIVE_RECONNECT_MS * 4);
+      expect(streams).toHaveLength(count + 1);
+    });
+  }
+
+  it('an answer that comes after the sync stopped is ignored', async () => {
+    probeAnswer = 'network';
+    setLiveSyncDepsForTests(probing(true));
+    const stop = start();
+    stream().fail(true);
+    await settle();
+    stop();
+    const count = streams.length;
+    releaseProbe!();
+    await settle();
+    await vi.advanceTimersByTimeAsync(LIVE_STREAM_RETRY_MS * 2);
+    expect(streams).toHaveLength(count);
+  });
+
+  it('a stream that is reconnecting by itself (not closed for good) is not probed', async () => {
+    probeAnswer = 429;
+    setLiveSyncDepsForTests(probing());
+    start();
+    stream().fail(false);
+    await settle();
+    expect(probes).toEqual([]);
+    const count = streams.length;
+    await vi.advanceTimersByTimeAsync(LIVE_RECONNECT_MS);
+    expect(streams).toHaveLength(count + 1);
+  });
+});
+
 describe('liveSync: stream refusals back off with jitter (F7)', () => {
   it('waits 1, then 2 minutes, plus the random share', async () => {
     const random = vi.fn(() => 0.5);
