@@ -49,6 +49,23 @@ export function noteFollowToggledByPerson(presence: object): void {
 /** How many line ids the announcer remembers (the feed holds LIVE_FEED_MAX). */
 const SEEN_MAX = 500;
 
+/**
+ * How far before the newest line seen a reconnect's unseen line may be and still count as the
+ * gap's: a write that committed just before another agent's line this tab already showed.
+ */
+export const GAP_ALLOWANCE_MS = 2 * 60_000;
+
+/** A line's time in milliseconds, or -Infinity when unreadable. */
+function atOf(line: Pick<LiveFeedLine, 'at'>): number {
+  const t = Date.parse(line.at);
+  return Number.isFinite(t) ? t : -Infinity;
+}
+
+/** The newest time among these lines. */
+function newestOf(lines: ReadonlyArray<Pick<LiveFeedLine, 'at'>>): number {
+  return lines.reduce((max, l) => Math.max(max, atOf(l)), -Infinity);
+}
+
 interface PageLike {
   id: string;
   metadata?: { title?: string };
@@ -112,6 +129,9 @@ const AgentAnnouncer = observer(function AgentAnnouncer() {
       while (seen.size > SEEN_MAX) seen.delete(seen.values().next().value as string);
     };
     see(presence.feed);
+    // The newest line time seen (server times), and when the current run began.
+    let newestAt = newestOf(presence.feed);
+    let runStartAt = -Infinity;
     let state = presence.stateApplied;
     let resets = presence.resets;
     let wasActive = presence.anyActive;
@@ -145,9 +165,11 @@ const AgentAnnouncer = observer(function AgentAnnouncer() {
       // gap's lines before its summary is spoken.
       reaction(
         () => ({ feed: presence.feed, active: presence.anyActive, states: presence.stateApplied, resets: presence.resets, up: streamUp.get() }),
-        ({ feed, active, up }) => {
-          // The sync may have started (or restarted) after this mounted.
+        ({ feed, active }) => {
+          // The sync may have started (or restarted, also for the same site) after this mounted:
+          // whether the stream is up is read from the current one.
           attach();
+          const up = streamUp.get();
           if (!up || !wasUp) awaitingState = true;
           wasUp = up;
           const reset = presence.resets !== resets;
@@ -160,16 +182,27 @@ const AgentAnnouncer = observer(function AgentAnnouncer() {
             runLines = [];
             announced = 'none';
             seen.clear();
+            newestAt = -Infinity;
           } else {
             const history = fromState && presence.statesSinceReset === 1;
-            const fresh = history ? [] : feed.filter((l) => !seen.has(l.id)).reverse();
+            // A reconnect's `state` can carry old lines this tab never held (the feed it had was
+            // capped, or a server restart dropped the in-memory lines that pushed them out): only an
+            // unseen line from around the gap or later is news, and only one from this run counts in it.
+            const gapFrom = newestAt - GAP_ALLOWANCE_MS;
+            const runFrom = runStartAt - GAP_ALLOWANCE_MS;
+            const fresh = history ? [] : feed.filter((l) => !seen.has(l.id) && (!fromState || atOf(l) >= gapFrom)).reverse();
             for (const line of fresh) {
               // Only the agents' own lines count in their run (a person's save is not theirs).
-              if ((wasActive || active) && line.actorKind === 'key') runLines.push(line);
+              const inRun = !fromState || atOf(line) >= runFrom;
+              if ((wasActive || active) && line.actorKind === 'key' && inRun) runLines.push(line);
               if (needsAttention(line)) say(feedLineAnnouncement(line));
             }
           }
           see(feed);
+          newestAt = Math.max(newestAt, newestOf(feed));
+          // A run begins: lines from before it never count in it (this clock against the server's,
+          // within the allowance).
+          if (active && !wasActive) runStartAt = Date.now();
           const settled = up && !awaitingState;
           if (wasActive && !active && !reset && settled) {
             const summary = runSummary(runLines);

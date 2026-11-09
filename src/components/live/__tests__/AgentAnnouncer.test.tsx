@@ -204,6 +204,42 @@ describe('the agent announcer', () => {
     expect(heard()).toEqual(['Claude is reading this site', 'Claude is planning changes to this site', 'Claude is editing this site']);
   });
 
+  it('a reconnect after a server restart never counts or reads out an agent\'s old lines this tab never held', () => {
+    sync = new FakeSync();
+    render(<AgentAnnouncer />);
+    // Written an hour before the editor opened, then pushed out of its capped feed.
+    const oldWrite = line({ id: 'old-write', changes: 80 });
+    const oldRefusal = line({ id: 'old-refusal', outcome: 'failed', tool: 'publish' });
+    act(() => vi.advanceTimersByTime(60 * 60_000));
+    act(() => presence().applyState({ agents: [], feed: [] }));
+    const start = activity({ callId: 'w1', tool: 'apply_batch', at: new Date().toISOString() });
+    act(() => presence().applyActivity(start));
+    act(() => presence().applyActivity({ ...start, phase: 'end', outcome: 'ok', changes: 2, at: new Date().toISOString() }));
+    act(() => sync!.setPhase('polling'));
+    act(() => vi.advanceTimersByTime(5_000));
+    act(() => sync!.setPhase('live'));
+    act(() => presence().applyState({ agents: [], feed: [...presence().feed, oldRefusal, oldWrite] }));
+    expect(heard()).not.toContain('Claude: Publishing failed');
+    expect(heard().at(-1)).toBe('Claude finished: wrote 2 changes');
+  });
+
+  it('follows a live sync restarted for the same site, and sums up its runs', () => {
+    sync = new FakeSync();
+    render(<AgentAnnouncer />);
+    act(() => presence().applyState({ agents: [], feed: [] }));
+    // The sync stops (it resets the store) and a new one starts for the same site, already live.
+    act(() => {
+      sync!.setPhase('stopped');
+      presence().reset();
+    });
+    sync = new FakeSync();
+    act(() => presence().applyState({ agents: [], feed: [] }));
+    act(() => presence().applyActivity(activity({ callId: 'w1', tool: 'apply_batch' })));
+    act(() => presence().applyActivity(activity({ callId: 'w1', tool: 'apply_batch', phase: 'end', outcome: 'ok', changes: 3 })));
+    act(() => vi.advanceTimersByTime(AGENT_ACTIVE_MS + 1));
+    expect(heard().at(-1)).toBe('Claude finished: wrote 3 changes');
+  });
+
   it('never reads out "the site changed meanwhile": the agent recovers by itself', () => {
     render(<AgentAnnouncer />);
     act(() => presence().applyActivity(activity({ tool: 'apply_batch' })));
