@@ -27,8 +27,10 @@ const fakeKey = () => fakeCredential(['sk', 'live'].join('_'));
 
 const KEY_A = fakeKey();
 const KEY_B = fakeKey();
-const GROUP_A = '018f9c10-0000-7000-8000-0000000000e1';
-const GROUP_B = '018f9c10-0000-7000-8000-0000000000e2';
+// Tenant groups of this file alone: the integration files run in parallel on one database, and
+// another file's cleanup deletes every site of its own groups (src/server/__tests__/integrationTenantGroups.test.ts guards this).
+const GROUP_A = '018f9c10-0000-7000-8000-0000000000f3';
+const GROUP_B = '018f9c10-0000-7000-8000-0000000000f4';
 const STRUCTURE: Record<string, { groupIds: string[]; workspaceIds: string[] }> = {
   'mcp-tenant-a': { groupIds: [GROUP_A], workspaceIds: ['mcp_ws_a'] },
   'mcp-tenant-b': { groupIds: [GROUP_B], workspaceIds: ['mcp_ws_b'] },

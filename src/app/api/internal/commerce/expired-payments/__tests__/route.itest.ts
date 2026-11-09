@@ -3,9 +3,41 @@
 // The scheduled sweep against real Postgres, through the real route, across two tenant groups: an abandoned hold
 // ends with nobody buying, in every company, and a hold inside its window is left alone. Other suites share this
 // database, so the assertions read this suite's own rows, never the fleet-wide totals.
+//
+// The fleet the sweep walks (every tenant group with a site) is narrowed to this suite's own groups: the
+// integration files run in parallel, and a sweep over the whole database closed, or failed on, other suites'
+// orders in the middle of their own tests (a 500 here, a changed order there). The route, the sweep and every
+// tenant schema stay real; only the list of groups is this suite's.
 
 import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+/** The tenant groups this suite created; the sweep's fleet query answers only these. */
+const suiteGroups = vi.hoisted(() => new Set<string>());
+vi.mock('@/server/db', async (importActual) => {
+  const actual = await importActual<typeof import('@/server/db')>();
+  return {
+    ...actual,
+    getPrismaClient: () => {
+      const prisma = actual.getPrismaClient();
+      return new Proxy(prisma, {
+        get(target, prop, receiver) {
+          if (prop !== 'site') return Reflect.get(target, prop, receiver);
+          const site = target.site;
+          return new Proxy(site, {
+            get(siteTarget, siteProp, siteReceiver) {
+              if (siteProp !== 'findMany') return Reflect.get(siteTarget, siteProp, siteReceiver);
+              return async (args: Parameters<typeof site.findMany>[0]) => {
+                const rows = (await site.findMany(args)) as Array<{ tenantGroupId?: string }>;
+                return rows.filter((row) => row.tenantGroupId === undefined || suiteGroups.has(row.tenantGroupId));
+              };
+            },
+          });
+        },
+      });
+    },
+  };
+});
 
 import { createOrder } from '@/server/commerce/order/createOrder';
 import { DEMO_COMPANY_ID } from '@/lib/renderer/server/demoTenant';
@@ -34,6 +66,7 @@ beforeAll(async () => {
   noCommerceGroup = randomUUID();
   await createPublishedSite(fx, noCommerceGroup, 'sweep-none');
   await createPublishedSite(fx, 'legacy-tenant-group', 'sweep-legacy');
+  for (const group of [...shops.map((shop) => shop.tgId), noCommerceGroup, 'legacy-tenant-group']) suiteGroups.add(group);
 }, 120_000);
 
 afterAll(async () => {
@@ -103,9 +136,8 @@ describe('POST /api/internal/commerce/expired-payments on real tenant schemas', 
 
     const res = await sweep();
     expect(res.status).toBe(200);
-    const summary = (await res.json()) as { closed: number; skipped: number };
-    expect(summary.closed).toBeGreaterThanOrEqual(2);
-    expect(summary.skipped).toBeGreaterThanOrEqual(2);
+    // The fleet is this suite's four groups: two shops swept, the group without commerce and the legacy id skipped.
+    expect(await res.json()).toEqual({ tenantGroups: 2, skipped: 2, closed: 2, failed: 0 });
 
     expect(await state(abandonedA)).toEqual({ status: 'expired', reserved: 0 });
     expect(await state(abandonedB)).toEqual({ status: 'expired', reserved: 0 });

@@ -23,7 +23,8 @@ const fakeKey = () => fakeCredential(['sk', 'live'].join('_'));
 const KEY_A = fakeKey();
 const KEY_B = fakeKey();
 const GROUP_A = '018f9c10-0000-7000-8000-0000000000c1';
-const GROUP_B = '018f9c10-0000-7000-8000-0000000000d1';
+// Not the domain service test's group: its cleanup deletes every site of that group, in parallel with this file.
+const GROUP_B = '018f9c10-0000-7000-8000-0000000000d9';
 
 function verified(tenant: string, keyId: string) {
   return {
