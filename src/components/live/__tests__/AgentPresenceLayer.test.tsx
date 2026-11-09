@@ -14,6 +14,7 @@ import { createIntrinsicComponent, type ComponentInstance } from '@/models/Compo
 import type { PageModelType } from '@/models/PageModel';
 import { AGENT_FRAME_LINGER_MS, type AgentActivity } from '@/lib/projects/liveEvents';
 import type { LivePresenceStore } from '@/lib/live/presenceStore';
+import { REVEAL_KEYFRAMES } from '@/lib/live/reveal';
 
 let store: RootStoreType;
 vi.mock('@/hooks/useStore', () => ({ useStore: () => store }));
@@ -229,6 +230,28 @@ describe('the frame', () => {
     const second = document.querySelector('[data-inner-component-id="hero"]')!;
     expect(watched.has(second)).toBe(true);
     expect(watched.has(first)).toBe(false);
+  });
+
+  it('redraws once for many reveals that end in the same frame, after reading every rect', async () => {
+    act(() => presence().applyActivity(activity()));
+    // Let the draw the new picture scheduled for its next frame run first.
+    await act(async () => {
+      await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+    });
+    const hero = document.querySelector<HTMLElement>('[data-inner-component-id="hero"]')!;
+    const read = vi.spyOn(hero, 'getBoundingClientRect');
+    const reveal = () => {
+      const e = new Event('animationend', { bubbles: true });
+      Object.defineProperty(e, 'animationName', { value: REVEAL_KEYFRAMES });
+      document.body.dispatchEvent(e);
+    };
+    for (let i = 0; i < 5; i += 1) reveal();
+    expect(read).not.toHaveBeenCalled();
+    await act(async () => {
+      await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+    });
+    // One draw reads the element once.
+    expect(read).toHaveBeenCalledTimes(1);
   });
 
   it('frames the page frames for a call that names the page and no node', () => {

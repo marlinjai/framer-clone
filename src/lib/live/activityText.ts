@@ -26,7 +26,7 @@ export function activityVerb(tool: string): string {
     case 'publish':
       return 'Publishing';
     case 'rollback':
-      return 'Rolling back';
+      return 'Restoring a version';
     case 'preview_url':
       return 'Previewing';
     case 'announce_sections':
@@ -43,61 +43,99 @@ export function presenceLabel(label: string, tool: string, sectionTitle?: string
   return `${label || 'Agent'} · ${activityVerb(tool)}`;
 }
 
-/** The top bar's note for the active agents' labels. */
-export function editingNote(labels: readonly string[]): string | null {
-  // One entry per active agent: two agents with the same label are still two agents.
+/** Who did something, from the labels of one or more agents: "Claude", "Claude and Codex", "3 agents". */
+function whoOf(labels: readonly string[]): string {
+  // One entry per agent: two agents with the same label are still two agents.
   const names = labels.map((l) => l || 'Agent');
-  if (names.length === 0) return null;
-  if (names.length === 1) return `${names[0]} is editing this site`;
-  if (names.length === 2 && names[0] !== names[1]) return `${names[0]} and ${names[1]} are editing this site`;
-  return `${names.length} agents are editing this site`;
+  if (names.length === 1) return names[0];
+  if (names.length === 2 && names[0] !== names[1]) return `${names[0]} and ${names[1]}`;
+  return `${names.length} agents`;
+}
+
+/**
+ * The top bar's note for the active agents: "Claude is reading this site"
+ * while every active agent's latest call only reads, "Claude is editing this
+ * site" as soon as one writes (a conflict may follow then).
+ */
+export function editingNote(agents: ReadonlyArray<{ label: string; tool: string }>): string | null {
+  if (agents.length === 0) return null;
+  const who = whoOf(agents.map((a) => a.label));
+  const verb = agents.some((a) => !isReadTool(a.tool)) ? 'editing' : 'reading';
+  return `${who} ${agents.length === 1 ? 'is' : 'are'} ${verb} this site`;
 }
 
 function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;
 }
 
-function onPage(pageTitle: string | undefined): string {
-  return pageTitle ? ` on ${pageTitle}` : '';
+/** A page title as the feed quotes it. */
+function quoted(title: string): string {
+  return `‘${title}’`;
 }
 
-/** What a refused or failed call was, as a noun ("Changes", "Generation"). */
+function onPage(pageTitle: string | undefined): string {
+  return pageTitle ? ` on ${quoted(pageTitle)}` : '';
+}
+
+/** What a refused or failed call was, as a noun ("Changes", "Publishing"). */
 function attemptNoun(tool: string): string {
   switch (tool) {
     case 'apply_batch':
       return 'Changes';
     case 'generate_page':
-      return 'Generation';
+      return 'Generating content';
     case 'publish':
       return 'Publishing';
     case 'rollback':
-      return 'Rollback';
+      return 'Restoring an earlier version';
     case 'announce_sections':
       return 'Planned sections';
     case 'clear_sections':
-      return 'Clearing planned sections';
+      return 'Removing the planned sections';
     default:
-      return 'A request';
+      return 'A step';
   }
 }
 
 function refusal(tool: string, outcome: Exclude<AgentOutcome, 'ok'>): string {
   const noun = attemptNoun(tool);
-  if (outcome === 'site_changed') return `${noun} refused: site changed, re-reading`;
+  if (outcome === 'site_changed') return `${noun} not written: the site changed meanwhile, reading it again`;
   if (outcome === 'rejected') return `${noun} refused, nothing written`;
-  if (outcome === 'awaiting_approval') return `${noun} waiting for your approval`;
-  if (outcome === 'declined') return `${noun} declined, nothing written`;
-  return `${noun} failed`;
+  if (outcome === 'awaiting_approval') return `${noun} needs your approval`;
+  if (outcome === 'declined') return `${noun} declined, nothing changed`;
+  return `${noun} failed, nothing written`;
 }
 
-/** One feed line in plain words. `pageTitle` is the title of the line's page in the open copy, if it still exists. */
-export function feedLineText(line: Pick<LiveFeedLine, 'tool' | 'outcome' | 'changes'>, pageTitle?: string): string {
+export type FeedLineWords = Pick<LiveFeedLine, 'tool' | 'outcome'> & Partial<Pick<LiveFeedLine, 'label' | 'pageId' | 'changes' | 'deletedPageIds'>>;
+
+/** A batch's words: "Wrote 4 changes on 'Home'", "Deleted the page 'About'", "Wrote 4 changes and deleted 1 page". */
+function batchText(line: FeedLineWords, pageTitle: string | undefined, deletedTitles: ReadonlyArray<string | undefined>): string {
+  const deleted = line.deletedPageIds?.length ?? 0;
+  // The line's page is the deleted one: no "on" for a page that is gone.
+  const page = line.pageId && line.deletedPageIds?.includes(line.pageId) ? undefined : pageTitle;
+  if (deleted === 0) {
+    return line.changes !== undefined ? `Wrote ${plural(line.changes, 'change', 'changes')}${onPage(page)}` : `Edited the site${onPage(page)}`;
+  }
+  const title = deleted === 1 ? deletedTitles[0] : undefined;
+  const others = Math.max(0, (line.changes ?? deleted) - deleted);
+  if (others === 0) return deleted === 1 ? `Deleted ${title ? `the page ${quoted(title)}` : 'a page'}` : `Deleted ${deleted} pages`;
+  const deletion = title ? `the page ${quoted(title)}` : plural(deleted, 'page', 'pages');
+  return `Wrote ${plural(others, 'change', 'changes')}${onPage(page)} and deleted ${deletion}`;
+}
+
+/**
+ * One feed line in plain words. `pageTitle` is the title of the line's page in
+ * the open copy, if it still exists; `deletedTitles` the titles the editor
+ * still knows of the pages the line deleted, in the order of `deletedPageIds`
+ * (a page deleted before this editor saw it has none: "Deleted a page").
+ */
+export function feedLineText(line: FeedLineWords, pageTitle?: string, deletedTitles: ReadonlyArray<string | undefined> = []): string {
   if (line.outcome !== 'ok') return refusal(line.tool, line.outcome);
   switch (line.tool) {
     case 'get_site':
       return 'Read the site';
     case 'get_page':
-      return pageTitle ? `Read the ${pageTitle} page` : 'Read a page';
+      return pageTitle ? `Read the page ${quoted(pageTitle)}` : 'Read a page';
     case 'describe_vocabulary':
       return 'Read the building blocks';
     case 'list_revisions':
@@ -105,7 +143,7 @@ export function feedLineText(line: Pick<LiveFeedLine, 'tool' | 'outcome' | 'chan
     case 'preview_url':
       return 'Opened a preview';
     case 'apply_batch':
-      return line.changes !== undefined ? `Wrote ${plural(line.changes, 'change', 'changes')}${onPage(pageTitle)}` : `Edited the site${onPage(pageTitle)}`;
+      return batchText(line, pageTitle, deletedTitles);
     case 'generate_page':
       return `Generated content${onPage(pageTitle)}`;
     case 'publish':
@@ -115,14 +153,76 @@ export function feedLineText(line: Pick<LiveFeedLine, 'tool' | 'outcome' | 'chan
     case 'create_site':
       return 'Created the site';
     case 'announce_sections':
-      return `Planned the next sections${onPage(pageTitle)}`;
+      return `Planned sections${onPage(pageTitle)}`;
     case 'clear_sections':
-      return 'Removed its planned sections';
+      return 'Removed the planned sections';
     case PLAN_STOPPED_TOOL:
-      return 'Planned sections removed: the agent stopped';
+      return `Planned sections removed: ${line.label || 'the agent'} stopped`;
     default:
       return 'Worked on the site';
   }
+}
+
+/** Whether a line asks for the person's attention when it arrives: a refusal, an approval needed, a failure. */
+export function needsAttention(line: Pick<LiveFeedLine, 'outcome'>): boolean {
+  return line.outcome !== 'ok';
+}
+
+/** A line as a screen reader hears it when it arrives: the agent first. */
+export function feedLineAnnouncement(line: FeedLineWords, pageTitle?: string, deletedTitles: ReadonlyArray<string | undefined> = []): string {
+  return `${line.label || 'Agent'}: ${feedLineText(line, pageTitle, deletedTitles)}`;
+}
+
+/** The writes besides batches a run summary names, once each (planned sections change nothing on the site). */
+const RUN_STEPS: Record<string, string> = {
+  generate_page: 'generated content',
+  publish: 'published the site',
+  rollback: 'put an earlier version live',
+  create_site: 'created the site',
+};
+
+/**
+ * The one sentence a run ends with (the agents became inactive): what the
+ * run's lines wrote, in total. "Claude finished: wrote 6 changes and deleted 1
+ * page", "Claude finished without changing anything". Refusals are not
+ * repeated (each was announced when it arrived). Null for a run with no line.
+ */
+export function runSummary(lines: ReadonlyArray<Pick<LiveFeedLine, 'agentId' | 'label' | 'tool' | 'outcome' | 'changes' | 'deletedPageIds'>>): string | null {
+  if (lines.length === 0) return null;
+  const agents = new Map<string, string>();
+  for (const l of lines) if (!agents.has(l.agentId)) agents.set(l.agentId, l.label);
+  const who = whoOf([...agents.values()]);
+  let changes = 0;
+  let deleted = 0;
+  const steps = new Set<string>();
+  for (const l of lines) {
+    if (l.outcome !== 'ok' || isReadTool(l.tool)) continue;
+    if (l.tool === 'apply_batch') {
+      const d = l.deletedPageIds?.length ?? 0;
+      deleted += d;
+      changes += Math.max(0, (l.changes ?? 1) - d);
+    } else if (RUN_STEPS[l.tool]) {
+      steps.add(RUN_STEPS[l.tool]);
+    }
+  }
+  const parts: string[] = [];
+  if (changes > 0) parts.push(`wrote ${plural(changes, 'change', 'changes')}`);
+  if (deleted > 0) parts.push(`deleted ${plural(deleted, 'page', 'pages')}`);
+  parts.push(...steps);
+  if (parts.length === 0) return `${who} finished without changing anything`;
+  const last = parts.pop()!;
+  return `${who} finished: ${parts.length > 0 ? `${parts.join(', ')} and ${last}` : last}`;
+}
+
+/** What the person hears when the camera stops following because they moved it. */
+export function followOffAnnouncement(label: string | undefined): string {
+  return `Stopped following ${label || 'the agent'}. Turn Follow back on to follow again.`;
+}
+
+/** The Follow toggle's tooltip. */
+export function followTitle(on: boolean, label: string | undefined): string {
+  const who = label || 'the agent';
+  return on ? `The canvas follows ${who}` : `Follow ${who} on the canvas`;
 }
 
 /** The line's time as the feed shows it (local hours and minutes). */

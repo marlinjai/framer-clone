@@ -234,6 +234,20 @@ export function sectionRefsOf(args: unknown): string[] {
   return refs;
 }
 
+/** The pages a batch's deletePage operations name, in order, at most LIVE_LIST_MAX. Only vouched for once the site accepted the batch. */
+export function deletedPageIdsOf(args: unknown): string[] {
+  const ids: string[] = [];
+  const ops = record(args).ops;
+  if (!Array.isArray(ops)) return ids;
+  for (const raw of ops) {
+    const op = record(raw);
+    if (op.op !== 'deletePage') continue;
+    const id = idOf(op.pageId);
+    if (id && !ids.includes(id) && ids.length < LIVE_LIST_MAX) ids.push(id);
+  }
+  return ids;
+}
+
 /** How a tool's answer ended, from its error code. A rate limit is a refusal: nothing was written. */
 export function outcomeOf(result: ToolResult | undefined): AgentOutcome {
   if (!result) return 'failed';
@@ -358,6 +372,8 @@ export async function withPresence(
     const pageId = ('pageId' in named ? named.pageId : undefined) ?? answered.pageId;
     const ops = record(call.args).ops;
     const changes = Array.isArray(ops) ? ops.length : undefined;
+    // Like the named ids: a refused batch deleted nothing, whatever it names.
+    const deletedPageIds = outcome === 'ok' ? deletedPageIdsOf(call.args) : [];
     const end: AgentActivity = {
       ...base,
       phase: 'end',
@@ -365,6 +381,7 @@ export async function withPresence(
       ...(pageId ? { pageId } : {}),
       ...(nodeIds.length > 0 ? { nodeIds } : {}),
       ...(changes !== undefined ? { changes } : {}),
+      ...(deletedPageIds.length > 0 ? { deletedPageIds } : {}),
       at: new Date().toISOString(),
     };
     // A committed write is in the audit table, which backs the feed after a reload;
@@ -381,6 +398,7 @@ export async function withPresence(
           ...(pageId ? { pageId } : {}),
           ...(nodeIds.length > 0 ? { nodeIds } : {}),
           ...(changes !== undefined ? { changes } : {}),
+          ...(deletedPageIds.length > 0 ? { deletedPageIds } : {}),
           at: end.at,
         };
     // Nothing after the end may draw the frame again.

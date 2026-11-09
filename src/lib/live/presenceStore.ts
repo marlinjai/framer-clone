@@ -94,6 +94,7 @@ export function feedLineOf(a: AgentActivity): LiveFeedLine {
     ...(a.pageId ? { pageId: a.pageId } : {}),
     ...(a.nodeIds?.length ? { nodeIds: a.nodeIds } : {}),
     ...(a.changes !== undefined ? { changes: a.changes } : {}),
+    ...(a.deletedPageIds?.length ? { deletedPageIds: a.deletedPageIds } : {}),
     at: a.at,
   };
 }

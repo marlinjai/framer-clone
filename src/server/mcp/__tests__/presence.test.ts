@@ -23,6 +23,7 @@ vi.mock('@/server/sites/cachedResolver', () => ({
   revalidateCustomHostsForSiteId: async () => [],
 }));
 
+import { getSnapshot } from 'mobx-state-tree';
 import ProjectModel, { type ProjectModelType } from '@/models/ProjectModel';
 import { defaultViewportSnapshots } from '@/lib/canvas/defaultViewports';
 import { SiteChangedError, SiteNotFoundError, type SiteRepository } from '@/server/sites';
@@ -35,7 +36,7 @@ import { liveAgentId } from '@/server/siteOps/audit';
 import { createMcpHandler } from '../handler';
 import { resetLivePlansForTests } from '../livePlans';
 import { ApprovalStore } from '../approvals';
-import { focusOf, MISSES_PER_KEY, outcomeOf, REPORTS_PER_KEY, resetPresenceScopeCacheForTests, siteInScope, takeReport } from '../presence';
+import { deletedPageIdsOf, focusOf, MISSES_PER_KEY, outcomeOf, REPORTS_PER_KEY, resetPresenceScopeCacheForTests, siteInScope, takeReport } from '../presence';
 
 const fakeKey = () => `${['sk', 'live'].join('_')}_${randomBytes(16).toString('hex')}`;
 const KEY_ID = `key_${randomBytes(6).toString('hex')}`;
@@ -300,6 +301,25 @@ describe('agent:activity from the MCP endpoint', () => {
     expect(activities(heard).map((a) => a.phase)).toEqual(['start', 'end']);
   });
 
+  it('reports the pages a batch deleted on its end, and none for a refused delete', async () => {
+    const s = setup();
+    // A site with a second page (the home page and the last page cannot be deleted).
+    const pageId = 'about';
+    s.mock.loadProjectWithVersion.mockImplementation(async () => {
+      const snap = getSnapshot(storedProject());
+      const about = { ...snap.pages.home, id: pageId, slug: 'about', metadata: { title: 'About', description: '' }, appComponentTree: { id: 'root-about', type: 'div', componentType: 'host', props: {}, children: [] } };
+      return { project: ProjectModel.create({ ...snap, pages: { ...snap.pages, [pageId]: about } } as never), version: s.state.version };
+    });
+    const heard = listen('site-1');
+    await callTool(s, 'apply_batch', { siteId: 'site-1', expectedVersion: 3, ops: [{ op: 'deletePage', pageId: 'home' }] });
+    const deleted = await callTool(s, 'apply_batch', { siteId: 'site-1', expectedVersion: 3, ops: [{ op: 'deletePage', pageId }] });
+    expect(deleted.isError).toBe(false);
+    const [refused, ok] = activities(heard).filter((a) => a.phase === 'end');
+    expect(refused.outcome).toBe('rejected');
+    expect(refused.deletedPageIds).toBeUndefined();
+    expect(ok).toMatchObject({ outcome: 'ok', changes: 1, deletedPageIds: [pageId] });
+  });
+
   it('reports invalid arguments as failed', async () => {
     const s = setup();
     const heard = listen('site-1');
@@ -444,6 +464,22 @@ describe('the pieces', () => {
       }),
     ).toEqual({ pageId: 'p2', nodeIds: ['a', 'b'] });
     expect(focusOf('not an object')).toEqual({ nodeIds: [] });
+  });
+
+  it('reads the pages a batch deletes, ids only, once each, never a made-up one', () => {
+    expect(
+      deletedPageIdsOf({
+        ops: [
+          { op: 'deletePage', pageId: 'p1' },
+          { op: 'updateText', nodeId: 'a', text: 'content' },
+          { op: 'deletePage', pageId: 'p1' },
+          { op: 'deletePage', pageId: 'p2' },
+          { op: 'deletePage', pageId: 'not an id!' },
+        ],
+      }),
+    ).toEqual(['p1', 'p2']);
+    expect(deletedPageIdsOf({ ops: 'nope' })).toEqual([]);
+    expect(deletedPageIdsOf(undefined)).toEqual([]);
   });
 
   it('reads the outcome from the error code', () => {

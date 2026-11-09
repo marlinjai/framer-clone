@@ -225,6 +225,22 @@ export function SkeletonShape({ kind, narrow }: { kind: PlanSectionKind; narrow:
   }
 }
 
+/** The skeleton title's chip: dark grey on near white, whatever the page's background is. */
+export const SKELETON_TITLE_STYLE: React.CSSProperties = {
+  alignSelf: 'flex-start',
+  maxWidth: '100%',
+  boxSizing: 'border-box',
+  padding: '2px 8px',
+  borderRadius: 4,
+  background: 'rgba(255, 255, 255, 0.92)',
+  color: '#404040',
+  font: '500 12px/1.4 system-ui, sans-serif',
+  letterSpacing: '0.02em',
+  whiteSpace: 'nowrap',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+};
+
 /**
  * The block every skeleton is drawn as: the section's title (plain text) above
  * its static shape. `attributes` mark what it belongs to (an agent's plan, or
@@ -248,9 +264,8 @@ export function SkeletonBlock({ title, kind, narrow, attributes }: { title: stri
         gap: 20,
       }}
     >
-      <div style={{ font: '500 12px/1.4 system-ui, sans-serif', letterSpacing: '0.02em', color: 'rgba(110, 110, 110, 0.95)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-        {title}
-      </div>
+      {/* On its own light chip: the page behind may be any colour, a dark frame too, and the title stays readable (about 9:1). */}
+      <div style={SKELETON_TITLE_STYLE}>{title}</div>
       <SkeletonShape kind={kind} narrow={narrow} />
     </div>
   );
@@ -410,9 +425,11 @@ export const SkeletonPageFrames = observer(function SkeletonPageFrames({ frames,
               style={{ width: `${f.width}px`, opacity: leaving ? 0 : 1, transition: 'opacity 200ms ease-out' }}
             >
               <div className="absolute -top-8 left-0 flex max-w-full items-center gap-2 whitespace-nowrap text-sm font-medium text-gray-600">
-                <span className="truncate">{plan.newPage?.title}</span>
-                <span className="rounded bg-gray-200 px-2 py-0.5 text-xs">Planned</span>
-                <span className="rounded bg-gray-200 px-2 py-0.5 text-xs">{f.label}</span>
+                <span className="min-w-0 truncate" title={plan.newPage?.title}>
+                  {plan.newPage?.title}
+                </span>
+                <span className="shrink-0 rounded bg-gray-200 px-2 py-0.5 text-xs">Planned</span>
+                <span className="shrink-0 rounded bg-gray-200 px-2 py-0.5 text-xs">{f.label}</span>
               </div>
               <div
                 className={editorUI.frameDarkClass ? 'rounded-lg dark' : 'rounded-lg'}

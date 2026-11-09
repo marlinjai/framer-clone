@@ -198,81 +198,98 @@ const AgentPresenceLayer = observer(function AgentPresenceLayer() {
   const signature = next.map((d) => `${d.agentId}|${d.key}|${d.shown ? 1 : 0}|${d.label}`).join('\n');
 
   // `immediate`: a camera move or resize. The frame tracks the canvas at once, whatever section move is under way.
+  // Reads and writes are batched (perf review P5): every rect is read first, then the frames are written,
+  // then the pills are measured in one go and placed. Two layouts per draw, not one per element.
   const update = React.useCallback((immediate = false) => {
     const container = containerRef.current;
     if (!container) return;
     const reduced = prefersReducedMotion();
     const now = Date.now();
+
+    // 1. Read: the visible canvas and every element's rect.
     const visible = visibleCanvasRect();
-    const keep = new Set<Element>();
     const measured = new Set<Element>();
+    const plan: Array<{ agent: DrawnAgent; id: string; box: ReturnType<typeof frameBox>; pill: boolean; moving: boolean }> = [];
     for (const agent of drawn.current) {
       if (!agent.target) continue;
       const elements = targetElements(agent.target);
-      for (const element of elements) measured.add(element);
-      const move = moves.current.get(agent.agentId);
+      const rects = elements.map((element) => {
+        measured.add(element);
+        return element.getBoundingClientRect();
+      });
       // The pill goes on the first frame that shows in the visible canvas (the
       // first breakpoint may be scrolled out of it), else on the first.
       const pillIndex = Math.max(
         0,
-        elements.findIndex((el) => {
-          const r = el.getBoundingClientRect();
-          return (r.width > 0 || r.height > 0) && !!pillPlacement(frameBox(r), visible, { width: 0, height: 0 });
-        }),
+        rects.findIndex((r) => (r.width > 0 || r.height > 0) && !!pillPlacement(frameBox(r), visible, { width: 0, height: 0 })),
       );
+      const move = moves.current.get(agent.agentId);
       const moving = !immediate && !reduced && !!move && move.until > now;
-      elements.forEach((element, index) => {
-        const rect = element.getBoundingClientRect();
+      rects.forEach((rect, index) => {
         if (rect.width === 0 && rect.height === 0) return;
-        const id = `${agent.agentId}:${index}`;
-        let frame = container.querySelector<HTMLDivElement>(`[${PRESENCE_FRAME_ATTR}="${CSS.escape(id)}"]`);
-        if (!frame) {
-          frame = document.createElement('div');
-          frame.setAttribute(PRESENCE_FRAME_ATTR, id);
-          frame.className = 'absolute left-0 top-0 rounded-[3px] border-2 border-agent-presence';
-          frame.style.pointerEvents = 'none';
-          frame.style.opacity = '0';
-          container.appendChild(frame);
-        }
-        keep.add(frame);
-        const box = frameBox(rect);
-        const transitions = [] as string[];
-        if (moving) transitions.push(`transform ${PRESENCE_MOVE_MS}ms ease-out`, `width ${PRESENCE_MOVE_MS}ms ease-out`, `height ${PRESENCE_MOVE_MS}ms ease-out`);
-        if (!reduced) transitions.push(`opacity ${PRESENCE_FADE_MS}ms ease-out`);
-        frame.style.transition = transitions.join(', ');
-        frame.style.transform = `translate(${box.x}px, ${box.y}px)`;
-        frame.style.width = `${box.width}px`;
-        frame.style.height = `${box.height}px`;
-        frame.style.opacity = agent.shown ? '1' : '0';
-        let pill = frame.querySelector<HTMLDivElement>(`[${PRESENCE_LABEL_ATTR}]`);
-        if (index === pillIndex) {
-          if (!pill) {
-            pill = document.createElement('div');
-            pill.setAttribute(PRESENCE_LABEL_ATTR, '');
-            pill.className =
-              'absolute left-0 top-0 max-w-[240px] truncate whitespace-nowrap rounded-[4px] bg-agent-presence px-1.5 py-0.5 text-[11px] font-medium leading-4 text-agent-presence-foreground shadow-sm';
-            frame.appendChild(pill);
-          }
-          // Plain text only.
-          if (pill.textContent !== agent.label) pill.textContent = agent.label;
-          // Never wider than the visible canvas (it would run under a sidebar).
-          pill.style.maxWidth = `${Math.max(0, Math.min(240, visible.right - visible.left - 2 * PRESENCE_PILL_INSET))}px`;
-          // Inside the visible canvas, never under a sidebar or the top bar.
-          const size = pill.getBoundingClientRect();
-          const place = pillPlacement(box, visible, { width: size.width, height: size.height || 20 });
-          pill.style.visibility = place ? '' : 'hidden';
-          pill.style.transform = place ? `translate(${place.left}px, ${place.top}px)` : '';
-        } else if (pill) {
-          pill.remove();
-        }
+        plan.push({ agent, id: `${agent.agentId}:${index}`, box: frameBox(rect), pill: index === pillIndex, moving });
       });
     }
-    for (const child of Array.from(container.children)) if (!keep.has(child)) child.remove();
     // A sidebar resized or collapsed (or the toolbar) changes the visible canvas: the pill moves with it.
-    if (keep.size > 0) for (const el of Array.from(document.querySelectorAll(`[${EDITOR_CHROME_ATTR}]`))) measured.add(el);
+    const chrome = plan.length > 0 ? Array.from(document.querySelectorAll(`[${EDITOR_CHROME_ATTR}]`)) : [];
+    const root = document.querySelector('[data-camera-transform]');
+
+    // 2. Write: the frames, and each pill's text and width (no reads in between).
+    const pillWidth = `${Math.max(0, Math.min(240, visible.right - visible.left - 2 * PRESENCE_PILL_INSET))}px`;
+    const keep = new Set<Element>();
+    const pills: Array<{ pill: HTMLDivElement; box: ReturnType<typeof frameBox> }> = [];
+    for (const item of plan) {
+      let frame = container.querySelector<HTMLDivElement>(`[${PRESENCE_FRAME_ATTR}="${CSS.escape(item.id)}"]`);
+      if (!frame) {
+        frame = document.createElement('div');
+        frame.setAttribute(PRESENCE_FRAME_ATTR, item.id);
+        frame.className = 'absolute left-0 top-0 rounded-[3px] border-2 border-agent-presence';
+        frame.style.pointerEvents = 'none';
+        frame.style.opacity = '0';
+        container.appendChild(frame);
+      }
+      keep.add(frame);
+      const transitions = [] as string[];
+      if (item.moving) transitions.push(`transform ${PRESENCE_MOVE_MS}ms ease-out`, `width ${PRESENCE_MOVE_MS}ms ease-out`, `height ${PRESENCE_MOVE_MS}ms ease-out`);
+      if (!reduced) transitions.push(`opacity ${PRESENCE_FADE_MS}ms ease-out`);
+      frame.style.transition = transitions.join(', ');
+      frame.style.transform = `translate(${item.box.x}px, ${item.box.y}px)`;
+      frame.style.width = `${item.box.width}px`;
+      frame.style.height = `${item.box.height}px`;
+      frame.style.opacity = item.agent.shown ? '1' : '0';
+      let pill = frame.querySelector<HTMLDivElement>(`[${PRESENCE_LABEL_ATTR}]`);
+      if (item.pill) {
+        if (!pill) {
+          pill = document.createElement('div');
+          pill.setAttribute(PRESENCE_LABEL_ATTR, '');
+          pill.className =
+            'absolute left-0 top-0 max-w-[240px] truncate whitespace-nowrap rounded-[4px] bg-agent-presence px-1.5 py-0.5 text-[11px] font-medium leading-4 text-agent-presence-foreground shadow-sm';
+          frame.appendChild(pill);
+        }
+        // Plain text only.
+        if (pill.textContent !== item.agent.label) pill.textContent = item.agent.label;
+        // Never wider than the visible canvas (it would run under a sidebar).
+        pill.style.maxWidth = pillWidth;
+        pills.push({ pill, box: item.box });
+      } else if (pill) {
+        pill.remove();
+      }
+    }
+    for (const child of Array.from(container.children)) if (!keep.has(child)) child.remove();
+
+    // 3. Read: every pill's size, in one layout.
+    const sizes = pills.map(({ pill }) => pill.getBoundingClientRect());
+
+    // 4. Write: each pill inside the visible canvas, never under a sidebar or the top bar.
+    pills.forEach(({ pill, box }, i) => {
+      const place = pillPlacement(box, visible, { width: sizes[i].width, height: sizes[i].height || 20 });
+      pill.style.visibility = place ? '' : 'hidden';
+      pill.style.transform = place ? `translate(${place.left}px, ${place.top}px)` : '';
+    });
+
+    for (const el of chrome) measured.add(el);
     // The canvas may have mounted after the layer: watch whichever root is there now.
     const watch = layout.current;
-    const root = document.querySelector('[data-camera-transform]');
     if (watch && root !== watch.root) {
       watch.observer.disconnect();
       watch.root = root;
@@ -286,6 +303,31 @@ const AgentPresenceLayer = observer(function AgentPresenceLayer() {
       resize.watched = measured;
     }
   }, []);
+
+  // Redraws asked for by observers and events, coalesced into one per frame. `immediate` sticks if
+  // any of the coalesced asks wanted it (a reveal that ended during a section move skips the move).
+  const pending = React.useRef<{ raf: number; immediate: boolean }>({ raf: 0, immediate: false });
+  const schedule = React.useCallback(
+    (immediate = false) => {
+      const ask = pending.current;
+      ask.immediate ||= immediate;
+      if (ask.raf) return;
+      ask.raf = requestAnimationFrame(() => {
+        const now = ask.immediate;
+        ask.raf = 0;
+        ask.immediate = false;
+        update(now);
+      });
+    },
+    [update],
+  );
+  React.useEffect(
+    () => () => {
+      if (pending.current.raf) cancelAnimationFrame(pending.current.raf);
+      pending.current = { raf: 0, immediate: false };
+    },
+    [],
+  );
 
   // A new picture from the store: note which agents moved, then draw.
   React.useLayoutEffect(() => {
@@ -303,16 +345,16 @@ const AgentPresenceLayer = observer(function AgentPresenceLayer() {
     drawn.current = next;
     update();
     // The adopted copy may still be laying out: measure once more on the next frame.
-    const raf = requestAnimationFrame(() => update());
-    return () => cancelAnimationFrame(raf);
+    schedule();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [signature, update]);
+  }, [signature, update, schedule]);
 
   // A node that just revealed (src/lib/live/reveal.ts) rose 4px into place: the
   // frame was measured at its start position, so it measures again.
   React.useEffect(() => {
     const onEnd = (e: AnimationEvent) => {
-      if (e.animationName === REVEAL_KEYFRAMES) update(true);
+      // Many nodes reveal at once: one redraw for all of them.
+      if (e.animationName === REVEAL_KEYFRAMES) schedule(true);
     };
     document.addEventListener('animationend', onEnd);
     document.addEventListener('animationcancel', onEnd);
@@ -320,60 +362,58 @@ const AgentPresenceLayer = observer(function AgentPresenceLayer() {
       document.removeEventListener('animationend', onEnd);
       document.removeEventListener('animationcancel', onEnd);
     };
-  }, [update]);
+  }, [schedule]);
 
   // Camera moves (pan, zoom) and window resizes: redraw at once, without the move transition.
   React.useEffect(() => subscribe(() => update(true)), [subscribe, update]);
   React.useEffect(() => {
-    const onResize = () => update(true);
+    const onResize = () => schedule(true);
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
-  }, [update]);
+  }, [schedule]);
   // The section's own size changes (an adoption, the person's edit): redraw. The
   // elements watched are kept current by every draw.
   React.useEffect(() => {
     if (typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(() => update());
+    const observer = new ResizeObserver(() => schedule());
     resizes.current = { observer, watched: new Set() };
     update();
     return () => {
       observer.disconnect();
       resizes.current = null;
     };
-  }, [update]);
+  }, [update, schedule]);
 
   // Any change inside the canvas (a section above the framed one grows, the framed element is replaced)
   // redraws, once per frame. The layer's own writes are outside the canvas and never trigger it.
   React.useEffect(() => {
     if (typeof MutationObserver === 'undefined') return;
-    let raf = 0;
-    const observer = new MutationObserver(() => {
-      if (raf) return;
-      raf = requestAnimationFrame(() => {
-        raf = 0;
-        update();
-      });
-    });
+    const observer = new MutationObserver(() => schedule());
     layout.current = { observer, root: null };
     update();
     return () => {
-      if (raf) cancelAnimationFrame(raf);
       observer.disconnect();
       layout.current = null;
     };
-  }, [update]);
+  }, [update, schedule]);
 
   // Chrome that mounts or unmounts (the phone bar appears, the toolbar leaves) changes the visible canvas.
   React.useEffect(() => {
     if (typeof MutationObserver === 'undefined') return;
+    // Text nodes and leaf elements are filtered out before any query (the body changes often).
     const isChrome = (node: Node) =>
-      node instanceof Element && (node.hasAttribute(EDITOR_CHROME_ATTR) || !!node.querySelector(`[${EDITOR_CHROME_ATTR}]`));
+      node instanceof Element &&
+      (node.hasAttribute(EDITOR_CHROME_ATTR) || (node.childElementCount > 0 && !!node.querySelector(`[${EDITOR_CHROME_ATTR}]`)));
+    const touchesChrome = (nodes: NodeList) => {
+      for (let i = 0; i < nodes.length; i += 1) if (isChrome(nodes[i])) return true;
+      return false;
+    };
     const observer = new MutationObserver((mutations) => {
-      if (mutations.some((m) => Array.from(m.addedNodes).some(isChrome) || Array.from(m.removedNodes).some(isChrome))) update(true);
+      if (mutations.some((m) => touchesChrome(m.addedNodes) || touchesChrome(m.removedNodes))) schedule(true);
     });
     observer.observe(document.body, { childList: true, subtree: true });
     return () => observer.disconnect();
-  }, [update]);
+  }, [schedule]);
 
   return <div ref={containerRef} aria-hidden="true" className="pointer-events-none fixed inset-0" style={{ zIndex: 9 }} data-agent-presence-layer="" />;
 });

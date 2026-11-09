@@ -1,7 +1,20 @@
 // The words of the live agent canvas (src/lib/live/activityText.ts).
 
 import { describe, expect, it } from 'vitest';
-import { activityVerb, editingNote, feedLineText, presenceLabel } from '../activityText';
+import {
+  activityVerb,
+  editingNote,
+  feedLineAnnouncement,
+  feedLineText,
+  followOffAnnouncement,
+  followTitle,
+  needsAttention,
+  presenceLabel,
+  runSummary,
+} from '../activityText';
+
+const L = '\u2018';
+const R = '\u2019';
 
 describe('activity words', () => {
   it('says what an agent does on the label', () => {
@@ -9,32 +22,88 @@ describe('activity words', () => {
     expect(presenceLabel('', 'get_page')).toBe('Agent · Reading');
     expect(presenceLabel('Claude', 'announce_sections')).toBe('Claude · Planning');
     expect(presenceLabel('Claude', 'apply_batch', 'Pricing')).toBe('Claude · Writing Pricing');
-    expect(feedLineText({ tool: 'announce_sections', outcome: 'ok' }, 'Home')).toBe('Planned the next sections on Home');
-    expect(feedLineText({ tool: 'announce_sections', outcome: 'rejected' })).toBe('Planned sections refused, nothing written');
-    expect(feedLineText({ tool: 'clear_sections', outcome: 'ok' })).toBe('Removed its planned sections');
-    expect(feedLineText({ tool: 'sections_stopped', outcome: 'ok' })).toBe('Planned sections removed: the agent stopped');
     expect(activityVerb('generate_page')).toBe('Generating');
+    expect(activityVerb('rollback')).toBe('Restoring a version');
     expect(activityVerb('something_new')).toBe('Working');
   });
 
-  it('writes feed lines in plain words, with the page title the editor knows', () => {
-    expect(feedLineText({ tool: 'get_page', outcome: 'ok' }, 'Home')).toBe('Read the Home page');
-    expect(feedLineText({ tool: 'get_page', outcome: 'ok' })).toBe('Read a page');
-    expect(feedLineText({ tool: 'apply_batch', outcome: 'ok', changes: 4 }, 'Pricing')).toBe('Wrote 4 changes on Pricing');
-    expect(feedLineText({ tool: 'apply_batch', outcome: 'ok', changes: 1 })).toBe('Wrote 1 change');
-    expect(feedLineText({ tool: 'generate_page', outcome: 'site_changed' })).toBe('Generation refused: site changed, re-reading');
-    expect(feedLineText({ tool: 'apply_batch', outcome: 'rejected' })).toBe('Changes refused, nothing written');
-    expect(feedLineText({ tool: 'publish', outcome: 'failed' })).toBe('Publishing failed');
-    expect(feedLineText({ tool: 'publish', outcome: 'ok' })).toBe('Published the site');
+  it('uses "Planned" for every planned sections line, and names the agent that stopped', () => {
+    expect(feedLineText({ tool: 'announce_sections', outcome: 'ok' }, 'Home')).toBe(`Planned sections on ${L}Home${R}`);
+    expect(feedLineText({ tool: 'announce_sections', outcome: 'rejected' })).toBe('Planned sections refused, nothing written');
+    expect(feedLineText({ tool: 'clear_sections', outcome: 'ok' })).toBe('Removed the planned sections');
+    expect(feedLineText({ tool: 'clear_sections', outcome: 'failed' })).toBe('Removing the planned sections failed, nothing written');
+    expect(feedLineText({ tool: 'sections_stopped', outcome: 'ok', label: 'Claude' })).toBe('Planned sections removed: Claude stopped');
+    expect(feedLineText({ tool: 'sections_stopped', outcome: 'ok' })).toBe('Planned sections removed: the agent stopped');
   });
 
-  it('names who edits in the top bar', () => {
+  it('writes feed lines in plain words, with the page title the editor knows', () => {
+    expect(feedLineText({ tool: 'get_page', outcome: 'ok' }, 'Home')).toBe(`Read the page ${L}Home${R}`);
+    expect(feedLineText({ tool: 'get_page', outcome: 'ok' })).toBe('Read a page');
+    expect(feedLineText({ tool: 'apply_batch', outcome: 'ok', changes: 4 }, 'Pricing')).toBe(`Wrote 4 changes on ${L}Pricing${R}`);
+    expect(feedLineText({ tool: 'apply_batch', outcome: 'ok', changes: 1 })).toBe('Wrote 1 change');
+    expect(feedLineText({ tool: 'apply_batch', outcome: 'ok' })).toBe('Edited the site');
+    expect(feedLineText({ tool: 'publish', outcome: 'ok' })).toBe('Published the site');
+    expect(feedLineText({ tool: 'rollback', outcome: 'ok' })).toBe('Put an earlier version live');
+  });
+
+  it('words refusals, approvals and failures without jargon', () => {
+    expect(feedLineText({ tool: 'generate_page', outcome: 'site_changed' })).toBe('Generating content not written: the site changed meanwhile, reading it again');
+    expect(feedLineText({ tool: 'apply_batch', outcome: 'rejected' })).toBe('Changes refused, nothing written');
+    expect(feedLineText({ tool: 'publish', outcome: 'failed' })).toBe('Publishing failed, nothing written');
+    expect(feedLineText({ tool: 'publish', outcome: 'awaiting_approval' })).toBe('Publishing needs your approval');
+    expect(feedLineText({ tool: 'rollback', outcome: 'declined' })).toBe('Restoring an earlier version declined, nothing changed');
+    expect(feedLineText({ tool: 'unknown_tool', outcome: 'failed' })).toBe('A step failed, nothing written');
+  });
+
+  it('names a deleted page by the title the editor remembers, and words a mixed batch', () => {
+    expect(feedLineText({ tool: 'apply_batch', outcome: 'ok', changes: 1, pageId: 'p2', deletedPageIds: ['p2'] }, 'About', ['About'])).toBe(`Deleted the page ${L}About${R}`);
+    expect(feedLineText({ tool: 'apply_batch', outcome: 'ok', changes: 1, deletedPageIds: ['p2'] })).toBe('Deleted a page');
+    expect(feedLineText({ tool: 'apply_batch', outcome: 'ok', changes: 2, deletedPageIds: ['p2', 'p3'] }, undefined, ['A', 'B'])).toBe('Deleted 2 pages');
+    expect(feedLineText({ tool: 'apply_batch', outcome: 'ok', changes: 5, pageId: 'p1', deletedPageIds: ['p2'] }, 'Home')).toBe(`Wrote 4 changes on ${L}Home${R} and deleted 1 page`);
+    expect(feedLineText({ tool: 'apply_batch', outcome: 'ok', changes: 5, deletedPageIds: ['p2'] }, undefined, ['About'])).toBe(`Wrote 4 changes and deleted the page ${L}About${R}`);
+    // The line's own page is the deleted one: no "on" for it.
+    expect(feedLineText({ tool: 'apply_batch', outcome: 'ok', changes: 3, pageId: 'p2', deletedPageIds: ['p2'] }, 'About')).toBe('Wrote 2 changes and deleted 1 page');
+    // A refused batch is a refusal, whatever it names.
+    expect(feedLineText({ tool: 'apply_batch', outcome: 'rejected', changes: 1, deletedPageIds: ['p2'] })).toBe('Changes refused, nothing written');
+  });
+
+  it('says in the top bar whether the agents read or edit', () => {
+    const a = (label: string, tool = 'apply_batch') => ({ label, tool });
     expect(editingNote([])).toBeNull();
-    expect(editingNote(['Claude', 'Claude'])).toBe('2 agents are editing this site');
-    expect(editingNote(['Claude', 'Claude', 'Codex', ''])).toBe('4 agents are editing this site');
-    expect(editingNote(['', ''])).toBe('2 agents are editing this site');
-    expect(editingNote(['Claude', 'Codex'])).toBe('Claude and Codex are editing this site');
-    expect(editingNote(['a', 'b', 'c'])).toBe('3 agents are editing this site');
+    expect(editingNote([a('Claude', 'get_page')])).toBe('Claude is reading this site');
+    expect(editingNote([a('Claude')])).toBe('Claude is editing this site');
+    expect(editingNote([a('Claude', 'announce_sections')])).toBe('Claude is editing this site');
+    expect(editingNote([a('Claude'), a('Claude')])).toBe('2 agents are editing this site');
+    expect(editingNote([a('Claude'), a('Claude'), a('Codex'), a('')])).toBe('4 agents are editing this site');
+    expect(editingNote([a(''), a('')])).toBe('2 agents are editing this site');
+    expect(editingNote([a('Claude', 'get_site'), a('Codex', 'get_page')])).toBe('Claude and Codex are reading this site');
+    expect(editingNote([a('Claude', 'get_site'), a('Codex')])).toBe('Claude and Codex are editing this site');
+  });
+
+  it('announces only what needs attention, with the agent first', () => {
+    expect(needsAttention({ outcome: 'ok' })).toBe(false);
+    expect(needsAttention({ outcome: 'awaiting_approval' })).toBe(true);
+    expect(feedLineAnnouncement({ tool: 'publish', outcome: 'awaiting_approval', label: 'Claude' })).toBe('Claude: Publishing needs your approval');
+    expect(feedLineAnnouncement({ tool: 'publish', outcome: 'failed' })).toBe('Agent: Publishing failed, nothing written');
+  });
+
+  it('sums up a run in one sentence', () => {
+    const line = (over: Record<string, unknown>) => ({ agentId: 'a1', label: 'Claude', tool: 'apply_batch', outcome: 'ok' as const, ...over });
+    expect(runSummary([])).toBeNull();
+    expect(runSummary([line({ tool: 'get_site' }), line({ tool: 'get_page' })])).toBe('Claude finished without changing anything');
+    expect(runSummary([line({ changes: 4 }), line({ changes: 2 })])).toBe('Claude finished: wrote 6 changes');
+    expect(runSummary([line({ changes: 5, deletedPageIds: ['p2'] }), line({ tool: 'publish' })])).toBe('Claude finished: wrote 4 changes, deleted 1 page and published the site');
+    expect(runSummary([line({ changes: 1, deletedPageIds: ['p2'] })])).toBe('Claude finished: deleted 1 page');
+    // Refusals are not repeated, planned sections change nothing on the site.
+    expect(runSummary([line({ outcome: 'rejected', changes: 3 }), line({ tool: 'announce_sections' })])).toBe('Claude finished without changing anything');
+    expect(runSummary([line({ changes: 1 }), line({ agentId: 'a2', label: 'Codex', changes: 1 })])).toBe('Claude and Codex finished: wrote 2 changes');
+  });
+
+  it('names the agent the camera follows', () => {
+    expect(followOffAnnouncement('Claude')).toBe('Stopped following Claude. Turn Follow back on to follow again.');
+    expect(followOffAnnouncement(undefined)).toBe('Stopped following the agent. Turn Follow back on to follow again.');
+    expect(followTitle(true, 'Claude')).toBe('The canvas follows Claude');
+    expect(followTitle(false, undefined)).toBe('Follow the agent on the canvas');
   });
 });
 

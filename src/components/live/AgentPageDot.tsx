@@ -32,7 +32,7 @@ const AgentPageDot = observer(function AgentPageDot({ pageId }: { pageId: string
   if (!working) return null;
   return (
     <span data-agent-page-dot="" className="inline-flex shrink-0 items-center">
-      <span aria-hidden="true" className="block size-1.5 rounded-full bg-agent-presence" />
+      <span aria-hidden="true" className="block size-1.5 rounded-full bg-agent-presence forced-colors:bg-[CanvasText]" />
       <span className="sr-only">(an agent is working here)</span>
     </span>
   );
