@@ -9,7 +9,9 @@ import { TransformProvider } from '@/contexts/TransformContext';
 import PageFitOnRequest from '../PageFitOnRequest';
 
 let store: RootStoreType;
+let phone = false;
 vi.mock('@/hooks/useStore', () => ({ useStore: () => store }));
+vi.mock('@/hooks/use-mobile', () => ({ useIsPhone: () => phone }));
 
 const rect = (left: number, top: number, width: number, height: number) =>
   ({ left, top, width, height, right: left + width, bottom: top + height, x: left, y: top, toJSON: () => ({}) }) as DOMRect;
@@ -37,6 +39,7 @@ function canvas(withFrame: boolean) {
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'requestAnimationFrame', 'cancelAnimationFrame'] });
   store = createRootStore();
+  phone = false;
 });
 
 afterEach(() => {
@@ -63,6 +66,60 @@ describe('PageFitOnRequest', () => {
     expect(3000 * zoom + panX + 600 * zoom).toBeLessThanOrEqual(1000);
     expect(200 * zoom + panY).toBeGreaterThanOrEqual(0);
     remove();
+  });
+
+  it('fits into the part of the canvas the person sees: under the top bar, between the sidebars, labels clear', () => {
+    const { camera, remove } = canvas(true);
+    const chrome = (attr: string, value: string | null, r: DOMRect) => {
+      const el = document.createElement('div');
+      if (value === null) el.setAttribute(attr, '');
+      else el.setAttribute(attr, value);
+      el.getBoundingClientRect = () => r;
+      document.body.append(el);
+      return el;
+    };
+    const parts = [
+      chrome('data-editor-topbar', null, rect(0, 0, 1000, 64)),
+      chrome('data-editor-chrome', 'left', rect(0, 64, 240, 736)),
+      chrome('data-editor-chrome', 'right', rect(760, 64, 240, 736)),
+    ];
+    render(
+      <TransformProvider>
+        <PageFitOnRequest />
+      </TransformProvider>,
+    );
+    act(() => store.editorUI.requestPageFit());
+    act(() => vi.advanceTimersByTime(50));
+    const [panX, panY, zoom] = (camera.getAttribute('data-camera-transform') ?? '').split(',').map(Number);
+    const left = 3000 * zoom + panX;
+    const right = left + 600 * zoom;
+    const top = 200 * zoom + panY;
+    expect(left).toBeGreaterThanOrEqual(240);
+    expect(right).toBeLessThanOrEqual(760);
+    expect(top).toBeGreaterThanOrEqual(64 + 28); // the label above the frame clears the top bar
+    expect(zoom).toBeLessThan(1); // 600 px wide frame into 520 px between the sidebars
+    for (const part of parts) part.remove();
+    remove();
+  });
+
+  it('on a phone it leaves the camera to the phone layout, which fits on every page change', () => {
+    phone = true;
+    const { camera, remove } = canvas(true);
+    render(
+      <TransformProvider>
+        <PageFitOnRequest />
+      </TransformProvider>,
+    );
+    act(() => store.editorUI.requestPageFit());
+    act(() => vi.advanceTimersByTime(100));
+    expect(camera.style.transform).toBe('');
+    remove();
+  });
+
+  it('the request is editor state only, never in the editor snapshot', async () => {
+    const { getSnapshot } = await import('mobx-state-tree');
+    store.editorUI.requestPageFit();
+    expect(JSON.stringify(getSnapshot(store.editorUI))).not.toContain('pageFitRequest');
   });
 
   it('waits for the new page frames to render, then fits', () => {

@@ -172,11 +172,11 @@ const EditorUIStore = types.model('EditorUI', {
   isResizing: false,
   // A marquee rectangle is being drawn on the canvas (Canvas.tsx): the live
   // canvas's camera followers wait for it (src/lib/live/editingInProgress.ts).
-  marqueeActive: false,
   // Asks the canvas to bring the open page's frames into view (PageFitOnRequest in
   // Canvas.tsx): counted up by "Open it" on an agent's new page, which the person
   // may open while the camera looks at an empty part of the canvas.
   pageFitRequest: 0,
+  marqueeActive: false,
   // One rule shown on every copy of its node as though it applied (a state on
   // the canvas is otherwise dead). `ruleId` is a stored rule's id or a named state,
   // and the sheet expands it through src/lib/rules/states.ts, so Pressed shows Hover
