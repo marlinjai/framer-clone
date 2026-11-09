@@ -187,6 +187,7 @@ export class AutosaveController {
 
   private debounceTimer: ReturnType<typeof setTimeout> | undefined;
   private maxWaitTimer: ReturnType<typeof setTimeout> | undefined;
+  private deferredByLiveSync = false;
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
   private inFlight: Promise<void> | undefined;
   /** A change arrived while a request was out (or Publish held the controller). */
@@ -368,12 +369,18 @@ export class AutosaveController {
   }
 
   private schedule() {
+    // Held for the person's editing by the live sync: nothing goes out until the hold ends.
+    if (this.deferredByLiveSync) return;
     if (this.debounceTimer) clearTimeout(this.debounceTimer);
     this.debounceTimer = setTimeout(() => this.fire(), AUTOSAVE_DEBOUNCE_MS);
     if (!this.maxWaitTimer) this.maxWaitTimer = setTimeout(() => this.fire(), AUTOSAVE_MAX_WAIT_MS);
   }
 
   private fire() {
+    if (this.deferredByLiveSync) {
+      this.clearDebounce();
+      return;
+    }
     const once = this.debounceIsRetryOnce;
     this.debounceIsRetryOnce = false;
     this.clearDebounce();
@@ -725,6 +732,21 @@ export class AutosaveController {
   dismissMessage(): void {
     const state = this.state;
     if (state.phase === 'failed' || state.phase === 'retrying') this.setState({ ...state, hidden: true });
+  }
+
+  /**
+   * The live sync holds an agent's newer copy while the person types, drags or
+   * resizes (src/lib/projects/liveSync.ts). A save now would go out on the old
+   * version and be refused, opening the dialog under the cursor (a long resize
+   * reaches the 10 s maximum wait). So the debounce waits, without any dialog,
+   * until the hold ends; the live sync then adopts, replays or asks. Cmd+S and
+   * the save on leaving the page still save.
+   */
+  deferWhileLiveHeld(defer: boolean): void {
+    if (this.deferredByLiveSync === defer) return;
+    this.deferredByLiveSync = defer;
+    if (defer) this.clearDebounce();
+    else if (this.state.phase === 'unsaved' && !this.inFlight && this.held === 0) this.schedule();
   }
 
   // ---- other writers of this tab (Publish) -----------------------------------
