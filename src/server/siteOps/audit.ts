@@ -135,7 +135,14 @@ export async function recentSiteOperations(
     };
     if (pageId) line.pageId = pageId;
     if (nodeIds.length > 0) line.nodeIds = nodeIds;
-    if (row.operation === 'batch') line.changes = ops.length;
+    if (row.operation === 'batch') {
+      line.changes = ops.length;
+      const deletes = ops.filter((o) => o?.op === 'deletePage' && typeof o.pageId === 'string');
+      if (deletes.length > 0) {
+        line.deletedPageIds = [...new Set(deletes.map((o) => o.pageId as string))].slice(0, LIVE_LIST_MAX);
+        line.deletedPages = deletes.length;
+      }
+    }
     return line;
   });
 }

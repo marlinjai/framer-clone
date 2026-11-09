@@ -33,6 +33,8 @@
 //      over, and the camera follows again.
 
 import { action, makeObservable, observable } from 'mobx';
+import { writesSite } from '@/lib/live/activityText';
+import { forgetPageTitles } from '@/lib/live/pageTitleMemory';
 import {
   AGENT_ACTIVE_MS,
   AGENT_FRAME_LINGER_MS,
@@ -64,6 +66,9 @@ export interface AgentPresence {
   failed: boolean;
 }
 
+/** How recent an active agent's write must be for a reload or reconnect to keep its run "editing". */
+export const RUN_EDIT_WINDOW_MS = 10 * 60_000;
+
 /** Remembered (callId, phase) pairs, so an activity heard twice (state and stream) applies once. */
 const SEEN_MAX = 500;
 
@@ -94,6 +99,8 @@ export function feedLineOf(a: AgentActivity): LiveFeedLine {
     ...(a.pageId ? { pageId: a.pageId } : {}),
     ...(a.nodeIds?.length ? { nodeIds: a.nodeIds } : {}),
     ...(a.changes !== undefined ? { changes: a.changes } : {}),
+    ...(a.deletedPageIds?.length ? { deletedPageIds: a.deletedPageIds } : {}),
+    ...(a.deletedPages ? { deletedPages: a.deletedPages } : {}),
     at: a.at,
   };
 }
@@ -118,6 +125,21 @@ export class LivePresenceStore {
   leadAgentId: string | undefined = undefined;
   /** Counts the runs (an agent becoming active while none was): the camera's "moved by the person" starts over with each. */
   run = 0;
+  /**
+   * Counts the `state` events applied. The first after a reset (or before any) brings history,
+   * which the announcer (src/components/live/AgentAnnouncer.tsx) never reads out; a later one is a
+   * reconnect, whose new lines happened during the gap.
+   */
+  stateApplied = 0;
+  /** The `state` events applied since the last reset: the one that makes it 1 brings history. */
+  statesSinceReset = 0;
+  /** Counts the resets (the live sync stopped: another site opened, the editor left). */
+  resets = 0;
+  /**
+   * An agent wrote (or started a call that writes) during this run: the top bar keeps saying
+   * "editing" until the run ends, also while the agent reads between writes.
+   */
+  runEdited = false;
 
   private timers = new Map<string, Timers>();
   /** Per agent, its running calls in the order they started (the last is the most recent). */
@@ -135,6 +157,10 @@ export class LivePresenceStore {
       everActive: observable,
       leadAgentId: observable,
       run: observable,
+      stateApplied: observable,
+      statesSinceReset: observable,
+      resets: observable,
+      runEdited: observable,
       applyState: action,
       applyActivity: action,
       setFollow: action,
@@ -248,6 +274,7 @@ export class LivePresenceStore {
     if (this.agents.size === 0 && !continuing) {
       this.follow = true;
       this.run += 1;
+      this.runEdited = false;
     }
     if (!this.everActive) {
       this.everActive = true;
@@ -257,6 +284,8 @@ export class LivePresenceStore {
 
   /** The `state` event of a (re)connect: the active agents and the feed, replacing what was held. */
   applyState(state: Pick<SiteStateEvent, 'agents' | 'feed'>): void {
+    this.stateApplied += 1;
+    this.statesSinceReset += 1;
     const now = this.now();
     // Agents were here before this snapshot: it continues the run (a reconnect), it does not begin one.
     const continuing = this.agents.size > 0;
@@ -276,6 +305,7 @@ export class LivePresenceStore {
       // A snapshot lists every call still running; an agent with one running has no use for its last ended one.
       if (a.phase === 'end' && prev && prev.openCalls.length > 0) continue;
       if (this.agents.size === 0) this.becameActive(continuing);
+      if (writesSite(a.tool)) this.runEdited = true;
       this.markSeen(a);
       const running = a.phase === 'start';
       const failed = a.phase === 'end' && a.outcome !== undefined && a.outcome !== 'ok';
@@ -294,6 +324,14 @@ export class LivePresenceStore {
     }
     const feed = Array.isArray(state.feed) ? state.feed : [];
     this.feed = feed.filter((l) => l && typeof l.id === 'string').slice(0, LIVE_FEED_MAX);
+    // An agent active now that wrote to the site a little while ago is still in the run it wrote in
+    // (a reload, or a reconnect after a gap longer than AGENT_ACTIVE_MS that let it lapse here): the
+    // top bar keeps saying "editing" while it reads in between.
+    if (!this.runEdited && this.agents.size > 0) {
+      this.runEdited = this.feed.some(
+        (l) => l.outcome === 'ok' && writesSite(l.tool) && this.agents.has(l.agentId) && ageOf(l.at, now) <= RUN_EDIT_WINDOW_MS,
+      );
+    }
   }
 
   /** One `agent:activity` from the stream. Applied once per call and phase. */
@@ -307,6 +345,7 @@ export class LivePresenceStore {
     const prev = this.agents.get(a.agentId);
     // A first sight of the agent (its start may have been missed across a reconnect) begins a run either way.
     if (!prev) this.becameActive();
+    if (writesSite(a.tool)) this.runEdited = true;
     if (a.phase === 'start') {
       this.clearTimers(a.agentId);
       this.openCall(a.agentId, a.callId, focusOf(a), ageOf(a.at, this.now()));
@@ -357,6 +396,11 @@ export class LivePresenceStore {
 
   /** The editor closed the site (or opened another): nothing carries over. */
   reset(): void {
+    this.resets += 1;
+    this.statesSinceReset = 0;
+    // The titles this editor saw of the last site's pages (they were only ever kept in memory).
+    forgetPageTitles();
+    this.runEdited = false;
     for (const id of [...this.timers.keys()]) this.clearTimers(id);
     this.clearCalls();
     this.agents.clear();

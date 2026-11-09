@@ -33,3 +33,32 @@ describe('created ids in the audit row', () => {
     expect(rows[0].ops).toEqual([{ op: 'createPage' }, { op: 'insertNodes' }]);
   });
 });
+
+describe('deleted pages in the audit row', () => {
+  it('come back as the line\'s deleted page ids, ids only, never the stored title', async () => {
+    const rows: Array<Record<string, unknown>> = [];
+    const prisma = {
+      siteOperationAudit: {
+        create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
+          rows.push({ id: 'r1', createdAt: new Date('2026-11-08T12:00:00Z'), ...data });
+        }),
+        findMany: vi.fn(async () => rows),
+      },
+    } as never;
+    await recordSiteOperation(prisma, caller, {
+      siteId: 's1',
+      operation: 'batch',
+      ops: [{ op: 'updateText', nodeId: 'n1' }, { op: 'deletePage', pageId: 'p-about', slug: 'about', title: 'About us' }],
+    });
+    const [line] = await recentSiteOperations(prisma, scope, 's1');
+    expect(line).toMatchObject({ tool: 'apply_batch', changes: 2, deletedPages: 1, deletedPageIds: ['p-about'] });
+    expect(JSON.stringify(line)).not.toContain('About us');
+  });
+
+  it('are absent from a batch that deleted nothing', async () => {
+    const rows = [{ id: 'r1', createdAt: new Date(), actorKind: 'key', actorId: 'k1', actorDetail: {}, operation: 'batch', ops: [{ op: 'updateText', nodeId: 'n1' }] }];
+    const prisma = { siteOperationAudit: { findMany: vi.fn(async () => rows) } } as never;
+    const [line] = await recentSiteOperations(prisma, scope, 's1');
+    expect(line).not.toHaveProperty('deletedPageIds');
+  });
+});

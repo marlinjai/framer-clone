@@ -14,6 +14,7 @@ import { createIntrinsicComponent, type ComponentInstance } from '@/models/Compo
 import type { PageModelType } from '@/models/PageModel';
 import { AGENT_FRAME_LINGER_MS, type AgentActivity } from '@/lib/projects/liveEvents';
 import type { LivePresenceStore } from '@/lib/live/presenceStore';
+import { REVEAL_KEYFRAMES } from '@/lib/live/reveal';
 
 let store: RootStoreType;
 vi.mock('@/hooks/useStore', () => ({ useStore: () => store }));
@@ -231,6 +232,28 @@ describe('the frame', () => {
     expect(watched.has(first)).toBe(false);
   });
 
+  it('redraws once for many reveals that end in the same frame, after reading every rect', async () => {
+    act(() => presence().applyActivity(activity()));
+    // Let the draw the new picture scheduled for its next frame run first.
+    await act(async () => {
+      await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+    });
+    const hero = document.querySelector<HTMLElement>('[data-inner-component-id="hero"]')!;
+    const read = vi.spyOn(hero, 'getBoundingClientRect');
+    const reveal = () => {
+      const e = new Event('animationend', { bubbles: true });
+      Object.defineProperty(e, 'animationName', { value: REVEAL_KEYFRAMES });
+      document.body.dispatchEvent(e);
+    };
+    for (let i = 0; i < 5; i += 1) reveal();
+    expect(read).not.toHaveBeenCalled();
+    await act(async () => {
+      await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+    });
+    // One draw reads the element once.
+    expect(read).toHaveBeenCalledTimes(1);
+  });
+
   it('frames the page frames for a call that names the page and no node', () => {
     act(() => presence().applyActivity(activity({ tool: 'get_page', nodeIds: [] })));
     const [frame] = frames();
@@ -244,6 +267,20 @@ describe('the frame', () => {
     act(() => presence().applyActivity(activity({ pageId: 'elsewhere', nodeIds: [], phase: 'end', outcome: 'ok' })));
     act(() => vi.advanceTimersByTime(60_000));
     expect(screen.queryByText(/is editing this site/)).toBeNull();
+  });
+});
+
+describe('the top bar\'s editing note', () => {
+  it('keeps saying editing for the rest of a run once the agent wrote, also while it reads', () => {
+    cleanup();
+    render(<AgentEditingNote />);
+    const at = () => new Date().toISOString();
+    act(() => presence().applyActivity({ callId: 'r1', agentId: 'a1', label: 'Claude', tool: 'get_page', phase: 'start', at: at() }));
+    expect(document.querySelector('[data-agent-editing-note]')).toHaveTextContent('Claude is reading this site');
+    act(() => presence().applyActivity({ callId: 'w1', agentId: 'a1', label: 'Claude', tool: 'apply_batch', phase: 'start', at: at() }));
+    act(() => presence().applyActivity({ callId: 'w1', agentId: 'a1', label: 'Claude', tool: 'apply_batch', phase: 'end', outcome: 'ok', changes: 4, at: at() }));
+    act(() => presence().applyActivity({ callId: 'r2', agentId: 'a1', label: 'Claude', tool: 'get_page', phase: 'start', at: at() }));
+    expect(document.querySelector('[data-agent-editing-note]')).toHaveTextContent('Claude is editing this site');
   });
 });
 

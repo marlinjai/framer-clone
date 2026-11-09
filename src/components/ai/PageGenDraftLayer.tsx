@@ -115,6 +115,19 @@ export function useDraftHook(componentId: string, skip: boolean): DraftHook {
   return hook.get();
 }
 
+/** The band text's chip: dark grey on near white, whatever the frame's background is. */
+export const DRAFT_BAND_TEXT_STYLE: React.CSSProperties = {
+  maxWidth: 'calc(100% - 32px)',
+  padding: '4px 10px',
+  borderRadius: 6,
+  background: 'rgba(255, 255, 255, 0.92)',
+  color: '#404040',
+  font: '500 13px/1.4 system-ui, sans-serif',
+  whiteSpace: 'nowrap',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+};
+
 /** The band where the next section will appear. Static, no shimmer. */
 function DraftBand({ text }: { text: string }) {
   return (
@@ -130,12 +143,11 @@ function DraftBand({ text }: { text: string }) {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        font: '500 13px/1.4 system-ui, sans-serif',
-        color: 'rgba(90, 90, 90, 0.9)',
         pointerEvents: 'none',
       }}
     >
-      {text}
+      {/* On its own light chip, readable on a dark frame too (about 9:1). */}
+      <span style={DRAFT_BAND_TEXT_STYLE}>{text}</span>
     </div>
   );
 }
@@ -148,9 +160,9 @@ function DraftBand({ text }: { text: string }) {
  */
 export function draftBandText(phase: PageGenDraftStore['phase'], drawn: number, skeletons = 0): string | null {
   if (phase === 'writing' && skeletons > 0) return null;
-  if (phase === 'writing') return `Writing section ${drawn + 1}...`;
+  if (phase === 'writing') return `Writing section ${drawn + 1}…`;
   if (drawn > 0) return null;
-  return phase === 'polishing' ? 'Polishing the page...' : 'Checking the page...';
+  return phase === 'polishing' ? 'Polishing the page…' : 'Checking the page…';
 }
 
 /**
@@ -246,10 +258,12 @@ export const DraftPageFrames = observer(function DraftPageFrames({ framesRight, 
             className="relative rounded-lg bg-white shadow-lg ring-2 ring-brand/40"
             style={{ width: `${v.width}px` }}
           >
-            <div className="absolute -top-8 left-0 flex items-center gap-2 whitespace-nowrap text-sm font-medium text-gray-600">
-              <span>{target.title}</span>
-              <span className="rounded bg-brand/15 px-2 py-0.5 text-xs text-brand">Draft</span>
-              <span className="rounded bg-gray-200 px-2 py-0.5 text-xs">{v.label}</span>
+            <div className="absolute -top-8 left-0 right-0 flex min-w-0 items-center gap-2 whitespace-nowrap text-sm font-medium text-gray-600">
+              <span className="min-w-0 truncate" title={target.title}>
+                {target.title}
+              </span>
+              <span className="shrink-0 rounded bg-brand/15 px-2 py-0.5 text-xs text-brand">Draft</span>
+              <span className="shrink-0 rounded bg-gray-200 px-2 py-0.5 text-xs">{v.label}</span>
             </div>
             <div
               className={editorUI.frameDarkClass ? 'rounded-lg dark' : 'rounded-lg'}

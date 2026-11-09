@@ -3,10 +3,12 @@
 // "Agent activity", the feed of the live agent canvas (plan
 // docs/plans/2026-11-08-live-agent-canvas.md, section 2): a collapsible panel at
 // the foot of the editor's left sidebar, newest line first. One line per call:
-// the time, the agent's label, what it did in plain words ("Read the Home
-// page", "Wrote 4 changes on Home", "Changes refused: site changed,
-// re-reading") and a status mark. Writes come back after a reload from the
-// audit rows; reads exist only live (src/lib/live/presenceStore.ts).
+// the time, the agent's label, what it did in plain words ("Read the page
+// ‘Home’", "Wrote 4 changes on ‘Home’", "Deleted the page ‘About’", "Changes
+// refused, nothing written") and a status mark. Writes come back after a
+// reload from the audit rows; reads exist only live
+// (src/lib/live/presenceStore.ts). What a screen reader hears as lines arrive
+// is the announcer's (src/components/live/AgentAnnouncer.tsx).
 //
 // Clicking a line whose nodes still exist opens their page, selects them and
 // brings them into view; a line that names only a page opens the page; a line
@@ -23,7 +25,9 @@ import { observer } from 'mobx-react-lite';
 import { AlertTriangle, Check, ChevronDown, ChevronRight, Clock, Crosshair, X } from 'lucide-react';
 import { useStore } from '@/hooks/useStore';
 import { revealOffset } from '@/lib/canvas/cameraControls';
-import { feedLineText, feedLineTime } from '@/lib/live/activityText';
+import { feedLineText, feedLineTime, followTitle } from '@/lib/live/activityText';
+import { rememberedPageTitle } from '@/lib/live/pageTitleMemory';
+import { noteFollowToggledByPerson } from '@/components/live/AgentAnnouncer';
 import type { LivePresenceStore } from '@/lib/live/presenceStore';
 import { presencePagesOf, type PresenceProject } from '@/lib/live/presenceTarget';
 import type { LiveFeedLine } from '@/lib/projects/liveEvents';
@@ -56,11 +60,16 @@ export function breakpointFor(page: PageModelType, preferred?: string): string |
   return viewports.find((v) => v.breakpointId)?.breakpointId;
 }
 
+/** The amber of a refusal or a wait: darker in light mode, where the status token is under 3:1 on white. */
+const WARNING_CLASS = 'text-amber-700 dark:text-status-draft';
+
+/** The line's status mark: an image with its name, so a screen reader says it in the line. */
 function StatusMark({ outcome }: { outcome: LiveFeedLine['outcome'] }) {
-  if (outcome === 'ok') return <Check size={12} aria-label="done" className="shrink-0 text-status-published" />;
-  if (outcome === 'failed') return <X size={12} aria-label="failed" className="shrink-0 text-destructive" />;
-  if (outcome === 'awaiting_approval') return <Clock size={12} aria-label="waiting for approval" className="shrink-0 text-status-draft" />;
-  return <AlertTriangle size={12} aria-label="refused" className="shrink-0 text-status-draft" />;
+  if (outcome === 'ok') return <Check size={12} role="img" aria-label="Done" className="mt-0.5 shrink-0 text-status-published" />;
+  if (outcome === 'failed') return <X size={12} role="img" aria-label="Failed" className="mt-0.5 shrink-0 text-destructive" />;
+  if (outcome === 'awaiting_approval') return <Clock size={12} role="img" aria-label="Needs your approval" className={`mt-0.5 shrink-0 ${WARNING_CLASS}`} />;
+  if (outcome === 'declined') return <X size={12} role="img" aria-label="Declined" className={`mt-0.5 shrink-0 ${WARNING_CLASS}`} />;
+  return <AlertTriangle size={12} role="img" aria-label="Refused" className={`mt-0.5 shrink-0 ${WARNING_CLASS}`} />;
 }
 
 const AgentActivityPanel = observer(function AgentActivityPanel() {
@@ -72,6 +81,9 @@ const AgentActivityPanel = observer(function AgentActivityPanel() {
   const projectPages = Array.from(project.pages.values()) as PageModelType[];
   // The pages of component definitions too: an agent can edit the one open on the canvas.
   const pages = presencePagesOf(project as unknown as PresenceProject) as unknown as PageModelType[];
+  // A deleted page's title, as the announcer remembered it (it is always mounted and keeps them).
+  const titleOf = (id: string): string | undefined => pages.find((p) => p.id === id)?.metadata.title || rememberedPageTitle(project, id);
+  const lead = presence.leadAgentId ? presence.agents.get(presence.leadAgentId) : undefined;
   const open = presence.panelOpen;
 
   const reveal = (line: LiveFeedLine) => {
@@ -116,14 +128,18 @@ const AgentActivityPanel = observer(function AgentActivityPanel() {
           className="flex flex-1 min-w-0 items-center gap-1.5 rounded px-1 py-1 text-left text-xs font-medium text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {open ? <ChevronDown size={12} aria-hidden="true" /> : <ChevronRight size={12} aria-hidden="true" />}
-          {presence.anyActive && <span aria-hidden="true" className="block size-1.5 shrink-0 rounded-full bg-agent-presence" />}
+          {presence.anyActive && <span aria-hidden="true" className="block size-1.5 shrink-0 rounded-full bg-agent-presence forced-colors:bg-[CanvasText]" />}
           <span className="truncate">Agent activity</span>
         </button>
         <button
           type="button"
-          onClick={() => presence.setFollow(!presence.follow)}
+          onClick={() => {
+            // Its pressed state is spoken: the announcer must not say it again.
+            noteFollowToggledByPerson(presence);
+            presence.setFollow(!presence.follow);
+          }}
           aria-pressed={presence.follow}
-          title={presence.follow ? 'The canvas follows the agent' : 'Follow the agent on the canvas'}
+          title={followTitle(presence.follow, lead?.label)}
           className={`inline-flex items-center gap-1 rounded px-1.5 py-1 text-[11px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
             presence.follow ? 'bg-agent-presence/15 text-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground'
           }`}
@@ -134,20 +150,24 @@ const AgentActivityPanel = observer(function AgentActivityPanel() {
       </div>
       {open && (
         <ol id={listId} className="min-h-0 max-h-[min(14rem,30vh)] overflow-y-auto px-2 pb-2" aria-label="Agent activity, newest first">
-          {presence.feed.length === 0 && <li className="px-1 py-1 text-xs text-muted-foreground">Nothing yet.</li>}
+          {presence.feed.length === 0 && (
+            <li className="px-1 py-1 text-xs text-muted-foreground">No agent activity yet. Each step an agent takes on this site shows here.</li>
+          )}
           {presence.feed.map((line) => {
             const page = line.pageId ? pages.find((p) => p.id === line.pageId) : undefined;
-            const text = feedLineText(line, page?.metadata.title);
+            const text = feedLineText(line, page?.metadata.title, (line.deletedPageIds ?? []).map(titleOf));
             const time = feedLineTime(line.at);
+            const meta = `${time ? `${time} · ` : ''}${line.label}`;
             const clickable = !!lineTarget(pages, line);
             const body = (
               <>
                 <StatusMark outcome={line.outcome} />
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-xs text-foreground">{text}</span>
-                  <span className="block truncate text-[10px] leading-tight text-muted-foreground">
-                    {time ? `${time} · ` : ''}
-                    {line.label}
+                  <span className="block truncate text-xs text-foreground" title={text}>
+                    {text}
+                  </span>
+                  <span className="block truncate text-[11px] leading-tight text-muted-foreground" title={meta}>
+                    {meta}
                   </span>
                 </span>
               </>

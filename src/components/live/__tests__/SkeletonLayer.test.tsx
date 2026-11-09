@@ -93,3 +93,14 @@ describe('a skeleton section', () => {
     expect(container.querySelector(`[${SKELETON_ATTR}]`)).toBe(before);
   });
 });
+
+describe('the skeleton title', () => {
+  it('sits on its own light chip, so it reads on a dark frame too', () => {
+    const { getByText } = render(<SkeletonSection agentId="agent-a" section={section('pricing', 'Pricing')} narrow={false} leaving={false} />);
+    const title = getByText('Pricing');
+    expect(title.style.background).toBe('rgba(255, 255, 255, 0.92)');
+    expect(title.style.color).toBe('rgb(64, 64, 64)');
+    // A long title wraps (a skeleton takes no pointer, so no tooltip could show the rest).
+    expect(title.style.whiteSpace).toBe('normal');
+  });
+});

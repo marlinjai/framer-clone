@@ -128,7 +128,7 @@ describe('the draft on the canvas', () => {
     // The motion rules live beside the frames, never inside the page tree.
     expect(dom.querySelector('style')).toBeNull();
     // The band of the next section, with a static tint.
-    expect(dom.querySelector(`[${DRAFT_BAND_ATTR}]`)).toHaveTextContent('Writing section 2...');
+    expect(dom.querySelector(`[${DRAFT_BAND_ATTR}]`)).toHaveTextContent('Writing section 2…');
   });
 
   it('replace of the page root: the root stays, its children are the draft', () => {
@@ -191,6 +191,9 @@ describe('the draft on the canvas', () => {
     expect(frames).toHaveLength(target.viewports.length);
     expect(frames[0]).toHaveTextContent('Our menu');
     expect(frames[0]).toHaveTextContent('Draft');
+    // A long title is cut with an ellipsis and stays readable as a tooltip.
+    const title = frames[0].querySelector('[title="Our menu"]')!;
+    expect(title).toHaveClass('truncate');
     // The frames carry the theme attributes, never the real frames' markers.
     expect(dom.querySelector('[data-fc-theme="frame"]')).toBeInTheDocument();
     expect(dom.querySelector('[data-viewport-id], [data-viewport-content-id]')).toBeNull();
@@ -233,13 +236,13 @@ describe('the draft on the canvas', () => {
   it('the band says what happens next, and gives way to skeletons', () => {
     expect(draftBandText('writing', 0, 2)).toBeNull();
     // A skeleton the stream never filled does not hide the check or the polish.
-    expect(draftBandText('checking', 0, 1)).toBe('Checking the page...');
-    expect(draftBandText('polishing', 0, 3)).toBe('Polishing the page...');
-    expect(draftBandText('writing', 0)).toBe('Writing section 1...');
-    expect(draftBandText('writing', 2)).toBe('Writing section 3...');
+    expect(draftBandText('checking', 0, 1)).toBe('Checking the page…');
+    expect(draftBandText('polishing', 0, 3)).toBe('Polishing the page…');
+    expect(draftBandText('writing', 0)).toBe('Writing section 1…');
+    expect(draftBandText('writing', 2)).toBe('Writing section 3…');
     expect(draftBandText('polishing', 2)).toBeNull();
-    expect(draftBandText('polishing', 0)).toBe('Polishing the page...');
-    expect(draftBandText('checking', 0)).toBe('Checking the page...');
+    expect(draftBandText('polishing', 0)).toBe('Polishing the page…');
+    expect(draftBandText('checking', 0)).toBe('Checking the page…');
   });
 });
 

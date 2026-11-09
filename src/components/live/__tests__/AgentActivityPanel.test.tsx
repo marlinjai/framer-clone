@@ -18,6 +18,7 @@ let store: RootStoreType;
 vi.mock('@/hooks/useStore', () => ({ useStore: () => store }));
 
 import AgentActivityPanel from '../AgentActivityPanel';
+import AgentAnnouncer from '../AgentAnnouncer';
 import { AgentCameraFollow } from '../AgentPresenceLayer';
 
 let home: PageModelType;
@@ -89,6 +90,8 @@ beforeEach(() => {
       <CameraHandle />
       <AgentCameraFollow />
       <AgentActivityPanel />
+      {/* Always mounted in the editor (the top bar): it keeps the page titles the feed names deleted pages by. */}
+      <AgentAnnouncer />
     </TransformProvider>,
   );
   drawCanvas();
@@ -121,9 +124,9 @@ describe('the activity feed', () => {
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
     fireEvent.click(toggle);
     const items = within(panel).getAllByRole('listitem').map((li) => li.textContent);
-    expect(items[0]).toContain('Wrote 4 changes on Home');
-    expect(items[1]).toContain('Read the About page');
-    expect(items[2]).toContain('Changes refused: site changed, re-reading');
+    expect(items[0]).toContain('Wrote 4 changes on \u2018Home\u2019');
+    expect(items[1]).toContain('Read the page \u2018About\u2019');
+    expect(items[2]).toContain('Changes not written: the site changed meanwhile');
     expect(items.every((t) => t?.includes('Claude'))).toBe(true);
   });
 
@@ -132,7 +135,49 @@ describe('the activity feed', () => {
     const panel = screen.getByRole('region', { name: 'Agent activity' });
     expect(within(panel).getByRole('button', { name: /Agent activity/ })).toHaveAttribute('aria-expanded', 'true');
     act(() => presence().applyActivity(activity({ phase: 'end', outcome: 'ok', changes: 2 })));
-    expect(within(panel).getByText('Wrote 2 changes on Home')).toBeInTheDocument();
+    expect(within(panel).getByText('Wrote 2 changes on \u2018Home\u2019')).toBeInTheDocument();
+  });
+
+  it('names a page an agent deleted by the title it had, also after it left the open copy', () => {
+    act(() => presence().applyActivity(activity({ pageId: about.id, nodeIds: [] })));
+    act(() => store.editorUI.currentProject!.removePage(about.id));
+    act(() => presence().applyActivity(activity({ phase: 'end', outcome: 'ok', pageId: about.id, nodeIds: [], changes: 1, deletedPageIds: [about.id] })));
+    const panel = screen.getByRole('region', { name: 'Agent activity' });
+    const text = within(panel).getByText('Deleted the page \u2018About\u2019');
+    expect(text).toHaveAttribute('title', 'Deleted the page \u2018About\u2019');
+    // A page this editor never saw has no title to give.
+    act(() => presence().applyActivity(activity({ callId: 'c2', phase: 'end', outcome: 'ok', pageId: 'gone', nodeIds: [], changes: 3, deletedPageIds: ['gone'] })));
+    expect(within(panel).getByText('Wrote 2 changes and deleted 1 page')).toBeInTheDocument();
+  });
+
+  it('marks each line with a named status image, and keeps its time and agent readable', () => {
+    act(() =>
+      presence().applyState({
+        agents: [],
+        feed: [line({ id: 'l1', outcome: 'awaiting_approval', tool: 'publish' }), line({ id: 'l0', outcome: 'ok', tool: 'get_site' })],
+      }),
+    );
+    const panel = screen.getByRole('region', { name: 'Agent activity' });
+    fireEvent.click(within(panel).getByRole('button', { name: /Agent activity/ }));
+    expect(within(panel).getByRole('img', { name: 'Needs your approval' })).toHaveClass('text-amber-700');
+    expect(within(panel).getByRole('img', { name: 'Done' })).toBeInTheDocument();
+    const meta = within(panel).getAllByTitle(/· Claude$/)[0];
+    expect(meta).toHaveClass('text-[11px]');
+  });
+
+  it('says what the empty feed will hold', () => {
+    act(() => presence().applyActivity(activity({ tool: 'get_site', pageId: undefined, nodeIds: [] })));
+    const panel = screen.getByRole('region', { name: 'Agent activity' });
+    expect(within(panel).getByText('No agent activity yet. Each step an agent takes on this site shows here.')).toBeInTheDocument();
+  });
+
+  it('names the agent on the Follow toggle', () => {
+    act(() => presence().applyActivity(activity()));
+    const follow = screen.getByRole('button', { name: 'Follow' });
+    expect(follow).toHaveAttribute('title', 'The canvas follows Claude');
+    fireEvent.click(follow);
+    expect(follow).toHaveAttribute('aria-pressed', 'false');
+    expect(follow).toHaveAttribute('title', 'Follow Claude on the canvas');
   });
 
   it('a click on a line selects its nodes that still exist, on their page; a line whose nodes are gone is plain', () => {
