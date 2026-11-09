@@ -6,7 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-import { createSseStream, SSE_HEARTBEAT_MS } from '../sse';
+import { createSseStream, SSE_HEARTBEAT_MS, SSE_MAX_QUEUED_BYTES } from '../sse';
 
 async function readAll(stream: ReadableStream<Uint8Array>): Promise<string> {
   const reader = stream.getReader();
@@ -116,5 +116,93 @@ describe('createSseStream disconnect signal', () => {
     expect(sse.signal.aborted).toBe(true);
     // Writes after a disconnect are dropped silently.
     expect(() => sse.send('x', {})).not.toThrow();
+  });
+});
+
+describe('createSseStream named heartbeat', () => {
+  it('sends the heartbeat as a named event with an empty object when asked to', async () => {
+    const sse = createSseStream({ heartbeatEvent: 'ping' });
+    sse.heartbeat();
+    sse.close();
+
+    expect(await readAll(sse.stream)).toBe('event: ping\ndata: {}\n\n');
+  });
+});
+
+describe('createSseStream backpressure', () => {
+  it('ends the stream and aborts the signal once a reader that does not read falls behind the bound', async () => {
+    const sse = createSseStream({ maxQueuedBytes: 1024 });
+    const chunk = 'x'.repeat(400);
+    // 3 x ~430 bytes: the third write overshoots the bound, the fourth finds it full.
+    sse.send('token', { delta: chunk });
+    sse.send('token', { delta: chunk });
+    sse.send('token', { delta: chunk });
+    expect(sse.signal.aborted).toBe(false);
+    sse.send('token', { delta: chunk });
+    expect(sse.signal.aborted).toBe(true);
+    // Later writes are dropped without throwing.
+    expect(() => sse.send('token', { delta: 'late' })).not.toThrow();
+    expect(() => sse.heartbeat()).not.toThrow();
+    expect(() => sse.close()).not.toThrow();
+    // The queue was dropped: the reader sees an AbortError (a client disconnect to Next.js), not the backlog.
+    const failure = await sse.stream.getReader().read().catch((e: unknown) => e);
+    expect(failure).toMatchObject({ name: 'AbortError', message: expect.stringMatching(/fell behind/) });
+  });
+
+  it('lets one event larger than the bound through to a stream that is read', async () => {
+    const sse = createSseStream({ maxQueuedBytes: 64 });
+    sse.send('state', { blob: 'y'.repeat(500) });
+    expect(sse.signal.aborted).toBe(false);
+    sse.close();
+    expect(await readAll(sse.stream)).toContain('"blob"');
+  });
+
+  it('keeps a stream alive while its reader keeps up', async () => {
+    const sse = createSseStream({ maxQueuedBytes: 1024 });
+    const reader = sse.stream.getReader();
+    for (let i = 0; i < 50; i++) {
+      sse.send('token', { delta: 'z'.repeat(400) });
+      const { value } = await reader.read();
+      expect(value?.byteLength).toBeGreaterThan(400);
+    }
+    expect(sse.signal.aborted).toBe(false);
+    sse.close();
+    expect((await reader.read()).done).toBe(true);
+  });
+
+  it('does not count an opening burst written before arm(), and bounds what comes after it', () => {
+    const sse = createSseStream({ maxQueuedBytes: 1024, armed: false });
+    // Larger than the bound, in several events, before anything can read.
+    for (let i = 0; i < 5; i++) sse.send('state', { part: 'b'.repeat(400) });
+    expect(sse.signal.aborted).toBe(false);
+    sse.arm();
+    sse.arm(); // idempotent
+    // Room for the bound on top of the burst still unread.
+    sse.send('token', { delta: 'c'.repeat(400) });
+    sse.send('token', { delta: 'c'.repeat(400) });
+    sse.send('token', { delta: 'c'.repeat(400) });
+    expect(sse.signal.aborted).toBe(false);
+    sse.send('token', { delta: 'c'.repeat(400) });
+    expect(sse.signal.aborted).toBe(true);
+  });
+
+  it('shrinks the burst allowance as the reader takes it: a reader that read the burst and then stalls is cut off at the bound', async () => {
+    const sse = createSseStream({ maxQueuedBytes: 1024, armed: false });
+    for (let i = 0; i < 5; i++) sse.send('state', { part: 'b'.repeat(400) });
+    sse.arm();
+    const reader = sse.stream.getReader();
+    for (let i = 0; i < 5; i++) await reader.read();
+    // Burst read: the bound alone applies now.
+    sse.send('token', { delta: 'c'.repeat(400) });
+    sse.send('token', { delta: 'c'.repeat(400) });
+    sse.send('token', { delta: 'c'.repeat(400) });
+    expect(sse.signal.aborted).toBe(false);
+    sse.send('token', { delta: 'c'.repeat(400) });
+    expect(sse.signal.aborted).toBe(true);
+  });
+
+  it('defaults to SSE_MAX_QUEUED_BYTES and refuses a bound that is not positive', () => {
+    expect(SSE_MAX_QUEUED_BYTES).toBe(4 * 1024 * 1024);
+    expect(() => createSseStream({ maxQueuedBytes: 0 })).toThrow(RangeError);
   });
 });

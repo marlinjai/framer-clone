@@ -50,8 +50,12 @@ import { publishSiteEvent, resetLiveBusForTests, LIVE_STREAM_LIMITS } from '@/se
 import { GET as EVENTS } from '../[projectId]/events/route';
 import { announcePlan, resetLivePlansForTests } from '@/server/mcp/livePlans';
 import { openLiveGeneration, resetLiveGenerationForTests } from '@/server/sites/liveGeneration';
-import { LIVE_RECHECK_MS, LIVE_RECHECK_ON_WRITE_MS } from '@/lib/projects/liveEvents';
+import { LIVE_CHECK_TIMEOUT_MS, LIVE_PING_EVENT, LIVE_RECHECK_MS, LIVE_RECHECK_ON_WRITE_MS } from '@/lib/projects/liveEvents';
 import { GET as DOCUMENT } from '../[projectId]/document/route';
+import { SSE_HEARTBEAT_MS } from '@/lib/ai/sse';
+import { LIVE_GUARD_MEMO_MS, resetLiveGuardMemoForTests } from '@/server/sites/liveGuard';
+import { forgetSiteDocuments, resetLiveDocumentCacheForTests } from '@/server/sites/liveDocumentCache';
+import { acquireStreamSlot } from '@/server/sites/liveBus';
 
 const ORIGINAL_EDITOR_HOST = process.env.EDITOR_HOST;
 const SCOPE = { workspaceId: 'ws_marlin', tenantGroupId: 'tg_lumitra' };
@@ -85,10 +89,21 @@ function req(path: string, opts: { host?: string; cookie?: string | null; header
   return new Request(`http://app.lumitra.co${path}`, { headers, signal: opts.signal });
 }
 
+const activity = (over: Record<string, unknown> = {}) => ({
+  callId: 'call-1',
+  agentId: 'agent-a',
+  label: 'Claude',
+  tool: 'get_page',
+  phase: 'start' as const,
+  pageId: 'home',
+  at: new Date().toISOString(),
+  ...over,
+});
+
 const ctx = (projectId: string) => ({ params: Promise.resolve({ projectId }) });
 
 /** Reads named events off an SSE response as they arrive. */
-function eventReader(res: Response) {
+function eventReader(res: Response, opts: { pings?: boolean } = {}) {
   const reader = res.body!.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -99,7 +114,8 @@ function eventReader(res: Response) {
         if (end >= 0) {
           const block = buffer.slice(0, end);
           buffer = buffer.slice(end + 2);
-          if (block.startsWith(':')) continue; // heartbeat
+          if (block.startsWith(':')) continue; // a comment line
+          if (block.startsWith(`event: ${LIVE_PING_EVENT}\n`) && !opts.pings) continue; // heartbeat, unless asked for
           const fields = Object.fromEntries(block.split('\n').map((line) => [line.slice(0, line.indexOf(':')), line.slice(line.indexOf(':') + 2)]));
           return { event: fields.event, data: JSON.parse(fields.data), ...(fields.id ? { id: fields.id } : {}) };
         }
@@ -124,6 +140,8 @@ beforeEach(() => {
   resetLivePresenceForTests();
   resetLivePlansForTests();
   resetLiveGenerationForTests();
+  resetLiveGuardMemoForTests();
+  resetLiveDocumentCacheForTests();
   auditRows.rows = [];
   auditRows.fail = false;
   auditRows.calls = [];
@@ -283,16 +301,44 @@ describe('GET /api/projects/<id>/events', () => {
     await other.cancel();
   });
 
-  it('re-checks access on a write heard 30 s after the last check', async () => {
+  it('holds a write heard 30 s after the last check behind a re-check: access gone, the version never goes out', async () => {
     vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
     const events = eventReader(await EVENTS(req('/api/projects/site_1/events'), ctx('site_1')));
     await events.next();
     mockCan.mockResolvedValue(false);
     vi.setSystemTime(Date.now() + LIVE_RECHECK_ON_WRITE_MS + 1);
     publishSiteEvent('site_1', 'site:version', { origin: 'mcp', version: 8, versionBefore: 7 });
-    expect((await events.next()).id).toBe('8');
     expect(await events.next()).toEqual({ event: 'auth:expired', data: {} });
     expect(await events.ended()).toBe(true);
+  });
+
+  it('holds every kind of event behind a due re-check (plans, agent activity, versions), none of it reaching a stream whose access is gone', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    const events = eventReader(await EVENTS(req('/api/projects/site_1/events'), ctx('site_1')));
+    await events.next();
+    mockCan.mockResolvedValue(false);
+    vi.setSystemTime(Date.now() + LIVE_RECHECK_ON_WRITE_MS + 1);
+    reportAgentActivity('site_1', 'tg_lumitra', activity({ callId: 'held' }));
+    publishSiteEvent('site_1', 'plan:update', { plan: { planId: 'p1' } });
+    publishSiteEvent('site_1', 'site:version', { origin: 'mcp', version: 8, versionBefore: 7 });
+    expect(await events.next()).toEqual({ event: 'auth:expired', data: {} });
+    expect(await events.ended()).toBe(true);
+  });
+
+  it('a due re-check that passes sends the held events of every kind in their order', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    const events = eventReader(await EVENTS(req('/api/projects/site_1/events'), ctx('site_1')));
+    await events.next();
+    const verified = mockVerifySession.mock.calls.length;
+    vi.setSystemTime(Date.now() + LIVE_RECHECK_ON_WRITE_MS + 1);
+    reportAgentActivity('site_1', 'tg_lumitra', activity({ callId: 'a1' }));
+    publishSiteEvent('site_1', 'plan:update', { plan: { planId: 'p1' } });
+    publishSiteEvent('site_1', 'site:version', { origin: 'mcp', version: 8, versionBefore: 7 });
+    const order = [await events.next(), await events.next(), await events.next()].map((e) => e.event);
+    expect(order).toEqual(['agent:activity', 'plan:update', 'site:version']);
+    // It really asked again (the guard's memo had run out).
+    expect(mockVerifySession.mock.calls.length).toBeGreaterThan(verified);
+    await events.cancel();
   });
 
   it("holds a running generation's draft until a stale check passed: a stream whose access is gone gets none of it", async () => {
@@ -313,8 +359,9 @@ describe('GET /api/projects/<id>/events', () => {
     expect(await fresh.ended()).toBe(true);
   });
 
-  it('a stale check that never answers lets the held draft events go after 10 s, as an outage does', async () => {
+  it('a due re-check that never answers ends the stream after 10 s (fail closed): nothing it held goes out, and no auth:expired', async () => {
     vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval', 'setTimeout', 'clearTimeout'] });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const node = { id: 'n1', type: 'section', componentType: 'host', label: 'Hero', props: {}, children: [] } as never;
     const events = eventReader(await EVENTS(req('/api/projects/site_1/events'), ctx('site_1')));
     await events.next();
@@ -323,17 +370,50 @@ describe('GET /api/projects/<id>/events', () => {
     vi.setSystemTime(Date.now() + LIVE_RECHECK_ON_WRITE_MS + 1);
     run.section({ generationId: 'run-1', attempt: 1, index: 0, slot: 0, node });
     publishSiteEvent('site_1', 'site:version', { origin: 'mcp', version: 8, versionBefore: 7 });
-    await vi.advanceTimersByTimeAsync(10_000);
-    expect((await events.next()).event).toBe('gen:section');
-    expect((await events.next()).event).toBe('site:version');
-    // The timed-out check is not reused: the next one really runs, and finds the access gone.
-    const calls = mockVerifySession.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(LIVE_CHECK_TIMEOUT_MS);
+    // Ended without a single further event: the editor reconnects and meets the guard.
+    await expect(events.next()).rejects.toThrow('stream ended');
+    expect(warn).toHaveBeenCalled();
+    // The slot is free again.
+    mockVerifySession.mockReset();
     mockVerifySession.mockResolvedValue(makeSession());
-    mockCan.mockResolvedValue(false);
+    const again = await EVENTS(req('/api/projects/site_1/events', { cookie: 'lumitra_session=fresh' }), ctx('site_1'));
+    expect(again.status).toBe(200);
+  });
+
+  it('a due re-check that meets an auth-brain outage ends the stream (fail closed) and drops what it held', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const events = eventReader(await EVENTS(req('/api/projects/site_1/events'), ctx('site_1')));
+    await events.next();
+    const { AuthBrainError } = await import('@marlinjai/auth-brain-sdk');
+    mockVerifySession.mockRejectedValueOnce(new AuthBrainError('down', 503));
     vi.setSystemTime(Date.now() + LIVE_RECHECK_ON_WRITE_MS + 1);
-    run.section({ generationId: 'run-1', attempt: 1, index: 1, slot: 1, node });
-    expect(await events.next()).toEqual({ event: 'auth:expired', data: {} });
-    expect(mockVerifySession.mock.calls.length).toBeGreaterThan(calls);
+    publishSiteEvent('site_1', 'site:version', { origin: 'mcp', version: 8, versionBefore: 7 });
+    await expect(events.next()).rejects.toThrow('stream ended');
+    expect(warn).toHaveBeenCalled();
+  });
+
+  it('a due re-check that meets an OpenFGA outage ends the stream (fail closed)', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const events = eventReader(await EVENTS(req('/api/projects/site_1/events'), ctx('site_1')));
+    await events.next();
+    const { AuthBrainError } = await import('@marlinjai/auth-brain-sdk');
+    mockCan.mockRejectedValueOnce(new AuthBrainError('fga down', 503));
+    vi.setSystemTime(Date.now() + LIVE_RECHECK_ON_WRITE_MS + 1);
+    reportAgentActivity('site_1', 'tg_lumitra', activity({ callId: 'held' }));
+    await expect(events.next()).rejects.toThrow('stream ended');
+  });
+
+  it('sends the heartbeat as a named `ping` event with an empty object, which the browser can see', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    const events = eventReader(await EVENTS(req('/api/projects/site_1/events'), ctx('site_1')), { pings: true });
+    await events.next();
+    await vi.advanceTimersByTimeAsync(SSE_HEARTBEAT_MS);
+    expect(await events.next()).toEqual({ event: 'ping', data: {} });
+    await events.cancel();
   });
 
   it('ends the stream when more than 500 events pile up behind a check', async () => {
@@ -411,6 +491,35 @@ describe('GET /api/projects/<id>/events', () => {
     for (const events of open.slice(1)) await events.cancel();
   });
 
+  it('counts a duplicated session cookie under the one the guard verified (the last), like the guard reads it', async () => {
+    const open: Array<ReturnType<typeof eventReader>> = [];
+    for (let i = 0; i < LIVE_STREAM_LIMITS.perSession; i++) {
+      const res = await EVENTS(req('/api/projects/site_1/events', { cookie: `lumitra_session=decoy${i}; lumitra_session=real` }), ctx('site_1'));
+      expect(res.status).toBe(200);
+      open.push(eventReader(res));
+    }
+    const refused = await EVENTS(req('/api/projects/site_1/events', { cookie: 'lumitra_session=real' }), ctx('site_1'));
+    expect(refused.status).toBe(429);
+    for (const events of open) await events.cancel();
+  });
+
+  it('cuts off a browser that stops reading once 1 MiB waits unread, as a disconnect (AbortError)', async () => {
+    const res = await EVENTS(req('/api/projects/site_1/events'), ctx('site_1'));
+    const reader = res.body!.getReader();
+    // The state arrives; then the browser stops reading.
+    await reader.read();
+    const big = 'x'.repeat(300_000);
+    for (let i = 0; i < 6; i++) publishSiteEvent('site_1', 'plan:update', { plan: { planId: `p${i}`, note: big } });
+    // The queue was dropped: what is left is the disconnect, and the slot is free again.
+    const failure = await reader.read().catch((e: unknown) => e);
+    expect(failure).toMatchObject({ name: 'AbortError' });
+    for (let i = 0; i < LIVE_STREAM_LIMITS.perSession; i++) {
+      const again = await EVENTS(req('/api/projects/site_1/events'), ctx('site_1'));
+      expect(again.status).toBe(200);
+      await eventReader(again).cancel();
+    }
+  });
+
   it('answers 429 over the per-site bound', async () => {
     const open: Array<ReturnType<typeof eventReader>> = [];
     for (let i = 0; i < LIVE_STREAM_LIMITS.perSite; i++) {
@@ -423,42 +532,45 @@ describe('GET /api/projects/<id>/events', () => {
     for (const events of open) await events.cancel();
   });
 
-  it('ends with auth:expired when the re-check finds the permission gone; an outage keeps it open', async () => {
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
-    const res = await EVENTS(req('/api/projects/site_1/events'), ctx('site_1'));
-    const events = eventReader(res);
+  it('answers 429 over the per-company bound, while another company still gets a stream', async () => {
+    // Fill the company's share without opening hundreds of streams.
+    const held: Array<() => void> = [];
+    for (let i = 0; i < LIVE_STREAM_LIMITS.perCompany; i++) held.push(acquireStreamSlot(`elsewhere_${Math.floor(i / 40)}`, `s${i}`, SCOPE.tenantGroupId)!);
+    const refused = await EVENTS(req('/api/projects/site_1/events', { cookie: 'lumitra_session=late' }), ctx('site_1'));
+    expect(refused.status).toBe(429);
+    expect(acquireStreamSlot('site_x', 'other-company-session', 'tg_other')).not.toBeNull();
+    held[0]();
+    const res = await EVENTS(req('/api/projects/site_1/events', { cookie: 'lumitra_session=late' }), ctx('site_1'));
+    expect(res.status).toBe(200);
+    await eventReader(res).cancel();
+    for (const release of held) release();
+  });
+
+  it('ends with auth:expired when the five-minute re-check finds the permission gone', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    const events = eventReader(await EVENTS(req('/api/projects/site_1/events'), ctx('site_1')));
     await events.next();
-
-    // auth-brain down at the re-check: not a sign-out.
-    const { AuthBrainError } = await import('@marlinjai/auth-brain-sdk');
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    mockVerifySession.mockRejectedValueOnce(new AuthBrainError('down', 503));
-    await vi.advanceTimersByTimeAsync(LIVE_RECHECK_MS);
-    publishSiteEvent('site_1', 'site:version', { origin: 'mcp', version: 8, versionBefore: 7 });
-    expect((await events.next()).id).toBe('8');
-
     mockCan.mockResolvedValue(false);
     await vi.advanceTimersByTimeAsync(LIVE_RECHECK_MS);
     expect(await events.next()).toEqual({ event: 'auth:expired', data: {} });
     expect(await events.ended()).toBe(true);
     // Unsubscribed: a later write goes nowhere and throws nothing.
     expect(() => publishSiteEvent('site_1', 'site:version', { origin: 'mcp', version: 9, versionBefore: 8 })).not.toThrow();
-    errorSpy.mockRestore();
+  });
+
+  it('a five-minute re-check that meets an outage ends the stream too (fail closed), without auth:expired', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const events = eventReader(await EVENTS(req('/api/projects/site_1/events'), ctx('site_1')));
+    await events.next();
+    const { AuthBrainError } = await import('@marlinjai/auth-brain-sdk');
+    mockVerifySession.mockRejectedValueOnce(new AuthBrainError('down', 503));
+    await vi.advanceTimersByTimeAsync(LIVE_RECHECK_MS);
+    await expect(events.next()).rejects.toThrow('stream ended');
   });
 });
 
 describe('the presence in the events stream', () => {
-  const activity = (over: Record<string, unknown> = {}) => ({
-    callId: 'call-1',
-    agentId: 'agent-a',
-    label: 'Claude',
-    tool: 'get_page',
-    phase: 'start' as const,
-    pageId: 'home',
-    at: new Date().toISOString(),
-    ...over,
-  });
-
   it("backfills the state's feed from the site's audit rows, scoped to the caller's workspace, merged with live lines", async () => {
     const now = Date.now();
     auditRows.rows = [
@@ -473,7 +585,7 @@ describe('the presence in the events stream', () => {
       },
       { id: 'row-1', actorKind: 'user', actorId: 'user-9', actorDetail: null, operation: 'publish', ops: null, createdAt: new Date(now - 60_000) },
     ];
-    reportAgentActivity('site_1', activity({ callId: 'read-1', phase: 'end', outcome: 'ok', at: new Date(now - 30_000).toISOString() }), {
+    reportAgentActivity('site_1', 'tg_lumitra', activity({ callId: 'read-1', phase: 'end', outcome: 'ok', at: new Date(now - 30_000).toISOString() }), {
       id: 'read-1', agentId: 'agent-a', label: 'Claude', actorKind: 'key', tool: 'get_page', outcome: 'ok', pageId: 'home', at: new Date(now - 30_000).toISOString(),
     });
     const events = eventReader(await EVENTS(req('/api/projects/site_1/events'), ctx('site_1')));
@@ -503,7 +615,7 @@ describe('the presence in the events stream', () => {
   it('keeps the stream when the audit rows cannot be read: the live lines alone', async () => {
     auditRows.fail = true;
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    reportAgentActivity('site_1', activity({ phase: 'end', outcome: 'failed' }), {
+    reportAgentActivity('site_1', 'tg_lumitra', activity({ phase: 'end', outcome: 'failed' }), {
       id: 'call-1', agentId: 'agent-a', label: 'Claude', actorKind: 'key', tool: 'get_page', outcome: 'failed', at: new Date().toISOString(),
     });
     const events = eventReader(await EVENTS(req('/api/projects/site_1/events'), ctx('site_1')));
@@ -514,18 +626,18 @@ describe('the presence in the events stream', () => {
   });
 
   it("sends the state's active agents (a running call wins) and forwards every agent:activity of this site only", async () => {
-    reportAgentActivity('site_1', activity({ callId: 'c1' }));
+    reportAgentActivity('site_1', 'tg_lumitra', activity({ callId: 'c1' }));
     const events = eventReader(await EVENTS(req('/api/projects/site_1/events'), ctx('site_1')));
     const state = (await events.next()).data as { agents: Array<Record<string, unknown>> };
     expect(state.agents).toEqual([expect.objectContaining({ callId: 'c1', phase: 'start' })]);
-    reportAgentActivity('site_2', activity({ callId: 'other-site' }));
-    reportAgentActivity('site_1', activity({ callId: 'c1', phase: 'end', outcome: 'ok' }));
+    reportAgentActivity('site_2', 'tg_lumitra', activity({ callId: 'other-site' }));
+    reportAgentActivity('site_1', 'tg_lumitra', activity({ callId: 'c1', phase: 'end', outcome: 'ok' }));
     expect(await events.next()).toEqual({ event: 'agent:activity', data: expect.objectContaining({ callId: 'c1', phase: 'end' }) });
     await events.cancel();
   });
 
   it('leaves out an agent that left more than a minute ago', async () => {
-    reportAgentActivity('site_1', activity({ phase: 'end', outcome: 'ok' }), undefined, Date.now() - 120_000);
+    reportAgentActivity('site_1', 'tg_lumitra', activity({ phase: 'end', outcome: 'ok' }), undefined, Date.now() - 120_000);
     const events = eventReader(await EVENTS(req('/api/projects/site_1/events'), ctx('site_1')));
     expect(((await events.next()).data as { agents: unknown[] }).agents).toEqual([]);
     await events.cancel();
@@ -553,5 +665,102 @@ describe('GET /api/projects/<id>/document', () => {
   it('answers the copy when If-None-Match names an older version', async () => {
     const res = await DOCUMENT(req('/api/projects/site_1/document', { headers: { 'if-none-match': '"6"' } }), ctx('site_1'));
     expect(res.status).toBe(200);
+  });
+});
+
+describe('the kept document body', () => {
+  it('serves a version already served without loading it again, the same bytes and headers', async () => {
+    const first = await DOCUMENT(req('/api/projects/site_1/document'), ctx('site_1'));
+    const second = await DOCUMENT(req('/api/projects/site_1/document', { cookie: 'lumitra_session=other-tab' }), ctx('site_1'));
+    expect(second.status).toBe(200);
+    expect(second.headers.get('etag')).toBe('"7"');
+    expect(second.headers.get('content-type')).toContain('application/json');
+    expect(second.headers.get('cache-control')).toBe('private, no-cache');
+    expect(await second.text()).toBe(await first.text());
+    expect(repo.loadProjectWithVersion).toHaveBeenCalledTimes(1);
+  });
+
+  it('still runs the whole guard for a kept version: a session without editSite gets 403, a foreign workspace 404', async () => {
+    await DOCUMENT(req('/api/projects/site_1/document'), ctx('site_1'));
+    mockCan.mockResolvedValue(false);
+    const refused = await DOCUMENT(req('/api/projects/site_1/document', { cookie: 'lumitra_session=no-edit' }), ctx('site_1'));
+    expect(refused.status).toBe(403);
+    mockCan.mockResolvedValue(true);
+    repo.getSiteVersion.mockRejectedValueOnce(new SiteNotFoundError('site_1'));
+    const gone = await DOCUMENT(req('/api/projects/site_1/document'), ctx('site_1'));
+    expect(gone.status).toBe(404);
+  });
+
+  it('loads again for a new version, and after the site was forgotten (a rename)', async () => {
+    await DOCUMENT(req('/api/projects/site_1/document'), ctx('site_1'));
+    version = 8;
+    expect((await DOCUMENT(req('/api/projects/site_1/document'), ctx('site_1'))).headers.get('etag')).toBe('"8"');
+    expect(repo.loadProjectWithVersion).toHaveBeenCalledTimes(2);
+    forgetSiteDocuments('site_1');
+    await DOCUMENT(req('/api/projects/site_1/document'), ctx('site_1'));
+    expect(repo.loadProjectWithVersion).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('the guard memo', () => {
+  it('reuses an allowed editSite for 30 s, then asks again; the session is verified on every request', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    await DOCUMENT(req('/api/projects/site_1/document'), ctx('site_1'));
+    await DOCUMENT(req('/api/projects/site_1/document'), ctx('site_1'));
+    expect(mockVerifySession).toHaveBeenCalledTimes(2);
+    expect(mockCan).toHaveBeenCalledTimes(1);
+    vi.setSystemTime(Date.now() + LIVE_GUARD_MEMO_MS + 1);
+    await DOCUMENT(req('/api/projects/site_1/document'), ctx('site_1'));
+    expect(mockCan).toHaveBeenCalledTimes(2);
+  });
+
+  it('refuses a signed-out session even while its editSite is remembered', async () => {
+    await DOCUMENT(req('/api/projects/site_1/document'), ctx('site_1'));
+    mockVerifySession.mockResolvedValueOnce(null);
+    expect((await DOCUMENT(req('/api/projects/site_1/document'), ctx('site_1'))).status).toBe(401);
+  });
+
+  it('never remembers a no: a refused editSite is asked again on the next request', async () => {
+    mockCan.mockResolvedValueOnce(false);
+    expect((await DOCUMENT(req('/api/projects/site_1/document'), ctx('site_1'))).status).toBe(403);
+    expect((await DOCUMENT(req('/api/projects/site_1/document'), ctx('site_1'))).status).toBe(200);
+    expect(mockCan).toHaveBeenCalledTimes(2);
+    mockVerifySession.mockResolvedValueOnce(null);
+    expect((await DOCUMENT(req('/api/projects/site_1/document', { cookie: 'lumitra_session=signed-out' }), ctx('site_1'))).status).toBe(401);
+    expect((await DOCUMENT(req('/api/projects/site_1/document', { cookie: 'lumitra_session=signed-out' }), ctx('site_1'))).status).toBe(200);
+  });
+
+  it('keys by the session cookie: another session asks again', async () => {
+    await DOCUMENT(req('/api/projects/site_1/document'), ctx('site_1'));
+    await DOCUMENT(req('/api/projects/site_1/document', { cookie: 'lumitra_session=someone-else' }), ctx('site_1'));
+    expect(mockCan).toHaveBeenCalledTimes(2);
+  });
+
+  it("keys editSite by the workspace the session resolved: switching company asks again, and one company's yes never stands for another's", async () => {
+    const twoCompanies = {
+      ...makeSession(),
+      tenants: [
+        { id: 'tenant-1', app_grants: ['sites'], group_id: 'tg_lumitra' },
+        { id: 'tenant-2', app_grants: ['sites'], group_id: 'tg_other' },
+      ],
+      workspaces: [
+        { id: 'ws_marlin', tenant_id: 'tenant-1' },
+        { id: 'ws_other', tenant_id: 'tenant-2' },
+      ],
+    };
+    mockVerifySession.mockResolvedValue(twoCompanies);
+    await DOCUMENT(req('/api/projects/site_1/document', { cookie: 'lumitra_session=good; framer_company=tenant-1' }), ctx('site_1'));
+    // The same session picks the other company: its permission there is asked for, and refused.
+    mockCan.mockResolvedValue(false);
+    const other = await DOCUMENT(req('/api/projects/site_1/document', { cookie: 'lumitra_session=good; framer_company=tenant-2' }), ctx('site_1'));
+    expect(other.status).toBe(403);
+    expect(mockCan).toHaveBeenCalledTimes(2);
+    expect(mockCan.mock.calls[1]).toContainEqual(expect.objectContaining({ workspaceId: 'ws_other' }));
+  });
+
+  it('is never used for a machine request (a Bearer header), which has no session here at all', async () => {
+    await DOCUMENT(req('/api/projects/site_1/document'), ctx('site_1'));
+    const machine = await DOCUMENT(req('/api/projects/site_1/document', { headers: { authorization: 'Bearer anything' } }), ctx('site_1'));
+    expect(machine.status).toBe(401);
   });
 });

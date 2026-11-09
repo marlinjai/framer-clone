@@ -415,11 +415,18 @@ export function sanitizeLiveLabel(text: unknown): string | undefined {
 export function boundedWriteEvent(event: SiteWriteEvent): SiteWriteEvent {
   const out: SiteWriteEvent = { origin: event.origin };
   if (event.originTab) out.originTab = event.originTab;
-  if (event.actor) out.actor = { kind: event.actor.kind, label: capLiveText(event.actor.label) || 'Someone' };
+  // The actor's label and the summary lines are names someone chose (a key's, a user's, a page's):
+  // stripped of control and bidirectional characters like any other label, so none can reorder the line.
+  if (event.actor) out.actor = { kind: event.actor.kind, label: sanitizeLiveLabel(event.actor.label) ?? 'Someone' };
   if (event.ops) out.ops = event.ops.slice(0, LIVE_LIST_MAX);
   // The keys are refs an agent chose: capped like any other text that travels.
   if (event.created) out.created = Object.fromEntries(Object.entries(event.created).slice(0, LIVE_LIST_MAX).map(([ref, id]) => [capLiveText(ref), id]));
-  if (event.summary) out.summary = event.summary.slice(0, LIVE_LIST_MAX).map(capLiveText);
+  if (event.summary) {
+    out.summary = event.summary
+      .slice(0, LIVE_LIST_MAX)
+      .map((line) => sanitizeLiveLabel(line))
+      .filter((line): line is string => line !== undefined);
+  }
   return out;
 }
 
@@ -428,5 +435,15 @@ export const ORIGIN_TAB_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
 
 /** How often an open stream checks that its session and permission still hold. */
 export const LIVE_RECHECK_MS = 5 * 60_000;
-/** A write heard longer than this after the last check triggers one more (access lost shows up within a write). */
+/** An event heard longer than this after the last check waits for one more (access lost shows up within an event). */
 export const LIVE_RECHECK_ON_WRITE_MS = 30_000;
+/** How long such a check may take; past it the stream ends (fail closed) and the editor reconnects. */
+export const LIVE_CHECK_TIMEOUT_MS = 10_000;
+/** Unread bytes the live stream holds for a browser that stopped reading before it is cut off (it reconnects). */
+export const LIVE_SSE_MAX_QUEUED_BYTES = 1024 * 1024;
+/**
+ * The live stream's heartbeat: a named event with `{}` as data, sent every
+ * SSE_HEARTBEAT_MS (src/lib/ai/sse.ts), so the editor can tell a stream that
+ * went silent from a quiet one. A client watchdog listens for exactly this name.
+ */
+export const LIVE_PING_EVENT = 'ping';

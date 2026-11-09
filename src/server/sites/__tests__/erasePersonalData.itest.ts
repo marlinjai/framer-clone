@@ -29,6 +29,7 @@ import {
 import { ERASE_LIMITS, EraseQueryError, REDACTED_SEGMENT } from '@/server/sites/erase';
 import { resolvePublishedSiteByKey, type PublishedSite } from '@/server/sites/publicResolver';
 import { latestVersionRepository } from './latestVersionRepository';
+import { cachedDocument, documentEpoch, rememberDocument } from '@/server/sites/liveDocumentCache';
 
 const TENANT_GROUP = '018f9c10-0000-7000-8000-0000000052e1';
 const VALUE = 'Max Mustermann';
@@ -149,6 +150,8 @@ describe('forward: search, erase, proof', () => {
     const before = await revisions();
     const working = JSON.stringify(await prisma.site.findUniqueOrThrow({ where: { id: siteId }, select: { siteSettings: true } }));
     const versionBefore = (await repo.loadProjectWithVersion(scope, siteId)).version;
+    // An open editor's document route kept the copy that still holds the value.
+    rememberDocument(scope, siteId, versionBefore, JSON.stringify({ holds: VALUE }), documentEpoch());
 
     const result = await repo.erasePersonalData(scope, siteId, {
       query: QUERY,
@@ -158,6 +161,8 @@ describe('forward: search, erase, proof', () => {
       erasedBy: OWNER,
     });
     expect(result).toMatchObject({ erased: 21, remaining: 0 });
+    // The kept copy is gone with the erasure, not only unreachable under the old version.
+    expect(cachedDocument(scope, siteId, versionBefore)).toBeUndefined();
 
     // The proof: a fresh search finds nothing, and the value is nowhere in storage.
     expect((await repo.searchPersonalData(scope, siteId, QUERY)).total).toBe(0);

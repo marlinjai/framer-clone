@@ -13,11 +13,17 @@
 // route (src/server/sites/liveGuard.ts): editor host (404), session (401), the
 // active company with `sites` (403), `editSite` (403), the project in that
 // workspace (404); outages answer 503.
+//
+// After a write every open editor of the site asks at once, so the serialized
+// answer is kept per (workspace, site, version) (src/server/sites/liveDocumentCache.ts):
+// the guard still runs on every request, and only the load and the
+// serialization are skipped for a version already served.
 
 import { getSnapshot } from 'mobx-state-tree';
 import { withAuthAvailability } from '@/lib/authBrainAvailability';
 import { jsonError } from '@/lib/api/respond';
 import { authorizeLiveProject } from '@/server/sites/liveGuard';
+import { cachedDocument, documentEpoch, rememberDocument } from '@/server/sites/liveDocumentCache';
 import { getSiteRepository, siteRepositoryErrorResponse, SiteRepositoryError } from '@/server/sites';
 import type { ProjectSnapshotOut } from '@/models/ProjectModel';
 
@@ -43,10 +49,16 @@ async function handleGET(req: Request, { params }: Ctx): Promise<Response> {
   if (namesVersion(req.headers.get('if-none-match'), auth.version)) {
     return new Response(null, { status: 304, headers: { ...headers, etag: etagOf(auth.version) } });
   }
+  const json = { ...headers, 'content-type': 'application/json' };
+  const kept = cachedDocument(auth.scope, projectId, auth.version);
+  if (kept !== undefined) return new Response(kept, { headers: { ...json, etag: etagOf(auth.version) } });
   try {
+    const epoch = documentEpoch();
     const { project, version } = await getSiteRepository().loadProjectWithVersion(auth.scope, projectId);
     const snapshot = getSnapshot(project) as ProjectSnapshotOut;
-    return Response.json({ version, snapshot }, { headers: { ...headers, etag: etagOf(version) } });
+    const body = JSON.stringify({ version, snapshot });
+    rememberDocument(auth.scope, projectId, version, body, epoch);
+    return new Response(body, { headers: { ...json, etag: etagOf(version) } });
   } catch (err) {
     if (err instanceof SiteRepositoryError) return siteRepositoryErrorResponse(err);
     console.error(`[live] the document of site ${projectId} could not be loaded`, err);

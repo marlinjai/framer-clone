@@ -59,6 +59,7 @@ import { generateSubdomain } from './subdomain';
 import { parseRevisionDocument, REVISION_SCHEMA_VERSION, revisionPublishCheck } from './revision';
 import { publishSiteEvent } from './liveBus';
 import { endLiveGenerationOfSite } from './liveGeneration';
+import { forgetSiteDocuments } from './liveDocumentCache';
 import { checkPlanAnchors, hasPlans, noteSiteWrite } from '@/server/mcp/livePlans';
 import { boundedWriteEvent, LIVE_EVENTS, type SiteVersionEvent, type SiteWriteEvent } from '@/lib/projects/liveEvents';
 import type { PublishCheck } from '@/lib/legal/publishCheck';
@@ -954,7 +955,11 @@ export class SiteRepository {
       },
       data: { name, projectUpdatedAt: updatedAt },
     });
-    if (result.count === 1) return { name, updatedAt };
+    if (result.count === 1) {
+      // The name is in the editor's document but moves no version: the kept copy of it is stale now.
+      forgetSiteDocuments(siteId);
+      return { name, updatedAt };
+    }
 
     // Nothing matched: tell a missing (or foreign) site from a lost race.
     const current = await this.prisma.site.findFirst({
@@ -1307,6 +1312,8 @@ export class SiteRepository {
     // A generate_page still running drafted from the copy before the erasure: its
     // previews could repeat the erased value, so the run ends here and sends no more.
     endLiveGenerationOfSite(siteId, 'site_changed');
+    // The kept document of the old version may hold the erased value: never kept past the erasure.
+    forgetSiteDocuments(siteId);
     announceWrite(siteId, erasure.write, { origin: 'erasure' });
     return erasure.result;
   }
@@ -1488,7 +1495,7 @@ export class SiteRepository {
   ): Promise<DeletedSite> {
     assertScope(scope);
     const where = { id: siteId, workspaceId: scope.workspaceId, tenantGroupId: scope.tenantGroupId };
-    return this.prisma.$transaction(async (tx) => {
+    const deleted = await this.prisma.$transaction(async (tx) => {
       // Take the row lock BEFORE reading the status: a publish or save that is
       // in flight finishes first, so the status checked below (and the domains
       // captured) are the ones this delete really removes. Touching only the
@@ -1529,6 +1536,10 @@ export class SiteRepository {
         hostnames: [...hostnames],
       };
     });
+    // A deleted site's content is not kept in memory either: no kept copy, no running draft.
+    forgetSiteDocuments(siteId);
+    endLiveGenerationOfSite(siteId, 'site_changed');
+    return deleted;
   }
 }
 

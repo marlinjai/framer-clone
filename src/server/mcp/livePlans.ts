@@ -125,7 +125,7 @@ function end(siteId: string, entry: PlanEntry, reason: PlanEndReason, now: numbe
   plans?.delete(entry.plan.planId);
   if (plans && plans.size === 0) state().sites.delete(siteId);
   if (reason === 'expired' || reason === 'session_ended') {
-    recordLiveFeedLine(siteId, {
+    recordLiveFeedLine(siteId, entry.scope.tenantGroupId, {
       id: stoppedPlanLineId(entry.plan.planId),
       agentId: entry.plan.agentId,
       label: entry.plan.label,

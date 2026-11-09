@@ -17,15 +17,17 @@ import 'server-only';
 //     and failed calls). A write that committed is in site_operation_audits, and
 //     the `state` event reads it from there (src/server/siteOps/audit.ts).
 //
-// Bounded: MAX_SITES sites (the least recently touched goes first),
-// MAX_AGENTS_PER_SITE agents per site, LIVE_FEED_MAX lines per site, and a
+// Bounded: LIVE_PRESENCE_LIMITS.sites sites in the process (the least recently
+// touched goes first), LIVE_PRESENCE_LIMITS.sitesPerCompany sites of one company
+// (its tenant group; past it that company's own least recently touched site goes,
+// never another company's), LIVE_PRESENCE_LIMITS.agentsPerSite agents per site, LIVE_FEED_MAX lines per site, and a
 // running call older than OPEN_CALL_MAX_MS counts as ended. Kept on globalThis
 // so a development hot reload does not split reporters and readers.
 
 import { AGENT_ACTIVE_MS, LIVE_EVENTS, LIVE_FEED_MAX, OPEN_CALL_MAX_MS, type AgentActivity, type LiveFeedLine } from '@/lib/projects/liveEvents';
 import { publishSiteEvent } from './liveBus';
 
-export const LIVE_PRESENCE_LIMITS = { sites: 2000, agentsPerSite: 20, callsPerAgent: 10 } as const;
+export const LIVE_PRESENCE_LIMITS = { sites: 2000, sitesPerCompany: 200, agentsPerSite: 20, callsPerAgent: 10 } as const;
 export { OPEN_CALL_MAX_MS };
 /** A site nobody reported on for this long is forgotten, its live lines with it. */
 export const SITE_IDLE_MS = 6 * 60 * 60_000;
@@ -38,6 +40,8 @@ interface AgentEntry {
 }
 
 interface SiteEntry {
+  /** The company (tenant group id) whose MCP key reported on the site first: its share holds the entry. */
+  company: string;
   agents: Map<string, AgentEntry>;
   /** Newest first. */
   feed: LiveFeedLine[];
@@ -46,6 +50,8 @@ interface SiteEntry {
 
 interface PresenceState {
   sites: Map<string, SiteEntry>;
+  /** Sites held per company, for its share. */
+  perCompany: Map<string, number>;
 }
 
 const KEY = Symbol.for('lumitra.livePresence');
@@ -54,26 +60,46 @@ function state(): PresenceState {
   const g = globalThis as unknown as Record<symbol, PresenceState | undefined>;
   let s = g[KEY];
   if (!s) {
-    s = { sites: new Map() };
+    s = { sites: new Map(), perCompany: new Map() };
     g[KEY] = s;
   }
   return s;
 }
 
-function siteEntry(siteId: string, now: number): SiteEntry {
-  const { sites } = state();
+function forgetSite(siteId: string): void {
+  const s = state();
+  const entry = s.sites.get(siteId);
+  if (!entry) return;
+  s.sites.delete(siteId);
+  const left = (s.perCompany.get(entry.company) ?? 1) - 1;
+  if (left > 0) s.perCompany.set(entry.company, left);
+  else s.perCompany.delete(entry.company);
+}
+
+function siteEntry(siteId: string, company: string, now: number): SiteEntry {
+  const s = state();
+  const { sites } = s;
   let entry = sites.get(siteId);
   if (entry) {
     // Most recently touched last, so the first key is the one to evict.
     sites.delete(siteId);
   } else {
-    entry = { agents: new Map(), feed: [], touchedAt: now };
+    entry = { company, agents: new Map(), feed: [], touchedAt: now };
+    s.perCompany.set(company, (s.perCompany.get(company) ?? 0) + 1);
   }
   entry.touchedAt = now;
   sites.set(siteId, entry);
+  // The company's own share first: its least recently touched site goes, never another company's.
+  if ((s.perCompany.get(entry.company) ?? 0) > LIVE_PRESENCE_LIMITS.sitesPerCompany) {
+    for (const [id, other] of sites) {
+      if (id !== siteId && other.company === entry.company) {
+        forgetSite(id);
+        break;
+      }
+    }
+  }
   while (sites.size > LIVE_PRESENCE_LIMITS.sites) {
-    const oldest = sites.keys().next().value as string;
-    sites.delete(oldest);
+    forgetSite(sites.keys().next().value as string);
   }
   return entry;
 }
@@ -87,7 +113,7 @@ function dropStaleCalls(agent: AgentEntry, now: number): void {
 function sweep(now: number): void {
   const { sites } = state();
   for (const [siteId, entry] of sites) {
-    if (now - entry.touchedAt > SITE_IDLE_MS) sites.delete(siteId);
+    if (now - entry.touchedAt > SITE_IDLE_MS) forgetSite(siteId);
   }
 }
 
@@ -97,10 +123,16 @@ function sweep(now: number): void {
  * a call that ended without an audit row (a read, a refusal, a failure); the
  * caller leaves it out for a write that committed. Never throws.
  */
-export function reportAgentActivity(siteId: string, activity: AgentActivity, line?: LiveFeedLine, now: number = Date.now()): void {
+export function reportAgentActivity(
+  siteId: string,
+  company: string,
+  activity: AgentActivity,
+  line?: LiveFeedLine,
+  now: number = Date.now(),
+): void {
   try {
     sweep(now);
-    const site = siteEntry(siteId, now);
+    const site = siteEntry(siteId, company, now);
     let agent = site.agents.get(activity.agentId);
     if (agent) {
       site.agents.delete(activity.agentId);
@@ -136,10 +168,10 @@ export function reportAgentActivity(siteId: string, activity: AgentActivity, lin
  * event. The open editors compose the same line from the event they hear, with
  * the same id. Never throws.
  */
-export function recordLiveFeedLine(siteId: string, line: LiveFeedLine, now: number = Date.now()): void {
+export function recordLiveFeedLine(siteId: string, company: string, line: LiveFeedLine, now: number = Date.now()): void {
   try {
     sweep(now);
-    const site = siteEntry(siteId, now);
+    const site = siteEntry(siteId, company, now);
     site.feed = [line, ...site.feed.filter((l) => l.id !== line.id)].slice(0, LIVE_FEED_MAX);
   } catch (err) {
     console.error(`[live] a feed line of site ${siteId} could not be recorded`, err);
@@ -153,7 +185,7 @@ export function presenceSnapshot(siteId: string, now: number = Date.now()): { ag
   if (!entry) return { agents: [], feed: [] };
   // An idle site is forgotten before it is read, so a reconnect never gets its stale lines.
   if (now - entry.touchedAt > SITE_IDLE_MS) {
-    sites.delete(siteId);
+    forgetSite(siteId);
     return { agents: [], feed: [] };
   }
   const agents: AgentActivity[] = [];
@@ -171,4 +203,5 @@ export function presenceSnapshot(siteId: string, now: number = Date.now()): { ag
 /** Tests only: forget every site. */
 export function resetLivePresenceForTests(): void {
   state().sites.clear();
+  state().perCompany.clear();
 }

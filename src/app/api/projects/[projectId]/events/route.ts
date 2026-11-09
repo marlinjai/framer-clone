@@ -36,17 +36,29 @@
 //     browser that reconnects sends it back as Last-Event-ID, and a site that
 //     moved on meanwhile gets one catch-up `site:version` for the current one;
 //   - `auth:expired` when the session or the permission is gone (re-checked every
-//     five minutes, and on a write or a draft event of a running generation heard
-//     more than 30 s after the last check),
-//     after which the stream ends and the editor does not reconnect.
+//     five minutes, and before any event heard more than 30 s after the last
+//     check), after which the stream ends and the editor does not reconnect;
+//   - `ping` (data `{}`) every SSE_HEARTBEAT_MS, a named event the browser can
+//     see, so the editor can tell a stream that went silent from a quiet one.
 //
-// Bounds: at most 4 streams per session, 50 per site and 1,000 per process; over
-// a bound the answer is 429 and the editor polls the snapshot route instead. The
-// stream ends when the browser goes away, which unsubscribes from the bus.
+// Access re-checks fail closed (decided 2026-11-09, plan section "Decisions"):
+// once a check is due, EVERY event waits behind it (site:version, plan:update,
+// agent:activity, gen:*), so nothing reaches a stream whose access may be gone.
+// A check that does not answer within LIVE_CHECK_TIMEOUT_MS, or that meets an
+// auth-brain or OpenFGA outage (or any other error), ends the stream without
+// `auth:expired` and drops what it held: the editor reconnects, meets the guard
+// (503 during an outage) and falls back to the guarded document route.
+//
+// Bounds: at most 4 streams per session, 50 per site, 200 per company and 1,000
+// per process; over a bound the answer is 429 and the editor polls the snapshot
+// route instead. A browser that stops reading is cut off once LIVE_SSE_MAX_QUEUED_BYTES
+// wait unread (src/lib/ai/sse.ts), and reconnects. The stream ends when the
+// browser goes away, which unsubscribes from the bus.
 
 import { createHash } from 'node:crypto';
 import { withAuthAvailability, AuthUnavailableError, AuthzUnavailableError } from '@/lib/authBrainAvailability';
 import { jsonError } from '@/lib/api/respond';
+import { readRequestCookie } from '@/lib/activeCompanyCookie';
 import { createSseStream, SSE_HEADERS, SSE_HEARTBEAT_MS } from '@/lib/ai/sse';
 import { authorizeLiveProject } from '@/server/sites/liveGuard';
 import { acquireStreamSlot, subscribeSite } from '@/server/sites/liveBus';
@@ -58,8 +70,11 @@ import { recentSiteOperations } from '@/server/siteOps/audit';
 import { getPrismaClient } from '@/server/db';
 import type { TenantScope } from '@/server/sites/repository';
 import {
+  LIVE_CHECK_TIMEOUT_MS,
   LIVE_EVENTS,
   LIVE_FEED_MAX,
+  LIVE_PING_EVENT,
+  LIVE_SSE_MAX_QUEUED_BYTES,
   LIVE_RECHECK_MS,
   LIVE_RECHECK_ON_WRITE_MS,
   ORIGIN_TAB_PATTERN,
@@ -73,14 +88,13 @@ export const dynamic = 'force-dynamic';
 
 type Ctx = { params: Promise<{ projectId: string }> };
 
-/** How long an access check may take; past it, it counts as an outage (never a sign-out) and held draft events go. */
-const CHECK_TIMEOUT_MS = 10_000;
-/** Events held behind such a check at most; past this the stream ends and the editor reconnects. */
+/** Events held behind an access check at most; past this the stream ends and the editor reconnects. */
 const GATE_QUEUE_MAX = 500;
 
 /** The bound "per session" counts streams of one session cookie, never its value. */
 function sessionKey(req: Request, userId: string): string {
-  const cookie = /(?:^|;\s*)lumitra_session=([^;]+)/.exec(req.headers.get('cookie') ?? '')?.[1];
+  // Read like the guard reads it, so a duplicated cookie is counted under the session that was verified.
+  const cookie = readRequestCookie(req, 'lumitra_session');
   return cookie ? createHash('sha256').update(cookie).digest('base64url').slice(0, 22) : `user:${userId}`;
 }
 
@@ -112,14 +126,16 @@ async function handleGET(req: Request, { params }: Ctx): Promise<Response> {
   const auth = await authorizeLiveProject(req, projectId);
   if (!auth.ok) return auth.response;
 
-  const release = acquireStreamSlot(projectId, sessionKey(req, auth.session.user.id));
+  const release = acquireStreamSlot(projectId, sessionKey(req, auth.session.user.id), auth.scope.tenantGroupId);
   if (!release) {
     const refused = jsonError('too_many_streams', 'too many live streams are open; the editor checks for changes instead', 429);
     refused.headers.set('retry-after', '60');
     return refused;
   }
 
-  const sse = createSseStream();
+  // Armed only when the Response is handed back: the opening burst (state, catch-up, what arrived
+  // meanwhile) is queued before anything can read it, so it must not count against the bound.
+  const sse = createSseStream({ maxQueuedBytes: LIVE_SSE_MAX_QUEUED_BYTES, heartbeatEvent: LIVE_PING_EVENT, armed: false });
   // Events heard before `state` went out wait for it, so nothing is lost or reordered.
   let ready = false;
   const waiting: Array<[string, unknown]> = [];
@@ -129,26 +145,38 @@ async function handleGET(req: Request, { params }: Ctx): Promise<Response> {
   const tab = tabParam && ORIGIN_TAB_PATTERN.test(tabParam) ? tabParam : undefined;
   let lastCheck = Date.now();
   let inflight: Promise<void> | undefined;
-  /** Re-check the session and the permission; a check already running is shared. */
+  /**
+   * Re-check the session and the permission; a check already running is shared.
+   * Fails closed: anything but a clear yes ends the stream (a clear no first says
+   * `auth:expired`, so the editor stops; a timeout or an outage says nothing, so
+   * it reconnects and meets the guard).
+   */
   const check = (): Promise<void> => {
     if (ended) return Promise.resolve();
     inflight ??= (async () => {
       lastCheck = Date.now();
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
-        // A check that does not answer in time counts as an outage, and the next one really runs again.
         const deadline = new Promise<'timeout'>((resolve) => {
-          timer = setTimeout(() => resolve('timeout'), CHECK_TIMEOUT_MS);
+          timer = setTimeout(() => resolve('timeout'), LIVE_CHECK_TIMEOUT_MS);
         });
         const again = await Promise.race([authorizeLiveProject(req, projectId), deadline]);
-        // Timed out, or the browser left while the check ran.
-        if (again === 'timeout' || again.ok || ended) return;
+        if (ended) return;
+        if (again === 'timeout') {
+          console.warn(`[live] the stream of site ${projectId} ends: its access check did not answer within ${LIVE_CHECK_TIMEOUT_MS} ms`);
+          end();
+          return;
+        }
+        if (again.ok) return;
         sse.send(LIVE_EVENTS.authExpired, {});
         end();
       } catch (err) {
-        // An outage is not a sign-out: the stream stays, the next check decides.
-        if (err instanceof AuthUnavailableError || err instanceof AuthzUnavailableError) return;
-        console.error(`[live] the stream of site ${projectId} could not re-check its session`, err);
+        if (err instanceof AuthUnavailableError || err instanceof AuthzUnavailableError) {
+          console.warn(`[live] the stream of site ${projectId} ends: its access check met an outage (${err.name})`);
+        } else {
+          console.error(`[live] the stream of site ${projectId} ends: it could not re-check its session`, err);
+        }
+        end();
       } finally {
         clearTimeout(timer);
         inflight = undefined;
@@ -156,12 +184,12 @@ async function handleGET(req: Request, { params }: Ctx): Promise<Response> {
     })();
     return inflight;
   };
-  // A running generation's draft is content: when the last check is older than
-  // LIVE_RECHECK_ON_WRITE_MS, it waits for a check, and everything after it waits
-  // too (so the order holds); a stream whose access is gone gets none of it. A
-  // check that does not answer within CHECK_TIMEOUT_MS lets the queue go, as an
-  // outage does (an outage is not a sign-out); a queue that grows past
-  // GATE_QUEUE_MAX ends the stream, and the editor reconnects.
+  // Every event waits for a check when the last one is older than
+  // LIVE_RECHECK_ON_WRITE_MS (or one is running), and everything after it waits
+  // too (so the order holds): a stream whose access is gone gets none of it,
+  // not a version, not a plan, not an agent's activity, not a draft. The check
+  // fails closed (see check()), which drops the queue with the stream; a queue
+  // that grows past GATE_QUEUE_MAX ends the stream too, and the editor reconnects.
   let gated: Array<[string, unknown]> | undefined;
   const send = (event: string, data: unknown) => {
     if (event !== LIVE_EVENTS.siteVersion) {
@@ -171,9 +199,8 @@ async function handleGET(req: Request, { params }: Ctx): Promise<Response> {
     const { originTab, ...rest } = data as SiteVersionEvent;
     const out: SiteVersionEvent = tab && originTab === tab ? { ...rest, own: true } : rest;
     sse.send(event, out, out.version);
-    if (Date.now() - lastCheck > LIVE_RECHECK_ON_WRITE_MS) void check();
   };
-  /** Whether a draft event must wait for a check: one is running (its answer is not in yet), or the last one is old. */
+  /** Whether an event must wait for a check: one is running (its answer is not in yet), or the last one is old. */
   const checkDue = () => inflight !== undefined || Date.now() - lastCheck > LIVE_RECHECK_ON_WRITE_MS;
   const forward = (event: string, data: unknown) => {
     if (gated) {
@@ -181,8 +208,7 @@ async function handleGET(req: Request, { params }: Ctx): Promise<Response> {
       if (gated.length > GATE_QUEUE_MAX) end();
       return;
     }
-    const content = event === LIVE_EVENTS.genOutline || event === LIVE_EVENTS.genSection;
-    if (content && checkDue()) {
+    if (checkDue()) {
       const queue: Array<[string, unknown]> = [[event, data]];
       gated = queue;
       void check().then(() => {
@@ -233,8 +259,8 @@ async function handleGET(req: Request, { params }: Ctx): Promise<Response> {
   const presence = presenceSnapshot(projectId);
   // The plans announced under the scope this stream's guard verified; one whose time ran out is never sent.
   const feed = await feedFor(auth.scope, projectId, presence.feed);
-  // The draft is content: when the initialization took long enough for access to have changed,
-  // the same gate as for draft events applies before it is read and sent.
+  // The state carries a draft (content): when the initialization took long enough for access to
+  // have changed, the same gate as for every event applies before it is read and sent.
   if (checkDue()) {
     await check();
     if (ended) return new Response(sse.stream, { status: 200, headers: SSE_HEADERS });
@@ -257,6 +283,7 @@ async function handleGET(req: Request, { params }: Ctx): Promise<Response> {
   if (ended) return new Response(sse.stream, { status: 200, headers: SSE_HEADERS });
   timers.heartbeat = setInterval(() => sse.heartbeat(), SSE_HEARTBEAT_MS);
   timers.recheck = setInterval(() => void check(), LIVE_RECHECK_MS);
+  sse.arm();
 
   return new Response(sse.stream, { status: 200, headers: SSE_HEADERS });
 }
