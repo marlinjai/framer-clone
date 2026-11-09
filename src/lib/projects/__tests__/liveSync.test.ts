@@ -1168,6 +1168,33 @@ describe("liveSync: an agent's generate_page draft (slice 6)", () => {
     stop();
   });
 
+  it('a new page whose frames are in view stays in the Pages panel when the tab is hidden', async () => {
+    const stop = start();
+    store.editorUI.setCurrentPage(project().getPage(homeId())!);
+    stream().emit('gen:outline', { runId: 'run-1', target: { kind: 'newPage', title: 'Menu' }, outline: [{ title: 'Hero', kind: 'hero' }] });
+    store.editorUI.livePresence.setFollow(false);
+    const remove = drawFrame(true);
+    const state = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    await newPageSaved('run-1');
+    state.mockRestore();
+    remove();
+    expect(store.editorUI.currentPage?.id).toBe(homeId());
+    stop();
+  });
+
+  it('a new page whose frames are in view stays in the Pages panel while the Preview covers the canvas', async () => {
+    const stop = start();
+    store.editorUI.setCurrentPage(project().getPage(homeId())!);
+    stream().emit('gen:outline', { runId: 'run-1', target: { kind: 'newPage', title: 'Menu' }, outline: [{ title: 'Hero', kind: 'hero' }] });
+    store.editorUI.livePresence.setFollow(false);
+    const remove = drawFrame(true);
+    store.editorUI.setPreviewOpen(true);
+    await newPageSaved('run-1');
+    remove();
+    expect(store.editorUI.currentPage?.id).toBe(homeId());
+    stop();
+  });
+
   it('ignores malformed events and a target this copy does not have', () => {
     const stop = start();
     stream().emit('gen:section', { runId: '../x', target: target(), index: 0, slot: 0, node: node('A') });

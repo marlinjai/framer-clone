@@ -214,7 +214,7 @@ export class LiveSync {
       },
       currentPageId: () => rootStore.editorUI.currentPage?.id,
       knownVersion: () => knownServerVersion(projectId),
-      draftInView: draftFramesInView,
+      draftInView: () => !rootStore.editorUI.previewOpen && draftFramesInView(),
     });
   }
 
@@ -674,9 +674,11 @@ export async function loadNewerVersion(projectId: string | undefined): Promise<v
   reloadDiscarding(projectId);
 }
 
-/** Whether a draft frame of a new page is visible in the canvas (any part of it inside the canvas's box). */
+/** Whether a draft frame of a new page is visible in the canvas (any part of it inside the canvas's box) and the document itself is showing. The open Preview covering the canvas is the caller's check. */
 export function draftFramesInView(): boolean {
   if (typeof document === 'undefined') return false;
+  // A hidden tab shows nothing, whatever its frames' rectangles say.
+  if (document.visibilityState === 'hidden') return false;
   const ground = document.querySelector<HTMLElement>('[data-ground]');
   if (!ground) return false;
   const view = ground.getBoundingClientRect();
