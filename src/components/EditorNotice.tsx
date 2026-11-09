@@ -7,7 +7,7 @@
 // does not exist. Also when an agent's new page is ready while the person works
 // elsewhere (src/lib/projects/liveSync.ts): Open it shows that page. And when an
 // agent deleted the page that was open (src/components/live/AgentDeletedPageWatcher.tsx):
-// Undo brings it back while that step is the last one applied. The live region is
+// Undo brings it back while that step is the last one applied and did nothing else. The live region is
 // always present, so the message is announced when it appears.
 //
 // It is also the badge of a state preview (editorUI.previewState): the canvas shows a
@@ -21,13 +21,41 @@ import { reloadDiscarding } from '@/lib/projects/autosave';
 import { getHistoryStore } from '@/stores/RootStore';
 
 /**
- * Whether the agent's step that deleted the open page is still the last one applied: then its
- * ordinary undo brings the page back (src/components/live/AgentDeletedPageWatcher.tsx).
+ * Whether the history entry only removed this page: each of its inverse patches puts back that
+ * page, or the project's updatedAt stamp. An adopted step can hold more (an agent's batch that
+ * also edited other pages, or several writers' versions fetched together); undoing it would take
+ * all of that back too, so the notice then offers no Undo.
  */
-export function canUndoAgentDelete(historyEntryId: string | undefined): boolean {
+export function onlyRemovedPage(inversePatches: ReadonlyArray<{ path: string }>, pageId: string): boolean {
+  const escaped = pageId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const allowed = new RegExp(`^/projects/[^/]+/(pages/${escaped}(/|$)|metadata/updatedAt$)`);
+  return inversePatches.length > 0 && inversePatches.every((p) => allowed.test(p.path));
+}
+
+/**
+ * Whether Undo can bring back the page an agent deleted (src/components/live/AgentDeletedPageWatcher.tsx):
+ * its step is still the last one applied, and that step did nothing else.
+ */
+export function canUndoAgentDelete(historyEntryId: string | undefined, pageId: string | undefined): boolean {
   const history = getHistoryStore();
-  if (!history || !historyEntryId || history.undoIdx === 0) return false;
-  return history.history[history.undoIdx - 1]?.id === historyEntryId;
+  if (!history || !historyEntryId || !pageId || history.undoIdx === 0) return false;
+  const entry = history.history[history.undoIdx - 1];
+  return entry?.id === historyEntryId && onlyRemovedPage(entry.inversePatches, pageId);
+}
+
+/** After a notice's button leaves with the notice: the focus goes to the open page's row in the Pages panel, or else to the canvas. */
+function focusOpenPage(): void {
+  requestAnimationFrame(() => {
+    const row = document.querySelector<HTMLElement>('button[aria-current="page"]');
+    if (row) {
+      row.focus();
+      return;
+    }
+    const canvas = document.querySelector<HTMLElement>('[data-ground]');
+    if (!canvas) return;
+    if (!canvas.hasAttribute('tabindex')) canvas.setAttribute('tabindex', '-1');
+    canvas.focus({ preventScroll: true });
+  });
 }
 
 const EditorNotice = observer(() => {
@@ -64,36 +92,23 @@ const EditorNotice = observer(() => {
                 if (page) editorUI.setCurrentPage(page);
                 editorUI.setEditorNotice(undefined);
                 // The button goes with the notice: the focus moves to the page's row in the Pages panel, or else to the canvas.
-                requestAnimationFrame(() => {
-                  const row = document.querySelector<HTMLElement>('button[aria-current="page"]');
-                  if (row) {
-                    row.focus();
-                    return;
-                  }
-                  const canvas = document.querySelector<HTMLElement>('[data-ground]');
-                  if (!canvas) return;
-                  if (!canvas.hasAttribute('tabindex')) canvas.setAttribute('tabindex', '-1');
-                  canvas.focus({ preventScroll: true });
-                });
+                focusOpenPage();
               }}
               className="shrink-0 rounded border border-amber-400 px-2 py-0.5 font-medium hover:bg-amber-100"
             >
               Open it
             </button>
           ) : null}
-          {notice.kind === 'pageDeleted' && notice.pageId && canUndoAgentDelete(notice.historyEntryId) ? (
+          {notice.kind === 'pageDeleted' && canUndoAgentDelete(notice.historyEntryId, notice.pageId) ? (
             <button
               type="button"
               // The visible word first (Label in Name), then what it does.
               aria-label="Undo: bring the page back"
               onClick={() => {
-                if (!canUndoAgentDelete(notice.historyEntryId)) return;
+                if (!canUndoAgentDelete(notice.historyEntryId, notice.pageId)) return;
+                // The page comes back; the watcher then opens it and clears this notice, as after any undo.
                 getHistoryStore()?.undo();
-                const page = editorUI.currentProject?.getPage(notice.pageId!);
-                if (page) editorUI.setCurrentPage(page);
-                editorUI.setEditorNotice(undefined);
-                // The button goes with the notice: the focus moves to the page's row in the Pages panel, when it shows.
-                requestAnimationFrame(() => document.querySelector<HTMLElement>('button[aria-current="page"]')?.focus());
+                focusOpenPage();
               }}
               className="shrink-0 rounded border border-amber-400 px-2 py-0.5 font-medium hover:bg-amber-100"
             >

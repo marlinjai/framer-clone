@@ -8,12 +8,16 @@
 // runs the ordinary history undo of that agent's step: the adoption recorded it
 // as one remote entry (HistoryStore.applyRemote), so undoing it brings the page
 // back, and autosave then saves that like any other undo. Undo is offered only
-// while that entry is still the last one applied.
+// while that entry is still the last one applied and did nothing but remove the
+// page (an adopted step can hold other edits too, which an undo would revert).
+// However the page comes back (the button, Cmd+Z, the history panel), it opens
+// again and the notice goes, so it never states what is no longer true.
 //
 // It tells the agent's delete from any other way the open page can go: the page
 // left in a recorded remote step, and an agent's feed line names it among the
-// pages it deleted (the line and the adoption can come in either order). A
-// person deleting a page in this tab, or another person's save, shows nothing
+// pages it deleted (the line and the adoption can come in either order, within
+// DELETED_PAGE_LINE_WAIT_MS of each other; a line explains one deletion only).
+// A person deleting a page in this tab, or another person's save, shows nothing
 // here. Renders nothing.
 'use client';
 
@@ -35,9 +39,22 @@ interface Gone {
   at: number;
 }
 
-/** The agent line that deleted this page, if the feed holds one. */
-function deletingLine(feed: readonly LiveFeedLine[], pageId: string): LiveFeedLine | undefined {
-  return feed.find((l) => l.actorKind === 'key' && l.outcome === 'ok' && l.deletedPageIds?.includes(pageId));
+/** A line's time in milliseconds, or -Infinity when unreadable. */
+function atOf(line: Pick<LiveFeedLine, 'at'>): number {
+  const t = Date.parse(line.at);
+  return Number.isFinite(t) ? t : -Infinity;
+}
+
+/** The recent agent line that deleted this page and explains no other deletion yet, if the feed holds one. */
+function deletingLine(feed: readonly LiveFeedLine[], pageId: string, used: ReadonlySet<string>, now: number): LiveFeedLine | undefined {
+  return feed.find(
+    (l) =>
+      l.actorKind === 'key' &&
+      l.outcome === 'ok' &&
+      !used.has(l.id) &&
+      l.deletedPageIds?.includes(pageId) &&
+      Math.abs(now - atOf(l)) <= DELETED_PAGE_LINE_WAIT_MS,
+  );
 }
 
 export default function AgentDeletedPageWatcher() {
@@ -47,9 +64,12 @@ export default function AgentDeletedPageWatcher() {
     const presence = editorUI.livePresence as LivePresenceStore | undefined;
     if (!presence) return;
     let gone: Gone | undefined;
+    // The lines that explained a deletion already: one line, one notice.
+    const used = new Set<string>();
 
     const show = (line: LiveFeedLine, page: Gone) => {
       gone = undefined;
+      used.add(line.id);
       editorUI.setEditorNotice({
         kind: 'pageDeleted',
         message: deletedOpenPageNotice(line.label, page.title),
@@ -74,7 +94,7 @@ export default function AgentDeletedPageWatcher() {
           const entry = history && history.undoIdx > 0 ? history.history[history.undoIdx - 1] : undefined;
           if (!entry?.remote) return;
           const page: Gone = { pageId: before.pageId, title: before.title || undefined, historyEntryId: entry.id, at: Date.now() };
-          const line = deletingLine(presence.feed, page.pageId);
+          const line = deletingLine(presence.feed, page.pageId, used, page.at);
           if (line) show(line, page);
           else gone = page;
         },
@@ -88,8 +108,22 @@ export default function AgentDeletedPageWatcher() {
             gone = undefined;
             return;
           }
-          const line = deletingLine(feed, gone.pageId);
+          const line = deletingLine(feed, gone.pageId, used, Date.now());
           if (line) show(line, gone);
+        },
+      ),
+      // The page came back, by any undo: it opens again and the notice goes.
+      reaction(
+        () => {
+          const notice = editorUI.editorNotice;
+          if (notice?.kind !== 'pageDeleted' || !notice.pageId) return undefined;
+          return editorUI.currentProject?.getPage(notice.pageId) ? notice.pageId : undefined;
+        },
+        (pageId) => {
+          if (!pageId) return;
+          const page = editorUI.currentProject?.getPage(pageId);
+          if (page) editorUI.setCurrentPage(page);
+          editorUI.setEditorNotice(undefined);
         },
       ),
     ];
