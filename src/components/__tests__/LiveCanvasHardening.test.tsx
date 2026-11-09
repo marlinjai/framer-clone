@@ -10,7 +10,7 @@ import { createRootStore, type RootStoreType } from '@/stores/RootStore';
 import ProjectModel, { type ProjectModelType, type ProjectSnapshotOut } from '@/models/ProjectModel';
 import { openProject } from '@/stores/openProject';
 import { autosaveFor, resetAutosaveForTests } from '@/lib/projects/autosave';
-import { setLiveSyncDepsForTests, startLiveSync, type LiveEventSource, type LiveSyncDeps } from '@/lib/projects/liveSync';
+import { LIVE_RECONNECT_MS, setLiveSyncDepsForTests, startLiveSync, type LiveEventSource, type LiveSyncDeps } from '@/lib/projects/liveSync';
 import LiveConnectionStatus, { LIVE_BACK_MS, LIVE_PAUSED_GRACE_MS, LIVE_PAUSED_TEXT, LIVE_BACK_TEXT } from '../live/LiveConnectionStatus';
 import EditorNotice from '../EditorNotice';
 import SiteChangedDialog from '../SiteChangedDialog';
@@ -25,7 +25,9 @@ class FakeStream implements LiveEventSource {
   addEventListener(type: string, listener: (event: { data: string }) => void) {
     this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
   }
+  closed = false;
   close() {
+    this.closed = true;
     this.readyState = 2;
   }
   open() {
@@ -104,6 +106,7 @@ describe('LiveConnectionStatus (H1)', () => {
     // A short word stays in sight on a small screen (touch cannot open a tooltip).
     expect(region.querySelector('[aria-hidden="true"].md\\:hidden')?.textContent).toBe('Paused');
 
+    // Reopened by the live sync's own reconnect (it ran meanwhile, still connecting) and open now.
     act(() => stream().open());
     expect(region.textContent).toContain(LIVE_BACK_TEXT);
     act(() => vi.advanceTimersByTime(LIVE_BACK_MS));
@@ -118,7 +121,8 @@ describe('LiveConnectionStatus (H1)', () => {
     render(<LiveConnectionStatus projectId={site} />);
     const region = screen.getByTestId('live-connection-status');
     act(() => stream().fail());
-    act(() => vi.advanceTimersByTime(LIVE_PAUSED_GRACE_MS / 2));
+    // Reopened on the live sync's own back-off (random 0 here: 2 s), within the grace.
+    act(() => vi.advanceTimersByTime(LIVE_RECONNECT_MS));
     act(() => stream().open());
     act(() => vi.advanceTimersByTime(LIVE_BACK_MS));
     expect(region.textContent).toBe('');

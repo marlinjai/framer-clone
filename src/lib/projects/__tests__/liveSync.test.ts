@@ -24,7 +24,7 @@ import {
   adoptionLabel,
   heldWriter,
   LIVE_FETCH_RETRY_MS,
-  LIVE_PING_EVENT,
+  LIVE_RECONNECT_MS,
   LIVE_WATCHDOG_MS,
   LOAD_NEWER_WRITE_WAIT_MS,
   pagesRemovedBy,
@@ -42,7 +42,7 @@ import {
   type LiveEventSource,
   type LiveSyncDeps,
 } from '../liveSync';
-import type { SiteVersionEvent } from '../liveEvents';
+import { LIVE_PING_EVENT, type SiteVersionEvent } from '../liveEvents';
 import { registerOpenDraft } from '../openDrafts';
 import { EDITING_RECHECK_MS } from '@/lib/live/editingInProgress';
 import { GEN_DRAFT_LIMITS } from '../liveEvents';
@@ -185,6 +185,12 @@ afterEach(() => {
   resetAutosaveForTests();
   vi.useRealTimers();
 });
+
+/** The stream ended (closed by the server, a drop): this tab reopens it after its own back-off (random 0 in these tests), and it opens. */
+async function reconnect() {
+  await vi.advanceTimersByTimeAsync(LIVE_RECONNECT_MS);
+  stream().open();
+}
 
 function start() {
   const stop = startLiveSync(SITE, store);
@@ -398,8 +404,8 @@ describe('liveSync: resume', () => {
   it("a reconnect's state brings a newer version in one fetch; a lower one is ignored", async () => {
     start();
     await agentWrites('while away', false);
-    stream().fail(false); // reconnecting by itself
-    stream().open();
+    stream().fail(false); // closed by the server: reopened after this tab's back-off
+    await reconnect();
     stream().emit('state', { version: server.version, plans: [], agents: [], feed: [] });
     await settle();
     expect(fetches).toEqual([1]);
@@ -609,7 +615,7 @@ describe('liveSync: the per-component reveal (live agent canvas, slice 3)', () =
     expect(knownServerVersion(SITE)).toBe(2);
     await writes(null);
     stream().fail(false);
-    stream().open();
+    await reconnect();
     stream().emit('state', { version: server.version, plans: [], agents: [], feed: [] });
     await settle();
     expect(knownServerVersion(SITE)).toBe(3);
@@ -1060,7 +1066,7 @@ describe("liveSync: an agent's generate_page draft (slice 6)", () => {
     stream().fail(false);
     // A brief drop redraws nothing: the draft stays while the stream reconnects.
     expect(draft().target?.requestKey).toBe('agent:run-1');
-    stream().open();
+    await reconnect();
     stream().emit('state', { version: server.version, plans: [], agents: [], feed: [], generation: { runId: 'run-1', target: target(), outline: [], sections: [{ index: 0, slot: 0, node: node('Hero') }] } });
     expect(draft().target?.requestKey).toBe('agent:run-1');
     expect(draft().sections).toHaveLength(1);
@@ -1715,7 +1721,7 @@ describe('liveSync: a failed fetch while the stream is live (F2)', () => {
     const spent = fetches.length;
     stream().fail(false);
     server.status = undefined;
-    stream().open();
+    await reconnect();
     server.status = 500;
     stream().emit('site:version', { origin: 'mcp', version: 3, versionBefore: 2 });
     await settle();
@@ -1831,22 +1837,55 @@ describe('liveSync: a silent stream and a tab shown again (F3)', () => {
 });
 
 describe('liveSync: the server simply closes the stream (a re-check timeout, an auth outage, a slow reader)', () => {
-  it('reconnecting by itself: polls the document route meanwhile, and is live again once reopened', async () => {
+  it('closed by the server: polls the document route meanwhile, reopens on its own jittered back-off (never the browser\'s fixed retry)', async () => {
+    const random = vi.fn(() => 0.5);
+    setLiveSyncDepsForTests({ ...deps, random });
     start();
     stream().emit(LIVE_PING_EVENT, {});
-    stream().fail(false); // closed by the server, no auth:expired: the browser reconnects by itself
+    const first = stream();
+    first.fail(false); // the server ended it, no auth:expired
     const sync = liveSyncFor(SITE)!;
     expect(sync.phase).toBe('polling');
     expect(sync.wasLive).toBe(true);
+    expect(first.closed).toBe(true); // the browser's own reconnect is not left to run
     expect(autosaveFor(SITE).getState().phase).toBe('saved'); // not signed out
+    // 2 s plus half again at random: 3 s.
+    await vi.advanceTimersByTimeAsync(LIVE_RECONNECT_MS * 1.5 - 1);
+    expect(streams).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(streams).toHaveLength(2);
     await agentWrites('while closed', false);
     await vi.advanceTimersByTimeAsync(LIVE_POLL_VISIBLE_MS);
     expect(knownServerVersion(SITE)).toBe(2);
-    // The watchdog was cleared with the error: no second stream is forced open meanwhile.
-    await vi.advanceTimersByTimeAsync(LIVE_WATCHDOG_MS);
-    expect(streams).toHaveLength(1);
+    // It ends again before opening: the next wait doubles (6 s).
+    stream().fail(false);
+    await vi.advanceTimersByTimeAsync(LIVE_RECONNECT_MS * 3 - 1);
+    expect(streams).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(streams).toHaveLength(3);
     stream().open();
     expect(sync.phase).toBe('live');
+    // Open again: the next end starts at the short wait once more.
+    stream().fail(false);
+    await vi.advanceTimersByTimeAsync(LIVE_RECONNECT_MS * 1.5);
+    expect(streams).toHaveLength(4);
+  });
+
+  it('many editors closed at once come back spread out, by their random share', async () => {
+    const waits: number[] = [];
+    for (const r of [0, 0.25, 0.5, 0.99]) {
+      setLiveSyncDepsForTests({ ...deps, random: () => r });
+      streams = [];
+      const stop = start();
+      stream().fail(false);
+      const at = Date.now();
+      while (streams.length < 2) await vi.advanceTimersByTimeAsync(100);
+      waits.push(Date.now() - at);
+      stop();
+    }
+    expect(new Set(waits).size).toBe(4);
+    expect(Math.min(...waits)).toBeGreaterThanOrEqual(LIVE_RECONNECT_MS);
+    expect(Math.max(...waits)).toBeLessThanOrEqual(LIVE_RECONNECT_MS * 2 + 100);
   });
 
   it('the reconnect refused (closed for good): polling goes on and a new stream is tried after the back-off', async () => {

@@ -49,8 +49,11 @@
 // When the stream is down (a network loss, the 429 of too many streams, a proxy
 // that buffers), the snapshot route is polled with If-None-Match every 5 s while
 // the tab is visible and every 60 s while hidden, until the stream is back. A
-// stream refused for good is tried again after 1, 2, 4 then 8 minutes, each a
-// little later at random so tabs do not come back at once. The server sends a
+// stream that ended (closed by the server, a network drop) is reopened by this
+// tab after 2 to 4 s (doubling with each failure in a row, up to a minute), never
+// by the browser's own fixed retry, so editors whose streams the server ended
+// together do not all come back together. A stream refused is tried again after
+// 1, 2, 4 then 8 minutes, each a little later at random. The server sends a
 // `ping` every LIVE_HEARTBEAT_MS; once one arrived, a stream silent for
 // LIVE_WATCHDOG_MS (a proxy that holds it open without passing anything) is
 // reopened. A server that sends no ping arms no watchdog. A fetch of the stored
@@ -90,6 +93,7 @@ import { SSE_HEARTBEAT_MS } from '@/lib/ai/sse';
 import { editorTabId } from './tabId';
 import {
   LIVE_EVENTS,
+  LIVE_PING_EVENT,
   type AgentActivity,
   type GenDoneEvent,
   type GenOutlineEvent,
@@ -122,8 +126,10 @@ export const LIVE_WATCHDOG_MS = Math.round(LIVE_HEARTBEAT_MS * 2.5);
 export const LIVE_FETCH_RETRY_MS = [2_000, 5_000, 15_000] as const;
 /** "Load the newer version" while a write of this tab is out waits this long for it to settle. */
 export const LOAD_NEWER_WRITE_WAIT_MS = 10_000;
-/** The stream's heartbeat event name (a named event, so the client sees it; a comment it would not). */
-export const LIVE_PING_EVENT = 'ping';
+/** The first reconnect after a stream ended (closed by the server, a network drop) waits this long, plus up to as much again at random; it doubles with each failure in a row. */
+export const LIVE_RECONNECT_MS = 2_000;
+/** The longest wait before reconnecting a stream that ended (a refusal waits LIVE_STREAM_RETRY_MS and more). */
+export const LIVE_RECONNECT_MAX_MS = 60_000;
 
 /** The part of a browser EventSource this module uses. */
 export interface LiveEventSource {
@@ -276,6 +282,8 @@ export class LiveSync {
   private heartbeatSeen = false;
   /** Streams refused in a row (the retry wait doubles). */
   private streamRefusals = 0;
+  /** Streams that ended in a row without opening again (the reconnect wait doubles). */
+  private reconnects = 0;
   private wasLiveValue = false;
   private draftLostValue = false;
   /** The newest version announced by another writer, with its event. */
@@ -481,6 +489,7 @@ export class LiveSync {
     if (this.streamRetryTimer) clearTimeout(this.streamRetryTimer);
     this.streamRetryTimer = undefined;
     this.streamRefusals = 0;
+    this.reconnects = 0;
     this.stopWaitingForEditing();
     this.editMark = undefined;
     this.replayMark = undefined;
@@ -522,6 +531,7 @@ export class LiveSync {
       if (this.stream !== stream) return;
       this.clearPoll();
       this.streamRefusals = 0;
+      this.reconnects = 0;
       this.setPhase('live');
     };
     stream.onerror = () => {
@@ -531,13 +541,15 @@ export class LiveSync {
       this.clearFetchRetry();
       // Events can be missed from now on (an agent's draft end among them): its draft goes, the reconnect's state draws it again.
       this.generation.streamLost();
-      // Down: poll meanwhile. A stream closed for good (a refusal such as 429)
-      // is tried again later; one that is reconnecting by itself is left to it.
+      // Down: poll meanwhile, and reconnect on this tab's own jittered back-off,
+      // never the browser's: when the server ends every stream at once (its
+      // checks failing closed, a restart), the browser would bring every editor
+      // back after the same fixed delay. A refusal (such as 429 or 503) waits longer.
+      const refused = stream.readyState === CLOSED;
       this.startPolling();
-      if (stream.readyState === CLOSED) {
-        this.closeStream();
-        this.retryStreamLater();
-      }
+      this.closeStream();
+      if (refused) this.retryStreamLater();
+      else this.reconnectLater();
     };
     on(LIVE_PING_EVENT, () => {
       // The server sends heartbeats: from now on its silence is a stuck stream.
@@ -596,6 +608,17 @@ export class LiveSync {
     stream.onopen = null;
     stream.onerror = null;
     stream.close();
+  }
+
+  private reconnectLater() {
+    if (this.streamRetryTimer) return;
+    const base = Math.min(LIVE_RECONNECT_MS * 2 ** this.reconnects, LIVE_RECONNECT_MAX_MS);
+    const wait = Math.round(base * (1 + (this.deps.random ?? Math.random)()));
+    this.reconnects++;
+    this.streamRetryTimer = setTimeout(() => {
+      this.streamRetryTimer = undefined;
+      if (this.phaseValue === 'polling') this.openStream();
+    }, wait);
   }
 
   private retryStreamLater() {

@@ -15,7 +15,8 @@ import React from 'react';
 import { Radio } from 'lucide-react';
 import { useLiveSyncState, type LiveSyncState } from '@/hooks/useLiveSyncState';
 
-export const LIVE_PAUSED_GRACE_MS = 2_000;
+/** Longer than one reconnect on the live sync's own back-off (2 to 4 s, src/lib/projects/liveSync.ts), so a clean reconnect says nothing. */
+export const LIVE_PAUSED_GRACE_MS = 6_000;
 export const LIVE_BACK_MS = 4_000;
 
 export const LIVE_PAUSED_TEXT = 'Live updates paused, reconnecting…';
