@@ -80,10 +80,13 @@ const AgentAnnouncer = observer(function AgentAnnouncer() {
 
   React.useEffect(() => {
     if (!presence) return;
-    // Lines there already are history, not news; so is every line a `state` event brings (the
-    // backfill after a reload, a reconnect, a site switch), which comes after this mounts.
+    // Lines there already are history, not news; so is every line the first `state` event brings
+    // (the backfill after a reload or after another site opened), which comes after this mounts.
+    // A later `state` is a reconnect: its new lines happened during the gap and are news.
     const seen = new Set(presence.feed.map((l) => l.id));
     let state = presence.stateApplied;
+    let resets = presence.resets;
+    let historyNext = presence.feed.length === 0;
     let runLines: LiveFeedLine[] = [];
     // What the run's note announced: nothing yet, reading, or editing.
     let announced: 'none' | 'reading' | 'editing' = 'none';
@@ -92,8 +95,15 @@ const AgentAnnouncer = observer(function AgentAnnouncer() {
       reaction(
         () => presence.feed,
         (feed) => {
-          const history = presence.stateApplied !== state;
+          if (presence.resets !== resets) {
+            resets = presence.resets;
+            seen.clear();
+            historyNext = true;
+          }
+          const fromState = presence.stateApplied !== state;
           state = presence.stateApplied;
+          const history = fromState && historyNext;
+          if (fromState) historyNext = false;
           const fresh = history ? [] : feed.filter((l) => !seen.has(l.id)).reverse();
           for (const line of fresh) {
             if (presence.anyActive) runLines.push(line);
@@ -107,11 +117,9 @@ const AgentAnnouncer = observer(function AgentAnnouncer() {
       reaction(
         () => presence.anyActive,
         (active) => {
-          // A new run starts with no lines; its note was reset when the last run ended.
-          if (active) {
-            runLines = [];
-            return;
-          }
+          // A new run's lines were cleared when the last one ended (a line can come just before
+          // this flips, when a call's end is the first thing heard of its agent).
+          if (active) return;
           // A sign-out clears the feed with the agents: nothing finished then.
           const summary = presence.feed.length > 0 ? runSummary(runLines) : null;
           runLines = [];
@@ -122,7 +130,7 @@ const AgentAnnouncer = observer(function AgentAnnouncer() {
       reaction(
         () => {
           const agents = presence.active.map((a) => ({ label: a.label, tool: a.focus.tool }));
-          return { mode: activityMode(agents), note: editingNote(agents) };
+          return { mode: activityMode(agents, presence.runEdited), note: editingNote(agents, presence.runEdited) };
         },
         ({ mode, note }) => {
           if (!mode || !note) return;
@@ -137,7 +145,8 @@ const AgentAnnouncer = observer(function AgentAnnouncer() {
         () => presence.follow,
         (follow) => {
           const byPerson = toggledByPerson.delete(presence);
-          if (follow || byPerson) return;
+          // Only while an agent works: with none, there is nothing the camera was following.
+          if (follow || byPerson || !presence.anyActive) return;
           const lead = presence.leadAgentId ? presence.agents.get(presence.leadAgentId) : undefined;
           say(followOffAnnouncement(lead?.label));
         },

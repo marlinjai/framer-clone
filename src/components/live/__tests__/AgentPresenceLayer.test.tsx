@@ -270,6 +270,20 @@ describe('the frame', () => {
   });
 });
 
+describe('the top bar\'s editing note', () => {
+  it('keeps saying editing for the rest of a run once the agent wrote, also while it reads', () => {
+    cleanup();
+    render(<AgentEditingNote />);
+    const at = () => new Date().toISOString();
+    act(() => presence().applyActivity({ callId: 'r1', agentId: 'a1', label: 'Claude', tool: 'get_page', phase: 'start', at: at() }));
+    expect(document.querySelector('[data-agent-editing-note]')).toHaveTextContent('Claude is reading this site');
+    act(() => presence().applyActivity({ callId: 'w1', agentId: 'a1', label: 'Claude', tool: 'apply_batch', phase: 'start', at: at() }));
+    act(() => presence().applyActivity({ callId: 'w1', agentId: 'a1', label: 'Claude', tool: 'apply_batch', phase: 'end', outcome: 'ok', changes: 4, at: at() }));
+    act(() => presence().applyActivity({ callId: 'r2', agentId: 'a1', label: 'Claude', tool: 'get_page', phase: 'start', at: at() }));
+    expect(document.querySelector('[data-agent-editing-note]')).toHaveTextContent('Claude is editing this site');
+  });
+});
+
 describe('the compact bar\'s editing note', () => {
   it('is a dot that carries the sentence for a tooltip and a screen reader, only while an agent is active', () => {
     cleanup();

@@ -235,20 +235,23 @@ export function sectionRefsOf(args: unknown): string[] {
 }
 
 /**
- * The pages a batch's deletePage operations name: the ids in order, once each, at most
- * LIVE_LIST_MAX, and how many operations there were, uncapped. Only vouched for once the site
- * accepted the batch.
+ * The pages a batch's deletePage operations removed: the ids in order, once each, at most
+ * LIVE_LIST_MAX, and how many operations there were, uncapped. A `ref:name` page id (a page the
+ * same batch created) is read from the answer's `created` map, so the count matches the audit
+ * row's, which holds the resolved ids. Only vouched for once the site accepted the batch.
  */
-export function deletedPagesOf(args: unknown): { ids: string[]; count: number } {
+export function deletedPagesOf(args: unknown, created?: unknown): { ids: string[]; count: number } {
   const ids: string[] = [];
   let count = 0;
   const ops = record(args).ops;
   if (!Array.isArray(ops)) return { ids, count };
+  const refs = record(created);
   for (const raw of ops) {
     const op = record(raw);
-    if (op.op !== 'deletePage') continue;
+    if (op.op !== 'deletePage' || typeof op.pageId !== 'string') continue;
+    const named = op.pageId.startsWith('ref:') ? refs[op.pageId.slice(4)] : op.pageId;
     count += 1;
-    const id = idOf(op.pageId);
+    const id = idOf(named);
     if (id && !ids.includes(id) && ids.length < LIVE_LIST_MAX) ids.push(id);
   }
   return { ids, count };
@@ -379,7 +382,7 @@ export async function withPresence(
     const ops = record(call.args).ops;
     const changes = Array.isArray(ops) ? ops.length : undefined;
     // Like the named ids: a refused batch deleted nothing, whatever it names.
-    const deleted = outcome === 'ok' ? deletedPagesOf(call.args) : { ids: [] as string[], count: 0 };
+    const deleted = outcome === 'ok' ? deletedPagesOf(call.args, record(result?.structuredContent).created) : { ids: [] as string[], count: 0 };
     const deletion = deleted.count > 0 ? { deletedPages: deleted.count, ...(deleted.ids.length > 0 ? { deletedPageIds: deleted.ids } : {}) } : {};
     const end: AgentActivity = {
       ...base,

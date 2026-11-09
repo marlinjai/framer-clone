@@ -3,7 +3,8 @@
 // The top bar's note while an agent works on the open site (plan
 // docs/plans/2026-11-08-live-agent-canvas.md, section 1, "unsaved local edits"):
 // "Claude is editing this site", so a person who starts editing knows a
-// conflict may follow ("Claude is reading this site" while it only reads).
+// conflict may follow ("Claude is reading this site" while it has only read in
+// this run; once it wrote, "editing" stays until the run ends).
 // Shown while a call runs and AGENT_ACTIVE_MS after the last one ended
 // (src/lib/live/presenceStore.ts). Not a live region itself: the verb changes
 // with every call, and the announcer (src/components/live/AgentAnnouncer.tsx)
@@ -21,7 +22,10 @@ import type { LivePresenceStore } from '@/lib/live/presenceStore';
 const AgentEditingNote = observer(function AgentEditingNote({ className = '', compact = false }: { className?: string; compact?: boolean }) {
   const { editorUI } = useStore();
   const presence = editorUI.livePresence as LivePresenceStore | undefined;
-  const note = editingNote((presence?.active ?? []).map((a) => ({ label: a.label, tool: a.focus.tool })));
+  const note = editingNote(
+    (presence?.active ?? []).map((a) => ({ label: a.label, tool: a.focus.tool })),
+    presence?.runEdited ?? false,
+  );
   return (
     <span className={className}>
       {note && compact && (

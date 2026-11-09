@@ -69,6 +69,26 @@ describe('the agent announcer', () => {
     expect(heard().at(-1)).toBe('Claude finished: wrote 2 changes');
   });
 
+  it('announces what needs attention from a reconnect, which happened during the gap', () => {
+    render(<AgentAnnouncer />);
+    act(() => presence().applyState({ agents: [], feed: [line({ id: 'old', outcome: 'failed' })] }));
+    act(() => presence().applyState({ agents: [], feed: [line({ id: 'gap', outcome: 'awaiting_approval', tool: 'publish' }), line({ id: 'old', outcome: 'failed' })] }));
+    expect(heard()).toEqual(['Claude: Publishing needs your approval']);
+  });
+
+  it('counts a call whose end is the first thing heard of its agent in the summary', () => {
+    render(<AgentAnnouncer />);
+    act(() => presence().applyActivity(activity({ callId: 'e1', tool: 'apply_batch', phase: 'end', outcome: 'ok', changes: 5 })));
+    act(() => vi.advanceTimersByTime(AGENT_ACTIVE_MS + 1));
+    expect(heard().at(-1)).toBe('Claude finished: wrote 5 changes');
+  });
+
+  it('says nothing about Follow when no agent works (a pan in an empty session)', () => {
+    render(<AgentAnnouncer />);
+    act(() => presence().setFollow(false));
+    expect(heard()).toEqual([]);
+  });
+
   it('never announces the history of another site opened after a reset', () => {
     render(<AgentAnnouncer />);
     act(() => presence().reset());

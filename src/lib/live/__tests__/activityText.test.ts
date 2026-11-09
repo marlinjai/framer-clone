@@ -48,7 +48,9 @@ describe('activity words', () => {
   });
 
   it('words refusals, approvals and failures without jargon', () => {
-    expect(feedLineText({ tool: 'generate_page', outcome: 'site_changed' })).toBe('Generating content not written: the site changed meanwhile, reading it again');
+    expect(feedLineText({ tool: 'generate_page', outcome: 'site_changed' })).toBe('Generated content not saved: the site changed meanwhile, reading it again');
+    expect(feedLineText({ tool: 'apply_batch', outcome: 'site_changed' })).toBe('Changes not written: the site changed meanwhile, reading it again');
+    expect(feedLineText({ tool: 'publish', outcome: 'site_changed' })).toBe('Publishing stopped: the site changed meanwhile, reading it again');
     expect(feedLineText({ tool: 'apply_batch', outcome: 'rejected' })).toBe('Changes refused, nothing written');
     expect(feedLineText({ tool: 'publish', outcome: 'failed' })).toBe('Publishing failed');
     expect(feedLineText({ tool: 'publish', outcome: 'awaiting_approval' })).toBe('Publishing needs your approval');
@@ -85,6 +87,9 @@ describe('activity words', () => {
     expect(activityMode([])).toBeUndefined();
     expect(activityMode([a('Claude', 'get_page')])).toBe('reading');
     expect(activityMode([a('Claude', 'get_page'), a('Codex', 'publish')])).toBe('editing');
+    // Once it wrote in this run, it stays "editing" while it reads in between.
+    expect(activityMode([a('Claude', 'get_page')], true)).toBe('editing');
+    expect(editingNote([a('Claude', 'get_page')], true)).toBe('Claude is editing this site');
   });
 
   it('announces only what needs attention, with the agent first', () => {
@@ -104,6 +109,9 @@ describe('activity words', () => {
     // Refusals are not repeated, planned sections change nothing on the site.
     expect(runSummary([line({ outcome: 'rejected', changes: 3 }), line({ tool: 'announce_sections' })])).toBe('Claude finished without changing anything');
     expect(runSummary([line({ changes: 1 }), line({ agentId: 'a2', label: 'Codex', changes: 1 })])).toBe('Claude and Codex finished: wrote 2 changes');
+    // A failure may have come after a write committed: never "without changing anything" then.
+    expect(runSummary([line({ outcome: 'failed', changes: 2 })])).toBe('Claude finished: 1 step failed');
+    expect(runSummary([line({ changes: 3 }), line({ outcome: 'failed', tool: 'publish' }), line({ outcome: 'failed' })])).toBe('Claude finished: wrote 3 changes and 2 steps failed');
   });
 
   it('names the agent the camera follows', () => {

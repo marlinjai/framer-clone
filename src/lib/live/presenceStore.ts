@@ -33,6 +33,7 @@
 //      over, and the camera follows again.
 
 import { action, makeObservable, observable } from 'mobx';
+import { isReadTool } from '@/lib/live/activityText';
 import {
   AGENT_ACTIVE_MS,
   AGENT_FRAME_LINGER_MS,
@@ -121,10 +122,18 @@ export class LivePresenceStore {
   /** Counts the runs (an agent becoming active while none was): the camera's "moved by the person" starts over with each. */
   run = 0;
   /**
-   * Counts the `state` events applied (and resets): the feed lines they bring are history, which
-   * the announcer (src/components/live/AgentAnnouncer.tsx) never reads out, unlike a line that arrives.
+   * Counts the `state` events applied. The first after a reset (or before any) brings history,
+   * which the announcer (src/components/live/AgentAnnouncer.tsx) never reads out; a later one is a
+   * reconnect, whose new lines happened during the gap.
    */
   stateApplied = 0;
+  /** Counts the resets (a sign-out, another site opened). */
+  resets = 0;
+  /**
+   * An agent wrote (or started a call that writes) during this run: the top bar keeps saying
+   * "editing" until the run ends, also while the agent reads between writes.
+   */
+  runEdited = false;
 
   private timers = new Map<string, Timers>();
   /** Per agent, its running calls in the order they started (the last is the most recent). */
@@ -143,6 +152,8 @@ export class LivePresenceStore {
       leadAgentId: observable,
       run: observable,
       stateApplied: observable,
+      resets: observable,
+      runEdited: observable,
       applyState: action,
       applyActivity: action,
       setFollow: action,
@@ -256,6 +267,7 @@ export class LivePresenceStore {
     if (this.agents.size === 0 && !continuing) {
       this.follow = true;
       this.run += 1;
+      this.runEdited = false;
     }
     if (!this.everActive) {
       this.everActive = true;
@@ -285,6 +297,7 @@ export class LivePresenceStore {
       // A snapshot lists every call still running; an agent with one running has no use for its last ended one.
       if (a.phase === 'end' && prev && prev.openCalls.length > 0) continue;
       if (this.agents.size === 0) this.becameActive(continuing);
+      if (!isReadTool(a.tool)) this.runEdited = true;
       this.markSeen(a);
       const running = a.phase === 'start';
       const failed = a.phase === 'end' && a.outcome !== undefined && a.outcome !== 'ok';
@@ -316,6 +329,7 @@ export class LivePresenceStore {
     const prev = this.agents.get(a.agentId);
     // A first sight of the agent (its start may have been missed across a reconnect) begins a run either way.
     if (!prev) this.becameActive();
+    if (!isReadTool(a.tool)) this.runEdited = true;
     if (a.phase === 'start') {
       this.clearTimers(a.agentId);
       this.openCall(a.agentId, a.callId, focusOf(a), ageOf(a.at, this.now()));
@@ -366,7 +380,8 @@ export class LivePresenceStore {
 
   /** The editor closed the site (or opened another): nothing carries over. */
   reset(): void {
-    this.stateApplied += 1;
+    this.resets += 1;
+    this.runEdited = false;
     for (const id of [...this.timers.keys()]) this.clearTimers(id);
     this.clearCalls();
     this.agents.clear();

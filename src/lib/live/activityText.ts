@@ -57,17 +57,20 @@ function whoOf(labels: readonly string[]): string {
  * while every active agent's latest call only reads, "Claude is editing this
  * site" as soon as one writes (a conflict may follow then).
  */
-export function editingNote(agents: ReadonlyArray<{ label: string; tool: string }>): string | null {
-  const mode = activityMode(agents);
+export function editingNote(agents: ReadonlyArray<{ label: string; tool: string }>, edited = false): string | null {
+  const mode = activityMode(agents, edited);
   if (!mode) return null;
   const who = whoOf(agents.map((a) => a.label));
   return `${who} ${agents.length === 1 ? 'is' : 'are'} ${mode} this site`;
 }
 
-/** Whether the active agents only read, or one of them edits; undefined while none is active. */
-export function activityMode(agents: ReadonlyArray<{ tool: string }>): 'reading' | 'editing' | undefined {
+/**
+ * Whether the active agents only read, or one of them edits; undefined while none is active.
+ * `edited`: an agent wrote earlier in this run, so it stays "editing" while it reads in between.
+ */
+export function activityMode(agents: ReadonlyArray<{ tool: string }>, edited = false): 'reading' | 'editing' | undefined {
   if (agents.length === 0) return undefined;
-  return agents.some((a) => !isReadTool(a.tool)) ? 'editing' : 'reading';
+  return edited || agents.some((a) => !isReadTool(a.tool)) ? 'editing' : 'reading';
 }
 
 function plural(n: number, one: string, many: string): string {
@@ -103,9 +106,23 @@ function attemptNoun(tool: string): string {
   }
 }
 
+/** What a call the site refused because it changed meanwhile did not do. */
+function notDone(tool: string): string {
+  switch (tool) {
+    case 'apply_batch':
+      return 'Changes not written';
+    case 'generate_page':
+      return 'Generated content not saved';
+    case 'announce_sections':
+      return 'Planned sections not saved';
+    default:
+      return `${attemptNoun(tool)} stopped`;
+  }
+}
+
 function refusal(tool: string, outcome: Exclude<AgentOutcome, 'ok'>): string {
   const noun = attemptNoun(tool);
-  if (outcome === 'site_changed') return `${noun} not written: the site changed meanwhile, reading it again`;
+  if (outcome === 'site_changed') return `${notDone(tool)}: the site changed meanwhile, reading it again`;
   if (outcome === 'rejected') return `${noun} refused, nothing written`;
   if (outcome === 'awaiting_approval') return `${noun} needs your approval`;
   if (outcome === 'declined') return `${noun} declined, nothing changed`;
@@ -196,8 +213,9 @@ const RUN_STEPS: Record<string, string> = {
 /**
  * The one sentence a run ends with (the agents became inactive): what the
  * run's lines wrote, in total. "Claude finished: wrote 6 changes and deleted 1
- * page", "Claude finished without changing anything". Refusals are not
- * repeated (each was announced when it arrived). Null for a run with no line.
+ * page", "Claude finished: 1 step failed", "Claude finished without changing
+ * anything". Refusals are not repeated (each was announced when it arrived and
+ * wrote nothing). Null for a run with no line.
  */
 export function runSummary(
   lines: ReadonlyArray<Pick<LiveFeedLine, 'agentId' | 'label' | 'tool' | 'outcome'> & Partial<Pick<LiveFeedLine, 'changes' | 'deletedPageIds' | 'deletedPages'>>>,
@@ -208,8 +226,11 @@ export function runSummary(
   const who = whoOf([...agents.values()]);
   let changes = 0;
   let deleted = 0;
+  let failed = 0;
   const steps = new Set<string>();
   for (const l of lines) {
+    // A failure may have come after a write committed: the summary never claims nothing changed then.
+    if (l.outcome === 'failed') failed += 1;
     if (l.outcome !== 'ok' || isReadTool(l.tool)) continue;
     if (l.tool === 'apply_batch') {
       const d = deletedCount(l);
@@ -223,6 +244,7 @@ export function runSummary(
   if (changes > 0) parts.push(`wrote ${plural(changes, 'change', 'changes')}`);
   if (deleted > 0) parts.push(`deleted ${plural(deleted, 'page', 'pages')}`);
   parts.push(...steps);
+  if (failed > 0) parts.push(`${plural(failed, 'step', 'steps')} failed`);
   if (parts.length === 0) return `${who} finished without changing anything`;
   const last = parts.pop()!;
   return `${who} finished: ${parts.length > 0 ? `${parts.join(', ')} and ${last}` : last}`;
