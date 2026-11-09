@@ -80,8 +80,10 @@ const AgentAnnouncer = observer(function AgentAnnouncer() {
 
   React.useEffect(() => {
     if (!presence) return;
-    // Lines there already are history, not news.
+    // Lines there already are history, not news; so is every line a `state` event brings (the
+    // backfill after a reload, a reconnect, a site switch), which comes after this mounts.
     const seen = new Set(presence.feed.map((l) => l.id));
+    let state = presence.stateApplied;
     let runLines: LiveFeedLine[] = [];
     // What the run's note announced: nothing yet, reading, or editing.
     let announced: 'none' | 'reading' | 'editing' = 'none';
@@ -90,7 +92,9 @@ const AgentAnnouncer = observer(function AgentAnnouncer() {
       reaction(
         () => presence.feed,
         (feed) => {
-          const fresh = feed.filter((l) => !seen.has(l.id)).reverse();
+          const history = presence.stateApplied !== state;
+          state = presence.stateApplied;
+          const fresh = history ? [] : feed.filter((l) => !seen.has(l.id)).reverse();
           for (const line of fresh) {
             if (presence.anyActive) runLines.push(line);
             if (needsAttention(line)) say(feedLineAnnouncement(line));

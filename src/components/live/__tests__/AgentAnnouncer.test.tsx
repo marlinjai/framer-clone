@@ -50,9 +50,29 @@ describe('the agent announcer', () => {
     expect(heard()).toEqual([]);
   });
 
-  it('never announces the backfill of a reload', () => {
-    act(() => presence().applyState({ agents: [], feed: [line({ id: 'old', outcome: 'failed' })] }));
+  it('never announces the backfill of a reload, which arrives after it mounted', () => {
     render(<AgentAnnouncer />);
+    act(() => presence().applyState({ agents: [], feed: [line({ id: 'old', outcome: 'failed' }), line({ id: 'older', outcome: 'awaiting_approval', tool: 'publish' })] }));
+    expect(heard()).toEqual([]);
+    // A line that arrives afterwards is news.
+    act(() => presence().addLine(line({ id: 'new', outcome: 'failed', tool: 'publish' })));
+    expect(heard()).toEqual(['Claude: Publishing failed']);
+  });
+
+  it('a reload during a run counts only the lines that arrive afterwards in its summary', () => {
+    render(<AgentAnnouncer />);
+    const start = activity({ callId: 'c9', tool: 'apply_batch' });
+    act(() => presence().applyState({ agents: [start], feed: [line({ id: 'old1', changes: 40 }), line({ id: 'old2', outcome: 'rejected' })] }));
+    expect(heard()).toEqual(['Claude is editing this site']);
+    act(() => presence().applyActivity({ ...start, phase: 'end', outcome: 'ok', changes: 2 }));
+    act(() => vi.advanceTimersByTime(AGENT_ACTIVE_MS + 1));
+    expect(heard().at(-1)).toBe('Claude finished: wrote 2 changes');
+  });
+
+  it('never announces the history of another site opened after a reset', () => {
+    render(<AgentAnnouncer />);
+    act(() => presence().reset());
+    act(() => presence().applyState({ agents: [], feed: [line({ id: 'other-site', outcome: 'failed' })] }));
     expect(heard()).toEqual([]);
   });
 

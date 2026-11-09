@@ -32,7 +32,7 @@ describe('activity words', () => {
     expect(feedLineText({ tool: 'announce_sections', outcome: 'ok' }, 'Home')).toBe(`Planned sections on ${L}Home${R}`);
     expect(feedLineText({ tool: 'announce_sections', outcome: 'rejected' })).toBe('Planned sections refused, nothing written');
     expect(feedLineText({ tool: 'clear_sections', outcome: 'ok' })).toBe('Removed the planned sections');
-    expect(feedLineText({ tool: 'clear_sections', outcome: 'failed' })).toBe('Removing the planned sections failed, nothing written');
+    expect(feedLineText({ tool: 'clear_sections', outcome: 'failed' })).toBe('Removing the planned sections failed');
     expect(feedLineText({ tool: 'sections_stopped', outcome: 'ok', label: 'Claude' })).toBe('Planned sections removed: Claude stopped');
     expect(feedLineText({ tool: 'sections_stopped', outcome: 'ok' })).toBe('Planned sections removed: the agent stopped');
   });
@@ -50,10 +50,10 @@ describe('activity words', () => {
   it('words refusals, approvals and failures without jargon', () => {
     expect(feedLineText({ tool: 'generate_page', outcome: 'site_changed' })).toBe('Generating content not written: the site changed meanwhile, reading it again');
     expect(feedLineText({ tool: 'apply_batch', outcome: 'rejected' })).toBe('Changes refused, nothing written');
-    expect(feedLineText({ tool: 'publish', outcome: 'failed' })).toBe('Publishing failed, nothing written');
+    expect(feedLineText({ tool: 'publish', outcome: 'failed' })).toBe('Publishing failed');
     expect(feedLineText({ tool: 'publish', outcome: 'awaiting_approval' })).toBe('Publishing needs your approval');
     expect(feedLineText({ tool: 'rollback', outcome: 'declined' })).toBe('Restoring an earlier version declined, nothing changed');
-    expect(feedLineText({ tool: 'unknown_tool', outcome: 'failed' })).toBe('A step failed, nothing written');
+    expect(feedLineText({ tool: 'unknown_tool', outcome: 'failed' })).toBe('A step failed');
   });
 
   it('names a deleted page by the title the editor remembers, and words a mixed batch', () => {
@@ -64,6 +64,9 @@ describe('activity words', () => {
     expect(feedLineText({ tool: 'apply_batch', outcome: 'ok', changes: 5, deletedPageIds: ['p2'] }, undefined, ['About'])).toBe(`Wrote 4 changes and deleted the page ${L}About${R}`);
     // The line's own page is the deleted one: no "on" for it.
     expect(feedLineText({ tool: 'apply_batch', outcome: 'ok', changes: 3, pageId: 'p2', deletedPageIds: ['p2'] }, 'About')).toBe('Wrote 2 changes and deleted 1 page');
+    // More deletes than ids travel: the uncapped count decides.
+    expect(feedLineText({ tool: 'apply_batch', outcome: 'ok', changes: 30, deletedPageIds: ['p1', 'p2'], deletedPages: 30 })).toBe('Deleted 30 pages');
+    expect(runSummary([{ agentId: 'a1', label: 'Claude', tool: 'apply_batch', outcome: 'ok', changes: 31, deletedPageIds: ['p1'], deletedPages: 30 }])).toBe('Claude finished: wrote 1 change and deleted 30 pages');
     // A refused batch is a refusal, whatever it names.
     expect(feedLineText({ tool: 'apply_batch', outcome: 'rejected', changes: 1, deletedPageIds: ['p2'] })).toBe('Changes refused, nothing written');
   });
@@ -88,7 +91,7 @@ describe('activity words', () => {
     expect(needsAttention({ outcome: 'ok' })).toBe(false);
     expect(needsAttention({ outcome: 'awaiting_approval' })).toBe(true);
     expect(feedLineAnnouncement({ tool: 'publish', outcome: 'awaiting_approval', label: 'Claude' })).toBe('Claude: Publishing needs your approval');
-    expect(feedLineAnnouncement({ tool: 'publish', outcome: 'failed' })).toBe('Agent: Publishing failed, nothing written');
+    expect(feedLineAnnouncement({ tool: 'publish', outcome: 'failed' })).toBe('Agent: Publishing failed');
   });
 
   it('sums up a run in one sentence', () => {

@@ -137,8 +137,11 @@ export async function recentSiteOperations(
     if (nodeIds.length > 0) line.nodeIds = nodeIds;
     if (row.operation === 'batch') {
       line.changes = ops.length;
-      const deleted = [...new Set(ops.filter((o) => o?.op === 'deletePage' && typeof o.pageId === 'string').map((o) => o.pageId as string))].slice(0, LIVE_LIST_MAX);
-      if (deleted.length > 0) line.deletedPageIds = deleted;
+      const deletes = ops.filter((o) => o?.op === 'deletePage' && typeof o.pageId === 'string');
+      if (deletes.length > 0) {
+        line.deletedPageIds = [...new Set(deletes.map((o) => o.pageId as string))].slice(0, LIVE_LIST_MAX);
+        line.deletedPages = deletes.length;
+      }
     }
     return line;
   });

@@ -95,6 +95,7 @@ export function feedLineOf(a: AgentActivity): LiveFeedLine {
     ...(a.nodeIds?.length ? { nodeIds: a.nodeIds } : {}),
     ...(a.changes !== undefined ? { changes: a.changes } : {}),
     ...(a.deletedPageIds?.length ? { deletedPageIds: a.deletedPageIds } : {}),
+    ...(a.deletedPages ? { deletedPages: a.deletedPages } : {}),
     at: a.at,
   };
 }
@@ -119,6 +120,11 @@ export class LivePresenceStore {
   leadAgentId: string | undefined = undefined;
   /** Counts the runs (an agent becoming active while none was): the camera's "moved by the person" starts over with each. */
   run = 0;
+  /**
+   * Counts the `state` events applied (and resets): the feed lines they bring are history, which
+   * the announcer (src/components/live/AgentAnnouncer.tsx) never reads out, unlike a line that arrives.
+   */
+  stateApplied = 0;
 
   private timers = new Map<string, Timers>();
   /** Per agent, its running calls in the order they started (the last is the most recent). */
@@ -136,6 +142,7 @@ export class LivePresenceStore {
       everActive: observable,
       leadAgentId: observable,
       run: observable,
+      stateApplied: observable,
       applyState: action,
       applyActivity: action,
       setFollow: action,
@@ -258,6 +265,7 @@ export class LivePresenceStore {
 
   /** The `state` event of a (re)connect: the active agents and the feed, replacing what was held. */
   applyState(state: Pick<SiteStateEvent, 'agents' | 'feed'>): void {
+    this.stateApplied += 1;
     const now = this.now();
     // Agents were here before this snapshot: it continues the run (a reconnect), it does not begin one.
     const continuing = this.agents.size > 0;
@@ -358,6 +366,7 @@ export class LivePresenceStore {
 
   /** The editor closed the site (or opened another): nothing carries over. */
   reset(): void {
+    this.stateApplied += 1;
     for (const id of [...this.timers.keys()]) this.clearTimers(id);
     this.clearCalls();
     this.agents.clear();

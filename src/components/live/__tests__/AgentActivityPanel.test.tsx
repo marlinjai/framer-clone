@@ -18,6 +18,7 @@ let store: RootStoreType;
 vi.mock('@/hooks/useStore', () => ({ useStore: () => store }));
 
 import AgentActivityPanel from '../AgentActivityPanel';
+import AgentAnnouncer from '../AgentAnnouncer';
 import { AgentCameraFollow } from '../AgentPresenceLayer';
 
 let home: PageModelType;
@@ -89,6 +90,8 @@ beforeEach(() => {
       <CameraHandle />
       <AgentCameraFollow />
       <AgentActivityPanel />
+      {/* Always mounted in the editor (the top bar): it keeps the page titles the feed names deleted pages by. */}
+      <AgentAnnouncer />
     </TransformProvider>,
   );
   drawCanvas();

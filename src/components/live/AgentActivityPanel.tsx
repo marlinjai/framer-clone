@@ -26,7 +26,7 @@ import { AlertTriangle, Check, ChevronDown, ChevronRight, Clock, Crosshair, X } 
 import { useStore } from '@/hooks/useStore';
 import { revealOffset } from '@/lib/canvas/cameraControls';
 import { feedLineText, feedLineTime, followTitle } from '@/lib/live/activityText';
-import { rememberedPageTitle, rememberPageTitles } from '@/lib/live/pageTitleMemory';
+import { rememberedPageTitle } from '@/lib/live/pageTitleMemory';
 import { noteFollowToggledByPerson } from '@/components/live/AgentAnnouncer';
 import type { LivePresenceStore } from '@/lib/live/presenceStore';
 import { presencePagesOf, type PresenceProject } from '@/lib/live/presenceTarget';
@@ -81,8 +81,7 @@ const AgentActivityPanel = observer(function AgentActivityPanel() {
   const projectPages = Array.from(project.pages.values()) as PageModelType[];
   // The pages of component definitions too: an agent can edit the one open on the canvas.
   const pages = presencePagesOf(project as unknown as PresenceProject) as unknown as PageModelType[];
-  // Remembered, so a page an agent deletes can still be named in its line.
-  rememberPageTitles(project, projectPages);
+  // A deleted page's title, as the announcer remembered it (it is always mounted and keeps them).
   const titleOf = (id: string): string | undefined => pages.find((p) => p.id === id)?.metadata.title || rememberedPageTitle(project, id);
   const lead = presence.leadAgentId ? presence.agents.get(presence.leadAgentId) : undefined;
   const open = presence.panelOpen;

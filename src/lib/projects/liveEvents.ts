@@ -103,6 +103,8 @@ export interface AgentActivity {
   changes?: number;
   /** On the end of a batch the site accepted: the pages its deletePage operations removed (counted in `changes` too). At most LIVE_LIST_MAX. */
   deletedPageIds?: string[];
+  /** How many deletePage operations that batch held, uncapped (the ids are capped). */
+  deletedPages?: number;
   /** ISO 8601. */
   at: string;
 }
@@ -128,6 +130,8 @@ export interface LiveFeedLine {
   changes?: number;
   /** The pages the batch deleted (its deletePage operations, counted in `changes` too): ids only, the editor words them. */
   deletedPageIds?: string[];
+  /** How many pages the batch deleted, uncapped (the ids are capped at LIVE_LIST_MAX). */
+  deletedPages?: number;
   /** ISO 8601. */
   at: string;
 }

@@ -109,14 +109,20 @@ function refusal(tool: string, outcome: Exclude<AgentOutcome, 'ok'>): string {
   if (outcome === 'rejected') return `${noun} refused, nothing written`;
   if (outcome === 'awaiting_approval') return `${noun} needs your approval`;
   if (outcome === 'declined') return `${noun} declined, nothing changed`;
-  return `${noun} failed, nothing written`;
+  // A failure may have come after a write committed: no promise that nothing changed.
+  return `${noun} failed`;
 }
 
-export type FeedLineWords = Pick<LiveFeedLine, 'tool' | 'outcome'> & Partial<Pick<LiveFeedLine, 'label' | 'pageId' | 'changes' | 'deletedPageIds'>>;
+export type FeedLineWords = Pick<LiveFeedLine, 'tool' | 'outcome'> & Partial<Pick<LiveFeedLine, 'label' | 'pageId' | 'changes' | 'deletedPageIds' | 'deletedPages'>>;
+
+/** How many pages a line deleted: the uncapped count, else the ids it carries. */
+function deletedCount(line: Partial<Pick<LiveFeedLine, 'deletedPageIds' | 'deletedPages'>>): number {
+  return line.deletedPages ?? line.deletedPageIds?.length ?? 0;
+}
 
 /** A batch's words: "Wrote 4 changes on 'Home'", "Deleted the page 'About'", "Wrote 4 changes and deleted 1 page". */
 function batchText(line: FeedLineWords, pageTitle: string | undefined, deletedTitles: ReadonlyArray<string | undefined>): string {
-  const deleted = line.deletedPageIds?.length ?? 0;
+  const deleted = deletedCount(line);
   // The line's page is the deleted one: no "on" for a page that is gone.
   const page = line.pageId && line.deletedPageIds?.includes(line.pageId) ? undefined : pageTitle;
   if (deleted === 0) {
@@ -193,7 +199,9 @@ const RUN_STEPS: Record<string, string> = {
  * page", "Claude finished without changing anything". Refusals are not
  * repeated (each was announced when it arrived). Null for a run with no line.
  */
-export function runSummary(lines: ReadonlyArray<Pick<LiveFeedLine, 'agentId' | 'label' | 'tool' | 'outcome' | 'changes' | 'deletedPageIds'>>): string | null {
+export function runSummary(
+  lines: ReadonlyArray<Pick<LiveFeedLine, 'agentId' | 'label' | 'tool' | 'outcome'> & Partial<Pick<LiveFeedLine, 'changes' | 'deletedPageIds' | 'deletedPages'>>>,
+): string | null {
   if (lines.length === 0) return null;
   const agents = new Map<string, string>();
   for (const l of lines) if (!agents.has(l.agentId)) agents.set(l.agentId, l.label);
@@ -204,7 +212,7 @@ export function runSummary(lines: ReadonlyArray<Pick<LiveFeedLine, 'agentId' | '
   for (const l of lines) {
     if (l.outcome !== 'ok' || isReadTool(l.tool)) continue;
     if (l.tool === 'apply_batch') {
-      const d = l.deletedPageIds?.length ?? 0;
+      const d = deletedCount(l);
       deleted += d;
       changes += Math.max(0, (l.changes ?? 1) - d);
     } else if (RUN_STEPS[l.tool]) {

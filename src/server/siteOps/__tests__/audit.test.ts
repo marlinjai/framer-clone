@@ -51,7 +51,7 @@ describe('deleted pages in the audit row', () => {
       ops: [{ op: 'updateText', nodeId: 'n1' }, { op: 'deletePage', pageId: 'p-about', slug: 'about', title: 'About us' }],
     });
     const [line] = await recentSiteOperations(prisma, scope, 's1');
-    expect(line).toMatchObject({ tool: 'apply_batch', changes: 2, deletedPageIds: ['p-about'] });
+    expect(line).toMatchObject({ tool: 'apply_batch', changes: 2, deletedPages: 1, deletedPageIds: ['p-about'] });
     expect(JSON.stringify(line)).not.toContain('About us');
   });
 

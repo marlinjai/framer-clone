@@ -115,7 +115,6 @@ export function useDraftHook(componentId: string, skip: boolean): DraftHook {
   return hook.get();
 }
 
-/** The band where the next section will appear. Static, no shimmer. */
 /** The band text's chip: dark grey on near white, whatever the frame's background is. */
 export const DRAFT_BAND_TEXT_STYLE: React.CSSProperties = {
   maxWidth: 'calc(100% - 32px)',
@@ -129,6 +128,7 @@ export const DRAFT_BAND_TEXT_STYLE: React.CSSProperties = {
   textOverflow: 'ellipsis',
 };
 
+/** The band where the next section will appear. Static, no shimmer. */
 function DraftBand({ text }: { text: string }) {
   return (
     <div

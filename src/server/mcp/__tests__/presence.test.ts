@@ -36,7 +36,7 @@ import { liveAgentId } from '@/server/siteOps/audit';
 import { createMcpHandler } from '../handler';
 import { resetLivePlansForTests } from '../livePlans';
 import { ApprovalStore } from '../approvals';
-import { deletedPageIdsOf, focusOf, MISSES_PER_KEY, outcomeOf, REPORTS_PER_KEY, resetPresenceScopeCacheForTests, siteInScope, takeReport } from '../presence';
+import { deletedPagesOf, focusOf, MISSES_PER_KEY, outcomeOf, REPORTS_PER_KEY, resetPresenceScopeCacheForTests, siteInScope, takeReport } from '../presence';
 
 const fakeKey = () => `${['sk', 'live'].join('_')}_${randomBytes(16).toString('hex')}`;
 const KEY_ID = `key_${randomBytes(6).toString('hex')}`;
@@ -317,7 +317,8 @@ describe('agent:activity from the MCP endpoint', () => {
     const [refused, ok] = activities(heard).filter((a) => a.phase === 'end');
     expect(refused.outcome).toBe('rejected');
     expect(refused.deletedPageIds).toBeUndefined();
-    expect(ok).toMatchObject({ outcome: 'ok', changes: 1, deletedPageIds: [pageId] });
+    expect(refused.deletedPages).toBeUndefined();
+    expect(ok).toMatchObject({ outcome: 'ok', changes: 1, deletedPages: 1, deletedPageIds: [pageId] });
   });
 
   it('reports invalid arguments as failed', async () => {
@@ -468,7 +469,7 @@ describe('the pieces', () => {
 
   it('reads the pages a batch deletes, ids only, once each, never a made-up one', () => {
     expect(
-      deletedPageIdsOf({
+      deletedPagesOf({
         ops: [
           { op: 'deletePage', pageId: 'p1' },
           { op: 'updateText', nodeId: 'a', text: 'content' },
@@ -477,9 +478,9 @@ describe('the pieces', () => {
           { op: 'deletePage', pageId: 'not an id!' },
         ],
       }),
-    ).toEqual(['p1', 'p2']);
-    expect(deletedPageIdsOf({ ops: 'nope' })).toEqual([]);
-    expect(deletedPageIdsOf(undefined)).toEqual([]);
+    ).toEqual({ ids: ['p1', 'p2'], count: 4 });
+    expect(deletedPagesOf({ ops: 'nope' })).toEqual({ ids: [], count: 0 });
+    expect(deletedPagesOf(undefined)).toEqual({ ids: [], count: 0 });
   });
 
   it('reads the outcome from the error code', () => {

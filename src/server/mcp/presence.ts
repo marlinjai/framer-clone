@@ -234,18 +234,24 @@ export function sectionRefsOf(args: unknown): string[] {
   return refs;
 }
 
-/** The pages a batch's deletePage operations name, in order, at most LIVE_LIST_MAX. Only vouched for once the site accepted the batch. */
-export function deletedPageIdsOf(args: unknown): string[] {
+/**
+ * The pages a batch's deletePage operations name: the ids in order, once each, at most
+ * LIVE_LIST_MAX, and how many operations there were, uncapped. Only vouched for once the site
+ * accepted the batch.
+ */
+export function deletedPagesOf(args: unknown): { ids: string[]; count: number } {
   const ids: string[] = [];
+  let count = 0;
   const ops = record(args).ops;
-  if (!Array.isArray(ops)) return ids;
+  if (!Array.isArray(ops)) return { ids, count };
   for (const raw of ops) {
     const op = record(raw);
     if (op.op !== 'deletePage') continue;
+    count += 1;
     const id = idOf(op.pageId);
     if (id && !ids.includes(id) && ids.length < LIVE_LIST_MAX) ids.push(id);
   }
-  return ids;
+  return { ids, count };
 }
 
 /** How a tool's answer ended, from its error code. A rate limit is a refusal: nothing was written. */
@@ -373,7 +379,8 @@ export async function withPresence(
     const ops = record(call.args).ops;
     const changes = Array.isArray(ops) ? ops.length : undefined;
     // Like the named ids: a refused batch deleted nothing, whatever it names.
-    const deletedPageIds = outcome === 'ok' ? deletedPageIdsOf(call.args) : [];
+    const deleted = outcome === 'ok' ? deletedPagesOf(call.args) : { ids: [] as string[], count: 0 };
+    const deletion = deleted.count > 0 ? { deletedPages: deleted.count, ...(deleted.ids.length > 0 ? { deletedPageIds: deleted.ids } : {}) } : {};
     const end: AgentActivity = {
       ...base,
       phase: 'end',
@@ -381,7 +388,7 @@ export async function withPresence(
       ...(pageId ? { pageId } : {}),
       ...(nodeIds.length > 0 ? { nodeIds } : {}),
       ...(changes !== undefined ? { changes } : {}),
-      ...(deletedPageIds.length > 0 ? { deletedPageIds } : {}),
+      ...deletion,
       at: new Date().toISOString(),
     };
     // A committed write is in the audit table, which backs the feed after a reload;
@@ -398,7 +405,7 @@ export async function withPresence(
           ...(pageId ? { pageId } : {}),
           ...(nodeIds.length > 0 ? { nodeIds } : {}),
           ...(changes !== undefined ? { changes } : {}),
-          ...(deletedPageIds.length > 0 ? { deletedPageIds } : {}),
+          ...deletion,
           at: end.at,
         };
     // Nothing after the end may draw the frame again.
