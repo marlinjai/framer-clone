@@ -548,8 +548,10 @@ export class LiveSync {
     this.disposeSettled = onWritesSettled((projectId) => {
       if (projectId !== this.projectId) return;
       this.retake();
-      // The merged copy's save settled with nothing held for it: no further replay can follow it.
-      if (!this.held?.afterReplay && !hasWriteInFlight(this.projectId)) this.replayMark = undefined;
+      // The merged copy's save landed with nothing held for it: no further replay can follow it.
+      // A refusal (conflict) keeps the mark: the agent's newer copy, fetched after it, replays the edit again (take).
+      const refused = existingAutosave(this.projectId)?.getState().phase === 'conflict';
+      if (!this.held?.afterReplay && !hasWriteInFlight(this.projectId) && !refused) this.replayMark = undefined;
     });
     this.setPhase('connecting');
     this.openStream();
@@ -973,6 +975,20 @@ export class LiveSync {
     }
   }
 
+  /**
+   * Cmd/Ctrl+S (src/lib/projects/saveShortcut.ts) commits the open drafts and
+   * saves in the same moment, before the look at a copy held for that editing
+   * (a microtask later) could run: that save would go out on the old version and
+   * be refused. So the shortcut asks for the look first, here and now. Answers
+   * whether a copy held for editing was looked at (adopted, replayed or asked).
+   */
+  settleHeldEdit(): boolean {
+    const held = this.held;
+    if (!held?.whileEditing || isEditing(this.rootStore)) return false;
+    this.retake();
+    return true;
+  }
+
   /** Look at a held copy again: adopt it if the working copy is clean now, else keep asking the person. */
   private retake() {
     const held = this.held;
@@ -1036,10 +1052,19 @@ export class LiveSync {
       // Typing, a text edit, a drag or a resize is open (a resize writes on every
       // move, so the copy may already differ): no adoption replacing what the
       // person works on, and no dialog from this copy. Looked at once it settled.
+      // A replayed edit whose save was refused is the one to replay again then.
+      if (autosavePhase === 'conflict' && this.replayMark && !this.editMark) this.editMark = this.replayMark;
       this.setHeld({ ...keep, whileEditing: true });
       // Already in conflict (an earlier refusal): only the version it names moves.
       if (autosavePhase === 'conflict') autosave?.noteChangedElsewhere(body.version);
       return;
+    }
+    if (!clean && autosavePhase === 'conflict' && this.replayMark && !hasWriteInFlight(this.projectId)) {
+      // The save of a replayed edit was refused before this newer copy arrived (the
+      // refusal usually wins: it is one round trip, the copy two): replay it again on top.
+      const mark = this.replayMark;
+      this.replayMark = undefined;
+      if (this.rebaseEdit(keep, mark)) return;
     }
     if (!clean && this.editMark && !hasWriteInFlight(this.projectId) && autosavePhase !== 'conflict') {
       // An edit that settled while this copy was being fetched (marked when it was announced).

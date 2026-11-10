@@ -47,6 +47,7 @@ import {
 } from '../liveSync';
 import { LIVE_PING_EVENT, type SiteVersionEvent } from '../liveEvents';
 import { registerOpenDraft } from '../openDrafts';
+import { handleSaveShortcut } from '../saveShortcut';
 import { EDITING_RECHECK_MS } from '@/lib/live/editingInProgress';
 import { GEN_DRAFT_LIMITS } from '../liveEvents';
 import { REVEAL_SETTLE_MS } from '@/lib/live/revealStore';
@@ -1564,6 +1565,97 @@ describe('liveSync: a settled edit goes on top of the agent\'s copy (review of P
     expect(knownServerVersion(SITE)).toBeGreaterThanOrEqual(3);
   });
 
+  /** Saves wait at a gate the test opens; a save on an old version is refused (409). */
+  function gatedSaves() {
+    const gates: Array<() => void> = [];
+    resetAutosaveForTests({
+      write: async (snapshot, expectedVersion): Promise<ProjectWriteResult> => {
+        await new Promise<void>((resolve) => gates.push(resolve));
+        saves.push({ expectedVersion, snapshot: snapshot as ProjectSnapshotOut });
+        if (expectedVersion !== server.version) return { kind: 'conflict', currentVersion: server.version };
+        server = { version: server.version + 1, snapshot: snapshot as ProjectSnapshotOut };
+        return { kind: 'ok', payload: {}, version: server.version };
+      },
+    });
+    autosaveFor(SITE).attach(project());
+    return { release: () => gates.shift()?.() };
+  }
+
+  it('the merged save refused before the agent\'s newer copy arrives (the usual order): the edit is replayed again once it does, no dialog left', async () => {
+    start();
+    await agentWrites('first');
+    const node = homeChild(0);
+    const gate = gatedSaves();
+    const draft = openDraft(() => node.setTextContent('typed by the person'));
+    await agentWrites('second');
+    draft.commitAndClose();
+    await settle(); // replayed on 3, its save waits at the gate
+    // The agent writes again; the refusal comes back before the event (one round trip against two).
+    const event = await agentWrites('third', false);
+    gate.release();
+    await settle();
+    await settle();
+    expect(autosaveFor(SITE).getState().phase).toBe('conflict');
+    stream().emit('site:version', event);
+    await settle();
+    gate.release();
+    await settle();
+    await settle();
+    expect(saves.map((save) => save.expectedVersion)).toEqual([3, 4]);
+    expect(autosaveFor(SITE).getState().phase).toBe('saved');
+    const text = JSON.stringify(server.snapshot);
+    for (const part of ['typed by the person', 'second', 'third']) expect(text).toContain(part);
+  });
+
+  it('the same with the stream down: the poll brings the newer copy, and the edit is replayed again', async () => {
+    start();
+    await agentWrites('first');
+    const node = homeChild(0);
+    const gate = gatedSaves();
+    const draft = openDraft(() => node.setTextContent('typed by the person'));
+    await agentWrites('second');
+    draft.commitAndClose();
+    await settle();
+    stream().fail(true); // refused: polling from now on
+    await agentWrites('third', false);
+    gate.release();
+    await settle();
+    await settle();
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_VISIBLE_MS);
+    gate.release();
+    await settle();
+    await settle();
+    expect(saves.map((save) => save.expectedVersion)).toEqual([3, 4]);
+    expect(autosaveFor(SITE).getState().phase).toBe('saved');
+    expect(JSON.stringify(server.snapshot)).toContain('typed by the person');
+    expect(JSON.stringify(server.snapshot)).toContain('third');
+  });
+
+  it('Cmd+S right after typing, with an agent write held for it: replayed on top, then one save on the agent\'s version, no dialog', async () => {
+    start();
+    await agentWrites('first');
+    const node = homeChild(0);
+    let dirty = true;
+    registerOpenDraft({
+      isDirty: () => dirty,
+      commit: () => {
+        node.setTextContent('typed then saved');
+        dirty = false;
+      },
+    });
+    await agentWrites('agent');
+    expect(liveSyncFor(SITE)?.heldVersion).toMatchObject({ whileEditing: true });
+    const key = new KeyboardEvent('keydown', { key: 's', metaKey: true, cancelable: true });
+    expect(handleSaveShortcut(key, store.editorUI)).toBe(true);
+    await settle();
+    await settle();
+    expect(saves.map((save) => save.expectedVersion)).toEqual([3]);
+    expect(autosaveFor(SITE).getState().phase).toBe('saved');
+    const text = JSON.stringify(server.snapshot);
+    expect(text).toContain('typed then saved');
+    expect(text).toContain('agent');
+  });
+
   it('the merged save refused because the agent wrote again first: the edit is replayed once more, no dialog', async () => {
     start();
     await agentWrites('first');
@@ -1839,7 +1931,6 @@ describe('liveSync: replay edge cases (third review of PR #353)', () => {
 });
 
 describe('liveSync: an edit settles after an agent write was held for it', () => {
-  const homeChild = (i: number) => project().getPage(homeId())!.appComponentTree.children[i] as unknown as { id: string; setTextContent(text: string): void };
 
   it('still editing when a write of this tab settles: the copy keeps waiting, nothing adopted under the cursor', async () => {
     start();
