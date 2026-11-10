@@ -93,7 +93,7 @@ import {
   type AdoptedVersion,
   type ProjectContent,
 } from '@/stores/openProject';
-import { existingAutosave, reloadDiscarding } from './autosave';
+import { existingAutosave, reloadDiscarding, setConflictDialogHold } from './autosave';
 import { SSE_HEARTBEAT_MS } from '@/lib/ai/sse';
 import { editorTabId } from './tabId';
 import {
@@ -326,6 +326,7 @@ export class LiveSync {
   private disposeVisibility: (() => void) | undefined;
   private disposeSettled: (() => void) | undefined;
   private disposeEditing: (() => void) | undefined;
+  private disposeDialogHold: (() => void) | undefined;
   /** Where the undo history stood when a copy was first held for the person's editing (rebaseEdit). */
   private editMark: HistoryMark | undefined;
   /** Where the history stood before a replayed edit, until its save settled. */
@@ -545,6 +546,8 @@ export class LiveSync {
     this.disposeVisibility = this.deps.onVisibilityChange(() => this.visibilityChanged());
     // A copy held while this tab's write was out: that write may have succeeded
     // (no 409 will come), so the held copy is looked at again once it settled.
+    // A save refused while the person is mid-edit, or while a replay of the refused edit is pending, keeps its dialog for later.
+    this.disposeDialogHold = setConflictDialogHold(this.projectId, () => isEditing(this.rootStore) || this.replayMark !== undefined);
     this.disposeSettled = onWritesSettled((projectId) => {
       if (projectId !== this.projectId) return;
       this.retake();
@@ -576,6 +579,8 @@ export class LiveSync {
     this.disposeVisibility = undefined;
     this.disposeSettled?.();
     this.disposeSettled = undefined;
+    this.disposeDialogHold?.();
+    this.disposeDialogHold = undefined;
     // Nor does a reveal still playing, or an agent's draft.
     this.reveal.reset();
     this.generation.reset();

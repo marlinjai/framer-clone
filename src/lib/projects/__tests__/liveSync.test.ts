@@ -16,8 +16,8 @@ import { applyPatch, getSnapshot } from 'mobx-state-tree';
 import { createRootStore, getHistoryStore, type RootStoreType } from '@/stores/RootStore';
 import ProjectModel, { type ProjectModelType, type ProjectSnapshotOut } from '@/models/ProjectModel';
 import { applyOperations } from '@/lib/siteOps/applyOps';
-import { knownServerPageIds, knownServerVersion, noteWriteInFlight, openProject } from '@/stores/openProject';
-import { autosaveFor, resetAutosaveForTests, AUTOSAVE_DEBOUNCE_MS } from '../autosave';
+import { hasWriteInFlight, knownServerPageIds, knownServerVersion, noteWriteInFlight, openProject } from '@/stores/openProject';
+import { autosaveFor, resetAutosaveForTests, AUTOSAVE_DEBOUNCE_MS, AUTOSAVE_MAX_WAIT_MS, HELD_DIALOG_CHECK_MS, HELD_DIALOG_MAX_MS } from '../autosave';
 import type { ProjectWriteResult } from '../projectWrite';
 import { editorTabId } from '../tabId';
 import {
@@ -38,6 +38,7 @@ import {
   loadNewerVersion,
   revealsOnAdoption,
   liveSyncFor,
+  LiveSync,
   setLiveSyncDepsForTests,
   setReplayApplyForTests,
   startLiveSync,
@@ -1592,10 +1593,15 @@ describe('liveSync: a settled edit goes on top of the agent\'s copy (review of P
     await settle(); // replayed on 3, its save waits at the gate
     // The agent writes again; the refusal comes back before the event (one round trip against two).
     const event = await agentWrites('third', false);
+    const opened: boolean[] = [];
+    const stopWatching = autosaveFor(SITE).subscribe(() => {
+      const state = autosaveFor(SITE).getState();
+      opened.push(state.phase === 'conflict' && state.dialogOpen);
+    });
     gate.release();
     await settle();
     await settle();
-    expect(autosaveFor(SITE).getState().phase).toBe('conflict');
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: false }); // held: a replay is pending
     stream().emit('site:version', event);
     await settle();
     gate.release();
@@ -1605,6 +1611,9 @@ describe('liveSync: a settled edit goes on top of the agent\'s copy (review of P
     expect(autosaveFor(SITE).getState().phase).toBe('saved');
     const text = JSON.stringify(server.snapshot);
     for (const part of ['typed by the person', 'second', 'third']) expect(text).toContain(part);
+    stopWatching();
+    // The dialog never stood open in between.
+    expect(opened).not.toContain(true);
   });
 
   it('the same with the stream down: the poll brings the newer copy, and the edit is replayed again', async () => {
@@ -1959,6 +1968,160 @@ describe('liveSync: an edit settles after an agent write was held for it', () =>
     expect(autosaveFor(SITE).getState().phase).toBe('conflict');
   });
 
+});
+
+describe('liveSync: a refused save\'s dialog waits while the person is mid-edit or a replay is pending', () => {
+  const homeChild = (i: number) => project().getPage(homeId())!.appComponentTree.children[i] as unknown as { id: string; setTextContent(text: string): void };
+  /** A save goes out mid-resize, the agent writes, and the save is refused. */
+  async function refusedMidResize(edit: 'text' | 'site setting' = 'text') {
+    start();
+    await agentWrites('first');
+    const node = homeChild(0);
+    const pending: Array<(result: ProjectWriteResult) => void> = [];
+    resetAutosaveForTests({
+      write: () =>
+        new Promise<ProjectWriteResult>((resolve) => {
+          pending.push(resolve);
+        }),
+    });
+    const finish = (result: ProjectWriteResult) => pending.shift()?.(result);
+    autosaveFor(SITE).attach(project());
+    const history = getHistoryStore()!;
+    store.editorUI.startResize({} as never);
+    history.startBatch('Resize');
+    if (edit === 'text') node.setTextContent('moving');
+    else project().updateMetadata({ description: 'a setting no replay carries' });
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_MAX_WAIT_MS); // the save goes out mid-gesture
+    await agentWrites('agent', false);
+    finish({ kind: 'conflict', currentVersion: server.version });
+    await settle();
+    const end = () => {
+      history.commitBatch();
+      store.editorUI.endResize();
+    };
+    return { end };
+  }
+
+  afterEach(async () => {
+    // No save of this block stays out for the next test (a write in flight is module state).
+    while (hasWriteInFlight(SITE)) {
+      noteWriteInFlight(SITE, false);
+    }
+    await settle();
+  });
+
+  it('refused mid-gesture: no dialog under the cursor; it opens once the gesture ended', async () => {
+    const { end } = await refusedMidResize();
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: false });
+    await vi.advanceTimersByTimeAsync(HELD_DIALOG_CHECK_MS * 3);
+    expect(autosaveFor(SITE).getState()).toMatchObject({ dialogOpen: false });
+    end();
+    await vi.advanceTimersByTimeAsync(HELD_DIALOG_CHECK_MS);
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: true });
+  });
+
+  it('never held longer than the limit, even while a gesture stays open', async () => {
+    const { end } = await refusedMidResize();
+    await vi.advanceTimersByTimeAsync(HELD_DIALOG_MAX_MS - HELD_DIALOG_CHECK_MS * 2);
+    expect(autosaveFor(SITE).getState()).toMatchObject({ dialogOpen: false });
+    await vi.advanceTimersByTimeAsync(HELD_DIALOG_CHECK_MS * 3);
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: true });
+    end();
+  });
+
+  it('the agent writing again while the dialog waits moves its version and does not end the wait', async () => {
+    const { end } = await refusedMidResize('site setting');
+    if (process.env.DBG) autosaveFor(SITE).subscribe(() => process.stderr.write('STATE ' + autosaveFor(SITE).getState().phase + ' resizing=' + store.editorUI.isResizing + ' batch=' + !!getHistoryStore()!.batch + '\n'));
+    stream().emit('site:version', { origin: 'mcp', version: server.version, versionBefore: server.version - 1 });
+    await settle();
+    await agentWrites('agent again');
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: false, currentVersion: server.version });
+    end();
+    await vi.advanceTimersByTimeAsync(HELD_DIALOG_CHECK_MS);
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: true, currentVersion: server.version });
+  });
+
+  it('a resize refused mid-gesture that the replay can carry: once it ends, replayed on the agent\'s copy, no dialog at all', async () => {
+    const { end } = await refusedMidResize();
+    stream().emit('site:version', { origin: 'mcp', version: server.version, versionBefore: server.version - 1 });
+    await settle();
+    end();
+    await settle();
+    await vi.advanceTimersByTimeAsync(HELD_DIALOG_CHECK_MS * 2);
+    expect(autosaveFor(SITE).getState().phase).not.toBe('conflict');
+    expect(JSON.stringify(working())).toContain('moving');
+    expect(JSON.stringify(working())).toContain('agent');
+  });
+
+  it('"Keep editing" is the person\'s answer: the held dialog does not come back by itself', async () => {
+    const { end } = await refusedMidResize();
+    autosaveFor(SITE).openConflict(); // from the status...
+    autosaveFor(SITE).dismissConflict(); // ...and Keep editing
+    end();
+    await vi.advanceTimersByTimeAsync(HELD_DIALOG_MAX_MS);
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: false });
+  });
+
+  it('a replay that turns out impossible (the agent changed the same text) opens the held dialog', async () => {
+    start();
+    await agentWrites('first');
+    const node = homeChild(0);
+    const gates: Array<() => void> = [];
+    resetAutosaveForTests({
+      write: async (snapshot, expectedVersion): Promise<ProjectWriteResult> => {
+        await new Promise<void>((resolve) => gates.push(resolve));
+        saves.push({ expectedVersion, snapshot: snapshot as ProjectSnapshotOut });
+        if (expectedVersion !== server.version) return { kind: 'conflict', currentVersion: server.version };
+        server = { version: server.version + 1, snapshot: snapshot as ProjectSnapshotOut };
+        return { kind: 'ok', payload: {}, version: server.version };
+      },
+    });
+    autosaveFor(SITE).attach(project());
+    const draft = openDraft(() => node.setTextContent('typed by the person'));
+    await agentWrites('second');
+    draft.commitAndClose();
+    await settle(); // replayed on 3, its save waits
+    // The agent rewrites the very text; the refusal comes first.
+    await serverWrites(async (m) => {
+      const outcome = await applyOperations(m, [{ op: 'updateText', nodeId: node.id, text: 'the agent\'s text' }]);
+      if (!outcome.ok) throw new Error('refused');
+    }, null);
+    gates.shift()!();
+    await settle();
+    await settle();
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: false });
+    stream().emit('site:version', { origin: 'mcp', version: server.version, versionBefore: server.version - 1 });
+    await settle();
+    await vi.advanceTimersByTimeAsync(HELD_DIALOG_CHECK_MS);
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: true });
+    expect(JSON.stringify(working())).toContain('typed by the person');
+  });
+
+  it('a stopped sync removes only its own hold: a newer sync\'s hold stands (two syncs overlapping)', async () => {
+    const older = new LiveSync(SITE, store, deps);
+    const newer = new LiveSync(SITE, store, deps);
+    older.start();
+    newer.start(); // installs its own hold over the older one's
+    older.stop(); // must not take the newer one's hold away
+    const draft = openDraft(); // mid-edit
+    let finish!: (result: ProjectWriteResult) => void;
+    resetAutosaveForTests({
+      write: () =>
+        new Promise<ProjectWriteResult>((resolve) => {
+          finish = resolve;
+        }),
+    });
+    autosaveFor(SITE).attach(project());
+    project().updateMetadata({ description: 'mine' });
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+    finish({ kind: 'conflict', currentVersion: 9 });
+    await settle();
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: false });
+    draft.cancel();
+    await vi.advanceTimersByTimeAsync(HELD_DIALOG_CHECK_MS);
+    expect(autosaveFor(SITE).getState()).toMatchObject({ dialogOpen: true });
+    newer.stop();
+  });
 });
 
 describe('liveSync: the new page notice and other notices (review of PR #353)', () => {
