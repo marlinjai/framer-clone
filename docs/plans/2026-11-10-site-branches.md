@@ -130,8 +130,8 @@ The cost of a hidden row is that every place that lists or acts on sites must kn
 
 | Column | Meaning |
 |---|---|
-| `id`, `site_id` (main, cascade), `workspace_id`, `tenant_group_id` | Identity and the isolation boundary, as on every site table |
-| `branch_site_id` (unique, nullable) | The hidden `sites` row holding the content. NULL once the branch is merged or discarded |
+| `id`, `site_id` (main, cascade), `workspace_id`, `tenant_group_id` | Identity and the isolation boundary, as on every site table. `id` is the same uuid as the hidden `sites` row's id (set at creation, no foreign key to `sites`), so it stays the branch's address after that row is deleted: an old link and a retried merge or discard find the closed record by the id they already hold |
+| `branch_site_id` (unique, nullable) | The hidden `sites` row holding the content (always equal to `id` while it exists). NULL once the branch is merged or discarded |
 | `name` | Up to 60 characters, control and bidirectional characters removed. Unique per site among open branches |
 | `status` | `open`, `ready` (review asked), `merged`, `discarded` |
 | `base_version`, `base_document` | Main's version and full copy (in the revision document format, with `schemaVersion`) at the fork, replaced on every update from main. The common ancestor of the three-way merge. NULL once closed |
@@ -140,6 +140,8 @@ The cost of a hidden row is that every place that lists or acts on sites must kn
 | `merged_by`, `merged_at`, `merged_from_version`, `merged_main_version` | What the merge did |
 | `main_before_document`, `main_before_expires_at` | Main as it was just before the merge, kept 30 days for "Undo this merge", then removed. Only the site's latest merge keeps one: a new merge clears the earlier one in the same transaction |
 | `created_by_kind`, `created_by`, `created_at`, `updated_at` | A user or a key, as the audit table records actors |
+
+**The working-copy description and the site name.** `SiteRevisionDocument` has no `description` today, but `writeWorkingCopy` writes one. S1 extends the document format with it (a `schemaVersion` bump with a reader for the old shape, as the rule below requires), so `base_document` and `main_before_document` carry it: the merge sees a description changed on both sides, and "Undo this merge" restores the earlier one. The description merges per field like site settings (section 5, rule 11). The site name is a branch property too: `writeWorkingCopy` does not write it and `renameSite` does not move `version`, so the plan changes both. A rename of a branch or of main bumps that site's `version`, so a review token and an approval go stale on a rename, and the merge transaction copies the branch's name onto main only when main's name is unchanged since the fork (otherwise it is a conflict like any other setting).
 
 Main has no stored history of its working copy, so the fork point cannot be looked up later: it has to be stored when the branch is made. `base_document` and `main_before_document` follow the rule the published copy plan set for revisions: a change to the page format must rewrite them or keep a reader for the old shape.
 
@@ -162,9 +164,9 @@ Redirects are not merged: `writeWorkingCopy` derives them when the merge writes 
 
 ### One engine, two directions, conflicts settled only on the branch
 
-A pure, client-safe module `src/lib/siteMerge/` takes three documents (base, main, branch) and answers a merged document plus a list of conflicts. It is used in one direction only: **bringing main into the branch** ("Update"). Merging the branch into main is allowed only when the branch's base is main's current version, and then main simply becomes the branch's content, written through `writeWorkingCopy` under main's version lock.
+A pure, client-safe module `src/lib/siteMerge/` takes three documents (base, main, branch) and answers a merged document plus a list of conflicts. It is used in one direction only: **bringing main into the branch** ("Update"). Merging the branch into main is allowed only when the branch's base is main's current version, and then main simply becomes the branch's content (description and name included), written through `writeWorkingCopy` under main's version lock.
 
-Why: main is never written with a half-settled merge, every conflict answer lands on the branch where it can be previewed, undone and reviewed before main changes, and there is one merge computation to test instead of two. Figma works this way too (section 1). "Merge into main" on a branch that is behind runs the update first, in the same transaction; only real conflicts stop it and open the review.
+Why: main is never written with a half-settled merge, every conflict answer lands on the branch where it can be previewed, undone and reviewed before main changes, and there is one merge computation to test instead of two. Figma works this way too (section 1). "Merge into main" on a branch that is behind does not merge: it runs the update (in its own transaction) and stops. The update changes the branch's version and so withdraws any approval, so the reviewer is shown the updated branch and must approve again before the merge button works. Conflicts open the review as before.
 
 ### Units and granularity
 
@@ -209,7 +211,8 @@ Reused, moved into `src/lib/siteMerge/` and then called from `rebaseEdit` so the
 - `PATCH` and `DELETE /api/projects/<mainId>/branches/<branchId>` (`editSite`): rename, mark ready or back to open, discard.
 - `GET /api/projects/<branchId>/branch/changes` (`viewSite`): the change list and conflicts, computed on request, never stored, with a `token` over the three versions.
 - `POST /api/projects/<branchId>/branch/update` `{ token, resolutions }` (`editSite`): brings main in.
-- `POST /api/projects/<branchId>/branch/approve` (`mergeBranch`) and `.../merge` `{ token }` (`mergeBranch`): approve; merge into main.
+- `POST /api/projects/<branchId>/branch/approve` and `.../branch/send-back` `{ token, note }` (`reviewBranch`): approve the branch version seen; send it back to open with a note.
+- `POST /api/projects/<branchId>/branch/merge` `{ token }` (`mergeBranch`): merge into main.
 - `POST /api/projects/<mainId>/branches/<branchId>/undo-merge` (`mergeBranch`): main back to before that merge, the merged work into a new branch.
 
 Closing a branch (merge or discard) deletes its hidden site row through the same cleanup a site delete runs: the kept document bodies, a running generation, skeleton plans, presence and open approvals of that id are ended, and its live streams get the closed notice. "Review and merge" saves the tab's unsaved work first, and the merge names the branch version it reviewed, so a second tab with unsaved edits is not merged unseen: its next save answers 410 `branch_closed`, and its dialog offers "Save mine as a new branch" (a new branch from main with that tab's copy as content) or discarding the edits.
@@ -221,7 +224,7 @@ Locking: update and merge take `SELECT ... FOR UPDATE` on main's row first, then
 | Derived state | Keyed to | Invalidated when |
 |---|---|---|
 | The change list and its `token` | base version, main version, branch version | any of the three moves: the request answers 409 `branch_review_stale`, the review reloads |
-| One conflict answer in `merge_draft` | a hash of that conflict's base, main and branch values | any of the three values changes. An answer whose values are unchanged is kept, also when main moved elsewhere. An erase of personal data clears every `merge_draft` of the site, since a hash of a value is still a trace of it (the erase tool's own rule) |
+| One conflict answer in `merge_draft` | the conflict's stable id plus a hash of its base, main and branch values (two conflicts on different nodes can carry identical values, so the value hash alone would make their answers collide) | any of the three values changes. An answer whose values are unchanged is kept, also when main moved elsewhere. An erase of personal data clears every `merge_draft` of the site, since a hash of a value is still a trace of it (the erase tool's own rule) |
 | An approval | the branch version it saw | any write to the branch (an edit, an update from main) |
 | "Ready for review" | the branch | set back to open by discarding or by the author; an edit keeps it and withdraws the approval |
 | An agent's merge approval | company, key, main, branch, branch version, main version | either version moves |
@@ -265,7 +268,8 @@ Locking: update and merge take `SELECT ... FOR UPDATE` on main's row first, then
 |---|---|
 | See branches, the change list, the preview | `viewSite` (`workspace.viewer`) |
 | Create, edit, rename, update from main, mark ready, discard | `editSite` (`workspace.admin`) |
-| Approve, merge into main, undo a merge | a new action `mergeBranch` (`workspace.admin` for now, in `src/lib/permissions.ts`, so it can be tightened alone later) |
+| Approve a branch or send it back with a note | a new action `reviewBranch` (`workspace.viewer`, so a reviewer with only `viewSite` can complete the review the section 3 flow promises). Approving names the branch version seen; sending back sets the branch to open and stores the note |
+| Merge into main, undo a merge | a new action `mergeBranch` (`workspace.admin` for now, in `src/lib/permissions.ts`, so it can be tightened alone later) |
 | Publish | unchanged, `publishSite`, on main only |
 | An API key | what its role allows, as today; `merge_branch` additionally needs a person's approval |
 
@@ -285,7 +289,7 @@ Locking: update and merge take `SELECT ... FOR UPDATE` on main's row first, then
 | `ensureSiteDomain`, domain routes (`src/server/domains`) | Refuse | The trigger refuses the row |
 | The public resolver (`publicResolver.ts`, `cachedResolver.ts`, `primaryHost.ts`) | Nothing | A branch is never `published` and has no domain, so it cannot resolve |
 | `site_images` save check, upload, delete check | Use main's images; the delete check scans branches and stored documents | A save on a branch is refused (`SiteImageMissingError`): loud, nothing lost |
-| The erase of personal data (`erasePersonalData`, search and proof) | Search and rewrite every open branch's working copy, every `base_document` and `main_before_document`, and raise every branch's `erasure_epoch` with main's, in the same transaction | This one would fail open (an erased value could come back through a merge), so it is in the first slice, with a test that an erase followed by a merge leaves `remaining` at zero |
+| The erase of personal data (`erasePersonalData`, search and proof) | Search and rewrite every open branch's working copy, every `base_document` and `main_before_document`, and raise every branch's `erasure_epoch` with main's, in the same transaction. After the transaction, for every branch: end its live generation, clear its document cache, and advance and announce its erased version so open branch editors reload and clear their undo history (a generation started before the erase must not keep streaming the erased value, and a cache must not retain it) | This one would fail open (an erased value could come back through a merge), so it is in the first slice, with a test that an erase followed by a merge leaves `remaining` at zero |
 | Merge and update after an erase | Refused while the epochs of main, the branch and the tab differ | Covered by the existing epoch check in `writeWorkingCopy` |
 | The company erasure consumer (`src/server/erasure/public.ts`) | Nothing: it deletes sites by workspace and company, and a branch is a site row there | Already covered; `site_branches` cascades from the site |
 | Site delete (`deleteSite`, `src/server/forms/projectDelete.ts`) | Delete the branches with main | The foreign key cascades |
@@ -303,7 +307,7 @@ Each slice is its own pull request with its tests, landed by land-pr. Sizes are 
 | # | Slice | Size | Accepted when |
 |---|---|---|---|
 | S1 | **Data model and repository.** The per-company switch; the migration with its constraints and triggers; create, list, rename, mark ready, discard; mains-only listings; refusals of publish, rollback and domains; uploaded images through main; the erase of personal data and its proof covering branches and stored documents; the classification test | 5 to 6 | Integration tests on real Postgres: a branch is an exact copy with the right base; each constraint refuses what it should (publish, a domain, a foreign workspace, a branch of a branch); a foreign company gets 404 everywhere; deleting main deletes its branches; an erase reaches every copy; forward, a retried create, and re-entry on a discarded branch |
-| S2 | **The merge engine** (`src/lib/siteMerge/`, pure): diff, three-way merge, conflicts with stable ids, the validity check; `rebaseEdit` moved onto the shared pieces with its tests unchanged | 7 to 9 | A unit test per rule of section 5; property tests (merging a document with itself changes nothing; changes on disjoint nodes always merge without conflict and contain both; the result always loads as a `ProjectModel`); the real stored format run through the real schema (`parseRevisionDocument`), not only fixtures; the replay-on-top tests still pass |
+| S2 | **The merge engine** (`src/lib/siteMerge/`, pure): diff, three-way merge, conflicts with stable ids, the validity check; `rebaseEdit` moved onto the shared pieces with its tests unchanged | 7 to 9 | A unit test per rule of section 5; property tests (merging a document with itself changes nothing; changes on disjoint nodes with no cross-node reference between them always merge without conflict and contain both (a branch that adds a reference to a node main removed is a rule 10 conflict, not a disjoint change); the result always loads as a `ProjectModel`); the real stored format run through the real schema (`parseRevisionDocument`), not only fixtures; the replay-on-top tests still pass |
 | S3 | **Update and merge on the server.** The changes, update, approve and merge routes; the token; locking order; the merge written through `writeWorkingCopy` with origin `merge`; audit rows; `main_before_document` written at the merge | 4 to 5 | The four paths of section 6 as integration tests, including a merge racing a save of main (one wins, the other is refused, nothing half written), a double merge request, an injected failure at the last write, and an open editor of main adopting the merge as one undo step |
 | S4 | **Branches in the editor.** The switcher, create, rename and discard dialogs, the branch badge, "Review and merge" in place of Publish, "Main has changed" with Update, the closed-branch page, the branch count on the dashboard | 3 to 4 | Component tests for each state (no branches, open, ready, behind main, closed); keyboard and screen reader checks; proven in the browser on app.lumitra.co |
 | S5 | **The review.** The change list, the side-by-side view with changed nodes outlined, conflict answers with "all from main" and "all from the branch", ready and approved states, the merge button's states and refusals | 5 to 7 | Component and integration tests for backtrack (an answer changed, main moving mid-review, an edit after approval), resume (reload mid-review, stale answers dropped) and the counter-case (nothing changed, nothing lost); a review of a 200 node change renders in under a second |
