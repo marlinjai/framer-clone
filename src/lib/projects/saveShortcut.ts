@@ -13,11 +13,16 @@
 // canvas's inline text editor, the panel's text field and the component
 // dialogs stop every keydown from bubbling, and the browser's dialog would
 // open there. Text still being typed in those fields is committed first
-// (openDrafts.ts), so the save carries it.
+// (openDrafts.ts), so the save carries it. When an agent's newer copy was held
+// for that typing (src/lib/projects/liveSync.ts), the live sync looks at it
+// before the save goes out (settleHeldEdit): the edit is replayed on top of the
+// agent's copy and saved on its version, instead of a save on the old version
+// that would be refused.
 
 import { resolveAction } from '@/lib/keyBindings';
 import { existingAutosave } from './autosave';
 import { commitOpenDrafts } from './openDrafts';
+import { liveSyncFor } from './liveSync';
 
 export interface SaveShortcutUI {
   readonly isUnsavedDemo?: boolean;
@@ -29,7 +34,9 @@ export function handleSaveShortcut(event: KeyboardEvent, ui: SaveShortcutUI): bo
   if (resolveAction(event)?.action !== 'save') return false;
   event.preventDefault();
   commitOpenDrafts();
-  if (!ui.isUnsavedDemo) void existingAutosave(ui.currentProject?.id)?.flush();
+  if (ui.isUnsavedDemo) return true;
+  liveSyncFor(ui.currentProject?.id)?.settleHeldEdit();
+  void existingAutosave(ui.currentProject?.id)?.flush();
   return true;
 }
 

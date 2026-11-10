@@ -71,6 +71,10 @@ function newRequestKey(): string {
 
 export const AUTOSAVE_DEBOUNCE_MS = 1500;
 export const AUTOSAVE_MAX_WAIT_MS = 10_000;
+/** How often a refusal's held dialog looks whether it may open. */
+export const HELD_DIALOG_CHECK_MS = 500;
+/** A refusal's dialog is never held longer than this. */
+export const HELD_DIALOG_MAX_MS = 60_000;
 /** Waits before each retry of a passing failure; the last one repeats. */
 export const AUTOSAVE_BACKOFF_MS = [2000, 5000, 15_000, 30_000, 60_000] as const;
 /** After this long of passing failures in a row, automatic retries stop (Retry still works). */
@@ -187,6 +191,7 @@ export class AutosaveController {
 
   private debounceTimer: ReturnType<typeof setTimeout> | undefined;
   private maxWaitTimer: ReturnType<typeof setTimeout> | undefined;
+  private heldDialogTimer: ReturnType<typeof setInterval> | undefined;
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
   private inFlight: Promise<void> | undefined;
   /** A change arrived while a request was out (or Publish held the controller). */
@@ -221,6 +226,8 @@ export class AutosaveController {
   };
 
   private setState(next: AutosaveState) {
+    // A conflict that resolved (a replay adopted the newer copy, a save over it) has no dialog left to open.
+    if (next.phase !== 'conflict') this.stopHeldDialog();
     this.stamp++;
     this.state = next;
     for (const listener of [...this.listeners]) listener();
@@ -416,6 +423,9 @@ export class AutosaveController {
     // Publish writes this very copy; the status already says so.
     if (phase === 'publishing') return Promise.resolve();
     if (phase === 'conflict') {
+      // Held for the person's edit or a replay about to resolve it (Cmd+S): it stays
+      // held, and opens by itself if the replay cannot. The status's button still opens it.
+      if (this.heldDialogTimer && (conflictDialogHolds.get(this.projectId)?.() ?? false)) return Promise.resolve();
       this.openConflict();
       return Promise.resolve();
     }
@@ -551,7 +561,12 @@ export class AutosaveController {
       this.attempts = 0;
       this.failingSince = undefined;
       this.dirtyHint = true;
-      this.setState({ phase: 'conflict', currentVersion: result.currentVersion, dialogOpen: true, retrying: false });
+      // The person is mid-edit, or the live sync is about to replay the refused edit
+      // on the newer copy (conflictDialogHolds): the dialog waits, never under the
+      // cursor and never for a conflict about to resolve itself.
+      const held = conflictDialogHolds.get(this.projectId)?.() ?? false;
+      this.setState({ phase: 'conflict', currentVersion: result.currentVersion, dialogOpen: !held, retrying: false });
+      if (held) this.watchHeldDialog();
       return;
     }
     if (result.kind === 'error') {
@@ -625,13 +640,44 @@ export class AutosaveController {
 
   // ---- the version lock's dialog ---------------------------------------------
 
+  /**
+   * A refusal's dialog held back (conflictDialogHolds): looked at every
+   * HELD_DIALOG_CHECK_MS and opened once nothing holds it any more, or after
+   * HELD_DIALOG_MAX_MS whatever holds it (a conflict is never hidden for long).
+   * Its own timer, apart from the save timers (clearTimers must not end it: the
+   * live sync moving the conflict's version calls that).
+   */
+  private watchHeldDialog() {
+    if (this.heldDialogTimer) return;
+    const since = Date.now();
+    this.heldDialogTimer = setInterval(() => {
+      const state = this.state;
+      if (state.phase !== 'conflict' || state.dialogOpen) {
+        this.stopHeldDialog();
+        return;
+      }
+      const held = conflictDialogHolds.get(this.projectId)?.() ?? false;
+      if (held && Date.now() - since < HELD_DIALOG_MAX_MS) return;
+      this.stopHeldDialog();
+      this.setState({ ...state, dialogOpen: true });
+    }, HELD_DIALOG_CHECK_MS);
+  }
+
+  private stopHeldDialog() {
+    if (this.heldDialogTimer) clearInterval(this.heldDialogTimer);
+    this.heldDialogTimer = undefined;
+  }
+
   /** "Keep editing": the dialog closes, autosave stays paused. */
   dismissConflict(): void {
+    // "Keep editing" is the person's answer: a held dialog does not come back by itself.
+    this.stopHeldDialog();
     if (this.state.phase === 'conflict' && !this.state.retrying) this.setState({ ...this.state, dialogOpen: false });
   }
 
   /** Reopen the dialog (the status's "Changed elsewhere", or Cmd+S). */
   openConflict(): void {
+    this.stopHeldDialog();
     if (this.state.phase === 'conflict') this.setState({ ...this.state, dialogOpen: true });
   }
 
@@ -918,6 +964,7 @@ export class AutosaveController {
 
   /** Tests only: drop timers and listeners. */
   disposeForTests(): void {
+    this.stopHeldDialog();
     this.held = 0;
     this.disposeStamp?.();
     this.disposeStamp = undefined;
@@ -1009,6 +1056,20 @@ export function reloadDiscarding(projectId: string | undefined): void {
 export function abandonWorkingCopy(projectId: string): void {
   existingAutosave(projectId)?.abandon();
   discardWorkingCopy(projectId);
+}
+
+// project id -> whether a refusal's dialog should wait right now, installed by the
+// live sync (src/lib/projects/liveSync.ts), which may start before the project's
+// autosave controller exists: true while the person is mid-edit or a replay of
+// the refused edit is pending.
+const conflictDialogHolds = new Map<string, () => boolean>();
+
+/** The live sync installs when a refusal's dialog should wait; only its own installation is removed. */
+export function setConflictDialogHold(projectId: string, hold: () => boolean): () => void {
+  conflictDialogHolds.set(projectId, hold);
+  return () => {
+    if (conflictDialogHolds.get(projectId) === hold) conflictDialogHolds.delete(projectId);
+  };
 }
 
 /** The controller of a project, created on first use. */

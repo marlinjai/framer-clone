@@ -3,7 +3,7 @@ title: Live replay of a settled edit on top of an agent's write
 description: Plan for keeping both changes when an agent writes while a person edits the open site, instead of asking with the Site Changed dialog, for the cases where that is safe.
 summary: When a person's edit, made while an agent's newer copy of the site was held, only replaced values of nodes the agent left alone, the editor undoes the edit, adopts the agent's copy and applies the edit again as one undo step under its own name, saved at once on the agent's version. Real conflicts still open the dialog. Built in #353, taken out after four review rounds; continues here on its own.
 type: plan
-status: decided
+status: in-progress
 date: 2026-11-09
 tags: [framer-clone, editor, live-sync, plan]
 projects: [framer-clone]
@@ -24,11 +24,16 @@ The live agent canvas (shipped; the editor follows every write of an agent) hold
 
 ## State of the work
 
-The implementation and its tests are on branch `feat/live-replay-on-top` (built in #353, taken out of it on 2026-11-09). The autosave deferral (point 3) is at #353's commit 0de7c711. Open before it can land, from review round four:
+Rebuilt on 2026-11-10 on a fresh branch from main, `feat/live-replay-on-top-v2` (the first branch, `feat/live-replay-on-top`, sat on #353's history before its squash), in three commits so one can come out on its own:
 
-1. A merged save refused (409) because the agent wrote again: the replay again only works when the agent's copy arrives before the refusal; in the common ordering the refusal comes first and the dialog opens. Keep the replay mark when a refusal settles with nothing held, and replay once the copy arrives.
-2. Cmd+S right after typing commits the draft and saves in the same step, before the replay can run, so the dialog opens. While a copy is held for editing, Cmd+S should replay first, then save.
-3. Deferring autosave while a copy is held for the person's editing, so a save on the old version is never sent and refused mid-gesture (today the dialog can still open under the cursor then, as before the live canvas). Built in #353 and taken out after two review rounds; the last found that a later `noteChangedElsewhere` cleared the wait for the edit to end, so the dialog could never open, that the wait had no idle limit, and that a stop() of one sync could remove another's edit check. The code is on the same branch (`deferWhileLiveHeld`, `setEditInProgressCheck` in `src/lib/projects/autosave.ts`).
-4. Fresh reviews of its own, on a branch from main that carries only these.
+1. **The replay core**, ported from #353 onto main as it now is (after #355 and #356). A mark taken when a version was announced during editing is now dropped on any adoption (a stale mark, a low finding of #353's fourth review).
+2. **The two orderings the fourth review found:**
+   - A merged save refused before the agent's newer copy arrives (the usual order: the refusal is one round trip, the copy two): the replay mark is kept while the refusal stands, and the newer copy, fetched by the stream event or a poll, replays the edit on top of it.
+   - Cmd+S right after typing: the shortcut asks the live sync to look at a copy held for that typing (`settleHeldEdit`) after committing the drafts and before saving, so the edit is replayed and saved on the agent's version instead of a save on the old version that is refused.
+3. **The dialog gate, instead of deferring saves (decided, say so if you disagree).** Point 3 of the first version deferred autosave during the hold, and its reviews kept finding problems in it. What it was for is that no refused save opens the dialog under the cursor. A smaller mechanism gives that: the dialog of a refusal (409) waits while the person is mid-edit or a replay of the refused edit is pending (`setConflictDialogHold`, installed by the live sync), and opens once neither holds, at most after 60 s. Saves go out as before. Its watcher is apart from the save timers, so a version move by the live sync does not end the wait (the high finding of round seven); "Keep editing" is honoured; a sync removes only its own hold.
 
-It must not block the deploy of the live agent canvas hardening (#350, #351, #353).
+With the replay and the gate together, a refused save never shows a dialog that the replay resolves a moment later: the refusal waits, the newer copy arrives, the edit is replayed and saved.
+
+Decided (say so if you disagree): a replay pushes the person's step on top of the history, so the Undo of the notice for a page an agent deleted (offered while that deletion is the last step, #355) gives way to the ordinary undo; the two only meet when the agent deleted the open page while the person edited another node of it, and then the edited node is gone with the page, so the dialog asks instead.
+
+It must not block the deploy of the live agent canvas (completed 2026-11-09).
