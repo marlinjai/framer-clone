@@ -129,6 +129,8 @@ export const LIVE_HEARTBEAT_MS = SSE_HEARTBEAT_MS;
 export const LIVE_WATCHDOG_MS = Math.round(LIVE_HEARTBEAT_MS * 2.5);
 /** The waits before a failed fetch of the stored copy is tried again while the stream is live; the last repeats. */
 export const LIVE_FETCH_RETRY_MS = [2_000, 5_000, 15_000] as const;
+/** A refusal's dialog held for the copy of a marked edit waits for that copy at most this long. */
+export const LIVE_HELD_FETCH_MS = 10_000;
 /** "Load the newer version" while a write of this tab is out waits this long for it to settle. */
 export const LOAD_NEWER_WRITE_WAIT_MS = 10_000;
 /** The first reconnect after a stream ended (closed by the server, a network drop) waits this long, plus up to as much again at random; it doubles with each failure in a row. */
@@ -331,6 +333,8 @@ export class LiveSync {
   private editMark: HistoryMark | undefined;
   /** Where the history stood before a replayed edit, until its save settled. */
   private replayMark: HistoryMark | undefined;
+  /** When the version wanted now was first heard of: a held dialog waits for its copy only so long (LIVE_HELD_FETCH_MS). */
+  private wantedAt = 0;
   private fetchRetryTimer: ReturnType<typeof setTimeout> | undefined;
   private fetchRetries = 0;
   private watchdogTimer: ReturnType<typeof setTimeout> | undefined;
@@ -549,7 +553,11 @@ export class LiveSync {
     // version was announced whose copy is still being fetched), keeps its dialog for later.
     this.disposeDialogHold = setConflictDialogHold(
       this.projectId,
-      () => isEditing(this.rootStore) || this.replayMark !== undefined || (this.editMark !== undefined && this.wanted !== undefined),
+      () =>
+        isEditing(this.rootStore) ||
+        this.replayMark !== undefined ||
+        // A fetch that hangs or keeps failing does not hold the dialog for long.
+        (this.editMark !== undefined && this.wanted !== undefined && Date.now() - this.wantedAt < LIVE_HELD_FETCH_MS),
     );
     // A copy held while this tab's write was out: that write may have succeeded
     // (no 409 will come), so the held copy is looked at again once it settled.
@@ -558,10 +566,15 @@ export class LiveSync {
       // A save refused while the person is mid-edit (a gesture, typing): where the
       // history stands now marks that edit (its step is not recorded yet), so the
       // agent's newer copy can take it on top once it comes and the edit settled.
-      if (existingAutosave(this.projectId)?.getState().phase === 'conflict' && isEditing(this.rootStore) && !this.editMark) {
+      const state = existingAutosave(this.projectId)?.getState();
+      if (state?.phase === 'conflict' && isEditing(this.rootStore) && !this.editMark) {
         this.editMark = historyMark();
       }
       this.retake();
+      // A refusal names the newer version: fetched now, whatever the stream's timing
+      // (or a tab that only polls), so a marked edit is replayed and its dialog stays
+      // held meanwhile, instead of opening and then closing under the person.
+      if (state?.phase === 'conflict' && this.phaseValue !== 'stopped' && this.phaseValue !== 'signed-out') this.heard(state.currentVersion, undefined);
       // The merged copy's save landed with nothing held for it: no further replay can follow it.
       // A refusal (conflict) keeps the mark: the agent's newer copy, fetched after it, replays the edit again (take).
       const refused = existingAutosave(this.projectId)?.getState().phase === 'conflict';
@@ -926,7 +939,10 @@ export class LiveSync {
     const known = knownServerVersion(this.projectId);
     if (known !== undefined && version <= known) return;
     if (this.held && version <= this.held.version) return;
-    if (!this.wanted || version > this.wanted.version) this.wanted = { version, event };
+    if (!this.wanted || version > this.wanted.version) {
+      this.wanted = { version, event };
+      this.wantedAt = Date.now();
+    }
     // The person edits as the newer version is announced: where the history stands
     // now marks their edit, should it settle before the copy has arrived.
     if (isEditing(this.rootStore) && !this.editMark) this.editMark = historyMark();

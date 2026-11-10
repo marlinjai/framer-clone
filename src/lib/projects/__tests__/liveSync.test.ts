@@ -30,6 +30,7 @@ import {
   LIVE_HEARTBEAT_MS,
   LIVE_WATCHDOG_MS,
   LOAD_NEWER_WRITE_WAIT_MS,
+  LIVE_HELD_FETCH_MS,
   pagesRemovedBy,
   restoredPagesSentence,
   LIVE_POLL_HIDDEN_MS,
@@ -1601,8 +1602,9 @@ describe('liveSync: a settled edit goes on top of the agent\'s copy (review of P
     gate.release();
     await settle();
     await settle();
-    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: false }); // held: a replay is pending
-    stream().emit('site:version', event);
+    // The refusal names the newer version, fetched at once: the edit is replayed (or about to be), the dialog held meanwhile.
+    expect(autosaveFor(SITE).getState()).not.toMatchObject({ phase: 'conflict', dialogOpen: true });
+    stream().emit('site:version', event); // late: its version is held already
     await settle();
     gate.release();
     await settle();
@@ -2010,8 +2012,8 @@ describe('liveSync: a refused save\'s dialog waits while the person is mid-edit 
     await settle();
   });
 
-  it('refused mid-gesture: no dialog under the cursor; it opens once the gesture ended', async () => {
-    const { end } = await refusedMidResize();
+  it('refused mid-gesture: no dialog under the cursor; it opens once the gesture ended (an edit no replay carries)', async () => {
+    const { end } = await refusedMidResize('site setting');
     expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: false });
     await vi.advanceTimersByTimeAsync(HELD_DIALOG_CHECK_MS * 3);
     expect(autosaveFor(SITE).getState()).toMatchObject({ dialogOpen: false });
@@ -2021,7 +2023,7 @@ describe('liveSync: a refused save\'s dialog waits while the person is mid-edit 
   });
 
   it('never held longer than the limit, even while a gesture stays open', async () => {
-    const { end } = await refusedMidResize();
+    const { end } = await refusedMidResize('site setting');
     await vi.advanceTimersByTimeAsync(HELD_DIALOG_MAX_MS - HELD_DIALOG_CHECK_MS * 2);
     expect(autosaveFor(SITE).getState()).toMatchObject({ dialogOpen: false });
     await vi.advanceTimersByTimeAsync(HELD_DIALOG_CHECK_MS * 3);
@@ -2053,7 +2055,7 @@ describe('liveSync: a refused save\'s dialog waits while the person is mid-edit 
   });
 
   it('"Keep editing" is the person\'s answer: the held dialog does not come back by itself', async () => {
-    const { end } = await refusedMidResize();
+    const { end } = await refusedMidResize('site setting');
     autosaveFor(SITE).openConflict(); // from the status...
     autosaveFor(SITE).dismissConflict(); // ...and Keep editing
     end();
@@ -2113,7 +2115,8 @@ describe('liveSync: a refused save\'s dialog waits while the person is mid-edit 
     autosaveFor(SITE).attach(project());
     project().updateMetadata({ description: 'mine' });
     await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
-    finish({ kind: 'conflict', currentVersion: 9 });
+    await agentWrites('agent', false);
+    finish({ kind: 'conflict', currentVersion: server.version });
     await settle();
     expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: false });
     draft.cancel();
@@ -2237,12 +2240,16 @@ describe('liveSync: a save refused mid-edit still gets the replay (review of PR 
     await settle(); // replayed on 3, its save waits
     const event = await agentWrites('third', false);
     const dialog = watchDialog();
+    holdFetch = { release: () => {} }; // the newer copy is slow to come
     gates.shift()!(); // refused before the copy comes
     await settle();
     await settle();
     handleSaveShortcut(new KeyboardEvent('keydown', { key: 's', metaKey: true, cancelable: true }), store.editorUI);
     expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: false });
     stream().emit('site:version', event);
+    holdFetch.release();
+    holdFetch = undefined;
+    await settle();
     await settle();
     gates.shift()!();
     await settle();
@@ -2250,6 +2257,134 @@ describe('liveSync: a save refused mid-edit still gets the replay (review of PR 
     expect(autosaveFor(SITE).getState().phase).toBe('saved');
     dialog.stop();
     expect(dialog.everOpened()).toBe(false);
+  });
+});
+
+describe('liveSync: a replay never lands over other unsaved work (narrow review of PR #358)', () => {
+  const homeChild = (i: number) => project().getPage(homeId())!.appComponentTree.children[i] as unknown as { id: string; setTextContent(text: string): void };
+  /** A text edit committed while an agent write was announced, its save refused; answers the pending-save resolver. */
+  async function refusedEdit() {
+    start();
+    await agentWrites('first');
+    const node = homeChild(0);
+    const gates: Array<() => void> = [];
+    resetAutosaveForTests({
+      write: async (snapshot, expectedVersion): Promise<ProjectWriteResult> => {
+        await new Promise<void>((resolve) => gates.push(resolve));
+        saves.push({ expectedVersion, snapshot: snapshot as ProjectSnapshotOut });
+        if (expectedVersion !== server.version) return { kind: 'conflict', currentVersion: server.version };
+        server = { version: server.version + 1, snapshot: snapshot as ProjectSnapshotOut };
+        return { kind: 'ok', payload: {}, version: server.version };
+      },
+    });
+    autosaveFor(SITE).attach(project());
+    return { node, release: () => gates.shift()?.() };
+  }
+  afterEach(async () => {
+    while (hasWriteInFlight(SITE)) noteWriteInFlight(SITE, false);
+    await settle();
+  });
+
+  it('a second edit after the refused save: no replay, both edits kept, the dialog asks', async () => {
+    const { node, release } = await refusedEdit();
+    holdFetch = { release: () => {} };
+    const draft = openDraft(() => node.setTextContent('first edit'));
+    await agentWrites('agent');
+    draft.commitAndClose();
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+    release(); // refused
+    await settle();
+    project().updateMetadata({ description: 'second edit' }); // another edit before the copy comes
+    holdFetch.release();
+    holdFetch = undefined;
+    await settle();
+    await vi.advanceTimersByTimeAsync(HELD_DIALOG_CHECK_MS);
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: true });
+    expect(JSON.stringify(working())).toContain('first edit');
+    expect(working().metadata.description).toBe('second edit');
+    expect(JSON.stringify(working())).not.toContain('"agent"');
+  });
+
+  it('unsaved work from before the gesture: no replay, both kept, the dialog asks', async () => {
+    const { node, release } = await refusedEdit();
+    project().updateMetadata({ description: 'from before' });
+    const history = getHistoryStore()!;
+    store.editorUI.startResize({} as never);
+    history.startBatch('Resize');
+    node.setTextContent('resized');
+    await agentWrites('agent', false);
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_MAX_WAIT_MS);
+    release(); // refused mid-gesture
+    await settle();
+    history.commitBatch();
+    store.editorUI.endResize();
+    await settle();
+    await vi.advanceTimersByTimeAsync(HELD_DIALOG_CHECK_MS);
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: true });
+    expect(working().metadata.description).toBe('from before');
+    expect(JSON.stringify(working())).toContain('resized');
+  });
+
+  it('typing in a field plus a direct edit, both unsaved: no replay, both kept, the dialog asks', async () => {
+    const { node, release } = await refusedEdit();
+    project().updateMetadata({ description: 'direct edit' });
+    const draft = openDraft(() => node.setTextContent('typed'));
+    await agentWrites('agent');
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+    release(); // the direct edit's save is refused
+    await settle();
+    draft.commitAndClose();
+    await settle();
+    await vi.advanceTimersByTimeAsync(HELD_DIALOG_CHECK_MS);
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: true });
+    expect(working().metadata.description).toBe('direct edit');
+    expect(JSON.stringify(working())).toContain('typed');
+  });
+
+  it('a copy whose fetch hangs holds the dialog at most LIVE_HELD_FETCH_MS; then Cmd+S and the hold open it', async () => {
+    const { node, release } = await refusedEdit();
+    const draft = openDraft(() => node.setTextContent('typed'));
+    holdFetch = { release: () => {} }; // the copy never comes
+    await agentWrites('agent');
+    draft.commitAndClose();
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+    release(); // refused
+    await settle();
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: false });
+    await vi.advanceTimersByTimeAsync(LIVE_HELD_FETCH_MS + HELD_DIALOG_CHECK_MS);
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: true });
+    holdFetch.release();
+    holdFetch = undefined;
+  });
+
+  it('a tab that only polls: a save refused mid-gesture fetches the newer copy at once, the replay comes, the dialog never opens', async () => {
+    const { node, release } = await refusedEdit();
+    stream().fail(true); // polling from now on
+    const opened: boolean[] = [];
+    const stopWatching = autosaveFor(SITE).subscribe(() => {
+      const state = autosaveFor(SITE).getState();
+      opened.push(state.phase === 'conflict' && state.dialogOpen);
+    });
+    const history = getHistoryStore()!;
+    store.editorUI.startResize({} as never);
+    history.startBatch('Resize');
+    node.setTextContent('resized');
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_MAX_WAIT_MS); // the save goes out (the polls so far found nothing new)
+    await agentWrites('agent', false); // the agent writes while it is out; the next poll is seconds away
+    release(); // refused mid-gesture
+    await settle();
+    await settle();
+    history.commitBatch();
+    store.editorUI.endResize();
+    await settle();
+    release(); // the replayed edit's save
+    await settle();
+    await settle();
+    stopWatching();
+    expect(autosaveFor(SITE).getState().phase).toBe('saved');
+    expect(opened).not.toContain(true);
+    expect(JSON.stringify(server.snapshot)).toContain('resized');
+    expect(JSON.stringify(server.snapshot)).toContain('agent');
   });
 });
 
