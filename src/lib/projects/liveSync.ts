@@ -475,11 +475,12 @@ export class LiveSync {
     }
     const targets = edits.map((edit) => ({ edit, node: findNode(adopted, edit.nodeId) }));
     const applied: Array<{ node: object; field: string; before: unknown }> = [];
+    let recorded = false;
     const entriesBefore = history.history.length;
     try {
       if (targets.some((t) => !t.node)) throw new Error('a node of the edit is not in the adopted copy');
       // One undo step, under the edit's own name.
-      history.applyRemote(
+      recorded = history.applyRemote(
         label,
         () =>
           runInAction(() => {
@@ -503,7 +504,7 @@ export class LiveSync {
       return true;
     }
     // Until the merged copy is saved: an agent write meanwhile can be met by another replay (see take).
-    this.replayMark = { topId: history.history[history.undoIdx - 2]?.id };
+    if (recorded) this.replayMark = { topId: history.history[history.undoIdx - 2]?.id };
     void existingAutosave(this.projectId)?.saveNow();
     return true;
   }
@@ -1173,6 +1174,8 @@ export class LiveSync {
     this.setHeld(undefined);
     // A mark taken when a version was announced during editing is spent once a copy is adopted.
     this.editMark = undefined;
+    // So is a replay's: the adopted copy is the newest write, and no replayed save is pending for it.
+    this.replayMark = undefined;
     existingAutosave(this.projectId)?.noteServerCopyAdopted();
     this.onAdopted?.(adopted, event);
     return true;
