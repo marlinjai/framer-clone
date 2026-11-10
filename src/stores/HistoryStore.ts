@@ -136,7 +136,8 @@ const HistoryStore = types
       // taken by hand (the middleware would record the inner actions under
       // their own names); a change that patches nothing records nothing.
       // Answers whether an entry was recorded.
-      applyRemote(label: string, fn: () => void): boolean {
+      // `remote` false: an edit of this tab applied again (a live replay), named by its own label.
+      applyRemote(label: string, fn: () => void, remote = true): boolean {
         if (!self.targetStore) {
           withoutRecording(fn);
           return false;
@@ -149,7 +150,7 @@ const HistoryStore = types
           recorder.stop();
         }
         if (recorder.patches.length === 0) return false;
-        this.recordEntry(label, recorder.patches, recorder.inversePatches, true);
+        this.recordEntry(label, recorder.patches, recorder.inversePatches, remote);
         return true;
       },
 
