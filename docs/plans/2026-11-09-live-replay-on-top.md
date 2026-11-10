@@ -34,6 +34,6 @@ Rebuilt on 2026-11-10 on a fresh branch from main, `feat/live-replay-on-top-v2` 
 
 With the replay and the gate together, a refused save never shows a dialog that the replay resolves a moment later: the refusal waits, the newer copy arrives, the edit is replayed and saved.
 
-Known limit: a replay pushes the person's step on top of the history, so the Undo of the notice for a page an agent deleted (offered while that deletion is the last step, #355) gives way to the ordinary undo; the two only meet when the agent deleted the open page while the person edited another node of it, and then the edited node is gone with the page, so the dialog asks instead.
+Decided (say so if you disagree): a replay pushes the person's step on top of the history, so the Undo of the notice for a page an agent deleted (offered while that deletion is the last step, #355) gives way to the ordinary undo; the two only meet when the agent deleted the open page while the person edited another node of it, and then the edited node is gone with the page, so the dialog asks instead.
 
 It must not block the deploy of the live agent canvas (completed 2026-11-09).

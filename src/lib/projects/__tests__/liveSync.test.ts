@@ -2031,7 +2031,6 @@ describe('liveSync: a refused save\'s dialog waits while the person is mid-edit 
 
   it('the agent writing again while the dialog waits moves its version and does not end the wait', async () => {
     const { end } = await refusedMidResize('site setting');
-    if (process.env.DBG) autosaveFor(SITE).subscribe(() => process.stderr.write('STATE ' + autosaveFor(SITE).getState().phase + ' resizing=' + store.editorUI.isResizing + ' batch=' + !!getHistoryStore()!.batch + '\n'));
     stream().emit('site:version', { origin: 'mcp', version: server.version, versionBefore: server.version - 1 });
     await settle();
     await agentWrites('agent again');
@@ -2121,6 +2120,136 @@ describe('liveSync: a refused save\'s dialog waits while the person is mid-edit 
     await vi.advanceTimersByTimeAsync(HELD_DIALOG_CHECK_MS);
     expect(autosaveFor(SITE).getState()).toMatchObject({ dialogOpen: true });
     newer.stop();
+  });
+});
+
+describe('liveSync: a save refused mid-edit still gets the replay (review of PR #358)', () => {
+  const homeChild = (i: number) => project().getPage(homeId())!.appComponentTree.children[i] as unknown as { id: string; setTextContent(text: string): void };
+  /** Every state autosave passed through: whether its dialog ever stood open. */
+  function watchDialog() {
+    const opened: boolean[] = [];
+    const stop = autosaveFor(SITE).subscribe(() => {
+      const state = autosaveFor(SITE).getState();
+      opened.push(state.phase === 'conflict' && state.dialogOpen);
+    });
+    return { everOpened: () => opened.includes(true), stop };
+  }
+
+  it('Cmd+S while the announced copy is still being fetched: refused, then replayed on the copy, no dialog', async () => {
+    start();
+    await agentWrites('first');
+    const node = homeChild(0);
+    let dirty = true;
+    registerOpenDraft({
+      isDirty: () => dirty,
+      commit: () => {
+        node.setTextContent('typed then saved');
+        dirty = false;
+      },
+    });
+    const dialog = watchDialog();
+    holdFetch = { release: () => {} };
+    await agentWrites('agent'); // announced while typing; its copy is on the way
+    handleSaveShortcut(new KeyboardEvent('keydown', { key: 's', metaKey: true, cancelable: true }), store.editorUI);
+    await settle(); // the save on the old version is refused
+    expect(saves.map((save) => save.expectedVersion)).toEqual([2]);
+    holdFetch.release();
+    holdFetch = undefined;
+    await settle();
+    await settle();
+    expect(saves.map((save) => save.expectedVersion)).toEqual([2, 3]);
+    expect(autosaveFor(SITE).getState().phase).toBe('saved');
+    expect(JSON.stringify(server.snapshot)).toContain('typed then saved');
+    expect(JSON.stringify(server.snapshot)).toContain('agent');
+    dialog.stop();
+    expect(dialog.everOpened()).toBe(false);
+  });
+
+  it('a resize refused mid-gesture, the agent\'s version announced during it and its copy arriving after: replayed, no dialog', async () => {
+    start();
+    await agentWrites('first');
+    const node = homeChild(0);
+    const history = getHistoryStore()!;
+    const dialog = watchDialog();
+    store.editorUI.startResize({} as never);
+    history.startBatch('Resize');
+    node.setTextContent('resized');
+    holdFetch = { release: () => {} };
+    await agentWrites('agent'); // announced mid-gesture; its copy is on the way
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_MAX_WAIT_MS); // the save goes out and is refused
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: false });
+    history.commitBatch();
+    store.editorUI.endResize();
+    await settle();
+    holdFetch.release();
+    holdFetch = undefined;
+    await settle();
+    await settle();
+    expect(autosaveFor(SITE).getState().phase).not.toBe('conflict');
+    expect(JSON.stringify(working())).toContain('resized');
+    expect(JSON.stringify(working())).toContain('agent');
+    dialog.stop();
+    expect(dialog.everOpened()).toBe(false);
+  });
+
+  it('a resize refused mid-gesture with no version announced yet: the copy that comes after replays it, no dialog', async () => {
+    start();
+    await agentWrites('first');
+    const node = homeChild(0);
+    const history = getHistoryStore()!;
+    const dialog = watchDialog();
+    store.editorUI.startResize({} as never);
+    history.startBatch('Resize');
+    node.setTextContent('resized');
+    const event = await agentWrites('agent', false); // the agent wrote; no event yet
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_MAX_WAIT_MS); // the save is refused mid-gesture
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: false });
+    history.commitBatch();
+    store.editorUI.endResize();
+    stream().emit('site:version', event); // the event right after the gesture
+    await settle();
+    await settle();
+    expect(autosaveFor(SITE).getState().phase).not.toBe('conflict');
+    expect(JSON.stringify(working())).toContain('resized');
+    expect(JSON.stringify(working())).toContain('agent');
+    dialog.stop();
+    expect(dialog.everOpened()).toBe(false);
+  });
+
+  it('Cmd+S while a refused replay waits for the agent\'s copy keeps the dialog held; the replay resolves it', async () => {
+    start();
+    await agentWrites('first');
+    const node = homeChild(0);
+    const gates: Array<() => void> = [];
+    resetAutosaveForTests({
+      write: async (snapshot, expectedVersion): Promise<ProjectWriteResult> => {
+        await new Promise<void>((resolve) => gates.push(resolve));
+        saves.push({ expectedVersion, snapshot: snapshot as ProjectSnapshotOut });
+        if (expectedVersion !== server.version) return { kind: 'conflict', currentVersion: server.version };
+        server = { version: server.version + 1, snapshot: snapshot as ProjectSnapshotOut };
+        return { kind: 'ok', payload: {}, version: server.version };
+      },
+    });
+    autosaveFor(SITE).attach(project());
+    const draft = openDraft(() => node.setTextContent('typed by the person'));
+    await agentWrites('second');
+    draft.commitAndClose();
+    await settle(); // replayed on 3, its save waits
+    const event = await agentWrites('third', false);
+    const dialog = watchDialog();
+    gates.shift()!(); // refused before the copy comes
+    await settle();
+    await settle();
+    handleSaveShortcut(new KeyboardEvent('keydown', { key: 's', metaKey: true, cancelable: true }), store.editorUI);
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: false });
+    stream().emit('site:version', event);
+    await settle();
+    gates.shift()!();
+    await settle();
+    await settle();
+    expect(autosaveFor(SITE).getState().phase).toBe('saved');
+    dialog.stop();
+    expect(dialog.everOpened()).toBe(false);
   });
 });
 

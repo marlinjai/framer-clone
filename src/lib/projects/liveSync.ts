@@ -544,12 +544,23 @@ export class LiveSync {
   start(): void {
     if (this.phaseValue !== 'stopped') return;
     this.disposeVisibility = this.deps.onVisibilityChange(() => this.visibilityChanged());
+    // A save refused while the person is mid-edit, or while a replay of the refused
+    // edit is pending (a replayed edit's save, or an edit marked when a newer
+    // version was announced whose copy is still being fetched), keeps its dialog for later.
+    this.disposeDialogHold = setConflictDialogHold(
+      this.projectId,
+      () => isEditing(this.rootStore) || this.replayMark !== undefined || (this.editMark !== undefined && this.wanted !== undefined),
+    );
     // A copy held while this tab's write was out: that write may have succeeded
     // (no 409 will come), so the held copy is looked at again once it settled.
-    // A save refused while the person is mid-edit, or while a replay of the refused edit is pending, keeps its dialog for later.
-    this.disposeDialogHold = setConflictDialogHold(this.projectId, () => isEditing(this.rootStore) || this.replayMark !== undefined);
     this.disposeSettled = onWritesSettled((projectId) => {
       if (projectId !== this.projectId) return;
+      // A save refused while the person is mid-edit (a gesture, typing): where the
+      // history stands now marks that edit (its step is not recorded yet), so the
+      // agent's newer copy can take it on top once it comes and the edit settled.
+      if (existingAutosave(this.projectId)?.getState().phase === 'conflict' && isEditing(this.rootStore) && !this.editMark) {
+        this.editMark = historyMark();
+      }
       this.retake();
       // The merged copy's save landed with nothing held for it: no further replay can follow it.
       // A refusal (conflict) keeps the mark: the agent's newer copy, fetched after it, replays the edit again (take).
@@ -1058,7 +1069,10 @@ export class LiveSync {
       // move, so the copy may already differ): no adoption replacing what the
       // person works on, and no dialog from this copy. Looked at once it settled.
       // A replayed edit whose save was refused is the one to replay again then.
-      if (autosavePhase === 'conflict' && this.replayMark && !this.editMark) this.editMark = this.replayMark;
+      if (autosavePhase === 'conflict' && this.replayMark && !this.editMark) {
+        this.editMark = this.replayMark;
+        this.replayMark = undefined;
+      }
       this.setHeld({ ...keep, whileEditing: true });
       // Already in conflict (an earlier refusal): only the version it names moves.
       if (autosavePhase === 'conflict') autosave?.noteChangedElsewhere(body.version);
@@ -1071,8 +1085,11 @@ export class LiveSync {
       this.replayMark = undefined;
       if (this.rebaseEdit(keep, mark)) return;
     }
-    if (!clean && this.editMark && !hasWriteInFlight(this.projectId) && autosavePhase !== 'conflict') {
-      // An edit that settled while this copy was being fetched (marked when it was announced).
+    if (!clean && this.editMark && !hasWriteInFlight(this.projectId)) {
+      // An edit that settled while this copy was being fetched (marked when it was
+      // announced, or when its save was refused mid-edit): also after that refusal,
+      // since rebaseEdit checks the copy is saved once the edit is undone, so it
+      // never replays over other unsaved work.
       const mark = this.editMark;
       this.editMark = undefined;
       if (this.rebaseEdit(keep, mark)) return;

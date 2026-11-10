@@ -423,6 +423,9 @@ export class AutosaveController {
     // Publish writes this very copy; the status already says so.
     if (phase === 'publishing') return Promise.resolve();
     if (phase === 'conflict') {
+      // Held for the person's edit or a replay about to resolve it (Cmd+S): it stays
+      // held, and opens by itself if the replay cannot. The status's button still opens it.
+      if (this.heldDialogTimer && (conflictDialogHolds.get(this.projectId)?.() ?? false)) return Promise.resolve();
       this.openConflict();
       return Promise.resolve();
     }
@@ -637,7 +640,6 @@ export class AutosaveController {
 
   // ---- the version lock's dialog ---------------------------------------------
 
-  /** "Keep editing": the dialog closes, autosave stays paused. */
   /**
    * A refusal's dialog held back (conflictDialogHolds): looked at every
    * HELD_DIALOG_CHECK_MS and opened once nothing holds it any more, or after
@@ -666,6 +668,7 @@ export class AutosaveController {
     this.heldDialogTimer = undefined;
   }
 
+  /** "Keep editing": the dialog closes, autosave stays paused. */
   dismissConflict(): void {
     // "Keep editing" is the person's answer: a held dialog does not come back by itself.
     this.stopHeldDialog();
@@ -1055,7 +1058,6 @@ export function abandonWorkingCopy(projectId: string): void {
   discardWorkingCopy(projectId);
 }
 
-/** The controller of a project, created on first use. */
 // project id -> whether a refusal's dialog should wait right now, installed by the
 // live sync (src/lib/projects/liveSync.ts), which may start before the project's
 // autosave controller exists: true while the person is mid-edit or a replay of
@@ -1070,6 +1072,7 @@ export function setConflictDialogHold(projectId: string, hold: () => boolean): (
   };
 }
 
+/** The controller of a project, created on first use. */
 export function autosaveFor(projectId: string): AutosaveController {
   let controller = controllers.get(projectId);
   if (!controller) {
