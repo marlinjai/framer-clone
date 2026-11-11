@@ -19,7 +19,7 @@
  * `public/` so the build never fetches an external asset.
  */
 
-import { useFrame } from "@react-three/fiber";
+import { useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 
@@ -228,6 +228,9 @@ function ImageLayerComponent({ layer, values, ctx }: LayerComponentProps) {
   );
   const interactivity = useInteractivity();
   const spec = useInteractivitySpec(layer.interactivity);
+  // Under reduced motion the canvas draws on demand, so a late image has to ask
+  // for the frame that shows it. A no-op in the always-drawing loop.
+  const invalidate = useThree((state) => state.invalidate);
 
   const initialUniforms = useMemo<ImageUniforms>(
     () => ({
@@ -258,7 +261,8 @@ function ImageLayerComponent({ layer, values, ctx }: LayerComponentProps) {
     if (img && img.width && img.height) {
       m.uniforms.uImageAspect.value = img.width / img.height;
     }
-  }, [texVersion, fallback]);
+    invalidate();
+  }, [texVersion, fallback, invalidate]);
 
   useEffect(() => {
     const m = matRef.current;

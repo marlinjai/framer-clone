@@ -26,6 +26,7 @@
 // What the island is doing is written on the box as `data-fc-fx-state`
 // (src/lib/fxScene/marker.ts), for tests and for diagnosis.
 //
+// A change of the reduced-motion preference runs the steps again for the page.
 // Leaving the page (`pagehide`) tears the scene down and releases its context; a
 // page restored from the back/forward cache (`pageshow`) starts again.
 'use client';
@@ -173,9 +174,20 @@ export default function FxIsland({ program }: { program: readonly FxProgramEntry
     const onShow = (event: PageTransitionEvent) => {
       if (event.persisted && !stop) stop = run(program);
     };
+    // The preference can change while the page is open: run the program again, so
+    // a waiting or live scene follows its `calm` setting (a background scene is
+    // dropped, a frame scene is remounted with the new preference).
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const onPreference = () => {
+      if (!stop) return;
+      stop();
+      stop = run(program);
+    };
+    reduced.addEventListener('change', onPreference);
     window.addEventListener('pagehide', onHide);
     window.addEventListener('pageshow', onShow);
     return () => {
+      reduced.removeEventListener('change', onPreference);
       window.removeEventListener('pagehide', onHide);
       window.removeEventListener('pageshow', onShow);
       stop?.();
