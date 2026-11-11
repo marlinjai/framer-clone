@@ -19,8 +19,11 @@ export interface ValueConflict {
   branch: unknown;
 }
 
-/** Whether the value at `path` is merged per key (when every side that has it is a plain object). */
-export type SplitRule = (path: ValuePath) => boolean;
+/**
+ * Whether the value at `path` is merged per key (only ever asked when every side that has it is a plain
+ * object). `sides` are base, main and branch at that path, so a rule can look at the shape (a responsive value).
+ */
+export type SplitRule = (path: ValuePath, sides: readonly [unknown, unknown, unknown]) => boolean;
 
 /** The answer to a conflict at a path, when one was given and still applies. */
 export type PickAt = (path: ValuePath, conflict: ValueConflict) => 'main' | 'branch' | undefined;
@@ -116,7 +119,7 @@ function merge(
   if (jsonEqual(base, main)) return branch; // rule 1 (and 5: removed on the branch)
   if (jsonEqual(base, branch)) return main; // rule 1 (and 5: removed on main)
   const sides = [base, main, branch].filter((v) => v !== undefined);
-  if (split(path) && sides.every(isPlainObject) && main !== undefined && branch !== undefined) {
+  if (main !== undefined && branch !== undefined && sides.every(isPlainObject) && split(path, [base, main, branch])) {
     const b = (base ?? {}) as Record<string, unknown>;
     const m = main as Record<string, unknown>;
     const r = branch as Record<string, unknown>;
