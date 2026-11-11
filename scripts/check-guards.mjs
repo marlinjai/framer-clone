@@ -71,6 +71,19 @@
  * contract (plan section 4.2), and their trigger functions pin a path with
  * `SET search_path FROM CURRENT`.
  *
+ * FX ENGINE IMPORT BOUNDARY (not a tenant rule, kept here because this is the
+ * repository's one static guard, run by `pnpm lint:guards` and CI). Lumitra FX,
+ * the WebGL effects engine, lives in src/lib/fx as an internal module that must
+ * stay extractable (plan docs/plans/2026-11-08-lumitra-fx-in-sites.md, "Where
+ * the code lives"):
+ *  FX1: a file inside src/lib/fx imports nothing from the rest of the
+ *       repository, and no package outside FX_ALLOWED_PACKAGES (so leva and
+ *       drei, which the plan keeps out of Sites, cannot come back unnoticed).
+ *  FX2: a file outside src/lib/fx reaches the engine only through its public
+ *       entries (FX_PUBLIC_ENTRIES), never through a file inside it.
+ * Both rules read every static import, re-export, dynamic import() and
+ * require() with a literal specifier; see scanFxBoundary.
+ *
  * A deliberate hazard FIXTURE (a test proving that an unqualified fragment
  * leaks) may opt out of one line with a `tenant-db-guard-disable-next-line`
  * comment on the line above. Never in application code.
@@ -102,6 +115,7 @@ const EXCLUDED_PREFIXES = [
   `${TENANT_MIGRATIONS_DIR}/`,
   'scripts/check-guards.mjs',
   'src/server/commerce/__tests__/checkGuards.test.ts',
+  'src/lib/fx/__tests__/boundaryGuard.test.ts',
 ];
 
 /**
@@ -114,6 +128,31 @@ const ALLOWANCES = {
   'src/server/commerce/provisioning/__tests__/backfill-demo.itest.ts': ['G3-raw'],
   'src/server/cms/withTenant.ts': ['G2'],
 };
+
+/** The FX engine's directory (relative to the repository root, POSIX separators). */
+export const FX_DIR = 'src/lib/fx';
+
+/**
+ * The files through which the rest of the app may import the engine, without
+ * extension. `@/lib/fx` resolves to the first. A later slice that needs a
+ * second entry (a parser the server can import without three.js) adds it here.
+ */
+export const FX_PUBLIC_ENTRIES = [`${FX_DIR}/index`];
+
+/**
+ * The packages the engine may import. Subpaths count (`three/addons/...`,
+ * `react-dom/client`). vitest is for the engine's own tests.
+ */
+export const FX_ALLOWED_PACKAGES = [
+  'react',
+  'react-dom',
+  'three',
+  '@react-three/fiber',
+  '@react-three/postprocessing',
+  'postprocessing',
+  '@marlinjai/studio-scene-core',
+  'vitest',
+];
 
 const SCANNED_EXTENSIONS = /\.(?:ts|tsx|mts|cts|js|mjs|cjs)$/;
 
@@ -161,6 +200,8 @@ export function scanText(file) {
     if (disabledLines.has(idx + 1) || allowed.has(rule)) return;
     violations.push({ rule, line: idx + 1, message });
   };
+
+  for (const v of scanFxBoundary({ path: file.path, code })) push(v.rule, v.line - 1, v.message);
 
   // G1: any reach for withSchema, over the WHOLE comment-stripped text so a
   // newline before the `(` cannot hide a call. Three shapes: a call, computed
@@ -421,6 +462,97 @@ function allTaggedTemplates(text, tags) {
   return out;
 }
 
+// --- FX engine import boundary ----------------------------------------------
+
+/**
+ * Every module specifier a file names with a string literal: `import ... from`,
+ * `export ... from`, a bare `import '...'`, `import('...')` and `require('...')`.
+ * Runs on comment-stripped code. An import() or require() whose argument is not
+ * a plain literal is returned with `specifier: null`: the scanner cannot tell
+ * where it points.
+ * @param {string} code
+ * @returns {Array<{ specifier: string | null, index: number }>}
+ */
+export function moduleSpecifiers(code) {
+  const out = [];
+  const patterns = [
+    // import x from '...', import {..} from '...', export {..} from '...', export * from '...'
+    /\b(?:import|export)\b[^'"`;()]*?\bfrom\s*(['"])([^'"\n]+)\1/g,
+    // import '...'
+    /\bimport\s*(['"])([^'"\n]+)\1/g,
+  ];
+  for (const re of patterns) {
+    let m;
+    while ((m = re.exec(code)) !== null) out.push({ specifier: m[2], index: m.index });
+  }
+  const call = /\b(?:import|require)\s*\(\s*([^)]*?)\s*\)/g;
+  let m;
+  while ((m = call.exec(code)) !== null) {
+    const literal = /^(['"`])([^'"`$\n]+)\1$/.exec(m[1]);
+    out.push({ specifier: literal ? literal[2] : null, index: m.index });
+  }
+  return out.sort((a, b) => a.index - b.index);
+}
+
+/**
+ * Where a specifier points, as a path relative to the repository root (POSIX,
+ * no extension normalisation), or `null` for a package.
+ */
+function resolveSpecifier(specifier, fromRel) {
+  if (specifier.startsWith('@/')) return `src/${specifier.slice(2)}`.replace(/\/+$/, '');
+  if (specifier === '@') return 'src';
+  if (specifier.startsWith('.')) {
+    return toPosix(relative(REPO_ROOT, resolve(REPO_ROOT, dirname(fromRel), specifier)));
+  }
+  if (specifier.startsWith('/')) return toPosix(relative(REPO_ROOT, specifier));
+  return null;
+}
+
+function isInsideFx(rel) {
+  return rel === FX_DIR || rel.startsWith(`${FX_DIR}/`);
+}
+
+function isAllowedFxPackage(specifier) {
+  return FX_ALLOWED_PACKAGES.some((name) => specifier === name || specifier.startsWith(`${name}/`));
+}
+
+function isFxPublicEntry(rel) {
+  const bare = rel.replace(/\.(?:ts|tsx|mts|cts|js|mjs|cjs)$/, '');
+  return bare === FX_DIR || FX_PUBLIC_ENTRIES.includes(bare);
+}
+
+/**
+ * @param {{ path: string, code: string }} file `code` is comment-stripped source.
+ * @returns {Array<{ rule: string, line: number, message: string }>}
+ */
+export function scanFxBoundary(file) {
+  const rel = toPosix(relative(REPO_ROOT, resolve(REPO_ROOT, file.path)));
+  const inside = isInsideFx(rel);
+  const violations = [];
+  for (const { specifier, index } of moduleSpecifiers(file.code)) {
+    const line = lineOf(file.code, index) + 1;
+    if (specifier === null) {
+      if (inside) {
+        violations.push({ rule: 'FX1', line, message: 'the FX engine may only import with a literal specifier, so its imports can be checked' });
+      }
+      continue;
+    }
+    const target = resolveSpecifier(specifier, rel);
+    if (inside) {
+      if (target === null) {
+        if (!isAllowedFxPackage(specifier)) {
+          violations.push({ rule: 'FX1', line, message: `the FX engine may not import the package "${specifier}" (allowed: ${FX_ALLOWED_PACKAGES.join(', ')})` });
+        }
+      } else if (!isInsideFx(target)) {
+        violations.push({ rule: 'FX1', line, message: `the FX engine (${FX_DIR}) imports nothing from the rest of the repository, found "${specifier}"` });
+      }
+    } else if (target !== null && isInsideFx(target) && !isFxPublicEntry(target)) {
+      violations.push({ rule: 'FX2', line, message: `import the FX engine through "@/lib/fx" only, not "${specifier}"` });
+    }
+  }
+  return violations;
+}
+
 // --- file discovery + CLI ---------------------------------------------------
 
 function toPosix(p) {
@@ -492,10 +624,10 @@ if (isMain) {
     for (const v of violations) {
       process.stderr.write(`[${v.rule}] ${toPosix(relative(REPO_ROOT, v.path))}:${v.line} ${v.message}\n`);
     }
-    process.stderr.write(`\ntenant-db guards: ${violations.length} violation(s)\n`);
+    process.stderr.write(`\nguards: ${violations.length} violation(s)\n`);
     process.exit(1);
   }
   process.stdout.write(
-    `tenant-db guards: clean (${files.length} files, ${knownTables.length} tenant tables, rules G1 to G5)\n`,
+    `guards: clean (${files.length} files, ${knownTables.length} tenant tables, rules G1 to G5, FX1 and FX2)\n`,
   );
 }

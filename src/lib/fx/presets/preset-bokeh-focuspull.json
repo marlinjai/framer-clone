@@ -1,0 +1,138 @@
+{
+  "version": 1,
+  "id": "lumitra-preset-bokeh-focuspull",
+  "size": { "mode": "fill" },
+  "background": "#070710",
+  "fps": 60,
+  "dpr": [1, 1.75],
+  "layers": [
+    {
+      "id": "gradient-bg",
+      "type": "gradient",
+      "name": "Backdrop",
+      "visible": true,
+      "blend": "normal",
+      "params": {
+        "colorA": "#1d0a3a",
+        "colorB": "#3c1361",
+        "colorC": "#0c2856",
+        "colorD": "#07070f",
+        "speed": 0.25,
+        "scale": 1.05,
+        "falloff": 2.6,
+        "opacity": 1
+      }
+    },
+    {
+      "id": "shape-orb-a",
+      "type": "shape",
+      "name": "Orb A",
+      "visible": true,
+      "blend": "screen",
+      "params": {
+        "shape": "blob",
+        "position": [-0.55, 0.2],
+        "size": 0.4,
+        "aspect": 1,
+        "radius": 0.18,
+        "softness": 0.35,
+        "color": "#9fb6ff",
+        "opacity": 0.85,
+        "wobble": 0.3
+      },
+      "interactivity": {
+        "trackMouse": 0.5,
+        "momentum": 0.75,
+        "spring": 0.06,
+        "axes": "both"
+      }
+    },
+    {
+      "id": "shape-orb-b",
+      "type": "shape",
+      "name": "Orb B",
+      "visible": true,
+      "blend": "screen",
+      "params": {
+        "shape": "blob",
+        "position": [0.55, -0.18],
+        "size": 0.32,
+        "aspect": 1,
+        "radius": 0.18,
+        "softness": 0.4,
+        "color": "#ff7eb6",
+        "opacity": 0.75,
+        "wobble": 0.4
+      },
+      "interactivity": {
+        "trackMouse": 0.5,
+        "momentum": 0.75,
+        "spring": 0.06,
+        "axes": "both"
+      }
+    },
+    {
+      "id": "text-lockup",
+      "type": "text",
+      "name": "Lockup",
+      "visible": true,
+      "blend": "normal",
+      "params": {
+        "color": "#f4f6ff",
+        "width": 5,
+        "height": 2.5,
+        "reveal": 1.6,
+        "parallax": 0.12
+      }
+    },
+    {
+      "id": "bokeh",
+      "type": "bokeh",
+      "name": "Bokeh Focus-Pull",
+      "visible": true,
+      "blend": "normal",
+      "params": {
+        "radius": 0.045,
+        "mixRadius": 0.18,
+        "easing": 0.4,
+        "focusPos": [0, 0],
+        "invert": false,
+        "reveal": 2.4
+      }
+    },
+    {
+      "id": "bloom",
+      "type": "bloom",
+      "name": "Bloom",
+      "visible": true,
+      "blend": "add",
+      "params": {
+        "intensity": 0.55,
+        "threshold": 0.35,
+        "radius": 0.7
+      }
+    },
+    {
+      "id": "vignette",
+      "type": "vignette",
+      "name": "Vignette",
+      "visible": true,
+      "blend": "normal",
+      "params": {
+        "offset": 0.4,
+        "darkness": 0.65
+      }
+    },
+    {
+      "id": "grain",
+      "type": "grain",
+      "name": "Grain",
+      "visible": true,
+      "blend": "overlay",
+      "params": {
+        "premultiply": false,
+        "opacity": 0.14
+      }
+    }
+  ]
+}

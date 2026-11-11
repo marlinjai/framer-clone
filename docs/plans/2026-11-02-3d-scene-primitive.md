@@ -319,6 +319,10 @@ high-frequency actions). How the scene keeps them:
 
 ### Bundle budget
 
+**three.js version (2026-11-11):** the Lumitra FX import ([plan](2026-11-08-lumitra-fx-in-sites.md), slice F1) landed
+first and pinned `three` 0.184.0 exactly in `package.json`, the version lumitra.co runs. This primitive uses that one
+entry; a version change is made once, for both, with the FX pixel comparison as its check.
+
 | Chunk | Gzipped budget | Note |
 |---|---|---|
 | three.js core, tree-shaken to what the runtime imports | 150 KB | Grothe ships the whole minified module at 170 KB |

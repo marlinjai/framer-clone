@@ -1,6 +1,6 @@
 ---
 type: plan
-status: draft
+status: in-progress
 date: 2026-11-08
 title: "Lumitra FX moves into Lumitra Sites: the WebGL effects engine becomes an FX scene block"
 summary: "Marlin decided on 2026-11-08 that Lumitra FX, the owned WebGL effects engine (god rays, bloom, noise fields, gradients, grain; today the private package @lumitra-web/fx in the lumitra-web repo, whose only consumer is the lumitra.co hub hero), belongs in Lumitra Sites (framer-clone). This plan copies the engine into framer-clone as an internal module, adds an `FX scene` node (a marked div with the scene as data, rendered by a lazy client island only where one is on the page), generates its properties panel from the engine's own parameter schema in place of the leva tuning panel, teaches the AI generator and the agent plugin about it, and proves it pixel for pixel against lumitra.co before lumitra.co itself moves. lumitra-web keeps a frozen copy and lumitra.co and services.lumitra.co keep running untouched until Marlin approves the apex move. Supersedes the 2026-06-27 decision (D4) that FX would move into the lumitra-studio monorepo. Eight slices, about 17 to 24 agent days. Marlin also decided on 2026-11-08 (option B) that services.lumitra.co is rebuilt in Sites as well and lumitra-web is retired once both hosts run on Sites; the retirement sequence is part of this plan."
@@ -343,4 +343,61 @@ plan, step 6).
 
 ## Build log
 
-Empty until F1.
+### 2026-11-11: Marlin approved the plan and the build started
+
+Marlin asked for the migration to be built from this plan as written. Status moved from draft to in-progress.
+
+### F1 `fx-import` (2026-11-11)
+
+Source: lumitra-web `packages/fx/src` at commit `8a77254ee5d66f2c8b7e4005933290c6c0796393` (package `@lumitra-web/fx`
+0.4.0), copied from the git object, into `src/lib/fx/`. The three scenes the tests need (`src/scenes/v7.json`,
+`demo-phase-2.json`, `hub-hero.json`) came along as fixtures from the same commit.
+
+What landed:
+
+- The engine (15 layer types, registry, serializer, the Studio bridge, presets, `createScene`, `LumitraScene`) and its
+  equivalence test, which passes in framer-clone's Vitest.
+- Dependencies, pinned exactly to what lumitra-web resolves, so the F4 pixel comparison compares the same libraries:
+  `three` 0.184.0, `@react-three/fiber` 9.6.1, `@react-three/postprocessing` 3.0.4, `postprocessing` 6.39.1,
+  `@types/three` 0.184.1. **This is the app's one three.js version; the 3D scene primitive inherits it** (noted in that
+  plan's bundle section).
+- `@marlinjai/studio-scene-core` 0.3.0, the current release (the plan said 0.2.x, which was current on 2026-11-08). The
+  equivalence test passes against it unchanged.
+- Import boundary: rules FX1 and FX2 in `scripts/check-guards.mjs` (`pnpm lint:guards`), with their own tests in
+  `src/lib/fx/__tests__/boundaryGuard.test.ts`. FX1: the engine imports nothing from the rest of the repository and
+  only a fixed list of packages. FX2: the rest of the app imports the engine only through `@/lib/fx`.
+- "The production bundle is unchanged", asserted twice: a test fails when any file outside the engine imports it
+  (F3 replaces that test with the bundle tests), and a real `next build` on this slice contains no chunk with three.js,
+  react-three-fiber or postprocessing in it (0 files under `.next/static` and `.next/server` match).
+
+Decided in F1, say so if you disagree:
+
+- **The leva tuning panel is left behind, not split into an optional entry.** The plan asked for an optional editor
+  entry that Sites never imports. Such an entry would be code nothing runs, and it would put leva into `package.json`
+  only so it typechecks. So `LevaEditor`, `EditorTools`, `LayerListPanel` and the localStorage autosave
+  (`editor/persistence.ts`) were not copied; lumitra-web's frozen copy keeps them. `layerOps.ts`, the pure layer list
+  operations F5 builds on, is kept and exported. The guard's package list keeps leva out for good.
+- **`LumitraScene` is controlled.** With its own panel it held a private copy of the scene and treated the `config`
+  prop as a seed. Without the panel it draws exactly the `config` it is handed and re-draws on a new one, which is what
+  the F5 "Live" toggle needs. `createScene().setParam` now produces a new scene object for each change (it mutated in
+  place, which the seed-only component never drew).
+- **drei is replaced by a local frame rate sampler** (`frameRate.ts`, `FrameRateMonitor.tsx`, about 90 lines with
+  tests), not imported by deep path: drei brings a large dependency tree for one component. It samples as drei's
+  `PerformanceMonitor` did (250 millisecond windows, batches of ten, a floor of 40 frames per second, 60 on displays
+  faster than 100 hertz) with one deliberate difference: drei also counted batches that were faster than the upper
+  bound, and after four of them called its fallback, which the engine routed to the same step down. A machine holding
+  its frame rate therefore lost its heavy passes (bloom, god rays) after about ten seconds. That is a defect in the
+  lumitra-web copy too and was never the intent; here only a sustained low frame rate steps down, once. Read from
+  drei 10.7.7's `core/PerformanceMonitor.js` (`flipped++` on incline, `flipped > flipflops` calls `onFallback`; the
+  engine passed `flipflops={3}` and routed `onFallback` to the step down). lumitra-web's frozen copy keeps the defect:
+  it is retired by R1 to R5, and a fix there is not worth a deploy of an app being switched off. Consequences for later
+  slices: F4 compares the static reduced-motion frame but must still capture before the first batch of ten windows
+  completes (2.5 seconds) or switch the monitor off on both sides, because software WebGL is slow enough to step both
+  copies down at uncontrolled moments; and F8's animated side-by-side recording will show lumitra.co losing bloom after
+  about ten seconds on a fast machine while Sites keeps it, which is the fix, not a mismatch.
+- **No Dependabot rule needed for the pins:** `.github/dependabot.yml` covers only the Docker base image, so nothing
+  bumps the WebGL packages automatically. A deliberate bump runs the F4 comparison once that exists.
+- **The engine's allowed packages are a fixed list** in the guard (react, react-dom, three, the two react-three
+  packages, postprocessing, scene-core, vitest for its tests). A new one is a decision, not a drive-by.
+
+Checks run locally: `pnpm typecheck`, `pnpm lint`, `pnpm lint:guards`, `pnpm test`, `pnpm check:roadmap`, `pnpm build`.

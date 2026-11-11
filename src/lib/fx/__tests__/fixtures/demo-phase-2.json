@@ -1,0 +1,164 @@
+{
+  "version": 1,
+  "id": "lumitra-demo-phase-2",
+  "size": { "mode": "fill" },
+  "background": "#06060a",
+  "fps": 60,
+  "dpr": [1, 1.75],
+  "layers": [
+    {
+      "id": "gradient-bg",
+      "type": "gradient",
+      "name": "Gradient",
+      "visible": true,
+      "blend": "normal",
+      "params": {
+        "colorA": "#1a0a3a",
+        "colorB": "#3a1361",
+        "colorC": "#0a3556",
+        "colorD": "#06060a",
+        "speed": 0.45,
+        "scale": 1.1,
+        "falloff": 2.6,
+        "opacity": 1
+      },
+      "interactivity": {
+        "trackMouse": 0.6,
+        "momentum": 0.7,
+        "spring": 0.05,
+        "axes": "both"
+      }
+    },
+    {
+      "id": "image-thumb",
+      "type": "image",
+      "name": "Backdrop Image",
+      "visible": true,
+      "blend": "screen",
+      "params": {
+        "src": "/fx/thumbs/thumb-7.jpg",
+        "fit": "cover",
+        "opacity": 0.45,
+        "displace": 0.02,
+        "scale": 1
+      },
+      "interactivity": {
+        "trackMouse": 0.4,
+        "momentum": 0.85,
+        "spring": 0.04,
+        "axes": "both"
+      }
+    },
+    {
+      "id": "shape-blob",
+      "type": "shape",
+      "name": "Accent Blob",
+      "visible": true,
+      "blend": "screen",
+      "params": {
+        "shape": "blob",
+        "position": [-0.55, 0.25],
+        "size": 0.55,
+        "aspect": 1,
+        "radius": 0.2,
+        "softness": 0.4,
+        "color": "#7c5cff",
+        "opacity": 0.85,
+        "wobble": 0.35
+      },
+      "interactivity": {
+        "trackMouse": 0.9,
+        "momentum": 0.55,
+        "spring": 0.08,
+        "axes": "both"
+      }
+    },
+    {
+      "id": "shape-rect",
+      "type": "shape",
+      "name": "Frame",
+      "visible": true,
+      "blend": "add",
+      "params": {
+        "shape": "roundedRect",
+        "position": [0.55, -0.2],
+        "size": 0.42,
+        "aspect": 1.3,
+        "radius": 0.18,
+        "softness": 0.03,
+        "color": "#3ad6ff",
+        "opacity": 0.55,
+        "wobble": 0
+      },
+      "interactivity": {
+        "trackMouse": 0.5,
+        "momentum": 0.7,
+        "spring": 0.06,
+        "axes": "x"
+      }
+    },
+    {
+      "id": "noise",
+      "type": "noiseFill",
+      "name": "Noise Field",
+      "visible": true,
+      "blend": "add",
+      "params": {
+        "color": "#b89cff",
+        "scale": 2.4,
+        "speed": 0.8,
+        "intensity": 0.18
+      },
+      "interactivity": {
+        "trackMouse": 0.7,
+        "momentum": 0.8,
+        "spring": 0.05,
+        "axes": "both"
+      }
+    },
+    {
+      "id": "bloom",
+      "type": "bloom",
+      "name": "Bloom",
+      "visible": true,
+      "blend": "add",
+      "params": {
+        "intensity": 0.6,
+        "threshold": 0.35,
+        "radius": 0.7
+      }
+    },
+    {
+      "id": "chromatic",
+      "type": "chromaticAberration",
+      "name": "Lens / Chromatic",
+      "visible": true,
+      "blend": "normal",
+      "params": {
+        "offset": [0.0008, 0.0005]
+      }
+    },
+    {
+      "id": "vignette",
+      "type": "vignette",
+      "name": "Vignette",
+      "visible": true,
+      "blend": "normal",
+      "params": {
+        "offset": 0.35,
+        "darkness": 0.7
+      }
+    },
+    {
+      "id": "grain",
+      "type": "grain",
+      "name": "Grain",
+      "visible": true,
+      "blend": "overlay",
+      "params": {
+        "premultiply": false,
+        "opacity": 0.18
+      }
+    }
+  ]
+}
