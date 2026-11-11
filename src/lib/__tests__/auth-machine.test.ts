@@ -446,7 +446,16 @@ describe('authorizeKeyAction', () => {
     for (const action of ['manageDomain', 'eraseSiteData', 'editBooks'] as const) {
       expect(authorizeKeyAction(key('admin', ['sites', 'books']), action)).toBe(false);
     }
-    expect([...MACHINE_ACTIONS].sort()).toEqual(['editSite', 'publishSite', 'viewBooks', 'viewSite']);
+    expect([...MACHINE_ACTIONS].sort()).toEqual(['editSite', 'mergeBranch', 'publishSite', 'viewBooks', 'viewSite']);
+  });
+
+  it('lets an admin key merge a site branch (the merge_branch tool adds a person\'s approval), and no lesser key', () => {
+    expect(authorizeKeyAction(key('admin', ['sites']), 'mergeBranch')).toBe(true);
+    for (const role of ['member', 'viewer', null] as const) {
+      expect(authorizeKeyAction(key(role, ['sites']), 'mergeBranch')).toBe(false);
+    }
+    // Approving or sending back a branch is a person's review: never a key's.
+    expect(authorizeKeyAction(key('admin', ['sites']), 'reviewBranch')).toBe(false);
   });
 
   it('lets a key read the Books only with the company books grant and a workspace admin role', () => {
