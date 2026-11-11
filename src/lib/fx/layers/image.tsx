@@ -19,7 +19,7 @@
  * `public/` so the build never fetches an external asset.
  */
 
-import { useFrame } from "@react-three/fiber";
+import { useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 
@@ -31,6 +31,7 @@ import type {
   LayerComponentProps,
   LayerDefinition,
 } from "../types";
+import { textureSize } from "../textureSize";
 import { applyContentBlend } from "./contentBlend";
 import { imageSchema } from "../schemas";
 
@@ -132,6 +133,25 @@ const IMAGE_FRAG = /* glsl */ `
 const FIT_INDEX: Record<string, number> = { cover: 0, contain: 1 };
 
 /**
+ * A picture larger than a screen needs is redrawn smaller before it reaches
+ * the GPU (see ../textureSize). The loaded texture is returned as it is when
+ * it fits, or when no 2D canvas is available to redraw it.
+ */
+function withinTextureSize(loaded: THREE.Texture): THREE.Texture {
+  const image = loaded.image as { width?: number; height?: number } | undefined;
+  const size = textureSize(image?.width ?? 0, image?.height ?? 0);
+  if (!size.scaled) return loaded;
+  const canvas = document.createElement("canvas");
+  canvas.width = size.width;
+  canvas.height = size.height;
+  const context = canvas.getContext("2d");
+  if (!context) return loaded;
+  context.drawImage(loaded.image as CanvasImageSource, 0, 0, size.width, size.height);
+  loaded.dispose();
+  return new THREE.CanvasTexture(canvas);
+}
+
+/**
  * Shared 1x1 fallback texture for when `src` is empty or fails to load.
  * Avoids a transient warning the first frame and gives the editor something
  * visible to drag/tune against.
@@ -178,12 +198,13 @@ function ImageLayerComponent({ layer, values, ctx }: LayerComponentProps) {
           loaded.dispose();
           return;
         }
-        loaded.colorSpace = THREE.SRGBColorSpace;
-        loaded.needsUpdate = true;
+        const texture = withinTextureSize(loaded);
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.needsUpdate = true;
         // Dispose previous before adopting the new one to avoid GPU leaks
         // when the editor cycles `src` rapidly.
         texRef.current?.dispose();
-        texRef.current = loaded;
+        texRef.current = texture;
         setTexVersion((n) => n + 1);
       },
       undefined,
@@ -207,6 +228,9 @@ function ImageLayerComponent({ layer, values, ctx }: LayerComponentProps) {
   );
   const interactivity = useInteractivity();
   const spec = useInteractivitySpec(layer.interactivity);
+  // Under reduced motion the canvas draws on demand, so a late image has to ask
+  // for the frame that shows it. A no-op in the always-drawing loop.
+  const invalidate = useThree((state) => state.invalidate);
 
   const initialUniforms = useMemo<ImageUniforms>(
     () => ({
@@ -237,7 +261,8 @@ function ImageLayerComponent({ layer, values, ctx }: LayerComponentProps) {
     if (img && img.width && img.height) {
       m.uniforms.uImageAspect.value = img.width / img.height;
     }
-  }, [texVersion, fallback]);
+    invalidate();
+  }, [texVersion, fallback, invalidate]);
 
   useEffect(() => {
     const m = matRef.current;

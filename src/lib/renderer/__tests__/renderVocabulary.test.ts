@@ -17,6 +17,7 @@ import {
 import { REVIEWED_ATTRIBUTES, REVIEWED_HTML_TAGS, REVIEWED_MATHML_TAGS, REVIEWED_SVG_TAGS } from '@/lib/ai/pageGen/reviewedVocabulary';
 import { BLOCKED_TAGS, isRefusedTag } from '@/lib/renderer/blockedNodes';
 import { REFUSED_RENDER_ATTRIBUTES, RENDERED_ATTRIBUTES, RENDERED_TAGS, isRenderedAttribute, isRenderedTag } from '@/lib/renderer/renderVocabulary';
+import { isFxIssuedAttribute } from '@/lib/fxScene/marker';
 
 const attributeNames = () =>
   [...new Set([...htmlElementAttributes(), ...htmlGlobalAttributes(), ...svgAttributes(), ...mathmlAttributes()].map((entry) => entry.id.slice(entry.id.lastIndexOf('.') + 1).toLowerCase()))]
@@ -51,12 +52,13 @@ describe('renderVocabulary', () => {
     for (const tag of ['brandnew', 'permission', 'svg:script', 'x-y:script', 'x:a', 'script ']) expect(isRenderedTag(tag)).toBe(false);
   });
 
-  it('refuses every data-fc name the code uses, unless applyBehaviour issues it and drops stored ones', () => {
+  it('refuses every data-fc name the code uses, unless applyBehaviour or applyFx issues it and drops stored ones', () => {
     const files = fs.readdirSync('src', { recursive: true, encoding: 'utf8' })
       .filter((file) => /\.tsx?$/.test(file) && !file.includes('__tests__'));
     const used = new Set(files.flatMap((file) => fs.readFileSync(path.join('src', file), 'utf8').match(/data-fc-[a-z][a-z-]*[a-z]/g) ?? []));
     expect(used.size).toBeGreaterThan(10);
-    const issued = (name: string) => isIssuedAttribute(name) || name === 'data-fc-sticky-cta';
+    // applyFx issues the `data-fc-fx` names the same way: it writes them and drops stored ones.
+    const issued = (name: string) => isIssuedAttribute(name) || isFxIssuedAttribute(name) || name === 'data-fc-sticky-cta';
     expect([...used].filter((name) => isRenderedAttribute(name) && !issued(name))).toEqual([]);
   });
 

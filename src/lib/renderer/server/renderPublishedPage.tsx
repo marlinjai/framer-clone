@@ -24,11 +24,13 @@ import { DEFAULT_LOOK, type SiteLook } from '@/lib/site/notFoundDefault';
 import { renderComponentNode } from './renderComponentNode';
 import { applyResponsiveStyles } from './applyResponsiveStyles';
 import { applyEffects } from './applyEffects';
+import { applyFx } from './applyFx';
 import { applyBehaviour } from './applyBehaviour';
 import type { BehaviourProgram } from '@/lib/behaviour/program';
 import { behaviourBootScript } from '@/lib/behaviour/gate';
 import BehaviourIsland from './BehaviourIsland';
 import EffectsIsland from './EffectsIsland';
+import FxIsland from './FxIsland';
 import { publishedEffectsBootScript } from '@/lib/effects/effects';
 import { LENIS_CSS } from '@/lib/effects/smoothScroll';
 import { DEFAULT_PAGE_BASE, pageBaseSheet, type PageBase } from '@/lib/site/pageBase';
@@ -219,7 +221,10 @@ export async function renderPublishedPage(
   // `style`, which the responsive pass then moves into the stylesheet per
   // breakpoint like any responsive style. The hover presets land in that sheet too.
   const effects = applyEffects(images.root, breakpoints);
-  const responsive = applyResponsiveStyles(effects.root, breakpoints, { gated: behaviour.hasGate, colorMode: themeColorMode(theme) });
+  // FX scenes (src/lib/fxScene): each box's stored scene becomes an entry of the
+  // page's FX program and a mark on the box; `fx` leaves every node here.
+  const fx = applyFx(effects.root);
+  const responsive = applyResponsiveStyles(fx.root, breakpoints, { gated: behaviour.hasGate, colorMode: themeColorMode(theme) });
   // The self-hosted web fonts the page uses, scanned before the responsive
   // rewrite moves styles into classes (src/lib/fonts/registry.ts).
   const fonts = publishedFontAssets(hydrated, theme);
@@ -286,6 +291,11 @@ export async function renderPublishedPage(
           <EffectsIsland effects={effects.needsRuntime} smoothScroll={smoothScroll} />
         ) : null}
         {behaviour.program ? <BehaviourIsland program={behaviour.program} /> : null}
+        {fx.program.length > 0 ? (
+          // Only on a page with a scene to draw. The engine is a chunk of its
+          // own, fetched by the island when the scene starts.
+          <FxIsland program={fx.program} />
+        ) : null}
       </>
     ),
     analyticsGated: tracker !== null,

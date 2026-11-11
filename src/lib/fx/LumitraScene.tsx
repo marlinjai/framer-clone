@@ -10,6 +10,9 @@
  *   content layers (back -> front, rendered as meshes)
  *   post layers    (top of the layer list to bottom = composer pass order)
  *
+ * Under prefers-reduced-motion the scene is one still frame: layers pin their
+ * clocks (`ctx.reduce`) and the canvas draws on demand instead of every frame.
+ *
  * `config` is controlled: the scene renders exactly the config it is handed
  * and re-renders when the parent passes a new one. In lumitra-web (source
  * commit 8a77254) the component also mounted a leva tuning panel behind
@@ -34,9 +37,9 @@
  * the probe passed (e.g. the GPU process crashes mid-session).
  */
 
-import { Canvas } from "@react-three/fiber";
+import { Canvas, useFrame } from "@react-three/fiber";
 import { EffectComposer } from "@react-three/postprocessing";
-import { Component, useCallback, useMemo, useState, type ReactNode } from "react";
+import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Object3D } from "three";
 
 import { planPipeline } from "./pipeline";
@@ -64,6 +67,44 @@ interface LumitraSceneProps {
    * When omitted, the fallback is just that background frame.
    */
   fallback?: ReactNode;
+  /**
+   * Called once, when the first frame has been drawn. A host that fades the
+   * scene in waits for this, so it never fades in an empty canvas.
+   */
+  onFirstFrame?: () => void;
+  /**
+   * Called once when the scene cannot draw (any more): no WebGL context could
+   * be created, the renderer threw while it was set up, or the context was
+   * lost. A host that shows its own background instead removes the scene then.
+   */
+  onFail?: (reason: SceneFailure) => void;
+}
+
+/** Why a scene stopped drawing, see `onFail`. */
+export type SceneFailure = "no-webgl" | "renderer-error" | "context-lost";
+
+/** Inside the Canvas: reports once that a frame has been drawn. */
+function FirstFrame({ onFirstFrame }: { onFirstFrame: () => void }) {
+  const seen = useRef(false);
+  const pending = useRef<number | null>(null);
+  // A frame callback runs before its frame is drawn, so the report waits for
+  // the next animation frame. Not for the next frame callback: a scene held
+  // still (reduced motion) draws on demand and may never have a second one.
+  useFrame(() => {
+    if (seen.current) return;
+    seen.current = true;
+    pending.current = requestAnimationFrame(() => {
+      pending.current = null;
+      onFirstFrame();
+    });
+  });
+  useEffect(
+    () => () => {
+      if (pending.current !== null) cancelAnimationFrame(pending.current);
+    },
+    [],
+  );
+  return null;
 }
 
 function extractValues<P extends ParamsSchema>(params: P): ParamValues<P> {
@@ -130,7 +171,7 @@ class WebGLErrorBoundary extends Component<
   }
 }
 
-export function LumitraScene({ config, className, fallback }: LumitraSceneProps) {
+export function LumitraScene({ config, className, fallback, onFirstFrame, onFail }: LumitraSceneProps) {
   const [objects, setObjects] = useState<Record<string, Object3D>>({});
   const reduce = useMemo(() => readPrefersReducedMotion(), []);
 
@@ -138,23 +179,49 @@ export function LumitraScene({ config, className, fallback }: LumitraSceneProps)
   // process, locked-down browser), render `fallback` instead of mounting the
   // Canvas so the page degrades gracefully instead of throwing.
   const [webglOk, setWebglOk] = useState<boolean>(() => detectWebGL());
+  // Why WebGL is not (or no longer) available; the probe failing is the default.
+  const failure = useRef<SceneFailure>("no-webgl");
+  const reported = useRef(false);
+  const fail = useCallback((reason: SceneFailure) => {
+    failure.current = reason;
+    setWebglOk(false);
+  }, []);
+  useEffect(() => {
+    if (webglOk || reported.current) return;
+    reported.current = true;
+    onFail?.(failure.current);
+  }, [webglOk, onFail]);
 
   // Performance downshift state (sticky). Initialized true on mobile-class
   // pointers so we don't pay the "decline -> downshift" cost on devices that
   // were never going to clear the 60fps bar anyway.
   const [perfLow, setPerfLow] = useState<boolean>(() => isMobileLikely());
 
+  // A content layer hands over its object through a ref callback written
+  // inline, so React calls it with `null` and then with the same object again
+  // on EVERY render of that layer. Taking the `null` at once changed the
+  // registry (a new object each time), which re-rendered the scene, which
+  // called the refs again: an endless render loop, hidden only because the
+  // scene redraws every frame anyway. A removal therefore waits one microtask
+  // and is dropped when the same id is registered again in the meantime; only
+  // a layer that really unmounted is removed.
+  const pendingRemovals = useRef(new Set<string>());
   const registerObject = useCallback((id: string, obj: Object3D | null) => {
-    setObjects((prev) => {
-      if (obj === null) {
-        if (!(id in prev)) return prev;
-        const next = { ...prev };
-        delete next[id];
-        return next;
-      }
-      if (prev[id] === obj) return prev;
-      return { ...prev, [id]: obj };
-    });
+    if (obj === null) {
+      pendingRemovals.current.add(id);
+      queueMicrotask(() => {
+        if (!pendingRemovals.current.delete(id)) return;
+        setObjects((prev) => {
+          if (!(id in prev)) return prev;
+          const next = { ...prev };
+          delete next[id];
+          return next;
+        });
+      });
+      return;
+    }
+    pendingRemovals.current.delete(id);
+    setObjects((prev) => (prev[id] === obj ? prev : { ...prev, [id]: obj }));
   }, []);
 
   const ctx: LayerContext = useMemo(
@@ -182,9 +249,19 @@ export function LumitraScene({ config, className, fallback }: LumitraSceneProps)
       style={{ position: "absolute", inset: 0, background: config.background }}
     >
       {webglOk ? (
-        <WebGLErrorBoundary onError={() => setWebglOk(false)}>
+        <WebGLErrorBoundary onError={() => fail("renderer-error")}>
           <Canvas
             dpr={dprClamp}
+            // Reduced motion means one still frame. Every layer already pins its
+            // own clock under `reduce`, but a post pass with a clock of its own
+            // (the grain's noise is new on every frame) kept the picture moving.
+            // Drawing on demand settles it: a frame is drawn when the scene or
+            // its size changes, and never otherwise.
+            frameloop={reduce ? "demand" : "always"}
+            // The scene is a background: it takes no click, tap or hover, and
+            // what is under it stays reachable. Layers that follow the pointer
+            // listen on the window (./interactivity), not on the canvas.
+            style={{ pointerEvents: "none" }}
             gl={{ antialias: true, powerPreference: "high-performance" }}
             camera={{ position: [0, 0, 5], fov: 50 }}
             onCreated={({ gl }) => {
@@ -194,7 +271,7 @@ export function LumitraScene({ config, className, fallback }: LumitraSceneProps)
                 "webglcontextlost",
                 (e) => {
                   e.preventDefault();
-                  setWebglOk(false);
+                  fail("context-lost");
                 },
                 { once: true },
               );
@@ -203,6 +280,7 @@ export function LumitraScene({ config, className, fallback }: LumitraSceneProps)
             {/* Once the step down happened it is final, so the monitor
                 has nothing left to report and is unmounted. */}
             {!perfLow && <FrameRateMonitor onDecline={() => setPerfLow(true)} />}
+            {onFirstFrame && <FirstFrame onFirstFrame={onFirstFrame} />}
             <color attach="background" args={[config.background]} />
             {contentLayers.map((layer) => (
               <LayerHost key={layer.id} layer={layer} ctx={ctx} />
