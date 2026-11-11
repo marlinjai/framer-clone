@@ -299,12 +299,23 @@ export class SiteBranchMergeService {
    * The answers that applied in this run replace the draft, when the draft is still what was read: an answer
    * whose conflict changed or vanished is gone for good, and does not come back when a value flips back.
    */
-  private async keepDraft(scope: TenantScope, stamp: Stamp, kept: Record<string, { fingerprint: string; pick: MergeSide }>): Promise<boolean> {
-    if (stableStringify(draftAnswers(stamp.mergeDraft)) === stableStringify(kept)) return true;
+  /**
+   * `checked`: confirm under the locks even when nothing changes, so the answer says whether the answers are
+   * stored now (an erase may have cleared the draft since the read). The review read takes the fast path.
+   */
+  private async keepDraft(
+    scope: TenantScope,
+    stamp: Stamp,
+    kept: Record<string, { fingerprint: string; pick: MergeSide }>,
+    checked = false,
+  ): Promise<boolean> {
+    const same = stableStringify(draftAnswers(stamp.mergeDraft)) === stableStringify(kept);
+    if (same && !checked) return true;
     return this.prisma.$transaction(async (tx) => {
       await this.lockPair(tx, scope, stamp);
       const now = await this.stamp(tx, scope, stamp.branchId);
       if (reviewToken(now) !== reviewToken(stamp) || stableStringify(now.mergeDraft) !== stableStringify(stamp.mergeDraft)) return false;
+      if (same) return true;
       await tx.siteBranch.update({ where: { id: stamp.branchId }, data: { mergeDraft: draftOf(kept) } });
       return true;
     });
@@ -389,9 +400,9 @@ export class SiteBranchMergeService {
     const kept = Object.fromEntries(merge.settled.map(({ conflict, pick }) => [conflict.id, { fingerprint: conflict.fingerprint, pick }]));
     // Stored before anything else is tried: a request refused below, or one whose write finds the state moved,
     // keeps the answers that applied, so the person never gives them twice.
-    const answersKept = await this.keepDraft(scope, stamp, kept);
+    const answersKept = await this.keepDraft(scope, stamp, kept, true);
     if (merge.conflicts.length > 0) throw new BranchConflictsError(merge.conflicts.map(shown), reviewToken(stamp), answersKept);
-    if (problems.length > 0) throw new BranchMergeInvalidError(problems);
+    if (problems.length > 0) throw new BranchMergeInvalidError(problems, answersKept);
 
     const now = new Date();
     const persisted = persistedFor(merge.document, state.branchRow, now);

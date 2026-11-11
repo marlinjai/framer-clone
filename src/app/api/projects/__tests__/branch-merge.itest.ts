@@ -225,9 +225,14 @@ describe('forward', () => {
     await getSiteRepository().renameSite(us.scope, us.mainId, 'Main name');
     const behind = await review(mainOnly);
     expect(behind.upToDate).toBe(false);
-    const first = await merge(mainOnly, { token: behind.token });
-    expect((await first.json()).error.code).toBe('branch_updated_from_main');
-    expect((await merge(mainOnly, { token: (await review(mainOnly)).token })).status).toBe(200);
+    expect(behind.branch.mainMoved).toBe(true);
+    const first = (await (await merge(mainOnly, { token: behind.token })).json()).error;
+    expect(first.code).toBe('branch_updated_from_main');
+    // The token the update answered is the one a fresh review gives, its name change included, and it merges.
+    const fresh = await review(mainOnly);
+    expect(fresh.token).toBe(first.token);
+    expect(fresh.branch.mainMoved).toBe(false);
+    expect((await merge(mainOnly, { token: first.token })).status).toBe(200);
     expect((await prisma.site.findUniqueOrThrow({ where: { id: us.mainId } })).name).toBe('Main name');
 
     // Both renamed: a conflict, never one name dropped without a word.
@@ -318,6 +323,7 @@ describe('backtrack and revise', () => {
     expect(partial.status).toBe(409);
     const left = (await partial.json()).error;
     expect(left.code).toBe('branch_conflicts');
+    expect(left.answersKept).toBe(true);
     expect(left.conflicts.map((c: { id: string }) => c.id)).toEqual([about.id]);
     expect(await textOf(branchId, 'home')).toBe('Branch home');
 

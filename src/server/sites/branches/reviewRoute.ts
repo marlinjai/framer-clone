@@ -17,8 +17,11 @@ import { MERGE_DRAFT_MAX_ANSWERS, REVIEW_NOTE_MAX_LENGTH } from './merge';
 
 export type ReviewCtx = { params: Promise<{ projectId: string }> };
 
-/** 2,000 answers of the largest allowed size fit in this; anything larger is refused before it is parsed. */
-const REVIEW_BODY_MAX_BYTES = 1_500_000;
+/**
+ * 2,000 answers of the largest allowed size fit in this even with every key character written as a six byte
+ * JSON escape (512 x 6 + 128 + punctuation, about 3.3 KB each); anything larger is refused before it is parsed.
+ */
+const REVIEW_BODY_MAX_BYTES = 7_000_000;
 
 const NO_STORE = { 'cache-control': 'no-store' } as const;
 

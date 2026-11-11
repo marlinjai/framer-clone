@@ -370,10 +370,13 @@ export class BranchUpdatedFirstError extends SiteRepositoryError {
 /** The merged or updated document would not be a valid site: nothing was written. 422 with the reasons. */
 export class BranchMergeInvalidError extends SiteRepositoryError {
   readonly problems: ReadonlyArray<{ code: string; message: string; pageId?: string; componentId?: string }>;
+  /** For an update: whether the answers given were stored; undefined for a merge, which takes none. */
+  readonly answersKept: boolean | undefined;
 
-  constructor(problems: ReadonlyArray<{ code: string; message: string; pageId?: string; componentId?: string }>) {
+  constructor(problems: ReadonlyArray<{ code: string; message: string; pageId?: string; componentId?: string }>, answersKept?: boolean) {
     super('branch_merge_invalid', `The result would not be a valid site: ${problems.map((p) => p.message).slice(0, 3).join('; ')}`, 422);
     this.problems = problems;
+    this.answersKept = answersKept;
   }
 }
 
@@ -398,7 +401,10 @@ export function siteRepositoryErrorResponse(err: SiteRepositoryError): Response 
     return jsonError(err.code, err.message, err.status, { token: err.token });
   }
   if (err instanceof BranchMergeInvalidError) {
-    return jsonError(err.code, err.message, err.status, { problems: err.problems });
+    return jsonError(err.code, err.message, err.status, {
+      problems: err.problems,
+      ...(err.answersKept === undefined ? {} : { answersKept: err.answersKept }),
+    });
   }
   if (err instanceof BranchLimitError) {
     return jsonError(err.code, err.message, err.status, { limit: err.limit });
