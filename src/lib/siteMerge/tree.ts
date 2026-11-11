@@ -58,7 +58,11 @@ function flatten(forest: Forest | undefined): Flat {
     flat.fields.set(id, fields);
     flat.parent.set(id, parent);
     pushChild(flat, parent, id);
-    if (Array.isArray(children)) for (const child of children) visit(child, id);
+    // A stored `children: []` is kept as it is: the key's presence is recorded even with nothing in it.
+    if (Array.isArray(children)) {
+      if (!flat.children.has(id)) flat.children.set(id, []);
+      for (const child of children) visit(child, id);
+    }
   };
   for (const [slot, roots] of Object.entries(forest?.slots ?? {})) {
     flat.children.set(slotKey(slot), flat.children.get(slotKey(slot)) ?? []);
