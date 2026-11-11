@@ -178,14 +178,14 @@ The merge compares by id, never by position or by text.
 | Page | page id | exists; slug; each metadata field; its tree |
 | Node | node id | exists; parent and place among siblings; each own field; `props` per key; `props.style` per property; a responsive value per breakpoint key; `bindings` per key |
 | Component definition | definition id | exists; its inputs and defaults per key; its tree as nodes |
-| Site settings | key path | theme tokens per token; head entries per entry; business data per field; every other setting per key |
+| Site settings | key path | theme tokens per token; the head as one value (its entries have no id, decision 31); business data per field; every other setting per key |
 
 ### Rules
 
 1. **Only one side changed a part:** that side's value is taken.
 2. **Both sides made the same change:** taken once.
 3. **Both sides changed the same part differently:** a conflict. The person picks main's or the branch's value. Text is one value: two edits of the same text conflict as a whole, they are never spliced.
-4. **Added on one side** (a node, a page, a definition, a token): kept. Added on both sides: both kept, since their ids differ. The same id added on both sides with different content (a rare id collision): the branch's copy gets fresh ids, with its references remapped, as paste already does (`renewIds` in `PageModel`).
+4. **Added on one side** (a node, a page, a definition, a token): kept. Added on both sides: both kept, since their ids differ. The same id added on both sides with different content (a rare id collision, in practice one copy pasted into both): a conflict, the person picks the copy they mean (decision 32).
 5. **Removed on one side, untouched on the other:** removed.
 6. **Removed on one side, changed on the other** (the node itself or anything inside it): a conflict, "keep it with the changes" or "remove it". The same for a page and for a component definition that the other side still places.
 7. **Moved on one side:** the move is taken. Moved to different places on both sides: a conflict.

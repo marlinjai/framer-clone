@@ -98,14 +98,58 @@ export function pageReferences(doc: MergeDocument, trees: readonly unknown[], pa
 
 /** Something the merged document points at that is not there, though it was on main and on the branch alone. */
 export interface DanglingReference {
-  kind: 'node' | 'page' | 'component';
+  /** `link`: links to an address no page holds any more (a page renamed or removed on the other side). */
+  kind: 'node' | 'page' | 'component' | 'link';
+  /** The node, page or component id; for `link`, the page that held the address. */
   id: string;
   /** For a node: the page or component definition it was in (`page:<id>`, `component:<id>`). */
   container?: string;
+  /** For a link: the address the links lead to, and how many there are. */
+  slug?: string;
+  count?: number;
 }
 
-/** What `merged` points at and does not hold, left out what main or the branch alone already pointed at so. */
-export function danglingReferences(merged: MergeDocument, main: MergeDocument, branch: MergeDocument): DanglingReference[] {
+/** An address as pages are compared by it: trimmed, lowercased. */
+const addressKey = (slug: string) => slug.trim().toLowerCase();
+
+/**
+ * Links in `merged` to an address no page of it holds, that some page held on main, the branch or the base:
+ * rule 10's "a link to a slug that the other side renamed is reported too" (the redirect only exists once the
+ * site is published). Left out: links that already led nowhere on main or on the branch alone, as many.
+ */
+function danglingLinks(merged: MergeDocument, main: MergeDocument, branch: MergeDocument, base?: MergeDocument): DanglingReference[] {
+  const held = (doc: MergeDocument) => new Set(doc.pages.map((p) => addressKey(p.slug)));
+  const now = held(merged);
+  const candidates = new Map<string, { pageId: string; slug: string }>();
+  for (const doc of [main, branch, ...(base ? [base] : [])]) {
+    for (const page of doc.pages) {
+      const key = addressKey(page.slug);
+      // The home address always resolves, and a dynamic address has no single path.
+      if (key === '' || key.includes(':') || now.has(key) || candidates.has(key)) continue;
+      candidates.set(key, { pageId: page.pageId, slug: page.slug });
+    }
+  }
+  if (candidates.size === 0) return [];
+  const trees = { merged: documentTrees(merged), main: documentTrees(main), branch: documentTrees(branch) };
+  const heldOn = { main: held(main), branch: held(branch) };
+  const out: DanglingReference[] = [];
+  // Only `href` links: a form's thank-you page is named by id and reported as a missing page above, so the
+  // count runs with an id no form can hold.
+  const byAddress = (t: unknown[], page: { slug: string }) => countLinksToPage(t, { pageId: '\u0000', slug: page.slug });
+  for (const [key, page] of candidates) {
+    const count = byAddress(trees.merged, page);
+    if (count === 0) continue;
+    const before = (side: 'main' | 'branch') => (heldOn[side].has(key) ? 0 : byAddress(trees[side], page));
+    if (count > Math.max(before('main'), before('branch'))) out.push({ kind: 'link', id: page.pageId, slug: page.slug, count });
+  }
+  return out.sort((a, b) => (a.slug! < b.slug! ? -1 : a.slug! > b.slug! ? 1 : 0));
+}
+
+/**
+ * What `merged` points at and does not hold, left out what main or the branch alone already pointed at so.
+ * `base` adds the addresses pages had at the fork point to the links looked for.
+ */
+export function danglingReferences(merged: MergeDocument, main: MergeDocument, branch: MergeDocument, base?: MergeDocument): DanglingReference[] {
   const broken = (doc: MergeDocument): Map<string, DanglingReference> => {
     const out = new Map<string, DanglingReference>();
     const bodies: Array<[string, unknown]> = [
@@ -132,5 +176,5 @@ export function danglingReferences(merged: MergeDocument, main: MergeDocument, b
     return out;
   };
   const before = new Set([...broken(main).keys(), ...broken(branch).keys()]);
-  return [...broken(merged)].filter(([key]) => !before.has(key)).map(([, ref]) => ref);
+  return [...[...broken(merged)].filter(([key]) => !before.has(key)).map(([, ref]) => ref), ...danglingLinks(merged, main, branch, base)];
 }

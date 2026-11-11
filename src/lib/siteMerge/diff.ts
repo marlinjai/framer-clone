@@ -126,7 +126,8 @@ function nodeChanges(before: readonly unknown[], after: readonly unknown[]) {
     }
     // A parent's order compares only the children it holds on both sides (rule 8): a move counts on the moved
     // node, not again on the two parents.
-    const kept = new Set(node.children.filter((child) => other.children.includes(child)));
+    const theirs = new Set(other.children);
+    const kept = new Set(node.children.filter((child) => theirs.has(child)));
     const order = (n: FlatNode) => n.children.filter((child) => kept.has(child));
     if (node.parent !== other.parent || !jsonEqual(node.fields, other.fields) || !jsonEqual(order(node), order(other))) changed++;
   }

@@ -79,6 +79,17 @@ describe('a removal the other side points at', () => {
     expect(merged.dangling).toEqual([{ kind: 'component', id: 'card' }]);
   });
 
+  it('links to an address the other side renamed are reported, with their count', () => {
+    const b = doc([page('home', '', [node('a')]), page('about', 'about', [])]);
+    const main = doc([page('home', '', [node('a')]), page('about', 'ueber-uns', [])]);
+    const branch = doc([page('home', '', [node('a', { href: '/about' }), node('b', { href: '/About/#team' })]), page('about', 'about', [])]);
+    const merged = mergeDocuments(b, main, branch);
+    expect(merged.conflicts).toEqual([]);
+    expect(merged.dangling).toEqual([{ kind: 'link', id: 'about', slug: 'about', count: 2 }]);
+    // The same links with the old address kept: nothing dangles.
+    expect(mergeDocuments(b, b, branch).dangling).toEqual([]);
+  });
+
   it('a reference that already dangled on one side alone is not the merge’s doing', () => {
     const main = doc([page('home', '', [node('a', { behaviour: { on: [{ event: 'click', do: [{ focus: 'ghost' }] }] } })])]);
     expect(mergeDocuments(base, main, base).dangling).toEqual([]);

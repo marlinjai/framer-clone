@@ -70,6 +70,8 @@ export function mergedDocumentProblems(merged: MergeDocument, stored: MergeDocum
     return [...problems, { code: 'does_not_load', message: messageOf(err) }];
   }
 
+  // `stored` is normalised through the editor model like `merged` (decision 35), so both sizes are of the same
+  // shape: a definition does not grow over its limit by defaults alone.
   for (const [id, definition] of scratch.components) {
     const after = serializedBytes(getSnapshot(definition));
     const before = isPlainObject(stored.components?.[id]) ? serializedBytes(stored.components[id]) : 0;
@@ -80,18 +82,28 @@ export function mergedDocumentProblems(merged: MergeDocument, stored: MergeDocum
 
   const refusedNodes = (doc: MergeDocument) => {
     const out = new Set<string>();
-    for (const page of doc.pages) {
-      const root = page.snapshot.appComponentTree;
+    const roots: Array<[string, unknown]> = [
+      ...doc.pages.map((page) => [`page:${page.pageId}`, page.snapshot.appComponentTree] as [string, unknown]),
+      ...Object.entries(doc.components ?? {}).map(
+        ([id, definition]) => [`component:${id}`, isPlainObject(definition) && isPlainObject(definition.page) ? definition.page.appComponentTree : undefined] as [string, unknown],
+      ),
+    ];
+    for (const [container, root] of roots) {
       if (!isPlainObject(root)) continue;
-      for (const refused of readBehaviourTree(root as never).refused) out.add(`${page.pageId}|${refused.nodeId ?? ''}|${refused.reason ?? ''}`);
+      for (const refused of readBehaviourTree(root as never).refused) out.add(`${container}|${refused.nodeId ?? ''}|${refused.reason ?? ''}`);
     }
     return out;
   };
   const before = refusedNodes(stored);
   for (const key of refusedNodes(merged)) {
     if (before.has(key)) continue;
-    const [pageId, nodeId] = key.split('|');
-    problems.push({ code: 'behaviour', message: `a behaviour on node ${nodeId || '(unnamed)'} no longer reads`, pageId });
+    const [container, nodeId] = key.split('|');
+    const [kind, id] = [container.slice(0, container.indexOf(':')), container.slice(container.indexOf(':') + 1)];
+    problems.push({
+      code: 'behaviour',
+      message: `a behaviour on node ${nodeId || '(unnamed)'} no longer reads`,
+      ...(kind === 'page' ? { pageId: id } : { componentId: id }),
+    });
   }
   return problems;
 }

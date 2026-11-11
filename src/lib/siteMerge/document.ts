@@ -109,7 +109,7 @@ export function mergeDocuments(
   out.siteSettings = mergeSettings(base.siteSettings, main.siteSettings, branch.siteSettings, log);
   out.components = mergeComponents(sides, log);
   out.pages = mergePages(sides, log);
-  return { document: out, conflicts: log.open, settled: log.settled, dangling: danglingReferences(out, main, branch) };
+  return { document: out, conflicts: log.open, settled: log.settled, dangling: danglingReferences(out, main, branch, base) };
 }
 
 function mergeSettings(base: unknown, main: unknown, branch: unknown, log: ConflictLog): Record<string, unknown> {
@@ -181,7 +181,10 @@ function mergeComponents(sides: Sides, log: ConflictLog) {
   const base = sides.base.components;
   const main = sides.main.components;
   const branch = sides.branch.components;
-  const placed = { base: placements(sides.trees.base), main: placements(sides.trees.main), branch: placements(sides.trees.branch) };
+  // Counted once, on the first removal that needs them.
+  let counted: Record<'base' | MergeSide, Map<string, number>> | undefined;
+  const placedOn = () =>
+    (counted ??= { base: placements(sides.trees.base), main: placements(sides.trees.main), branch: placements(sides.trees.branch) });
   const out: Record<string, unknown> = {};
   for (const id of new Set([...Object.keys(main ?? {}), ...Object.keys(branch ?? {}), ...Object.keys(base ?? {})])) {
     const merged = mergeUnit(
@@ -190,10 +193,7 @@ function mergeComponents(sides: Sides, log: ConflictLog) {
       branch?.[id] as Record<string, unknown> | undefined,
       { kind: 'component', id },
       log,
-      {
-        main: (placed.main.get(id) ?? 0) > (placed.base.get(id) ?? 0),
-        branch: (placed.branch.get(id) ?? 0) > (placed.base.get(id) ?? 0),
-      },
+      (side) => (placedOn()[side].get(id) ?? 0) > (placedOn().base.get(id) ?? 0),
       (b, m, r, unit) => {
         const container = `component:${id}`;
         const fields = (d: Record<string, unknown>) => {
@@ -232,7 +232,7 @@ function mergePages(sides: Sides, log: ConflictLog): MergePage[] {
   const merged = new Map<string, MergePage>();
   for (const id of new Set([...M.keys(), ...R.keys(), ...B.keys()])) {
     const inBase = B.get(id);
-    const pointedAt = (side: 'main' | 'branch') =>
+    const pointedAt = (side: MergeSide) =>
       inBase !== undefined &&
       pageReferences(sides[side], sides.trees[side], inBase) > pageReferences(sides.base, sides.trees.base, inBase);
     const page = mergeUnit(
@@ -241,7 +241,7 @@ function mergePages(sides: Sides, log: ConflictLog): MergePage[] {
       R.get(id)?.snapshot,
       { kind: 'page', id },
       log,
-      { main: pointedAt('main'), branch: pointedAt('branch') },
+      pointedAt,
       (b, m, r, unit) => mergePageBody(b, m, r, `page:${id}`, log, unit),
     );
     if (page) merged.set(id, { pageId: id, slug: typeof page.slug === 'string' ? page.slug : '', snapshot: page });
@@ -268,8 +268,11 @@ function mergeUnit(
   branch: Record<string, unknown> | undefined,
   unit: MergeUnit,
   log: ConflictLog,
-  /** Whether each side points at the unit more than the base did (rule 10): its removal is then asked. */
-  newlyReferenced: { main: boolean; branch: boolean },
+  /**
+   * Whether a side points at the unit more than the base did (rule 10): its removal is then asked. Asked only
+   * when the unit was removed on the other side, since working it out walks every tree of the site.
+   */
+  newlyReferenced: (side: MergeSide) => boolean,
   body: (b: Record<string, unknown>, m: Record<string, unknown>, r: Record<string, unknown>, unit: MergeUnit) => Record<string, unknown>,
 ): Record<string, unknown> | undefined {
   const content = (u: Record<string, unknown> | undefined) => (u ? withoutTimestamps(u) : undefined);
@@ -285,7 +288,7 @@ function mergeUnit(
     const remover: MergeSide = main ? 'branch' : 'main';
     const kept = (main ?? branch)!;
     const keeper: MergeSide = main ? 'main' : 'branch';
-    if (jsonEqual(content(base), content(kept)) && !newlyReferenced[keeper]) return undefined;
+    if (jsonEqual(content(base), content(kept)) && !newlyReferenced(keeper)) return undefined;
     const pick =
       log.ask({ id: conflictId(unit, 'removed'), kind: 'removed', unit, path: [], base: content(base), main: content(main), branch: content(branch), removedOn: remover }) ??
       'main';
@@ -293,6 +296,16 @@ function mergeUnit(
   }
   const merged = body(base, main, branch, unit);
   return { ...merged, ...timestampsFor(merged, main, branch) };
+}
+
+/** A stored timestamp as a number: the editor model stores a Date as epoch milliseconds; older rows a string. */
+function timeOf(value: unknown): number {
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? Number.NEGATIVE_INFINITY : parsed;
+  }
+  return Number.NEGATIVE_INFINITY;
 }
 
 function withoutTimestamps(u: Record<string, unknown>): Record<string, unknown> {
@@ -310,7 +323,7 @@ function timestampsFor(merged: Record<string, unknown>, main: Record<string, unk
     const same = jsonEqual(withoutTimestamps(merged), withoutTimestamps(main));
     const m = main.updatedAt;
     const r = branch.updatedAt;
-    out.updatedAt = same || r === undefined ? m : m === undefined ? r : String(r) > String(m) ? r : m;
+    out.updatedAt = same || r === undefined ? m : m === undefined ? r : timeOf(r) > timeOf(m) ? r : m;
   }
   return out;
 }

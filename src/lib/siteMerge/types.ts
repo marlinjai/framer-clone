@@ -20,9 +20,10 @@ export type MergeSide = 'main' | 'branch';
  * - `added-twice`: the same id added on both sides with different content (rule 4).
  * - `cycle`: two moves that are fine alone put a node inside itself together.
  * - `slug`: two pages end with the same address (rule 9); the picked side's page keeps it.
- * - `reference`: something left pointing at a removed thing (rule 10), reported on the removed thing.
+ *
+ * A reference left pointing at a removed thing (rule 10) is a `removed` conflict on that thing.
  */
-export type ConflictKind = 'value' | 'moved' | 'order' | 'removed' | 'added-twice' | 'cycle' | 'slug' | 'reference';
+export type ConflictKind = 'value' | 'moved' | 'order' | 'removed' | 'added-twice' | 'cycle' | 'slug';
 
 /** What a conflict is about: the site, its settings, a page, a node of a page or component, a component. */
 export interface MergeUnit {

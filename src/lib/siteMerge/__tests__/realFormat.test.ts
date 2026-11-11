@@ -132,6 +132,39 @@ describe('the real stored format', () => {
   });
 });
 
+describe('edits made through the editor model', () => {
+  it('main and the branch editing one page on different nodes: no conflict, timestamps included', () => {
+    const base = generatedSite(4, 12);
+    const ids = nodesOfTree(homeTree(base)).map((n) => n.id);
+    const edit = (change: (page: ReturnType<typeof pageOf>) => void, at: number) => {
+      const project = ProjectModel.create(toProject(base));
+      change(pageOf(project));
+      const out = stored(getSnapshot(project) as ProjectSnapshotOut);
+      // The page's own timestamp is the time of the edit (the model sets it from the clock).
+      out.pages[0].snapshot.updatedAt = at;
+      return out;
+    };
+    const main = edit((page) => page.findComponent(ids[3])!.setProps({ children: 'main' }), 1_800_000_000_000);
+    const branch = edit((page) => {
+      page.findComponent(ids[5])!.setProps({ children: 'branch' });
+      page.updateMetadata({ description: 'From the branch' });
+    }, 1_800_000_500_000);
+    const merged = mergeDocuments(base, main, branch);
+    expect(merged.conflicts).toEqual([]);
+    const result = nodesOfTree(homeTree(merged.document));
+    expect(result.find((n) => n.id === ids[3])?.props.children).toBe('main');
+    expect(result.find((n) => n.id === ids[5])?.props.children).toBe('branch');
+    expect((merged.document.pages[0].snapshot.metadata as Record<string, unknown>).description).toBe('From the branch');
+    // The later of the two edits, compared as times (both are epoch numbers).
+    expect(merged.document.pages[0].snapshot.updatedAt).toBe(1_800_000_500_000);
+    expect(mergedDocumentProblems(merged.document, main, toProject)).toEqual([]);
+  });
+});
+
+function pageOf(project: ReturnType<typeof ProjectModel.create>) {
+  return [...project.pages.values()][0];
+}
+
 describe('properties, on generated sites', () => {
   const seeds = Array.from({ length: 40 }, (_, i) => i + 100);
 

@@ -193,6 +193,29 @@ describe('mergeDocuments', () => {
     expect(removed.conflicts.map((c) => [c.kind, c.unit.kind, c.removedOn])).toEqual([['removed', 'component', 'main']]);
   });
 
+  it('an answer can bring up a new conflict: earlier answers stay settled, an answer for a gone conflict is ignored', () => {
+    // Main removed "about" and gave its address to a new page; the branch edited "about".
+    const main = doc({ pages: [page('home', ''), page('new', 'about')] });
+    const branch = doc({ pages: [page('home', ''), page('about', 'about', 'Edited')] });
+    const first = mergeDocuments(doc(), main, branch);
+    expect(first.conflicts.map((c) => c.kind)).toEqual(['removed']);
+    // Keeping it brings the two pages onto one address: a second round asks that.
+    const keep = { [first.conflicts[0].id]: { fingerprint: first.conflicts[0].fingerprint, pick: 'branch' as const } };
+    const second = mergeDocuments(doc(), main, branch, keep);
+    expect(second.settled.map((s) => s.conflict.kind)).toEqual(['removed']);
+    expect(second.conflicts.map((c) => c.kind)).toEqual(['slug']);
+    const both = { ...keep, [second.conflicts[0].id]: { fingerprint: second.conflicts[0].fingerprint, pick: 'branch' as const } };
+    const third = mergeDocuments(doc(), main, branch, both);
+    expect(third.conflicts).toEqual([]);
+    expect(Object.fromEntries(third.document.pages.map((p) => [p.pageId, p.slug]))).toMatchObject({ about: 'about', new: 'about-2' });
+    // Removing it instead: the address question never comes up, and its answer is simply not used.
+    const removeIt = { ...both, [first.conflicts[0].id]: { fingerprint: first.conflicts[0].fingerprint, pick: 'main' as const } };
+    const other = mergeDocuments(doc(), main, branch, removeIt);
+    expect(other.conflicts).toEqual([]);
+    expect(other.settled.map((s) => s.conflict.kind)).toEqual(['removed']);
+    expect(other.document.pages.map((p) => p.pageId)).toEqual(['home', 'new']);
+  });
+
   it('conflicts come out in the same order with the same ids on every run', () => {
     const main = doc({ name: 'A', pages: [page('home', '', 'M'), page('about', 'about')] });
     const branch = doc({ name: 'B', pages: [page('home', '', 'R'), page('about', 'about')] });
