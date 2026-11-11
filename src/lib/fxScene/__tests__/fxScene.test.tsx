@@ -166,19 +166,31 @@ describe('the published page', () => {
     expect(markup).not.toContain('<canvas');
   });
 
-  it('draws the same box for a scene that is refused or missing', async () => {
-    const good = await publish(fxNode(storedFx()));
-    expect(await publish(fxNode(storedFx([imageLayer('pic', 'https://evil.example/x.png')])))).toBe(good);
-    expect(await publish(fxNode(storedFx([], { version: 9 })))).toBe(good);
-    expect(await publish(fxNode(undefined))).toBe(good);
-    expect(await publish(fxNode('not a scene'))).toBe(good);
-    expect(good).not.toContain('evil.example');
+  it('marks a box whose scene reads cleanly with its place in the page program, and nothing else', async () => {
+    const markup = await publish(fxNode(storedFx()));
+    expect(markup).toContain('data-fc-fx="0"');
+    expect(markup).not.toContain('data-fc-fx-state');
   });
 
-  it('gives the same markup as the box without the scene, apart from the marker', async () => {
+  it('draws a box whose scene is refused or missing as the same box without that mark', async () => {
+    const plain = (await publish(fxNode(storedFx()))).replace(' data-fc-fx="0"', '');
+    expect(plain).not.toContain('data-fc-fx');
+    expect(await publish(fxNode(storedFx([imageLayer('pic', 'https://evil.example/x.png')])))).toBe(plain);
+    expect(await publish(fxNode(storedFx([], { version: 9 })))).toBe(plain);
+    expect(await publish(fxNode(undefined))).toBe(plain);
+    expect(await publish(fxNode('not a scene'))).toBe(plain);
+    expect(plain).not.toContain('evil.example');
+  });
+
+  it('gives the same markup as the box without the scene, apart from the marker and the mark', async () => {
     const withScene = await publish(fxNode(storedFx()));
     const plain = await publish({ ...fxNode(storedFx()), props: { style: { position: 'relative', minHeight: '100svh', background: '#000000' } } } as ComponentNode);
-    expect(withScene.replace(' data-fx="scene"', '')).toBe(plain);
+    expect(withScene.replace(' data-fx="scene"', '').replace(' data-fc-fx="0"', '')).toBe(plain);
+  });
+
+  it('drops a stored mark that only the page may write', async () => {
+    const markup = await publish(fxNode(undefined, { 'data-fc-fx': '0', 'data-fc-fx-state': 'live' }));
+    expect(markup).not.toContain('data-fc-fx');
   });
 });
 

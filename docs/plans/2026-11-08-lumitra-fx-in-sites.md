@@ -469,3 +469,88 @@ Decided in F2, say so if you disagree:
 Checks run locally: `pnpm typecheck`, `pnpm lint`, `pnpm lint:guards`, `pnpm test`, `pnpm test:render-gate`,
 `pnpm test:behaviour`, the site images integration file against a real Postgres, `pnpm check:roadmap`, `pnpm build`
 (still no three.js in any built file).
+
+Landed as pull request #368 on 2026-11-11.
+
+### F3 `fx-published-island` (2026-11-11)
+
+What it builds:
+
+- **`applyFx`** (`src/lib/renderer/server/applyFx.ts`), a pure pass in `renderPublishedPage` after `applyEffects`. Each
+  FX box whose scene reads cleanly becomes an entry of the page's FX program (what the strict reader gives back, never
+  the stored prop) and gets a mark, `data-fc-fx="<index>"`. `fx` leaves every node, refused scenes included, and the
+  `data-fc-fx` names, which only this step may write, are dropped from every stored node.
+- **`FxIsland`** (`src/lib/renderer/server/FxIsland.tsx`), rendered only on a page whose program is not empty. It
+  imports no engine code. In order: one context per page, reduced motion, a WebGL probe, the start (`settled`,
+  `visible`, `immediate`), then one dynamic import.
+- **`src/lib/fxScene/mount.tsx`, the lazy chunk:** the engine with three.js and the scene reader. It reads the scene
+  through the strict reader a second time on the client, puts a layer behind the box's content (first child, absolute,
+  `z-index: -1` inside `isolation: isolate` on the box, no pointer, hidden from assistive technology), and fades it in
+  over 300 milliseconds on the first drawn frame. On any failure the layer is taken out and the box is what the server
+  sent.
+- **What the island is doing is written on the box** as `data-fc-fx-state` (`waiting`, `loading`, `live`, `calm`,
+  `off`). The tests wait on it instead of on timers, and F4's harness will too.
+- **Engine:** `LumitraScene` gained `onFirstFrame` and `onFail` (no WebGL, a renderer error, a lost context), so a host
+  can fade in and fall back; image layer textures are scaled to at most 2560 pixels on the longer side before they
+  reach the GPU (the upload limit of 8000 pixels is not a GPU limit).
+
+Found by the browser tests and fixed in the engine:
+
+- **The "still frame" under reduced motion was not still.** Every layer pins its own clock, but the grain pass draws
+  new noise on every frame: two screenshots 0.7 seconds apart differed in 52 percent of their pixels. The canvas now
+  draws on demand under reduced motion (a frame when the scene or its size changes, never otherwise). lumitra-web never
+  showed this because its hero does not mount under reduced motion. **For F4:** lumitra-web's frozen copy still animates
+  its grain there, so the comparison must fix the grain on that side (the plan's "inject a fixed seed") or compare
+  scenes without grain.
+- **The scene re-rendered itself without end.** Content layers hand their object to the scene through an inline ref
+  callback, which React calls again on every render; each call changed the registry, which re-rendered the scene,
+  which called the refs again. It was invisible while every frame is drawn anyway, and showed as soon as frames were
+  drawn on demand: about 150 frames a second on a scene that should draw none. A removal now waits one microtask and
+  is dropped when the same layer registers again. A test counts drawn frames on a settled scene under reduced motion
+  and requires zero. This defect is in lumitra-web's frozen copy too (it costs processor time on lumitra.co, nothing
+  visible).
+- **The canvas took the pointer.** react-three-fiber's canvas sets `pointer-events: auto` on itself, which overrode the
+  layer's `none`: a click on the box landed on the canvas. The scene now sets `none` on the canvas (layers that follow
+  the pointer listen on the window).
+
+Decided in F3, say so if you disagree:
+
+- **The first FX box in the document gets the page's one context.** Every other box stays calm and shows its own
+  background, also when its calm state is `frame`: a still frame needs a context too.
+- **`settled` is the `load` event plus 1.5 seconds**, as on lumitra.co, counted from now when `load` already fired
+  before the island ran.
+- **Leaving the page releases the context** (`pagehide`), a pending start is cancelled, and a page restored from the
+  back/forward cache starts again (`pageshow`).
+- **The bundle budget is 371,000 bytes on the wire for what a scene adds**, set from the first measurement plus 5
+  percent as the plan says: about 353,000 bytes in 7 scripts (Next 15.5.28). The plan expected about 230,000. Where it goes:
+  three.js about 189,000 (the engine imports it whole, `import * as THREE`), the react-three packages with their own
+  reconciler about 113,000, postprocessing about 22,000, the engine and the scene reader about 29,000. The page's own
+  scripts are byte for byte the same with and without a scene (254,177). Narrowing the three.js imports is the one
+  lever that would lower it; it is not done here, because how much it saves is unmeasured and the plan sets the budget
+  from the measurement.
+- **Flash safety, measured, and one range narrowed.** Black and white scenes with every moving full-screen layer at
+  the top of its range were read frame by frame, with the engine's clock stepped one sixtieth of a second per drawn
+  frame, in Chromium and WebKit: a gradient at full speed with the hardest edges under each of the distortion's three
+  kinds, from its coarsest density (one wave across the whole box, the largest area moving as one) to its finest. With
+  the distortion's speed at lumitra-web's top value of 4, parts of the picture reached exactly three flashes a second,
+  the most WCAG 2.3.1 allows. **The distortion's speed now tops out at 3**, which measures at most two flashes a second
+  in any sixty-fourth of the box and none for the box as a whole. No existing scene uses the distortion, and a stored
+  value above 3 is clamped with a note. Grain at full opacity keeps every sixty-fourth of the box within 0.11 of mid
+  grey. The test stays in the suite, so a new layer or a wider range is held to the same limit.
+- **`/preview` and the editor canvas** draw the plain box until F5, which owns the panel, the canvas "Live" toggle and
+  the preview.
+- **Naming, noticed:** the motion effects feature already uses `data-fx-a`, `data-fx-st`, `data-fx-p`, `data-fx-in`
+  and `data-fx-on` on elements. The plan's marker `data-fx="scene"` does not collide with any of them (no selector or
+  script reads a bare `data-fx`), so it is kept as decided.
+
+Published tests (`test/behaviour/fx.spec.ts`, a real production build, Chromium and WebKit, 60 tests): the hub hero
+draws with a real WebGL context; the scene shows over the box background and under content that is not positioned,
+and takes no click; a box without a position still contains the layer; no byte of the engine on a page without a
+scene; a refused scene is the plain box with no island; no WebGL; reduced motion with either calm state, including scenes with an intro (a text reveal, a focus pull) held at their end, and no frame drawn once settled; the engine
+chunk failing; a lost context; two scenes on one page; `settled` and `visible` timing; put away and shown again; a
+start cancelled before it ran; no JavaScript; the box's HTML equal to the same box without a scene apart from its two
+marks; the bundle budget; flash safety.
+
+For F4: `fx.spec.ts` reads its scenes from files inside the engine, and the guard does not scan `test/` yet. The F4
+harness lives there too, so F4 extends the guard's roots and gives tests a public way to the fixtures.
+

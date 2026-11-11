@@ -201,34 +201,50 @@ describe('the repository as it is', () => {
     expect(engine.length).toBeGreaterThan(30);
   });
 
-  // Until slice F3 of the plan mounts the scene from the published page's island
-  // (and replaces this test with the bundle tests `fx-no-bytes-without-fx` and
-  // `fx-bundle-budget`), nothing outside the engine imports its render entry
-  // (`@/lib/fx`), so no page's bundle carries three.js. The render-free entry
-  // (`@/lib/fx/format`) is imported by the app and proven free of three.js in
-  // importGraph.test.ts.
+  // The render entry (`@/lib/fx`) loads three.js. Exactly one file outside the
+  // engine imports it, the lazy mount module, and that module is reached only by
+  // a dynamic import(): so three.js is in a chunk of its own, fetched where a
+  // scene is drawn, and in no page's own bundle. The real chunks are measured in
+  // test/behaviour/fx.spec.ts; this keeps the reason they are small.
+  const resolve = (specifier: string, from: string): string | null => {
+    const target = specifier.startsWith('@/')
+      ? path.join(REPO_ROOT, 'src', specifier.slice(2))
+      : specifier.startsWith('.')
+        ? path.resolve(path.dirname(from), specifier)
+        : null;
+    return target ? target.replace(/\.(?:ts|tsx)$/, '') : null;
+  };
+  /** Every import of `target` outside the engine: the importing file, and whether it is an import() call. */
+  const importersOf = (target: string): Array<{ file: string; dynamic: boolean }> => {
+    const fxAbs = path.join(REPO_ROOT, FX_DIR);
+    const found: Array<{ file: string; dynamic: boolean }> = [];
+    for (const [file, code] of sources) {
+      if (file.startsWith(`${fxAbs}${path.sep}`)) continue;
+      if (!code.includes('fx')) continue;
+      for (const { specifier, index } of moduleSpecifiers(code) as Array<{ specifier: string | null; index: number }>) {
+        if (!specifier || resolve(specifier, file) !== target) continue;
+        found.push({ file: path.relative(REPO_ROOT, file), dynamic: /^import\s*\(/.test(code.slice(index)) });
+      }
+    }
+    return found;
+  };
+  const MOUNT = 'src/lib/fxScene/mount';
+
   it(
-    'has no importer of the render entry outside the engine yet, so no bundle carries three.js',
+    'imports the render entry from the lazy mount module only',
     () => {
       const fxAbs = path.join(REPO_ROOT, FX_DIR);
-      const renderEntry = path.join(REPO_ROOT, FX_RENDER_ENTRY);
-      const importers: string[] = [];
-      for (const [file, code] of sources) {
-        if (file.startsWith(`${fxAbs}${path.sep}`)) continue;
-        if (!code.includes('fx')) continue;
-        for (const { specifier } of moduleSpecifiers(code) as Array<{ specifier: string | null }>) {
-          if (!specifier) continue;
-          const target = specifier.startsWith('@/')
-            ? path.join(REPO_ROOT, 'src', specifier.slice(2))
-            : specifier.startsWith('.')
-              ? path.resolve(path.dirname(file), specifier)
-              : null;
-          if (!target) continue;
-          const bare = target.replace(/\.(?:ts|tsx)$/, '');
-          if (bare === fxAbs || bare === renderEntry) importers.push(path.relative(REPO_ROOT, file));
-        }
-      }
-      expect(importers).toEqual([]);
+      const importers = [...importersOf(fxAbs), ...importersOf(path.join(REPO_ROOT, FX_RENDER_ENTRY))];
+      expect(importers.map((i) => i.file)).toEqual([`${MOUNT}.tsx`]);
+    },
+    SCAN_TIMEOUT_MS,
+  );
+
+  it(
+    'reaches the lazy mount module by dynamic import only, from the published island',
+    () => {
+      const importers = importersOf(path.join(REPO_ROOT, MOUNT));
+      expect(importers).toEqual([{ file: 'src/lib/renderer/server/FxIsland.tsx', dynamic: true }]);
     },
     SCAN_TIMEOUT_MS,
   );

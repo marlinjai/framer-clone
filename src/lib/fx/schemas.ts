@@ -238,7 +238,11 @@ const DISTORTION_DEFAULT_PARAMS: ParamsSchema = {
   type: { type: "select", value: "noise", options: ["noise", "ripple", "texture"] },
   strength: { type: "number", value: 0.01, min: 0, max: 0.2, step: 0.001 },
   scale: { type: "number", value: 3, min: 0.1, max: 20, step: 0.1 },
-  speed: { type: "number", value: 0.5, min: 0, max: 4, step: 0.05 },
+  // The top of the range was 4 in lumitra-web. Measured in a browser with a
+  // black and white scene (test/behaviour/fx.spec.ts, "flash safety"), 4 gives
+  // exactly three flashes a second in parts of the picture, the most WCAG
+  // 2.3.1 allows; 3 keeps a margin under that limit.
+  speed: { type: "number", value: 0.5, min: 0, max: 3, step: 0.05 },
   mouseInfluence: { type: "number", value: 0, min: 0, max: 1, step: 0.01 },
 };
 
