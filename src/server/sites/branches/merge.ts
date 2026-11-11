@@ -23,7 +23,7 @@ import 'server-only';
 // in that order, re-reads the token's state and writes only when it is unchanged, SERIALIZABLE as a save, so
 // a failure at any step leaves both sites and the record as they were.
 
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import {
   diffDocuments,
@@ -42,16 +42,21 @@ import { getPrismaClient } from '@/server/db';
 import {
   BranchClosedError,
   BranchConflictsError,
+  BranchLimitError,
   BranchMergeInvalidError,
+  BranchNotFoundError,
   BranchReviewStaleError,
   BranchUpdatedFirstError,
   InvalidTenantScopeError,
+  MergeUndoUnavailableError,
+  SiteIsBranchError,
   SiteNotFoundError,
 } from '../errors';
 import { announceWrite, getSiteRepository, type SiteRepository, type TenantScope, type WorkingCopyWrite } from '../repository';
 import { buildRevisionDocument, parseRevisionDocument } from '../revision';
 import type { PersistedSite } from '../snapshot';
-import { forgetBranchContent, SiteBranchRepository, type BranchActor, type BranchSummary } from './repository';
+import { forgetBranchContent, freeOpenName, RECORD_SELECT, SiteBranchRepository, summaryOf, type BranchActor, type BranchSummary } from './repository';
+import { MAX_OPEN_BRANCHES_PER_SITE } from '@/lib/sites/branches';
 import { persistedFor, reviewDocument, revisionRow, SITE_DOCUMENT_SELECT, toProjectSnapshot, type SiteDocumentRow } from './documents';
 
 /** How long main's copy from before a merge is kept for "Undo this merge" (S7). */
@@ -72,7 +77,7 @@ const SERIALIZATION_ATTEMPTS = 4;
 
 /** A step a test can make fail just before the commit (the plan's injected failure at the last write). */
 export interface BranchMergeHooks {
-  beforeCommit?: (tx: Prisma.TransactionClient, step: 'update' | 'merge') => Promise<void>;
+  beforeCommit?: (tx: Prisma.TransactionClient, step: 'update' | 'merge' | 'undo') => Promise<void>;
 }
 
 /** A conflict as the review shows it: large values replaced by their size. */
@@ -105,6 +110,11 @@ export interface BranchReview {
 
 export type BranchUpdateOutcome = { updated: boolean; branch: BranchSummary; token: string };
 export type BranchMergeOutcome = { merged: boolean; branch: BranchSummary; mainVersion: number };
+/**
+ * An undone merge: `branch` is the new open branch holding the merged work, `merged` the record of the branch
+ * whose merge was undone. `undone` is false when it had been undone before this call (the first result).
+ */
+export type MergeUndoOutcome = { undone: boolean; branch: BranchSummary; merged: BranchSummary; mainVersion: number };
 
 /** The state a token is over: read cheaply, without the documents. */
 interface Stamp {
@@ -605,6 +615,160 @@ export class SiteBranchMergeService {
     forgetBranchContent(stamp.branchId);
     this.announce(stamp.mainId, outcome.write, persisted, 'merge', [`Merged branch ${stamp.recordName}`]);
     return { merged: true, branch: await this.branches.getBranch(scope, stamp.mainId, stamp.branchId), mainVersion: outcome.write.version };
+  }
+
+  /**
+   * Undo the site's latest merge (slice S7): the site goes back to what it was just before `branchId` was merged,
+   * as a new version (the counter never rewinds), and everything the site holds now, the merged work and any
+   * change made since, becomes the content of a new open branch whose fork point is that earlier copy. Merging
+   * the new branch later is an ordinary merge. Nothing is published.
+   *
+   * Everything is read under the site's row lock, in the transaction that writes: the kept copy is rewritten
+   * by an erase of personal data under the same lock, so a copy read earlier could carry an erased value back.
+   * A second undo of the same merge answers the first one's result. Refused, with nothing written: a branch
+   * that was not merged, a copy that expired or that a later merge replaced (409 `merge_undo_unavailable`),
+   * and a site already at its limit of open branches (409 `branch_limit`).
+   */
+  async undoMerge(scope: TenantScope, mainSiteId: string, branchId: string, actor: BranchActor): Promise<MergeUndoOutcome> {
+    assertScope(scope);
+    const now = new Date();
+    const outcome = await withSerializationRetry(() =>
+      this.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${mainSiteId} AND workspace_id = ${scope.workspaceId} AND tenant_group_id = ${scope.tenantGroupId} FOR UPDATE`;
+        const main = await tx.site.findFirst({
+          where: { id: mainSiteId, workspaceId: scope.workspaceId, tenantGroupId: scope.tenantGroupId },
+          select: { ...SITE_DOCUMENT_SELECT, version: true, companyId: true, branchOfSiteId: true },
+        });
+        if (!main) throw new SiteNotFoundError(mainSiteId);
+        if (main.branchOfSiteId) throw new SiteIsBranchError('a merge is undone on its site, not on a branch.');
+        const record = await tx.siteBranch.findFirst({
+          where: { id: branchId, siteId: main.id, workspaceId: scope.workspaceId },
+          select: { ...RECORD_SELECT, mainBeforeDocument: true },
+        });
+        if (!record) throw new BranchNotFoundError(branchId);
+        // Undone before (a double click, a retry after a lost answer): the first result, nothing written.
+        if (record.undoneIntoBranchId) return { kind: 'repeat', newBranchId: record.undoneIntoBranchId, mainVersion: main.version } as const;
+        if (record.status !== 'merged') throw new MergeUndoUnavailableError('not_merged');
+        if (record.mainBeforeDocument === null || !record.mainBeforeExpiresAt) throw new MergeUndoUnavailableError('replaced');
+        if (record.mainBeforeExpiresAt.getTime() <= now.getTime()) throw new MergeUndoUnavailableError('expired');
+
+        const open = await tx.siteBranch.count({ where: { siteId: main.id, status: { in: ['open', 'ready'] } } });
+        if (open >= MAX_OPEN_BRANCHES_PER_SITE) throw new BranchLimitError(MAX_OPEN_BRANCHES_PER_SITE);
+
+        // The new branch: the site as it is stored right now, row for row, as a create copies it.
+        const newBranchId = randomUUID();
+        const name = await freeOpenName(tx, main.id, record.name, newBranchId);
+        await tx.site.create({
+          data: {
+            id: newBranchId,
+            workspaceId: scope.workspaceId,
+            tenantGroupId: scope.tenantGroupId,
+            companyId: main.companyId,
+            branchOfSiteId: main.id,
+            name: main.name,
+            description: main.description,
+            status: 'draft',
+            analyticsProjectId: main.analyticsProjectId,
+            ingestionEndpoint: main.ingestionEndpoint,
+            apiKeyRef: main.apiKeyRef,
+            lumitraEnabled: main.lumitraEnabled,
+            siteSettings: main.siteSettings as Prisma.InputJsonValue,
+            components: main.components as Prisma.InputJsonValue,
+            redirects: [],
+            projectCreatedAt: main.projectCreatedAt,
+            projectUpdatedAt: main.projectUpdatedAt,
+            erasureEpoch: main.erasureEpoch,
+            version: 1,
+          },
+        });
+        for (const page of main.pages) {
+          await tx.sitePage.create({
+            data: {
+              siteId: newBranchId,
+              workspaceId: scope.workspaceId,
+              tenantGroupId: scope.tenantGroupId,
+              pageId: page.pageId,
+              slug: page.slug,
+              snapshot: page.snapshot as Prisma.InputJsonValue,
+            },
+          });
+        }
+
+        // The site back to the kept copy, through the save (its checks, its redirects), as a new version.
+        const before = parseRevisionDocument(record.mainBeforeDocument);
+        const restored = reviewDocument(revisionRow(main.id, before, main.erasureEpoch), 'base');
+        const persisted = persistedFor(restored, main, now);
+        const write = await this.sites.writeWorkingCopyIn(tx, scope, persisted, { mustExist: true, expectedVersion: main.version });
+        // A save does not write the name; without this the new branch would read as behind main at once.
+        if (restored.name !== main.name) {
+          await tx.site.updateMany({ where: { id: main.id, workspaceId: scope.workspaceId }, data: { name: restored.name } });
+        }
+
+        const created = await tx.siteBranch.create({
+          data: {
+            id: newBranchId,
+            siteId: main.id,
+            workspaceId: scope.workspaceId,
+            tenantGroupId: scope.tenantGroupId,
+            companyId: main.companyId,
+            branchSiteId: newBranchId,
+            name,
+            status: 'open',
+            // The site's version after the write back, whose content is the kept copy: the branch is up to date.
+            baseVersion: write.version,
+            baseDocument: record.mainBeforeDocument as Prisma.InputJsonValue,
+            createdByKind: actor.kind,
+            createdBy: actor.id,
+            createdAt: now,
+          },
+          select: RECORD_SELECT,
+        });
+        const merged = await tx.siteBranch.update({
+          where: { id: record.id },
+          data: {
+            mainBeforeDocument: Prisma.DbNull,
+            mainBeforeExpiresAt: null,
+            undoneIntoBranchId: newBranchId,
+            undoneBy: actor.id,
+            undoneAt: now,
+          },
+          select: RECORD_SELECT,
+        });
+        await tx.siteOperationAudit.create({
+          data: {
+            siteId: main.id,
+            workspaceId: scope.workspaceId,
+            tenantGroupId: scope.tenantGroupId,
+            actorKind: actor.kind,
+            actorId: actor.id,
+            // Ids and versions only, as for a merge.
+            actorDetail: { branchId: record.id, newBranchId },
+            operation: 'branch_merge_undo',
+            versionBefore: write.versionBefore,
+            versionAfter: write.version,
+          },
+        });
+        await this.hooks.beforeCommit?.(tx, 'undo');
+        return {
+          kind: 'written',
+          write,
+          persisted,
+          recordName: record.name,
+          branch: summaryOf(created, write.version),
+          merged: summaryOf(merged, write.version),
+        } as const;
+      }, WRITE_TRANSACTION),
+    );
+    if (outcome.kind === 'repeat') {
+      return {
+        undone: false,
+        branch: await this.branches.getBranch(scope, mainSiteId, outcome.newBranchId),
+        merged: await this.branches.getBranch(scope, mainSiteId, branchId),
+        mainVersion: outcome.mainVersion,
+      };
+    }
+    this.announce(mainSiteId, outcome.write, outcome.persisted, 'merge', [`Undid the merge of branch ${outcome.recordName}`]);
+    return { undone: true, branch: outcome.branch, merged: outcome.merged, mainVersion: outcome.write.version };
   }
 
   private async mergedOutcome(scope: TenantScope, stamp: Stamp): Promise<BranchMergeOutcome> {

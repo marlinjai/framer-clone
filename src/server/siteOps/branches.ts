@@ -117,9 +117,16 @@ function fromError(err: unknown, id: string): BranchOpsResult<never> {
   if (err instanceof BranchClosedError) {
     return fail({
       code: 'branch_closed',
-      message: `branch "${id}" was ${err.branchStatus} and is closed: nothing can be read from or written to it.${err.branchStatus === 'merged' ? ` Its work is on its site, "${err.mainSiteId}".` : ` Its site is "${err.mainSiteId}".`}`,
+      message: `branch "${id}" was ${err.branchStatus} and is closed: nothing can be read from or written to it.${
+        err.branchStatus !== 'merged'
+          ? ` Its site is "${err.mainSiteId}".`
+          : err.undoneIntoBranchId
+            ? ` A person undid that merge later: its site, "${err.mainSiteId}", went back to what it was, and the merged work went to branch "${err.undoneIntoBranchId}" (list_branches on the site shows whether that one is still open).`
+            : ` Its work is on its site, "${err.mainSiteId}".`
+      }`,
       branchStatus: err.branchStatus,
       siteId: err.mainSiteId,
+      ...(err.undoneIntoBranchId ? { undoneIntoBranchId: err.undoneIntoBranchId } : {}),
     });
   }
   if (err instanceof BranchNotFoundError || err instanceof SiteNotFoundError || err instanceof SiteGoneError) return missing(id);
@@ -234,6 +241,8 @@ export interface BranchView {
   updatedAt: string;
   mergedAt: string | null;
   discardedAt: string | null;
+  /** A merged branch whose merge a person undid: the branch that took the merged work back. Its site no longer holds it. */
+  undoneIntoBranchId: string | null;
 }
 
 function viewOf(summary: BranchSummary, caller: SiteOpsCaller): BranchView {
@@ -253,6 +262,7 @@ function viewOf(summary: BranchSummary, caller: SiteOpsCaller): BranchView {
     updatedAt: summary.updatedAt.toISOString(),
     mergedAt: summary.mergedAt?.toISOString() ?? null,
     discardedAt: summary.discardedAt?.toISOString() ?? null,
+    undoneIntoBranchId: summary.undoneIntoBranchId,
   };
 }
 

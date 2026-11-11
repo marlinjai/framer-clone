@@ -102,6 +102,7 @@ const TOOL_OF_OPERATION: Record<string, string> = {
   branch_create: 'create_branch',
   branch_review: 'request_review',
   branch_discard: 'discard_branch',
+  branch_merge_undo: 'undo_merge',
 };
 
 /**

@@ -394,6 +394,12 @@ model SiteBranch {
   mainBeforeDocument  Json?     @map("main_before_document")
   mainBeforeExpiresAt DateTime? @map("main_before_expires_at")
 
+  // Set when this branch's merge was undone (S7): the new open branch that took the merged work, who, and when.
+  // No foreign key: the new branch has its own life (merged again, discarded), and this stays as what happened.
+  undoneIntoBranchId String?   @map("undone_into_branch_id")
+  undoneBy           String?   @map("undone_by")
+  undoneAt           DateTime? @map("undone_at")
+
   // Who made it: a signed-in person (`user`) or an MCP key (`key`), as site_operation_audits records actors.
   createdByKind String   @map("created_by_kind")
   createdBy     String   @map("created_by")

@@ -136,6 +136,9 @@ function world(options: { key?: VerifiedKey; enabled?: boolean; createdBy?: { ki
     approved: false,
     mergedAt: state.status === 'merged' ? new Date('2026-11-11T12:00:00Z') : null,
     discardedAt: state.status === 'discarded' ? new Date('2026-11-11T12:00:00Z') : null,
+    undoUntil: null,
+    undoneIntoBranchId: null,
+    undoneAt: null,
   });
   const closed = () => (state.status === 'merged' || state.status === 'discarded' ? new BranchClosedError(state.status, MAIN) : null);
   const review = (): BranchReview => ({

@@ -272,8 +272,10 @@ export class BranchNotFoundError extends SiteRepositoryError {
 export class BranchClosedError extends SiteNotFoundError {
   readonly branchStatus: 'merged' | 'discarded';
   readonly mainSiteId: string;
+  /** A merged branch whose merge was undone (S7): the open branch that took the merged work back. */
+  readonly undoneIntoBranchId: string | null;
 
-  constructor(branchStatus: 'merged' | 'discarded', mainSiteId: string) {
+  constructor(branchStatus: 'merged' | 'discarded', mainSiteId: string, undoneIntoBranchId: string | null = null) {
     super(mainSiteId, {
       code: 'branch_closed',
       message:
@@ -284,6 +286,28 @@ export class BranchClosedError extends SiteNotFoundError {
     });
     this.branchStatus = branchStatus;
     this.mainSiteId = mainSiteId;
+    this.undoneIntoBranchId = undoneIntoBranchId;
+  }
+}
+
+/**
+ * "Undo this merge" (S7) asked of a merge that cannot be undone: the branch was never merged, the 30 days ran
+ * out, or a later merge into the site replaced the copy kept for it. Nothing was written. 409.
+ */
+export class MergeUndoUnavailableError extends SiteRepositoryError {
+  readonly reason: 'not_merged' | 'expired' | 'replaced';
+
+  constructor(reason: 'not_merged' | 'expired' | 'replaced') {
+    super(
+      'merge_undo_unavailable',
+      reason === 'not_merged'
+        ? 'This branch was not merged, so there is no merge to undo.'
+        : reason === 'expired'
+          ? 'This merge can no longer be undone: the copy of the site from before it was kept for 30 days. To take the changes back, edit the site, or publish an earlier version.'
+          : 'This merge can no longer be undone: another branch was merged into the site since, and only the latest merge can be undone.',
+      409,
+    );
+    this.reason = reason;
   }
 }
 
@@ -392,7 +416,11 @@ export function siteRepositoryErrorResponse(err: SiteRepositoryError): Response 
     return jsonError(err.code, err.message, err.status, { currentVersion: err.currentVersion });
   }
   if (err instanceof BranchClosedError) {
-    return jsonError(err.code, err.message, err.status, { branchStatus: err.branchStatus, mainSiteId: err.mainSiteId });
+    return jsonError(err.code, err.message, err.status, {
+      branchStatus: err.branchStatus,
+      mainSiteId: err.mainSiteId,
+      ...(err.undoneIntoBranchId ? { undoneIntoBranchId: err.undoneIntoBranchId } : {}),
+    });
   }
   if (err instanceof BranchConflictsError) {
     return jsonError(err.code, err.message, err.status, { conflicts: err.conflicts, token: err.token, answersKept: err.answersKept });

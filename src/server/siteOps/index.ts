@@ -129,7 +129,7 @@ function fromError(err: unknown, siteId?: string): SiteOpsResult<never> {
   if (err instanceof BranchClosedError) {
     return fail({
       code: 'site_not_found',
-      message: `${siteId ? `"${siteId}" is a site branch that was ${err.branchStatus}` : `this site branch was ${err.branchStatus}`} and is closed: nothing can be read from or written to it. Its site is "${err.mainSiteId}"`,
+      message: `${siteId ? `"${siteId}" is a site branch that was ${err.branchStatus}` : `this site branch was ${err.branchStatus}`} and is closed: nothing can be read from or written to it. Its site is "${err.mainSiteId}"${err.undoneIntoBranchId ? `; that merge was undone later, and the merged work went to branch "${err.undoneIntoBranchId}"` : ''}`,
     });
   }
   if (err instanceof SiteNotFoundError || err instanceof SiteGoneError) {

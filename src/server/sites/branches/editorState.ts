@@ -24,6 +24,8 @@ export function summaryJson(summary: BranchSummary): BranchSummaryJson {
     readyAt: iso(summary.readyAt),
     mergedAt: iso(summary.mergedAt),
     discardedAt: iso(summary.discardedAt),
+    undoUntil: iso(summary.undoUntil),
+    undoneAt: iso(summary.undoneAt),
   };
 }
 
@@ -77,7 +79,10 @@ export async function closedBranchNotice(
   if (!siteBranchesEnabled(companyId)) return null;
   const record = await prisma.siteBranch.findFirst({
     where: { id: siteId, workspaceId: scope.workspaceId, tenantGroupId: scope.tenantGroupId, branchSiteId: null },
-    select: { id: true, status: true, name: true, siteId: true, mergedAt: true, discardedAt: true, updatedAt: true },
+    select: {
+      id: true, status: true, name: true, siteId: true, mergedAt: true, discardedAt: true, updatedAt: true,
+      mainBeforeExpiresAt: true, undoneIntoBranchId: true,
+    },
   });
   if (!record) return null;
   const main = await prisma.site.findFirst({
@@ -87,5 +92,28 @@ export async function closedBranchNotice(
   if (!main) return null;
   const status = record.status === 'merged' ? 'merged' : 'discarded';
   const closedAt = (status === 'merged' ? record.mergedAt : record.discardedAt) ?? record.updatedAt;
-  return { branchId: record.id, status, name: record.name, mainSiteId: record.siteId, mainName: main.name, closedAt: closedAt.toISOString() };
+  const merged = status === 'merged';
+  // The branch a merge was undone into: named while its record exists, linked only while it is open.
+  const undone = merged && record.undoneIntoBranchId
+    ? await prisma.siteBranch.findFirst({
+        where: { id: record.undoneIntoBranchId, siteId: record.siteId, workspaceId: scope.workspaceId },
+        select: { name: true, status: true },
+      })
+    : null;
+  return {
+    branchId: record.id,
+    status,
+    name: record.name,
+    mainSiteId: record.siteId,
+    mainName: main.name,
+    closedAt: closedAt.toISOString(),
+    undoUntil:
+      merged && !record.undoneIntoBranchId && record.mainBeforeExpiresAt && record.mainBeforeExpiresAt.getTime() > Date.now()
+        ? record.mainBeforeExpiresAt.toISOString()
+        : null,
+    undoneInto:
+      merged && record.undoneIntoBranchId
+        ? { branchId: record.undoneIntoBranchId, name: undone?.name ?? null, open: undone?.status === 'open' || undone?.status === 'ready' }
+        : null,
+  };
 }
