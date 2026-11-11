@@ -417,6 +417,13 @@ discard them: older code does not know the column and lists each open branch as 
 dashboard. It cannot publish one or give it a domain (a `CHECK` constraint and a trigger refuse that whatever code
 runs), so visitors are never affected; the extra entries go away when the code is rolled forward again.
 
+**Erasing personal data while rolled back misses branch copies.** Older code's erase does not know the copies a
+branch keeps (its fork point, the site as it was before a merge, branch names and review notes). So: merge or discard
+every branch before the rollback, and run no erase while it lasts. If an erase had to run anyway, note the time and
+repeat the same search and erase on each affected site once the code is forward again; the new code reaches them.
+A record whose branch older code deleted as a site is closed as discarded by the database (a trigger), so it keeps no
+copy and frees its name.
+
 ## Migration rollbacks
 
 `20261104000000_site_last_write_key` (the editor autosave's attempt keys, plan

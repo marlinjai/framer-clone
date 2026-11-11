@@ -16,7 +16,8 @@ import 'server-only';
 // other workspace impossible in the database itself.
 //
 // Locking: a call that changes a branch takes main's row first (`FOR UPDATE`), then the branch's, always in that
-// order, as publish and the erase of personal data take main's. Creating a branch copies main under that lock, so
+// order, as publish and the erase of personal data take main's. Each lock is filtered by the caller's workspace
+// (and the branch's by its main), so a foreign or wrong id locks nothing. Creating a branch copies main under that lock, so
 // the copy and its `base_version` are of one moment, and the cap of open branches is counted under it too.
 
 import { randomUUID } from 'node:crypto';
@@ -37,7 +38,7 @@ import { buildRevisionDocument } from '../revision';
 import { closedBranchError } from './closed';
 import { forgetSiteDocuments } from '../liveDocumentCache';
 import { endLiveGenerationOfSite } from '../liveGeneration';
-import { MAX_OPEN_BRANCHES_PER_SITE, validateBranchName, type BranchStatus } from '@/lib/sites/branches';
+import { BRANCH_NAME_MAX_LENGTH, MAX_OPEN_BRANCHES_PER_SITE, validateBranchName, type BranchStatus } from '@/lib/sites/branches';
 
 /** Who acts: a signed-in person or an MCP key, as `site_operation_audits` records actors. */
 export interface BranchActor {
@@ -152,6 +153,41 @@ function isNameClash(err: unknown): boolean {
   return named.includes('name');
 }
 
+/**
+ * Whether another open branch of the site holds this name. Compared in SQL with `lower()`, exactly as the
+ * unique index `site_branches_open_name_key` compares, so no check here disagrees with the index.
+ */
+export async function openNameTaken(
+  client: Prisma.TransactionClient | PrismaClient,
+  mainSiteId: string,
+  name: string,
+  exceptBranchId: string | null = null,
+): Promise<boolean> {
+  const rows = await client.$queryRaw<{ id: string }[]>`
+    SELECT id FROM public.site_branches
+    WHERE site_id = ${mainSiteId} AND status IN ('open', 'ready') AND lower(name) = lower(${name})
+      AND (${exceptBranchId}::text IS NULL OR id <> ${exceptBranchId}::text)
+    LIMIT 1`;
+  return rows.length > 0;
+}
+
+/**
+ * A name for an open branch that no other open branch of the site holds: `stem`, or `stem 2`, `stem 3`, ...
+ * within the length limit. For a rewrite that must not fail on the name's uniqueness (the erase of personal data).
+ */
+export async function freeOpenName(
+  client: Prisma.TransactionClient,
+  mainSiteId: string,
+  stem: string,
+  branchId: string,
+): Promise<string> {
+  let name = stem;
+  for (let n = 2; await openNameTaken(client, mainSiteId, name, branchId); n++) {
+    name = `${Array.from(stem).slice(0, BRANCH_NAME_MAX_LENGTH - 1 - String(n).length).join('')} ${n}`;
+  }
+  return name;
+}
+
 export class SiteBranchRepository {
   constructor(private readonly prisma: PrismaClient) {}
 
@@ -173,7 +209,7 @@ export class SiteBranchRepository {
     const branchId = input.branchId ?? randomUUID();
     try {
       return await this.prisma.$transaction(async (tx) => {
-        await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${mainSiteId} FOR UPDATE`;
+        await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${mainSiteId} AND workspace_id = ${scope.workspaceId} AND tenant_group_id = ${scope.tenantGroupId} FOR UPDATE`;
         const main = await tx.site.findFirst({
           where: { id: mainSiteId, workspaceId: scope.workspaceId, tenantGroupId: scope.tenantGroupId },
           select: {
@@ -210,17 +246,15 @@ export class SiteBranchRepository {
           }
           return { branch: summaryOf(earlier, main.version), created: false };
         }
-        // Any other row under that id (another workspace's site or record): refused the same way, so it leaks nothing.
+        // Any other row under that id (another workspace's site or record): refused the same way. A caller learns
+        // only that an id it already holds is in use, never whose or what; ids are random, so none can be guessed.
         const taken = await tx.$queryRaw<{ n: bigint }[]>`
           SELECT (SELECT count(*) FROM public.sites WHERE id = ${branchId}) + (SELECT count(*) FROM public.site_branches WHERE id = ${branchId}) AS n`;
         if (Number(taken[0]?.n ?? 0) > 0) throw new BranchNotFoundError(branchId);
 
-        const open = await tx.siteBranch.findMany({
-          where: { siteId: main.id, status: { in: ['open', 'ready'] } },
-          select: { name: true },
-        });
-        if (open.length >= MAX_OPEN_BRANCHES_PER_SITE) throw new BranchLimitError(MAX_OPEN_BRANCHES_PER_SITE);
-        if (open.some((b) => b.name.toLowerCase() === name.toLowerCase())) throw new BranchNameTakenError(name);
+        const open = await tx.siteBranch.count({ where: { siteId: main.id, status: { in: ['open', 'ready'] }, } });
+        if (open >= MAX_OPEN_BRANCHES_PER_SITE) throw new BranchLimitError(MAX_OPEN_BRANCHES_PER_SITE);
+        if (await openNameTaken(tx, main.id, name)) throw new BranchNameTakenError(name);
 
         const now = new Date();
         await tx.site.create({
@@ -283,6 +317,9 @@ export class SiteBranchRepository {
     } catch (err) {
       // Two creates with the same name racing past the check above: the partial unique index decides.
       if (isNameClash(err)) throw new BranchNameTakenError(name);
+      // The same chosen id sent for two different sites at once (each create holds only its own main's lock):
+      // the primary key decides, and the loser is answered as any other id already in use.
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') throw new BranchNotFoundError(branchId);
       throw err;
     }
   }
@@ -361,52 +398,56 @@ export class SiteBranchRepository {
     if (closed) throw closed;
   }
 
-  /** Rename a branch (its record; the site name inside the branch is part of its content). */
-  async renameBranch(scope: TenantScope, mainSiteId: string, branchId: string, rawName: unknown): Promise<BranchSummary> {
+  /**
+   * Change a branch's record: a new name, the ready state, or both in one transaction, so a request that asks
+   * for both gets both or neither. Ready keeps the branch editable (an edit withdraws an approval, never the
+   * ready state); back to open clears the ready marks and any approval. The site name inside the branch is part
+   * of its content, not this.
+   */
+  async changeBranch(
+    scope: TenantScope,
+    mainSiteId: string,
+    branchId: string,
+    change: { name?: unknown; ready?: boolean },
+    actor: BranchActor | null,
+  ): Promise<BranchSummary> {
     assertScope(scope);
-    const name = cleanName(rawName);
+    const name = change.name === undefined ? undefined : cleanName(change.name);
+    if (change.ready !== undefined && !actor) throw new Error('changeBranch: the ready state needs an actor');
     try {
       return await this.prisma.$transaction(async (tx) => {
         const { main, record } = await this.lockOpen(tx, scope, mainSiteId, branchId);
-        if (record.name === name) return summaryOf(record, main.version);
-        const clash = await tx.siteBranch.findFirst({
-          where: { siteId: main.id, status: { in: ['open', 'ready'] }, id: { not: branchId }, name: { equals: name, mode: 'insensitive' } },
-          select: { id: true },
-        });
-        if (clash) throw new BranchNameTakenError(name);
-        const row = await tx.siteBranch.update({ where: { id: branchId }, data: { name }, select: RECORD_SELECT });
+        const data: Prisma.SiteBranchUncheckedUpdateInput = {};
+        if (name !== undefined && name !== record.name) {
+          if (await openNameTaken(tx, main.id, name, branchId)) throw new BranchNameTakenError(name);
+          data.name = name;
+        }
+        if (change.ready !== undefined && (record.status === 'ready') !== change.ready) {
+          Object.assign(
+            data,
+            change.ready
+              ? { status: 'ready', readyBy: actor!.id, readyAt: new Date(), reviewNote: null }
+              : { status: 'open', readyBy: null, readyAt: null, approvedBy: null, approvedAt: null, approvedBranchVersion: null },
+          );
+        }
+        if (Object.keys(data).length === 0) return summaryOf(record, main.version);
+        const row = await tx.siteBranch.update({ where: { id: branchId }, data, select: RECORD_SELECT });
         return summaryOf(row, main.version);
       });
     } catch (err) {
-      if (isNameClash(err)) throw new BranchNameTakenError(name);
+      if (isNameClash(err) && name !== undefined) throw new BranchNameTakenError(name);
       throw err;
     }
   }
 
-  /**
-   * Mark a branch ready for review, or back to open. Ready keeps the branch editable (an edit withdraws an
-   * approval, never the ready state); back to open clears the ready marks and any approval.
-   */
-  async setBranchReady(
-    scope: TenantScope,
-    mainSiteId: string,
-    branchId: string,
-    ready: boolean,
-    actor: BranchActor,
-  ): Promise<BranchSummary> {
-    assertScope(scope);
-    return this.prisma.$transaction(async (tx) => {
-      const { main, record } = await this.lockOpen(tx, scope, mainSiteId, branchId);
-      if ((record.status === 'ready') === ready) return summaryOf(record, main.version);
-      const row = await tx.siteBranch.update({
-        where: { id: branchId },
-        data: ready
-          ? { status: 'ready', readyBy: actor.id, readyAt: new Date(), reviewNote: null }
-          : { status: 'open', readyBy: null, readyAt: null, approvedBy: null, approvedAt: null, approvedBranchVersion: null },
-        select: RECORD_SELECT,
-      });
-      return summaryOf(row, main.version);
-    });
+  /** Rename a branch (its record). */
+  renameBranch(scope: TenantScope, mainSiteId: string, branchId: string, rawName: unknown): Promise<BranchSummary> {
+    return this.changeBranch(scope, mainSiteId, branchId, { name: rawName }, null);
+  }
+
+  /** Mark a branch ready for review, or back to open. */
+  setBranchReady(scope: TenantScope, mainSiteId: string, branchId: string, ready: boolean, actor: BranchActor): Promise<BranchSummary> {
+    return this.changeBranch(scope, mainSiteId, branchId, { ready }, actor);
   }
 
   /**
@@ -423,7 +464,7 @@ export class SiteBranchRepository {
     assertScope(scope);
     const outcome = await this.prisma.$transaction(async (tx) => {
       const main = await this.lockMain(tx, scope, mainSiteId);
-      await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${branchId} FOR UPDATE`;
+      await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${branchId} AND workspace_id = ${scope.workspaceId} AND branch_of_site_id = ${main.id} FOR UPDATE`;
       const record = await tx.siteBranch.findFirst({
         where: { id: branchId, siteId: main.id, workspaceId: scope.workspaceId },
         select: RECORD_SELECT,
@@ -483,14 +524,14 @@ export class SiteBranchRepository {
   }
 
   private async lockMain(tx: Prisma.TransactionClient, scope: TenantScope, mainSiteId: string) {
-    await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${mainSiteId} FOR UPDATE`;
+    await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${mainSiteId} AND workspace_id = ${scope.workspaceId} AND tenant_group_id = ${scope.tenantGroupId} FOR UPDATE`;
     return this.loadMain(tx, scope, mainSiteId);
   }
 
   /** Main's and the branch's row locks, in that order, and the branch's record, which must be open or ready. */
   private async lockOpen(tx: Prisma.TransactionClient, scope: TenantScope, mainSiteId: string, branchId: string) {
     const main = await this.lockMain(tx, scope, mainSiteId);
-    await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${branchId} FOR UPDATE`;
+    await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${branchId} AND workspace_id = ${scope.workspaceId} AND branch_of_site_id = ${main.id} FOR UPDATE`;
     const record = await tx.siteBranch.findFirst({
       where: { id: branchId, siteId: main.id, workspaceId: scope.workspaceId },
       select: RECORD_SELECT,

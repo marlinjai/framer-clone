@@ -26,10 +26,10 @@ type Kind =
  */
 const CLASSIFIED: Record<string, { uses: number; kind: Kind; why: string }> = {
   'src/server/sites/repository.ts': {
-    uses: 60, kind: 'sees-branches',
-    why: 'listSites filters to mains; save works on a branch id; publish, rollback, unpublish, domains, delete and erase refuse a branch; erase of a main covers its branches',
+    uses: 61, kind: 'sees-branches',
+    why: 'listSites filters to mains; save works on a branch id, its image check under a share lock on main; publish, rollback, unpublish, domains, delete and erase refuse a branch; erase of a main covers its branches',
   },
-  'src/server/sites/branches/repository.ts': { uses: 26, kind: 'sees-branches', why: 'the branch repository itself' },
+  'src/server/sites/branches/repository.ts': { uses: 25, kind: 'sees-branches', why: 'the branch repository itself' },
   'src/server/sites/branches/closed.ts': { uses: 1, kind: 'sees-branches', why: 'answers a closed branch id with 410' },
   'src/server/sites/siteImages.ts': {
     uses: 19, kind: 'sees-branches',
@@ -51,7 +51,7 @@ const CLASSIFIED: Record<string, { uses: number; kind: Kind; why: string }> = {
   },
   'src/server/domains/service.ts': { uses: 16, kind: 'mains-only', why: 'addDomain refuses a branch (409) before the trigger would' },
   'src/server/erasure/public.ts': {
-    uses: 11, kind: 'sees-branches',
+    uses: 12, kind: 'sees-branches',
     why: 'deletes every site of the company, branches included (same company and workspace); names the branches that cascade with a main of the batch, so each one is forgotten in memory too',
   },
   'src/server/commerce/editorTenant.ts': {

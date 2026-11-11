@@ -52,8 +52,8 @@ import {
   SiteIsBranchError,
 } from './errors';
 import { closedBranchError } from './branches/closed';
-import { BRANCH_NAME_MAX_LENGTH, validateBranchName } from '@/lib/sites/branches';
-import { forgetBranchContent } from './branches/repository';
+import { validateBranchName } from '@/lib/sites/branches';
+import { forgetBranchContent, freeOpenName } from './branches/repository';
 import { namedSiteImages } from '@/lib/site/siteImages';
 import { normalizeSiteSettings } from '@/lib/site/siteSettings';
 import { themeBoundsErrors } from '@/lib/site/theme';
@@ -237,7 +237,7 @@ export interface SiteErasureSummary {
  * Limits of an erase: up to 30 revisions of up to 10 MB each, and the copies a site's
  * branches keep (up to 10 open working copies and their fork points, one kept
  * pre-merge copy), are rewritten one at a time in one transaction, which a
- * publish's 30 seconds do not cover.
+ * publish's 30 seconds do not cover. The search reads the same copies, so it has the same budget.
  */
 const ERASE_TRANSACTION = { maxWait: 5_000, timeout: 240_000 } as const;
 
@@ -715,7 +715,12 @@ export class SiteRepository {
       persisted.pages.map((p) => (p.snapshot as { metadata?: { ogImage?: unknown } }).metadata?.ogImage),
     );
     if (named.size > 0) {
-      // A branch's images are its main site's (stored once there, usable by every branch).
+      // A branch's images are its main site's (stored once there, usable by every branch). A branch save shares
+      // main's row lock, which an image delete takes for update, so the two queue on one row (main first, as every
+      // branch write locks) besides the serializable conflict check that already refuses one of them.
+      if (existing?.branchOfSiteId) {
+        await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${existing.branchOfSiteId} AND workspace_id = ${scope.workspaceId} FOR SHARE`;
+      }
       const stored = await tx.siteImage.findMany({
         where: { siteId: existing?.branchOfSiteId ?? persisted.siteId, sha256: { in: [...named.keys()] } },
         select: { sha256: true },
@@ -1216,7 +1221,7 @@ export class SiteRepository {
         truncated: all.length > ERASE_LIMITS.listed,
         locations,
       };
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, ...PROJECT_WRITE_TRANSACTION });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, ...ERASE_TRANSACTION });
   }
 
   /**
@@ -1416,21 +1421,14 @@ export class SiteRepository {
       select: { id: true, name: true, status: true, branchSiteId: true, reviewNote: true, baseDocument: true, mainBeforeDocument: true },
     });
     const sources: BranchEraseSource[] = [];
-    // Names of open branches, compared without case, as the unique index compares them.
-    const openNames = new Set(records.filter((r) => r.status === 'open' || r.status === 'ready').map((r) => r.name.toLowerCase()));
-    // A rewritten name stays a valid branch name, unique among the open ones (a number is added when the
-    // rewrite makes it equal another): an erase never fails on the name's own rules.
-    const nameAfter = (record: { name: string; status: string }, rewritten: unknown): string => {
+    // A rewritten name stays a valid branch name, unique among the open ones as the index compares them (a
+    // number is added when the rewrite makes it equal another, checked in SQL): an erase never fails on the
+    // name's own rules.
+    const nameAfter = async (client: Prisma.TransactionClient, record: { id: string; status: string }, rewritten: unknown): Promise<string> => {
       const cleaned = validateBranchName(rewritten);
       const stem = cleaned.ok ? cleaned.name : 'Branch';
       if (record.status !== 'open' && record.status !== 'ready') return stem;
-      openNames.delete(record.name.toLowerCase());
-      let name = stem;
-      for (let n = 2; openNames.has(name.toLowerCase()); n++) {
-        name = `${Array.from(stem).slice(0, BRANCH_NAME_MAX_LENGTH - 4).join('')} ${n}`;
-      }
-      openNames.add(name.toLowerCase());
-      return name;
+      return freeOpenName(client, siteId, stem, record.id);
     };
     for (const record of records) {
       const label = { branchId: record.id, name: record.name, branchStatus: record.status };
@@ -1447,7 +1445,7 @@ export class SiteRepository {
           const doc = rewritten as Record<string, unknown>;
           await client.siteBranch.update({
             where: { id: record.id },
-            data: { name: nameAfter(record, doc.branchName), reviewNote: record.reviewNote === null ? null : String(doc.reviewNote ?? '') },
+            data: { name: await nameAfter(client, record, doc.branchName), reviewNote: record.reviewNote === null ? null : String(doc.reviewNote ?? '') },
           });
           if (!content || !branchSiteId) return;
           // The rewrite keeps an unchanged snapshot as the same object, as for main's working copy above.

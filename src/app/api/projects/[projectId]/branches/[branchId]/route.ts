@@ -17,7 +17,7 @@ import { z } from 'zod';
 import { withAuthAvailability } from '@/lib/authBrainAvailability';
 import { jsonError, parseBody } from '@/lib/api/respond';
 import { SiteRepositoryError, siteRepositoryErrorResponse } from '@/server/sites';
-import { getSiteBranchRepository, type BranchSummary } from '@/server/sites/branches/repository';
+import { getSiteBranchRepository } from '@/server/sites/branches/repository';
 import { guardBranchRoute } from '@/server/sites/branches/routeGuard';
 
 export const runtime = 'nodejs';
@@ -57,11 +57,10 @@ async function handlePATCH(req: Request, { params }: Ctx): Promise<Response> {
   const { projectId, branchId } = await params;
   const repo = getSiteBranchRepository();
   try {
-    let branch: BranchSummary | null = null;
-    if (body.data.name !== undefined) branch = await repo.renameBranch(guarded.scope, projectId, branchId, body.data.name);
-    if (body.data.ready !== undefined) {
-      branch = await repo.setBranchReady(guarded.scope, projectId, branchId, body.data.ready, { kind: 'user', id: guarded.userId });
-    }
+    // Both changes in one transaction: a request asking for both gets both or neither.
+    const branch = await repo.changeBranch(
+      guarded.scope, projectId, branchId, { name: body.data.name, ready: body.data.ready }, { kind: 'user', id: guarded.userId },
+    );
     return Response.json({ branch }, { headers: NO_STORE });
   } catch (err) {
     return failed(err, 'changing', projectId, branchId);

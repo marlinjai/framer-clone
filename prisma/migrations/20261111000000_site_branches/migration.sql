@@ -136,3 +136,25 @@ ALTER TABLE "public"."site_branches" ADD CONSTRAINT "site_branches_created_by_ki
 CREATE UNIQUE INDEX "site_branches_open_name_key"
     ON "public"."site_branches" ("site_id", lower("name"))
     WHERE "status" IN ('open', 'ready');
+
+-- A record whose content row goes some other way than a merge or a discard (a code rollback that deletes the
+-- branch as a site, a cascade): the foreign key sets branch_site_id NULL, and this closes the record as
+-- discarded with its fork point and draft, so it frees its name and its place under the cap and keeps no copy.
+CREATE FUNCTION "public"."site_branches_close_without_content"() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.branch_site_id IS NULL AND OLD.branch_site_id IS NOT NULL AND NEW.status IN ('open', 'ready') THEN
+    NEW.status := 'discarded';
+    NEW.discarded_at := COALESCE(NEW.discarded_at, now() AT TIME ZONE 'UTC');
+    NEW.base_document := NULL;
+    NEW.merge_draft := NULL;
+    NEW.approved_by := NULL;
+    NEW.approved_at := NULL;
+    NEW.approved_branch_version := NULL;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+CREATE TRIGGER "site_branches_close_without_content"
+    BEFORE UPDATE OF "branch_site_id" ON "public"."site_branches"
+    FOR EACH ROW EXECUTE FUNCTION "public"."site_branches_close_without_content"();

@@ -104,7 +104,15 @@ export async function eraseCompanyPublic(
       if (event.processedAt) return null;
       let current = mergeScope(parseScope(event.scope), scope);
       const { siteIds, workspaceIds } = current;
-      const sitesToDelete = await tx.site.findMany({ where: { id: { in: siteIds } }, select: { id: true }, take: 25, orderBy: { id: 'asc' } });
+      // Main sites first: a site branch goes with its main by the cascade, so its row is never locked before its
+      // main's (every other path locks main, then the branch) and its record never outlives its row between
+      // batches. A branch is taken on its own only if no main of the scope is left, which the foreign key rules out.
+      const mainsToDelete = await tx.site.findMany({
+        where: { id: { in: siteIds }, branchOfSiteId: null }, select: { id: true }, take: 25, orderBy: { id: 'asc' },
+      });
+      const sitesToDelete = mainsToDelete.length > 0
+        ? mainsToDelete
+        : await tx.site.findMany({ where: { id: { in: siteIds } }, select: { id: true }, take: 25, orderBy: { id: 'asc' } });
       const ids = sitesToDelete.map((site) => site.id);
       if (ids.length) {
         // Domain inserts hold a foreign-key lock on the site. Wait for those writers, then read their

@@ -345,8 +345,37 @@ describe('the branch record constraints', () => {
   it('a record whose content row is deleted some other way reads as closed (the foreign key sets it NULL)', async () => {
     const { branch } = await create();
     await prisma.site.delete({ where: { id: branch.branchId } });
-    expect((await prisma.siteBranch.findUniqueOrThrow({ where: { id: branch.branchId } })).branchSiteId).toBeNull();
+    const record = await prisma.siteBranch.findUniqueOrThrow({ where: { id: branch.branchId } });
+    // Closed by the trigger: no content, no fork point kept, the name and the place under the cap are free.
+    expect(record).toMatchObject({ branchSiteId: null, status: 'discarded', baseDocument: null, mergeDraft: null });
+    expect(record.discardedAt).toBeInstanceOf(Date);
     await expect(latestVersionRepository().loadProjectWithVersion(scope, branch.branchId)).rejects.toMatchObject({ code: 'branch_closed' });
+    await expect(create(branch.name)).resolves.toMatchObject({ created: true });
+  });
+});
+
+describe('one change, both or neither', () => {
+  it('a rename and ready in one request: a name clash changes neither', async () => {
+    const { branch: a } = await create('First');
+    await create('Second');
+    await expect(branches.changeBranch(scope, mainId, a.branchId, { name: 'SECOND', ready: true }, ALICE)).rejects.toBeInstanceOf(
+      BranchNameTakenError,
+    );
+    expect(await prisma.siteBranch.findUniqueOrThrow({ where: { id: a.branchId }, select: { name: true, status: true } })).toEqual({
+      name: 'First',
+      status: 'open',
+    });
+    await expect(branches.changeBranch(scope, mainId, a.branchId, { name: 'Third', ready: true }, ALICE)).resolves.toMatchObject({
+      name: 'Third',
+      status: 'ready',
+    });
+  });
+
+  it('compares names as the index does, so a name with % or _ clashes with nothing else', async () => {
+    const { branch: a } = await create('Sale_1');
+    await create('Sale 100%');
+    await expect(branches.renameBranch(scope, mainId, a.branchId, 'Sale%')).resolves.toMatchObject({ name: 'Sale%' });
+    await expect(branches.renameBranch(scope, mainId, a.branchId, 'sale 100%')).rejects.toBeInstanceOf(BranchNameTakenError);
   });
 });
 
@@ -496,6 +525,19 @@ describe('the company erasure', () => {
     expect(cachedDocument(scope, branch.branchId, 1)).toBeUndefined();
     await prisma.erasureEvent.delete({ where: { id: eventId } });
   });
+
+  it('takes main sites first, so a branch is never locked or deleted before its main', async () => {
+    const { branch } = await create();
+    const eventId = `evt-${randomUUID()}`;
+    await prisma.erasureEvent.create({ data: { id: eventId, kind: 'company', tenantId: COMPANY } });
+    // The branch named first, as a scope listing every site of the company would, in any order.
+    const result = await eraseCompanyPublic(prisma, { ...EMPTY_SCOPE, siteIds: [branch.branchId, mainId].sort() }, eventId);
+    expect(await prisma.site.count({ where: { id: { in: [mainId, branch.branchId] } } })).toBe(0);
+    expect(await prisma.siteBranch.count({ where: { siteId: mainId } })).toBe(0);
+    // One delete of main removed both rows by the cascade.
+    expect(result?.rows.sites).toBe(1);
+    await prisma.erasureEvent.delete({ where: { id: eventId } });
+  });
 });
 
 describe('uploaded images belong to main', () => {
@@ -575,5 +617,19 @@ describe('an erase of personal data reaches every copy a branch keeps', () => {
     await expect(
       repo.saveProject(scope, project(branch.branchId, VALUE, { erasureEpoch: epochBefore }), { mustExist: true, expectedVersion: after.version }),
     ).rejects.toMatchObject({ code: 'erased_since_load' });
+  });
+
+  it('an erased name that would equal another open branch name gets a number instead of failing', async () => {
+    const repo = latestVersionRepository();
+    await create('Sale [entfernt]');
+    const { branch } = await create(`Sale ${VALUE}`);
+    const query = { value: VALUE, caseSensitive: false };
+    const preview = await repo.searchPersonalData(scope, mainId, query);
+    await repo.erasePersonalData(scope, mainId, {
+      query, replacement: '[ENTFERNT]', token: preview.token,
+      chosen: preview.matches.filter((m) => m.blocked === null).map((m) => m.id), erasedBy: ALICE.id,
+    });
+    // Equal to "Sale [entfernt]" as the index compares (without case): numbered.
+    expect((await branches.getBranch(scope, mainId, branch.branchId)).name).toBe('Sale [ENTFERNT] 2');
   });
 });
