@@ -1,0 +1,566 @@
+// The review, update and merge routes of site branches (docs/plans/2026-11-10-site-branches.md, slice S3)
+// against a real Postgres: the four paths of section 6 (forward, backtrack and revise, resume, re-entry), a
+// merge racing a save of main, a double merge, an injected failure at the last write, an open editor of main
+// hearing the merge as one step, and a foreign company answered like a missing site. The session and the
+// permission check are faked; everything below them is real.
+
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import type { PrismaClient } from '@prisma/client';
+import type { SessionVerifyResponse } from '@marlinjai/auth-brain-sdk';
+
+vi.mock('next/cache', () => ({ unstable_cache: (fn: (...args: unknown[]) => unknown) => fn, revalidateTag: vi.fn() }));
+vi.mock('@/lib/auth-api', () => ({ getVerifiedSession: vi.fn(), authenticateRequest: vi.fn() }));
+vi.mock('@/lib/auth-check', () => ({ checkWorkspaceAccess: vi.fn(async () => true) }));
+
+import { authenticateRequest, getVerifiedSession } from '@/lib/auth-api';
+import { adoptionLabel } from '@/lib/projects/liveSync';
+import { LIVE_EVENTS, type SiteVersionEvent } from '@/lib/projects/liveEvents';
+import { getPrismaClient } from '@/server/db';
+import type { TenantScope } from '@/server/sites';
+import { latestVersionRepository } from '@/server/sites/__tests__/latestVersionRepository';
+import { getSiteBranchRepository } from '@/server/sites/branches/repository';
+import { SiteBranchMergeService } from '@/server/sites/branches/merge';
+import { getSiteRepository } from '@/server/sites/repository';
+import { subscribeSite } from '@/server/sites/liveBus';
+import { POST as createPOST } from '../[projectId]/branches/route';
+import { DELETE as branchDELETE } from '../[projectId]/branches/[branchId]/route';
+import { GET as changesGET } from '../[projectId]/branch/changes/route';
+import { POST as updatePOST } from '../[projectId]/branch/update/route';
+import { POST as approvePOST } from '../[projectId]/branch/approve/route';
+import { POST as sendBackPOST } from '../[projectId]/branch/send-back/route';
+import { POST as mergePOST } from '../[projectId]/branch/merge/route';
+
+const EDITOR = 'app.lumitra.test';
+const TENANT_GROUP = '018f9c10-0000-7000-8000-0000000b5b02';
+const sessionMock = vi.mocked(getVerifiedSession);
+const authMock = vi.mocked(authenticateRequest);
+
+interface Company {
+  companyId: string;
+  scope: TenantScope;
+  mainId: string;
+}
+
+interface Texts {
+  home: string;
+  about: string;
+  extra?: string;
+}
+
+let prisma: PrismaClient;
+let us: Company;
+let them: Company;
+const savedEnv = { editor: process.env.EDITOR_HOST, branches: process.env.SITE_BRANCHES_COMPANIES };
+
+function memberOf(company: Company): SessionVerifyResponse {
+  return {
+    user: { id: `user-${company.companyId}` },
+    workspaces: [{ id: company.scope.workspaceId, tenant_id: company.companyId }],
+    tenants: [{ id: company.companyId, app_grants: ['sites'], group_id: company.scope.tenantGroupId }],
+    active_workspace: { id: company.scope.workspaceId },
+  } as unknown as SessionVerifyResponse;
+}
+
+function page(id: string, slug: string, text: string) {
+  return {
+    id,
+    slug,
+    metadata: { title: id },
+    appComponentTree: {
+      id: `root-${id}`,
+      type: 'div',
+      componentType: 'host',
+      props: {},
+      children: [{ id: `text-${id}`, type: 'p', componentType: 'host', props: { children: text }, children: [] }],
+    },
+    canvasNodes: {},
+  };
+}
+
+/** A site with a home page and an about page, each with one text, and an extra page when given. */
+function project(id: string, texts: Texts) {
+  return {
+    id,
+    metadata: { title: 'Bakery', description: '', createdAt: 1, updatedAt: 2 },
+    pages: {
+      home: page('home', '', texts.home),
+      about: page('about', 'about', texts.about),
+      ...(texts.extra === undefined ? {} : { extra: page('extra', 'extra', texts.extra) }),
+    },
+  } as never;
+}
+
+async function makeCompany(): Promise<Company> {
+  const companyId = `company-${randomUUID().slice(0, 8)}`;
+  const scope = { workspaceId: `ws_brm_${randomUUID().slice(0, 8)}`, tenantGroupId: TENANT_GROUP };
+  const mainId = randomUUID();
+  await latestVersionRepository().saveProject(scope, project(mainId, { home: 'Fresh bread', about: 'Since 1990' }), { companyId });
+  return { companyId, scope, mainId };
+}
+
+/** Save a site's whole document, as an open editor tab that has just loaded it would. */
+async function edit(company: Company, siteId: string, texts: Texts) {
+  return latestVersionRepository().saveProject(company.scope, project(siteId, texts), { mustExist: true });
+}
+
+/** The text of a page on a site's stored working copy. */
+async function textOf(siteId: string, pageId: string): Promise<string | undefined> {
+  const row = await prisma.sitePage.findUnique({ where: { siteId_pageId: { siteId, pageId } }, select: { snapshot: true } });
+  const tree = (row?.snapshot as { appComponentTree?: { children?: Array<{ props?: { children?: string } }> } } | undefined)?.appComponentTree;
+  return tree?.children?.[0]?.props?.children;
+}
+
+const versionOf = async (siteId: string) => (await prisma.site.findUniqueOrThrow({ where: { id: siteId }, select: { version: true } })).version;
+
+function request(method: string, path: string, body?: unknown): Request {
+  return new Request(`https://${EDITOR}${path}`, {
+    method,
+    headers: { host: EDITOR, cookie: 'lumitra_session=faked', ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
+
+const ctx = (projectId: string) => ({ params: Promise.resolve({ projectId }) });
+
+async function createBranch(company: Company, name: string): Promise<string> {
+  const res = await createPOST(request('POST', `/api/projects/${company.mainId}/branches`, { name }), ctx(company.mainId));
+  expect(res.status).toBe(201);
+  return (await res.json()).branch.branchId as string;
+}
+
+const changes = (branchId: string) => changesGET(request('GET', `/api/projects/${branchId}/branch/changes`), ctx(branchId));
+const update = (branchId: string, body: unknown) => updatePOST(request('POST', `/api/projects/${branchId}/branch/update`, body), ctx(branchId));
+const approve = (branchId: string, body: unknown) => approvePOST(request('POST', `/api/projects/${branchId}/branch/approve`, body), ctx(branchId));
+const sendBack = (branchId: string, body: unknown) => sendBackPOST(request('POST', `/api/projects/${branchId}/branch/send-back`, body), ctx(branchId));
+const merge = (branchId: string, body: unknown) => mergePOST(request('POST', `/api/projects/${branchId}/branch/merge`, body), ctx(branchId));
+
+async function review(branchId: string) {
+  const res = await changes(branchId);
+  expect(res.status).toBe(200);
+  return res.json();
+}
+
+beforeAll(() => {
+  prisma = getPrismaClient();
+  process.env.EDITOR_HOST = EDITOR;
+});
+
+beforeEach(async () => {
+  us = await makeCompany();
+  them = await makeCompany();
+  process.env.SITE_BRANCHES_COMPANIES = `${us.companyId},${them.companyId}`;
+  sessionMock.mockResolvedValue(memberOf(us));
+  authMock.mockImplementation(async () => ({ authenticated: true, userId: `user-${us.companyId}` }));
+});
+
+afterEach(() => {
+  vi.clearAllMocks();
+});
+
+afterAll(async () => {
+  process.env.EDITOR_HOST = savedEnv.editor;
+  process.env.SITE_BRANCHES_COMPANIES = savedEnv.branches;
+  await prisma.site.deleteMany({ where: { tenantGroupId: TENANT_GROUP, branchOfSiteId: { not: null } } });
+  await prisma.site.deleteMany({ where: { tenantGroupId: TENANT_GROUP } });
+  await prisma.$disconnect();
+});
+
+describe('forward', () => {
+  it('reviews, approves and merges: main gets one new version equal to the branch, nothing is published', async () => {
+    const branchId = await createBranch(us, 'Summer sale');
+    await edit(us, branchId, { home: 'Summer bread', about: 'Since 1990' });
+    const mainVersion = await versionOf(us.mainId);
+
+    const seen = await review(branchId);
+    expect(seen.upToDate).toBe(true);
+    expect(seen.conflicts).toEqual([]);
+    expect(seen.problems).toEqual([]);
+    expect(seen.branchChanges.pages.changed).toEqual(['home']);
+
+    const approved = await approve(branchId, { token: seen.token });
+    expect(approved.status).toBe(200);
+    expect((await approved.json()).branch.approved).toBe(true);
+    expect(authMock.mock.calls.at(-1)?.[2]).toBe('reviewBranch');
+
+    // An open editor of main hears the merge once, as one step named for the branch.
+    const heard: SiteVersionEvent[] = [];
+    const stop = subscribeSite(us.mainId, (event, data) => {
+      if (event === LIVE_EVENTS.siteVersion) heard.push(data as SiteVersionEvent);
+    });
+    const res = await merge(branchId, { token: seen.token });
+    stop();
+    expect(res.status).toBe(200);
+    expect(authMock.mock.calls.at(-1)?.[2]).toBe('mergeBranch');
+    const outcome = await res.json();
+    expect(outcome).toMatchObject({ merged: true, mainVersion: mainVersion + 1, branch: { status: 'merged' } });
+
+    expect(await textOf(us.mainId, 'home')).toBe('Summer bread');
+    const main = await prisma.site.findUniqueOrThrow({ where: { id: us.mainId }, select: { version: true, status: true, publishedRevisionId: true } });
+    expect(main).toEqual({ version: mainVersion + 1, status: 'draft', publishedRevisionId: null });
+    expect(await prisma.site.findUnique({ where: { id: branchId } })).toBeNull();
+    const record = await prisma.siteBranch.findUniqueOrThrow({ where: { id: branchId } });
+    expect(record).toMatchObject({ status: 'merged', mergedMainVersion: mainVersion + 1, branchSiteId: null, baseDocument: null });
+    expect(JSON.stringify(record.mainBeforeDocument)).toContain('Fresh bread');
+    expect(record.mainBeforeExpiresAt!.getTime()).toBeGreaterThan(Date.now() + 29 * 24 * 3600 * 1000);
+
+    expect(heard).toHaveLength(1);
+    expect(heard[0]).toMatchObject({ origin: 'merge', version: mainVersion + 1, versionBefore: mainVersion });
+    expect(adoptionLabel(heard[0])).toBe('Merged branch Summer sale');
+
+    const audit = await prisma.siteOperationAudit.findMany({ where: { siteId: us.mainId, operation: 'branch_merge' } });
+    expect(audit).toHaveLength(1);
+    expect(audit[0]).toMatchObject({ versionBefore: mainVersion, versionAfter: mainVersion + 1 });
+    expect(JSON.stringify(audit[0].actorDetail)).not.toContain('Summer sale');
+  });
+
+  it('carries a rename of the branch’s site onto main, and keeps main’s own rename', async () => {
+    const renamed = await createBranch(us, 'New name');
+    await getSiteRepository().renameSite(us.scope, renamed, 'Bakery Deluxe');
+    await merge(renamed, { token: (await review(renamed)).token });
+    expect((await prisma.site.findUniqueOrThrow({ where: { id: us.mainId } })).name).toBe('Bakery Deluxe');
+
+    const both = await createBranch(us, 'Both renamed');
+    await getSiteRepository().renameSite(us.scope, both, 'Branch name');
+    await getSiteRepository().renameSite(us.scope, us.mainId, 'Main name');
+    const res = await merge(both, { token: (await review(both)).token });
+    expect(res.status).toBe(200);
+    expect((await prisma.site.findUniqueOrThrow({ where: { id: us.mainId } })).name).toBe('Main name');
+  });
+});
+
+describe('backtrack and revise', () => {
+  it('refuses a merge when main moved during the review, and writes nothing', async () => {
+    const branchId = await createBranch(us, 'Stale');
+    await edit(us, branchId, { home: 'Branch bread', about: 'Since 1990' });
+    const { token } = await review(branchId);
+    await edit(us, us.mainId, { home: 'Fresh bread', about: 'Since 1991' });
+    const before = await versionOf(us.mainId);
+
+    const res = await merge(branchId, { token });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error.code).toBe('branch_review_stale');
+    expect(await versionOf(us.mainId)).toBe(before);
+    expect(await textOf(us.mainId, 'home')).toBe('Fresh bread');
+    expect((await prisma.siteBranch.findUniqueOrThrow({ where: { id: branchId } })).status).toBe('open');
+  });
+
+  it('a rename of main makes an open review stale too', async () => {
+    const branchId = await createBranch(us, 'Renamed under it');
+    const { token } = await review(branchId);
+    await getSiteRepository().renameSite(us.scope, us.mainId, 'Other');
+    expect((await approve(branchId, { token })).status).toBe(409);
+  });
+
+  it('a branch behind main is updated first, the merge stops, and the next merge lands both changes', async () => {
+    const branchId = await createBranch(us, 'Behind');
+    await edit(us, branchId, { home: 'Branch bread', about: 'Since 1990' });
+    const seen = await review(branchId);
+    await approve(branchId, { token: seen.token });
+    await edit(us, us.mainId, { home: 'Fresh bread', about: 'Since 1991' });
+
+    const behind = await review(branchId);
+    expect(behind.upToDate).toBe(false);
+    expect(behind.conflicts).toEqual([]);
+    expect(behind.mainChanges.pages.changed).toEqual(['about']);
+    const mainVersion = await versionOf(us.mainId);
+
+    const first = await merge(branchId, { token: behind.token });
+    expect(first.status).toBe(409);
+    const body = await first.json();
+    expect(body.error.code).toBe('branch_updated_from_main');
+    // Main untouched; the branch holds both changes, is based on main now, and its approval is gone.
+    expect(await versionOf(us.mainId)).toBe(mainVersion);
+    expect(await textOf(branchId, 'home')).toBe('Branch bread');
+    expect(await textOf(branchId, 'about')).toBe('Since 1991');
+    const updated = await review(branchId);
+    expect(updated).toMatchObject({ upToDate: true, token: body.error.token, branch: { approved: false, baseVersion: mainVersion } });
+
+    const res = await merge(branchId, { token: updated.token });
+    expect(res.status).toBe(200);
+    expect(await textOf(us.mainId, 'home')).toBe('Branch bread');
+    expect(await textOf(us.mainId, 'about')).toBe('Since 1991');
+  });
+
+  it('asks a conflict, keeps a partial answer, and lands the answered update', async () => {
+    const branchId = await createBranch(us, 'Conflicts');
+    await edit(us, branchId, { home: 'Branch home', about: 'Branch about' });
+    await edit(us, us.mainId, { home: 'Main home', about: 'Main about' });
+
+    const seen = await review(branchId);
+    expect(seen.conflicts).toHaveLength(2);
+    const [home, about] = [...seen.conflicts].sort((a: { unit: { id: string } }, b: { unit: { id: string } }) => (a.unit.id < b.unit.id ? 1 : -1));
+    expect(home.unit.id).toBe('text-home');
+
+    // Nothing written without every answer; the one given is kept.
+    const partial = await update(branchId, { token: seen.token, resolutions: { [home.id]: { fingerprint: home.fingerprint, pick: 'branch' } } });
+    expect(partial.status).toBe(409);
+    const left = (await partial.json()).error;
+    expect(left.code).toBe('branch_conflicts');
+    expect(left.conflicts.map((c: { id: string }) => c.id)).toEqual([about.id]);
+    expect(await textOf(branchId, 'home')).toBe('Branch home');
+
+    // Resume: a reload shows the answer settled.
+    const reloaded = await review(branchId);
+    expect(reloaded.settled).toEqual([{ id: home.id, pick: 'branch' }]);
+    expect(reloaded.token).toBe(seen.token);
+
+    // Changing an answer changes only that conflict's outcome.
+    const done = await update(branchId, {
+      token: seen.token,
+      resolutions: { [about.id]: { fingerprint: about.fingerprint, pick: 'main' } },
+    });
+    expect(done.status).toBe(200);
+    expect(await textOf(branchId, 'home')).toBe('Branch home');
+    expect(await textOf(branchId, 'about')).toBe('Main about');
+    expect((await prisma.siteBranch.findUniqueOrThrow({ where: { id: branchId } })).mergeDraft).toBeNull();
+    expect((await review(branchId)).upToDate).toBe(true);
+
+    const audit = await prisma.siteOperationAudit.findMany({ where: { siteId: branchId, operation: 'branch_update' } });
+    expect(audit).toHaveLength(1);
+  });
+
+  it('drops an answer whose values changed, and does not bring it back when they change back', async () => {
+    const branchId = await createBranch(us, 'Flip');
+    await edit(us, branchId, { home: 'Branch home', about: 'Since 1990' });
+    await edit(us, us.mainId, { home: 'Main home', about: 'Since 1990' });
+    const seen = await review(branchId);
+    const [conflict] = seen.conflicts;
+    await update(branchId, { token: seen.token, resolutions: { [conflict.id]: { fingerprint: conflict.fingerprint, pick: 'branch' } } }).then(
+      (r) => expect(r.status).toBe(200),
+    );
+
+    // A second round: answered, then main changes that value, then changes it back.
+    await edit(us, branchId, { home: 'Branch home 2', about: 'Since 1990' });
+    await edit(us, us.mainId, { home: 'Main home 2', about: 'Since 1990' });
+    const round = await review(branchId);
+    const [second] = round.conflicts;
+    expect((await update(branchId, { token: round.token, resolutions: { [second.id]: { fingerprint: second.fingerprint, pick: 'main' } } })).status).toBe(200);
+    expect(await textOf(branchId, 'home')).toBe('Main home 2');
+
+    // Third round: the answer is given and not applied (another conflict open), then the value moves away and back.
+    await edit(us, branchId, { home: 'B3', about: 'B-about' });
+    await edit(us, us.mainId, { home: 'M3', about: 'M-about' });
+    const third = await review(branchId);
+    const homeConflict = third.conflicts.find((c: { unit: { id: string } }) => c.unit.id === 'text-home');
+    await update(branchId, { token: third.token, resolutions: { [homeConflict.id]: { fingerprint: homeConflict.fingerprint, pick: 'branch' } } });
+    expect((await review(branchId)).settled).toHaveLength(1);
+    await edit(us, us.mainId, { home: 'M3 changed', about: 'M-about' });
+    expect((await review(branchId)).settled).toEqual([]);
+    await edit(us, us.mainId, { home: 'M3', about: 'M-about' });
+    expect((await review(branchId)).settled).toEqual([]);
+  });
+
+  it('withdraws an approval when the branch is edited, and send-back sets it to open with the note', async () => {
+    const branchId = await createBranch(us, 'Approval');
+    const seen = await review(branchId);
+    await approve(branchId, { token: seen.token });
+    await edit(us, branchId, { home: 'Edited after', about: 'Since 1990' });
+    const after = await review(branchId);
+    expect(after.branch.approved).toBe(false);
+    expect((await approve(branchId, { token: seen.token })).status).toBe(409);
+
+    const ready = await getSiteBranchRepository().setBranchReady(us.scope, us.mainId, branchId, true, { kind: 'user', id: 'u' });
+    expect(ready.status).toBe('ready');
+    const current = await review(branchId);
+    await approve(branchId, { token: current.token });
+    const sent = await sendBack(branchId, { token: current.token, note: '  Fix the‮ headline  ' });
+    expect(sent.status).toBe(200);
+    expect((await sent.json()).branch).toMatchObject({ status: 'open', approved: false, reviewNote: 'Fix the headline', readyBy: null });
+  });
+
+  it('the counter-case: leaving and coming back with nothing changed keeps the token, the answers and the approval', async () => {
+    const branchId = await createBranch(us, 'Unchanged');
+    await edit(us, branchId, { home: 'Branch home', about: 'Branch about' });
+    await edit(us, us.mainId, { home: 'Main home', about: 'Main about' });
+    const seen = await review(branchId);
+    const [one] = seen.conflicts;
+    await update(branchId, { token: seen.token, resolutions: { [one.id]: { fingerprint: one.fingerprint, pick: 'branch' } } });
+    await approve(branchId, { token: seen.token });
+    const again = await review(branchId);
+    expect(again.token).toBe(seen.token);
+    expect(again.settled).toEqual([{ id: one.id, pick: 'branch' }]);
+    expect(again.branch.approved).toBe(true);
+    expect(again.conflicts).toEqual(seen.conflicts.filter((c: { id: string }) => c.id !== one.id));
+  });
+});
+
+describe('re-entry after completion or failure', () => {
+  it('a second merge answers the first one’s result and merges nothing twice', async () => {
+    const branchId = await createBranch(us, 'Twice');
+    await edit(us, branchId, { home: 'Twice', about: 'Since 1990' });
+    const { token } = await review(branchId);
+    const first = await (await merge(branchId, { token })).json();
+    const again = await merge(branchId, { token });
+    expect(again.status).toBe(200);
+    expect(await again.json()).toMatchObject({ merged: false, mainVersion: first.mainVersion });
+    expect(await versionOf(us.mainId)).toBe(first.mainVersion);
+    // Update and approval on the merged branch: closed.
+    expect((await update(branchId, { token })).status).toBe(410);
+    expect((await approve(branchId, { token })).status).toBe(410);
+    expect((await changes(branchId)).status).toBe(410);
+  });
+
+  it('two merges at once: one merges, the other answers its result', async () => {
+    const branchId = await createBranch(us, 'Race');
+    await edit(us, branchId, { home: 'Race', about: 'Since 1990' });
+    const { token } = await review(branchId);
+    const before = await versionOf(us.mainId);
+    const outcomes = await Promise.all([merge(branchId, { token }), merge(branchId, { token })]);
+    expect(outcomes.map((r) => r.status)).toEqual([200, 200]);
+    const bodies = await Promise.all(outcomes.map((r) => r.json()));
+    expect(bodies.map((b) => b.merged).sort()).toEqual([false, true]);
+    expect(await versionOf(us.mainId)).toBe(before + 1);
+    expect(await prisma.siteOperationAudit.count({ where: { siteId: us.mainId, operation: 'branch_merge' } })).toBe(1);
+  });
+
+  it('a merge racing a save of main: one wins, the other is refused, nothing is half written', async () => {
+    const branchId = await createBranch(us, 'Against a save');
+    await edit(us, branchId, { home: 'Merged', about: 'Since 1990' });
+    const { token } = await review(branchId);
+    const before = await versionOf(us.mainId);
+    const [merged, saved] = await Promise.allSettled([
+      merge(branchId, { token }),
+      getSiteRepository().saveProject(us.scope, project(us.mainId, { home: 'Saved', about: 'Since 1990' }), { mustExist: true, expectedVersion: before }),
+    ]);
+    const mergedStatus = merged.status === 'fulfilled' ? merged.value.status : 500;
+    expect(await versionOf(us.mainId)).toBe(before + 1);
+    if (saved.status === 'fulfilled') {
+      // The save won: the merge wrote nothing to main (stale, or it updated the branch first).
+      expect([409]).toContain(mergedStatus);
+      expect(await textOf(us.mainId, 'home')).toBe('Saved');
+      expect((await prisma.siteBranch.findUniqueOrThrow({ where: { id: branchId } })).status).toBe('open');
+    } else {
+      expect(mergedStatus).toBe(200);
+      expect(saved.reason).toMatchObject({ code: 'site_changed' });
+      expect(await textOf(us.mainId, 'home')).toBe('Merged');
+    }
+  });
+
+  it('a failure at the last write leaves main, the branch and the record as they were', async () => {
+    const branchId = await createBranch(us, 'Fails');
+    await edit(us, branchId, { home: 'Never lands', about: 'Since 1990' });
+    const service = new SiteBranchMergeService(prisma, getSiteRepository(), {
+      beforeCommit: async () => {
+        throw new Error('injected failure');
+      },
+    });
+    const { token } = await service.changes(us.scope, branchId);
+    const mainBefore = await versionOf(us.mainId);
+    const branchBefore = await versionOf(branchId);
+    await expect(service.merge(us.scope, branchId, { token }, { kind: 'user', id: 'u' })).rejects.toThrow('injected failure');
+    expect(await versionOf(us.mainId)).toBe(mainBefore);
+    expect(await textOf(us.mainId, 'home')).toBe('Fresh bread');
+    expect(await versionOf(branchId)).toBe(branchBefore);
+    const record = await prisma.siteBranch.findUniqueOrThrow({ where: { id: branchId } });
+    expect(record).toMatchObject({ status: 'open', branchSiteId: branchId, mainBeforeDocument: null });
+    expect(await prisma.siteOperationAudit.count({ where: { siteId: us.mainId, operation: 'branch_merge' } })).toBe(0);
+
+    // The same request again, without the failure, lands.
+    const merged = await getSiteBranchRepository().getBranch(us.scope, us.mainId, branchId);
+    expect(merged.status).toBe('open');
+    expect((await merge(branchId, { token })).status).toBe(200);
+  });
+
+  it('a discarded branch answers 410 everywhere, and a new branch may take its name fresh', async () => {
+    const branchId = await createBranch(us, 'Gone');
+    const { token } = await review(branchId);
+    const del = await branchDELETE(request('DELETE', `/api/projects/${us.mainId}/branches/${branchId}`), {
+      params: Promise.resolve({ projectId: us.mainId, branchId }),
+    });
+    expect(del.status).toBe(200);
+    for (const res of [await changes(branchId), await update(branchId, { token }), await merge(branchId, { token }), await approve(branchId, { token })]) {
+      expect(res.status).toBe(410);
+    }
+    const again = await createBranch(us, 'Gone');
+    const fresh = await review(again);
+    expect(fresh).toMatchObject({ upToDate: true, settled: [], branch: { approved: false } });
+  });
+
+  it('refuses a merge that would not be a valid site, and writes nothing', async () => {
+    const branchId = await createBranch(us, 'Duplicate address');
+    await edit(us, branchId, { home: 'Fresh bread', about: 'Since 1990', extra: 'Extra' });
+    // Main takes the extra page's address meanwhile, under another page id: both pages would claim it.
+    await latestVersionRepository().saveProject(
+      us.scope,
+      { ...(project(us.mainId, { home: 'Fresh bread', about: 'Since 1990' }) as object), pages: {
+        home: page('home', '', 'Fresh bread'), about: page('about', 'about', 'Since 1990'), other: page('other', 'extra', 'Other'),
+      } } as never,
+      { mustExist: true },
+    );
+    const seen = await review(branchId);
+    expect(seen.conflicts.map((c: { kind: string }) => c.kind)).toEqual(['slug']);
+    const before = await versionOf(branchId);
+    expect((await update(branchId, { token: seen.token })).status).toBe(409);
+    expect(await versionOf(branchId)).toBe(before);
+  });
+});
+
+describe('isolation', () => {
+  it('answers another company’s branch like a missing one on every review route, and writes nothing', async () => {
+    sessionMock.mockResolvedValue(memberOf(them));
+    authMock.mockImplementation(async () => ({ authenticated: true, userId: `user-${them.companyId}` }));
+    const theirs = await createBranch(them, 'Theirs');
+    await edit(them, theirs, { home: 'Their change', about: 'Since 1990' });
+    const { token } = await review(theirs);
+
+    sessionMock.mockResolvedValue(memberOf(us));
+    authMock.mockImplementation(async () => ({ authenticated: true, userId: `user-${us.companyId}` }));
+    for (const res of [
+      await changes(theirs),
+      await update(theirs, { token }),
+      await approve(theirs, { token }),
+      await sendBack(theirs, { token, note: 'x' }),
+      await merge(theirs, { token }),
+      // Their main site's id named as a branch.
+      await changes(them.mainId),
+      await merge(them.mainId, { token }),
+    ]) {
+      expect(res.status).toBe(404);
+    }
+    expect(await prisma.siteBranch.findUniqueOrThrow({ where: { id: theirs }, select: { status: true, approvedBy: true } })).toEqual({
+      status: 'open',
+      approvedBy: null,
+    });
+    expect(await textOf(them.mainId, 'home')).toBe('Fresh bread');
+    expect(await prisma.siteOperationAudit.count({ where: { workspaceId: us.scope.workspaceId, operation: { in: ['branch_merge', 'branch_update'] } } })).toBe(0);
+  });
+
+  it('answers 404 with the switch off, and a main site’s id is no branch', async () => {
+    const branchId = await createBranch(us, 'Switched off');
+    process.env.SITE_BRANCHES_COMPANIES = them.companyId;
+    expect((await changes(branchId)).status).toBe(404);
+    process.env.SITE_BRANCHES_COMPANIES = us.companyId;
+    expect((await changes(us.mainId)).status).toBe(404);
+  });
+});
+
+describe('the erase of personal data and a merge', () => {
+  it('an erase between the review and the merge makes it stale, and the merge after leaves nothing', async () => {
+    const VALUE = 'Max Mustermann';
+    const branchId = await createBranch(us, 'With a name');
+    await edit(us, branchId, { home: `Run by ${VALUE}`, about: 'Since 1990' });
+    const { token } = await review(branchId);
+    const repo = getSiteRepository();
+    const query = { value: VALUE, caseSensitive: false };
+    const preview = await repo.searchPersonalData(us.scope, us.mainId, query);
+    await repo.erasePersonalData(us.scope, us.mainId, {
+      query,
+      replacement: '[entfernt]',
+      token: preview.token,
+      chosen: preview.matches.filter((m) => m.blocked === null).map((m) => m.id),
+      erasedBy: 'u',
+    });
+    expect((await merge(branchId, { token })).status).toBe(409);
+    // The fork point was rewritten as main was: the branch is still up to date, not behind.
+    const after = await review(branchId);
+    expect(after.upToDate).toBe(true);
+    expect((await merge(branchId, { token: after.token })).status).toBe(200);
+    const stored = JSON.stringify([
+      await prisma.site.findMany({ where: { workspaceId: us.scope.workspaceId }, include: { pages: true } }),
+      await prisma.siteBranch.findMany({ where: { siteId: us.mainId } }),
+    ]);
+    expect(stored).not.toContain(VALUE);
+    expect((await repo.searchPersonalData(us.scope, us.mainId, query)).total).toBe(0);
+  });
+});

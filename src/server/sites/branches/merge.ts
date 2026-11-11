@@ -185,7 +185,10 @@ async function withSerializationRetry<T>(run: () => Promise<T>): Promise<T> {
     try {
       return await run();
     } catch (err) {
-      const conflict = err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2034';
+      // P2034 from a Prisma query; a raw query (the row locks) reports Postgres' 40001 as P2010.
+      const conflict =
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        (err.code === 'P2034' || (err.code === 'P2010' && (err.meta as { code?: unknown } | undefined)?.code === '40001'));
       if (!conflict || attempt >= SERIALIZATION_ATTEMPTS) throw err;
     }
   }
@@ -488,7 +491,15 @@ export class SiteBranchMergeService {
     assertScope(scope);
     const first = await this.stamp(this.prisma, scope, branchId);
     if (first.status === 'merged') return this.mergedOutcome(scope, first);
-    const state = await this.readState(scope, branchId);
+    let state: ReviewState;
+    try {
+      state = await this.readState(scope, branchId);
+    } catch (err) {
+      // Merged by a concurrent request between the two reads: its result is this one's too.
+      const now = err instanceof BranchClosedError ? await this.stamp(this.prisma, scope, branchId) : null;
+      if (now?.status === 'merged') return this.mergedOutcome(scope, now);
+      throw err;
+    }
     const { stamp } = state;
     if (reviewToken(stamp) !== input.token) throw new BranchReviewStaleError();
 
