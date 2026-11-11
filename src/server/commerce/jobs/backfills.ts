@@ -114,6 +114,23 @@ export const shopMailBackfill: JobBackfill = {
       )
       .onConflict((conflict) => conflict.constraint('commerce_job_dedupe_key').doNothing())
       .execute();
+    // A job the engine ended (a database error on the last attempt, a lease it never answered) leaves its letter
+    // `pending` for ever: the owner would see neither a failure nor a retry. The row says `failed`, with the job's
+    // reason, where the owner looks.
+    await db
+      .updateTable('shop_mail')
+      .from('commerce_job as job')
+      .set({
+        status: 'failed',
+        updated_at: now,
+        last_error: sql<string>`left(coalesce(job.last_error, 'the job ended without an answer'), 500)`,
+      })
+      .where('shop_mail.status', '=', 'pending')
+      .whereRef('job.tenant_id', '=', 'shop_mail.tenant_id')
+      .where('job.kind', '=', SHOP_MAIL_JOB_KIND)
+      .where('job.status', '=', 'dead')
+      .where(sql<boolean>`job.dedupe_key = 'mail:' || shop_mail.order_id || ':' || shop_mail.kind`)
+      .execute();
   },
 };
 

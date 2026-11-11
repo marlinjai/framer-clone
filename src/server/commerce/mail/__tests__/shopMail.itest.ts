@@ -428,6 +428,25 @@ describe('the buyer hears of a paid order', () => {
     expect(await mailJob(orderId)).toBeUndefined();
   });
 
+  it('resume: a letter whose job the engine ended stays pending no longer: the backfill writes it failed with the reason', async () => {
+    await connect();
+    const orderId = await placeOrder(await stockedRing(2));
+    await pay(paid(orderId), { drain: false });
+    // The engine gave the job up while the row still said pending (a database error on the last attempt).
+    await env.ownerDb
+      .updateTable('commerce_job')
+      .set({ status: 'dead', finished_at: shop.clock.now, last_error: 'lease lost' })
+      .where('tenant_id', '=', shop.company)
+      .where('kind', '=', 'shop_mail')
+      .execute();
+    expect(await mailRow(orderId)).toMatchObject({ status: 'pending' });
+
+    await runJobBackfills(env.appDb, shop.clock.now);
+    expect(await mailRow(orderId)).toMatchObject({ status: 'failed', last_error: 'lease lost' });
+    expect(await mailJob(orderId)).toMatchObject({ status: 'dead' });
+    expect(shop.mail.sent).toHaveLength(0);
+  });
+
   it('resume: a retry sends the letter as first built, even after the site was renamed and switched to English', async () => {
     await connect();
     const orderId = await placeOrder(await stockedRing(2));
