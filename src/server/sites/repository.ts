@@ -1480,9 +1480,9 @@ export class SiteRepository {
           revision: true,
           branchSiteId: null,
           write: async (client, rewritten) => {
-            await client.siteBranch.update({ where: { id: record.id }, data: { baseDocument: rewritten as Prisma.InputJsonValue } };
+            await client.siteBranch.update({ where: { id: record.id }, data: { baseDocument: rewritten as Prisma.InputJsonValue } });
           },
-        });
+        };
       }
       if (record.mainBeforeDocument !== null) {
         yield {
@@ -1491,9 +1491,9 @@ export class SiteRepository {
           revision: true,
           branchSiteId: null,
           write: async (client, rewritten) => {
-            await client.siteBranch.update({ where: { id: record.id }, data: { mainBeforeDocument: rewritten as Prisma.InputJsonValue } };
+            await client.siteBranch.update({ where: { id: record.id }, data: { mainBeforeDocument: rewritten as Prisma.InputJsonValue } });
           },
-        });
+        };
       }
     }
   }
