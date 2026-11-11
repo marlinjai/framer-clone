@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "id": "lumitra-hero-v7",
+  "size": { "mode": "fill" },
+  "background": "#08080b",
+  "fps": 60,
+  "dpr": [1, 1.75],
+  "layers": [
+    {
+      "id": "noise",
+      "type": "noiseFill",
+      "name": "Noise Field",
+      "visible": true,
+      "blend": "add",
+      "params": {
+        "color": "#b89cff",
+        "scale": 2.4,
+        "speed": 1,
+        "intensity": 0.22
+      }
+    },
+    {
+      "id": "text-lockup",
+      "type": "text",
+      "name": "Lockup",
+      "visible": true,
+      "blend": "normal",
+      "params": {
+        "color": "#dfe6ff",
+        "width": 5,
+        "height": 2.5,
+        "reveal": 2,
+        "parallax": 0.16
+      }
+    },
+    {
+      "id": "god-rays",
+      "type": "godRays",
+      "name": "God Rays",
+      "visible": true,
+      "blend": "screen",
+      "params": {
+        "sourceLayerId": "text-lockup",
+        "density": 0.92,
+        "decay": 0.9,
+        "weight": 0.3,
+        "exposure": 0.18,
+        "samples": 60,
+        "clampMax": 0.9
+      }
+    },
+    {
+      "id": "bloom",
+      "type": "bloom",
+      "name": "Bloom",
+      "visible": true,
+      "blend": "add",
+      "params": {
+        "intensity": 0.7,
+        "threshold": 0.5,
+        "radius": 0.62
+      }
+    },
+    {
+      "id": "chromatic",
+      "type": "chromaticAberration",
+      "name": "Lens / Chromatic",
+      "visible": true,
+      "blend": "normal",
+      "params": {
+        "offset": [0.0007, 0.0004]
+      }
+    }
+  ]
+}

@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "id": "lumitra-hub-hero",
+  "size": {
+    "mode": "fill"
+  },
+  "background": "#000000",
+  "fps": 60,
+  "dpr": [
+    1,
+    1.75
+  ],
+  "layers": [
+    {
+      "id": "gradient-bg",
+      "type": "gradient",
+      "name": "Gradient",
+      "visible": true,
+      "blend": "normal",
+      "params": {
+        "colorA": "#4a3610",
+        "colorB": "#8a6a1e",
+        "colorC": "#241a06",
+        "colorD": "#000000",
+        "speed": 0.2,
+        "scale": 1.05,
+        "falloff": 3.0,
+        "opacity": 1
+      },
+      "interactivity": {
+        "trackMouse": 0.3,
+        "momentum": 0.8,
+        "spring": 0.04,
+        "axes": "both"
+      }
+    },
+    {
+      "id": "noise",
+      "type": "noiseFill",
+      "name": "Noise Field",
+      "visible": true,
+      "blend": "screen",
+      "params": {
+        "color": "#d9b552",
+        "scale": 2.6,
+        "speed": 0.3,
+        "intensity": 0.3
+      },
+      "interactivity": {
+        "trackMouse": 0.5,
+        "momentum": 0.85,
+        "spring": 0.05,
+        "axes": "both"
+      }
+    },
+    {
+      "id": "bloom",
+      "type": "bloom",
+      "name": "Bloom",
+      "visible": true,
+      "blend": "add",
+      "params": {
+        "intensity": 0.35,
+        "threshold": 0.45,
+        "radius": 0.7
+      }
+    },
+    {
+      "id": "vignette",
+      "type": "vignette",
+      "name": "Vignette",
+      "visible": true,
+      "blend": "normal",
+      "params": {
+        "offset": 0.3,
+        "darkness": 0.75
+      }
+    },
+    {
+      "id": "grain",
+      "type": "grain",
+      "name": "Grain",
+      "visible": true,
+      "blend": "overlay",
+      "params": {
+        "premultiply": false,
+        "opacity": 0.12
+      }
+    }
+  ]
+}
