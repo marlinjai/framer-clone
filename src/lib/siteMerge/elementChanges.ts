@@ -192,6 +192,9 @@ function nameOfComponent(definition: unknown, fallback: string): string {
 }
 
 const TREES = new Set(['appComponentTree', 'canvasNodes']);
+/** Site fields listed as changed with no value: the reference to where the analytics key is kept. */
+const VALUE_HIDDEN = new Set<string>(['apiKeyRef']);
+const HIDDEN = { omitted: true, hidden: true } as const;
 
 function ownFields(unit: unknown): Record<string, unknown> {
   if (!isPlainObject(unit)) return {};
@@ -202,7 +205,10 @@ function ownFields(unit: unknown): Record<string, unknown> {
 
 /** The review of everything `to` changes against `from`. */
 export function reviewDocuments(from: MergeDocument, to: MergeDocument): DocumentReview {
-  const site = SITE_FIELDS.filter((f) => !jsonEqual(from[f], to[f])).map((f) => ({ field: f, before: shownValue(from[f]), after: shownValue(to[f]) }));
+  const site = SITE_FIELDS.filter((f) => !jsonEqual(from[f], to[f])).map((f) =>
+    // Where the analytics key is kept: named as changed, its value never shown.
+    VALUE_HIDDEN.has(f) ? { field: f, before: HIDDEN, after: HIDDEN } : { field: f, before: shownValue(from[f]), after: shownValue(to[f]) },
+  );
   const settings = fieldChanges(isPlainObject(from.siteSettings) ? from.siteSettings : {}, isPlainObject(to.siteSettings) ? to.siteSettings : {});
 
   const units: UnitReview[] = [];

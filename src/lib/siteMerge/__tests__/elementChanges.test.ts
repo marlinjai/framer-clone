@@ -119,6 +119,12 @@ describe('reviewDocuments', () => {
     expect(kinds.filter((k) => k === 'removed')).toHaveLength(counts.nodes.removed);
   });
 
+  it('names a changed key reference without its value', () => {
+    const review = reviewDocuments(doc([]), doc([], { apiKeyRef: 'ref-b' }));
+    expect(review.site).toEqual([{ field: 'apiKeyRef', before: { omitted: true, hidden: true }, after: { omitted: true, hidden: true } }]);
+    expect(JSON.stringify(review)).not.toContain('ref-b');
+  });
+
   it('nothing for the same document', () => {
     expect(reviewDocuments(base, JSON.parse(JSON.stringify(base)))).toEqual({ site: [], settings: [], units: [], pageOrder: false });
   });

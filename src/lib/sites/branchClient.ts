@@ -60,9 +60,12 @@ export type DocumentChangesJson = DocumentChanges;
 export interface ShownConflictJson {
   id: string;
   kind: string;
-  unit: { kind: string; id: string };
+  unit: { kind: 'site' | 'settings' | 'page' | 'node' | 'component'; id: string; container?: string };
   path: string[];
   fingerprint: string;
+  /** The answers it takes: usually both sides, sometimes one (the home page's address). */
+  options: MergeSideJson[];
+  removedOn?: MergeSideJson;
   base?: unknown;
   main?: unknown;
   branch?: unknown;
@@ -81,6 +84,7 @@ export interface BranchReviewJson {
   problems: Array<{ code: string; message: string; pageId?: string; componentId?: string }>;
   /** The change list: what the branch changes, per page and element (S5). Absent from an older server. */
   review?: DocumentReview;
+  versions?: { main: number; branch: number };
 }
 
 export const branchClient = {
@@ -100,8 +104,6 @@ export const branchClient = {
   approve: (branchId: string, token: string) => call<{ branch: BranchSummaryJson }>('POST', `${site(branchId)}/branch/approve`, { token }),
   sendBack: (branchId: string, token: string, note: string) =>
     call<{ branch: BranchSummaryJson }>('POST', `${site(branchId)}/branch/send-back`, { token, note }),
-  updateWith: (branchId: string, token: string) =>
-    call<{ updated: boolean; branch: BranchSummaryJson; token: string }>('POST', `${site(branchId)}/branch/update`, { token }),
   merge: (branchId: string, token: string) =>
     call<{ merged: boolean; branch: BranchSummaryJson; mainVersion: number }>('POST', `${site(branchId)}/branch/merge`, { token }),
 };

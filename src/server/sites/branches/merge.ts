@@ -97,6 +97,8 @@ export interface BranchReview {
   settled: Array<{ id: string; pick: MergeSide; conflict: ShownConflict }>;
   /** What the branch changes since its fork point, per page and element, with old and new values (the change list). */
   review: DocumentReview;
+  /** The versions the review was computed from: a page drawn from older reads reloads (S5). */
+  versions: { main: number; branch: number };
   /** Why the result would not be a valid site, once no conflict is open. */
   problems: Array<{ code: string; message: string; pageId?: string; componentId?: string }>;
 }
@@ -366,6 +368,7 @@ export class SiteBranchMergeService {
       settled,
       problems,
       review: reviewDocuments(state.base, state.branch),
+      versions: { main: stamp.mainVersion, branch: stamp.branchVersion },
     };
   }
 
