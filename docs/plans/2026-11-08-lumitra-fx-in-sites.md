@@ -229,7 +229,7 @@ Each slice is one pull request, green alone. Sizes are judgement in agent days.
 |---|---|---|---|---|---|
 | F1 | `fx-import` | Copy into `src/lib/fx/` (commit names the lumitra-web source commit), three.js and the react-three-fiber family added, leva split out of `LumitraScene.tsx`, drei reduced to the monitor, scene-core moved to 0.2.x, the import-boundary guard, FX's test running in framer-clone's Vitest | none | `pnpm typecheck`, `pnpm test`, `pnpm lint:guards` green; equivalence test passes; nothing in the app imports the engine yet, so the production bundle is unchanged (asserted) | 2 to 3 |
 | F2 | `fx-format` | `src/lib/fx/format.ts` (parse, clamps, refusals with messages, the image address rule), `fx` denied as a DOM prop, the marker in both renderers' dispatch | F1 | Unit tests per clamp and refusal: unknown layer type, foreign image address, oversized text, too many layers, bad version | 2 |
-| F3 | `fx-published-island` | `applyFx` pass, `FxIsland` with probe, `start` modes, `calm`, crossfade, fallback ladder, one-context rule, teardown, bundle test | F2 | Published tests `fx-no-bytes-without-fx`, `fx-no-webgl`, `fx-reduced-motion`, `fx-chunk-fails`, `fx-context-lost`, `fx-bundle-budget`; the published HTML of an FX page equals the same page without the island, apart from the island's own script | 3 to 4 |
+| F3 | `fx-published-island` | `applyFx` pass, `FxIsland` with probe, `start` modes, `calm`, crossfade, fallback ladder, one-context rule, teardown, bundle test | F2 | Published tests `fx-no-bytes-without-fx`, `fx-no-webgl`, `fx-reduced-motion`, `fx-chunk-fails`, `fx-context-lost`, `fx-bundle-budget`; the published HTML of an FX page equals the same page without the island, apart from the island's own script; the island reads the scene through `readFxScene` again before it draws (the image rule a second time); a browser check that the fastest full-screen layers at the top of their ranges stay under three luminance flashes per second (added 2026-11-11, see the F2 log) | 3 to 4 |
 | F4 | `fx-visual-oracle` | A local headless Chromium harness (SwiftShader WebGL) rendering one scene config twice, through lumitra-web's frozen copy and through Sites' `FxIsland`, at the reduced-motion static frame, which is deterministic, and diffing the pixels; fixtures: the hub hero, `godrays-hero`, `noise-gradient` | F3 | All three fixtures within 0.5 percent of pixels differing, per channel tolerance 2; added to the score as an "FX promises" row | 2 to 3 |
 | F5 | `fx-panel` | Palette entry with presets, FX section (layer list, generated controls, `start`, `calm`, import and copy JSON), canvas static by default with the one-breakpoint Live toggle | F3 | Panel tests for each control kind; the four stateful paths (forward; changing a layer type resets that layer's parameters and keeps the others; reload restores; undo after delete restores the layer); no more than one WebGL context on the canvas, asserted | 4 to 5 |
 | F6 | `fx-ai-and-agent` | Schema documents, validator rules, preset templates for the generator; the same validator in the agent plugin's site operations | F2, agent plugin site operations | A generated FX node from a preset survives `validateGeneration`; an invented layer type is dropped with a review note; an agent `set_node` with a foreign image address is refused | 2 |
@@ -401,3 +401,71 @@ Decided in F1, say so if you disagree:
   packages, postprocessing, scene-core, vitest for its tests). A new one is a decision, not a drive-by.
 
 Checks run locally: `pnpm typecheck`, `pnpm lint`, `pnpm lint:guards`, `pnpm test`, `pnpm check:roadmap`, `pnpm build`.
+
+Landed as pull request #365 on 2026-11-11.
+
+### F2 `fx-format` (2026-11-11)
+
+What it builds:
+
+- **`src/lib/fx/format.ts`, the one reader of a stored scene.** `parseFx` reads the node's envelope
+  (`{ version, scene, start, calm }`) and `parseFxScene` the scene. Both rebuild the scene field by field from the layer
+  schemas: an unknown field is not carried over, a value outside its schema is clamped or replaced by the default, and
+  each repair is returned as a note in plain words. Three things are refused with a message instead of repaired: a
+  version this code does not read, more than 16 layers, and an image layer whose address the host does not allow.
+- **The engine has a render-free half.** The 15 layer schemas (type, kind, label, default parameters with ranges) moved
+  out of the three.js component files into `src/lib/fx/schemas.ts`; each component file spreads its schema, so the two
+  cannot drift. The loader, the format, the layer list operations and the presets now work without React or three.js,
+  and `@/lib/fx/format` is the engine's second public entry (rule FX2). An import graph test proves that entry reaches
+  no package and no component file. The defaults of all 15 layer types were dumped before and after the move and are
+  identical, apart from the image address below.
+- **`src/lib/fxScene/fxScene.ts`, the node in Sites:** the marker (`data-fx="scene"`, on a `div` only), the prop
+  (`fx`), `readFxScene` (the one way the app reads the prop) and the app's image rule.
+- **`fx` is denied as a DOM prop** in both renderers, hidden from the Custom section together with the marker, and
+  not settable as a loose prop through site operations (F6 adds the checked way in). A box whose scene is missing or
+  refused is drawn as the plain box with its children; the published markup of an FX box equals the same box without
+  the scene, apart from the marker (tested).
+
+Decided in F2, say so if you disagree:
+
+- **The image rule is passed into the engine, not copied into it.** Rule FX1 forbids the engine to import app code, so
+  `parseFx` takes the host's rule as an option and refuses every address when none is given. Sites passes
+  `isSiteImagePath`: exactly `/site-images/<sha256>.<ext>`, the site's own uploads.
+- **The image layer's address is a text parameter, empty by default.** In lumitra-web it was a choice among that app's
+  seven demo pictures (`/fx/thumbs/...`), files Sites does not have. No comparison fixture of F4 uses an image layer.
+- **An image an FX scene shows counts as in use.** Saving a site checks that each one is stored for this site (the
+  existing `SiteImageMissingError`), for scenes on pages and in reusable component definitions. The existing delete
+  check already finds it: it searches the stored text of the settings, the definitions, every page, every kept
+  revision and every branch for the path. So an image a scene shows cannot be deleted and another site's path is
+  refused on save, both proven against a real database in `siteImages.itest.ts`. Uploading an
+  image from the FX panel is F5's work; the upload limits (2 MB, 8000 pixels a side) are the resolution clamp the plan
+  names.
+- **`background`, `dpr`, `fps`, ids and names are rebuilt too.** The engine's loader passed `background` through as a
+  string, and the scene writes it into CSS, where `url(...)` would have fetched any address. Only hex and numeric
+  `rgb()`/`hsl()` colours pass; the pixel ratio stays inside 1 to 1.75; a fixed size is ignored (the box sizes the
+  scene); ids are made unique.
+- **Per-parameter `animate` is left out with a note.** The engine has the hook (`resolveAnimatedNumber`) but no layer
+  calls it and no scene uses it, so storing it would promise motion that does not happen. **Flash safety** therefore
+  rests on the layer parameters' own ranges, which the format now enforces (the engine's loader did not clamp): no
+  stored value can drive a layer faster than its range allows. F3 checks the fastest full-screen layers against the
+  three-per-second limit in a browser before a scene reaches a visitor.
+- **A post pass names its source among the scene's content layers.** God rays read a content layer by id; the format
+  offers the scene's content layers as the choices and moves a source that names none of them to the first. In the
+  renderer, a pass whose source is hidden or missing is now left out on its own (`pipeline.ts`): before, it held the
+  whole composer back, which switched off every other post pass for good.
+- **Clamps do not change a real scene.** The hub hero, lumitra-web's two own scenes and the three presets read through
+  the strict reader to exactly what the engine's loader gives, with no note (tested), so F4 compares like with like.
+- **Custom `serialize` and `deserialize` hooks on a layer are removed.** No layer used them, and with no
+  author-supplied layers nothing can.
+- **The marker's names live apart from the reader** (`src/lib/fxScene/marker.ts`, which imports nothing). The
+  renderers' prop gates, the bindings resolver and site operations need only the names, and some of that code reaches
+  the client code of published pages; importing the reader there would have carried the layer schemas and presets onto
+  pages without an FX scene.
+- **Nothing is bound into a scene.** The bindings resolver skips the `fx` slot and every path under it, as it does for
+  `behaviour`: a bound value would reach the scene without the format's check.
+- **React import and detaching a component need no rule of their own.** Whatever puts an `fx` prop on a node, the
+  only code that reads it is `readFxScene`, so an imported or detached node with a bad scene is a plain box.
+
+Checks run locally: `pnpm typecheck`, `pnpm lint`, `pnpm lint:guards`, `pnpm test`, `pnpm test:render-gate`,
+`pnpm test:behaviour`, the site images integration file against a real Postgres, `pnpm check:roadmap`, `pnpm build`
+(still no three.js in any built file).

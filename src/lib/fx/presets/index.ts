@@ -20,10 +20,6 @@
 import { deserializeScene } from "../serialize";
 import type { SceneConfig } from "../types";
 
-// Side effect: ensure builtins are registered so deserialize can find each
-// layer type's defaults. The scene index imports this module directly.
-import "../builtins";
-
 import godraysHero from "./preset-godrays-hero.json";
 import noiseGradient from "./preset-noise-gradient.json";
 import bokehFocuspull from "./preset-bokeh-focuspull.json";

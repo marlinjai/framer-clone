@@ -15,9 +15,9 @@ import { Vector2 } from "three";
 import type {
   LayerComponentProps,
   LayerDefinition,
-  ParamsSchema,
 } from "../types";
 import { blendFunctionFor } from "./blend";
+import { chromaticAberrationSchema } from "../schemas";
 
 interface ChromaticValues {
   offset: [number, number];
@@ -36,20 +36,7 @@ function ChromaticAberrationComponent({ layer, values }: LayerComponentProps) {
   );
 }
 
-const CHROMATIC_DEFAULT_PARAMS: ParamsSchema = {
-  offset: {
-    type: "vec2",
-    value: [0.0007, 0.0004],
-    min: [0, 0],
-    max: [0.006, 0.006],
-    step: 0.0001,
-  },
-};
-
 export const ChromaticAberrationLayer: LayerDefinition = {
-  type: "chromaticAberration",
-  kind: "post",
-  label: "Chromatic Aberration",
-  defaultParams: CHROMATIC_DEFAULT_PARAMS,
+  ...chromaticAberrationSchema,
   Component: ChromaticAberrationComponent,
 };

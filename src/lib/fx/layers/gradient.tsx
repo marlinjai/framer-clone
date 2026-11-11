@@ -25,9 +25,9 @@ import {
 import type {
   LayerComponentProps,
   LayerDefinition,
-  ParamsSchema,
 } from "../types";
 import { applyContentBlend } from "./contentBlend";
+import { gradientSchema } from "../schemas";
 
 interface GradientValues {
   colorA: string;
@@ -199,21 +199,7 @@ function GradientLayerComponent({ layer, values, ctx }: LayerComponentProps) {
   );
 }
 
-const GRADIENT_DEFAULT_PARAMS: ParamsSchema = {
-  colorA: { type: "color", value: "#7c5cff" },
-  colorB: { type: "color", value: "#ff7eb6" },
-  colorC: { type: "color", value: "#3ad6ff" },
-  colorD: { type: "color", value: "#0a0a14" },
-  speed: { type: "number", value: 0.6, min: 0, max: 4, step: 0.05 },
-  scale: { type: "number", value: 1, min: 0.2, max: 2.5, step: 0.05 },
-  falloff: { type: "number", value: 2.2, min: 0.5, max: 6, step: 0.1 },
-  opacity: { type: "number", value: 1, min: 0, max: 1, step: 0.01 },
-};
-
 export const GradientLayer: LayerDefinition = {
-  type: "gradient",
-  kind: "content",
-  label: "Gradient",
-  defaultParams: GRADIENT_DEFAULT_PARAMS,
+  ...gradientSchema,
   Component: GradientLayerComponent,
 };

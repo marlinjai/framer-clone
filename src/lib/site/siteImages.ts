@@ -105,16 +105,18 @@ export function isSiteImagePath(value: string): boolean {
 }
 
 /**
- * The uploaded images a site names where the published head reads them: the
- * favicon and sharing image of the settings, and each page's own sharing
- * image. Hash -> path, so a save can check each against what the site stores.
+ * The uploaded images a site names: the favicon and sharing image of the
+ * settings, and what its pages name (`pageImages`: each page's own sharing
+ * image, and the images its FX scenes show, src/lib/fxScene/fxScene.ts).
+ * Hash -> path, so a save can check each against what the site stores.
+ * Values that are not site image paths (an https address, nothing) are skipped.
  */
 export function namedSiteImages(
   siteSettings: { faviconUrl?: unknown; ogImageUrl?: unknown } | null | undefined,
-  pageOgImages: readonly unknown[],
+  pageImages: readonly unknown[],
 ): Map<string, string> {
   const named = new Map<string, string>();
-  for (const value of [siteSettings?.faviconUrl, siteSettings?.ogImageUrl, ...pageOgImages]) {
+  for (const value of [siteSettings?.faviconUrl, siteSettings?.ogImageUrl, ...pageImages]) {
     if (typeof value !== 'string') continue;
     const parsed = parseSiteImagePath(value);
     if (parsed) named.set(parsed.sha256, value);

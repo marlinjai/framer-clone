@@ -16,6 +16,7 @@ import { isOtherSpelling, isRenderedAttribute, isRenderedTag } from '@/lib/rende
 import { TEXT_NODE_TYPE } from '@/lib/renderer/textNode';
 import { STICKY_CTA_PROP_KEYS } from '@/lib/stickyCta/stickyCta';
 import { MAP_EMBED_PROP_KEYS } from '@/lib/mapEmbed/mapEmbed';
+import { FX_PROP } from '@/lib/fxScene/marker';
 import { SAFE_PROPERTY, UNSAFE_VALUE, cssValueText, holdsTopLayerValue, isContainedValue } from '@/lib/responsive/responsiveCss';
 import { withCappedZIndex } from '@/lib/styles/stacking';
 import { isPlatformVariable } from '@/lib/rules/rootProperties';
@@ -178,7 +179,7 @@ export function isBlockedTag(tag: unknown, foreign: ForeignContent = false): boo
   return true;
 }
 
-const NODE_SETTINGS: ReadonlySet<string> = new Set(['query', 'bindings', 'effects', 'rules', 'behaviour', 'instance', 'fieldName']);
+const NODE_SETTINGS: ReadonlySet<string> = new Set(['query', 'bindings', 'effects', 'rules', 'behaviour', 'instance', 'fieldName', FX_PROP]);
 
 /** Settings the renderers read from the node. Off the element, as they should be, so nothing to report. */
 export const isSettingsProp = (name: string): boolean =>

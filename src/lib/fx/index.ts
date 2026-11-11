@@ -37,7 +37,9 @@ export {
   registerNode,
   registerLayer,
   getLayerDefinition,
+  getLayerSchema,
   listLayerDefinitions,
+  listLayerSchemas,
 } from "./registry";
 export { sceneConfigFromUnified } from "./unified";
 export { resolveAnimatedNumber } from "./animation";
@@ -74,6 +76,7 @@ export type {
   LayerContext,
   LayerDefinition,
   LayerKind,
+  LayerSchemaDefinition,
   ParamSchema,
   ParamValueOf,
   ParamValues,

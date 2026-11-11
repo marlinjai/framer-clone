@@ -12,6 +12,7 @@ import type { BindingScope } from './scope';
 import { evaluateExpression, parseExpression } from './expression';
 import { isSafeSrc, safeHrefFromData } from '@/lib/links/safeHref';
 import { cssValueText, isStyleMap, unsafeDeclaration } from '@/lib/responsive/responsiveCss';
+import { FX_PROP } from '@/lib/fxScene/marker';
 
 /** A render-time props bag. Mirrors ComponentModel's PropsRecord without
  *  importing the (React-coupled) model. */
@@ -138,6 +139,9 @@ export function applyBindings(
     if (!entry || entry.mode !== 'read' || slot === 'visible') continue;
     // Nothing is bound into a behaviour: the one way in is a component's `state`.
     if (slot === 'behaviour' || slot.startsWith('behaviour.')) continue;
+    // Nor into an FX scene (src/lib/fxScene): it is stored whole, after its own
+    // check, and a bound value would reach the scene without it.
+    if (slot === FX_PROP || slot.startsWith(`${FX_PROP}.`)) continue;
 
     const resolved = resolveBinding(scope, entry);
     const value = slot === 'style.backgroundImage' && readsInput(entry) ? backgroundFromInput(resolved) : resolved;

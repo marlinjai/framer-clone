@@ -19,9 +19,9 @@ import {
 import type {
   LayerComponentProps,
   LayerDefinition,
-  ParamsSchema,
 } from "../types";
 import { applyContentBlend } from "./contentBlend";
+import { noiseFillSchema } from "../schemas";
 
 interface NoiseValues {
   color: string;
@@ -180,17 +180,7 @@ function NoiseFieldComponent({ layer, values, ctx }: LayerComponentProps) {
   );
 }
 
-const NOISE_DEFAULT_PARAMS: ParamsSchema = {
-  color: { type: "color", value: "#b89cff" },
-  scale: { type: "number", value: 2.4, min: 0.5, max: 6, step: 0.1 },
-  speed: { type: "number", value: 1, min: 0, max: 4, step: 0.1 },
-  intensity: { type: "number", value: 0.22, min: 0, max: 1, step: 0.02 },
-};
-
 export const NoiseFillLayer: LayerDefinition = {
-  type: "noiseFill",
-  kind: "content",
-  label: "Noise Field",
-  defaultParams: NOISE_DEFAULT_PARAMS,
+  ...noiseFillSchema,
   Component: NoiseFieldComponent,
 };

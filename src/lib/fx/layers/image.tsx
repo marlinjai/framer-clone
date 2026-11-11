@@ -30,9 +30,9 @@ import {
 import type {
   LayerComponentProps,
   LayerDefinition,
-  ParamsSchema,
 } from "../types";
 import { applyContentBlend } from "./contentBlend";
+import { imageSchema } from "../schemas";
 
 interface ImageValues {
   src: string;
@@ -295,26 +295,7 @@ function ImageLayerComponent({ layer, values, ctx }: LayerComponentProps) {
   );
 }
 
-const IMAGE_DEFAULT_PARAMS: ParamsSchema = {
-  src: { type: "select", value: "/fx/thumbs/thumb-7.jpg", options: [
-    "/fx/thumbs/thumb-1.jpg",
-    "/fx/thumbs/thumb-2.jpg",
-    "/fx/thumbs/thumb-3.jpg",
-    "/fx/thumbs/thumb-4.jpg",
-    "/fx/thumbs/thumb-5.jpg",
-    "/fx/thumbs/thumb-6.jpg",
-    "/fx/thumbs/thumb-7.jpg",
-  ] },
-  fit: { type: "select", value: "cover", options: ["cover", "contain"] },
-  opacity: { type: "number", value: 0.85, min: 0, max: 1, step: 0.01 },
-  displace: { type: "number", value: 0, min: 0, max: 0.2, step: 0.005 },
-  scale: { type: "number", value: 1, min: 0.25, max: 2, step: 0.05 },
-};
-
 export const ImageLayer: LayerDefinition = {
-  type: "image",
-  kind: "content",
-  label: "Image",
-  defaultParams: IMAGE_DEFAULT_PARAMS,
+  ...imageSchema,
   Component: ImageLayerComponent,
 };

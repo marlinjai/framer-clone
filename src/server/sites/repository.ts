@@ -55,6 +55,7 @@ import { closedBranchError } from './branches/closed';
 import { validateBranchName } from '@/lib/sites/branches';
 import { forgetBranchContent, freeOpenName } from './branches/repository';
 import { namedSiteImages } from '@/lib/site/siteImages';
+import { fxSiteImagePaths } from '@/lib/fxScene/fxScene';
 import { normalizeSiteSettings } from '@/lib/site/siteSettings';
 import { themeBoundsErrors } from '@/lib/site/theme';
 import { findProjectSlugProblem } from '@/lib/pages/slug';
@@ -726,10 +727,16 @@ export class SiteRepository {
     // icon or sharing image. Read in this transaction, so an image deleted by a
     // concurrent delete (which takes this site row first, src/server/sites/
     // siteImages.ts) cannot slip through.
-    const named = namedSiteImages(
-      persisted.siteSettings,
-      persisted.pages.map((p) => (p.snapshot as { metadata?: { ogImage?: unknown } }).metadata?.ogImage),
-    );
+    // The same holds for an image an FX scene shows, on a page or in a component
+    // definition (src/lib/fxScene/fxScene.ts): its island would draw nothing for a
+    // path this site does not store.
+    const named = namedSiteImages(persisted.siteSettings, [
+      ...persisted.pages.map((p) => (p.snapshot as { metadata?: { ogImage?: unknown } }).metadata?.ogImage),
+      ...persisted.pages.flatMap((p) => fxSiteImagePaths(p.snapshot)),
+      // Reusable component definitions hold nodes too. A save that sends none
+      // leaves the stored ones as they are, checked when they were saved.
+      ...fxSiteImagePaths(persisted.components),
+    ]);
     if (named.size > 0) {
       // A branch's images are its main site's (stored once there, usable by every branch). An image delete scans
       // every branch's pages and runs serializable like this save, so a delete and a branch save naming the same

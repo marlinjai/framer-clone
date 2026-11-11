@@ -16,9 +16,9 @@ import { Noise } from "@react-three/postprocessing";
 import type {
   LayerComponentProps,
   LayerDefinition,
-  ParamsSchema,
 } from "../types";
 import { blendFunctionFor } from "./blend";
+import { grainSchema } from "../schemas";
 
 interface GrainValues {
   opacity: number;
@@ -36,15 +36,7 @@ function GrainComponent({ layer, values }: LayerComponentProps) {
   );
 }
 
-const GRAIN_DEFAULT_PARAMS: ParamsSchema = {
-  opacity: { type: "number", value: 0.25, min: 0, max: 1, step: 0.01 },
-  premultiply: { type: "bool", value: false },
-};
-
 export const GrainLayer: LayerDefinition = {
-  type: "grain",
-  kind: "post",
-  label: "Grain",
-  defaultParams: GRAIN_DEFAULT_PARAMS,
+  ...grainSchema,
   Component: GrainComponent,
 };

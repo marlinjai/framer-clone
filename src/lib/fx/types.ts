@@ -114,7 +114,11 @@ export interface LayerComponentProps<P extends ParamsSchema = ParamsSchema> {
   ctx: LayerContext;
 }
 
-export interface LayerDefinition<P extends ParamsSchema = ParamsSchema> {
+/**
+ * A layer as data: everything the loader, the format checks and an editor
+ * need, without the component that draws it (see ./schemas).
+ */
+export interface LayerSchemaDefinition<P extends ParamsSchema = ParamsSchema> {
   type: string;
   kind: LayerKind;
   /**
@@ -124,15 +128,15 @@ export interface LayerDefinition<P extends ParamsSchema = ParamsSchema> {
   label?: string;
   /**
    * Marks a layer whose per-frame cost is high (multi-tap blurs, mipmap
-   * pyramids, big sample loops). The Phase 3 PerformanceMonitor downshift
-   * drops these from the live pipeline when fps stays below the floor, so
-   * the rest of the scene keeps running smoothly.
+   * pyramids, big sample loops). The frame rate step down drops these from
+   * the live pipeline when the frame rate stays below the floor, so the rest
+   * of the scene keeps running smoothly.
    */
   heavy?: boolean;
   defaultParams: P;
+}
+
+/** A layer schema together with the component that draws it. */
+export interface LayerDefinition<P extends ParamsSchema = ParamsSchema> extends LayerSchemaDefinition<P> {
   Component: ComponentType<LayerComponentProps<P>>;
-  /** Optional custom JSON encode; defaults to passing `params` through. */
-  serialize?: (params: P) => unknown;
-  /** Optional custom JSON decode; defaults to merging over `defaultParams`. */
-  deserialize?: (raw: unknown) => P;
 }

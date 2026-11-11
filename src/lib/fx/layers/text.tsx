@@ -21,8 +21,8 @@ import * as THREE from "three";
 import type {
   LayerComponentProps,
   LayerDefinition,
-  ParamsSchema,
 } from "../types";
+import { textSchema } from "../schemas";
 
 interface TextValues {
   eyebrowText: string;
@@ -40,16 +40,6 @@ interface TextValues {
   reveal: number;
   parallax: number;
 }
-
-const FONT_OPTIONS = [
-  "Helvetica Neue",
-  "Arial",
-  "Inter",
-  "system-ui",
-  "Georgia",
-  "Times New Roman",
-  "Courier New",
-];
 
 /** Map a friendly font name to a CSS stack with sensible canvas fallbacks. */
 const FONT_STACKS: Record<string, string> = {
@@ -181,36 +171,7 @@ function TextLayerComponent({ layer, values, ctx }: LayerComponentProps) {
   );
 }
 
-const TEXT_DEFAULT_PARAMS: ParamsSchema = {
-  eyebrowText: { type: "string", value: "Introducing", label: "eyebrow" },
-  headlineText: { type: "string", value: "Lumitra", label: "headline" },
-  taglineText: {
-    type: "string",
-    value: "we bring your project to life",
-    label: "tagline",
-  },
-  eyebrowFont: { type: "select", value: "Georgia", options: FONT_OPTIONS, label: "eyebrow font" },
-  bodyFont: { type: "select", value: "Helvetica Neue", options: FONT_OPTIONS, label: "body font" },
-  headlineWeight: {
-    type: "select",
-    value: "500",
-    options: ["300", "400", "500", "600", "700", "800"],
-    label: "headline weight",
-  },
-  eyebrowSize: { type: "number", value: 88, min: 30, max: 200, step: 2, label: "eyebrow size" },
-  headlineSize: { type: "number", value: 300, min: 80, max: 480, step: 10, label: "headline size" },
-  taglineSize: { type: "number", value: 60, min: 24, max: 160, step: 2, label: "tagline size" },
-  color: { type: "color", value: "#dfe6ff" },
-  width: { type: "number", value: 5, min: 2, max: 9, step: 0.1 },
-  height: { type: "number", value: 2.5, min: 1, max: 5, step: 0.1 },
-  reveal: { type: "number", value: 2, min: 0, max: 5, step: 0.1 },
-  parallax: { type: "number", value: 0.16, min: 0, max: 0.6, step: 0.01 },
-};
-
 export const TextLayer: LayerDefinition = {
-  type: "text",
-  kind: "content",
-  label: "Text Lockup",
-  defaultParams: TEXT_DEFAULT_PARAMS,
+  ...textSchema,
   Component: TextLayerComponent,
 };

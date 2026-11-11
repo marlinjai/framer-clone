@@ -39,7 +39,7 @@
  * scene file").
  */
 
-import { getLayerDefinition } from "./registry";
+import { getLayerSchema } from "./registry";
 import type {
   AnimateSpec,
   BlendMode,
@@ -122,11 +122,7 @@ function serializeParams(params: ParamsSchema): Record<string, SerializedParamVa
 }
 
 function serializeLayer(layer: Layer): SerializedLayer {
-  // A layer definition may register a custom encode; default is values-only.
-  const def = getLayerDefinition(layer.type);
-  const params = def?.serialize
-    ? (def.serialize(layer.params) as Record<string, SerializedParamValue>)
-    : serializeParams(layer.params);
+  const params = serializeParams(layer.params);
   const out: SerializedLayer = {
     id: layer.id,
     type: layer.type,
@@ -249,7 +245,7 @@ function sanitizeInteractivity(raw: unknown): InteractivitySpec | undefined {
  * loader, guaranteeing the two paths produce identical layers.
  */
 export function deserializeLayer(raw: SerializedLayer): Layer | null {
-  const def = getLayerDefinition(raw.type);
+  const def = getLayerSchema(raw.type);
   if (!def) {
     // Unknown layer type: skip rather than throw, so a scene authored against
     // a newer registry still partially loads in an older client.
@@ -258,9 +254,7 @@ export function deserializeLayer(raw: SerializedLayer): Layer | null {
     }
     return null;
   }
-  const params = def.deserialize
-    ? def.deserialize(raw.params)
-    : deserializeParams(def.defaultParams, raw.params);
+  const params = deserializeParams(def.defaultParams, raw.params);
   const layer: Layer = {
     id: raw.id,
     type: raw.type,
