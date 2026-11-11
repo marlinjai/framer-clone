@@ -17,6 +17,7 @@
 //
 // PURE: client and server safe.
 
+import { mergeOrder } from './order';
 import { conflictId, type ConflictLog, type MergeSide, type MergeUnit } from './types';
 import { isPlainObject, jsonEqual, mergeValue, type SplitRule } from './value';
 
@@ -286,50 +287,11 @@ export function mergeForest(
   for (const [id, up] of parent) childrenOf.set(up, [...(childrenOf.get(up) ?? []), id]);
   const order = (key: string): string[] => {
     const present = new Set(childrenOf.get(key) ?? []);
-    if (present.size === 0) return [];
-    const inOrder = (flat: Flat) => (flat.children.get(key) ?? []).filter((id) => present.has(id));
-    const b = inOrder(B);
-    const m = inOrder(M);
-    const r = inOrder(R);
-    let primary = m;
-    let secondary = r;
-    const unordered = isSlotKey(key) && UNORDERED_SLOTS.has(key.slice(1));
-    if (!unordered) {
-      // Relative order of the children all three sides hold under this parent.
-      const common = b.filter((id) => m.includes(id) && r.includes(id));
-      const seq = (list: string[]) => list.filter((id) => common.includes(id));
-      const mMoved = !jsonEqual(seq(m), seq(b));
-      const rMoved = !jsonEqual(seq(r), seq(b));
-      if (rMoved && !mMoved) {
-        primary = r;
-        secondary = m;
-      } else if (rMoved && mMoved && !jsonEqual(seq(m), seq(r))) {
-        const parentUnit: MergeUnit = isSlotKey(key) ? { kind: 'node', id: key, container } : unit(key);
-        const pick = log.ask({ id: conflictId(parentUnit, 'order'), kind: 'order', unit: parentUnit, path: [], base: seq(b), main: seq(m), branch: seq(r) });
-        if (pick === 'branch') {
-          primary = r;
-          secondary = m;
-        }
-      }
-    }
-    const out = [...primary];
-    for (const id of present) if (!out.includes(id) && !secondary.includes(id)) out.push(id);
-    // Unordered (canvas nodes): what only the other side has goes last.
-    if (unordered) return [...out, ...secondary.filter((id) => !out.includes(id))];
-    // What only the other side placed here: after the sibling it followed there, or first.
-    secondary.forEach((id, index) => {
-      if (out.includes(id)) return;
-      let at = 0;
-      for (let i = index - 1; i >= 0; i--) {
-        const found = out.indexOf(secondary[i]);
-        if (found >= 0) {
-          at = found + 1;
-          break;
-        }
-      }
-      out.splice(at, 0, id);
+    const parentUnit: MergeUnit = isSlotKey(key) ? { kind: 'node', id: key, container } : unit(key);
+    return mergeOrder(B.children.get(key) ?? [], M.children.get(key) ?? [], R.children.get(key) ?? [], present, {
+      unordered: isSlotKey(key) && UNORDERED_SLOTS.has(key.slice(1)),
+      ask: (base, main, branch) => log.ask({ id: conflictId(parentUnit, 'order'), kind: 'order', unit: parentUnit, path: [], base, main, branch }),
     });
-    return out;
   };
 
   const build = (id: string): TreeNode => {
