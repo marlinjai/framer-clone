@@ -283,7 +283,10 @@ describe('createSectionScanner: outline and opened elements', () => {
     }
   });
 
-  it('fuzz: a cut at every offset reports the same outline, openings and sections as the whole input', () => {
+  // Every cut scans the whole text again, so the work grows with the square of its length: 1.5 s alone, and 5.0 to
+  // 6.3 s measured under the full parallel suite on a laptop (2026-11-11), past the 5 s default. Every cut is the
+  // point of the test, so the limit is set from those measurements instead of the cuts thinned.
+  it('fuzz: a cut at every offset reports the same outline, openings and sections as the whole input', { timeout: 20_000 }, () => {
     for (const text of [OUTLINE_FIRST, OUTLINE_FIRST_PRETTY, OUTLINE_LAST, EMIT_PAGE_INPUT_TEXT]) {
       const whole = report([text]);
       for (let cut = 0; cut <= text.length; cut += 1) {
