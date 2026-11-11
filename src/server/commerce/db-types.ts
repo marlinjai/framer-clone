@@ -40,7 +40,7 @@ import type { GlobalKey, TenantKey } from '@marlinjai/tenant-db';
 
 // The shapes of the Books JSONB columns (zod-inferred; type-only import).
 import type {
-  CustomerSnapshot,
+  CustomerSnapshotV1,
   EventPayload,
   SenderBlockV1,
   SenderSnapshotV1,
@@ -466,11 +466,10 @@ export interface CustomerTable {
   vat_id: string | null;
   country_code: Generated<string>;
   tax_number: string | null;
-  /** 030: the contact (a person of the contacts database) a new draft for this customer is addressed to. */
-  default_contact_person_id: string | null;
   archived_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   updated_at: Timestamp;
+  default_contact_person_id: string | null;
 }
 
 /**
@@ -507,8 +506,6 @@ export interface SalesDocumentTable {
   source: Generated<SalesDocSource>;
   version: Generated<number>;
   customer_id: string | null;
-  /** 030: the contact person (a person of the contacts database) the invoice is addressed to; frozen in the snapshot at issue. */
-  contact_person_id: string | null;
   template_id: string | null;
   corrects_document_id: string | null;
   source_order_id: string | null;
@@ -536,7 +533,7 @@ export interface SalesDocumentTable {
   tax_amount: Generated<number>;
   total: Generated<number>;
   tax_summary: Generated<JsonColumn<TaxSummary>>;
-  customer_snapshot: JsonColumn<CustomerSnapshot> | null;
+  customer_snapshot: JsonColumn<CustomerSnapshotV1> | null;
   sender_snapshot: JsonColumn<SenderSnapshotV1> | null;
   intro_text: string | null;
   outro_text: string | null;
@@ -553,6 +550,7 @@ export interface SalesDocumentTable {
   outro_format: JsonColumn<RichText> | null;
   paid_on: DateString | null;
   tax_country: string | null;
+  contact_person_id: string | null;
 }
 
 /**
