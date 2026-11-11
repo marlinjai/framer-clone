@@ -7,7 +7,7 @@
 // branches are on for the company (the editor route passes no state otherwise). Each branch has its own
 // address; the switcher saves this tab's work before it leaves.
 
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Check, GitBranch, ChevronDown, Plus, Pencil, Trash2, Send, Undo2 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -30,6 +30,9 @@ export default function BranchSwitcher({ className = '' }: { className?: string 
   const [listed, setListed] = useState<Listed>({ kind: 'loading' });
   const [dialog, setDialog] = useState<null | 'new' | 'rename' | 'discard'>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // A dialog opens once the menu has CLOSED (as in ProjectCard): while the menu is open it traps focus, so a
+  // dialog opened from its item would lose focus to the trigger straight away.
+  const chosen = useRef<'new' | 'rename' | 'discard' | null>(null);
   if (!state) return null;
 
   const mainSiteId = state.kind === 'main' ? state.siteId : state.mainSiteId;
@@ -77,7 +80,19 @@ export default function BranchSwitcher({ className = '' }: { className?: string 
           <span className="truncate">{label}</span>
           <ChevronDown size={14} aria-hidden />
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="w-64">
+        <DropdownMenuContent
+          align="start"
+          data-editor-ui="true"
+          className="z-[1100] w-64"
+          onCloseAutoFocus={(e) => {
+            const next = chosen.current;
+            chosen.current = null;
+            if (next) {
+              e.preventDefault();
+              setDialog(next);
+            }
+          }}
+        >
           <DropdownMenuLabel>Branches</DropdownMenuLabel>
           <DropdownMenuItem onSelect={() => void go(mainSiteId)}>
             {state.kind === 'main' ? <Check aria-hidden /> : <span className="w-4" aria-hidden />} Main
@@ -96,12 +111,12 @@ export default function BranchSwitcher({ className = '' }: { className?: string 
             ))
           )}
           <DropdownMenuSeparator />
-          <DropdownMenuItem onSelect={() => setDialog('new')}>
+          <DropdownMenuItem onSelect={() => (chosen.current = 'new')}>
             <Plus aria-hidden /> New branch…
           </DropdownMenuItem>
           {onBranch ? (
             <>
-              <DropdownMenuItem onSelect={() => setDialog('rename')}>
+              <DropdownMenuItem onSelect={() => (chosen.current = 'rename')}>
                 <Pencil aria-hidden /> Rename branch…
               </DropdownMenuItem>
               {onBranch.status === 'ready' ? (
@@ -113,7 +128,7 @@ export default function BranchSwitcher({ className = '' }: { className?: string 
                   <Send aria-hidden /> Mark ready for review
                 </DropdownMenuItem>
               )}
-              <DropdownMenuItem variant="destructive" onSelect={() => setDialog('discard')}>
+              <DropdownMenuItem variant="destructive" onSelect={() => (chosen.current = 'discard')}>
                 <Trash2 aria-hidden /> Discard branch…
               </DropdownMenuItem>
             </>

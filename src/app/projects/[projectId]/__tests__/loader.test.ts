@@ -59,6 +59,14 @@ vi.mock('@/server/sites', async (importActual) => {
   };
 });
 
+// Site branches (S4): what the editor is told about main, a branch or a closed branch. Off by default.
+const mockEditorBranchState = vi.fn(async (): Promise<unknown> => null);
+const mockClosedBranchNotice = vi.fn(async (): Promise<unknown> => null);
+vi.mock('@/server/sites/branches/editorState', () => ({
+  editorBranchState: (...args: unknown[]) => mockEditorBranchState(...(args as [])),
+  closedBranchNotice: (...args: unknown[]) => mockClosedBranchNotice(...(args as [])),
+}));
+
 const mockCookieGet = vi.fn();
 const mockHeaderGet = vi.fn();
 vi.mock('next/headers', () => ({
@@ -109,6 +117,8 @@ function setHeaders(map: Record<string, string>) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockEditorBranchState.mockResolvedValue(null);
+  mockClosedBranchNotice.mockResolvedValue(null);
   setHeaders({ 'x-forwarded-proto': 'https', 'x-forwarded-host': 'app.lumitra.co' });
 });
 
@@ -421,5 +431,45 @@ describe('loadProjectSnapshot: the sites grant', () => {
 
     expect(await loadProjectSnapshot('site-c1')).toEqual({ status: 'not_found' });
     expect(mockFindSiteWorkspaceAmong).toHaveBeenCalledWith('site-c1', ['ws_b']);
+  });
+});
+
+describe('loadProjectSnapshot: site branches', () => {
+  beforeEach(() => {
+    mockCookieGet.mockReturnValue({ value: 'sess_a' });
+    mockVerifySession.mockResolvedValue(sessionA());
+  });
+
+  it('passes main or a branch through, read under the session scope and company', async () => {
+    const state = { kind: 'main', siteId: 'site-a1', siteName: 'A One', openBranches: 2 };
+    mockLoadProject.mockResolvedValue(projectNode('site-a1'));
+    mockEditorBranchState.mockResolvedValue(state);
+
+    const result = await loadProjectSnapshot('site-a1');
+
+    expect(mockEditorBranchState).toHaveBeenCalledWith({ workspaceId: 'ws_a', tenantGroupId: 'tg_a' }, 'tenant-a', 'site-a1');
+    expect(result.status === 'ok' && result.branch).toEqual(state);
+  });
+
+  it('answers a branch hidden by the switch with a plain 404', async () => {
+    mockLoadProject.mockResolvedValue(projectNode('branch-1'));
+    mockEditorBranchState.mockResolvedValue('hidden');
+
+    expect(await loadProjectSnapshot('branch-1')).toEqual({ status: 'not_found' });
+  });
+
+  it('turns a merged branch\'s old address into its notice', async () => {
+    const notice = { branchId: 'branch-1', status: 'merged', name: 'Spring', mainSiteId: 'site-a1', mainName: 'A One', closedAt: '2026-11-11T10:00:00.000Z' };
+    mockLoadProject.mockRejectedValue(new SiteNotFoundError('branch-1'));
+    mockClosedBranchNotice.mockResolvedValue(notice);
+
+    expect(await loadProjectSnapshot('branch-1')).toEqual({ status: 'branch_closed', notice });
+    expect(mockClosedBranchNotice).toHaveBeenCalledWith({ workspaceId: 'ws_a', tenantGroupId: 'tg_a' }, 'tenant-a', 'branch-1');
+  });
+
+  it('keeps a missing id that is no closed branch a 404', async () => {
+    mockLoadProject.mockRejectedValue(new SiteNotFoundError('nope'));
+
+    expect(await loadProjectSnapshot('nope')).toEqual({ status: 'not_found' });
   });
 });

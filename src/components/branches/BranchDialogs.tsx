@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Button } from '@/components/ui/button';
 import { BRANCH_NAME_MAX_LENGTH, validateBranchName } from '@/lib/sites/branches';
 import { BranchApiError, branchClient, changeCountText } from '@/lib/sites/branchClient';
-import { openSite, savedBeforeLeaving } from './leave';
+import { leaveClosedBranch, openSite, savedBeforeLeaving } from './leave';
 
 function messageOf(err: unknown): string {
   if (err instanceof BranchApiError) return err.message;
@@ -169,6 +169,13 @@ export function RenameBranchDialog({ open, onOpenChange, mainSiteId, branchId, c
   );
 }
 
+export function discardText(lost: { kind: 'loading' } | { kind: 'known'; text: string } | { kind: 'unknown' }): string {
+  if (lost.kind === 'loading') return 'Counting the changes on this branch…';
+  if (lost.kind === 'unknown') return 'The changes on this branch could not be counted just now; all of them will be lost.';
+  if (lost.text === 'No changes yet') return 'This branch holds no changes yet.';
+  return `${lost.text} on this branch will be lost.`;
+}
+
 /** Discard the open branch, naming how much is lost, then go to main. */
 export function DiscardBranchDialog({ open, onOpenChange, mainSiteId, branchId, name }: {
   open: boolean;
@@ -177,18 +184,19 @@ export function DiscardBranchDialog({ open, onOpenChange, mainSiteId, branchId, 
   branchId: string;
   name: string;
 }) {
-  const [lost, setLost] = useState<string | null>(null);
+  // What is lost: being counted, counted, or not countable (the discard still works).
+  const [lost, setLost] = useState<{ kind: 'loading' } | { kind: 'known'; text: string } | { kind: 'unknown' }>({ kind: 'loading' });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     if (!open) return;
     setError(null);
-    setLost(null);
+    setLost({ kind: 'loading' });
     let live = true;
     branchClient
       .changes(branchId)
-      .then((review) => live && setLost(changeCountText(review.branchChanges)))
-      .catch(() => live && setLost(null));
+      .then((review) => live && setLost({ kind: 'known', text: changeCountText(review.branchChanges) }))
+      .catch(() => live && setLost({ kind: 'unknown' }));
     return () => {
       live = false;
     };
@@ -199,7 +207,7 @@ export function DiscardBranchDialog({ open, onOpenChange, mainSiteId, branchId, 
     setError(null);
     try {
       await branchClient.discard(mainSiteId, branchId);
-      openSite(mainSiteId);
+      leaveClosedBranch(branchId, mainSiteId);
     } catch (err) {
       setError(messageOf(err));
       setBusy(false);
@@ -211,9 +219,8 @@ export function DiscardBranchDialog({ open, onOpenChange, mainSiteId, branchId, 
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Discard “{name}”?</DialogTitle>
-          <DialogDescription>
-            {lost && lost !== 'No changes yet' ? `${lost} on this branch will be lost. ` : 'This branch holds no changes yet. '}
-            The site itself does not change. This cannot be undone.
+          <DialogDescription aria-busy={lost.kind === 'loading'}>
+            {discardText(lost)} The site itself does not change. This cannot be undone.
           </DialogDescription>
         </DialogHeader>
         {error ? (

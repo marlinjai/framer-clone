@@ -36,14 +36,24 @@ async function siteName(prisma: PrismaClient, scope: TenantScope, siteId: string
   return row.name;
 }
 
-/** Main or branch, for a site the caller's workspace holds; null when branches are off for the company. */
+/**
+ * Main or branch, for a site the caller's workspace holds. With branches off for the company: null for a main
+ * site (the editor looks as it always did) and `hidden` for a branch, whose address then answers 404 like the
+ * branch routes do (section 9: turning the switch off hides branches without deleting them).
+ */
 export async function editorBranchState(
   scope: TenantScope,
   companyId: string,
   siteId: string,
   prisma: PrismaClient = getPrismaClient(),
-): Promise<EditorBranchState | null> {
-  if (!siteBranchesEnabled(companyId)) return null;
+): Promise<EditorBranchState | null | 'hidden'> {
+  if (!siteBranchesEnabled(companyId)) {
+    const row = await prisma.site.findFirst({
+      where: { id: siteId, workspaceId: scope.workspaceId, tenantGroupId: scope.tenantGroupId },
+      select: { branchOfSiteId: true },
+    });
+    return row?.branchOfSiteId ? 'hidden' : null;
+  }
   const context = await getSiteBranchRepository().siteBranchContext(scope, siteId);
   if (context.kind === 'main') {
     return { kind: 'main', siteId, siteName: await siteName(prisma, scope, siteId), openBranches: context.openBranches };

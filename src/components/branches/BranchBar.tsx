@@ -14,7 +14,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useSiteBranch } from '@/contexts/SiteBranchContext';
 import { BranchApiError, branchClient, changeCountText, type BranchReviewJson } from '@/lib/sites/branchClient';
-import { openSite, savedBeforeLeaving } from './leave';
+import { leaveClosedBranch, savedBeforeLeaving } from './leave';
 
 function messageOf(err: unknown): string {
   if (err instanceof BranchApiError) return err.message;
@@ -65,7 +65,8 @@ export function MainChangedNote({ className = '' }: { className?: string }) {
       }
       const review = await branchClient.changes(siteId);
       if (review.conflicts.length > 0) {
-        setMessage(`${conflictText(review.conflicts.length)}. Answer them in Review and merge.`);
+        // Answering conflicts one by one is the review (slice S5); until then the branch stays as it is.
+        setMessage(`${conflictText(review.conflicts.length)}, so it was not updated. The branch is unchanged.`);
         return;
       }
       await branchClient.update(siteId, review.token);
@@ -127,7 +128,7 @@ export function ReviewAndMergeButton() {
     setError(null);
     try {
       await branchClient.merge(state!.siteId, review.token);
-      openSite(mainSiteId);
+      leaveClosedBranch(state!.siteId, mainSiteId);
     } catch (err) {
       setError(messageOf(err));
       setBusy(false);

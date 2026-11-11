@@ -162,6 +162,8 @@ export async function loadProjectSnapshot(
     // "old links will redirect" note. Same scope, so it cannot leak either.
     const { host, everPublished } = await repo.getSiteAddress(scopeResult.scope, projectId);
     const branch = await editorBranchState(scopeResult.scope, scopeResult.companyId, projectId);
+    // A branch while site branches are off for the company: hidden, so a plain 404.
+    if (branch === 'hidden') return { status: 'not_found' };
     return { status: 'ok', snapshot, version, site: { host, everPublished }, branch };
   } catch (err) {
     if (err instanceof SiteNotFoundError) {
