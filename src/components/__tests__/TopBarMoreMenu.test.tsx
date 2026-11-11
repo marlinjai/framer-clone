@@ -6,6 +6,8 @@ import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import TopBar from '../TopBar';
+import { SiteBranchProvider } from '@/contexts/SiteBranchContext';
+import type { EditorBranchState } from '@/lib/sites/branches';
 
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
 vi.mock('next/link', () => ({
@@ -154,5 +156,52 @@ describe('compact top bar', () => {
     const names = screen.getAllByRole('menuitem').map((el) => el.textContent?.trim());
     expect(names).not.toContain('Domains');
     expect(screen.getByRole('menuitem', { name: 'Generate with AI' }).getAttribute('aria-disabled')).toBe('true');
+  });
+});
+
+describe('the top bar on a site branch', () => {
+  const branch: EditorBranchState = {
+    kind: 'branch',
+    siteId: 'site_1',
+    mainSiteId: 'site_main',
+    mainName: 'Bakery',
+    branch: {
+      branchId: 'site_1', mainSiteId: 'site_main', name: 'Spring sale', status: 'open', createdByKind: 'user', createdBy: 'u',
+      createdAt: '2026-11-11T09:00:00.000Z', updatedAt: '2026-11-11T09:00:00.000Z', version: 2, baseVersion: 5, mainMoved: false,
+      readyBy: null, readyAt: null, reviewNote: null, approved: false, mergedAt: null, discardedAt: null,
+    },
+  };
+  const main: EditorBranchState = { kind: 'main', siteId: 'site_1', siteName: 'Bakery', openBranches: 1 };
+
+  it('puts Review and merge in place of Publish and leaves out what belongs to main', () => {
+    render(
+      <SiteBranchProvider initial={branch}>
+        <TopBar />
+      </SiteBranchProvider>,
+    );
+    expect(screen.queryByRole('button', { name: 'Publish' })).toBeNull();
+    expect(screen.getByRole('button', { name: /review and merge/i })).toBeTruthy();
+    for (const label of ['Published versions', 'Domains', 'Form submissions']) {
+      expect(screen.queryByRole('button', { name: `${label} button` })).toBeNull();
+    }
+    // Still on a branch: site settings and the theme are part of what a branch changes.
+    expect(screen.getByRole('button', { name: 'Site settings button' })).toBeTruthy();
+    openMore();
+    const items = screen.getAllByRole('menuitem').map((el) => el.textContent?.trim());
+    expect(items).not.toContain('Domains');
+    expect(items).not.toContain('Published versions');
+    expect(items).not.toContain('Form submissions');
+    expect(items).toContain('Site settings');
+  });
+
+  it('keeps Publish and every action on main, with the switcher beside the name', () => {
+    render(
+      <SiteBranchProvider initial={main}>
+        <TopBar />
+      </SiteBranchProvider>,
+    );
+    expect(screen.getByRole('button', { name: 'Publish' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Main. Switch branch' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Domains button' })).toBeTruthy();
   });
 });
