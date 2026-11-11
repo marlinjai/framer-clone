@@ -111,7 +111,11 @@ const RECORD_SELECT = {
 
 type RecordRow = Prisma.SiteBranchGetPayload<{ select: typeof RECORD_SELECT }>;
 
-function summaryOf(row: RecordRow, mainVersion: number): BranchSummary {
+/**
+ * `renamed`: main's name is no longer the fork point's. A rename moves no version, yet the branch is behind
+ * main then, as the review and the merge count it (src/server/sites/branches/merge.ts, decision 37).
+ */
+function summaryOf(row: RecordRow, mainVersion: number, renamed = false): BranchSummary {
   const open = row.status === 'open' || row.status === 'ready';
   const version = open ? (row.branchSite?.version ?? null) : null;
   return {
@@ -125,7 +129,7 @@ function summaryOf(row: RecordRow, mainVersion: number): BranchSummary {
     updatedAt: row.updatedAt,
     version,
     baseVersion: open ? row.baseVersion : null,
-    mainMoved: open && row.baseVersion !== null && row.baseVersion !== mainVersion,
+    mainMoved: open && row.baseVersion !== null && (row.baseVersion !== mainVersion || renamed),
     readyBy: row.readyBy,
     readyAt: row.readyAt,
     reviewNote: row.reviewNote,
@@ -194,6 +198,15 @@ export function isIdClash(err: unknown): boolean {
   const target = (err.meta as { target?: unknown } | undefined)?.target;
   const named = Array.isArray(target) ? target : [String(target ?? '')];
   return named.every((t) => t === 'id' || t === 'branch_site_id' || /_pkey$|branch_site_id/.test(String(t)));
+}
+
+/** The open branches of a main site whose fork point names the site differently from main now. */
+async function renamedSinceFork(client: Prisma.TransactionClient | PrismaClient, mainSiteId: string, workspaceId: string): Promise<Set<string>> {
+  const rows = await client.$queryRaw<{ id: string }[]>`
+    SELECT b.id FROM public.site_branches b JOIN public.sites s ON s.id = b.site_id AND s.workspace_id = b.workspace_id
+    WHERE b.site_id = ${mainSiteId} AND b.workspace_id = ${workspaceId} AND b.status IN ('open', 'ready')
+      AND b.base_document IS NOT NULL AND (b.base_document->>'name') IS DISTINCT FROM s.name`;
+  return new Set(rows.map((r) => r.id));
 }
 
 export class SiteBranchRepository {
@@ -336,7 +349,7 @@ export class SiteBranchRepository {
   async listBranches(scope: TenantScope, mainSiteId: string): Promise<BranchList> {
     assertScope(scope);
     const main = await this.loadMain(this.prisma, scope, mainSiteId);
-    const [open, closed] = await Promise.all([
+    const [open, closed, renamed] = await Promise.all([
       this.prisma.siteBranch.findMany({
         where: { siteId: main.id, workspaceId: scope.workspaceId, status: { in: ['open', 'ready'] } },
         orderBy: { createdAt: 'asc' },
@@ -348,11 +361,12 @@ export class SiteBranchRepository {
         take: CLOSED_LISTED,
         select: RECORD_SELECT,
       }),
+      renamedSinceFork(this.prisma, main.id, scope.workspaceId),
     ]);
     return {
       mainSiteId: main.id,
       mainVersion: main.version,
-      open: open.map((row) => summaryOf(row, main.version)),
+      open: open.map((row) => summaryOf(row, main.version, renamed.has(row.id))),
       closed: closed.map((row) => summaryOf(row, main.version)),
     };
   }
@@ -366,7 +380,7 @@ export class SiteBranchRepository {
       select: RECORD_SELECT,
     });
     if (!row) throw new BranchNotFoundError(branchId);
-    return summaryOf(row, main.version);
+    return summaryOf(row, main.version, (await renamedSinceFork(this.prisma, main.id, scope.workspaceId)).has(row.id));
   }
 
   /**
@@ -394,7 +408,8 @@ export class SiteBranchRepository {
       select: RECORD_SELECT,
     });
     if (!main || !row) throw new SiteNotFoundError(siteId);
-    return { kind: 'branch', siteId: site.id, mainSiteId: site.branchOfSiteId, branch: summaryOf(row, main.version) };
+    const renamed = (await renamedSinceFork(this.prisma, site.branchOfSiteId, scope.workspaceId)).has(row.id);
+    return { kind: 'branch', siteId: site.id, mainSiteId: site.branchOfSiteId, branch: summaryOf(row, main.version, renamed) };
   }
 
   /**

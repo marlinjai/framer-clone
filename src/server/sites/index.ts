@@ -45,6 +45,10 @@ export {
   BranchLimitError,
   BranchNameTakenError,
   InvalidBranchNameError,
+  BranchReviewStaleError,
+  BranchConflictsError,
+  BranchUpdatedFirstError,
+  BranchMergeInvalidError,
   siteRepositoryErrorResponse,
 } from './errors';
 

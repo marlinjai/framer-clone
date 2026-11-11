@@ -27,7 +27,7 @@ export interface AuditedOp {
 
 export interface AuditEntry {
   siteId: string;
-  operation: 'batch' | 'create_site' | 'generate_page' | 'publish' | 'rollback';
+  operation: 'batch' | 'create_site' | 'generate_page' | 'publish' | 'rollback' | 'branch_update' | 'branch_merge';
   ops?: AuditedOp[];
   versionBefore?: number;
   versionAfter?: number;
@@ -94,6 +94,8 @@ const TOOL_OF_OPERATION: Record<string, string> = {
   generate_page: 'generate_page',
   publish: 'publish',
   rollback: 'rollback',
+  branch_merge: 'merge_branch',
+  branch_update: 'update_branch',
 };
 
 /**

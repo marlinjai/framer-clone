@@ -379,7 +379,7 @@ export class SaveAbortedError extends Error {
 }
 
 /** What the shared working-copy write did. */
-interface WorkingCopyWrite {
+export interface WorkingCopyWrite {
   version: number;
   /** The version before; equal to `version` when nothing was written (a repeat of a lost answer). */
   versionBefore: number;
@@ -391,7 +391,7 @@ interface WorkingCopyWrite {
  * transaction resolved, never inside it, so a refused or rolled back write is
  * never announced. A failure is logged and never undoes the write.
  */
-function announceWrite(siteId: string, write: WorkingCopyWrite, event: SiteWriteEvent | undefined, written?: PersistedSite): void {
+export function announceWrite(siteId: string, write: WorkingCopyWrite, event: SiteWriteEvent | undefined, written?: PersistedSite): void {
   if (!write.wrote) return;
   // The newest written version, so an announcement checked against an older read is refused (src/server/mcp/livePlans.ts).
   noteSiteWrite(siteId, write.version);
@@ -602,6 +602,22 @@ export class SiteRepository {
     }
     announceWrite(persisted.siteId, write, options.event, persisted);
     return { version: write.version };
+  }
+
+  /**
+   * The working-copy write inside the caller's transaction, for a site branch's update and merge
+   * (src/server/sites/branches/merge.ts), which lock main and the branch first and write the record in the same
+   * transaction. The caller runs it SERIALIZABLE, as saveProject does, and announces with `announceWrite` after
+   * the commit.
+   */
+  writeWorkingCopyIn(
+    tx: Prisma.TransactionClient,
+    scope: TenantScope,
+    persisted: PersistedSite,
+    options: WorkingCopyWriteOptions,
+  ): Promise<WorkingCopyWrite> {
+    assertScope(scope);
+    return this.writeWorkingCopy(tx, scope, persisted, options);
   }
 
   /**
@@ -1351,6 +1367,14 @@ export class SiteRepository {
       // revisions: a tab loaded long ago may hold it even if the working copy does not.
       // The version moves too: the working copy may have been rewritten, and an
       // agent holding the old version must load again before it writes.
+      // A branch forked from main as it is now stays up to date, but only when the erase left the value nowhere:
+      // then its fork point and main were rewritten alike, and it moves with main's version (an erase must not
+      // make every branch "behind main"). An erase of only some matches may have rewritten main and not the fork
+      // point; the branch is then behind main, and the three-way merge keeps main's erased text.
+      if (remaining === 0) await tx.$executeRaw`
+        UPDATE public.site_branches SET base_version = base_version + 1
+        WHERE site_id = ${siteId} AND workspace_id = ${scope.workspaceId} AND status IN ('open', 'ready')
+          AND base_version = (SELECT version FROM public.sites WHERE id = ${siteId} AND workspace_id = ${scope.workspaceId})`;
       await tx.site.updateMany({ where, data: { erasureEpoch: { increment: 1 }, version: { increment: 1 }, lastWriteKey: null, lastWriteVersion: null } });
       // Every open branch moves with main: a branch tab loaded before cannot write the value back, and an agent
       // holding the branch's old version loads again. Under the rows' locks, so each version moved by exactly one.

@@ -206,6 +206,10 @@ export function feedLineText(line: FeedLineWords, pageTitle?: string, deletedTit
       return 'Put an earlier version live';
     case 'create_site':
       return 'Created the site';
+    case 'merge_branch':
+      return 'Merged a branch into the site';
+    case 'update_branch':
+      return 'Brought the changes from main into the branch';
     case 'announce_sections':
       return `Planned sections${onPage(pageTitle)}`;
     case 'clear_sections':

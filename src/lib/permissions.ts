@@ -48,6 +48,16 @@ export const FRAMER_PERMISSIONS = definePermissions({
     requires: 'workspace.admin',
     description: 'Configure a custom domain or subdomain for a site.',
   },
+  // Site branches (docs/plans/2026-11-10-site-branches.md, section 7). A reviewer with only view rights can
+  // approve a branch or send it back; merging into main is its own action so it can be tightened alone.
+  reviewBranch: {
+    requires: 'workspace.viewer',
+    description: 'Approve a site branch, or send it back to its author with a note.',
+  },
+  mergeBranch: {
+    requires: 'workspace.admin',
+    description: "Merge a site branch into its site's working copy (never published by it).",
+  },
   // Erasing personal data from a site's history (docs/plans/2026-11-01-immutable-published-copy.md).
   // OpenFGA has no workspace owner, so the routes ALSO require the session's role on the site's
   // company to be `owner` (authorizeDomainProject's `requireCompanyOwner`); this is the floor.
