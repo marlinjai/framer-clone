@@ -69,6 +69,15 @@ export class SiteImageError extends Error {
 
 const SHA256 = /^[0-9a-f]{64}$/;
 
+/**
+ * The site whose images `siteId` uses: its main site for a branch (plan docs/plans/2026-11-10-site-branches.md,
+ * section 4: an image is stored once on main, named by its hash, and usable by every branch), else itself.
+ */
+export async function imageSiteId(client: PrismaClient | Prisma.TransactionClient, siteId: string): Promise<string> {
+  const row = await client.site.findUnique({ where: { id: siteId }, select: { branchOfSiteId: true } });
+  return row?.branchOfSiteId ?? siteId;
+}
+
 const columns = { sha256: true, contentType: true, byteSize: true, width: true, height: true } as const;
 
 function view(row: { sha256: string; contentType: string; byteSize: number; width: number; height: number }): StoredSiteImage {
@@ -93,21 +102,23 @@ export async function storeSiteImage(
   const sha256 = createHash('sha256').update(bytes).digest('hex');
 
   return prisma.$transaction(async (tx) => {
+    // An upload from a branch's editor is stored on its main site (same workspace by the foreign key).
+    const ownerId = await imageSiteId(tx, site.id);
     // One upload or delete per site at a time: the count and the bytes below
     // cannot be raced past the limits, and the same file uploaded twice at once
     // finds the first row.
-    await lockSiteImages(tx, site.id);
-    const existing = await tx.siteImage.findUnique({ where: { siteId_sha256: { siteId: site.id, sha256 } }, select: columns });
+    await lockSiteImages(tx, ownerId);
+    const existing = await tx.siteImage.findUnique({ where: { siteId_sha256: { siteId: ownerId, sha256 } }, select: columns });
     if (existing) return { image: view(existing), created: false };
 
-    const usage = await tx.siteImage.aggregate({ where: { siteId: site.id }, _count: { _all: true }, _sum: { byteSize: true } });
+    const usage = await tx.siteImage.aggregate({ where: { siteId: ownerId }, _count: { _all: true }, _sum: { byteSize: true } });
     if (usage._count._all >= limits.maxImages || (usage._sum.byteSize ?? 0) + bytes.byteLength > limits.maxBytes) {
       throw new SiteImageError('image_limit', 409, SITE_IMAGE_LIMIT_MESSAGE);
     }
     const created = await tx.siteImage.create({
       data: {
         id: randomUUID(),
-        siteId: site.id,
+        siteId: ownerId,
         workspaceId: site.workspaceId,
         tenantGroupId: site.tenantGroupId,
         sha256,
@@ -146,8 +157,11 @@ async function lockSiteImages(tx: Prisma.TransactionClient, siteId: string): Pro
  * (a variant may name one), and the undo records of the content agent in the
  * site's workspace (an undo may write one back; agent runs carry the workspace,
  * not the site, so every site of the workspace counts them, which can only keep
- * an image longer). A text search for the path, so a field added later is
- * covered without a change here.
+ * an image longer), and every copy of the site a branch keeps: each open branch's
+ * settings, definitions and pages, and every branch's fork point and kept
+ * pre-merge copy (a merge or its undo may write them back). A text search for the
+ * path, so a field added later is covered without a change here. `siteId` is a
+ * main site: the one that owns the images.
  */
 async function referencedHashes(tx: Prisma.TransactionClient, siteId: string): Promise<Set<string>> {
   const pattern = 'site-images/([0-9a-f]{64})';
@@ -162,6 +176,15 @@ async function referencedHashes(tx: Prisma.TransactionClient, siteId: string): P
       UNION ALL
       SELECT regexp_matches(e.config::text, ${pattern}, 'g')
         FROM public.site_experiments e WHERE e.site_id = ${siteId} AND e.config IS NOT NULL
+      UNION ALL
+      SELECT regexp_matches(b.site_settings::text || ' ' || b.components::text, ${pattern}, 'g')
+        FROM public.sites b WHERE b.branch_of_site_id = ${siteId}
+      UNION ALL
+      SELECT regexp_matches(bp.snapshot::text, ${pattern}, 'g')
+        FROM public.site_pages bp JOIN public.sites b ON b.id = bp.site_id WHERE b.branch_of_site_id = ${siteId}
+      UNION ALL
+      SELECT regexp_matches(coalesce(r.base_document::text, '') || ' ' || coalesce(r.main_before_document::text, ''), ${pattern}, 'g')
+        FROM public.site_branches r WHERE r.site_id = ${siteId}
       UNION ALL
       SELECT regexp_matches(c.inverse_payload::text, ${pattern}, 'g')
         FROM public.agent_changes c
@@ -184,6 +207,7 @@ export async function listSiteImages(
   prisma: PrismaClient = getPrismaClient(),
 ): Promise<{ items: ListedSiteImage[]; totalBytes: number; maxImages: number; maxBytes: number }> {
   return prisma.$transaction(async (tx) => {
+    siteId = await imageSiteId(tx, siteId);
     const rows = await tx.siteImage.findMany({
       where: { siteId },
       select: { ...columns, createdAt: true },
@@ -211,6 +235,8 @@ export async function deleteSiteImage(siteId: string, sha256: string, prisma: Pr
   if (!SHA256.test(sha256)) throw new SiteImageError('image_not_found', 404, 'This image does not exist on this site.');
   try {
     await prisma.$transaction(async (tx) => {
+      // From a branch's editor: the image is its main site's, and so is the lock.
+      siteId = await imageSiteId(tx, siteId);
       await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${siteId} FOR UPDATE`;
       await lockSiteImages(tx, siteId);
       const row = await tx.siteImage.findUnique({ where: { siteId_sha256: { siteId, sha256 } }, select: { id: true } });
@@ -240,7 +266,7 @@ export async function readSiteImage(
 ): Promise<{ contentType: SiteImageContentType; bytes: Uint8Array } | null> {
   if (!SHA256.test(sha256)) return null;
   const row = await prisma.siteImage.findUnique({
-    where: { siteId_sha256: { siteId, sha256 } },
+    where: { siteId_sha256: { siteId: await imageSiteId(prisma, siteId), sha256 } },
     select: { contentType: true, content: true },
   });
   return row ? { contentType: row.contentType as SiteImageContentType, bytes: new Uint8Array(row.content) } : null;
@@ -253,7 +279,7 @@ export async function readSiteImageType(
   prisma: PrismaClient = getPrismaClient(),
 ): Promise<SiteImageContentType | null> {
   if (!SHA256.test(sha256)) return null;
-  const row = await prisma.siteImage.findUnique({ where: { siteId_sha256: { siteId, sha256 } }, select: { contentType: true } });
+  const row = await prisma.siteImage.findUnique({ where: { siteId_sha256: { siteId: await imageSiteId(prisma, siteId), sha256 } }, select: { contentType: true } });
   return row ? (row.contentType as SiteImageContentType) : null;
 }
 

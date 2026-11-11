@@ -17,6 +17,7 @@ describe('parseRevisionDocument', () => {
     const doc = parseRevisionDocument({
       schemaVersion,
       name: 'Bakery',
+      description: 'Fresh bread',
       analyticsProjectId: 'p',
       ingestionEndpoint: 'https://in',
       apiKeyRef: 'REF',
@@ -29,6 +30,7 @@ describe('parseRevisionDocument', () => {
     expect(doc).toEqual({
       schemaVersion,
       name: 'Bakery',
+      description: 'Fresh bread',
       analyticsProjectId: 'p',
       ingestionEndpoint: 'https://in',
       apiKeyRef: 'REF',
@@ -44,6 +46,8 @@ describe('parseRevisionDocument', () => {
     const doc = parseRevisionDocument({ schemaVersion, pages: [] });
     expect(doc.components).toEqual({});
     expect(doc.redirects).toEqual([]);
+    // The description joined without a version bump (site branches plan): an older document reads as empty.
+    expect(doc.description).toBe('');
     expect(doc.siteSettings).toEqual(normalizeSiteSettings({}));
     expect(doc.lumitraEnabled).toBe(false);
     expect(doc.apiKeyRef).toBeNull();

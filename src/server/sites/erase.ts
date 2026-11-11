@@ -42,8 +42,18 @@ export const ERASE_LIMITS = {
   excerptContext: 40,
 } as const;
 
-/** Where a document lives: one kept revision, or the editor's working copy. */
-export type EraseLocation = { kind: 'revision'; number: number } | { kind: 'working' };
+/**
+ * Where a document lives: one kept revision, the editor's working copy, or a copy a site branch keeps (plan
+ * docs/plans/2026-11-10-site-branches.md): an open branch's working copy with its record's name and review note
+ * (for a closed branch, the record alone), a branch's fork point, and main as it was before a merge. `name` is the
+ * branch's name for the preview; only the id is part of a match's identity.
+ */
+export type EraseLocation =
+  | { kind: 'revision'; number: number }
+  | { kind: 'working' }
+  | { kind: 'branch'; branchId: string; name: string }
+  | { kind: 'branch-base'; branchId: string; name: string }
+  | { kind: 'merge-undo'; branchId: string; name: string };
 
 /** What kind of place a match is in, for the preview. */
 export type EraseArea =
@@ -60,6 +70,7 @@ export type EraseArea =
   | 'address'
   | 'domain'
   | 'experiment'
+  | 'branch'
   | 'other';
 
 /** Why a match is reported but never rewritten. */
@@ -318,6 +329,8 @@ function areaOf(path: readonly Segment[]): EraseArea {
   const [head, , third] = path;
   if (head === 'domains') return 'domain';
   if (head === 'experiments') return 'experiment';
+  // A branch record's own text, beside a branch's working copy.
+  if (head === 'branchName' || head === 'reviewNote') return 'branch';
   if (isAddressPath(path)) return 'address';
   if (head === 'name') return 'name';
   if (head === 'description') return 'description';
@@ -386,7 +399,9 @@ export function redactedId(id: string | null, holdsValue: (segment: string) => b
 }
 
 function locationKey(location: EraseLocation): string {
-  return location.kind === 'revision' ? `revision:${location.number}` : 'working';
+  if (location.kind === 'revision') return `revision:${location.number}`;
+  if (location.kind === 'working') return 'working';
+  return `${location.kind}:${location.branchId}`;
 }
 
 function digest(...parts: string[]): string {

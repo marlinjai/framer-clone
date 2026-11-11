@@ -252,6 +252,73 @@ export class NothingToEraseError extends SiteRepositoryError {
 }
 
 /**
+ * Site branches (docs/plans/2026-11-10-site-branches.md). A branch, or the main site a branch call names, that
+ * is not in the caller's workspace, or a branch id that is no branch of that main site. Indistinguishable from a
+ * missing one, so existence never leaks. 404.
+ */
+export class BranchNotFoundError extends SiteRepositoryError {
+  constructor(branchId: string) {
+    super('branch_not_found', `no branch "${branchId}" of this site in this workspace`, 404);
+  }
+}
+
+/** A branch that was merged or discarded: its content is gone, nothing more can be written to it. 410. */
+export class BranchClosedError extends SiteRepositoryError {
+  readonly branchStatus: 'merged' | 'discarded';
+  readonly mainSiteId: string;
+
+  constructor(branchStatus: 'merged' | 'discarded', mainSiteId: string) {
+    super(
+      'branch_closed',
+      branchStatus === 'merged'
+        ? 'This branch was merged into its site and is closed. Your changes were not saved.'
+        : 'This branch was discarded. Your changes were not saved.',
+      410,
+    );
+    this.branchStatus = branchStatus;
+    this.mainSiteId = mainSiteId;
+  }
+}
+
+/** Publishing, rolling back, unpublishing or giving an address to a branch: only main is ever published. 409. */
+export class BranchCannotPublishError extends SiteRepositoryError {
+  constructor() {
+    super('branch_cannot_publish', 'A branch is never published. Merge it into main, then publish main.', 409);
+  }
+}
+
+/** An action that only a main site supports was asked of a branch (deleting it as a site, branching it). 409. */
+export class SiteIsBranchError extends SiteRepositoryError {
+  constructor(what: string) {
+    super('site_is_branch', `This is a branch: ${what}`, 409);
+  }
+}
+
+/** The site already has the most open branches allowed. 409. */
+export class BranchLimitError extends SiteRepositoryError {
+  readonly limit: number;
+
+  constructor(limit: number) {
+    super('branch_limit', `A site can have at most ${limit} open branches. Merge or discard one first.`, 409);
+    this.limit = limit;
+  }
+}
+
+/** Another open branch of the site already has this name (compared without case). 409. */
+export class BranchNameTakenError extends SiteRepositoryError {
+  constructor(name: string) {
+    super('branch_name_taken', `An open branch named "${name}" already exists on this site.`, 409);
+  }
+}
+
+/** A branch name that is empty or too long once cleaned. 400. */
+export class InvalidBranchNameError extends SiteRepositoryError {
+  constructor(message: string) {
+    super('invalid_branch_name', message, 400);
+  }
+}
+
+/**
  * Map any {@link SiteRepositoryError} to its Track-0 error envelope. A route
  * matches `instanceof SiteRepositoryError` once and returns this.
  */
@@ -261,6 +328,12 @@ export function siteRepositoryErrorResponse(err: SiteRepositoryError): Response 
   }
   if (err instanceof SiteChangedError) {
     return jsonError(err.code, err.message, err.status, { currentVersion: err.currentVersion });
+  }
+  if (err instanceof BranchClosedError) {
+    return jsonError(err.code, err.message, err.status, { branchStatus: err.branchStatus, mainSiteId: err.mainSiteId });
+  }
+  if (err instanceof BranchLimitError) {
+    return jsonError(err.code, err.message, err.status, { limit: err.limit });
   }
   return jsonError(err.code, err.message, err.status);
 }

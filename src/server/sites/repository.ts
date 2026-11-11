@@ -48,7 +48,12 @@ import {
   ErasePreviewStaleError,
   NothingToEraseError,
   SiteImageMissingError,
+  BranchCannotPublishError,
+  SiteIsBranchError,
 } from './errors';
+import { closedBranchError } from './branches/closed';
+import { BRANCH_NAME_MAX_LENGTH, validateBranchName } from '@/lib/sites/branches';
+import { forgetBranchContent } from './branches/repository';
 import { namedSiteImages } from '@/lib/site/siteImages';
 import { normalizeSiteSettings } from '@/lib/site/siteSettings';
 import { themeBoundsErrors } from '@/lib/site/theme';
@@ -56,7 +61,7 @@ import { findProjectSlugProblem } from '@/lib/pages/slug';
 import { pickPrimaryHost } from './primaryHost';
 import { nextSiteRedirects, parseSiteRedirects } from '@/lib/pages/redirects';
 import { generateSubdomain } from './subdomain';
-import { parseRevisionDocument, REVISION_SCHEMA_VERSION, revisionPublishCheck } from './revision';
+import { buildRevisionDocument, parseRevisionDocument, revisionPublishCheck } from './revision';
 import { publishSiteEvent } from './liveBus';
 import { endLiveGenerationOfSite } from './liveGeneration';
 import { forgetSiteDocuments } from './liveDocumentCache';
@@ -150,6 +155,8 @@ export interface SiteSummary {
   subdomain: string | null;
   /** Connected custom domains (requested hostnames), oldest first. */
   customDomains: string[];
+  /** Open branches of the site (docs/plans/2026-11-10-site-branches.md); a branch itself is never listed. */
+  openBranches: number;
 }
 
 /** One published revision for a listing (no document loaded). */
@@ -198,8 +205,10 @@ export interface PersonalDataSearch {
 
 /** One place an erase changed, as the audit keeps it: never a value. */
 export interface ErasurePlace {
-  location: 'working' | 'revision';
+  location: EraseLocation['kind'];
   revision: number | null;
+  /** For a place a site branch keeps: the branch's id (never its name, which may hold the value). */
+  branchId: string | null;
   pageId: string | null;
   area: EraseArea;
   path: string;
@@ -225,10 +234,27 @@ export interface SiteErasureSummary {
 }
 
 /**
- * Limits of an erase: up to 30 revisions of up to 10 MB each are rewritten one at
- * a time in one transaction, which a publish's 30 seconds do not cover.
+ * Limits of an erase: up to 30 revisions of up to 10 MB each, and the copies a site's
+ * branches keep (up to 10 open working copies and their fork points, one kept
+ * pre-merge copy), are rewritten one at a time in one transaction, which a
+ * publish's 30 seconds do not cover.
  */
-const ERASE_TRANSACTION = { maxWait: 5_000, timeout: 120_000 } as const;
+const ERASE_TRANSACTION = { maxWait: 5_000, timeout: 240_000 } as const;
+
+/**
+ * One copy of a site that a branch keeps, as an erase searches and rewrites it
+ * (docs/plans/2026-11-10-site-branches.md, section 7). `write` stores the
+ * rewritten document; `branchSiteId` names an open branch's content row, whose
+ * erasure epoch and version move with main's.
+ */
+interface BranchEraseSource {
+  location: EraseLocation;
+  document: unknown;
+  /** Checked like a revision (it must still parse as one): a fork point or a pre-merge copy. */
+  revision: boolean;
+  write: (tx: Prisma.TransactionClient, rewritten: unknown) => Promise<void>;
+  branchSiteId: string | null;
+}
 
 /** What the working copy reads for an erase: the `sites` columns, the pages, and what is only reported. */
 const WORKING_COPY_SELECT = {
@@ -274,6 +300,7 @@ function placeOf(match: EraseMatch, holdsValue: (segment: string) => boolean): E
   return {
     location: match.location.kind,
     revision: match.location.kind === 'revision' ? match.location.number : null,
+    branchId: 'branchId' in match.location ? match.location.branchId : null,
     pageId: redactedId(match.pageId, holdsValue),
     area: match.area,
     path: redactedPath(match.path, holdsValue),
@@ -394,9 +421,11 @@ export class SiteRepository {
   async listSites(scope: TenantScope): Promise<SiteSummary[]> {
     assertScope(scope);
     const rows = await this.prisma.site.findMany({
-      where: { workspaceId: scope.workspaceId },
+      // Main sites only: a branch is a hidden site row, shown inside its site, never as a site of its own.
+      where: { workspaceId: scope.workspaceId, branchOfSiteId: null },
       orderBy: { createdAt: 'desc' },
       select: {
+        _count: { select: { branchSites: true } },
         id: true,
         name: true,
         description: true,
@@ -420,6 +449,7 @@ export class SiteRepository {
       lumitraEnabled: r.lumitraEnabled,
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
+      openBranches: r._count.branchSites,
     }));
   }
 
@@ -457,7 +487,7 @@ export class SiteRepository {
       where: { id: siteId, workspaceId: scope.workspaceId },
       select: { version: true },
     });
-    if (!row) throw new SiteNotFoundError(siteId);
+    if (!row) throw (await closedBranchError(this.prisma, scope.workspaceId, siteId)) ?? new SiteNotFoundError(siteId);
     return row.version;
   }
 
@@ -497,7 +527,7 @@ export class SiteRepository {
         },
       },
     });
-    if (!row) throw new SiteNotFoundError(siteId);
+    if (!row) throw (await closedBranchError(this.prisma, scope.workspaceId, siteId)) ?? new SiteNotFoundError(siteId);
 
     const rowData: SiteRowData = {
       id: row.id,
@@ -602,6 +632,7 @@ export class SiteRepository {
         version: true,
         lastWriteKey: true,
         lastWriteVersion: true,
+        branchOfSiteId: true,
       },
     });
     if (existing && existing.workspaceId !== scope.workspaceId) {
@@ -618,7 +649,8 @@ export class SiteRepository {
     // create one. Without this, an editor tab still open on a DELETED project
     // would bring it back on its next save (the upsert below creates).
     if (options.mustExist && !existing) {
-      throw new SiteGoneError();
+      // A merged or discarded branch answers 410 `branch_closed`, naming its site, so the tab can say what happened.
+      throw (await closedBranchError(tx, scope.workspaceId, persisted.siteId)) ?? new SiteGoneError();
     }
     // The version lock, after the erasure check (a tab that may hold erased data
     // must reload, never "save over"): an existing site is only written by a
@@ -683,8 +715,9 @@ export class SiteRepository {
       persisted.pages.map((p) => (p.snapshot as { metadata?: { ogImage?: unknown } }).metadata?.ogImage),
     );
     if (named.size > 0) {
+      // A branch's images are its main site's (stored once there, usable by every branch).
       const stored = await tx.siteImage.findMany({
-        where: { siteId: persisted.siteId, sha256: { in: [...named.keys()] } },
+        where: { siteId: existing?.branchOfSiteId ?? persisted.siteId, sha256: { in: [...named.keys()] } },
         select: { sha256: true },
       });
       const have = new Set(stored.map((s) => s.sha256));
@@ -765,7 +798,7 @@ export class SiteRepository {
           where: { id: persisted.siteId, workspaceId: scope.workspaceId },
           select: { version: true },
         });
-        if (!current) throw new SiteGoneError();
+        if (!current) throw (await closedBranchError(tx, scope.workspaceId, persisted.siteId)) ?? new SiteGoneError();
         throw new SiteChangedError(current.version);
       }
     } else {
@@ -870,6 +903,7 @@ export class SiteRepository {
       where: { id: siteId, workspaceId: scope.workspaceId },
       select: {
         name: true,
+        description: true,
         analyticsProjectId: true,
         ingestionEndpoint: true,
         apiKeyRef: true,
@@ -897,22 +931,20 @@ export class SiteRepository {
         number,
         kind: revision.kind,
         publishedBy: revision.publishedBy,
-        document: {
-          schemaVersion: REVISION_SCHEMA_VERSION,
-          name: site.name,
-          analyticsProjectId: site.analyticsProjectId,
-          ingestionEndpoint: site.ingestionEndpoint,
-          apiKeyRef: site.apiKeyRef,
-          lumitraEnabled: site.lumitraEnabled,
-          redirects: site.redirects,
-          siteSettings: site.siteSettings,
-          pages: site.pages,
-          components: site.components,
-        } as unknown as Prisma.InputJsonValue,
+        document: buildRevisionDocument(site) as unknown as Prisma.InputJsonValue,
       },
       select: { id: true },
     });
     return { id: created.id, number };
+  }
+
+  /** Throws BranchCannotPublishError when `siteId` is a branch in the caller's workspace. */
+  private async refuseBranch(client: PrismaClient | Prisma.TransactionClient, scope: TenantScope, siteId: string): Promise<void> {
+    const row = await client.site.findFirst({
+      where: { id: siteId, workspaceId: scope.workspaceId },
+      select: { branchOfSiteId: true },
+    });
+    if (row && row.branchOfSiteId) throw new BranchCannotPublishError();
   }
 
   /**
@@ -1010,6 +1042,8 @@ export class SiteRepository {
 
     const published = await withSerializationRetry(() => this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${siteId} FOR UPDATE`;
+      // Only main is ever published (the database's CHECK would refuse it too, after the write).
+      await this.refuseBranch(tx, scope, siteId);
       const write = await this.writeWorkingCopy(tx, scope, persisted, {
         mustExist: true,
         companyId: options.companyId,
@@ -1050,8 +1084,9 @@ export class SiteRepository {
     assertScope(scope);
     await withSerializationRetry(() => this.prisma.$transaction(async (tx) => {
       const where = { id: siteId, workspaceId: scope.workspaceId };
-      const site = await tx.site.findFirst({ where, select: { id: true } });
+      const site = await tx.site.findFirst({ where, select: { id: true, branchOfSiteId: true } });
       if (!site) throw new SiteNotFoundError(siteId);
+      if (site.branchOfSiteId) throw new BranchCannotPublishError();
       const revision = await tx.siteRevision.findFirst({
         where: { siteId, workspaceId: scope.workspaceId, number },
         select: { id: true },
@@ -1129,11 +1164,13 @@ export class SiteRepository {
         where: { id: siteId, workspaceId: scope.workspaceId, tenantGroupId: scope.tenantGroupId },
         select: {
           ...WORKING_COPY_SELECT,
+          branchOfSiteId: true,
           publishedRevisionId: true,
           revisions: { orderBy: { number: 'desc' }, select: { id: true, number: true, kind: true, createdAt: true } },
         },
       });
       if (!site) throw new SiteNotFoundError(siteId);
+      if (site.branchOfSiteId) throw new SiteIsBranchError('erase personal data from its site; that covers every branch.');
 
       const all: EraseMatch[] = [];
       const locations: ErasureLocationSummary[] = [];
@@ -1158,6 +1195,14 @@ export class SiteRepository {
           createdAt: revision.createdAt,
           kind: revision.kind,
           live: revision.id === site.publishedRevisionId,
+        });
+      }
+      for (const source of await this.branchEraseSources(tx, scope, siteId)) {
+        record(findMatches(source.document, source.location, matcher), {
+          location: source.location,
+          createdAt: null,
+          kind: null,
+          live: false,
         });
       }
 
@@ -1216,10 +1261,15 @@ export class SiteRepository {
         select: {
           ...WORKING_COPY_SELECT,
           version: true,
+          branchOfSiteId: true,
           revisions: { orderBy: { number: 'desc' }, select: { id: true, number: true } },
         },
       });
       if (!site) throw new SiteNotFoundError(siteId);
+      if (site.branchOfSiteId) throw new SiteIsBranchError('erase personal data from its site; that covers every branch.');
+      // Then the branches' rows, in id order (main first, as every branch write takes them), so no branch save
+      // lands between the search below and the rewrite.
+      await tx.$queryRaw`SELECT id FROM public.sites WHERE branch_of_site_id = ${siteId} ORDER BY id FOR UPDATE`;
 
       const now = new Date();
       const found: EraseMatch[] = [];
@@ -1275,6 +1325,18 @@ export class SiteRepository {
         erased.push(...rewrite.erased);
       }
 
+      // Every copy the site's branches keep, in the same transaction: otherwise a merge could bring an erased
+      // value back into main (plan docs/plans/2026-11-10-site-branches.md, section 7).
+      for (const source of await this.branchEraseSources(tx, scope, siteId)) {
+        found.push(...findMatches(source.document, source.location, matcher));
+        const rewrite = rewriteDocument(source.document, source.location, matcher, replacement, chosen);
+        remaining += findMatches(rewrite.document, source.location, matcher).length;
+        if (rewrite.erased.length === 0) continue;
+        assertShapeKept(source.document, rewrite.document, { revision: source.revision });
+        await source.write(tx, rewrite.document);
+        erased.push(...rewrite.erased);
+      }
+
       // Checked last: throwing here rolls every write above back.
       if (matchesToken(found) !== token) throw new ErasePreviewStaleError();
       // Only an erasable match the preview listed can have been ticked; anything else
@@ -1288,6 +1350,19 @@ export class SiteRepository {
       // The version moves too: the working copy may have been rewritten, and an
       // agent holding the old version must load again before it writes.
       await tx.site.updateMany({ where, data: { erasureEpoch: { increment: 1 }, version: { increment: 1 }, lastWriteKey: null, lastWriteVersion: null } });
+      // Every open branch moves with main: a branch tab loaded before cannot write the value back, and an agent
+      // holding the branch's old version loads again. Under the rows' locks, so each version moved by exactly one.
+      const branchVersions = await tx.site.findMany({
+        where: { branchOfSiteId: siteId, workspaceId: scope.workspaceId },
+        select: { id: true, version: true },
+      });
+      await tx.site.updateMany({
+        where: { branchOfSiteId: siteId, workspaceId: scope.workspaceId },
+        data: { erasureEpoch: { increment: 1 }, version: { increment: 1 }, lastWriteKey: null, lastWriteVersion: null },
+      });
+      // A conflict answer is keyed by a hash of the values it was given for, and a hash of a value is still a
+      // trace of it: every review in progress on the site starts over.
+      await tx.siteBranch.updateMany({ where: { siteId, workspaceId: scope.workspaceId }, data: { mergeDraft: Prisma.DbNull } });
 
       const holdsValue = redactionMatcher(query);
       const places = erased.map((match) => placeOf(match, holdsValue));
@@ -1305,7 +1380,11 @@ export class SiteRepository {
       });
       // Under the row lock taken above, so the version moved by exactly one.
       const write: WorkingCopyWrite = { version: site.version + 1, versionBefore: site.version, wrote: true };
-      return { result: { erasureId: audit.id, erased: erased.length, places, remaining }, write };
+      const branchWrites = branchVersions.map((b) => ({
+        branchId: b.id,
+        write: { version: b.version + 1, versionBefore: b.version, wrote: true } satisfies WorkingCopyWrite,
+      }));
+      return { result: { erasureId: audit.id, erased: erased.length, places, remaining }, write, branchWrites };
     }, ERASE_TRANSACTION));
     // Open editors must load again: their copy may hold the erased value. An erasure
     // blanks values and removes no node or page, so skeleton anchors are left alone.
@@ -1315,7 +1394,108 @@ export class SiteRepository {
     // The kept document of the old version may hold the erased value: never kept past the erasure.
     forgetSiteDocuments(siteId);
     announceWrite(siteId, erasure.write, { origin: 'erasure' });
+    // The same for every open branch: its editors reload and clear their undo history, its generation ends, its
+    // kept documents go.
+    for (const branch of erasure.branchWrites) {
+      endLiveGenerationOfSite(branch.branchId, 'site_changed');
+      forgetSiteDocuments(branch.branchId);
+      announceWrite(branch.branchId, branch.write, { origin: 'erasure' });
+    }
     return erasure.result;
+  }
+
+  /**
+   * The copies of a main site that its branches keep, for an erase (search and rewrite): each open branch's
+   * working copy with its record's name and review note, each closed branch's record text, every fork point and
+   * every kept pre-merge copy. Ordered by branch id, so a search and the erase after it list them alike.
+   */
+  private async branchEraseSources(tx: Prisma.TransactionClient, scope: TenantScope, siteId: string): Promise<BranchEraseSource[]> {
+    const records = await tx.siteBranch.findMany({
+      where: { siteId, workspaceId: scope.workspaceId },
+      orderBy: { id: 'asc' },
+      select: { id: true, name: true, status: true, branchSiteId: true, reviewNote: true, baseDocument: true, mainBeforeDocument: true },
+    });
+    const sources: BranchEraseSource[] = [];
+    // Names of open branches, compared without case, as the unique index compares them.
+    const openNames = new Set(records.filter((r) => r.status === 'open' || r.status === 'ready').map((r) => r.name.toLowerCase()));
+    // A rewritten name stays a valid branch name, unique among the open ones (a number is added when the
+    // rewrite makes it equal another): an erase never fails on the name's own rules.
+    const nameAfter = (record: { name: string; status: string }, rewritten: unknown): string => {
+      const cleaned = validateBranchName(rewritten);
+      const stem = cleaned.ok ? cleaned.name : 'Branch';
+      if (record.status !== 'open' && record.status !== 'ready') return stem;
+      openNames.delete(record.name.toLowerCase());
+      let name = stem;
+      for (let n = 2; openNames.has(name.toLowerCase()); n++) {
+        name = `${Array.from(stem).slice(0, BRANCH_NAME_MAX_LENGTH - 4).join('')} ${n}`;
+      }
+      openNames.add(name.toLowerCase());
+      return name;
+    };
+    for (const record of records) {
+      const label = { branchId: record.id, name: record.name };
+      const content = record.branchSiteId
+        ? await tx.site.findFirst({ where: { id: record.branchSiteId, workspaceId: scope.workspaceId }, select: WORKING_COPY_SELECT })
+        : null;
+      const branchSiteId = content ? record.branchSiteId : null;
+      sources.push({
+        location: { kind: 'branch', ...label },
+        document: { ...(content ? workingDocument(content) : {}), branchName: record.name, reviewNote: record.reviewNote ?? '' },
+        revision: false,
+        branchSiteId,
+        write: async (client, rewritten) => {
+          const doc = rewritten as Record<string, unknown>;
+          await client.siteBranch.update({
+            where: { id: record.id },
+            data: { name: nameAfter(record, doc.branchName), reviewNote: record.reviewNote === null ? null : String(doc.reviewNote ?? '') },
+          });
+          if (!content || !branchSiteId) return;
+          // The rewrite keeps an unchanged snapshot as the same object, as for main's working copy above.
+          const before = workingDocument(content).pages as Array<{ pageId: string; snapshot: unknown }>;
+          const after = doc.pages as Array<{ pageId: string; snapshot: unknown }>;
+          for (let i = 0; i < after.length; i++) {
+            if (after[i].snapshot === before[i].snapshot) continue;
+            await client.sitePage.update({
+              where: { siteId_pageId: { siteId: branchSiteId, pageId: after[i].pageId } },
+              data: { snapshot: after[i].snapshot as Prisma.InputJsonValue },
+            });
+          }
+          await client.site.updateMany({
+            where: { id: branchSiteId, workspaceId: scope.workspaceId },
+            data: {
+              name: doc.name as string,
+              description: doc.description as string,
+              siteSettings: doc.siteSettings as Prisma.InputJsonValue,
+              components: doc.components as Prisma.InputJsonValue,
+              redirects: doc.redirects as Prisma.InputJsonValue,
+            },
+          });
+        },
+      });
+      if (record.baseDocument !== null) {
+        sources.push({
+          location: { kind: 'branch-base', ...label },
+          document: record.baseDocument,
+          revision: true,
+          branchSiteId: null,
+          write: async (client, rewritten) => {
+            await client.siteBranch.update({ where: { id: record.id }, data: { baseDocument: rewritten as Prisma.InputJsonValue } });
+          },
+        });
+      }
+      if (record.mainBeforeDocument !== null) {
+        sources.push({
+          location: { kind: 'merge-undo', ...label },
+          document: record.mainBeforeDocument,
+          revision: true,
+          branchSiteId: null,
+          write: async (client, rewritten) => {
+            await client.siteBranch.update({ where: { id: record.id }, data: { mainBeforeDocument: rewritten as Prisma.InputJsonValue } });
+          },
+        });
+      }
+    }
+    return sources;
   }
 
   /** The erasures of a site, newest first (the owner's audit list). */
@@ -1362,9 +1542,11 @@ export class SiteRepository {
     // subdomain is never minted across the boundary.
     const site = await this.prisma.site.findFirst({
       where: { id: siteId, workspaceId: scope.workspaceId },
-      select: { id: true },
+      select: { id: true, branchOfSiteId: true },
     });
     if (!site) throw new SiteNotFoundError(siteId);
+    // A branch never holds an address (the database trigger refuses the row too).
+    if (site.branchOfSiteId) throw new BranchCannotPublishError();
 
     // Idempotency: a re-publish must keep the SAME URL. If any domain row for
     // this site already carries a non-null subdomain, return it untouched.
@@ -1427,8 +1609,14 @@ export class SiteRepository {
     baseHost: string | null | undefined = process.env.PUBLIC_SITE_BASE_HOST,
   ): Promise<{ host: string | null; everPublished: boolean }> {
     assertScope(scope);
-    const site = await this.prisma.site.findFirst({
+    const row = await this.prisma.site.findFirst({
       where: { id: siteId, workspaceId: scope.workspaceId },
+      select: { branchOfSiteId: true },
+    });
+    if (!row) throw new SiteNotFoundError(siteId);
+    // A branch has no address of its own: its pages will live at its site's once merged and published.
+    const site = await this.prisma.site.findFirst({
+      where: { id: row.branchOfSiteId ?? siteId, workspaceId: scope.workspaceId },
       select: {
         domains: {
           select: {
@@ -1463,10 +1651,13 @@ export class SiteRepository {
   async unpublishProject(scope: TenantScope, siteId: string): Promise<void> {
     assertScope(scope);
     const result = await this.prisma.site.updateMany({
-      where: { id: siteId, workspaceId: scope.workspaceId },
+      where: { id: siteId, workspaceId: scope.workspaceId, branchOfSiteId: null },
       data: { status: 'draft' },
     });
-    if (result.count === 0) throw new SiteNotFoundError(siteId);
+    if (result.count === 0) {
+      await this.refuseBranch(this.prisma, scope, siteId);
+      throw new SiteNotFoundError(siteId);
+    }
   }
 
   /**
@@ -1508,10 +1699,15 @@ export class SiteRepository {
         select: {
           name: true,
           status: true,
+          branchOfSiteId: true,
           domains: { select: { subdomain: true, hostname: true, customHostname: true } },
+          // The cascade deletes them in the database; this process forgets their content after the commit.
+          branchSites: { select: { id: true } },
         },
       });
       if (!site) throw new SiteNotFoundError(siteId);
+      // Deleting a branch as a site would leave its record open with no content: it is discarded from its site.
+      if (site.branchOfSiteId) throw new SiteIsBranchError('discard it from its site\'s branches instead of deleting it.');
       if (site.status === 'published' && options.confirmName !== site.name) {
         throw new SiteDeleteConfirmationError(site.name);
       }
@@ -1529,17 +1725,21 @@ export class SiteRepository {
       if (result.count === 0) throw new SiteNotFoundError(siteId);
 
       return {
-        siteId,
-        name: site.name,
-        wasPublished: site.status === 'published',
-        subdomain,
-        hostnames: [...hostnames],
+        deleted: {
+          siteId,
+          name: site.name,
+          wasPublished: site.status === 'published',
+          subdomain,
+          hostnames: [...hostnames],
+        },
+        branchIds: site.branchSites.map((b) => b.id),
       };
     });
-    // A deleted site's content is not kept in memory either: no kept copy, no running draft.
+    // A deleted site's content is not kept in memory either: no kept copy, no running draft, nor of its branches.
     forgetSiteDocuments(siteId);
     endLiveGenerationOfSite(siteId, 'site_changed');
-    return deleted;
+    for (const branchId of deleted.branchIds) forgetBranchContent(branchId);
+    return deleted.deleted;
   }
 }
 

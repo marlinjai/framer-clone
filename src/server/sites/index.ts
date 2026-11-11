@@ -38,6 +38,13 @@ export {
   ErasePreviewStaleError,
   NothingToEraseError,
   SiteImageMissingError,
+  BranchNotFoundError,
+  BranchClosedError,
+  BranchCannotPublishError,
+  SiteIsBranchError,
+  BranchLimitError,
+  BranchNameTakenError,
+  InvalidBranchNameError,
   siteRepositoryErrorResponse,
 } from './errors';
 

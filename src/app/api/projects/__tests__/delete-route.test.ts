@@ -78,6 +78,9 @@ const db = {
         ...s,
         ...(select?.domains ? { domains: domains.filter((d) => d.siteId === s.id) } : {}),
         ...(select?.pages ? { pages: [] } : {}),
+        // No site here is a branch (docs/plans/2026-11-10-site-branches.md).
+        ...(select?.branchOfSiteId ? { branchOfSiteId: null } : {}),
+        ...(select?.branchSites ? { branchSites: [] } : {}),
       };
     }),
     findUnique: vi.fn(async ({ where }: { where: { id: string } }) => sites.find((s) => s.id === where.id) ?? null),
@@ -100,6 +103,8 @@ const db = {
     ),
   },
   sitePage: { upsert: vi.fn(), deleteMany: vi.fn() },
+  // No closed branch records: a missing site is reported as missing (src/server/sites/branches/closed.ts).
+  siteBranch: { findFirst: vi.fn(async () => null) },
   $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(db)),
 };
 

@@ -80,6 +80,8 @@ function makeFakePrisma() {
     sitePage,
     siteDomain,
     siteRevision,
+    // No closed site branch records (src/server/sites/branches/closed.ts): a missing site reads as missing.
+    siteBranch: { findFirst: vi.fn(async () => null as unknown) },
     // Typed with the options argument (tests read it from the calls); the fake only runs the callback.
     $transaction: vi.fn<(fn: (tx: unknown) => Promise<unknown>, opts?: unknown) => Promise<unknown>>(async (fn): Promise<unknown> => fn(prisma)),
   };
@@ -114,7 +116,8 @@ describe('SiteRepository.listSites', () => {
     prisma.site.findMany.mockResolvedValue([]);
     await repo.listSites(SCOPE);
     expect(prisma.site.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { workspaceId: 'ws_marlin' } }),
+      // Main sites only: a site branch is a hidden row (docs/plans/2026-11-10-site-branches.md).
+      expect.objectContaining({ where: { workspaceId: 'ws_marlin', branchOfSiteId: null } }),
     );
   });
 
@@ -123,17 +126,17 @@ describe('SiteRepository.listSites', () => {
     prisma.site.findMany.mockResolvedValue([
       {
         id: 'site_1', name: 'Bakery', description: '', status: 'published', lumitraEnabled: false,
-        createdAt: at, updatedAt: at,
+        createdAt: at, updatedAt: at, _count: { branchSites: 2 },
         domains: [{ subdomain: 'k3j9x0abcd12', hostname: null }, { subdomain: null, hostname: 'www.bakery.de' }],
       },
       {
         id: 'site_2', name: 'Draft', description: '', status: 'draft', lumitraEnabled: false,
-        createdAt: at, updatedAt: at, domains: [],
+        createdAt: at, updatedAt: at, _count: { branchSites: 0 }, domains: [],
       },
     ]);
     const [a, b] = await repo.listSites(SCOPE);
-    expect(a).toMatchObject({ siteId: 'site_1', subdomain: 'k3j9x0abcd12', customDomains: ['www.bakery.de'] });
-    expect(b).toMatchObject({ siteId: 'site_2', subdomain: null, customDomains: [] });
+    expect(a).toMatchObject({ siteId: 'site_1', subdomain: 'k3j9x0abcd12', customDomains: ['www.bakery.de'], openBranches: 2 });
+    expect(b).toMatchObject({ siteId: 'site_2', subdomain: null, customDomains: [], openBranches: 0 });
   });
 });
 
@@ -875,7 +878,8 @@ describe('SiteRepository.unpublishProject', () => {
     await repo.unpublishProject(SCOPE, 'site_1');
 
     expect(prisma.site.updateMany).toHaveBeenCalledWith({
-      where: { id: 'site_1', workspaceId: 'ws_marlin' },
+      // A branch is never published, so it is never unpublished either.
+      where: { id: 'site_1', workspaceId: 'ws_marlin', branchOfSiteId: null },
       data: { status: 'draft' },
     });
     // D3: the slug is preserved for a stable URL on re-publish.
@@ -905,6 +909,9 @@ describe('SiteRepository.deleteSite', () => {
       name: 'Bakery',
       status,
       domains: domains.map((d) => ({ subdomain: null, hostname: null, customHostname: null, ...d })),
+      // A main site with no branches (docs/plans/2026-11-10-site-branches.md).
+      branchOfSiteId: null,
+      branchSites: [],
     };
   }
 

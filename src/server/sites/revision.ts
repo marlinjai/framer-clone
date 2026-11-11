@@ -24,6 +24,11 @@ import { parseComponents } from '@/lib/components/definition';
  */
 export const REVISION_SCHEMA_VERSION = 1;
 
+// The working-copy description (site branches plan, section 4) joined the document as an OPTIONAL field
+// without a version bump: a rolling deploy runs old and new code side by side, and an old reader throws on a
+// version it does not know, so a bump would take every site published by new code offline for old code. An
+// older document without it reads as an empty description.
+
 /** One frozen page: the same shape the public resolver hands to the router. */
 export interface RevisionPage {
   pageId: string;
@@ -35,6 +40,8 @@ export interface RevisionPage {
 export interface SiteRevisionDocument {
   schemaVersion: typeof REVISION_SCHEMA_VERSION;
   name: string;
+  /** The working copy's description; `''` for a document written before it was frozen too. */
+  description: string;
   analyticsProjectId: string | null;
   ingestionEndpoint: string | null;
   /** A SERVER-SIDE ref (Infisical path / pointer), NEVER the literal key. */
@@ -49,6 +56,40 @@ export interface SiteRevisionDocument {
    * Opaque here; expansion reads it through its own parser.
    */
   components: Record<string, unknown>;
+}
+
+/** The stored columns a document is frozen from (the `sites` row and its pages), as read. */
+export interface RevisionSource {
+  name: string;
+  description: string;
+  analyticsProjectId: string | null;
+  ingestionEndpoint: string | null;
+  apiKeyRef: string | null;
+  lumitraEnabled: boolean;
+  redirects: unknown;
+  siteSettings: unknown;
+  components: unknown;
+  pages: Array<{ pageId: string; slug: string; snapshot: unknown }>;
+}
+
+/**
+ * The document of what is stored right now, as `site_revisions.document` and a branch's `base_document` hold it
+ * (the JSON written, not yet parsed). Pages in the order given.
+ */
+export function buildRevisionDocument(site: RevisionSource): Record<string, unknown> {
+  return {
+    schemaVersion: REVISION_SCHEMA_VERSION,
+    name: site.name,
+    description: site.description,
+    analyticsProjectId: site.analyticsProjectId,
+    ingestionEndpoint: site.ingestionEndpoint,
+    apiKeyRef: site.apiKeyRef,
+    lumitraEnabled: site.lumitraEnabled,
+    redirects: site.redirects,
+    siteSettings: site.siteSettings,
+    pages: site.pages.map((p) => ({ pageId: p.pageId, slug: p.slug, snapshot: p.snapshot })),
+    components: site.components,
+  };
 }
 
 /** A revision document that cannot be read. */
@@ -91,6 +132,7 @@ export function parseRevisionDocument(raw: unknown): SiteRevisionDocument {
   return {
     schemaVersion: REVISION_SCHEMA_VERSION,
     name: typeof raw.name === 'string' ? raw.name : '',
+    description: typeof raw.description === 'string' ? raw.description : '',
     analyticsProjectId: stringOrNull(raw.analyticsProjectId),
     ingestionEndpoint: stringOrNull(raw.ingestionEndpoint),
     apiKeyRef: stringOrNull(raw.apiKeyRef),

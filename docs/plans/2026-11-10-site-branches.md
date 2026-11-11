@@ -1,9 +1,9 @@
 ---
 title: Site branches
 description: Plan for branching in Lumitra Sites, modelled on Framer's branching, so a person or an agent can change a copy of a site, have it reviewed, and merge it back into main.
-summary: A branch is a hidden copy of a site's working copy that keeps its fork point. The editor, autosave, the version lock, the live stream, the preview and the Model Context Protocol (MCP) tools work on it unchanged, because it is a site row. A pure node-level three-way merge brings main into the branch, conflicts are settled on the branch, and merging into main is then one ordinary write under the version lock. Unlike Framer, Content Management System (CMS) content is not branched in version one; commerce, forms, domains and published revisions never are, and a branch can never be published to the live site. Eight slices of about 32 to 42 agent days, plus an optional ninth for a public preview link (3 to 4 more). Draft, waiting for Marlin's approval.
+summary: A branch is a hidden copy of a site's working copy that keeps its fork point. The editor, autosave, the version lock, the live stream, the preview and the Model Context Protocol (MCP) tools work on it unchanged, because it is a site row. A pure node-level three-way merge brings main into the branch, conflicts are settled on the branch, and merging into main is then one ordinary write under the version lock. Unlike Framer, Content Management System (CMS) content is not branched in version one; commerce, forms, domains and published revisions never are, and a branch can never be published to the live site. Nine slices of about 35 to 46 agent days, the public preview link included. Approved by Marlin on 2026-11-11 with all four recommendations; S1 in progress.
 type: plan
-status: draft
+status: in-progress
 date: 2026-11-10
 tags: [framer-clone, branches, merge, editor, mcp, publishing, plan]
 projects: [framer-clone]
@@ -11,7 +11,7 @@ projects: [framer-clone]
 
 # Site branches
 
-**Status:** draft, written 2026-11-10 at Marlin's request. Nothing is built. Marlin approves or changes this plan before any code.
+**Status:** in progress. Written 2026-11-10 at Marlin's request, approved by him on 2026-11-11 with all four recommendations of section 11 taken (answers recorded there). S1 is being built.
 
 ## 1. What Framer's branching does
 
@@ -143,7 +143,7 @@ The cost of a hidden row is that every place that lists or acts on sites must kn
 
 **The working-copy description and the site name.** `SiteRevisionDocument` has no `description` today, but `writeWorkingCopy` writes one. S1 extends the document format with it (a `schemaVersion` bump with a reader for the old shape, as the rule below requires), so `base_document` and `main_before_document` carry it: the merge sees a description changed on both sides, and "Undo this merge" restores the earlier one. The description merges per field like site settings (section 5, rule 11). The site name is a branch property too: `writeWorkingCopy` does not write it and `renameSite` does not move `version`, so the plan changes both. A rename of a branch or of main bumps that site's `version`, so a review token and an approval go stale on a rename, and the merge transaction copies the branch's name onto main only when main's name is unchanged since the fork (otherwise it is a conflict like any other setting).
 
-Main has no stored history of its working copy, so the fork point cannot be looked up later: it has to be stored when the branch is made. `base_document` and `main_before_document` follow the rule the published copy plan set for revisions: a change to the page format must rewrite them or keep a reader for the old shape.
+The description is added without a version bump (decision 18). Main has no stored history of its working copy, so the fork point cannot be looked up later: it has to be stored when the branch is made. `base_document` and `main_before_document` follow the rule the published copy plan set for revisions: a change to the page format must rewrite them or keep a reader for the old shape.
 
 ### What a branch copies and what it shares
 
@@ -346,7 +346,20 @@ Order: S1, then S2 (S4 can start beside it), S3, S5, S6, S7, S9; S8 wherever it 
 16. **Updating a branch from main is a button, not automatic.** Framer rebases branches onto main by itself. Here a silent update could change the canvas under the author and withdraw an approval without anyone acting; the top bar says that main has changed, and "Merge into main" runs the update itself when there is no conflict. Making a conflict-free update automatic later is a small change on top of the live stream.
 17. **The interface says "merge" and "branch"**, not Framer's "apply".
 
-## 11. For Marlin to decide
+Decided while building S1 (2026-11-11), say so if you disagree:
+
+18. **No `schemaVersion` bump for the description.** `parseRevisionDocument` throws on a version it does not know, and a rolling deploy runs old and new containers side by side (`boot.sh`), so a bump would make every site published by the new code unreadable to the old one, which is also what section 9 promises a code rollback never does. `description` joins the revision document as an optional field read as `''` when absent; published revisions carry it too, harmlessly.
+19. **A retried create names its id.** `POST .../branches` takes an optional `branchId` (a UUID the client chose). The same id from the same person on the same site answers the branch it made (200, `created: false`); any other row under that id answers 404 like a missing branch, so it leaks nothing.
+20. **The rename version bump moves to S3.** Bumping `version` on a rename changes main's behaviour for every open editor tab and only matters once review tokens exist, so it lands with the tokens in S3.
+21. **"An erase followed by a merge leaves nothing" is tested in S3**, where the merge exists. S1 proves the erase reaches every copy: open branches' working copies, their fork points, kept pre-merge copies, and a branch record's name and review note (a branch name or a note can hold the value too). The erase is started from main only; on a branch id it answers 409 `site_is_branch`.
+22. **The closed notice on a branch's live stream is S4.** In S1 an open tab of a discarded branch hears 410 `branch_closed` on its next save or load; S4 adds the live notice and the closed page that reads it.
+23. **A branch's `site_branches.branch_site_id` has a foreign key with `ON DELETE SET NULL`**, so whatever deletes a content row, the record reads as closed (410) rather than pointing at nothing. `DELETE /api/projects/<branchId>` is refused (409 `site_is_branch`): a branch is discarded from its site's branch list.
+24. **The page settings address of a branch is its site's**: a branch has no address of its own, its pages will live there once merged and published.
+
+## 11. For Marlin to decide (answered 2026-11-11)
+
+Marlin took all four recommendations on 2026-11-11: (1) no tier logic, one constant of 10 open branches per site, switched on for Lumitra's own company first, the tier decided with Sites pricing; (2) no required second approval in version one; (3) yes to the public preview link, slice S8 after the core, 7 day expiry by default and a revoke button; (4) the CMS is not branched now.
+
 
 1. **Which customers get branches, and at what price?** Options: every plan; from a paid tier up; with a different number of open branches per tier. **Recommendation:** build it without any tier logic (one constant, 10 open branches), turn it on for Lumitra's own company, and decide the tier when pricing for Sites is decided, as was done for the 3D scene quotas. For reference, Framer lists branching on its Pro plan (30 US dollars a month; its Enterprise column could not be read), Webflow and Figma only on their enterprise or organisation plans.
 2. **Should a merge be able to require a second person's approval?** In version one a person with the right to merge can merge their own branch, which suits a one-person company, and approval is offered but not forced. A setting "merges need an approval from someone else" is a team feature and a likely tier line. **Recommendation:** not in version one; add the setting when the first team customer asks, since the approval state is already stored.
