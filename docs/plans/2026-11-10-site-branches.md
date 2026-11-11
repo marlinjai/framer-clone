@@ -178,18 +178,18 @@ The merge compares by id, never by position or by text.
 | Page | page id | exists; slug; each metadata field; its tree |
 | Node | node id | exists; parent and place among siblings; each own field; `props` per key; `props.style` per property; a responsive value per breakpoint key; `bindings` per key |
 | Component definition | definition id | exists; its inputs and defaults per key; its tree as nodes |
-| Site settings | key path | theme tokens per token; head entries per entry; business data per field; every other setting per key |
+| Site settings | key path | theme tokens per token; the head as one value (its entries have no id, decision 31); business data per field; every other setting per key |
 
 ### Rules
 
 1. **Only one side changed a part:** that side's value is taken.
 2. **Both sides made the same change:** taken once.
 3. **Both sides changed the same part differently:** a conflict. The person picks main's or the branch's value. Text is one value: two edits of the same text conflict as a whole, they are never spliced.
-4. **Added on one side** (a node, a page, a definition, a token): kept. Added on both sides: both kept, since their ids differ. The same id added on both sides with different content (a rare id collision): the branch's copy gets fresh ids, with its references remapped, as paste already does (`renewIds` in `PageModel`).
+4. **Added on one side** (a node, a page, a definition, a token): kept. Added on both sides: both kept, since their ids differ. The same id added on both sides with different content (a rare id collision, in practice one copy pasted into both): a conflict, the person picks the copy they mean (decision 32).
 5. **Removed on one side, untouched on the other:** removed.
 6. **Removed on one side, changed on the other** (the node itself or anything inside it): a conflict, "keep it with the changes" or "remove it". The same for a page and for a component definition that the other side still places.
 7. **Moved on one side:** the move is taken. Moved to different places on both sides: a conflict.
-8. **Order of children:** main's order is the starting point; nodes the branch added go after the sibling they followed on the branch (or first, when that sibling is gone). Both sides reordering the same parent's existing children is a conflict on that parent, main's order or the branch's.
+8. **Order of children:** main's order is the starting point; nodes the branch added go right after the nearest earlier sibling they followed on the branch that is still there (or first, when none is). Both sides reordering the same parent's existing children is a conflict on that parent, main's order or the branch's.
 9. **Slugs:** two pages ending with the same slug is a conflict the person settles by renaming one; the home page's empty slug never changes hands.
 10. **References:** after merging, anything that points at a removed node, page or definition is reported: behaviour rules, `for` and `aria-*` attributes and the other references of `src/lib/renderer/idRefs.ts`, the 404 page setting, component placements, a form's thank-you page, and internal links to a page's address (counted with the same code `deletePage` uses, `src/lib/siteOps/pageLinks.ts`; a link to a slug that the other side renamed is reported too, since the redirect only exists once the site is published). A dangling reference the merge itself created is a conflict of rule 6's kind on the removed thing, never silently dropped.
 
@@ -201,7 +201,7 @@ Before anything is written, the merged document is loaded on a scratch copy (`Pr
 
 ### What is reused from `rebaseEdit`, and what is new
 
-Reused, moved into `src/lib/siteMerge/` and then called from `rebaseEdit` so there is one implementation: `nodesOf`, the "unchanged since the base" comparison, the scratch-copy dry run with the component size limit. New work, and most of the merge slice: comparing two documents (the diff), structure (adds, removes, moves, order), pages and slugs, component definitions, settings, looking inside `props`, the reference check, and conflict objects with stable ids. `rebaseEdit` keeps its narrow job (one undo entry in an open tab) and gains nothing in scope from this plan.
+Moved into `src/lib/siteMerge/shared.ts` so there is one implementation: `nodesOf`, `findNode` and the scratch-copy dry run (`replaysCleanly`), whose component size rule (`outgrewLimit`) the merge's validity check calls too. The merge walks documents in its own flat form (`flatten` in `tree.ts`, node by id with parent and children per container), since it needs parents and order, which `nodesOf` does not keep. New work, and most of the merge slice: comparing two documents (the diff), structure (adds, removes, moves, order), pages and slugs, component definitions, settings, looking inside `props`, the reference check, and conflict objects with stable ids. `rebaseEdit` keeps its narrow job (one undo entry in an open tab) and gains nothing in scope from this plan.
 
 ## 6. Flows, states and the four paths
 
@@ -363,6 +363,12 @@ Decided while building S1 (2026-11-11), say so if you disagree:
 28. **Locks are scoped, mains go first.** Every branch lock names the caller's workspace (and the branch lock its main), so a foreign id locks nothing; the company erasure deletes main sites and lets their branches go by the cascade, so no path locks a branch before its main; publish and the erase of personal data scope their row locks the same way. A branch save that names an image takes no lock on main: an image delete scans every branch's pages and both run serializable, so they cannot both commit (a lock there only made branch saves retry while main was being edited).
 29. **Branch names are compared in SQL only**, `lower(name)` as the unique index compares, for create, rename and the erase's rewrite of a name (which adds a number on a clash). A rename and the ready state asked together are one transaction.
 30. **A record without content closes itself.** A trigger marks an open record discarded (and drops its fork point, draft and approval) when its content row goes some other way than a merge or a discard, so it never holds a name, a place under the cap or a copy.
+31. **The head is one value.** Its items carry no id, and merging a list by position is what this merge never does: two different changes to the head are one conflict. Theme tokens, a component's inputs and its states carry ids and merge item by item.
+32. **The same id added on both sides with different content is a conflict**, never renamed into two copies: ids are uuids, so this only happens when one copy was pasted into both, and the person knows which one they mean.
+33. **A page's timestamps never conflict.** They move with any edit, so they are left out of the comparison and follow the content that stands (main's, or the later one when the branch's content was taken).
+34. **Rule 10 asks instead of guessing, from the result.** The merge runs, then looks at what the result points at and does not hold, where main and the branch alone did not leave that same reference (the same referring node, the same target) broken: a behaviour rule, an HTML id reference, a link to an address, a form's thank-you page, the 404 setting, a placement. Each such thing's removal is asked as a rule 6 conflict, and the merge runs again, until a run asks nothing new. Answering "remove" leaves the reference reported with the result. Reference kinds are read through the walks copy and paste already use (`remapBehaviourRefs`, `withFollowedRefs`) and the address keys `deletePage` counts links with, so a new kind there is seen here too.
+35. **All three documents go through the editor model before the merge** (S3's job, on the server): a document written without the model's defaults (an import, an old tool) would otherwise count as changed in every node. The merge itself takes defaults added on one side as a change of other keys, so it never conflicts on them; the counts of changes are what would be wrong.
+36. **Nodes are matched within one page or component.** A node moved to another page on one side is a removal there and an addition on the other page; when the other side edited it, the removal is asked. Kept in both places, the merged site holds one id twice, which the validity check refuses (unless the site already had that), so the person must take one side before it is written.
 
 ## 11. For Marlin to decide (answered 2026-11-11)
 
