@@ -38,6 +38,11 @@ const mockGetSiteAddress = vi.fn(
     everPublished: false,
   }),
 );
+// Site branches off (S4): the preview of a main site, as before.
+vi.mock('@/server/sites/branches/editorState', () => ({
+  editorBranchState: async () => null,
+  closedBranchNotice: async () => null,
+}));
 vi.mock('@/server/sites', async (importActual) => {
   const actual = await importActual<typeof import('@/server/sites')>();
   return {

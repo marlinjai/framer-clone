@@ -15,6 +15,7 @@
 
 import { notFound, redirect } from 'next/navigation';
 import AuthUnavailable from '../../AuthUnavailable';
+import ClosedBranch from '../../ClosedBranch';
 import { loadProjectSnapshot } from '../loader';
 import PreviewMount from './PreviewMount';
 
@@ -56,6 +57,11 @@ export default async function ProjectPreviewPage({
   // Missing OR cross-workspace id -> 404. Never preview a foreign tenant's site.
   if (result.status === 'not_found') {
     notFound();
+  }
+
+  // A merged or discarded branch: say what happened and link to its site (site branches).
+  if (result.status === 'branch_closed') {
+    return <ClosedBranch notice={result.notice} />;
   }
 
   return <PreviewMount projectSnapshot={result.snapshot} projectVersion={result.version} pageId={pageId} />;
