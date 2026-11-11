@@ -77,6 +77,7 @@ describe('the agent approval page', () => {
     expect(html).toContain('An agent asks to merge the branch');
     expect(html).toContain('Merge branch &quot;Pricing&quot;');
     expect(html).toContain('>Merge the branch<');
+    expect(html).toContain('href="/projects/branch-1/review"');
     expect(vi.mocked(checkWorkspaceAccess)).toHaveBeenLastCalledWith('owner-a', 'ws_a', 'mergeBranch');
     expect(getApprovalStore().get(id)?.decision).toBeNull();
     // The site and the branch share the mocked version: a move of it is a move of what the person was shown.

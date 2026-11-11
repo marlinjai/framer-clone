@@ -325,6 +325,7 @@ describe('the branch tools against a real database', () => {
     expect(await refusal(KEY_A, 'branch_status', { branchId })).toMatchObject({ code: 'branch_closed', branchStatus: 'merged', siteId });
     expect((await refusal(KEY_A, 'apply_batch', { siteId: branchId, expectedVersion: 1, ops: [{ op: 'updateText', nodeId: headline, text: 'late' }] })).code).toBe('site_not_found');
     expect((await refusal(KEY_A, 'discard_branch', { branchId })).code).toBe('branch_closed');
+    expect((await refusal(KEY_A, 'publish', { siteId: branchId, expectedVersion: 1 })).code).toBe('site_not_found');
     const after = await ok(KEY_A, 'list_branches', { siteId });
     expect(after.open).toEqual([]);
     expect((after.closed as Array<Record<string, unknown>>).map((b) => [b.branchId, b.status])).toEqual([[branchId, 'merged']]);
@@ -390,7 +391,10 @@ describe('the branch tools against a real database', () => {
     expect(await prisma.site.count({ where: { id: mine } })).toBe(0);
     expect((await prisma.siteBranch.findUniqueOrThrow({ where: { id: mine }, select: { status: true, discardedBy: true } }))).toEqual({ status: 'discarded', discardedBy: 'mcp-br-key-a' });
     // Re-entry: the id is closed for good, and its name is free for a new branch from the site as it is now.
-    expect(await refusal(KEY_A, 'discard_branch', { branchId: mine })).toMatchObject({ code: 'branch_closed', branchStatus: 'discarded' });
+    expect(await ok(KEY_A, 'discard_branch', { branchId: mine })).toMatchObject({ discarded: false });
+    expect(await refusal(KEY_A2, 'discard_branch', { branchId: mine })).toMatchObject({ code: 'branch_closed', branchStatus: 'discarded' });
+    expect((await refusal(KEY_A, 'branch_status', { branchId: site.siteId })).code).toBe('not_a_branch');
+    expect(await refusal(KEY_A, 'list_branches', { siteId: persons })).toMatchObject({ code: 'site_is_branch', siteId: site.siteId });
     expect(await refusal(KEY_A, 'merge_branch', { branchId: mine, token: 'any' })).toMatchObject({ code: 'branch_closed', branchStatus: 'discarded' });
     const renewed = await ok(KEY_A, 'create_branch', { siteId: site.siteId, name: 'Trial' });
     expect(renewed.branchId).not.toBe(mine);

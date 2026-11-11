@@ -186,6 +186,10 @@ function world(options: { key?: VerifiedKey; enabled?: boolean; createdBy?: { ki
         state.created.push({ name: input.name, actor: input.actor });
         return { branch: summary(), created: true };
       },
+      getBranch: async (_scope, mainSiteId, branchId) => {
+        if (mainSiteId !== MAIN || branchId !== BRANCH) throw new SiteNotFoundError(branchId);
+        return summary();
+      },
       siteBranchContext: async (_scope, siteId): Promise<SiteBranchContext> => {
         if (siteId === MAIN) return { kind: 'main', siteId: MAIN, openBranches: 1 };
         if (siteId !== BRANCH) throw new SiteNotFoundError(siteId);
@@ -260,6 +264,15 @@ function world(options: { key?: VerifiedKey; enabled?: boolean; createdBy?: { ki
     );
     return (await res.json()) as { result?: Record<string, unknown>; error?: { code: number; message: string } };
   };
+  /** A raw request, for the paths beside a plain call: a batch, a stream, a session id. */
+  const raw = (body: unknown, headers: Record<string, string> = {}) =>
+    handler.POST(
+      new Request('https://app.lumitra.co/api/mcp', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream', ...headers },
+        body: JSON.stringify(body),
+      }),
+    );
   const call = async (name: string, args: Record<string, unknown> = {}) => {
     const body = await rpc('tools/call', { name, arguments: args });
     if (!body.result) throw new Error(`tools/call ${name} answered a JSON-RPC error: ${body.error?.message}`);
@@ -277,7 +290,34 @@ function world(options: { key?: VerifiedKey; enabled?: boolean; createdBy?: { ki
       String(approvalId),
       { store, repository: repository as unknown as SiteRepository, canMerge, canPublish: async () => false },
     );
-  return { state, repository, rpc, call, decide, canMerge, store };
+  return { state, repository, rpc, raw, call, decide, canMerge, store };
+}
+
+/** The messages of a streamed answer, one per call. */
+function sseReader(res: Response) {
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  return async function next(): Promise<Record<string, unknown>> {
+    for (;;) {
+      const end = buffer.indexOf('\n\n');
+      if (end >= 0) {
+        const chunk = buffer.slice(0, end);
+        buffer = buffer.slice(end + 2);
+        const data = chunk.split('\n').find((l) => l.startsWith('data: '));
+        if (data) return JSON.parse(data.slice(6)) as Record<string, unknown>;
+        continue;
+      }
+      const { done, value } = await reader.read();
+      if (done) throw new Error('stream ended');
+      buffer += decoder.decode(value, { stream: true });
+    }
+  };
+}
+
+async function dialogSession(w: ReturnType<typeof world>): Promise<string> {
+  const res = await w.raw({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: { elicitation: {} }, clientInfo: { name: 'test', version: '1' } } });
+  return res.headers.get('mcp-session-id')!;
 }
 
 const errorOf = (result: { structuredContent: Record<string, unknown> }) => result.structuredContent.error as Record<string, unknown>;
@@ -421,7 +461,6 @@ describe('reading and creating', () => {
       ['update_branch', { branchId: BRANCH, token: 'tok-1' }],
       ['request_review', { branchId: BRANCH }],
       ['merge_branch', { branchId: BRANCH, token: 'tok-1' }],
-      ['discard_branch', { branchId: BRANCH }],
     ] as const) {
       const result = await w.call(name, args);
       expect(errorOf(result), name).toMatchObject({ code: 'branch_closed', branchStatus: 'discarded', siteId: MAIN });
@@ -663,5 +702,107 @@ describe('failures', () => {
     expect(errorOf(result)).toEqual({ code: 'failed', message: 'the branch operation failed unexpectedly; call branch_status again before retrying' });
     expect(JSON.stringify(result)).not.toContain('10.0.0.5');
     expect(errorSpy).toHaveBeenCalled();
+  });
+});
+
+describe('review findings', () => {
+  it('with the switch off a branch tool is unknown in a batch and on the dialog path too, and nothing is asked or written', async () => {
+    const w = world({ enabled: false });
+    const batch = await w.raw([
+      { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'merge_branch', arguments: { branchId: BRANCH, token: 'tok-1' } } },
+      { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'create_branch', arguments: { siteId: MAIN, name: 'x' } } },
+    ]);
+    const answers = (await batch.json()) as Array<{ result?: unknown; error?: { message: string } }>;
+    expect(answers.map((a) => a.error?.message)).toEqual(['unknown tool: merge_branch', 'unknown tool: create_branch']);
+    const session = await dialogSession(w);
+    const streamed = await w.raw({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'merge_branch', arguments: { branchId: BRANCH, token: 'tok-1' } } }, { 'mcp-session-id': session });
+    expect(streamed.headers.get('content-type')).not.toBe('text/event-stream');
+    expect(((await streamed.json()) as { error: { message: string } }).error.message).toBe('unknown tool: merge_branch');
+    expect(w.state).toMatchObject({ merges: 0, created: [] });
+  });
+
+  it('merge_branch through the client dialog: merges on accept, on the same stream', async () => {
+    const w = world();
+    const session = await dialogSession(w);
+    const res = await w.raw({ jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'merge_branch', arguments: { branchId: BRANCH, token: 'tok-1' } } }, { 'mcp-session-id': session });
+    expect(res.headers.get('content-type')).toBe('text/event-stream');
+    const next = sseReader(res);
+    const question = await next();
+    expect(question).toMatchObject({ method: 'elicitation/create', params: { message: expect.stringContaining('Merge branch "New pricing page"') } });
+    expect(w.state.merges).toBe(0);
+    await w.raw({ jsonrpc: '2.0', id: question.id, result: { action: 'accept', content: { confirm: true } } }, { 'mcp-session-id': session });
+    const final = (await next()) as { result: { isError: boolean; structuredContent: Record<string, unknown> } };
+    expect(final.result.structuredContent).toMatchObject({ merged: true, siteId: MAIN });
+    expect(w.state.merges).toBe(1);
+  });
+
+  it('merge_branch through the client dialog: a decline merges nothing', async () => {
+    for (const result of [{ action: 'decline' }, { action: 'cancel' }, { action: 'accept', content: { confirm: false } }]) {
+      const w = world();
+      const session = await dialogSession(w);
+      const res = await w.raw({ jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'merge_branch', arguments: { branchId: BRANCH, token: 'tok-1' } } }, { 'mcp-session-id': session });
+      const next = sseReader(res);
+      const question = await next();
+      await w.raw({ jsonrpc: '2.0', id: question.id, result }, { 'mcp-session-id': session });
+      const final = (await next()) as { result: { structuredContent: Record<string, unknown> } };
+      expect(final.result.structuredContent).not.toHaveProperty('merged');
+      expect(w.state.merges).toBe(0);
+    }
+  });
+
+  it("an approval for one branch cannot be spent on a sibling branch of the same site, even with the same token and versions", () => {
+    const store = new ApprovalStore();
+    const subject = { action: 'merge' as const, tenantId: 'tenant-a', keyId: 'key_1', scope: SCOPE, siteId: MAIN, version: 5, branchId: 'branch-a', branchVersion: 1, token: 'same-token' };
+    const approval = store.open(subject, 'Merge branch "A"?');
+    expect(store.decide(approval.id, 'owner-a', 'approve').kind).toBe('decided');
+    expect(store.redeem(approval.id, { ...subject, branchId: 'branch-b' }).kind).toBe('invalid');
+    expect(store.redeem(approval.id, { ...subject, branchVersion: 2 }).kind).toBe('invalid');
+    expect(store.redeem(approval.id, { ...subject, token: 'other-token' }).kind).toBe('invalid');
+    expect(store.redeem(approval.id, { ...subject, action: 'publish' as const }).kind).toBe('invalid');
+    expect(store.redeem(approval.id, subject).kind).toBe('approved');
+  });
+
+  it('a site id given where a branch id belongs is told so, on every tool that takes a branch', async () => {
+    const w = world();
+    for (const [name, args] of [
+      ['branch_status', { branchId: MAIN }],
+      ['update_branch', { branchId: MAIN, token: 'tok-1' }],
+      ['merge_branch', { branchId: MAIN, token: 'tok-1' }],
+      ['request_review', { branchId: MAIN }],
+      ['discard_branch', { branchId: MAIN }],
+    ] as const) {
+      expect(errorOf(await w.call(name, args)).code, name).toBe('not_a_branch');
+    }
+    expect(errorOf(await w.call('branch_status', { branchId: 'nothing-of-ours' })).code).toBe('site_not_found');
+  });
+
+  it('a repeated discard answers the first outcome to the key that made the branch, and only to it', async () => {
+    const w = world();
+    expect((await w.call('discard_branch', { branchId: BRANCH })).structuredContent).toMatchObject({ discarded: true });
+    const again = await w.call('discard_branch', { branchId: BRANCH });
+    expect(again.isError).toBe(false);
+    expect(again.structuredContent).toMatchObject({ discarded: false });
+    expect(w.state.discards).toBe(1);
+    const other = world({ createdBy: { kind: 'user', id: PERSON } });
+    other.state.status = 'discarded';
+    expect(errorOf(await other.call('discard_branch', { branchId: BRANCH })).code).toBe('branch_closed');
+  });
+
+  it('publish and rollback on a closed branch id open no link', async () => {
+    const w = world();
+    w.state.status = 'merged';
+    for (const result of [await w.call('publish', { siteId: BRANCH, expectedVersion: 2 }), await w.call('rollback', { siteId: BRANCH, revision: 1 })]) {
+      expect(result.isError).toBe(true);
+      expect(errorOf(result).code).toBe('site_not_found');
+      expect(String(errorOf(result).message)).toContain(MAIN);
+      expect(result.structuredContent).not.toHaveProperty('approvalUrl');
+    }
+    expect(w.repository.publishProject).not.toHaveBeenCalled();
+  });
+
+  it('a taken name points at list_branches, for a create whose first answer was lost', async () => {
+    const w = world();
+    w.state.throwOn.create = new BranchNameTakenError('a');
+    expect(String(errorOf(await w.call('create_branch', { siteId: MAIN, name: 'a' })).message)).toContain('list_branches');
   });
 });

@@ -50,7 +50,7 @@ export const CONFLICTS_LISTED = 50;
 export const ANSWERS_PER_UPDATE = 200;
 
 export interface BranchOpsDeps {
-  branches?: Pick<SiteBranchRepository, 'listBranches' | 'createBranch' | 'siteBranchContext' | 'setBranchReady' | 'discardBranch'>;
+  branches?: Pick<SiteBranchRepository, 'listBranches' | 'createBranch' | 'getBranch' | 'siteBranchContext' | 'setBranchReady' | 'discardBranch'>;
   merges?: Pick<SiteBranchMergeService, 'changes' | 'update' | 'merge'>;
   /** The editor's host, for preview and review links (defaults to EDITOR_HOST). */
   editorHost?: string | null;
@@ -150,7 +150,7 @@ function fromError(err: unknown, id: string): BranchOpsResult<never> {
   if (err instanceof BranchMergeInvalidError) {
     return fail({
       code: 'branch_merge_invalid',
-      message: `the result would not be a valid site, so nothing was written: ${err.problems.map((p) => p.message).slice(0, 3).join('; ')}`,
+      message: `the result would not be a valid site, so nothing was written: ${err.problems.map((p) => p.message).slice(0, 3).join('; ')}. Fix these on the branch with apply_batch (or pick the other side of a conflict), then call branch_status and try again`,
       problems: err.problems.slice(0, CONFLICTS_LISTED),
       ...(err.answersKept === undefined ? {} : { answersKept: err.answersKept }),
     });
@@ -158,7 +158,11 @@ function fromError(err: unknown, id: string): BranchOpsResult<never> {
   if (err instanceof BranchLimitError) {
     return fail({ code: 'branch_limit', message: `a site has at most ${err.limit} open branches; one must be merged or discarded first`, limit: err.limit });
   }
-  if (err instanceof BranchNameTakenError) return fail({ code: 'branch_name_taken', message: 'an open branch of this site already has that name; pick another' });
+  if (err instanceof BranchNameTakenError) return fail({
+      code: 'branch_name_taken',
+      message:
+        'an open branch of this site already has that name. If an earlier create_branch of yours got no answer, list_branches shows it: it may be the branch you just made, so continue on it. Otherwise pick another name',
+    });
   if (err instanceof SiteIsBranchError) {
     return fail({ code: 'site_is_branch', message: `"${id}" is itself a branch: a branch is made from a site, never from a branch` });
   }
@@ -175,6 +179,22 @@ function fromError(err: unknown, id: string): BranchOpsResult<never> {
   // The error's own text (a database driver's, say) stays in the server log.
   console.error('[site-ops] unexpected branch failure', err);
   return fail({ code: 'failed', message: GENERIC_BRANCH_FAILURE });
+}
+
+/**
+ * A refusal of an operation that takes a branch id: when the id is not a branch but a site of the caller,
+ * say so (`not_a_branch`) instead of "no such site or branch", so an agent that mixed the two ids up knows.
+ */
+async function fromBranchIdError(err: unknown, caller: SiteOpsCaller, id: string, deps: BranchOpsDeps): Promise<BranchOpsResult<never>> {
+  const refusal = fromError(err, id);
+  if (refusal.ok || refusal.error.code !== 'site_not_found') return refusal;
+  try {
+    const context = await branches(deps).siteBranchContext(caller.scope, id);
+    if (context.kind === 'main') return notABranch(id);
+  } catch {
+    // Not the caller's, or gone: the refusal above stands.
+  }
+  return refusal;
 }
 
 /** Write an audit row; a failure is logged loudly but never undoes a write that committed. */
@@ -285,6 +305,15 @@ export async function listBranches(caller: SiteOpsCaller, input: { siteId: strin
       closed: list.closed.map((b) => viewOf(b, caller)),
     });
   } catch (err) {
+    if (err instanceof SiteIsBranchError) {
+      const of = await branchOfSite(caller, { siteId: input.siteId }, deps);
+      const mainSiteId = of.ok && of.value ? of.value.mainSiteId : undefined;
+      return fail({
+        code: 'site_is_branch',
+        message: `"${input.siteId}" is itself a branch; branches are listed on their site${mainSiteId ? `, "${mainSiteId}"` : ''}`,
+        ...(mainSiteId ? { siteId: mainSiteId } : {}),
+      });
+    }
     return fromError(err, input.siteId);
   }
 }
@@ -364,7 +393,7 @@ export async function branchStatus(caller: SiteOpsCaller, input: { branchId: str
   try {
     return ok(statusOf(await merges(deps).changes(caller.scope, input.branchId), caller, deps));
   } catch (err) {
-    return fromError(err, input.branchId);
+    return fromBranchIdError(err, caller, input.branchId, deps);
   }
 }
 
@@ -401,7 +430,7 @@ export async function updateBranch(
     const outcome = await merges(deps).update(caller.scope, input.branchId, { token: input.token, resolutions: resolutions as MergeAnswers }, actorOf(caller));
     return ok({ updated: outcome.updated, branch: viewOf(outcome.branch, caller), version: outcome.branch.version, token: outcome.token });
   } catch (err) {
-    return fromError(err, input.branchId);
+    return fromBranchIdError(err, caller, input.branchId, deps);
   }
 }
 
@@ -461,7 +490,7 @@ export async function mergeBranch(
     const outcome = await merges(deps).merge(caller.scope, input.branchId, { token: input.token }, actorOf(caller));
     return ok({ merged: outcome.merged, branch: viewOf(outcome.branch, caller), siteId: outcome.branch.mainSiteId, version: outcome.mainVersion });
   } catch (err) {
-    return fromError(err, input.branchId);
+    return fromBranchIdError(err, caller, input.branchId, deps);
   }
 }
 
@@ -495,6 +524,16 @@ export async function discardBranch(
     if (outcome.discarded) await audit(caller, deps, { siteId: context.mainSiteId, operation: 'branch_discard', branchId: input.branchId });
     return ok({ discarded: outcome.discarded, branch: viewOf(outcome.branch, caller) });
   } catch (err) {
+    // A repeat of a discard (the first answer was lost): the same outcome, for the caller that may discard it.
+    if (err instanceof BranchClosedError && err.branchStatus === 'discarded') {
+      try {
+        const record = await branches(deps).getBranch(caller.scope, err.mainSiteId, input.branchId);
+        const own = caller.actor.kind !== 'key' || (record.createdByKind === 'key' && record.createdBy === caller.actor.id);
+        if (own) return ok({ discarded: false, branch: viewOf(record, caller) });
+      } catch {
+        // Falls through to the closed refusal.
+      }
+    }
     return fromError(err, input.branchId);
   }
 }

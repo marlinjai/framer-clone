@@ -53,7 +53,7 @@ const NON_TOOL_WORDS = new Set([
   'approvalRequired', 'approvalPending', 'declined', 'summary', 'replace',
   // site branches: answer and argument fields, and refusals (src/server/siteOps/branches.ts, src/server/mcp/tools.ts)
   'branchId', 'token', 'upToDate', 'mergeable', 'conflicts', 'answers', 'fingerprint', 'pick', 'previewUrl', 'reviewUrl',
-  'branch_conflicts', 'branch_review_stale', 'branch_closed', 'branch_behind_main', 'branch_updated_from_main',
+  'branch_conflicts', 'branch_review_stale', 'branch_closed', 'branch_behind_main',
   'branch_cannot_publish', 'branch_limit', 'work-on-a-branch',
   // skeleton plans (announce_sections)
   'planId', 'replaces', 'newPage', 'after', 'kind',

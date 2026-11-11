@@ -120,6 +120,19 @@ export default async function ConfirmAgentActionPage({ params }: Props) {
         <p className="mt-4 whitespace-pre-wrap rounded-md border bg-muted/40 p-4 text-sm" data-testid="approval-summary">
           {view.summary}
         </p>
+        {view.action === 'merge' && view.branchId ? (
+          <p className="mt-4 text-sm">
+            <a
+              href={`/projects/${encodeURIComponent(view.branchId)}/review`}
+              target="_blank"
+              rel="noreferrer"
+              className="font-medium underline underline-offset-4"
+            >
+              Open the review of this branch
+            </a>{' '}
+            to see what it changes, side by side with the site, before you decide.
+          </p>
+        ) : null}
         <p className="mt-4 text-xs text-muted-foreground">
           The link works once and expires at {view.expiresAt.slice(11, 16)} UTC. After you approve, the agent carries it
           out on its next call. If you did not ask for this, close the page: nothing happens.

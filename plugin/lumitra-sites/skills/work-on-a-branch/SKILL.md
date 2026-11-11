@@ -64,8 +64,9 @@ build-a-site skills, on the branch instead of the site:
 - `preview_url` with the `branchId` shows the branch as a visitor would see it. Look at every
   breakpoint before you call the work done.
 
-A merged or discarded branch is closed: every call on its id answers `branch_closed` and names its
-site. Do not write to the site in its place unless the person asks.
+A merged or discarded branch is closed: the branch tools answer `branch_closed` on its id, the
+read and write tools answer that there is no such site, and both messages name its site. Do not
+write to the site in its place unless the person asks.
 
 ## 4. Stay current with the site
 
@@ -109,8 +110,9 @@ When, and only when, the person asks you to merge:
    `merge_branch` again with the same arguments and the `approvalId`. An answer with
    `approvalPending` means they have not approved yet: say so and wait again. An answer with
    `declined` means nothing was merged: stop. A link expires after five minutes.
-5. `branch_behind_main` or `branch_updated_from_main` mean main moved meanwhile: the branch was
-   or must be updated first, and the person approves again on what they then see.
+5. `branch_review_stale` or `branch_behind_main` mean main or the branch changed meanwhile, also
+   after an approval: nothing was merged. Read `branch_status` again, update the branch if it is
+   behind, and the person approves again on what they then see.
 
 After the merge, tell the person: the work is now in the site's draft, the branch is closed, and
 nothing was published. Visitors see it only after a publish, which they ask for separately.

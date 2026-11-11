@@ -14,6 +14,7 @@ export const NO_BRANCHES: BranchOpsDeps = {
     siteBranchContext: async (_scope, siteId) => ({ kind: 'main', siteId, openBranches: 0 }),
     listBranches: unused,
     createBranch: unused,
+    getBranch: unused,
     setBranchReady: unused,
     discardBranch: unused,
   },
