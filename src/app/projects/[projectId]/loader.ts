@@ -67,6 +67,8 @@ export type ProjectLoadResult =
       site: SiteAddress;
       /** Main or a branch, when site branches are on for the company; null otherwise. */
       branch: EditorBranchState | null;
+      /** Main's snapshot, for a branch's review (asked for with `withMain`); read under the same scope. */
+      main?: { snapshot: ProjectSnapshotOut; version: number };
     };
 
 /**
@@ -117,6 +119,7 @@ function chooserUrlFor(
 export async function loadProjectSnapshot(
   projectId: string,
   returnPathSuffix = '',
+  options: { withMain?: boolean } = {},
 ): Promise<ProjectLoadResult> {
   const jar = await cookies();
   const cookie = jar.get(SESSION_COOKIE)?.value;
@@ -164,6 +167,13 @@ export async function loadProjectSnapshot(
     const branch = await editorBranchState(scopeResult.scope, scopeResult.companyId, projectId);
     // A branch while site branches are off for the company: hidden, so a plain 404.
     if (branch === 'hidden') return { status: 'not_found' };
+    if (options.withMain && branch?.kind === 'branch') {
+      const mainLoaded = await repo.loadProjectWithVersion(scopeResult.scope, branch.mainSiteId);
+      return {
+        status: 'ok', snapshot, version, site: { host, everPublished }, branch,
+        main: { snapshot: getSnapshot(mainLoaded.project) as ProjectSnapshotOut, version: mainLoaded.version },
+      };
+    }
     return { status: 'ok', snapshot, version, site: { host, everPublished }, branch };
   } catch (err) {
     if (err instanceof SiteNotFoundError) {

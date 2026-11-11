@@ -71,6 +71,7 @@ export const HOST_ROUTES: readonly HostRoute[] = [
   { route: '/projects', why: 'the editor dashboard' },
   { route: '/projects/[projectId]', why: 'the editor' },
   { route: '/projects/[projectId]/preview', why: 'the editor preview' },
+  { route: '/projects/[projectId]/review', why: 'site branches: the review of a branch' },
   {
     route: '/projects/[projectId]/confirm/[approvalId]',
     why: 'a person approves an agent publish or rollback (src/server/mcp/approvals.ts); signed-in editor only, never framed',

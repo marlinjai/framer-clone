@@ -5,6 +5,7 @@
 // (`branch_name_taken`, `branch_review_stale`, `branch_conflicts`, `branch_closed`, ...). Client-safe.
 
 import type { DocumentChanges } from '@/lib/siteMerge/diff';
+import type { DocumentReview } from '@/lib/siteMerge/elementChanges';
 import type { BranchSummaryJson } from './branches';
 
 export class BranchApiError extends Error {
@@ -55,15 +56,31 @@ export interface BranchListJson {
 
 /** The review, as `GET .../branch/changes` answers it (BranchReview in src/server/sites/branches/merge.ts). */
 export type DocumentChangesJson = DocumentChanges;
+/** A conflict as the review shows it (ShownConflict in merge.ts): its values capped at 4,096 characters. */
+export interface ShownConflictJson {
+  id: string;
+  kind: string;
+  unit: { kind: string; id: string };
+  path: string[];
+  fingerprint: string;
+  base?: unknown;
+  main?: unknown;
+  branch?: unknown;
+}
+
+export type MergeSideJson = 'main' | 'branch';
+
 export interface BranchReviewJson {
   branch: BranchSummaryJson;
   token: string;
   upToDate: boolean;
   branchChanges: DocumentChangesJson;
   mainChanges: DocumentChangesJson | null;
-  conflicts: Array<{ id: string; kind: string; unit: { kind: string; id: string }; path: string[]; fingerprint: string }>;
-  settled: Array<{ id: string; pick: 'main' | 'branch' }>;
-  problems: Array<{ code: string; message: string }>;
+  conflicts: ShownConflictJson[];
+  settled: Array<{ id: string; pick: MergeSideJson; conflict?: ShownConflictJson }>;
+  problems: Array<{ code: string; message: string; pageId?: string; componentId?: string }>;
+  /** The change list: what the branch changes, per page and element (S5). Absent from an older server. */
+  review?: DocumentReview;
 }
 
 export const branchClient = {
@@ -77,6 +94,13 @@ export const branchClient = {
   get: (mainId: string, branchId: string) => call<{ branch: BranchSummaryJson }>('GET', `${site(mainId)}/branches/${encodeURIComponent(branchId)}`),
   changes: (branchId: string) => call<BranchReviewJson>('GET', `${site(branchId)}/branch/changes`),
   update: (branchId: string, token: string) =>
+    call<{ updated: boolean; branch: BranchSummaryJson; token: string }>('POST', `${site(branchId)}/branch/update`, { token }),
+  answers: (branchId: string, token: string, resolutions: Record<string, { fingerprint: string; pick: MergeSideJson }>) =>
+    call<BranchReviewJson>('POST', `${site(branchId)}/branch/answers`, { token, resolutions }),
+  approve: (branchId: string, token: string) => call<{ branch: BranchSummaryJson }>('POST', `${site(branchId)}/branch/approve`, { token }),
+  sendBack: (branchId: string, token: string, note: string) =>
+    call<{ branch: BranchSummaryJson }>('POST', `${site(branchId)}/branch/send-back`, { token, note }),
+  updateWith: (branchId: string, token: string) =>
     call<{ updated: boolean; branch: BranchSummaryJson; token: string }>('POST', `${site(branchId)}/branch/update`, { token }),
   merge: (branchId: string, token: string) =>
     call<{ merged: boolean; branch: BranchSummaryJson; mainVersion: number }>('POST', `${site(branchId)}/branch/merge`, { token }),
