@@ -311,8 +311,8 @@ describe('the panel', () => {
     const panel = await screen.findByRole('dialog', { name: 'Pearl necklace' });
     fireEvent.click(within(panel).getByRole('button', { name: 'Remove the value 52' }));
     fireEvent.change(within(panel).getAllByRole('textbox', { name: 'Value of Size' })[0], { target: { value: '54 mm' } });
-    expect(within(panel).getByText(/Saving removes 1 variant/)).toBeTruthy();
-    fireEvent.click(within(panel).getByRole('button', { name: 'Save options (1 variant)' }));
+    expect(await within(panel).findByText(/Saving removes 1 variant/)).toBeTruthy();
+    fireEvent.click(await within(panel).findByRole('button', { name: 'Save options (1 variant)' }));
     await waitFor(() => expect(within(screen.getByRole('dialog')).getByText('54 mm')).toBeTruthy());
     expect(calls.find((c) => c.method === 'PUT')!.body).toEqual({ options: [{ id: 'o1', title: 'Size', values: [{ id: 'b', value: '54 mm' }] }] });
     // The kept variant shows its stored figures.
