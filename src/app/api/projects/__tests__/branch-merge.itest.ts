@@ -602,6 +602,35 @@ describe('isolation', () => {
 });
 
 describe('the erase of personal data and a merge', () => {
+  it('after an erase the review sends no trace of the value: not in the list, the questions or the answered ones', async () => {
+    const VALUE = 'Petra Probe';
+    const branchId = await createBranch(us, 'Values');
+    await edit(us, branchId, { home: `Branch: ${VALUE}`, about: `About ${VALUE}` });
+    await edit(us, us.mainId, { home: `Main: ${VALUE}`, about: `Main about ${VALUE}` });
+    const seen = await review(branchId);
+    // Before: the change list and the questions carry the values (that is what a reviewer reads).
+    expect(JSON.stringify(seen.review)).toContain(VALUE);
+    const [one] = seen.conflicts;
+    expect((await answers(branchId, { token: seen.token, resolutions: { [one.id]: { fingerprint: one.fingerprint, pick: 'branch' } } })).status).toBe(200);
+    expect(JSON.stringify((await review(branchId)).settled)).toContain(VALUE);
+
+    const repo = getSiteRepository();
+    const query = { value: VALUE, caseSensitive: false };
+    const preview = await repo.searchPersonalData(us.scope, us.mainId, query);
+    await repo.erasePersonalData(us.scope, us.mainId, {
+      query,
+      replacement: '[entfernt]',
+      token: preview.token,
+      chosen: preview.matches.filter((m) => m.blocked === null).map((m) => m.id),
+      erasedBy: 'u',
+    });
+    expect((await repo.searchPersonalData(us.scope, us.mainId, query)).total).toBe(0);
+    const after = await review(branchId);
+    expect(JSON.stringify(after)).not.toContain(VALUE);
+    const stored = JSON.stringify(await prisma.siteBranch.findMany({ where: { siteId: us.mainId } }));
+    expect(stored).not.toContain(VALUE);
+  });
+
   it('an erase of only main’s matches leaves the branch behind main, and the merge keeps main erased', async () => {
     const VALUE = 'Erika Muster';
     // Main and the branch's fork point hold the value; the branch changes another page only.

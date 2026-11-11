@@ -261,7 +261,8 @@ describe('a branch behind main', () => {
     expect(client.update).not.toHaveBeenCalled();
     // The way on: each conflict is answered in the review.
     fireEvent.click(screen.getByRole('button', { name: 'Answer in the review' }));
-    expect(leave.openReview).toHaveBeenCalledWith(BRANCH);
+    await waitFor(() => expect(leave.openReview).toHaveBeenCalledWith(BRANCH));
+    expect(leave.savedBeforeLeaving).toHaveBeenCalledWith(BRANCH);
   });
 });
 

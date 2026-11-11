@@ -28,32 +28,86 @@ export const REVIEW_FRAME_WIDTH = 1280;
 
 const useBeforePaint = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
-/** Copy the document's stylesheets into a shadow root, and keep copying the ones added later (development). */
-function mirrorStyles(root: ShadowRoot): () => void {
+const isSheet = (node: Node) =>
+  node.nodeName === 'STYLE' || (node.nodeName === 'LINK' && (node as HTMLLinkElement).rel === 'stylesheet');
+
+/** The font sheets the panes raise into the document: not copied back into a pane (a face there is ignored). */
+const HOISTED = new WeakSet<Node>();
+
+/**
+ * Copy the document's stylesheets into a shadow root ahead of `before` (the pane's own content), in the document's
+ * order, so the app's reset and utilities come first and the page's own sheets, inside `before`, after them as
+ * they do in the preview. A sheet added later is copied into its place, one removed is removed, and one whose text
+ * or address changes (development replaces sheets in place) is copied again.
+ */
+function mirrorStyles(root: ShadowRoot, before: Node): () => void {
   const copies = new Map<Node, Node>();
-  const copy = (node: Node) => {
-    if (copies.has(node)) return;
-    const el = node as Element;
-    const isSheet = el.nodeName === 'STYLE' || (el.nodeName === 'LINK' && (el as HTMLLinkElement).rel === 'stylesheet');
-    if (!isSheet) return;
-    const clone = el.cloneNode(true);
-    copies.set(node, clone);
-    root.insertBefore(clone, root.firstChild?.nextSibling ?? null);
+  const place = (node: Node, clone: Node) => {
+    // Before the copy of the next sheet in the document, so the order holds for a sheet added in between.
+    let next: Node | null = node.nextSibling;
+    while (next && !copies.has(next)) next = next.nextSibling;
+    root.insertBefore(clone, next ? copies.get(next)! : before);
   };
-  document.head.querySelectorAll('style, link[rel="stylesheet"]').forEach(copy);
+  const copy = (node: Node) => {
+    if (copies.has(node) || !isSheet(node) || HOISTED.has(node)) return;
+    const clone = node.cloneNode(true);
+    copies.set(node, clone);
+    place(node, clone);
+  };
+  const recopy = (node: Node) => {
+    const old = copies.get(node);
+    if (!old) return;
+    const clone = node.cloneNode(true);
+    copies.set(node, clone);
+    old.parentNode?.replaceChild(clone, old);
+  };
+  // In reverse, so each one finds the copy of the sheet after it already in place.
+  Array.from(document.head.childNodes).reverse().forEach(copy);
   const watcher = new MutationObserver((records) => {
     for (const r of records) {
-      r.addedNodes.forEach(copy);
-      r.removedNodes.forEach((n) => {
-        copies.get(n)?.parentNode?.removeChild(copies.get(n)!);
-        copies.delete(n);
-      });
+      if (r.target === document.head && r.type === 'childList') {
+        r.addedNodes.forEach(copy);
+        r.removedNodes.forEach((n) => {
+          const clone = copies.get(n);
+          clone?.parentNode?.removeChild(clone);
+          copies.delete(n);
+        });
+        continue;
+      }
+      // A change inside a sheet (its text) or to a sheet (its address).
+      let sheet: Node | null = r.target;
+      while (sheet && sheet.parentNode !== document.head) sheet = sheet.parentNode;
+      if (sheet) recopy(sheet);
     }
   });
-  watcher.observe(document.head, { childList: true });
+  watcher.observe(document.head, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['href', 'media', 'disabled'] });
   return () => {
     watcher.disconnect();
     copies.forEach((c) => c.parentNode?.removeChild(c));
+  };
+}
+
+/**
+ * The page's `@font-face` rules, raised into the document: Chromium does not take a face declared inside a shadow
+ * root, so the pane would fall back and hide a font change. Faces come only from the font registry, the same text
+ * for the same family, so the two panes' copies cannot conflict.
+ */
+function hoistFontFaces(container: HTMLElement, side: string): () => void {
+  const sheet = document.createElement('style');
+  // Named, so a person (or the browser proof) can tell it from the app's own sheets.
+  sheet.id = `review-fonts-${side}`;
+  HOISTED.add(sheet);
+  document.head.appendChild(sheet);
+  const sync = () => {
+    const text = Array.from(container.querySelectorAll('style[data-fc-fonts]'), (el) => el.textContent ?? '').join('');
+    if (sheet.textContent !== text) sheet.textContent = text;
+  };
+  sync();
+  const watcher = new MutationObserver(sync);
+  watcher.observe(container, { childList: true, subtree: true, characterData: true });
+  return () => {
+    watcher.disconnect();
+    sheet.remove();
   };
 }
 
@@ -69,13 +123,12 @@ export interface ReviewPaneProps {
   outlines: string;
   /** An element to bring into view. */
   focusId: string | null;
-  height: number;
 }
 
-export const ReviewPane = observer(function ReviewPane({ side, title, page, site, emptyText, outlines, focusId, height }: ReviewPaneProps) {
+export const ReviewPane = observer(function ReviewPane({ side, title, page, site, emptyText, outlines, focusId }: ReviewPaneProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [mount, setMount] = useState<HTMLDivElement | null>(null);
-  const [scale, setScale] = useState(0.5);
+  const [box, setBox] = useState({ scale: 0.5, height: 560 });
 
   useBeforePaint(() => {
     const host = hostRef.current;
@@ -83,10 +136,19 @@ export const ReviewPane = observer(function ReviewPane({ side, title, page, site
     const root = host.shadowRoot ?? host.attachShadow({ mode: 'open' });
     const container = document.createElement('div');
     root.appendChild(container);
-    const stop = mirrorStyles(root);
+    // A picture, not a page to use: a link never takes the review away, a form never sends.
+    const stopLink = (e: Event) => {
+      if ((e.target as Element | null)?.closest?.('a[href], area[href]')) e.preventDefault();
+    };
+    const stopSubmit = (e: Event) => e.preventDefault();
+    container.addEventListener('click', stopLink, true);
+    container.addEventListener('submit', stopSubmit, true);
+    const stop = mirrorStyles(root, container);
+    const stopFonts = hoistFontFaces(container, side);
     setMount(container);
     return () => {
       stop();
+      stopFonts();
       container.remove();
       setMount(null);
     };
@@ -95,7 +157,11 @@ export const ReviewPane = observer(function ReviewPane({ side, title, page, site
   useBeforePaint(() => {
     const host = hostRef.current;
     if (!host) return;
-    const measure = () => setScale(Math.max(0.1, host.clientWidth / REVIEW_FRAME_WIDTH));
+    // The page at desktop width, scaled to the pane's width; the frame as tall as the pane at that scale.
+    const measure = () => {
+      const scale = Math.max(0.1, host.clientWidth / REVIEW_FRAME_WIDTH);
+      setBox({ scale, height: Math.max(120, host.clientHeight) });
+    };
     measure();
     const watcher = new ResizeObserver(measure);
     watcher.observe(host);
@@ -109,16 +175,16 @@ export const ReviewPane = observer(function ReviewPane({ side, title, page, site
     el?.scrollIntoView({ block: 'center', inline: 'nearest' });
   }, [mount, focusId, page]);
 
-  const frameHeight = Math.round(height / scale);
+  const { scale } = box;
+  const frameHeight = Math.round(box.height / scale);
 
   return (
-    <section className="flex min-w-0 flex-1 flex-col gap-1" aria-label={title}>
+    <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-1" aria-label={title}>
       <h3 className="truncate text-xs font-medium text-muted-foreground">{title}</h3>
       <div
         ref={hostRef}
         data-review-side={side}
-        className="relative overflow-hidden rounded-md border border-border bg-muted"
-        style={{ height }}
+        className="relative min-h-[120px] flex-1 overflow-hidden rounded-md border border-border bg-muted"
       />
       {mount
         ? createPortal(

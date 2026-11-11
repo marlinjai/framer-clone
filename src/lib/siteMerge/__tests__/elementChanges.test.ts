@@ -53,6 +53,14 @@ describe('elementChanges', () => {
     expect(changes.find((c) => c.id === 'a')).toEqual({ id: 'a', kind: 'moved', type: 'div', label: 'y', fields: [{ field: 'props.children', before: 'x', after: 'y' }] });
   });
 
+  it('leaves out where a frame sits on the canvas, and lists its width', () => {
+    const frame = (x: number, width: string) => ({ appComponentTree: node('root'), canvasNodes: { v1: { id: 'v1', type: 'div', canvasX: x, canvasY: 0, canvasZIndex: 1, props: { style: { width } } } } });
+    expect(elementChanges(frame(100, '1280px'), frame(900, '1280px'))).toEqual([]);
+    expect(elementChanges(frame(100, '1280px'), frame(900, '1440px'))).toEqual([
+      expect.objectContaining({ id: 'v1', kind: 'changed', fields: [{ field: 'props.style.width', before: '1280px', after: '1440px' }] }),
+    ]);
+  });
+
   it('nothing for the same tree', () => {
     const same = tree([node('a', { children: 'x' }, [node('b')])]);
     expect(elementChanges(same, JSON.parse(JSON.stringify(same)))).toEqual([]);

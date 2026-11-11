@@ -127,6 +127,53 @@ for (const [engine, type] of ENGINES) {
       await page.close();
     });
 
+    it('draws a changed component in both panes, keeps the app sheets ahead of the page sheets, declares the fonts, and goes nowhere on a link', async () => {
+      const main = siteSnapshot({ id: 'site-main', texts: ['Same'], ground: '#ffffff', card: 'Old card' });
+      const branch = siteSnapshot({ id: 'site-branch', texts: ['Same'], ground: '#ffffff', card: 'New card', font: 'Fraunces', link: 'https://elsewhere.example/' });
+      const left: string[] = [];
+      const { page, crashes } = await open(propsOf(main, branch), async (p) => {
+        await p.route('**/api/projects/site-branch/branch/changes', (route) => json(route, reviewOf(main, branch)));
+        await p.route('https://elsewhere.example/**', (route) => {
+          left.push(route.request().url());
+          return route.fulfill({ status: 200, contentType: 'text/html', body: 'left' });
+        });
+      });
+      await page.getByText(/^1 page, 1 component/).waitFor();
+      // The page first: the app's sheets come before the pane's content, in the document's order.
+      const order = await page.evaluate(() => {
+        const root = document.querySelector('[data-review-side="branch"]')?.shadowRoot;
+        const kids = Array.from(root?.childNodes ?? []);
+        const container = kids.findIndex((n) => n.nodeName === 'DIV');
+        // The document's sheets, less the panes' own font sheets raised into it: those are not copied back.
+        const head = Array.from(document.head.querySelectorAll('style, link[rel="stylesheet"]'))
+          .filter((n) => !n.id.startsWith('review-fonts-'))
+          .map((n) => n.textContent ?? '');
+        const copied = kids.slice(0, container).map((n) => n.textContent ?? '');
+        const frame = root?.querySelector<HTMLElement>('[data-preview-frame]');
+        return { last: container === kids.length - 1, sameOrder: head.length > 0 && JSON.stringify(head) === JSON.stringify(copied), overflow: frame ? getComputedStyle(frame).overflowY : null };
+      });
+      // `overflow-auto` is an app utility: it styles the frame only when the app's sheet reached the pane.
+      expect(order).toEqual({ last: true, sameOrder: true, overflow: 'auto' });
+      // The font's faces live in the document, where every engine takes them.
+      await expect.poll(() => page.evaluate(() => document.getElementById('review-fonts-branch')?.textContent?.includes("font-family:'Fraunces'"))).toBe(true);
+      // A link in the picture goes nowhere.
+      await page.evaluate(() => {
+        document.querySelector('[data-review-side="branch"]')?.shadowRoot?.querySelector<HTMLAnchorElement>('a[href]')?.click();
+      });
+      await page.waitForTimeout(300);
+      expect(left).toEqual([]);
+      expect(page.url()).toBe('http://canvas-probe.local/');
+      // The component on its own page, in both panes, with its change outlined.
+      await tabTo(page, /^Component Card/);
+      await page.keyboard.press('Enter');
+      await page.getByText(/The component “Card” on its own/).waitFor();
+      await expect.poll(() => paneState(page, 'branch', ['card-text'])).toMatchObject({ outlines: { 'card-text': 'rgb(217, 119, 6)' } });
+      expect(await paneState(page, 'main', ['card-text'])).toMatchObject({ outlines: { 'card-text': 'rgb(217, 119, 6)' } });
+      expect(await page.evaluate(() => document.querySelector('[data-review-side="main"]')?.shadowRoot?.textContent?.includes('Old card'))).toBe(true);
+      expect(crashes).toEqual([]);
+      await page.close();
+    });
+
     it('answers a question with the keyboard, stores it, updates the branch and merges', async () => {
       const main = siteSnapshot({ id: 'site-main', texts: ['Main title'], ground: '#ffffff' });
       const branch = siteSnapshot({ id: 'site-branch', texts: ['Branch title'], ground: '#ffffff' });

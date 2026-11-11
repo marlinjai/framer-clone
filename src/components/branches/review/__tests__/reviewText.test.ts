@@ -47,7 +47,8 @@ describe('outlineSheet and escapeId', () => {
     expect(sheet).not.toContain('a"b');
     expect(sheet).toContain('"gone"');
     expect(outlineSheet(unit, 'branch', null, escapeId)).not.toContain('gone');
-    expect(outlineSheet({ ...unit, unit: 'component' }, 'branch', null, escapeId)).toBe('');
+    expect(outlineSheet({ ...unit, unit: 'component' }, 'branch', null, escapeId)).toContain('outline');
+    expect(outlineSheet(undefined, 'branch', null, escapeId)).toBe('');
   });
   it('counts the totals from the list', () => {
     expect(totalsText({ site: [{ field: 'name', before: 'a', after: 'b' }], settings: [], pageOrder: false, units: [unit] })).toBe('1 page, 2 elements, 1 site setting changed');

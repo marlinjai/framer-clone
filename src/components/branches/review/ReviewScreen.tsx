@@ -46,6 +46,13 @@ function drawingCopy(snapshot: ProjectSnapshotOut): ProjectModelType {
   return ProjectModel.create(snapshot);
 }
 
+/** The page a pane draws for a unit: the page itself, or a component's own page. */
+function drawnPage(model: ProjectModelType, unit: UnitReview | undefined) {
+  if (!unit) return undefined;
+  if (unit.unit === 'page') return model.getPage(unit.id);
+  return model.components.get(unit.id)?.page as ReturnType<ProjectModelType['getPage']>;
+}
+
 type Loaded = { kind: 'loading' } | { kind: 'failed'; message: string } | { kind: 'ok'; review: BranchReviewJson };
 
 export function ReviewScreen({ branchId, branchName, mainSiteId, mainName, branch, main, can }: ReviewScreenProps) {
@@ -59,6 +66,7 @@ export function ReviewScreen({ branchId, branchName, mainSiteId, mainName, branc
   const [unitId, setUnitId] = useState<string | null>(null);
   const [focusId, setFocusId] = useState<string | null>(null);
   const reloadedFor = useRef<string | null>(null);
+  const lastToken = useRef<string | null>(null);
   const queue = useRef<Promise<unknown>>(Promise.resolve());
 
   const branchModel = useMemo(() => drawingCopy(branch.snapshot), [branch.snapshot]);
@@ -67,14 +75,15 @@ export function ReviewScreen({ branchId, branchName, mainSiteId, mainName, branc
   const show = useCallback(
     (review: BranchReviewJson) => {
       setLoaded({ kind: 'ok', review });
-      // The pictures are of older reads than the data: reload them (once per pair of versions).
+      // The pictures are of older reads than the data: reload them, once per state. A version moves with every
+      // write and every erase of personal data; the token also moves with a rename, which writes no version.
       const v = review.versions;
-      if (v && (v.main !== main.version || v.branch !== branch.version)) {
-        const key = `${v.main}:${v.branch}`;
-        if (reloadedFor.current !== key) {
-          reloadedFor.current = key;
-          router.refresh();
-        }
+      const older = v !== undefined && (v.main !== main.version || v.branch !== branch.version);
+      const moved = lastToken.current !== null && lastToken.current !== review.token;
+      lastToken.current = review.token;
+      if ((older || moved) && reloadedFor.current !== review.token) {
+        reloadedFor.current = review.token;
+        router.refresh();
       }
     },
     [router, main.version, branch.version],
@@ -111,7 +120,7 @@ export function ReviewScreen({ branchId, branchName, mainSiteId, mainName, branc
 
   const review = loaded.kind === 'ok' ? loaded.review : null;
   const units = review?.review?.units ?? [];
-  const unit: UnitReview | undefined = units.find((u) => u.id === unitId) ?? units.find((u) => u.unit === 'page');
+  const unit: UnitReview | undefined = units.find((u) => u.id === unitId) ?? units[0];
 
   /** A refusal because the state moved: read again and say so. */
   const stale = (err: unknown) => {
@@ -204,8 +213,8 @@ export function ReviewScreen({ branchId, branchName, mainSiteId, mainName, branc
   const reviewOff = can?.review === false ? 'You may not review branches of this site.' : undefined;
   const allConflicts = review ? [...review.conflicts.map((c) => ({ c, pick: null as MergeSideJson | null })), ...review.settled.filter((s) => s.conflict).map((s) => ({ c: s.conflict!, pick: s.pick }))] : [];
   const openCount = review?.conflicts.length ?? 0;
-  const mainPage = unit?.unit === 'page' ? mainModel.getPage(unit.id) : undefined;
-  const branchPage = unit?.unit === 'page' ? branchModel.getPage(unit.id) : undefined;
+  const mainPage = drawnPage(mainModel, unit);
+  const branchPage = drawnPage(branchModel, unit);
   const status = review?.branch;
 
   return (
@@ -412,9 +421,7 @@ export function ReviewScreen({ branchId, branchName, mainSiteId, mainName, branc
 
         <div className="flex min-w-0 flex-1 flex-col gap-2 overflow-hidden p-3">
           {unit?.unit === 'component' ? (
-            <p className="text-sm text-muted-foreground">
-              A component’s changes are listed on the left. They show on every page that places it; the pages here outline page elements only.
-            </p>
+            <p className="text-xs text-muted-foreground">The component “{unit.title}” on its own; every page that places it shows the same change.</p>
           ) : null}
           {review && !review.upToDate ? (
             <p className="text-xs text-muted-foreground">
@@ -427,20 +434,18 @@ export function ReviewScreen({ branchId, branchName, mainSiteId, mainName, branc
               title={`${mainName} (main)`}
               page={mainPage}
               site={mainModel.site}
-              emptyText={unit?.change === 'added' ? 'This page is new on the branch.' : 'Pick a page on the left.'}
+              emptyText={unit?.change === 'added' ? `This ${unit.unit} is new on the branch.` : 'Pick a page on the left.'}
               outlines={outlineSheet(unit, 'main', focusId, escapeId)}
               focusId={focusId}
-              height={560}
             />
             <ReviewPane
               side="branch"
               title={`${branchName} (branch)`}
               page={branchPage}
               site={branchModel.site}
-              emptyText={unit?.change === 'removed' ? 'The branch removes this page.' : 'Pick a page on the left.'}
+              emptyText={unit?.change === 'removed' ? `The branch removes this ${unit.unit}.` : 'Pick a page on the left.'}
               outlines={outlineSheet(unit, 'branch', focusId, escapeId)}
               focusId={focusId}
-              height={560}
             />
           </div>
         </div>

@@ -249,6 +249,20 @@ describe('resume and re-entry', () => {
     expect(router.refresh).not.toHaveBeenCalled();
   });
 
+  it('a rename moves only the token: the pictures reload once, and not again for the same state', async () => {
+    client.changes.mockResolvedValueOnce(review()).mockResolvedValue(review({ token: 'tok-renamed' }));
+    open();
+    await screen.findByText(/elements changed/);
+    expect(router.refresh).not.toHaveBeenCalled();
+    for (let i = 0; i < 2; i += 1) {
+      await act(async () => {
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+    }
+    await waitFor(() => expect(client.changes).toHaveBeenCalledTimes(3));
+    expect(router.refresh).toHaveBeenCalledTimes(1);
+  });
+
   it('an edit after approval withdraws it: the next read says so and offers Looks good again', async () => {
     client.changes.mockResolvedValueOnce(review({ branch: summary({ approved: true }) })).mockResolvedValue(review({ token: 'tok-2', branch: summary({ approved: false }), versions: { main: 8, branch: 4 } }));
     open();

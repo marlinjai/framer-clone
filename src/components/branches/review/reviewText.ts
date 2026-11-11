@@ -93,11 +93,11 @@ export const KIND_TEXT: Record<ElementChangeKind, string> = { added: 'Added', re
 export const KIND_COLOR: Record<ElementChangeKind, string> = { added: '#16a34a', removed: '#dc2626', moved: '#2563eb', changed: '#d97706' };
 
 /**
- * One pane's outline sheet: each listed element of the page drawn there outlined in the colour of its change, the
+ * One pane's outline sheet: each listed element of the page (or component) drawn there outlined in the colour of its change, the
  * selected one thicker. Ids are escaped; an id the pane does not draw (main moved since the fork) matches nothing.
  */
 export function outlineSheet(unit: UnitReview | undefined, side: 'main' | 'branch', selected: string | null, escape: (id: string) => string): string {
-  if (!unit || unit.unit !== 'page') return '';
+  if (!unit) return '';
   const rules: string[] = [];
   for (const e of unit.elements) {
     const shown = side === 'branch' ? e.kind !== 'removed' : e.kind !== 'added';

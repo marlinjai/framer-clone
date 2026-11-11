@@ -13,9 +13,19 @@ export interface SiteSpec {
   id: string;
   texts: string[];
   ground: string;
+  /** The text of a reusable component "Card", when the site has one. */
+  card?: string;
+  /** A font for the first text (a family of the font library). */
+  font?: string;
+  /** A link to another site after the texts. */
+  link?: string;
 }
 
-export function siteSnapshot({ id, texts, ground }: SiteSpec): Record<string, unknown> {
+export function siteSnapshot({ id, texts, ground, card, font, link }: SiteSpec): Record<string, unknown> {
+  const children: Record<string, unknown>[] = texts.map((text, i) => ({
+    id: `el-${i}`, type: 'p', componentType: 'host', props: { children: text, ...(i === 0 && font ? { style: { fontFamily: `'${font}', serif` } } : {}) }, children: [],
+  }));
+  if (link) children.push({ id: 'el-link', type: 'a', componentType: 'host', props: { href: link, children: 'Elsewhere' }, children: [] });
   return {
     id,
     metadata: { title: 'Bakery' },
@@ -32,11 +42,25 @@ export function siteSnapshot({ id, texts, ground }: SiteSpec): Record<string, un
           type: 'div',
           componentType: 'host',
           props: {},
-          children: texts.map((text, i) => ({ id: `el-${i}`, type: 'p', componentType: 'host', props: { children: text }, children: [] })),
+          children,
         },
         canvasNodes: defaultViewportSnapshots(BREAKPOINTS),
       },
     },
+    ...(card === undefined
+      ? {}
+      : {
+          components: {
+            card: {
+              id: 'card', name: 'Card', inputs: [], states: [],
+              page: {
+                id: 'page-card', metadata: { title: 'Card' },
+                appComponentTree: { id: 'card-root', type: 'div', componentType: 'host', props: {}, children: [{ id: 'card-text', type: 'p', componentType: 'host', props: { children: card }, children: [] }] },
+                canvasNodes: defaultViewportSnapshots(BREAKPOINTS),
+              },
+            },
+          },
+        }),
   };
 }
 
@@ -46,7 +70,7 @@ function mergeDocument(snapshot: Record<string, unknown>): MergeDocument {
     name: 'Bakery', description: '', analyticsProjectId: null, ingestionEndpoint: null, apiKeyRef: null, lumitraEnabled: false, redirects: [],
     siteSettings: snapshot.siteSettings as Record<string, unknown>,
     pages: pages.map((p) => ({ pageId: p.id as string, slug: p.slug as string, snapshot: p })),
-    components: {},
+    components: (snapshot.components as Record<string, unknown> | undefined) ?? {},
   };
 }
 

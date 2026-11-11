@@ -73,8 +73,11 @@ export interface DocumentReview {
   pageOrder: boolean;
 }
 
-/** Fields an element's own record holds that are not content: never listed as a change. */
-const ELEMENT_IGNORED = new Set(['id']);
+/**
+ * Fields an element's own record holds that are not the site: its id, and where a frame or a floating element sits
+ * on the editor's canvas, which no visitor ever sees. Dragging a frame aside is not a change to review; its width is.
+ */
+const ELEMENT_IGNORED = new Set(['id', 'canvasX', 'canvasY', 'canvasScale', 'canvasRotation', 'canvasZIndex', 'canvasVisible', 'canvasLocked']);
 /** A props key whose value is an object is compared per key, one level down (`props.style.color`). */
 const NESTED = new Set(['props', 'style', 'bindings']);
 

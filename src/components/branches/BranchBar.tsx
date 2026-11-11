@@ -85,7 +85,15 @@ export function MainChangedNote({ className = '' }: { className?: string }) {
     <div role="status" className={`flex shrink-0 items-center gap-2 text-xs ${className}`}>
       <span className="text-muted-foreground max-xl:hidden">{message ?? `${mainName} has changed`}</span>
       {conflicts ? (
-        <Button size="sm" variant="outline" onClick={() => openReview(siteId)}>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={async () => {
+            // Leaving saves first (decision 48).
+            if (await savedBeforeLeaving(siteId)) openReview(siteId);
+            else setMessage('This tab’s changes are not saved yet. The save status says why.');
+          }}
+        >
           Answer in the review
         </Button>
       ) : null}
