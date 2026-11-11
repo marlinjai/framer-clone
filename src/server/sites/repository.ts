@@ -1199,7 +1199,7 @@ export class SiteRepository {
           live: revision.id === site.publishedRevisionId,
         });
       }
-      for (const source of await this.branchEraseSources(tx, scope, siteId)) {
+      for await (const source of this.branchEraseSources(tx, scope, siteId)) {
         record(findMatches(source.document, source.location, matcher), {
           location: source.location,
           createdAt: null,
@@ -1329,7 +1329,7 @@ export class SiteRepository {
 
       // Every copy the site's branches keep, in the same transaction: otherwise a merge could bring an erased
       // value back into main (plan docs/plans/2026-11-10-site-branches.md, section 7).
-      for (const source of await this.branchEraseSources(tx, scope, siteId)) {
+      for await (const source of this.branchEraseSources(tx, scope, siteId)) {
         found.push(...findMatches(source.document, source.location, matcher));
         const rewrite = rewriteDocument(source.document, source.location, matcher, replacement, chosen);
         remaining += findMatches(rewrite.document, source.location, matcher).length;
@@ -1411,13 +1411,14 @@ export class SiteRepository {
    * working copy with its record's name and review note, each closed branch's record text, every fork point and
    * every kept pre-merge copy. Ordered by branch id, so a search and the erase after it list them alike.
    */
-  private async branchEraseSources(tx: Prisma.TransactionClient, scope: TenantScope, siteId: string): Promise<BranchEraseSource[]> {
-    const records = await tx.siteBranch.findMany({
+  private async *branchEraseSources(tx: Prisma.TransactionClient, scope: TenantScope, siteId: string): AsyncGenerator<BranchEraseSource> {
+    // Only the ids up front: each record's documents are loaded when its turn comes and released after it, so ten
+    // large branches never sit in memory together.
+    const ids = await tx.siteBranch.findMany({
       where: { siteId, workspaceId: scope.workspaceId },
       orderBy: { id: 'asc' },
-      select: { id: true, name: true, status: true, branchSiteId: true, reviewNote: true, baseDocument: true, mainBeforeDocument: true },
+      select: { id: true },
     });
-    const sources: BranchEraseSource[] = [];
     // A rewritten name stays a valid branch name, unique among the open ones as the index compares them (a
     // number is added when the rewrite makes it equal another, checked in SQL): an erase never fails on the
     // name's own rules.
@@ -1427,13 +1428,18 @@ export class SiteRepository {
       if (record.status !== 'open' && record.status !== 'ready') return stem;
       return freeOpenName(client, siteId, stem, record.id);
     };
-    for (const record of records) {
+    for (const { id } of ids) {
+      const record = await tx.siteBranch.findFirst({
+        where: { id, siteId, workspaceId: scope.workspaceId },
+        select: { id: true, name: true, status: true, branchSiteId: true, reviewNote: true, baseDocument: true, mainBeforeDocument: true },
+      });
+      if (!record) continue;
       const label = { branchId: record.id, name: record.name, branchStatus: record.status };
       const content = record.branchSiteId
         ? await tx.site.findFirst({ where: { id: record.branchSiteId, workspaceId: scope.workspaceId }, select: WORKING_COPY_SELECT })
         : null;
       const branchSiteId = content ? record.branchSiteId : null;
-      sources.push({
+      yield {
         location: { kind: 'branch', ...label },
         document: { ...(content ? workingDocument(content) : {}), branchName: record.name, reviewNote: record.reviewNote ?? '' },
         revision: false,
@@ -1466,31 +1472,30 @@ export class SiteRepository {
             },
           });
         },
-      });
+      };
       if (record.baseDocument !== null) {
-        sources.push({
+        yield {
           location: { kind: 'branch-base', ...label },
           document: record.baseDocument,
           revision: true,
           branchSiteId: null,
           write: async (client, rewritten) => {
-            await client.siteBranch.update({ where: { id: record.id }, data: { baseDocument: rewritten as Prisma.InputJsonValue } });
+            await client.siteBranch.update({ where: { id: record.id }, data: { baseDocument: rewritten as Prisma.InputJsonValue } };
           },
         });
       }
       if (record.mainBeforeDocument !== null) {
-        sources.push({
+        yield {
           location: { kind: 'merge-undo', ...label },
           document: record.mainBeforeDocument,
           revision: true,
           branchSiteId: null,
           write: async (client, rewritten) => {
-            await client.siteBranch.update({ where: { id: record.id }, data: { mainBeforeDocument: rewritten as Prisma.InputJsonValue } });
+            await client.siteBranch.update({ where: { id: record.id }, data: { mainBeforeDocument: rewritten as Prisma.InputJsonValue } };
           },
         });
       }
     }
-    return sources;
   }
 
   /** The erasures of a site, newest first (the owner's audit list). */

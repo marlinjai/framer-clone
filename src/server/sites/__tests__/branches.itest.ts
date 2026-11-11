@@ -208,7 +208,8 @@ describe('forward: creating a branch', () => {
       expect(r.reason).toBeInstanceOf(BranchLimitError);
     }
     // A discarded one frees its place.
-    const first = (made[0] as PromiseFulfilledResult<Awaited<ReturnType<typeof create>>>).value.branch;
+    const won = made.find((m) => m.status === 'fulfilled') as PromiseFulfilledResult<Awaited<ReturnType<typeof create>>>;
+    const first = won.value.branch;
     await branches.discardBranch(scope, mainId, first.branchId, ALICE);
     await expect(create('One more')).resolves.toMatchObject({ created: true });
   });

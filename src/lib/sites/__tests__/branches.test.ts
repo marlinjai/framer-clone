@@ -1,7 +1,7 @@
 // The shared rules of a site branch (src/lib/sites/branches.ts) and the per-company switch
 // (src/server/sites/branches/switch.ts).
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { BRANCH_NAME_MAX_LENGTH, isOpenBranchStatus, validateBranchName } from '../branches';
 import { siteBranchesEnabled } from '@/server/sites/branches/switch';
 
@@ -25,7 +25,18 @@ describe('validateBranchName', () => {
 });
 
 describe('siteBranchesEnabled', () => {
+  // The default parameter reads the variable, so the unset case must really unset it.
+  const saved = process.env.SITE_BRANCHES_COMPANIES;
+  beforeEach(() => {
+    delete process.env.SITE_BRANCHES_COMPANIES;
+  });
+  afterEach(() => {
+    if (saved === undefined) delete process.env.SITE_BRANCHES_COMPANIES;
+    else process.env.SITE_BRANCHES_COMPANIES = saved;
+  });
+
   it('is off unless the variable names the company or says *', () => {
+    expect(siteBranchesEnabled('c1')).toBe(false);
     expect(siteBranchesEnabled('c1', undefined)).toBe(false);
     expect(siteBranchesEnabled('c1', '')).toBe(false);
     expect(siteBranchesEnabled('c1', 'c2, c3')).toBe(false);
