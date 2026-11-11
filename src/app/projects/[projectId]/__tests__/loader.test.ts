@@ -67,6 +67,10 @@ vi.mock('@/server/sites/branches/editorState', () => ({
   closedBranchNotice: (...args: unknown[]) => mockClosedBranchNotice(...(args as [])),
 }));
 
+// The review's permissions (S5): editSite, reviewBranch, mergeBranch on the workspace.
+const mockCheckAccess = vi.fn(async (...args: unknown[]): Promise<boolean> => args.length > 0);
+vi.mock('@/lib/auth-check', () => ({ checkWorkspaceAccess: (...args: unknown[]) => mockCheckAccess(...args) }));
+
 const mockCookieGet = vi.fn();
 const mockHeaderGet = vi.fn();
 vi.mock('next/headers', () => ({
@@ -119,6 +123,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockEditorBranchState.mockResolvedValue(null);
   mockClosedBranchNotice.mockResolvedValue(null);
+  mockCheckAccess.mockResolvedValue(true);
   setHeaders({ 'x-forwarded-proto': 'https', 'x-forwarded-host': 'app.lumitra.co' });
 });
 
@@ -471,5 +476,47 @@ describe('loadProjectSnapshot: site branches', () => {
     mockLoadProject.mockRejectedValue(new SiteNotFoundError('nope'));
 
     expect(await loadProjectSnapshot('nope')).toEqual({ status: 'not_found' });
+  });
+});
+
+describe('loadProjectSnapshot: the review of a branch (S5)', () => {
+  const onBranch = { kind: 'branch', siteId: 'branch-1', mainSiteId: 'site-a1', mainName: 'A One', branch: {} };
+  beforeEach(() => {
+    mockCookieGet.mockReturnValue({ value: 'sess_a' });
+    mockVerifySession.mockResolvedValue(sessionA());
+    mockLoadProject.mockImplementation(async (_scope: unknown, id: string) => projectNode(id));
+    mockEditorBranchState.mockResolvedValue(onBranch);
+  });
+
+  it('reads main under the same scope and says what the person may do', async () => {
+    mockCheckAccess.mockImplementation(async (_user: unknown, _ws: unknown, action: unknown) => action !== 'mergeBranch');
+    const result = await loadProjectSnapshot('branch-1', '/review', { withMain: true });
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') return;
+    expect(mockLoadProject).toHaveBeenCalledWith({ workspaceId: 'ws_a', tenantGroupId: 'tg_a' }, 'site-a1');
+    expect(result.main?.snapshot.id).toBe('site-a1');
+    expect(result.snapshot.id).toBe('branch-1');
+    expect(result.can).toEqual({ edit: true, review: true, merge: false });
+    expect(mockCheckAccess.mock.calls.map((c) => c.slice(0, 3))).toEqual([
+      ['user-a', 'ws_a', 'editSite'],
+      ['user-a', 'ws_a', 'reviewBranch'],
+      ['user-a', 'ws_a', 'mergeBranch'],
+    ]);
+  });
+
+  it('with the permission service down, says it could not tell (null), never a deny', async () => {
+    const { AuthzUnavailableError } = await import('@/lib/authBrainAvailability');
+    mockCheckAccess.mockRejectedValue(new AuthzUnavailableError(new Error('down')));
+    const result = await loadProjectSnapshot('branch-1', '/review', { withMain: true });
+    expect(result.status === 'ok' && result.can).toBeNull();
+  });
+
+  it('reads no main and checks nothing for the editor, or for main itself', async () => {
+    await loadProjectSnapshot('branch-1');
+    mockEditorBranchState.mockResolvedValue({ kind: 'main', siteId: 'site-a1', siteName: 'A One', openBranches: 1 });
+    const onMain = await loadProjectSnapshot('site-a1', '/review', { withMain: true });
+    expect(onMain.status === 'ok' && onMain.main).toBeUndefined();
+    expect(mockCheckAccess).not.toHaveBeenCalled();
+    expect(mockLoadProject).toHaveBeenCalledTimes(2);
   });
 });

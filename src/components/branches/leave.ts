@@ -18,6 +18,11 @@ export function openSite(siteId: string): void {
   window.location.assign(`/projects/${encodeURIComponent(siteId)}`);
 }
 
+/** Open a branch's review (slice S5). A full navigation, like opening a site. */
+export function openReview(branchId: string): void {
+  window.location.assign(`/projects/${encodeURIComponent(branchId)}/review`);
+}
+
 /**
  * Leave a branch that was just merged or discarded. Its working copy is given up first: the branch holds no
  * content any more, so a save on the way out (or an "unsaved changes" warning) would only meet 410.

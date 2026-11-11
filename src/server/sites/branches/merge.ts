@@ -36,6 +36,8 @@ import {
   type MergeSide,
 } from '@/lib/siteMerge';
 import { stableStringify } from '@/lib/ai/serializers/normalize';
+// A conflict value larger than 4,096 characters (as JSON) is shown as its size: a removed page is a whole page.
+import { reviewDocuments, shownValue, type DocumentReview } from '@/lib/siteMerge/elementChanges';
 import { getPrismaClient } from '@/server/db';
 import {
   BranchClosedError,
@@ -58,10 +60,10 @@ export const MAIN_BEFORE_KEPT_DAYS = 30;
 export const MERGE_DRAFT_MAX_ANSWERS = 2_000;
 /** A note sent back with a branch. */
 export const REVIEW_NOTE_MAX_LENGTH = 2_000;
-/** A conflict value larger than this (as JSON) is shown as its size, never sent whole: a removed page is a whole page. */
-const SHOWN_VALUE_MAX_CHARS = 4_096;
 
 const ID_MAX = 512;
+/** Answers stored at the same moment are retried this often before the review is called stale. */
+const ANSWER_ATTEMPTS = 5;
 const FINGERPRINT_MAX = 128;
 
 /** Copying a site at the 10 MB limit, page by page, fits in this, as a branch create. */
@@ -91,8 +93,12 @@ export interface BranchReview {
   mainChanges: DocumentChanges | null;
   /** Conflicts of bringing main in that still need an answer; empty when up to date. */
   conflicts: ShownConflict[];
-  /** Conflicts an answer in the draft settles, with the side picked. */
-  settled: Array<{ id: string; pick: MergeSide }>;
+  /** Conflicts an answer in the draft settles, with the side picked and the values, so the answer can be changed. */
+  settled: Array<{ id: string; pick: MergeSide; conflict: ShownConflict }>;
+  /** What the branch changes since its fork point, per page and element, with old and new values (the change list). */
+  review: DocumentReview;
+  /** The versions the review was computed from: a page drawn from older reads reloads (S5). */
+  versions: { main: number; branch: number };
   /** Why the result would not be a valid site, once no conflict is open. */
   problems: Array<{ code: string; message: string; pageId?: string; componentId?: string }>;
 }
@@ -163,11 +169,6 @@ function draftOf(answers: Record<string, { fingerprint: string; pick: MergeSide 
   return Object.keys(answers).length === 0 ? Prisma.DbNull : ({ v: 1, answers } as Prisma.InputJsonValue);
 }
 
-function shownValue(value: unknown): unknown {
-  if (value === undefined) return null;
-  const json = stableStringify(value);
-  return json.length <= SHOWN_VALUE_MAX_CHARS ? value : { omitted: true, characters: json.length };
-}
 
 function shown(conflict: MergeConflict): ShownConflict {
   return { ...conflict, base: shownValue(conflict.base), main: shownValue(conflict.main), branch: shownValue(conflict.branch) };
@@ -352,7 +353,7 @@ export class SiteBranchMergeService {
     } else {
       const brought = this.bringMainIn(state, answers);
       conflicts = brought.merge.conflicts.map(shown);
-      settled = brought.merge.settled.map(({ conflict, pick }) => ({ id: conflict.id, pick }));
+      settled = brought.merge.settled.map(({ conflict, pick }) => ({ id: conflict.id, pick, conflict: shown(conflict) }));
       kept = Object.fromEntries(brought.merge.settled.map(({ conflict, pick }) => [conflict.id, { fingerprint: conflict.fingerprint, pick }]));
       problems = brought.problems;
     }
@@ -366,7 +367,32 @@ export class SiteBranchMergeService {
       conflicts,
       settled,
       problems,
+      review: reviewDocuments(state.base, state.branch),
+      versions: { main: stamp.mainVersion, branch: stamp.branchVersion },
     };
+  }
+
+  /**
+   * Store conflict answers without bringing main in (slice S5): the review saves each answer as it is given, so a
+   * reload, another tab or the next day finds it (section 6, "Resume"). Only answers that settle a conflict of the
+   * state the token names are kept; the branch's content is not touched, and nothing is applied until Update.
+   * Answers the review afresh; 409 `branch_review_stale` when the state moved (the review reloads).
+   */
+  async answer(scope: TenantScope, branchId: string, input: { token: string; resolutions: MergeAnswers }): Promise<BranchReview> {
+    assertScope(scope);
+    // The token names the documents, not the draft: another answer stored in between (a second click, another tab)
+    // is laid under this one and tried again; only documents that moved make the review stale.
+    for (let attempt = 1; ; attempt++) {
+      const state = await this.readState(scope, branchId);
+      if (reviewToken(state.stamp) !== input.token) throw new BranchReviewStaleError();
+      if (this.upToDate(state)) break;
+      const { merge } = this.bringMainIn(state, { ...draftAnswers(state.stamp.mergeDraft), ...input.resolutions });
+      const kept = Object.fromEntries(merge.settled.map(({ conflict, pick }) => [conflict.id, { fingerprint: conflict.fingerprint, pick }]));
+      // Under the locks, and only when the state is still the one read: an answer is never stored against a newer one.
+      if (await this.keepDraft(scope, state.stamp, kept, true)) break;
+      if (attempt >= ANSWER_ATTEMPTS) throw new BranchReviewStaleError();
+    }
+    return this.changes(scope, branchId);
   }
 
   /**

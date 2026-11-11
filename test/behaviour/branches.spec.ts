@@ -5,11 +5,9 @@
 //
 //   - Keyboard only: the switcher opens with Enter, New branch moves the focus into the name field, typing there
 //     never reaches the canvas's shortcuts, Enter creates and opens the branch; Escape closes a dialog.
-//   - On a branch Publish gives way to Review and merge; its dialog takes the focus and names the conflicts,
-//     and Merge stays disabled while they are open.
+//   - On a branch Publish gives way to Review and merge, which opens the review page (slice S5).
 //   - Behind main, Update brings main in and says so in a status a screen reader hears.
-//   - Paths: forward (create, update, merge), backtrack (Escape out of a dialog changes nothing), re-entry
-//     (a merge leaves for main: the branch's address is closed).
+//   - Paths: forward (create, update, open the review), backtrack (Escape out of a dialog changes nothing).
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { chromium, webkit, type Browser, type BrowserType, type Page, type Route } from 'playwright';
@@ -148,32 +146,17 @@ for (const [engine, type] of ENGINES) {
       await page.close();
     });
 
-    it('shows Review and merge in place of Publish on a branch, and keeps Merge closed over conflicts', async () => {
-      const conflicts = [
-        { id: 'c1', kind: 'value', unit: { kind: 'page', id: 'home' }, path: ['props'], fingerprint: 'f', base: 1, main: 2, branch: 3 },
-        { id: 'c2', kind: 'value', unit: { kind: 'page', id: 'home' }, path: ['x'], fingerprint: 'g', base: 1, main: 2, branch: 3 },
-      ];
-      const { page, crashes } = await open(onBranch({ mainMoved: true }), async (p) => {
-        await p.route('**/api/projects/site-branch/branch/changes', (route) =>
-          json(route, { branch: summary({ mainMoved: true }), token: 't', upToDate: false, branchChanges: CHANGED, mainChanges: NONE, conflicts, settled: [], problems: [] }),
-        );
-      });
+    it('shows Review and merge in place of Publish on a branch, and opens the review with Enter', async () => {
+      const { page, crashes, went } = await open(onBranch(), async () => undefined);
       expect(await page.getByRole('button', { name: 'Publish', exact: true }).count()).toBe(0);
       await tabTo(page, /Review and merge/);
       await page.keyboard.press('Enter');
-      const dialog = page.getByRole('dialog', { name: 'Review and merge into Bakery' });
-      await dialog.waitFor();
-      await dialog.getByText(/conflict in 2 places/).waitFor();
-      expect(await dialog.getByRole('button', { name: 'Merge into Bakery' }).isDisabled()).toBe(true);
-      // The focus is inside the dialog, and Escape gives the editor back.
-      expect(await page.evaluate(() => !!document.activeElement?.closest('[role="dialog"]'))).toBe(true);
-      await page.keyboard.press('Escape');
-      await dialog.waitFor({ state: 'detached' });
+      await expect.poll(() => went).toEqual([`/projects/${BRANCH}/review`]);
       expect(crashes).toEqual([]);
       await page.close();
     });
 
-    it('updates from main with Enter and says so in a status, then merges and leaves for main', async () => {
+    it('updates from main with Enter and says so in a status, then opens the review', async () => {
       let updated = false;
       const { page, crashes, calls, went } = await open(onBranch({ mainMoved: true }), async (p, calls) => {
         await p.route('**/api/projects/site-branch/branch/changes', (route) =>
@@ -185,10 +168,6 @@ for (const [engine, type] of ENGINES) {
           return json(route, { updated: true, branch: summary(), token: 't2' });
         });
         await p.route('**/api/projects/site-main/branches/site-branch', (route) => json(route, { branch: summary({ mainMoved: !updated, baseVersion: updated ? 8 : 7 }) }));
-        await p.route('**/api/projects/site-branch/branch/merge', (route) => {
-          calls.push(`merge ${route.request().postData()}`);
-          return json(route, { merged: true, branch: summary({ status: 'merged' }), mainVersion: 9 });
-        });
       });
       await tabTo(page, /^Update$/);
       await page.keyboard.press('Enter');
@@ -196,14 +175,10 @@ for (const [engine, type] of ENGINES) {
       expect(calls).toContain('update {"token":"t1"}');
       // Main no longer moved: Update is gone.
       await page.getByRole('button', { name: /^Update$/ }).waitFor({ state: 'detached' });
+      // The merge itself is the review's (test/behaviour/branchReview.spec.ts): this opens it.
       await tabTo(page, /Review and merge/);
       await page.keyboard.press('Enter');
-      const merge = page.getByRole('button', { name: 'Merge into Bakery' });
-      await expect.poll(() => merge.isEnabled()).toBe(true);
-      await merge.focus();
-      await page.keyboard.press('Enter');
-      await expect.poll(() => went).toEqual([`/projects/${MAIN}`]);
-      expect(calls).toContain('merge {"token":"t2"}');
+      await expect.poll(() => went).toEqual([`/projects/${BRANCH}/review`]);
       expect(crashes).toEqual([]);
       await page.close();
     });

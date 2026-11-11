@@ -23,7 +23,7 @@ const { client, leave } = vi.hoisted(() => ({
     update: vi.fn(),
     merge: vi.fn(),
   },
-  leave: { savedBeforeLeaving: vi.fn(async () => true), openSite: vi.fn(), leaveClosedBranch: vi.fn() },
+  leave: { savedBeforeLeaving: vi.fn(async () => true), openSite: vi.fn(), openReview: vi.fn(), leaveClosedBranch: vi.fn() },
 }));
 vi.mock('@/lib/sites/branchClient', async (importActual) => {
   const actual = await importActual<typeof import('@/lib/sites/branchClient')>();
@@ -205,50 +205,19 @@ describe('an open branch', () => {
     expect(screen.queryByRole('button', { name: /update/i })).toBeNull();
   });
 
-  it('merges from the review when nothing needs an answer, then leaves for main', async () => {
-    client.changes.mockResolvedValue(review());
-    client.merge.mockResolvedValue({ merged: true, branch: summary({ status: 'merged' }), mainVersion: 8 });
+  it('opens the review page after saving this tab', async () => {
     renderWith(onBranch());
     fireEvent.click(screen.getByRole('button', { name: /review and merge/i }));
-    expect(await screen.findByText(/2 elements|3 elements/)).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Merge into Bakery' }));
-    await waitFor(() => expect(leave.leaveClosedBranch).toHaveBeenCalledWith(BRANCH, MAIN));
-    expect(client.merge).toHaveBeenCalledWith(BRANCH, 'tok-1');
+    await waitFor(() => expect(leave.openReview).toHaveBeenCalledWith(BRANCH));
     expect(leave.savedBeforeLeaving).toHaveBeenCalledWith(BRANCH);
   });
 
-  it('shows a refused merge (not an admin) and stays', async () => {
-    client.changes.mockResolvedValue(review());
-    client.merge.mockRejectedValue(new BranchApiError('forbidden', 'Only an admin of this company can merge.', 403));
-    renderWith(onBranch());
-    fireEvent.click(screen.getByRole('button', { name: /review and merge/i }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Merge into Bakery' }));
-    expect(await screen.findByText('Only an admin of this company can merge.')).toBeTruthy();
-    expect(leave.leaveClosedBranch).not.toHaveBeenCalled();
-  });
-
-  it('cannot merge a branch without changes', async () => {
-    client.changes.mockResolvedValue(review({ branchChanges: NONE }));
-    renderWith(onBranch());
-    fireEvent.click(screen.getByRole('button', { name: /review and merge/i }));
-    expect(await screen.findByText(/No changes yet/)).toBeTruthy();
-    expect((screen.getByRole('button', { name: 'Merge into Bakery' }) as HTMLButtonElement).disabled).toBe(true);
-  });
-
-  it('names a result that would not be a valid site, and cannot merge it', async () => {
-    client.changes.mockResolvedValue(review({ problems: [{ code: 'slug_taken', message: 'Two pages would have the address /about.' }] }));
-    renderWith(onBranch());
-    fireEvent.click(screen.getByRole('button', { name: /review and merge/i }));
-    expect(await screen.findByText('Two pages would have the address /about.')).toBeTruthy();
-    expect((screen.getByRole('button', { name: 'Merge into Bakery' }) as HTMLButtonElement).disabled).toBe(true);
-  });
-
-  it('does not review what this tab has not saved', async () => {
+  it('does not open the review over what this tab has not saved', async () => {
     leave.savedBeforeLeaving.mockResolvedValue(false);
     renderWith(onBranch());
     fireEvent.click(screen.getByRole('button', { name: /review and merge/i }));
     expect((await screen.findByRole('alert')).textContent).toMatch(/not saved yet/);
-    expect(client.changes).not.toHaveBeenCalled();
+    expect(leave.openReview).not.toHaveBeenCalled();
   });
 });
 
@@ -285,32 +254,19 @@ describe('a branch behind main', () => {
   });
 
   it('does not update over conflicts, and says the branch is unchanged', async () => {
-    client.changes.mockResolvedValue(review({ upToDate: false, conflicts: [{ id: 'c1', kind: 'value', unit: { kind: 'page', id: 'home' }, path: ['props'], fingerprint: 'f' }] }));
+    client.changes.mockResolvedValue(review({ upToDate: false, conflicts: [{ id: 'c1', kind: 'value', unit: { kind: 'page', id: 'home' }, path: ['props'], fingerprint: 'f', options: ['main', 'branch'] }] }));
     renderWith(onBranch({ mainMoved: true }));
     fireEvent.click(screen.getByRole('button', { name: /update/i }));
     expect(await screen.findByText(/conflict in 1 place, so it was not updated/)).toBeTruthy();
     expect(client.update).not.toHaveBeenCalled();
-  });
-
-  it('shows the conflicts in the review and cannot merge', async () => {
-    client.changes.mockResolvedValue(review({ upToDate: false, mainChanges: NONE, conflicts: [{ id: 'c1', kind: 'value', unit: { kind: 'page', id: 'home' }, path: ['props'], fingerprint: 'f' }, { id: 'c2', kind: 'value', unit: { kind: 'page', id: 'home' }, path: ['x'], fingerprint: 'g' }] }));
-    renderWith(onBranch({ mainMoved: true }));
-    fireEvent.click(screen.getByRole('button', { name: /review and merge/i }));
-    expect(await screen.findByText(/conflict in 2 places/)).toBeTruthy();
-    expect((screen.getByRole('button', { name: 'Merge into Bakery' }) as HTMLButtonElement).disabled).toBe(true);
-  });
-
-  it('reads the review again when the merge brought main in first', async () => {
-    client.changes.mockResolvedValueOnce(review({ upToDate: false, mainChanges: NONE })).mockResolvedValue(review({ token: 'tok-2' }));
-    client.merge.mockRejectedValueOnce(new BranchApiError('branch_updated_from_main', 'Main had changed: its changes were brought in first. Review again, then merge.', 409));
-    renderWith(onBranch({ mainMoved: true }));
-    fireEvent.click(screen.getByRole('button', { name: /review and merge/i }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Merge into Bakery' }));
-    expect(await screen.findByText(/brought in first/)).toBeTruthy();
-    await waitFor(() => expect(client.changes).toHaveBeenCalledTimes(2));
-    expect(leave.leaveClosedBranch).not.toHaveBeenCalled();
+    // The way on: each conflict is answered in the review.
+    fireEvent.click(screen.getByRole('button', { name: 'Answer in the review' }));
+    await waitFor(() => expect(leave.openReview).toHaveBeenCalledWith(BRANCH));
+    expect(leave.savedBeforeLeaving).toHaveBeenCalledWith(BRANCH);
   });
 });
+
+
 
 describe('discard', () => {
   it('names what is lost in each state of the count', () => {

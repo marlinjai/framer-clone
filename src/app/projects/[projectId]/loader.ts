@@ -42,6 +42,8 @@ import {
 import type { ProjectSnapshotOut } from '@/models/ProjectModel';
 import type { ClosedBranchNotice, EditorBranchState } from '@/lib/sites/branches';
 import { closedBranchNotice, editorBranchState } from '@/server/sites/branches/editorState';
+import { checkWorkspaceAccess } from '@/lib/auth-check';
+import { AuthzUnavailableError } from '@/lib/authBrainAvailability';
 import type { SiteAddress } from '@/contexts/SiteAddressContext';
 
 // Same default + cookie name the rest of the app uses (auth-brain.ts /
@@ -67,6 +69,14 @@ export type ProjectLoadResult =
       site: SiteAddress;
       /** Main or a branch, when site branches are on for the company; null otherwise. */
       branch: EditorBranchState | null;
+      /** Main's snapshot, for a branch's review (asked for with `withMain`); read under the same scope. */
+      main?: { snapshot: ProjectSnapshotOut; version: number };
+      /**
+       * What the signed-in person may do in a review (`withMain` only): settle conflicts (editSite), approve or
+       * send back (reviewBranch), merge (mergeBranch). Null when the permission service could not answer: the
+       * controls stay on and each request is checked again.
+       */
+      can?: ReviewPermissions | null;
     };
 
 /**
@@ -114,9 +124,31 @@ function chooserUrlFor(
  * than the editor (e.g. the MT-11 preview at `/projects/<id>/preview`) bounces
  * the user back to ITSELF after login, not the editor. Defaults to '' (editor).
  */
+export interface ReviewPermissions {
+  edit: boolean;
+  review: boolean;
+  merge: boolean;
+}
+
+async function reviewPermissions(userId: string, workspaceId: string): Promise<ReviewPermissions | null> {
+  try {
+    const [edit, review, merge] = await Promise.all(
+      (['editSite', 'reviewBranch', 'mergeBranch'] as const).map((action) => checkWorkspaceAccess(userId, workspaceId, action)),
+    );
+    return { edit, review, merge };
+  } catch (err) {
+    if (err instanceof AuthzUnavailableError) {
+      console.error('[authz] permission service unavailable while opening a review', err.cause);
+      return null;
+    }
+    throw err;
+  }
+}
+
 export async function loadProjectSnapshot(
   projectId: string,
   returnPathSuffix = '',
+  options: { withMain?: boolean } = {},
 ): Promise<ProjectLoadResult> {
   const jar = await cookies();
   const cookie = jar.get(SESSION_COOKIE)?.value;
@@ -164,6 +196,17 @@ export async function loadProjectSnapshot(
     const branch = await editorBranchState(scopeResult.scope, scopeResult.companyId, projectId);
     // A branch while site branches are off for the company: hidden, so a plain 404.
     if (branch === 'hidden') return { status: 'not_found' };
+    if (options.withMain && branch?.kind === 'branch') {
+      const [mainLoaded, can] = await Promise.all([
+        repo.loadProjectWithVersion(scopeResult.scope, branch.mainSiteId),
+        reviewPermissions(session.user.id, scopeResult.scope.workspaceId),
+      ]);
+      return {
+        status: 'ok', snapshot, version, site: { host, everPublished }, branch,
+        main: { snapshot: getSnapshot(mainLoaded.project) as ProjectSnapshotOut, version: mainLoaded.version },
+        can,
+      };
+    }
     return { status: 'ok', snapshot, version, site: { host, everPublished }, branch };
   } catch (err) {
     if (err instanceof SiteNotFoundError) {
