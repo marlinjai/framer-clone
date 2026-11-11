@@ -8,9 +8,22 @@
 import React, { useEffect, useId, useState } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+// Not crypto.randomUUID: browsers offer it only in a secure context, and the dialog is mounted with the editor.
+import { v4 as uuidv4 } from 'uuid';
 import { BRANCH_NAME_MAX_LENGTH, validateBranchName } from '@/lib/sites/branches';
 import { BranchApiError, branchClient, changeCountText } from '@/lib/sites/branchClient';
 import { leaveClosedBranch, openSite, savedBeforeLeaving } from './leave';
+
+/** Where the focus goes when a dialog closes: the control that opened it (the switcher), never the page. */
+type ReturnFocus = { returnFocusTo?: React.RefObject<HTMLElement | null> };
+
+function closeFocus(ref: ReturnFocus['returnFocusTo']) {
+  return (e: Event) => {
+    if (!ref?.current) return;
+    e.preventDefault();
+    ref.current.focus();
+  };
+}
 
 function messageOf(err: unknown): string {
   if (err instanceof BranchApiError) return err.message;
@@ -43,7 +56,7 @@ function NameField({ id, value, onChange, error }: { id: string; value: string; 
 }
 
 /** "New branch": a copy of main's working copy as stored now, opened in the editor. */
-export function NewBranchDialog({ open, onOpenChange, mainSiteId, fromSiteId }: {
+export function NewBranchDialog({ open, onOpenChange, mainSiteId, fromSiteId, returnFocusTo }: ReturnFocus & {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   mainSiteId: string;
@@ -55,12 +68,12 @@ export function NewBranchDialog({ open, onOpenChange, mainSiteId, fromSiteId }: 
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // One id per dialog opening: a retry after a lost answer finds the branch it made, never a second one.
-  const [branchId, setBranchId] = useState(() => crypto.randomUUID());
+  const [branchId, setBranchId] = useState(() => uuidv4());
   useEffect(() => {
     if (open) {
       setName('');
       setError(null);
-      setBranchId(crypto.randomUUID());
+      setBranchId(uuidv4());
     }
   }, [open]);
 
@@ -86,7 +99,7 @@ export function NewBranchDialog({ open, onOpenChange, mainSiteId, fromSiteId }: 
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent onCloseAutoFocus={closeFocus(returnFocusTo)}>
         <form onSubmit={submit} className="grid gap-4">
           <DialogHeader>
             <DialogTitle>New branch</DialogTitle>
@@ -111,7 +124,7 @@ export function NewBranchDialog({ open, onOpenChange, mainSiteId, fromSiteId }: 
 }
 
 /** Rename the open branch (its record; the site's own name is a site setting). */
-export function RenameBranchDialog({ open, onOpenChange, mainSiteId, branchId, current, onRenamed }: {
+export function RenameBranchDialog({ open, onOpenChange, mainSiteId, branchId, current, onRenamed, returnFocusTo }: ReturnFocus & {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   mainSiteId: string;
@@ -148,7 +161,7 @@ export function RenameBranchDialog({ open, onOpenChange, mainSiteId, branchId, c
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent onCloseAutoFocus={closeFocus(returnFocusTo)}>
         <form onSubmit={submit} className="grid gap-4">
           <DialogHeader>
             <DialogTitle>Rename branch</DialogTitle>
@@ -177,7 +190,7 @@ export function discardText(lost: { kind: 'loading' } | { kind: 'known'; text: s
 }
 
 /** Discard the open branch, naming how much is lost, then go to main. */
-export function DiscardBranchDialog({ open, onOpenChange, mainSiteId, branchId, name }: {
+export function DiscardBranchDialog({ open, onOpenChange, mainSiteId, branchId, name, returnFocusTo }: ReturnFocus & {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   mainSiteId: string;
@@ -216,7 +229,7 @@ export function DiscardBranchDialog({ open, onOpenChange, mainSiteId, branchId, 
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent onCloseAutoFocus={closeFocus(returnFocusTo)}>
         <DialogHeader>
           <DialogTitle>Discard “{name}”?</DialogTitle>
           <DialogDescription aria-busy={lost.kind === 'loading'}>

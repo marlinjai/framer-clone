@@ -33,6 +33,8 @@ export default function BranchSwitcher({ className = '' }: { className?: string 
   // A dialog opens once the menu has CLOSED (as in ProjectCard): while the menu is open it traps focus, so a
   // dialog opened from its item would lose focus to the trigger straight away.
   const chosen = useRef<'new' | 'rename' | 'discard' | null>(null);
+  // Where a dialog opened from the menu gives the focus back when it closes.
+  const triggerRef = useRef<HTMLButtonElement>(null);
   if (!state) return null;
 
   const mainSiteId = state.kind === 'main' ? state.siteId : state.mainSiteId;
@@ -71,8 +73,9 @@ export default function BranchSwitcher({ className = '' }: { className?: string 
 
   return (
     <>
-      <DropdownMenu onOpenChange={(open) => open && void load()}>
+      <DropdownMenu modal={false} onOpenChange={(open) => open && void load()}>
         <DropdownMenuTrigger
+          ref={triggerRef}
           className={`flex h-8 max-w-[180px] shrink-0 items-center gap-1 rounded px-2 text-sm hover:bg-accent ${onBranch ? 'bg-accent font-medium' : 'text-muted-foreground'} ${className}`}
           aria-label={onBranch ? `Branch ${label}. Switch branch` : 'Main. Switch branch'}
         >
@@ -138,7 +141,7 @@ export default function BranchSwitcher({ className = '' }: { className?: string 
       <span role="status" aria-live="polite" className="sr-only">
         {notice ?? ''}
       </span>
-      <NewBranchDialog open={dialog === 'new'} onOpenChange={(o) => setDialog(o ? 'new' : null)} mainSiteId={mainSiteId} fromSiteId={state.siteId} />
+      <NewBranchDialog open={dialog === 'new'} onOpenChange={(o) => setDialog(o ? 'new' : null)} mainSiteId={mainSiteId} fromSiteId={state.siteId} returnFocusTo={triggerRef} />
       {onBranch ? (
         <>
           <RenameBranchDialog
@@ -148,6 +151,7 @@ export default function BranchSwitcher({ className = '' }: { className?: string 
             branchId={onBranch.branchId}
             current={onBranch.name}
             onRenamed={() => void refresh()}
+            returnFocusTo={triggerRef}
           />
           <DiscardBranchDialog
             open={dialog === 'discard'}
@@ -155,6 +159,7 @@ export default function BranchSwitcher({ className = '' }: { className?: string 
             mainSiteId={mainSiteId}
             branchId={onBranch.branchId}
             name={onBranch.name}
+            returnFocusTo={triggerRef}
           />
         </>
       ) : null}
