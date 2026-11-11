@@ -26,10 +26,11 @@ type Kind =
  */
 const CLASSIFIED: Record<string, { uses: number; kind: Kind; why: string }> = {
   'src/server/sites/repository.ts': {
-    uses: 61, kind: 'sees-branches',
-    why: 'listSites filters to mains; save works on a branch id, its image check against the images of main; publish, rollback, unpublish, domains, delete and erase refuse a branch; erase of a main covers its branches',
+    uses: 63, kind: 'sees-branches',
+    why: 'listSites filters to mains; save works on a branch id, its image check against the images of main; publish, rollback, unpublish, domains, delete and erase refuse a branch; erase of a main covers its branches and moves an up-to-date fork point with main',
   },
   'src/server/sites/branches/repository.ts': { uses: 25, kind: 'sees-branches', why: 'the branch repository itself' },
+  'src/server/sites/branches/merge.ts': { uses: 16, kind: 'sees-branches', why: 'the review, update and merge of a branch: resolves the branch and its main through the caller\'s workspace, locks main then the branch' },
   'src/server/sites/branches/closed.ts': { uses: 1, kind: 'sees-branches', why: 'answers a closed branch id with 410' },
   'src/server/sites/siteImages.ts': {
     uses: 19, kind: 'sees-branches',
