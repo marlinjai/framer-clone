@@ -369,6 +369,9 @@ describe('re-entry', () => {
       getMany: (t, ids) => book.getMany(t, ids),
       findSame: (t, i) => book.findSame(t, i),
       personsNamed: (t, n) => book.personsNamed(t, n),
+      listContactPersons: (t, o) => book.listContactPersons(t, o),
+      addContactPerson: (t, i) => book.addContactPerson(t, i),
+      endContactPerson: (t, o, a) => book.endContactPerson(t, o, a),
       create: async () => {
         throw new BooksError('INVALID_INPUT', 'INVALID_INPUT: contact.name', { issues: [{ path: 'contact.name', message: 'too_long' }] });
       },

@@ -57,7 +57,7 @@
     "@hookform/resolvers": "^5.2.1",
     "@marlinjai/auth-brain-sdk": "^2.0.0",
     "@marlinjai/block-editor-react": "^0.1.2",
-    "@marlinjai/contacts-core": "^0.4.0",
+    "@marlinjai/contacts-core": "^0.5.0",
     "@marlinjai/data-table-adapter-prisma": "^0.2.2",
     "@marlinjai/data-table-core": "^0.3.0",
     "@marlinjai/data-table-react": "^0.3.1",

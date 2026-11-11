@@ -32,6 +32,7 @@ export interface CustomerRow {
   vat_id: string | null;
   country_code: string;
   tax_number: string | null;
+  default_contact_person_id: string | null;
   archived_at: Date | null;
   created_at: Date;
   updated_at: Date;

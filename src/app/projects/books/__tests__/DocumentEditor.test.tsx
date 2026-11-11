@@ -919,3 +919,107 @@ describe('DocumentEditor: deleting a draft', () => {
     expect(within(menu).queryByRole('menuitem', { name: 'Delete draft…' })).toBeNull();
   });
 });
+
+describe('DocumentEditor: the contact person (z. Hd.)', () => {
+  const PERSONS = [
+    { affiliationId: 'aff-1', contactId: 'p1', name: 'Anna Beispiel', role: 'Einkauf', startedOn: null, primary: true },
+    { affiliationId: 'aff-2', contactId: 'p2', name: 'Ben Muster', role: '', startedOn: null, primary: false },
+  ];
+  const withPerson = (over: { personId?: string | null; person?: Json | null; persons?: unknown; version?: number } = {}): Json => ({
+    ...detail({ document: { customerId: 'cust-fr', version: over.version ?? 3, contactPersonId: over.personId ?? null } }),
+    contactPerson: over.person ?? null,
+    contactPersons: over.persons === undefined ? PERSONS : over.persons,
+  });
+
+  it('forward: offers the customer\'s people with their roles, sends the choice with the version, shows who is chosen', async () => {
+    let current = withPerson();
+    server({
+      ...base(() => current),
+      'PUT /api/books/documents/doc-1/contact-person': (body) => {
+        current = withPerson({ personId: body!.contactPersonId as string | null, version: 4, person: body!.contactPersonId ? { contactId: 'p1', status: 'ok', name: 'Anna Beispiel', role: 'Einkauf' } : null });
+        return { status: 200, body: current };
+      },
+    });
+    render(<DocumentEditor id="doc-1" />);
+    const select = (await screen.findByLabelText('Contact person (z. Hd.)')) as HTMLSelectElement;
+    expect([...select.options].map((o) => o.textContent)).toEqual(['None', 'Anna Beispiel, Einkauf', 'Ben Muster']);
+    fireEvent.change(select, { target: { value: 'p1' } });
+    await waitFor(() => expect((screen.getByLabelText('Contact person (z. Hd.)') as HTMLSelectElement).value).toBe('p1'));
+    expect(calls.find((c) => c.method === 'PUT')!.body).toEqual({ contactPersonId: 'p1', expectedVersion: 3 });
+    // And back to none (the empty choice removes them).
+    fireEvent.change(screen.getByLabelText('Contact person (z. Hd.)'), { target: { value: '' } });
+    await waitFor(() => expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(2));
+    expect(calls.filter((c) => c.method === 'PUT')[1]!.body).toEqual({ contactPersonId: null, expectedVersion: 4 });
+  });
+
+  it('a customer without people (and none chosen) shows no contact person field at all', async () => {
+    server(base(() => withPerson({ persons: [] })));
+    render(<DocumentEditor id="doc-1" />);
+    await screen.findByLabelText('Customer');
+    expect(screen.queryByLabelText('Contact person (z. Hd.)')).toBeNull();
+  });
+
+  it('resume: a person who has left is announced with both ways forward, and Issue says why it waits', async () => {
+    let current = withPerson({ personId: 'p9', person: { contactId: 'p9', status: 'unavailable', name: null, role: '' } });
+    server({
+      ...base(() => current),
+      'PUT /api/books/documents/doc-1/contact-person': (body) => {
+        current = withPerson({ personId: body!.contactPersonId as string | null, version: 4, person: body!.contactPersonId ? { contactId: 'p2', status: 'ok', name: 'Ben Muster', role: '' } : null });
+        return { status: 200, body: current };
+      },
+    });
+    render(<DocumentEditor id="doc-1" />);
+    const notice = await screen.findByRole('alert', { name: 'Contact person' });
+    expect(notice.textContent).toMatch(/no longer works for the customer/);
+    const issue = screen.getByRole('button', { name: 'Issue…' });
+    expect(issue.getAttribute('aria-disabled')).toBe('true');
+    expect(document.getElementById(issue.getAttribute('aria-describedby')!)?.textContent).toBe('Choose another contact person or remove the contact person');
+
+    // Way forward 1: another person.
+    fireEvent.change(within(notice).getByLabelText('Choose another contact person'), { target: { value: 'p2' } });
+    await waitFor(() => expect(screen.queryByRole('alert', { name: 'Contact person' })).toBeNull());
+    expect(calls.find((c) => c.method === 'PUT')!.body).toEqual({ contactPersonId: 'p2', expectedVersion: 3 });
+  });
+
+  it('way forward 2: removing the contact person clears the notice', async () => {
+    let current = withPerson({ personId: 'p9', person: { contactId: 'p9', status: 'unavailable', name: null, role: '' } });
+    server({
+      ...base(() => current),
+      'PUT /api/books/documents/doc-1/contact-person': () => {
+        current = withPerson({ version: 4 });
+        return { status: 200, body: current };
+      },
+    });
+    render(<DocumentEditor id="doc-1" />);
+    fireEvent.click(await within(await screen.findByRole('alert', { name: 'Contact person' })).findByRole('button', { name: 'Remove the contact person' }));
+    await waitFor(() => expect(screen.queryByRole('alert', { name: 'Contact person' })).toBeNull());
+    expect(calls.find((c) => c.method === 'PUT')!.body).toEqual({ contactPersonId: null, expectedVersion: 3 });
+  });
+
+  it('while the contacts database is down the person reads as unreadable: no notice, nothing is blocked or guessed', async () => {
+    server(base(() => withPerson({ personId: 'p1', person: { contactId: 'p1', status: 'unreadable', name: null, role: '' }, persons: null })));
+    render(<DocumentEditor id="doc-1" />);
+    await screen.findByLabelText('Customer');
+    expect(screen.queryByRole('alert', { name: 'Contact person' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Issue…' }).getAttribute('aria-disabled')).not.toBe('true');
+  });
+
+  it('an issued invoice shows the frozen contact person with the role it was issued with', async () => {
+    server(
+      base(() => ({
+        ...detail({
+          document: {
+            status: 'issued',
+            documentNumber: '62',
+            issueDate: '2026-10-19',
+            customerSnapshot: { name: 'Société Exemple', addressLine1: 'Rue 1', postalCode: '75001', city: 'Paris', country: 'FR' },
+          },
+        }),
+        contactPerson: { contactId: 'p1', status: 'ok', name: 'Anna Beispiel', role: 'Leitung' },
+        contactPersons: null,
+      })),
+    );
+    const { container } = render(<DocumentEditor id="doc-1" />);
+    await waitFor(() => expect(container.textContent).toContain('z. Hd. Anna Beispiel, Leitung'));
+  });
+});

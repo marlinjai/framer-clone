@@ -101,7 +101,8 @@ describe('snapshots', () => {
     expect(recipientMissingFields(contact({ postalCode: null, country: null }))).toEqual(['postalCode', 'country']);
     const snap = buildCustomerSnapshot(contact(), { customerType: 'b2b', vatId: 'DE123456789', taxNumber: null });
     expect(snap).toMatchObject({
-      v: 1,
+      v: 2,
+      contactPerson: null,
       name: 'Sample Customer GmbH',
       addressLine1: 'Beispielweg 2',
       customerType: 'b2b',

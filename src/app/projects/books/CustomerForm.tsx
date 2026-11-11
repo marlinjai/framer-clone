@@ -18,7 +18,8 @@ import { booksApi, type ContactLabel, type CustomerView } from '@/lib/books/api'
 import { ErrorAlert, Field, errorText } from './ui';
 
 interface Props {
-  onCreated: (customer: CustomerView) => void;
+  /** `warning` says what could not be done after the customer was created (the contact person), so the list can show it. */
+  onCreated: (customer: CustomerView, warning?: string) => void;
   onCancel: () => void;
 }
 
@@ -38,6 +39,9 @@ export default function CustomerForm({ onCreated, onCancel }: Props) {
     city: '',
     country: 'DE',
   });
+  // A business can get its first contact person in the same step (name and role; more are added from the list).
+  const [firstPerson, setFirstPerson] = useState('');
+  const [firstRole, setFirstRole] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -82,7 +86,17 @@ export default function CustomerForm({ onCreated, onCancel }: Props) {
               countryCode: contact.country.trim().toUpperCase() || 'DE',
               ...tax,
             };
-      onCreated(await booksApi.createCustomer(body));
+      const created = await booksApi.createCustomer(body);
+      let warning: string | undefined;
+      if (customerType === 'b2b' && firstPerson.trim() !== '') {
+        try {
+          await booksApi.addContactPerson(created.id, { person: { name: firstPerson.trim() }, role: firstRole.trim() || null });
+        } catch (err) {
+          // The customer exists now: say what is missing instead of failing the whole step.
+          warning = `The customer was created, but the contact person could not be added (${errorText(err)}). Add them from the customer's “Contact persons”.`;
+        }
+      }
+      onCreated(created, warning);
     } catch (err) {
       setError(errorText(err));
     } finally {
@@ -174,6 +188,17 @@ export default function CustomerForm({ onCreated, onCancel }: Props) {
           <Input id="customer-vat" value={vatId} onChange={(e) => setVatId(e.target.value)} placeholder="FR12345678901" />
         </Field>
       </div>
+
+      {customerType === 'b2b' ? (
+        <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Field label="First contact person (optional)" htmlFor="customer-person" hint="Who you write to at this business.">
+            <Input id="customer-person" value={firstPerson} onChange={(e) => setFirstPerson(e.target.value)} />
+          </Field>
+          <Field label="Their role (optional)" htmlFor="customer-person-role">
+            <Input id="customer-person-role" maxLength={160} value={firstRole} onChange={(e) => setFirstRole(e.target.value)} disabled={firstPerson.trim() === ''} />
+          </Field>
+        </div>
+      ) : null}
 
       <div className="flex justify-end gap-2">
         <Button type="button" variant="ghost" onClick={onCancel}>

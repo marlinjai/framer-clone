@@ -68,4 +68,4 @@ export {
 } from './repository/read';
 export { issue, type IssueInput, type IssueOptions, type IssueResult } from './issue';
 export { cancelInvoice, type CancelInvoiceInput, type CancelResult } from './cancel';
-export type { CustomerSnapshotV1, SenderBlockV1, SenderSnapshotV1, TaxSummary } from './snapshots';
+export type { CustomerSnapshot, CustomerSnapshotV1, CustomerSnapshotV2, SenderBlockV1, SenderSnapshotV1, TaxSummary } from './snapshots';

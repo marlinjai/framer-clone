@@ -174,7 +174,7 @@ export type FieldKind = 'text' | 'multiline' | 'date' | 'number' | 'money' | 'se
 export type FieldSource = 'document' | 'line';
 
 /** The draft's request keys a field can edit (PATCH /api/books/documents/<id>, and `customerId` through PUT .../customer). */
-export type DocumentFieldKey = 'serviceDate' | 'servicePeriod' | 'paymentTermsDays' | 'contractReference' | 'subject' | 'introText' | 'outroText' | 'customerId';
+export type DocumentFieldKey = 'serviceDate' | 'servicePeriod' | 'paymentTermsDays' | 'contractReference' | 'subject' | 'introText' | 'outroText' | 'customerId' | 'contactPersonId';
 /** A line's request keys a field can edit (PATCH .../lines/<lineId>, `lineFieldsBody`). */
 export type LineFieldKey = 'title' | 'description' | 'quantity' | 'unitLabel' | 'unitPrice' | 'discountBp' | 'taxClass';
 
@@ -567,6 +567,11 @@ class Binder {
         return keep(this.meta(block, x, width, size, color));
       case 'title':
         return keep(region === 'followingPageHeader' ? this.continuationTitle(block.id, x, width, size, bold, color, align) : this.title(block.id, x, width, size, bold, color, align));
+      case 'attention': {
+        // Chosen from the customer's people, never typed: the field is a select on the draft's contact person.
+        const spec = this.field(block.id, 'recipient.attention', 'select', { source: 'document', documentField: 'contactPersonId' }, style);
+        return keep(m.attention ? this.lines(block.id, x, width, [m.attention], { size, bold, color, align, field: () => spec }) : []);
+      }
       case 'subject': {
         const spec = this.field(block.id, 'subject', 'text', { source: 'document', documentField: 'subject' }, style);
         return keep(m.subject ? this.lines(block.id, x, width, [m.subject], { size, bold, color, align, field: () => spec }) : []);
@@ -645,6 +650,8 @@ class Binder {
     switch (block.type) {
       case 'recipient':
         return at(this.field(block.id, 'recipient.customer', 'select', { source: 'document', documentField: 'customerId' }, style, { empty: true }));
+      case 'attention':
+        return at(this.field(block.id, 'recipient.attention', 'select', { source: 'document', documentField: 'contactPersonId' }, style, { empty: true }));
       case 'subject':
         return at(this.field(block.id, 'subject', 'text', { source: 'document', documentField: 'subject' }, style, { empty: true }));
       case 'introText':
@@ -1209,7 +1216,7 @@ function stack(
 }
 
 const BLOCK_TYPES = new Set([
-  'logo', 'senderLine', 'recipient', 'documentMeta', 'title', 'subject', 'introText', 'outroText', 'lineTable', 'totals', 'taxNote',
+  'logo', 'senderLine', 'recipient', 'attention', 'documentMeta', 'title', 'subject', 'introText', 'outroText', 'lineTable', 'totals', 'taxNote',
   'paymentDetails', 'paymentQr', 'senderColumns', 'freeText', 'spacer', 'divider', 'columns',
 ]);
 const THEME_COLORS = new Set(['ink', 'accent', 'muted']);

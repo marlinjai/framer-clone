@@ -80,6 +80,7 @@ export const ALLOWED_REGIONS: Record<BlockType, readonly RegionName[]> = {
   logo: ['firstPageHeader', 'addressZone.right', 'followingPageHeader', 'footer'],
   senderLine: ['addressZone.left', 'firstPageHeader'],
   recipient: ['addressZone.left'],
+  attention: ['addressZone.left'],
   documentMeta: ['addressZone.right', 'body'],
   title: ['body', 'followingPageHeader'],
   subject: ['body'],
@@ -113,6 +114,7 @@ export const REQUIRED: ReadonlyArray<{ type: BlockType; region: RegionName | nul
 export const SINGLETONS: ReadonlySet<BlockType> = new Set<BlockType>([
   'senderLine',
   'recipient',
+  'attention',
   'documentMeta',
   'subject',
   'introText',
@@ -350,6 +352,11 @@ function contrastProblems(doc: TemplateDocumentV2): TemplateProblem[] {
 /** Whether a template prints the document's subject (a `subject` block, body only); a version 1 template never does. */
 export function printsSubject(doc: TemplateDocumentV2 | null): boolean {
   return Boolean(doc?.regions.body.some((b) => b.type === 'subject'));
+}
+
+/** Whether a template prints the contact person (an `attention` block, wherever it sits); a version 1 template never does. */
+export function printsAttention(doc: TemplateDocumentV2 | null): boolean {
+  return doc !== null && allBlocks(doc).some((e) => e.block.type === 'attention');
 }
 
 /** Every text the template itself prints (free texts, headings, captions), for the drawable check. */

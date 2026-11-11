@@ -127,6 +127,8 @@ export async function startCorrection(
         status: 'draft',
         source: 'editor',
         customer_id: customer.id,
+        // The person the invoice was addressed to stays on its replacement (checked again when it is issued).
+        contact_person_id: invoice.contact_person_id,
         template_id: template?.id ?? fallback?.id ?? null,
         replaces_document_id: invoiceId,
         net_or_gross: invoice.net_or_gross,

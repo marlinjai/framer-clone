@@ -14,7 +14,7 @@ import type { RenderInput, RenderRecipient } from '../render/model';
 import type { CompletenessContext } from '../render/completeness';
 import type { SalesDocumentLine, SalesDocumentWithSnapshots } from '../repository/read';
 import { plainOf, type RichText } from '../render/richText';
-import type { CustomerSnapshotV1, SenderSnapshotV1 } from '../snapshots';
+import { printedContactPerson, type CustomerSnapshotV2, type SenderSnapshotV1 } from '../snapshots';
 
 export const PROBE_NAMES = [
   'smallBusiness',
@@ -61,8 +61,10 @@ const SENDER: SenderSnapshotV1 = {
   managingDirector: 'Erika Beispiel',
 };
 
-const CUSTOMER: CustomerSnapshotV1 = {
-  v: 1,
+const CUSTOMER: CustomerSnapshotV2 = {
+  v: 2,
+  // The longest plausible attention line, so a template that prints it is checked with it.
+  contactPerson: { contactId: '0190a000-0000-7000-8000-0000000000d1', affiliationId: '0190a000-0000-7000-8000-0000000000d2', name: 'Anna Beispiel-Musterfrau', role: 'Leitung Einkauf und Beschaffung' },
   contactId: '0190a000-0000-7000-8000-0000000000c9',
   kind: 'organization',
   name: 'Probekunde',
@@ -130,6 +132,7 @@ function baseDocument(overrides: Partial<SalesDocumentWithSnapshots> = {}): Sale
     source: 'editor',
     version: 3,
     customerId: 'probe-customer',
+    contactPersonId: null,
     templateId: null,
     correctsDocumentId: null,
     replacesDocumentId: null,
@@ -378,6 +381,7 @@ export function probeInput(p: Probe, draft = false): RenderInput {
     country: c.country,
     customerNumber: c.customerNumber,
     vatId: c.vatId,
+    contactPerson: printedContactPerson(c),
   };
   return {
     draft,

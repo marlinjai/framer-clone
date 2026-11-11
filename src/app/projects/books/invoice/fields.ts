@@ -29,7 +29,9 @@ export const TAX_CLASS_OPTIONS = [
 export type FieldRequest =
   | { kind: 'document'; body: Record<string, unknown> }
   | { kind: 'line'; lineId: string; body: Record<string, unknown> }
-  | { kind: 'customer'; customerId: string };
+  | { kind: 'customer'; customerId: string }
+  /** The person the draft is addressed to ("z. Hd."); null removes them. */
+  | { kind: 'contactPerson'; contactPersonId: string | null };
 
 export type ParsedValue = { ok: true; request: FieldRequest; local: string | null } | { ok: false; message: string };
 
@@ -144,6 +146,8 @@ export function editValue(field: LayoutField, detail: DocumentDetail): string {
       return doc.outroText ?? '';
     case 'customerId':
       return doc.customerId ?? '';
+    case 'contactPersonId':
+      return doc.contactPersonId ?? '';
     default:
       return '';
   }
@@ -168,6 +172,7 @@ const DOCUMENT_PARTS: Record<string, string> = {
   introText: 'Intro text',
   outroText: 'Closing text',
   customerId: 'Customer',
+  contactPersonId: 'Contact person',
 };
 
 /**
@@ -253,6 +258,8 @@ export function parseValue(field: LayoutField, raw: string): ParsedValue {
     case 'customerId':
       if (trimmed === '') return { ok: false, message: 'Choose a customer.' };
       return { ok: true, request: { kind: 'customer', customerId: trimmed }, local: null };
+    case 'contactPersonId':
+      return { ok: true, request: { kind: 'contactPerson', contactPersonId: trimmed === '' ? null : trimmed }, local: null };
     case 'serviceDate':
       if (trimmed !== '' && !/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return { ok: false, message: 'Enter a date.' };
       return docReq({ serviceDate: trimmed === '' ? null : trimmed }, null);

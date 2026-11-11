@@ -33,11 +33,11 @@ import { readSettings } from '../settings';
 import { documentTaxFields, profileFor, recomputeLines, selectCustomerRow } from './taxState';
 import type { BooksScope } from '../scope';
 import {
-  customerSnapshotV1Schema,
+  customerSnapshotSchema,
   templateSnapshotSchema,
   senderSnapshotV1Schema,
   taxSummarySchema,
-  type CustomerSnapshotV1,
+  type CustomerSnapshot,
   type EventPayload,
   type SenderSnapshotV1,
   type TemplateSnapshot,
@@ -57,6 +57,8 @@ export interface SalesDocument {
   source: SalesDocSource;
   version: number;
   customerId: string | null;
+  /** The person at the customer's business the draft is addressed to (a contact id), null for none; issued documents freeze it in the snapshot. */
+  contactPersonId: string | null;
   templateId: string | null;
   correctsDocumentId: string | null;
   /** The issued invoice this invoice replaces (the Correct flow, 011_books_replacement). */
@@ -106,7 +108,7 @@ export interface SalesDocument {
 
 /** A document with its frozen snapshots (null until issued). */
 export interface SalesDocumentWithSnapshots extends SalesDocument {
-  customerSnapshot: CustomerSnapshotV1 | null;
+  customerSnapshot: CustomerSnapshot | null;
   /** The template layout frozen at issue (null on a draft, and on documents issued before 008). */
   templateSnapshot: TemplateSnapshot | null;
   senderSnapshot: SenderSnapshotV1 | null;
@@ -198,6 +200,7 @@ export type DocumentRow = {
   source: SalesDocSource;
   version: number;
   customer_id: string | null;
+  contact_person_id: string | null;
   template_id: string | null;
   corrects_document_id: string | null;
   replaces_document_id: string | null;
@@ -242,7 +245,7 @@ export type DocumentRow = {
   created_at_text: string;
 };
 export type DocumentRowWithSnapshots = DocumentRow & {
-  customer_snapshot: CustomerSnapshotV1 | null;
+  customer_snapshot: CustomerSnapshot | null;
   sender_snapshot: SenderSnapshotV1 | null;
   template_snapshot: TemplateSnapshot | null;
 };
@@ -256,6 +259,7 @@ export function mapDocument(row: DocumentRow): SalesDocument {
     source: row.source,
     version: row.version,
     customerId: row.customer_id,
+    contactPersonId: row.contact_person_id,
     templateId: row.template_id,
     correctsDocumentId: row.corrects_document_id,
     replacesDocumentId: row.replaces_document_id,
@@ -302,7 +306,7 @@ export function mapDocument(row: DocumentRow): SalesDocument {
 export function mapDocumentWithSnapshots(row: DocumentRowWithSnapshots): SalesDocumentWithSnapshots {
   return {
     ...mapDocument(row),
-    customerSnapshot: row.customer_snapshot === null ? null : customerSnapshotV1Schema.parse(row.customer_snapshot),
+    customerSnapshot: row.customer_snapshot === null ? null : customerSnapshotSchema.parse(row.customer_snapshot),
     senderSnapshot: row.sender_snapshot === null ? null : senderSnapshotV1Schema.parse(row.sender_snapshot),
     templateSnapshot:
       row.template_snapshot == null ? null : templateSnapshotSchema.parse(row.template_snapshot),

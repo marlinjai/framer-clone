@@ -146,6 +146,7 @@ async function fleetMigrate(schema: string) {
     '027_receipt_tax_country',
     '028_checkout_request',
     '029_company_erasure',
+    '030_books_contact_person',
   ]);
 }
 
@@ -225,6 +226,7 @@ describe('007_books through the fleet runner', () => {
       '027_receipt_tax_country',
       '028_checkout_request',
       '029_company_erasure',
+      '030_books_contact_person',
     ]);
     expect(await privileges(schema)).toEqual(expectedPrivileges());
     expect(await readCommerceTenantState(owner, tgId, schema)).toBe('ready');
@@ -259,8 +261,8 @@ describe('009_books_import over a schema already holding issued documents (as pr
       // 011 adds the nullable column replaces_document_id, 012 the column
       // print_replaces_reference and 016 the nullable subject: compared
       // without them (they did not exist before), and asserted NULL, false
-      // and NULL below. 024 adds the nullable paid_on and 027 the nullable tax_country, likewise left out.
-      owner`SELECT to_jsonb(d) - 'replaces_document_id' - 'print_replaces_reference' - 'subject' - 'intro_format' - 'outro_format' - 'paid_on' - 'tax_country' AS doc, (SELECT jsonb_agg(to_jsonb(l)) FROM ${s}.sales_document_line l WHERE l.document_id = d.id) AS lines
+      // and NULL below. 024 adds the nullable paid_on and 027 the nullable tax_country, likewise left out; so does 030's nullable contact_person_id.
+      owner`SELECT to_jsonb(d) - 'replaces_document_id' - 'print_replaces_reference' - 'subject' - 'intro_format' - 'outro_format' - 'paid_on' - 'tax_country' - 'contact_person_id' AS doc, (SELECT jsonb_agg(to_jsonb(l)) FROM ${s}.sales_document_line l WHERE l.document_id = d.id) AS lines
               FROM ${s}.sales_document d WHERE d.id = ${docId}`;
     const before = await snapshot();
 
@@ -287,6 +289,7 @@ describe('009_books_import over a schema already holding issued documents (as pr
       '027_receipt_tax_country',
       '028_checkout_request',
       '029_company_erasure',
+      '030_books_contact_person',
     ]);
 
     expect(await snapshot()).toEqual(before);
@@ -342,7 +345,7 @@ describe('012_books_template_v2 through the fleet runner', () => {
                 VALUES (${plain}, ${tenantId}, 'Plain', NULL, ${owner.json([{ unexpected: 1 }])}, now())`;
 
     const result = await migrateAllCommerceTenants({ connectionString: ownerUrl });
-    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['012_books_template_v2', '013_books_assets', '014_books_asset_delete', '015_books_products', '016_books_subject', '017_form_submissions', '018_books_text_format', '019_books_draft_delete', '020_catalogue_company', '021_order_payment', '022_payment_account', '023_shop_mail', '024_receipt_paid_on', '025_commerce_job', '026_order_request_key', '027_receipt_tax_country', '028_checkout_request', '029_company_erasure']);
+    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['012_books_template_v2', '013_books_assets', '014_books_asset_delete', '015_books_products', '016_books_subject', '017_form_submissions', '018_books_text_format', '019_books_draft_delete', '020_catalogue_company', '021_order_payment', '022_payment_account', '023_shop_mail', '024_receipt_paid_on', '025_commerce_job', '026_order_request_key', '027_receipt_tax_country', '028_checkout_request', '029_company_erasure', '030_books_contact_person']);
 
     const columns = await owner<{ column_name: string }[]>`
       SELECT column_name FROM information_schema.columns WHERE table_schema = ${schema} AND table_name = 'document_template' ORDER BY column_name`;
@@ -428,7 +431,7 @@ describe('013_books_assets (and 014 after it) through the fleet runner', () => {
     // The fleet runner applies the whole set: 013, then 014 (which lets an unused logo be deleted,
     // tested on its own below).
     const result = await migrateAllCommerceTenants({ connectionString: ownerUrl });
-    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['013_books_assets', '014_books_asset_delete', '015_books_products', '016_books_subject', '017_form_submissions', '018_books_text_format', '019_books_draft_delete', '020_catalogue_company', '021_order_payment', '022_payment_account', '023_shop_mail', '024_receipt_paid_on', '025_commerce_job', '026_order_request_key', '027_receipt_tax_country', '028_checkout_request', '029_company_erasure']);
+    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['013_books_assets', '014_books_asset_delete', '015_books_products', '016_books_subject', '017_form_submissions', '018_books_text_format', '019_books_draft_delete', '020_catalogue_company', '021_order_payment', '022_payment_account', '023_shop_mail', '024_receipt_paid_on', '025_commerce_job', '026_order_request_key', '027_receipt_tax_country', '028_checkout_request', '029_company_erasure', '030_books_contact_person']);
     expect(await owner`SELECT * FROM ${s}.document_template_version ORDER BY id`).toEqual(before);
     expect(await privileges(schema)).toEqual(expectedPrivileges());
 
@@ -528,7 +531,7 @@ describe('014_books_asset_delete through the fleet runner', () => {
     });
 
     const result = await migrateAllCommerceTenants({ connectionString: ownerUrl });
-    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['014_books_asset_delete', '015_books_products', '016_books_subject', '017_form_submissions', '018_books_text_format', '019_books_draft_delete', '020_catalogue_company', '021_order_payment', '022_payment_account', '023_shop_mail', '024_receipt_paid_on', '025_commerce_job', '026_order_request_key', '027_receipt_tax_country', '028_checkout_request', '029_company_erasure']);
+    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['014_books_asset_delete', '015_books_products', '016_books_subject', '017_form_submissions', '018_books_text_format', '019_books_draft_delete', '020_catalogue_company', '021_order_payment', '022_payment_account', '023_shop_mail', '024_receipt_paid_on', '025_commerce_job', '026_order_request_key', '027_receipt_tax_country', '028_checkout_request', '029_company_erasure', '030_books_contact_person']);
     expect(await privileges(schema)).toEqual(expectedPrivileges());
     // The frozen logo of a document is found through its own index.
     const [index] = await owner<{ n: number }[]>`

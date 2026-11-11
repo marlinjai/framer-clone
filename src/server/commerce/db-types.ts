@@ -469,6 +469,7 @@ export interface CustomerTable {
   archived_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   updated_at: Timestamp;
+  default_contact_person_id: string | null;
 }
 
 /**
@@ -549,6 +550,7 @@ export interface SalesDocumentTable {
   outro_format: JsonColumn<RichText> | null;
   paid_on: DateString | null;
   tax_country: string | null;
+  contact_person_id: string | null;
 }
 
 /**

@@ -33,6 +33,8 @@ const DE = {
   'meta.customerNumber': 'Kundennummer',
   'meta.contract': 'Vertrag',
   'meta.recipientVatId': 'USt-IdNr. Leistungsempfänger',
+  // The contact person line under the address: "z. Hd. Anna Beispiel, Einkauf".
+  'attention.prefix': 'z. Hd.',
   'meta.dueDate': 'Fällig am',
   'meta.numberPending': 'wird bei Ausstellung vergeben',
   'meta.datePending': 'wird bei Ausstellung gesetzt',

@@ -17,10 +17,10 @@ import 'server-only';
 // editor can show both values; nothing is reconciled silently.
 
 import { isBooksError } from '../errors';
-import type { ContactBook } from '../contactBook';
+import type { ContactBook, ContactPersonView } from '../contactBook';
 import type { Customer } from '../repository/customers';
 import type { DocumentView, SalesDocument, SalesDocumentListItem } from '../repository/read';
-import type { RecipientContact } from '../snapshots';
+import { snapshotContactPerson, type RecipientContact } from '../snapshots';
 import { describeError } from './describeError';
 
 export type ContactStatus = 'ok' | 'missing' | 'unavailable';
@@ -185,9 +185,26 @@ function listFields(doc: SalesDocument): Omit<DocumentListItem, 'customerName' |
   };
 }
 
-/** A document as the editor reads it: the repository view plus the customer label. */
+/**
+ * The person the document is addressed to ("z. Hd."), as the editor shows it. A draft's is read live: `ok` with the
+ * name and the role they hold now, `unavailable` when they no longer work for the customer (or were erased or
+ * archived: issuing is refused until it is changed), `unreadable` when the contacts database could not be read. An
+ * issued document's is its frozen snapshot, always `ok`.
+ */
+export interface ContactPersonState {
+  contactId: string;
+  status: 'ok' | 'unavailable' | 'unreadable';
+  name: string | null;
+  role: string;
+}
+
+/** A document as the editor reads it: the repository view plus the customer label and its contact persons. */
 export interface DocumentDetail extends DocumentView {
   customer: CustomerView | null;
+  /** The document's contact person, null when it has none. */
+  contactPerson: ContactPersonState | null;
+  /** A draft's choices: the customer's people with an open affiliation; null when none can be offered (no customer, or the contacts database is unreadable). */
+  contactPersons: ContactPersonView[] | null;
 }
 
 /**
@@ -202,10 +219,37 @@ export async function documentDetail(
   loadCustomer: (id: string) => Promise<Customer>,
 ): Promise<DocumentDetail> {
   const customerId = view.document.customerId;
-  if (!customerId) return { ...view, customer: null };
+  const doc = view.document;
+  if (doc.status !== 'draft' && doc.customerSnapshot) {
+    // Issued: the frozen snapshot is the record; nothing is read from the contacts database for the person.
+    const frozen = snapshotContactPerson(doc.customerSnapshot);
+    const contactPerson: ContactPersonState | null = frozen
+      ? { contactId: frozen.contactId, status: 'ok', name: frozen.name, role: frozen.role }
+      : null;
+    if (!customerId) return { ...view, customer: null, contactPerson, contactPersons: null };
+    const customer = await loadCustomer(customerId);
+    const [label] = await customerViews(book, tenantId, [customer]);
+    return { ...view, customer: label ?? null, contactPerson, contactPersons: null };
+  }
+  if (!customerId) return { ...view, customer: null, contactPerson: null, contactPersons: null };
   const customer = await loadCustomer(customerId);
   const [label] = await customerViews(book, tenantId, [customer]);
-  return { ...view, customer: label ?? null };
+  let contactPersons: ContactPersonView[] | null = null;
+  let contactPerson: ContactPersonState | null = null;
+  if (doc.contactPersonId || customer.customerType === 'b2b') {
+    try {
+      contactPersons = await book.listContactPersons(tenantId, customer.contactId);
+    } catch (err) {
+      if (!isBooksError(err, 'RECIPIENT_UNAVAILABLE')) throw err;
+    }
+  }
+  if (doc.contactPersonId) {
+    const found = contactPersons?.find((p) => p.contactId === doc.contactPersonId);
+    contactPerson = found
+      ? { contactId: found.contactId, status: 'ok', name: found.name, role: found.role }
+      : { contactId: doc.contactPersonId, status: contactPersons === null ? 'unreadable' : 'unavailable', name: null, role: '' };
+  }
+  return { ...view, customer: label ?? null, contactPerson, contactPersons };
 }
 
 /** Label a page of documents with their customers' current contact names. */

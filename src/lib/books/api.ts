@@ -24,6 +24,24 @@ export interface ContactLabel {
   customerId?: string | null;
 }
 
+/** A person at a business customer, with the role they hold there. */
+export interface ContactPersonView {
+  affiliationId: string;
+  contactId: string;
+  name: string;
+  role: string;
+  startedOn: string | null;
+  primary: boolean;
+}
+
+/** The draft's contact person as the editor shows it (see ContactPersonState on the server). */
+export interface ContactPersonState {
+  contactId: string;
+  status: 'ok' | 'unavailable' | 'unreadable';
+  name: string | null;
+  role: string;
+}
+
 export interface CustomerView {
   id: string;
   contactId: string;
@@ -31,6 +49,8 @@ export interface CustomerView {
   vatId: string | null;
   countryCode: string;
   taxNumber: string | null;
+  /** The person (a contact id) a new draft for this customer is addressed to; null for none. */
+  defaultContactPersonId: string | null;
   archivedAt: string | null;
   contact: ContactLabel | null;
   contactStatus: 'ok' | 'missing' | 'unavailable';
@@ -122,6 +142,8 @@ export interface DocumentView {
   introFormat: RichText | null;
   outroFormat: RichText | null;
   renderedPdfFileId: string | null;
+  /** The person the draft is addressed to (a contact id); an issued document's is in its snapshot. */
+  contactPersonId: string | null;
   customerSnapshot: { name: string; addressLine1: string; postalCode: string; city: string; country: string } | null;
 }
 
@@ -149,6 +171,10 @@ export interface DocumentDetail {
   };
   stale: boolean;
   customer: CustomerView | null;
+  /** The person the document is addressed to ("z. Hd."); null for none. */
+  contactPerson: ContactPersonState | null;
+  /** A draft's choices: the customer's people; null when none can be offered. */
+  contactPersons: ContactPersonView[] | null;
 }
 
 export interface DocumentListItem {
@@ -398,6 +424,17 @@ export const booksApi = {
   updateDraft: (id: string, body: unknown) => request<DocumentDetail>('PATCH', `/api/books/documents/${id}`, body),
   setCustomer: (id: string, customerId: string, expectedVersion: number) =>
     request<DocumentDetail>('PUT', `/api/books/documents/${id}/customer`, { customerId, expectedVersion }),
+  /** Address the draft to a person at its customer's business, or remove them (null). */
+  setContactPerson: (id: string, contactPersonId: string | null, expectedVersion: number) =>
+    request<DocumentDetail>('PUT', `/api/books/documents/${id}/contact-person`, { contactPersonId, expectedVersion }),
+  contactPersons: (customerId: string) =>
+    request<{ items: ContactPersonView[] }>('GET', `/api/books/customers/${customerId}/contact-persons`),
+  addContactPerson: (customerId: string, body: { contactId: string; role?: string | null } | { person: { name: string }; role?: string | null }) =>
+    request<ContactPersonView>('POST', `/api/books/customers/${customerId}/contact-persons`, body),
+  endContactPerson: (customerId: string, affiliationId: string) =>
+    request<{ items: ContactPersonView[] }>('DELETE', `/api/books/customers/${customerId}/contact-persons/${affiliationId}`),
+  setDefaultContactPerson: (customerId: string, contactPersonId: string | null) =>
+    request<CustomerView>('PUT', `/api/books/customers/${customerId}/default-contact-person`, { contactPersonId }),
   addLine: (id: string, body: unknown) => request<DocumentDetail>('POST', `/api/books/documents/${id}/lines`, body),
   updateLine: (id: string, lineId: string, body: unknown) =>
     request<DocumentDetail>('PATCH', `/api/books/documents/${id}/lines/${lineId}`, body),

@@ -14,7 +14,7 @@ import { z } from 'zod';
 import type { CustomerType } from '../../commerce/db-types';
 import { isVatIdShape, normalizeVatId } from '../../tax/germanVat';
 import { BooksError, constraintName, invalid, sqlState, withDbErrors } from '../errors';
-import { readRecipient } from '../recipients';
+import { readContactPerson, readRecipient, type ContactPerson } from '../recipients';
 import type { BooksScope } from '../scope';
 import { CUSTOMER_COLUMNS } from './columns';
 import { selectCustomerRow, type CustomerRow } from './taxState';
@@ -26,6 +26,8 @@ export interface Customer {
   vatId: string | null;
   countryCode: string;
   taxNumber: string | null;
+  /** The person (a contact id) a new draft for this customer is addressed to; null for none. */
+  defaultContactPersonId: string | null;
   archivedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
@@ -39,6 +41,7 @@ export function mapCustomer(row: CustomerRow): Customer {
     vatId: row.vat_id,
     countryCode: row.country_code,
     taxNumber: row.tax_number,
+    defaultContactPersonId: row.default_contact_person_id,
     archivedAt: row.archived_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -165,6 +168,62 @@ export async function updateCustomerTaxFields(
   );
   if (!row) throw new BooksError('NOT_FOUND', 'NOT_FOUND: customer', { customerId: id });
   return mapCustomer(row);
+}
+
+/**
+ * The customer's default contact person: whom a new draft for this customer is addressed to. Only a person with
+ * an open affiliation to the customer's business can be set (CONTACT_PERSON_NOT_FOUND otherwise, also for a
+ * person of another company); null clears it. The directory is read first, outside any transaction.
+ */
+export async function setCustomerDefaultContactPerson(
+  scope: BooksScope,
+  id: string,
+  personId: string | null,
+): Promise<Customer> {
+  const customer = await getCustomer(scope, id);
+  if (personId !== null) {
+    if (!UUID.test(personId)) throw invalid('INVALID_INPUT', [{ path: ['contactPersonId'], message: 'expected a contact id' }]);
+    await requireContactPerson(scope, customer.contactId, personId);
+  }
+  const row = await scope.db
+    .updateTable('customer')
+    .set({ default_contact_person_id: personId, updated_at: new Date() })
+    .where('tenant_id', '=', scope.tenantId)
+    .where('id', '=', id)
+    .returning(CUSTOMER_COLUMNS)
+    .executeTakeFirst();
+  if (!row) throw new BooksError('NOT_FOUND', 'NOT_FOUND: customer', { customerId: id });
+  return mapCustomer(row);
+}
+
+/**
+ * Clear the customer's default contact person, but only while it still is `personId`: a person who leaves must not
+ * take a newer default (chosen meanwhile by another request) with them. One conditional update, no earlier read.
+ */
+export async function clearCustomerDefaultContactPerson(scope: BooksScope, id: string, personId: string): Promise<void> {
+  await scope.db
+    .updateTable('customer')
+    .set({ default_contact_person_id: null, updated_at: new Date() })
+    .where('tenant_id', '=', scope.tenantId)
+    .where('id', '=', id)
+    .where('default_contact_person_id', '=', personId)
+    .execute();
+}
+
+/**
+ * The person's open affiliation to the customer's business, or CONTACT_PERSON_NOT_FOUND: the person is unknown,
+ * another company's, never worked there, or left (an ended or removed affiliation reads the same, so nothing
+ * about another company is confirmed). An archived person is CONTACT_PERSON_UNAVAILABLE.
+ */
+export async function requireContactPerson(
+  scope: BooksScope,
+  organizationContactId: string,
+  personId: string,
+): Promise<ContactPerson> {
+  const person = await readContactPerson(scope, personId, organizationContactId);
+  if (!person) throw new BooksError('CONTACT_PERSON_NOT_FOUND', 'CONTACT_PERSON_NOT_FOUND: no such contact person for this customer', { contactPersonId: personId });
+  if (person.archived) throw new BooksError('CONTACT_PERSON_UNAVAILABLE', 'CONTACT_PERSON_UNAVAILABLE: the contact person is archived', { contactPersonId: personId });
+  return person;
 }
 
 /** Archive a customer (it can no longer be put on a draft). Idempotent. */

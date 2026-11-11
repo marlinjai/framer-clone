@@ -41,6 +41,33 @@ export interface NewContactInput {
   vatId?: string | null;
 }
 
+/** A person at a business, as the customer screen and the invoice picker list them: name and the role held there. */
+export interface ContactPersonView {
+  /** The affiliation (the person's open membership of the business). */
+  affiliationId: string;
+  /** The person's contact id. */
+  contactId: string;
+  name: string;
+  /** The role at that business; '' when none was recorded. */
+  role: string;
+  /** 'YYYY-MM-DD' or null. */
+  startedOn: string | null;
+  /** The person's main business. */
+  primary: boolean;
+}
+
+/** What a new contact person is made of: an existing person, or a new one (name only; no mail or phone is taken). */
+export interface NewContactPersonInput {
+  /** The business (an organization contact of the company) the person works for. */
+  organizationContactId: string;
+  /** An existing person of the company, or ... */
+  personContactId?: string;
+  /** ... a new person, created in the shared contacts database and affiliated in one step. */
+  person?: { name: string };
+  /** Their role at the business. */
+  role?: string | null;
+}
+
 export interface ContactBook {
   /** Contacts of the company matching `search` (name, company or role, email), archived left out. */
   search(tenantId: string, opts: { search?: string; limit: number }): Promise<RecipientContact[]>;
@@ -64,6 +91,22 @@ export interface ContactBook {
    * return a cut list.
    */
   personsNamed(tenantId: string, name: string): Promise<RecipientContact[]>;
+  /** The business's people with an open affiliation, archived persons left out, the primary and oldest first. */
+  listContactPersons(tenantId: string, organizationContactId: string): Promise<ContactPersonView[]>;
+  /**
+   * Make a person a contact person of the business, in one step (creating the person when `person` is given).
+   * BooksError: RECIPIENT_NOT_FOUND (the business or the person is not a contact of the company),
+   * INVALID_INPUT (a kind or a field the package refuses), DUPLICATE_CONTACT (a new person whose name exists;
+   * `existingContactId` names them), DUPLICATE_CONTACT_PERSON (already a contact person of this business).
+   */
+  addContactPerson(tenantId: string, input: NewContactPersonInput): Promise<ContactPersonView>;
+  /**
+   * End a person's affiliation with the business (the row stays as history in the contacts database).
+   * RECIPIENT_NOT_FOUND when the affiliation is not one of this business's in this company. Ending an ended one is a no-op.
+   * Resolves to the person's contact id, read from the affiliation itself, so it is known for an ended affiliation and
+   * an archived person too (the caller's retry after a half-done leave still finds who left).
+   */
+  endContactPerson(tenantId: string, organizationContactId: string, affiliationId: string): Promise<string>;
 }
 
 /** How many contacts one name lookup reads at most; more hits than this cannot be told apart and are refused. */
@@ -85,7 +128,7 @@ function unavailable(err: unknown): BooksError {
 }
 
 /** The package refusals a create can produce that are the caller's input, mapped by field name only. */
-const INPUT_CODES = new Set(['invalid_name', 'invalid_field', 'too_long', 'invalid_organization']);
+const INPUT_CODES = new Set(['invalid_name', 'invalid_field', 'too_long', 'invalid_organization', 'invalid_affiliation']);
 
 /**
  * A refusal of the package that is the caller's input (an invalid or too long
@@ -193,6 +236,74 @@ export function contactsContactBook(handle: () => ContactsDb = contactsDb): Cont
           });
         }
         throw inputOrUnavailable(err);
+      }
+    },
+    async listContactPersons(tenantId, organizationContactId) {
+      const db = await open();
+      try {
+        const contacts = contactsFor(db, tenantId);
+        const affiliations = await contacts.affiliationsAt(organizationContactId);
+        const people = await contacts.getMany(affiliations.map((a) => a.personId));
+        const byId = new Map(people.map((p) => [p.id, p]));
+        return affiliations.flatMap((a) => {
+          const person = byId.get(a.personId);
+          if (!person || person.archived) return [];
+          return [{ affiliationId: a.id, contactId: person.id, name: person.name, role: a.role, startedOn: a.startedOn, primary: a.primary }];
+        });
+      } catch (err) {
+        throw unavailable(err);
+      }
+    },
+    async addContactPerson(tenantId, input) {
+      const db = await open();
+      const contacts = contactsFor(db, tenantId);
+      try {
+        const organization = (await contacts.getMany([input.organizationContactId]))[0];
+        if (!organization || organization.kind !== 'organization') {
+          throw new BooksError('RECIPIENT_NOT_FOUND', 'RECIPIENT_NOT_FOUND: no such business for this company');
+        }
+        let person;
+        if (input.personContactId !== undefined) {
+          person = (await contacts.getMany([input.personContactId]))[0];
+          if (!person || person.kind !== 'person') {
+            throw new BooksError('RECIPIENT_NOT_FOUND', 'RECIPIENT_NOT_FOUND: no such person for this company');
+          }
+        } else if (input.person) {
+          // The person stays in the contacts database when the affiliation then fails (a valid contact of the company).
+          person = await contacts.create({ kind: 'person', name: input.person.name });
+        } else {
+          throw new BooksError('INVALID_INPUT', 'INVALID_INPUT: person', { issues: [{ path: 'person', message: 'name a person or give a new one' }] });
+        }
+        const a = await contacts.addAffiliation({ personId: person.id, organizationId: organization.id, role: input.role ?? '' });
+        return { affiliationId: a.id, contactId: person.id, name: person.name, role: a.role, startedOn: a.startedOn, primary: a.primary };
+      } catch (err) {
+        if (isBooksError(err)) throw err;
+        const code = errorCode(err);
+        if (code === 'duplicate') {
+          const existing = (err as { existing?: { id?: unknown } }).existing;
+          throw new BooksError('DUPLICATE_CONTACT', 'DUPLICATE_CONTACT: a contact with this name already exists', {
+            existingContactId: typeof existing?.id === 'string' ? existing.id : null,
+          });
+        }
+        if (code === 'duplicate_affiliation') {
+          throw new BooksError('DUPLICATE_CONTACT_PERSON', 'DUPLICATE_CONTACT_PERSON: this person already is a contact person of this customer');
+        }
+        throw inputOrUnavailable(err);
+      }
+    },
+    async endContactPerson(tenantId, organizationContactId, affiliationId): Promise<string> {
+      const db = await open();
+      const contacts = contactsFor(db, tenantId);
+      try {
+        const a = await contacts.getAffiliation(affiliationId);
+        if (!a || a.organizationId !== organizationContactId) {
+          throw new BooksError('RECIPIENT_NOT_FOUND', 'RECIPIENT_NOT_FOUND: no such contact person for this customer');
+        }
+        await contacts.endAffiliation(affiliationId);
+        return a.personId;
+      } catch (err) {
+        if (isBooksError(err)) throw err;
+        throw unavailable(err);
       }
     },
   };

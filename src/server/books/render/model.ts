@@ -43,6 +43,8 @@ export interface RenderRecipient {
   country: string | null;
   customerNumber: number | null;
   vatId: string | null;
+  /** The person at the business the document is addressed to ("z. Hd."); absent or null prints none. Never an email or phone. */
+  contactPerson?: { name: string; role: string } | null;
 }
 
 export interface RenderInput {
@@ -112,6 +114,8 @@ export interface RenderModel {
   reference: string | null;
   /** The subject line, one line (printed by the template's `subject` block); null prints none. */
   subject: string | null;
+  /** "z. Hd. Name, Rolle" (printed by the template's `attention` block); null prints none. */
+  attention: string | null;
   intro: string | null;
   showRate: boolean;
   amountHeader: string;
@@ -163,6 +167,12 @@ export function countryLine(country: string | null | undefined, senderCountry: s
 
 function present(v: string | null | undefined): v is string {
   return typeof v === 'string' && v.trim() !== '';
+}
+
+/** The contact person's line: "z. Hd. Anna Beispiel, Einkauf" (the role only when one was recorded); null for none. */
+export function attentionLine(person: { name: string; role: string } | null): string | null {
+  if (!person || !present(person.name)) return null;
+  return toPdfText(`${label('attention.prefix')} ${person.name.trim()}${present(person.role) ? `, ${person.role.trim()}` : ''}`);
 }
 
 /** The recipient address block, line by line, with the property each line shows. */
@@ -462,6 +472,7 @@ export function buildRenderModel(input: RenderInput): RenderModel {
     meta: meta.map((m) => ({ label: m.label, value: toPdfText(m.value) })),
     reference,
     subject: present(doc.subject) ? toPdfText(doc.subject) : null,
+    attention: attentionLine(recipient?.contactPerson ?? null),
     intro: present(doc.introText) ? toPdfText(doc.introText) : null,
     showRate: !doc.kleinunternehmer,
     amountHeader,

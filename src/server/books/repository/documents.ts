@@ -20,6 +20,7 @@ import { requireSettings } from '../settings';
 import { derivePair, richFromPlain, richTextSchema, type RichText } from '../render/richText';
 import { toJsonb } from '../snapshots';
 import { totalsExceedLimit } from '../totals';
+import { requireContactPerson } from './customers';
 import { insertEvent } from './events';
 import { readPersistedView, selectDocumentRow, type DocumentRowWithSnapshots, type DocumentView } from './read';
 import { profileFor, selectCustomerRow, syncDraftTaxState, type CustomerRow } from './taxState';
@@ -108,6 +109,7 @@ export async function requireUsableCustomer(
 /** The document columns a draft edit may set directly (besides the derived ones). */
 export interface DraftPatch {
   customer_id?: string | null;
+  contact_person_id?: string | null;
   template_id?: string | null;
   net_or_gross?: NetOrGross;
   service_date?: string | null;
@@ -267,6 +269,10 @@ export async function createDraft(scope: BooksScope, input: CreateDraftInput): P
         doc_type: 'invoice',
         status: 'draft',
         customer_id: customer?.id ?? null,
+        // A new draft for a customer starts from the customer's default contact person (checked again when it is
+        // issued). A shop receipt does not: it is made out to its buyer, and a stale default must never hold up a
+        // paid order's receipt.
+        contact_person_id: args.sourceOrderId === undefined ? (customer?.default_contact_person_id ?? null) : null,
         template_id: args.templateId ?? null,
         net_or_gross: args.netOrGross ?? 'net',
         service_date: args.serviceDate ?? null,
@@ -402,7 +408,15 @@ export async function setCustomer(scope: BooksScope, id: string, input: SetCusto
     if (row.customer_id === args.customerId) return readPersistedView(trx, scope, id);
     const customer = await requireUsableCustomer(trx, scope, args.customerId);
     const previousKey = row.tax_profile_key;
-    const key = await finishDraftMutation(trx, scope, row, { customer_id: customer.id }, { customer });
+    // The contact person is derived from the customer (stateful-flow rule: derived state is keyed to its input):
+    // another customer starts from that customer's default (or none), never keeps the previous customer's person.
+    const key = await finishDraftMutation(
+      trx,
+      scope,
+      row,
+      { customer_id: customer.id, contact_person_id: customer.default_contact_person_id },
+      { customer },
+    );
     await insertEvent(trx, scope, {
       documentId: id,
       eventType: 'customer_set',
@@ -413,8 +427,57 @@ export async function setCustomer(scope: BooksScope, id: string, input: SetCusto
         customerId: customer.id,
         previousCustomerId: row.customer_id,
         taxProfileChanged: key !== previousKey,
+        contactPersonCleared: row.contact_person_id !== null && row.contact_person_id !== customer.default_contact_person_id,
       },
     });
+    return readPersistedView(trx, scope, id);
+  });
+}
+
+// --- setContactPerson --------------------------------------------------------------
+
+const setContactPersonInput = z
+  .object({
+    /** The person's contact id; null removes the contact person. */
+    contactPersonId: z.string().regex(/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/, 'expected a contact id').nullable(),
+    expectedVersion,
+  })
+  .strict();
+export type SetContactPersonInput = z.input<typeof setContactPersonInput>;
+
+/**
+ * Address a draft to a person at its customer's business ("z. Hd."), or remove them (null). Only a person with an
+ * OPEN affiliation to the customer's business can be chosen: CONTACT_PERSON_NOT_FOUND otherwise (also for a person
+ * of another company, which therefore reads like one that does not exist), CONTACT_PERSON_UNAVAILABLE for an archived
+ * one, CUSTOMER_REQUIRED for a draft without a customer. The contacts database is read first, outside the
+ * transaction (a network read must not hold the document lock); the transaction then refuses with CONCURRENT_EDIT when
+ * the draft's customer changed meanwhile, so a person is never put on a customer they were not checked against.
+ * Setting the same value again changes nothing (the version stays).
+ */
+export async function setContactPerson(scope: BooksScope, id: string, input: SetContactPersonInput): Promise<DocumentView> {
+  const parsed = setContactPersonInput.safeParse(input);
+  if (!parsed.success) throw invalid('INVALID_INPUT', parsed.error.issues);
+  const args = parsed.data;
+
+  const before = await selectDocumentRow(scope.db, scope, id);
+  if (!before) throw new BooksError('NOT_FOUND', 'NOT_FOUND: document', { documentId: id });
+  if (before.status !== 'draft') throw new BooksError('NOT_DRAFT', 'NOT_DRAFT', { documentId: id });
+  let customerId: string | null = before.customer_id;
+  if (args.contactPersonId !== null) {
+    if (!before.customer_id) throw new BooksError('CUSTOMER_REQUIRED', 'CUSTOMER_REQUIRED: choose a customer before a contact person', { documentId: id });
+    const customer = await selectCustomerRow(scope.db, scope, before.customer_id);
+    if (!customer) throw new BooksError('CUSTOMER_NOT_FOUND', 'CUSTOMER_NOT_FOUND', { customerId: before.customer_id });
+    await requireContactPerson(scope, customer.contact_id, args.contactPersonId);
+    customerId = customer.id;
+  }
+
+  return inDraftTransaction(scope, async (trx) => {
+    const row = await lockDraft(trx, scope, id, args.expectedVersion);
+    if (row.contact_person_id === args.contactPersonId) return readPersistedView(trx, scope, id);
+    if (args.contactPersonId !== null && row.customer_id !== customerId) {
+      throw new BooksError('CONCURRENT_EDIT', 'CONCURRENT_EDIT: the customer changed meanwhile; choose the contact person again', { documentId: id });
+    }
+    await finishDraftMutation(trx, scope, row, { contact_person_id: args.contactPersonId });
     return readPersistedView(trx, scope, id);
   });
 }

@@ -52,6 +52,7 @@ export const BLOCK_INFO: Record<BlockType, { label: string; description: string 
   logo: { label: 'Logo', description: 'The company logo.' },
   senderLine: { label: 'Return line', description: 'The small sender line above the address, read through the envelope window.' },
   recipient: { label: 'Recipient', description: 'The customer’s address, in the DIN 5008 window position.' },
+  attention: { label: 'Contact person', description: 'The person at the customer the invoice is addressed to (“z. Hd. Name, Rolle”), one line under the address. Prints nothing when the invoice has none.' },
   documentMeta: { label: 'Document data', description: 'Number, dates, customer number and the other document data.' },
   title: { label: 'Title', description: '“Rechnung” or “Gutschrift”; on later pages the continuation line.' },
   subject: { label: 'Subject', description: 'The document’s subject line (“Betreff”), written on each invoice.' },
@@ -108,6 +109,7 @@ export const PALETTE_ORDER: readonly BlockType[] = [
   'columns',
   'paymentDetails',
   'paymentQr',
+  'attention',
   'subject',
   'introText',
   'outroText',
@@ -302,6 +304,8 @@ export function newBlock(type: BlockType, id: string): Block {
       };
     case 'subject':
       return { id, type, style: { bold: true, spaceBelowPt: 6 } };
+    case 'attention':
+      return { id, type, style: { spaceBelowPt: 4 } };
     case 'recipient':
     case 'introText':
     case 'outroText':

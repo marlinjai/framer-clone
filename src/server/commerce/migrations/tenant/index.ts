@@ -29,6 +29,7 @@ import { orderRequestKey } from './026_order_request_key';
 import { receiptTaxCountry } from './027_receipt_tax_country';
 import { checkoutRequest } from './028_checkout_request';
 import { companyErasure } from './029_company_erasure';
+import { booksContactPerson } from './030_books_contact_person';
 
 /**
  * CM-04 — `COMMERCE_TENANT_MIGRATIONS`: the per-tenant (`tg_<id>`) commerce
@@ -135,6 +136,8 @@ import { companyErasure } from './029_company_erasure';
  *                            buyer's, not the reused customer row's)
  *   028_checkout_request   : a hosted checkout's request, fixed once with the
  *                            buyer it is made out to (BK018)
+ *   030_books_contact_person: the contact person of an invoice and a customer's default one
+ *                              (two nullable columns, no foreign key: the person lives in the contacts database).
  *   029_company_erasure    : the owner-only way past the delete guards while auth-brain
  *                            erases one company of a shared schema
  */
@@ -169,4 +172,5 @@ export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   receiptTaxCountry,
   checkoutRequest,
   companyErasure,
+  booksContactPerson,
 ];

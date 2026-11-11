@@ -11,7 +11,7 @@
 // shares), and says so by being a draft.
 
 import { BooksError } from '../errors';
-import { printsSubject, templateTexts } from '../template/rules';
+import { printsAttention, printsSubject, templateTexts } from '../template/rules';
 import type { FontFamily, TemplateDocumentV2 } from '../template/schema';
 import { canDraw, canDrawItalic, undrawable, undrawableItalic } from './fonts';
 import type { RenderInput, RenderModel } from './model';
@@ -39,6 +39,10 @@ function printedFields(input: RenderInput, template: TemplateDocumentV2 | null):
       ['recipient.city', r.city],
       ['recipient.vatId', r.vatId],
     );
+    // Only where the template prints it: the `attention` block is the one place a contact person is drawn.
+    if (printsAttention(template)) {
+      fields.push(['recipient.contactPerson', r.contactPerson?.name], ['recipient.contactPersonRole', r.contactPerson?.role]);
+    }
   }
   for (const l of input.lines) {
     fields.push([`line${l.position}.title`, l.title], [`line${l.position}.description`, l.description], [`line${l.position}.unitLabel`, l.unitLabel]);

@@ -70,6 +70,7 @@ const EXPECTED_MIGRATION_IDS = [
   '027_receipt_tax_country',
   '028_checkout_request',
   '029_company_erasure',
+  '030_books_contact_person',
 ];
 
 const EXPECTED_ENUMS: Record<string, string[]> = {
