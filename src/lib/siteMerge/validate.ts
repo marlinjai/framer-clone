@@ -22,6 +22,7 @@
 
 import { getSnapshot } from 'mobx-state-tree';
 import ProjectModel, { type ProjectSnapshotIn } from '@/models/ProjectModel';
+import { parseModelComponents } from '@/models/ComponentDefinitionModel';
 import { findProjectSlugProblem } from '@/lib/pages/slug';
 import { normalizeTheme, themeBoundsErrors } from '@/lib/site/theme';
 import { readBehaviourTree } from '@/lib/behaviour/format';
@@ -92,6 +93,15 @@ export function mergedDocumentProblems(merged: MergeDocument, stored: MergeDocum
   }
   if (new TextEncoder().encode(JSON.stringify(project)).length > PROJECT_BODY_MAX_BYTES) {
     problems.push({ code: 'too_large', message: `the merged site is larger than a save may be (${PROJECT_BODY_MAX_BYTES} bytes)` });
+  }
+
+  // The model drops a definition it refuses (over its size limit, or a page that does not fit) when it loads,
+  // so the loop below never sees it: look at the definitions before that. One the stored site already had
+  // refused may stay so.
+  const refusedBefore = new Set(parseModelComponents(stored.components).refused.filter((r) => !r.edit).map((r) => r.id));
+  for (const refused of parseModelComponents(project.components).refused) {
+    if (refused.edit || refusedBefore.has(refused.id)) continue;
+    problems.push({ code: 'component_too_large', message: `the reusable component ${refused.id} is refused: ${refused.reason}`, componentId: refused.id });
   }
 
   let scratch: ReturnType<typeof ProjectModel.create>;

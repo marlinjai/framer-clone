@@ -81,4 +81,13 @@ describe('equality and fingerprints', () => {
     expect(fingerprint('ab', 'c')).not.toBe(fingerprint('a', 'bc'));
     expect(fingerprint('x')).toMatch(/^[0-9a-f]{16}$/);
   });
+
+  it('keeps own keys named like inherited ones, and an own __proto__ as data', () => {
+    const split: SplitRule = () => true;
+    const branch = JSON.parse('{"constructor":"keep","__proto__":{"x":1}}');
+    const out = mergeValue({}, { x: 1 }, branch, { split }).value as Record<string, unknown>;
+    expect(Object.getPrototypeOf(out)).toBe(Object.prototype);
+    expect(out.constructor).toBe('keep');
+    expect(Object.keys(out)).toEqual(['x', 'constructor', '__proto__']);
+  });
 });

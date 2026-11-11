@@ -170,7 +170,9 @@ export function mergeForest(
       let keep = false;
       if (changed) {
         const project = (flat: Flat) =>
-          [...members, ...extra].sort().map((id) => (flat.fields.has(id) ? { ...flat.fields.get(id), parent: flat.parent.get(id) } : null));
+          [...members, ...extra]
+            .sort()
+            .map((id) => (flat.fields.has(id) ? { ...flat.fields.get(id), parent: flat.parent.get(id), children: flat.children.get(id) ?? [] } : null));
         const pick = log.ask({
           id: conflictId(unit(root), 'removed'),
           kind: 'removed',

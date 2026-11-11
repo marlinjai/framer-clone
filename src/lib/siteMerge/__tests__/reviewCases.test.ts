@@ -189,4 +189,34 @@ describe('review cases', () => {
     // Generous for a loaded machine; the quadratic version took over two seconds here.
     expect(took).toBeLessThan(1500);
   });
+
+  it('third review: a label for an element id main renamed is dangling though the node remains', () => {
+    const base = doc([page('home', '', node('root', {}, [node('N', { id: 'email' })]))]);
+    const main = doc([page('home', '', node('root', {}, [node('N', { id: 'contact' })]))]);
+    const branch = doc([page('home', '', node('root', {}, [node('N', { id: 'email' }), node('L', { htmlFor: 'email' })]))]);
+    const merged = mergeDocuments(base, main, branch);
+    expect(merged.dangling).toEqual([{ kind: 'node', id: 'N', container: 'page:home', lostId: true }]);
+    expect(merged.conflicts).toEqual([]);
+  });
+
+  it('third review: a removal answer is asked again when the branch reorders the removed children another way', () => {
+    const kids = (...ids: string[]) => ids.map((id) => node(id));
+    const base = doc([page('home', '', node('root', {}, [node('P', {}, kids('a', 'b', 'c'))]))]);
+    const main = doc([page('home', '', node('root', {}, []))]);
+    const one = doc([page('home', '', node('root', {}, [node('P', {}, kids('b', 'a', 'c'))]))]);
+    const other = doc([page('home', '', node('root', {}, [node('P', {}, kids('c', 'b', 'a'))]))]);
+    const first = mergeDocuments(base, main, one);
+    expect(first.conflicts.map((c) => c.kind)).toEqual(['removed']);
+    const answers = answer(first, 'branch');
+    expect(mergeDocuments(base, main, one, answers).conflicts).toEqual([]);
+    expect(mergeDocuments(base, main, other, answers).conflicts.map((c) => c.kind)).toEqual(['removed']);
+  });
+
+  it('third review: an oversized merged component definition is a problem, not silently dropped', () => {
+    const big = { id: 'c1', name: 'Big', page: { id: 'c1', appComponentTree: node('r', { t: 'x'.repeat(2_000_000) }), canvasNodes: {} } };
+    const merged = doc([page('home', '', node('root'))], { components: { c1: big } });
+    const stored = doc([page('home', '', node('root'))]);
+    const problems = mergedDocumentProblems(merged, stored, (d) => ({ id: 'p', metadata: { name: 'S' }, pages: {}, components: d.components }) as never);
+    expect(problems.some((p) => p.code === 'component_too_large' && p.componentId === 'c1')).toBe(true);
+  });
 });

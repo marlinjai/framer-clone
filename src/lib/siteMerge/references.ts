@@ -81,8 +81,8 @@ export function htmlIdsOf(trees: readonly unknown[]): Map<string, string> {
  * reference names an element `id`; `elsewhere` gives the node that carried it on another side, so a
  * reference to an element the merge removed is still a reference to that node.
  */
-export function nodeReferences(trees: readonly unknown[], elsewhere?: ReadonlyMap<string, string>): Array<{ from: string; to: string }> {
-  const out: Array<{ from: string; to: string }> = [];
+export function nodeReferences(trees: readonly unknown[], elsewhere?: ReadonlyMap<string, string>): Array<{ from: string; to: string; lostId?: boolean }> {
+  const out: Array<{ from: string; to: string; lostId?: boolean }> = [];
   const htmlIdToNode = new Map<string, string>();
   const htmlRefs: Array<{ from: string; ids: Set<string> }> = [];
   for (const node of walkNodes(trees)) {
@@ -102,8 +102,15 @@ export function nodeReferences(trees: readonly unknown[], elsewhere?: ReadonlyMa
   // An HTML reference names an element `id`; it points at the node carrying that id, if any.
   for (const { from, ids } of htmlRefs) {
     for (const htmlId of ids) {
-      const to = htmlIdToNode.get(htmlId) ?? elsewhere?.get(htmlId);
-      if (to !== undefined) out.push({ from, to });
+      const here = htmlIdToNode.get(htmlId);
+      if (here !== undefined) {
+        out.push({ from, to: here });
+        continue;
+      }
+      // The element id is gone from the trees. Its former node may still be there under another id: the
+      // reference is broken all the same (`lostId`), not satisfied by the node.
+      const former = elsewhere?.get(htmlId);
+      if (former !== undefined) out.push({ from, to: former, lostId: true });
     }
   }
   return out;
@@ -117,6 +124,8 @@ export interface DanglingReference {
   id: string;
   /** For a node: the page or component definition it was in (`page:<id>`, `component:<id>`). */
   container?: string;
+  /** For a node: the node is still there but no longer carries the HTML element id the reference names. */
+  lostId?: boolean;
   /** For a link: the address the links lead to, and how many links lead there. */
   slug?: string;
   count?: number;
@@ -152,8 +161,9 @@ function brokenReferences(doc: MergeDocument, known: KnownAddresses, htmlIds: Kn
       const page = key === null ? undefined : known.get(key);
       if (key !== null && page && !held.has(key)) out.set(`link|${key}|${from}`, { kind: 'link', id: page.pageId, slug: page.slug, count: 1 });
     }
-    for (const { from, to } of nodeReferences(trees, htmlIds.get(container))) {
-      if (!present.has(to)) out.set(`node|${container}|${to}|${from}`, { kind: 'node', id: to, container });
+    for (const { from, to, lostId } of nodeReferences(trees, htmlIds.get(container))) {
+      if (lostId && present.has(to)) out.set(`node|${container}|${to}|${from}|lostId`, { kind: 'node', id: to, container, lostId: true });
+      else if (!present.has(to)) out.set(`node|${container}|${to}|${from}`, { kind: 'node', id: to, container });
     }
   }
   const notFound = isPlainObject(doc.siteSettings) ? doc.siteSettings.notFoundPageId : undefined;
@@ -191,7 +201,7 @@ export function danglingChecker(main: MergeDocument, branch: MergeDocument, base
     const out = new Map<string, DanglingReference>();
     for (const [key, ref] of brokenReferences(merged, known, htmlIds)) {
       if (before.has(key)) continue;
-      const target = `${ref.kind}|${ref.container ?? ''}|${ref.id}`;
+      const target = `${ref.kind}|${ref.container ?? ''}|${ref.id}${ref.lostId ? '|lostId' : ''}`;
       const seen = out.get(target);
       if (seen && ref.kind === 'link') seen.count = (seen.count ?? 0) + 1;
       else if (!seen) out.set(target, { ...ref });
@@ -211,7 +221,8 @@ export function danglingReferences(merged: MergeDocument, main: MergeDocument, b
  * reported, but there is no removal to ask).
  */
 export function askKey(ref: DanglingReference, merged: MergeDocument): string | null {
-  if (ref.kind === 'node') return `node|${ref.container}|${ref.id}`;
+  // A node that is still there has no removal to ask.
+  if (ref.kind === 'node') return ref.lostId ? null : `node|${ref.container}|${ref.id}`;
   if (ref.kind === 'component') return ref.id in (merged.components ?? {}) ? null : `component|${ref.id}`;
   return merged.pages.some((p) => p.pageId === ref.id) ? null : `page|${ref.id}`;
 }

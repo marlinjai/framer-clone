@@ -114,11 +114,14 @@ function merge(
     const m = main as Record<string, unknown>;
     const r = branch as Record<string, unknown>;
     const out: Record<string, unknown> = {};
+    // Own properties only: a key such as `constructor` or `__proto__` is data, never inherited.
+    const has = (o: Record<string, unknown>, k: string) => Object.prototype.hasOwnProperty.call(o, k);
+    const get = (o: Record<string, unknown>, k: string) => (has(o, k) ? o[k] : undefined);
     // Main's key order first, then keys only the branch has, in its order.
-    const keys = [...Object.keys(m), ...Object.keys(r).filter((k) => !(k in m)), ...Object.keys(b).filter((k) => !(k in m) && !(k in r))];
+    const keys = [...Object.keys(m), ...Object.keys(r).filter((k) => !has(m, k)), ...Object.keys(b).filter((k) => !has(m, k) && !has(r, k))];
     for (const key of keys) {
-      const merged = merge(b[key], m[key], r[key], [...path, key], split, pick, conflicts);
-      if (merged !== undefined) out[key] = merged;
+      const merged = merge(get(b, key), get(m, key), get(r, key), [...path, key], split, pick, conflicts);
+      if (merged !== undefined) Object.defineProperty(out, key, { value: merged, enumerable: true, writable: true, configurable: true });
     }
     return out;
   }
