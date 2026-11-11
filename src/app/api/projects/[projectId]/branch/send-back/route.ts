@@ -19,6 +19,6 @@ export const POST = withAuthAvailability(
     action: 'reviewBranch',
     what: 'sending back',
     body: z.object({ token: tokenSchema, note: noteSchema }),
-    run: async ({ scope, branchId, actor, body }) => ({ branch: await getSiteBranchMergeService().sendBack(scope, branchId, body, actor) }),
+    run: async ({ scope, branchId, body }) => ({ branch: await getSiteBranchMergeService().sendBack(scope, branchId, body) }),
   }),
 );

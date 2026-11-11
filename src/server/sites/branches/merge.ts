@@ -175,7 +175,6 @@ function shown(conflict: MergeConflict): ShownConflict {
 
 /** Text a person typed, for storing: control and bidirectional characters removed, trimmed, bounded. */
 function cleanNote(raw: string): string {
-  // eslint-disable-next-line no-control-regex
   const cleaned = raw.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F‎‏‪-‮⁦-⁩]/g, '').trim();
   return Array.from(cleaned).slice(0, REVIEW_NOTE_MAX_LENGTH).join('');
 }
@@ -451,7 +450,7 @@ export class SiteBranchMergeService {
   }
 
   /** Send the branch back to open with a note; any approval is withdrawn. */
-  async sendBack(scope: TenantScope, branchId: string, input: { token: string; note: string }, _actor: BranchActor): Promise<BranchSummary> {
+  async sendBack(scope: TenantScope, branchId: string, input: { token: string; note: string }): Promise<BranchSummary> {
     const note = cleanNote(input.note);
     return this.verdict(scope, branchId, input.token, () => ({
       status: 'open',
