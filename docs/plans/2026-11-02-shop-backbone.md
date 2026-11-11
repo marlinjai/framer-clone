@@ -1,6 +1,6 @@
 ---
 type: plan
-status: draft
+status: in-progress
 date: 2026-11-02
 title: "Shop backbone: one job table, Stripe reconciliation, a server-side checkout record and one tax computation"
 summary: "The design contract every later shop slice builds on. Durable work moves into one table per tenant schema, commerce_job, claimed one row at a time with FOR UPDATE SKIP LOCKED under a lease, with no Redis. The expiry sweep, receipt retries and shop mail become consumers of it, cut over by expand, backfill, contract. A per-company job replays Stripe's event list through the existing payment handler. A checkout record prices shipping and discounts on the server before payment while guest carts stay in the browser. The order total identity stays total = subtotal + tax_amount: discounts fold into lines in exact cents, and shipping is an order line per rate. Books copies the order's line figures and refuses a receipt whose tax profile disagrees, until the VAT review. Sixteen slices: eleven need Marlin's review, four need a one-line yes for a production change, and one needs nothing."
@@ -1168,3 +1168,11 @@ checked against the code and hold. Findings about Stripe behaviour are adopted a
   whatever its job does, as well as one no live job will issue (R2-1), so a receipt that keeps retrying turns `receipts` to `"unissued"` too; the owner's page keeps
   the wording "retrying" or "stopped". A demo payment of a company other than the demo company owes no invoice: its receipt job ends `done` with nothing issued, and
   only Stripe payments count on the owner's list and the monitor (R2-2). The coordinator's production check found 0 demo-paid orders in every company.
+- 2026-11-11: B5 built: the buyer's letters are a job kind. `receipt.issued` and `payment.refunded` each have a consumer (`mail/mailJob.ts`) that writes the
+  `shop_mail` row and its `shop_mail` job (`mail:<orderId>:<kind>`) together, in the emitting transaction, only while the company is connected. `deliverShopMail`
+  now ends as the job's outcomes: sent and blocked are `done`, a refusal is written `failed` on the row and is `dead` (`JobRefused`), Lumitra Mail down is
+  `JobRetryLater` (1, 5, 15, 60 minutes, then 6 hours) until three days after the row was written, then `failed` and `dead` (`gave_up`). `sweepShopMail`,
+  `startShopMailSweep`, `deliverShopMailSoon`, `PaymentDeps.deliverMail` and `nextAttemptDelayMs` are gone, so one process owns each row's schedule; the buyer's first
+  attempt is the poller's (within its 30 seconds), no longer started inline. The mail backfill gives a job to every `pending` row without one, due at the old
+  `next_attempt_at`. `attempts` and `next_attempt_at` stay on the table, unwritten, until B9. The late-refund notice is still written before the refund moves money
+  and now by emitting `payment.refunded` there; B6 moves that emission to the refund job's own commit. B0 to B5 are shipped, so the plan is `in-progress`.

@@ -512,7 +512,7 @@ describe('R: resume', () => {
   });
 
   it('the backfill keeps a job that exists, and never brings back a finished one', async () => {
-    expect(JOB_BACKFILLS.map((backfill) => backfill.name)).toEqual(['payment_expiry', 'receipt_issue']);
+    expect(JOB_BACKFILLS.map((backfill) => backfill.name)).toEqual(['payment_expiry', 'receipt_issue', 'shop_mail']);
     const ring = await stockedRing(2);
     const orderId = await placeOrder(ring);
     const written = await jobOf(orderId);

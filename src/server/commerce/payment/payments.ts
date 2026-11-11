@@ -37,7 +37,6 @@ import type { CommerceEvent } from '../jobs/types';
 import { applyInventoryEffect, ReservationOverflowError, reserve, RESERVE_ISOLATION_LEVEL } from '../inventory/reserve';
 import { isLockTimeout } from '../provisioning/ownerSql';
 import type { PaymentEvent, PaymentProvider, ProviderId } from './provider';
-import { enqueueShopMail } from '../mail/outbox';
 import { demoCheckoutAllowed } from './demoCheckout';
 
 /** How long a pending payment holds its stock (the design: 30 minutes). */
@@ -131,13 +130,6 @@ export interface PaymentDeps {
   lockWaitMs?: number;
   /** The company's connected account for refunds (Stripe Connect). */
   connectedAccountId?: string;
-  /**
-   * Start sending the buyer's letter (the shop's receipt email, mail/runtime.ts) once it is written: the letter
-   * itself is written in the transaction that links the receipt or records the refund, so it can never be lost,
-   * and this only starts the first attempt without waiting for it (nothing waits for mail; the sweep sends
-   * whatever this attempt could not). Absent in tests that send no mail.
-   */
-  deliverMail?: (tenantId: string, orderId: string, kind: 'order_confirmation' | 'late_refund') => void;
 }
 
 export interface PaymentOutcome {
@@ -370,7 +362,6 @@ export async function handlePaymentEvent(deps: PaymentDeps, event: PaymentEvent)
     if (event.requireDue && isLockTimeout(err)) throw new PaymentBusyError(event.orderId);
     if (!(err instanceof LateStockGoneError)) throw err;
     status = await refundLatePayment(deps, event, now());
-    if (status === 'refunded') deps.deliverMail?.(event.tenantId, event.orderId, 'late_refund');
   }
   return { status, duplicate, jobIds, ...(notDue ? { notDue } : {}) };
 }
@@ -387,8 +378,9 @@ async function refundLatePayment(deps: PaymentDeps, event: PaymentEvent, at: Dat
     const providerPaymentId = payment.provider_payment_id ?? event.providerPaymentId;
     if (!providerPaymentId) throw new Error(`late payment of order ${event.orderId} carries no provider payment id`);
     // The buyer's refund notice (when the shop sends mail) is written before any money moves, so a failure to
-    // write it stops here instead of after the refund.
-    await enqueueShopMail(trx, event.tenantId, event.orderId, 'late_refund', at);
+    // write it stops here instead of after the refund: the transaction rolls back with it. The `late_refund` job
+    // moves to the refund's own commit with slice B6.
+    await deps.emit(trx, { tenantId: event.tenantId, type: 'payment.refunded', payload: { orderId: event.orderId }, at });
     const { refundId } = await deps
       .provider(payment.provider as ProviderId)
       .refund({ providerPaymentId, amount: payment.amount, connectedAccountId: deps.connectedAccountId });
@@ -475,13 +467,10 @@ export async function issueReceipt(deps: PaymentDeps, tenantId: string, orderId:
       .executeTakeFirst();
     // Zero rows: another attempt linked it first and wrote the rest with it.
     if (update.numUpdatedRows === BigInt(0)) return false;
-    await enqueueShopMail(trx, tenantId, orderId, 'order_confirmation', at);
     await deps.emit(trx, { tenantId, type: 'receipt.issued', payload: { orderId }, at });
     return true;
   });
   if (!linked) return { outcome: 'linked', documentId };
-  // The buyer hears once the receipt exists (the letter links it).
-  deps.deliverMail?.(tenantId, orderId, 'order_confirmation');
   return { outcome: 'issued', documentId };
 }
 

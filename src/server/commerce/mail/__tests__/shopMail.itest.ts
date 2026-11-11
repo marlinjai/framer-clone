@@ -1,19 +1,22 @@
 // src/server/commerce/mail/__tests__/shopMail.itest.ts
 //
-// The shop's receipt email (docs/plans/2026-10-27-shop-receipt-email.md) against real Postgres, with a fake Lumitra
-// Mail and the same payment handler a webhook uses. The four paths of the stateful-flow standard:
+// The shop's receipt email (docs/plans/2026-10-27-shop-receipt-email.md) as a job consumer (shop backbone slice B5), against
+// real Postgres, with a fake Lumitra Mail and the same payment handler a webhook uses. The four paths of the stateful-flow
+// standard:
 //
-//   1. forward: connect a workspace of the shop's company, pay an order, the buyer's confirmation goes out once,
-//      with the order, the total in German and a signed link that serves exactly that receipt;
-//   2. backtrack: a workspace of another company, a role too low or an unknown sender is refused and nothing is
-//      stored; an install that fails takes its new key back; reconnecting revokes the old key; disconnecting
-//      revokes the key first and keeps the connection when Lumitra Mail cannot be reached;
-//   3. resume: Lumitra Mail down, the letter waits and the sweep sends it when due, unchanged even when the site
-//      changed meanwhile; a letter whose first attempt never started (a crash after the receipt) is sent by the
-//      sweep; a repeated webhook or two overlapping attempts send one letter;
-//   4. re-entry: a refusal ends a letter as failed (shown to the owner), a blocked address as blocked, three days
-//      of failures end it as failed; a late payment refunded sends the refund notice; a shop not connected sends
-//      nothing; an owner without a role in Lumitra Mail can still disconnect.
+//   1. forward: connect a workspace of the shop's company, pay an order, the receipt's event writes the letter and its job
+//      together, the job sends the buyer's confirmation once, with the order, the total in German and a signed link that
+//      serves exactly that receipt;
+//   2. backtrack: a workspace of another company, a role too low or an unknown sender is refused and nothing is stored; an
+//      install that fails takes its new key back; reconnecting revokes the old key; disconnecting revokes the key first
+//      and keeps the connection when Lumitra Mail cannot be reached; a shop that is not connected writes neither letter
+//      nor job;
+//   3. resume: Lumitra Mail down, the job waits and sends the letter when due, unchanged even when the site changed
+//      meanwhile; a letter the old build wrote (a row with no job) is given its job by the backfill; a repeated webhook or
+//      two overlapping attempts send one letter;
+//   4. re-entry: a refusal ends a letter as failed (shown to the owner) and its job dead, a blocked address as blocked and
+//      the job done, three days of failures end it as failed; a reconnect to another workspace builds the letter again
+//      there; a late payment refunded sends the refund notice.
 // All data is synthetic.
 
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -25,7 +28,8 @@ import { catalogRepository } from '../../repository/catalog';
 import { pricingRepository } from '../../repository/pricing';
 import { createOrder } from '../../order/createOrder';
 import { emitCommerceEvent } from '../../jobs/emit';
-import { runJobNow } from '../../jobs/run';
+import { runJobNow, type JobRunOptions } from '../../jobs/run';
+import { runJobBackfills } from '../../jobs/backfills';
 import { handlePaymentEvent, sweepExpiredPayments, type PaymentDeps } from '../../payment/payments';
 import { demoProvider, type PaymentEvent } from '../../payment/provider';
 import { ensureReceipt } from '../../payment/receipt';
@@ -34,7 +38,8 @@ import { booksScope } from '@/server/books/scope';
 import { FakeContactBook, FakeDirectory, initCompany, openBooksEnv, type BooksEnv } from '@/server/books/__tests__/booksFixtures';
 import { ConnectRefused, connectShopMail, disconnectShopMail, readConnection } from '../connection';
 import { MailRefused, MailRetryLater } from '../lumitraMail';
-import { deliverShopMail, sweepShopMail, type OutboxDeps } from '../outbox';
+import { deliverShopMail, enqueueShopMail, type OutboxDeps } from '../outbox';
+import { JobRetryLater } from '../../jobs/types';
 import { readReceiptToken } from '../receiptLink';
 import { serveReceipt } from '../receiptRoute';
 import { mailConnect, mailStatus } from '../ownerHandlers';
@@ -73,8 +78,6 @@ interface Shop {
   site: { name: string; language: string };
   outbox: OutboxDeps;
   deps: PaymentDeps;
-  /** First attempts the payment handler started (not awaited there, as in production). */
-  attempts: Promise<unknown>[];
 }
 
 let shop: Shop;
@@ -105,7 +108,6 @@ function newShop(): Shop {
     siteInfo: async () => ({ ...site }),
     now: () => clock.now,
   };
-  const attempts: Promise<unknown>[] = [];
   const deps: PaymentDeps = {
     db: env.appDb,
     tgId: env.tgId,
@@ -113,11 +115,8 @@ function newShop(): Shop {
     receipt: (orderId) => ensureReceipt(scope, contacts, orderId, { now: clock.now }),
     emit: (trx, event) => emitCommerceEvent(trx, event),
     now: () => clock.now,
-    deliverMail: (tenantId, orderId, kind) => {
-      attempts.push(deliverShopMail(outbox, tenantId, orderId, kind));
-    },
   };
-  return { company, workspaceId, providerId, mail, clock, site, outbox, deps, attempts };
+  return { company, workspaceId, providerId, mail, clock, site, outbox, deps };
 }
 
 beforeEach(async () => {
@@ -171,17 +170,36 @@ async function placeOrder(ring: Awaited<ReturnType<typeof stockedRing>>) {
   return result.orderId;
 }
 
+/** The worker's wiring of this shop: its payments and its Lumitra Mail, on the test clock. */
+function worker(deps: PaymentDeps = shop.deps, outbox: OutboxDeps = shop.outbox): JobRunOptions {
+  return { paymentDeps: () => deps, mailDeps: () => outbox, now: () => shop.clock.now };
+}
+
+/** Run every `shop_mail` job that is due on the test clock, as the poller would. Answers how many ran. */
+async function drainMail(outbox: OutboxDeps = shop.outbox): Promise<number> {
+  const due = await env.ownerDb
+    .selectFrom('commerce_job')
+    .select('id')
+    .where('tenant_id', '=', shop.company)
+    .where('kind', '=', 'shop_mail')
+    .where('status', '=', 'pending')
+    .where('run_at', '<=', shop.clock.now)
+    .execute();
+  for (const job of due) await runJobNow({ id: env.tgId, db: env.appDb }, shop.company, job.id, worker(shop.deps, outbox));
+  return due.length;
+}
+
 /**
- * Handle a payment event and run the receipt job it wrote, as a route starts it (slice B4), then wait for the first mail
- * attempts that started. `deps` stands in for a process that wires the payment differently (one that dies before the
- * mail's first attempt). Answers the outcome with the receipt as the payment holds it afterwards.
+ * Handle a payment event and run the receipt job it wrote, as a route starts it (slice B4). The letter's job waits for
+ * the poller, as in production: `drain` runs it as well. Answers the outcome with the receipt as the payment holds it.
  */
-async function pay(event: PaymentEvent, deps: PaymentDeps = shop.deps) {
+async function pay(event: PaymentEvent, opts: { deps?: PaymentDeps; drain?: boolean } = {}) {
+  const deps = opts.deps ?? shop.deps;
   const outcome = await handlePaymentEvent(deps, event);
   for (const jobId of outcome.jobIds) {
-    await runJobNow({ id: env.tgId, db: env.appDb }, shop.company, jobId, { paymentDeps: () => deps, now: () => shop.clock.now });
+    await runJobNow({ id: env.tgId, db: env.appDb }, shop.company, jobId, worker(deps));
   }
-  await Promise.all(shop.attempts.splice(0));
+  if (opts.drain !== false) await drainMail();
   const row = await env.ownerDb
     .selectFrom('order_payment')
     .select('receipt_document_id')
@@ -197,6 +215,16 @@ function paid(orderId: string, extra: Partial<PaymentEvent> = {}): PaymentEvent 
 
 async function mailRow(orderId: string, kind: 'order_confirmation' | 'late_refund' = 'order_confirmation') {
   return env.ownerDb.selectFrom('shop_mail').selectAll().where('tenant_id', '=', shop.company).where('order_id', '=', orderId).where('kind', '=', kind).executeTakeFirst();
+}
+
+async function mailJob(orderId: string, kind: 'order_confirmation' | 'late_refund' = 'order_confirmation') {
+  return env.ownerDb
+    .selectFrom('commerce_job')
+    .selectAll()
+    .where('tenant_id', '=', shop.company)
+    .where('kind', '=', 'shop_mail')
+    .where('dedupe_key', '=', `mail:${orderId}:${kind}`)
+    .executeTakeFirst();
 }
 
 describe('connecting the shop to Lumitra Mail', () => {
@@ -293,7 +321,8 @@ describe('the buyer hears of a paid order', () => {
       merge: { shop_name: 'Schmuck Testshop', order_number: order.order_number, total_text: '49,00\u00a0€', first_name: 'Alex', receipt_number: '1' },
     });
     expect(letter.key).toBe(`shop:${shop.company}:${orderId}:order_confirmation:${shop.workspaceId}`);
-    expect(await mailRow(orderId)).toMatchObject({ status: 'sent', attempts: 1, mailing_id: 'mailing-1', last_error: null });
+    expect(await mailRow(orderId)).toMatchObject({ status: 'sent', mailing_id: 'mailing-1', last_error: null });
+    expect(await mailJob(orderId)).toMatchObject({ status: 'done', event_type: 'receipt.issued' });
 
     const token = letter.merge.receipt_url.replace('https://app.example/api/receipts/', '');
     expect(readReceiptToken(LINK_KEY, token)).toEqual({ tenantGroupId: env.tgId, tenantId: shop.company, documentId: outcome.receiptDocumentId });
@@ -306,6 +335,7 @@ describe('the buyer hears of a paid order', () => {
     // A repeated webhook sends no second letter.
     await pay(paid(orderId, { eventId: `evt-${randomUUID()}` }));
     expect(shop.mail.sent).toHaveLength(1);
+    expect(await env.ownerDb.selectFrom('commerce_job').select('id').where('tenant_id', '=', shop.company).where('kind', '=', 'shop_mail').execute()).toHaveLength(1);
   });
 
   it('a receipt link is refused for another key, another company, or a document that is not a shop receipt', async () => {
@@ -322,26 +352,42 @@ describe('the buyer hears of a paid order', () => {
     expect((await serveReceipt(missing, LINK_KEY, async () => env.appDb)).status).toBe(404);
   });
 
+  it('backtrack: a letter written in a transaction that rolls back leaves neither the row nor the job', async () => {
+    await connect();
+    const orderId = await placeOrder(await stockedRing(2));
+    await expect(
+      env.appDb.transaction().execute(async (trx) => {
+        expect(await enqueueShopMail(trx, shop.company, orderId, 'order_confirmation', shop.clock.now)).toEqual(expect.any(String));
+        throw new Error('the change that needed the letter failed');
+      }),
+    ).rejects.toThrow('the change that needed the letter failed');
+    expect(await mailRow(orderId)).toBeUndefined();
+    expect(await mailJob(orderId)).toBeUndefined();
+  });
+
   it('re-entry: a shop that is not connected sends nothing and keeps no letter', async () => {
     const orderId = await placeOrder(await stockedRing(2));
     expect((await pay(paid(orderId))).status).toBe('paid');
     expect(shop.mail.sent).toEqual([]);
     expect(await mailRow(orderId)).toBeUndefined();
+    expect(await mailJob(orderId)).toBeUndefined();
   });
 
-  it('resume: with Lumitra Mail down the letter waits, and the sweep sends it once it is due', async () => {
+  it('resume: with Lumitra Mail down the job waits with its backoff, and sends the letter once it is due', async () => {
     await connect();
     const orderId = await placeOrder(await stockedRing(2));
     shop.mail.failNext('send', new MailRetryLater('Lumitra Mail could not be reached'));
     expect((await pay(paid(orderId))).status).toBe('paid');
-    const waiting = await mailRow(orderId);
-    expect(waiting).toMatchObject({ status: 'pending', attempts: 1, last_error: 'Lumitra Mail could not be reached' });
-    expect(new Date(waiting!.next_attempt_at).getTime() - shop.clock.now.getTime()).toBe(60_000);
+    expect(await mailRow(orderId)).toMatchObject({ status: 'pending', last_error: 'Lumitra Mail could not be reached' });
+    const waiting = await mailJob(orderId);
+    expect(waiting).toMatchObject({ status: 'pending', last_error: 'Lumitra Mail could not be reached' });
+    expect(new Date(waiting!.run_at).getTime() - shop.clock.now.getTime()).toBe(60_000);
 
-    expect(await sweepShopMail(shop.outbox)).toBe(0);
+    expect(await drainMail()).toBe(0);
     shop.clock.now = new Date(shop.clock.now.getTime() + 61_000);
-    expect(await sweepShopMail(shop.outbox)).toBe(1);
-    expect(await mailRow(orderId)).toMatchObject({ status: 'sent', attempts: 2, last_error: null });
+    expect(await drainMail()).toBe(1);
+    expect(await mailRow(orderId)).toMatchObject({ status: 'sent', last_error: null });
+    expect(await mailJob(orderId)).toMatchObject({ status: 'done' });
     expect(shop.mail.sent).toHaveLength(1);
   });
 
@@ -351,23 +397,54 @@ describe('the buyer hears of a paid order', () => {
     shop.mail.failNext('send', new MailRefused('template_missing', 'no template'));
     await pay(paid(refused));
     expect(await mailRow(refused)).toMatchObject({ status: 'failed', last_error: 'no template' });
+    expect(await mailJob(refused)).toMatchObject({ status: 'dead', last_error: 'template_missing' });
     expect((await readConnection(env.appDb, shop.company, shop.clock.now))!.failed).toEqual({ count: 1, latestReason: 'no template' });
 
     shop.mail.blocked.add('alex@example.com');
     const blocked = await placeOrder(await stockedRing(2));
     await pay(paid(blocked));
     expect(await mailRow(blocked)).toMatchObject({ status: 'blocked' });
+    expect(await mailJob(blocked)).toMatchObject({ status: 'done' });
   });
 
-  it('resume: a letter whose first attempt never started (a crash after the receipt) is written all the same, and the sweep sends it', async () => {
+  it('resume: a letter the old build wrote (a row with no job) is given its job by the backfill, once, and sent', async () => {
     await connect();
     const orderId = await placeOrder(await stockedRing(2));
-    // The process dies before the first attempt: the hand-off is never made.
-    await pay(paid(orderId), { ...shop.deps, deliverMail: undefined });
-    expect(await mailRow(orderId)).toMatchObject({ status: 'pending', attempts: 0 });
-    expect(await sweepShopMail(shop.outbox)).toBe(1);
+    await pay(paid(orderId), { drain: false });
+    // As the old build left it: the row, no job.
+    await env.ownerDb.deleteFrom('commerce_job').where('tenant_id', '=', shop.company).where('kind', '=', 'shop_mail').execute();
+    expect(await mailJob(orderId)).toBeUndefined();
+
+    await runJobBackfills(env.appDb, shop.clock.now);
+    await runJobBackfills(env.appDb, shop.clock.now);
+    expect(await env.ownerDb.selectFrom('commerce_job').select('id').where('tenant_id', '=', shop.company).where('kind', '=', 'shop_mail').execute()).toHaveLength(1);
+    expect(await drainMail()).toBe(1);
     expect(await mailRow(orderId)).toMatchObject({ status: 'sent' });
     expect(shop.mail.sent).toHaveLength(1);
+
+    // A letter that is settled needs no job: the backfill leaves a sent row alone, and a dead job stays dead.
+    await env.ownerDb.deleteFrom('commerce_job').where('tenant_id', '=', shop.company).where('kind', '=', 'shop_mail').execute();
+    await runJobBackfills(env.appDb, shop.clock.now);
+    expect(await mailJob(orderId)).toBeUndefined();
+  });
+
+  it('resume: a letter whose job the engine ended stays pending no longer: the backfill writes it failed with the reason', async () => {
+    await connect();
+    const orderId = await placeOrder(await stockedRing(2));
+    await pay(paid(orderId), { drain: false });
+    // The engine gave the job up while the row still said pending (a database error on the last attempt).
+    await env.ownerDb
+      .updateTable('commerce_job')
+      .set({ status: 'dead', finished_at: shop.clock.now, last_error: 'lease lost' })
+      .where('tenant_id', '=', shop.company)
+      .where('kind', '=', 'shop_mail')
+      .execute();
+    expect(await mailRow(orderId)).toMatchObject({ status: 'pending' });
+
+    await runJobBackfills(env.appDb, shop.clock.now);
+    expect(await mailRow(orderId)).toMatchObject({ status: 'failed', last_error: 'lease lost' });
+    expect(await mailJob(orderId)).toMatchObject({ status: 'dead' });
+    expect(shop.mail.sent).toHaveLength(0);
   });
 
   it('resume: a retry sends the letter as first built, even after the site was renamed and switched to English', async () => {
@@ -381,7 +458,7 @@ describe('the buyer hears of a paid order', () => {
     shop.site.name = 'Renamed Shop';
     shop.site.language = 'en';
     shop.clock.now = new Date(shop.clock.now.getTime() + 61_000);
-    await sweepShopMail(shop.outbox);
+    await drainMail();
     expect(shop.mail.sent).toHaveLength(1);
     expect(shop.mail.sent[0]).toMatchObject({ locale: 'de', merge: { shop_name: 'Schmuck Testshop' } });
   });
@@ -396,13 +473,14 @@ describe('the buyer hears of a paid order', () => {
     shop.outbox = { ...shop.outbox, mail: shop.mail };
     await connect();
     const orderId = await placeOrder(await stockedRing(2));
-    await pay(paid(orderId), { ...shop.deps, deliverMail: undefined });
-    const [first, second] = await Promise.all([
+    await pay(paid(orderId), { drain: false });
+    const settled = await Promise.allSettled([
       deliverShopMail(shop.outbox, shop.company, orderId, 'order_confirmation'),
       deliverShopMail(shop.outbox, shop.company, orderId, 'order_confirmation'),
     ]);
     // One went through; the other met the conflict and would retry, but its write cannot touch a sent row.
-    expect([first, second].sort()).toEqual(['pending', 'sent']);
+    expect(settled.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected']);
+    expect(settled.find((r) => r.status === 'rejected')).toMatchObject({ reason: expect.any(JobRetryLater) });
     expect(shop.mail.calls.filter((c) => c.op === 'send')).toHaveLength(2);
     expect(shop.mail.sent).toHaveLength(1);
     expect(await mailRow(orderId)).toMatchObject({ status: 'sent', mailing_id: 'mailing-1' });
@@ -416,8 +494,10 @@ describe('the buyer hears of a paid order', () => {
     // The order row is stamped by the database's real clock, so three days are counted from whichever is later.
     shop.clock.now = new Date(Math.max(Date.now(), shop.clock.now.getTime()) + 3 * 24 * 60 * 60 * 1000 + 1000);
     shop.mail.failNext('send', new MailRetryLater('still down'));
-    await sweepShopMail(shop.outbox);
+    await drainMail();
     expect(await mailRow(orderId)).toMatchObject({ status: 'failed', last_error: 'still down' });
+    expect(await mailJob(orderId)).toMatchObject({ status: 'dead', last_error: 'gave_up' });
+    expect((await readConnection(env.appDb, shop.company, shop.clock.now))!.failed).toMatchObject({ count: 1 });
   });
 
   it('re-entry: a reconnect to another workspace builds the letter again there, under that workspace\'s keys', async () => {
@@ -434,7 +514,7 @@ describe('the buyer hears of a paid order', () => {
     });
     await connectShopMail(env.appDb, moved, SEAL_KEY, { subject: OWNER, companyId: shop.company, workspaceId: second, providerId: provider2, attempt: 'attempt-move-1', now: shop.clock.now });
     shop.clock.now = new Date(shop.clock.now.getTime() + 61_000);
-    await sweepShopMail({ ...shop.outbox, mail: moved });
+    await drainMail({ ...shop.outbox, mail: moved });
     expect(moved.sent).toHaveLength(1);
     expect(moved.sent[0]).toMatchObject({ providerId: provider2, key: `shop:${shop.company}:${orderId}:order_confirmation:${second}` });
   });

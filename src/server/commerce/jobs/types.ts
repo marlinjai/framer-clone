@@ -19,6 +19,7 @@ import type { ZodType } from 'zod';
 import type { CommerceDB, CommerceJobTable } from '../db-types';
 import type { PaymentOutcome, ReceiptAttempt } from '../payment/payments';
 import type { PaymentEvent } from '../payment/provider';
+import type { ShopMailKind } from '../mail/templates';
 
 /** How long a claim holds a job. `run_at` carries it, so a crashed worker's job simply becomes due again. */
 export const JOB_LEASE_MS = 10 * 60 * 1000;
@@ -158,6 +159,14 @@ export interface JobPayments {
   issueReceipt(orderId: string): Promise<ReceiptAttempt>;
 }
 
+/**
+ * What a handler may do to the buyer's letters. The wiring is built by the worker and stays there: the company comes from
+ * the job. Ends as the job's outcomes: it throws `JobRefused` and `JobRetryLater` (mail/outbox.ts deliverShopMail).
+ */
+export interface JobMail {
+  deliver(orderId: string, kind: ShopMailKind): Promise<'sent' | 'blocked' | 'none'>;
+}
+
 export interface JobContext<P> {
   readonly job: Pick<CommerceJob, 'id' | 'kind' | 'attempts'>;
   readonly company: CompanyContext;
@@ -166,6 +175,8 @@ export interface JobContext<P> {
   readonly signal: AbortSignal;
   /** The payment state machine, bound to this job's company. */
   readonly payments: JobPayments;
+  /** The buyer's letters, bound to this job's company. */
+  readonly mail: JobMail;
 }
 
 export interface JobKind<P = unknown> {

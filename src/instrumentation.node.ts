@@ -19,14 +19,6 @@ export async function registerNode(): Promise<void> {
   }
   const { warnIfOpenfgaTokenMissing } = await import('./lib/openfgaConfig');
   warnIfOpenfgaTokenMissing();
-  // The shop's receipt email: retry what could not be sent, every minute (only when Lumitra Mail is configured).
-  // A failure to start is logged, never a failed start: the shop sells without its mail.
-  try {
-    const { startShopMailSweep } = await import('./server/commerce/mail/runtime');
-    startShopMailSweep();
-  } catch (err) {
-    console.error('[startup] the shop mail sweep did not start:', err);
-  }
   // The shop's job engine: a pass over every tenant group, every 30 seconds. Also never a failed start, and the host
   // timer's watchdog route gets the same work done if this does not run.
   try {

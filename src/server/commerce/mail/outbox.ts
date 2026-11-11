@@ -3,14 +3,18 @@ import 'server-only';
 // src/server/commerce/mail/outbox.ts
 //
 // The shop's mail outbox (docs/plans/2026-10-27-shop-receipt-email.md, decision 4; table `shop_mail`, migration
-// 023). A row is written when a paid order's receipt is issued (`order_confirmation`) or a late payment is
-// refunded (`late_refund`), only while the company is connected to Lumitra Mail. It is sent right after, and
-// the sweep (every minute) sends what is due again:
+// 023), driven by the job engine since slice B5 of docs/plans/2026-11-02-shop-backbone.md. A row and its `shop_mail`
+// job are written together, in the transaction of the change that needs the letter, when a paid order's receipt is
+// issued (`order_confirmation`, event `receipt.issued`) or a late payment is refunded (`late_refund`, event
+// `payment.refunded`), only while the company is connected to Lumitra Mail. The job owns the schedule; the row keeps
+// what is about the letter:
 //
-//   sent      Lumitra Mail took the letter (its mailing id kept)
-//   blocked   the address is blocked for transactional mail there (bounce, complaint, by hand): never retried
-//   failed    Lumitra Mail kept refusing, or the attempts ran out; the reason is kept and shown to the owner
-//   pending   waiting for its next attempt: after 1, 5, 15 and 60 minutes, then every 6 hours, for 3 days
+//   sent      Lumitra Mail took the letter (its mailing id kept); the job is done
+//   blocked   the address is blocked for transactional mail there (bounce, complaint, by hand): the job is done,
+//             nothing a person can change here
+//   failed    Lumitra Mail kept refusing, or three days of failures; the reason is kept and shown to the owner, and
+//             the job is dead
+//   pending   waiting for its next attempt (the job's backoff: 1, 5, 15 and 60 minutes, then every 6 hours)
 //
 // The letter is built once, at its first attempt, and kept on the row: every retry sends exactly it, under the
 // same idempotency keys, because Lumitra Mail refuses a key repeated with another body (a site renamed or a
@@ -18,12 +22,14 @@ import 'server-only';
 // workspace it was made for: after a reconnect to another workspace it is built again there, under keys of that
 // workspace.
 //
-// Sending never throws into its caller (a payment stands whatever the mail does); every failure is recorded on
-// the row and logged without personal data or secrets.
+// `attempts`, `next_attempt_at` and the old build's sweep are gone from here: the old build's rows are given a job by
+// the mail backfill (jobs/backfills.ts), and B9 drops the columns.
 
-import type { Kysely } from 'kysely';
+import type { Kysely, Transaction } from 'kysely';
 
 import { toJsonb } from '@/server/books/snapshots';
+import { scheduleJob } from '../jobs/schedule';
+import { JobRefused, JobRetryLater } from '../jobs/types';
 import type { CommerceDB } from '../db-types';
 import { readBuyer } from '../payment/buyer';
 import type { LumitraMail } from './lumitraMail';
@@ -32,11 +38,11 @@ import { receiptToken } from './receiptLink';
 import { unseal } from './seal';
 import type { ShopMailKind, ShopMailLocale } from './templates';
 
-/** Minutes to wait after the n-th failed attempt (1-based); past the list, every 6 hours. */
-const BACKOFF_MINUTES = [1, 5, 15, 60];
-const LATER_MINUTES = 6 * 60;
+export const SHOP_MAIL_JOB_KIND = 'shop_mail';
+/** The job's dedupe key: one per order and kind of letter, whatever the number of attempts. */
+export const shopMailJobKey = (orderId: string, kind: ShopMailKind) => `mail:${orderId}:${kind}`;
 /** How long a letter is tried for before it is left `failed`. */
-const GIVE_UP_AFTER_MS = 3 * 24 * 60 * 60 * 1000;
+export const GIVE_UP_AFTER_MS = 3 * 24 * 60 * 60 * 1000;
 
 export interface SiteInfo {
   name: string;
@@ -56,30 +62,33 @@ export interface OutboxDeps {
   now?: () => Date;
 }
 
-export function nextAttemptDelayMs(failedAttempts: number): number {
-  const minutes = BACKOFF_MINUTES[failedAttempts - 1] ?? LATER_MINUTES;
-  return minutes * 60 * 1000;
-}
-
 /**
- * Write the letter for an order, when the company is connected (once per order and kind). Answers whether a
- * letter is waiting now.
+ * Write the letter row and its job for an order, in the caller's transaction, when the company is connected (once per
+ * order and kind). Answers the job's id, or null when nothing was written (not connected, or already written).
  */
 export async function enqueueShopMail(
-  db: Kysely<CommerceDB>,
+  trx: Transaction<CommerceDB>,
   tenantId: string,
   orderId: string,
   kind: ShopMailKind,
   at: Date,
-): Promise<boolean> {
-  const connected = await db.selectFrom('shop_mail_connection').select('tenant_id').where('tenant_id', '=', tenantId).executeTakeFirst();
-  if (!connected) return false;
-  await db
+): Promise<string | null> {
+  const connected = await trx.selectFrom('shop_mail_connection').select('tenant_id').where('tenant_id', '=', tenantId).executeTakeFirst();
+  if (!connected) return null;
+  await trx
     .insertInto('shop_mail')
     .values({ tenant_id: tenantId, order_id: orderId, kind, next_attempt_at: at, updated_at: at })
     .onConflict((oc) => oc.columns(['tenant_id', 'order_id', 'kind']).doNothing())
     .execute();
-  return true;
+  return scheduleJob(trx, {
+    tenantId,
+    kind: SHOP_MAIL_JOB_KIND,
+    dedupeKey: shopMailJobKey(orderId, kind),
+    eventType: kind === 'order_confirmation' ? 'receipt.issued' : 'payment.refunded',
+    payload: { orderId, kind },
+    runAt: at,
+    at,
+  });
 }
 
 /** A letter as built at its first attempt. */
@@ -157,13 +166,18 @@ async function letterValues(deps: OutboxDeps, tenantId: string, orderId: string,
   return { to: buyer.email, locale, merge };
 }
 
-/** One attempt at one letter. Never throws: the outcome is written on its row. Answers the row's new status. */
+/**
+ * One attempt at one letter, for the `shop_mail` job. Answers how the letter stands when nothing is left to do:
+ * `sent`, `blocked`, or `none` (no row, or one already settled as failed). Anything else ends the attempt as a job
+ * outcome: a refusal is written `failed` on the row and throws `JobRefused` (dead), and what may heal throws
+ * `JobRetryLater` with the row still `pending`, until three days have passed, when it too is written `failed`.
+ */
 export async function deliverShopMail(
   deps: OutboxDeps,
   tenantId: string,
   orderId: string,
   kind: ShopMailKind,
-): Promise<'sent' | 'blocked' | 'failed' | 'pending' | 'none'> {
+): Promise<'sent' | 'blocked' | 'none'> {
   const now = (deps.now ?? (() => new Date()))();
   const row = await deps.db
     .selectFrom('shop_mail')
@@ -173,16 +187,20 @@ export async function deliverShopMail(
     .where('kind', '=', kind)
     .executeTakeFirst();
   if (!row) return 'none';
-  if (row.status !== 'pending') return row.status;
+  if (row.status === 'sent' || row.status === 'blocked') return row.status;
+  // A letter the owner was told failed stays failed: its job is dead already.
+  if (row.status === 'failed') return 'none';
 
-  const record = async (status: 'sent' | 'blocked' | 'failed' | 'pending', fields: { last_error?: string | null; mailing_id?: string | null }) => {
-    const attempts = row.attempts + 1;
+  // Never writes over a settled row: two attempts at one letter (a job reclaimed after its lease, or the old build's
+  // sweep during a deploy) end with whichever settled first.
+  const record = async (
+    status: 'sent' | 'blocked' | 'failed' | 'pending',
+    fields: { last_error?: string | null; mailing_id?: string | null },
+  ) => {
     await deps.db
       .updateTable('shop_mail')
       .set({
         status,
-        attempts,
-        next_attempt_at: status === 'pending' ? new Date(now.getTime() + nextAttemptDelayMs(attempts)) : now,
         updated_at: now,
         ...('last_error' in fields ? { last_error: fields.last_error?.slice(0, 1000) ?? null } : {}),
         ...('mailing_id' in fields ? { mailing_id: fields.mailing_id ?? null } : {}),
@@ -192,7 +210,6 @@ export async function deliverShopMail(
       .where('kind', '=', kind)
       .where('status', '=', 'pending')
       .execute();
-    return status;
   };
 
   try {
@@ -211,6 +228,7 @@ export async function deliverShopMail(
         .where('tenant_id', '=', tenantId)
         .where('order_id', '=', orderId)
         .where('kind', '=', kind)
+        .where('status', '=', 'pending')
         .execute();
     }
     const sent = await deps.mail.send(unseal(deps.sealKey, connection.api_key_sealed), {
@@ -222,27 +240,21 @@ export async function deliverShopMail(
       to: letter.to,
       merge: letter.merge,
     });
-    return await record(sent.delivery, { mailing_id: sent.mailingId, last_error: null });
+    await record(sent.delivery, { mailing_id: sent.mailingId, last_error: null });
+    return sent.delivery;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[shop-mail] ${kind} of order ${orderId} (company ${tenantId}): ${message}`);
-    const givingUp = now.getTime() - new Date(row.created_at).getTime() >= GIVE_UP_AFTER_MS;
-    if (err instanceof MailRefused || givingUp) return record('failed', { last_error: message });
-    return record('pending', { last_error: message });
+    if (err instanceof MailRefused) {
+      await record('failed', { last_error: message });
+      throw new JobRefused(err.reason);
+    }
+    if (now.getTime() - new Date(row.created_at).getTime() >= GIVE_UP_AFTER_MS) {
+      await record('failed', { last_error: message });
+      throw new JobRefused('gave_up');
+    }
+    await record('pending', { last_error: message });
+    // MailRetryLater, and anything unexpected: the letter may still go out.
+    throw new JobRetryLater(err instanceof MailRetryLater ? message.slice(0, 200) : 'mail_attempt_failed');
   }
-}
-
-/** Send every letter of the tenant group that is due. Answers how many were attempted. */
-export async function sweepShopMail(deps: OutboxDeps, limit = 50): Promise<number> {
-  const now = (deps.now ?? (() => new Date()))();
-  const due = await deps.db
-    .selectFrom('shop_mail')
-    .select(['tenant_id', 'order_id', 'kind'])
-    .where('status', '=', 'pending')
-    .where('next_attempt_at', '<=', now)
-    .orderBy('next_attempt_at')
-    .limit(limit)
-    .execute();
-  for (const row of due) await deliverShopMail(deps, row.tenant_id, row.order_id, row.kind);
-  return due.length;
 }

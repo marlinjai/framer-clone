@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
 import { COMMERCE_CONSUMERS, JOB_KINDS } from '../consumers';
+import { receiptIssuedMailConsumer, refundedMailConsumer } from '../../mail/mailJob';
 import { paymentExpiryConsumer } from '../../payment/expiryJob';
 import { RECEIPT_REFUSALS, receiptIssueConsumer } from '../../payment/receiptJob';
 import { backoffMs } from '../run';
@@ -50,11 +51,18 @@ describe('defineJobKind', () => {
 });
 
 describe('the production registries', () => {
-  it('hold the expiry job and the receipt job, and nothing else yet', () => {
-    expect(Object.keys(JOB_KINDS)).toEqual(['payment_expiry', 'receipt_issue']);
+  it('hold the expiry, receipt and mail jobs, and nothing else yet', () => {
+    expect(Object.keys(JOB_KINDS)).toEqual(['payment_expiry', 'receipt_issue', 'shop_mail']);
     expect(COMMERCE_CONSUMERS['order.placed']).toEqual([paymentExpiryConsumer]);
     expect(COMMERCE_CONSUMERS['payment.paid']).toEqual([receiptIssueConsumer]);
-    expect(Object.values(COMMERCE_CONSUMERS).flat()).toEqual([paymentExpiryConsumer, receiptIssueConsumer]);
+    expect(COMMERCE_CONSUMERS['receipt.issued']).toEqual([receiptIssuedMailConsumer]);
+    expect(COMMERCE_CONSUMERS['payment.refunded']).toEqual([refundedMailConsumer]);
+    expect(Object.values(COMMERCE_CONSUMERS).flat()).toEqual([
+      paymentExpiryConsumer,
+      receiptIssueConsumer,
+      refundedMailConsumer,
+      receiptIssuedMailConsumer,
+    ]);
   });
 
   it('give the receipt job the policy of section 1.8: 1, 5, 15, 60 minutes, then 6 hours, for 30 days', () => {

@@ -15,7 +15,6 @@ import type { CommerceDB } from '../db-types';
 import type { PaymentDeps } from './payments';
 import { demoProvider, type PaymentProvider, type ProviderId } from './provider';
 import { ensureReceipt } from './receipt';
-import { deliverShopMailSoon } from '../mail/runtime';
 import { emitCommerceEvent } from '../jobs/emit';
 import { httpStripeApi, stripeConfig, type StripeApi } from './stripe/client';
 import { stripeProvider } from './stripe/connect';
@@ -47,6 +46,5 @@ export function paymentDeps(
       return ensureReceipt(booksScope(db, tgId, companyId, { recipients }), contactBook, orderId);
     },
     emit: (trx, event) => emitCommerceEvent(trx, event),
-    deliverMail: (tenantId, orderId, kind) => deliverShopMailSoon(db, tgId, tenantId, orderId, kind),
   };
 }
