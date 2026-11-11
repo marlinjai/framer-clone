@@ -10,6 +10,7 @@ import 'server-only';
 import { sql, type Kysely } from 'kysely';
 
 import type { CommerceDB } from '../db-types';
+import { SHOP_MAIL_JOB_KIND } from '../mail/outbox';
 import { EXPIRY_KEY_PREFIX, PAYMENT_EXPIRY_KIND } from '../payment/expiryJob';
 import { RECEIPT_ISSUE_KIND, RECEIPT_KEY_PREFIX } from '../payment/receiptJob';
 
@@ -82,7 +83,41 @@ export const receiptIssueBackfill: JobBackfill = {
   },
 };
 
-export const JOB_BACKFILLS: readonly JobBackfill[] = [paymentExpiryBackfill, receiptIssueBackfill];
+/**
+ * A mail job for every letter still waiting that has none: one the old build wrote, which only its minute sweep would
+ * ever send. Due when the old build's own schedule said (`next_attempt_at`), so a letter that was backing off keeps
+ * its wait. A letter already sent, blocked or failed needs none; a job already written, done or dead keeps its row.
+ * Goes in slice B9.
+ */
+export const shopMailBackfill: JobBackfill = {
+  name: SHOP_MAIL_JOB_KIND,
+  async run(db, now) {
+    await db
+      .insertInto('commerce_job')
+      .columns(['id', 'tenant_id', 'kind', 'dedupe_key', 'event_type', 'payload', 'run_at', 'cycle_started_at', 'updated_at'])
+      .expression(
+        db
+          .selectFrom('shop_mail')
+          .select((eb) => [
+            sql<string>`gen_random_uuid()::text`.as('id'),
+            'tenant_id',
+            eb.val(SHOP_MAIL_JOB_KIND).as('kind'),
+            sql<string>`'mail:' || ${sql.ref('order_id')} || ':' || ${sql.ref('kind')}`.as('dedupe_key'),
+            sql<string>`CASE ${sql.ref('kind')} WHEN 'order_confirmation' THEN 'receipt.issued' ELSE 'payment.refunded' END`.as('event_type'),
+            sql<string>`jsonb_build_object('orderId', ${sql.ref('order_id')}, 'kind', ${sql.ref('kind')})`.as('payload'),
+            'next_attempt_at',
+            // The give-up cycle counts from the letter's own start, as the old sweep counted it.
+            'created_at',
+            eb.val(now).as('updated_at'),
+          ])
+          .where('status', '=', 'pending'),
+      )
+      .onConflict((conflict) => conflict.constraint('commerce_job_dedupe_key').doNothing())
+      .execute();
+  },
+};
+
+export const JOB_BACKFILLS: readonly JobBackfill[] = [paymentExpiryBackfill, receiptIssueBackfill, shopMailBackfill];
 
 /** Run every backfill on one tenant group. The first failure stops the rest: they all come round again. */
 export async function runJobBackfills(

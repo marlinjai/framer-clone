@@ -18,7 +18,9 @@ import { seal, unseal } from '../seal';
 import { readReceiptToken, receiptToken } from '../receiptLink';
 import { receiptLinkBase, receiptLinkKey, shopMailConfig } from '../config';
 import { MAIL_INPUTS, SHOP_MAIL_KINDS, TEMPLATE_LOCALES, templateCreate, templatesVersion } from '../templates';
-import { callKey, nextAttemptDelayMsForTest } from './support';
+import { backoffMs } from '../../jobs/run';
+import { shopMailKind } from '../mailJob';
+import { callKey } from './support';
 
 const key = () => randomBytes(32);
 const REF = { tenantGroupId: '01a12d22-54a4-72a3-a0ce-f65f9f518e81', tenantId: '01a178f6-a324-7ba9-835e-ba13cd55e8b8', documentId: '5b2c1f0e-1d3a-4b7e-9c11-2a6f8e0d4c10' };
@@ -118,8 +120,8 @@ describe('the two templates', () => {
 });
 
 describe('retries and call keys', () => {
-  it('waits 1, 5, 15 and 60 minutes, then 6 hours', () => {
-    expect([1, 2, 3, 4, 5, 9].map((n) => nextAttemptDelayMsForTest(n) / 60_000)).toEqual([1, 5, 15, 60, 360, 360]);
+  it('the mail job waits 1, 5, 15 and 60 minutes, then 6 hours', () => {
+    expect([1, 2, 3, 4, 5, 9].map((n) => backoffMs(shopMailKind.policy, n) / 60_000)).toEqual([1, 5, 15, 60, 360, 360]);
   });
 
   it('keeps a call key within what Lumitra Mail takes', () => {

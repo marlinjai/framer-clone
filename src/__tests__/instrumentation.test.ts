@@ -9,7 +9,6 @@ const { startCommerceWorker } = vi.hoisted(() => ({ startCommerceWorker: vi.fn()
 
 vi.mock('@/lib/editorHost', () => ({ assertEditorHostConfigured: () => undefined }));
 vi.mock('@/lib/openfgaConfig', () => ({ warnIfOpenfgaTokenMissing: () => undefined }));
-vi.mock('@/server/commerce/mail/runtime', () => ({ startShopMailSweep: () => undefined }));
 vi.mock('@/server/commerce/jobs/runtime', () => ({ startCommerceWorker }));
 
 import { registerNode } from '../instrumentation.node';

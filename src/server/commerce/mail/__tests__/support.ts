@@ -1,11 +1,9 @@
 // Test support for the shop mail: re-exports of the pure helpers (their modules are server-only, mocked in the
 // tests), and a fake Lumitra Mail that records every call and can be told to fail.
-import { nextAttemptDelayMs } from '../outbox';
 import { MailRefused, MailRetryLater, type Letter, type LumitraMail, type MailSender, type MailWorkspace } from '../lumitraMail';
 import type { ShopMailKind } from '../templates';
 
 export { callKey } from '../lumitraMail';
-export const nextAttemptDelayMsForTest = nextAttemptDelayMs;
 
 export interface FakeMail extends LumitraMail {
   calls: { op: string; args: unknown[] }[];
