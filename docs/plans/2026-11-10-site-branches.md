@@ -130,14 +130,15 @@ The cost of a hidden row is that every place that lists or acts on sites must kn
 
 | Column | Meaning |
 |---|---|
-| `id`, `site_id` (main, cascade), `workspace_id`, `tenant_group_id` | Identity and the isolation boundary, as on every site table. `id` is the same uuid as the hidden `sites` row's id (set at creation, no foreign key to `sites`), so it stays the branch's address after that row is deleted: an old link and a retried merge or discard find the closed record by the id they already hold |
+| `id`, `site_id` (main, cascade), `workspace_id`, `tenant_group_id`, `company_id` | Identity and the isolation boundary, as on every site table. `id` is the same uuid as the hidden `sites` row's id (set at creation, no foreign key to `sites`), so it stays the branch's address after that row is deleted: an old link and a retried merge or discard find the closed record by the id they already hold |
 | `branch_site_id` (unique, nullable) | The hidden `sites` row holding the content (always equal to `id` while it exists). NULL once the branch is merged or discarded |
 | `name` | Up to 60 characters, control and bidirectional characters removed. Unique per site among open branches |
 | `status` | `open`, `ready` (review asked), `merged`, `discarded` |
 | `base_version`, `base_document` | Main's version and full copy (in the revision document format, with `schemaVersion`) at the fork, replaced on every update from main. The common ancestor of the three-way merge. NULL once closed |
 | `merge_draft` | The review in progress: the conflict answers given so far, each keyed to the values it was given for (section 6) |
-| `ready_by`, `ready_at`, `approved_by`, `approved_at`, `approved_branch_version` | Review state. An approval counts only while `approved_branch_version` is the branch's version |
+| `ready_by`, `ready_at`, `review_note`, `approved_by`, `approved_at`, `approved_branch_version` | Review state. An approval counts only while `approved_branch_version` is the branch's version |
 | `merged_by`, `merged_at`, `merged_from_version`, `merged_main_version` | What the merge did |
+| `discarded_by`, `discarded_at` | Who discarded it, and when |
 | `main_before_document`, `main_before_expires_at` | Main as it was just before the merge, kept 30 days for "Undo this merge", then removed. Only the site's latest merge keeps one: a new merge clears the earlier one in the same transaction |
 | `created_by_kind`, `created_by`, `created_at`, `updated_at` | A user or a key, as the audit table records actors |
 
@@ -355,6 +356,9 @@ Decided while building S1 (2026-11-11), say so if you disagree:
 22. **The closed notice on a branch's live stream is S4.** In S1 an open tab of a discarded branch hears 410 `branch_closed` on its next save or load; S4 adds the live notice and the closed page that reads it.
 23. **A branch's `site_branches.branch_site_id` has a foreign key with `ON DELETE SET NULL`**, so whatever deletes a content row, the record reads as closed (410) rather than pointing at nothing. `DELETE /api/projects/<branchId>` is refused (409 `site_is_branch`): a branch is discarded from its site's branch list.
 24. **The page settings address of a branch is its site's**: a branch has no address of its own, its pages will live there once merged and published.
+25. **Closing a branch ends what a site delete ends, no more.** In S1 that is the kept document bodies and a running generation, in this process and, for the company erasure, for every branch that cascades with a main site of its batch. Presence, skeleton plans and approvals keep no per-site cleanup even for a deleted site, and they fail closed on a closed branch: an approval re-reads the site before it counts and a closed branch answers as changed, a skeleton plan is fulfilled only by a write that is refused with 410, and presence expires with the idle timeout. Section 6's wider list is met by these, plus S4's closed notice (decision 22).
+26. **The list's change counts and "main moved" move to S3**, with the diff that counts them. S1's list answers each branch's state, name, fork version, who made it and when.
+27. **A closed branch is a kind of missing site in code.** `BranchClosedError` extends `SiteNotFoundError`, so every existing caller that handles a missing site (the editor page, the live stream, MCP approvals, site operations) fails closed on it; the live stream guard, the branch routes and site operations say 410 `branch_closed` (site operations: `site_not_found` naming the main site, as their error codes are fixed).
 
 ## 11. For Marlin to decide (answered 2026-11-11)
 

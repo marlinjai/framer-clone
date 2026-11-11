@@ -35,6 +35,9 @@ import { SiteImageError, deleteSiteImage, listSiteImages, readSiteImage, storeSi
 import { MAX_OPEN_BRANCHES_PER_SITE } from '@/lib/sites/branches';
 import { png } from '@/lib/images/__tests__/fixtures';
 import { latestVersionRepository } from './latestVersionRepository';
+import { cachedDocument, documentEpoch, rememberDocument } from '@/server/sites/liveDocumentCache';
+import { EMPTY_SCOPE, eraseCompanyPublic } from '@/server/erasure/public';
+import { getSite } from '@/server/siteOps';
 
 const TENANT_GROUP = '018f9c10-0000-7000-8000-0000000b5a01';
 const OTHER_GROUP = '018f9c10-0000-7000-8000-0000000b5a02';
@@ -180,9 +183,9 @@ describe('forward: creating a branch', () => {
   });
 
   it('cleans the name and refuses an empty or too long one', async () => {
-    const { branch } = await create('  New‮hero \u0007 ');
+    const { branch } = await create('  New\u202Ehero \u0007 ');
     expect(branch.name).toBe('New hero');
-    await expect(create('​ ')).rejects.toBeInstanceOf(InvalidBranchNameError);
+    await expect(create('\u200B ')).rejects.toBeInstanceOf(InvalidBranchNameError);
     await expect(create('x'.repeat(61))).rejects.toBeInstanceOf(InvalidBranchNameError);
   });
 
@@ -211,6 +214,17 @@ describe('forward: creating a branch', () => {
   });
 });
 
+describe('a closed branch to an agent', () => {
+  it('reads as a missing site that names its main site, through the site operations', async () => {
+    const { branch } = await create('Agent work');
+    await branches.discardBranch(scope, mainId, branch.branchId, ALICE);
+    const caller = { scope, companyId: COMPANY, actor: { kind: 'key' as const, id: 'key_1' }, can: () => true };
+    const read = await getSite(caller, { siteId: branch.branchId }, { repository: latestVersionRepository() });
+    expect(read).toMatchObject({ ok: false, error: { code: 'site_not_found' } });
+    expect(!read.ok && read.error.message).toContain(`was discarded and is closed: nothing can be read from or written to it. Its site is "${mainId}"`);
+  });
+});
+
 describe('resume: a retried create', () => {
   it('answers the branch the first request made, never a second one', async () => {
     const branchId = randomUUID();
@@ -220,7 +234,7 @@ describe('resume: a retried create', () => {
     expect(await prisma.siteBranch.count({ where: { siteId: mainId } })).toBe(1);
   });
 
-  it('refuses an id that is someone else’s branch, another site’s, or another workspace’s site, like a missing one', async () => {
+  it('refuses an id that is someone else\u2019s branch, another site\u2019s, or another workspace\u2019s site, like a missing one', async () => {
     const branchId = randomUUID();
     await create('Retry', ALICE, { branchId });
     await expect(create('Retry', BOB, { branchId })).rejects.toBeInstanceOf(BranchNotFoundError);
@@ -293,6 +307,46 @@ describe('the database refuses what a branch may never be, whatever code runs', 
         }),
       ),
     ).toMatch(/P2003|foreign key/i);
+  });
+});
+
+describe('the branch record constraints', () => {
+  const record = (over: Record<string, unknown>) =>
+    prisma.siteBranch.create({
+      data: {
+        id: randomUUID(), siteId: mainId, workspaceId: scope.workspaceId, tenantGroupId: TENANT_GROUP,
+        name: 'Raw', createdByKind: 'user', createdBy: ALICE.id, ...over,
+      } as never,
+    });
+
+  it('a second open branch with the same name, compared without case, is refused by the index itself', async () => {
+    await record({ name: 'Raw' });
+    const clash = await refusal(() => record({ name: 'RAW' }));
+    // What the repository's name-clash check reads (P2002 naming the name).
+    expect(clash).toMatch(/^P2002 /);
+    expect(clash).toContain('name');
+    // A closed one does not count.
+    await expect(record({ name: 'raw', status: 'discarded' })).resolves.toBeTruthy();
+  });
+
+  it('refuses a content row other than its own id, an open-looking closed record, a bad name or actor', async () => {
+    const { branch } = await create();
+    expect(await refusal(() => record({ branchSiteId: branch.branchId }))).toContain('site_branches_content_row_check');
+    const id = randomUUID();
+    await prisma.$executeRaw`UPDATE public.site_branches SET branch_site_id = NULL WHERE id = ${branch.branchId}`;
+    expect(
+      await refusal(() => prisma.$executeRaw`UPDATE public.site_branches SET status = 'merged', branch_site_id = ${branch.branchId} WHERE id = ${branch.branchId}`),
+    ).toContain('site_branches_closed_check');
+    expect(await refusal(() => record({ id, name: '' }))).toContain('site_branches_name_check');
+    expect(await refusal(() => record({ name: 'x'.repeat(61) }))).toContain('site_branches_name_check');
+    expect(await refusal(() => record({ createdByKind: 'robot' }))).toContain('site_branches_created_by_kind_check');
+  });
+
+  it('a record whose content row is deleted some other way reads as closed (the foreign key sets it NULL)', async () => {
+    const { branch } = await create();
+    await prisma.site.delete({ where: { id: branch.branchId } });
+    expect((await prisma.siteBranch.findUniqueOrThrow({ where: { id: branch.branchId } })).branchSiteId).toBeNull();
+    await expect(latestVersionRepository().loadProjectWithVersion(scope, branch.branchId)).rejects.toMatchObject({ code: 'branch_closed' });
   });
 });
 
@@ -427,6 +481,20 @@ describe('deleting main', () => {
     expect(await prisma.site.count({ where: { id: { in: [mainId, one] } } })).toBe(0);
     expect(await prisma.sitePage.count({ where: { siteId: one } })).toBe(0);
     expect(await prisma.siteBranch.count({ where: { siteId: mainId } })).toBe(0);
+  });
+});
+
+describe('the company erasure', () => {
+  it('forgets a branch that cascaded with its main site, even when the branch was not in the batch', async () => {
+    const { branch } = await create();
+    rememberDocument(scope, branch.branchId, 1, JSON.stringify({ holds: 'content' }), documentEpoch());
+    const eventId = `evt-${randomUUID()}`;
+    await prisma.erasureEvent.create({ data: { id: eventId, kind: 'company', tenantId: COMPANY } });
+    // The scope names main only, as a batch that sorted the branch into a later one would.
+    await eraseCompanyPublic(prisma, { ...EMPTY_SCOPE, siteIds: [mainId] }, eventId);
+    expect(await prisma.site.count({ where: { id: { in: [mainId, branch.branchId] } } })).toBe(0);
+    expect(cachedDocument(scope, branch.branchId, 1)).toBeUndefined();
+    await prisma.erasureEvent.delete({ where: { id: eventId } });
   });
 });
 

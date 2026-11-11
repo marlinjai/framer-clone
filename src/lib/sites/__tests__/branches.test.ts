@@ -8,11 +8,11 @@ import { siteBranchesEnabled } from '@/server/sites/branches/switch';
 describe('validateBranchName', () => {
   it('trims, collapses whitespace and removes control and bidirectional characters', () => {
     expect(validateBranchName('  Spring\n\tsale  ')).toEqual({ ok: true, name: 'Spring sale' });
-    expect(validateBranchName('a‮b⁦c\u0000d')).toEqual({ ok: true, name: 'a b c d' });
+    expect(validateBranchName('a\u202Eb\u2066c\u0000d')).toEqual({ ok: true, name: 'a b c d' });
   });
 
   it('refuses an empty, invisible, too long or non-string name', () => {
-    for (const raw of ['', '   ', '​‍', '\u0007', 42, null]) expect(validateBranchName(raw).ok).toBe(false);
+    for (const raw of ['', '   ', '\u200B\u200D', '\u0007', 42, null]) expect(validateBranchName(raw).ok).toBe(false);
     expect(validateBranchName('x'.repeat(BRANCH_NAME_MAX_LENGTH)).ok).toBe(true);
     expect(validateBranchName('x'.repeat(BRANCH_NAME_MAX_LENGTH + 1)).ok).toBe(false);
     // Code points, not UTF-16 units: an emoji counts once.

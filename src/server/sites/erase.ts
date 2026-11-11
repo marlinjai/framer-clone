@@ -51,9 +51,12 @@ export const ERASE_LIMITS = {
 export type EraseLocation =
   | { kind: 'revision'; number: number }
   | { kind: 'working' }
-  | { kind: 'branch'; branchId: string; name: string }
-  | { kind: 'branch-base'; branchId: string; name: string }
-  | { kind: 'merge-undo'; branchId: string; name: string };
+  | { kind: 'branch'; branchId: string; name: string; branchStatus: EraseBranchStatus }
+  | { kind: 'branch-base'; branchId: string; name: string; branchStatus: EraseBranchStatus }
+  | { kind: 'merge-undo'; branchId: string; name: string; branchStatus: EraseBranchStatus };
+
+/** A branch's state, so the preview tells an open branch from a closed one of the same name. */
+export type EraseBranchStatus = 'open' | 'ready' | 'merged' | 'discarded';
 
 /** What kind of place a match is in, for the preview. */
 export type EraseArea =

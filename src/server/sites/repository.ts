@@ -1433,7 +1433,7 @@ export class SiteRepository {
       return name;
     };
     for (const record of records) {
-      const label = { branchId: record.id, name: record.name };
+      const label = { branchId: record.id, name: record.name, branchStatus: record.status };
       const content = record.branchSiteId
         ? await tx.site.findFirst({ where: { id: record.branchSiteId, workspaceId: scope.workspaceId }, select: WORKING_COPY_SELECT })
         : null;

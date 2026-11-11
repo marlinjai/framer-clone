@@ -31,8 +31,9 @@ export class SiteRepositoryError extends Error {
  * leaks the existence of a cross-workspace resource. 404.
  */
 export class SiteNotFoundError extends SiteRepositoryError {
-  constructor(siteId: string) {
-    super('site_not_found', `no site "${siteId}" in this workspace`, 404);
+  /** `answer` lets a more specific "not here" (a closed site branch) keep its own code and status. */
+  constructor(siteId: string, answer?: { code: string; message: string; status: number }) {
+    super(answer?.code ?? 'site_not_found', answer?.message ?? `no site "${siteId}" in this workspace`, answer?.status ?? 404);
   }
 }
 
@@ -262,19 +263,25 @@ export class BranchNotFoundError extends SiteRepositoryError {
   }
 }
 
-/** A branch that was merged or discarded: its content is gone, nothing more can be written to it. 410. */
-export class BranchClosedError extends SiteRepositoryError {
+/**
+ * A branch that was merged or discarded: its content is gone, nothing more can be written to it. 410
+ * `branch_closed`, naming the main site. A kind of SiteNotFoundError, so every caller that already handles a
+ * missing site (the editor page, the live stream, MCP approvals, site operations) handles a closed branch the
+ * same way, failing closed, and only the places that know about branches say more.
+ */
+export class BranchClosedError extends SiteNotFoundError {
   readonly branchStatus: 'merged' | 'discarded';
   readonly mainSiteId: string;
 
   constructor(branchStatus: 'merged' | 'discarded', mainSiteId: string) {
-    super(
-      'branch_closed',
-      branchStatus === 'merged'
-        ? 'This branch was merged into its site and is closed. Your changes were not saved.'
-        : 'This branch was discarded. Your changes were not saved.',
-      410,
-    );
+    super(mainSiteId, {
+      code: 'branch_closed',
+      message:
+        branchStatus === 'merged'
+          ? 'This branch was merged into its site and is closed. Your changes were not saved.'
+          : 'This branch was discarded. Your changes were not saved.',
+      status: 410,
+    });
     this.branchStatus = branchStatus;
     this.mainSiteId = mainSiteId;
   }

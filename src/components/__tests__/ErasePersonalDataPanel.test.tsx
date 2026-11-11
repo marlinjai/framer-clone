@@ -113,6 +113,43 @@ describe('ErasePersonalDataPanel', () => {
     expect(screen.getByText(/every other open tab of this project needs a reload too/)).toBeTruthy();
   });
 
+  it('names each site branch place with its state, two branches of one name kept apart, and says branches in the confirmation', async () => {
+    const open = { kind: 'branch', branchId: 'br_open', name: 'Sale', branchStatus: 'open' };
+    const closed = { kind: 'branch', branchId: 'br_old', name: 'Sale', branchStatus: 'discarded' };
+    const base = { kind: 'branch-base', branchId: 'br_open', name: 'Sale', branchStatus: 'open' };
+    const undo = { kind: 'merge-undo', branchId: 'br_done', name: 'Spring', branchStatus: 'merged' };
+    const M4 = 'd'.repeat(32);
+    fetchMock.mockResolvedValueOnce(
+      json({
+        token: 'f'.repeat(32), total: 4, erasable: 4, blocked: 0, truncated: false,
+        locations: [open, closed, base, undo].map((location) => ({ location, createdAt: null, kind: null, live: false, matches: 1, erasable: 1 })),
+        matches: [
+          { id: M1, location: open, area: 'text', pageId: 'home', pageSlug: '', path: '/pages/0/snapshot', excerpt: 'Max', blocked: null },
+          { id: M2, location: closed, area: 'branch', pageId: null, pageSlug: null, path: '/reviewNote', excerpt: 'Max', blocked: null },
+          { id: M3, location: base, area: 'text', pageId: 'home', pageSlug: '', path: '/pages/0/snapshot', excerpt: 'Max', blocked: null },
+          { id: M4, location: undo, area: 'text', pageId: 'home', pageSlug: '', path: '/pages/0/snapshot', excerpt: 'Max', blocked: null },
+        ],
+      }),
+    );
+    render(<ErasePersonalDataPanel projectId="site 1" />);
+    fireEvent.change(screen.getByLabelText('Value to find'), { target: { value: 'Max' } });
+    fireEvent.click(screen.getByRole('button', { name: /Search/ }));
+    await screen.findByText(/4 matches: 4 can be erased/);
+
+    // One line per place, even where two branches share a name.
+    expect(screen.getByText('Branch "Sale": 1')).toBeTruthy();
+    expect(screen.getByText('Branch "Sale" (record only, discarded): 1')).toBeTruthy();
+    expect(screen.getByText(/Branch "Sale" \(where it started from main\): 1/)).toBeTruthy();
+    expect(screen.getByText(/Site before merging "Spring" \(kept to undo the merge\): 1/)).toBeTruthy();
+    const list = screen.getByRole('list', { name: 'Matches' });
+    expect(within(list).getByText(/record only, discarded\) · branch name or review note/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Erase this match in Branch "Sale"' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Erase 1 ticked match...' }));
+    const confirm = screen.getByRole('group', { name: 'Confirm the erase' });
+    expect(within(confirm).getByText(/in its branches\?/)).toBeTruthy();
+  });
+
   it('says no match for this exact text remains, and when the proof could not run', async () => {
     fetchMock.mockResolvedValueOnce(json(FOUND)).mockResolvedValueOnce(json({ erased: 2, remaining: 0, erasableRemaining: 0 }));
     render(<ErasePersonalDataPanel projectId="site 1" />);

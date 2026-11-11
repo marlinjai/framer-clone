@@ -148,11 +148,14 @@ export async function eraseCompanyPublic(
         cmsTables = (await tx.dtTable.deleteMany({ where: { id: { in: tableIds } } })).count;
       }
 
-      // Pages, revisions, image bytes, domains, experiments and report counts cascade.
+      // A main site's branches cascade with it (docs/plans/2026-11-10-site-branches.md) even when they sort into
+      // a later batch: named here, so this process forgets their content too.
+      const cascadedBranches = await tx.site.findMany({ where: { branchOfSiteId: { in: ids } }, select: { id: true } });
+      // Pages, revisions, image bytes, domains, experiments, report counts and branches cascade.
       const sites = await tx.site.deleteMany({ where: { id: { in: ids } } });
       return {
         scope: current,
-        deletedSiteIds: ids,
+        deletedSiteIds: [...new Set([...ids, ...cascadedBranches.map((b) => b.id)])],
         rows: { sites: sites.count, siteErasures: siteErasures.count, siteOperationAudits: siteOperationAudits.count,
           agentRuns: agentRuns.count, cmsTables, cmsRows: cmsRows.count },
       };

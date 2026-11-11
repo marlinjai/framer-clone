@@ -28,7 +28,7 @@ import { reloadDiscarding } from '@/lib/projects/autosave';
 type Location =
   | { kind: 'revision'; number: number }
   | { kind: 'working' }
-  | { kind: 'branch' | 'branch-base' | 'merge-undo'; branchId: string; name: string };
+  | { kind: 'branch' | 'branch-base' | 'merge-undo'; branchId: string; name: string; branchStatus: 'open' | 'ready' | 'merged' | 'discarded' };
 
 interface Match {
   id: string;
@@ -106,6 +106,9 @@ const BLOCKED_LABELS: Record<string, string> = {
   separate: 'kept outside the published versions: change it where it is set (domains, A/B tests)',
 };
 
+/** A merged or discarded branch keeps only its record (name, note) and, once merged, main's copy from before. */
+const CLOSED_BRANCH: Record<string, string> = { merged: ', merged', discarded: ', discarded' };
+
 function locationLabel(location: Location): string {
   switch (location.kind) {
     case 'working':
@@ -113,12 +116,19 @@ function locationLabel(location: Location): string {
     case 'revision':
       return `Version ${location.number}`;
     case 'branch':
-      return `Branch "${location.name}"`;
+      return `Branch "${location.name}"${location.branchStatus in CLOSED_BRANCH ? ` (record only${CLOSED_BRANCH[location.branchStatus]})` : ''}`;
     case 'branch-base':
       return `Branch "${location.name}" (where it started from main)`;
     case 'merge-undo':
       return `Site before merging "${location.name}" (kept to undo the merge)`;
   }
+}
+
+/** A location's identity: two branches may share a name, never an id. */
+function locationKey(location: Location): string {
+  if (location.kind === 'working') return 'working';
+  if (location.kind === 'revision') return `revision:${location.number}`;
+  return `${location.kind}:${location.branchId}`;
 }
 
 async function readError(res: Response, fallback: string): Promise<{ code: string | null; message: string }> {
@@ -296,7 +306,7 @@ export function ErasePersonalDataPanel({ projectId }: { projectId: string }) {
               {found.result.locations
                 .filter((l) => l.matches > 0)
                 .map((l) => (
-                  <li key={locationLabel(l.location)}>
+                  <li key={locationKey(l.location)}>
                     {locationLabel(l.location)}
                     {l.live && ' (live)'}: {l.matches}
                   </li>

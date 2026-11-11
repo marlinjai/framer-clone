@@ -34,6 +34,7 @@ import {
   type SiteRepository,
   type SiteRevisionList,
   type SiteSummary,
+  BranchClosedError,
 } from '@/server/sites';
 import { SaveAbortedError } from '@/server/sites/repository';
 import { revalidateCustomHostsForSiteId, revalidateSiteCache } from '@/server/sites/cachedResolver';
@@ -121,6 +122,13 @@ function fromError(err: unknown, siteId?: string): SiteOpsResult<never> {
   // The repository's own messages speak to an editor tab ("reload the page", "this
   // tab"); a caller of this library is an agent or a CLI as often, so the codes that
   // can come back here get wording that names what to do through these operations.
+  // A merged or discarded site branch: its content is gone; the work, if merged, is on its site.
+  if (err instanceof BranchClosedError) {
+    return fail({
+      code: 'site_not_found',
+      message: `${siteId ? `"${siteId}" is a site branch that was ${err.branchStatus}` : `this site branch was ${err.branchStatus}`} and is closed: nothing can be read from or written to it. Its site is "${err.mainSiteId}"`,
+    });
+  }
   if (err instanceof SiteNotFoundError || err instanceof SiteGoneError) {
     return fail({
       code: 'site_not_found',
