@@ -15,7 +15,7 @@ import { mergeOrder } from './order';
 import { mergeForest, type Forest, type TreeNode } from './tree';
 import { ConflictLog, conflictId, type MergeAnswers, type MergeConflict, type MergeSide, type MergeUnit } from './types';
 import { isPlainObject, jsonEqual, mergeValue, type SplitRule } from './value';
-import { danglingReferences, documentTrees, nodeReferences, pageReferences, placements, treesOf, type DanglingReference } from './references';
+import { askKey, danglingReferences, type DanglingReference } from './references';
 
 export interface MergePage {
   pageId: string;
@@ -48,16 +48,19 @@ export interface DocumentMerge {
   dangling: DanglingReference[];
 }
 
-/** The three documents, for what a unit's merge needs to know beyond the unit (references to it). */
+/** The three documents, and the removals rule 10 asks (keys of `askKey`): what a merge pass left dangling. */
 interface Sides {
   base: MergeDocument;
   main: MergeDocument;
   branch: MergeDocument;
-  trees: { base: unknown[]; main: unknown[]; branch: unknown[] };
+  asked: ReadonlySet<string>;
 }
 
+/** Passes of rule 10 at most: each one only adds questions, so this is reached only by a broken document. */
+const MAX_PASSES = 16;
+
 /** The site's own fields, each one value. */
-const SITE_FIELDS = ['name', 'description', 'analyticsProjectId', 'ingestionEndpoint', 'apiKeyRef', 'lumitraEnabled'] as const;
+export const SITE_FIELDS = ['name', 'description', 'analyticsProjectId', 'ingestionEndpoint', 'apiKeyRef', 'lumitraEnabled'] as const;
 /** A page's timestamps move with any edit on it: never compared, taken from the side whose content stands. */
 const PAGE_TIMESTAMPS = ['createdAt', 'updatedAt'] as const;
 const PAGE_TREE_FIELDS = ['appComponentTree', 'canvasNodes'] as const;
@@ -81,12 +84,30 @@ const DEFINITION_SPLIT: SplitRule = (path) => path.length === 0;
 /** An item of a list keyed by id (an input, a state) merges per field. */
 const ITEM_SPLIT: SplitRule = (path) => path.length === 0;
 
+/**
+ * Rule 10 is asked from the result: a pass that leaves something dangling that main and the branch alone did
+ * not asks that thing's removal (a rule 6 conflict) in the next pass, until a pass adds no question.
+ */
 export function mergeDocuments(
   base: MergeDocument,
   main: MergeDocument,
   branch: MergeDocument,
   answers: MergeAnswers = {},
 ): DocumentMerge {
+  let asked = new Set<string>();
+  for (let pass = 1; ; pass++) {
+    const result = mergePass({ base, main, branch, asked }, answers);
+    const more = result.dangling.map(askKey).filter((key) => !asked.has(key));
+    if (more.length === 0 || pass >= MAX_PASSES) return result;
+    asked = new Set([...asked, ...more]);
+  }
+}
+
+/** Keys of the stored document this merge handles itself; any other top-level key is merged as one value. */
+const HANDLED_KEYS = new Set<string>([...SITE_FIELDS, 'redirects', 'siteSettings', 'pages', 'components']);
+
+function mergePass(sides: Sides, answers: MergeAnswers): DocumentMerge {
+  const { base, main, branch } = sides;
   const log = new ConflictLog(answers);
   const out: MergeDocument = { ...main };
 
@@ -99,13 +120,16 @@ export function mergeDocuments(
     }).value as never;
   }
   out.redirects = main.redirects;
+  // A key a later schema adds, unknown here: one value, so a change on the branch is never dropped silently.
+  for (const key of [...new Set([...Object.keys(main), ...Object.keys(branch)])].sort()) {
+    if (HANDLED_KEYS.has(key)) continue;
+    out[key] = mergeValue(base[key], main[key], branch[key], {
+      path: [key],
+      pick: (path, c) => log.ask({ id: conflictId(site, 'value', path), kind: 'value', unit: site, path: [...path], base: c.base, main: c.main, branch: c.branch }),
+    }).value;
+    if (out[key] === undefined) delete out[key];
+  }
 
-  const sides: Sides = {
-    base,
-    main,
-    branch,
-    trees: { base: documentTrees(base), main: documentTrees(main), branch: documentTrees(branch) },
-  };
   out.siteSettings = mergeSettings(base.siteSettings, main.siteSettings, branch.siteSettings, log);
   out.components = mergeComponents(sides, log);
   out.pages = mergePages(sides, log);
@@ -181,10 +205,6 @@ function mergeComponents(sides: Sides, log: ConflictLog) {
   const base = sides.base.components;
   const main = sides.main.components;
   const branch = sides.branch.components;
-  // Counted once, on the first removal that needs them.
-  let counted: Record<'base' | MergeSide, Map<string, number>> | undefined;
-  const placedOn = () =>
-    (counted ??= { base: placements(sides.trees.base), main: placements(sides.trees.main), branch: placements(sides.trees.branch) });
   const out: Record<string, unknown> = {};
   for (const id of new Set([...Object.keys(main ?? {}), ...Object.keys(branch ?? {}), ...Object.keys(base ?? {})])) {
     const merged = mergeUnit(
@@ -193,7 +213,7 @@ function mergeComponents(sides: Sides, log: ConflictLog) {
       branch?.[id] as Record<string, unknown> | undefined,
       { kind: 'component', id },
       log,
-      (side) => (placedOn()[side].get(id) ?? 0) > (placedOn().base.get(id) ?? 0),
+      sides.asked.has(`component|${id}`),
       (b, m, r, unit) => {
         const container = `component:${id}`;
         const fields = (d: Record<string, unknown>) => {
@@ -212,7 +232,7 @@ function mergeComponents(sides: Sides, log: ConflictLog) {
           const merged = mergeKeyedList(b[list], m[list], r[list], unit, [list], log, ITEM_SPLIT);
           if (merged !== undefined) result[list] = merged;
         }
-        result.page = mergePageBody(b.page, m.page, r.page, container, log, unit);
+        result.page = mergePageBody(b.page, m.page, r.page, container, log, unit, sides.asked);
         return result;
       },
     );
@@ -231,18 +251,14 @@ function mergePages(sides: Sides, log: ConflictLog): MergePage[] {
   const R = byId(branch);
   const merged = new Map<string, MergePage>();
   for (const id of new Set([...M.keys(), ...R.keys(), ...B.keys()])) {
-    const inBase = B.get(id);
-    const pointedAt = (side: MergeSide) =>
-      inBase !== undefined &&
-      pageReferences(sides[side], sides.trees[side], inBase) > pageReferences(sides.base, sides.trees.base, inBase);
     const page = mergeUnit(
       B.get(id)?.snapshot,
       M.get(id)?.snapshot,
       R.get(id)?.snapshot,
       { kind: 'page', id },
       log,
-      pointedAt,
-      (b, m, r, unit) => mergePageBody(b, m, r, `page:${id}`, log, unit),
+      sides.asked.has(`page|${id}`),
+      (b, m, r, unit) => mergePageBody(b, m, r, `page:${id}`, log, unit, sides.asked),
     );
     if (page) merged.set(id, { pageId: id, slug: typeof page.slug === 'string' ? page.slug : '', snapshot: page });
   }
@@ -268,11 +284,8 @@ function mergeUnit(
   branch: Record<string, unknown> | undefined,
   unit: MergeUnit,
   log: ConflictLog,
-  /**
-   * Whether a side points at the unit more than the base did (rule 10): its removal is then asked. Asked only
-   * when the unit was removed on the other side, since working it out walks every tree of the site.
-   */
-  newlyReferenced: (side: MergeSide) => boolean,
+  /** Rule 10: a previous pass left something pointing at this unit, so its removal is asked. */
+  referenced: boolean,
   body: (b: Record<string, unknown>, m: Record<string, unknown>, r: Record<string, unknown>, unit: MergeUnit) => Record<string, unknown>,
 ): Record<string, unknown> | undefined {
   const content = (u: Record<string, unknown> | undefined) => (u ? withoutTimestamps(u) : undefined);
@@ -287,8 +300,7 @@ function mergeUnit(
   if (!main || !branch) {
     const remover: MergeSide = main ? 'branch' : 'main';
     const kept = (main ?? branch)!;
-    const keeper: MergeSide = main ? 'main' : 'branch';
-    if (jsonEqual(content(base), content(kept)) && !newlyReferenced(keeper)) return undefined;
+    if (jsonEqual(content(base), content(kept)) && !referenced) return undefined;
     const pick =
       log.ask({ id: conflictId(unit, 'removed'), kind: 'removed', unit, path: [], base: content(base), main: content(main), branch: content(branch), removedOn: remover }) ??
       'main';
@@ -308,7 +320,7 @@ function timeOf(value: unknown): number {
   return Number.NEGATIVE_INFINITY;
 }
 
-function withoutTimestamps(u: Record<string, unknown>): Record<string, unknown> {
+export function withoutTimestamps(u: Record<string, unknown>): Record<string, unknown> {
   const copy = { ...u };
   for (const key of PAGE_TIMESTAMPS) delete copy[key];
   if (isPlainObject(copy.page)) copy.page = withoutTimestamps(copy.page);
@@ -335,7 +347,8 @@ function mergePageBody(
   branch: unknown,
   container: string,
   log: ConflictLog,
-  unit: MergeUnit = { kind: 'page', id: container },
+  unit: MergeUnit,
+  asked: ReadonlySet<string>,
 ): Record<string, unknown> {
   const b = (base ?? {}) as Record<string, unknown>;
   const m = (main ?? {}) as Record<string, unknown>;
@@ -349,12 +362,22 @@ function mergePageBody(
     split: PAGE_SPLIT,
     pick: (path, c) => log.ask({ id: conflictId(unit, 'value', path), kind: 'value', unit, path: [...path], base: c.base, main: c.main, branch: c.branch }),
   }).value as Record<string, unknown>;
-  const baseRefs = nodeReferences(treesOf(b));
-  const newly = (side: Record<string, unknown>) => new Set([...nodeReferences(treesOf(side))].filter((id) => !baseRefs.has(id)));
-  const { forest } = mergeForest(forestOf(b), forestOf(m), forestOf(r), container, log, { main: newly(m), branch: newly(r) });
+  const prefix = `node|${container}|`;
+  const referenced = new Set([...asked].filter((key) => key.startsWith(prefix)).map((key) => key.slice(prefix.length)));
+  const { forest } = mergeForest(forestOf(b), forestOf(m), forestOf(r), container, log, referenced);
   const out: Record<string, unknown> = { ...fields };
   for (const key of PAGE_TIMESTAMPS) if (key in m) out[key] = m[key];
-  const [app] = forest.slots.app ?? [];
+  // One side replaced the page's top node and the other's changes inside the old one were kept: two tops.
+  // Only one can stand, so the person picks; main's stands in.
+  const roots = forest.slots.app ?? [];
+  let app = roots[0];
+  if (roots.length > 1) {
+    const rootOf = (p: Record<string, unknown>) => (isPlainObject(p.appComponentTree) ? p.appComponentTree.id : undefined);
+    const pick =
+      log.ask({ id: conflictId(unit, 'value', ['appComponentTree']), kind: 'value', unit, path: ['appComponentTree'], base: rootOf(b), main: rootOf(m), branch: rootOf(r) }) ??
+      'main';
+    app = roots.find((root) => root.id === rootOf(pick === 'main' ? m : r)) ?? roots[0];
+  }
   if (app !== undefined) out.appComponentTree = app;
   if ('canvasNodes' in m || 'canvasNodes' in r || (forest.slots.canvas ?? []).length > 0) {
     out.canvasNodes = Object.fromEntries((forest.slots.canvas ?? []).map((node) => [node.id, node]));
@@ -362,7 +385,7 @@ function mergePageBody(
   return out;
 }
 
-function forestOf(page: Record<string, unknown>): Forest {
+export function forestOf(page: Record<string, unknown>): Forest {
   const app = isPlainObject(page.appComponentTree) ? [page.appComponentTree as TreeNode] : [];
   const canvas = isPlainObject(page.canvasNodes) ? (Object.values(page.canvasNodes) as TreeNode[]) : [];
   return { slots: { app, canvas } };

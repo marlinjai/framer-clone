@@ -52,6 +52,20 @@ function internalHrefKey(href: string): string | null {
   return pathKey(path);
 }
 
+/**
+ * The comparison key of the page an `href` leads to on this site, or null for a link elsewhere; equal to
+ * `addressKeyOfSlug` of that page's slug. For the site branches merge, which looks for links to an address
+ * no page holds any more (src/lib/siteMerge/references.ts).
+ */
+export const linkKeyOfHref = (href: string): string | null => internalHrefKey(href);
+
+/** The comparison key of a page's address: null for the home page's (it always resolves) and a dynamic one's. */
+export function addressKeyOfSlug(slug: string): string | null {
+  if (slug.trim() === '') return null;
+  const path = linkPathOfSlug(slug);
+  return path === null ? null : pathKey(path);
+}
+
 /** How many links in `trees` lead to the page with this id and slug. */
 export function countLinksToPage(trees: readonly unknown[], page: { pageId: string; slug: string }): number {
   // An empty slug is the root address; the only empty-slug page that can be deleted

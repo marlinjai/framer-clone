@@ -9,7 +9,10 @@
 // - the theme's caps (`themeBoundsErrors`): a count over a cap may stay, never grow;
 // - the size limit of every reusable component (one already too big may stay so, never grow), as the
 //   live replay's dry run checks it (`./shared.ts`);
-// - behaviour that still reads: no node's behaviour refused that the stored site ran;
+// - behaviour that still reads, in every tree (pages, components, canvas nodes): no node's behaviour refused
+//   that the stored site ran;
+// - no node id on two pages or components (decision 36: a node moved to another page on one side and kept on
+//   the other);
 // - the body limit of a save.
 //
 // The document is turned into an editor project by the caller (the server's `persistedToProjectSnapshot`,
@@ -22,13 +25,15 @@ import ProjectModel, { type ProjectSnapshotIn } from '@/models/ProjectModel';
 import { findProjectSlugProblem } from '@/lib/pages/slug';
 import { normalizeTheme, themeBoundsErrors } from '@/lib/site/theme';
 import { readBehaviourTree } from '@/lib/behaviour/format';
-import { COMPONENT_LIMITS, serializedBytes } from '@/lib/components/placement';
+import { serializedBytes } from '@/lib/components/placement';
 import { PROJECT_BODY_MAX_BYTES } from '@/lib/api/respond';
 import { isPlainObject } from './value';
+import { outgrewLimit } from './shared';
+import { documentBodies, treesOf, walkNodes } from './references';
 import type { MergeDocument } from './document';
 
 export interface MergeProblem {
-  code: 'slug' | 'theme' | 'component_too_large' | 'behaviour' | 'too_large' | 'does_not_load';
+  code: 'slug' | 'theme' | 'component_too_large' | 'behaviour' | 'duplicate_id' | 'too_large' | 'does_not_load';
   message: string;
   /** The page or component definition it is about, when it is about one. */
   pageId?: string;
@@ -53,6 +58,32 @@ export function mergedDocumentProblems(merged: MergeDocument, stored: MergeDocum
   const theme = (doc: MergeDocument) => normalizeTheme(isPlainObject(doc.siteSettings) ? doc.siteSettings.theme : undefined);
   for (const message of themeBoundsErrors(theme(merged), theme(stored))) problems.push({ code: 'theme', message });
 
+  // A node id held by two pages or components: what the merge gives when a node moved to another page on one
+  // side and was kept where it was on the other (decision 36). Like the other rules, one the site already had
+  // may stay.
+  const shared = (doc: MergeDocument) => {
+    const owner = new Map<string, string>();
+    const twice = new Set<string>();
+    for (const [container, body] of documentBodies(doc)) {
+      const here = new Set<string>();
+      for (const node of walkNodes(treesOf(body))) if (typeof node.id === 'string') here.add(node.id);
+      for (const id of here) {
+        const first = owner.get(id);
+        if (first === undefined) owner.set(id, container);
+        else twice.add(id);
+      }
+    }
+    return { owner, twice };
+  };
+  const stillShared = shared(stored).twice;
+  const { owner, twice } = shared(merged);
+  for (const id of [...twice].sort()) {
+    if (stillShared.has(id)) continue;
+    const container = owner.get(id)!;
+    const at = container.startsWith('page:') ? { pageId: container.slice(5) } : { componentId: container.slice(10) };
+    problems.push({ code: 'duplicate_id', message: `node ${id} is on two pages or components at once`, ...at });
+  }
+
   let project: ProjectSnapshotIn;
   try {
     project = toProject(merged);
@@ -75,22 +106,19 @@ export function mergedDocumentProblems(merged: MergeDocument, stored: MergeDocum
   for (const [id, definition] of scratch.components) {
     const after = serializedBytes(getSnapshot(definition));
     const before = isPlainObject(stored.components?.[id]) ? serializedBytes(stored.components[id]) : 0;
-    if (after > COMPONENT_LIMITS.definitionBytes && after > before) {
+    if (outgrewLimit(after, before)) {
       problems.push({ code: 'component_too_large', message: `the reusable component "${definition.name}" is over its size limit`, componentId: id });
     }
   }
 
   const refusedNodes = (doc: MergeDocument) => {
     const out = new Set<string>();
-    const roots: Array<[string, unknown]> = [
-      ...doc.pages.map((page) => [`page:${page.pageId}`, page.snapshot.appComponentTree] as [string, unknown]),
-      ...Object.entries(doc.components ?? {}).map(
-        ([id, definition]) => [`component:${id}`, isPlainObject(definition) && isPlainObject(definition.page) ? definition.page.appComponentTree : undefined] as [string, unknown],
-      ),
-    ];
-    for (const [container, root] of roots) {
-      if (!isPlainObject(root)) continue;
-      for (const refused of readBehaviourTree(root as never).refused) out.add(`${container}|${refused.nodeId ?? ''}|${refused.reason ?? ''}`);
+    // Every tree: each page's and component's own, and the canvas nodes beside it.
+    for (const [container, body] of documentBodies(doc)) {
+      for (const root of treesOf(body)) {
+        if (!isPlainObject(root)) continue;
+        for (const refused of readBehaviourTree(root as never).refused) out.add(`${container}|${refused.nodeId ?? ''}|${refused.reason ?? ''}`);
+      }
     }
     return out;
   };
@@ -105,6 +133,7 @@ export function mergedDocumentProblems(merged: MergeDocument, stored: MergeDocum
       ...(kind === 'page' ? { pageId: id } : { componentId: id }),
     });
   }
+
   return problems;
 }
 

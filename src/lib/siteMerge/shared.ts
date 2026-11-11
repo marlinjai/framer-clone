@@ -59,6 +59,14 @@ export function findNode(project: unknown, id: string): object | undefined {
   return undefined;
 }
 
+/**
+ * The size rule of a reusable component, as the model applies it: over the limit is refused only when the
+ * change made it bigger (one already too big may stay so, never grow).
+ */
+export function outgrewLimit(after: number, before: number): boolean {
+  return after > COMPONENT_LIMITS.definitionBytes && after > before;
+}
+
 /** The edit applied to a scratch copy of the agent's version: true when every value applies and no reusable component outgrows its limit. */
 export function replaysCleanly(snapshot: ProjectSnapshotOut, edits: Array<{ nodeId: string; field: string; value: unknown }>): boolean {
   try {
@@ -78,7 +86,7 @@ export function replaysCleanly(snapshot: ProjectSnapshotOut, edits: Array<{ node
     for (const [id, before] of touched) {
       const definition = scratch.components.get(id);
       const after = definition ? serializedBytes(getSnapshot(definition)) : 0;
-      if (after > COMPONENT_LIMITS.definitionBytes && after > before) return false;
+      if (outgrewLimit(after, before)) return false;
     }
     return true;
   } catch {

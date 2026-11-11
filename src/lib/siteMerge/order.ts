@@ -28,7 +28,9 @@ export function mergeOrder(
   let secondary = r;
   if (!options.unordered) {
     // The relative order of what all three hold: an add on one side and a reorder on the other never clash.
-    const common = new Set(b.filter((id) => m.includes(id) && r.includes(id)));
+    const inM = new Set(m);
+    const inR = new Set(r);
+    const common = new Set(b.filter((id) => inM.has(id) && inR.has(id)));
     const seq = (list: string[]) => list.filter((id) => common.has(id));
     const mMoved = !jsonEqual(seq(m), seq(b));
     const rMoved = !jsonEqual(seq(r), seq(b));
@@ -40,24 +42,51 @@ export function mergeOrder(
       secondary = m;
     }
   }
-  const out = [...primary];
+  const placed = new Set(primary);
+  let out: string[];
   if (options.unordered) {
-    for (const id of secondary) if (!out.includes(id)) out.push(id);
+    out = [...primary];
+    for (const id of secondary) {
+      if (placed.has(id)) continue;
+      placed.add(id);
+      out.push(id);
+    }
   } else {
-    secondary.forEach((id, index) => {
-      if (out.includes(id)) return;
-      let at = 0;
-      for (let i = index - 1; i >= 0; i--) {
-        const found = out.indexOf(secondary[i]);
-        if (found >= 0) {
-          at = found + 1;
-          break;
-        }
+    // Each item only the secondary list holds goes right after the item before it there (that item already
+    // placed, or placed just now), or first: anchored, then written out in one pass. Linear in the lists.
+    const START = '';
+    const after = new Map<string, string[]>();
+    let anchor = START;
+    for (const id of secondary) {
+      if (!placed.has(id)) {
+        placed.add(id);
+        const list = after.get(anchor);
+        if (list) list.push(id);
+        else after.set(anchor, [id]);
       }
-      out.splice(at, 0, id);
-    });
+      anchor = id;
+    }
+    out = [];
+    const emit = (from: string) => {
+      const stack = [...(after.get(from) ?? [])].reverse();
+      while (stack.length > 0) {
+        const id = stack.pop()!;
+        out.push(id);
+        const next = after.get(id);
+        if (next) for (let i = next.length - 1; i >= 0; i--) stack.push(next[i]);
+      }
+    };
+    emit(START);
+    for (const id of primary) {
+      out.push(id);
+      emit(id);
+    }
   }
   // Held by neither side's list (kept by an answer from the base): last, in the base's order.
-  for (const id of [...b, ...present]) if (!out.includes(id)) out.push(id);
+  for (const id of [...b, ...present]) {
+    if (placed.has(id)) continue;
+    placed.add(id);
+    out.push(id);
+  }
   return out;
 }

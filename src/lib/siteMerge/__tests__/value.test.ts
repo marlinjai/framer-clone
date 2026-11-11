@@ -1,7 +1,7 @@
 // The merge of one value (src/lib/siteMerge/value.ts), rule by rule of the site branches plan, section 5.
 
 import { describe, expect, it } from 'vitest';
-import { fingerprint, jsonEqual, mergeValue, stableJson, type SplitRule } from '../value';
+import { fingerprint, jsonEqual, mergeValue, type SplitRule } from '../value';
 
 const splitProps: SplitRule = (path) => path.length === 0 || (path[0] === 'style' && path.length === 1);
 
@@ -71,7 +71,7 @@ describe('equality and fingerprints', () => {
     expect(jsonEqual({ a: 1, b: undefined }, { a: 1 })).toBe(true);
     expect(jsonEqual(new Date(5), new Date(5))).toBe(true);
     expect(jsonEqual(new Date(5), new Date(6))).toBe(false);
-    expect(stableJson({ b: 1, a: [1, { d: 2, c: 1 }] })).toBe(stableJson({ a: [1, { c: 1, d: 2 }], b: 1 }));
+    expect(fingerprint({ b: 1, a: [1, { d: 2, c: 1 }] })).toBe(fingerprint({ a: [1, { c: 1, d: 2 }], b: 1 }));
     expect(jsonEqual(null, undefined)).toBe(false);
   });
 

@@ -31,7 +31,7 @@ describe('nodeReferences', () => {
         node('label', { htmlFor: 'missing-html-id' }),
       ]),
     ];
-    expect([...nodeReferences(trees)].sort()).toEqual(['dialog1', 'menu']);
+    expect(nodeReferences(trees).map((r) => `${r.from}>${r.to}`).sort()).toEqual(['button>dialog1', 'button>menu']);
   });
 });
 

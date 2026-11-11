@@ -8,8 +8,8 @@
 // PURE: client and server safe.
 
 import { jsonEqual, isPlainObject } from './value';
-import { treesOf } from './references';
-import type { MergeDocument } from './document';
+import { flatten } from './tree';
+import { forestOf, SITE_FIELDS, withoutTimestamps, type MergeDocument } from './document';
 
 export interface UnitChanges {
   added: string[];
@@ -30,8 +30,6 @@ export interface DocumentChanges {
   pageOrder: boolean;
 }
 
-const SITE_FIELDS = ['name', 'description', 'analyticsProjectId', 'ingestionEndpoint', 'apiKeyRef', 'lumitraEnabled'] as const;
-const TIMESTAMPS = ['createdAt', 'updatedAt'];
 
 export function diffDocuments(from: MergeDocument, to: MergeDocument): DocumentChanges {
   const changes: DocumentChanges = {
@@ -71,8 +69,8 @@ function units(
   for (const [id, before] of from) {
     const after = to.get(id);
     if (after === undefined) continue;
-    if (!jsonEqual(withoutTimestamps(before), withoutTimestamps(after))) out.changed.push(id);
-    const n = nodeChanges(treesOf(bodyOf(before)), treesOf(bodyOf(after)));
+    if (!jsonEqual(stripped(before), stripped(after))) out.changed.push(id);
+    const n = nodeChanges(bodyOf(before), bodyOf(after));
     nodes.added += n.added;
     nodes.removed += n.removed;
     nodes.changed += n.changed;
@@ -82,54 +80,29 @@ function units(
   out.changed.sort();
 }
 
-function withoutTimestamps(unit: unknown): unknown {
-  if (!isPlainObject(unit)) return unit;
-  const copy: Record<string, unknown> = { ...unit };
-  for (const key of TIMESTAMPS) delete copy[key];
-  if (isPlainObject(copy.page)) copy.page = withoutTimestamps(copy.page);
-  return copy;
-}
+const stripped = (unit: unknown) => (isPlainObject(unit) ? withoutTimestamps(unit) : unit);
 
-interface FlatNode {
-  fields: Record<string, unknown>;
-  parent: string;
-  children: string[];
-}
-
-function flat(trees: readonly unknown[]): Map<string, FlatNode> {
-  const out = new Map<string, FlatNode>();
-  const stack: Array<[unknown, string]> = trees.map((tree) => [tree, '#root']).reverse() as Array<[unknown, string]>;
-  let guard = 0;
-  while (stack.length > 0 && guard++ < 1_000_000) {
-    const [node, parent] = stack.pop()!;
-    if (!isPlainObject(node) || typeof node.id !== 'string' || out.has(node.id)) continue;
-    const { children, ...fields } = node;
-    const kids = Array.isArray(children) ? children.filter((c) => isPlainObject(c) && typeof c.id === 'string') : [];
-    out.set(node.id, { fields, parent, children: kids.map((c) => (c as { id: string }).id) });
-    for (let i = kids.length - 1; i >= 0; i--) stack.push([kids[i], node.id]);
-  }
-  return out;
-}
-
-function nodeChanges(before: readonly unknown[], after: readonly unknown[]) {
-  const a = flat(before);
-  const b = flat(after);
+function nodeChanges(before: unknown, after: unknown) {
+  const a = flatten(forestOf(isPlainObject(before) ? before : {}));
+  const b = flatten(forestOf(isPlainObject(after) ? after : {}));
   let added = 0;
   let removed = 0;
   let changed = 0;
-  for (const id of b.keys()) if (!a.has(id)) added++;
-  for (const [id, node] of a) {
-    const other = b.get(id);
-    if (!other) {
+  for (const id of b.fields.keys()) if (!a.fields.has(id)) added++;
+  for (const [id, fields] of a.fields) {
+    const otherFields = b.fields.get(id);
+    if (!otherFields) {
       removed++;
       continue;
     }
+    const kids = a.children.get(id) ?? [];
+    const otherKids = b.children.get(id) ?? [];
     // A parent's order compares only the children it holds on both sides (rule 8): a move counts on the moved
     // node, not again on the two parents.
-    const theirs = new Set(other.children);
-    const kept = new Set(node.children.filter((child) => theirs.has(child)));
-    const order = (n: FlatNode) => n.children.filter((child) => kept.has(child));
-    if (node.parent !== other.parent || !jsonEqual(node.fields, other.fields) || !jsonEqual(order(node), order(other))) changed++;
+    const theirs = new Set(otherKids);
+    const kept = new Set(kids.filter((child) => theirs.has(child)));
+    const order = (list: string[]) => list.filter((child) => kept.has(child));
+    if (a.parent.get(id) !== b.parent.get(id) || !jsonEqual(fields, otherFields) || !jsonEqual(order(kids), order(otherKids))) changed++;
   }
   return { added, removed, changed };
 }

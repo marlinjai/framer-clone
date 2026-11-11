@@ -8,7 +8,7 @@
 // - Fields of a node merge per field; `props`, its `style`, a responsive value and `bindings` per key.
 // - A node added on one side is kept; the same id added on both sides with different content conflicts.
 // - A node removed on one side and untouched on the other goes. Removed on one side and changed on the
-//   other (the node, a node inside it, a child added or moved into it, or newly pointed at there) is one conflict for the whole removed
+//   other (the node, a node inside it, a child added or moved into it, or left pointed at by the merge) is one conflict for the whole removed
 //   part, asked on its top node: keep it with the changes, or remove it.
 // - A move on one side is taken; different moves on both sides conflict, and so do two moves that would put
 //   a node inside itself.
@@ -35,7 +35,7 @@ export interface Forest {
 /** Slots whose roots have no order. */
 const UNORDERED_SLOTS = new Set(['canvas']);
 
-interface Flat {
+export interface Flat {
   /** Each node's own fields, without `children`. */
   fields: Map<string, Record<string, unknown>>;
   /** Each node's parent: a node id, or `#<slot>` for a root. */
@@ -47,7 +47,7 @@ interface Flat {
 const slotKey = (slot: string) => `#${slot}`;
 const isSlotKey = (key: string) => key.startsWith('#');
 
-function flatten(forest: Forest | undefined): Flat {
+export function flatten(forest: Forest | undefined): Flat {
   const flat: Flat = { fields: new Map(), parent: new Map(), children: new Map() };
   const visit = (node: unknown, parent: string) => {
     if (!isPlainObject(node) || typeof node.id !== 'string') return;
@@ -90,10 +90,6 @@ export const NODE_SPLIT: SplitRule = (path, sides) => {
   return responsive && (path.length === 2 || (path.length === 3 && path[1] === 'style'));
 };
 
-export interface TreeMerge {
-  forest: Forest;
-}
-
 /** Merge one container's forest three ways, reporting conflicts to `log` (keyed under `container`). */
 export function mergeForest(
   base: Forest | undefined,
@@ -101,9 +97,9 @@ export function mergeForest(
   branch: Forest | undefined,
   container: string,
   log: ConflictLog,
-  /** Node ids each side points at and the base did not (rule 10): a removal of one of them is asked. */
-  newlyReferenced: { main: ReadonlySet<string>; branch: ReadonlySet<string> } = { main: new Set(), branch: new Set() },
-): TreeMerge {
+  /** Node ids a previous pass left something pointing at (rule 10): a removal of one of them is asked. */
+  referenced: ReadonlySet<string> = new Set(),
+): { forest: Forest } {
   const B = flatten(base);
   const M = flatten(main);
   const R = flatten(branch);
@@ -114,8 +110,8 @@ export function mergeForest(
   const parent = new Map<string, string>();
   /** Where a node's parent came from, for the fallback when that parent is gone. */
   const parentFrom = new Map<string, MergeSide | 'base'>();
-  /** Nodes whose structure is taken whole from one side (kept against a removal, or a conflict's answer). */
-  const takenFrom = new Map<string, MergeSide>();
+  /** Nodes decided by a removal (kept with the keeper's structure, or removed): not merged again below. */
+  const decided = new Set<string>();
 
   // Removed on one side: grouped under the top node of each removed part, kept or removed as one.
   const decideRemovals = (remover: MergeSide) => {
@@ -125,35 +121,44 @@ export function mergeForest(
     const removed = new Set([...B.fields.keys()].filter((id) => K.fields.has(id) && !X.fields.has(id)));
     if (removed.size === 0) return;
     const groupOf = new Map<string, string>();
-    const top = (id: string): string => {
-      const known = groupOf.get(id);
-      if (known) return known;
-      const up = K.parent.get(id)!;
-      const root = removed.has(up) ? top(up) : id;
-      groupOf.set(id, root);
+    // The top removed node above each removed node (iterative: a deep tree must not exhaust the stack).
+    const top = (start: string): string => {
+      const chain: string[] = [];
+      let id = start;
+      let root: string | undefined;
+      while (root === undefined) {
+        const known = groupOf.get(id);
+        if (known) root = known;
+        else {
+          chain.push(id);
+          const up = K.parent.get(id)!;
+          if (removed.has(up)) id = up;
+          else root = id;
+        }
+      }
+      for (const visited of chain) groupOf.set(visited, root);
       return root;
     };
+    const push = (map: Map<string, string[]>, key: string, id: string) => {
+      const list = map.get(key);
+      if (list) list.push(id);
+      else map.set(key, [id]);
+    };
     const groups = new Map<string, string[]>();
-    for (const id of removed) {
-      const root = top(id);
-      groups.set(root, [...(groups.get(root) ?? []), id]);
-    }
+    for (const id of removed) push(groups, top(id), id);
     // Nodes the keeper added inside a removed part belong to that part.
     const added = new Map<string, string[]>();
     for (const id of K.fields.keys()) {
       if (B.fields.has(id)) continue;
       let up = K.parent.get(id)!;
       while (!isSlotKey(up) && !B.fields.has(up) && K.parent.has(up)) up = K.parent.get(up)!;
-      if (removed.has(up)) {
-        const root = top(up);
-        added.set(root, [...(added.get(root) ?? []), id]);
-      }
+      if (removed.has(up)) push(added, top(up), id);
     }
     for (const [root, members] of groups) {
       const extra = added.get(root) ?? [];
       const changed =
         extra.length > 0 ||
-        members.some((id) => newlyReferenced[keeper].has(id)) ||
+        members.some((id) => referenced.has(id)) ||
         members.some(
           (id) =>
             !jsonEqual(B.fields.get(id), K.fields.get(id)) ||
@@ -182,10 +187,8 @@ export function mergeForest(
           fields.set(id, K.fields.get(id)!);
           parent.set(id, K.parent.get(id)!);
           parentFrom.set(id, keeper);
-          takenFrom.set(id, keeper);
-        } else {
-          takenFrom.set(id, remover);
         }
+        decided.add(id);
       }
     }
   };
@@ -194,7 +197,7 @@ export function mergeForest(
 
   const ids = new Set([...B.fields.keys(), ...M.fields.keys(), ...R.fields.keys()]);
   for (const id of ids) {
-    if (takenFrom.has(id)) continue;
+    if (decided.has(id)) continue;
     const inB = B.fields.has(id);
     const inM = M.fields.has(id);
     const inR = R.fields.has(id);
@@ -275,8 +278,8 @@ export function mergeForest(
   // the base's; with none left it goes too.
   for (let changed = true; changed; ) {
     changed = false;
-    for (const [id, up] of [...parent]) {
-      if (isSlotKey(up) || fields.has(up)) continue;
+    const orphans = [...parent].filter(([, up]) => !isSlotKey(up) && !fields.has(up));
+    for (const [id] of orphans) {
       const from = parentFrom.get(id);
       const candidates = [from === 'main' ? R.parent.get(id) : M.parent.get(id), B.parent.get(id)];
       const next = candidates.find((c) => c !== undefined && (isSlotKey(c) || fields.has(c)));
@@ -291,7 +294,11 @@ export function mergeForest(
 
   // Children in order, per parent.
   const childrenOf = new Map<string, string[]>();
-  for (const [id, up] of parent) childrenOf.set(up, [...(childrenOf.get(up) ?? []), id]);
+  for (const [id, up] of parent) {
+    const list = childrenOf.get(up);
+    if (list) list.push(id);
+    else childrenOf.set(up, [id]);
+  }
   const order = (key: string): string[] => {
     const present = new Set(childrenOf.get(key) ?? []);
     const parentUnit: MergeUnit = isSlotKey(key) ? { kind: 'node', id: key, container } : unit(key);

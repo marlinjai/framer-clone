@@ -8,6 +8,8 @@
 //
 // PURE: no React, no MobX. Client and server safe.
 
+import { stableStringify } from '@/lib/ai/serializers/normalize';
+
 /** Where a value sits inside its unit, as keys (`['props', 'style', 'color', 'base']`). */
 export type ValuePath = readonly string[];
 
@@ -52,25 +54,13 @@ export function jsonEqual(a: unknown, b: unknown): boolean {
   return true;
 }
 
-/** JSON with sorted keys, `undefined` keys left out: equal values give equal text. */
-export function stableJson(value: unknown): string {
-  if (value === undefined) return 'undefined';
-  if (value instanceof Date) return JSON.stringify(value.toISOString());
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map((item) => (item === undefined ? 'null' : stableJson(item))).join(',')}]`;
-  const entries = Object.keys(value)
-    .filter((key) => (value as Record<string, unknown>)[key] !== undefined)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${stableJson((value as Record<string, unknown>)[key])}`);
-  return `{${entries.join(',')}}`;
-}
-
 /**
  * A short fingerprint of some values (FNV-1a, 64 bits as two 32-bit halves, hex). Not a secret and not
  * collision-proof against an attacker: it tells an answer given for these values from one given for others.
  */
 export function fingerprint(...values: unknown[]): string {
-  const text = values.map(stableJson).join('\u0000');
+  // Sorted keys, `undefined` left out, dates as text: equal values give equal text (`undefined` gives '').
+  const text = values.map((value) => stableStringify(value) ?? '').join('\u0000');
   let h1 = 0x811c9dc5;
   let h2 = 0x01000193 ^ 0x5bd1e995;
   for (let i = 0; i < text.length; i++) {
