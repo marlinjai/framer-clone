@@ -214,18 +214,35 @@ describe('forward', () => {
     expect(JSON.stringify(audit[0].actorDetail)).not.toContain('Summer sale');
   });
 
-  it('carries a rename of the branch’s site onto main, and keeps main’s own rename', async () => {
+  it('carries a rename of the branch’s site onto main; a rename of main since the fork is brought in first', async () => {
     const renamed = await createBranch(us, 'New name');
     await getSiteRepository().renameSite(us.scope, renamed, 'Bakery Deluxe');
     await merge(renamed, { token: (await review(renamed)).token });
     expect((await prisma.site.findUniqueOrThrow({ where: { id: us.mainId } })).name).toBe('Bakery Deluxe');
 
+    // Only main renamed: the branch is behind, the update takes main's name, the merge keeps it.
+    const mainOnly = await createBranch(us, 'Main renamed');
+    await getSiteRepository().renameSite(us.scope, us.mainId, 'Main name');
+    const behind = await review(mainOnly);
+    expect(behind.upToDate).toBe(false);
+    const first = await merge(mainOnly, { token: behind.token });
+    expect((await first.json()).error.code).toBe('branch_updated_from_main');
+    expect((await merge(mainOnly, { token: (await review(mainOnly)).token })).status).toBe(200);
+    expect((await prisma.site.findUniqueOrThrow({ where: { id: us.mainId } })).name).toBe('Main name');
+
+    // Both renamed: a conflict, never one name dropped without a word.
     const both = await createBranch(us, 'Both renamed');
     await getSiteRepository().renameSite(us.scope, both, 'Branch name');
-    await getSiteRepository().renameSite(us.scope, us.mainId, 'Main name');
-    const res = await merge(both, { token: (await review(both)).token });
-    expect(res.status).toBe(200);
-    expect((await prisma.site.findUniqueOrThrow({ where: { id: us.mainId } })).name).toBe('Main name');
+    await getSiteRepository().renameSite(us.scope, us.mainId, 'Main again');
+    const seen = await review(both);
+    expect(seen.conflicts.map((c: { path: string[] }) => c.path)).toEqual([['name']]);
+    const res = await merge(both, { token: seen.token });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error.code).toBe('branch_conflicts');
+    const [conflict] = seen.conflicts;
+    expect((await update(both, { token: seen.token, resolutions: { [conflict.id]: { fingerprint: conflict.fingerprint, pick: 'branch' } } })).status).toBe(200);
+    expect((await merge(both, { token: (await review(both)).token })).status).toBe(200);
+    expect((await prisma.site.findUniqueOrThrow({ where: { id: us.mainId } })).name).toBe('Branch name');
   });
 });
 
@@ -275,9 +292,13 @@ describe('backtrack and revise', () => {
     expect(await textOf(branchId, 'about')).toBe('Since 1991');
     const updated = await review(branchId);
     expect(updated).toMatchObject({ upToDate: true, token: body.error.token, branch: { approved: false, baseVersion: mainVersion } });
+    // A save of the branch after the update: the update's token no longer merges it unseen.
+    await edit(us, branchId, { home: 'Branch bread', about: 'Since 1991', extra: 'Unseen' });
+    expect((await merge(branchId, { token: body.error.token })).status).toBe(409);
 
-    const res = await merge(branchId, { token: updated.token });
+    const res = await merge(branchId, { token: (await review(branchId)).token });
     expect(res.status).toBe(200);
+    expect(await textOf(us.mainId, 'extra')).toBe('Unseen');
     expect(await textOf(us.mainId, 'home')).toBe('Branch bread');
     expect(await textOf(us.mainId, 'about')).toBe('Since 1991');
   });
@@ -462,6 +483,31 @@ describe('re-entry after completion or failure', () => {
     expect((await merge(branchId, { token })).status).toBe(200);
   });
 
+  it('a failure at the last write of an update leaves the branch and its record as they were, answers kept', async () => {
+    const branchId = await createBranch(us, 'Update fails');
+    await edit(us, branchId, { home: 'Branch home', about: 'Since 1990' });
+    await edit(us, us.mainId, { home: 'Main home', about: 'Since 1990' });
+    const service = new SiteBranchMergeService(prisma, getSiteRepository(), {
+      beforeCommit: async () => {
+        throw new Error('injected failure');
+      },
+    });
+    const seen = await service.changes(us.scope, branchId);
+    const [conflict] = seen.conflicts;
+    const before = await prisma.siteBranch.findUniqueOrThrow({ where: { id: branchId }, select: { baseVersion: true } });
+    const branchBefore = await versionOf(branchId);
+    await expect(
+      service.update(us.scope, branchId, { token: seen.token, resolutions: { [conflict.id]: { fingerprint: conflict.fingerprint, pick: 'branch' } } }, { kind: 'user', id: 'u' }),
+    ).rejects.toThrow('injected failure');
+    expect(await versionOf(branchId)).toBe(branchBefore);
+    expect(await textOf(branchId, 'home')).toBe('Branch home');
+    expect(await prisma.siteBranch.findUniqueOrThrow({ where: { id: branchId }, select: { baseVersion: true } })).toEqual(before);
+    expect(await prisma.siteOperationAudit.count({ where: { siteId: branchId, operation: 'branch_update' } })).toBe(0);
+    // The answer was stored before the write was tried: the same request, sent again without it, lands.
+    expect((await review(branchId)).settled).toEqual([{ id: conflict.id, pick: 'branch' }]);
+    expect((await update(branchId, { token: seen.token })).status).toBe(200);
+  });
+
   it('a discarded branch answers 410 everywhere, and a new branch may take its name fresh', async () => {
     const branchId = await createBranch(us, 'Gone');
     const { token } = await review(branchId);
@@ -526,6 +572,18 @@ describe('isolation', () => {
     expect(await prisma.siteOperationAudit.count({ where: { workspaceId: us.scope.workspaceId, operation: { in: ['branch_merge', 'branch_update'] } } })).toBe(0);
   });
 
+  it('answers another company’s closed branch with 404, never 410', async () => {
+    sessionMock.mockResolvedValue(memberOf(them));
+    authMock.mockImplementation(async () => ({ authenticated: true, userId: `user-${them.companyId}` }));
+    const theirs = await createBranch(them, 'Theirs, merged');
+    const { token } = await review(theirs);
+    expect((await merge(theirs, { token })).status).toBe(200);
+
+    sessionMock.mockResolvedValue(memberOf(us));
+    authMock.mockImplementation(async () => ({ authenticated: true, userId: `user-${us.companyId}` }));
+    for (const res of [await changes(theirs), await merge(theirs, { token }), await update(theirs, { token })]) expect(res.status).toBe(404);
+  });
+
   it('answers 404 with the switch off, and a main site’s id is no branch', async () => {
     const branchId = await createBranch(us, 'Switched off');
     process.env.SITE_BRANCHES_COMPANIES = them.companyId;
@@ -536,6 +594,28 @@ describe('isolation', () => {
 });
 
 describe('the erase of personal data and a merge', () => {
+  it('an erase of only main’s matches leaves the branch behind main, and the merge keeps main erased', async () => {
+    const VALUE = 'Erika Muster';
+    // Main and the branch's fork point hold the value; the branch changes another page only.
+    await edit(us, us.mainId, { home: `Run by ${VALUE}`, about: 'Since 1990' });
+    const branchId = await createBranch(us, 'Partial');
+    await edit(us, branchId, { home: `Run by ${VALUE}`, about: 'Branch about' });
+    const repo = getSiteRepository();
+    const query = { value: VALUE, caseSensitive: false };
+    const preview = await repo.searchPersonalData(us.scope, us.mainId, query);
+    const onMain = preview.matches.filter((m) => m.blocked === null && m.location.kind === 'working').map((m) => m.id);
+    expect(onMain.length).toBeGreaterThan(0);
+    const erased = await repo.erasePersonalData(us.scope, us.mainId, { query, replacement: '[entfernt]', token: preview.token, chosen: onMain, erasedBy: 'u' });
+    expect(erased.remaining).toBeGreaterThan(0);
+
+    const after = await review(branchId);
+    expect(after.upToDate).toBe(false);
+    await merge(branchId, { token: after.token });
+    expect((await merge(branchId, { token: (await review(branchId)).token })).status).toBe(200);
+    expect(await textOf(us.mainId, 'home')).toBe('Run by [entfernt]');
+    expect(await textOf(us.mainId, 'about')).toBe('Branch about');
+  });
+
   it('an erase between the review and the merge makes it stale, and the merge after leaves nothing', async () => {
     const VALUE = 'Max Mustermann';
     const branchId = await createBranch(us, 'With a name');

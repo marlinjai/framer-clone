@@ -17,6 +17,9 @@ import { MERGE_DRAFT_MAX_ANSWERS, REVIEW_NOTE_MAX_LENGTH } from './merge';
 
 export type ReviewCtx = { params: Promise<{ projectId: string }> };
 
+/** 2,000 answers of the largest allowed size fit in this; anything larger is refused before it is parsed. */
+const REVIEW_BODY_MAX_BYTES = 1_500_000;
+
 const NO_STORE = { 'cache-control': 'no-store' } as const;
 
 export const tokenSchema = z.string().min(1).max(64);
@@ -41,7 +44,7 @@ export function reviewRoute<T>(handler: Handler<T>) {
     if (!guarded.ok) return guarded.response;
     let body = undefined as T;
     if (handler.body) {
-      const parsed = await parseBody(req, handler.body);
+      const parsed = await parseBody(req, handler.body, { maxBytes: REVIEW_BODY_MAX_BYTES });
       if (!parsed.ok) return parsed.response;
       body = parsed.data;
     }

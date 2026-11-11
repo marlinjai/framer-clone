@@ -339,11 +339,18 @@ export class BranchReviewStaleError extends SiteRepositoryError {
 export class BranchConflictsError extends SiteRepositoryError {
   readonly conflicts: readonly unknown[];
   readonly token: string;
+  /** Whether the answers that applied were stored; false when the branch or main moved meanwhile (give them again). */
+  readonly answersKept: boolean;
 
-  constructor(conflicts: readonly unknown[], token: string) {
-    super('branch_conflicts', `${conflicts.length} conflict(s) with main need an answer before the branch can be updated.`, 409);
+  constructor(conflicts: readonly unknown[], token: string, answersKept: boolean) {
+    super(
+      'branch_conflicts',
+      `${conflicts.length} conflict(s) with main need an answer before the branch can be updated.${answersKept ? '' : ' The answers given were not stored, because main or the branch changed meanwhile: reload the review.'}`,
+      409,
+    );
     this.conflicts = conflicts;
     this.token = token;
+    this.answersKept = answersKept;
   }
 }
 
@@ -385,7 +392,7 @@ export function siteRepositoryErrorResponse(err: SiteRepositoryError): Response 
     return jsonError(err.code, err.message, err.status, { branchStatus: err.branchStatus, mainSiteId: err.mainSiteId });
   }
   if (err instanceof BranchConflictsError) {
-    return jsonError(err.code, err.message, err.status, { conflicts: err.conflicts, token: err.token });
+    return jsonError(err.code, err.message, err.status, { conflicts: err.conflicts, token: err.token, answersKept: err.answersKept });
   }
   if (err instanceof BranchUpdatedFirstError) {
     return jsonError(err.code, err.message, err.status, { token: err.token });

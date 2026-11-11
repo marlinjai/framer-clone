@@ -279,8 +279,13 @@ export class SiteBranchMergeService {
     };
   }
 
-  private upToDate(stamp: Pick<Stamp, 'baseVersion' | 'mainVersion'>): boolean {
-    return stamp.baseVersion === stamp.mainVersion;
+  /**
+   * Whether main is what the branch was forked from (or last updated from): its version, and its name, which a
+   * rename changes without a version (decision 37). A branch whose main was only renamed is behind too, so the
+   * update asks when both renamed, never dropping one name silently.
+   */
+  private upToDate(state: Pick<ReviewState, 'stamp' | 'main' | 'base'>): boolean {
+    return state.stamp.baseVersion === state.stamp.mainVersion && state.main.name === state.base.name;
   }
 
   /** Bringing main into the branch with these answers: the merge, and once nothing is open, its validity. */
@@ -290,22 +295,18 @@ export class SiteBranchMergeService {
     return { merge, problems };
   }
 
-  /** Main's name after the merge: the branch's, unless main was renamed since the fork point. */
-  private mergedName(state: ReviewState): string {
-    return state.main.name === state.base.name ? state.branch.name : state.main.name;
-  }
-
   /**
    * The answers that applied in this run replace the draft, when the draft is still what was read: an answer
    * whose conflict changed or vanished is gone for good, and does not come back when a value flips back.
    */
-  private async keepDraft(scope: TenantScope, stamp: Stamp, kept: Record<string, { fingerprint: string; pick: MergeSide }>): Promise<void> {
-    if (stableStringify(draftAnswers(stamp.mergeDraft)) === stableStringify(kept)) return;
-    await this.prisma.$transaction(async (tx) => {
+  private async keepDraft(scope: TenantScope, stamp: Stamp, kept: Record<string, { fingerprint: string; pick: MergeSide }>): Promise<boolean> {
+    if (stableStringify(draftAnswers(stamp.mergeDraft)) === stableStringify(kept)) return true;
+    return this.prisma.$transaction(async (tx) => {
       await this.lockPair(tx, scope, stamp);
       const now = await this.stamp(tx, scope, stamp.branchId);
-      if (reviewToken(now) !== reviewToken(stamp) || stableStringify(now.mergeDraft) !== stableStringify(stamp.mergeDraft)) return;
+      if (reviewToken(now) !== reviewToken(stamp) || stableStringify(now.mergeDraft) !== stableStringify(stamp.mergeDraft)) return false;
       await tx.siteBranch.update({ where: { id: stamp.branchId }, data: { mergeDraft: draftOf(kept) } });
+      return true;
     });
   }
 
@@ -329,14 +330,14 @@ export class SiteBranchMergeService {
     assertScope(scope);
     const state = await this.readState(scope, branchId);
     const { stamp } = state;
-    const upToDate = this.upToDate(stamp);
+    const upToDate = this.upToDate(state);
     const answers = draftAnswers(stamp.mergeDraft);
     let conflicts: ShownConflict[] = [];
     let settled: BranchReview['settled'] = [];
     let problems: BranchReview['problems'] = [];
     let kept: Record<string, { fingerprint: string; pick: MergeSide }> = {};
     if (upToDate) {
-      problems = mergedDocumentProblems({ ...state.branch, name: this.mergedName(state) }, state.main, toProjectSnapshot);
+      problems = mergedDocumentProblems(state.branch, state.main, toProjectSnapshot);
     } else {
       const brought = this.bringMainIn(state, answers);
       conflicts = brought.merge.conflicts.map(shown);
@@ -381,19 +382,16 @@ export class SiteBranchMergeService {
     actor: BranchActor,
   ): Promise<BranchUpdateOutcome> {
     const { stamp } = state;
-    if (this.upToDate(stamp)) {
+    if (this.upToDate(state)) {
       return { updated: false, branch: await this.branches.getBranch(scope, stamp.mainId, stamp.branchId), token: reviewToken(stamp) };
     }
     const { merge, problems } = this.bringMainIn(state, answers);
     const kept = Object.fromEntries(merge.settled.map(({ conflict, pick }) => [conflict.id, { fingerprint: conflict.fingerprint, pick }]));
-    if (merge.conflicts.length > 0) {
-      await this.keepDraft(scope, stamp, kept);
-      throw new BranchConflictsError(merge.conflicts.map(shown), reviewToken(stamp));
-    }
-    if (problems.length > 0) {
-      await this.keepDraft(scope, stamp, kept);
-      throw new BranchMergeInvalidError(problems);
-    }
+    // Stored before anything else is tried: a request refused below, or one whose write finds the state moved,
+    // keeps the answers that applied, so the person never gives them twice.
+    const answersKept = await this.keepDraft(scope, stamp, kept);
+    if (merge.conflicts.length > 0) throw new BranchConflictsError(merge.conflicts.map(shown), reviewToken(stamp), answersKept);
+    if (problems.length > 0) throw new BranchMergeInvalidError(problems);
 
     const now = new Date();
     const persisted = persistedFor(merge.document, state.branchRow, now);
@@ -436,8 +434,18 @@ export class SiteBranchMergeService {
       }, WRITE_TRANSACTION),
     );
     this.announce(stamp.branchId, written, persisted, 'update', ['Brought in the changes from main']);
-    const after = await this.stamp(this.prisma, scope, stamp.branchId);
-    return { updated: true, branch: await this.branches.getBranch(scope, stamp.mainId, stamp.branchId), token: reviewToken(after) };
+    // The token of exactly what this update wrote, never read again afterwards: a save landing after the commit
+    // must not be carried into a merge unseen (section 6, "the merge names the branch version it reviewed").
+    const token = reviewToken({
+      baseVersion: stamp.mainVersion,
+      mainVersion: stamp.mainVersion,
+      mainName: stamp.mainName,
+      mainEpoch: stamp.mainEpoch,
+      branchVersion: written.version,
+      branchName: merge.document.name,
+      branchEpoch: stamp.branchEpoch,
+    });
+    return { updated: true, branch: await this.branches.getBranch(scope, stamp.mainId, stamp.branchId), token };
   }
 
   /** Approve the branch version the token names. Keeps the ready state; an edit later withdraws it. */
@@ -502,12 +510,13 @@ export class SiteBranchMergeService {
     const { stamp } = state;
     if (reviewToken(stamp) !== input.token) throw new BranchReviewStaleError();
 
-    if (!this.upToDate(stamp)) {
+    if (!this.upToDate(state)) {
       const updated = await this.updateFrom(scope, state, draftAnswers(stamp.mergeDraft), actor);
       throw new BranchUpdatedFirstError(updated.token);
     }
 
-    const merged: MergeDocument = { ...state.branch, name: this.mergedName(state) };
+    // Up to date: main's name is the fork point's, so the branch's name (renamed or not) is the merged one.
+    const merged: MergeDocument = state.branch;
     const problems = mergedDocumentProblems(merged, state.main, toProjectSnapshot);
     if (problems.length > 0) throw new BranchMergeInvalidError(problems);
     if (stamp.branchEpoch !== stamp.mainEpoch) throw new BranchReviewStaleError();

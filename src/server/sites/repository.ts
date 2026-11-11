@@ -1367,9 +1367,11 @@ export class SiteRepository {
       // revisions: a tab loaded long ago may hold it even if the working copy does not.
       // The version moves too: the working copy may have been rewritten, and an
       // agent holding the old version must load again before it writes.
-      // A branch forked from main as it is now stays up to date: its fork point was rewritten exactly as main
-      // was, so it moves with main's version (an erase must not make every branch "behind main").
-      await tx.$executeRaw`
+      // A branch forked from main as it is now stays up to date, but only when the erase left the value nowhere:
+      // then its fork point and main were rewritten alike, and it moves with main's version (an erase must not
+      // make every branch "behind main"). An erase of only some matches may have rewritten main and not the fork
+      // point; the branch is then behind main, and the three-way merge keeps main's erased text.
+      if (remaining === 0) await tx.$executeRaw`
         UPDATE public.site_branches SET base_version = base_version + 1
         WHERE site_id = ${siteId} AND workspace_id = ${scope.workspaceId} AND status IN ('open', 'ready')
           AND base_version = (SELECT version FROM public.sites WHERE id = ${siteId} AND workspace_id = ${scope.workspaceId})`;
