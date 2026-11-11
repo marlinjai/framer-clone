@@ -129,7 +129,7 @@ export const shopMailBackfill: JobBackfill = {
       .whereRef('job.tenant_id', '=', 'shop_mail.tenant_id')
       .where('job.kind', '=', SHOP_MAIL_JOB_KIND)
       .where('job.status', '=', 'dead')
-      .where(sql<boolean>`job.dedupe_key = 'mail:' || shop_mail.order_id || ':' || shop_mail.kind`)
+      .where(sql<boolean>`${sql.ref('job.dedupe_key')} = 'mail:' || ${sql.ref('shop_mail.order_id')} || ':' || ${sql.ref('shop_mail.kind')}`)
       .execute();
   },
 };
