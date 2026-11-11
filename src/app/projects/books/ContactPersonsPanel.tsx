@@ -115,6 +115,16 @@ export default function ContactPersonsPanel({ customer, onCustomer }: Props) {
               ))}
             </ul>
           )}
+          {items !== null && customer.defaultContactPersonId !== null && !items.some((p) => p.contactId === customer.defaultContactPersonId) ? (
+            <div className="flex items-center justify-between gap-3 rounded-md border border-dashed px-3 py-2 text-sm">
+              <span className="text-muted-foreground">
+                The default contact person is no longer available (they left, or were archived or removed).
+              </span>
+              <Button size="sm" variant="ghost" disabled={busy} onClick={() => void setDefault(null)}>
+                Clear the default
+              </Button>
+            </div>
+          ) : null}
           {adding ? (
             <AddPerson
               customerId={customer.id}

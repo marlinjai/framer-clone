@@ -70,7 +70,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { booksApi, type CatalogueItemView, type ContactPersonState, type ContactPersonView, type CustomerView, type DocumentDetail, type LineView } from '@/lib/books/api';
+import { BooksApiError, booksApi, type CatalogueItemView, type ContactPersonState, type ContactPersonView, type CustomerView, type DocumentDetail, type LineView } from '@/lib/books/api';
 import { lineFromProduct } from '@/lib/books/products';
 import { money, parseMoney, parseQuantity } from '@/lib/books/units';
 import type { FieldRect, LayoutField } from '@/server/books/render/engine';
@@ -364,23 +364,33 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
     // formatted text's value is its runs, so undo sends its formatting back with its words.
     // Changing the customer clears the contact person (it belongs to the customer), so undoing it puts the previous
     // customer back AND, when it still can, the person who was on the draft before (a person who has left since stays off).
-    const previousPerson = field.documentField === 'customerId' ? detailRef.current.document.contactPersonId : null;
+    // `undefined`: not a customer edit, nothing to put back. `null`: the draft had explicitly no person (which the
+    // previous customer's default would otherwise bring back), and undo puts that back as well.
+    const previousPerson: string | null | undefined =
+      field.documentField === 'customerId' ? detailRef.current.document.contactPersonId : undefined;
     const undoStep = (v: number): Promise<DocumentDetail> =>
       before.ok ? send(before.request, v) : Promise.reject(new Error('nothing to undo'));
     const step: UndoStep | null = before.ok
       ? {
           label,
-          undo: previousPerson
-            ? async (v) => {
-                const restored = await undoStep(v);
-                if (restored.document.contactPersonId === previousPerson) return restored;
-                try {
-                  return await booksApi.setContactPerson(id, previousPerson, restored.document.version);
-                } catch {
-                  return restored;
+          undo:
+            previousPerson !== undefined
+              ? async (v) => {
+                  const restored = await undoStep(v);
+                  if (restored.document.contactPersonId === previousPerson) return restored;
+                  try {
+                    return await booksApi.setContactPerson(id, previousPerson, restored.document.version);
+                  } catch (err) {
+                    // A person who has left or been archived since stays off the draft: the customer is back, which is
+                    // the undo. Anything else (a concurrent edit, the network) is not a finished undo: it goes to the
+                    // change path, which reads the draft again and reports it.
+                    if (err instanceof BooksApiError && (err.code === 'contact_person_not_found' || err.code === 'contact_person_unavailable')) {
+                      return restored;
+                    }
+                    throw err;
+                  }
                 }
-              }
-            : (v) => send(before.request, v),
+              : (v) => send(before.request, v),
           redo: (v) => send(forward, v),
         }
       : null;

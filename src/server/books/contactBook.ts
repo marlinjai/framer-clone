@@ -103,8 +103,10 @@ export interface ContactBook {
   /**
    * End a person's affiliation with the business (the row stays as history in the contacts database).
    * RECIPIENT_NOT_FOUND when the affiliation is not one of this business's in this company. Ending an ended one is a no-op.
+   * Resolves to the person's contact id, read from the affiliation itself, so it is known for an ended affiliation and
+   * an archived person too (the caller's retry after a half-done leave still finds who left).
    */
-  endContactPerson(tenantId: string, organizationContactId: string, affiliationId: string): Promise<void>;
+  endContactPerson(tenantId: string, organizationContactId: string, affiliationId: string): Promise<string>;
 }
 
 /** How many contacts one name lookup reads at most; more hits than this cannot be told apart and are refused. */
@@ -289,7 +291,7 @@ export function contactsContactBook(handle: () => ContactsDb = contactsDb): Cont
         throw inputOrUnavailable(err);
       }
     },
-    async endContactPerson(tenantId, organizationContactId, affiliationId) {
+    async endContactPerson(tenantId, organizationContactId, affiliationId): Promise<string> {
       const db = await open();
       const contacts = contactsFor(db, tenantId);
       try {
@@ -298,6 +300,7 @@ export function contactsContactBook(handle: () => ContactsDb = contactsDb): Cont
           throw new BooksError('RECIPIENT_NOT_FOUND', 'RECIPIENT_NOT_FOUND: no such contact person for this customer');
         }
         await contacts.endAffiliation(affiliationId);
+        return a.personId;
       } catch (err) {
         if (isBooksError(err)) throw err;
         throw unavailable(err);

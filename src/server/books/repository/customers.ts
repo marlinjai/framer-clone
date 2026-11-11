@@ -197,6 +197,20 @@ export async function setCustomerDefaultContactPerson(
 }
 
 /**
+ * Clear the customer's default contact person, but only while it still is `personId`: a person who leaves must not
+ * take a newer default (chosen meanwhile by another request) with them. One conditional update, no earlier read.
+ */
+export async function clearCustomerDefaultContactPerson(scope: BooksScope, id: string, personId: string): Promise<void> {
+  await scope.db
+    .updateTable('customer')
+    .set({ default_contact_person_id: null, updated_at: new Date() })
+    .where('tenant_id', '=', scope.tenantId)
+    .where('id', '=', id)
+    .where('default_contact_person_id', '=', personId)
+    .execute();
+}
+
+/**
  * The person's open affiliation to the customer's business, or CONTACT_PERSON_NOT_FOUND: the person is unknown,
  * another company's, never worked there, or left (an ended or removed affiliation reads the same, so nothing
  * about another company is confirmed). An archived person is CONTACT_PERSON_UNAVAILABLE.

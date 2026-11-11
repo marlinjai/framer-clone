@@ -1010,4 +1010,48 @@ describe('the invoice page: the contact person (z. Hd.)', () => {
     await waitFor(() => expect(current.document.customerId).toBe('cust-de'));
     expect(current.document.contactPersonId).toBeNull();
   });
+  it('backtrack: a draft with explicitly no person gets none back on undo, though the previous customer defaults to one', async () => {
+    server({
+      'PUT /api/books/documents/doc-1/customer': (b) => {
+        // Putting a customer back brings that customer's default person (p9) onto the draft.
+        current = personDetail(b!.customerId === 'cust-de' ? 'p9' : null, current.document.version + 1, b!.customerId as string);
+        return { status: 200, body: current };
+      },
+      'PUT /api/books/documents/doc-1/contact-person': (b) => {
+        current = personDetail(b!.contactPersonId as string | null, current.document.version + 1, current.document.customerId as string);
+        return { status: 200, body: current };
+      },
+    });
+    current = personDetail(null, 3);
+    await opened();
+    fireEvent.click(fieldButton('recipient.line.1'));
+    const select = screen.getByRole('combobox', { name: 'Customer' });
+    fireEvent.change(select, { target: { value: 'cust-fr' } });
+    fireEvent.keyDown(select, { key: 'Enter' });
+    await waitFor(() => expect(current.document.customerId).toBe('cust-fr'));
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(current.document.customerId).toBe('cust-de'));
+    await waitFor(() => expect(current.document.contactPersonId).toBeNull());
+    expect(calls.filter((c) => c.method === 'PUT').map((c) => c.body).at(-1)).toEqual({ contactPersonId: null, expectedVersion: 5 });
+  });
+
+  it('backtrack: a concurrent edit while the person is put back is not reported as a finished undo', async () => {
+    server({
+      'PUT /api/books/documents/doc-1/customer': (b) => {
+        current = personDetail(null, current.document.version + 1, b!.customerId as string);
+        return { status: 200, body: current };
+      },
+      'PUT /api/books/documents/doc-1/contact-person': () => ({ status: 409, body: { error: { code: 'concurrent_edit', message: 'changed' } } }),
+      'GET /api/books/documents/doc-1': () => ({ status: 200, body: current }),
+    });
+    current = personDetail('p1', 3);
+    await opened();
+    fireEvent.click(fieldButton('recipient.line.1'));
+    const select = screen.getByRole('combobox', { name: 'Customer' });
+    fireEvent.change(select, { target: { value: 'cust-fr' } });
+    fireEvent.keyDown(select, { key: 'Enter' });
+    await waitFor(() => expect(current.document.customerId).toBe('cust-fr'));
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    await screen.findByText(/Could not undo/);
+  });
 });

@@ -132,6 +132,29 @@ describe('ContactPersonsPanel', () => {
     expect(calls.find((c) => c.method === 'PUT')!.body).toEqual({ contactPersonId: 'p1' });
   });
 
+  it('re-entry: a default who is no longer listed (left, archived) can still be cleared from the customer screen', async () => {
+    const onCustomer = vi.fn();
+    server({
+      'GET /api/books/customers/cust-1/contact-persons': () => ({ status: 200, body: { items: [ANNA] } }),
+      'PUT /api/books/customers/cust-1/default-contact-person': (body) => ({ status: 200, body: { ...business(), defaultContactPersonId: body!.contactPersonId } }),
+    });
+    render(<ContactPersonsPanel customer={business({ defaultContactPersonId: 'gone-person' })} onCustomer={onCustomer} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Contact persons' }));
+    await screen.findByText('Anna Beispiel');
+    // Anna is listed but is not the default: the unavailable default is said, with its own way out.
+    fireEvent.click(screen.getByRole('button', { name: 'Clear the default' }));
+    await waitFor(() => expect(onCustomer).toHaveBeenCalledWith(expect.objectContaining({ defaultContactPersonId: null })));
+    expect(calls.find((c) => c.method === 'PUT')!.body).toEqual({ contactPersonId: null });
+  });
+
+  it('a default who is listed gets no clear-the-default notice', async () => {
+    server({ 'GET /api/books/customers/cust-1/contact-persons': () => ({ status: 200, body: { items: [ANNA] } }) });
+    render(<ContactPersonsPanel customer={business({ defaultContactPersonId: 'p1' })} onCustomer={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Contact persons' }));
+    await screen.findByText('Anna Beispiel');
+    expect(screen.queryByRole('button', { name: 'Clear the default' })).toBeNull();
+  });
+
   it('resume: a read that fails is said, and the list is not shown as empty', async () => {
     server({ 'GET /api/books/customers/cust-1/contact-persons': () => ({ status: 503, body: { error: { code: 'recipient_unavailable', message: 'down' } } }) });
     render(<ContactPersonsPanel customer={business()} onCustomer={() => {}} />);

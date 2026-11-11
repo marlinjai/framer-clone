@@ -219,6 +219,21 @@ describe('contact persons: the customer screen routes', () => {
     expect((await api.setDefault(customer.id, null)).status).toBe(200);
   });
 
+  it('leaving never clears another person\'s default, and a retry after a half-done leave still clears the leaver\'s', async () => {
+    const customer = await business();
+    const anna = await person(customer.id, 'Anna Beispiel', 'Einkauf');
+    const ben = await person(customer.id, 'Ben Muster', 'Leitung');
+    await api.setDefault(customer.id, ben.contactId);
+    // Anna leaves while Ben is the default: Ben stays.
+    await api.endPerson(customer.id, anna.affiliationId);
+    expect((await api.getCustomer(customer.id)).json.defaultContactPersonId).toBe(ben.contactId);
+    // Ben's affiliation ended but the clear never happened (a failed second write): ending again finishes it.
+    dir.endAffiliation(ben.affiliationId);
+    expect((await api.getCustomer(customer.id)).json.defaultContactPersonId).toBe(ben.contactId);
+    expect((await api.endPerson(customer.id, ben.affiliationId)).status).toBe(200);
+    expect((await api.getCustomer(customer.id)).json.defaultContactPersonId).toBeNull();
+  });
+
   it('rights: reading needs viewBooks, every change needs editBooks', async () => {
     const customer = await business();
     const anna = await person(customer.id, 'Anna Beispiel');

@@ -354,6 +354,11 @@ export function printsSubject(doc: TemplateDocumentV2 | null): boolean {
   return Boolean(doc?.regions.body.some((b) => b.type === 'subject'));
 }
 
+/** Whether a template prints the contact person (an `attention` block, wherever it sits); a version 1 template never does. */
+export function printsAttention(doc: TemplateDocumentV2 | null): boolean {
+  return doc !== null && allBlocks(doc).some((e) => e.block.type === 'attention');
+}
+
 /** Every text the template itself prints (free texts, headings, captions), for the drawable check. */
 export function templateTexts(doc: TemplateDocumentV2): Array<{ blockId: string; field: string; text: string }> {
   const out: Array<{ blockId: string; field: string; text: string }> = [];

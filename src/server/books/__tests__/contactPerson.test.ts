@@ -6,6 +6,7 @@
 
 import { describe, expect, it } from 'vitest';
 
+import { undrawableFields } from '../render/drawable';
 import { renderTemplate } from '../render/engine';
 import { extractDrawnText } from '../render/extractText';
 import { fontFiles } from '../render/fonts';
@@ -55,6 +56,14 @@ describe('the attention line', () => {
     for (const name of ['klassisch'] as const) {
       expect(preset(name).regions.addressZone.left.some((b) => b.type === 'attention')).toBe(false);
     }
+  });
+
+  it('a glyph the font cannot draw in the contact person holds up an issue only where the template prints the line', () => {
+    const input = probeInput(probe('regular'));
+    const person = { name: '中文', role: 'Einkauf' };
+    const withPerson = { ...input, recipient: { ...input.recipient!, contactPerson: person } };
+    expect(undrawableFields(withPerson, withAttention())).toContain('recipient.contactPerson');
+    expect(undrawableFields(withPerson, preset('klassisch'))).toEqual([]);
   });
 
   it('the printed line is the field the editor opens (a select on the contact person), never typed text', async () => {

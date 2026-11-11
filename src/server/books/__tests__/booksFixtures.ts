@@ -229,11 +229,12 @@ export class FakeContactBook implements ContactBook {
     const row = this.dir.affiliations.find((x) => x.id === a.id)!;
     return { affiliationId: row.id, contactId: person.id, name: person.name, role: row.role, startedOn: null, primary: row.primary };
   }
-  async endContactPerson(tenantId: string, organizationContactId: string, affiliationId: string): Promise<void> {
+  async endContactPerson(tenantId: string, organizationContactId: string, affiliationId: string): Promise<string> {
     this.outage();
     const a = this.dir.affiliations.find((x) => x.id === affiliationId && x.tenantId === tenantId && x.organizationId === organizationContactId);
     if (!a) throw new BooksError('RECIPIENT_NOT_FOUND', 'RECIPIENT_NOT_FOUND: no such contact person for this customer');
     if (a.endedAt === null) this.dir.endAffiliation(a.id);
+    return a.personId;
   }
   async create(tenantId: string, input: NewContactInput): Promise<RecipientContact> {
     this.outage();

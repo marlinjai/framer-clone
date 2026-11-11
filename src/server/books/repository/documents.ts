@@ -269,8 +269,10 @@ export async function createDraft(scope: BooksScope, input: CreateDraftInput): P
         doc_type: 'invoice',
         status: 'draft',
         customer_id: customer?.id ?? null,
-        // A new draft for a customer starts from the customer's default contact person (checked again when it is issued).
-        contact_person_id: customer?.default_contact_person_id ?? null,
+        // A new draft for a customer starts from the customer's default contact person (checked again when it is
+        // issued). A shop receipt does not: it is made out to its buyer, and a stale default must never hold up a
+        // paid order's receipt.
+        contact_person_id: args.sourceOrderId === undefined ? (customer?.default_contact_person_id ?? null) : null,
         template_id: args.templateId ?? null,
         net_or_gross: args.netOrGross ?? 'net',
         service_date: args.serviceDate ?? null,
