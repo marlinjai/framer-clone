@@ -38,6 +38,9 @@ const STATUS: Record<BooksErrorCode, number> = {
   TEMPLATE_NOT_FOUND: 404,
   VARIANT_NOT_FOUND: 404,
   RECIPIENT_NOT_FOUND: 422,
+  CONTACT_PERSON_NOT_FOUND: 404,
+  CONTACT_PERSON_UNAVAILABLE: 422,
+  DUPLICATE_CONTACT_PERSON: 409,
   CONCURRENT_EDIT: 409,
   NOT_DRAFT: 409,
   DUPLICATE_CUSTOMER: 409,
@@ -105,6 +108,8 @@ const MESSAGES: Partial<Record<BooksErrorCode, string>> = {
   CONCURRENT_EDIT: 'the document was changed elsewhere; reload it and apply your change again',
   NOT_DRAFT: 'the document is no longer a draft and cannot be changed',
   CUSTOMER_REQUIRED: 'pick a customer before issuing',
+  CONTACT_PERSON_UNAVAILABLE:
+    'this contact person no longer works for the customer; choose another or remove the contact person (nothing was changed)',
   NO_BILLABLE_LINES: 'add at least one line with a quantity before issuing',
   SERVICE_DATE_REQUIRED: 'enter a service date or a service period before issuing',
   UNDRAWABLE_TEXT:

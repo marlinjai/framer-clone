@@ -58,6 +58,10 @@ export type BooksErrorCode =
   | 'IMPORT_INCOMPLETE'
   | 'IMPORT_COUNTER_TOO_LOW'
   | 'RECIPIENT_AMBIGUOUS'
+  // Contact persons (030_books_contact_person): NOT_FOUND for a person the customer's business has no open affiliation with, UNAVAILABLE for one that was there and is not any more (or is archived).
+  | 'CONTACT_PERSON_NOT_FOUND'
+  | 'CONTACT_PERSON_UNAVAILABLE'
+  | 'DUPLICATE_CONTACT_PERSON'
   | 'IMPORT_FAILED'
   | 'CURRENCY_NOT_SUPPORTED'
   // The upload import (src/server/books/upload).

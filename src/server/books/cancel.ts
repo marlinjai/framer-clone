@@ -52,7 +52,7 @@ import { readPersistedView, selectDocumentRow, selectLineRows, type DocumentView
 import type { BooksScope } from './scope';
 import { requireSettings } from './settings';
 import { readRecipient } from './recipients';
-import { buildSenderSnapshot, senderMissingFields, toJsonb, type CustomerSnapshotV1 } from './snapshots';
+import { buildSenderSnapshot, senderMissingFields, toJsonb, type CustomerSnapshot } from './snapshots';
 
 const cancelInput = z.object({
   actorUserId: z.string().trim().min(1).max(200),
@@ -80,7 +80,7 @@ export interface CancelResult {
  * an import). Read before the cancellation's transaction: a network read must
  * not hold the document locks.
  */
-async function completeImportedRecipient(scope: BooksScope, invoiceId: string): Promise<CustomerSnapshotV1 | null> {
+async function completeImportedRecipient(scope: BooksScope, invoiceId: string): Promise<CustomerSnapshot | null> {
   const row = await selectDocumentRow(scope.db, scope, invoiceId);
   const snapshot = row?.source === 'import' ? row.customer_snapshot : null;
   if (!snapshot) return null;
@@ -142,7 +142,7 @@ export interface CancelInTransaction {
   issueDate: string;
   now: Date;
   /** See completeImportedRecipient (null for an editor invoice). */
-  completedRecipient: CustomerSnapshotV1 | null;
+  completedRecipient: CustomerSnapshot | null;
   /** Runs with the issued credit note before the caller's commit (the routes store its PDF). */
   beforeCommit?: (trx: Transaction<CommerceDB>, creditNote: DocumentView) => Promise<void>;
   /**

@@ -37,6 +37,7 @@ import {
 } from '@/lib/books/api';
 import { date, money } from '@/lib/books/units';
 
+import ContactPersonsPanel from './ContactPersonsPanel';
 import CustomerForm from './CustomerForm';
 import { FirstPage, MoreRows } from './ListStatus';
 import { BOOKS_TABS, type BooksTab } from './tabs';
@@ -295,8 +296,9 @@ export default function BooksHome({ initialTab = 'documents' }: { initialTab?: T
             <div className="mb-6">
               <CustomerForm
                 onCancel={() => setAdding(false)}
-                onCreated={async () => {
+                onCreated={async (_customer, warning) => {
                   setAdding(false);
+                  setError(warning ?? null);
                   await customers.reload({ keepShown: true });
                 }}
               />
@@ -315,7 +317,8 @@ export default function BooksHome({ initialTab = 'documents' }: { initialTab?: T
           ) : (
             <ul className="flex flex-col gap-2" aria-label="Customers" aria-busy={customers.loadingMore}>
               {customers.items.map((c) => (
-                <li key={c.id} className="flex items-center justify-between gap-4 rounded-lg border p-4">
+                <li key={c.id} className="rounded-lg border p-4">
+                  <div className="flex items-center justify-between gap-4">
                   <span className="min-w-0">
                     <span className="block truncate font-medium">
                       {c.contact?.name ?? (c.contactStatus === 'unavailable' ? 'Name unavailable (contacts database not answering)' : 'Contact not found')}
@@ -329,6 +332,8 @@ export default function BooksHome({ initialTab = 'documents' }: { initialTab?: T
                   <Button size="sm" variant="ghost" onClick={() => archive(c.id)}>
                     Archive
                   </Button>
+                  </div>
+                  <ContactPersonsPanel customer={c} onCustomer={() => void customers.reload({ keepShown: true })} />
                 </li>
               ))}
             </ul>

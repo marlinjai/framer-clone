@@ -77,6 +77,9 @@ const LAYOUT = {
   },
 };
 
+/** Whether the template under test prints the contact person line (the `attention` block). Off, as for every built-in template. */
+let withAttention = false;
+
 /** The layout as the renderer reports it: a text slot is empty while the draft holds no text for it. */
 function layoutNow() {
   const d = current?.document ?? {};
@@ -86,7 +89,11 @@ function layoutNow() {
     outroText: Boolean(d.outroText),
     'line.l1.description': Boolean(current?.lines?.find((l: Json) => l.id === 'l1')?.description),
   };
-  return { ...LAYOUT, fields: LAYOUT.fields.map((f: Json) => (f.id in filled ? { ...f, empty: !filled[f.id] } : f)) };
+  const fields = LAYOUT.fields.map((f: Json) => (f.id in filled ? { ...f, empty: !filled[f.id] } : f));
+  if (withAttention) {
+    fields.push(field({ id: 'recipient.attention', kind: 'select', source: 'document', documentField: 'contactPersonId', empty: !d.contactPersonId, room: 12, region: 'addressZone.left', rects: rect(155) }));
+  }
+  return { ...LAYOUT, fields };
 }
 
 function line(over: Json = {}): Json {
@@ -905,5 +912,102 @@ describe('the invoice page: re-entry', () => {
     expect(renderInputs).toBe(0);
     expect(calls.some((c) => c.url === '/api/books/documents/doc-1/pdf')).toBe(true);
     await act(async () => {});
+  });
+});
+
+describe('the invoice page: the contact person (z. Hd.)', () => {
+  const PERSONS = [
+    { affiliationId: 'aff-1', contactId: 'p1', name: 'Anna Beispiel', role: 'Einkauf', startedOn: null, primary: true },
+    { affiliationId: 'aff-2', contactId: 'p2', name: 'Ben Muster', role: '', startedOn: null, primary: false },
+  ];
+  const personDetail = (personId: string | null, version: number, customerId = 'cust-de'): Json => ({
+    ...detail({ document: { customerId, contactPersonId: personId, version } }),
+    contactPerson: personId ? { contactId: personId, status: 'ok', name: personId === 'p1' ? 'Anna Beispiel' : 'Ben Muster', role: personId === 'p1' ? 'Einkauf' : '' } : null,
+    contactPersons: PERSONS,
+  });
+
+  beforeEach(() => {
+    withAttention = true;
+  });
+  afterEach(() => {
+    withAttention = false;
+  });
+
+  it('forward: the Add menu offers the contact person when the template prints it; the choice is a select of the customer\'s people, sent with the version', async () => {
+    server({
+      'PUT /api/books/documents/doc-1/contact-person': (b) => {
+        current = personDetail(b!.contactPersonId as string, current.document.version + 1);
+        return { status: 200, body: current };
+      },
+    });
+    current = personDetail(null, 3);
+    await opened();
+    addPart('Contact person');
+    const select = screen.getByRole('combobox', { name: 'Contact person' }) as HTMLSelectElement;
+    expect([...select.options].map((o) => o.textContent)).toEqual(['No contact person', 'Anna Beispiel, Einkauf', 'Ben Muster']);
+    fireEvent.change(select, { target: { value: 'p1' } });
+    fireEvent.keyDown(select, { key: 'Enter' });
+    await waitFor(() => expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ contactPersonId: 'p1', expectedVersion: 3 }));
+  });
+
+  it('the Add menu does not offer it when the template has no such line (off by default)', async () => {
+    withAttention = false;
+    server();
+    current = personDetail(null, 3);
+    await opened();
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Add' }), { button: 0, ctrlKey: false });
+    expect(within(screen.getByRole('menu')).queryByRole('menuitem', { name: 'Contact person' })).toBeNull();
+  });
+
+  it('backtrack: undoing a customer change puts the previous customer back AND the person who was on the draft', async () => {
+    server({
+      'PUT /api/books/documents/doc-1/customer': (b) => {
+        // Another customer: the person goes (this customer has no default).
+        current = personDetail(null, current.document.version + 1, b!.customerId as string);
+        return { status: 200, body: current };
+      },
+      'PUT /api/books/documents/doc-1/contact-person': (b) => {
+        current = personDetail(b!.contactPersonId as string | null, current.document.version + 1, current.document.customerId as string);
+        return { status: 200, body: current };
+      },
+    });
+    current = personDetail('p1', 3);
+    await opened();
+    fireEvent.click(fieldButton('recipient.line.1'));
+    const select = screen.getByRole('combobox', { name: 'Customer' });
+    fireEvent.change(select, { target: { value: 'cust-fr' } });
+    fireEvent.keyDown(select, { key: 'Enter' });
+    await waitFor(() => expect(current.document.customerId).toBe('cust-fr'));
+    expect(current.document.contactPersonId).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(current.document.contactPersonId).toBe('p1'));
+    expect(current.document.customerId).toBe('cust-de');
+    const puts = calls.filter((c) => c.method === 'PUT').map((c) => c.body);
+    expect(puts).toEqual([
+      { customerId: 'cust-fr', expectedVersion: 3 },
+      { customerId: 'cust-de', expectedVersion: 4 },
+      { contactPersonId: 'p1', expectedVersion: 5 },
+    ]);
+  });
+
+  it('backtrack: if the previous person has left meanwhile, undo still restores the customer and the person stays off', async () => {
+    server({
+      'PUT /api/books/documents/doc-1/customer': (b) => {
+        current = personDetail(null, current.document.version + 1, b!.customerId as string);
+        return { status: 200, body: current };
+      },
+      'PUT /api/books/documents/doc-1/contact-person': () => ({ status: 404, body: { error: { code: 'contact_person_not_found', message: 'gone' } } }),
+    });
+    current = personDetail('p1', 3);
+    await opened();
+    fireEvent.click(fieldButton('recipient.line.1'));
+    const select = screen.getByRole('combobox', { name: 'Customer' });
+    fireEvent.change(select, { target: { value: 'cust-fr' } });
+    fireEvent.keyDown(select, { key: 'Enter' });
+    await waitFor(() => expect(current.document.customerId).toBe('cust-fr'));
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(current.document.customerId).toBe('cust-de'));
+    expect(current.document.contactPersonId).toBeNull();
   });
 });

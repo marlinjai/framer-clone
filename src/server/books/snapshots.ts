@@ -92,6 +92,42 @@ export const customerSnapshotV1Schema = z.object({
 });
 export type CustomerSnapshotV1 = z.infer<typeof customerSnapshotV1Schema>;
 
+/** The person at the business an invoice is addressed to, frozen at issue with the role they held then. */
+export const snapshotContactPersonSchema = z.object({
+  contactId: z.string(),
+  affiliationId: z.string(),
+  name: z.string().min(1),
+  /** The role at that business at the moment of issue; '' when none was recorded. */
+  role: z.string(),
+});
+export type SnapshotContactPerson = z.infer<typeof snapshotContactPersonSchema>;
+
+/**
+ * Version 2 of the recipient snapshot: version 1 plus the contact person ("z. Hd."), null when the invoice has
+ * none. Documents issued before contact persons existed, and every imported one, keep their version 1 snapshot;
+ * both are read through {@link customerSnapshotSchema}.
+ */
+export const customerSnapshotV2Schema = customerSnapshotV1Schema.extend({
+  v: z.literal(2),
+  contactPerson: snapshotContactPersonSchema.nullable(),
+});
+export type CustomerSnapshotV2 = z.infer<typeof customerSnapshotV2Schema>;
+
+/** The recipient frozen on an issued document, whichever version it was written in. */
+export const customerSnapshotSchema = z.discriminatedUnion('v', [customerSnapshotV1Schema, customerSnapshotV2Schema]);
+export type CustomerSnapshot = z.infer<typeof customerSnapshotSchema>;
+
+/** What the renderer is given of the contact person: the name and the role, nothing else (no ids, no mail, no phone). */
+export function printedContactPerson(snapshot: CustomerSnapshot): { name: string; role: string } | null {
+  const p = snapshotContactPerson(snapshot);
+  return p ? { name: p.name, role: p.role } : null;
+}
+
+/** The contact person a snapshot carries (version 1 snapshots carry none). */
+export function snapshotContactPerson(snapshot: CustomerSnapshot): SnapshotContactPerson | null {
+  return snapshot.v === 2 ? snapshot.contactPerson : null;
+}
+
 /**
  * The template's layout as it stood at issue (phase 3), frozen on the document
  * like the other snapshots, so a later template edit never changes how an
@@ -253,9 +289,11 @@ export function recipientMissingFields(contact: RecipientContact): string[] {
 export function buildCustomerSnapshot(
   contact: RecipientContact,
   customer: { customerType: 'b2c' | 'b2b'; vatId: string | null; taxNumber: string | null },
-): CustomerSnapshotV1 {
-  return customerSnapshotV1Schema.parse({
-    v: 1,
+  contactPerson: SnapshotContactPerson | null = null,
+): CustomerSnapshotV2 {
+  return customerSnapshotV2Schema.parse({
+    v: 2,
+    contactPerson,
     contactId: contact.id,
     kind: contact.kind,
     name: contact.name,

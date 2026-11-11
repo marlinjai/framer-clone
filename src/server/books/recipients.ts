@@ -20,9 +20,28 @@ import type { RecipientContact } from './snapshots';
 
 export type { RecipientContact } from './snapshots';
 
+/** A person at a business customer: who they are and the role they hold there, as of now. */
+export interface ContactPerson {
+  /** The person's contact id. */
+  contactId: string;
+  /** The affiliation (the person's open membership of the business) this was read from. */
+  affiliationId: string;
+  name: string;
+  /** The role at that business ('' when none was recorded). Never `company_or_role`. */
+  role: string;
+  /** Whether the person's contact is archived (then they are not offered, and an invoice cannot be issued to them). */
+  archived: boolean;
+}
+
 export interface RecipientDirectory {
   /** The company's contact, or null when it does not exist for that company. Throws on connection failure. */
   getContact(tenantId: string, contactId: string): Promise<RecipientContact | null>;
+  /**
+   * The person's OPEN affiliation to the business (an organization contact of the company), or null when the
+   * person has none (ended, removed, erased, never had one, or either contact is not this company's).
+   * Throws on connection failure.
+   */
+  getContactPerson(tenantId: string, personId: string, organizationContactId: string): Promise<ContactPerson | null>;
 }
 
 /** Thrown when CONTACTS_DATABASE_URL is not set (surfaced as RECIPIENT_UNAVAILABLE). */
@@ -90,6 +109,26 @@ export function contactsRecipientDirectory(handle: () => ContactsDb = contactsDb
         );
       }
     },
+    async getContactPerson(tenantId, personId, organizationContactId) {
+      try {
+        const db = handle();
+        await db.ready();
+        const contacts = contactsFor(db, tenantId);
+        const person = await contacts.get(personId);
+        if (!person || person.kind !== 'person') return null;
+        const open = (await contacts.affiliationsOf(personId)).find((a) => a.organizationId === organizationContactId);
+        if (!open) return null;
+        return { contactId: person.id, affiliationId: open.id, name: person.name, role: open.role, archived: person.archived };
+      } catch (err) {
+        if (isNotFound(err)) return null;
+        throw new BooksError(
+          'RECIPIENT_UNAVAILABLE',
+          'RECIPIENT_UNAVAILABLE: the contacts database could not be read',
+          undefined,
+          { cause: err },
+        );
+      }
+    },
   };
 }
 
@@ -114,6 +153,28 @@ export async function readRecipient(
 ): Promise<RecipientContact | null> {
   try {
     return await directoryFor(scope).getContact(scope.tenantId, contactId);
+  } catch (err) {
+    if (isBooksError(err, 'RECIPIENT_UNAVAILABLE')) throw err;
+    throw new BooksError(
+      'RECIPIENT_UNAVAILABLE',
+      'RECIPIENT_UNAVAILABLE: the contacts database could not be read',
+      undefined,
+      { cause: err },
+    );
+  }
+}
+
+/**
+ * The person's open affiliation to the business, through the scope's directory. null when there is none. Like
+ * {@link readRecipient}: any failure is RECIPIENT_UNAVAILABLE, and it is never called inside a Books transaction.
+ */
+export async function readContactPerson(
+  scope: { tenantId: string; recipients?: RecipientDirectory },
+  personId: string,
+  organizationContactId: string,
+): Promise<ContactPerson | null> {
+  try {
+    return await directoryFor(scope).getContactPerson(scope.tenantId, personId, organizationContactId);
   } catch (err) {
     if (isBooksError(err, 'RECIPIENT_UNAVAILABLE')) throw err;
     throw new BooksError(

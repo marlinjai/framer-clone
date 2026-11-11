@@ -38,6 +38,8 @@ function printedFields(input: RenderInput, template: TemplateDocumentV2 | null):
       ['recipient.postalCode', r.postalCode],
       ['recipient.city', r.city],
       ['recipient.vatId', r.vatId],
+      ['recipient.contactPerson', r.contactPerson?.name],
+      ['recipient.contactPersonRole', r.contactPerson?.role],
     );
   }
   for (const l of input.lines) {

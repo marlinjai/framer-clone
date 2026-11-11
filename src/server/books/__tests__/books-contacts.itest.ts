@@ -10,8 +10,8 @@ import { GenericContainer, Wait, type StartedTestContainer } from 'testcontainer
 import postgres from 'postgres';
 import { contactsFor, createContactsDb, migrate, type ContactsDb } from '@marlinjai/contacts-core';
 
-import { createCustomer } from '../repository/customers';
-import { createDraft } from '../repository/documents';
+import { createCustomer, setCustomerDefaultContactPerson } from '../repository/customers';
+import { createDraft, setContactPerson } from '../repository/documents';
 import { addLine } from '../repository/lines';
 import { getDocument } from '../repository/read';
 import { contactsRecipientDirectory, type RecipientDirectory } from '../recipients';
@@ -84,7 +84,8 @@ describe('Books with the real contacts database', () => {
     await addLine(scope, draft.document.id, { title: 'Consulting', quantity: 1000, unitPrice: 10000 });
     const { document } = await issue(scope, draft.document.id, { actorUserId: ACTOR });
     expect(document.document.customerSnapshot).toEqual({
-      v: 1,
+      v: 2,
+      contactPerson: null,
       contactId: contact.id,
       kind: 'organization',
       name: 'Sample Customer GmbH',
@@ -191,6 +192,96 @@ describe('Books with the real contacts database', () => {
     const docB = (await getDocument(scope, b.documentId)).document;
     expect(docA.customerId).toBe(docB.customerId);
     expect((await contactsFor(handle, scope.tenantId).list({ search: 'Sample Customer' })).map((c) => c.id)).toEqual([docA.customerSnapshot!.contactId]);
+  });
+
+  it('contact persons on the real package: a person with a role is chosen, issue freezes name and role, later changes never reach the issued invoice', async () => {
+    const handle = contacts!;
+    const book = contactsContactBook(() => handle);
+    const scope = await companyWith(directory);
+    const db = contactsFor(handle, scope.tenantId);
+    const org = await db.create(organization('Contact Person Customer GmbH'));
+    const customer = await createCustomer(scope, { contactId: org.id, customerType: 'b2b' });
+
+    const anna = await book.addContactPerson(scope.tenantId, { organizationContactId: org.id, person: { name: 'Anna Beispiel' }, role: 'Einkauf' });
+    expect(anna).toMatchObject({ name: 'Anna Beispiel', role: 'Einkauf', primary: true });
+    expect((await book.listContactPersons(scope.tenantId, org.id)).map((p) => [p.name, p.role])).toEqual([['Anna Beispiel', 'Einkauf']]);
+
+    const draft = await createDraft(scope, { docType: 'invoice', actorUserId: ACTOR, customerId: customer.id });
+    await addLine(scope, draft.document.id, { title: 'Consulting', quantity: 1000, unitPrice: 10000 });
+    const set = await setContactPerson(scope, draft.document.id, { contactPersonId: anna.contactId });
+    expect(set.document.contactPersonId).toBe(anna.contactId);
+
+    // The role changes before issue: the draft follows, and issue freezes what holds at that moment.
+    const affiliation = (await db.affiliationsOf(anna.contactId))[0]!;
+    await db.updateAffiliation(affiliation.id, { role: 'Leitung Einkauf' });
+    const { document } = await issue(scope, draft.document.id, { actorUserId: ACTOR });
+    expect(document.document.customerSnapshot).toMatchObject({
+      v: 2,
+      contactPerson: { contactId: anna.contactId, affiliationId: affiliation.id, name: 'Anna Beispiel', role: 'Leitung Einkauf' },
+    });
+    // After issue the person changes role and leaves: the issued snapshot does not move.
+    await db.updateAffiliation(affiliation.id, { role: 'Beirat' });
+    await db.endAffiliation(affiliation.id);
+    const reread = (await getDocument(scope, draft.document.id)).document.customerSnapshot;
+    expect(reread).toMatchObject({ contactPerson: { name: 'Anna Beispiel', role: 'Leitung Einkauf' } });
+  });
+
+  it('contact persons on the real package: the refusals (another business, another company, archived, left, duplicate)', async () => {
+    const handle = contacts!;
+    const book = contactsContactBook(() => handle);
+    const scope = await companyWith(directory);
+    const db = contactsFor(handle, scope.tenantId);
+    const org = await db.create(organization('First Business GmbH'));
+    const other = await db.create(organization('Second Business GmbH'));
+    const customer = await createCustomer(scope, { contactId: org.id, customerType: 'b2b' });
+    const ben = await book.addContactPerson(scope.tenantId, { organizationContactId: other.id, person: { name: 'Ben Muster' } });
+    const cora = await book.addContactPerson(scope.tenantId, { organizationContactId: org.id, person: { name: 'Cora Archiv' } });
+    const draft = await createDraft(scope, { docType: 'invoice', actorUserId: ACTOR, customerId: customer.id });
+
+    // A person of the other business, and of another company, are "not found" for this customer.
+    await expect(setContactPerson(scope, draft.document.id, { contactPersonId: ben.contactId })).rejects.toMatchObject({ code: 'CONTACT_PERSON_NOT_FOUND' });
+    const foreign = await contactsFor(handle, newTenantId()).create({ kind: 'person', name: 'Foreign Person' });
+    await expect(setContactPerson(scope, draft.document.id, { contactPersonId: foreign.id })).rejects.toMatchObject({ code: 'CONTACT_PERSON_NOT_FOUND' });
+    await expect(setCustomerDefaultContactPerson(scope, customer.id, ben.contactId)).rejects.toMatchObject({ code: 'CONTACT_PERSON_NOT_FOUND' });
+
+    // Archived: unavailable. Left: not found for a new choice, and a stored one stops the issue.
+    await db.archive(cora.contactId);
+    await expect(setContactPerson(scope, draft.document.id, { contactPersonId: cora.contactId })).rejects.toMatchObject({ code: 'CONTACT_PERSON_UNAVAILABLE' });
+    await db.restore(cora.contactId);
+    await setContactPerson(scope, draft.document.id, { contactPersonId: cora.contactId });
+    await addLine(scope, draft.document.id, { title: 'Consulting', quantity: 1000, unitPrice: 10000 });
+    await db.endAffiliation(cora.affiliationId);
+    await expect(issue(scope, draft.document.id, { actorUserId: ACTOR })).rejects.toMatchObject({ code: 'CONTACT_PERSON_UNAVAILABLE' });
+    expect((await getDocument(scope, draft.document.id)).document.status).toBe('draft');
+    await setContactPerson(scope, draft.document.id, { contactPersonId: null });
+    await expect(issue(scope, draft.document.id, { actorUserId: ACTOR })).resolves.toBeDefined();
+
+    // The same person twice, and a new person whose name exists: the book names both.
+    await expect(book.addContactPerson(scope.tenantId, { organizationContactId: other.id, personContactId: ben.contactId })).rejects.toMatchObject({ code: 'DUPLICATE_CONTACT_PERSON' });
+    await expect(book.addContactPerson(scope.tenantId, { organizationContactId: other.id, person: { name: 'Ben Muster' } })).rejects.toMatchObject({ code: 'DUPLICATE_CONTACT' });
+    // A person cannot be made a contact person of a person, nor of a business of another company.
+    await expect(book.addContactPerson(scope.tenantId, { organizationContactId: ben.contactId, personContactId: cora.contactId })).rejects.toMatchObject({ code: 'RECIPIENT_NOT_FOUND' });
+    const theirOrg = await contactsFor(handle, newTenantId()).create(organization('Their GmbH'));
+    await expect(book.addContactPerson(scope.tenantId, { organizationContactId: theirOrg.id, personContactId: cora.contactId })).rejects.toMatchObject({ code: 'RECIPIENT_NOT_FOUND' });
+  });
+
+  it('contact persons on the real package: company_or_role is never read as a role', async () => {
+    const handle = contacts!;
+    const book = contactsContactBook(() => handle);
+    const scope = await companyWith(directory);
+    const db = contactsFor(handle, scope.tenantId);
+    const org = await db.create(organization('Legacy Text GmbH'));
+    const customer = await createCustomer(scope, { contactId: org.id, customerType: 'b2b' });
+    // A person recorded the old way: the free text "Firma oder Funktion" holds a company name.
+    const old = await db.create({ kind: 'person', name: 'Dora Alt', companyOrRole: 'Muster GmbH' });
+    const added = await book.addContactPerson(scope.tenantId, { organizationContactId: org.id, personContactId: old.id });
+    expect(added.role).toBe('');
+    const draft = await createDraft(scope, { docType: 'invoice', actorUserId: ACTOR, customerId: customer.id });
+    await addLine(scope, draft.document.id, { title: 'Consulting', quantity: 1000, unitPrice: 10000 });
+    await setContactPerson(scope, draft.document.id, { contactPersonId: old.id });
+    const { document } = await issue(scope, draft.document.id, { actorUserId: ACTOR });
+    expect(document.document.customerSnapshot).toMatchObject({ contactPerson: { name: 'Dora Alt', role: '' } });
+    expect(JSON.stringify(document.document.customerSnapshot)).not.toContain('Muster GmbH');
   });
 
   it('a stopped contacts container gives RECIPIENT_UNAVAILABLE and writes nothing', async () => {

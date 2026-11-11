@@ -64,7 +64,7 @@ import { ReverseChargeNotAllowedError } from '../tax/germanVat';
 import { totalsExceedLimit } from './totals';
 import { BooksError, invalid, withDbErrors } from './errors';
 import { addDays, allocateNumber, resolveIssueDate } from './numbering';
-import { readRecipient } from './recipients';
+import { readContactPerson, readRecipient } from './recipients';
 import { readPersistedView, selectDocumentRow, selectLineRows, type DocumentView } from './repository/read';
 import { profileFor, selectCustomerRow, syncDraftTaxState } from './repository/taxState';
 import { lockLogos } from './repository/assets';
@@ -76,6 +76,7 @@ import type { BooksScope } from './scope';
 import { requireSettings } from './settings';
 import {
   buildCustomerSnapshot,
+  type SnapshotContactPerson,
   buildSenderSnapshot,
   recipientMissingFields,
   senderMissingFields,
@@ -218,6 +219,19 @@ export async function issue(
     });
   }
 
+  // The contact person ("z. Hd."), if the draft has one: read now, frozen with the role they hold NOW. A person who
+  // has left the business since (or was erased or archived) stops the issue: the user chooses another or removes them.
+  let snapshotPerson: SnapshotContactPerson | null = null;
+  if (before.contact_person_id) {
+    const person = await readContactPerson(scope, before.contact_person_id, contact.id);
+    if (!person || person.archived) {
+      throw new BooksError('CONTACT_PERSON_UNAVAILABLE', 'CONTACT_PERSON_UNAVAILABLE: the contact person no longer works for this customer', {
+        contactPersonId: before.contact_person_id,
+      });
+    }
+    snapshotPerson = { contactId: person.contactId, affiliationId: person.affiliationId, name: person.name, role: person.role };
+  }
+
   if (options.beforeTransaction) await options.beforeTransaction();
 
   return withDbErrors(() =>
@@ -238,6 +252,11 @@ export async function issue(
         }
         if (row.customer_id !== customerBefore.id) {
           throw new BooksError('CONCURRENT_EDIT', 'CONCURRENT_EDIT: the customer changed during the issue', {
+            documentId: id,
+          });
+        }
+        if (row.contact_person_id !== before.contact_person_id) {
+          throw new BooksError('CONCURRENT_EDIT', 'CONCURRENT_EDIT: the contact person changed during the issue', {
             documentId: id,
           });
         }
@@ -340,7 +359,7 @@ export async function issue(
           customerType: customer.customer_type,
           vatId: customer.vat_id,
           taxNumber: customer.tax_number,
-        });
+        }, snapshotPerson);
         // Reverse charge must name the recipient's VAT id (section 14a (1) UStG).
         if (profile.reverseCharge && !customerSnapshot.vatId?.trim()) {
           throw new BooksError('REVERSE_CHARGE_NOT_ALLOWED', 'REVERSE_CHARGE_NOT_ALLOWED: the recipient has no VAT id', {

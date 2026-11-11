@@ -25,9 +25,9 @@ import {
 import { createCustomer, type Customer } from '../repository/customers';
 import { contactIdentityKey } from '@marlinjai/contacts-core';
 
-import type { ContactBook, NewContactInput } from '../contactBook';
+import type { ContactBook, ContactPersonView, NewContactInput, NewContactPersonInput } from '../contactBook';
 import { BooksError } from '../errors';
-import type { RecipientContact, RecipientDirectory } from '../recipients';
+import type { ContactPerson, RecipientContact, RecipientDirectory } from '../recipients';
 import { booksScope, type BooksScope } from '../scope';
 import { initBooksCompany } from '../settings';
 import type { SenderBlockV1 } from '../snapshots';
@@ -109,6 +109,43 @@ export class FakeDirectory implements RecipientDirectory {
     return entry && entry.tenantId === tenantId ? { ...entry.contact } : null;
   }
 
+  /** Affiliations of the fake: a person's membership of a business, open until ended. */
+  readonly affiliations: Array<{ id: string; tenantId: string; personId: string; organizationId: string; role: string; endedAt: Date | null; primary: boolean }> = [];
+
+  /** Make a person a member of a business with a role (tests only). */
+  affiliate(tenantId: string, personId: string, organizationId: string, role = ''): { id: string } {
+    const open = this.affiliations.filter((a) => a.tenantId === tenantId && a.personId === personId && a.endedAt === null);
+    const a = { id: randomUUID(), tenantId, personId, organizationId, role, endedAt: null as Date | null, primary: open.length === 0 };
+    this.affiliations.push(a);
+    return a;
+  }
+
+  /** The person left the business (tests only). */
+  endAffiliation(id: string): void {
+    const a = this.affiliations.find((x) => x.id === id);
+    if (!a) throw new Error('FakeDirectory: no such affiliation');
+    a.endedAt = new Date();
+  }
+
+  /** Change the role of an affiliation (tests only). */
+  setRole(id: string, role: string): void {
+    const a = this.affiliations.find((x) => x.id === id);
+    if (!a) throw new Error('FakeDirectory: no such affiliation');
+    a.role = role;
+  }
+
+  async getContactPerson(tenantId: string, personId: string, organizationContactId: string): Promise<ContactPerson | null> {
+    this.calls += 1;
+    if (this.failing) throw new Error('synthetic contacts outage');
+    const person = this.contacts.get(personId);
+    if (!person || person.tenantId !== tenantId || person.contact.kind !== 'person') return null;
+    const a = this.affiliations.find(
+      (x) => x.tenantId === tenantId && x.personId === personId && x.organizationId === organizationContactId && x.endedAt === null,
+    );
+    if (!a) return null;
+    return { contactId: personId, affiliationId: a.id, name: person.contact.name, role: a.role, archived: person.contact.archived };
+  }
+
   /** The company's contacts (tests only). */
   contactsOf(tenantId: string): RecipientContact[] {
     return [...this.contacts.values()].filter((e) => e.tenantId === tenantId).map((e) => ({ ...e.contact }));
@@ -159,6 +196,44 @@ export class FakeContactBook implements ContactBook {
     this.outage();
     const key = contactIdentityKey('person', name, '');
     return this.dir.contactsOf(tenantId).filter((c) => c.kind === 'person' && contactIdentityKey('person', c.name, '') === key);
+  }
+  async listContactPersons(tenantId: string, organizationContactId: string): Promise<ContactPersonView[]> {
+    this.outage();
+    return this.dir.affiliations
+      .filter((a) => a.tenantId === tenantId && a.organizationId === organizationContactId && a.endedAt === null)
+      .flatMap((a) => {
+        const person = this.dir.contactsOf(tenantId).find((c) => c.id === a.personId);
+        return person && !person.archived
+          ? [{ affiliationId: a.id, contactId: person.id, name: person.name, role: a.role, startedOn: null, primary: a.primary }]
+          : [];
+      });
+  }
+  async addContactPerson(tenantId: string, input: NewContactPersonInput): Promise<ContactPersonView> {
+    this.outage();
+    const org = this.dir.contactsOf(tenantId).find((c) => c.id === input.organizationContactId);
+    if (!org || org.kind !== 'organization') throw new BooksError('RECIPIENT_NOT_FOUND', 'RECIPIENT_NOT_FOUND: no such business for this company');
+    let person: RecipientContact | undefined;
+    if (input.personContactId !== undefined) {
+      person = this.dir.contactsOf(tenantId).find((c) => c.id === input.personContactId && c.kind === 'person');
+      if (!person) throw new BooksError('RECIPIENT_NOT_FOUND', 'RECIPIENT_NOT_FOUND: no such person for this company');
+    } else if (input.person) {
+      person = await this.create(tenantId, { kind: 'person', name: input.person.name });
+    } else {
+      throw new BooksError('INVALID_INPUT', 'INVALID_INPUT: person');
+    }
+    const open = this.dir.affiliations.find(
+      (a) => a.tenantId === tenantId && a.personId === person!.id && a.organizationId === org.id && a.endedAt === null,
+    );
+    if (open) throw new BooksError('DUPLICATE_CONTACT_PERSON', 'DUPLICATE_CONTACT_PERSON');
+    const a = this.dir.affiliate(tenantId, person.id, org.id, input.role ?? '') as { id: string };
+    const row = this.dir.affiliations.find((x) => x.id === a.id)!;
+    return { affiliationId: row.id, contactId: person.id, name: person.name, role: row.role, startedOn: null, primary: row.primary };
+  }
+  async endContactPerson(tenantId: string, organizationContactId: string, affiliationId: string): Promise<void> {
+    this.outage();
+    const a = this.dir.affiliations.find((x) => x.id === affiliationId && x.tenantId === tenantId && x.organizationId === organizationContactId);
+    if (!a) throw new BooksError('RECIPIENT_NOT_FOUND', 'RECIPIENT_NOT_FOUND: no such contact person for this customer');
+    if (a.endedAt === null) this.dir.endAffiliation(a.id);
   }
   async create(tenantId: string, input: NewContactInput): Promise<RecipientContact> {
     this.outage();

@@ -80,6 +80,7 @@ export const ALLOWED_REGIONS: Record<BlockType, readonly RegionName[]> = {
   logo: ['firstPageHeader', 'addressZone.right', 'followingPageHeader', 'footer'],
   senderLine: ['addressZone.left', 'firstPageHeader'],
   recipient: ['addressZone.left'],
+  attention: ['addressZone.left'],
   documentMeta: ['addressZone.right', 'body'],
   title: ['body', 'followingPageHeader'],
   subject: ['body'],
@@ -113,6 +114,7 @@ export const REQUIRED: ReadonlyArray<{ type: BlockType; region: RegionName | nul
 export const SINGLETONS: ReadonlySet<BlockType> = new Set<BlockType>([
   'senderLine',
   'recipient',
+  'attention',
   'documentMeta',
   'subject',
   'introText',

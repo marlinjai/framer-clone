@@ -88,7 +88,7 @@ describe('Books stateful flow', () => {
     expect(doc.subtotal).toBe(12000 + 2500);
     expect(doc.total).toBe(14500);
     expect(doc.taxSummary).toEqual([{ taxRate: 0, taxTreatment: 'kleinunternehmer', net: 14500, tax: 0 }]);
-    expect(doc.customerSnapshot).toMatchObject({ v: 1, name: 'Sample Customer GmbH', city: 'Hamburg', vatId: 'DE123456789' });
+    expect(doc.customerSnapshot).toMatchObject({ v: 2, contactPerson: null, name: 'Sample Customer GmbH', city: 'Hamburg', vatId: 'DE123456789' });
     expect(doc.senderSnapshot).toMatchObject({ v: 1, legalName: 'Example Studio' });
     expect(view.lines.map((l) => l.position)).toEqual([1, 2, 3]);
     const issued = view.events.filter((e) => e.eventType === 'issued');

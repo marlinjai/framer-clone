@@ -60,14 +60,14 @@ import type { Kysely, Transaction } from 'kysely';
 
 import type { CommerceDB } from '../../commerce/db-types';
 import { BooksError, withDbErrors } from '../errors';
-import { readRecipient } from '../recipients';
+import { readContactPerson, readRecipient } from '../recipients';
 import { templateAssetRefs, templateAssets } from '../repository/assets';
 import { getDocument, selectDocumentRow, type DocumentView } from '../repository/read';
 import { selectCustomerRow } from '../repository/taxState';
 import { templateSnapshotFor } from '../repository/templates';
 import type { BooksScope } from '../scope';
 import { readSettings } from '../settings';
-import type { TemplateSnapshotV1 } from '../snapshots';
+import { printedContactPerson, type TemplateSnapshotV1 } from '../snapshots';
 import { printsSubject } from '../template/rules';
 import { logoBlocks, withOnlyLogo, type TemplateDocumentV2 } from '../template/schema';
 import { missingFields } from './completeness';
@@ -176,6 +176,8 @@ async function issuedInput(db: Db, scope: BooksScope, view: DocumentView): Promi
       country: c.country,
       customerNumber: c.customerNumber,
       vatId: c.vatId,
+      // The frozen contact person (version 2 snapshots); older documents carry none.
+      contactPerson: printedContactPerson(c),
     },
     corrects,
     replaces,
@@ -218,6 +220,12 @@ async function draftInput(
           customerNumber: contact.customerNumber,
           vatId: customer.vat_id,
         };
+        // The draft's contact person, live: the name and the role they hold now. One who has left (or was erased or
+        // archived) prints nothing here; the editor shows them as unavailable and issuing is refused.
+        if (doc.contactPersonId) {
+          const person = await readContactPerson(scope, doc.contactPersonId, customer.contact_id);
+          if (person && !person.archived) recipient.contactPerson = { name: person.name, role: person.role };
+        }
       }
     }
   }

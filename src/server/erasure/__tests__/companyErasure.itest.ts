@@ -210,6 +210,14 @@ async function seedCompany(label: string): Promise<Company> {
   const draft = await createDraft(scope, { docType: 'invoice', actorUserId: ACTOR, customerId: customer.id, serviceDate: '2026-10-01' });
   await addLine(scope, draft.document.id, { title: 'Consulting', quantity: 1000, unitPrice: 10000 });
   const issued = await issue(scope, draft.document.id, { actorUserId: ACTOR });
+  // The customer's default contact person (030): a column on a table the erasure already reaches by company, so
+  // it goes with its row; the value is set here, after the issue (a new draft would copy it and refuse to issue to a person who is not there), so the erasure test proves it is erased, not only absent.
+  await env.ownerDb
+    .updateTable('customer')
+    .set({ default_contact_person_id: randomUUID() })
+    .where('tenant_id', '=', company)
+    .where('id', '=', customer.id)
+    .execute();
   const pdf = Buffer.from(`%PDF-1.7 synthetic ${company}`);
   const fileId = randomUUID();
   await env.ownerDb

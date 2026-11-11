@@ -89,6 +89,7 @@ export function smallBusinessInvoice(): { document: SalesDocumentWithSnapshots; 
     docType: 'invoice',
     status: 'issued',
     source: 'editor',
+    contactPersonId: null,
     version: 4,
     subject: null,
     introFormat: null,

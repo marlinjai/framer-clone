@@ -63,6 +63,7 @@ import { browserRenderSupported } from '@/lib/books/engine';
 import { isStyled } from '@/server/books/render/richText';
 import { date, money, moneyInput, parseMoney, parseQuantity, quantity, quantityInput, rate } from '@/lib/books/units';
 
+import { ContactPersonGone, ContactPersonSelect, personLabel } from './ContactPersonPicker';
 import { GLASS_SURFACE, SegmentedSwitch, ToolLink } from './invoice/chrome';
 import InvoicePage from './invoice/InvoicePage';
 import StoredPdf from './invoice/StoredPdf';
@@ -406,9 +407,12 @@ export default function DocumentEditor({ id }: { id: string }) {
   }
 
   // Why Issue does nothing yet (shown on its tooltip; the button stays focusable so the reason can be read).
+  const contactPersonGone = draft && detail.contactPerson?.status === 'unavailable';
   const issueBlocked = !doc.customerId
     ? 'Choose a customer first'
-    : detail.lines.length === 0
+    : contactPersonGone
+      ? 'Choose another contact person or remove the contact person'
+      : detail.lines.length === 0
       ? 'Add at least one line first'
       : busy
         ? 'Saving…'
@@ -418,7 +422,7 @@ export default function DocumentEditor({ id }: { id: string }) {
     ? recipientName ?? 'No customer yet'
     : imported
       ? `${recipientName ? `${recipientName} · ` : ''}imported, the original PDF is the document of record`
-      : `${recipientName ? `${recipientName} · ` : ''}${STATUS_LABELS[doc.status]}${doc.issueDate ? ` on ${date(doc.issueDate)}` : ''}${doc.dueDate ? ` · due ${date(doc.dueDate)}` : ''}`;
+      : `${recipientName ? `${recipientName}${detail.contactPerson?.name ? `, z. Hd. ${personLabel(detail.contactPerson)}` : ''} · ` : ''}${STATUS_LABELS[doc.status]}${doc.issueDate ? ` on ${date(doc.issueDate)}` : ''}${doc.dueDate ? ` · due ${date(doc.dueDate)}` : ''}`;
   const moreItems = cancellable || draft;
 
   async function newInvoice() {
@@ -565,7 +569,7 @@ export default function DocumentEditor({ id }: { id: string }) {
         ) : null}
       </header>
 
-      {error || notice || detail.stale || (replacing && replaces) ? (
+      {error || notice || detail.stale || contactPersonGone || (replacing && replaces) ? (
         <div className="mx-auto mt-5 flex w-full max-w-3xl flex-col gap-3 px-4">
           <ErrorAlert message={error} onDismiss={() => setError(null)} />
           {notice ? (
@@ -578,6 +582,9 @@ export default function DocumentEditor({ id }: { id: string }) {
               The customer’s tax details changed since this draft was last saved. The figures are recalculated and are
               saved with your next change or when you issue.
             </div>
+          ) : null}
+          {contactPersonGone ? (
+            <ContactPersonGone id={id} version={version} contactPersons={detail.contactPersons} busy={busy} change={change} />
           ) : null}
           {replacing && replaces ? (
             <section role="region" aria-label="Correction" className="glass rounded-xl px-4 py-3 text-sm">
@@ -663,12 +670,28 @@ export default function DocumentEditor({ id }: { id: string }) {
                       {doc.customerSnapshot.addressLine1}
                       <br />
                       {doc.customerSnapshot.postalCode} {doc.customerSnapshot.city}
+                      {detail.contactPerson?.name ? (
+                        <>
+                          <br />
+                          z. Hd. {personLabel(detail.contactPerson)}
+                        </>
+                      ) : null}
                     </address>
                   ) : (
                     <p className="text-muted-foreground">No recipient was stored with this invoice; the PDF shows the one it was issued to.</p>
                   )}
                 </div>
               )}
+              {draft ? (
+                <ContactPersonSelect
+                  id={id}
+                  version={version}
+                  contactPerson={detail.contactPerson}
+                  contactPersons={detail.contactPersons}
+                  busy={busy}
+                  change={change}
+                />
+              ) : null}
               {draft ? (
                 <Field
                   label="Service date"

@@ -48,6 +48,7 @@ import {
   Search,
   TextQuote,
   Trash2,
+  UserRound,
   Undo2,
   UserPlus,
 } from 'lucide-react';
@@ -69,7 +70,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { booksApi, type CatalogueItemView, type CustomerView, type DocumentDetail, type LineView } from '@/lib/books/api';
+import { booksApi, type CatalogueItemView, type ContactPersonState, type ContactPersonView, type CustomerView, type DocumentDetail, type LineView } from '@/lib/books/api';
 import { lineFromProduct } from '@/lib/books/products';
 import { money, parseMoney, parseQuantity } from '@/lib/books/units';
 import type { FieldRect, LayoutField } from '@/server/books/render/engine';
@@ -103,9 +104,10 @@ const OPTIONAL_PARTS: Partial<Record<string, { label: string; icon: React.Compon
   introText: { label: 'Intro text', icon: TextQuote },
   'meta.contract': { label: 'Reference', icon: Hash },
   outroText: { label: 'Closing text', icon: TextQuote },
+  'recipient.attention': { label: 'Contact person', icon: UserRound },
 };
 /** Their order where two print at the same place (an empty subject slot sits where the intro would start). */
-const PART_ORDER = ['meta.contract', 'subject', 'introText', 'outroText'];
+const PART_ORDER = ['recipient.attention', 'meta.contract', 'subject', 'introText', 'outroText'];
 
 interface ActiveEditor {
   field: LayoutField;
@@ -166,6 +168,7 @@ function readUnsaved(documentId: string): Unsaved | null {
 /** The request a field change becomes, as a call. */
 function call(id: string, req: FieldRequest, version: number): Promise<DocumentDetail> {
   if (req.kind === 'customer') return booksApi.setCustomer(id, req.customerId, version);
+  if (req.kind === 'contactPerson') return booksApi.setContactPerson(id, req.contactPersonId, version);
   if (req.kind === 'line') return booksApi.updateLine(id, req.lineId, { ...req.body, expectedVersion: version });
   return booksApi.updateDraft(id, { ...req.body, expectedVersion: version });
 }
@@ -359,7 +362,28 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
     const forward = parsed.request;
     // A value that cannot be sent back (no customer before the first one was chosen) is not a step to undo. A
     // formatted text's value is its runs, so undo sends its formatting back with its words.
-    const step: UndoStep | null = before.ok ? { label, undo: (v) => send(before.request, v), redo: (v) => send(forward, v) } : null;
+    // Changing the customer clears the contact person (it belongs to the customer), so undoing it puts the previous
+    // customer back AND, when it still can, the person who was on the draft before (a person who has left since stays off).
+    const previousPerson = field.documentField === 'customerId' ? detailRef.current.document.contactPersonId : null;
+    const undoStep = (v: number): Promise<DocumentDetail> =>
+      before.ok ? send(before.request, v) : Promise.reject(new Error('nothing to undo'));
+    const step: UndoStep | null = before.ok
+      ? {
+          label,
+          undo: previousPerson
+            ? async (v) => {
+                const restored = await undoStep(v);
+                if (restored.document.contactPersonId === previousPerson) return restored;
+                try {
+                  return await booksApi.setContactPerson(id, previousPerson, restored.document.version);
+                } catch {
+                  return restored;
+                }
+              }
+            : (v) => send(before.request, v),
+          redo: (v) => send(forward, v),
+        }
+      : null;
     const ok = await run(step, (v) => send(forward, v), `${label} saved.`);
     if (ok) rememberUnsaved(id, null);
     else {
@@ -589,6 +613,8 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
           scale={scale}
           fontFamily={cssFontFamily(active.field.style.fontFamily)}
           customers={usable}
+          contactPersons={detail.contactPersons}
+          currentPerson={detail.contactPerson}
           label={fieldLabel(active.field, detail)}
           onType={onType}
           onCommit={(by) => void commit(by)}
@@ -606,7 +632,8 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
           nodes.push(editor(r));
           return;
         }
-        const recipient = f.id.startsWith('recipient.');
+        // The address lines and the customer slot belong to the customer; the contact person line is its own field.
+        const recipient = f.id.startsWith('recipient.line.') || f.id === 'recipient.customer';
         const editable = f.kind !== 'readonly' || recipient;
         if (!editable) {
           nodes.push(<span key={key} aria-hidden title={readOnlyReason(f)} className="absolute cursor-default rounded-[3px]" style={style(r)} />);
@@ -926,6 +953,8 @@ function InlineEditor({
   scale,
   fontFamily,
   customers,
+  contactPersons,
+  currentPerson,
   label,
   onType,
   onCommit,
@@ -936,6 +965,9 @@ function InlineEditor({
   scale: number;
   fontFamily: string;
   customers: CustomerView[];
+  /** The customer's people for the contact person select; null when none can be offered. */
+  contactPersons: ContactPersonView[] | null;
+  currentPerson: ContactPersonState | null;
   label: string;
   onType: (value: string) => void;
   onCommit: (by: 'key' | 'blur') => void;
@@ -989,6 +1021,20 @@ function InlineEditor({
             {c.contact?.name ?? c.contactId}
           </option>
         ))}
+      </select>
+    );
+  } else if (field.documentField === 'contactPersonId') {
+    // Chosen from the customer's people, never typed. A person who left is not offered (the banner above the page
+    // says so); the empty choice removes the contact person.
+    control = (
+      <select {...common} className={`${cls} text-sm`} value={value} onChange={(e) => onType(e.target.value)} onKeyDown={(e) => keys(e, false)}>
+        <option value="">{contactPersons && contactPersons.length > 0 ? 'No contact person' : 'This customer has no contact persons yet (add one on the Customers tab)'}</option>
+        {(contactPersons ?? []).map((p) => (
+          <option key={p.affiliationId} value={p.contactId}>
+            {p.role ? `${p.name}, ${p.role}` : p.name}
+          </option>
+        ))}
+        {currentPerson && currentPerson.status === 'unreadable' ? <option value={currentPerson.contactId}>Contact person (the contacts database is not reachable)</option> : null}
       </select>
     );
   } else if (field.documentField === 'taxClass') {

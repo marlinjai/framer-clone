@@ -88,6 +88,11 @@ export const logoBlockSchema = z
   .strict();
 export const senderLineBlockSchema = z.object({ ...base, type: z.literal('senderLine') }).strict();
 export const recipientBlockSchema = z.object({ ...base, type: z.literal('recipient') }).strict();
+/**
+ * The person the document is addressed to ("z. Hd. Name, Rolle"), one line under the address; prints nothing when
+ * the document has none. Off by default: no built-in template has one, a template gets it when its author adds it.
+ */
+export const attentionBlockSchema = z.object({ ...base, type: z.literal('attention') }).strict();
 export const documentMetaBlockSchema = z
   .object({
     ...base,
@@ -205,6 +210,7 @@ export const blockSchema = z.discriminatedUnion('type', [
   logoBlockSchema,
   senderLineBlockSchema,
   recipientBlockSchema,
+  attentionBlockSchema,
   documentMetaBlockSchema,
   titleBlockSchema,
   subjectBlockSchema,
