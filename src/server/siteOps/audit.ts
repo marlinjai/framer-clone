@@ -27,7 +27,9 @@ export interface AuditedOp {
 
 export interface AuditEntry {
   siteId: string;
-  operation: 'batch' | 'create_site' | 'generate_page' | 'publish' | 'rollback' | 'branch_update' | 'branch_merge';
+  operation: 'batch' | 'create_site' | 'generate_page' | 'publish' | 'rollback' | 'branch_update' | 'branch_merge' | 'branch_create' | 'branch_review' | 'branch_discard';
+  /** A branch operation's branch (an id, never its name: a name can hold personal data and audit rows are not erased). */
+  branchId?: string;
   ops?: AuditedOp[];
   versionBefore?: number;
   versionAfter?: number;
@@ -48,6 +50,7 @@ function actorDetailOf(caller: SiteOpsCaller, entry: AuditEntry): Record<string,
     ...(caller.actorDetail ?? {}),
     ...(caller.actorLabel ? { label: caller.actorLabel } : {}),
     ...(caller.liveCallId ? { callId: caller.liveCallId } : {}),
+    ...(entry.branchId ? { branchId: entry.branchId } : {}),
     // Kept apart from `ops`, so the count of operations a line shows stays the batch's.
     ...(created && created.nodeIds.length > 0 ? { createdNodeIds: created.nodeIds.slice(0, LIVE_LIST_MAX) } : {}),
     ...(created && created.pageIds.length > 0 ? { createdPageIds: created.pageIds.slice(0, LIVE_LIST_MAX) } : {}),
@@ -96,6 +99,9 @@ const TOOL_OF_OPERATION: Record<string, string> = {
   rollback: 'rollback',
   branch_merge: 'merge_branch',
   branch_update: 'update_branch',
+  branch_create: 'create_branch',
+  branch_review: 'request_review',
+  branch_discard: 'discard_branch',
 };
 
 /**

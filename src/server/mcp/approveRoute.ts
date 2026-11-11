@@ -60,7 +60,7 @@ export async function approveConfirmation(
     return jsonError('approval_not_found', 'this approval link is unknown, expired or already used; ask the agent for a new one', 404);
   }
   if (checked.status === 'forbidden') {
-    return jsonError('forbidden', 'you may not publish this site, so you cannot approve this', 403);
+    return jsonError('forbidden', 'you may not do this on the site yourself (publish it, or merge a branch into it), so you cannot approve it for an agent', 403);
   }
   // A changed site can still be declined; only approving it is refused.
   if (checked.status === 'changed' && decision === 'approve') {
@@ -82,6 +82,7 @@ export async function approveConfirmation(
       action: outcome.approval.action,
       siteId: outcome.approval.siteId,
       version: outcome.approval.version,
+      ...(outcome.approval.branchId ? { branchId: outcome.approval.branchId, branchVersion: outcome.approval.branchVersion } : {}),
       keyId: outcome.approval.keyId,
       workspaceId: outcome.approval.scope.workspaceId,
       decidedBy: userId,

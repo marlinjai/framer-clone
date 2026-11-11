@@ -2,7 +2,7 @@ import 'server-only';
 
 // src/server/mcp/approvalCheck.ts
 //
-// Who may approve an agent's publish or rollback through the approval link
+// Who may approve an agent's publish, rollback or branch merge through the approval link
 // (./approvals.ts), shared by the editor page that shows the request
 // (src/app/projects/[projectId]/confirm/[approvalId]/page.tsx) and the route its
 // button posts to (src/app/api/projects/[projectId]/confirmations/[approvalId]).
@@ -15,6 +15,12 @@ import 'server-only';
 // request whose site changed since it was opened (another write, or the site
 // removed) cannot be approved: the agent's next call would be refused anyway,
 // and the person would be approving something they were not shown.
+//
+// A merge of a site branch (docs/plans/2026-11-10-site-branches.md, decision 10) is
+// approved by someone who may merge (mergeBranch), not publish: a merge publishes
+// nothing. Its request names the site merged into and the branch, and both must
+// still be at the versions the person is shown; a branch that was merged or
+// discarded meanwhile counts as changed.
 
 import { checkWorkspaceAccess } from '@/lib/auth-check';
 import { getSiteRepository, SiteNotFoundError, type SiteRepository } from '@/server/sites';
@@ -55,6 +61,8 @@ export interface ApprovalCheckDeps {
   store?: ApprovalStore;
   repository?: SiteRepository;
   canPublish?: (userId: string, workspaceId: string) => Promise<boolean>;
+  /** The check for a merge request (mergeBranch on the workspace). */
+  canMerge?: (userId: string, workspaceId: string) => Promise<boolean>;
   /** The clock the sign-in age is judged by (tests). */
   now?: () => number;
 }
@@ -62,7 +70,7 @@ export interface ApprovalCheckDeps {
 export type ApprovalCheck =
   /** Unknown, expired, already used, or not a request for this site. */
   | { status: 'not_found' }
-  /** Signed in, but without publishSite on the request's workspace. */
+  /** Signed in, but without publishSite (or, for a merge, mergeBranch) on the request's workspace. */
   | { status: 'forbidden' }
   /** The site changed (or is gone) since the agent asked. */
   | { status: 'changed'; approval: Approval }
@@ -81,11 +89,22 @@ export async function checkApprover(
 ): Promise<ApprovalCheck> {
   const approval = (deps.store ?? getApprovalStore()).get(approvalId);
   if (!approval || approval.siteId !== projectId) return { status: 'not_found' };
-  const canPublish = deps.canPublish ?? ((user, workspace) => checkWorkspaceAccess(user, workspace, 'publishSite'));
-  if (!(await canPublish(userId, approval.scope.workspaceId))) return { status: 'forbidden' };
+  const merge = approval.action === 'merge';
+  const may = merge
+    ? (deps.canMerge ?? ((user: string, workspace: string) => checkWorkspaceAccess(user, workspace, 'mergeBranch')))
+    : (deps.canPublish ?? ((user: string, workspace: string) => checkWorkspaceAccess(user, workspace, 'publishSite')));
+  if (!(await may(userId, approval.scope.workspaceId))) return { status: 'forbidden' };
+  // A merge request that names no branch is malformed: nothing to show, nothing to approve.
+  if (merge && (!approval.branchId || approval.branchVersion === undefined)) return { status: 'not_found' };
   try {
-    const { version } = await (deps.repository ?? getSiteRepository()).loadProjectWithVersion(approval.scope, approval.siteId);
+    const repository = deps.repository ?? getSiteRepository();
+    const { version } = await repository.loadProjectWithVersion(approval.scope, approval.siteId);
     if (version !== approval.version) return { status: 'changed', approval };
+    if (merge) {
+      // A closed branch throws BranchClosedError, a kind of SiteNotFoundError: changed, like a removed site.
+      const branch = await repository.loadProjectWithVersion(approval.scope, approval.branchId as string);
+      if (branch.version !== approval.branchVersion) return { status: 'changed', approval };
+    }
   } catch (err) {
     if (err instanceof SiteNotFoundError) return { status: 'changed', approval };
     throw err;
@@ -102,6 +121,7 @@ export function approvalView(approval: Approval) {
     summary: approval.summary,
     version: approval.version,
     ...(approval.revision !== undefined ? { revision: approval.revision } : {}),
+    ...(approval.branchId !== undefined ? { branchId: approval.branchId, branchVersion: approval.branchVersion } : {}),
     expiresAt: new Date(approval.expiresAt).toISOString(),
     decision: approval.decision,
   };

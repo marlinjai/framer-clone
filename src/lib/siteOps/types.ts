@@ -18,7 +18,7 @@ import { z } from 'zod';
 import type { TenantScope } from '@/server/sites/repository';
 
 /** The permissions the operations check (FRAMER_PERMISSIONS in src/lib/permissions.ts). */
-export type SiteOpsAction = 'viewSite' | 'editSite' | 'publishSite';
+export type SiteOpsAction = 'viewSite' | 'editSite' | 'publishSite' | 'mergeBranch';
 
 /**
  * Who calls. Built by the caller's own door (a company API key through
@@ -57,6 +57,8 @@ export type SiteOpsError =
   | { code: 'site_not_found'; message: string }
   | { code: 'page_not_found'; message: string }
   | { code: 'revision_not_found'; message: string }
+  /** Publish or rollback named a site branch: only its site is ever published. */
+  | { code: 'branch_cannot_publish'; message: string; mainSiteId?: string }
   | { code: 'site_changed'; message: string; currentVersion: number }
   | { code: 'invalid_request'; message: string; issues?: string[] }
   | { code: 'rejected'; message: string; rejected: RejectedOperation[] }

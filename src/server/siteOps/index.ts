@@ -34,6 +34,7 @@ import {
   type SiteRepository,
   type SiteRevisionList,
   type SiteSummary,
+  BranchCannotPublishError,
   BranchClosedError,
 } from '@/server/sites';
 import { SaveAbortedError } from '@/server/sites/repository';
@@ -89,6 +90,8 @@ export interface SiteOpsDeps {
   editorHost?: string | null;
   /** The published sites' base host (defaults to PUBLIC_SITE_BASE_HOST). */
   publicBaseHost?: string | null;
+  /** What the branch operations (./branches.ts) run on; the editor host above is theirs too. */
+  branches?: import('./branches').BranchOpsDeps;
 }
 
 const repo = (deps: SiteOpsDeps) => deps.repository ?? getSiteRepository();
@@ -136,6 +139,10 @@ function fromError(err: unknown, siteId?: string): SiteOpsResult<never> {
     });
   }
   if (err instanceof SiteRevisionNotFoundError) return fail({ code: 'revision_not_found', message: err.message });
+  // Publish or rollback on a branch id: the database refuses it too (a CHECK constraint), this says why.
+  if (err instanceof BranchCannotPublishError) {
+    return fail({ code: 'branch_cannot_publish', message: 'a branch is never published or rolled back: merge it into its site, then publish the site' });
+  }
   if (err instanceof SiteRepositoryError && err.code === 'version_required') {
     return fail({
       code: 'invalid_request',
