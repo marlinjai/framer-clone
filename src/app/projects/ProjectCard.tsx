@@ -32,6 +32,8 @@ export interface ProjectCardProps {
   /** `<label>.sites.lumitra.co` once the project has a published address. */
   liveHost?: string | null;
   customDomains?: string[];
+  /** Open site branches, shown when site branches are on for the company (null: not shown). */
+  openBranches?: number | null;
 }
 
 export default function ProjectCard({
@@ -41,6 +43,7 @@ export default function ProjectCard({
   updatedLabel,
   liveHost = null,
   customDomains = [],
+  openBranches = null,
 }: ProjectCardProps) {
   const router = useRouter();
   const [name, setName] = useState(serverName);
@@ -129,7 +132,10 @@ export default function ProjectCard({
             {shown}
           </Link>
         )}
-        <span className="mt-0.5 block text-xs text-muted-foreground">Updated {updatedLabel}</span>
+        <span className="mt-0.5 block text-xs text-muted-foreground">
+          Updated {updatedLabel}
+          {openBranches ? ` · ${openBranches} ${openBranches === 1 ? 'open branch' : 'open branches'}` : null}
+        </span>
         {error ? (
           <p role="alert" className="relative z-10 mt-1 text-sm text-destructive">
             {error}

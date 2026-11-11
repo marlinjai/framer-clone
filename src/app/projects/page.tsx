@@ -31,6 +31,7 @@ import { safeEditorReturnPath } from '@/server/auth/activeCompany';
 import { loadDashboard } from './loader';
 import NewProjectButton from './NewProjectButton';
 import ProjectCard from './ProjectCard';
+import { siteBranchesEnabled } from '@/server/sites/branches/switch';
 import CompanyChooser from './CompanyChooser';
 import SitesNotEnabled from './SitesNotEnabled';
 import AuthUnavailable from './AuthUnavailable';
@@ -120,6 +121,8 @@ export default async function ProjectsPage({ searchParams }: ProjectsPageProps) 
   }
 
   const { sites, companies, activeCompany, booksEnabled } = data;
+  // The open branch count shows only while site branches are on for the company.
+  const branchesOn = siteBranchesEnabled(activeCompany.id);
 
   return (
     <main className="mx-auto w-full max-w-3xl px-6 py-12">
@@ -193,6 +196,7 @@ export default async function ProjectsPage({ searchParams }: ProjectsPageProps) 
                 updatedLabel={formatUpdated(site.updatedAt)}
                 liveHost={liveHostFor(site.subdomain)}
                 customDomains={site.customDomains}
+                openBranches={branchesOn ? site.openBranches : null}
               />
             </li>
           ))}

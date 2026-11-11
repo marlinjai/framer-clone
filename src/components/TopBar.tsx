@@ -71,6 +71,9 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import EditableProjectTitle from './EditableProjectTitle';
+import { useSiteBranch } from '@/contexts/SiteBranchContext';
+import BranchSwitcher from './branches/BranchSwitcher';
+import { BranchBadge, MainChangedNote, ReviewAndMergeButton } from './branches/BranchBar';
 import ColorModeSwitch, { useHasColorModeSwitch } from './ColorModeSwitch';
 
 function relativeTime(ts: number, now: number): string {
@@ -245,6 +248,8 @@ const MoreMenu = observer(({ onOpen, className = '' }: { onOpen: (dialog: Exclud
   // A `system` site's Light and Dark switch (ColorModeSwitch), as one checkbox here.
   const hasColorMode = useHasColorModeSwitch();
   const showsDark = editorUI.previewColorMode === 'dark';
+  // A site branch has no domains, published versions or form submissions: they belong to main (site branches).
+  const onBranch = useSiteBranch().state?.kind === 'branch';
   return (
     <DropdownMenu modal={false}>
       <DropdownMenuTrigger
@@ -264,21 +269,27 @@ const MoreMenu = observer(({ onOpen, className = '' }: { onOpen: (dialog: Exclud
         {hasProject && (
           <>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => onOpen('versions')}>
-              <Undo /> Published versions
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => onOpen('domains')}>
-              <Globe /> Domains
-            </DropdownMenuItem>
+            {!onBranch && (
+              <>
+                <DropdownMenuItem onSelect={() => onOpen('versions')}>
+                  <Undo /> Published versions
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => onOpen('domains')}>
+                  <Globe /> Domains
+                </DropdownMenuItem>
+              </>
+            )}
             <DropdownMenuItem onSelect={() => onOpen('siteSettings')}>
               <Settings /> Site settings
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => onOpen('theme')}>
               <Palette /> Theme
             </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => onOpen('forms')}>
-              <Inbox /> Form submissions
-            </DropdownMenuItem>
+            {!onBranch && (
+              <DropdownMenuItem onSelect={() => onOpen('forms')}>
+                <Inbox /> Form submissions
+              </DropdownMenuItem>
+            )}
           </>
         )}
         {hasColorMode && (
@@ -340,6 +351,8 @@ const TopBar = observer(() => {
   const currentPage = editorUI.currentPage;
   const history = getHistoryStore();
   const [dialog, setDialog] = React.useState<TopBarDialog>(null);
+  // Main or a site branch, when branches are on for the company (null otherwise: nothing of branches shows).
+  const onBranch = useSiteBranch().state?.kind === 'branch';
   // Open state for one dialog, in the shape the buttons take.
   const control = (which: Exclude<TopBarDialog, null>) => ({
     open: dialog === which,
@@ -368,6 +381,8 @@ const TopBar = observer(() => {
           <ChevronLeft size={18} />
         </Link>
         <EditableProjectTitle project={project} />
+        <BranchSwitcher />
+        <BranchBadge className="max-md:hidden" />
         {currentPage && (
           <>
             <span className="text-muted-foreground max-md:hidden">/</span>
@@ -415,20 +430,33 @@ const TopBar = observer(() => {
 
       {/* Publish: the primary rightward action. Serializes the live project
           and pushes it live via the admin-guarded publish endpoint. */}
-      <PublishButton />
+      {/* On a site branch: "Main has changed" with Update, and "Review and merge" in place of Publish (a
+          branch is never published; publishing happens from main). */}
+      {onBranch ? (
+        <>
+          <MainChangedNote className="mr-2" />
+          <ReviewAndMergeButton />
+        </>
+      ) : (
+        <PublishButton />
+      )}
 
-      {/* Published versions: what visitors have been served, and going back to one. */}
-      <PublishedVersionsButton {...control('versions')} triggerClassName={wideOnly} />
+      {!onBranch && (
+        <>
+          {/* Published versions: what visitors have been served, and going back to one. */}
+          <PublishedVersionsButton {...control('versions')} triggerClassName={wideOnly} />
 
-      {/* Domains: connect a custom domain to this project (its own dialog). */}
-      <DomainsButton {...control('domains')} triggerClassName={wideOnly} />
+          {/* Domains: connect a custom domain to this project (its own dialog). */}
+          <DomainsButton {...control('domains')} triggerClassName={wideOnly} />
+        </>
+      )}
 
       {/* Site settings: name, language, favicon, sharing image, business data. */}
       <SiteSettingsButton {...control('siteSettings')} triggerClassName={wideOnly} />
       {/* Theme: the site's shared colours and fonts, colour mode and page defaults. */}
       <ThemeButton {...control('theme')} triggerClassName={wideOnly} />
       {/* Form submissions: what visitors sent through this site's forms. */}
-      <FormSubmissionsButton {...control('forms')} triggerClassName={wideOnly} />
+      {!onBranch && <FormSubmissionsButton {...control('forms')} triggerClassName={wideOnly} />}
 
       {/* Preview entry: sits just before the undo/redo cluster so it's
           visually grouped with the other rightward actions. */}

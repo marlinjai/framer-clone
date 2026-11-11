@@ -4,6 +4,7 @@
 // refusal comes back as a BranchApiError with the route's error code, so a dialog can say what happened
 // (`branch_name_taken`, `branch_review_stale`, `branch_conflicts`, `branch_closed`, ...). Client-safe.
 
+import type { DocumentChanges } from '@/lib/siteMerge/diff';
 import type { BranchSummaryJson } from './branches';
 
 export class BranchApiError extends Error {
@@ -52,20 +53,8 @@ export interface BranchListJson {
   closed: BranchSummaryJson[];
 }
 
-/** The review's counts, as `GET .../branch/changes` answers them (src/server/sites/branches/merge.ts). */
-export interface UnitChangesJson {
-  added: string[];
-  removed: string[];
-  changed: string[];
-}
-export interface DocumentChangesJson {
-  site: string[];
-  settings: string[];
-  pages: UnitChangesJson;
-  components: UnitChangesJson;
-  nodes: { added: number; removed: number; changed: number };
-  pageOrder: boolean;
-}
+/** The review, as `GET .../branch/changes` answers it (BranchReview in src/server/sites/branches/merge.ts). */
+export type DocumentChangesJson = DocumentChanges;
 export interface BranchReviewJson {
   branch: BranchSummaryJson;
   token: string;
