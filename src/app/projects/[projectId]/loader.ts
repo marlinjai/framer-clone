@@ -40,6 +40,8 @@ import {
   SiteNotFoundError,
 } from '@/server/sites';
 import type { ProjectSnapshotOut } from '@/models/ProjectModel';
+import type { ClosedBranchNotice, EditorBranchState } from '@/lib/sites/branches';
+import { closedBranchNotice, editorBranchState } from '@/server/sites/branches/editorState';
 import type { SiteAddress } from '@/contexts/SiteAddressContext';
 
 // Same default + cookie name the rest of the app uses (auth-brain.ts /
@@ -55,12 +57,16 @@ export type ProjectLoadResult =
   | { status: 'auth_unavailable' }
   | { status: 'choose_company'; chooserUrl: string }
   | { status: 'not_found' }
+  /** A merged or discarded site branch's old address (site branches, S4): the page says what happened. */
+  | { status: 'branch_closed'; notice: ClosedBranchNotice }
   | {
       status: 'ok';
       snapshot: ProjectSnapshotOut;
       /** The site version read with the snapshot: the editor's `expectedVersion` (version lock). */
       version: number;
       site: SiteAddress;
+      /** Main or a branch, when site branches are on for the company; null otherwise. */
+      branch: EditorBranchState | null;
     };
 
 /**
@@ -155,9 +161,13 @@ export async function loadProjectSnapshot(
     // Where the site lives, for the page settings URL preview and its
     // "old links will redirect" note. Same scope, so it cannot leak either.
     const { host, everPublished } = await repo.getSiteAddress(scopeResult.scope, projectId);
-    return { status: 'ok', snapshot, version, site: { host, everPublished } };
+    const branch = await editorBranchState(scopeResult.scope, scopeResult.companyId, projectId);
+    return { status: 'ok', snapshot, version, site: { host, everPublished }, branch };
   } catch (err) {
     if (err instanceof SiteNotFoundError) {
+      // A merged or discarded branch of this workspace: its old address says so and links to its site.
+      const notice = await closedBranchNotice(scopeResult.scope, scopeResult.companyId, projectId);
+      if (notice) return { status: 'branch_closed', notice };
       // The link may point at a project of ANOTHER of the caller's companies
       // with Lumitra Sites (shared link, or the company was switched in
       // another tab). Look only among those companies' workspaces; when it is

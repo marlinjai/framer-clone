@@ -36,3 +36,43 @@ export function validateBranchName(raw: unknown): BranchNameResult {
   return { ok: true, name };
 }
 
+
+/** A branch as the editor receives it (the server's BranchSummary, its dates as ISO strings). */
+export interface BranchSummaryJson {
+  branchId: string;
+  mainSiteId: string;
+  name: string;
+  status: BranchStatus;
+  createdByKind: 'user' | 'key';
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  version: number | null;
+  baseVersion: number | null;
+  mainMoved: boolean;
+  readyBy: string | null;
+  readyAt: string | null;
+  reviewNote: string | null;
+  approved: boolean;
+  mergedAt: string | null;
+  discardedAt: string | null;
+}
+
+/**
+ * What the editor knows about branches of the site it has open: main (and how many branches it has), or a
+ * branch (with its record and its main). Null when site branches are off for the company (section 9).
+ */
+export type EditorBranchState =
+  | { kind: 'main'; siteId: string; siteName: string; openBranches: number }
+  | { kind: 'branch'; siteId: string; mainSiteId: string; mainName: string; branch: BranchSummaryJson };
+
+/** The old address of a merged or discarded branch: what happened, and the way to its site. */
+export interface ClosedBranchNotice {
+  branchId: string;
+  status: 'merged' | 'discarded';
+  name: string;
+  mainSiteId: string;
+  mainName: string;
+  /** When it was merged or discarded (ISO), when known. */
+  closedAt: string | null;
+}

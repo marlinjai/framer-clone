@@ -17,6 +17,8 @@
 import dynamic from 'next/dynamic';
 import type { ProjectSnapshotOut } from '@/models/ProjectModel';
 import { SiteAddressProvider, type SiteAddress } from '@/contexts/SiteAddressContext';
+import { SiteBranchProvider } from '@/contexts/SiteBranchContext';
+import type { EditorBranchState } from '@/lib/sites/branches';
 
 const EditorApp = dynamic(() => import('@/components/EditorApp'), { ssr: false });
 
@@ -24,16 +26,21 @@ export default function EditorMount({
   projectSnapshot,
   projectVersion,
   site,
+  branch = null,
 }: {
   projectSnapshot: ProjectSnapshotOut;
   /** The site version read with the snapshot (the version lock). */
   projectVersion: number;
   /** Where the published site lives (page settings URL preview). */
   site?: SiteAddress;
+  /** Main or a branch, when site branches are on for the company. */
+  branch?: EditorBranchState | null;
 }) {
   return (
     <SiteAddressProvider initial={site}>
-      <EditorApp projectSnapshot={projectSnapshot} projectVersion={projectVersion} />
+      <SiteBranchProvider initial={branch}>
+        <EditorApp projectSnapshot={projectSnapshot} projectVersion={projectVersion} />
+      </SiteBranchProvider>
     </SiteAddressProvider>
   );
 }

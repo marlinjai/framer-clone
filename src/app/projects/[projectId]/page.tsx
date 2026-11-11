@@ -13,6 +13,7 @@
 
 import { notFound, redirect } from 'next/navigation';
 import AuthUnavailable from '../AuthUnavailable';
+import ClosedBranch from '../ClosedBranch';
 import { loadProjectSnapshot } from './loader';
 import EditorMount from './EditorMount';
 
@@ -50,5 +51,10 @@ export default async function ProjectEditorPage({
     notFound();
   }
 
-  return <EditorMount projectSnapshot={result.snapshot} projectVersion={result.version} site={result.site} />;
+  // A merged or discarded branch: say what happened and link to its site (site branches).
+  if (result.status === 'branch_closed') {
+    return <ClosedBranch notice={result.notice} />;
+  }
+
+  return <EditorMount projectSnapshot={result.snapshot} projectVersion={result.version} site={result.site} branch={result.branch} />;
 }
