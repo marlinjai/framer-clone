@@ -8,7 +8,7 @@
 // - Fields of a node merge per field; `props`, its `style`, a responsive value and `bindings` per key.
 // - A node added on one side is kept; the same id added on both sides with different content conflicts.
 // - A node removed on one side and untouched on the other goes. Removed on one side and changed on the
-//   other (the node, a node inside it, a child added or moved into it) is one conflict for the whole removed
+//   other (the node, a node inside it, a child added or moved into it, or newly pointed at there) is one conflict for the whole removed
 //   part, asked on its top node: keep it with the changes, or remove it.
 // - A move on one side is taken; different moves on both sides conflict, and so do two moves that would put
 //   a node inside itself.
@@ -97,6 +97,8 @@ export function mergeForest(
   branch: Forest | undefined,
   container: string,
   log: ConflictLog,
+  /** Node ids each side points at and the base did not (rule 10): a removal of one of them is asked. */
+  newlyReferenced: { main: ReadonlySet<string>; branch: ReadonlySet<string> } = { main: new Set(), branch: new Set() },
 ): TreeMerge {
   const B = flatten(base);
   const M = flatten(main);
@@ -147,6 +149,7 @@ export function mergeForest(
       const extra = added.get(root) ?? [];
       const changed =
         extra.length > 0 ||
+        members.some((id) => newlyReferenced[keeper].has(id)) ||
         members.some(
           (id) =>
             !jsonEqual(B.fields.get(id), K.fields.get(id)) ||

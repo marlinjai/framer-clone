@@ -15,6 +15,7 @@ import { mergeOrder } from './order';
 import { mergeForest, type Forest, type TreeNode } from './tree';
 import { ConflictLog, conflictId, type MergeAnswers, type MergeConflict, type MergeSide, type MergeUnit } from './types';
 import { isPlainObject, jsonEqual, mergeValue, type SplitRule } from './value';
+import { danglingReferences, documentTrees, nodeReferences, pageReferences, placements, treesOf, type DanglingReference } from './references';
 
 export interface MergePage {
   pageId: string;
@@ -43,6 +44,16 @@ export interface DocumentMerge {
   conflicts: MergeConflict[];
   /** Conflicts settled by an answer that still applies. */
   settled: Array<{ conflict: MergeConflict; pick: MergeSide }>;
+  /** What the merged document points at that is gone, though it was there on main and on the branch alone. */
+  dangling: DanglingReference[];
+}
+
+/** The three documents, for what a unit's merge needs to know beyond the unit (references to it). */
+interface Sides {
+  base: MergeDocument;
+  main: MergeDocument;
+  branch: MergeDocument;
+  trees: { base: unknown[]; main: unknown[]; branch: unknown[] };
 }
 
 /** The site's own fields, each one value. */
@@ -89,10 +100,16 @@ export function mergeDocuments(
   }
   out.redirects = main.redirects;
 
+  const sides: Sides = {
+    base,
+    main,
+    branch,
+    trees: { base: documentTrees(base), main: documentTrees(main), branch: documentTrees(branch) },
+  };
   out.siteSettings = mergeSettings(base.siteSettings, main.siteSettings, branch.siteSettings, log);
-  out.components = mergeComponents(base.components, main.components, branch.components, log);
-  out.pages = mergePages(base.pages, main.pages, branch.pages, log);
-  return { document: out, conflicts: log.open, settled: log.settled };
+  out.components = mergeComponents(sides, log);
+  out.pages = mergePages(sides, log);
+  return { document: out, conflicts: log.open, settled: log.settled, dangling: danglingReferences(out, main, branch) };
 }
 
 function mergeSettings(base: unknown, main: unknown, branch: unknown, log: ConflictLog): Record<string, unknown> {
@@ -160,7 +177,11 @@ function mergeKeyedList(
   return order.map((id) => items.get(id));
 }
 
-function mergeComponents(base: Record<string, unknown>, main: Record<string, unknown>, branch: Record<string, unknown>, log: ConflictLog) {
+function mergeComponents(sides: Sides, log: ConflictLog) {
+  const base = sides.base.components;
+  const main = sides.main.components;
+  const branch = sides.branch.components;
+  const placed = { base: placements(sides.trees.base), main: placements(sides.trees.main), branch: placements(sides.trees.branch) };
   const out: Record<string, unknown> = {};
   for (const id of new Set([...Object.keys(main ?? {}), ...Object.keys(branch ?? {}), ...Object.keys(base ?? {})])) {
     const merged = mergeUnit(
@@ -169,6 +190,10 @@ function mergeComponents(base: Record<string, unknown>, main: Record<string, unk
       branch?.[id] as Record<string, unknown> | undefined,
       { kind: 'component', id },
       log,
+      {
+        main: (placed.main.get(id) ?? 0) > (placed.base.get(id) ?? 0),
+        branch: (placed.branch.get(id) ?? 0) > (placed.base.get(id) ?? 0),
+      },
       (b, m, r, unit) => {
         const container = `component:${id}`;
         const fields = (d: Record<string, unknown>) => {
@@ -196,15 +221,28 @@ function mergeComponents(base: Record<string, unknown>, main: Record<string, unk
   return out;
 }
 
-function mergePages(base: MergePage[], main: MergePage[], branch: MergePage[], log: ConflictLog): MergePage[] {
+function mergePages(sides: Sides, log: ConflictLog): MergePage[] {
+  const base = sides.base.pages;
+  const main = sides.main.pages;
+  const branch = sides.branch.pages;
   const byId = (pages: MergePage[]) => new Map(pages.map((p) => [p.pageId, p]));
   const B = byId(base);
   const M = byId(main);
   const R = byId(branch);
   const merged = new Map<string, MergePage>();
   for (const id of new Set([...M.keys(), ...R.keys(), ...B.keys()])) {
-    const page = mergeUnit(B.get(id)?.snapshot, M.get(id)?.snapshot, R.get(id)?.snapshot, { kind: 'page', id }, log, (b, m, r, unit) =>
-      mergePageBody(b, m, r, `page:${id}`, log, unit),
+    const inBase = B.get(id);
+    const pointedAt = (side: 'main' | 'branch') =>
+      inBase !== undefined &&
+      pageReferences(sides[side], sides.trees[side], inBase) > pageReferences(sides.base, sides.trees.base, inBase);
+    const page = mergeUnit(
+      B.get(id)?.snapshot,
+      M.get(id)?.snapshot,
+      R.get(id)?.snapshot,
+      { kind: 'page', id },
+      log,
+      { main: pointedAt('main'), branch: pointedAt('branch') },
+      (b, m, r, unit) => mergePageBody(b, m, r, `page:${id}`, log, unit),
     );
     if (page) merged.set(id, { pageId: id, slug: typeof page.slug === 'string' ? page.slug : '', snapshot: page });
   }
@@ -230,6 +268,8 @@ function mergeUnit(
   branch: Record<string, unknown> | undefined,
   unit: MergeUnit,
   log: ConflictLog,
+  /** Whether each side points at the unit more than the base did (rule 10): its removal is then asked. */
+  newlyReferenced: { main: boolean; branch: boolean },
   body: (b: Record<string, unknown>, m: Record<string, unknown>, r: Record<string, unknown>, unit: MergeUnit) => Record<string, unknown>,
 ): Record<string, unknown> | undefined {
   const content = (u: Record<string, unknown> | undefined) => (u ? withoutTimestamps(u) : undefined);
@@ -244,7 +284,8 @@ function mergeUnit(
   if (!main || !branch) {
     const remover: MergeSide = main ? 'branch' : 'main';
     const kept = (main ?? branch)!;
-    if (jsonEqual(content(base), content(kept))) return undefined;
+    const keeper: MergeSide = main ? 'main' : 'branch';
+    if (jsonEqual(content(base), content(kept)) && !newlyReferenced[keeper]) return undefined;
     const pick =
       log.ask({ id: conflictId(unit, 'removed'), kind: 'removed', unit, path: [], base: content(base), main: content(main), branch: content(branch), removedOn: remover }) ??
       'main';
@@ -295,7 +336,9 @@ function mergePageBody(
     split: PAGE_SPLIT,
     pick: (path, c) => log.ask({ id: conflictId(unit, 'value', path), kind: 'value', unit, path: [...path], base: c.base, main: c.main, branch: c.branch }),
   }).value as Record<string, unknown>;
-  const { forest } = mergeForest(forestOf(b), forestOf(m), forestOf(r), container, log);
+  const baseRefs = nodeReferences(treesOf(b));
+  const newly = (side: Record<string, unknown>) => new Set([...nodeReferences(treesOf(side))].filter((id) => !baseRefs.has(id)));
+  const { forest } = mergeForest(forestOf(b), forestOf(m), forestOf(r), container, log, { main: newly(m), branch: newly(r) });
   const out: Record<string, unknown> = { ...fields };
   for (const key of PAGE_TIMESTAMPS) if (key in m) out[key] = m[key];
   const [app] = forest.slots.app ?? [];
