@@ -410,6 +410,9 @@ path (it serves its rows until its next save or publish freezes them). Which sit
 Site branches (`docs/plans/2026-11-10-site-branches.md`) are off unless `SITE_BRANCHES_COMPANIES` is set on the app:
 unset or empty is off for everyone, `*` is on for every company, or a comma separated list of auth-brain company ids.
 Turning it off hides branches without deleting them. It is not set on production until the feature's last slice (S9).
+The same switch decides what an agent is offered: the branch tools of the MCP endpoint (`create_branch`, `merge_branch` and
+the others) are in the tool list and callable only for a key of a company in the list. The public plugin (0.4.0) already
+ships the work-on-a-branch skill; it checks the tool list first and works on the site directly while the tools are absent.
 
 Migration `20261111000000_site_branches` is additive (one nullable column on `sites`, one table, constraints every
 existing row satisfies) and needs no reversing. **Before rolling the code back past it with open branches**, merge or
