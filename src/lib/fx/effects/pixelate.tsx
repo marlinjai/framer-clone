@@ -14,8 +14,8 @@ import { Pixelation } from "@react-three/postprocessing";
 import type {
   LayerComponentProps,
   LayerDefinition,
-  ParamsSchema,
 } from "../types";
+import { pixelateSchema } from "../schemas";
 
 interface PixelateValues {
   granularity: number;
@@ -26,13 +26,7 @@ function PixelateComponent({ values }: LayerComponentProps) {
   return <Pixelation granularity={v.granularity} />;
 }
 
-const PIXELATE_DEFAULT_PARAMS: ParamsSchema = {
-  granularity: { type: "number", value: 6, min: 1, max: 60, step: 1 },
-};
-
 export const PixelateLayer: LayerDefinition = {
-  type: "pixelate",
-  kind: "post",
-  defaultParams: PIXELATE_DEFAULT_PARAMS,
+  ...pixelateSchema,
   Component: PixelateComponent,
 };

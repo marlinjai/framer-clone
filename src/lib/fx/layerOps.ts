@@ -11,7 +11,7 @@
  * registry's default. The rest mutate at the `Layer` granularity only.
  */
 
-import { getLayerDefinition, listLayerDefinitions } from "./registry";
+import { getLayerSchema, listLayerSchemas } from "./registry";
 import type { Layer, ParamSchema, ParamsSchema, SceneConfig } from "./types";
 
 /** Defensive deep-clone for a `ParamSchema` entry. Vec2 has a tuple value. */
@@ -46,7 +46,7 @@ function uniqueLayerId(existing: Layer[], base: string): string {
  * registered (caller can flash an error).
  */
 export function instantiateLayer(type: string, existing: Layer[]): Layer | null {
-  const def = getLayerDefinition(type);
+  const def = getLayerSchema(type);
   if (!def) return null;
   const id = uniqueLayerId(existing, type);
   return {
@@ -94,7 +94,7 @@ export function appendLayer(layers: Layer[], layer: Layer): Layer[] {
 
 /** All registered types, sorted by `kind` then `label`, for the add picker. */
 export function listAddableTypes(): { type: string; label: string; kind: "content" | "post" }[] {
-  return listLayerDefinitions()
+  return listLayerSchemas()
     .map((d) => ({ type: d.type, label: d.label ?? d.type, kind: d.kind }))
     .sort((a, b) => {
       if (a.kind !== b.kind) return a.kind === "content" ? -1 : 1;

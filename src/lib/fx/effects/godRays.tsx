@@ -15,9 +15,9 @@ import { Mesh } from "three";
 import type {
   LayerComponentProps,
   LayerDefinition,
-  ParamsSchema,
 } from "../types";
 import { blendFunctionFor } from "./blend";
+import { godRaysSchema } from "../schemas";
 
 interface GodRaysValues {
   sourceLayerId: string;
@@ -53,22 +53,7 @@ function GodRaysComponent({ layer, values, ctx }: LayerComponentProps) {
   );
 }
 
-const GOD_RAYS_DEFAULT_PARAMS: ParamsSchema = {
-  sourceLayerId: { type: "select", value: "text-lockup", options: ["text-lockup"] },
-  density: { type: "number", value: 0.92, min: 0.8, max: 1, step: 0.005 },
-  decay: { type: "number", value: 0.9, min: 0.8, max: 0.99, step: 0.005 },
-  weight: { type: "number", value: 0.3, min: 0, max: 1, step: 0.01 },
-  exposure: { type: "number", value: 0.18, min: 0, max: 0.6, step: 0.01 },
-  samples: { type: "number", value: 60, min: 20, max: 120, step: 5 },
-  clampMax: { type: "number", value: 0.9, min: 0.5, max: 1, step: 0.01 },
-};
-
 export const GodRaysLayer: LayerDefinition = {
-  type: "godRays",
-  kind: "post",
-  label: "God Rays",
-  // Per-pixel radial sample loop; heaviest pass in the v1 set after Bloom.
-  heavy: true,
-  defaultParams: GOD_RAYS_DEFAULT_PARAMS,
+  ...godRaysSchema,
   Component: GodRaysComponent,
 };

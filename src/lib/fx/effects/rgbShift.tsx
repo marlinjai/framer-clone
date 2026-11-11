@@ -17,9 +17,9 @@ import { Uniform } from "three";
 import type {
   LayerComponentProps,
   LayerDefinition,
-  ParamsSchema,
 } from "../types";
 import { blendFunctionFor } from "./blend";
+import { rgbShiftSchema } from "../schemas";
 
 const RGB_SHIFT_FRAG = /* glsl */ `
   uniform float uAmount;
@@ -77,15 +77,7 @@ function RGBShiftComponent({ layer, values }: LayerComponentProps) {
   );
 }
 
-const RGB_SHIFT_DEFAULT_PARAMS: ParamsSchema = {
-  amount: { type: "number", value: 0.003, min: 0, max: 0.05, step: 0.0001 },
-  angle: { type: "number", value: 0, min: 0, max: Math.PI * 2, step: 0.01 },
-};
-
 export const RGBShiftLayer: LayerDefinition = {
-  type: "rgbShift",
-  kind: "post",
-  label: "RGB Shift",
-  defaultParams: RGB_SHIFT_DEFAULT_PARAMS,
+  ...rgbShiftSchema,
   Component: RGBShiftComponent,
 };

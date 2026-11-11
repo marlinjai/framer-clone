@@ -19,9 +19,9 @@ import { DotScreen } from "@react-three/postprocessing";
 import type {
   LayerComponentProps,
   LayerDefinition,
-  ParamsSchema,
 } from "../types";
 import { blendFunctionFor } from "./blend";
+import { halftoneSchema } from "../schemas";
 
 interface HalftoneValues {
   angle: number;
@@ -39,14 +39,7 @@ function HalftoneComponent({ layer, values }: LayerComponentProps) {
   );
 }
 
-const HALFTONE_DEFAULT_PARAMS: ParamsSchema = {
-  angle: { type: "number", value: 1.57, min: 0, max: Math.PI * 2, step: 0.01 },
-  scale: { type: "number", value: 1, min: 0.2, max: 5, step: 0.05 },
-};
-
 export const HalftoneLayer: LayerDefinition = {
-  type: "halftone",
-  kind: "post",
-  defaultParams: HALFTONE_DEFAULT_PARAMS,
+  ...halftoneSchema,
   Component: HalftoneComponent,
 };

@@ -18,6 +18,8 @@ import {
   DEFAULT_ROOTS,
   FX_ALLOWED_PACKAGES,
   FX_DIR,
+  FX_RENDER_ENTRY,
+  FX_TEST_PACKAGES,
   collectFiles,
   moduleSpecifiers,
   readKnownTenantTables,
@@ -79,6 +81,20 @@ describe('FX1: the engine imports nothing from the rest of the repository', () =
     expect(rules(ENGINE_FILE, `import { x } from '@/lib/fx/registry';`)).toEqual([]);
   });
 
+  it('allows the test runner, the TypeScript parser and Node built-ins in the engine tests only', () => {
+    const TEST_FILE = 'src/lib/fx/__tests__/importGraph.test.ts';
+    for (const name of FX_TEST_PACKAGES) {
+      expect(rules(TEST_FILE, `import x from '${name}';`)).toEqual([]);
+      expect(rules(ENGINE_FILE, `import x from '${name}';`)).toEqual(['FX1']);
+    }
+    expect(rules(TEST_FILE, `import { readFileSync } from 'node:fs';`)).toEqual([]);
+    expect(rules(ENGINE_FILE, `import { readFileSync } from 'node:fs';`)).toEqual(['FX1']);
+    // Without the prefix a built-in is not told apart from a package, in a test too.
+    expect(rules(TEST_FILE, `import { readFileSync } from 'fs';`)).toEqual(['FX1']);
+    // A test still imports nothing from the rest of the repository.
+    expect(rules(TEST_FILE, `import { x } from '@/lib/renderer';`)).toEqual(['FX1']);
+  });
+
   it('allows every listed package and its subpaths', () => {
     for (const name of FX_ALLOWED_PACKAGES) {
       expect(rules(ENGINE_FILE, `import x from '${name}';`)).toEqual([]);
@@ -119,6 +135,12 @@ describe('FX1: the engine imports nothing from the rest of the repository', () =
 });
 
 describe('FX2: the app reaches the engine only through its public entry', () => {
+  it('allows the render-free entry', () => {
+    expect(rules(APP_FILE, `import { parseFx } from '@/lib/fx/format';`)).toEqual([]);
+    expect(rules(APP_FILE, `import { parseFx } from '../../fx/format.ts';`)).toEqual([]);
+    expect(rules(APP_FILE, `import { x } from '@/lib/fx/formatting';`)).toEqual(['FX2']);
+  });
+
   it('allows the public entry, by alias and by relative path', () => {
     expect(rules(APP_FILE, `import { LumitraScene } from '@/lib/fx';`)).toEqual([]);
     expect(rules(APP_FILE, `const fx = await import('@/lib/fx');`)).toEqual([]);
@@ -179,14 +201,17 @@ describe('the repository as it is', () => {
     expect(engine.length).toBeGreaterThan(30);
   });
 
-  // Slice F1 of the plan only brings the engine in. Until slice F3 mounts it
-  // from the published page's island (and replaces this test with the bundle
-  // tests `fx-no-bytes-without-fx` and `fx-bundle-budget`), nothing outside the
-  // engine imports it, so no page's bundle carries three.js.
+  // Until slice F3 of the plan mounts the scene from the published page's island
+  // (and replaces this test with the bundle tests `fx-no-bytes-without-fx` and
+  // `fx-bundle-budget`), nothing outside the engine imports its render entry
+  // (`@/lib/fx`), so no page's bundle carries three.js. The render-free entry
+  // (`@/lib/fx/format`) is imported by the app and proven free of three.js in
+  // importGraph.test.ts.
   it(
-    'has no importer outside the engine yet, so no bundle carries it',
+    'has no importer of the render entry outside the engine yet, so no bundle carries three.js',
     () => {
       const fxAbs = path.join(REPO_ROOT, FX_DIR);
+      const renderEntry = path.join(REPO_ROOT, FX_RENDER_ENTRY);
       const importers: string[] = [];
       for (const [file, code] of sources) {
         if (file.startsWith(`${fxAbs}${path.sep}`)) continue;
@@ -198,13 +223,18 @@ describe('the repository as it is', () => {
             : specifier.startsWith('.')
               ? path.resolve(path.dirname(file), specifier)
               : null;
-          if (target && (target === fxAbs || target.startsWith(`${fxAbs}${path.sep}`))) {
-            importers.push(path.relative(REPO_ROOT, file));
-          }
+          if (!target) continue;
+          const bare = target.replace(/\.(?:ts|tsx)$/, '');
+          if (bare === fxAbs || bare === renderEntry) importers.push(path.relative(REPO_ROOT, file));
         }
       }
       expect(importers).toEqual([]);
     },
     SCAN_TIMEOUT_MS,
   );
+
+  it('has importers of the render-free entry', () => {
+    const formatEntry = '@/lib/fx/format';
+    expect([...sources.values()].some((code) => code.includes(`'${formatEntry}'`))).toBe(true);
+  });
 });

@@ -28,9 +28,9 @@ import { Uniform, Vector2 } from "three";
 import type {
   LayerComponentProps,
   LayerDefinition,
-  ParamsSchema,
 } from "../types";
 import { blendFunctionFor } from "./blend";
+import { distortionSchema } from "../schemas";
 
 const DISTORTION_FRAG = /* glsl */ `
   uniform float uTime;
@@ -210,18 +210,7 @@ function DistortionComponent({ layer, values, ctx }: LayerComponentProps) {
   return <distortionEffect ref={ref} />;
 }
 
-const DISTORTION_DEFAULT_PARAMS: ParamsSchema = {
-  type: { type: "select", value: "noise", options: ["noise", "ripple", "texture"] },
-  strength: { type: "number", value: 0.01, min: 0, max: 0.2, step: 0.001 },
-  scale: { type: "number", value: 3, min: 0.1, max: 20, step: 0.1 },
-  speed: { type: "number", value: 0.5, min: 0, max: 4, step: 0.05 },
-  mouseInfluence: { type: "number", value: 0, min: 0, max: 1, step: 0.01 },
-};
-
 export const DistortionLayer: LayerDefinition = {
-  type: "distortion",
-  kind: "post",
-  label: "Distortion",
-  defaultParams: DISTORTION_DEFAULT_PARAMS,
+  ...distortionSchema,
   Component: DistortionComponent,
 };

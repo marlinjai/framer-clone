@@ -14,9 +14,9 @@ import { Vignette } from "@react-three/postprocessing";
 import type {
   LayerComponentProps,
   LayerDefinition,
-  ParamsSchema,
 } from "../types";
 import { blendFunctionFor } from "./blend";
+import { vignetteSchema } from "../schemas";
 
 interface VignetteValues {
   offset: number;
@@ -34,15 +34,7 @@ function VignetteComponent({ layer, values }: LayerComponentProps) {
   );
 }
 
-const VIGNETTE_DEFAULT_PARAMS: ParamsSchema = {
-  offset: { type: "number", value: 0.5, min: 0, max: 1, step: 0.01 },
-  darkness: { type: "number", value: 0.5, min: 0, max: 1, step: 0.01 },
-};
-
 export const VignetteLayer: LayerDefinition = {
-  type: "vignette",
-  kind: "post",
-  label: "Vignette",
-  defaultParams: VIGNETTE_DEFAULT_PARAMS,
+  ...vignetteSchema,
   Component: VignetteComponent,
 };

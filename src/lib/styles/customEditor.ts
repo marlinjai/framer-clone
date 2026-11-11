@@ -110,13 +110,13 @@ export function attributeName(prop: string): string {
 
 /** Props that are the editor's own data, or that React reads as more than an attribute. */
 const RESERVED_PROPS: ReadonlySet<string> = new Set([
-  'children', 'key', 'ref', 'style', 'query', 'bindings', 'effects', 'behaviour', 'dangerouslySetInnerHTML',
+  'children', 'key', 'ref', 'style', 'query', 'bindings', 'effects', 'behaviour', 'fx', 'dangerouslySetInnerHTML',
   'suppressContentEditableWarning', 'suppressHydrationWarning', 'hostType',
 ]);
 
 /** Attributes the editor and renderers use as markers: changing one changes what the node is. */
 const RESERVED_MARKER =
-  /^data-(?:form-|component-|inner-component-|credit-|decorative$|sticky-cta$|map-embed$|fc-|viewport-id$|floating-root-id$|text-node-row$|editor-ui$|ground)/i;
+  /^data-(?:form-|component-|inner-component-|credit-|decorative$|sticky-cta$|map-embed$|fx$|fc-|viewport-id$|floating-root-id$|text-node-row$|editor-ui$|ground)/i;
 
 /** Attributes whose value is an address a browser follows or loads. */
 const URL_ATTRIBUTES: ReadonlySet<string> = new Set([

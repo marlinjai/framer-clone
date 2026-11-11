@@ -30,9 +30,9 @@ import {
 import type {
   LayerComponentProps,
   LayerDefinition,
-  ParamsSchema,
 } from "../types";
 import { applyContentBlend } from "./contentBlend";
+import { shapeSchema } from "../schemas";
 
 interface ShapeValues {
   shape: string;
@@ -262,22 +262,7 @@ function ShapeLayerComponent({ layer, values, ctx }: LayerComponentProps) {
   );
 }
 
-const SHAPE_DEFAULT_PARAMS: ParamsSchema = {
-  shape: { type: "select", value: "circle", options: ["circle", "roundedRect", "blob"] },
-  position: { type: "vec2", value: [0, 0], min: [-1.6, -1], max: [1.6, 1], step: 0.01 },
-  size: { type: "number", value: 0.6, min: 0.05, max: 2, step: 0.01 },
-  aspect: { type: "number", value: 1, min: 0.2, max: 3, step: 0.01 },
-  radius: { type: "number", value: 0.15, min: 0, max: 1, step: 0.01 },
-  softness: { type: "number", value: 0.05, min: 0, max: 1, step: 0.005 },
-  color: { type: "color", value: "#9fb6ff" },
-  opacity: { type: "number", value: 0.7, min: 0, max: 1, step: 0.01 },
-  wobble: { type: "number", value: 0.15, min: 0, max: 1, step: 0.01 },
-};
-
 export const ShapeLayer: LayerDefinition = {
-  type: "shape",
-  kind: "content",
-  label: "Shape (SDF)",
-  defaultParams: SHAPE_DEFAULT_PARAMS,
+  ...shapeSchema,
   Component: ShapeLayerComponent,
 };

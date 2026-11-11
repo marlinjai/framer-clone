@@ -79,8 +79,10 @@
  *  FX1: a file inside src/lib/fx imports nothing from the rest of the
  *       repository, and no package outside FX_ALLOWED_PACKAGES (so leva and
  *       drei, which the plan keeps out of Sites, cannot come back unnoticed).
+ *       Its tests may also import FX_TEST_PACKAGES and `node:` built-ins.
  *  FX2: a file outside src/lib/fx reaches the engine only through its public
- *       entries (FX_PUBLIC_ENTRIES), never through a file inside it.
+ *       entries (FX_PUBLIC_ENTRIES: `@/lib/fx` and the render-free
+ *       `@/lib/fx/format`), never through another file inside it.
  * Both rules read every static import, re-export, dynamic import() and
  * require() with a literal specifier; see scanFxBoundary.
  *
@@ -134,14 +136,21 @@ export const FX_DIR = 'src/lib/fx';
 
 /**
  * The files through which the rest of the app may import the engine, without
- * extension. `@/lib/fx` resolves to the first. A later slice that needs a
- * second entry (a parser the server can import without three.js) adds it here.
+ * extension:
+ *  - `@/lib/fx` (index): everything, the renderer included. Importing it loads
+ *    three.js, so only the code that draws a scene does, behind a dynamic import.
+ *  - `@/lib/fx/format`: the stored format, the layer schemas and the scene
+ *    operations. Render-free (src/lib/fx/__tests__/importGraph.test.ts), for a
+ *    server, a panel or a validator.
  */
-export const FX_PUBLIC_ENTRIES = [`${FX_DIR}/index`];
+export const FX_PUBLIC_ENTRIES = [`${FX_DIR}/index`, `${FX_DIR}/format`];
+
+/** The entry that loads the renderer (three.js): see FX_PUBLIC_ENTRIES. */
+export const FX_RENDER_ENTRY = `${FX_DIR}/index`;
 
 /**
  * The packages the engine may import. Subpaths count (`three/addons/...`,
- * `react-dom/client`). vitest is for the engine's own tests.
+ * `react-dom/client`).
  */
 export const FX_ALLOWED_PACKAGES = [
   'react',
@@ -151,8 +160,14 @@ export const FX_ALLOWED_PACKAGES = [
   '@react-three/postprocessing',
   'postprocessing',
   '@marlinjai/studio-scene-core',
-  'vitest',
 ];
+
+/**
+ * What the engine's own tests (src/lib/fx/__tests__) may import on top: the
+ * test runner, the TypeScript parser (the import graph test) and Node built-ins
+ * under the `node:` prefix. Never shipped, so not part of the engine's bundle.
+ */
+export const FX_TEST_PACKAGES = ['vitest', 'typescript'];
 
 const SCANNED_EXTENSIONS = /\.(?:ts|tsx|mts|cts|js|mjs|cjs)$/;
 
@@ -512,8 +527,10 @@ function isInsideFx(rel) {
   return rel === FX_DIR || rel.startsWith(`${FX_DIR}/`);
 }
 
-function isAllowedFxPackage(specifier) {
-  return FX_ALLOWED_PACKAGES.some((name) => specifier === name || specifier.startsWith(`${name}/`));
+function isAllowedFxPackage(specifier, fromRel) {
+  const names = fromRel.startsWith(`${FX_DIR}/__tests__/`) ? [...FX_ALLOWED_PACKAGES, ...FX_TEST_PACKAGES] : FX_ALLOWED_PACKAGES;
+  if (names.some((name) => specifier === name || specifier.startsWith(`${name}/`))) return true;
+  return fromRel.startsWith(`${FX_DIR}/__tests__/`) && specifier.startsWith('node:');
 }
 
 function isFxPublicEntry(rel) {
@@ -540,14 +557,14 @@ export function scanFxBoundary(file) {
     const target = resolveSpecifier(specifier, rel);
     if (inside) {
       if (target === null) {
-        if (!isAllowedFxPackage(specifier)) {
+        if (!isAllowedFxPackage(specifier, rel)) {
           violations.push({ rule: 'FX1', line, message: `the FX engine may not import the package "${specifier}" (allowed: ${FX_ALLOWED_PACKAGES.join(', ')})` });
         }
       } else if (!isInsideFx(target)) {
         violations.push({ rule: 'FX1', line, message: `the FX engine (${FX_DIR}) imports nothing from the rest of the repository, found "${specifier}"` });
       }
     } else if (target !== null && isInsideFx(target) && !isFxPublicEntry(target)) {
-      violations.push({ rule: 'FX2', line, message: `import the FX engine through "@/lib/fx" only, not "${specifier}"` });
+      violations.push({ rule: 'FX2', line, message: `import the FX engine through "@/lib/fx" or "@/lib/fx/format" only, not "${specifier}"` });
     }
   }
   return violations;

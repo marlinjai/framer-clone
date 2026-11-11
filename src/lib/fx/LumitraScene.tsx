@@ -39,6 +39,7 @@ import { EffectComposer } from "@react-three/postprocessing";
 import { Component, useCallback, useMemo, useState, type ReactNode } from "react";
 import type { Object3D } from "three";
 
+import { planPipeline } from "./pipeline";
 import { getLayerDefinition } from "./registry";
 import { FrameRateMonitor } from "./FrameRateMonitor";
 import type {
@@ -165,32 +166,15 @@ export function LumitraScene({ config, className, fallback }: LumitraSceneProps)
     [registerObject, objects, reduce],
   );
 
-  // Apply the perf downshift: drop heavy layers and clamp dpr to 1. Layers
-  // are filtered before kind splitting so the visibility / kind logic stays
-  // ignorant of perf state.
-  const liveLayers = useMemo(() => {
-    if (!perfLow) return config.layers;
-    return config.layers.filter((l) => !getLayerDefinition(l.type)?.heavy);
-  }, [config.layers, perfLow]);
+  // What to draw: visible layers, minus the heavy ones after the step down,
+  // minus post passes whose source layer is not drawn (see ./pipeline).
+  const { content: contentLayers, post: postLayers, postReady } = planPipeline(
+    config.layers,
+    perfLow,
+    (layerId) => objects[layerId] != null,
+  );
 
   const dprClamp = perfLow ? ([1, 1] as [number, number]) : config.dpr;
-
-  const visibleLayers = liveLayers.filter((l) => l.visible);
-  const contentLayers = visibleLayers.filter(
-    (l) => getLayerDefinition(l.type)?.kind === "content",
-  );
-  const postLayers = visibleLayers.filter(
-    (l) => getLayerDefinition(l.type)?.kind === "post",
-  );
-
-  // Mirror v7's `{sun && <Effects/>}` gate: if any post layer references a
-  // source content layer that isn't mounted yet, hold the composer off until
-  // it is. Avoids a transient frame where GodRays runs against null.
-  const postReady = postLayers.every((layer) => {
-    const src = layer.params.sourceLayerId as ParamSchema | undefined;
-    if (!src || src.type !== "select") return true;
-    return objects[src.value] != null;
-  });
 
   return (
     <div

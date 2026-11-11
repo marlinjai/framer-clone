@@ -39,9 +39,9 @@ import { Uniform, Vector2 } from "three";
 import type {
   LayerComponentProps,
   LayerDefinition,
-  ParamsSchema,
 } from "../types";
 import { blendFunctionFor } from "./blend";
+import { bokehSchema } from "../schemas";
 
 // 16-tap golden-angle disc sample. Single-pass; the radius and mask are
 // per-pixel so the focus-pull animation is just a uniform write.
@@ -231,27 +231,7 @@ function BokehComponent({ layer, values, ctx }: LayerComponentProps) {
   return <bokehMixEffect ref={ref} />;
 }
 
-const BOKEH_DEFAULT_PARAMS: ParamsSchema = {
-  radius: { type: "number", value: 0.02, min: 0, max: 0.08, step: 0.001 },
-  mixRadius: { type: "number", value: 0.35, min: 0, max: 1, step: 0.01 },
-  easing: { type: "number", value: 0.15, min: 0, max: 0.6, step: 0.005 },
-  focusPos: {
-    type: "vec2",
-    value: [0, 0],
-    min: [-1, -1],
-    max: [1, 1],
-    step: 0.01,
-  },
-  invert: { type: "bool", value: false },
-  reveal: { type: "number", value: 0, min: 0, max: 5, step: 0.05 },
-};
-
 export const BokehLayer: LayerDefinition = {
-  type: "bokeh",
-  kind: "post",
-  label: "Bokeh / DoF",
-  // 16-tap disc sample per pixel; significant on mobile, dropped on low-fps.
-  heavy: true,
-  defaultParams: BOKEH_DEFAULT_PARAMS,
+  ...bokehSchema,
   Component: BokehComponent,
 };

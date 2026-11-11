@@ -51,6 +51,7 @@ import { keyedBreakpoints, type KeyedBreakpoint } from './breakpoints';
 import { foreignContentOf, renderGateProblem, type GateNode } from './gate';
 import { countLinksToPage } from './pageLinks';
 import { MAX_BATCH_OPS, OperationSchema, type Operation, type RejectedOperation } from './types';
+import { FX_ATTR, FX_PROP } from '@/lib/fxScene/marker';
 
 /** The prefix of a reference to something an earlier operation created. */
 export const REF_PREFIX = 'ref:';
@@ -61,6 +62,9 @@ const SHAPE_KEEPING_WARNING = 'node had text and children, text moved into a lea
 /** Props setProps leaves to their own operations (or to nobody). */
 const PROPS_NOT_SET_HERE: ReadonlySet<string> = new Set([
   'style', 'children', 'rules', 'behaviour', 'effects', 'query', 'bindings', 'instance', 'component',
+  // An FX scene (src/lib/fxScene) is stored only after its own check;
+  // its marker makes a box an FX scene, so neither is set as a loose prop.
+  FX_PROP, FX_ATTR,
   // A shop part's role is the platform's (src/lib/commerce/parts.ts): set by the
   // control, never added, changed or removed by hand.
   SHOP_PART_ATTR,

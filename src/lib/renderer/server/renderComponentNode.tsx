@@ -37,6 +37,7 @@ import { formKindOf } from '@/lib/forms/definition';
 import { isStickyCta } from '@/lib/stickyCta/stickyCta';
 import { createStickyCtaElement } from '../stickyCta/stickyCtaElement';
 import { isMapEmbed, MAP_EMBED_PROP_KEYS, stripMapEmbedProps } from '@/lib/mapEmbed/mapEmbed';
+import { FX_PROP } from '@/lib/fxScene/marker';
 import MapEmbedIsland from '../mapEmbed/MapEmbedIsland';
 import { shopPartRoleOf } from '@/lib/commerce/parts';
 import { applyBindings } from '@/lib/bindings/resolver/applyBindings';
@@ -57,9 +58,11 @@ const INTERACTIVE_COMMERCE_KINDS: ReadonlySet<string> = new Set([
 // `bindings` never lives in props but is denied defensively; `effects` is
 // turned into attributes by applyEffects and denied here defensively too, as
 // `behaviour` is, which is data for the behaviour runtime under any value.
+// `fx` is the stored scene of an FX scene box (src/lib/fxScene): data
+// for its island, never an attribute.
 // `rules` is the same unless it is a string, which stays the legacy `<table>`
 // attribute it has always been: anything else would render as `[object Object]`.
-const NON_DOM_PROPS: ReadonlySet<string> = new Set(['children', 'query', 'bindings', 'effects', 'behaviour']);
+const NON_DOM_PROPS: ReadonlySet<string> = new Set(['children', 'query', 'bindings', 'effects', 'behaviour', FX_PROP]);
 
 /**
  * Resolve a node's HTML tag. A stored `type` IS the tag: every write path stores

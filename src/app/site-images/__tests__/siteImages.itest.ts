@@ -56,6 +56,7 @@ import type { TenantScope } from '@/server/sites';
 import { latestVersionRepository } from '@/server/sites/__tests__/latestVersionRepository';
 import { ico, icoWith, jpegHeader, png, pngHeader, svgText } from '@/lib/images/__tests__/fixtures';
 import { MAX_SITE_IMAGE_BYTES } from '@/lib/site/siteImages';
+import { FX_ATTR, FX_MARKER, FX_PROP, fxSiteImagePaths } from '@/lib/fxScene/fxScene';
 import { GET as listGET, POST as uploadPOST } from '@/app/api/projects/[projectId]/images/route';
 import { DELETE as editorDELETE, GET as editorGET } from '@/app/api/projects/[projectId]/images/[sha256]/route';
 import { SiteImageError, storeSiteImage } from '@/server/sites/siteImages';
@@ -83,20 +84,70 @@ let siteA: TestSite;
 let siteB: TestSite;
 let customHost: string;
 
-function project(id: string, siteSettings: object = {}, aboutImage = '') {
-  const page = (pageId: string, slug: string, ogImage = '') => ({
+/** What a test project may carry besides its settings: nodes on the home page and component definitions. */
+interface ProjectExtra {
+  homeChildren?: unknown[];
+  components?: Record<string, unknown>;
+}
+
+function project(id: string, siteSettings: object = {}, aboutImage = '', extra: ProjectExtra = {}) {
+  const page = (pageId: string, slug: string, ogImage = '', children: unknown[] = []) => ({
     id: pageId,
     slug,
     metadata: { title: pageId === 'home' ? 'Home' : 'About', ...(ogImage ? { ogImage } : {}) },
-    appComponentTree: { id: `root-${pageId}`, type: 'div', componentType: 'host', props: {}, children: [] },
+    appComponentTree: { id: `root-${pageId}`, type: 'div', componentType: 'host', props: {}, children },
     canvasNodes: {},
   });
   return {
     id,
     metadata: { title: 'Image site', description: '', createdAt: 1, updatedAt: 2 },
-    pages: { home: page('home', ''), about: page('about', 'about', aboutImage) },
+    pages: { home: page('home', '', '', extra.homeChildren), about: page('about', 'about', aboutImage) },
     siteSettings,
+    ...(extra.components ? { components: extra.components } : {}),
   } as never;
+}
+
+/** An FX scene box (src/lib/fxScene/fxScene.ts) whose one image layer shows `src`. */
+function fxBox(id: string, src: string, parentId = 'root-home') {
+  return {
+    id,
+    type: 'div',
+    componentType: 'host',
+    parentId,
+    props: {
+      [FX_ATTR]: FX_MARKER,
+      [FX_PROP]: {
+        version: 1,
+        scene: {
+          version: 1,
+          id: 'scene',
+          size: { mode: 'fill' },
+          background: '#000000',
+          fps: 60,
+          dpr: [1, 1.75],
+          layers: [{ id: 'picture', type: 'image', name: 'Picture', visible: true, blend: 'normal', params: { src } }],
+        },
+        start: 'settled',
+        calm: 'background',
+      },
+    },
+    children: [],
+  };
+}
+
+/** A reusable component definition whose tree is one FX scene box. */
+function fxDefinition(src: string) {
+  return {
+    id: 'backdrop',
+    name: 'Backdrop',
+    page: {
+      id: 'backdrop-page',
+      slug: '',
+      metadata: { title: 'Backdrop' },
+      appComponentTree: { id: 'b-root', type: 'section', componentType: 'host', props: {}, children: [fxBox('b-fx', src, 'b-root')] },
+      canvasNodes: {},
+    },
+  };
 }
 
 const createdSites: string[] = [];
@@ -497,6 +548,41 @@ describe('listing and deleting', () => {
     expect((await remove(site.id, sha(unused))).status).toBe(404);
   });
 
+  it('keeps an image an FX scene shows, on a page and in a component definition, until nothing shows it', async () => {
+    const site = await makeSite('fxdelete');
+    sessionMock.mockResolvedValue(memberOf(site));
+    const onPage = png(200, 200, [21, 21, 21]);
+    const inDefinition = png(200, 200, [22, 22, 22]);
+    const pagePath = (await (await upload(site.id, onPage, 'sharing')).json()).path as string;
+    const definitionPath = (await (await upload(site.id, inDefinition, 'sharing')).json()).path as string;
+    // The fixture really is an FX scene the app reads: otherwise this test would prove nothing.
+    expect(fxSiteImagePaths(fxBox('fx', pagePath))).toEqual([pagePath]);
+
+    const repo = latestVersionRepository();
+    await repo.saveProject(
+      site.scope,
+      project(site.id, {}, '', { homeChildren: [fxBox('fx', pagePath)], components: { backdrop: fxDefinition(definitionPath) } }),
+      { mustExist: true },
+    );
+
+    const listed = await (await list(site.id)).json();
+    const inUse = Object.fromEntries(listed.items.map((i: { sha256: string; inUse: boolean }) => [i.sha256, i.inUse]));
+    expect(inUse).toEqual({ [sha(onPage)]: true, [sha(inDefinition)]: true });
+    for (const bytes of [onPage, inDefinition]) {
+      const res = await remove(site.id, sha(bytes));
+      expect(res.status).toBe(409);
+      expect((await res.json()).error.code).toBe('image_in_use');
+    }
+    expect((await visit(site.host, `${sha(onPage)}.png`)).status).toBe(200);
+
+    // The scenes are taken out again (the site was never published with them, so no revision keeps them).
+    await repo.saveProject(site.scope, project(site.id, {}, '', { components: {} }), { mustExist: true });
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    expect((await remove(site.id, sha(onPage))).status).toBe(204);
+    expect((await remove(site.id, sha(inDefinition))).status).toBe(204);
+    info.mockRestore();
+  });
+
   it('keeps an image an A/B test variant names', async () => {
     const site = await makeSite('experiment');
     sessionMock.mockResolvedValue(memberOf(site));
@@ -574,6 +660,38 @@ describe('a path the site does not store', () => {
     ]) {
       await expect(attempt()).rejects.toMatchObject({ code: 'site_image_missing', status: 422 });
     }
+  });
+
+  it('is refused on save and publish when an FX scene shows it, on a page or in a component definition', async () => {
+    const theirs = png(220, 220, [9, 9, 9]);
+    sessionMock.mockResolvedValue(memberOf(siteB));
+    const theirPath = (await (await upload(siteB.id, theirs, 'sharing')).json()).path as string;
+    const repo = latestVersionRepository();
+    const typed = `/site-images/${'e'.repeat(64)}.png`;
+
+    for (const attempt of [
+      () => repo.saveProject(siteA.scope, project(siteA.id, {}, '', { homeChildren: [fxBox('fx', theirPath)] }), { mustExist: true }),
+      () => repo.saveProject(siteA.scope, project(siteA.id, {}, '', { homeChildren: [fxBox('fx', typed)] }), { mustExist: true }),
+      () => repo.saveProject(siteA.scope, project(siteA.id, {}, '', { components: { backdrop: fxDefinition(theirPath) } }), { mustExist: true }),
+      () => repo.publishProject(siteA.scope, project(siteA.id, {}, '', { homeChildren: [fxBox('fx', typed)] })),
+    ]) {
+      await expect(attempt()).rejects.toMatchObject({ code: 'site_image_missing', status: 422 });
+    }
+  });
+
+  it('is accepted in an FX scene once this site stores it, and a scene with a foreign address names nothing', async () => {
+    sessionMock.mockResolvedValue(memberOf(siteA));
+    const mine = png(220, 220, [10, 10, 10]);
+    const myPath = (await (await upload(siteA.id, mine, 'sharing')).json()).path as string;
+    const repo = latestVersionRepository();
+    await expect(
+      repo.saveProject(siteA.scope, project(siteA.id, {}, '', { homeChildren: [fxBox('fx', myPath)] }), { mustExist: true }),
+    ).resolves.toBeDefined();
+    // An https address in an image layer refuses the scene when it is read (the box is drawn plain), so the
+    // save has no site image to look for and stores the node as it is.
+    await expect(
+      repo.saveProject(siteA.scope, project(siteA.id, {}, '', { homeChildren: [fxBox('fx', 'https://elsewhere.example/x.png')] }), { mustExist: true }),
+    ).resolves.toBeDefined();
   });
 });
 

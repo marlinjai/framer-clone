@@ -25,6 +25,27 @@ function rowScope(r: Row = row): BindingScope {
   return pushRowFrame(createScope(), r);
 }
 
+describe('applyBindings: an FX scene takes no binding', () => {
+  it('leaves `fx` and every path under it as stored', () => {
+    const stored = { version: 1, scene: { id: 'scene', layers: [] }, start: 'settled', calm: 'background' };
+    const node: ComponentNode = {
+      type: 'div',
+      bindings: {
+        fx: { mode: 'read', expression: '{{title}}' },
+        'fx.scene': { mode: 'read', expression: '{{title}}' },
+        'fx.scene.background': { mode: 'read', expression: '{{color}}' },
+        title: { mode: 'read', expression: '{{title}}' },
+      },
+    };
+    const { resolvedProps, isLoading } = applyBindings(node, { 'data-fx': 'scene', fx: stored }, rowScope());
+    expect(resolvedProps.fx).toBe(stored);
+    expect(JSON.stringify(resolvedProps.fx)).toBe(JSON.stringify(stored));
+    // A neighbouring slot still binds.
+    expect(resolvedProps.title).toBe('Hello World');
+    expect(isLoading).toBe(false);
+  });
+});
+
 describe('applyBindings — merge', () => {
   it('merges a resolved value into props.children for a Text node', () => {
     const node: ComponentNode = {
