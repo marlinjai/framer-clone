@@ -715,12 +715,9 @@ export class SiteRepository {
       persisted.pages.map((p) => (p.snapshot as { metadata?: { ogImage?: unknown } }).metadata?.ogImage),
     );
     if (named.size > 0) {
-      // A branch's images are its main site's (stored once there, usable by every branch). A branch save shares
-      // main's row lock, which an image delete takes for update, so the two queue on one row (main first, as every
-      // branch write locks) besides the serializable conflict check that already refuses one of them.
-      if (existing?.branchOfSiteId) {
-        await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${existing.branchOfSiteId} AND workspace_id = ${scope.workspaceId} FOR SHARE`;
-      }
+      // A branch's images are its main site's (stored once there, usable by every branch). An image delete scans
+      // every branch's pages and runs serializable like this save, so a delete and a branch save naming the same
+      // image cannot both commit: one is refused, as for main.
       const stored = await tx.siteImage.findMany({
         where: { siteId: existing?.branchOfSiteId ?? persisted.siteId, sha256: { in: [...named.keys()] } },
         select: { sha256: true },
@@ -1046,7 +1043,7 @@ export class SiteRepository {
     const siteId = persisted.siteId;
 
     const published = await withSerializationRetry(() => this.prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${siteId} FOR UPDATE`;
+      await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${siteId} AND workspace_id = ${scope.workspaceId} FOR UPDATE`;
       // Only main is ever published (the database's CHECK would refuse it too, after the write).
       await this.refuseBranch(tx, scope, siteId);
       const write = await this.writeWorkingCopy(tx, scope, persisted, {
@@ -1259,7 +1256,7 @@ export class SiteRepository {
     if (chosen.size === 0) throw new NothingToEraseError();
 
     const erasure = await withSerializationRetry(() => this.prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${siteId} FOR UPDATE`;
+      await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${siteId} AND workspace_id = ${scope.workspaceId} FOR UPDATE`;
       const where = { id: siteId, workspaceId: scope.workspaceId, tenantGroupId: scope.tenantGroupId };
       const site = await tx.site.findFirst({
         where,
@@ -1274,7 +1271,7 @@ export class SiteRepository {
       if (site.branchOfSiteId) throw new SiteIsBranchError('erase personal data from its site; that covers every branch.');
       // Then the branches' rows, in id order (main first, as every branch write takes them), so no branch save
       // lands between the search below and the rewrite.
-      await tx.$queryRaw`SELECT id FROM public.sites WHERE branch_of_site_id = ${siteId} ORDER BY id FOR UPDATE`;
+      await tx.$queryRaw`SELECT id FROM public.sites WHERE branch_of_site_id = ${siteId} AND workspace_id = ${scope.workspaceId} ORDER BY id FOR UPDATE`;
 
       const now = new Date();
       const found: EraseMatch[] = [];

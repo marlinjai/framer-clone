@@ -183,9 +183,17 @@ export async function freeOpenName(
 ): Promise<string> {
   let name = stem;
   for (let n = 2; await openNameTaken(client, mainSiteId, name, branchId); n++) {
-    name = `${Array.from(stem).slice(0, BRANCH_NAME_MAX_LENGTH - 1 - String(n).length).join('')} ${n}`;
+    name = `${Array.from(stem).slice(0, BRANCH_NAME_MAX_LENGTH - 1 - String(n).length).join('').trimEnd()} ${n}`;
   }
   return name;
+}
+
+/** A unique violation of a primary key (`sites` or `site_branches`) or of `branch_site_id`: the chosen id is taken. */
+export function isIdClash(err: unknown): boolean {
+  if (!(err instanceof Prisma.PrismaClientKnownRequestError) || err.code !== 'P2002') return false;
+  const target = (err.meta as { target?: unknown } | undefined)?.target;
+  const named = Array.isArray(target) ? target : [String(target ?? '')];
+  return named.every((t) => t === 'id' || t === 'branch_site_id' || /_pkey$|branch_site_id/.test(String(t)));
 }
 
 export class SiteBranchRepository {
@@ -319,7 +327,7 @@ export class SiteBranchRepository {
       if (isNameClash(err)) throw new BranchNameTakenError(name);
       // The same chosen id sent for two different sites at once (each create holds only its own main's lock):
       // the primary key decides, and the loser is answered as any other id already in use.
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') throw new BranchNotFoundError(branchId);
+      if (isIdClash(err)) throw new BranchNotFoundError(branchId);
       throw err;
     }
   }

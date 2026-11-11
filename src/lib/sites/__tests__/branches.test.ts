@@ -2,7 +2,7 @@
 // (src/server/sites/branches/switch.ts).
 
 import { describe, expect, it } from 'vitest';
-import { BRANCH_NAME_MAX_LENGTH, isOpenBranchStatus, sameBranchName, validateBranchName } from '../branches';
+import { BRANCH_NAME_MAX_LENGTH, isOpenBranchStatus, validateBranchName } from '../branches';
 import { siteBranchesEnabled } from '@/server/sites/branches/switch';
 
 describe('validateBranchName', () => {
@@ -17,11 +17,6 @@ describe('validateBranchName', () => {
     expect(validateBranchName('x'.repeat(BRANCH_NAME_MAX_LENGTH + 1)).ok).toBe(false);
     // Code points, not UTF-16 units: an emoji counts once.
     expect(validateBranchName('\u{1F600}'.repeat(BRANCH_NAME_MAX_LENGTH)).ok).toBe(true);
-  });
-
-  it('compares names without case, as the unique index does', () => {
-    expect(sameBranchName('Spring Sale', 'spring sale')).toBe(true);
-    expect(sameBranchName('Spring', 'Sprung')).toBe(false);
   });
 
   it('knows which states hold content', () => {

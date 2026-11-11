@@ -29,7 +29,7 @@ import {
   SiteNotFoundError,
   type TenantScope,
 } from '@/server/sites';
-import { SiteBranchRepository } from '@/server/sites/branches/repository';
+import { SiteBranchRepository, isIdClash } from '@/server/sites/branches/repository';
 import { parseRevisionDocument } from '@/server/sites/revision';
 import { SiteImageError, deleteSiteImage, listSiteImages, readSiteImage, storeSiteImage } from '@/server/sites/siteImages';
 import { MAX_OPEN_BRANCHES_PER_SITE } from '@/lib/sites/branches';
@@ -225,6 +225,36 @@ describe('a closed branch to an agent', () => {
   });
 });
 
+describe('one chosen id for two sites at once', () => {
+  it('makes one branch and answers the other create 404, never 500', async () => {
+    const otherMain = randomUUID();
+    await latestVersionRepository().saveProject(scope, project(otherMain, 'Erika Muster'), { companyId: COMPANY });
+    const branchId = randomUUID();
+    const raced = await Promise.allSettled([create('A', ALICE, { branchId }), create('B', ALICE, { branchId, main: otherMain })]);
+    expect(raced.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    const lost = raced.find((r) => r.status === 'rejected') as PromiseRejectedResult;
+    expect(lost.reason).toBeInstanceOf(BranchNotFoundError);
+  });
+
+  it('tells a taken id from any other unique violation, on the errors Postgres really gives', async () => {
+    const caught = async (run: () => Promise<unknown>) => run().then(() => null, (err: unknown) => err);
+    const { branch } = await create('Taken');
+    const row = await prisma.site.findUniqueOrThrow({ where: { id: mainId } });
+    const { id: _id, ...rest } = row;
+    void _id;
+    // A sites row under an id already in use.
+    expect(isIdClash(await caught(() => prisma.site.create({ data: { ...rest, id: branch.branchId, siteSettings: {}, components: {}, redirects: [] } as never })))).toBe(true);
+    // The open-name index is not an id clash.
+    const nameClash = await caught(() =>
+      prisma.siteBranch.create({
+        data: { id: randomUUID(), siteId: mainId, workspaceId: scope.workspaceId, tenantGroupId: TENANT_GROUP, name: 'taken', createdByKind: 'user', createdBy: ALICE.id } as never,
+      }),
+    );
+    expect(nameClash).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
+    expect(isIdClash(nameClash)).toBe(false);
+  });
+});
+
 describe('resume: a retried create', () => {
   it('answers the branch the first request made, never a second one', async () => {
     const branchId = randomUUID();
@@ -347,7 +377,7 @@ describe('the branch record constraints', () => {
     await prisma.site.delete({ where: { id: branch.branchId } });
     const record = await prisma.siteBranch.findUniqueOrThrow({ where: { id: branch.branchId } });
     // Closed by the trigger: no content, no fork point kept, the name and the place under the cap are free.
-    expect(record).toMatchObject({ branchSiteId: null, status: 'discarded', baseDocument: null, mergeDraft: null });
+    expect(record).toMatchObject({ branchSiteId: null, status: 'discarded', baseVersion: null, baseDocument: null, mergeDraft: null });
     expect(record.discardedAt).toBeInstanceOf(Date);
     await expect(latestVersionRepository().loadProjectWithVersion(scope, branch.branchId)).rejects.toMatchObject({ code: 'branch_closed' });
     await expect(create(branch.name)).resolves.toMatchObject({ created: true });

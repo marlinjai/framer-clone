@@ -669,9 +669,11 @@ describe('SiteRepository.publishProject', () => {
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
     // Not SERIALIZABLE: that made publishes of unrelated sites abort each other.
     expect(prisma.$transaction.mock.calls[0][1]).toEqual({ maxWait: 5_000, timeout: 30_000 });
-    const [sql, siteId] = prisma.$queryRaw.mock.calls[0] as [TemplateStringsArray, string];
-    expect(sql.join('?')).toBe('SELECT id FROM public.sites WHERE id = ? FOR UPDATE');
+    const [sql, siteId, workspaceId] = prisma.$queryRaw.mock.calls[0] as [TemplateStringsArray, string, string];
+    // Scoped to the workspace: another workspace's id locks nothing.
+    expect(sql.join('?')).toBe('SELECT id FROM public.sites WHERE id = ? AND workspace_id = ? FOR UPDATE');
     expect(siteId).toBe('site_1');
+    expect(workspaceId).toBe('ws_marlin');
     expect(prisma.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(prisma.site.findUnique.mock.invocationCallOrder[0]);
   });
 

@@ -36,7 +36,3 @@ export function validateBranchName(raw: unknown): BranchNameResult {
   return { ok: true, name };
 }
 
-/** Two names that count as the same among a site's open branches (the database index compares `lower(name)`). */
-export function sameBranchName(a: string, b: string): boolean {
-  return a.toLowerCase() === b.toLowerCase();
-}

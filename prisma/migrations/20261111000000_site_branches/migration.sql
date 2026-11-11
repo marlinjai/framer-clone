@@ -146,6 +146,7 @@ BEGIN
   IF NEW.branch_site_id IS NULL AND OLD.branch_site_id IS NOT NULL AND NEW.status IN ('open', 'ready') THEN
     NEW.status := 'discarded';
     NEW.discarded_at := COALESCE(NEW.discarded_at, now() AT TIME ZONE 'UTC');
+    NEW.base_version := NULL;
     NEW.base_document := NULL;
     NEW.merge_draft := NULL;
     NEW.approved_by := NULL;
