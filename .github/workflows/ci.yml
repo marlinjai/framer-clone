@@ -168,7 +168,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Bounded: `--with-deps` runs apt-get, which retries a mirror it cannot resolve for as long as the job
+      # may run (6 hours by default; on 2026-11-11 a runner-side name-lookup outage held this step for over
+      # 30 minutes on every run). Measured over 114 successful runs: median 43 s, 95th percentile 148 s,
+      # slowest 924 s. 20 minutes passes a slow mirror and ends a hung one.
       - name: Install browsers
+        timeout-minutes: 20
         run: pnpm exec playwright install --with-deps chromium webkit
 
       # Whether anything stored can act on a page, through both renderers.
@@ -199,7 +204,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Bounded: `--with-deps` runs apt-get, which retries a mirror it cannot resolve for as long as the job
+      # may run (6 hours by default; on 2026-11-11 a runner-side name-lookup outage held this step for over
+      # 30 minutes on every run). Measured over 114 successful runs: median 43 s, 95th percentile 148 s,
+      # slowest 924 s. 20 minutes passes a slow mirror and ends a hung one.
       - name: Install browsers
+        timeout-minutes: 20
         run: pnpm exec playwright install --with-deps chromium webkit
 
       - name: Behaviour proofs
