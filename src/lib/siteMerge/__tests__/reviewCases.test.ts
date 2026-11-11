@@ -111,6 +111,68 @@ describe('review cases', () => {
     expect((rootOf(again.document).props as N).t).toBe('main 2');
   });
 
+  it('second review: a label pointing at a field main removed is asked, though the id is gone from the result', () => {
+    const base = doc([page('home', '', node('root', {}, [node('N', { id: 'email' })]))]);
+    const main = doc([page('home', '', node('root', {}, []))]);
+    const branch = doc([page('home', '', node('root', {}, [node('N', { id: 'email' }), node('L', { htmlFor: 'email' })]))]);
+    const merged = mergeDocuments(base, main, branch);
+    expect(merged.conflicts.map((c) => [c.kind, c.unit.id])).toEqual([['removed', 'N']]);
+    expect(merged.dangling).toEqual([{ kind: 'node', id: 'N', container: 'page:home' }]);
+    expect(settle(base, main, branch, 'branch').dangling).toEqual([]);
+  });
+
+  it('second review: removing a part never drops nodes a move put in a loop with it', () => {
+    const base = doc([page('p1', '', node('root', {}, [node('A', {}, [node('X', {}, [node('Xc')])]), node('P')]))]);
+    // Main: X under P, A under X. The branch removes P.
+    const main = doc([page('p1', '', node('root', {}, [node('P', {}, [node('X', {}, [node('Xc'), node('A')])])]))]);
+    const branch = doc([page('p1', '', node('root', {}, [node('A', {}, [node('X', {}, [node('Xc')])])]))]);
+    const first = mergeDocuments(base, main, branch);
+    expect(first.conflicts.map((c) => c.id)).toEqual(['page:p1|node:P|removed']);
+    const removed = mergeDocuments(base, main, branch, answer(first, 'branch'));
+    const ids = (n: N): string[] => [n.id as string, ...((n.children as N[] | undefined) ?? []).flatMap(ids)];
+    expect(ids(rootOf(removed.document, 'p1')).sort()).toEqual(['A', 'X', 'Xc', 'root']);
+  });
+
+  it('second review: both sides removing, one more than the other, asks nothing', () => {
+    const base = doc([page('p1', '', node('root', {}, [node('P', {}, [node('C')])]))]);
+    const main = doc([page('p1', '', node('root', {}, []))]);
+    const branch = doc([page('p1', '', node('root', {}, [node('P', {}, [])]))]);
+    const merged = mergeDocuments(base, main, branch);
+    expect(merged.conflicts).toEqual([]);
+    expect(rootOf(merged.document, 'p1').children).toEqual([]);
+  });
+
+  it('second review: two product pages on one address settle on a valid one', () => {
+    const base = doc([page('home', '', node('rh'))]);
+    const main = doc([page('home', '', node('rh')), page('a', 'shop/:handle', node('ra'))]);
+    const branch = doc([page('home', '', node('rh')), page('b', 'shop/:handle', node('rb'))]);
+    const merged = mergeDocuments(base, main, branch);
+    expect(merged.conflicts.map((c) => c.kind)).toEqual(['slug']);
+    expect(Object.fromEntries(merged.document.pages.map((p) => [p.pageId, p.slug]))).toMatchObject({ a: 'shop/:handle', b: 'shop-2/:handle' });
+    expect(mergedDocumentProblems(settle(base, main, branch, 'branch').document, main, () => ({}) as never).map((p) => p.code)).not.toContain('slug');
+  });
+
+  it('second review: a link to an address main renamed is reported in one pass, with nothing to ask', () => {
+    const base = doc([page('home', '', node('rh', {}, [])), page('about', 'about', node('ra'))]);
+    const main = doc([page('home', '', node('rh', {}, [])), page('about', 'ueber-uns', node('ra'))]);
+    const branch = doc([page('home', '', node('rh', {}, [node('l', { href: '/about' })])), page('about', 'about', node('ra'))]);
+    const merged = mergeDocuments(base, main, branch);
+    expect(merged.conflicts).toEqual([]);
+    expect(merged.dangling).toEqual([{ kind: 'link', id: 'about', slug: 'about', count: 1 }]);
+  });
+
+  it('second review: a component’s own page takes the later timestamp when the branch’s content stands', () => {
+    const def = (text: string, updatedAt: number) => ({
+      id: 'card', name: 'Card',
+      page: { id: 'cp', slug: '', metadata: { title: 'Card' }, createdAt: 1, updatedAt, appComponentTree: node('cr', { t: text }), canvasNodes: {} },
+    });
+    const base = doc([page('home', '', node('rh'))], { components: { card: def('base', 10) } });
+    const main = doc([page('home', '', node('rh'))], { components: { card: def('base', 10) } });
+    const branch = doc([page('home', '', node('rh'))], { components: { card: def('branch', 20) } });
+    const merged = mergeDocuments(base, main, branch);
+    expect(((merged.document.components.card as N).page as N).updatedAt).toBe(20);
+  });
+
   it('a parent with 20,000 children merges in linear time', () => {
     const kids = Array.from({ length: 20_000 }, (_, i) => node(`k${i}`, { t: i }));
     const base = doc([page('home', '', node('root', {}, kids))]);

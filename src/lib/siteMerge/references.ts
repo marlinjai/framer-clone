@@ -66,8 +66,22 @@ export function documentBodies(doc: MergeDocument): Array<[string, unknown]> {
   ];
 }
 
-/** Each node reference in the trees of one page body: the referring node and the node it names. */
-export function nodeReferences(trees: readonly unknown[]): Array<{ from: string; to: string }> {
+/** HTML element ids to the node carrying each, in the trees of one page body. */
+export function htmlIdsOf(trees: readonly unknown[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const node of walkNodes(trees)) {
+    const props = isPlainObject(node.props) ? node.props : undefined;
+    if (typeof node.id === 'string' && props && typeof props.id === 'string' && props.id !== '' && !out.has(props.id)) out.set(props.id, node.id);
+  }
+  return out;
+}
+
+/**
+ * Each node reference in the trees of one page body: the referring node and the node it names. An HTML
+ * reference names an element `id`; `elsewhere` gives the node that carried it on another side, so a
+ * reference to an element the merge removed is still a reference to that node.
+ */
+export function nodeReferences(trees: readonly unknown[], elsewhere?: ReadonlyMap<string, string>): Array<{ from: string; to: string }> {
   const out: Array<{ from: string; to: string }> = [];
   const htmlIdToNode = new Map<string, string>();
   const htmlRefs: Array<{ from: string; ids: Set<string> }> = [];
@@ -88,7 +102,7 @@ export function nodeReferences(trees: readonly unknown[]): Array<{ from: string;
   // An HTML reference names an element `id`; it points at the node carrying that id, if any.
   for (const { from, ids } of htmlRefs) {
     for (const htmlId of ids) {
-      const to = htmlIdToNode.get(htmlId);
+      const to = htmlIdToNode.get(htmlId) ?? elsewhere?.get(htmlId);
       if (to !== undefined) out.push({ from, to });
     }
   }
@@ -111,12 +125,15 @@ export interface DanglingReference {
 /** A page address any side gave a page: its key, to the page and its slug there. */
 type KnownAddresses = Map<string, { pageId: string; slug: string }>;
 
+/** Per container, HTML element ids to their node on any of the three sides. */
+type KnownHtmlIds = Map<string, Map<string, string>>;
+
 /** Every broken reference of a document, keyed by what points and what it points at. */
-function brokenReferences(doc: MergeDocument, known: KnownAddresses): Map<string, DanglingReference> {
+function brokenReferences(doc: MergeDocument, known: KnownAddresses, htmlIds: KnownHtmlIds): Map<string, DanglingReference> {
   const out = new Map<string, DanglingReference>();
   const components = doc.components ?? {};
   const pageIds = new Set(doc.pages.map((p) => p.pageId));
-  const held = new Set(doc.pages.map((p) => addressKeyOfSlug(p.slug)));
+  const held = new Set(doc.pages.map((p) => addressKeyOfSlug(textOf(p.slug))));
   for (const [container, body] of documentBodies(doc)) {
     const trees = treesOf(body);
     const present = new Set<string>();
@@ -135,7 +152,7 @@ function brokenReferences(doc: MergeDocument, known: KnownAddresses): Map<string
       const page = key === null ? undefined : known.get(key);
       if (key !== null && page && !held.has(key)) out.set(`link|${key}|${from}`, { kind: 'link', id: page.pageId, slug: page.slug, count: 1 });
     }
-    for (const { from, to } of nodeReferences(trees)) {
+    for (const { from, to } of nodeReferences(trees, htmlIds.get(container))) {
       if (!present.has(to)) out.set(`node|${container}|${to}|${from}`, { kind: 'node', id: to, container });
     }
   }
@@ -144,35 +161,57 @@ function brokenReferences(doc: MergeDocument, known: KnownAddresses): Map<string
   return out;
 }
 
+const textOf = (value: unknown): string => (typeof value === 'string' ? value : '');
+
 /**
- * What `merged` points at and does not hold, left out each reference main or the branch alone already left
- * broken the same way (the same referring node, the same target). One entry per target; a link entry counts
- * its links. `base` adds the addresses pages had at the fork point to the links looked for.
+ * What a merge result points at and does not hold, left out each reference main or the branch alone already
+ * left broken the same way (the same referring node, the same target). One entry per target; a link entry
+ * counts its links. Built once per merge from the three sides; `base` adds the addresses pages had at the fork
+ * point to the links looked for.
  */
-export function danglingReferences(merged: MergeDocument, main: MergeDocument, branch: MergeDocument, base?: MergeDocument): DanglingReference[] {
+export function danglingChecker(main: MergeDocument, branch: MergeDocument, base?: MergeDocument): (merged: MergeDocument) => DanglingReference[] {
+  const sides = [main, branch, ...(base ? [base] : [])];
   const known: KnownAddresses = new Map();
-  for (const doc of [merged, main, branch, ...(base ? [base] : [])]) {
+  const htmlIds: KnownHtmlIds = new Map();
+  for (const doc of sides) {
     for (const page of doc.pages) {
-      const key = addressKeyOfSlug(page.slug);
+      const slug = textOf(page.slug);
+      const key = addressKeyOfSlug(slug);
       // The home address always resolves, and a dynamic address has no single path.
-      if (key !== null && !page.slug.includes(':') && !known.has(key)) known.set(key, { pageId: page.pageId, slug: page.slug });
+      if (key !== null && !known.has(key)) known.set(key, { pageId: page.pageId, slug });
+    }
+    for (const [container, body] of documentBodies(doc)) {
+      const ids = htmlIds.get(container) ?? new Map<string, string>();
+      for (const [htmlId, nodeId] of htmlIdsOf(treesOf(body))) if (!ids.has(htmlId)) ids.set(htmlId, nodeId);
+      htmlIds.set(container, ids);
     }
   }
-  const before = new Set([...brokenReferences(main, known).keys(), ...brokenReferences(branch, known).keys()]);
-  const out = new Map<string, DanglingReference>();
-  for (const [key, ref] of brokenReferences(merged, known)) {
-    if (before.has(key)) continue;
-    const target = `${ref.kind}|${ref.container ?? ''}|${ref.id}`;
-    const seen = out.get(target);
-    if (seen && ref.kind === 'link') seen.count = (seen.count ?? 0) + 1;
-    else if (!seen) out.set(target, { ...ref });
-  }
-  return [...out.values()];
+  const before = new Set([...brokenReferences(main, known, htmlIds).keys(), ...brokenReferences(branch, known, htmlIds).keys()]);
+  return (merged) => {
+    const out = new Map<string, DanglingReference>();
+    for (const [key, ref] of brokenReferences(merged, known, htmlIds)) {
+      if (before.has(key)) continue;
+      const target = `${ref.kind}|${ref.container ?? ''}|${ref.id}`;
+      const seen = out.get(target);
+      if (seen && ref.kind === 'link') seen.count = (seen.count ?? 0) + 1;
+      else if (!seen) out.set(target, { ...ref });
+    }
+    return [...out.values()];
+  };
 }
 
-/** The key under which the merge asks the removal of what a dangling reference points at (`./document.ts`). */
-export function askKey(ref: DanglingReference): string {
+/** `danglingChecker` for one result. */
+export function danglingReferences(merged: MergeDocument, main: MergeDocument, branch: MergeDocument, base?: MergeDocument): DanglingReference[] {
+  return danglingChecker(main, branch, base)(merged);
+}
+
+/**
+ * The key under which the merge asks the removal of what a dangling reference points at (`./document.ts`),
+ * or null when the merged document still holds that thing (a link to an address its page no longer has:
+ * reported, but there is no removal to ask).
+ */
+export function askKey(ref: DanglingReference, merged: MergeDocument): string | null {
   if (ref.kind === 'node') return `node|${ref.container}|${ref.id}`;
-  if (ref.kind === 'component') return `component|${ref.id}`;
-  return `page|${ref.id}`;
+  if (ref.kind === 'component') return ref.id in (merged.components ?? {}) ? null : `component|${ref.id}`;
+  return merged.pages.some((p) => p.pageId === ref.id) ? null : `page|${ref.id}`;
 }

@@ -15,7 +15,7 @@ import { mergeOrder } from './order';
 import { mergeForest, type Forest, type TreeNode } from './tree';
 import { ConflictLog, conflictId, type MergeAnswers, type MergeConflict, type MergeSide, type MergeUnit } from './types';
 import { isPlainObject, jsonEqual, mergeValue, type SplitRule } from './value';
-import { askKey, danglingReferences, type DanglingReference } from './references';
+import { askKey, danglingChecker, type DanglingReference } from './references';
 
 export interface MergePage {
   pageId: string;
@@ -56,8 +56,7 @@ interface Sides {
   asked: ReadonlySet<string>;
 }
 
-/** Passes of rule 10 at most: each one only adds questions, so this is reached only by a broken document. */
-const MAX_PASSES = 16;
+
 
 /** The site's own fields, each one value. */
 export const SITE_FIELDS = ['name', 'description', 'analyticsProjectId', 'ingestionEndpoint', 'apiKeyRef', 'lumitraEnabled'] as const;
@@ -94,11 +93,16 @@ export function mergeDocuments(
   branch: MergeDocument,
   answers: MergeAnswers = {},
 ): DocumentMerge {
+  for (const [side, doc] of [['base', base], ['main', main], ['branch', branch]] as const) {
+    if (!Array.isArray(doc?.pages)) throw new TypeError(`the ${side} document has no list of pages (read it through parseRevisionDocument)`);
+  }
+  const dangling = danglingChecker(main, branch, base);
+  // Each pass asks at least one thing more, and there are finitely many things to ask: this ends.
   let asked = new Set<string>();
-  for (let pass = 1; ; pass++) {
-    const result = mergePass({ base, main, branch, asked }, answers);
-    const more = result.dangling.map(askKey).filter((key) => !asked.has(key));
-    if (more.length === 0 || pass >= MAX_PASSES) return result;
+  for (;;) {
+    const result = mergePass({ base, main, branch, asked }, answers, dangling);
+    const more = result.dangling.map((ref) => askKey(ref, result.document)).filter((key): key is string => key !== null && !asked.has(key));
+    if (more.length === 0) return result;
     asked = new Set([...asked, ...more]);
   }
 }
@@ -106,7 +110,7 @@ export function mergeDocuments(
 /** Keys of the stored document this merge handles itself; any other top-level key is merged as one value. */
 const HANDLED_KEYS = new Set<string>([...SITE_FIELDS, 'redirects', 'siteSettings', 'pages', 'components']);
 
-function mergePass(sides: Sides, answers: MergeAnswers): DocumentMerge {
+function mergePass(sides: Sides, answers: MergeAnswers, dangling: (merged: MergeDocument) => DanglingReference[]): DocumentMerge {
   const { base, main, branch } = sides;
   const log = new ConflictLog(answers);
   const out: MergeDocument = { ...main };
@@ -133,7 +137,7 @@ function mergePass(sides: Sides, answers: MergeAnswers): DocumentMerge {
   out.siteSettings = mergeSettings(base.siteSettings, main.siteSettings, branch.siteSettings, log);
   out.components = mergeComponents(sides, log);
   out.pages = mergePages(sides, log);
-  return { document: out, conflicts: log.open, settled: log.settled, dangling: danglingReferences(out, main, branch, base) };
+  return { document: out, conflicts: log.open, settled: log.settled, dangling: dangling(out) };
 }
 
 function mergeSettings(base: unknown, main: unknown, branch: unknown, log: ConflictLog): Record<string, unknown> {
@@ -232,7 +236,9 @@ function mergeComponents(sides: Sides, log: ConflictLog) {
           const merged = mergeKeyedList(b[list], m[list], r[list], unit, [list], log, ITEM_SPLIT);
           if (merged !== undefined) result[list] = merged;
         }
-        result.page = mergePageBody(b.page, m.page, r.page, container, log, unit, sides.asked);
+        const page = mergePageBody(b.page, m.page, r.page, container, log, unit, sides.asked);
+        // Decision 33 for the definition's own page too: its timestamps follow the content that stands.
+        result.page = isPlainObject(m.page) && isPlainObject(r.page) ? { ...page, ...timestampsFor(page, m.page, r.page) } : page;
         return result;
       },
     );
@@ -392,6 +398,17 @@ export function forestOf(page: Record<string, unknown>): Forest {
 }
 
 /**
+ * An address with a number added to its last fixed part: `karte-2`, and for a product page `shop-2/:handle`,
+ * since the placeholder must stay the last part (`validateSlugFormat`).
+ */
+function numbered(slug: string, n: number): string {
+  const parts = (slug || 'page').split('/');
+  const at = parts.length > 1 && parts[parts.length - 1].startsWith(':') ? parts.length - 2 : parts.length - 1;
+  parts[at] = `${parts[at]}-${n}`;
+  return parts.join('/');
+}
+
+/**
  * Rule 9: two pages ending with the same address. The page whose side the person picks keeps it, the other
  * gets the first free `<address>-2`, `-3`, ... The home page's empty address never changes hands: main's
  * home keeps it, and the only answer is main.
@@ -425,7 +442,7 @@ function settleSlugs(pages: MergePage[], M: Map<string, MergePage>, R: Map<strin
       const other = (sideOf(page) === 'main' ? R : M).get(page.pageId)?.slug;
       let next = other !== undefined && other !== slug && other !== '' && !taken(other, page) ? other : undefined;
       for (let n = 2; next === undefined; n++) {
-        const candidate = `${slug || 'page'}-${n}`;
+        const candidate = numbered(slug, n);
         if (!taken(candidate, page)) next = candidate;
       }
       page.slug = next;

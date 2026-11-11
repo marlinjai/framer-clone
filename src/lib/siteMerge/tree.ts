@@ -154,6 +154,7 @@ export function mergeForest(
       while (!isSlotKey(up) && !B.fields.has(up) && K.parent.has(up)) up = K.parent.get(up)!;
       if (removed.has(up)) push(added, top(up), id);
     }
+    const stays = (child: string) => K.fields.has(child) || X.fields.has(child);
     for (const [root, members] of groups) {
       const extra = added.get(root) ?? [];
       const changed =
@@ -163,7 +164,8 @@ export function mergeForest(
           (id) =>
             !jsonEqual(B.fields.get(id), K.fields.get(id)) ||
             B.parent.get(id) !== K.parent.get(id) ||
-            !jsonEqual(B.children.get(id) ?? [], K.children.get(id) ?? []),
+            // Children both sides removed are not an edit inside it.
+            !jsonEqual(B.children.get(id)?.filter(stays) ?? [], K.children.get(id)?.filter(stays) ?? []),
         );
       let keep = false;
       if (changed) {
@@ -271,8 +273,31 @@ export function mergeForest(
       }
     }
   }
-  // Still a loop (a mix the answer could not undo): main's places for every node in it.
-  for (const loop of findLoops(parent)) for (const id of loop) if (M.parent.has(id)) parent.set(id, M.parent.get(id)!);
+  /** Whether `id` sits under `ancestor` in the merged parents (bounded: a loop elsewhere cannot hang it). */
+  const isUnder = (id: string, ancestor: string): boolean => {
+    let at: string | undefined = id;
+    for (let steps = 0; at !== undefined && !isSlotKey(at) && steps <= parent.size; steps++) {
+      if (at === ancestor) return true;
+      at = parent.get(at);
+    }
+    return false;
+  };
+  // Any loop left (a mix an answer could not undo, or one a re-homing below made): cut at its smallest id,
+  // which takes the first of its places on main, the branch or the base that is outside the loop, else goes
+  // under the page's top node (or onto the canvas). Nothing is dropped: a loop is unreachable from the top,
+  // so leaving one would lose every node in it without a trace.
+  const breakLoops = () => {
+    for (let loops = findLoops(parent); loops.length > 0; loops = findLoops(parent)) {
+      for (const loop of loops) {
+        const first = [...loop].sort()[0];
+        const fits = (c: string | undefined): c is string =>
+          c !== undefined && (isSlotKey(c) || (fields.has(c) && parent.has(c) && !isUnder(c, first)));
+        const top = [...parent].find(([id, up]) => up === slotKey('app') && id !== first && !loop.includes(id))?.[0];
+        parent.set(first, [M.parent.get(first), R.parent.get(first), B.parent.get(first)].find(fits) ?? top ?? slotKey('canvas'));
+      }
+    }
+  };
+  breakLoops();
 
   // A node whose merged parent is gone (its part was removed by an answer): the other side's place, then
   // the base's; with none left it goes too.
@@ -291,6 +316,7 @@ export function mergeForest(
       changed = true;
     }
   }
+  breakLoops();
 
   // Children in order, per parent.
   const childrenOf = new Map<string, string[]>();
