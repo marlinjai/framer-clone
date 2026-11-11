@@ -37,9 +37,13 @@ describe('elementChanges', () => {
     const before = tree([node('a'), node('b'), node('c')]);
     expect(elementChanges(before, tree([node('b'), node('c')]))).toEqual([expect.objectContaining({ id: 'a', kind: 'removed' })]);
     expect(elementChanges(before, tree([node('x'), node('a'), node('b'), node('c')]))).toEqual([expect.objectContaining({ id: 'x', kind: 'added' })]);
-    const moved = elementChanges(before, tree([node('b'), node('c'), node('a')]));
-    expect(moved.filter((c) => c.kind === 'moved').map((c) => c.id)).toContain('a');
-    expect(moved.every((c) => c.kind === 'moved')).toBe(true);
+    expect(elementChanges(before, tree([node('b'), node('c'), node('a')])).map((c) => [c.id, c.kind])).toEqual([['a', 'moved']]);
+    // One moved among fifty marks that one.
+    const many = Array.from({ length: 50 }, (_, i) => node(`n${i}`));
+    const shifted = [...many.slice(1, 30), many[0], ...many.slice(30)];
+    expect(elementChanges(tree(many), tree(shifted)).map((c) => [c.id, c.kind])).toEqual([['n0', 'moved']]);
+    // A move with a neighbour removed: still only the moved one.
+    expect(elementChanges(before, tree([node('c'), node('a')])).map((c) => [c.id, c.kind]).sort()).toEqual([['b', 'removed'], ['c', 'moved']].sort());
   });
 
   it('a move into another parent, with a field changed too, is one moved element with its fields', () => {

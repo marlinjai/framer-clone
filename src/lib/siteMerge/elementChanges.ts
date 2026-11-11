@@ -116,6 +116,7 @@ export function elementChanges(before: unknown, after: unknown): ElementChange[]
   const a: Flat = flatten(forestOf(isPlainObject(before) ? before : {}));
   const b: Flat = flatten(forestOf(isPlainObject(after) ? after : {}));
   const out: ElementChange[] = [];
+  const order = reordered(a, b);
   for (const [id, fields] of b.fields) {
     const old = a.fields.get(id);
     if (!old) {
@@ -123,7 +124,7 @@ export function elementChanges(before: unknown, after: unknown): ElementChange[]
       continue;
     }
     const changed = fieldChanges(old, fields);
-    const moved = a.parent.get(id) !== b.parent.get(id) || orderMoved(a, b, id);
+    const moved = a.parent.get(id) !== b.parent.get(id) || order.has(id);
     if (moved || changed.length > 0) {
       out.push({ id, kind: moved ? 'moved' : 'changed', type: typeOf(fields), label: labelOf(fields), fields: changed });
     }
@@ -135,21 +136,49 @@ export function elementChanges(before: unknown, after: unknown): ElementChange[]
 }
 
 /**
- * Whether `id` moved among siblings it keeps on both sides: its place relative to them changed. A node whose
- * neighbour was added or removed has not moved (rule 8 of the merge counts a move on the moved node only).
+ * The ids each parent's kept children moved: among the children a parent keeps on both sides, those outside the
+ * longest common order. Moving one element among fifty marks that one, not the fifty whose neighbour changed; a
+ * neighbour added or removed moves nothing. Canvas roots have no order.
  */
-function orderMoved(a: Flat, b: Flat, id: string): boolean {
-  const parent = a.parent.get(id);
-  if (parent === undefined || parent !== b.parent.get(id) || parent === '#canvas') return false;
-  const before = a.children.get(parent) ?? [];
-  const after = b.children.get(parent) ?? [];
-  const both = new Set(after);
-  const kept = before.filter((child) => both.has(child));
-  const keptSet = new Set(kept);
-  const keptAfter = after.filter((child) => keptSet.has(child));
-  const at = kept.indexOf(id);
-  // Moved when what comes before it among the kept siblings differs.
-  return !jsonEqual(kept.slice(0, at), keptAfter.slice(0, keptAfter.indexOf(id)));
+function reordered(a: Flat, b: Flat): Set<string> {
+  const out = new Set<string>();
+  for (const [parent, after] of b.children) {
+    if (parent === '#canvas') continue;
+    const before = a.children.get(parent);
+    if (!before) continue;
+    const inAfter = new Set(after);
+    const kept = before.filter((id) => inAfter.has(id));
+    const keptSet = new Set(kept);
+    const keptAfter = after.filter((id) => keptSet.has(id));
+    if (jsonEqual(kept, keptAfter)) continue;
+    const stay = longestCommonOrder(kept, keptAfter);
+    for (const id of keptAfter) if (!stay.has(id)) out.add(id);
+  }
+  return out;
+}
+
+/** The ids of a longest common subsequence of two orders of the same ids (patience: O(n log n)). */
+function longestCommonOrder(before: string[], after: string[]): Set<string> {
+  const rank = new Map(before.map((id, i) => [id, i]));
+  const seq = after.map((id) => rank.get(id)!);
+  const tails: number[] = [];
+  const tailAt: number[] = [];
+  const prev: number[] = new Array(seq.length).fill(-1);
+  for (let i = 0; i < seq.length; i++) {
+    let lo = 0;
+    let hi = tails.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (tails[mid] < seq[i]) lo = mid + 1;
+      else hi = mid;
+    }
+    tails[lo] = seq[i];
+    tailAt[lo] = i;
+    prev[i] = lo > 0 ? tailAt[lo - 1] : -1;
+  }
+  const stay = new Set<string>();
+  for (let i = tails.length ? tailAt[tails.length - 1] : -1; i >= 0; i = prev[i]) stay.add(after[i]);
+  return stay;
 }
 
 function titleOfPage(snapshot: Record<string, unknown> | undefined, fallback: string): string {

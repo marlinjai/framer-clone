@@ -62,6 +62,8 @@ export const MERGE_DRAFT_MAX_ANSWERS = 2_000;
 export const REVIEW_NOTE_MAX_LENGTH = 2_000;
 
 const ID_MAX = 512;
+/** Answers stored at the same moment are retried this often before the review is called stale. */
+const ANSWER_ATTEMPTS = 5;
 const FINGERPRINT_MAX = 128;
 
 /** Copying a site at the 10 MB limit, page by page, fits in this, as a branch create. */
@@ -375,13 +377,17 @@ export class SiteBranchMergeService {
    */
   async answer(scope: TenantScope, branchId: string, input: { token: string; resolutions: MergeAnswers }): Promise<BranchReview> {
     assertScope(scope);
-    const state = await this.readState(scope, branchId);
-    if (reviewToken(state.stamp) !== input.token) throw new BranchReviewStaleError();
-    if (!this.upToDate(state)) {
+    // The token names the documents, not the draft: another answer stored in between (a second click, another tab)
+    // is laid under this one and tried again; only documents that moved make the review stale.
+    for (let attempt = 1; ; attempt++) {
+      const state = await this.readState(scope, branchId);
+      if (reviewToken(state.stamp) !== input.token) throw new BranchReviewStaleError();
+      if (this.upToDate(state)) break;
       const { merge } = this.bringMainIn(state, { ...draftAnswers(state.stamp.mergeDraft), ...input.resolutions });
       const kept = Object.fromEntries(merge.settled.map(({ conflict, pick }) => [conflict.id, { fingerprint: conflict.fingerprint, pick }]));
       // Under the locks, and only when the state is still the one read: an answer is never stored against a newer one.
-      if (!(await this.keepDraft(scope, state.stamp, kept, true))) throw new BranchReviewStaleError();
+      if (await this.keepDraft(scope, state.stamp, kept, true)) break;
+      if (attempt >= ANSWER_ATTEMPTS) throw new BranchReviewStaleError();
     }
     return this.changes(scope, branchId);
   }

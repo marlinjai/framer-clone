@@ -705,6 +705,21 @@ describe('the review (S5): the change list and answers saved as given', () => {
     expect(await textOf(branchId, 'about')).toBe('Branch about');
   });
 
+  it('two answers stored at once both land: a draft changed by the other is no stale review', async () => {
+    const branchId = await createBranch(us, 'Parallel');
+    await edit(us, branchId, { home: 'Branch home', about: 'Branch about' });
+    await edit(us, us.mainId, { home: 'Main home', about: 'Main about' });
+    const seen = await review(branchId);
+    const [one, two] = seen.conflicts;
+    const [r1, r2] = await Promise.all([
+      answers(branchId, { token: seen.token, resolutions: { [one.id]: { fingerprint: one.fingerprint, pick: 'branch' } } }),
+      answers(branchId, { token: seen.token, resolutions: { [two.id]: { fingerprint: two.fingerprint, pick: 'main' } } }),
+    ]);
+    expect([r1.status, r2.status]).toEqual([200, 200]);
+    const after = await review(branchId);
+    expect(Object.fromEntries(after.settled.map((x: { id: string; pick: string }) => [x.id, x.pick]))).toEqual({ [one.id]: 'branch', [two.id]: 'main' });
+  });
+
   it('refuses answers for a state that moved, storing nothing', async () => {
     const branchId = await createBranch(us, 'Stale');
     await edit(us, branchId, { home: 'Branch home', about: 'Since 1990' });
