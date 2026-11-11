@@ -26,7 +26,7 @@ type Kind =
  */
 const CLASSIFIED: Record<string, { uses: number; kind: Kind; why: string }> = {
   'src/server/sites/repository.ts': {
-    uses: 60, kind: 'sees-branches',
+    uses: 61, kind: 'sees-branches',
     why: 'listSites filters to mains; save works on a branch id, its image check against the images of main; publish, rollback, unpublish, domains, delete and erase refuse a branch; erase of a main covers its branches',
   },
   'src/server/sites/branches/repository.ts': { uses: 25, kind: 'sees-branches', why: 'the branch repository itself' },
