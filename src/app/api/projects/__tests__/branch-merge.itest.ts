@@ -30,6 +30,7 @@ import { POST as updatePOST } from '../[projectId]/branch/update/route';
 import { POST as approvePOST } from '../[projectId]/branch/approve/route';
 import { POST as sendBackPOST } from '../[projectId]/branch/send-back/route';
 import { POST as mergePOST } from '../[projectId]/branch/merge/route';
+import { POST as answersPOST } from '../[projectId]/branch/answers/route';
 
 const EDITOR = 'app.lumitra.test';
 const TENANT_GROUP = '018f9c10-0000-7000-8000-0000000b5b02';
@@ -133,6 +134,7 @@ const changes = (branchId: string) => changesGET(request('GET', `/api/projects/$
 const update = (branchId: string, body: unknown) => updatePOST(request('POST', `/api/projects/${branchId}/branch/update`, body), ctx(branchId));
 const approve = (branchId: string, body: unknown) => approvePOST(request('POST', `/api/projects/${branchId}/branch/approve`, body), ctx(branchId));
 const sendBack = (branchId: string, body: unknown) => sendBackPOST(request('POST', `/api/projects/${branchId}/branch/send-back`, body), ctx(branchId));
+const answers = (branchId: string, body: unknown) => answersPOST(request('POST', `/api/projects/${branchId}/branch/answers`, body), ctx(branchId));
 const merge = (branchId: string, body: unknown) => mergePOST(request('POST', `/api/projects/${branchId}/branch/merge`, body), ctx(branchId));
 
 async function review(branchId: string) {
@@ -329,7 +331,7 @@ describe('backtrack and revise', () => {
 
     // Resume: a reload shows the answer settled.
     const reloaded = await review(branchId);
-    expect(reloaded.settled).toEqual([{ id: home.id, pick: 'branch' }]);
+    expect(reloaded.settled).toMatchObject([{ id: home.id, pick: 'branch', conflict: { id: home.id, main: 'Main home', branch: 'Branch home' } }]);
     expect(reloaded.token).toBe(seen.token);
 
     // Changing an answer changes only that conflict's outcome.
@@ -406,7 +408,7 @@ describe('backtrack and revise', () => {
     await approve(branchId, { token: seen.token });
     const again = await review(branchId);
     expect(again.token).toBe(seen.token);
-    expect(again.settled).toEqual([{ id: one.id, pick: 'branch' }]);
+    expect(again.settled).toMatchObject([{ id: one.id, pick: 'branch', conflict: { id: one.id } }]);
     expect(again.branch.approved).toBe(true);
     expect(again.conflicts).toEqual(seen.conflicts.filter((c: { id: string }) => c.id !== one.id));
   });
@@ -510,7 +512,7 @@ describe('re-entry after completion or failure', () => {
     expect(await prisma.siteBranch.findUniqueOrThrow({ where: { id: branchId }, select: { baseVersion: true } })).toEqual(before);
     expect(await prisma.siteOperationAudit.count({ where: { siteId: branchId, operation: 'branch_update' } })).toBe(0);
     // The answer was stored before the write was tried: the same request, sent again without it, lands.
-    expect((await review(branchId)).settled).toEqual([{ id: conflict.id, pick: 'branch' }]);
+    expect((await review(branchId)).settled).toMatchObject([{ id: conflict.id, pick: 'branch', conflict: { id: conflict.id } }]);
     expect((await update(branchId, { token: seen.token })).status).toBe(200);
   });
 
@@ -648,5 +650,97 @@ describe('the erase of personal data and a merge', () => {
     ]);
     expect(stored).not.toContain(VALUE);
     expect((await repo.searchPersonalData(us.scope, us.mainId, query)).total).toBe(0);
+  });
+});
+
+describe('the review (S5): the change list and answers saved as given', () => {
+  it('lists what the branch changes per page and element, with old and new values', async () => {
+    const branchId = await createBranch(us, 'List');
+    await edit(us, branchId, { home: 'Fresh rolls', about: 'Since 1990', extra: 'New page' });
+    const seen = await review(branchId);
+    const units = seen.review.units as Array<{ id: string; change: string; elements: Array<{ id: string; kind: string; fields: Array<{ field: string; before: unknown; after: unknown }> }> }>;
+    const home = units.find((u) => u.id === 'home')!;
+    expect(home.change).toBe('changed');
+    expect(home.elements).toEqual([
+      expect.objectContaining({ id: 'text-home', kind: 'changed', fields: [{ field: 'props.children', before: 'Fresh bread', after: 'Fresh rolls' }] }),
+    ]);
+    expect(units.find((u) => u.id === 'extra')).toMatchObject({ change: 'added', slug: { before: null, after: 'extra' } });
+    expect(units.find((u) => u.id === 'about')).toBeUndefined();
+  });
+
+  it('stores an answer without bringing main in; a reload finds it; changing it changes only that one', async () => {
+    const branchId = await createBranch(us, 'Answers');
+    await edit(us, branchId, { home: 'Branch home', about: 'Branch about' });
+    await edit(us, us.mainId, { home: 'Main home', about: 'Main about' });
+    const seen = await review(branchId);
+    const home = seen.conflicts.find((c: { unit: { id: string } }) => c.unit.id === 'text-home');
+    const about = seen.conflicts.find((c: { unit: { id: string } }) => c.unit.id === 'text-about');
+    const versionBefore = await versionOf(branchId);
+
+    // Both answered: still nothing applied (that is Update's), and the review shows both settled.
+    const res = await answers(branchId, {
+      token: seen.token,
+      resolutions: { [home.id]: { fingerprint: home.fingerprint, pick: 'branch' }, [about.id]: { fingerprint: about.fingerprint, pick: 'main' } },
+    });
+    expect(res.status).toBe(200);
+    const answered = await res.json();
+    expect(answered.conflicts).toEqual([]);
+    expect(answered.settled.map((x: { id: string; pick: string }) => [x.id, x.pick]).sort()).toEqual([[about.id, 'main'], [home.id, 'branch']].sort());
+    expect(await versionOf(branchId)).toBe(versionBefore);
+    expect(await textOf(branchId, 'home')).toBe('Branch home');
+
+    // Resume: a reload (a fresh read) finds both, with the same token.
+    const reloaded = await review(branchId);
+    expect(reloaded.token).toBe(seen.token);
+    expect(reloaded.settled).toHaveLength(2);
+
+    // Backtrack: one answer changed from main to branch; the other stays.
+    await answers(branchId, { token: seen.token, resolutions: { [about.id]: { fingerprint: about.fingerprint, pick: 'branch' } } }).then((r) => expect(r.status).toBe(200));
+    const changed = await review(branchId);
+    expect(Object.fromEntries(changed.settled.map((x: { id: string; pick: string }) => [x.id, x.pick]))).toEqual({ [home.id]: 'branch', [about.id]: 'branch' });
+
+    // Update applies the stored answers.
+    expect((await update(branchId, { token: seen.token })).status).toBe(200);
+    expect(await textOf(branchId, 'home')).toBe('Branch home');
+    expect(await textOf(branchId, 'about')).toBe('Branch about');
+  });
+
+  it('refuses answers for a state that moved, storing nothing', async () => {
+    const branchId = await createBranch(us, 'Stale');
+    await edit(us, branchId, { home: 'Branch home', about: 'Since 1990' });
+    await edit(us, us.mainId, { home: 'Main home', about: 'Since 1990' });
+    const seen = await review(branchId);
+    const [conflict] = seen.conflicts;
+    await edit(us, us.mainId, { home: 'Main home 2', about: 'Since 1990' });
+    const res = await answers(branchId, { token: seen.token, resolutions: { [conflict.id]: { fingerprint: conflict.fingerprint, pick: 'branch' } } });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error.code).toBe('branch_review_stale');
+    expect((await prisma.siteBranch.findUniqueOrThrow({ where: { id: branchId } })).mergeDraft).toBeNull();
+  });
+
+  it('ignores an answer whose fingerprint is not the conflict\'s, and a viewer may not answer', async () => {
+    const branchId = await createBranch(us, 'Wrong');
+    await edit(us, branchId, { home: 'Branch home', about: 'Since 1990' });
+    await edit(us, us.mainId, { home: 'Main home', about: 'Since 1990' });
+    const seen = await review(branchId);
+    const [conflict] = seen.conflicts;
+    const res = await answers(branchId, { token: seen.token, resolutions: { [conflict.id]: { fingerprint: 'not-it', pick: 'branch' } } });
+    expect(res.status).toBe(200);
+    expect((await res.json()).settled).toEqual([]);
+
+    authMock.mockImplementation(async (_req: unknown, _ws: unknown, action: unknown) =>
+      action === 'editSite' ? { authenticated: false, status: 403, error: 'not allowed' } : { authenticated: true, userId: `user-${us.companyId}` },
+    );
+    const viewer = await answers(branchId, { token: seen.token, resolutions: { [conflict.id]: { fingerprint: conflict.fingerprint, pick: 'branch' } } });
+    expect(viewer.status).toBe(403);
+    // A viewer still reads the review.
+    expect((await changes(branchId)).status).toBe(200);
+  });
+
+  it('answers another company\'s branch like a missing one, storing nothing', async () => {
+    const branchId = await createBranch(us, 'Ours');
+    sessionMock.mockResolvedValue(memberOf(them));
+    const res = await answers(branchId, { token: 'x'.repeat(64), resolutions: {} });
+    expect(res.status).toBe(404);
   });
 });
