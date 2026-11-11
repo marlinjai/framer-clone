@@ -6,6 +6,7 @@
 // while site branches are off for the company. Anyone who may view the site may open it; the controls follow what
 // the person may do.
 
+import React from 'react';
 import { notFound, redirect } from 'next/navigation';
 import AuthUnavailable from '../../AuthUnavailable';
 import ClosedBranch from '../../ClosedBranch';
