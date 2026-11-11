@@ -379,7 +379,7 @@ export class SaveAbortedError extends Error {
 }
 
 /** What the shared working-copy write did. */
-interface WorkingCopyWrite {
+export interface WorkingCopyWrite {
   version: number;
   /** The version before; equal to `version` when nothing was written (a repeat of a lost answer). */
   versionBefore: number;
@@ -391,7 +391,7 @@ interface WorkingCopyWrite {
  * transaction resolved, never inside it, so a refused or rolled back write is
  * never announced. A failure is logged and never undoes the write.
  */
-function announceWrite(siteId: string, write: WorkingCopyWrite, event: SiteWriteEvent | undefined, written?: PersistedSite): void {
+export function announceWrite(siteId: string, write: WorkingCopyWrite, event: SiteWriteEvent | undefined, written?: PersistedSite): void {
   if (!write.wrote) return;
   // The newest written version, so an announcement checked against an older read is refused (src/server/mcp/livePlans.ts).
   noteSiteWrite(siteId, write.version);
@@ -602,6 +602,22 @@ export class SiteRepository {
     }
     announceWrite(persisted.siteId, write, options.event, persisted);
     return { version: write.version };
+  }
+
+  /**
+   * The working-copy write inside the caller's transaction, for a site branch's update and merge
+   * (src/server/sites/branches/merge.ts), which lock main and the branch first and write the record in the same
+   * transaction. The caller runs it SERIALIZABLE, as saveProject does, and announces with `announceWrite` after
+   * the commit.
+   */
+  writeWorkingCopyIn(
+    tx: Prisma.TransactionClient,
+    scope: TenantScope,
+    persisted: PersistedSite,
+    options: WorkingCopyWriteOptions,
+  ): Promise<WorkingCopyWrite> {
+    assertScope(scope);
+    return this.writeWorkingCopy(tx, scope, persisted, options);
   }
 
   /**

@@ -20,7 +20,11 @@ import type { OutlineEntry } from '@/lib/ai/pageGen/outline';
 import type { GeneratedNodeSnapshot } from '@/lib/ai/pageGen/validate';
 
 /** Who wrote a version. */
-export type SiteWriteOrigin = 'editor' | 'mcp' | 'generate' | 'publish' | 'erasure';
+/**
+ * `update`: a site branch brought main's changes in; `merge`: a branch was merged into this site
+ * (docs/plans/2026-11-10-site-branches.md, slice S3). An older tab reads an origin it does not know as a save.
+ */
+export type SiteWriteOrigin = 'editor' | 'mcp' | 'generate' | 'publish' | 'erasure' | 'update' | 'merge';
 
 /** The writer as the editor shows it: never a key id or an email address. */
 export interface SiteWriteActor {

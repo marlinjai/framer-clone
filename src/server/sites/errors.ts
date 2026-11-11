@@ -326,6 +326,51 @@ export class InvalidBranchNameError extends SiteRepositoryError {
 }
 
 /**
+ * A branch review request named a state that is no longer the stored one (main, the branch or its fork point
+ * moved, or a name changed): nothing was written, the review reloads. 409 `branch_review_stale`.
+ */
+export class BranchReviewStaleError extends SiteRepositoryError {
+  constructor() {
+    super('branch_review_stale', 'Main or the branch changed since this review was loaded. Nothing was written; reload the review.', 409);
+  }
+}
+
+/** Conflicts of an update from main still need an answer: nothing was written, the answers given were kept. 409. */
+export class BranchConflictsError extends SiteRepositoryError {
+  readonly conflicts: readonly unknown[];
+  readonly token: string;
+
+  constructor(conflicts: readonly unknown[], token: string) {
+    super('branch_conflicts', `${conflicts.length} conflict(s) with main need an answer before the branch can be updated.`, 409);
+    this.conflicts = conflicts;
+    this.token = token;
+  }
+}
+
+/**
+ * A merge into main on a branch that was behind main: the merge ran the update from main instead (or found it
+ * needs answers), and stopped. The branch's version moved, so an approval must be given again. 409.
+ */
+export class BranchUpdatedFirstError extends SiteRepositoryError {
+  readonly token: string;
+
+  constructor(token: string) {
+    super('branch_updated_from_main', 'Main had changed: the branch was updated from main first. Review it again, then merge.', 409);
+    this.token = token;
+  }
+}
+
+/** The merged or updated document would not be a valid site: nothing was written. 422 with the reasons. */
+export class BranchMergeInvalidError extends SiteRepositoryError {
+  readonly problems: ReadonlyArray<{ code: string; message: string; pageId?: string; componentId?: string }>;
+
+  constructor(problems: ReadonlyArray<{ code: string; message: string; pageId?: string; componentId?: string }>) {
+    super('branch_merge_invalid', `The result would not be a valid site: ${problems.map((p) => p.message).slice(0, 3).join('; ')}`, 422);
+    this.problems = problems;
+  }
+}
+
+/**
  * Map any {@link SiteRepositoryError} to its Track-0 error envelope. A route
  * matches `instanceof SiteRepositoryError` once and returns this.
  */
@@ -338,6 +383,15 @@ export function siteRepositoryErrorResponse(err: SiteRepositoryError): Response 
   }
   if (err instanceof BranchClosedError) {
     return jsonError(err.code, err.message, err.status, { branchStatus: err.branchStatus, mainSiteId: err.mainSiteId });
+  }
+  if (err instanceof BranchConflictsError) {
+    return jsonError(err.code, err.message, err.status, { conflicts: err.conflicts, token: err.token });
+  }
+  if (err instanceof BranchUpdatedFirstError) {
+    return jsonError(err.code, err.message, err.status, { token: err.token });
+  }
+  if (err instanceof BranchMergeInvalidError) {
+    return jsonError(err.code, err.message, err.status, { problems: err.problems });
   }
   if (err instanceof BranchLimitError) {
     return jsonError(err.code, err.message, err.status, { limit: err.limit });

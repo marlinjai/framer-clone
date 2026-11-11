@@ -265,6 +265,9 @@ export function adoptionLabel(event: SiteVersionEvent | undefined): string {
   if (!event || event.catchUp) return 'Changes made elsewhere';
   const who = event.actor?.label || (event.origin === 'editor' ? 'Another tab' : 'Someone');
   const first = event.summary?.[0];
+  // One undo step named for what happened, whoever did it: "Merged branch Summer sale".
+  if (event.origin === 'merge') return first ?? 'Merged a branch';
+  if (event.origin === 'update') return first ?? 'Brought in the changes from main';
   if (first) return `${who}: ${first}`;
   switch (event.origin) {
     case 'publish':
