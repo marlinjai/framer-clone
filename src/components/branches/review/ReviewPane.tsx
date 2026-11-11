@@ -82,7 +82,6 @@ export const ReviewPane = observer(function ReviewPane({ side, title, page, site
     if (!host) return;
     const root = host.shadowRoot ?? host.attachShadow({ mode: 'open' });
     const container = document.createElement('div');
-    container.setAttribute('data-review-mount', side);
     root.appendChild(container);
     const stop = mirrorStyles(root);
     setMount(container);
