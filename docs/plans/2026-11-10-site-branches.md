@@ -1,9 +1,9 @@
 ---
 title: Site branches
 description: Plan for branching in Lumitra Sites, modelled on Framer's branching, so a person or an agent can change a copy of a site, have it reviewed, and merge it back into main.
-summary: A branch is a hidden copy of a site's working copy that keeps its fork point. The editor, autosave, the version lock, the live stream, the preview and the Model Context Protocol (MCP) tools work on it unchanged, because it is a site row. A pure node-level three-way merge brings main into the branch, conflicts are settled on the branch, and merging into main is then one ordinary write under the version lock. Unlike Framer, Content Management System (CMS) content is not branched in version one; commerce, forms, domains and published revisions never are, and a branch can never be published to the live site. Eight slices of about 32 to 42 agent days, plus an optional ninth for a public preview link (3 to 4 more). Draft, waiting for Marlin's approval.
+summary: A branch is a hidden copy of a site's working copy that keeps its fork point. The editor, autosave, the version lock, the live stream, the preview and the Model Context Protocol (MCP) tools work on it unchanged, because it is a site row. A pure node-level three-way merge brings main into the branch, conflicts are settled on the branch, and merging into main is then one ordinary write under the version lock. Unlike Framer, Content Management System (CMS) content is not branched in version one; commerce, forms, domains and published revisions never are, and a branch can never be published to the live site. Nine slices of about 35 to 46 agent days, the public preview link included. Approved by Marlin on 2026-11-11 with all four recommendations; S1 in progress.
 type: plan
-status: draft
+status: in-progress
 date: 2026-11-10
 tags: [framer-clone, branches, merge, editor, mcp, publishing, plan]
 projects: [framer-clone]
@@ -11,7 +11,7 @@ projects: [framer-clone]
 
 # Site branches
 
-**Status:** draft, written 2026-11-10 at Marlin's request. Nothing is built. Marlin approves or changes this plan before any code.
+**Status:** in progress. Written 2026-11-10 at Marlin's request, approved by him on 2026-11-11 with all four recommendations of section 11 taken (answers recorded there). S1 is being built.
 
 ## 1. What Framer's branching does
 
@@ -130,20 +130,21 @@ The cost of a hidden row is that every place that lists or acts on sites must kn
 
 | Column | Meaning |
 |---|---|
-| `id`, `site_id` (main, cascade), `workspace_id`, `tenant_group_id` | Identity and the isolation boundary, as on every site table. `id` is the same uuid as the hidden `sites` row's id (set at creation, no foreign key to `sites`), so it stays the branch's address after that row is deleted: an old link and a retried merge or discard find the closed record by the id they already hold |
+| `id`, `site_id` (main, cascade), `workspace_id`, `tenant_group_id`, `company_id` | Identity and the isolation boundary, as on every site table. `id` is the same uuid as the hidden `sites` row's id (set at creation, no foreign key to `sites`), so it stays the branch's address after that row is deleted: an old link and a retried merge or discard find the closed record by the id they already hold |
 | `branch_site_id` (unique, nullable) | The hidden `sites` row holding the content (always equal to `id` while it exists). NULL once the branch is merged or discarded |
 | `name` | Up to 60 characters, control and bidirectional characters removed. Unique per site among open branches |
 | `status` | `open`, `ready` (review asked), `merged`, `discarded` |
 | `base_version`, `base_document` | Main's version and full copy (in the revision document format, with `schemaVersion`) at the fork, replaced on every update from main. The common ancestor of the three-way merge. NULL once closed |
 | `merge_draft` | The review in progress: the conflict answers given so far, each keyed to the values it was given for (section 6) |
-| `ready_by`, `ready_at`, `approved_by`, `approved_at`, `approved_branch_version` | Review state. An approval counts only while `approved_branch_version` is the branch's version |
+| `ready_by`, `ready_at`, `review_note`, `approved_by`, `approved_at`, `approved_branch_version` | Review state. An approval counts only while `approved_branch_version` is the branch's version |
 | `merged_by`, `merged_at`, `merged_from_version`, `merged_main_version` | What the merge did |
+| `discarded_by`, `discarded_at` | Who discarded it, and when |
 | `main_before_document`, `main_before_expires_at` | Main as it was just before the merge, kept 30 days for "Undo this merge", then removed. Only the site's latest merge keeps one: a new merge clears the earlier one in the same transaction |
 | `created_by_kind`, `created_by`, `created_at`, `updated_at` | A user or a key, as the audit table records actors |
 
 **The working-copy description and the site name.** `SiteRevisionDocument` has no `description` today, but `writeWorkingCopy` writes one. S1 extends the document format with it (a `schemaVersion` bump with a reader for the old shape, as the rule below requires), so `base_document` and `main_before_document` carry it: the merge sees a description changed on both sides, and "Undo this merge" restores the earlier one. The description merges per field like site settings (section 5, rule 11). The site name is a branch property too: `writeWorkingCopy` does not write it and `renameSite` does not move `version`, so the plan changes both. A rename of a branch or of main bumps that site's `version`, so a review token and an approval go stale on a rename, and the merge transaction copies the branch's name onto main only when main's name is unchanged since the fork (otherwise it is a conflict like any other setting).
 
-Main has no stored history of its working copy, so the fork point cannot be looked up later: it has to be stored when the branch is made. `base_document` and `main_before_document` follow the rule the published copy plan set for revisions: a change to the page format must rewrite them or keep a reader for the old shape.
+The description is added without a version bump (decision 18). Main has no stored history of its working copy, so the fork point cannot be looked up later: it has to be stored when the branch is made. `base_document` and `main_before_document` follow the rule the published copy plan set for revisions: a change to the page format must rewrite them or keep a reader for the old shape.
 
 ### What a branch copies and what it shares
 
@@ -324,6 +325,7 @@ Order: S1, then S2 (S4 can start beside it), S3, S5, S6, S7, S9; S8 wherever it 
 - **Turning it off later** hides branches without deleting them. Open branches stay in the database and come back when it is turned on again; main is unaffected, since nothing about main depends on a branch.
 - **The migration is additive** and needs no reversing: one nullable column, constraints that every existing row satisfies, one new table. No backfill.
 - **Rolling the code back past S1** is safe for visitors and for main, with one visible effect: older code lists a branch as one more draft site in its company's dashboard (it does not know the column). It cannot publish it (the `CHECK` refuses) or give it a domain (the trigger refuses). The runbook line for `deploy/README.md`: before rolling back past S1 with open branches, merge or discard them, or accept the extra dashboard entries until the code is rolled forward again.
+- **An erase of personal data while rolled back** does not reach branch copies (fork points, pre-merge copies, branch names and notes), because older code does not know them. Merge or discard every branch before rolling back and run no erase meanwhile; an erase that had to run is repeated after rolling forward. A record whose branch older code deleted as a site is closed by a database trigger, keeping no copy (`deploy/README.md`, Site branches).
 - **A bad merge** is undone by "Undo this merge" (the latest merge, for 30 days), and in an open editor by one undo. It never reaches visitors by itself: only a publish does, and a publish can be rolled back to any of the 30 kept revisions.
 
 ## 10. Decided here, say so if you disagree
@@ -346,7 +348,26 @@ Order: S1, then S2 (S4 can start beside it), S3, S5, S6, S7, S9; S8 wherever it 
 16. **Updating a branch from main is a button, not automatic.** Framer rebases branches onto main by itself. Here a silent update could change the canvas under the author and withdraw an approval without anyone acting; the top bar says that main has changed, and "Merge into main" runs the update itself when there is no conflict. Making a conflict-free update automatic later is a small change on top of the live stream.
 17. **The interface says "merge" and "branch"**, not Framer's "apply".
 
-## 11. For Marlin to decide
+Decided while building S1 (2026-11-11), say so if you disagree:
+
+18. **No `schemaVersion` bump for the description.** `parseRevisionDocument` throws on a version it does not know, and a rolling deploy runs old and new containers side by side (`boot.sh`), so a bump would make every site published by the new code unreadable to the old one, which is also what section 9 promises a code rollback never does. `description` joins the revision document as an optional field read as `''` when absent; published revisions carry it too, harmlessly.
+19. **A retried create names its id.** `POST .../branches` takes an optional `branchId` (a UUID the client chose). The same id from the same person on the same site answers the branch it made (200, `created: false`); any other row under that id answers 404 like a missing branch, so a caller learns only that an id it already holds is in use, never whose or what (ids are random UUIDs and cannot be guessed). The same id sent for two sites at once: the primary key decides and the loser gets the same 404.
+20. **The rename version bump moves to S3.** Bumping `version` on a rename changes main's behaviour for every open editor tab and only matters once review tokens exist, so it lands with the tokens in S3.
+21. **"An erase followed by a merge leaves nothing" is tested in S3**, where the merge exists. S1 proves the erase reaches every copy: open branches' working copies, their fork points, kept pre-merge copies, and a branch record's name and review note (a branch name or a note can hold the value too). The erase is started from main only; on a branch id it answers 409 `site_is_branch`.
+22. **The closed notice on a branch's live stream is S4.** In S1 an open tab of a discarded branch hears 410 `branch_closed` on its next save or load; S4 adds the live notice and the closed page that reads it.
+23. **A branch's `site_branches.branch_site_id` has a foreign key with `ON DELETE SET NULL`**, so whatever deletes a content row, the record reads as closed (410) rather than pointing at nothing. `DELETE /api/projects/<branchId>` is refused (409 `site_is_branch`): a branch is discarded from its site's branch list.
+24. **The page settings address of a branch is its site's**: a branch has no address of its own, its pages will live there once merged and published.
+25. **Closing a branch ends what a site delete ends, no more.** In S1 that is the kept document bodies and a running generation, in this process and, for the company erasure, for every branch that cascades with a main site of its batch. Presence, skeleton plans and approvals keep no per-site cleanup even for a deleted site, and they fail closed on a closed branch: an approval re-reads the site before it counts and a closed branch answers as changed, a skeleton plan is fulfilled only by a write that is refused with 410, and presence expires with the idle timeout. Section 6's wider list is met by these, plus S4's closed notice (decision 22).
+26. **The list's change counts and "main moved" move to S3**, with the diff that counts them. S1's list answers each branch's state, name, fork version, who made it and when.
+27. **A closed branch is a kind of missing site in code.** `BranchClosedError` extends `SiteNotFoundError`, so every existing caller that handles a missing site (the editor page, the live stream, MCP approvals, site operations) fails closed on it; the live stream guard, the branch routes and site operations say 410 `branch_closed` (site operations: `site_not_found` naming the main site, as their error codes are fixed).
+28. **Locks are scoped, mains go first.** Every branch lock names the caller's workspace (and the branch lock its main), so a foreign id locks nothing; the company erasure deletes main sites and lets their branches go by the cascade, so no path locks a branch before its main; publish and the erase of personal data scope their row locks the same way. A branch save that names an image takes no lock on main: an image delete scans every branch's pages and both run serializable, so they cannot both commit (a lock there only made branch saves retry while main was being edited).
+29. **Branch names are compared in SQL only**, `lower(name)` as the unique index compares, for create, rename and the erase's rewrite of a name (which adds a number on a clash). A rename and the ready state asked together are one transaction.
+30. **A record without content closes itself.** A trigger marks an open record discarded (and drops its fork point, draft and approval) when its content row goes some other way than a merge or a discard, so it never holds a name, a place under the cap or a copy.
+
+## 11. For Marlin to decide (answered 2026-11-11)
+
+Marlin took all four recommendations on 2026-11-11: (1) no tier logic, one constant of 10 open branches per site, switched on for Lumitra's own company first, the tier decided with Sites pricing; (2) no required second approval in version one; (3) yes to the public preview link, slice S8 after the core, 7 day expiry by default and a revoke button; (4) the CMS is not branched now.
+
 
 1. **Which customers get branches, and at what price?** Options: every plan; from a paid tier up; with a different number of open branches per tier. **Recommendation:** build it without any tier logic (one constant, 10 open branches), turn it on for Lumitra's own company, and decide the tier when pricing for Sites is decided, as was done for the 3D scene quotas. For reference, Framer lists branching on its Pro plan (30 US dollars a month; its Enterprise column could not be read), Webflow and Figma only on their enterprise or organisation plans.
 2. **Should a merge be able to require a second person's approval?** In version one a person with the right to merge can merge their own branch, which suits a one-person company, and approval is offered but not forced. A setting "merges need an approval from someone else" is a team feature and a likely tier line. **Recommendation:** not in version one; add the setting when the first team customer asks, since the approval state is already stored.

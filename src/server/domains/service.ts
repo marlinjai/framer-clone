@@ -304,6 +304,12 @@ export class DomainService {
             // both pass the caps. A site belongs to one workspace, so the same
             // lock also serializes the per-site cap.
             await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`site_domains:${site.workspaceId}`}))::text AS locked`;
+            // A site branch never holds an address (docs/plans/2026-11-10-site-branches.md); the database trigger
+            // refuses the row too, this answers it as a clear 409 first.
+            const owner = await tx.site.findUnique({ where: { id: site.id }, select: { branchOfSiteId: true } });
+            if (owner?.branchOfSiteId) {
+              throw new DomainError('branch_cannot_publish', 'A branch has no address. Connect the domain to its site.', 409);
+            }
             const count = await tx.siteDomain.count({
               where: { siteId: site.id, hostname: { not: null } },
             });

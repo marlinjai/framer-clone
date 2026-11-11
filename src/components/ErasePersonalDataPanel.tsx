@@ -24,7 +24,11 @@ import { Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { reloadDiscarding } from '@/lib/projects/autosave';
 
-type Location = { kind: 'revision'; number: number } | { kind: 'working' };
+// The copies a site branch keeps (docs/plans/2026-11-10-site-branches.md) are searched and erased with the site.
+type Location =
+  | { kind: 'revision'; number: number }
+  | { kind: 'working' }
+  | { kind: 'branch' | 'branch-base' | 'merge-undo'; branchId: string; name: string; branchStatus: 'open' | 'ready' | 'merged' | 'discarded' };
 
 interface Match {
   id: string;
@@ -89,6 +93,7 @@ const AREA_LABELS: Record<string, string> = {
   address: 'page address',
   domain: 'domain',
   experiment: 'A/B test',
+  branch: 'branch name or review note',
   other: 'other',
 };
 
@@ -101,8 +106,29 @@ const BLOCKED_LABELS: Record<string, string> = {
   separate: 'kept outside the published versions: change it where it is set (domains, A/B tests)',
 };
 
+/** A merged or discarded branch keeps only its record (name, note) and, once merged, main's copy from before. */
+const CLOSED_BRANCH: Record<string, string> = { merged: ', merged', discarded: ', discarded' };
+
 function locationLabel(location: Location): string {
-  return location.kind === 'working' ? 'Editor (working copy)' : `Version ${location.number}`;
+  switch (location.kind) {
+    case 'working':
+      return 'Editor (working copy)';
+    case 'revision':
+      return `Version ${location.number}`;
+    case 'branch':
+      return `Branch "${location.name}"${location.branchStatus in CLOSED_BRANCH ? ` (record only${CLOSED_BRANCH[location.branchStatus]})` : ''}`;
+    case 'branch-base':
+      return `Branch "${location.name}" (where it started from main)`;
+    case 'merge-undo':
+      return `Site before merging "${location.name}" (kept to undo the merge)`;
+  }
+}
+
+/** A location's identity: two branches may share a name, never an id. */
+function locationKey(location: Location): string {
+  if (location.kind === 'working') return 'working';
+  if (location.kind === 'revision') return `revision:${location.number}`;
+  return `${location.kind}:${location.branchId}`;
 }
 
 async function readError(res: Response, fallback: string): Promise<{ code: string | null; message: string }> {
@@ -213,6 +239,7 @@ export function ErasePersonalDataPanel({ projectId }: { projectId: string }) {
     listedErasable.filter((m) => chosen.has(m.id) && m.location.kind === 'revision').map((m) => (m.location as { number: number }).number),
   ).size;
   const inEditor = listedErasable.some((m) => chosen.has(m.id) && m.location.kind === 'working');
+  const inBranches = listedErasable.some((m) => chosen.has(m.id) && m.location.kind !== 'working' && m.location.kind !== 'revision');
 
   return (
     <div className="space-y-3">
@@ -279,7 +306,7 @@ export function ErasePersonalDataPanel({ projectId }: { projectId: string }) {
               {found.result.locations
                 .filter((l) => l.matches > 0)
                 .map((l) => (
-                  <li key={locationLabel(l.location)}>
+                  <li key={locationKey(l.location)}>
                     {locationLabel(l.location)}
                     {l.live && ' (live)'}: {l.matches}
                   </li>
@@ -352,8 +379,9 @@ export function ErasePersonalDataPanel({ projectId }: { projectId: string }) {
                   <p className="text-sm font-medium">
                     Erase {count} ticked {count === 1 ? 'match' : 'matches'}
                     {versions > 0 ? ` in ${versions} published ${versions === 1 ? 'version' : 'versions'}` : ''}
-                    {inEditor ? (versions > 0 ? ' and the editor' : ' in the editor') : ''}? This cannot be undone, and
-                    the live site changes at once.
+                    {inEditor ? (versions > 0 ? ' and the editor' : ' in the editor') : ''}
+                    {inBranches ? (versions > 0 || inEditor ? ' and its branches' : ' in its branches') : ''}? This cannot be
+                    undone, and the live site changes at once.
                   </p>
                   <p className="text-xs text-muted-foreground">
                     Changes not saved in this tab are lost: after the erase, this tab has to reload. Save first if you need them.

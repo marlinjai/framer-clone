@@ -104,7 +104,15 @@ export async function eraseCompanyPublic(
       if (event.processedAt) return null;
       let current = mergeScope(parseScope(event.scope), scope);
       const { siteIds, workspaceIds } = current;
-      const sitesToDelete = await tx.site.findMany({ where: { id: { in: siteIds } }, select: { id: true }, take: 25, orderBy: { id: 'asc' } });
+      // Main sites first: a site branch goes with its main by the cascade, so its row is never locked before its
+      // main's (every other path locks main, then the branch) and its record never outlives its row between
+      // batches. A branch is taken on its own only if no main of the scope is left, which the foreign key rules out.
+      const mainsToDelete = await tx.site.findMany({
+        where: { id: { in: siteIds }, branchOfSiteId: null }, select: { id: true }, take: 25, orderBy: { id: 'asc' },
+      });
+      const sitesToDelete = mainsToDelete.length > 0
+        ? mainsToDelete
+        : await tx.site.findMany({ where: { id: { in: siteIds } }, select: { id: true }, take: 25, orderBy: { id: 'asc' } });
       const ids = sitesToDelete.map((site) => site.id);
       if (ids.length) {
         // Domain inserts hold a foreign-key lock on the site. Wait for those writers, then read their
@@ -148,11 +156,14 @@ export async function eraseCompanyPublic(
         cmsTables = (await tx.dtTable.deleteMany({ where: { id: { in: tableIds } } })).count;
       }
 
-      // Pages, revisions, image bytes, domains, experiments and report counts cascade.
+      // A main site's branches cascade with it (docs/plans/2026-11-10-site-branches.md) even when they sort into
+      // a later batch: named here, so this process forgets their content too.
+      const cascadedBranches = await tx.site.findMany({ where: { branchOfSiteId: { in: ids } }, select: { id: true } });
+      // Pages, revisions, image bytes, domains, experiments, report counts and branches cascade.
       const sites = await tx.site.deleteMany({ where: { id: { in: ids } } });
       return {
         scope: current,
-        deletedSiteIds: ids,
+        deletedSiteIds: [...new Set([...ids, ...cascadedBranches.map((b) => b.id)])],
         rows: { sites: sites.count, siteErasures: siteErasures.count, siteOperationAudits: siteOperationAudits.count,
           agentRuns: agentRuns.count, cmsTables, cmsRows: cmsRows.count },
       };

@@ -255,6 +255,7 @@ export async function resolvePublishedSiteByKey(
       tenantGroupId: true,
       companyId: true,
       name: true,
+      description: true,
       analyticsProjectId: true,
       ingestionEndpoint: true,
       apiKeyRef: true,
@@ -286,6 +287,7 @@ export async function resolvePublishedSiteByKey(
     : {
         schemaVersion: REVISION_SCHEMA_VERSION,
         name: site.name,
+        description: site.description,
         analyticsProjectId: site.analyticsProjectId,
         ingestionEndpoint: site.ingestionEndpoint,
         apiKeyRef: site.apiKeyRef,

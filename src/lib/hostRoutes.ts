@@ -94,6 +94,8 @@ export const HOST_ROUTES: readonly HostRoute[] = [
   { route: '/api/projects/publish', why: 'authoring' },
   { route: '/api/projects/unpublish', why: 'authoring' },
   { route: '/api/projects/[projectId]', why: 'authoring' },
+  { route: '/api/projects/[projectId]/branches', why: 'site branches: list and create (authoring)' },
+  { route: '/api/projects/[projectId]/branches/[branchId]', why: 'site branches: read, rename, ready, discard (authoring)' },
   { route: '/api/projects/[projectId]/revisions', why: 'authoring' },
   { route: '/api/projects/[projectId]/events', why: 'authoring: the open editor\'s live stream (session cookie only)' },
   { route: '/api/projects/[projectId]/document', why: 'authoring: the stored copy the open editor adopts' },

@@ -405,6 +405,25 @@ during that window and either republish it, or clear `published_revision_id` for
 path (it serves its rows until its next save or publish freezes them). Which sites: `status = 'published'` with
 `updated_at` after the noted time.
 
+## Site branches
+
+Site branches (`docs/plans/2026-11-10-site-branches.md`) are off unless `SITE_BRANCHES_COMPANIES` is set on the app:
+unset or empty is off for everyone, `*` is on for every company, or a comma separated list of auth-brain company ids.
+Turning it off hides branches without deleting them. It is not set on production until the feature's last slice (S9).
+
+Migration `20261111000000_site_branches` is additive (one nullable column on `sites`, one table, constraints every
+existing row satisfies) and needs no reversing. **Before rolling the code back past it with open branches**, merge or
+discard them: older code does not know the column and lists each open branch as one more draft site in its company's
+dashboard. It cannot publish one or give it a domain (a `CHECK` constraint and a trigger refuse that whatever code
+runs), so visitors are never affected; the extra entries go away when the code is rolled forward again.
+
+**Erasing personal data while rolled back misses branch copies.** Older code's erase does not know the copies a
+branch keeps (its fork point, the site as it was before a merge, branch names and review notes). So: merge or discard
+every branch before the rollback, and run no erase while it lasts. If an erase had to run anyway, note the time and
+repeat the same search and erase on each affected site once the code is forward again; the new code reaches them.
+A record whose branch older code deleted as a site is closed as discarded by the database (a trigger), so it keeps no
+copy and frees its name.
+
 ## Migration rollbacks
 
 `20261104000000_site_last_write_key` (the editor autosave's attempt keys, plan

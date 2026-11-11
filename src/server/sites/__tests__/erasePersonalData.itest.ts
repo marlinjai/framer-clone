@@ -219,6 +219,8 @@ describe('forward: search, erase, proof', () => {
     expect(audit[0].places).toContainEqual({
       location: 'revision',
       revision: 1,
+      // Only a place a site branch keeps names its branch.
+      branchId: null,
       pageId: null,
       area: 'settings',
       path: '/siteSettings/business/managingDirectors/0',

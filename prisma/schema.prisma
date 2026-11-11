@@ -308,11 +308,23 @@ model Site {
   // erase clear it). A retry of that attempt after a lost answer, still based on the version just
   // before it, gets this write's version back instead of a false 409 `site_changed`. Lives exactly
   // until the next write of the site.
-  lastWriteKey String? @map("last_write_key")
+  lastWriteKey     String? @map("last_write_key")
   // The version the write named by `lastWriteKey` produced. The key counts only while this equals
   // `version`: a writer that does not know the key (an older container during a rolling deploy)
   // moves the version and leaves the key, and that unbinds it.
-  lastWriteVersion Int? @map("last_write_version")
+  lastWriteVersion Int?    @map("last_write_version")
+
+  // Site branches (docs/plans/2026-11-10-site-branches.md): the main site this row is a hidden branch of, or
+  // NULL for a main site (every site that existed before branches). Set once at creation and never changed (a
+  // trigger refuses an update). The composite foreign key with `workspace_id` makes a branch of another
+  // workspace's site impossible, and deleting a main site deletes its branches. Raw SQL in the migration adds
+  // what Prisma cannot say: a branch is never published nor live, never a branch of a branch, and holds no domain.
+  branchOfSiteId String?      @map("branch_of_site_id")
+  branchOf       Site?        @relation("SiteBranchContent", fields: [branchOfSiteId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
+  branchSites    Site[]       @relation("SiteBranchContent")
+  // The branch records of this main site, and (for a hidden branch row) the one record naming it.
+  branchRecords  SiteBranch[] @relation("SiteBranchMain")
+  branchRecord   SiteBranch?  @relation("SiteBranchRow")
 
   // Persistence-layer timestamps (when the ROW was written), set by the DB.
   createdAt DateTime @default(now()) @map("created_at")
@@ -325,11 +337,87 @@ model Site {
   revisions   SiteRevision[]   @relation("SiteRevisions")
   images      SiteImage[]
 
+  @@unique([id, workspaceId])
   @@index([workspaceId])
   @@index([tenantGroupId])
   // Deleting a revision makes the foreign key check look here.
   @@index([publishedRevisionId])
+  // Listing a site's branches, and the cascade from deleting a main site.
+  @@index([branchOfSiteId])
   @@map("sites")
+  @@schema("public")
+}
+
+/// The record of one site branch (docs/plans/2026-11-10-site-branches.md, section 4). Its `id` is the id of the
+/// hidden `sites` row holding the branch's content, with no foreign key to it, so the record outlives that row:
+/// once the branch is merged or discarded the row is deleted, `branch_site_id` is NULL and the record keeps the
+/// branch's address answering "closed". `base_document` is main's working copy at the fork (or at the last update
+/// from main), in the revision document format: the common ancestor of the three-way merge.
+model SiteBranch {
+  id String @id
+
+  // The main site. Deleting it deletes its branch records.
+  siteId String @map("site_id")
+
+  // --- hard isolation boundary (both indexed), copied from the main site ---
+  workspaceId   String  @map("workspace_id")
+  tenantGroupId String  @map("tenant_group_id")
+  companyId     String? @map("company_id")
+
+  // The hidden `sites` row holding the content while the branch is open or ready; NULL once closed.
+  branchSiteId String? @unique @map("branch_site_id")
+
+  name   String
+  status SiteBranchStatus @default(open)
+
+  baseVersion  Int?  @map("base_version")
+  baseDocument Json? @map("base_document")
+
+  // The review in progress: conflict answers keyed to the values they were given for (S3, S5).
+  mergeDraft Json? @map("merge_draft")
+
+  readyBy               String?   @map("ready_by")
+  readyAt               DateTime? @map("ready_at")
+  reviewNote            String?   @map("review_note")
+  approvedBy            String?   @map("approved_by")
+  approvedAt            DateTime? @map("approved_at")
+  approvedBranchVersion Int?      @map("approved_branch_version")
+
+  mergedBy          String?   @map("merged_by")
+  mergedAt          DateTime? @map("merged_at")
+  mergedFromVersion Int?      @map("merged_from_version")
+  mergedMainVersion Int?      @map("merged_main_version")
+  discardedBy       String?   @map("discarded_by")
+  discardedAt       DateTime? @map("discarded_at")
+
+  // Main as it was just before this branch's merge, for "Undo this merge" (S7): only the site's latest merge keeps one.
+  mainBeforeDocument  Json?     @map("main_before_document")
+  mainBeforeExpiresAt DateTime? @map("main_before_expires_at")
+
+  // Who made it: a signed-in person (`user`) or an MCP key (`key`), as site_operation_audits records actors.
+  createdByKind String   @map("created_by_kind")
+  createdBy     String   @map("created_by")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  // Composite, as on `sites.branch_of_site_id`: a record of another workspace's site cannot exist.
+  site       Site  @relation("SiteBranchMain", fields: [siteId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
+  // SET NULL: whatever deletes the content row, the record reads as closed rather than pointing at nothing.
+  branchSite Site? @relation("SiteBranchRow", fields: [branchSiteId], references: [id], onDelete: SetNull)
+
+  @@index([siteId])
+  @@index([workspaceId])
+  @@index([tenantGroupId])
+  @@map("site_branches")
+  @@schema("public")
+}
+
+enum SiteBranchStatus {
+  open
+  ready
+  merged
+  discarded
+
   @@schema("public")
 }
 
@@ -655,10 +743,10 @@ model SiteOperationAudit {
   tenantGroupId String @map("tenant_group_id")
 
   // `user` (an auth-brain user id) or `key` (an auth-brain API key id).
-  actorKind String @map("actor_kind")
-  actorId   String @map("actor_id")
+  actorKind   String @map("actor_kind")
+  actorId     String @map("actor_id")
   // Extra ids about the actor (a key's service account), never a secret.
-  actorDetail Json? @map("actor_detail")
+  actorDetail Json?  @map("actor_detail")
 
   // batch, create_site, generate_page, publish, rollback.
   operation String

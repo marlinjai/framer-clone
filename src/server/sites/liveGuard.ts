@@ -52,7 +52,7 @@ import { isEditorHost } from '@/lib/editorHost';
 import { jsonError } from '@/lib/api/respond';
 import { getSiteRepository, type SiteRepository } from './repository';
 import { activeScopeDenial, resolveActiveScope } from './scope';
-import { SiteNotFoundError } from './errors';
+import { BranchClosedError, SiteNotFoundError, siteRepositoryErrorResponse } from './errors';
 import type { TenantScope } from './repository';
 
 /** How long an allowed `editSite` is remembered, at most. */
@@ -139,6 +139,8 @@ export async function authorizeLiveProject(
     const version = await repository.getSiteVersion(scope, projectId);
     return { ok: true, scope, session, version };
   } catch (err) {
+    // A merged or discarded branch: 410 `branch_closed`, so its open editor can say what happened.
+    if (err instanceof BranchClosedError) return { ok: false, response: siteRepositoryErrorResponse(err) };
     if (err instanceof SiteNotFoundError) {
       return { ok: false, response: jsonError('site_not_found', 'no such project', 404) };
     }
