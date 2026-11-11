@@ -113,6 +113,25 @@ export async function openEditor(
   contextOptions: Parameters<Browser['newPage']>[0] = {},
   beforeLoad?: (page: Page) => Promise<void>,
 ): Promise<{ page: Page; crashes: string[] }> {
+  const { page, crashes } = await openBundle(browser, bundle, contextOptions, beforeLoad);
+  // The frames open under the left sidebar, as they do at this window size. A person
+  // pans them out of it first, and so does a contract that clicks. A phone has no
+  // sidebar beside the canvas, and mobile WebKit has no wheel.
+  await page.locator('[data-ground]').first().waitFor({ state: 'attached' });
+  if (!contextOptions.isMobile) {
+    await page.mouse.move(1200, 500);
+    await page.mouse.wheel(-280, 0);
+  }
+  return { page, crashes };
+}
+
+/** A bundle on the editor's document (its sheets, fonts and viewport line), for a screen with no canvas. */
+export async function openBundle(
+  browser: Browser,
+  bundle: string,
+  contextOptions: Parameters<Browser['newPage']>[0] = {},
+  beforeLoad?: (page: Page) => Promise<void>,
+): Promise<{ page: Page; crashes: string[] }> {
   const page = await browser.newPage({ viewport: { width: 1600, height: 1000 }, ...contextOptions });
   page.setDefaultTimeout(1500);
   const crashes: string[] = [];
@@ -133,14 +152,6 @@ export async function openEditor(
   const editorCss = await editorSheet();
   await page.setContent(`<!doctype html><html lang="en" class="${meta.htmlClass}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>${css}</style><style>${editorCss}</style></head><body class="${meta.bodyClass}"><div id="root"></div></body></html>`);
   await page.addScriptTag({ path: bundle });
-  // The frames open under the left sidebar, as they do at this window size. A person
-  // pans them out of it first, and so does a contract that clicks. A phone has no
-  // sidebar beside the canvas, and mobile WebKit has no wheel.
-  await page.locator('[data-ground]').first().waitFor({ state: 'attached' });
-  if (!contextOptions.isMobile) {
-    await page.mouse.move(1200, 500);
-    await page.mouse.wheel(-280, 0);
-  }
   return { page, crashes };
 }
 
