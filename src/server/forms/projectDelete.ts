@@ -12,7 +12,11 @@ import 'server-only';
 import { isTenantGroupId } from '@marlinjai/tenant-db';
 
 import { commerceTenantDbChecked, isCommerceTenantNotProvisioned } from '@/server/commerce/db';
-import { deleteSiteSubmissions } from './repository';
+import { FormBusyError, deleteSiteSubmissions } from './repository';
+
+/** A notification email being sent holds its row for seconds: the delete is tried again, since the site row is gone and nothing else would remove the submissions. */
+const BUSY_ATTEMPTS = 6;
+const BUSY_PAUSE_MS = 2_000;
 
 /**
  * Delete every form submission of a deleted project. A tenant group without a
@@ -28,5 +32,12 @@ export async function deleteProjectSubmissions(tenantGroupId: string, siteId: st
     if (isCommerceTenantNotProvisioned(err)) return 0;
     throw err;
   }
-  return deleteSiteSubmissions(db, { tenantId: tenantGroupId, siteId });
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await deleteSiteSubmissions(db, { tenantId: tenantGroupId, siteId });
+    } catch (err) {
+      if (!(err instanceof FormBusyError) || attempt >= BUSY_ATTEMPTS) throw err;
+      await new Promise((resolve) => setTimeout(resolve, BUSY_PAUSE_MS));
+    }
+  }
 }

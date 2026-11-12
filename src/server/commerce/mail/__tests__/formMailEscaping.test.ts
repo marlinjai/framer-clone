@@ -97,10 +97,11 @@ describe('the visitor words in the notice, through the real merge code', () => {
     // Control characters (a header break) are gone.
     expect(out).not.toMatch(/[\u0000-\u001f]/);
     // personalizeText is NOT an HTML escaper (a header is not HTML): the markup characters arrive as they were typed, so the
-    // preview's HTML safety rests on the service escaping the merged preheader before it places it in the hidden element
-    // (email-editor apps/service/src/worker/compose.ts `withPreheader`: replaceHiddenPreview(html, escapePreviewText(preheader)),
-    // tested in packages/core/src/compiler/__tests__/hiddenPreview.test.ts, `escapePreviewText`). This test fails if the
-    // contract ever starts escaping here too (a double escape would print `&amp;lt;` in inboxes), and it names the dependency.
+    // preview's HTML safety rests on the service. In email-editor apps/service/src/worker/compose.ts `withPreheader` escapes the
+    // preheader TEMPLATE text (`escapePreviewText`, tested in packages/core hiddenPreview.test.ts) and the merge pass
+    // (`mergeHtml`, every value HTML-escaped, the same code formMailEscaping's first tests run) escapes the visitor's values
+    // when they are filled into the body and the hidden preview. This test fails if `personalizeText` ever starts escaping
+    // too (a double escape would print `&amp;lt;` in inboxes), and it names the dependency.
     expect(out).toContain('<b>"hi"</b> & <script>x</script>');
   });
 

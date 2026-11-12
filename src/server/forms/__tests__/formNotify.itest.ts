@@ -642,6 +642,31 @@ describe('3. resume', () => {
     expect(await notificationOf(s.id)).toMatchObject({ status: 'sent' });
   }, 30_000);
 
+  it('a reconnect to another workspace between the letter commit and the send is never rebuilt inside the send: the new letter is committed first, then sent under the new workspace key', async () => {
+    await connect(company);
+    const s = submission();
+    await insertFormSubmission(appDb, s);
+    const other = randomUUID();
+    let transactions = 0;
+    const between = new Proxy(appDb, {
+      get(target, prop, receiver) {
+        if (prop !== 'transaction') return Reflect.get(target, prop, receiver);
+        return () => ({
+          execute: async (work: Parameters<ReturnType<typeof appDb.transaction>['execute']>[0]) => {
+            transactions += 1;
+            // The second transaction is the first send: the owner reconnects just before it.
+            if (transactions === 2) await connect(company, { workspaceId: other });
+            return target.transaction().execute(work);
+          },
+        });
+      },
+    }) as Kysely<CommerceDB>;
+    expect(await deliverFormNotification({ ...company.outbox, db: between }, company.id, s.id)).toBe('sent');
+    // prepare, send (finds the old letter, hands back), prepare (new workspace), send.
+    expect(transactions).toBe(4);
+    expect(company.mail.sent.map((l) => l.key)).toEqual([`form:${company.id}:${s.id}:1:${other}`]);
+  }, 30_000);
+
   it('deleting a submission while its email is being sent waits briefly, then says busy; once the send has ended the delete goes through', async () => {
     await connect(company);
     const s = submission();

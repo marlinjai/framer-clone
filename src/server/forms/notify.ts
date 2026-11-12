@@ -178,10 +178,15 @@ export async function deliverFormNotification(
   // send, so the retry finds the same frozen letter and sends the same body under the same key, which Lumitra Mail replays.
   // Were the letter written in the sending transaction, it would roll back too and be rebuilt from a site renamed meanwhile:
   // another body under the same key, which Lumitra Mail refuses as reused.
-  let outcome = await run('prepare');
-  if (outcome.type === 'prepared') outcome = await run('send');
+  let outcome: AttemptOutcome = { type: 'prepared' };
+  // Prepare, then send. The send phase hands back `prepared` when the frozen letter it needs is gone (a reconnect to another
+  // workspace between the two), so the new letter is committed first; a few rounds of that is already a moving target.
+  for (let round = 0; round < 3 && outcome.type === 'prepared'; round += 1) {
+    outcome = await run('prepare');
+    if (outcome.type === 'prepared') outcome = await run('send');
+  }
   if (outcome.type === 'throw') throw outcome.error;
-  if (outcome.type === 'prepared') throw new Error('unreachable: the send phase always settles');
+  if (outcome.type === 'prepared') throw new JobRetryLater('the mail connection changed while sending');
   return outcome.result;
 }
 
@@ -259,6 +264,11 @@ async function attemptUnderLock(
     if (!connection) throw new MailRefused('other', 'the company is no longer connected to Lumitra Mail: connect it again, then send this again');
     const apiKey = unseal(deps.sealKey, connection.api_key_sealed);
     let letter = readFrozen(row.letter);
+    if (phase === 'send' && (!letter || letter.workspaceId !== connection.workspace_id)) {
+      // The letter was reset or the company reconnected to another workspace since the prepare commit: never rebuild it inside
+      // the sending transaction, go back and commit the new one first.
+      return { type: 'prepared' };
+    }
     if (!letter || letter.workspaceId !== connection.workspace_id) {
       // A connection made before this notice existed holds no template for it: install the templates with the
       // company's own send key (what connecting does), keep the ids, and go on.
