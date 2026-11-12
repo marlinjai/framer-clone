@@ -358,6 +358,10 @@ each reversible (say so if you disagree):
    every six hours with no end, so no time is promised), or, only when no job could be arranged, "deleted, but its form submissions could not be removed,
    contact support". A delete whose job could not be written is refused before anything changes ("nothing was deleted, try again").
    A purge that keeps failing never dies, so the watchdog counts it (`purgesStuck`, five failures or more).
+   **Operator-alert limitation (recorded 2026-11-12):** the watchdog route reports `purgesStuck` and `purges: "stuck"` but stays HTTP 200 for
+   it, and the three existing Uptime Kuma monitors (non-2xx, dead jobs, receipts) do not read either field. Nothing notifies a person of a
+   stuck purge until a fourth keyword monitor on `$.purges == "ok"` is created (a live change, not done; see deploy/README.md). The owner
+   messages also name "support" with no address, because the app has no support channel to point at. Both are open for Marlin.
 9. **Tests:** `formNotify.itest.ts` (real Postgres, fake Lumitra Mail) covers forward, a repeated post, not connected then
    connected plus resend, refusal then resend, blocked, an old connection installing the template, a failing install,
    reconnect to another workspace, Lumitra Mail down then back with the letter unchanged, three days of failures, a deleted
