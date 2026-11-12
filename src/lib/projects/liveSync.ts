@@ -138,7 +138,7 @@ export const LIVE_HEARTBEAT_MS = SSE_HEARTBEAT_MS;
 export const LIVE_WATCHDOG_MS = Math.round(LIVE_HEARTBEAT_MS * 2.5);
 /** The waits before a failed fetch of the stored copy is tried again while the stream is live; the last repeats. */
 export const LIVE_FETCH_RETRY_MS = [2_000, 5_000, 15_000] as const;
-/** A refusal's dialog held for the copy of a marked edit waits for that copy at most this long. */
+/** A refusal's dialog held for the newer copy (of a marked edit, or of a settled one the refusal found replayable) waits for it at most this long. */
 export const LIVE_HELD_FETCH_MS = 10_000;
 /** The most steps of the person one replay carries (all unsaved steps since the last saved copy, or none). */
 export const LIVE_REPLAY_MAX_STEPS = 10;
@@ -513,7 +513,7 @@ export class LiveSync {
     }
     const adopted = this.rootStore.projectStore.getProject(this.projectId);
     if (!adopted) {
-      this.editLost(new Error('the project left the store during the replay'));
+      this.editLost(new Error('the project left the store during the replay'), steps.length);
       return true;
     }
     const targets = steps.map((step) => ({ label: step.label, edits: step.edits.map((edit) => ({ edit, node: findNode(adopted, edit.nodeId) })) }));
@@ -546,7 +546,7 @@ export class LiveSync {
         }),
       );
       while (history.history.length > entriesBefore) history.forgetLastEntry();
-      this.editLost(err);
+      this.editLost(err, steps.length);
       return true;
     }
     // Until the merged copy is saved: an agent write meanwhile can be met by another replay (see take).
@@ -570,10 +570,19 @@ export class LiveSync {
     const project = store.getProject(this.projectId);
     if (!history || !project || !isAlive(project)) return undefined;
     if (history.undoIdx !== history.history.length || history.undoIdx < 1) return undefined;
-    if (isSaved(this.projectId, getSnapshot(project) as unknown as ProjectContent)) return undefined;
     const prefix = getRelativePath(store, project);
+    // Cheap first: the run of this tab's value replacements on top. Only within it can the saved copy be reached,
+    // so the costly part (a copy of the site and a comparison per step) is spent only there.
+    let run = 0;
+    while (run < LIVE_REPLAY_MAX_STEPS && run < history.undoIdx) {
+      const entry = history.history[history.undoIdx - 1 - run];
+      if (entry.remote || !entry.inversePatches.every((patch) => patch.op === 'replace' && patch.path.startsWith(`${prefix}/`))) break;
+      run++;
+    }
+    if (run === 0) return undefined;
+    if (isSaved(this.projectId, getSnapshot(project) as unknown as ProjectContent)) return undefined;
     const draft = JSON.parse(JSON.stringify(getSnapshot(project))) as Record<string, unknown>;
-    for (let i = history.undoIdx - 1, n = 0; i >= 0 && n < LIVE_REPLAY_MAX_STEPS; i--, n++) {
+    for (let i = history.undoIdx - 1, n = 0; n < run; i--, n++) {
       const entry = history.history[i];
       if (entry.remote) return undefined;
       for (const patch of entry.inversePatches.slice().reverse()) {
@@ -594,8 +603,11 @@ export class LiveSync {
   private noteRefusal() {
     this.refusedSettledAt = undefined;
     if (this.phaseValue === 'stopped' || this.phaseValue === 'signed-out' || this.phaseValue === 'gone') return;
-    // Mid-edit, a marked edit and a replayed one have their own holds and their own replays.
-    if (isEditing(this.rootStore) || this.editMark || this.replayMark) return;
+    // Mid-edit, and a replayed edit, have their own holds and their own replays; so
+    // has a marked edit whose copy is still being fetched. A mark whose copy already
+    // came (held while this save was out) holds nothing by itself: this does.
+    if (isEditing(this.rootStore) || this.replayMark) return;
+    if (this.editMark && this.wanted !== undefined) return;
     const mark = this.unsavedStepsMark();
     const history = getHistoryStore();
     if (!mark || !history) return;
@@ -607,13 +619,16 @@ export class LiveSync {
   }
 
   /** The person's edit could not be kept on top of the newer version: logged, and the person is told (a state preview ends so the notice can show). */
-  private editLost(err: unknown) {
+  private editLost(err: unknown, steps = 1) {
     console.error('[live] an edit could not be put on top of the newer version:', err);
     const ui = this.rootStore.editorUI;
     if (ui.editorNotice?.kind === 'previewState') ui.clearPreviewState();
     ui.setEditorNotice({
       kind: 'refused',
-      message: 'Your last edit could not be kept on top of the newer version of the site and was taken back. Please make it again.',
+      message:
+        steps > 1
+          ? `Your last ${steps} edits could not be kept on top of the newer version of the site and were taken back. Please make them again.`
+          : 'Your last edit could not be kept on top of the newer version of the site and was taken back. Please make it again.',
     });
   }
 
@@ -1199,10 +1214,14 @@ export class LiveSync {
     const project = this.rootStore.projectStore.getProject(this.projectId);
     if (!project || !isAlive(project)) return;
     const autosave = existingAutosave(this.projectId);
-    const autosavePhase = autosave?.getState().phase;
+    const autosaveState = autosave?.getState();
+    const autosavePhase = autosaveState?.phase;
+    // A refusal whose dialog is still held (the person has not been asked yet).
+    const heldRefusal = autosaveState?.phase === 'conflict' && autosaveState.held === true && !autosaveState.dialogOpen;
     const clean =
       !hasWriteInFlight(this.projectId) &&
-      autosavePhase !== 'conflict' &&
+      // A held refusal whose work was undone back to the saved copy (an undo while it waited) is about nothing: adopted as any clean copy.
+      (autosavePhase !== 'conflict' || heldRefusal) &&
       autosavePhase !== 'publishing' &&
       isSaved(this.projectId, getSnapshot(project) as unknown as ProjectContent);
     const keep = { version: body.version, snapshot: body.snapshot, label, ...(event && live ? { event } : {}) };
@@ -1241,8 +1260,6 @@ export class LiveSync {
     // dialog still held (never once the dialog stands open: the person decides
     // then). Its steps since the last saved copy go on top, when the history can
     // undo them to exactly that copy. The try spends the refusal's hold.
-    const state = autosave?.getState();
-    const heldRefusal = state?.phase === 'conflict' && state.held === true && !state.dialogOpen;
     this.refusedSettledAt = undefined;
     if (!clean && !hasWriteInFlight(this.projectId) && (autosavePhase === 'unsaved' || heldRefusal)) {
       if (this.rebaseEdit(keep, this.unsavedStepsMark())) return;
@@ -1482,7 +1499,7 @@ function entryEdits(
   return edits.length === 0 ? null : edits;
 }
 
-/** Replace the value at a JSON pointer inside a plain copy (an absent value as removing it); false when the path does not lead into the copy. */
+/** Replace the value at a JavaScript Object Notation (JSON) pointer inside a plain copy (an absent value as removing it); false when the path does not lead into the copy. */
 function replaceAt(target: Record<string, unknown>, pointer: string, value: unknown): boolean {
   const parts = pointer.split('/').slice(1).map((part) => part.replace(/~1/g, '/').replace(/~0/g, '~'));
   const last = parts.pop();

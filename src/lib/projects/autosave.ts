@@ -238,6 +238,9 @@ export class AutosaveController {
     if (next.phase !== 'conflict') this.stopHeldDialog();
     this.stamp++;
     this.state = next;
+    // A held refusal always has its watcher, also one put back after a Publish
+    // that changed nothing: otherwise its dialog (and the status's way to it) never comes.
+    if (next.phase === 'conflict' && next.held && !next.dialogOpen) this.watchHeldDialog();
     for (const listener of [...this.listeners]) listener();
     notifyRegistry();
   }
@@ -540,6 +543,8 @@ export class AutosaveController {
     content: SavedContent,
     once = false,
   ): Promise<void> {
+    // "Save mine over it": the person already chose in the dialog; a refusal of it reopens the dialog, it is no edit to replay.
+    const over = this.overPending !== undefined;
     let result: ProjectWriteResult;
     try {
       result = await this.deps.write(snapshot, expectedVersion, options);
@@ -573,7 +578,8 @@ export class AutosaveController {
       // on the newer copy (conflictDialogHolds): the dialog waits, never under the
       // cursor and never for a conflict about to resolve itself.
       // The hold is told of the refusal, so a settled edit it can replay holds the dialog too.
-      const held = conflictDialogHolds.get(this.projectId)?.({ currentVersion: result.currentVersion }) ?? false;
+      const hold = conflictDialogHolds.get(this.projectId);
+      const held = (over ? hold?.() : hold?.({ currentVersion: result.currentVersion })) ?? false;
       this.setState({ phase: 'conflict', currentVersion: result.currentVersion, dialogOpen: !held, retrying: false, ...(held ? { held: true } : {}) });
       if (held) this.watchHeldDialog();
       return;

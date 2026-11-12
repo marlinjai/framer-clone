@@ -146,7 +146,14 @@ const SaveStatus = observer(() => {
       </span>
       <span
         data-testid="save-status"
-        title={reason ?? (conflict ? 'This project was saved somewhere else. Choose what to keep.' : 'Changes are saved automatically. Cmd+S (Ctrl+S) saves at once.')}
+        title={
+          reason ??
+          (conflict
+            ? 'This project was saved somewhere else. Choose what to keep.'
+            : state.phase === 'conflict'
+              ? 'Your changes are being put on top of a newer version of this project.'
+              : 'Changes are saved automatically. Cmd+S (Ctrl+S) saves at once.')
+        }
         className={`flex min-w-0 items-center gap-1.5 text-xs ${tone}`}
       >
         <StatusIcon state={state} saving={saving} />

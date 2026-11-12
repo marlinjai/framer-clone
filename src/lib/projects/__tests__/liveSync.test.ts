@@ -2577,6 +2577,8 @@ describe('liveSync: a settled edit whose save was waiting or out when the agent 
       if (!outcome.ok) throw new Error('refused');
     });
     await release(); // refused; the replay is tried on the held copy and cannot be
+    // Held for that try (the status not yet showing the conflict), and only until the next check.
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: false, held: true });
     await vi.advanceTimersByTimeAsync(HELD_DIALOG_CHECK_MS);
     expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: true });
     expect(autosaveFor(SITE).getState()).not.toHaveProperty('held');
@@ -2662,6 +2664,186 @@ describe('liveSync: a settled edit whose save was waiting or out when the agent 
     expect(text()).toContain('typed by the person');
     expect(text()).not.toContain('"agent"');
     expect(saves).toHaveLength(1);
+  });
+
+  /** A committed edit whose save was refused while the agent's copy is still on the way (it arrives when `arrive` is called). */
+  async function refusedWhileCopyComes(agent: () => Promise<unknown> = () => agentWrites('agent', false)) {
+    const gated = await gatedSaves();
+    homeChild(0).setTextContent('typed by the person');
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+    holdFetch = { release: () => {} };
+    await agent();
+    await gated.release(); // refused, held for the copy
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: false, held: true });
+    return {
+      ...gated,
+      arrive: async () => {
+        holdFetch!.release();
+        holdFetch = undefined;
+        await settle();
+        await settle();
+      },
+    };
+  }
+
+  it('the agent\'s version announced while typing, the edit committed with Cmd+S before the copy came: the stale mark does not stop the replay', async () => {
+    const { release } = await gatedSaves();
+    const seen = watch();
+    const draft = openDraft(() => homeChild(0).setTextContent('typed then saved'));
+    holdFetch = { release: () => {} };
+    await agentWrites('agent'); // announced mid-typing: marks the edit; its copy is on the way
+    draft.commitAndClose();
+    handleSaveShortcut(new KeyboardEvent('keydown', { key: 's', metaKey: true, cancelable: true }), store.editorUI);
+    await settle(); // the save on 3 goes out
+    holdFetch.release(); // the copy lands while the save is out: held
+    holdFetch = undefined;
+    await settle();
+    await release(); // refused: held, and the held copy replays the edit
+    await release(); // the replayed save
+    seen.stop();
+    expect(saves.map((save) => save.expectedVersion)).toEqual([3, 4]);
+    expect(JSON.stringify(server.snapshot)).toContain('typed then saved');
+    expect(JSON.stringify(server.snapshot)).toContain('agent');
+    expect(seen.dialogOpened()).toBe(false);
+  });
+
+  it('Cmd+S while the refusal waits for the copy: still held; the copy replays the edit, no dialog', async () => {
+    const { arrive, release } = await refusedWhileCopyComes();
+    const seen = watch();
+    handleSaveShortcut(new KeyboardEvent('keydown', { key: 's', metaKey: true, cancelable: true }), store.editorUI);
+    await settle();
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: false, held: true });
+    await arrive();
+    await release();
+    seen.stop();
+    expect(seen.dialogOpened()).toBe(false);
+    expect(autosaveFor(SITE).getState().phase).toBe('saved');
+    expect(saves.map((save) => save.expectedVersion)).toEqual([3, 4]);
+  });
+
+  it('a Publish that changes nothing while the refusal waits: the wait comes back with its timer, and a failed replay still opens the dialog', async () => {
+    const node = () => homeChild(0);
+    const { arrive } = await refusedWhileCopyComes(() =>
+      serverWrites(async (m) => {
+        const outcome = await applyOperations(m, [{ op: 'updateText', nodeId: node().id, text: 'the agent\'s text' }]);
+        if (!outcome.ok) throw new Error('refused');
+      }, null),
+    );
+    await autosaveFor(SITE).exclusive(async () => ({ kind: 'error' as const })); // a Publish that failed: no version moved
+    await settle();
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: false, held: true });
+    await arrive(); // the agent changed the same text: the replay cannot be
+    await vi.advanceTimersByTimeAsync(HELD_DIALOG_CHECK_MS);
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: true });
+    expect(autosaveFor(SITE).getState()).not.toHaveProperty('held');
+    expect(text()).toContain('typed by the person');
+  });
+
+  it('backtrack while the refusal waits: the edit undone back to the saved copy, the copy that comes is simply adopted, no dialog', async () => {
+    const { arrive } = await refusedWhileCopyComes();
+    const seen = watch();
+    getHistoryStore()!.undo();
+    await arrive();
+    await vi.advanceTimersByTimeAsync(HELD_DIALOG_CHECK_MS * 2);
+    seen.stop();
+    expect(seen.dialogOpened()).toBe(false);
+    expect(autosaveFor(SITE).getState().phase).toBe('saved');
+    expect(knownServerVersion(SITE)).toBe(4);
+    expect(text()).toContain('agent');
+    expect(text()).not.toContain('typed by the person');
+    expect(saves).toHaveLength(1);
+  });
+
+  it('resume: the live sync stopped and started while the refusal waits: its hold goes with it and the dialog asks, the edit kept', async () => {
+    await refusedWhileCopyComes();
+    liveSyncFor(SITE)!.stop();
+    start();
+    await vi.advanceTimersByTimeAsync(HELD_DIALOG_CHECK_MS);
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: true });
+    expect(text()).toContain('typed by the person');
+    holdFetch?.release();
+    holdFetch = undefined;
+    await settle();
+    // The copy coming now changes nothing under the open dialog.
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: true });
+    expect(text()).toContain('typed by the person');
+  });
+
+  it('a refused "Save mine over it" reopens the dialog at once; it is never held as a replay', async () => {
+    const { release } = await gatedSaves();
+    const node = homeChild(0);
+    node.setTextContent('mine');
+    await serverWrites(async (m) => {
+      const outcome = await applyOperations(m, [{ op: 'updateText', nodeId: node.id, text: 'theirs' }]);
+      if (!outcome.ok) throw new Error('refused');
+    });
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: true });
+    const states: AutosaveState[] = [];
+    const stop = autosaveFor(SITE).subscribe(() => states.push(autosaveFor(SITE).getState()));
+    const state = autosaveFor(SITE).getState();
+    void autosaveFor(SITE).saveOver(state.phase === 'conflict' ? state.currentVersion : 0);
+    await settle();
+    await agentWrites('agent', false); // another write meanwhile: the save over it is refused
+    await release();
+    stop();
+    expect(states.some((s) => s.phase === 'conflict' && s.held)).toBe(false);
+    expect(states.some((s) => s.phase === 'conflict' && !s.dialogOpen && !s.retrying)).toBe(false);
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: true });
+  });
+
+  it('the step limit: ten edits in one window are replayed, eleven ask', async () => {
+    await twoNodes();
+    for (let i = 0; i < 10; i++) homeChild(i % 2).setTextContent(`edit ${i}`);
+    await agentWrites('agent');
+    expect(autosaveFor(SITE).getState().phase).toBe('saved');
+    expect(JSON.stringify(server.snapshot)).toContain('edit 9');
+    expect(JSON.stringify(server.snapshot)).toContain('"agent"');
+    for (let i = 0; i < 11; i++) homeChild(i % 2).setTextContent(`more ${i}`);
+    await agentWrites('agent again');
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: true });
+    expect(text()).toContain('more 10');
+  });
+
+  it('a replay of two steps failing on its second: taken back whole, the agent\'s copy exactly, the notice names both edits', async () => {
+    await twoNodes();
+    homeChild(0).setTextContent('person A');
+    homeChild(1).setTextContent('person B');
+    let calls = 0;
+    setReplayApplyForTests((node, field, value) => {
+      calls++;
+      if (calls === 2) throw new Error('injected');
+      applyPatch(node, { op: 'replace', path: `/${field}`, value });
+    });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const before = getHistoryStore()!.history.length;
+    try {
+      await agentWrites('agent');
+    } finally {
+      setReplayApplyForTests(undefined);
+    }
+    expect(calls).toBe(2);
+    expect(error).toHaveBeenCalled();
+    expect(working()).toEqual(server.snapshot);
+    const history = getHistoryStore()!;
+    // The two steps gave way to the agent's adoption; no half step of the replay.
+    expect(history.history.length).toBe(before - 2 + 1);
+    expect(history.history[history.history.length - 1].remote).toBe(true);
+    expect(store.editorUI.editorNotice).toMatchObject({ kind: 'refused', message: expect.stringContaining('last 2 edits') });
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS * 2);
+    expect(saves).toEqual([]);
+  });
+
+  it('a marked edit of two steps (a direct edit while typing, then the typing committed): both replayed, no dialog', async () => {
+    await twoNodes();
+    const draft = openDraft(() => homeChild(0).setTextContent('typed'));
+    await agentWrites('agent'); // held for the typing: marks where the history stood
+    homeChild(1).setTextContent('direct'); // a second step while the draft is open
+    draft.commitAndClose();
+    await settle();
+    expect(autosaveFor(SITE).getState().phase).toBe('saved');
+    for (const part of ['typed', 'direct', 'agent']) expect(JSON.stringify(server.snapshot)).toContain(part);
+    const history = getHistoryStore()!;
+    expect(history.history.slice(-2).map((entry) => entry.remote)).toEqual([false, false]);
   });
 
   it('backtrack and revise: the same text edited twice in one window is replayed with the revised value (compared by its first old value)', async () => {
