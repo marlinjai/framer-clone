@@ -156,7 +156,10 @@ export function applyGenerated(
   // (src/lib/ai/pageGen/editorBridge.ts), and land in the same recorded write as the page.
   const added = result.theme?.tokens ?? [];
   const current = normalizeSiteSettings(project.siteSettings).theme;
-  const heldComponent = target.componentId ? findInTree(project.pages.get(target.pageId!)?.appComponentTree as ComponentInstance, target.componentId) : undefined;
+  const targetPage = target.pageId ? (project.pages.get(target.pageId) as PageModelType | undefined) : undefined;
+  if (target.kind !== 'newPage' && !targetPage) return { ok: false, reason: 'the page no longer exists' };
+  // Anywhere on the page: a replaced floating node lives outside the app tree.
+  const heldComponent = target.componentId && targetPage ? targetPage.findComponent(target.componentId) as ComponentInstance | undefined : undefined;
   const held = heldComponent ? referencedIds(getSnapshot(heldComponent)) : new Set<string>();
   const references = new Set([...referencedIds(result.nodes)].filter((id) => !held.has(id)));
   const reconciled = reconcileGeneratedTokens(current, added, references);

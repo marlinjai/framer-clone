@@ -192,3 +192,27 @@ describe('tokens a generation adds', () => {
     expect(second.ok).toBe(true);
   });
 });
+
+describe('what the review of this slice found', () => {
+  it('drops a token reference in an attribute: a style is where one is judged', () => {
+    const out = run({ nodes: [{ type: 'svg', label: 'Icon', children: [{ type: 'path', props: { d: 'M0 0h1', fill: `var(--fc-t-${ACCENT})` } }] }] });
+    if (!out.ok) throw new Error(out.errors.join('; '));
+    expect(JSON.stringify(out.result.nodes)).not.toContain('--fc-t-');
+    expect(out.result.warnings.join()).toMatch(/not in an attribute/);
+  });
+
+  it('does not count a token whose value is dropped later as used', () => {
+    const out = run({
+      theme: { tokens: [{ ref: 'new-1', name: 'Crust', kind: 'color', light: '#eee' }] },
+      nodes: [{ type: 'div', label: 'A', props: { style: { font: 'var(--fc-t-new-1)', color: '#111' }, children: 'x' } }],
+    });
+    if (!out.ok) throw new Error(out.errors.join('; '));
+    expect(out.result.theme).toBeUndefined();
+    expect(out.result.warnings.join()).toMatch(/"Crust" is used by no node/);
+  });
+
+  it('refuses a token that paints nothing', () => {
+    const broken: SiteTheme = { ...THEME, tokens: [...THEME.tokens, { id: 'br0k3n01', name: 'Broken', kind: 'color', light: 'nonsense', broken: true }] };
+    expect(errorsOf(run(page({ color: ref('br0k3n01') }), { theme: broken })).join()).toMatch(/no readable value/);
+  });
+});

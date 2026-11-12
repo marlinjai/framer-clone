@@ -296,6 +296,9 @@ export function judgeReferences(property: string, value: string, ctx: ReferenceC
       if (ctx.held.has(id)) continue;
       return fail(`var(--fc-t-${id}) is not a token of this site: use one from the site's list`);
     }
+    if (token.kind === 'color' && token.broken) {
+      return fail(`"${token.name}" has no readable value, so it paints nothing: use another token`);
+    }
     if (token.deleted && !ctx.held.has(id)) {
       return fail(`"${token.name}" was deleted from the site: use a token that is still there`);
     }

@@ -471,3 +471,23 @@ describe('applyOperations: the FX scene', () => {
     expect(JSON.stringify(getSnapshot(project))).toBe(before);
   });
 });
+
+describe('applyOperations: the site theme', () => {
+  const ACCENT = 'ab12cd34';
+  const withToken = () => {
+    const project = makeProject();
+    project.updateTheme({ tokens: [{ id: ACCENT, name: 'Accent', kind: 'color', light: '#b4532a' }], document: {} });
+    return project;
+  };
+
+  it('lets an agent set a style, a state and a rule from a live token, and refuses one the site does not have', async () => {
+    const project = withToken();
+    const ok = await run(project, [
+      { op: 'updateStyle', nodeId: 'hero', property: 'color', value: `var(--fc-t-${ACCENT})` },
+      { op: 'updateStyle', nodeId: 'link', property: 'color', value: `var(--fc-t-${ACCENT})`, state: 'hover' },
+    ]);
+    expect(ok.ok).toBe(true);
+    expect(find(project, 'hero')!.props.style.color).toBe(`var(--fc-t-${ACCENT})`);
+    await refused([{ op: 'updateStyle', nodeId: 'hero', property: 'color', value: 'var(--fc-t-nope1234)' }]);
+  });
+});

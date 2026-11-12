@@ -35,6 +35,7 @@ import ProjectModel, { type ProjectModelType } from '@/models/ProjectModel';
 import type { PageModelType, InsertTarget } from '@/models/PageModel';
 import ComponentModel, { type ComponentInstance, type ComponentSnapshotIn, type NewRule } from '@/models/ComponentModel';
 import type { SiteTheme } from '@/lib/site/theme';
+import { referencedIds } from '@/lib/ai/pageGen/generatedTheme';
 import { isPlacementType } from '@/lib/components/placement';
 import { isTextNodeType, TEXT_NODE_TYPE } from '@/lib/renderer/textNode';
 import { isVoidTag } from '@/lib/drag/voidTags';
@@ -188,10 +189,12 @@ function throughGenerator(
   props: Record<string, unknown>,
   foreign: false | 'svg' | 'math',
   breakpoints: BreakpointKey[],
+  tokens?: { theme: SiteTheme; held: ReadonlySet<string> },
 ): GeneratedNodeSnapshot {
   const node = { type, props };
   const raw = foreign === 'svg' ? { type: 'svg', children: [node] } : foreign === 'math' ? { type: 'math', children: [node] } : node;
-  const outcome = validateGeneration({ nodes: [raw] }, { breakpoints });
+  // The site's tokens, so an agent may set a reference, and the ids the node already holds, which stay allowed.
+  const outcome = validateGeneration({ nodes: [raw] }, { breakpoints, ...(tokens ? { theme: tokens.theme, heldTokenIds: tokens.held } : {}) });
   if (!outcome.ok) throw new OpRefused(refusalOf(outcome));
   const problem = refusingWarnings(outcome.result.warnings);
   if (problem) throw new OpRefused(problem);
@@ -369,6 +372,11 @@ export async function applyOperations(
     if (created[ref] !== undefined) throw new OpRefused(`the ref ${JSON.stringify(ref)} is used twice in this batch`);
     created[ref] = id;
   };
+  /** The site's tokens and the ids a node already holds, which a style or rule an agent sets may refer to. */
+  const tokensOf = (node: ComponentInstance): { theme: SiteTheme; held: ReadonlySet<string> } => ({
+    theme: normalizeSiteSettings(project.siteSettings).theme,
+    held: referencedIds(getSnapshot(node)),
+  });
   const nodeFor = (rawId: string): Located => {
     const id = resolveId(rawId);
     const found = locate(project, id);
@@ -590,6 +598,7 @@ export async function applyOperations(
             { ...creditOf(node.props), style: { [property]: op.value } },
             foreignContentOf(ancestorTypes(page, node)),
             asBreakpointKeys(keyed),
+            tokensOf(node),
           );
           const kept = (cleaned.props.style as Record<string, unknown> | undefined)?.[property];
           if (kept === undefined || isObj(kept)) throw new OpRefused(`the value of ${property} was not kept by the style rules`);
@@ -642,6 +651,7 @@ export async function applyOperations(
             { ...context, ...setting },
             foreignContentOf(ancestorTypes(page, node)),
             asBreakpointKeys(keyedBreakpoints(page)),
+            tokensOf(node),
           );
           for (const key of Object.keys(setting)) {
             if (cleaned.props[key] === undefined) throw new OpRefused(`the prop ${JSON.stringify(key)} was not kept by the attribute rules`);
@@ -715,6 +725,7 @@ export async function applyOperations(
           { ...creditOf(node.props), rules: [draft] },
           foreignContentOf(ancestorTypes(page, node)),
           asBreakpointKeys(keyed),
+          tokensOf(node),
         );
         const keyMap = breakpointKeyMap(keyed.map(({ id, label, minWidth }) => ({ id, label, minWidth })));
         const rules = toEditorSnapshot(cleaned, keyMap).props?.rules;

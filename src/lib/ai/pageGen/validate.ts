@@ -843,6 +843,7 @@ class Validator {
     // drives the repair round) and never a quiet drop, which would ship a page missing a colour.
     // The streaming preview cannot see the tokens a generation proposes, so there it drops.
     let fontReferenceChecked = false;
+    let referenced: string[] = [];
     if (/--fc-t-/i.test(v)) {
       const verdict = judgeReferences(property, v, this.references);
       if (verdict.problem) {
@@ -851,9 +852,12 @@ class Validator {
         return undefined;
       }
       v = verdict.value;
-      verdict.used.forEach((id) => this.usedTokens.add(id));
+      referenced = verdict.used;
       // A font reference is the whole value: no family beside it to normalise.
-      if (property === 'fontFamily') return v;
+      if (property === 'fontFamily') {
+        referenced.forEach((id) => this.usedTokens.add(id));
+        return v;
+      }
       fontReferenceChecked = true;
     }
     const problem = styleValueProblem(property, v, place === 'rule', fontReferenceChecked);
@@ -861,6 +865,8 @@ class Validator {
       this.warn(path, `style.${key}: ${problem} dropped`);
       return undefined;
     }
+    // Counted only once the value has passed every check that can still drop it here.
+    referenced.forEach((id) => this.usedTokens.add(id));
     // url(...) only to http(s), site paths or a reference inside the page (an SVG
     // clip or mask), never data: or other schemes.
     const { urls } = scanCssValue(v);
@@ -1088,6 +1094,11 @@ class Validator {
       const slug = text.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
       this.idSlugs.set(text, slug);
       text = slug;
+    }
+    // A token reference belongs in a style, where it is judged and its local name rewritten.
+    if (/--fc-t-/i.test(text)) {
+      this.warn(path, `${key} dropped: a site token goes in a style value, not in an attribute`);
+      return;
     }
     const problem = attributeProblem(type, name, text, namespace);
     if (problem) {
