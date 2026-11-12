@@ -155,6 +155,28 @@ describe('the role box_reader', () => {
     }
   });
 
+  it('gets no document larger than a block may be', async () => {
+    const big = 'e'.repeat(64);
+    pg.sql(`INSERT INTO custom_code_blobs (site_id, sha256, document, declaration, title, created_by) VALUES ('${SITE_A}', '${big}', repeat('x', 262145), '{}', 'Big', 'u1');`);
+    const sql = asReader();
+    try {
+      expect((await sql`SELECT document, live FROM box_document(${SITE_A}, ${big})`).map((r) => [r.document, r.live])).toEqual([[null, true]]);
+    } finally {
+      await sql.end();
+      pg.sql(`DELETE FROM custom_code_blobs WHERE sha256 = '${big}';`);
+    }
+  });
+
+  it('RESIDUAL: it can read the catalogs (names of tables, columns and functions), never their rows', async () => {
+    const sql = asReader();
+    try {
+      const names = await sql`SELECT relname FROM pg_class WHERE relname IN ('custom_code_blobs', 'application_rows') ORDER BY relname`;
+      expect(names.map((row) => row.relname)).toEqual(['application_rows', 'custom_code_blobs']);
+    } finally {
+      await sql.end();
+    }
+  });
+
   // Decision D20: stated residuals of a stolen password, asserted so that a change in either direction is noticed.
   it('RESIDUAL: a session can lift its own timeout and take an advisory lock', async () => {
     const sql = postgres(pg.readerUrl, { max: 1, onnotice: () => {} });
@@ -207,6 +229,41 @@ describe('the handler on a real database', () => {
     expect((await get(SITE_A, HASH)).status).toBe(410);
     pg.sql(`UPDATE sites SET custom_code_enabled = true WHERE id = '${SITE_A}';`);
     expect((await get(SITE_A, HASH)).status).toBe(200);
+  });
+
+  it('answers 503 in time while the database is frozen, and serves again by itself when it thaws', async () => {
+    const frozenStore = createPostgresStore(pg.readerUrl, { queryTimeoutMs: 1500 });
+    const handle = createBoxHandler({ config, store: frozenStore, killSwitchOn: () => false, cacheTtlMs: 0 });
+    const get = () => handle({ method: 'GET', url: `/box/${SITE_A}/${HASH}`, headers: FRAME, remoteAddress: '203.0.113.7' });
+    const stray: unknown[] = [];
+    const onStray = (reason: unknown) => stray.push(reason);
+    process.on('unhandledRejection', onStray);
+    try {
+      expect((await get()).status).toBe(200);
+      // Frozen: the connection the store holds stays open and never answers.
+      pg.pause();
+      try {
+        for (let i = 0; i < 3; i++) {
+          const started = Date.now();
+          const down = await get();
+          expect(down.status).toBe(503);
+          expect(down.body.length).toBe(0);
+          expect(Date.now() - started).toBeLessThan(8000);
+        }
+      } finally {
+        pg.unpause();
+      }
+      let status = 0;
+      for (let i = 0; i < 40 && status !== 200; i++) {
+        status = (await get()).status;
+        if (status !== 200) await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      expect(status).toBe(200);
+      expect(stray).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onStray);
+      await frozenStore.close().catch(() => {});
+    }
   });
 
   it('answers 503 while the database is away and serves again when it is back', async () => {

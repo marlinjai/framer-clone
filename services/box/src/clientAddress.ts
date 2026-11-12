@@ -116,7 +116,7 @@ function hex(bytes: AddressBytes, count: number): string {
 }
 
 export interface ClientAddress {
-  /** What the rate limit counts by: a whole IPv4 address, or the /64 of an IPv6 address (one subscriber). */
+  /** What the rate limit counts by: a whole IPv4 address, or the /56 of an IPv6 address (what one subscriber is usually given). */
   key: string;
   /** What the log holds: the /24 of an IPv4 address or the /48 of an IPv6 address, never a whole address. */
   logPrefix: string;
@@ -126,6 +126,14 @@ const UNKNOWN: ClientAddress = { key: 'unknown', logPrefix: 'unknown' };
 
 /** How much of the end of `X-Forwarded-For` is read: room for a handful of hops. */
 const FORWARDED_TAIL_LENGTH = 256;
+
+/** A hop as some proxies write it: `[v6]`, `[v6]:port` or `v4:port`. The address part only. */
+function hopAddress(hop: string): string {
+  const bracketed = /^\[([0-9a-fA-F:.]+)\](?::[0-9]{1,5})?$/.exec(hop);
+  if (bracketed) return bracketed[1]!;
+  const withPort = /^([0-9.]+):[0-9]{1,5}$/.exec(hop);
+  return withPort ? withPort[1]! : hop;
+}
 
 /** True when the peer of a socket is a configured proxy. */
 export function isTrustedPeer(remoteAddress: unknown, proxies: readonly Cidr[]): boolean {
@@ -137,7 +145,7 @@ function describe(bytes: AddressBytes): ClientAddress {
   if (bytes.length === 4) {
     return { key: `4:${bytes.join('.')}`, logPrefix: `${bytes[0]}.${bytes[1]}.${bytes[2]}.0/24` };
   }
-  return { key: `6:${hex(bytes, 8)}`, logPrefix: `${hex(bytes, 6)}::/48` };
+  return { key: `6:${hex(bytes, 7)}`, logPrefix: `${hex(bytes, 6)}::/48` };
 }
 
 /**
@@ -155,7 +163,7 @@ export function clientAddressOf(remoteAddress: unknown, forwardedFor: unknown, p
   // The first piece of a cut header is a fragment, not a hop.
   const first = sliced ? 1 : 0;
   for (let i = hops.length - 1; i >= first; i--) {
-    const hop = parseAddress(hops[i]!.trim());
+    const hop = parseAddress(hopAddress(hops[i]!.trim()));
     // A hop that is not an address ends the walk: nothing left of it was written by a proxy we know.
     if (!hop) return describe(peer);
     if (!isTrusted(hop, proxies)) return describe(hop);

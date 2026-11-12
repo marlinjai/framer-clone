@@ -218,7 +218,9 @@ export function boxDocumentPolicy(siteHosts: unknown, editorHost: string): strin
 /** What every answer carries, whatever its status. There is no `Set-Cookie`, ever. */
 export const BOX_COMMON_HEADERS: Readonly<Record<string, string>> = Object.freeze({
   'Permissions-Policy': BOX_PERMISSIONS_POLICY,
-  'Cross-Origin-Opener-Policy': 'same-origin',
+  // No Cross-Origin-Opener-Policy (decision D21): together with `sandbox` in the policy a browser
+  // treats it as a network error on a direct visit, so the page that says what the domain is would
+  // never show. The opaque origin `sandbox` gives already cuts the opener off.
   'Cross-Origin-Resource-Policy': 'cross-origin',
   'X-Content-Type-Options': 'nosniff',
   'X-DNS-Prefetch-Control': 'off',

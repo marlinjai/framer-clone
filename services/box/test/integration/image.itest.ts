@@ -134,12 +134,29 @@ describe('the image', () => {
     // Nothing beyond the decided set and what HTTP itself needs (the connection headers depend on the client).
     const names = response.rawHeaderNames.map((name) => name.toLowerCase()).filter((name) => name !== 'connection' && name !== 'keep-alive');
     expect(names.sort()).toEqual(
-      ['cache-control', 'content-length', 'content-security-policy', 'content-type', 'cross-origin-opener-policy', 'cross-origin-resource-policy', 'date', 'permissions-policy', 'referrer-policy', 'strict-transport-security', 'vary', 'x-content-type-options', 'x-dns-prefetch-control'].sort(),
+      ['cache-control', 'content-length', 'content-security-policy', 'content-type', 'cross-origin-resource-policy', 'date', 'permissions-policy', 'referrer-policy', 'strict-transport-security', 'vary', 'x-content-type-options', 'x-dns-prefetch-control'].sort(),
     );
     const head = await httpGet(box.port, `/box/${SITE_A}/${HASH}`, FRAME_HEADERS, 'HEAD');
     expect(head.status).toBe(200);
     expect(head.body).toBe('');
     expect(head.headers['content-length']).toBe(response.headers['content-length']);
+  });
+
+  it('serves again by itself after the database froze with its connections open', async () => {
+    const target = `/box/${SITE_A}/${'9'.repeat(64)}`;
+    expect((await httpGet(box.port, target, FRAME_HEADERS)).status).toBe(404);
+    pg.pause();
+    try {
+      const down = await httpGet(box.port, `/box/${SITE_A}/${'8'.repeat(64)}`, FRAME_HEADERS);
+      expectRefusal(down, 503);
+      expect(down.body).toBe('');
+    } finally {
+      pg.unpause();
+    }
+    await until(async () => (await httpGet(box.port, `/box/${SITE_A}/${'8'.repeat(64)}`, FRAME_HEADERS)).status === 404, 'the box to reach the thawed database', 30_000);
+    // The process was never ended by a stray failure: the same container is still the one answering.
+    expect(docker(['inspect', '--format', '{{.RestartCount}} {{.State.Status}}', box.name]).trim()).toBe('0 running');
+    expect(docker(['logs', box.name])).not.toContain('uncaught');
   });
 
   it('refuses every other request with its own status, the refusal policy and no cookie', async () => {
@@ -224,6 +241,7 @@ describe('the image, started without a decision to serve', () => {
     ['no sites base host', { BOX_SITES_BASE_HOST: undefined }, 'BOX_SITES_BASE_HOST'],
     ['a proxy network that is everyone', { BOX_TRUSTED_PROXIES: '0.0.0.0/0' }, 'BOX_TRUSTED_PROXIES'],
     ['a listen host that is a name', { BOX_LISTEN_HOST: 'localhost' }, 'BOX_LISTEN_HOST'],
+    ['a database address with a malformed escape', { BOX_DATABASE_URL: 'postgres://box_reader:a%zzb@pg:5432/postgres' }, 'BOX_DATABASE_URL'],
   ])('refuses to start with %s, naming the variable and nothing it holds', async (_name, env, variable) => {
     const box = await runBox(env);
     await until(() => docker(['inspect', '--format', '{{.State.Status}}', box.name]).trim() === 'exited', 'the box to stop');
@@ -232,6 +250,8 @@ describe('the image, started without a decision to serve', () => {
     expect(logs).toContain(`box: ${variable} `);
     expect(logs).not.toContain('box_reader');
     expect(logs).not.toContain('postgres://');
+    // No stack trace of the service or the driver.
+    expect(logs).not.toMatch(/\n\s+at /);
   });
 
   it('refuses to start as root', async () => {

@@ -43,19 +43,11 @@ class TimeoutError extends Error {
 
 /**
  * The promise, or a rejection after `ms`: a connection that neither answers
- * nor fails must not hold a request open. `onTimeout` cancels the work that
- * was given up on, so abandoned queries do not pile up behind a dead database.
+ * nor fails must not hold a request open.
  */
-export function withTimeout<T>(promise: PromiseLike<T>, ms: number, onTimeout?: () => void): Promise<T> {
+export function withTimeout<T>(promise: PromiseLike<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      try {
-        onTimeout?.();
-      } catch {
-        // Giving up must not fail.
-      }
-      reject(new TimeoutError('the database did not answer in time'));
-    }, ms);
+    const timer = setTimeout(() => reject(new TimeoutError('the database did not answer in time')), ms);
     promise.then(
       (value) => {
         clearTimeout(timer);
@@ -69,39 +61,69 @@ export function withTimeout<T>(promise: PromiseLike<T>, ms: number, onTimeout?: 
   });
 }
 
-const QUERY_TIMEOUT_MS = 3000;
+export interface PostgresStoreOptions {
+  /** How long one call may take before it is given up on. */
+  queryTimeoutMs?: number;
+  connectTimeoutSeconds?: number;
+}
 
-export function createPostgresStore(databaseUrl: string): BoxStore {
-  const sql = postgres(databaseUrl, {
-    // The role allows 4 connections; one is left for an operator's check.
-    max: 3,
-    idle_timeout: 30,
-    connect_timeout: 5,
-    max_lifetime: 60 * 30,
-    // No look at the type catalogue: the two list columns are read as JSON.
-    // (The role could not read a table there either way; this keeps the box to one statement.)
-    fetch_types: false,
-    prepare: true,
-    onnotice: () => {},
-    connection: { application_name: 'framer-clone-box', statement_timeout: 2000 },
-  });
+export function createPostgresStore(databaseUrl: string, options: PostgresStoreOptions = {}): BoxStore {
+  const queryTimeoutMs = options.queryTimeoutMs ?? 3000;
+  const connect = () =>
+    postgres(databaseUrl, {
+      // The role allows 4 connections; one is left for an operator's check.
+      max: 3,
+      idle_timeout: 30,
+      connect_timeout: options.connectTimeoutSeconds ?? 5,
+      max_lifetime: 60 * 30,
+      // No look at the type catalogue: the two list columns are read as JSON.
+      fetch_types: false,
+      prepare: true,
+      onnotice: () => {},
+      connection: { application_name: 'framer-clone-box', statement_timeout: 2000 },
+    });
+  let sql = connect();
+
+  /**
+   * Runs one call. When it is given up on, the whole pool is thrown away and a
+   * new one takes its place: connections that went silent (a database that
+   * accepts and never answers) are not asked again, and the next request
+   * starts on fresh ones, so service comes back by itself. The old pool is
+   * closed at once, which ends its queries; nothing is cancelled through a
+   * second connection, whose failure would be a rejection nobody waits for.
+   */
+  async function run<T>(query: (db: typeof sql) => PromiseLike<T>): Promise<T> {
+    const db = sql;
+    // The driver's promise is observed even after it was given up on.
+    const pending = Promise.resolve(query(db));
+    pending.catch(() => {});
+    try {
+      return await withTimeout(pending, queryTimeoutMs);
+    } catch (error) {
+      if (error instanceof TimeoutError && sql === db) {
+        sql = connect();
+        db.end({ timeout: 0 }).catch(() => {});
+      }
+      throw error;
+    }
+  }
 
   return {
     async find(siteId, sha256) {
-      const query = sql<{ document: unknown; live: unknown; subdomain_labels: unknown; custom_hostnames: unknown }[]>`
-        SELECT document, live, to_json(subdomain_labels) AS subdomain_labels, to_json(custom_hostnames) AS custom_hostnames
-        FROM box_document(${siteId}, ${sha256})
-        LIMIT 1
-      `;
-      const rows = await withTimeout(query, QUERY_TIMEOUT_MS, () => query.cancel());
+      const rows = await run(
+        (db) => db<{ document: unknown; live: unknown; subdomain_labels: unknown; custom_hostnames: unknown }[]>`
+          SELECT document, live, to_json(subdomain_labels) AS subdomain_labels, to_json(custom_hostnames) AS custom_hostnames
+          FROM box_document(${siteId}, ${sha256})
+          LIMIT 1
+        `,
+      );
       const row = rows[0];
       if (!row) return null;
       return { document: row.document, live: row.live, subdomainLabels: row.subdomain_labels, customHostnames: row.custom_hostnames };
     },
     async ping() {
       // A pair no site can have: the call itself is what is checked.
-      const query = sql`SELECT 1 AS ok FROM box_document(${'00000000-0000-0000-0000-000000000000'}, ${'0'.repeat(64)})`;
-      await withTimeout(query, QUERY_TIMEOUT_MS, () => query.cancel());
+      await run((db) => db`SELECT 1 AS ok FROM box_document(${'00000000-0000-0000-0000-000000000000'}, ${'0'.repeat(64)})`);
     },
     async close() {
       await sql.end({ timeout: 2 });

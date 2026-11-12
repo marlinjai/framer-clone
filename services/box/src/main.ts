@@ -18,6 +18,14 @@ function fail(message: string): never {
 function main(): void {
   if (typeof process.getuid === 'function' && process.getuid() === 0) fail('refusing to run as root');
 
+  // Before anything that can throw. A fault nobody caught ends the process and the container is started
+  // again; only the kind of fault is written. A promise nobody waited for is written down and the box
+  // keeps serving: one failed call must not be a way to stop the service from outside.
+  process.on('uncaughtException', (error) => fail(`uncaught ${error instanceof Error ? error.name : 'error'}`));
+  process.on('unhandledRejection', () => {
+    process.stderr.write('box: a rejected promise was not handled\n');
+  });
+
   let config;
   try {
     config = readConfig(process.env);
@@ -25,7 +33,14 @@ function main(): void {
     fail(error instanceof ConfigError ? error.message : 'the configuration could not be read');
   }
 
-  const store = createPostgresStore(config.databaseUrl);
+  let store;
+  try {
+    store = createPostgresStore(config.databaseUrl);
+  } catch {
+    // The driver's own message can hold parts of the address: only the variable is named.
+    fail('BOX_DATABASE_URL could not be used');
+  }
+  // The kill switch is the process's environment, so changing it takes a restart of the box.
   const handle = createBoxHandler({ config, store, killSwitchOn: () => isKillSwitchOn(process.env) });
   const proxies = config.trustedProxies;
   const server = createBoxServer({
@@ -58,9 +73,6 @@ function main(): void {
   };
   process.on('SIGTERM', stop);
   process.on('SIGINT', stop);
-  // A fault nobody caught ends the process; the container is started again. Only the kind of fault is written.
-  process.on('uncaughtException', (error) => fail(`uncaught ${error instanceof Error ? error.name : 'error'}`));
-  process.on('unhandledRejection', () => fail('unhandled rejection'));
 }
 
 main();

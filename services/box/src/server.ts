@@ -29,7 +29,10 @@ export interface BoxServerOptions {
   connectionKeyOf?: (remoteAddress: string | undefined) => string | null;
   /** Connections one counted peer may hold at once. */
   maxConnectionsPerKey?: number;
+  /** Requests one connection may have sent and not yet been answered. */
+  maxUnansweredPerSocket?: number;
   /** Overrides for tests. */
+  maxRequestsPerSocket?: number;
   headersTimeoutMs?: number;
   requestTimeoutMs?: number;
   socketTimeoutMs?: number;
@@ -37,6 +40,8 @@ export interface BoxServerOptions {
 
 export function createBoxServer(options: BoxServerOptions): Server {
   const { handle, log } = options;
+  const unanswered = new WeakMap<object, number>();
+  const maxUnanswered = options.maxUnansweredPerSocket ?? 4;
   const server = createServer(
     {
       // Request line and headers together. A frame request is far below this.
@@ -45,9 +50,22 @@ export function createBoxServer(options: BoxServerOptions): Server {
       requestTimeout: options.requestTimeoutMs ?? 10_000,
       keepAliveTimeout: 5000,
       connectionsCheckingInterval: 1000,
+      // Node would answer a request without `Host` by itself, with no policy and no log line. The box
+      // does not use the header, so the handler answers it like any other request.
+      requireHostHeader: false,
     },
     (req, res) => {
       const started = performance.now();
+      // Requests one connection has sent and not yet been answered. A client that sends many at once
+      // and does not read the answers would otherwise have them all worked on and held in memory.
+      const socket = req.socket;
+      const waiting = (unanswered.get(socket) ?? 0) + 1;
+      if (waiting > maxUnanswered) {
+        socket.destroy();
+        return;
+      }
+      unanswered.set(socket, waiting);
+      res.once('close', () => unanswered.set(socket, Math.max(0, (unanswered.get(socket) ?? 1) - 1)));
       // A request that brings a body is answered and then cut off, unread.
       const bringsBody =
         req.headers['transfer-encoding'] !== undefined ||
@@ -90,7 +108,7 @@ export function createBoxServer(options: BoxServerOptions): Server {
   );
 
   server.maxConnections = 1024;
-  server.maxRequestsPerSocket = 1000;
+  server.maxRequestsPerSocket = options.maxRequestsPerSocket ?? 1000;
   // A connection on which nothing moves for this long is closed, in either direction: a client that asks
   // for a document and never reads it does not keep its place.
   server.setTimeout(options.socketTimeoutMs ?? 15_000);

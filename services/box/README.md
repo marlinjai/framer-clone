@@ -25,18 +25,18 @@ The box is the small service that serves a *custom code block* of a site built i
 | A malformed pair, an unknown hash, another site naming a real hash | 404 |
 | The site switched off, the blob blocked, the kill switch on | 410 |
 | Past 60 requests a minute for one path and address, or 600 for one address | 429 |
-| The database cannot be asked | 503, with no word of the error |
+| The database cannot be asked, or does not answer within 3 seconds | 503, with no word of the error. The connection pool is replaced, so service returns by itself |
 | `GET /health` | `ok` |
 | `GET /health/db` | `ok` after one call of the function, otherwise 503 and one word (`connect`, `timeout`, `denied`, `query`) |
 | `GET /` | A plain page saying what the domain is, with the contacts that are configured |
 | `GET /.well-known/security.txt` | Only when a security contact and an expiry are configured |
 | Anything else | 404, no body. Every method but `GET` and `HEAD`: 405 |
 
-Every answer the box writes, whatever its status, carries a Content Security Policy (CSP) and never a `Set-Cookie`. A request it does not answer at all (not HTTP, too large, too slow, an `Expect` header, a protocol upgrade) has its connection closed. A direct visit, a flood and a malformed address are refused before the database is asked. A document is `private`, kept by the visitor's browser for five minutes, and varies by the two fetch metadata headers.
+Every answer the box writes, whatever its status, carries a Content Security Policy (CSP) and never a `Set-Cookie`. A request it does not answer at all (not HTTP, too large, too slow, an `Expect` header, a protocol upgrade, more than four requests waiting on one connection) has its connection closed. A direct visit, a flood and a malformed address are refused before the database is asked. A document is `private`, kept by the visitor's browser for five minutes, and varies by the two fetch metadata headers.
 
 ## Restrictive defaults
 
-- **It does not serve unless told to.** A block is served only while `CUSTOM_CODE_DISABLED` is exactly `0`. Unset or anything else, every block answers 410.
+- **It does not serve unless told to.** A block is served only while `CUSTOM_CODE_DISABLED` is exactly `0`. Unset or anything else, every block answers 410. Changing it takes a restart of the box.
 - **It does not start without its configuration,** or as root. It names the variable that is wrong, never its value.
 - **`frame-ancestors` holds exact host names only.** A wildcard, a scheme, a port or any other spelling from the database is dropped, never repaired. A branch preview host (`preview-...`) is dropped even when exact, so a block shows its fallback on a preview link.
 - **`X-Forwarded-For` is read only from a configured proxy,** from the right. With no proxy configured it is never read, and every visitor behind a proxy then shares one rate limit: the start line says how many proxies are believed (`trustedProxies`).

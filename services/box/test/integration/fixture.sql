@@ -12,11 +12,14 @@
 --   1. the function `box_document(site_id text, sha256 text)`, returning at
 --      most one row of exactly these columns:
 --        document text, live boolean, subdomain_labels text[], custom_hostnames text[]
---      - SECURITY DEFINER with a fixed search_path, so the caller needs no
---        right on any table; EXECUTE revoked from PUBLIC;
+--      - SECURITY DEFINER with a fixed search_path that names pg_temp last
+--        (left out, the temporary schema is searched first), every table
+--        schema-qualified, so the caller needs no right on any table;
+--        EXECUTE revoked from PUBLIC;
 --      - `live` is `custom_code_enabled AND blocked_at IS NULL`;
 --      - `document` is NULL unless `live`, so the role can never read the
---        code of a blocked blob or of a site that switched custom code off;
+--        code of a blocked blob or of a site that switched custom code off,
+--        and NULL when it is larger than a block may be;
 --      - `subdomain_labels` leaves out every label kept for branch preview
 --        links (decision D13); the box drops them a second time;
 --      - `custom_hostnames` holds live claims only (verified or active).
@@ -71,10 +74,11 @@ RETURNS TABLE (document text, live boolean, subdomain_labels text[], custom_host
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = pg_catalog
+SET search_path = pg_catalog, pg_temp
 AS $$
   SELECT
-    CASE WHEN s.custom_code_enabled AND b.blocked_at IS NULL THEN b.document END,
+    -- Never more than a block may be (262144 bytes), so the box is not handed a row it would refuse anyway.
+    CASE WHEN s.custom_code_enabled AND b.blocked_at IS NULL AND octet_length(b.document) <= 262144 THEN b.document END,
     (s.custom_code_enabled AND b.blocked_at IS NULL),
     COALESCE(
       (SELECT array_agg(d.subdomain ORDER BY d.subdomain)

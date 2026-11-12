@@ -69,7 +69,9 @@ const HEALTH_DB_TTL_MS = 5000;
 
 export function createBoxHandler(options: BoxHandlerOptions): (request: BoxRequest) => Promise<BoxResponse> {
   const { config, store, killSwitchOn } = options;
-  const now = options.now ?? Date.now;
+  // A clock that only goes forward: a step of the wall clock must not keep a taken-down block in the
+  // cache or hand out rate limit tokens.
+  const now = options.now ?? (() => performance.now());
   const cache = new LookupCache(options.cacheBytes ?? 32 * 1024 * 1024, options.cacheTtlMs ?? 60_000, options.cacheMisses ?? 4096);
   const maxPending = options.maxPendingLookups ?? 64;
   const keys = options.rateLimitKeys ?? 50_000;

@@ -289,6 +289,24 @@ describe('failure and recovery', () => {
     expect(store.finds).toBe(before + 500);
   });
 
+  it('by default measures time with a clock that a step of the wall clock cannot move', async () => {
+    const store = new FakeStore();
+    store.put(SITE_A, HASH);
+    const handle = createBoxHandler({ config, store, killSwitchOn: () => false, cacheTtlMs: 150 });
+    const get = () => handle({ method: 'GET', url: `/box/${SITE_A}/${HASH}`, headers: FRAME, remoteAddress: '203.0.113.7' });
+    const realNow = Date.now;
+    try {
+      expect((await get()).status).toBe(200);
+      store.put(SITE_A, HASH, { live: false });
+      // The wall clock goes back an hour: the remembered answer must still run out on time.
+      Date.now = () => realNow() - 3_600_000;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expectRefusal(await get(), 410);
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
   it('remembers an answer for 60 seconds and then asks again, so a disabled block stops', async () => {
     const { store, clock, get } = setup();
     store.put(SITE_A, HASH);
@@ -480,6 +498,8 @@ describe('everything else', () => {
     expect((await get('/box/secret-data-in-the-path/x')).siteId).toBeNull();
     expect((await get('/health', {})).logPrefix).toBe('203.0.113.0/24');
     expect((await get('/health', {}, { remoteAddress: '2001:db8:1:2:3:4:5:6' })).logPrefix).toBe('20010db80001::/48');
+    // A request without a Host header is answered like any other: the box does not use the header.
+    expectRefusal(await get('/health', {}), 200);
     expect((await get('/health', {}, { remoteAddress: undefined })).logPrefix).toBe('unknown');
   });
 });

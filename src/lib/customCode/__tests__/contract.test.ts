@@ -118,6 +118,7 @@ describe('frame-ancestors', () => {
     ['a number', 7],
     ['null', null],
     ['an object', { toString: () => 'a.example.com' }],
+    ['a name longer than 253 characters', `${'a'.repeat(60)}.`.repeat(5) + 'example.com'],
   ])('drops %s instead of repairing it (D14)', (_name, value) => {
     expect(isExactHostname(value)).toBe(false);
     expect(frameAncestorsValue([value, 'ok.example.com'], EDITOR)).toBe('https://ok.example.com https://app.lumitra.co');
@@ -177,7 +178,6 @@ describe('headers', () => {
       'Content-Security-Policy': `${BOX_DOCUMENT_POLICY}; frame-ancestors https://shop.sites.lumitra.co https://app.lumitra.co; report-uri https://app.lumitra.co/api/csp-report/box`,
       'Permissions-Policy':
         'camera=(), microphone=(), geolocation=(), usb=(), serial=(), hid=(), bluetooth=(), midi=(), payment=(), display-capture=(), fullscreen=(), clipboard-read=(), clipboard-write=(), publickey-credentials-get=(), xr-spatial-tracking=(), accelerometer=(), gyroscope=(), magnetometer=(), idle-detection=(), screen-wake-lock=(), browsing-topics=(), attribution-reporting=()',
-      'Cross-Origin-Opener-Policy': 'same-origin',
       'Cross-Origin-Resource-Policy': 'cross-origin',
       'X-Content-Type-Options': 'nosniff',
       'X-DNS-Prefetch-Control': 'off',
@@ -188,6 +188,9 @@ describe('headers', () => {
     });
     expect(Object.keys(headers).map((k) => k.toLowerCase())).not.toContain('set-cookie');
     expect(Object.keys(headers).map((k) => k.toLowerCase())).not.toContain('cross-origin-embedder-policy');
+    // A sandboxed document with an opener policy is a network error on a direct visit (D21).
+    expect(Object.keys(headers).map((k) => k.toLowerCase())).not.toContain('cross-origin-opener-policy');
+    expect(Object.keys(boxRefusalHeaders()).map((k) => k.toLowerCase())).not.toContain('cross-origin-opener-policy');
   });
 
   it('a refusal runs nothing, is framed by nothing and is never stored', () => {

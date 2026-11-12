@@ -3,7 +3,8 @@ import { LookupCache } from '../src/cache';
 import { clientAddressOf, parseAddress, parseCidr, type Cidr } from '../src/clientAddress';
 import { ConfigError, isKillSwitchOn, readConfig } from '../src/config';
 import { RateLimiter } from '../src/rateLimit';
-import { storeFailureOf, withTimeout } from '../src/store';
+import { createServer, type Socket } from 'node:net';
+import { createPostgresStore, storeFailureOf, withTimeout } from '../src/store';
 
 describe('the rate limiter', () => {
   it('allows a burst of the capacity and gives tokens back over the window', () => {
@@ -145,10 +146,20 @@ describe('addresses', () => {
     expect(clientAddressOf('10.1.2.3', `${'9'.repeat(300)}`, proxies).key).toBe('4:10.1.2.3');
   });
 
-  it('counts an IPv6 client by its /64 and logs a prefix only', () => {
-    const a = clientAddressOf('2001:db8:1:2:aaaa::1', undefined, []);
-    const b = clientAddressOf('2001:db8:1:2:bbbb::2', undefined, []);
+  it('reads a hop written with brackets or a port', () => {
+    expect(clientAddressOf('10.1.2.3', '198.51.100.1:51234', proxies).key).toBe('4:198.51.100.1');
+    expect(clientAddressOf('10.1.2.3', '[2001:db8::1]', proxies).key).toBe(clientAddressOf('2001:db8::1', undefined, []).key);
+    expect(clientAddressOf('10.1.2.3', '[2001:db8::1]:443', proxies).key).toBe(clientAddressOf('2001:db8::1', undefined, []).key);
+    // Still not an address: the peer.
+    expect(clientAddressOf('10.1.2.3', '198.51.100.1:port', proxies).key).toBe('4:10.1.2.3');
+    expect(clientAddressOf('10.1.2.3', '[198.51.100.1', proxies).key).toBe('4:10.1.2.3');
+  });
+
+  it('counts an IPv6 client by its /56 and logs a prefix only', () => {
+    const a = clientAddressOf('2001:db8:1:200:aaaa::1', undefined, []);
+    const b = clientAddressOf('2001:db8:1:2ff:bbbb::2', undefined, []);
     expect(a.key).toBe(b.key);
+    expect(clientAddressOf('2001:db8:1:300::1', undefined, []).key).not.toBe(a.key);
     expect(a.logPrefix).toBe('20010db80001::/48');
     expect(clientAddressOf('203.0.113.7', undefined, []).logPrefix).toBe('203.0.113.0/24');
   });
@@ -181,6 +192,12 @@ describe('the configuration', () => {
     ['an empty database', { ...env, BOX_DATABASE_URL: '' }],
     ['a database that is not Postgres', { ...env, BOX_DATABASE_URL: 'mysql://x' }],
     ['a database that is not an address', { ...env, BOX_DATABASE_URL: 'box_reader' }],
+    ['a database address with two hosts', { ...env, BOX_DATABASE_URL: 'postgres://box_reader@db1,db2/app' }],
+    ['a database address with a malformed escape', { ...env, BOX_DATABASE_URL: 'postgres://box_reader:a%zzb@db.internal/app' }],
+    ['a database address with an unknown sslmode', { ...env, BOX_DATABASE_URL: 'postgres://box_reader@db.internal/app?sslmode=bogus' }],
+    ['an editor host that is a branch preview host', { ...env, BOX_EDITOR_HOST: 'preview-abcdefghijklmnopqrstuvwxyz234567.sites.lumitra.co' }],
+    ['a sites base host that is a branch preview host', { ...env, BOX_SITES_BASE_HOST: 'preview-x.lumitra.co' }],
+    ['an expiry on a day that does not exist', { ...env, BOX_SECURITY_TXT_EXPIRES: '2027-02-30T00:00:00Z' }],
     ['no editor host', { ...env, BOX_EDITOR_HOST: undefined }],
     ['an editor host with a scheme', { ...env, BOX_EDITOR_HOST: 'https://app.lumitra.co' }],
     ['a wildcard editor host', { ...env, BOX_EDITOR_HOST: '*.lumitra.co' }],
@@ -232,14 +249,69 @@ describe('store failures', () => {
     expect(storeFailureOf(null)).toBe('query');
   });
 
+  describe('against a listener that accepts and never answers', () => {
+    it('gives up after the timeout, leaves no rejection behind, and starts on fresh connections the next time', async () => {
+      const sockets: Socket[] = [];
+      const closed = new Set<Socket>();
+      const server = createServer((socket) => {
+        sockets.push(socket);
+        socket.on('error', () => {});
+        socket.on('close', () => closed.add(socket));
+        // Takes what is sent and answers nothing.
+        socket.resume();
+      });
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const port = (server.address() as { port: number }).port;
+      const stray: unknown[] = [];
+      const onStray = (reason: unknown) => stray.push(reason);
+      process.on('unhandledRejection', onStray);
+      const store = createPostgresStore(`postgres://box_reader@127.0.0.1:${port}/app`, { queryTimeoutMs: 300, connectTimeoutSeconds: 30 });
+      try {
+        const started = Date.now();
+        await expect(store.find('0b0e7c1a-5d2f-4c3b-9a8e-1f2d3c4b5a69', 'a'.repeat(64))).rejects.toMatchObject({ code: 'BOX_TIMEOUT' });
+        expect(Date.now() - started).toBeLessThan(2000);
+        // Five more calls, one after the other. A pool that kept its silent connections would stop at
+        // its three and never open another; a pool that is replaced opens a fresh one each time.
+        for (let i = 0; i < 5; i++) {
+          await expect(store.ping()).rejects.toMatchObject({ code: 'BOX_TIMEOUT' });
+        }
+        expect(sockets.length).toBeGreaterThanOrEqual(6);
+        // Every pool that was given up on closed its connection: at most the last one is still open.
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        expect(sockets.length - closed.size).toBeLessThanOrEqual(1);
+        expect(stray).toEqual([]);
+      } finally {
+        await store.close().catch(() => {});
+        process.off('unhandledRejection', onStray);
+        for (const socket of sockets) socket.destroy();
+        await new Promise((resolve) => server.close(resolve));
+      }
+    });
+
+    it('a refused connection is a failure the caller sees, not a stray one', async () => {
+      const stray: unknown[] = [];
+      const onStray = (reason: unknown) => stray.push(reason);
+      process.on('unhandledRejection', onStray);
+      // A port nothing listens on.
+      const probe = createServer();
+      await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve));
+      const port = (probe.address() as { port: number }).port;
+      await new Promise((resolve) => probe.close(resolve));
+      const store = createPostgresStore(`postgres://box_reader@127.0.0.1:${port}/app`, { queryTimeoutMs: 2000 });
+      try {
+        const failure = await store.find('0b0e7c1a-5d2f-4c3b-9a8e-1f2d3c4b5a69', 'a'.repeat(64)).then(() => null, (error: unknown) => error);
+        expect(storeFailureOf(failure)).toBe('connect');
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        expect(stray).toEqual([]);
+      } finally {
+        await store.close().catch(() => {});
+        process.off('unhandledRejection', onStray);
+      }
+    });
+  });
+
   it('a database that never answers is given up on', async () => {
-    let cancelled = 0;
-    await expect(withTimeout(new Promise(() => {}), 20, () => (cancelled += 1))).rejects.toMatchObject({ code: 'BOX_TIMEOUT' });
-    expect(cancelled).toBe(1);
-    // A cancel that itself fails does not change the answer, and an answer in time cancels nothing.
-    await expect(withTimeout(new Promise(() => {}), 20, () => { throw new Error('no'); })).rejects.toMatchObject({ code: 'BOX_TIMEOUT' });
-    await expect(withTimeout(Promise.resolve(7), 20, () => (cancelled += 1))).resolves.toBe(7);
-    expect(cancelled).toBe(1);
+    await expect(withTimeout(new Promise(() => {}), 20)).rejects.toMatchObject({ code: 'BOX_TIMEOUT' });
     await expect(withTimeout(Promise.resolve(7), 20)).resolves.toBe(7);
     await expect(withTimeout(Promise.reject(new Error('no')), 20)).rejects.toThrow('no');
   });

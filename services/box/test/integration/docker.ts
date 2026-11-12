@@ -15,6 +15,9 @@ import path from 'node:path';
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
 
+/** Postgres 16 on Alpine, by digest: the tests run the same bytes every time. */
+const POSTGRES_IMAGE = 'postgres:16-alpine@sha256:16bc17c64a573ef34162af9298258d1aec548232985b33ed7b1eac33ba35c229';
+
 export function docker(args: string[], options: { input?: string; env?: Record<string, string> } = {}): string {
   return execFileSync('docker', args, {
     input: options.input,
@@ -77,6 +80,9 @@ export interface ScratchPostgres {
   sql(text: string): string;
   stop(): void;
   start(): Promise<void>;
+  /** Freezes the database: it keeps its connections and answers nothing. */
+  pause(): void;
+  unpause(): void;
   remove(): void;
 }
 
@@ -89,7 +95,7 @@ export async function startScratchPostgres(): Promise<ScratchPostgres> {
   const readerPassword = randomBytes(18).toString('hex');
   docker(['network', 'create', network]);
   docker(
-    ['run', '-d', '--name', container, '--network', network, '--network-alias', 'pg', '-p', `127.0.0.1:${port}:5432`, '-e', 'POSTGRES_PASSWORD', 'postgres:16-alpine'],
+    ['run', '-d', '--name', container, '--network', network, '--network-alias', 'pg', '-p', `127.0.0.1:${port}:5432`, '-e', 'POSTGRES_PASSWORD', POSTGRES_IMAGE],
     { env: { POSTGRES_PASSWORD: adminPassword } },
   );
   const sql = (text: string) => docker(['exec', '-i', container, 'psql', '-v', 'ON_ERROR_STOP=1', '-q', '-t', '-A', '-U', 'postgres', '-d', 'postgres'], { input: text });
@@ -105,6 +111,8 @@ export async function startScratchPostgres(): Promise<ScratchPostgres> {
     readerUrlInNetwork: `postgres://box_reader:${readerPassword}@pg:5432/postgres`,
     sql,
     stop: () => void docker(['stop', '-t', '2', container]),
+    pause: () => void docker(['pause', container]),
+    unpause: () => void docker(['unpause', container]),
     start: async () => {
       docker(['start', container]);
       await ready();

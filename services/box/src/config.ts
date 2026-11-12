@@ -5,7 +5,7 @@
 // the variable (never its value), because a box that guessed a default for a
 // host or a proxy would be a box that is wrong quietly.
 
-import { isExactHostname } from '../../../src/lib/customCode/contract';
+import { isExactHostname, isPreviewLabelHost } from '../../../src/lib/customCode/contract';
 import { parseAddress, parseCidr, type Cidr } from './clientAddress';
 
 export interface BoxConfig {
@@ -41,6 +41,8 @@ function required(env: Env, name: string): string {
 function hostname(env: Env, name: string): string {
   const value = required(env, name);
   if (!isExactHostname(value)) throw new ConfigError(`${name} must be an exact lower case host name`);
+  // A branch preview host is never a frame ancestor (decision D13), so it cannot be one of these two either.
+  if (isPreviewLabelHost(value)) throw new ConfigError(`${name} must not be a branch preview host`);
   return value;
 }
 
@@ -64,18 +66,38 @@ function isHttpsUrl(value: string): boolean {
 }
 
 function isIsoInstant(value: string): boolean {
-  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(value) && !Number.isNaN(Date.parse(value));
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(value)) return false;
+  const time = Date.parse(value);
+  // A real day: 30 February is not one, though a parser may roll it over.
+  return !Number.isNaN(time) && new Date(time).toISOString().slice(0, 10) === value.slice(0, 10);
+}
+
+const SSL_MODES = new Set(['disable', 'allow', 'prefer', 'require', 'verify-ca', 'verify-full']);
+
+/** One host, credentials that decode, a known `sslmode`: what the driver would otherwise only find out by throwing. */
+function checkDatabaseUrl(value: string): void {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new ConfigError('BOX_DATABASE_URL is not a connection string');
+  }
+  if (url.protocol !== 'postgres:' && url.protocol !== 'postgresql:') throw new ConfigError('BOX_DATABASE_URL is not a Postgres connection string');
+  if (url.hostname === '' || url.hostname.includes(',')) throw new ConfigError('BOX_DATABASE_URL must name one host');
+  try {
+    decodeURIComponent(url.username);
+    decodeURIComponent(url.password);
+    decodeURIComponent(url.pathname);
+  } catch {
+    throw new ConfigError('BOX_DATABASE_URL holds a malformed percent escape');
+  }
+  const sslmode = url.searchParams.get('sslmode');
+  if (sslmode !== null && !SSL_MODES.has(sslmode)) throw new ConfigError('BOX_DATABASE_URL holds an unknown sslmode');
 }
 
 export function readConfig(env: Env): BoxConfig {
   const databaseUrl = required(env, 'BOX_DATABASE_URL');
-  let protocol: string;
-  try {
-    protocol = new URL(databaseUrl).protocol;
-  } catch {
-    throw new ConfigError('BOX_DATABASE_URL is not a connection string');
-  }
-  if (protocol !== 'postgres:' && protocol !== 'postgresql:') throw new ConfigError('BOX_DATABASE_URL is not a Postgres connection string');
+  checkDatabaseUrl(databaseUrl);
 
   const portText = env.BOX_PORT ?? '8080';
   if (!/^[1-9][0-9]{0,4}$/.test(portText) || Number(portText) > 65535) throw new ConfigError('BOX_PORT must be a port number');

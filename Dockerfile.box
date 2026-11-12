@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1.7
 #
 # The box: the small service that serves sandboxed custom code documents from
 # its own registrable domain (docs/plans/2026-11-02-sandboxed-custom-code.md).

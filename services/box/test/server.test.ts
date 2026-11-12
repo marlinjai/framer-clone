@@ -89,6 +89,8 @@ describe('the server', () => {
     expect(response.headers.get('set-cookie')).toBeNull();
     expect(await response.text()).toBe('');
     expect(JSON.stringify(lines)).not.toContain('hunter2');
+    expect(JSON.stringify([...response.headers.entries()])).not.toMatch(/hunter2|10\.0\.0\.5|password/);
+    expect(response.statusText).not.toMatch(/hunter2|password/);
   });
 
   it('never reads a request body: answers, then closes the connection', async () => {
@@ -220,6 +222,62 @@ describe('the server', () => {
       expect(result.data).toBe('');
     }
     expect(calls).toBe(0);
+  });
+
+  it('answers a request without a Host header itself, with the policy, and logs it', async () => {
+    const { port, lines } = await start(plain);
+    const result = await raw(port, ['GET /health HTTP/1.1\r\nConnection: close\r\n\r\n']);
+    expect(result.data).toMatch(/^HTTP\/1\.1 200 /);
+    expect(result.data.toLowerCase()).toContain(`content-security-policy: ${BOX_REFUSAL_POLICY}`);
+    expect(lines).toHaveLength(1);
+  });
+
+  it('closes a connection that sends more requests than it has been answered', async () => {
+    let calls = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const { port } = await start(
+      async (request) => {
+        calls += 1;
+        await gate;
+        return plain(request);
+      },
+      { maxUnansweredPerSocket: 2 },
+    );
+    const result = await raw(port, ['GET /health HTTP/1.1\r\nHost: x\r\n\r\n'.repeat(50)], 4000);
+    release();
+    expect(result.closedByServer).toBe(true);
+    expect(result.data).toBe('');
+    // Not all fifty were taken up.
+    expect(calls).toBeLessThanOrEqual(2);
+  });
+
+  it('gives no answer of Node\'s own to a request past the limit of one connection', async () => {
+    const { port } = await start(plain, { maxRequestsPerSocket: 2 });
+    const responses = await new Promise<string>((resolve) => {
+      const socket = connect(port, '127.0.0.1');
+      let data = '';
+      let sent = 0;
+      const send = () => {
+        sent += 1;
+        socket.write('GET /health HTTP/1.1\r\nHost: x\r\n\r\n');
+      };
+      socket.on('connect', send);
+      socket.on('data', (chunk) => {
+        data += chunk.toString('latin1');
+        // One at a time, each after the answer before it, so only the per-connection limit is met.
+        if (sent < 3 && (data.match(/HTTP\/1\.1 /g) ?? []).length === sent) send();
+      });
+      socket.on('close', () => resolve(data));
+      socket.on('error', () => resolve(data));
+      setTimeout(() => {
+        socket.destroy();
+        resolve(data);
+      }, 4000);
+    });
+    // Two answers of the box, and nothing for the third: no bare 503 without a policy.
+    expect((responses.match(/HTTP\/1\.1 200 /g) ?? []).length).toBe(2);
+    expect(responses).not.toContain(' 503 ');
   });
 
   it('survives an answer that cannot be written', async () => {

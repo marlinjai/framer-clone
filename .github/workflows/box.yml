@@ -73,7 +73,7 @@ jobs:
           cache-dependency-path: services/box/pnpm-lock.yaml
 
       - name: Install
-        run: pnpm install --frozen-lockfile --ignore-workspace
+        run: pnpm install --frozen-lockfile --ignore-workspace --ignore-scripts
 
       # The application's type check and lint leave services/ out (root tsconfig.json and
       # eslint.config.mjs), so these two steps are the box's only ones and must stay.
