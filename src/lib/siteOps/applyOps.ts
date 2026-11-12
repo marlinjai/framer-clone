@@ -62,6 +62,8 @@ const SHAPE_KEEPING_WARNING = 'node had text and children, text moved into a lea
 /** Props setProps leaves to their own operations (or to nobody). */
 const PROPS_NOT_SET_HERE: ReadonlySet<string> = new Set([
   'style', 'children', 'rules', 'behaviour', 'effects', 'query', 'bindings', 'instance', 'component',
+  // The 3D scene (src/lib/scene) is written by the scene editor, through parseScene, never here.
+  'scene', 'data-scene',
   // The marker of an FX scene box (src/lib/fxScene) makes a box an FX scene; the scene
   // itself is refused per node below, where an SVG gradient's `fx` is told apart.
   FX_ATTR,

@@ -61,9 +61,11 @@ const INTERACTIVE_COMMERCE_KINDS: ReadonlySet<string> = new Set([
 // `fx` is the stored scene of an FX scene box (src/lib/fxScene): data
 // for its island, never an attribute. It is denied per node (isFxSceneProp), because
 // on an SVG `radialGradient` the same name is the gradient's focal point.
+// `scene` is the stored 3D scene of a 3D scene box (src/lib/scene, not an FX scene): data for
+// its island under any value, never an attribute.
 // `rules` is the same unless it is a string, which stays the legacy `<table>`
 // attribute it has always been: anything else would render as `[object Object]`.
-const NON_DOM_PROPS: ReadonlySet<string> = new Set(['children', 'query', 'bindings', 'effects', 'behaviour']);
+const NON_DOM_PROPS: ReadonlySet<string> = new Set(['children', 'query', 'bindings', 'effects', 'behaviour', 'scene']);
 
 /**
  * Resolve a node's HTML tag. A stored `type` IS the tag: every write path stores
