@@ -575,8 +575,6 @@ class Validator {
   private readonly newId: () => string;
   /** What a token reference may name, the proposed tokens included (undefined: no check, never). */
   private readonly references: ReferenceContext;
-  /** Every token id a kept style value refers to, so an unused proposal is not added. */
-  readonly usedTokens = new Set<string>();
 
   constructor(ctx: ValidateContext, references: ReferenceContext) {
     this.references = references;
@@ -845,7 +843,6 @@ class Validator {
     // drives the repair round) and never a quiet drop, which would ship a page missing a colour.
     // The streaming preview cannot see the tokens a generation proposes, so there it drops.
     let fontReferenceChecked = false;
-    let referenced: string[] = [];
     if (/--fc-t-/i.test(v)) {
       const verdict = judgeReferences(property, v, this.references);
       if (verdict.problem) {
@@ -854,11 +851,9 @@ class Validator {
         return undefined;
       }
       v = verdict.value;
-      referenced = verdict.used;
       // A font reference is the whole value: no family beside it to normalise.
       if (property === 'fontFamily') {
-        referenced.forEach((id) => this.usedTokens.add(id));
-        return v;
+          return v;
       }
       fontReferenceChecked = true;
     }
@@ -867,8 +862,6 @@ class Validator {
       this.warn(path, `style.${key}: ${problem} dropped`);
       return undefined;
     }
-    // Counted only once the value has passed every check that can still drop it here.
-    referenced.forEach((id) => this.usedTokens.add(id));
     // url(...) only to http(s), site paths or a reference inside the page (an SVG
     // clip or mask), never data: or other schemes.
     const { urls } = scanCssValue(v);

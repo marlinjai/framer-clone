@@ -284,7 +284,7 @@ export function themeContextText(theme: SiteContextTheme | undefined, newPage: b
     '</site_theme>',
     '',
     'Using tokens:',
-    '- Prefer a token to a literal for anything in the palette. A colour token goes wherever a style value holds a colour: "color": "var(--fc-t-<id>)", also inside a gradient or a shadow. A font token is the whole fontFamily value, nothing beside it: "fontFamily": "var(--fc-t-<id>)". Write the reference exactly, with the id from the list: no space, no fallback.',
+    '- Prefer a token to a literal for anything in the palette. A colour token goes wherever a style value holds a colour: "color": "var(--fc-t-<id>)", also inside a gradient or a shadow. A font token is the whole fontFamily value, nothing beside it: "fontFamily": "var(--fc-t-<id>)". Write the reference exactly, with the id from the list: no space, no fallback. Only in a style value, never in an attribute such as fill or stroke (set those in the style).',
     '- Use only tokens from the list. A token of another kind, one not in the list, or any other --fc- name makes the page invalid.',
     '- A page still keeps its own literal colours where no token fits (a photo scrim, a one-off). Check that a text token has enough contrast on the background token it sits on, in both of the colours it takes (light and dark).',
   ];

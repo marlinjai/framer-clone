@@ -207,6 +207,14 @@ export type SiteHeadResult = { ok: true; dropped: number } | { ok: false; errors
 /** Site settings the siteSettings processor produced (complete, so never normalized again). */
 const normalizedSiteSettings = new WeakSet<object>();
 
+/** Two stored tokens with the same fields, whatever the order their keys were written in. */
+function sameToken(a: ThemeToken, b: ThemeToken): boolean {
+  const x = a as unknown as Record<string, unknown>;
+  const y = b as unknown as Record<string, unknown>;
+  const keys = new Set([...Object.keys(x), ...Object.keys(y)]);
+  return [...keys].every((key) => x[key] === y[key]);
+}
+
 // Project metadata model
 const ProjectMetadataModel = types.model('ProjectMetadata', {
   title: types.string,
@@ -1395,7 +1403,7 @@ export const ProjectModel = types
       for (const token of added) {
         const now = settings.theme.tokens.find((t) => t.id === token.id);
         if (!now) continue;
-        if ((used.get(token.id) ?? 0) > 0 || JSON.stringify(now) !== JSON.stringify(token)) kept.push(token.name);
+        if ((used.get(token.id) ?? 0) > 0 || !sameToken(now, token)) kept.push(token.name);
         else gone.add(token.id);
       }
       if (gone.size > 0) {

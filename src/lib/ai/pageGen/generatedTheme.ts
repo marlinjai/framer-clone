@@ -188,7 +188,7 @@ export function adoptProposedTokens(theme: SiteTheme, proposed: readonly Propose
     if (token.kind === 'color') {
       const light = parseColorValue(token.light);
       const dark = token.dark === undefined ? undefined : parseColorValue(token.dark);
-      if (same && same.kind === 'color' && same.broken) {
+      if (same && same.kind === 'color' && (colorReadability(same) === 'unreadable' || colorReadability(same) === 'light-unreadable')) {
         errors.push(`${label}: that name is taken by a colour the site cannot read, which is not in the list. Choose a different name for this role.`);
         continue;
       }
@@ -293,7 +293,7 @@ export function isColourSlot(property: string): boolean {
   return (
     property.startsWith('--') ||
     /color$/i.test(property) ||
-    /^(background|border|outline|boxShadow|textShadow|textDecoration|textEmphasis|columnRule|fill|stroke|filter|backdropFilter|mask|scrollbar|listStyle|caret|accent)/.test(property)
+    /^(?:webkit|moz)?(?:background|border|outline|boxShadow|textShadow|textDecoration|textEmphasis|textStroke|columnRule|fill|stroke|filter|backdropFilter|mask|scrollbar|listStyle|caret|accent)/i.test(property)
   );
 }
 
