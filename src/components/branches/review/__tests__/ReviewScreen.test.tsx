@@ -123,6 +123,7 @@ describe('forward', () => {
     fireEvent.click(button(/looks good/i));
     await waitFor(() => expect(client.approve).toHaveBeenCalledWith(BRANCH, 'tok-1'));
     expect(await screen.findByText(/Marked as looking good/)).toBeTruthy();
+    await waitFor(() => expect(client.changes).toHaveBeenCalledTimes(2));
     // What the press does is text the button points at, not only its tooltip.
     expect(document.getElementById(button('Merge into Bakery').getAttribute('aria-describedby') ?? '')?.textContent).toBe('Merge into Bakery. Nothing is published.');
     fireEvent.click(button('Merge into Bakery'));
