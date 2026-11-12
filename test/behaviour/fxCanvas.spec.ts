@@ -97,6 +97,9 @@ describe.each(ENGINES)('in %s', (_name, engine) => {
       });
     });
     ({ page, crashes } = opened);
+    // The harness's own default is 1.5 seconds, for an editor that answers at once. A scene drawn
+    // without a graphics card on a busy runner does not: these steps wait as long as the polls do.
+    page.setDefaultTimeout(30_000);
     await placeTree(page, crashes, tree(), { allFrames: true });
   };
 

@@ -172,20 +172,32 @@ describe('in the preview', () => {
     expect(drawn).toHaveLength(1);
   });
 
-  it('without WebGL: nothing is fetched, the layer is off, one warning, and the claim stays free for a scene that can draw', async () => {
+  it('without WebGL: nothing is fetched, the first scene is off with one warning, a second is calm', async () => {
     webgl = false;
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const claim = new FxClaim();
     render(
-      <Frame claim={claim}>
-        <Box stored={IMMEDIATE} />
+      <Frame claim={new FxClaim()}>
+        <Box key="a" stored={IMMEDIATE} />
+        <Box key="b" stored={IMMEDIATE} />
       </Frame>,
     );
     await flush();
-    expect(states()).toEqual(['off']);
+    expect(states()).toEqual(['off', 'calm']);
     expect(drawn).toHaveLength(0);
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(claim.taken).toBe(false);
+  });
+
+  it('the first scene holds the frame\'s one slot even when it stays calm: a second scene is not drawn in its place, as published', async () => {
+    reducedMotion = true;
+    render(
+      <Frame claim={new FxClaim()}>
+        <Box key="a" stored={IMMEDIATE} />
+        <Box key="b" stored={ok(setFxCalm(IMMEDIATE, 'frame'))} />
+      </Frame>,
+    );
+    await flush();
+    expect(states()).toEqual(['calm', 'calm']);
+    expect(drawn).toHaveLength(0);
   });
 
   it('when the engine does not arrive: off, with a warning, and nothing thrown', async () => {

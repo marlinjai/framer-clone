@@ -673,6 +673,13 @@ Decided in F5, say so if you disagree:
   zoom the drawing would have been scaled twice. Checked in a browser at 60 percent: the drawing fills the box.
   The published page keeps the default measure, so the pixel comparison of F4 is untouched.
 - **Live is session state:** never saved, never in undo history, off when another project opens.
+- **The presets are offered in the panel, not as separate palette entries.** The plan put them in the insert palette.
+  The palette has one entry, "FX scene", which starts as the lumitra.co hero, and "Replace with a preset" is the first
+  control of its section: four more palette tiles for one kind of box would crowd the palette, and a preset can be
+  changed later only from the panel anyway.
+- **In the preview the first scene holds the frame's one slot even when it is not drawn** (reduced motion with the
+  background as calm state, or no WebGL), exactly as the published island gives the page's slot to the first box. A
+  second scene is never drawn in its place.
 
 Found by the tests and fixed:
 
@@ -696,7 +703,9 @@ Tests:
   upload, copy and import, the Live switch with each reason, and the four stateful paths: forward; another kind resets
   that layer's settings and keeps every other layer, and the same kind keeps them; a reload restores the scene; undo
   after a removal restores the layer, another box starts clean, and a box whose scene cannot be read leads to a preset.
-- `src/lib/fxScene/__tests__/edit.test.ts`, `mount.test.tsx` (18), `src/components/fx/__tests__/FxLayer.test.tsx` (14).
+- `src/lib/fxScene/__tests__/edit.test.ts`, `mount.test.tsx` (18), `src/components/fx/__tests__/FxLayer.test.tsx` (15).
+- `src/app/site-images/__tests__/siteImages.itest.ts`: the real upload route stores a picture sent with `kind=scene`
+  (what the panel posts), of any shape without warnings, and refuses an icon file for it.
 - `test/behaviour/fxCanvas.spec.ts` (18, Chromium and WebKit, the real EditorApp): **no more than one WebGL context**,
   counted in the page where contexts are made: nothing drawn by default, Live draws one box in one frame, five changes
   of the scene keep the same context, the frame and the box can be switched, the preview over the editor takes the

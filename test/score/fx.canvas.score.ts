@@ -69,6 +69,9 @@ async function canvasCell(browser: Browser, bundle: string, scene: unknown): Pro
     });
     page = opened.page;
     const view = page;
+    // The whole score runs beside this probe and the scene is drawn without a graphics card here:
+    // the editor's own short default (1.5 seconds) would measure the machine's load, not the editor.
+    view.setDefaultTimeout(60_000);
     await placeTree(view, opened.crashes, tree(scene));
     const status = () => view.evaluate(() => (window as unknown as ProbeWindow).__editor.fxLiveStatus());
     const contexts = () => view.evaluate(() => (window as unknown as ProbeWindow).__fxContexts.live());

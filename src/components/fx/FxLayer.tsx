@@ -228,18 +228,23 @@ function PreviewLayer({ stored, ownPosition, claim, settings }: FxLayerProps & {
   const reduced = useReducedMotion();
   const [decision, setDecision] = useState<'calm' | 'off' | 'go' | null>(null);
   useEffect(() => {
-    const next = fxStartDecision(settings);
-    setDecision(next);
-    if (next === 'off') console.warn(FX_WARNING, 'WebGL is not available.');
+    setDecision(fxStartDecision(settings));
   }, [settings.calm, settings.start, reduced]); // eslint-disable-line react-hooks/exhaustive-deps
-  const holds = useFxClaim(claim, decision === 'go');
+  // The frame's one scene is its first, whether or not that one ends up drawn: as on the
+  // published page, where the first box holds the page's slot even when it stays calm (reduced
+  // motion) or off (no WebGL), and every later scene is calm. So the claim is asked for
+  // whatever the decision, and only its holder may draw.
+  const holds = useFxClaim(claim, decision !== null);
+  useEffect(() => {
+    if (holds && decision === 'off') console.warn(FX_WARNING, 'WebGL is not available.');
+  }, [holds, decision]);
   return (
     <DrawnLayer
       // A new element for a new preference: the scene starts over, as the island runs its program again.
       key={reduced ? 'reduced' : 'motion'}
       stored={stored}
-      draws={holds}
-      idle={decision === 'off' ? 'off' : 'calm'}
+      draws={holds && decision === 'go'}
+      idle={holds && decision === 'off' ? 'off' : 'calm'}
       start={settings.start}
       projectId={editorUI.currentProject?.id}
       ownPosition={ownPosition}

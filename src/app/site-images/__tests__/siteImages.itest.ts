@@ -305,6 +305,25 @@ describe('POST /api/projects/<id>/images', () => {
     expect(body.warnings.join(' ')).toMatch(/cut off/);
   });
 
+  it('stores a picture for an FX scene (kind=scene) of any shape without warnings, and refuses an icon file for it', async () => {
+    // What the FX section of the properties panel posts (FxSceneSection, PictureSetting).
+    const tall = png(300, 900, [9, 9, 9]);
+    const stored = await upload(siteA.id, tall, 'scene');
+    expect(stored.status).toBe(201);
+    expect(await stored.json()).toMatchObject({ path: `/site-images/${sha(tall)}.png`, contentType: 'image/png', width: 300, height: 900, warnings: [] });
+
+    const wide = jpegHeader(1600, 400);
+    const jpeg = await upload(siteA.id, wide, 'scene', { 'content-type': 'image/jpeg' });
+    expect(jpeg.status).toBe(201);
+    expect((await jpeg.json()).warnings).toEqual([]);
+
+    const before = await prisma.siteImage.count({ where: { siteId: siteA.id } });
+    const icon = await upload(siteA.id, ico([16, 32]), 'scene', { 'content-type': 'image/x-icon' });
+    expect(icon.status).toBe(415);
+    expect((await icon.json()).error.message).toMatch(/PNG|JPEG|WebP/);
+    expect(await prisma.siteImage.count({ where: { siteId: siteA.id } })).toBe(before);
+  });
+
   it('refuses SVG, a wrong type for the kind, a bad kind, and stores nothing', async () => {
     const before = await prisma.siteImage.count({ where: { siteId: siteA.id } });
 
