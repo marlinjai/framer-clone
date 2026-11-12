@@ -21,6 +21,11 @@
 // `"receipts":"ok"`, so money taken without a receipt turns that monitor red
 // while the status code stays 200 for this one.
 //
+// Form-submission purges of deleted projects (src/server/forms/purge.ts) never die and never give up, so a permanent fault
+// would retry silently: they are counted in `purgesStuck` (five failures or more) and `purges` reads "stuck" while there
+// are any, "ok" otherwise, for a fourth Uptime Kuma keyword monitor matching `"purges":"ok"` (deploy/README.md). Until that
+// monitor exists nothing notifies a person of a stuck purge.
+//
 // Running at the same moment as a poller is harmless: the claim hands each job to
 // one of them.
 //

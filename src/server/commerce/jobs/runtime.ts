@@ -60,6 +60,11 @@ export interface CommerceJobReport extends CommercePassSummary {
   deadUnacknowledged: number;
   /** Form-submission purges of deleted projects that keep failing (src/server/forms/purge.ts): they never die, so this is how a permanent fault shows. A count, like the dead jobs. */
   purgesStuck: number;
+  /**
+   * "ok", or "stuck" while `purgesStuck` is above 0. The field for its own Uptime Kuma keyword monitor (`"purges":"ok"`), so a
+   * deleted project's form submissions that cannot be removed turn that monitor red while the status code stays 200 for the others.
+   */
+  purges: 'ok' | 'stuck';
   /** Always 0 until B8 adds `payment_finding` and reconciliation: there is nothing to count before that. */
   findingsOpen: number;
   /** How late the oldest due job is, 0 with nothing due. Includes kinds this build does not know. */
@@ -226,6 +231,7 @@ export async function runCommerceWatchdogPass(options: CommercePassOptions = {})
     failed: Math.max(pass.failed, read.failed),
     deadUnacknowledged,
     purgesStuck,
+    purges: purgesStuck > 0 ? 'stuck' : 'ok',
     findingsOpen: 0,
     oldestDueSeconds: oldestDueMs === Infinity ? 0 : Math.floor((at.getTime() - oldestDueMs) / 1000),
     receiptsUnissued,

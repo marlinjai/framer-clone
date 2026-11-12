@@ -49,6 +49,16 @@ describe('DeleteProjectDialog', () => {
     expect(said).toMatch(/still being removed in the background/);
     expect(said).toMatch(/no guaranteed time/);
     expect(said).not.toMatch(/minutes|soon|shortly/i);
+    // The next step is there, with the id the owner can quote (the project is gone, its card is too).
+    expect(said).toMatch(/contact support and quote the project id s1/);
+  });
+
+  it('uses the server\'s own pending message when it sends one, so the words and the project id are the server\'s', async () => {
+    deleteProject.mockResolvedValue({ ok: true, formSubmissionsPending: true, message: 'Its form submissions are still being removed in the background. This has no guaranteed time. Quote project id s1 to support.' });
+    const onDeleted = open();
+    fireEvent.click(screen.getByRole('button', { name: 'Delete project' }));
+    await waitFor(() => expect(onDeleted).toHaveBeenCalledTimes(1));
+    expect(onDeleted.mock.calls[0][0]).toBe('Deleted the project Bakery. Its form submissions are still being removed in the background. This has no guaranteed time. Quote project id s1 to support.');
   });
 
   it('a deleted project whose submissions are not removed shows the support message and removes the card only when closed', async () => {
@@ -66,7 +76,7 @@ describe('DeleteProjectDialog', () => {
     // Closing removes the card, and the status line says what is true: deleted, but the submissions are not removed.
     fireEvent.click(screen.getByRole('button', { name: /close|ok|done|got it/i }));
     await waitFor(() => expect(onDeleted).toHaveBeenCalledTimes(1));
-    expect(onDeleted.mock.calls[0][0]).toMatch(/Its form submissions could not be removed: contact support\./);
+    expect(onDeleted.mock.calls[0][0]).toMatch(/Its form submissions could not be removed: contact support and quote the project id s1\./);
   });
 
   it('a delete refused before anything changed keeps the dialog open with a try-again message and no "deleted" announcement', async () => {

@@ -8,6 +8,8 @@ export type DeleteResult =
       ok: true;
       /** The project is gone, but the removal of its form submissions is still running in the background. */
       formSubmissionsPending?: boolean;
+      /** The server's own words for the pending removal: no time promise, the next step and the project id. */
+      message?: string;
     }
   | {
       ok: false;
@@ -37,12 +39,15 @@ export async function deleteProject(projectId: string, confirmName?: string): Pr
   }
   if (res.ok) {
     let pending = false;
+    let message: string | undefined;
     try {
-      pending = (await res.json())?.formSubmissionsPending === true;
+      const body = await res.json();
+      pending = body?.formSubmissionsPending === true;
+      if (pending && typeof body.message === 'string') message = body.message;
     } catch {
       // A body that is not JSON is a plain success.
     }
-    return pending ? { ok: true, formSubmissionsPending: true } : { ok: true };
+    return pending ? { ok: true, formSubmissionsPending: true, ...(message ? { message } : {}) } : { ok: true };
   }
 
   let code: string | undefined;

@@ -19,6 +19,7 @@ const HEALTHY = {
   failed: 0,
   deadUnacknowledged: 0,
   purgesStuck: 0,
+  purges: 'ok',
   findingsOpen: 0,
   oldestDueSeconds: 0,
   receiptsUnissued: 0,

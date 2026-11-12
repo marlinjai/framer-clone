@@ -18,7 +18,11 @@ describe('deleteProject', () => {
 
   it('a success while the form submissions are still being removed says so', async () => {
     answer(200, { siteId: 's', deleted: true, formSubmissionsPending: true, message: 'Its form submissions are still being removed in the background. This has no guaranteed time, and nothing more is needed.' });
-    expect(await deleteProject('s')).toEqual({ ok: true, formSubmissionsPending: true });
+    expect(await deleteProject('s')).toEqual({
+      ok: true,
+      formSubmissionsPending: true,
+      message: 'Its form submissions are still being removed in the background. This has no guaranteed time, and nothing more is needed.',
+    });
   });
 
   it('a success body that is not JSON is still a success', async () => {

@@ -449,7 +449,7 @@ describe('DELETE /api/projects/<id> outcome for a published project', () => {
     expect(res.status).toBe(500);
     const error = (await res.json()).error;
     expect(error.code).toBe('delete_submissions_failed');
-    expect(error.message).toMatch(/Contact support/);
+    expect(error.message).toMatch(/Contact support and quote the project id site_pub/);
     expect(error.message).toMatch(/still be served from cache/);
     errorSpy.mockRestore();
   });

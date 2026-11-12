@@ -94,7 +94,7 @@ export default function DeleteProjectDialog({
     if (result.ok) {
       onDeleted(
         result.formSubmissionsPending
-          ? `Deleted the project ${shownName}. Its form submissions are still being removed in the background, with no guaranteed time.`
+          ? `Deleted the project ${shownName}. ${result.message ?? `Its form submissions are still being removed in the background, with no guaranteed time. If you need them removed by a certain time, contact support and quote the project id ${siteId}.`}`
           : `Deleted the project ${shownName}.`,
       );
       return;
@@ -103,7 +103,7 @@ export default function DeleteProjectDialog({
       setGoneNotice({
         message: result.message,
         announcement: result.deletedWithWarning
-          ? `Deleted the project ${shownName}.${result.formSubmissionsPending ? ' Its form submissions are still being removed in the background, with no guaranteed time.' : ''}${result.submissionsNotRemoved ? ' Its form submissions could not be removed: contact support.' : ''}`
+          ? `Deleted the project ${shownName}.${result.formSubmissionsPending ? ` Its form submissions are still being removed in the background, with no guaranteed time. If you need them removed by a certain time, contact support and quote the project id ${siteId}.` : ''}${result.submissionsNotRemoved ? ` Its form submissions could not be removed: contact support and quote the project id ${siteId}.` : ''}`
           : `The project ${shownName} is no longer in this company.`,
       });
       return;

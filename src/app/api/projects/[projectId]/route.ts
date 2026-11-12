@@ -184,7 +184,8 @@ function invalidateDeletedHosts(deleted: DeletedSite): string[] {
 /**
  * What an owner is told while the form submissions of a deleted project are still being removed. No time is promised: the
  * background job is first due ten minutes after the delete began and retries (1, 5, 15, 60 minutes, then every six hours) for
- * as long as it takes, and it never gives up; operators are alerted when it keeps failing (`purgesStuck`). The next step is
+ * as long as it takes, and it never gives up; a permanent fault shows as `purgesStuck` / `purges: "stuck"` in the job watchdog report,
+ * which notifies a person once its Uptime Kuma monitor exists (deploy/README.md; not yet created). The next step is
  * only for the owner who needs the data gone by a certain time: support, with the project's id.
  */
 function formSubmissionsPendingNote(projectId: string): string {
