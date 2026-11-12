@@ -38,6 +38,7 @@ import {
   BranchClosedError,
 } from '@/server/sites';
 import { SaveAbortedError } from '@/server/sites/repository';
+import { siteBranchesEnabled } from '@/server/sites/branches/switch';
 import { revalidateCustomHostsForSiteId, revalidateSiteCache } from '@/server/sites/cachedResolver';
 import { ensureCompanyCommerce } from '@/server/sites/companyCommerce';
 import { buildEmptyDraftSnapshot } from '@/lib/projects/newProject';
@@ -176,14 +177,30 @@ function fromError(err: unknown, siteId?: string): SiteOpsResult<never> {
   return fail({ code: 'failed', message: GENERIC_LIBRARY_FAILURE });
 }
 
+/**
+ * Whether site branches are off for the caller's company, so a branch is hidden from it (plan
+ * docs/plans/2026-11-10-site-branches.md, section 9, decision 99). Off hides branches without deleting them: the
+ * editor answers 404 for a branch's address then, and an agent that still holds a branch's id must not read or
+ * write it either. Seen in the production proof of 2026-11-12: `get_site` still answered a branch with the
+ * switch off.
+ */
+function branchesHiddenFrom(deps: SiteOpsDeps, caller: SiteOpsCaller): boolean {
+  return !(deps.branches?.enabled ?? ((companyId: string) => siteBranchesEnabled(companyId)))(caller.companyId);
+}
+
 async function load(
   deps: SiteOpsDeps,
   caller: SiteOpsCaller,
   siteId: string,
 ): Promise<SiteOpsResult<{ project: ProjectModelType; version: number }>> {
   try {
-    return ok(await repo(deps).loadProjectWithVersion(caller.scope, siteId));
+    const loaded = await repo(deps).loadProjectWithVersion(caller.scope, siteId);
+    // An open branch while branches are off: answered exactly like a site that does not exist.
+    if (loaded.mainSiteId && branchesHiddenFrom(deps, caller)) throw new SiteNotFoundError(siteId);
+    return ok({ project: loaded.project, version: loaded.version });
   } catch (err) {
+    // A merged or discarded branch is hidden too: no "this branch was merged into ..." while branches are off.
+    if (err instanceof BranchClosedError && branchesHiddenFrom(deps, caller)) return fromError(new SiteNotFoundError(siteId), siteId);
     return fromError(err, siteId);
   }
 }
