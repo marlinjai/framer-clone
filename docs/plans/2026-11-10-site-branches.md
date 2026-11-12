@@ -442,6 +442,58 @@ Marlin took all four recommendations on 2026-11-11: (1) no tier logic, one const
 3. **Should there be a public preview link for people without an account (slice S8)?** Framer gives every branch one. It is how an agency shows a client a branch, and it reverses the earlier decision "No preview tokens", which was made for external frontends rather than for this. It puts unpublished content on an unguessable address. **Recommendation:** yes, as S8 after the core, with a 7 day expiry by default and a revoke button, because sending a client a link is the main reason an agency wants a branch preview at all.
 4. **Should CMS content be branched too, as in Framer?** In version one a branch shares the live CMS: an editor who rewrites collection items while on a branch changes main's content at once, and the Draft status of a row is the only staging. Branching the CMS means versioned rows and collection schemas in the shared data-table package and a merge for row data, roughly a second project of this plan's size. **Recommendation:** not now. Ship design branches first, see whether real use asks for staged content beyond the Draft status, and plan CMS branching on its own if it does.
 
+## 12. S9: the production proof, prepared on 2026-11-12
+
+Nothing in this section has been done on production. It records what production looks like, what the proof will do step by step, how each step is taken back, and the one decision that is Marlin's.
+
+### Production as read on 2026-11-12 (read only)
+
+- **What runs:** the image built from main at `7b32ea16`, deployed by hand on 2026-11-09 (`gh workflow run deploy --ref main`; the workflow has no push trigger). Main has moved on since: the whole of site branches (S1 to S7, S8 once #376 merges) and other work that is merged and not deployed yet (the FX engine F1 to F4, the contact person on invoices, the buyer's mail as a job, the replay of a settled edit, two test and workflow changes).
+- **Site branches are absent there:** `GET /api/projects/<id>/branches` answers the framework's own 404 page, not the application's JSON 404, so the route does not exist in that build. `SITE_BRANCHES_COMPANIES` is not among the application's variables in Coolify.
+- **Database:** none of the three site branches migrations is applied (`20261111000000_site_branches`, `20261112000000_site_branch_merge_undo`, `20261112120000_site_branch_previews`). All three are additive; the start sequence applies them on the first start of the new image (`prisma migrate deploy`).
+- **The company and its sites:** the automation profile is signed in on `app.lumitra.co` with Lumitra as the active company (id `019ec2f2-f19e-70f4-a889-8afb34c314ca`; the profile also belongs to two other companies, which stay off). Lumitra has two sites: "Lumitra (new landing page)", published, and "MCP end-to-end test", a draft.
+- **The wildcard:** a label never used before is served with the certificate `*.sites.lumitra.co` (decision 80), and the application routes any label under `sites.lumitra.co`.
+
+### What turning it on consists of
+
+1. **Deploy main** (after #376 and the fixes of the whole-feature reviews are merged): `gh workflow run deploy --ref main`, which builds the image, lets Coolify start it and waits for `/api/health/db`. This ships everything listed above, not only site branches, and applies the three migrations. With the switch unset the feature stays invisible: this step alone changes nothing a person or a visitor can see of branches.
+2. **Check the deploy with the switch still off:** the dashboard and both sites open as before, `GET /api/projects/<id>/branches` now answers the application's JSON 404, the published landing page renders unchanged, the MCP tool list has no branch tool.
+3. **Set `SITE_BRANCHES_COMPANIES=019ec2f2-f19e-70f4-a889-8afb34c314ca`** on the application in Coolify (Lumitra's own company only, never `*`) and restart it. An identifier, not a secret.
+4. **Run the proof below**, in the headless automation browser and with an agent key of the Lumitra company through the secrets proxy.
+
+### The proof, step by step
+
+Everything is done on **a new draft site made for the proof**, "Branch proof 2026-11-12", in the Lumitra company. The published landing page is opened once to see that it is untouched and is never edited. Each step names what is looked at as evidence.
+
+| # | Step | Evidence |
+|---|---|---|
+| 1 | Create the proof site with two pages and a form. Open it: the top bar shows the branch switcher with "Main". | The switcher is there; it is absent on a site of a company without the switch (checked by switching company and back). |
+| 2 | Create the branch "Proof A" from the switcher. Change a heading and add a section. Reload. | The badge names the branch, the changes survive the reload (autosave on a branch), the dashboard lists one site with "1 branch", and main is unchanged when opened in a second tab. |
+| 3 | **A person's branch merged with an agent's concurrent write to main:** while "Proof A" is open, the agent changes another element on main through `apply_batch`. In the branch: "Main has changed", Update. Open the review. | The review lists the branch's changes only, the side by side view shows both, the update brought the agent's change in without a conflict. |
+| 4 | **A conflict settled:** the agent changes the same heading on main. Update from main stops with one conflict; answer it with the branch's value on the review page, reload, then change the answer to main's and back. | The answer survives the reload; changing it changes the result shown; the merge is offered only once every conflict has an answer. |
+| 5 | Merge "Proof A". | Main holds both sets of changes at a new version, nothing is published (the site is a draft and stays one), the branch's old address says it was merged and offers the undo. |
+| 6 | **A merge undone and merged again:** undo the merge from the old address. Review the new branch and merge it. | Main is back to before the merge as a new version, the new branch holds the merged work and is up to date, the second merge lands the same content, the first branch's address says the merge was undone and where the work went. |
+| 7 | **An agent's merge approved and one declined:** the agent creates "Proof B" (`create_branch`), edits it, asks for review (`request_review`) and calls `merge_branch`. A person opens the confirmation address and declines. The agent calls again; the person approves. | Declined: nothing merged, the agent is told so. Approved: merged once; a repeat of the call answers the first result. `publish` on the branch id is refused. |
+| 8 | **A reviewer without edit rights:** a second login that may view and review but not edit opens the review of a third branch. | "Looks good" and "Send back" work, the conflict answers and "Share preview" are off with the reason, the routes answer 403 when called directly. Needs a member of the Lumitra company with that role; if the company has none, one is added for the proof and removed after it (asked for with the go). |
+| 9 | **The public preview link:** on "Proof C", Share preview, 1 day. Open the address in a clean browser profile with no login. | The page shows the branch with the band; response headers `x-robots-tag: noindex, nofollow, noarchive`, `cache-control: private, no-store`, `referrer-policy: no-referrer`; `robots.txt` disallows all; the form says nothing is sent; a `POST` to `/api/forms/submit` on that host answers 404; the certificate presented is `*.sites.lumitra.co`. Revoke: the address answers 404 at once. Make a new one, discard the branch: 404. |
+| 10 | Discard what is left open, and check the published landing page and its sitemap once more. | No open branch on the proof site; the landing page, its address and its published version number are as before step 1. |
+| 11 | Turn the switch off and on once (step 3 reversed and repeated). | Off: no switcher, the branch routes and tools answer 404, a preview address answers 404, main opens and saves as before. On: everything is back. |
+
+The proof site stays as a draft afterwards (deleting it is not needed and is not done without a word); its closed branches keep no content.
+
+### Taking it back
+
+| What | How | Effect |
+|---|---|---|
+| The switch | Remove `SITE_BRANCHES_COMPANIES` in Coolify and restart. Under five minutes. | Branches are hidden, not deleted; every preview address answers 404; main, saving and publishing are unaffected (section 9). Setting it again brings everything back. |
+| The deploy | Point the Coolify application at the previous image, `ghcr.io/marlinjai/framer-clone:7b32ea16...` (every deploy pushes the commit's own tag beside `latest`), and redeploy. | Older code ignores the new columns and tables. Before doing this with open branches, merge or discard them (older code would list each as a draft site, section 9), and run no erase of personal data while rolled back. |
+| The migrations | Not reversed: additive, ignored by older code. | None. |
+| A bad merge during the proof | "Undo this merge". | It is on the proof site only. |
+
+### For Marlin
+
+One line, with the default and the way back: **deploy main to production and turn site branches on for the Lumitra company only (`SITE_BRANCHES_COMPANIES` set to Lumitra's id), then run the eleven-step proof on a new draft site; default is not to do it until you say go; the switch comes off again in under five minutes by removing the variable, and the previous image is one redeploy away.** The deploy also ships the other merged work listed above, each of which its own owner would otherwise deploy.
+
 ## Sources
 
 Read on 2026-11-10.
