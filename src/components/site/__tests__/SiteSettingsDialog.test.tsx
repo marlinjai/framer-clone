@@ -8,6 +8,8 @@ import { render, cleanup, fireEvent, screen, within } from '@testing-library/rea
 import ProjectModel, { type ProjectModelType } from '@/models/ProjectModel';
 import HistoryStore from '@/stores/HistoryStore';
 import SiteSettingsButton from '../SiteSettingsDialog';
+import { addFxLayer, fxFromPreset, setFxParam } from '@/lib/fxScene/edit';
+import { FX_PROP } from '@/lib/fxScene/marker';
 
 let project: ProjectModelType | undefined;
 const setCurrentPage = vi.fn();
@@ -217,5 +219,39 @@ describe('legal pages and privacy', () => {
     project!.setLumitraEnabled(true);
     dialog = open();
     expect(within(dialog).getByTestId('consent-status').textContent).toContain('Shown to visitors, because analytics is on');
+  });
+});
+
+describe('uploaded images an FX scene shows', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('are in use, saved or not: the list offers no delete for a scene\'s picture', async () => {
+    const onPage = 'a'.repeat(64);
+    const unused = 'b'.repeat(64);
+    const withPicture = (sha: string) => {
+      const preset = fxFromPreset();
+      if (!preset.ok) throw new Error(preset.message);
+      const added = addFxLayer(preset.stored, 'image');
+      if (!added.ok || !added.layerId) throw new Error('no image layer');
+      const edit = setFxParam(added.stored, added.layerId, 'src', `/site-images/${sha}.png`);
+      if (!edit.ok) throw new Error(edit.message);
+      return edit.stored;
+    };
+    const box = project!.findPageBySlug('')!.insertRegistryComponent('fxScene', { kind: 'appTree' })!;
+    box.setProps({ [FX_PROP]: withPicture(onPage) });
+
+    const item = (sha256: string) => ({ sha256, path: `/site-images/${sha256}.png`, contentType: 'image/png', byteSize: 2048, width: 512, height: 512, inUse: false });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ items: [item(onPage), item(unused)], totalBytes: 4096, maxImages: 100, maxBytes: 50 * 1024 * 1024 }) }) as Response),
+    );
+    const dialog = open();
+    const section = within(dialog).getByTestId('site-image-library-section') as HTMLDetailsElement;
+    section.open = true;
+    fireEvent(section, new Event('toggle'));
+    expect(await within(section).findByText(/2 of 100 images/)).toBeTruthy();
+    // The server says neither is in use (nothing is saved yet); the editor knows the scene names one.
+    expect(within(section).getAllByText('In use')).toHaveLength(1);
+    expect(within(section).getAllByRole('button', { name: /Delete the unused image/ })).toHaveLength(1);
   });
 });

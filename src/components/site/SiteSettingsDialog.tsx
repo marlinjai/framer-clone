@@ -66,6 +66,7 @@ import { GoogleMapsPrivacyHint } from './GoogleMapsPrivacyHint';
 import { SiteImageField } from './SiteImageField';
 import { SiteImageLibrary } from './SiteImageLibrary';
 import { namedSiteImages } from '@/lib/site/siteImages';
+import { fxSiteImagePaths } from '@/lib/fxScene/fxScene';
 
 const fieldLabel = 'text-[11px] font-semibold uppercase tracking-wide text-muted-foreground';
 const inputBase =
@@ -198,9 +199,13 @@ const SiteSettingsForm = observer(({ project, onClose }: { project: ProjectModel
 
   // Uploaded images this editor names, saved or not (the draft, the stored settings, every page's sharing image):
   // the list never offers them for deletion.
+  // The pictures of FX scenes count too (src/lib/fxScene), on every page and in every component
+  // definition as the editor holds them now: a picture uploaded for a scene a moment ago is in no saved
+  // page yet, and deleting it here would leave that scene without it.
+  const scenePictures = [...fxSiteImagePaths(getSnapshot(project.pages)), ...fxSiteImagePaths(getSnapshot(project.components))];
   const namedHere = new Set([
     ...namedSiteImages(draft, []).keys(),
-    ...namedSiteImages(project.site, project.pagesArray.map((p) => p.metadata.ogImage)).keys(),
+    ...namedSiteImages(project.site, [...project.pagesArray.map((p) => p.metadata.ogImage), ...scenePictures]).keys(),
   ]);
 
   const siteName = effectiveSiteName(candidate, project.metadata.title);

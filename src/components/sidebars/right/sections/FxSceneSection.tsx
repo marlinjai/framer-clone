@@ -89,7 +89,7 @@ const LIVE_OFF: Readonly<Record<string, string>> = {
 };
 
 /** "eyebrowText" reads as "Eyebrow text". */
-function settingLabel(key: string, schema: ParamSchema): string {
+export function settingLabel(key: string, schema: ParamSchema): string {
   const raw = schema.label ?? key.replace(/([a-z0-9])([A-Z])/g, '$1 $2');
   // A single letter stays a capital: "colorA" reads as "Color A".
   const words = raw.split(' ').map((word, index) => (index === 0 ? word.charAt(0).toUpperCase() + word.slice(1).toLowerCase() : word.length === 1 ? word.toUpperCase() : word.toLowerCase()));
