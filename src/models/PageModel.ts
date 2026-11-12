@@ -41,6 +41,7 @@ import { getComponentEntry } from '@/lib/componentRegistry';
 import { CLOSED_SHOP_PART_MESSAGE, INTERACTIVE_SHOP_PART_MESSAGE, LABEL_SHOP_PART_MESSAGE, REQUIRED_SHOP_PART_MESSAGE, buildShopParts, shopPartRefusal, holdsOutsidePart, holdsRequiredShopPart, nearestShopControlId, shopControlKindOf, withoutOutsideRoles, shopLocaleOf, withShopParts, type ShopTreeNode } from '@/lib/commerce/parts';
 import type { ApplyOutcome, GenerationUndoRecord } from '@/lib/ai/pageGen/apply';
 import { isVoidTag } from '@/lib/drag/voidTags';
+import { DEFAULT_OG_TYPE, HEAD_LIMITS, parseOgType, storeHeadItems, type StoredHeadItem } from '@/lib/site/headItems';
 import { bareTextRefusal, isTextNodeType } from '@/lib/renderer/textNode';
 
 export type InsertTarget =
@@ -270,6 +271,14 @@ const PageMetadataModel = types.model('PageMetadata', {
   // Keep this page out of search engines: a robots noindex meta tag on the
   // published page, and left out of the site's sitemap.xml.
   noIndex: types.optional(types.boolean, false),
+  // The Open Graph content type (`og:type`): website, article, book or profile. Stored as
+  // text so a value a later build adds never stops a page loading; parseOgType reads it
+  // and anything else is `website`.
+  ogType: types.optional(types.string, DEFAULT_OG_TYPE),
+  // The page's own head items (src/lib/site/headItems.ts): a frozen list, replaced as a whole,
+  // kept as stored whether valid or not and read only through parseHeadItem. Nothing is
+  // emitted from it until slice H2.
+  head: types.optional(types.frozen<StoredHeadItem[]>(), []),
   // Set when the page was created from a legal page template
   // (src/lib/legal/templates.ts): 'impressum', 'privacy' or 'terms'. The
   // editor then shows a "template, not legal advice" banner above it (never
@@ -395,8 +404,26 @@ const PageModel = PageWithComponents
   }))
   .actions(self => ({
   // Update page metadata
-  updateMetadata(metadata: Partial<SnapshotIn<typeof PageMetadataModel>>) {
-    Object.assign(self.metadata, metadata);
+  //
+  // Field by field from the model's own keys, never Object.assign: that would treat a
+  // `__proto__` key of the update as the prototype setter. `head` is copied safely and capped
+  // (HEAD_LIMITS.pageItems), `ogType` is read through parseOgType. Returns what the cap dropped.
+  updateMetadata(metadata: Partial<SnapshotIn<typeof PageMetadataModel>>): { headDropped: number } {
+    let headDropped = 0;
+    for (const key of Object.keys(PageMetadataModel.properties) as Array<keyof typeof PageMetadataModel.properties>) {
+      if (!Object.hasOwn(metadata, key)) continue;
+      const value = (metadata as Record<string, unknown>)[key];
+      if (key === 'head') {
+        const written = storeHeadItems(value, HEAD_LIMITS.pageItems);
+        headDropped = written.overCap + written.unreadable;
+        self.metadata.head = written.items;
+      } else if (key === 'ogType') {
+        self.metadata.ogType = parseOgType(value);
+      } else {
+        (self.metadata as unknown as Record<string, unknown>)[key] = value;
+      }
+    }
+    return { headDropped };
     self.updatedAt = new Date();
   },
 

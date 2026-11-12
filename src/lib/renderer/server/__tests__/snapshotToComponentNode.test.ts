@@ -106,7 +106,22 @@ describe('snapshotToComponentNode', () => {
       ogImage: 'https://x/og.png',
       canonicalUrl: '',
       noIndex: false,
+      ogType: 'website',
+      head: [],
     });
+  });
+
+  it('lifts the page head items as stored and the og type through parseOgType', () => {
+    const base = { title: 'A' };
+    const read = (metadata: Record<string, unknown>) => snapshotToComponentNode(page({ metadata: { ...base, ...metadata } }), {}).metadata;
+    const items = [{ kind: 'meta', name: 'author', content: 'x' }, { kind: 'meta', name: 'viewport', content: 'refused but kept' }];
+    expect(read({ head: items, ogType: 'article' })).toMatchObject({ head: items, ogType: 'article' });
+    // An old page, a forged og type and a junk head all read as the defaults, never a throw.
+    expect(read({})).toMatchObject({ head: [], ogType: 'website' });
+    expect(read({ ogType: 'product', head: 'nope' })).toMatchObject({ head: [], ogType: 'website' });
+    const copied = read({ head: items }).head;
+    expect(copied).not.toBe(items);
+    expect(copied[0]).not.toBe(items[0]);
   });
 
   it('returns root null when the snapshot has no app component tree', () => {
