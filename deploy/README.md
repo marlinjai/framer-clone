@@ -75,6 +75,16 @@ oldest one should a company ever have several).
 | `src/app/api/health/route.ts` | `GET /api/health`, liveness, `{ "ok": true }` without touching the database. Coolify's health check uses it. |
 | `src/app/api/health/db/route.ts` | `GET /api/health/db`, readiness, runs `SELECT 1` through Prisma; a 503 names the error. The deploy workflow polls it. |
 
+## Releasing: one named commit, proven afterwards
+
+How the release of 2026-11-12 was done, and how the next one should be (site branches plan, section 12):
+
+1. **Pin the commit.** Tag the reviewed commit and dispatch the build from the tag (`gh workflow run deploy --ref <tag>`), never from a moving `main`. Check that the run's commit equals the pin.
+2. **The image.** The build job pushes it as `latest` and under the commit hash. Before deploying, check in the registry that `latest` and the pin's hash are one image and that no other deploy run is in flight: `latest` is what Coolify pulls, and it is mutable.
+3. **The deployment.** The workflow's own deploy step calls the shared Coolify webhook, which **answers HTTP 405 since 2026-11-12** (the shared `coolify-deploy-verify` workflow sends a GET), so that step fails before it starts anything. Until the shared workflow is fixed, start the deployment through the Coolify API for the application.
+4. **Proof that the new image serves.** A green deployment can still be the old container answering. The running container's `COMMIT_SHA` must equal the pin, its image digest the registry's, and `_prisma_migrations` must hold every migration of the pin with none failed.
+5. **A changed variable needs a redeploy**, not only a restart, and each redeploy pulls `latest` again: repeat check 2 before it.
+
 ## The start sequence
 
 Every container start runs, in order, and stops the start with a non-zero exit at
@@ -224,13 +234,14 @@ its start step with exactly that instruction.
 Names and meaning only; values live in Infisical (`prod`, path `/`) and the RUNBOOK
 says where each comes from.
 
-**On the Coolify application** (the only plain variables there):
+**On the Coolify application** (the only plain variables there; the start keeps them and adds Infisical's):
 
 | Name | Meaning |
 | --- | --- |
 | `INFISICAL_UNIVERSAL_AUTH_CLIENT_ID` | Client id of the `framer-clone-app` machine identity |
 | `INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET` | Its client secret (runtime only, never a build variable) |
 | `INFISICAL_PROJECT_ID` | The `framer-clone` Infisical project |
+| `SITE_BRANCHES_COMPANIES` | Optional, not a secret: the companies site branches are on for (see "Site branches"). On production since 2026-11-12 with one company id. Kept here and not in Infisical so that off is one delete and a redeploy. |
 
 **In Infisical, read at every start:**
 
@@ -411,7 +422,7 @@ Site branches (`docs/plans/2026-11-10-site-branches.md`) are off unless `SITE_BR
 unset or empty is off for everyone, `*` is on for every company, or a comma separated list of auth-brain company ids.
 Turning it off hides branches without deleting them. Two requests still work then, because they only end something:
 discarding a branch and revoking its public preview link (a person who is signed in and may edit the site). A link that
-is not revoked shows again the day the switch returns. It is not set on production until the feature's last slice (S9).
+is not revoked shows again the day the switch returns. On production it is set since 2026-11-12 for Lumitra's own company only, as a plain variable on the Coolify application; a change needs a redeploy, not only a restart.
 The same switch decides what an agent is offered: the branch tools of the MCP endpoint (`create_branch`, `merge_branch` and
 the others) are in the tool list and callable only for a key of a company in the list. The public plugin (0.4.0) already
 ships the work-on-a-branch skill; it checks the tool list first and works on the site directly while the tools are absent.

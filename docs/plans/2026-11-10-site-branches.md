@@ -11,7 +11,7 @@ projects: [framer-clone]
 
 # Site branches
 
-**Status:** in progress. Written 2026-11-10 at Marlin's request, approved by him on 2026-11-11 with all four recommendations of section 11 taken (answers recorded there). S1 to S8 are merged (#360, #361, #366, #367, #371, #372, #374, #376). Three whole-feature reviews ran on 2026-11-12 and their findings are fixed (decisions 86 to 97). What is left is S9, the proof on production, prepared in section 12: it needs a deploy of main and the switch for the Lumitra company, each Marlin's own yes, and both wait behind the contacts gate. The switch stays off until then.
+**Status:** in progress, live for one company. S1 to S8 are merged and three whole-feature reviews are fixed (decisions 86 to 97). On 2026-11-12, with Marlin's approval through the coordinator, production was deployed at commit `b1e19a32` and site branches were switched on for the Lumitra company only; the browser proof of S9 passed in every step that could be run (section 12, "The deploy and the proof as run"). Open: the approve and decline halves of step 7 (they need Marlin's fresh sign-in), the review-only half of step 8, and one finding from the proof.
 
 ## 1. What Framer's branching does
 
@@ -448,6 +448,8 @@ Decided after the whole-feature review (2026-11-12), say so if you disagree. Thr
 
 97. **What the usability review asked for, in the editor.** (a) The branch switcher has a "Recently merged" group: the three latest merges, each opening its old address, with "Undo the merge of ..." beside the one that can still be undone (the same dialog and request as on the closed branch's page, after this tab's work is saved), and for an undone merge where its work went. The listing always holds the latest three merges and every closed branch such a merge names, however many branches were discarded since. (b) The "New branch" dialog names the site it copies and says how many of the 10 branches are open. At the limit the button is off with the reason as text, but only when the count was just read from the server: a count from when the editor was opened never turns it off and is worded as what it is ("had 10 open branches when this page was opened"), so an outdated number cannot leave a person stuck, and the server's own refusal stays. (c) What the badge, "Update" and "Review and merge" mean was only a `title`, which a keyboard and a touch screen never show. Each is now rendered text the control points at, and the badge's sentence is also visible at the top of the switcher's menu on a branch. (d) The top bar on a branch did overflow: seen in real browsers, at 1,024 pixels its right half lay outside the window, and at 768 the back link and the switcher were squeezed away. Now "Review and merge", the main action, keeps its words from 1,024 pixels up and is an icon below; "Update" and "Share preview" are icons below 1,536 pixels, with their names kept for a screen reader; below that width the badge and the page name are left out (the switcher names the branch) and the left side takes the space that is left, its title and branch name truncating, with a floor so the back link and the switcher can always be pressed; long sentences shrink and are cut to three lines, and a press on a cut one shows all of it under the bar (it was whole only in a tooltip). A test in real Chromium and WebKit (`test/behaviour/branches.spec.ts`) opens the top bar of a branch behind main at 1,920, 1,536, 1,280, 1,024, 768 and 390 pixels and checks that every control is inside the window, none lies over another and each can be pressed, with the save status a stored site shows; the same for a site that is not a branch at 1,024, 768 and 390 pixels.
 
+98. **The switch is a plain variable on the Coolify application, not a value in Infisical** (2026-11-12). It is an identifier, not a secret; a plain variable is one delete away from off and needs no secrets tooling to read. The container's start keeps the variables Coolify gives it and adds Infisical's. It is the fourth plain variable there, beside the three that let the container sign in to Infisical. Before the first deploy it was checked unset in both places, so the deploy could not turn branches on by itself.
+
 ## 11. For Marlin to decide (answered 2026-11-11)
 
 Marlin took all four recommendations on 2026-11-11: (1) no tier logic, one constant of 10 open branches per site, switched on for Lumitra's own company first, the tier decided with Sites pricing; (2) no required second approval in version one; (3) yes to the public preview link, slice S8 after the core, 7 day expiry by default and a revoke button; (4) the CMS is not branched now.
@@ -556,11 +558,65 @@ What stands in for it, and what it does not cover:
 
 **The safe way to 8b, which is Marlin's to allow and is not done without his word:** invite one address of his own choosing (a second mailbox of his, never a customer's or a colleague's) to the Lumitra company's workspace with the role `viewer`, sign that account in once in the visible automation browser, run 8b, then remove the membership the same hour. Whether a membership on the workspace alone lets that account open the company in Sites is not known; if it does not, that is the first finding of 8b and the invitation is made on the company with the lowest role instead. It creates a user and a membership on the sign-in service's production data and removes the membership again; the user record of an invited address stays unless it is erased separately. The default is not to do it: the proof then runs 8a and reports the review-only case as proven by tests only. It is asked as one line together with the go for the switch, never before the contacts gate, the deploy and the switch have each had their own yes.
 
+### The deploy and the proof as run (2026-11-12)
+
+Marlin approved, through the coordinator, the deploy of the current Sites code after the contacts migration, then the switch for the Lumitra company and the proof. What was done, with the evidence taken at the time.
+
+**Before the deploy (read only)**
+
+- Contacts migration `0003_contact_affiliations` was applied on production by the receipts release (merged 11:42 UTC), confirmed by the contacts owner with matching counts and fingerprint; receipts healthy.
+- Release commit pinned: `b1e19a32aa00d49dd122e31b99a5ff2ef5d286fd` (main after #400, all checks green), tagged `release/sites-2026-11-12`. Every owner confirmed their part at that commit: scene format, effects, shop backbone, head items, live canvas, Books.
+- Production database read on the server: Postgres 16.15, 22 migrations applied and none failed, so exactly the five expected Prisma migrations were pending.
+- Fresh dumps taken on the server at 11:43 and 11:52 UTC (`manual-pre-deploy-20261112T114319Z.dmp`, `...T115208Z.dmp`, beside the nightly ones).
+- All six migrations were rehearsed on a restored copy of the first dump in a throwaway local Postgres 16, through the real start step: applied (the Books migration in 5 of 5 company schemas), a fingerprint over all sites unchanged, a second start applied nothing. That local copy was deleted afterwards.
+- The switch was unset in both places it could come from (the Coolify application and Infisical, checked by name).
+
+**The deploy**
+
+- The image was built from the tag by the deploy workflow (run 43212906183, its commit equals the pin) and pushed as `latest` and under the commit hash, digest `sha256:605257098a06`.
+- The workflow's own deploy step failed before starting anything: the shared Coolify webhook answers HTTP 405. The deployment was started through the Coolify API instead (12:02:44 to 12:05:07 UTC), which pulls that same `latest`.
+- The running container reports `COMMIT_SHA` equal to the pin and runs that digest. Start log: five Prisma migrations applied, Books `030` applied in 5 of 5 schemas, no lock wait, no error. 27 migrations recorded, none failed; the sites fingerprint identical to before; the new tables empty.
+- With the switch still off: health 200; both Lumitra sites open in the editor as before, with no switcher; the branches route answers the application's JSON 404; the published landing page's visible text is identical to the copy saved before; Books' customers read answers 200 through contacts-core 0.5.0; no shop or contacts error in the log.
+
+**The switch**
+
+- `SITE_BRANCHES_COMPANIES` is a plain variable on the Coolify application (decision 98), set to exactly the Lumitra company id and verified inside the running container. On for Lumitra (branches route 200, switcher shown); with another company of the same sign-in active, the route answers 404 and the editor shows no switcher.
+
+**The proof**, on a new draft site "Branch proof 2026-11-12" (`67e07e35-65ce-4e0d-ba0c-d4cb5d10306c`) in the Lumitra company. Clicks went through the real editor in the headless automation browser; the content edits of steps 2 to 4 were sent through the editor's own save route from the signed-in page, because a synthetic double-click did not start the canvas text edit in the headless browser.
+
+| Step | Result | What was seen |
+|---|---|---|
+| 1 | passed | The switcher shows "Main"; absent for another company. |
+| 2 | passed | "Proof A" made from the New branch dialog, which names the site and says "1 of 10 branches are open"; a second branch of the same name was refused. On the branch: its name in the switcher, Review and merge in place of Publish, Share preview. The edit survives a reload; main is unchanged; the dashboard shows the site once, with "1 open branch". |
+| 3 | passed with a person's write, and again with the agent as the writer of main | Main changed in another element meanwhile; the branch showed Update; one press brought it in without a question. The review lists only the branch's two changes and draws both sides. With the agent: `apply_batch` on main, then the agent's own `update_branch` updated its branch. |
+| 4 | passed with a person's write, and again with the agent as the writer of main | The same heading changed on main: one question; Update and the merge are off until it is answered ("Every question needs an answer first."); the answer survives a reload and can be changed and changed back. With the agent: after its `apply_batch` on the same heading, `update_branch` without an answer was refused (`branch_conflicts`, nothing written) and `merge_branch` was refused (`branch_behind_main`, nobody asked); a person answered on the review page and updated. |
+| 5 | passed | Update, then merge: main holds both sets of changes as a new version, nothing published (the site is a draft with no published revision), the old address says it was merged and offers the undo. |
+| 6 | passed | Undo from the old address: main back to before the merge as a new version, the merged work in a new open branch that is up to date; reviewed and merged again to the same content; the first branch's address says the merge was undone and where the work went. |
+| 7 | passed as far as an agent can go; approve and decline not run | The agent (the Lumitra agent key, used only inside the secrets proxy) made the branch "Proof B", wrote to it, asked for review and asked for the merge: the answer was "approval required" with nothing merged, and a second call without approval answered "pending". `publish` on the branch id was refused (`branch_cannot_publish`). The approval page, opened as the signed-in person, says "Approving needs a sign-in from the last 15 minutes" and offers nothing to press until then: that sign-in is Marlin's, so approving and declining were not run. "Proof B" is left open and ready on the proof site for it. |
+| 8a | passed | As an admin: "Looks good" marks the branch, "Send back" with a note returns it to open with the note stored. |
+| 8b | not run | No member of the company may review without editing, and no account was created ("Step 8: who could play the reviewer"). |
+| 9 | passed | Link made for 1 day from the review's dialog. The address shows the branch, not the site; German band (the proof site is German) at the bottom edge, the page's fixed header whole and on top, the last line ending exactly at the band, at 1,280 and at 390 pixels; `noindex, nofollow, noarchive`, `private, no-store`, `no-referrer`, framing denied; the wildcard certificate; the form has no address; `POST /api/forms/submit` 404; `robots.txt` disallows all; no sitemap; the same without any cookie. Revoke: 404 on the next request. A second link has another address; discarding the branch ends it. |
+| 10 | passed | Nothing left open on the proof site (four closed records, no hidden content row, no link); the landing page identical to before the deploy, still version 9; sitemap 200. |
+| 11 | passed | Switch off with one branch open and a live link: no switcher, every branch route 404, the link 404, main still opens and saves; revoking the link and discarding the branch still work (decision 86). Switch on again: all back, the revoked link and the discarded branch stay gone. For the agent (a second off-and-on cycle): off, 14 tools and no branch tool, a branch tool answers "unknown tool", the server instructions do not mention branches; on, 21 tools. |
+
+Of the sites that existed before, one changed during the proof: "MCP end-to-end test", written by the live canvas owner's own proof of #358 with the agent key, and left as it was.
+
+**What is still open from the proof**
+
+- **Step 7, approve and decline:** needs Marlin's own fresh sign-in in the visible automation browser; the agent then asks for the merge of "Proof B" again and both pages are run. Until then the agent's merge is proven up to the approval gate and by the tests.
+- **Step 8b:** as recorded under "Step 8: who could play the reviewer".
+- **A finding, fixed in a follow-up pull request:** with the switch off, the agent tool `get_site` still reads an open branch by its id, while the editor answers 404 for that address. Section 9 says off hides branches. It is the company's own data, and a branch stays unpublishable either way.
+
+**Observations for other owners**
+
+- The shared deploy workflow (`actions-shared`, `coolify-deploy-verify.yml`) calls the Coolify webhook with GET and gets HTTP 405, so every repository using it builds and then does not deploy. Receipts and Sites were both deployed through the Coolify API on this day.
+- A PostHog cookie scoped to the whole `lumitra.co` domain, set by another Lumitra application, is readable by every site under `sites.lumitra.co`.
+
 ### Taking site branches back
 
 | What | How | Effect |
 |---|---|---|
-| The switch | Remove `SITE_BRANCHES_COMPANIES` in Coolify and restart. Under five minutes. | Branches are hidden, not deleted; every preview address answers 404; main, saving and publishing are unaffected (section 9). Setting it again brings everything back. **It takes back site branches only, nothing else the deploy shipped.** |
+| The switch | Delete the variable `SITE_BRANCHES_COMPANIES` on the Coolify application and redeploy (a restart alone does not drop it). Done once in the proof: about four minutes from delete to the new container being the only one. | Branches are hidden, not deleted; every preview address answers 404; main, saving and publishing are unaffected (section 9). Setting it again brings everything back. **It takes back site branches only, nothing else the deploy shipped.** |
 | A bad merge during the proof | "Undo this merge". | It is on the proof site only. |
 | The image | See "What rolling the image back would and would not undo" above. | Not a clean way back for Books once an invoice addressed to a contact person was issued. |
 
