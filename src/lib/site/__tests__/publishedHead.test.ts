@@ -224,3 +224,32 @@ describe('previewMetadata (a branch\'s public preview link)', () => {
     expect(previewMetadata({ title: 'Site', robots: { index: true, follow: true } }).robots).toEqual({ index: false, follow: false, noarchive: true });
   });
 });
+
+describe('the Open Graph content type (head slice H1)', () => {
+  const page = { ...emptyPage, title: 'A' };
+  const input = { settings: settings(), siteName: 'Bakery', primaryHost: 'bakery.test', path: '/a' };
+
+  it('writes website for a page that names none, exactly as before', () => {
+    expect(pageMetadata({ ...input, page }).openGraph).toMatchObject({ type: 'website' });
+    expect(pageMetadata({ ...input, page: { ...page, ogType: undefined } }).openGraph).toMatchObject({ type: 'website' });
+  });
+
+  it('writes the chosen type', () => {
+    for (const ogType of ['article', 'book', 'profile', 'website']) {
+      expect(pageMetadata({ ...input, page: { ...page, ogType } }).openGraph).toMatchObject({ type: ogType });
+    }
+  });
+
+  it('reads a forged or unsupported type as website, so Next never throws on a published page', () => {
+    for (const ogType of ['product', 'music.song', '__proto__', 'ARTICLE', '']) {
+      expect(pageMetadata({ ...input, page: { ...page, ogType } }).openGraph).toMatchObject({ type: 'website' });
+    }
+  });
+
+  it('changes nothing else about the page metadata', () => {
+    const { openGraph: a, ...restA } = pageMetadata({ ...input, page });
+    const { openGraph: b, ...restB } = pageMetadata({ ...input, page: { ...page, ogType: 'article' } });
+    expect(restA).toEqual(restB);
+    expect({ ...a, type: undefined }).toEqual({ ...b, type: undefined });
+  });
+});
