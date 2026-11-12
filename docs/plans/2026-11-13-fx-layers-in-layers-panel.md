@@ -104,12 +104,14 @@ FX scene                      (the box: its HTML children first)
 
 ### Selection
 
-- `EditorUIStore` gains `selectedFxLayer: {componentId, layerId} | undefined`, session state like `fxLive`: not saved,
-  not in the undo history. Keyed by node id plus layer id, never by element, because one node can be drawn many times.
+- `EditorUIStore` gains `selectedFxLayer`, session state like `fxLive`: not saved, not in the undo history. It is
+  `{componentId, kind: 'layer', layerId}` for a scene layer or `{componentId, kind: 'background'}` for the Background
+  row, which has no scene layer id and is never subject to the layer-id check below. Keyed by node id plus layer id, never by element, because one node can be drawn many times.
 - Picking a layer row selects the box as the primary selection (handles and the breadcrumb stay on the box) and sets
   `selectedFxLayer`. Picking the row in another breakpoint moves Live there, as picking the box does today.
 - It is cleared when the selection moves to another node, page or project, and it is derived as invalid (falls back to
-  the box) whenever its layer id is not in the current scene: after an undo of an add, a preset, an import, a remote
+  the box) whenever a `'layer'` variant's layer id is not in the current scene (the Background variant stays valid while
+  the box has a readable scene): after an undo of an add, a preset, an import, a remote
   adoption. `setFxLayerType` returns the new id; the selection follows it.
 - Shift and Cmd click on a layer row pick that layer alone (multi-select of layers is not offered).
 
@@ -118,6 +120,8 @@ FX scene                      (the box: its HTML children first)
 - **Box selected, no layer picked:** the FX section shows the scene-level settings (preset, start, reduced motion) and
   a compact summary of the layers with a hint that they are in the Layers panel; each summary entry picks that layer.
   The normal box sections follow, as today.
+- **Background picked:** the header reads "Background" with the same way back to the box, and the panel shows only the
+  scene background colour and the reduced motion choice.
 - **A layer picked:** the header reads the layer's name and kind, with a way back to the box ("FX scene" crumb). Only
   that layer's sections show: Layer (name, visible, blend, kind behind a confirmation because changing the kind resets
   its settings), then its settings grouped. Groups come from an optional `group` on each setting in
