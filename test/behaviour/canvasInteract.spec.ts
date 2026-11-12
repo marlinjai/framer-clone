@@ -85,6 +85,29 @@ interface EditorWindow {
 const editor = <T,>(page: Page, call: (api: EditorWindow['__editor']) => T): Promise<T> =>
   page.evaluate((source) => new Function('api', `return (${source})(api)`)((window as unknown as EditorWindow).__editor), call.toString()) as Promise<T>;
 
+/**
+ * Resolves once a scroller has stopped moving: its position is the same over 200 ms of frames in a row. The
+ * browser's own `scrollend` would say it too, but only for a scroll that is still running when it is asked.
+ */
+const scrollAtRest = (scroller: Locator) =>
+  scroller.evaluate(
+    (el) =>
+      new Promise<void>((resolve) => {
+        let last = el.scrollTop;
+        let since = performance.now();
+        const look = () => {
+          const now = performance.now();
+          if (el.scrollTop !== last) {
+            last = el.scrollTop;
+            since = now;
+          }
+          if (now - since >= 200) resolve();
+          else requestAnimationFrame(look);
+        };
+        requestAnimationFrame(look);
+      }),
+  );
+
 const displays = (copies: Locator) => copies.evaluateAll((els) => els.map((el) => getComputedStyle(el).display));
 const camera = (page: Page) => page.locator('[data-camera-transform]').getAttribute('data-camera-transform');
 
@@ -459,6 +482,13 @@ describe.each(ENGINES)('in %s', (name, engine) => {
       await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
       await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
       expect(await camera(page)).toBe(before);
+      // The finger left the scroller moving, so it coasts on for a moment. A person lets it stop before
+      // pressing something else, and so does this: Chromium on Linux takes a tap that lands on a coasting
+      // scroll as "stop", not as a press, wherever on the screen it lands. Chromium on macOS does not, which
+      // is why this only ever failed in continuous integration. Measured in Linux Chromium with this editor
+      // and these steps: without the wait the tool stayed on Interact in 21 of 25 runs, with it in 0 of 25
+      // (on a bare page with no editor: 11 of 30 against 0 of 30).
+      await scrollAtRest(scroller);
     }
     await bar.getByRole('button', { name: 'Select tool' }).tap();
     // Polled: the tool changes on the tap's handler, which can land after the tap resolves.
