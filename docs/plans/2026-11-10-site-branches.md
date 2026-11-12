@@ -486,7 +486,7 @@ The proof site stays as a draft afterwards (deleting it is not needed and is not
 | What | How | Effect |
 |---|---|---|
 | The switch | Remove `SITE_BRANCHES_COMPANIES` in Coolify and restart. Under five minutes. | Branches are hidden, not deleted; every preview address answers 404; main, saving and publishing are unaffected (section 9). Setting it again brings everything back. |
-| The deploy | Point the Coolify application at the previous image, `ghcr.io/marlinjai/framer-clone:7b32ea16...` (every deploy pushes the commit's own tag beside `latest`), and redeploy. | Older code ignores the new columns and tables. Before doing this with open branches, merge or discard them (older code would list each as a draft site, section 9), and run no erase of personal data while rolled back. |
+| The deploy | Point the Coolify application at the previous image, `ghcr.io/marlinjai/framer-clone:7b32ea163bef2e1edb5fe0d249f1fc0875d24280` (every deploy pushes the commit's own tag beside `latest`), and redeploy. | Older code ignores the new columns and tables. Before doing this with open branches, merge or discard them (older code would list each as a draft site, section 9), and run no erase of personal data while rolled back. |
 | The migrations | Not reversed: additive, ignored by older code. | None. |
 | A bad merge during the proof | "Undo this merge". | It is on the proof site only. |
 
