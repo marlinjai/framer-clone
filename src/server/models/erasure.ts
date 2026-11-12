@@ -17,8 +17,8 @@
 // THE RACE THIS FILE DOES NOT CLOSE (read before wiring). `executeModelBlobErasure` re-checks `rowsReferencing(key)`
 // and then calls `deleteBlob(key)`. Those are two separate operations, so the re-check is NOT atomic with the delete:
 //   t1  eraser:  rowsReferencing(served/H) -> 0
-//   t2  site B:  upload of the same content finds the blob already stored (the pipeline skips `put` for a blob that
-//                exists, and writes blobs BEFORE it inserts the row), then inserts its row for H and commits
+//   t2  site B:  upload of the same content puts the blob (the pipeline always writes it, BEFORE it inserts the row;
+//                a put that lands before the delete does not survive it), then inserts its row for H and commits
 //   t3  eraser:  deleteBlob(served/H)       -> the blob is gone while site B's committed row points at it
 // Site B now serves a 404 for a model it owns, and nothing repairs it. The window is the storage round trip (network
 // time), not a few microseconds. A narrower variant: site B has put the blob but not yet inserted its row at t1, so
@@ -35,7 +35,8 @@
 //       bytes after the tombstone clears; the tombstone is cleared only after the blob delete is confirmed. The row
 //       insert and the tombstone check must be ordered by a row lock or a unique constraint, never by two reads.
 //   (c) any equivalent, including never deleting shared blobs inline and only sweeping them by age under (a) or (b).
-// Until then this executor stays unwired, and a company erasure must not be marked processed on the strength of it.
+// The unapproved design draft (Option B, an intent row plus a tombstone) is in the plan, "Draft (UNAPPROVED): coordinating uploads
+// and blob cleanup". Until it is approved and implemented this executor stays unwired, and a company erasure must not be marked processed on the strength of it.
 //
 // Blobs are content-addressed and shared across sites and companies, so a blob goes only when no remaining row of any
 // site keeps it. Originals are user content and go with the company, by the same rule.
