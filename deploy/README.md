@@ -453,21 +453,36 @@ copy and frees its name.
 ## Migration rollbacks
 
 `20261104000000_site_last_write_key` (the editor autosave's attempt keys, plan
-`docs/plans/2026-11-04-editor-autosave.md`) adds two nullable columns, `sites.last_write_key` and `sites.last_write_version`. Older code ignores them, so a
-code rollback needs nothing. To take the columns out as well, after the application runs the previous image:
+`docs/plans/2026-11-04-editor-autosave.md`) adds two nullable columns, `sites.last_write_key` and `sites.last_write_version`.
+Older code ignores them, so **a code rollback needs nothing, and the default is to leave the columns where they are**: a
+nullable column nobody reads costs nothing, and the migration stays recorded as applied, so the next deploy has nothing to
+redo. Do not drop anything to "tidy up" after a rollback.
+
+**Dropping the columns is destructive and needs its own explicit authorization** (the attempt keys of every site are lost,
+and the autosave of the previous image has no use for them either way). If it is authorized, do both steps in ONE
+transaction, after the application runs the previous image:
 
 ```sql
+BEGIN;
 ALTER TABLE "sites" DROP COLUMN "last_write_key", DROP COLUMN "last_write_version";
+DELETE FROM "_prisma_migrations" WHERE "migration_name" = '20261104000000_site_last_write_key';
+COMMIT;
 ```
 
-then tell Prisma the migration is no longer applied, so the next deploy applies it again:
+The second statement is what makes the next deploy apply the migration again. **Do not use `prisma migrate resolve
+--rolled-back` for this:** it works only on a migration Prisma recorded as FAILED, and for one that applied it stops with
+`P3012: cannot be rolled back because it is not in a failed state`. And do not drop the columns alone: Prisma still has
+the migration recorded as applied, answers "No pending migrations to apply", and the columns stay gone while newer code
+expects them. (Both outcomes were checked on a throwaway Postgres 16 with the full migration chain, 2026-11-12: the
+`resolve` was refused with P3012; the columns-only drop left them gone after a deploy; the single transaction above made
+the next `prisma migrate deploy` apply the migration again and the two columns came back.)
 
-```sh
-pnpm exec prisma migrate resolve --rolled-back 20261104000000_site_last_write_key
-```
+`migrate resolve --rolled-back <name>` is for the other case: a migration Prisma marked as failed (error P3009 at boot),
+once its partial effect has been undone by hand; until then every later deploy refuses to migrate.
 
-The same `migrate resolve --rolled-back <name>` clears a migration Prisma marked as failed (error P3009 at boot), once
-its partial effect has been undone by hand; until then every later deploy refuses to migrate.
+The same shape applies to any additive migration of this file's family (`site_branches` and its follow-ups): leave the new
+tables and columns in place on a code rollback; a destructive removal is a separate, explicitly authorized step that also
+deletes the migration's `_prisma_migrations` row in the same transaction.
 
 ## Erasing personal data: one container only
 
