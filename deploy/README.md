@@ -493,7 +493,9 @@ once its partial effect has been undone by hand; until then every later deploy r
 
 The same shape applies to any additive migration of this file's family (`site_branches` and its follow-ups): leave the new
 tables and columns in place on a code rollback; a destructive removal is a separate, explicitly authorized step that also
-deletes the migration's `_prisma_migrations` row in the same transaction.
+deletes the migration's `_prisma_migrations` row in the same transaction. `site_models` carries that as a script,
+`prisma/migrations/20261112200000_site_models/rollback.sql` (run by hand in one transaction; leaving the empty table in place
+is the default).
 
 ## Erasing personal data: one container only
 

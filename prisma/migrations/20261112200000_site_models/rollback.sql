@@ -3,8 +3,9 @@
 --
 --   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f prisma/migrations/20261112200000_site_models/rollback.sql
 --
--- Do NOT run `prisma migrate resolve --rolled-back` for it: that works only for a migration that FAILED, and refuses
--- one that applied (P3012). This script forgets the migration itself, so a later deploy of the same commit applies it
+-- Leaving the empty table in place after a code rollback is the default and harmless; running this script is a
+-- destructive step that needs its own explicit authorization. Do NOT run `prisma migrate resolve --rolled-back` for it:
+-- that works only for a migration that FAILED, and refuses one that applied (P3012, checked on a scratch database). This script forgets the migration itself, so a later deploy of the same commit applies it
 -- again instead of treating it as done. It drops only this migration's table (its indexes, constraints and foreign key
 -- go with it) and deletes only this migration's row of Prisma's history. Nothing else is touched. It destroys the
 -- stored model METADATA: the blobs in object storage are not touched and would be orphans.
