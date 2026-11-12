@@ -33,9 +33,9 @@ lands, no head item is written into any page, so the only thing a visitor could 
 ## What a rollback of 385 does
 
 - **Reading:** the old image reads every snapshot the new one wrote. Its page metadata model and its published-page adapter read only the fields they know and ignore `head` and `ogType`; the published revisions (frozen documents) are untouched by a code rollback.
-- **Writing after a rollback:** a page saved by the old image loses `head` and `ogType`. On H1 alone that is no data: nothing in the editor, the AI or the agent plugin writes either key (the panel is H3, and the generator is told head items are not its to write), only the defaults the model adds. The site's list `siteSettings.head` survives, because the older settings normalizer already kept it. No down migration or data repair is needed.
+- **Writing after a rollback:** a page saved by the old image loses `head` and `ogType`. On H1 alone that is no data: nothing in the editor, the AI or the agent plugin writes either key (the panel is H3, and the generator is told head items are not its to write), only the defaults the model adds. The site's list `siteSettings.head` survives, because the older settings normalizer already kept it. The save schemas keep unknown page keys, so an authorized save could in principle have stored a non-default `ogType` or `head`, and a save from the rolled-back build would drop it. No down migration is needed unless a stored page holds a non-default `ogType` or `head`: confirm that before release (check 5 below).
 - **A tab left open across the deploy** keeps the old shape and saves without the two keys: the same default-only loss, and the plan accepts it for a page's own head until H3 exists.
-- **If H2 and H3 are deployed later and then rolled back,** items stored on pages are dropped by the next save from the old image, and the published copies keep serving the frozen items they were published with. That belongs to their own confirmation.
+- **If H2 and H3 are deployed later and then rolled back,** items stored on pages are dropped by the next save from the old image, Published revisions keep their stored items, but the old image renders pages without them, so the published pages stop serving those items. That belongs to their own confirmation.
 
 ## To repeat at the exact release commit (read-only)
 
@@ -43,6 +43,7 @@ lands, no head item is written into any page, so the only thing a visitor could 
 2. Whether 390 (H2) and the Head panel (H3) are in the release; if they are, this note is not enough and they need their own confirmation, including the held crawler-metadata question and the unresolved save-contention decision (coordinator inbox entry `20261112-062705-site-head-model`).
 3. Re-run the two checks of item 1 above (the metadata objects and the raw head of a real build) at the release commit, and say what differs.
 4. Name who is the owner then.
+5. Read-only, on production data: confirm no stored page snapshot holds a non-default `metadata.ogType` (anything but `website`) or a non-empty `metadata.head`.
 
 | Release commit | Read on | Read by | Result |
 |---|---|---|---|
