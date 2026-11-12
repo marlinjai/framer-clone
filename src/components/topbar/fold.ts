@@ -103,12 +103,19 @@ export function measureRequired(bar: HTMLElement): number {
 }
 
 /**
- * The needs after the current level, measured again, came out `delta` wider (or narrower) than remembered: what
- * the bar holds changed (an agent began, a save failed, a word got longer). A change outside the folding controls
- * changes every level alike, so the others move with it: an estimate, measured when the bar steps there.
+ * The needs after the level `at`, measured again, came out `delta` wider (or narrower) than remembered: what the
+ * bar holds changed (an agent began, a save failed, a note went). The other levels get an estimate, measured when
+ * the bar steps there. Growth moves them all alike: a level below that needs more than estimated is tried once
+ * and refolds before paint, which nobody sees. Shrinking forgets the levels below instead: what went may have been
+ * wider there (a note that is a sentence at level 0 and an icon at level 1), and an estimate that is too high would
+ * keep the bar folded with room to spare.
  */
-export function shiftNeeds(required: ReadonlyArray<number | undefined>, delta: number): (number | undefined)[] {
-  return required.map((need) => (need === undefined ? undefined : need + delta));
+export function shiftNeeds(required: ReadonlyArray<number | undefined>, at: number, delta: number): (number | undefined)[] {
+  return required.map((need, level) => {
+    if (need === undefined) return undefined;
+    if (delta < 0 && level < at) return undefined;
+    return need + delta;
+  });
 }
 
 /** Whether someone is using the bar: the focus is in it, or one of its menus or dropdowns is open. */
@@ -133,6 +140,12 @@ export function useTopBarFold(ref: React.RefObject<HTMLElement | null>): FoldLev
   // The level the last measure was taken at: measured again at the same level, a different need means the
   // content changed.
   const lastMeasured = React.useRef<FoldLevel | null>(null);
+  // The bar's width at that measure: at the last level the names truncate with the width, so a change measured
+  // there with another width is the window's, not the content's.
+  const lastWidth = React.useRef(0);
+  // The level just tried on the way up without a known need: kept only if it fits with UNFOLD_SLACK to spare, like
+  // an unfold from a known need, so a word that grows and shrinks again never swings the bar.
+  const trying = React.useRef<FoldLevel | null>(null);
   levelRef.current = level;
 
   const measure = React.useCallback(() => {
@@ -148,11 +161,13 @@ export function useTopBarFold(ref: React.RefObject<HTMLElement | null>): FoldLev
     const at = levelRef.current;
     const need = measureRequired(bar);
     const before = required.current[at];
-    if (lastMeasured.current === at && before !== undefined && Math.abs(need - before) > 0.5) {
-      required.current = shiftNeeds(required.current, need - before);
+    const sameWidth = lastWidth.current === available;
+    if (lastMeasured.current === at && sameWidth && before !== undefined && Math.abs(need - before) > 0.5) {
+      required.current = shiftNeeds(required.current, at, need - before);
     }
     required.current[at] = need;
     lastMeasured.current = at;
+    lastWidth.current = available;
     // What each level needs, as last measured or estimated: on the bar for a proof (and a person debugging) to
     // read. An attribute, so the bar's own MutationObserver does not hear it.
     bar.setAttribute('data-fold-needs', JSON.stringify(required.current.map((n) => (n === undefined ? null : Math.round(n)))));
@@ -161,7 +176,11 @@ export function useTopBarFold(ref: React.RefObject<HTMLElement | null>): FoldLev
     if (focused && focused !== document.body && bar.contains(focused) && focused.getClientRects().length === 0) {
       bar.querySelector<HTMLElement>(`[${MORE_TRIGGER_ATTR}]`)?.focus();
     }
-    const next = decideFoldLevel(at, available, required.current);
+    const tried = trying.current === at;
+    trying.current = null;
+    let next = decideFoldLevel(at, available, required.current);
+    if (tried && next === at && need + UNFOLD_SLACK > available && at < MAX_FOLD) next = (at + 1) as FoldLevel;
+    else if (next < at && required.current[next] === undefined) trying.current = next;
     // Never unfold under someone's hands (a focused control or an open menu would move or vanish); folding
     // cannot wait, or controls would overlap. The bar unfolds when the focus leaves it.
     if (next < at && inUse(bar)) return;
@@ -209,7 +228,9 @@ export function useTopBarFold(ref: React.RefObject<HTMLElement | null>): FoldLev
       observeControls();
       rerun();
     });
-    content.observe(bar, { childList: true, subtree: true, characterData: true });
+    // aria-expanded too: a menu of the bar closing (by a click outside, which leaves the focus where it lands and
+    // re-renders only the menu) is when an unfold held back for it applies. The fold itself never sets it.
+    content.observe(bar, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['aria-expanded'] });
     const compact = typeof window.matchMedia === 'function' ? window.matchMedia(COMPACT_QUERY) : null;
     compact?.addEventListener?.('change', rerun);
     // A web font arriving after the first paint widens every word without changing an element or the bar's width:

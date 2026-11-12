@@ -91,7 +91,13 @@ const MAIN_NEEDS = [1420, 1296, 1232, 1012];
 // (its data-fold), plus `extra` for content that is the same at every level (a longer status word, an agent
 // chip), and overflows when that is more than the width. A box is drawn unless it or an ancestor is `hidden`
 // (the wide bar's undo cluster, `hidden lg:flex`, shows from 1024px up).
-const layout = { width: 1680, needs: BRANCH_NEEDS, extra: 0 };
+// `extraAt` is content that differs by level (a note that is a sentence at level 0 and an icon after it), and with
+// `namesTruncate` the last level's need follows the width as the site and branch names give way.
+const layout = { width: 1680, needs: BRANCH_NEEDS, extra: 0, extraAt: [0, 0, 0, 0], namesTruncate: false };
+const needAt = (level: number) => {
+  const need = layout.needs[level] + layout.extra + layout.extraAt[level];
+  return level === 3 && layout.namesTruncate ? Math.min(need, layout.width) : need;
+};
 const isHiddenBox = (el: Element): boolean => {
   for (let at: Element | null = el; at; at = at.parentElement) {
     if (at.classList.contains('hidden') && !at.classList.contains('lg:flex')) return true;
@@ -104,11 +110,14 @@ beforeEach(() => {
   layout.width = 1680;
   layout.needs = BRANCH_NEEDS;
   layout.extra = 0;
+  layout.extraAt = [0, 0, 0, 0];
+  layout.namesTruncate = false;
   resizeCallbacks.length = 0;
   realResizeObserver = globalThis.ResizeObserver;
   globalThis.ResizeObserver = class {
-    constructor(private readonly cb: () => void) {
-      resizeCallbacks.push(() => this.cb());
+    constructor(private readonly cb: (entries: unknown[], observer: unknown) => void) {
+      // No entries: the fold reads the bar itself; the menus' positioning (floating-ui) iterates them.
+      resizeCallbacks.push(() => this.cb([], this));
     }
     observe() {}
     unobserve() {}
@@ -119,14 +128,14 @@ beforeEach(() => {
   });
   vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockImplementation(function (this: HTMLElement) {
     if (!this.hasAttribute('data-editor-topbar')) return 0;
-    return Math.max(layout.width, layout.needs[Number(this.getAttribute('data-fold'))] + layout.extra);
+    return Math.max(layout.width, needAt(Number(this.getAttribute('data-fold'))));
   });
   // The free gap in the middle holds what the content leaves of the bar's width.
   const realRect = Element.prototype.getBoundingClientRect;
   vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
     if (!this.hasAttribute('data-fold-gap')) return realRect.call(this);
     const bar = this.closest('[data-editor-topbar]')!;
-    const room = layout.width - layout.needs[Number(bar.getAttribute('data-fold'))] - layout.extra;
+    const room = layout.width - needAt(Number(bar.getAttribute('data-fold')));
     return new DOMRect(0, 0, Math.max(0, room), 64);
   });
   vi.spyOn(Element.prototype, 'getClientRects').mockImplementation(function (this: Element) {
@@ -225,7 +234,9 @@ describe('the fold decision', () => {
   });
 
   it('moves every remembered need with a change measured at one level', () => {
-    expect(shiftNeeds([1661, 1300, undefined, 1024], 40)).toEqual([1701, 1340, undefined, 1064]);
+    expect(shiftNeeds([1661, 1300, undefined, 1024], 1, 40)).toEqual([1701, 1340, undefined, 1064]);
+    // Shrinking forgets the levels below: what went may have been wider there.
+    expect(shiftNeeds([1661, 1300, 1169, 1024], 1, -40)).toEqual([undefined, 1260, 1129, 984]);
   });
 
   it('unfolds from a remembered need only with room to spare', () => {
@@ -437,5 +448,49 @@ describe('the wide top bar, folding', () => {
     });
     await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
     expect(document.activeElement).toBe(moreButton());
+  });
+
+  it('unfolds when something that was wider at a lower level goes away (Update after "Main has changed")', async () => {
+    // The note is a 180px sentence at level 0 and a 32px icon after it: with it the bar sits at level 1.
+    layout.extraAt = [180, 32, 32, 32];
+    renderBar(branch, 1700);
+    expect(level()).toBe(1);
+    layout.extraAt = [0, 0, 0, 0];
+    await contentChanges(0);
+    expect(level()).toBe(0);
+  });
+
+  it('does not take a window resize at the last level for a change of content, where the names truncate', () => {
+    layout.needs = [1661, 1300, 1169, 1150];
+    layout.namesTruncate = true;
+    renderBar(branch, 1100);
+    expect(level()).toBe(3);
+    // Level 3 now measures 1150 at 1190px, the window's doing; level 2 fits with the slack to spare.
+    resizeTo(1190);
+    expect(level()).toBe(2);
+  });
+
+  it('unfolds once More closes by a click outside it, which leaves the focus out of the bar', async () => {
+    renderBar(branch, 1024);
+    expect(level()).toBe(3);
+    act(() => moreButton().focus());
+    act(() => {
+      fireEvent.keyDown(moreButton(), { key: 'Enter' });
+    });
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    resizeTo(1300);
+    expect(level()).toBe(3);
+    // The menu listens for a press outside from the next task on (Radix), as after a real person's pause.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    const canvas = document.createElement('div');
+    document.body.append(canvas);
+    act(() => {
+      fireEvent.pointerDown(canvas, { button: 0, pointerType: 'mouse' });
+    });
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+    // 1300px: level 2 (1169px) fits with the slack to spare, level 1 (1300px) does not.
+    await waitFor(() => expect(level()).toBe(2));
   });
 });
