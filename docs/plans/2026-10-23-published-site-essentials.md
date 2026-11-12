@@ -361,7 +361,15 @@ each reversible (say so if you disagree):
    **Operator-alert limitation (recorded 2026-11-12):** the watchdog route reports `purgesStuck` and `purges: "stuck"` but stays HTTP 200 for
    it, and the three existing Uptime Kuma monitors (non-2xx, dead jobs, receipts) do not read either field. Nothing notifies a person of a
    stuck purge until a fourth keyword monitor on `$.purges == "ok"` is created (a live change, not done; see deploy/README.md). The owner
-   messages also name "support" with no address, because the app has no support channel to point at. Both are open for Marlin.
+   messages also name "support" with no address, because the app has no support channel to point at (checked 2026-11-12: the
+   application's only convention is the bare words "contact support", as in the shop-suspended refusal in `companyCommerce.ts`; no support
+   address, link or setting exists in the code, `.env.example`, `deploy/` or the docs, and the one `support@lumitra.co` found in the suite is a
+   test fixture of another repository, not a convention). Both are open for Marlin. **Why the existing non-2xx monitor cannot carry it
+   (assessed, not implemented):** the route's contract is that persistent conditions stay HTTP 200 as counts with keyword monitors of
+   their own, because a persistent 500 keeps monitor 39 and the host timer's `curl --fail-with-body` unit red for as long as the cause lasts
+   and hides the next real failure (a failed pass, a job more than ten minutes late) on the same route. A stuck purge is exactly that kind of
+   condition (it never dies and stays until fixed), so turning the route non-2xx would break that contract and make monitor 39 ambiguous;
+   the fourth keyword monitor is the consistent fix.
 9. **Tests:** `formNotify.itest.ts` (real Postgres, fake Lumitra Mail) covers forward, a repeated post, not connected then
    connected plus resend, refusal then resend, blocked, an old connection installing the template, a failing install,
    reconnect to another workspace, Lumitra Mail down then back with the letter unchanged, three days of failures, a deleted
