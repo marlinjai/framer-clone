@@ -48,6 +48,13 @@ vi.mock('@/server/forms/projectDelete', () => ({
   deleteProjectSubmissions: (tenantGroupId: string, siteId: string) => deleteProjectSubmissions(tenantGroupId, siteId),
 }));
 
+// The durable cleanup intent, written before the site row is deleted (src/server/forms/purge.ts).
+const scheduleProjectSubmissionsPurge = vi.fn<(tenantGroupId: string, workspaceId: string, siteId: string) => Promise<void>>(async () => undefined);
+vi.mock('@/server/forms/purge', () => ({
+  scheduleProjectSubmissionsPurge: (tenantGroupId: string, workspaceId: string, siteId: string) =>
+    scheduleProjectSubmissionsPurge(tenantGroupId, workspaceId, siteId),
+}));
+
 // ---- in-memory database (sites, site_domains with ON DELETE CASCADE) ------
 type Site = { id: string; workspaceId: string; tenantGroupId: string; name: string; status: string; updatedAt?: Date };
 type Domain = {
@@ -183,6 +190,8 @@ beforeEach(() => {
   mockVerifySession.mockResolvedValue(makeSession());
   mockCan.mockResolvedValue(true);
   deleteProjectSubmissions.mockImplementation(async () => 0);
+  scheduleProjectSubmissionsPurge.mockReset();
+  scheduleProjectSubmissionsPurge.mockImplementation(async () => undefined);
 });
 
 afterEach(() => {
@@ -317,6 +326,51 @@ describe('DELETE /api/projects/<id> outcome for a published project', () => {
     expect(res.status).toBe(200);
     expect(deleteProjectSubmissions).toHaveBeenCalledTimes(1);
     expect(deleteProjectSubmissions).toHaveBeenCalledWith('tg_lumitra', 'site_pub');
+  });
+
+  it('writes the durable purge BEFORE the site row goes, for this workspace and project only', async () => {
+    scheduleProjectSubmissionsPurge.mockImplementation(async () => {
+      // The intent exists while the project still does: a crash right after it deletes nothing.
+      expect(sites.find((s) => s.id === 'site_pub')).toBeDefined();
+    });
+    const res = await del('site_pub', { confirmName: 'Bakery' });
+    expect(res.status).toBe(200);
+    expect(scheduleProjectSubmissionsPurge).toHaveBeenCalledTimes(1);
+    expect(scheduleProjectSubmissionsPurge).toHaveBeenCalledWith('tg_lumitra', expect.any(String), 'site_pub');
+  });
+
+  it('writes no purge for an unauthenticated or unauthorized caller or a bad body', async () => {
+    mockVerifySession.mockResolvedValue(null);
+    expect((await del('site_pub', { confirmName: 'Bakery' })).status).toBe(401);
+    mockVerifySession.mockResolvedValue(makeSession());
+    mockCan.mockResolvedValue(false);
+    expect((await del('site_pub', { confirmName: 'Bakery' })).status).toBe(403);
+    mockCan.mockResolvedValue(true);
+    expect((await del('site_pub', 'not json')).status).toBe(400);
+    expect(scheduleProjectSubmissionsPurge).not.toHaveBeenCalled();
+    expect(sites).toHaveLength(3);
+  });
+
+  it('a delete the repository refuses still wrote its purge, which ends as a no-op because the site is still there', async () => {
+    const res = await del('site_pub');
+    expect(res.status).toBe(409);
+    expect(scheduleProjectSubmissionsPurge).toHaveBeenCalledTimes(1);
+    expect(sites.find((s) => s.id === 'site_pub')).toBeDefined();
+    expect(deleteProjectSubmissions).not.toHaveBeenCalled();
+  });
+
+  it('if the purge cannot be written nothing is deleted (500, try again): no project goes without its cleanup', async () => {
+    scheduleProjectSubmissionsPurge.mockImplementation(async () => {
+      throw new Error('tenant schema unreachable');
+    });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = await del('site_pub', { confirmName: 'Bakery' });
+    expect(res.status).toBe(500);
+    expect((await res.json()).error.code).toBe('delete_failed');
+    expect(sites.find((s) => s.id === 'site_pub')).toBeDefined();
+    expect(db.site.deleteMany).not.toHaveBeenCalled();
+    expect(revalidateSiteCache).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 
   it('a failure deleting the form submissions is loud (500), the caches are still invalidated', async () => {

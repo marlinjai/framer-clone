@@ -328,10 +328,13 @@ export async function deleteFormSubmission(db: Kysely<CommerceDB>, ref: SiteRef,
 }
 
 /** Delete every submission of a site (the project delete). Returns how many rows went. */
-export async function deleteSiteSubmissions(db: Kysely<CommerceDB>, ref: SiteRef): Promise<number> {
-  const result = await deleteWithinLockWait(db, (tx) =>
-    tx.deleteFrom('form_submission').where('tenant_id', '=', ref.tenantId).where('site_id', '=', ref.siteId).executeTakeFirst(),
-  );
+export async function deleteSiteSubmissions(db: Kysely<CommerceDB>, ref: SiteRef & { workspaceId?: string }): Promise<number> {
+  const result = await deleteWithinLockWait(db, (tx) => {
+    let query = tx.deleteFrom('form_submission').where('tenant_id', '=', ref.tenantId).where('site_id', '=', ref.siteId);
+    // The purge job also names the workspace the delete was made from: another workspace's rows are never its to remove.
+    if (ref.workspaceId !== undefined) query = query.where('workspace_id', '=', ref.workspaceId);
+    return query.executeTakeFirst();
+  });
   return Number(result.numDeletedRows);
 }
 

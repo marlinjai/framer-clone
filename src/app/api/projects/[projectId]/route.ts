@@ -66,6 +66,7 @@ import { projectNameSchema } from '@/lib/projectName';
 import { z } from 'zod';
 import { revalidateCustomHostCache, revalidateSiteCache } from '@/server/sites/cachedResolver';
 import { deleteProjectSubmissions } from '@/server/forms/projectDelete';
+import { scheduleProjectSubmissionsPurge } from '@/server/forms/purge';
 import {
   getSiteRepository,
   activeScopeDenial,
@@ -205,6 +206,16 @@ async function handleDELETE(req: Request, { params }: Ctx): Promise<Response> {
   }
 
   const { projectId } = await params;
+  // The durable cleanup of the project's form submissions is written BEFORE the site row goes (after authorization and the
+  // body checks): the submissions are in another schema on another connection, so a crash or failure after the delete would
+  // otherwise leave visitors' words behind with nothing to remove them. The job removes them only once the site row is gone,
+  // so a refused delete costs nothing. If it cannot be written, nothing is deleted.
+  try {
+    await scheduleProjectSubmissionsPurge(scope.tenantGroupId, scope.workspaceId, projectId);
+  } catch (err) {
+    console.error(`[projects] scheduling the form cleanup of ${projectId} failed, nothing was deleted:`, err);
+    return jsonError('delete_failed', 'deleting the project failed; nothing was deleted, try again', 500);
+  }
   let deleted: DeletedSite;
   try {
     deleted = await getSiteRepository().deleteSite(scope, projectId, { confirmName });

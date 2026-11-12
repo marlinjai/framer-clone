@@ -40,6 +40,8 @@ import { fakeMail, type FakeMail } from '@/server/commerce/mail/__tests__/suppor
 import { POST } from '@/app/api/forms/submit/route';
 import { __resetFormRateLimiterForTests } from '../rateLimit';
 import { FormBusyError, deleteFormSubmission, insertFormSubmission, listFormSubmissions, type NewFormSubmission } from '../repository';
+import { deleteProjectSubmissions } from '../projectDelete';
+import { purgeSiteSubmissions } from '../purge';
 import { deliverFormNotification, resendFormNotification, writeFormNotification } from '../notify';
 
 const SEAL_KEY = randomBytes(32);
@@ -208,7 +210,7 @@ function submission(over: Partial<NewFormSubmission> = {}, recipient: string | n
 beforeEach(async () => {
   __resetFormRateLimiterForTests();
   await fx.owner`DELETE FROM ${fx.owner(schema)}.form_submission`;
-  await fx.owner`DELETE FROM ${fx.owner(schema)}.commerce_job WHERE kind = 'form_mail'`;
+  await fx.owner`DELETE FROM ${fx.owner(schema)}.commerce_job WHERE kind IN ('form_mail', 'form_purge')`;
   await fx.owner`DELETE FROM ${fx.owner(schema)}.shop_mail_connection`;
   company = newCompany();
 });
@@ -666,6 +668,36 @@ describe('3. resume', () => {
     expect(transactions).toBe(4);
     expect(company.mail.sent.map((l) => l.key)).toEqual([`form:${company.id}:${s.id}:1:${other}`]);
   }, 30_000);
+
+  it('a project delete that cannot get past an email being sent leaves the rows for the purge job (written before the delete), and the purge job treats the busy row as a retry', async () => {
+    await connect(company);
+    const s = submission();
+    const t = submission();
+    await insertFormSubmission(appDb, s);
+    await insertFormSubmission(appDb, t);
+    const gate = holdSends(company);
+    const attempt = deliverFormNotification(company.outbox, company.id, s.id);
+    await gate.entered;
+    // The site row is gone and the immediate cleanup waits its retries out (one here, so the test is short): it leaves the
+    // rows alone and answers 0, the job written before the delete (formPurge.itest.ts) takes it from there.
+    expect(await deleteProjectSubmissions(tgId, site.siteId, { attempts: 1, pauseMs: 0 })).toBe(0);
+    expect(await fx.owner`SELECT id FROM ${fx.owner(schema)}.form_submission WHERE site_id = ${site.siteId}`).toHaveLength(2);
+    // That job, run while the send is in flight and the site row gone, asks to be retried: never failed, never given up.
+    const gone = { site: { findUnique: async () => null } } as never;
+    await expect(purgeSiteSubmissions({ id: tgId, db: appDb }, tgId, site.siteId, site.workspaceId, gone)).rejects.toMatchObject({ name: 'JobRetryLater' });
+    expect(await fx.owner`SELECT id FROM ${fx.owner(schema)}.form_submission WHERE site_id = ${site.siteId}`).toHaveLength(2);
+    gate.release();
+    expect(await attempt).toBe('sent');
+    expect(await purgeSiteSubmissions({ id: tgId, db: appDb }, tgId, site.siteId, site.workspaceId, gone)).toBe('purged');
+    expect(await fx.owner`SELECT id FROM ${fx.owner(schema)}.form_submission WHERE site_id = ${site.siteId}`).toHaveLength(0);
+    expect(await notificationOf(s.id)).toBeUndefined();
+  }, 60_000);
+
+  it('a project delete with no send in flight just deletes', async () => {
+    await connect(company);
+    await insertFormSubmission(appDb, submission());
+    expect(await deleteProjectSubmissions(tgId, site.siteId, { attempts: 1, pauseMs: 0 })).toBe(1);
+  });
 
   it('deleting a submission while its email is being sent waits briefly, then says busy; once the send has ended the delete goes through', async () => {
     await connect(company);

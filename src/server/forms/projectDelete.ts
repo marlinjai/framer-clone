@@ -21,9 +21,16 @@ const BUSY_PAUSE_MS = 2_000;
 /**
  * Delete every form submission of a deleted project. A tenant group without a
  * commerce schema (a legacy site) has no submissions: 0. Any other failure
- * throws, and the caller reports it.
+ * throws, and the caller reports it. A submission whose notification email is being sent
+ * is waited for a few times; if that stays so, 0 is answered and the durable `form_purge` job written before the
+ * delete (src/server/forms/purge.ts) finishes it: no submission is ever left behind without a job that removes it.
  */
-export async function deleteProjectSubmissions(tenantGroupId: string, siteId: string): Promise<number> {
+export async function deleteProjectSubmissions(
+  tenantGroupId: string,
+  siteId: string,
+  options: { attempts?: number; pauseMs?: number; now?: () => Date } = {},
+): Promise<number> {
+  const { attempts = BUSY_ATTEMPTS, pauseMs = BUSY_PAUSE_MS } = options;
   if (!isTenantGroupId(tenantGroupId)) return 0;
   let db;
   try {
@@ -36,8 +43,12 @@ export async function deleteProjectSubmissions(tenantGroupId: string, siteId: st
     try {
       return await deleteSiteSubmissions(db, { tenantId: tenantGroupId, siteId });
     } catch (err) {
-      if (!(err instanceof FormBusyError) || attempt >= BUSY_ATTEMPTS) throw err;
-      await new Promise((resolve) => setTimeout(resolve, BUSY_PAUSE_MS));
+      if (!(err instanceof FormBusyError)) throw err;
+      if (attempt >= attempts) {
+        console.warn(`[forms] the submissions of deleted project ${siteId} are left to the purge job (an email was being sent)`);
+        return 0;
+      }
+      await new Promise((resolve) => setTimeout(resolve, pauseMs));
     }
   }
 }
