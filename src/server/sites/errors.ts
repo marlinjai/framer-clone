@@ -363,6 +363,21 @@ export class BranchReviewStaleError extends SiteRepositoryError {
   }
 }
 
+/**
+ * A merge or an undo on a site that is live without a frozen published version (published before published
+ * versions were kept, and never published since): visitors are served its working copy, so a merge would go
+ * live at once, against "a merge never publishes". Nothing was written. 409.
+ */
+export class SiteNeedsRepublishError extends SiteRepositoryError {
+  constructor() {
+    super(
+      'site_needs_republish',
+      'This site was published before published versions were kept, so visitors still see its working copy and a merge would go live at once. Publish the site once, then merge.',
+      409,
+    );
+  }
+}
+
 /** A merge of a branch that changes nothing against its site: nothing was written, the branch stays open. 409. */
 export class BranchUnchangedError extends SiteRepositoryError {
   constructor() {

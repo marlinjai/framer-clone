@@ -39,11 +39,12 @@ import {
 } from '@/lib/siteMerge';
 import { stableStringify } from '@/lib/ai/serializers/normalize';
 // A conflict value larger than 4,096 characters (as JSON) is shown as its size: a removed page is a whole page.
-import { reviewDocuments, shownValue, type DocumentReview } from '@/lib/siteMerge/elementChanges';
+import { reviewDocuments, shownConflictValue, type DocumentReview } from '@/lib/siteMerge/elementChanges';
 import { getPrismaClient } from '@/server/db';
 import {
   BranchClosedError,
   BranchUnchangedError,
+  SiteNeedsRepublishError,
   BranchConflictsError,
   BranchMergeInvalidError,
   BranchNotFoundError,
@@ -196,7 +197,8 @@ function draftOf(answers: Record<string, { fingerprint: string; pick: MergeSide 
 
 
 function shown(conflict: MergeConflict): ShownConflict {
-  return { ...conflict, base: shownValue(conflict.base), main: shownValue(conflict.main), branch: shownValue(conflict.branch) };
+  const value = (v: unknown) => shownConflictValue(conflict.unit.kind, conflict.path, v);
+  return { ...conflict, base: value(conflict.base), main: value(conflict.main), branch: value(conflict.branch) };
 }
 
 /** Text a person typed, for storing: control and bidirectional characters removed, trimmed, bounded. */
@@ -219,6 +221,19 @@ async function withSerializationRetry<T>(run: () => Promise<T>): Promise<T> {
       await new Promise((resolve) => setTimeout(resolve, attempt * (20 + Math.random() * 60)));
     }
   }
+}
+
+/**
+ * Refuses a write of main's working copy by site branches (a merge, an undo) while visitors are served that
+ * working copy: a published site with no frozen revision, which only data from before the immutable published
+ * copy can be (every publish since freezes one). Under main's row lock, in the writing transaction.
+ */
+async function assertNotServedFromWorkingCopy(tx: Prisma.TransactionClient, scope: TenantScope, mainSiteId: string): Promise<void> {
+  const live = await tx.site.findFirst({
+    where: { id: mainSiteId, workspaceId: scope.workspaceId, tenantGroupId: scope.tenantGroupId },
+    select: { status: true, publishedRevisionId: true },
+  });
+  if (live?.status === 'published' && live.publishedRevisionId === null) throw new SiteNeedsRepublishError();
 }
 
 /**
@@ -607,6 +622,7 @@ export class SiteBranchMergeService {
         const current = await this.verify(tx, scope, stamp);
         if (current.status === 'merged') return { kind: 'repeat', stamp: current } as const;
         if (current.status === 'discarded') throw new BranchClosedError('discarded', current.mainId);
+        await assertNotServedFromWorkingCopy(tx, scope, stamp.mainId);
         const write = await this.sites.writeWorkingCopyIn(tx, scope, persisted, { mustExist: true, expectedVersion: stamp.mainVersion });
         if (merged.name !== stamp.mainName) {
           await tx.site.updateMany({ where: { id: stamp.mainId, workspaceId: scope.workspaceId }, data: { name: merged.name } });
@@ -680,6 +696,7 @@ export class SiteBranchMergeService {
         });
         if (!main) throw new SiteNotFoundError(mainSiteId);
         if (main.branchOfSiteId) throw new SiteIsBranchError('a merge is undone on its site, not on a branch.');
+        await assertNotServedFromWorkingCopy(tx, scope, main.id);
         const record = await tx.siteBranch.findFirst({
           where: { id: branchId, siteId: main.id, workspaceId: scope.workspaceId },
           select: { ...RECORD_SELECT, mainBeforeDocument: true, mainBeforeEnded: true },

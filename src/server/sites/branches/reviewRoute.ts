@@ -22,6 +22,12 @@ export type ReviewCtx = { params: Promise<{ projectId: string }> };
  * JSON escape (512 x 6 + 128 + punctuation, about 3.3 KB each); anything larger is refused before it is parsed.
  */
 const REVIEW_BODY_MAX_BYTES = 7_000_000;
+/**
+ * A body that carries a token and at most a note (approve, send back, merge): the note is 2,000 characters at
+ * most, each at worst a twelve byte escape pair. Anything larger is refused before it is read in full, so a
+ * member who may only view cannot make the server parse megabytes.
+ */
+const SMALL_BODY_MAX_BYTES = 32_000;
 
 const NO_STORE = { 'cache-control': 'no-store' } as const;
 
@@ -38,6 +44,8 @@ interface Handler<T> {
   what: string;
   /** Without one, the route takes no body. */
   body?: z.ZodType<T>;
+  /** The body carries conflict answers (update, answers): the large limit. Every other body gets the small one. */
+  answers?: true;
   run: (input: { scope: TenantScope; branchId: string; actor: BranchActor; body: T }) => Promise<unknown>;
 }
 
@@ -47,7 +55,7 @@ export function reviewRoute<T>(handler: Handler<T>) {
     if (!guarded.ok) return guarded.response;
     let body = undefined as T;
     if (handler.body) {
-      const parsed = await parseBody(req, handler.body, { maxBytes: REVIEW_BODY_MAX_BYTES });
+      const parsed = await parseBody(req, handler.body, { maxBytes: handler.answers ? REVIEW_BODY_MAX_BYTES : SMALL_BODY_MAX_BYTES });
       if (!parsed.ok) return parsed.response;
       body = parsed.data;
     }

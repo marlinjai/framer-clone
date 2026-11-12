@@ -555,6 +555,64 @@ describe('re-entry after completion or failure', () => {
   });
 });
 
+describe('what the whole-feature review found', () => {
+  it('renaming the site on an approved branch takes the approval back: it was given for the name the reviewer saw', async () => {
+    const branchId = await createBranch(us, 'Approved, then renamed');
+    await edit(us, branchId, { home: 'Approved bread', about: 'Since 1990' });
+    await getSiteBranchRepository().changeBranch(us.scope, us.mainId, branchId, { ready: true }, { kind: 'user', id: 'author' });
+    expect((await approvePOST(request('POST', `/api/projects/${branchId}/branch/approve`, { token: (await review(branchId)).token }), ctx(branchId))).status).toBe(200);
+    expect((await review(branchId)).branch.approved).toBe(true);
+    await getSiteRepository().renameSite(us.scope, branchId, 'Bakery, renamed after approval');
+    expect((await review(branchId)).branch.approved).toBe(false);
+    // Renaming main touches no branch's approval.
+    expect((await approvePOST(request('POST', `/api/projects/${branchId}/branch/approve`, { token: (await review(branchId)).token }), ctx(branchId))).status).toBe(200);
+    await getSiteRepository().renameSite(us.scope, us.mainId, 'Main, renamed');
+    expect((await review(branchId)).branch.approved).toBe(true);
+  });
+
+  it('a site still served from its working copy (published before versions were frozen) takes no merge and no undo until it is published once', async () => {
+    const branchId = await createBranch(us, 'On an old live site');
+    await edit(us, branchId, { home: 'Would go live', about: 'Since 1990' });
+    await prisma.site.update({ where: { id: us.mainId }, data: { status: 'published', publishedRevisionId: null } });
+    const version = (await prisma.site.findUniqueOrThrow({ where: { id: us.mainId }, select: { version: true } })).version;
+    const res = await merge(branchId, { token: (await review(branchId)).token });
+    expect(res.status).toBe(409);
+    const error = (await res.json()).error;
+    expect(error.code).toBe('site_needs_republish');
+    expect(error.message).toMatch(/Publish the site once, then merge/);
+    expect((await prisma.site.findUniqueOrThrow({ where: { id: us.mainId }, select: { version: true } })).version).toBe(version);
+    expect(await textOf(us.mainId, 'home')).not.toBe('Would go live');
+    expect((await prisma.siteBranch.findUniqueOrThrow({ where: { id: branchId } })).status).toBe('open');
+    // A draft site, as every site made today is until its first publish, merges.
+    await prisma.site.update({ where: { id: us.mainId }, data: { status: 'draft' } });
+    expect((await merge(branchId, { token: (await review(branchId)).token })).status).toBe(200);
+  });
+
+  it('a conflict on the analytics key reference names the field and never shows what it holds', async () => {
+    const branchId = await createBranch(us, 'Key reference');
+    await prisma.site.update({ where: { id: branchId }, data: { apiKeyRef: 'path/on/the/branch' } });
+    await prisma.site.update({ where: { id: us.mainId }, data: { apiKeyRef: 'path/on/main', version: { increment: 1 } } });
+    const seen = await review(branchId);
+    const conflict = seen.conflicts.find((c: { path: string[] }) => c.path[0] === 'apiKeyRef');
+    expect(conflict).toBeDefined();
+    expect(conflict.main).toEqual({ omitted: true, hidden: true });
+    expect(conflict.branch).toEqual({ omitted: true, hidden: true });
+    expect(JSON.stringify(seen)).not.toContain('path/on/');
+  });
+
+  it('approve, send back and merge refuse a large body before reading it; update and answers still take their answers', async () => {
+    const branchId = await createBranch(us, 'Body sizes');
+    await edit(us, branchId, { home: 'Sized bread', about: 'Since 1990' });
+    const big = { token: (await review(branchId)).token, note: 'x'.repeat(40_000) };
+    for (const post of [approvePOST, sendBackPOST, mergePOST]) {
+      const res = await post(request('POST', `/api/projects/${branchId}/branch/x`, big), ctx(branchId));
+      expect(res.status).toBe(413);
+    }
+    const answers = await answersPOST(request('POST', `/api/projects/${branchId}/branch/answers`, { token: big.token, resolutions: {}, pad: 'x'.repeat(40_000) }), ctx(branchId));
+    expect(answers.status).not.toBe(413);
+  });
+});
+
 describe('a tab open on the branch hears that it was closed', () => {
   it('a merge and a discard each announce it on the branch\'s own stream, once, after the commit', async () => {
     const heard: Array<[string, unknown]> = [];

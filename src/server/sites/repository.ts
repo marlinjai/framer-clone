@@ -1030,6 +1030,12 @@ export class SiteRepository {
     if (result.count === 1) {
       // The name is in the editor's document but moves no version: the kept copy of it is stale now.
       forgetSiteDocuments(siteId);
+      // On a branch the name is part of what a merge writes, and "Looks good" is bound to the branch's version,
+      // which a rename does not move: a reviewer's approval is for the name they saw, so it goes.
+      await this.prisma.siteBranch.updateMany({
+        where: { branchSiteId: siteId, workspaceId: scope.workspaceId, approvedBranchVersion: { not: null } },
+        data: { approvedBy: null, approvedAt: null, approvedBranchVersion: null },
+      });
       return { name, updatedAt };
     }
 

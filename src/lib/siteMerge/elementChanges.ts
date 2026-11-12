@@ -199,6 +199,14 @@ const TREES = new Set(['appComponentTree', 'canvasNodes']);
 const VALUE_HIDDEN = new Set<string>(['apiKeyRef']);
 const HIDDEN = { omitted: true, hidden: true } as const;
 
+/**
+ * A conflict's values as they may be shown: a site field whose value is never shown (the reference to where the
+ * analytics key is kept) is told as changed, without what it holds, in a conflict as in the change list.
+ */
+export function shownConflictValue(unitKind: string, path: readonly string[], value: unknown): unknown {
+  return unitKind === 'site' && path.length > 0 && VALUE_HIDDEN.has(path[0]) ? HIDDEN : shownValue(value);
+}
+
 function ownFields(unit: unknown): Record<string, unknown> {
   if (!isPlainObject(unit)) return {};
   const copy = withoutTimestamps(unit);
