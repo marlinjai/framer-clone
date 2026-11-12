@@ -21,7 +21,8 @@ function messageOf(err: unknown): string {
 }
 
 function conflictText(n: number): string {
-  return n === 1 ? 'Main’s changes and this branch’s conflict in 1 place' : `Main’s changes and this branch’s conflict in ${n} places`;
+  // The review calls these questions; so does this.
+  return n === 1 ? 'The same thing was changed on main and on this branch: 1 question needs an answer first' : `The same things were changed on main and on this branch: ${n} questions need an answer first`;
 }
 
 /** The branch's name and state, beside the switcher. */
@@ -84,7 +85,8 @@ export function MainChangedNote({ className = '' }: { className?: string }) {
 
   return (
     <div role="status" className={`flex shrink-0 items-center gap-2 text-xs ${className}`}>
-      <span className="text-muted-foreground max-xl:hidden">{message ?? `${mainName} has changed`}</span>
+      {/* Only the idle label gives way on a narrow window; a result or a refusal is always shown. */}
+      <span className={`text-muted-foreground ${message ? '' : 'max-xl:hidden'}`}>{message ?? `${mainName} has changed`}</span>
       {conflicts ? (
         <Button
           size="sm"
@@ -99,7 +101,7 @@ export function MainChangedNote({ className = '' }: { className?: string }) {
         </Button>
       ) : null}
       <Button size="sm" variant="outline" onClick={update} disabled={busy} title={`Bring the changes made to ${mainName} into this branch`}>
-        <RefreshCw aria-hidden className={busy ? 'animate-spin' : undefined} /> {busy ? 'Updating…' : 'Update'}
+        <RefreshCw aria-hidden className={busy ? 'animate-spin motion-reduce:animate-none' : undefined} /> {busy ? 'Updating…' : 'Update'}
       </Button>
     </div>
   );

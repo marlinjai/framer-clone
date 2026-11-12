@@ -235,13 +235,13 @@ describe('a ready branch', () => {
     expect(screen.getByText('Approved')).toBeTruthy();
   });
 
-  it('goes back to open from the switcher', async () => {
+  it('takes "ready for review" back from the switcher, and says so where it can be seen', async () => {
     client.change.mockResolvedValue({ branch: summary() });
     renderWith(onBranch({ status: 'ready' }));
     openMenu(/switch branch/i);
-    fireEvent.click(await screen.findByRole('menuitem', { name: /back to open/i }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: /not ready for review yet/i }));
     await waitFor(() => expect(client.change).toHaveBeenCalledWith(MAIN, BRANCH, { ready: false }));
-    await waitFor(() => expect(screen.getByRole('status', { name: '' }).textContent).toBe('Back to open.'));
+    await waitFor(() => expect(screen.getByRole('status', { name: '' }).textContent).toBe('No longer marked ready for review.'));
   });
 });
 
@@ -262,7 +262,7 @@ describe('a branch behind main', () => {
     client.changes.mockResolvedValue(review({ upToDate: false, conflicts: [{ id: 'c1', kind: 'value', unit: { kind: 'page', id: 'home' }, path: ['props'], fingerprint: 'f', options: ['main', 'branch'] }] }));
     renderWith(onBranch({ mainMoved: true }));
     fireEvent.click(screen.getByRole('button', { name: /update/i }));
-    expect(await screen.findByText(/conflict in 1 place, so it was not updated/)).toBeTruthy();
+    expect(await screen.findByText(/1 question needs an answer first, so it was not updated\. The branch is unchanged\./)).toBeTruthy();
     expect(client.update).not.toHaveBeenCalled();
     // The way on: each conflict is answered in the review.
     fireEvent.click(screen.getByRole('button', { name: 'Answer in the review' }));

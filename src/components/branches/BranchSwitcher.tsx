@@ -65,7 +65,7 @@ export default function BranchSwitcher({ className = '' }: { className?: string 
     try {
       await branchClient.change(mainSiteId, onBranch.branchId, { ready });
       await refresh();
-      setNotice(ready ? 'Marked ready for review.' : 'Back to open.');
+      setNotice(ready ? 'Marked ready for review.' : 'No longer marked ready for review.');
     } catch (err) {
       setNotice(err instanceof BranchApiError ? err.message : 'That did not work. Try again.');
     }
@@ -124,7 +124,7 @@ export default function BranchSwitcher({ className = '' }: { className?: string 
               </DropdownMenuItem>
               {onBranch.status === 'ready' ? (
                 <DropdownMenuItem onSelect={() => void setReady(false)}>
-                  <Undo2 aria-hidden /> Back to open
+                  <Undo2 aria-hidden /> Not ready for review yet
                 </DropdownMenuItem>
               ) : (
                 <DropdownMenuItem onSelect={() => void setReady(true)}>
@@ -138,7 +138,9 @@ export default function BranchSwitcher({ className = '' }: { className?: string 
           ) : null}
         </DropdownMenuContent>
       </DropdownMenu>
-      <span role="status" aria-live="polite" className="sr-only">
+      {/* Seen as well as announced: a switch refused because the tab is not saved, or a failed "ready", would
+          otherwise close the menu and show nothing. Always mounted, so a screen reader hears each new text. */}
+      <span role="status" aria-live="polite" className={notice ? 'max-w-[22rem] shrink text-xs text-muted-foreground' : 'sr-only'}>
         {notice ?? ''}
       </span>
       <NewBranchDialog open={dialog === 'new'} onOpenChange={(o) => setDialog(o ? 'new' : null)} mainSiteId={mainSiteId} fromSiteId={state.siteId} returnFocusTo={triggerRef} />

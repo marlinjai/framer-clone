@@ -98,7 +98,7 @@ describe('forward', () => {
     client.changes.mockResolvedValue(review());
     open();
     expect(await screen.findByText('2 pages, 3 elements changed')).toBeTruthy();
-    const nav = screen.getByRole('navigation', { name: 'Changes' });
+    const nav = screen.getByRole('region', { name: 'Questions and changes' });
     expect(within(nav).getByText(/Fresh bread → Fresh rolls/)).toBeTruthy();
     // The branch outlines what it added and changed; main what it removed and changed.
     expect(lastPane('branch').outlines).toMatch(/"title".*\n.*"new"/);
@@ -157,10 +157,14 @@ describe('what a person may do', () => {
     await screen.findByText(/elements changed/);
     expect(button(/looks good/i).disabled).toBe(true);
     expect(button(/looks good/i).title).toMatch(/may not review/);
-    expect(button('Merge into Bakery').disabled).toBe(true);
-    expect(button('Merge into Bakery').title).toMatch(/Only an admin/);
-    expect(button(/Bakery: Main title/).disabled).toBe(true);
+    expect(button('Update from Bakery first').disabled).toBe(true);
+    expect(button('Update from Bakery first').title).toMatch(/Only an admin/);
+    expect(button(/Bakery: Main title/).getAttribute('aria-disabled')).toBe('true');
     expect(button(/All from Bakery/).title).toMatch(/Only someone who may edit/);
+    // The reasons are on the page as text too: a disabled button's tooltip reaches neither a keyboard nor a touch screen.
+    expect(screen.getByText(/“Looks good” and “Send back” are off: You may not review/)).toBeTruthy();
+    expect(screen.getByText(/The answers are off: Only someone who may edit/)).toBeTruthy();
+    expect(screen.getByText(/Merge is not possible yet: Only an admin/)).toBeTruthy();
   });
 
   it('with the permission service down, every control stays on and the server decides', async () => {
@@ -183,17 +187,19 @@ describe('questions from main', () => {
     client.answers.mockImplementationOnce(() => new Promise((r) => (release = () => r(review({ upToDate: false, conflicts: [two().conflicts[1]], settled: [{ id: 'c1', pick: 'branch', conflict: two().conflicts[0] }] })))));
     open();
     expect(await screen.findByText(/Home: Fresh rolls: text/)).toBeTruthy();
-    expect(button('Merge into Bakery').disabled).toBe(true);
+    expect(button('Update from Bakery first').disabled).toBe(true);
     expect(button('Update the branch').disabled).toBe(true);
     fireEvent.click(button(/Branch: Branch title/));
     await waitFor(() => expect(client.answers).toHaveBeenCalledWith(BRANCH, 'tok-1', { c1: { fingerprint: 'fp-c1', pick: 'branch' } }));
     // While it is stored, no other answer can be given.
-    expect(button(/Branch: Branch hours/).disabled).toBe(true);
+    expect(button(/Branch: Branch hours/).getAttribute('aria-disabled')).toBe('true');
     fireEvent.click(button(/Branch: Branch hours/));
     expect(client.answers).toHaveBeenCalledTimes(1);
     await act(async () => release());
     expect(button(/Branch: Branch title/).getAttribute('aria-pressed')).toBe('true');
-    expect(button('Merge into Bakery').disabled).toBe(true);
+    // The answered question stays where it was, first, and the pressed button keeps the keyboard's focus.
+    expect(screen.getAllByRole('listitem').filter((li) => li.hasAttribute('data-conflict')).map((li) => li.getAttribute('data-conflict'))).toEqual(['c1', 'c2']);
+    expect(button('Update from Bakery first').disabled).toBe(true);
   });
 
   it('all from main sends every question in one request, also the answered ones', async () => {

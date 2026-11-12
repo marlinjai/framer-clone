@@ -17,8 +17,35 @@ export function valueText(value: unknown): string {
     const characters = (value as { characters?: unknown }).characters;
     return typeof characters === 'number' ? `${characters.toLocaleString('en')} characters, too long to show here` : 'too long to show here';
   }
-  const json = JSON.stringify(value);
-  return json.length > 160 ? `${json.slice(0, 157)}...` : json;
+  // Never raw data: a site owner reads "3 items" or which settings a group holds, not JSON.
+  if (Array.isArray(value)) return value.length === 1 ? '1 item' : `${value.length} items`;
+  const keys = Object.keys(value as Record<string, unknown>);
+  if (keys.length === 0) return 'empty';
+  const named = keys.slice(0, 3).map((key) => fieldText(key)).join(', ');
+  return keys.length > 3 ? `${named} and ${keys.length - 3} more` : named;
+}
+
+/**
+ * One answer to a question, as the button says it: what choosing this side does, in a sentence. A removal against
+ * a change reads "Remove it" and "Keep it, with its changes" (plan section 5, rule 6); a place or an order names
+ * whose it is; a value shows the value.
+ */
+export function choiceText(conflict: ShownConflictJson, side: 'main' | 'branch', mainName: string): string {
+  const whose = side === 'main' ? mainName : 'the branch';
+  if (conflict.removedOn) return conflict.removedOn === side ? `Remove it, as ${whose} did` : `Keep it, with the changes ${whose} made`;
+  switch (conflict.kind) {
+    case 'moved':
+    case 'cycle':
+      return `Put it where ${whose} put it`;
+    case 'order':
+      return `Use the order ${whose} has`;
+    case 'added-twice':
+      return `Keep the one ${whose} added`;
+    case 'slug':
+      return `${side === 'main' ? mainName : 'Branch'} keeps this address: ${valueText(side === 'main' ? conflict.main : conflict.branch)}`;
+    default:
+      return `${side === 'main' ? mainName : 'Branch'}: ${valueText(side === 'main' ? conflict.main : conflict.branch)}`;
+  }
 }
 
 const FIELD_NAMES: Record<string, string> = {
@@ -52,12 +79,12 @@ export function conflictText(conflict: ShownConflictJson, review: DocumentReview
 }
 
 const CONFLICT_KIND_TEXT: Record<string, string> = {
-  moved: 'moved on both sides',
-  order: 'order changed on both sides',
-  removed: 'removed on one side, changed on the other',
-  'added-twice': 'added on both sides',
+  moved: 'moved to two different places',
+  order: 'put in two different orders',
+  removed: 'removed in one place, changed in the other',
+  'added-twice': 'added in both places',
   cycle: 'moved into each other',
-  slug: 'address taken on both sides',
+  slug: 'the same address used twice',
 };
 
 function elementLabel(review: DocumentReview | undefined, container: string | undefined, id: string): string | null {
