@@ -852,9 +852,7 @@ class Validator {
       }
       v = verdict.value;
       // A font reference is the whole value: no family beside it to normalise.
-      if (property === 'fontFamily') {
-          return v;
-      }
+      if (property === 'fontFamily') return v;
       fontReferenceChecked = true;
     }
     const problem = styleValueProblem(property, v, place === 'rule', fontReferenceChecked);
