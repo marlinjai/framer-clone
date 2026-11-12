@@ -19,8 +19,8 @@ Marlin put Unicorn Studio's editor beside Lumitra Sites (screenshots of 2026-11-
 `Interactivity`, for text `Text` with font, size, alignment, line height, letter spacing, fill, stroke). In Sites the
 FX scene box (an `FX scene` row in the Layers panel) has no rows for its layers; they are a list of buttons inside the
 FX section of the properties panel, below the preset, start, reduced motion and background controls, and the picked
-layer's settings follow below that list. On the lumitra.co hero scene (seven layers) the god rays settings start below
-the fold of the panel. Marlin wants the scene's layers visible and selectable on the left, with the right panel
+layer's settings follow below that list. On the seven-layer scene in Marlin's screenshot of the new landing page the
+god rays settings start below the fold of the panel. Marlin wants the scene's layers visible and selectable on the left, with the right panel
 adapting to the picked one, and the text editable there. The screenshots are a visual reference, not a list of
 features to copy.
 
@@ -42,7 +42,7 @@ here, in the same pull request as the first slice.
   `importFxScene`, `setFxStart`, `setFxCalm`, `setFxBackground`. Each stored change is one undo step
   (`component.setProps`).
 - **The layer list and the generated controls** live in `src/components/sidebars/right/sections/FxSceneSection.tsx`
-  (656 lines, 38 tests in `__tests__/FxSceneSection.test.tsx` covering the four stateful paths). Which layer is picked
+  (656 lines; its tests in `__tests__/FxSceneSection.test.tsx`, 38 by the FX owner's count, cover the four stateful paths). Which layer is picked
   is `useState` inside that section: lost when the section unmounts, and nothing else can point at a layer.
 - **Render order** (`src/lib/fx/pipeline.ts`): content layers draw back to front in stored order; post effects run
   after ALL content, in their own stored order, wherever they sit in the array. Only god rays read another layer
@@ -50,15 +50,16 @@ here, in the same pull request as the first slice.
 - **The text layer** (`text`, label "Text Lockup") draws a fixed lockup of three lines (`eyebrowText`,
   `headlineText`, `taglineText`) into a canvas texture: fonts from a list of seven, weight, three sizes, one colour,
   width, height, reveal, parallax. It is pixels, not HTML, length-clamped (`FX_LIMITS.text`, 200 characters). Its three
-  strings are already editable in the panel today, as ordinary text fields among its 17 settings.
+  strings are already editable in the panel today, as ordinary text fields among its 14 settings.
 - **Pointer settings** (`interactivity`: track mouse, momentum, spring, axes) are read and stored by the format but
   not shown in the panel.
 - **The Layers panel** (`src/components/sidebars/left/LayersPanel.tsx`) renders the node tree per breakpoint. Rows are
   click targets, drag sources and drop targets (`data-inner-component-id`), with hide, lock, delete and a menu. It has
   no tree roles and no arrow-key navigation today. Its "Hide layer" (`canvasVisible`) hides a node on the editor canvas
-  only; an FX layer's `visible` is stored and published.
+  only (`HeadlessComponentRenderer.tsx` says so: the published render does not honour it); an FX layer's `visible` is
+  stored and published.
 - **Editor shortcuts** (`src/lib/keyBindings.ts`, `src/lib/canvas/deleteSelection.ts`): Delete and Backspace remove
-  every selected node, Cmd+D duplicates, Escape clears the selection. With the FX box selected, Delete removes the box.
+  every selected node, Cmd+D duplicates, Escape clears the selection, Enter enters a component. With the FX box selected, Delete removes the box.
 - **Live drawing** is one breakpoint at a time (`fxLive` in `EditorUIStore`); selecting the box in another breakpoint
   moves Live there.
 - **Collaboration** (`src/lib/projects/liveSync.ts`) adopts another writer's whole document snapshot as one undo step,
@@ -91,13 +92,15 @@ FX scene                      (the box: its HTML children first)
   array position across groups changes nothing on screen, so allowing it would only mislead.
 - **Background** is a pseudo-row for the scene's background colour (selecting it shows the colour and the reduced
   motion choice). It cannot be hidden, moved or deleted.
+- The picked row is highlighted in the breakpoint whose frame is selected, as node rows are.
 - Rows are visibly not HTML: the sparkles group, a kind icon per layer (text, noise, gradient, image, shape, effect),
-  and the kind in muted text after the name. A god rays row says which layer it reads.
+  and the kind in muted text after the name. A god rays row says which layer it reads, and says "off: its layer is hidden" when that layer is hidden, because the
+  renderer then leaves the pass out (`pipeline.ts`).
 - A box whose `fx` cannot be read shows no Scene group; selecting the box leads to a preset, as today.
 - The rows are derived from `props.fx.scene.layers` on every render. They are not nodes: not drag sources for the node
   tree, not drop targets, never resolved by the drop resolver (no `data-inner-component-id`).
 - The mechanism is a small "derived rows" provider per marker type, so the 3D scene node (plan
-  [3D scene primitive](2026-11-02-3d-scene-primitive.md), owner w5:pG) can list its objects the same way later.
+  [3D scene primitive](2026-11-02-3d-scene-primitive.md)) can list its objects the same way later.
 
 ### Selection
 
@@ -123,16 +126,19 @@ FX scene                      (the box: its HTML children first)
   change.
 - **Text lockup picked:** the group "Text" comes first with the three lines as larger text fields (headline,
   eyebrow, tagline), then "Type" (fonts, weight, sizes, colour), "Layout" (width, height), "Motion" (reveal,
-  parallax). Pressing Enter or double-clicking the lockup row focuses the headline field. A hint under the group says
+  parallax). With the lockup picked, Enter focuses the headline field (it takes precedence over the editor's "enter
+  component" shortcut, which has no meaning on a scene layer); double-clicking the lockup row does the same. A hint under the group says
   the lockup is drawn as pixels and that the box's HTML headline is what search engines and screen readers read.
-- **Pointer** group for content layers with `interactivity` (track mouse, momentum, spring, axes), now shown.
+- **Pointer** group (track mouse, momentum, spring, axes), now shown, for the layer kinds whose component reads
+  `interactivity` (to be listed from `src/lib/fx/layers/` in L2). It needs a new `setFxLayerInteractivity` in `edit.ts`;
+  none exists today.
 - The notes and refusals of an edit stay tied to the scene they were said about (an undo clears them), as today.
 
 ### Actions on a layer row
 
 | Action | Row | Keyboard (row focused or layer picked) | Edit |
 |---|---|---|---|
-| Pick | click | Enter or Space on the row | none |
+| Pick | click | Enter or Space on the focused row | none |
 | Hide or show (published) | eye button, distinct tooltip "Hide in the scene", menu | none (Cmd+Shift+H is the browser's; `h` is the grab tool) | `toggleFxLayer` |
 | Rename | double-click the name, menu | F2 | `renameFxLayer` |
 | Delete | trash button, menu | Delete, Backspace | `removeFxLayer` |
@@ -169,7 +175,7 @@ events, so it ships separately from the keyboard and menu paths.
 
 | Slice | What | Tests | Days |
 |---|---|---|---|
-| L1 `fx-layer-rows` | Derived Scene rows (front at top, Effects sub-group, Background pseudo-row), `selectedFxLayer` in the store with its fallbacks, the panel showing only the picked layer (existing generated controls, ungrouped), the scene-level FX section and summary, row actions by button, menu and keys (hide, rename, delete, duplicate, move), the shortcut routing, `moveFxLayerTo` and `duplicateFxLayer`. FxSceneSection's 38 tests move with the code; the score rows in `test/score/fx.panel.jsdom.score.tsx` are updated so the floor holds. | Unit: layerOps helpers (move within group, never across; duplicate id; limit). Store: pick, follow `setFxLayerType`, fallback after undo of add, preset, import, adoption, node and page change. Panel: picked layer only, notes cleared on undo. Layers panel: rows per breakpoint, no drop target, unreadable scene shows none. Shortcuts: Delete with a layer picked removes the layer and not the box (and undo restores both), Cmd+D, Escape. Four paths per the stateful-flow standard: forward, backtrack (rename then undo), resume (reload keeps the scene, picks nothing), re-entry (delete the picked layer, pick again). Live adoption keeps or drops the pick. Browser proof locally with dev-browser on the automation profile: pick each row of the hub hero scene, edit the headline, hide god rays, move bloom, undo all. | 2 to 3 |
+| L1 `fx-layer-rows` | Derived Scene rows (front at top, Effects sub-group, Background pseudo-row), `selectedFxLayer` in the store with its fallbacks, the panel showing only the picked layer (existing generated controls, ungrouped), the scene-level FX section and summary, row actions by button, menu and keys (hide, rename, delete, duplicate, move), the shortcut routing, `moveFxLayerTo` and `duplicateFxLayer`. FxSceneSection's 38 tests move with the code; the score rows in `test/score/fx.panel.jsdom.score.tsx` are updated so the floor holds. | Unit: layerOps helpers (move within group, never across; duplicate id; limit). Store: pick, follow `setFxLayerType`, fallback after undo of add, preset, import, adoption, node and page change. Panel: picked layer only, notes cleared on undo. Layers panel: rows per breakpoint, no drop target, unreadable scene shows none. Shortcuts: Delete with a layer picked removes the layer and not the box (and undo restores both), Cmd+D, Escape. Four paths per the stateful-flow standard: forward, backtrack (rename then undo), resume (reload keeps the scene, picks nothing), re-entry (delete the picked layer, pick again). Hide and show: stored, published, one undo step; hiding god rays' source marks the god rays row off. Keyboard: Alt+Up and Alt+Down within a group and refused at its edge, F2 rename, Enter and Space pick, `aria-current` on the picked row, the live region announces a move and a refusal. Rows repeat in every breakpoint and the highlight follows the selected frame. Collaboration: an adopted snapshot keeps or drops the pick; with unsaved work and a layer picked, the "site changed" dialog, then "Load the newer version", leaves a valid pick or the box. Browser proof locally with dev-browser on the automation profile: pick each row of the hub hero scene, edit the headline, hide god rays, move bloom, undo all. | 2 to 3 |
 | L2 `fx-layer-panel-polish` | Setting groups (optional `group` on schema settings, presentation only), the Text group first with larger fields and focus on Enter, the Pointer group, kind change behind a confirmation, drag reorder within a group (Marlin verifies by hand), colour or thumbnail hint per row. | Schema groups do not change serialized output (golden test on every preset, including gold-noise-gradient); the generator schema docs and `validateGeneration` unchanged; pixel oracle unchanged. | 2 to 3 |
 | L3 (only if Marlin says yes, see below) | Free text layers. | Oracle, format, generator, agent | 4 to 6 |
 
