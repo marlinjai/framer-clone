@@ -9,6 +9,8 @@
 
 import SharePreview from './SharePreview';
 import React, { useState } from 'react';
+import { observer } from 'mobx-react-lite';
+import { getHistoryStore } from '@/stores/RootStore';
 import { GitMerge, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useSiteBranch } from '@/contexts/SiteBranchContext';
@@ -111,6 +113,30 @@ export function MainChangedNote({ className = '' }: { className?: string }) {
  * "Review and merge", in place of Publish on a branch: saves this tab's work, then opens the review (slice S5),
  * where the changes, the questions and the merge are.
  */
+/**
+ * On a branch whose "update from main" this tab undid: says what that means, with the way back. The branch still
+ * counts as up to date with main, so merging it like this would take main's changes out of main (plan section
+ * 6, path 2). Shown until the step is redone or the tab is reloaded.
+ */
+export const UpdateUndoneNote = observer(function UpdateUndoneNote({ className = '' }: { className?: string }) {
+  const { state } = useSiteBranch();
+  const history = getHistoryStore();
+  if (state?.kind !== 'branch' || !history?.undoneUpdateId) return null;
+  const canRedo = history.canRedo && history.history[history.undoIdx]?.id === history.undoneUpdateId;
+  return (
+    <div role="alert" className={`flex shrink-0 items-center gap-2 text-xs text-destructive ${className}`}>
+      <span className="max-w-[26rem]">
+        You undid the changes brought in from {state.mainName}. Merging this branch now would take them out of {state.mainName} too.
+      </span>
+      {canRedo ? (
+        <Button size="sm" variant="outline" onClick={() => history.redo()}>
+          Bring them back
+        </Button>
+      ) : null}
+    </div>
+  );
+});
+
 /** On a branch: "Share preview", the public preview link (S8). Whether the person may is the server's answer. */
 export function SharePreviewButton({ className }: { className?: string }) {
   const { state } = useSiteBranch();

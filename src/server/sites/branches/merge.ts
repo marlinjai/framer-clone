@@ -25,6 +25,7 @@ import 'server-only';
 
 import { createHash, randomUUID } from 'node:crypto';
 import { Prisma, type PrismaClient } from '@prisma/client';
+import { UPDATE_FROM_MAIN_LABEL } from '@/lib/sites/branchLabels';
 import {
   countChanges,
   diffDocuments,
@@ -507,7 +508,7 @@ export class SiteBranchMergeService {
         return write;
       }, WRITE_TRANSACTION),
     );
-    this.announce(stamp.branchId, written, persisted, 'update', ['Brought in the changes from main']);
+    this.announce(stamp.branchId, written, persisted, 'update', [UPDATE_FROM_MAIN_LABEL]);
     // The token of exactly what this update wrote, never read again afterwards: a save landing after the commit
     // must not be carried into a merge unseen (section 6, "the merge names the branch version it reviewed").
     const token = reviewToken({

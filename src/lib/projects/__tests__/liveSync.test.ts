@@ -33,6 +33,7 @@ import {
   LIVE_HELD_FETCH_MS,
   pagesRemovedBy,
   restoredPagesSentence,
+  heldStepSentence,
   LIVE_POLL_HIDDEN_MS,
   LIVE_POLL_VISIBLE_MS,
   LIVE_STREAM_RETRY_MS,
@@ -3077,5 +3078,24 @@ describe('liveSync: an agent\'s new page while the person works (H2)', () => {
     input.remove();
     remove();
     stop();
+  });
+});
+
+describe('heldStepSentence: when the newer copy is a whole step of site branches', () => {
+  const held = (origin: string) => ({ version: 2, snapshot: {} as never, label: 'x', event: { origin } as never });
+
+  it('names a merge, and what saving over it does', () => {
+    expect(heldStepSentence(held('merge'), 'save')).toMatch(/is a merged branch\. Saving yours over it takes that branch’s work off the site again, and the branch is already closed/);
+    expect(heldStepSentence(held('merge'), 'publish')).toMatch(/^The newer version is a merged branch\. Publishing yours/);
+  });
+
+  it('names an update from main, and that a later merge would take those changes out of main', () => {
+    expect(heldStepSentence(held('update'), 'save')).toMatch(/brought in the changes made to main\. Saving yours over it takes them out of this branch again, and merging the branch later would then take them out of main too/);
+  });
+
+  it('says nothing for any other copy, or none', () => {
+    for (const origin of ['editor', 'mcp', 'publish', 'erasure']) expect(heldStepSentence(held(origin), 'save')).toBe('');
+    expect(heldStepSentence(undefined, 'save')).toBe('');
+    expect(heldStepSentence({ version: 2, snapshot: {} as never, label: 'x' }, 'save')).toBe('');
   });
 });

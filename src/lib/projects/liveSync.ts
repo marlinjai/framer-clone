@@ -75,6 +75,7 @@
 // saved, else the dialog opens as for any unsaved work. (Putting a settled edit
 // on top of the agent's copy instead is its own follow-up, ROADMAP.md.)
 
+import { UPDATE_FROM_MAIN_LABEL } from '@/lib/sites/branchLabels';
 import { runInAction } from 'mobx';
 import { isEditing, isInteracting, onEditingSettled } from '@/lib/live/editingInProgress';
 import { applyPatch, getSnapshot, isAlive, resolvePath, type IJsonPatch } from 'mobx-state-tree';
@@ -267,7 +268,7 @@ export function adoptionLabel(event: SiteVersionEvent | undefined): string {
   const first = event.summary?.[0];
   // One undo step named for what happened, whoever did it: "Merged branch Summer sale".
   if (event.origin === 'merge') return first ?? 'Merged a branch';
-  if (event.origin === 'update') return first ?? 'Brought in the changes from main';
+  if (event.origin === 'update') return first ?? UPDATE_FROM_MAIN_LABEL;
   if (first) return `${who}: ${first}`;
   switch (event.origin) {
     case 'publish':
@@ -309,6 +310,26 @@ export function heldWriter(held: HeldVersion | undefined): string {
   if (event?.actor?.label) return event.actor.label;
   if (event && (event.origin === 'mcp' || event.origin === 'generate')) return 'the agent';
   return 'someone else';
+}
+
+/**
+ * The dialog's sentence when the newer copy is not an ordinary save but a whole step of site branches: what
+ * "keep mine" would undo for everyone, not only replace. Empty for any other copy.
+ *   - A merge: this tab's copy is from before it, so saving it takes the merged work off the site, and the
+ *     branch that held it is closed. (The merge can then no longer be undone into a branch holding that work.)
+ *   - An update from main (on a branch): saving this tab's copy takes main's changes out of the branch again,
+ *     and the branch still counts as up to date, so merging it later would take them out of main too.
+ */
+export function heldStepSentence(held: HeldVersion | undefined, action: 'save' | 'publish'): string {
+  const origin = held?.event?.origin;
+  const verb = action === 'publish' ? 'Publishing' : 'Saving';
+  if (origin === 'merge') {
+    return `The newer version is a merged branch. ${verb} yours over it takes that branch’s work off the site again, and the branch is already closed: load the newer version unless that is what you want.`;
+  }
+  if (origin === 'update') {
+    return `The newer version brought in the changes made to main. ${verb} yours over it takes them out of this branch again, and merging the branch later would then take them out of main too.`;
+  }
+  return '';
 }
 
 /** The dialog's sentence: what "keep mine" brings back. Empty when it brings back no page. */

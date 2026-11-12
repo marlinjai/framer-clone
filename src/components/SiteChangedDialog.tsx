@@ -27,7 +27,7 @@ import React from 'react';
 import { getSnapshot, isAlive } from 'mobx-state-tree';
 import { useStore } from '@/hooks/useStore';
 import { useLiveSyncState } from '@/hooks/useLiveSyncState';
-import { heldWriter, pagesRemovedBy, restoredPagesSentence } from '@/lib/projects/liveSync';
+import { heldStepSentence, heldWriter, pagesRemovedBy, restoredPagesSentence } from '@/lib/projects/liveSync';
 import { knownServerPageIds } from '@/stores/openProject';
 import {
   Dialog,
@@ -71,6 +71,7 @@ export default function SiteChangedDialog({
   const restored = open && project && isAlive(project)
     ? restoredPagesSentence(pagesRemovedBy(held, getSnapshot(project) as { pages?: unknown }, knownServerPageIds(project.id)), heldWriter(held), action)
     : '';
+  const step = open ? heldStepSentence(held, action) : '';
   return (
     <Dialog
       open={open}
@@ -87,6 +88,7 @@ export default function SiteChangedDialog({
             replaces those changes with this tab&apos;s version; loading the newer version discards
             the unsaved changes in this tab.
             {restored ? ` ${restored}` : ''}
+            {step ? ` ${step}` : ''}
           </DialogDescription>
         </DialogHeader>
         <p role="status" aria-live="polite" className="sr-only">
