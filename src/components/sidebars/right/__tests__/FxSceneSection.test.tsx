@@ -30,6 +30,8 @@ afterEach(() => {
 
 /** A project of its own with one FX scene box on its page, under a clean history. */
 function setup() {
+  // Not a hook: the editor's one store, which the section reads too.
+  // eslint-disable-next-line react-hooks/rules-of-hooks
   const store = useStore();
   const title = `FX panel ${++projects}`;
   store.projectStore.createProject(title);

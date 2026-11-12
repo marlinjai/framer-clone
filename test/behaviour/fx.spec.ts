@@ -635,7 +635,9 @@ describe.each(ENGINES)('in %s', (name, engine) => {
 
   it('start settled: waits for the page to load and 1.5 seconds more before it fetches the engine', async () => {
     await page.goto(`${origin}/fx-settled`, { waitUntil: 'load' });
-    expect(await state()).toBe('waiting');
+    // The island writes its state when the page is hydrated, which can come after the
+    // `load` event (the island arms its timer then): wait for the state, never read it once.
+    await waitForState('waiting');
     expect(await engineScripts()).toEqual([]);
     await waitForState('live');
     const timing = await page.evaluate((mark) => {
@@ -649,7 +651,7 @@ describe.each(ENGINES)('in %s', (name, engine) => {
 
   it('start visible: fetches nothing while the box is far below, and draws once it comes near', async () => {
     await page.goto(`${origin}/fx-visible`, { waitUntil: 'networkidle' });
-    expect(await state()).toBe('waiting');
+    await waitForState('waiting');
     await page.waitForTimeout(500);
     expect(await engineScripts()).toEqual([]);
     expect(await canvases()).toBe(0);
@@ -674,7 +676,7 @@ describe.each(ENGINES)('in %s', (name, engine) => {
 
   it('leaves no canvas and no context behind when the scene is cancelled before it started', async () => {
     await page.goto(`${origin}/fx-settled`, { waitUntil: 'load' });
-    expect(await state()).toBe('waiting');
+    await waitForState('waiting');
     await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
     await page.waitForTimeout(2200);
     expect(await canvases()).toBe(0);
