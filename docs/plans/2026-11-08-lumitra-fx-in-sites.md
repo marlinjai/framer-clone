@@ -853,6 +853,94 @@ Confirmed by the site branches owner against main at `380da6c1` on 2026-11-12, w
   work's), watches the start sequence apply the migrations, checks with the switch still off that sites, the published
   landing page and Books behave as before, and then hands over to this slice for the FX browser proof.
 
-So the deploy is a joint decision of the FX, branching and Books work, and Marlin's to make. This slice does not start
-it.
+**This inventory is a snapshot of main at `380da6c1`, and it goes stale with every merge.** Whoever starts the deploy
+recomputes it at the exact commit that is released, not at an older one, because the container applies every pending
+migration at start:
+
+- `git diff --name-only --diff-filter=A 7b32ea16 <release commit> -- prisma/migrations src/server/commerce/migrations`
+  lists the migrations the deploy would apply (replace `7b32ea16` by the commit production runs if that has changed);
+- `git diff 7b32ea16 <release commit> -- package.json deploy/README.md` shows changed dependencies and deploy notes.
+
+**Refreshed at main `d9e13c26` (2026-11-12, after the 3D model store, #394, merged): six application migrations.**
+The five above, plus the additive Prisma migration `20261112200000_site_models` (one new table that nothing reads or
+writes; no route, upload or clean-up is enabled and its flag stays unset). Merging applied nothing to production; a
+deploy from `d9e13c26` or later applies it at start, which needs its own yes. Its rollback, stated by the 3D scene
+owner: by default the empty table is left in place; removing it is done by hand with authorization, with
+`rollback.sql` beside the migration in one transaction, and never with `prisma migrate resolve --rolled-back` on an
+applied migration (`deploy/README.md`, "Migration 20261112200000_site_models"). The image also gains the 3D model
+packages (`@gltf-transform/*`, `gltf-validator`, `meshoptimizer`) and a pinned `sharp`; main also holds a first slice
+of the head items work. This refresh is itself a snapshot: recompute at the release commit.
+
+**The deploy checklist lives in the site branches plan** (`docs/plans/2026-11-10-site-branches.md`, section 12), kept
+by the owner who runs the deploy. Its rule, which this plan follows: the list is true only for the commit it was read
+at, so before the go is asked it is read again at the exact release commit, every owner (FX, site branches, Books, 3D
+scene, head items) confirms its part at that commit, and the go is asked for one named commit. This section records
+the FX side and is not a second checklist.
+
+So the deploy is a joint decision of the FX, branching, Books and 3D scene work, and Marlin's to make. This slice does
+not start it.
+
+### F7 and F8, prepared offline (2026-11-12)
+
+Nothing here touches production. It is what could be made ready without a deploy, so that the proof after one is a
+single run with a known procedure.
+
+- **`test/fx-proof/proof.ts`, `collectFxProof`:** for one address, in a fresh browser context, everything F7 asks to be
+  recorded: the state of every FX box, the WebGL contexts the page holds (counted where contexts are made, installed
+  before the page loads), every script file fetched with its size as text and as sent, which of them carry the engine
+  or the scene format, Content Security Policy violations, console errors and FX warnings. `problemsOfDrawnScene` and
+  `problemsOfNoScene` say whether a reading is what it must be.
+- **`compareFxAddresses`:** F8's comparison. The scene at two addresses at the still frame (reduced motion asked for,
+  the clock stopped before the page loads), everything on the page hidden but the canvas, the two pictures compared
+  with the oracle's own tolerance. It refuses two canvases of different sizes, because then nothing can be compared.
+- **`test/fx-proof/run.ts`, the command:** `pnpm tsx test/fx-proof/run.ts --fx <address with a scene> --plain <address
+  without one> [--compare <address>]`. Chromium and WebKit, a desktop and a phone width, with and without reduced
+  motion: 16 readings, and with `--compare` four comparisons with their pictures. It only reads pages. Exit code 0
+  means every reading is as it must be.
+- **Rehearsed on a real production build** inside the two existing FX browser specs (no new spec): the collector on
+  pages with a scene, without one, with two, under reduced motion in both calm states, and on four wrong pages that it
+  must name; the comparison on the same scene at two addresses (0 pixels differ), under content that covers it (still
+  0), on a changed scene (over the tolerance) and on a box of another size (refused); and the command itself, run as it
+  will be run, in both engines.
+
+Decided here, say so if you disagree:
+
+- **The proof runs as a Playwright command, not through the `dev-browser` skill** as the plan's "Visual verification"
+  says. It needs a script installed before the page loads (the context counter and the stopped clock), reduced motion
+  emulated, and two browser engines, and a published page needs no sign-in. `dev-browser` stays the tool for looking
+  at the page beside lumitra.co and for the side by side recording of F8.
+
+Found by rehearsing, fixed: run through `tsx`, the functions handed to the page are compiled with a helper that does
+not exist in a page, so the counter was never installed and every reading failed. Reading the code did not show it;
+running the command did.
+
+**The procedure after a deploy** (each numbered step that writes to production is named to Marlin first):
+
+1. The deploy itself, with its gates, as recorded above under "What a deploy of main would ship". Not this slice's to
+   start.
+2. **Production write:** a test site on a `sites.lumitra.co` address with two pages: one with an FX scene box (the
+   default preset, a heading over it, and "With reduced motion" set to one still frame, `calm: "frame"`, so that the
+   reduced motion readings and a later comparison have a picture) and one without. Built through the agent endpoint with the company key
+   (`insertNodes` with preset `fxScene`), or in the editor.
+3. **Production write, needs a person's approval** (agent plugin plan, decision 6): publishing that test site.
+4. Read only: `pnpm tsx test/fx-proof/run.ts --fx <the page with the scene> --plain <the page without>`. The readings
+   go into this log: context count, the chunk list with and without a scene, the engine's size as sent, reduced motion,
+   Content Security Policy violations.
+5. Read only: the page looked at beside lumitra.co at a desktop and a phone width through `dev-browser`, screenshots
+   into this log.
+6. F8, once the FX hero is in the new lumitra.co site (the dogfood work's draft, with its owner): the same command with
+   `--compare https://lumitra.co/` at a window width where both hero boxes have the same size. The hero's scene must
+   have `calm: "frame"` for this: the comparison asks for reduced motion, and a scene whose calm state is the box
+   background draws nothing there (the command says so instead of waiting).
+
+What stays unknown until then, and cannot be learned offline:
+
+- **Whether live lumitra.co matches.** F4 compared this app with the engine's source as lumitra-web runs it, with the
+  tuning panel and the frame rate monitor replaced by stand-ins. lumitra.co runs the real ones, on its own React and
+  Next versions.
+- **Whether lumitra.co draws the still frame at all under reduced motion,** which the comparison needs. If it shows
+  its painted background instead, F8's pixel comparison has nothing to read there and the side by side recording is
+  the evidence.
+- **The production Content Security Policy** (report-only today) and the sizes as the production server compresses
+  them. The rehearsal ran on a local production build.
 

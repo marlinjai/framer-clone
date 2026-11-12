@@ -60,3 +60,6 @@ dist-bench/
 # primitive score: per-run probe results and screenshot diffs (test/score/run.ts wipes it)
 test/score/.out/
 test/renderGate/.out/
+
+# FX browser proof: readings and pictures of a run (test/fx-proof/run.ts)
+test/fx-proof/.out/

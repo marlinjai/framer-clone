@@ -31,6 +31,7 @@ import {
 } from '../fx-oracle/oracle';
 import { node, type StoredNode } from './pages';
 import { publishPages } from './site';
+import { compareFxAddresses } from '../fx-proof/proof';
 
 /** A preset as it is stored: the values `serializeScene` writes. */
 const preset = (id: string): Scene => serializeScene(PRESETS.find((p) => p.id === id)!.load()) as unknown as Scene;
@@ -68,6 +69,19 @@ const fxPage = (scene: Scene): StoredNode =>
 const PAGES: Readonly<Record<string, () => StoredNode>> = {
   ...Object.fromEntries(Object.entries(SCENES).map(([name, scene]) => [`oracle-${name}`, () => fxPage(scene)])),
   'oracle-hub-hero-changed': () => fxPage(changedHubHero()),
+  // For the two-address comparison of F8 (test/fx-proof/proof.ts): the same scene at a second address,
+  // once more under a heading that covers part of it, and once in a box of another size.
+  'oracle-hub-hero-again': () => fxPage(SCENES['hub-hero']),
+  'oracle-hub-hero-covered': () => {
+    const page = fxPage(SCENES['hub-hero']);
+    const hero = page.children![0];
+    return { ...page, children: [{ ...hero, children: [node('cover', 'h1', { children: 'Over the scene', style: { color: '#ffffff', fontSize: '96px', margin: '0px' } })] }] };
+  },
+  'oracle-hub-hero-small': () => {
+    const page = fxPage(SCENES['hub-hero']);
+    const hero = page.children![0];
+    return { ...page, children: [{ ...hero, props: { ...hero.props, style: { ...(hero.props!.style as object), width: `${WIDTH / 2}px`, height: `${HEIGHT / 2}px` } } }] };
+  },
   'oracle-hub-hero-no-grain': () => fxPage(withoutGrain(SCENES['hub-hero'])),
 };
 
@@ -147,6 +161,28 @@ describe.each([['chromium', chromium], ['webkit', webkit]] as [string, BrowserTy
       const result = difference(await sites('oracle-hub-hero'), await reference(changedHubHero()));
       expect(result.share).toBeGreaterThan(MAX_DIFFERING_SHARE * 10);
     });
+
+    // The comparison slice F8 runs between two live addresses (test/fx-proof/proof.ts), rehearsed between
+    // addresses of this build. What it cannot learn here: lumitra.co runs its own tuning panel and frame rate
+    // monitor, which the reference above replaces with stand-ins. That is F8's to find out.
+    it('two addresses: the same scene is the same picture, another is not, and a box of another size cannot be compared', async () => {
+      const same = await compareFxAddresses(browser, { url: `${origin}/oracle-hub-hero` }, { url: `${origin}/oracle-hub-hero-again` }, { viewport: ORACLE_CONTEXT.viewport });
+      expect(same.sizes).toEqual([[WIDTH, HEIGHT], [WIDTH, HEIGHT]]);
+      expect(same.differing).toBe(0);
+      expect(same.same).toBe(true);
+
+      // Content over the scene is not part of the picture: only the canvas is compared.
+      const covered = await compareFxAddresses(browser, { url: `${origin}/oracle-hub-hero` }, { url: `${origin}/oracle-hub-hero-covered` }, { viewport: ORACLE_CONTEXT.viewport });
+      expect(covered.differing).toBe(0);
+
+      const changed = await compareFxAddresses(browser, { url: `${origin}/oracle-hub-hero` }, { url: `${origin}/oracle-hub-hero-changed` }, { viewport: ORACLE_CONTEXT.viewport });
+      expect(changed.same).toBe(false);
+      expect(changed.share).toBeGreaterThan(MAX_DIFFERING_SHARE);
+
+      await expect(
+        compareFxAddresses(browser, { url: `${origin}/oracle-hub-hero` }, { url: `${origin}/oracle-hub-hero-small` }, { viewport: ORACLE_CONTEXT.viewport }),
+      ).rejects.toThrow(/not the same size \(960x540 at .*, 480x270 at /);
+    }, 240_000);
 
     it('the grain is in the picture on both sides: with the clock stopped it is still grain, not a flat frame', async () => {
       expect(SCENES['hub-hero'].layers.some((l) => l.type === 'grain')).toBe(true);
