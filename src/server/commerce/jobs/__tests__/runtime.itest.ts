@@ -130,6 +130,8 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  // A test that failed before the hold was used must not hand it to the next one.
+  purgeCount.holdFirstPositiveMs = 0;
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
   for (const group of [groupA, groupB]) await su`DELETE FROM ${su(tenantSchema(group))}."commerce_job"`;
@@ -397,7 +399,8 @@ describe('E: re-entry after completion or failure', () => {
     expect((await runCommerceWatchdogPass()).purgesStuck).toBe(2);
     // The totals survive overlapping reads: the first group's count is held back while the second group's is added. With a total
     // read before the wait (`total += await count()`) the held group's addition overwrote the other's and this was 1.
-    purgeCount.holdFirstPositiveMs = 400;
+    // Long enough that the other group's whole read (connection, two queries, its count) is over before this one resumes.
+    purgeCount.holdFirstPositiveMs = 1500;
     expect((await runCommerceWatchdogPass()).purgesStuck).toBe(2);
     expect(purgeCount.holdFirstPositiveMs).toBe(0);
     // Once a purge is gone (it finished and was cleaned up) it no longer counts.
