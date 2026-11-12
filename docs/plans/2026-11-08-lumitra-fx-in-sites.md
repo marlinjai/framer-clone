@@ -811,3 +811,30 @@ F1 to F6 are merged (#365, #368, #369, #373, #378, #383) and none of it is deplo
 from 2026-11-09 and deploys are started by hand. F7 is the next slice and begins with a deploy to app.lumitra.co, so it
 waits for Marlin's yes. Until then nothing outside the repository has changed, and lumitra.co is served by lumitra-web
 as before.
+
+**What a deploy of main would ship (inventory of 2026-11-12, for the F7 decision).** F7's deploy is not an FX-only
+deploy. The last production deploy is commit `7b32ea16` (2026-11-09). Since then main holds, beside FX: site branches
+(slices S1 to S9), the 3D scene format, a contact person on customers and invoices in Books, the buyer's mail as a job
+consumer, live canvas and site merge work. What that means for a deploy, and for going back:
+
+- **Five application migrations run at container start.** Four Prisma migrations, all from site branches and all
+  additive (no drop, no delete, checked in the SQL): `20261111000000_site_branches`,
+  `20261112000000_site_branch_merge_undo`, `20261112120000_site_branch_previews`,
+  `20261112180000_site_branch_backstops`. One commerce tenant migration, `030_books_contact_person`, which runs once
+  for every company's schema (`src/server/commerce/migrations/tenant/`).
+- **One prerequisite outside this app.** `@marlinjai/contacts-core` went from 0.4 to 0.5, which needs migration 0003 of
+  the shared contacts database to have run first. Verified by the Books owner and the branching owner, as reported by
+  Marlin on 2026-11-12; this worker confirmed the version change in `package.json` and the migration files, not the
+  state of the shared contacts database.
+- **Going back is not just redeploying the previous image.** The previous image cannot read an invoice issued with a
+  version 2 snapshot (an invoice with a contact person, issued after the deploy). So a rollback after such an invoice
+  exists needs the Books owner's procedure, not only the old image. Same source as above.
+- **FX itself** adds no migration and no environment variable. It adds packages to the image (three.js 0.184,
+  react-three-fiber, postprocessing, scene-core), and a page without an FX scene fetches none of them (tested on a
+  real build).
+- **Site branches stay off** unless `SITE_BRANCHES_COMPANIES` is set on the app (`deploy/README.md`); their
+  migrations run regardless.
+
+So the deploy is a joint decision of the FX, branching and Books work, and Marlin's to make. This slice does not start
+it.
+
