@@ -105,6 +105,8 @@ const db = {
   sitePage: { upsert: vi.fn(), deleteMany: vi.fn() },
   // No closed branch records: a missing site is reported as missing (src/server/sites/branches/closed.ts).
   siteBranch: { findFirst: vi.fn(async () => null) },
+  // The row locks a save takes (SiteRepository.lockSiteForSave): no row of a branch, nothing to wait for.
+  $queryRaw: vi.fn(async () => [] as unknown[]),
   $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(db)),
 };
 
