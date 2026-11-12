@@ -951,7 +951,7 @@ describe('middleware: a preview host (the public preview link of a site branch, 
 
   it('refuses every write, every server action, the editor and every other API, each answer marked the same', async () => {
     use();
-    const attempts: Array<[string, RequestInit & { headers: Record<string, string> }]> = [
+    const attempts: Array<[string, { method: string; headers: Record<string, string> }]> = [
       ['/', { method: 'POST', headers: {} }],
       ['/about', { method: 'POST', headers: {} }],
       ['/about', { method: 'GET', headers: { 'next-action': 'abc' } }],
@@ -969,7 +969,7 @@ describe('middleware: a preview host (the public preview link of a site branch, 
       ['/API/commerce/products', { method: 'GET', headers: {} }],
     ];
     for (const [path, init] of attempts) {
-      const res = await middleware(new NextRequest(`https://${PREVIEW}${path}`, { ...init, headers: { host: PREVIEW, cookie: 'lumitra_session=x', ...init.headers } }));
+      const res = await middleware(new NextRequest(`https://${PREVIEW}${path}`, { method: init.method, headers: { host: PREVIEW, cookie: 'lumitra_session=x', ...init.headers } }));
       expect(res.status, `${init.method} ${path}`).toBe(404);
       expect(isNext(res)).toBe(false);
       marked(res);
