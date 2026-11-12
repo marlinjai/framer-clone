@@ -61,7 +61,31 @@ function io() {
 
 const whole = (n) => typeof n === 'number' && Number.isSafeInteger(n) && n >= 0;
 
-/** Step 3: what the file says it will decode to, summed from the JSON alone. */
+/**
+ * Step 3a: counts and depth from the JSON alone, before anything is allocated for them. A file of a
+ * few megabytes can name a million nodes or a chain a hundred thousand deep; both are refused here.
+ */
+export function checkDeclaredCounts(json, limits) {
+  const list = (key) => (Array.isArray(json[key]) ? json[key] : []);
+  const caps = [['nodes', limits.nodes], ['meshes', limits.meshes], ['materials', limits.materials], ['textures', limits.textures], ['images', limits.images], ['animations', limits.clips]];
+  for (const [key, cap] of caps) {
+    if (list(key).length > cap) throw new ModelRefusal('model-too-complex', `the model has ${list(key).length} ${key}, at most ${cap} are allowed`);
+  }
+  for (const [i, skin] of list('skins').entries()) {
+    if (Array.isArray(skin?.joints) && skin.joints.length > limits.bones) throw new ModelRefusal('model-too-complex', `skins[${i}] has ${skin.joints.length} bones, at most ${limits.bones} are allowed`);
+  }
+  const nodes = list('nodes');
+  const parent = new Array(nodes.length).fill(-1);
+  nodes.forEach((n, i) => { for (const c of Array.isArray(n?.children) ? n.children : []) if (whole(c) && c < nodes.length) parent[c] = i; });
+  for (let i = 0; i < nodes.length; i++) {
+    let depth = 1;
+    for (let cur = i; parent[cur] !== -1; cur = parent[cur]) {
+      if (++depth > limits.nodeDepth) throw new ModelRefusal('model-too-complex', `the node tree is deeper than ${limits.nodeDepth} levels`);
+    }
+  }
+}
+
+/** Step 3b: what the file says it will decode to, summed from the JSON alone. */
 export function declaredDecodedBytes(json, limits) {
   let total = 0;
   for (const [i, a] of (json.accessors ?? []).entries()) {
@@ -92,6 +116,7 @@ async function textureSizes(images, limits) {
     let meta;
     try { meta = await sharp(bytes, { limitInputPixels: limits.textureSide * limits.textureSide }).metadata(); }
     catch { throw new ModelRefusal('model-too-complex', `texture ${i} is too large or cannot be read`); }
+    if (!['png', 'jpeg', 'webp'].includes(meta.format) || (meta.pages ?? 1) !== 1) throw new ModelRefusal('model-too-complex', `texture ${i} is a ${meta.format ?? 'unknown'} image: only single png, jpeg or webp images are accepted`, 422);
     if (!meta.width || !meta.height) throw new ModelRefusal('model-too-complex', `texture ${i} has no readable size`, 422);
     side = Math.max(side, meta.width, meta.height);
     if (meta.width > limits.textureSide || meta.height > limits.textureSide) throw new ModelRefusal('model-too-complex', `a texture is ${Math.max(meta.width, meta.height)} pixels on a side, at most ${limits.textureSide} are allowed`);
@@ -101,9 +126,11 @@ async function textureSizes(images, limits) {
   return side;
 }
 
+/** Triangles drawn, not stored: a mesh counts once for every node that places it, so 1,000 instances of one mesh are 1,000 meshes. */
 function trianglesOf(doc) {
-  let triangles = 0;
+  const perMesh = new Map();
   for (const mesh of doc.getRoot().listMeshes()) {
+    let triangles = 0;
     for (const prim of mesh.listPrimitives()) {
       const indices = prim.getIndices();
       const position = prim.getAttribute('POSITION');
@@ -111,10 +138,25 @@ function trianglesOf(doc) {
       const mode = prim.getMode();
       triangles += mode === 4 ? Math.floor(n / 3) : mode === 5 || mode === 6 ? Math.max(0, n - 2) : 0;
     }
+    perMesh.set(mesh, triangles);
   }
-  return triangles;
+  let drawn = 0;
+  const stack = [];
+  for (const scene of doc.getRoot().listScenes()) stack.push(...scene.listChildren());
+  while (stack.length) {
+    const node = stack.pop();
+    const mesh = node.getMesh();
+    if (mesh) drawn += perMesh.get(mesh) ?? 0;
+    stack.push(...node.listChildren());
+  }
+  // A mesh no scene reaches is never drawn, but it is still decoded and stored: count it once.
+  const placed = new Set();
+  for (const scene of doc.getRoot().listScenes()) scene.traverse((n) => { if (n.getMesh()) placed.add(n.getMesh()); });
+  for (const [mesh, t] of perMesh) if (!placed.has(mesh)) drawn += t;
+  return drawn;
 }
 
+/** The rest-pose box of what each scene draws. Skinning, morph deltas and animation are not sampled: the box is the model's resting size. */
 function boundingBox(doc) {
   const size = [0, 0, 0];
   for (const scene of doc.getRoot().listScenes()) {
@@ -141,12 +183,14 @@ export async function validateModel(bytes) {
   let report;
   try {
     report = await validator.validateBytes(bytes, {
-      maxIssues: 50,
+      maxIssues: 1000,
       externalResourceFunction: () => Promise.reject(new Error('external resources are refused')),
     });
   } catch (err) {
     return { ok: false, message: `the file could not be read (${String(err?.message ?? err).slice(0, 120)})` };
   }
+  // A report that stopped at its issue limit has not been read to the end: later errors are unseen, so it is not a pass.
+  if (report.issues.truncated) return { ok: false, message: 'the file has more than 1000 problems and was not checked to the end' };
   if (report.issues.numErrors > 0) {
     const first = report.issues.messages.find((m) => m.severity === 0);
     return { ok: false, message: `${first?.code ?? 'INVALID'}${first?.pointer ? ` at ${first.pointer}` : ''}: ${first?.message ?? 'invalid glTF'}`.slice(0, 300) };
@@ -167,6 +211,7 @@ export async function reencodeModel(bytes, limits) {
   if (used.includes('KHR_draco_mesh_compression')) {
     throw new ModelRefusal('model-too-complex', 'Draco-compressed models are not supported yet: export the model without compression, or with meshopt', 422);
   }
+  checkDeclaredCounts(json, limits);
   declaredDecodedBytes(json, limits);
 
   let doc;

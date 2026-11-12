@@ -211,8 +211,8 @@ describe('the worker caps', () => {
 
   it('treats a validator that timed out as a refusal, never an approval', async () => {
     const v = khronosValidator({ script: fixture('spin.mjs'), timeoutMs: 500 });
-    const r = await v.validate(new Uint8Array(1));
-    expect(r.ok).toBe(false);
+    // Thrown, never returned as ok: the upload answers it as a refusal (413 timeout), see below.
+    await expect(v.validate(new Uint8Array(1))).rejects.toMatchObject({ code: 'timeout', status: 413 });
   }, SLOW);
 
   it('keeps the caller\'s bytes: the worker gets a copy', async () => {
@@ -220,6 +220,72 @@ describe('the worker caps', () => {
     const before = bytes.byteLength;
     await khronosValidator().validate(bytes);
     expect(bytes.byteLength).toBe(before);
+  }, SLOW);
+});
+
+describe('review findings', () => {
+  const fixture = (name: string) => new URL(`./fixtures/${name}`, import.meta.url);
+
+  it('does not take a truncated validator report for a pass: warnings that fill the limit cannot hide a later error', async () => {
+    const hidden = rewriteJson(await model(), (j) => {
+      j.materials = Array.from({ length: 1100 }, () => ({ unknownThing: 1 }));
+      j.nodes.push({ mesh: 99 });
+    });
+    const r = await khronosValidator().validate(hidden);
+    expect(r.ok).toBe(false);
+  }, SLOW);
+
+  it('counts a mesh once for every node that places it (instancing cannot hide triangles)', async () => {
+    const doc = new Document();
+    const buffer = doc.createBuffer();
+    const n = 1000;
+    const pos = new Float32Array(n * 9).map((_, i) => (i * 0.37) % 5);
+    const position = doc.createAccessor().setType('VEC3').setArray(pos).setBuffer(buffer);
+    const mesh = doc.createMesh().addPrimitive(doc.createPrimitive().setAttribute('POSITION', position));
+    const scene = doc.createScene();
+    for (let i = 0; i < 600; i++) scene.addChild(doc.createNode(`n${i}`).setMesh(mesh));
+    const out = await safeReencoder().reencode(await io.writeBinary(doc));
+    expect(out.input.triangles).toBe(600_000);
+    expect(decodedProblem(out.input)).toMatch(/triangles/);
+  }, SLOW);
+
+  it('refuses counts and depth from the JSON before decoding: nodes, images, a deep chain', async () => {
+    const e1 = await refusal(safeReencoder().reencode(rewriteJson(await model(), (j) => { j.nodes = Array.from({ length: 1001 }, () => ({})); })));
+    expect(e1.message).toMatch(/1001 nodes/);
+    const e2 = await refusal(safeReencoder().reencode(rewriteJson(await model(), (j) => { j.images = Array.from({ length: 17 }, () => ({ bufferView: 0 })); })));
+    expect(e2.message).toMatch(/17 images/);
+    const e3 = await refusal(safeReencoder().reencode(rewriteJson(await model(), (j) => { j.nodes = Array.from({ length: 40 }, (_, i) => (i < 39 ? { children: [i + 1] } : {})); })));
+    expect(e3.message).toMatch(/deeper than 32/);
+    const started = Date.now();
+    await refusal(safeReencoder().reencode(rewriteJson(await model(), (j) => { j.nodes = Array.from({ length: 150_000 }, (_, i) => ({ children: [i + 1] })); })));
+    expect(Date.now() - started).toBeLessThan(20_000);
+  }, SLOW);
+
+  it('accepts only single png, jpeg or webp images: an SVG named as a PNG is refused', async () => {
+    const doc = await io.readBinary(await model({ width: 8, height: 8 }));
+    doc.getRoot().listTextures()[0].setImage(enc.encode('<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="red"/></svg>')).setMimeType('image/png');
+    const e = await refusal(safeReencoder().reencode(await io.writeBinary(doc)));
+    expect(e.message).toMatch(/only single png, jpeg or webp/);
+    expect(e.status).toBe(422);
+  }, SLOW);
+
+  it('queues workers: no more than two run at once', async () => {
+    const started = Date.now();
+    await Promise.all([0, 1, 2].map(() => refusal(runInWorker('validate', new Uint8Array(1), {}, { script: fixture('spin.mjs'), timeoutMs: 500 }))));
+    expect(Date.now() - started).toBeGreaterThanOrEqual(950);
+  }, SLOW);
+
+  it('answers a validator that timed out as 413 timeout, not as an invalid file, and stores nothing', async () => {
+    const d = { blobs: new MemoryBlobStore(), models: new MemorySiteModels(), validator: khronosValidator({ script: fixture('spin.mjs'), timeoutMs: 400 }), reencoder: safeReencoder() };
+    expect(await acceptModelUpload(await model(), 's', 'u', d)).toMatchObject({ ok: false, status: 413, code: 'timeout' });
+    expect(d.blobs.files.size).toBe(0);
+  }, SLOW);
+
+  it('words a server-side refusal as ours to retry, not as the file\'s fault', async () => {
+    const d = { blobs: new MemoryBlobStore(), models: new MemorySiteModels(), validator: { validate: async () => ({ ok: true as const }) }, reencoder: { reencode: async () => { throw new ModelRefusalError('reencode-failed', 'the optimised model could not be read back', 500); } } };
+    const r = await acceptModelUpload(await model(), 's', 'u', d);
+    expect(r).toMatchObject({ ok: false, status: 500 });
+    if (!r.ok) expect(r.message).toMatch(/Try again/);
   }, SLOW);
 });
 

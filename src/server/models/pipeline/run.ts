@@ -4,16 +4,27 @@
 // "Upload, validation and re-encoding": 20 seconds and 512 megabytes). The worker is terminated
 // when the time is up or when it passes its heap limit; the caller gets a refusal either way.
 //
-// What the memory cap covers: `resourceLimits` bound the worker's JavaScript heap. Native memory
-// (sharp's image buffers, the validator's WebAssembly-free Dart output) is outside it, which is why
-// the engine caps decoded bytes and texture pixels BEFORE decoding (engine.mjs) and why a worker
-// handles one task and exits. The process-level guard (a container memory limit) is a deployment
-// concern and stays gated.
+// What the memory cap covers, honestly: `resourceLimits` bound the worker's JAVASCRIPT HEAP only.
+// Typed arrays (the decoded geometry, the written file, the copies of the input) and sharp's native
+// image buffers are outside it: a worker given a 64 MB heap allocated gigabytes of Uint8Arrays in
+// testing. What actually bounds them is the engine capping decoded bytes, texture pixels and counts
+// BEFORE decoding (engine.mjs), one task per worker, and at most WORKER_LIMITS.concurrent workers
+// at once. A container memory limit is the real backstop and is a deployment step that stays gated
+// before any route is wired; this file does not replace it.
 
 import { Worker } from 'node:worker_threads';
 import { ModelRefusalError } from '../ports';
 
-export const WORKER_LIMITS = { timeoutMs: 20_000, heapMb: 512 } as const;
+export const WORKER_LIMITS = { timeoutMs: 20_000, heapMb: 512, concurrent: 2 } as const;
+
+// A process-wide queue: uploads wait for a slot instead of each starting a worker of their own.
+let running = 0;
+const waiting: (() => void)[] = [];
+async function slot(): Promise<() => void> {
+  if (running >= WORKER_LIMITS.concurrent) await new Promise<void>((resolve) => waiting.push(resolve));
+  else running++;
+  return () => { const next = waiting.shift(); if (next) next(); else running--; };
+}
 
 export interface RunOptions {
   /** The worker script; defaults to this directory's worker.mjs. A test points it at a misbehaving one. */
@@ -24,7 +35,12 @@ export interface RunOptions {
 
 interface Message { ok: boolean; result?: unknown; error?: { code: string; message: string; status: 413 | 422 | 500 } }
 
-export function runInWorker<T>(task: 'validate' | 'reencode', bytes: Uint8Array, limits: unknown, options: RunOptions = {}): Promise<T> {
+export async function runInWorker<T>(task: 'validate' | 'reencode', bytes: Uint8Array, limits: unknown, options: RunOptions = {}): Promise<T> {
+  const release = await slot();
+  try { return await runWorker<T>(task, bytes, limits, options); } finally { release(); }
+}
+
+function runWorker<T>(task: 'validate' | 'reencode', bytes: Uint8Array, limits: unknown, options: RunOptions): Promise<T> {
   const timeoutMs = options.timeoutMs ?? WORKER_LIMITS.timeoutMs;
   const heapMb = options.heapMb ?? WORKER_LIMITS.heapMb;
   return new Promise<T>((resolve, reject) => {

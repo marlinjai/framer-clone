@@ -5,19 +5,14 @@
 // and enabled (a gated, separate step), the upload stays fail-closed.
 
 import { DECODED_LIMITS } from '../uploadModel';
-import { ModelRefusalError, type DecodedStats, type ModelReencoder, type ModelValidator } from '../ports';
+import { DecodedStats, ModelReencoder, ModelValidator } from '../ports';
 import { runInWorker, type RunOptions } from './run';
 
 export function khronosValidator(options: RunOptions = {}): ModelValidator {
   return {
-    async validate(bytes) {
-      try { return await runInWorker<{ ok: true } | { ok: false; message: string }>('validate', bytes, {}, options); }
-      catch (err) {
-        // A validator that timed out or ran out of memory has not approved the file: that is a refusal, not a pass.
-        if (err instanceof ModelRefusalError) return { ok: false, message: err.message };
-        throw err;
-      }
-    },
+    // A timeout or an out-of-memory is thrown as a ModelRefusalError (never returned as a pass): the upload
+    // answers it as such (413), not as an invalid file.
+    validate: (bytes) => runInWorker<{ ok: true } | { ok: false; message: string }>('validate', bytes, {}, options),
   };
 }
 

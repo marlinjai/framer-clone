@@ -34,7 +34,13 @@ export const DECODED_LIMITS = {
   /** What the re-encoder promises to write. */
   outputTextureSide: 2048,
   /** Not in the plan: bounds the decoder's own work (total decoded accessor bytes, total texture pixels) so a small file cannot declare a huge one. */
-  decodedBytes: 128 * 1024 * 1024,
+  decodedBytes: 64 * 1024 * 1024,
+  meshes: 256,
+  materials: 64,
+  textures: 16,
+  images: 16,
+  nodeDepth: 32,
+  bones: 128,
   totalTexturePixels: 40_000_000,
 } as const;
 
@@ -70,6 +76,9 @@ export function decodedProblem(s: DecodedStats | undefined | null): string | nul
   return null;
 }
 
+/** A refusal of the file reads as the file's fault; a 500 is ours, and says to try again. */
+const refusalMessage = (e: ModelRefusalError) => (e.status >= 500 ? `The model could not be processed (${e.message}). Try again.` : `This model cannot be used: ${e.message}.`);
+
 const logFailure = (step: string, siteId: string, err: unknown) => console.error(`models: ${step} failed for site ${siteId}.`, err);
 
 export async function acceptModelUpload(input: Uint8Array, siteId: string, uploaderId: string, deps: UploadDeps): Promise<UploadResult> {
@@ -90,12 +99,16 @@ export async function acceptModelUpload(input: Uint8Array, siteId: string, uploa
   }
 
   let validated: { ok: true } | { ok: false; message: string };
-  try { validated = await deps.validator.validate(input); } catch (err) { logFailure('validator', siteId, err); return fail(500, 'validator-failed', 'The model could not be checked. Try again.'); }
+  try { validated = await deps.validator.validate(input); } catch (err) {
+    if (err instanceof ModelRefusalError) return fail(err.status, err.code, refusalMessage(err));
+    logFailure('validator', siteId, err);
+    return fail(500, 'validator-failed', 'The model could not be checked. Try again.');
+  }
   if (!validated.ok) return fail(422, 'invalid-model', `This model is not a valid glTF file: ${validated.message}`);
 
   let encoded: Awaited<ReturnType<ModelReencoder['reencode']>>;
   try { encoded = await deps.reencoder.reencode(input); } catch (err) {
-    if (err instanceof ModelRefusalError) return fail(err.status, err.code, `This model cannot be used: ${err.message}.`);
+    if (err instanceof ModelRefusalError) return fail(err.status, err.code, refusalMessage(err));
     logFailure('re-encoder', siteId, err); return fail(500, 'reencode-failed', 'The model could not be optimised. Try again, or export it differently.'); }
 
   if (!encoded || !(encoded.bytes instanceof Uint8Array || ArrayBuffer.isView(encoded.bytes))) return fail(500, 'reencode-failed', 'The optimised model is missing.');
