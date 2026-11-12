@@ -9,7 +9,7 @@
 //   box_document(text, text) RETURNS TABLE (
 //     document text, live boolean, subdomain_labels text[], custom_hostnames text[])
 
-import { connect as netConnect, type Socket } from 'node:net';
+import { Socket } from 'node:net';
 import postgres from 'postgres';
 import { parseDatabaseUrl, type DatabaseTarget } from './databaseUrl';
 
@@ -35,7 +35,7 @@ export function storeFailureOf(error: unknown): StoreFailure {
   const code = typeof error === 'object' && error !== null && 'code' in error ? String((error as { code: unknown }).code) : '';
   if (code === 'BOX_TIMEOUT' || code === 'CONNECT_TIMEOUT' || code === '57014') return 'timeout';
   if (code.startsWith('28') || code === '42501') return 'denied';
-  if (/^(ECONN|ENOTFOUND|EAI_|EHOST|ENET|EPIPE|ETIMEDOUT|CONNECTION_)/.test(code) || code.startsWith('08') || code.startsWith('57P')) return 'connect';
+  if (/^(ECONN|ENOTFOUND|EAI_|EHOST|ENET|EPIPE|ETIMEDOUT|CONNECTION_|ERR_SOCKET_|ERR_STREAM_)/.test(code) || code.startsWith('08') || code.startsWith('57P')) return 'connect';
   return 'query';
 }
 
@@ -63,6 +63,9 @@ export function withTimeout<T>(promise: PromiseLike<T>, ms: number): Promise<T> 
   });
 }
 
+/** Calls of one pool that may be given up on before the pool is thrown away whatever else it answered. */
+const MAX_TIMEOUTS_PER_POOL = 24;
+
 /** One set of connections: what the store asks, and how it is thrown away. */
 export interface BoxPool {
   find(siteId: string, sha256: string): PromiseLike<BoxRow | null>;
@@ -83,24 +86,98 @@ export interface PostgresStoreOptions {
   now?: () => number;
 }
 
-/** True for an error the database itself sent (a five character SQLSTATE): proof that it answers. */
+/**
+ * True for an error the database itself sent: the driver's own error type with a five character
+ * SQLSTATE. Proof that the database answers. A code of the operating system or of Node (`EPIPE`,
+ * `ECONNRESET`), which may also be five characters long, is not one.
+ */
 function isAnswerFromDatabase(error: unknown): boolean {
-  return typeof error === 'object' && error !== null && 'code' in error && /^[0-9A-Z]{5}$/.test(String((error as { code: unknown }).code));
+  if (typeof error !== 'object' || error === null) return false;
+  const { name, code } = error as { name?: unknown; code?: unknown };
+  return name === 'PostgresError' && typeof code === 'string' && /^[0-9A-Z]{5}$/.test(code);
 }
 
-function openPostgresPool(target: DatabaseTarget, connectTimeoutMs: number): BoxPool {
+/** The longest pause before a pool opens its next connection after one that did not last. */
+const MAX_OPEN_PAUSE_MS = 2000;
+
+export function openPostgresPool(target: DatabaseTarget, connectTimeoutMs: number): BoxPool {
   const sockets = new Set<Socket>();
   // Set when the pool is thrown away: from then on it opens no connection, whatever the driver retries.
   let dead = false;
+  // A connection that closes within a second of opening (a database that refuses, accepts and hangs
+  // up, or is restarting) is followed by a pause, twice as long each time up to two seconds. During
+  // the pause no connection is opened, so the driver's retries cannot become hundreds of connections
+  // a second, and a new call fails at once as a connection failure, so no caller waits for nothing.
+  let pauseMs = 0;
+  let nextOpenAt = 0;
+  // Connections that are open right now (connected and not yet closed).
+  let connected = 0;
+
+  /**
+   * A socket for the driver. It is always a socket, handed over at once, never a failure of this
+   * function: the driver writes to it while it is still connecting, and whatever goes wrong (a
+   * refusal, a timeout, a pool that was thrown away) reaches the driver as the socket's own error and
+   * close, the way it expects. A failure of the function itself would leave one of the driver's
+   * connections waiting for good.
+   */
+  const openSocket = (): Socket => {
+    const socket = new Socket();
+    // An error always has a listener, also before the driver adds its own and after it removed them:
+    // an 'error' nobody listens to would end the process.
+    socket.on('error', () => {});
+    sockets.add(socket);
+    let openedAt = performance.now();
+    let timer: NodeJS.Timeout | undefined;
+    const connect = () => {
+      if (dead) {
+        // Without an error: the pool is gone and nobody is left to hear one.
+        socket.destroy();
+        return;
+      }
+      openedAt = performance.now();
+      timer = setTimeout(() => socket.destroy(Object.assign(new Error('the connection did not open in time'), { code: 'CONNECT_TIMEOUT' })), connectTimeoutMs);
+      socket.connect({ host: target.host, port: target.port });
+    };
+    let isConnected = false;
+    socket.once('connect', () => {
+      clearTimeout(timer);
+      isConnected = true;
+      connected += 1;
+    });
+    socket.once('close', () => {
+      clearTimeout(timer);
+      clearTimeout(waiting);
+      sockets.delete(socket);
+      if (isConnected) connected -= 1;
+      if (dead) return;
+      const now = performance.now();
+      pauseMs = now - openedAt < 1000 ? Math.min(MAX_OPEN_PAUSE_MS, Math.max(100, pauseMs * 2)) : 0;
+      nextOpenAt = now + pauseMs;
+    });
+    // Inside a pause the connection is opened when the pause is over, not before.
+    const wait = nextOpenAt - performance.now();
+    const waiting = wait > 0 ? setTimeout(connect, wait) : undefined;
+    if (wait <= 0) connect();
+    return socket;
+  };
+
+  /** Fails a call at once while no connection is open and none may be opened yet: nobody waits for a database that just refused. */
+  const refuseWhilePaused = () => {
+    if (connected === 0 && performance.now() < nextOpenAt) {
+      throw Object.assign(new Error('the last connection did not last; not opening another yet'), { code: 'CONNECTION_PAUSED' });
+    }
+  };
+
   // `socket` is an option of the driver (its connection.js) that its type definitions leave out. The
-  // driver's version is pinned exactly, and a test fails if the option stops being used.
-  const driverOptions: postgres.Options<Record<string, never>> & { socket: () => Promise<Socket> } = {
+  // driver's version is pinned exactly, and tests fail if the option stops being used.
+  const driverOptions: postgres.Options<Record<string, never>> & { socket: () => Socket } = {
     host: target.host,
     port: target.port,
     database: target.database,
     username: target.username,
     password: target.password,
-    ssl: target.ssl,
+    // No Transport Layer Security in this version: the address parser refuses an address that asks for it.
+    ssl: false,
     // The role allows 4 connections. Two here, so a pool that is being thrown away and the one that
     // takes its place stay within the limit together.
     max: 2,
@@ -114,30 +191,12 @@ function openPostgresPool(target: DatabaseTarget, connectTimeoutMs: number): Box
     connection: { application_name: 'framer-clone-box', statement_timeout: 2000 },
     // The box opens the socket itself, to the one host it checked, and keeps hold of it, so a
     // connection that went silent can be closed for real and not only asked to close.
-    socket: () =>
-      new Promise<Socket>((resolve, reject) => {
-        if (dead) {
-          reject(Object.assign(new Error('the pool was thrown away'), { code: 'CONNECTION_DESTROYED' }));
-          return;
-        }
-        const socket = netConnect({ host: target.host, port: target.port });
-        sockets.add(socket);
-        socket.once('close', () => sockets.delete(socket));
-        const timer = setTimeout(() => socket.destroy(Object.assign(new Error('the connection did not open in time'), { code: 'CONNECT_TIMEOUT' })), connectTimeoutMs);
-        socket.once('connect', () => {
-          clearTimeout(timer);
-          socket.off('error', reject);
-          resolve(socket);
-        });
-        socket.once('error', (error) => {
-          clearTimeout(timer);
-          reject(error);
-        });
-      }),
+    socket: openSocket,
   };
   const sql = postgres(driverOptions);
   return {
     async find(siteId, sha256) {
+      refuseWhilePaused();
       const rows = await sql<{ document: unknown; live: unknown; subdomain_labels: unknown; custom_hostnames: unknown }[]>`
         SELECT document, live, to_json(subdomain_labels) AS subdomain_labels, to_json(custom_hostnames) AS custom_hostnames
         FROM box_document(${siteId}, ${sha256})
@@ -148,6 +207,7 @@ function openPostgresPool(target: DatabaseTarget, connectTimeoutMs: number): Box
       return { document: row.document, live: row.live, subdomainLabels: row.subdomain_labels, customHostnames: row.custom_hostnames };
     },
     async ping() {
+      refuseWhilePaused();
       // A pair no site can have: the call itself is what is checked.
       await sql`SELECT 1 AS ok FROM box_document(${'00000000-0000-0000-0000-000000000000'}, ${'0'.repeat(64)})`;
     },
@@ -171,17 +231,19 @@ export function createPostgresStore(database: string | DatabaseTarget, options: 
   const target = typeof database === 'string' ? parseDatabaseUrl(database) : database;
   const open = options.open ?? (() => openPostgresPool(target, connectTimeoutMs));
 
-  let current = { pool: open(), lastAnswer: now() };
+  let current = { pool: open(), lastAnswer: now(), timeouts: 0 };
 
   /**
    * Runs one call on the current pool. A call that takes too long is given up
-   * on, and its caller is told to come back. The pool is thrown away only
-   * when it gave no answer at all, to any call, since this call began: a
-   * database that is busy but answering keeps its pool (replacing it would
-   * fail every other call for nothing), one that went silent does not (its
-   * connections would never be asked again). The old pool's connections are
-   * closed for real, at once, and the next request starts on fresh ones, so
-   * service comes back by itself.
+   * on, and its caller is told to come back. The pool is thrown away when it
+   * gave no answer at all, to any call, since this call began: a database that
+   * is busy but answering keeps its pool (replacing it would fail every other
+   * call for nothing), one that went silent does not (its connections would
+   * never be asked again). It is also thrown away once 24 of its calls were
+   * given up on, whatever answered meanwhile: with one connection silent and
+   * the other answering, the answers alone would keep the silent one in use.
+   * The old pool's connections are closed for real, at once, and the next
+   * request starts on fresh ones, so service comes back by itself.
    */
   async function run<T>(call: (pool: BoxPool) => PromiseLike<T>): Promise<T> {
     const used = current;
@@ -199,9 +261,12 @@ export function createPostgresStore(database: string | DatabaseTarget, options: 
     try {
       return await withTimeout(pending, queryTimeoutMs);
     } catch (error) {
-      if (error instanceof TimeoutError && current === used && used.lastAnswer < started) {
-        current = { pool: open(), lastAnswer: now() };
-        used.pool.destroy();
+      if (error instanceof TimeoutError) {
+        used.timeouts += 1;
+        if (current === used && (used.lastAnswer < started || used.timeouts >= MAX_TIMEOUTS_PER_POOL)) {
+          current = { pool: open(), lastAnswer: now(), timeouts: 0 };
+          used.pool.destroy();
+        }
       }
       throw error;
     }

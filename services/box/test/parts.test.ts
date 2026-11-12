@@ -5,7 +5,7 @@ import { ConfigError, isKillSwitchOn, readConfig } from '../src/config';
 import { RateLimiter } from '../src/rateLimit';
 import { createServer, type Socket } from 'node:net';
 import { DatabaseUrlError, parseDatabaseUrl } from '../src/databaseUrl';
-import { createPostgresStore, storeFailureOf, withTimeout, type BoxPool, type BoxRow } from '../src/store';
+import { createPostgresStore, openPostgresPool, storeFailureOf, withTimeout, type BoxPool, type BoxRow } from '../src/store';
 
 describe('the rate limiter', () => {
   it('allows a burst of the capacity and gives tokens back over the window', () => {
@@ -199,6 +199,12 @@ describe('the configuration', () => {
     ['a database address with a malformed escape', { ...env, BOX_DATABASE_URL: 'postgres://box_reader:a%zzb@db.internal/app' }],
     ['a database address with an unknown sslmode', { ...env, BOX_DATABASE_URL: 'postgres://box_reader@db.internal/app?sslmode=bogus' }],
     ['a database address with an sslmode that only prefers', { ...env, BOX_DATABASE_URL: 'postgres://box_reader@db.internal/app?sslmode=prefer' }],
+    // Encryption is not built in this version (D23): asking for it is refused, never half honoured.
+    ['a database address that asks for an unchecked certificate', { ...env, BOX_DATABASE_URL: 'postgres://box_reader@db.internal/app?sslmode=require' }],
+    ['a database address that asks for a checked certificate', { ...env, BOX_DATABASE_URL: 'postgres://box_reader@10.0.0.5/app?sslmode=verify-full' }],
+    ['a database name that adds a startup parameter', { ...env, BOX_DATABASE_URL: 'postgres://box_reader@db.internal/app%00search_path%00evil' }],
+    ['a role that adds a startup parameter', { ...env, BOX_DATABASE_URL: 'postgres://box%00statement_timeout%000@db.internal/app' }],
+    ['a password with a line break', { ...env, BOX_DATABASE_URL: 'postgres://box_reader:a%0Ab@db.internal/app' }],
     ['a database address with sslmode twice', { ...env, BOX_DATABASE_URL: 'postgres://box_reader@db.internal/app?sslmode=verify-full&sslmode=disable' }],
     ['a database address that lifts the statement timeout', { ...env, BOX_DATABASE_URL: 'postgres://box_reader@db.internal/app?statement_timeout=0' }],
     ['a database address with an ssl parameter', { ...env, BOX_DATABASE_URL: 'postgres://box_reader@db.internal/app?ssl=false' }],
@@ -237,17 +243,23 @@ describe('the configuration', () => {
   });
 
   it('reads the database address into the parts the driver is given', () => {
-    expect(parseDatabaseUrl('postgres://box_reader:p%40ss@db.internal:6543/app?sslmode=verify-full')).toEqual({
-      host: 'db.internal', port: 6543, database: 'app', username: 'box_reader', password: 'p@ss', ssl: 'verify-full',
+    expect(parseDatabaseUrl('postgres://box_reader:p%40ss@db.internal:6543/app?sslmode=disable')).toEqual({
+      host: 'db.internal', port: 6543, database: 'app', username: 'box_reader', password: 'p@ss',
     });
-    expect(parseDatabaseUrl('postgresql://box_reader@10.0.0.5/app')).toMatchObject({ host: '10.0.0.5', port: 5432, ssl: false });
-    expect(parseDatabaseUrl('postgres://box_reader@db/app?sslmode=disable').ssl).toBe(false);
-    expect(parseDatabaseUrl('postgres://box_reader@db/app?sslmode=require').ssl).toBe('require');
-    expect(() => parseDatabaseUrl('postgres://box_reader:secret-value@db%2cevil/app')).toThrow(DatabaseUrlError);
-    try {
-      parseDatabaseUrl('postgres://box_reader:secret-value@db%2cevil/app');
-    } catch (error) {
-      expect((error as Error).message).not.toMatch(/secret-value|evil|box_reader/);
+    expect(parseDatabaseUrl('postgresql://box_reader@10.0.0.5/app')).toMatchObject({ host: '10.0.0.5', port: 5432 });
+    // Names as a private network gives them: any case, a closing dot, an underscore.
+    expect(parseDatabaseUrl('postgres://box_reader@DB.Internal./app').host).toBe('db.internal');
+    expect(parseDatabaseUrl('postgres://box_reader@framer_clone_db/app').host).toBe('framer_clone_db');
+    for (const hostile of ['postgres://box_reader:secret-value@db%2cevil/app', 'postgres://box_reader:secret-value@db/app%00search_path%00evil']) {
+      let message = '';
+      try {
+        parseDatabaseUrl(hostile);
+      } catch (error) {
+        expect(error).toBeInstanceOf(DatabaseUrlError);
+        message = (error as Error).message;
+      }
+      expect(message.length).toBeGreaterThan(0);
+      expect(message).not.toMatch(/secret-value|evil|box_reader|search_path/);
     }
   });
 
@@ -263,6 +275,8 @@ describe('store failures', () => {
   it('are one of four words', () => {
     expect(storeFailureOf(Object.assign(new Error('x'), { code: 'ECONNREFUSED' }))).toBe('connect');
     expect(storeFailureOf(Object.assign(new Error('x'), { code: 'CONNECTION_CLOSED' }))).toBe('connect');
+    expect(storeFailureOf(Object.assign(new Error('x'), { code: 'CONNECTION_PAUSED' }))).toBe('connect');
+    expect(storeFailureOf(Object.assign(new Error('x'), { code: 'ERR_SOCKET_CLOSED' }))).toBe('connect');
     expect(storeFailureOf(Object.assign(new Error('x'), { code: '57P01' }))).toBe('connect');
     expect(storeFailureOf(Object.assign(new Error('x'), { code: 'CONNECT_TIMEOUT' }))).toBe('timeout');
     expect(storeFailureOf(Object.assign(new Error('x'), { code: '57014' }))).toBe('timeout');
@@ -336,13 +350,98 @@ describe('store failures', () => {
       await new Promise((resolve) => probe.close(resolve));
       const store = createPostgresStore(`postgres://box_reader@127.0.0.1:${port}/app`, { queryTimeoutMs: 2000 });
       try {
-        const failure = await store.find('0b0e7c1a-5d2f-4c3b-9a8e-1f2d3c4b5a69', 'a'.repeat(64)).then(() => null, (error: unknown) => error);
-        expect(storeFailureOf(failure)).toBe('connect');
+        // Six calls in a row: each one is refused as itself, quickly. None is left waiting on a
+        // connection that never came (which would end as a timeout, three seconds later).
+        for (let i = 0; i < 6; i++) {
+          const started = Date.now();
+          const failure = await store.find('0b0e7c1a-5d2f-4c3b-9a8e-1f2d3c4b5a69', 'a'.repeat(64)).then(() => null, (error: unknown) => error);
+          expect(storeFailureOf(failure)).toBe('connect');
+          expect(failure).not.toMatchObject({ code: 'BOX_TIMEOUT' });
+          expect(Date.now() - started).toBeLessThan(1500);
+        }
         await new Promise((resolve) => setTimeout(resolve, 100));
         expect(stray).toEqual([]);
       } finally {
         await store.close().catch(() => {});
         process.off('unhandledRejection', onStray);
+      }
+    });
+
+    it('a listener that accepts and hangs up does not become hundreds of connections', async () => {
+      let accepted = 0;
+      const server = createServer((socket) => {
+        accepted += 1;
+        socket.on('error', () => {});
+        socket.destroy();
+      });
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const port = (server.address() as { port: number }).port;
+      const store = createPostgresStore(`postgres://box_reader@127.0.0.1:${port}/app`, { queryTimeoutMs: 1500 });
+      try {
+        await store.ping().catch(() => {});
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        // Each connection that did not last makes the next one wait longer: a handful, not hundreds.
+        expect(accepted).toBeGreaterThanOrEqual(1);
+        expect(accepted).toBeLessThanOrEqual(12);
+      } finally {
+        await store.close().catch(() => {});
+        await new Promise((resolve) => server.close(resolve));
+      }
+    });
+
+    it('after a connection that did not last, new calls fail at once and open nothing until the pause is over', async () => {
+      let accepted = 0;
+      const server = createServer((socket) => {
+        accepted += 1;
+        socket.on('error', () => {});
+        socket.destroy();
+      });
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const port = (server.address() as { port: number }).port;
+      const pool = openPostgresPool(parseDatabaseUrl(`postgres://box_reader@127.0.0.1:${port}/app`), 500);
+      const outcome = () => Promise.resolve().then(() => pool.ping()).then(() => 'answered', (error: { code?: string }) => error.code);
+      try {
+        expect(await outcome()).not.toBe('answered');
+        // Straight after a connection that did not last (a moment for its close to be noticed, well
+        // inside the first pause of 100 milliseconds): five calls at once.
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        const before = accepted;
+        const started = Date.now();
+        const results = await Promise.all([outcome(), outcome(), outcome(), outcome(), outcome()]);
+        expect(Date.now() - started).toBeLessThan(60);
+        expect(results).toEqual(Array.from({ length: 5 }, () => 'CONNECTION_PAUSED'));
+        expect(accepted).toBe(before);
+        // And once the pause is over, a call opens a connection again.
+        await new Promise((resolve) => setTimeout(resolve, 2200));
+        await outcome();
+        expect(accepted).toBeGreaterThan(before);
+      } finally {
+        pool.destroy();
+        await new Promise((resolve) => server.close(resolve));
+      }
+    }, 15_000);
+
+    it('a pool that was thrown away opens no more connections, whatever its driver retries', async () => {
+      let accepted = 0;
+      const server = createServer((socket) => {
+        accepted += 1;
+        socket.on('error', () => {});
+        socket.destroy();
+      });
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const port = (server.address() as { port: number }).port;
+      const pool = openPostgresPool(parseDatabaseUrl(`postgres://box_reader@127.0.0.1:${port}/app`), 500);
+      try {
+        // A call that keeps the driver retrying against the listener that hangs up.
+        Promise.resolve(pool.ping()).catch(() => {});
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        pool.destroy();
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        const atDestroy = accepted;
+        await new Promise((resolve) => setTimeout(resolve, 2500));
+        expect(accepted).toBe(atDestroy);
+      } finally {
+        await new Promise((resolve) => server.close(resolve));
       }
     });
 
@@ -394,7 +493,7 @@ describe('store failures', () => {
 
     it('keeps a pool whose database answers with an error of its own', async () => {
       const { made, open } = fakePools((sha256) =>
-        sha256 === 'slow' ? never() : later(100, null).then(() => Promise.reject(Object.assign(new Error('x'), { code: '57014' }))),
+        sha256 === 'slow' ? never() : later(100, null).then(() => Promise.reject(Object.assign(new Error('x'), { name: 'PostgresError', code: '57014' }))),
       );
       const store = createPostgresStore('postgres://r@db/app', { queryTimeoutMs: 300, open });
       const slow = store.find(SITE, 'slow').catch((error: { code?: string }) => error.code);
@@ -419,15 +518,39 @@ describe('store failures', () => {
       expect(made[0]!.ended).toBe(false);
     });
 
-    it('does not count a failed connection as an answer', async () => {
+    it.each([
+      ['a reset connection', { code: 'ECONNRESET' }],
+      // Five characters, like an SQLSTATE, and not one.
+      ['a broken pipe', { code: 'EPIPE' }],
+      ['a five character code that is not the driver\'s error', { name: 'Error', code: '57014' }],
+    ])('does not count %s as an answer of the database', async (_what, fields) => {
       const { made, open } = fakePools((sha256, generation) =>
-        generation > 1 ? Promise.resolve(null) : sha256 === 'slow' ? never() : later(50, null).then(() => Promise.reject(Object.assign(new Error('x'), { code: 'ECONNRESET' }))),
+        generation > 1 ? Promise.resolve(null) : sha256 === 'slow' ? never() : later(50, null).then(() => Promise.reject(Object.assign(new Error('x'), fields))),
       );
       const store = createPostgresStore('postgres://r@db/app', { queryTimeoutMs: 200, open });
       const slow = store.find(SITE, 'slow').catch((error: { code?: string }) => error.code);
-      await expect(store.find(SITE, 'other')).rejects.toMatchObject({ code: 'ECONNRESET' });
+      await expect(store.find(SITE, 'other')).rejects.toMatchObject({ code: fields.code });
       expect(await slow).toBe('BOX_TIMEOUT');
       expect(made).toHaveLength(2);
+    });
+
+    it('throws a pool away after 24 calls were given up on, also while something else answers', async () => {
+      // One connection silent, one answering: 'slow' never returns, 'quick' always does.
+      const { made, open } = fakePools((sha256, generation) => (generation === 1 && sha256 === 'slow' ? never() : Promise.resolve(null)));
+      const store = createPostgresStore('postgres://r@db/app', { queryTimeoutMs: 60, open });
+      const keepAnswering = setInterval(() => void store.find(SITE, 'quick').catch(() => {}), 10);
+      try {
+        const first = await Promise.all(Array.from({ length: 23 }, () => store.find(SITE, 'slow').then(() => 'answered', (error: { code?: string }) => error.code)));
+        expect(new Set(first)).toEqual(new Set(['BOX_TIMEOUT']));
+        expect(made).toHaveLength(1);
+        // The 24th tips it over.
+        await expect(store.find(SITE, 'slow')).rejects.toMatchObject({ code: 'BOX_TIMEOUT' });
+        expect(made).toHaveLength(2);
+        expect(made[0]!.destroyed).toBe(true);
+        await expect(store.find(SITE, 'slow')).resolves.toBeNull();
+      } finally {
+        clearInterval(keepAnswering);
+      }
     });
   });
 

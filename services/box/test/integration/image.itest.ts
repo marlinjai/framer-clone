@@ -242,6 +242,7 @@ describe('the image, started without a decision to serve', () => {
     ['a proxy network that is everyone', { BOX_TRUSTED_PROXIES: '0.0.0.0/0' }, 'BOX_TRUSTED_PROXIES'],
     ['a listen host that is a name', { BOX_LISTEN_HOST: 'localhost' }, 'BOX_LISTEN_HOST'],
     ['a database address with a malformed escape', { BOX_DATABASE_URL: 'postgres://box_reader:a%zzb@pg:5432/postgres' }, 'BOX_DATABASE_URL'],
+    ['a database address that asks for encryption this version does not have', { BOX_DATABASE_URL: 'postgres://box_reader:x@pg:5432/postgres?sslmode=verify-full' }, 'BOX_DATABASE_URL'],
   ])('refuses to start with %s, naming the variable and nothing it holds', async (_name, env, variable) => {
     const box = await runBox(env);
     await until(() => docker(['inspect', '--format', '{{.State.Status}}', box.name]).trim() === 'exited', 'the box to stop');

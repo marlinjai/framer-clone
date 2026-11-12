@@ -25,7 +25,7 @@ The box is the small service that serves a *custom code block* of a site built i
 | A malformed pair, an unknown hash, another site naming a real hash | 404 |
 | The site switched off, the blob blocked, the kill switch on | 410 |
 | Past 60 requests a minute for one path and address, or 600 for one address | 429 |
-| The database cannot be asked, or does not answer within 3 seconds | 503, with no word of the error. A database that went silent has its connections closed and replaced, so service returns by itself; one that is only busy keeps them |
+| The database cannot be asked, or does not answer within 3 seconds | 503, with no word of the error. A database that went silent has its connections closed and replaced, so service returns by itself; one that is only busy keeps them. After a connection that did not last, new calls fail at once for a short pause (up to two seconds) |
 | `GET /health` | `ok` |
 | `GET /health/db` | `ok` after one call of the function, otherwise 503 and one word (`connect`, `timeout`, `denied`, `query`) |
 | `GET /` | A plain page saying what the domain is, with the contacts that are configured |
@@ -48,7 +48,7 @@ Every answer the box writes, whatever its status, carries a Content Security Pol
 
 | Variable | Required | Meaning |
 |---|---|---|
-| `BOX_DATABASE_URL` | yes | The connection string of the role `box_reader`. The only secret the box holds. One host by name or IPv4 address, a role, a database, and no parameter but `sslmode` (`disable`, `require`, `verify-full`); only `verify-full` checks the certificate |
+| `BOX_DATABASE_URL` | yes | The connection string of the role `box_reader`. The only secret the box holds. One host by name or IPv4 address, a role, a database, and no parameter but `sslmode=disable`. This version speaks to the database without encryption, over a private network the two share, and does not start with an address that asks for it (plan, decision D23) |
 | `BOX_EDITOR_HOST` | yes | The editor's host, such as `app.lumitra.co`: named in `frame-ancestors` and in the report address |
 | `BOX_SITES_BASE_HOST` | yes | The host platform subdomains live under, such as `sites.lumitra.co` |
 | `CUSTOM_CODE_DISABLED` | | `0` to serve. Everything else is the kill switch being on |
