@@ -69,16 +69,24 @@
 //
 // While the person types, edits text on the canvas, drags or resizes
 // (src/lib/live/editingInProgress.ts), a newer copy is held without the dialog:
-// adopting it would replace what is under the cursor. (Autosave goes on as
-// before: a save it sends on the old version meanwhile is refused and opens the
-// dialog, as it always did.) It is looked at again once the editing settled: adopted when the copy is still
-// saved, else the dialog opens as for any unsaved work. (Putting a settled edit
-// on top of the agent's copy instead is its own follow-up, ROADMAP.md.)
+// adopting it would replace what is under the cursor. It is looked at again once
+// the editing settled: adopted when the copy is still saved.
+//
+// Unsaved work over a newer copy is replayed on top of it instead of asking, when
+// that is safe (plan docs/plans/2026-11-09-live-replay-on-top.md, rebaseEdit): the
+// person's latest steps since the last saved copy, each only replacing values of
+// nodes the newer copy still has with the first old value unchanged there, are
+// undone, the copy is adopted and the steps are applied again under their own
+// names, then saved at once. That covers an edit settled while the copy was held
+// (marked), and a settled edit whose save is still waiting or out when the newer
+// copy comes or the save is refused (unmarked, found from the history). A refusal
+// such a replay is about to resolve keeps its dialog and its status wording back
+// (setConflictDialogHold). Anything else opens the dialog as for any unsaved work.
 
 import { UPDATE_FROM_MAIN_LABEL } from '@/lib/sites/branchLabels';
 import { runInAction } from 'mobx';
 import { isEditing, isInteracting, onEditingSettled } from '@/lib/live/editingInProgress';
-import { applyPatch, getSnapshot, isAlive, resolvePath, type IJsonPatch } from 'mobx-state-tree';
+import { applyPatch, getRelativePath, getSnapshot, isAlive, resolvePath, type IJsonPatch } from 'mobx-state-tree';
 import { getHistoryStore } from '@/stores/RootStore';
 import { shareUnchanged } from './structuralSharing';
 import { findNode, nodesOf, replaysCleanly } from '@/lib/siteMerge/shared';
@@ -130,8 +138,10 @@ export const LIVE_HEARTBEAT_MS = SSE_HEARTBEAT_MS;
 export const LIVE_WATCHDOG_MS = Math.round(LIVE_HEARTBEAT_MS * 2.5);
 /** The waits before a failed fetch of the stored copy is tried again while the stream is live; the last repeats. */
 export const LIVE_FETCH_RETRY_MS = [2_000, 5_000, 15_000] as const;
-/** A refusal's dialog held for the copy of a marked edit waits for that copy at most this long. */
+/** A refusal's dialog held for the newer copy (of a marked edit, or of a settled one the refusal found replayable) waits for it at most this long. */
 export const LIVE_HELD_FETCH_MS = 10_000;
+/** The most steps of the person one replay carries (all unsaved steps since the last saved copy, or none). */
+export const LIVE_REPLAY_MAX_STEPS = 10;
 /** "Load the newer version" while a write of this tab is out waits this long for it to settle. */
 export const LOAD_NEWER_WRITE_WAIT_MS = 10_000;
 /** The first reconnect after a stream ended (closed by the server, a network drop) waits this long, plus up to as much again at random; it doubles with each failure in a row. */
@@ -357,6 +367,12 @@ export class LiveSync {
   private editMark: HistoryMark | undefined;
   /** Where the history stood before a replayed edit, until its save settled. */
   private replayMark: HistoryMark | undefined;
+  /**
+   * When a save of a settled, unmarked edit was refused while that edit could be
+   * replayed on the newer copy (unsavedStepsMark): its dialog waits for that copy
+   * (at most LIVE_HELD_FETCH_MS), and the copy tries the replay. Spent by the try.
+   */
+  private refusedSettledAt: number | undefined;
   /** When the version wanted now was first heard of: a held dialog waits for its copy only so long (LIVE_HELD_FETCH_MS). */
   private wantedAt = 0;
   private fetchRetryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -453,69 +469,78 @@ export class LiveSync {
   }
 
   /**
-   * The person's settled edit, made while the agent's copy was held, put on top
-   * of that copy: undo it (the one history entry since `mark`), adopt the copy,
-   * apply the edit again as one step under its own name, and save at once. Only
-   * for edits that replace values of nodes (text, props, styles, a resize, also
-   * the same value several times, as a resize does) on nodes the copy still has,
-   * whose first edited value the agent left as it was. It is tried on a scratch
-   * copy of the agent's version first (also the size limit of a reusable
-   * component), so nothing is undone unless the replay will apply. Anything else
-   * (a move, a node or page the agent removed, the same value edited on both
-   * sides, a page or site setting) answers false, and the dialog asks as before.
+   * The person's settled steps put on top of a newer copy (held, or just fetched):
+   * undo them (every history entry since `mark`, at most LIVE_REPLAY_MAX_STEPS),
+   * adopt the copy, apply each again as its own undo step under its own name, and
+   * save at once. Only for steps that replace values of nodes (text, props,
+   * styles, a resize, also the same value several times, as a resize does) on
+   * nodes the copy still has, whose first edited value the copy left as it was.
+   * It is tried on a scratch copy of the newer version first (also the size limit
+   * of a reusable component), so nothing is undone unless the replay will apply;
+   * and once the steps are undone, the working copy must be exactly the saved one
+   * (no other unsaved work is ever replayed over). Anything else (a move, a node
+   * or page the copy removed, the same value edited on both sides, a page or site
+   * setting) answers false, and the dialog asks as before.
    */
   private rebaseEdit(held: HeldVersion, mark: HistoryMark | undefined): boolean {
     const history = getHistoryStore();
     const project = this.rootStore.projectStore.getProject(this.projectId);
     if (!mark || !history || !project || !isAlive(project)) return false;
-    // Exactly one new entry, on top (no redo tail): the person's edit, and nothing
-    // else. Compared by entry, not by count: a redo tail the edit dropped, or the
-    // oldest entry trimmed at the history's limit, changes the counts, not this.
+    // The person's steps since the mark, on top (no redo tail), and nothing else.
+    // Found by entry, not by count: a redo tail an edit dropped, or the oldest
+    // entry trimmed at the history's limit, changes the counts, not this.
     if (history.undoIdx !== history.history.length || history.undoIdx < 1) return false;
-    const below = history.history[history.undoIdx - 2]?.id;
-    if (below !== mark.topId) return false;
-    const entry = history.history[history.undoIdx - 1];
-    if (entry.id === mark.topId) return false;
-    if (entry.remote) return false;
-    // Recorded again under the entry's own action name, so the history names it as before.
-    const label = entry.actionName;
-    const edits = replayableEdits(this.rootStore.projectStore, entry.patches, entry.inversePatches, nodesOf(held.snapshot));
-    if (!edits) return false;
-    // A dry run on the agent's version: the values must apply, and no reusable component may outgrow its limit.
-    if (!replaysCleanly(held.snapshot, edits)) return false;
-    history.undo();
+    const from = mark.topId === undefined ? 0 : history.history.findIndex((e) => e.id === mark.topId) + 1;
+    if (mark.topId !== undefined && from === 0) return false;
+    const entries = history.history.slice(from, history.undoIdx);
+    if (entries.length === 0 || entries.length > LIVE_REPLAY_MAX_STEPS) return false;
+    if (entries.some((entry) => entry.remote)) return false;
+    const steps = replayableSteps(this.rootStore.projectStore, entries, nodesOf(held.snapshot));
+    if (!steps) return false;
+    // A dry run on the newer version: the values must apply, and no reusable component may outgrow its limit.
+    // Every history boundary is a state Undo can restore, so every prefix must fit the limit.
+    for (let i = 1; i <= steps.length; i++) {
+      if (!replaysCleanly(held.snapshot, steps.slice(0, i).flatMap((step) => step.edits))) return false;
+    }
+    for (let i = 0; i < entries.length; i++) history.undo();
+    const redoAll = () => {
+      for (let i = 0; i < entries.length; i++) history.redo();
+    };
     if (!isSaved(this.projectId, getSnapshot(project) as unknown as ProjectContent)) {
-      history.redo();
+      redoAll();
       return false;
     }
     if (!this.adopt(held.version, held.snapshot, held.label, undefined, false)) {
-      history.redo();
+      redoAll();
       return false;
     }
     const adopted = this.rootStore.projectStore.getProject(this.projectId);
     if (!adopted) {
-      this.editLost(new Error('the project left the store during the replay'));
+      this.editLost(new Error('the project left the store during the replay'), steps.length);
       return true;
     }
-    const targets = edits.map((edit) => ({ edit, node: findNode(adopted, edit.nodeId) }));
+    const targets = steps.map((step) => ({ label: step.label, edits: step.edits.map((edit) => ({ edit, node: findNode(adopted, edit.nodeId) })) }));
     const applied: Array<{ node: object; field: string; before: unknown }> = [];
-    let recorded = false;
+    let recorded = 0;
     const entriesBefore = history.history.length;
     try {
-      if (targets.some((t) => !t.node)) throw new Error('a node of the edit is not in the adopted copy');
-      // One undo step, under the edit's own name.
-      recorded = history.applyRemote(
-        label,
-        () =>
-          runInAction(() => {
-            for (const { edit, node } of targets) {
-              const before = (node as Record<string, unknown>)[edit.field];
-              replayApply(node!, edit.field, edit.value);
-              applied.push({ node: node!, field: edit.field, before });
-            }
-          }),
-        false,
-      );
+      if (targets.some((t) => t.edits.some((e) => !e.node))) throw new Error('a node of the edit is not in the adopted copy');
+      // One undo step per step of the person, under its own name.
+      for (const target of targets) {
+        const stepRecorded = history.applyRemote(
+          target.label,
+          () =>
+            runInAction(() => {
+              for (const { edit, node } of target.edits) {
+                const before = (node as Record<string, unknown>)[edit.field];
+                replayApply(node!, edit.field, edit.value);
+                applied.push({ node: node!, field: edit.field, before });
+              }
+            }),
+          false,
+        );
+        if (stepRecorded) recorded++;
+      }
     } catch (err) {
       // Half an edit is never left (nor saved, nor an undo step): back to the adopted copy as it came, and the person is told.
       history.runUntracked(() =>
@@ -524,23 +549,89 @@ export class LiveSync {
         }),
       );
       while (history.history.length > entriesBefore) history.forgetLastEntry();
-      this.editLost(err);
+      this.editLost(err, steps.length);
       return true;
     }
     // Until the merged copy is saved: an agent write meanwhile can be met by another replay (see take).
-    if (recorded) this.replayMark = { topId: history.history[history.undoIdx - 2]?.id };
+    if (recorded > 0) this.replayMark = { topId: history.history[history.undoIdx - 1 - recorded]?.id };
     void existingAutosave(this.projectId)?.saveNow();
     return true;
   }
 
+  /**
+   * Where the history stood at the last saved copy, when the person's steps since
+   * then can be undone to exactly that copy: every one of this tab, value
+   * replacements only, at most LIVE_REPLAY_MAX_STEPS, no redo tail. Worked out
+   * on a plain copy of the working copy (their inverse patches applied to it), so
+   * nothing in the editor changes. Undefined when the working copy is saved, or
+   * when no such run of steps leads back to the saved copy (a reload emptied the
+   * history, a structural edit, a page or site setting among them).
+   */
+  private unsavedStepsMark(): HistoryMark | undefined {
+    const history = getHistoryStore();
+    const store = this.rootStore.projectStore;
+    const project = store.getProject(this.projectId);
+    if (!history || !project || !isAlive(project)) return undefined;
+    if (history.undoIdx !== history.history.length || history.undoIdx < 1) return undefined;
+    const prefix = getRelativePath(store, project);
+    // Cheap first: the run of this tab's value replacements on top. Only within it can the saved copy be reached,
+    // so the costly part (a copy of the site and a comparison per step) is spent only there.
+    let run = 0;
+    while (run < LIVE_REPLAY_MAX_STEPS && run < history.undoIdx) {
+      const entry = history.history[history.undoIdx - 1 - run];
+      if (entry.remote || !entry.inversePatches.every((patch) => patch.op === 'replace' && patch.path.startsWith(`${prefix}/`))) break;
+      run++;
+    }
+    if (run === 0) return undefined;
+    if (isSaved(this.projectId, getSnapshot(project) as unknown as ProjectContent)) return undefined;
+    const draft = JSON.parse(JSON.stringify(getSnapshot(project))) as Record<string, unknown>;
+    for (let i = history.undoIdx - 1, n = 0; n < run; i--, n++) {
+      const entry = history.history[i];
+      if (entry.remote) return undefined;
+      for (const patch of entry.inversePatches.slice().reverse()) {
+        if (patch.op !== 'replace' || !patch.path.startsWith(`${prefix}/`)) return undefined;
+        if (!replaceAt(draft, patch.path.slice(prefix.length), patch.value)) return undefined;
+      }
+      if (isSaved(this.projectId, draft as unknown as ProjectContent)) return { topId: history.history[i - 1]?.id };
+    }
+    return undefined;
+  }
+
+  /**
+   * A save of this tab was refused (409), before its write counts as settled: a
+   * settled edit nothing marked (its save was out or waiting when the newer
+   * version was written) that the history can undo to the saved copy is replayed
+   * on the newer copy once it comes, so its dialog waits for that (take).
+   */
+  private noteRefusal() {
+    this.refusedSettledAt = undefined;
+    if (this.phaseValue === 'stopped' || this.phaseValue === 'signed-out' || this.phaseValue === 'gone') return;
+    // Mid-edit, and a replayed edit, have their own holds and their own replays; so
+    // has a marked edit whose copy is still being fetched. A mark whose copy already
+    // came (held while this save was out) holds nothing by itself: this does.
+    if (isEditing(this.rootStore) || this.replayMark) return;
+    if (this.editMark && this.wanted !== undefined) return;
+    const mark = this.unsavedStepsMark();
+    const history = getHistoryStore();
+    if (!mark || !history) return;
+    // Only steps a replay can carry at all (values of nodes): a page or site setting asks at once, as it always did.
+    const from = mark.topId === undefined ? 0 : history.history.findIndex((e) => e.id === mark.topId) + 1;
+    const entries = history.history.slice(from, history.undoIdx);
+    if (entries.length === 0 || !replayableSteps(this.rootStore.projectStore, entries, undefined)) return;
+    this.refusedSettledAt = Date.now();
+  }
+
   /** The person's edit could not be kept on top of the newer version: logged, and the person is told (a state preview ends so the notice can show). */
-  private editLost(err: unknown) {
+  private editLost(err: unknown, steps = 1) {
     console.error('[live] an edit could not be put on top of the newer version:', err);
     const ui = this.rootStore.editorUI;
     if (ui.editorNotice?.kind === 'previewState') ui.clearPreviewState();
     ui.setEditorNotice({
       kind: 'refused',
-      message: 'Your last edit could not be kept on top of the newer version of the site and was taken back. Please make it again.',
+      message:
+        steps > 1
+          ? `Your last ${steps} edits could not be kept on top of the newer version of the site and were taken back. Please make them again.`
+          : 'Your last edit could not be kept on top of the newer version of the site and was taken back. Please make it again.',
     });
   }
 
@@ -576,14 +667,28 @@ export class LiveSync {
     // A save refused while the person is mid-edit, or while a replay of the refused
     // edit is pending (a replayed edit's save, or an edit marked when a newer
     // version was announced whose copy is still being fetched), keeps its dialog for later.
-    this.disposeDialogHold = setConflictDialogHold(
-      this.projectId,
-      () =>
+    // A settled edit whose save was refused, with nothing marked (the save was out
+    // or waiting when the agent wrote), holds it too when the edit can be replayed.
+    this.disposeDialogHold = setConflictDialogHold(this.projectId, (refusal) => {
+      if (refusal?.currentVersion !== undefined) this.noteRefusal();
+      // A replayed edit holds the dialog only while it waits for something: its save
+      // is out, a copy is held for it, or the copy its refusal names is being fetched
+      // (as long as any held fetch). Never for a refused "Save mine over it": the
+      // person chose in the dialog.
+      const replayPending =
+        this.replayMark !== undefined &&
+        !refusal?.over &&
+        (hasWriteInFlight(this.projectId) ||
+          this.held?.afterReplay === true ||
+          (this.wanted !== undefined && Date.now() - this.wantedAt < LIVE_HELD_FETCH_MS));
+      return (
         isEditing(this.rootStore) ||
-        this.replayMark !== undefined ||
+        replayPending ||
         // A fetch that hangs or keeps failing does not hold the dialog for long.
-        (this.editMark !== undefined && this.wanted !== undefined && Date.now() - this.wantedAt < LIVE_HELD_FETCH_MS),
-    );
+        (this.editMark !== undefined && this.wanted !== undefined && Date.now() - this.wantedAt < LIVE_HELD_FETCH_MS) ||
+        (this.refusedSettledAt !== undefined && Date.now() - this.refusedSettledAt < LIVE_HELD_FETCH_MS)
+      );
+    });
     // A copy held while this tab's write was out: that write may have succeeded
     // (no 409 will come), so the held copy is looked at again once it settled.
     this.disposeSettled = onWritesSettled((projectId) => {
@@ -624,6 +729,7 @@ export class LiveSync {
     this.stopWaitingForEditing();
     this.editMark = undefined;
     this.replayMark = undefined;
+    this.refusedSettledAt = undefined;
     this.disposeVisibility?.();
     this.disposeVisibility = undefined;
     this.disposeSettled?.();
@@ -1121,10 +1227,14 @@ export class LiveSync {
     const project = this.rootStore.projectStore.getProject(this.projectId);
     if (!project || !isAlive(project)) return;
     const autosave = existingAutosave(this.projectId);
-    const autosavePhase = autosave?.getState().phase;
+    const autosaveState = autosave?.getState();
+    const autosavePhase = autosaveState?.phase;
+    // A refusal whose dialog is still held (the person has not been asked yet).
+    const heldRefusal = autosaveState?.phase === 'conflict' && autosaveState.held === true && !autosaveState.dialogOpen;
     const clean =
       !hasWriteInFlight(this.projectId) &&
-      autosavePhase !== 'conflict' &&
+      // A held refusal whose work was undone back to the saved copy (an undo while it waited) is about nothing: adopted as any clean copy.
+      (autosavePhase !== 'conflict' || heldRefusal) &&
       autosavePhase !== 'publishing' &&
       isSaved(this.projectId, getSnapshot(project) as unknown as ProjectContent);
     const keep = { version: body.version, snapshot: body.snapshot, label, ...(event && live ? { event } : {}) };
@@ -1157,6 +1267,15 @@ export class LiveSync {
       const mark = this.editMark;
       this.editMark = undefined;
       if (this.rebaseEdit(keep, mark)) return;
+    }
+    // A settled edit nothing marked: its save still waiting when this copy came
+    // (the 1.5 s debounce, so no refusal yet), or refused while it was out, its
+    // dialog still held (never once the dialog stands open: the person decides
+    // then). Its steps since the last saved copy go on top, when the history can
+    // undo them to exactly that copy. The try spends the refusal's hold.
+    this.refusedSettledAt = undefined;
+    if (!clean && !hasWriteInFlight(this.projectId) && (autosavePhase === 'unsaved' || heldRefusal)) {
+      if (this.rebaseEdit(keep, this.unsavedStepsMark())) return;
     }
     if (!clean) {
       if (this.replayMark && hasWriteInFlight(this.projectId)) {
@@ -1223,6 +1342,7 @@ export class LiveSync {
     this.editMark = undefined;
     // So is a replay's: the adopted copy is the newest write, and no replayed save is pending for it.
     this.replayMark = undefined;
+    this.refusedSettledAt = undefined;
     existingAutosave(this.projectId)?.noteServerCopyAdopted();
     this.onAdopted?.(adopted, event);
     return true;
@@ -1324,17 +1444,49 @@ export function setReplayApplyForTests(apply: ((node: object, field: string, val
 }
 
 /**
- * The person's history entry as values of nodes to set again, by node id and
- * field: the first old value (compared with the agent's copy) and the last new
- * one (what the edit left). Null when anything in it is not such a value, or a
- * node is not in the agent's copy, or the agent changed the same value.
+ * The person's history entries as values of nodes to set again, per entry (its
+ * own name and its edits by node id and field, the last new value of each). Null
+ * when anything in one is not such a value, or a node is not in the agent's copy,
+ * or the agent changed the same value: for a value several entries edit, the one
+ * compared is the first old value, from the oldest of them.
  */
-function replayableEdits(
+function replayableSteps(
+  root: object,
+  entries: ReadonlyArray<{ actionName: string; patches: readonly IJsonPatch[]; inversePatches: readonly IJsonPatch[] }>,
+  /** The agent's copy's nodes; undefined checks only that every step is such values (no agent's copy yet). */
+  agentNodes: Map<string, Record<string, unknown>> | undefined,
+): Array<{ label: string; edits: Array<{ nodeId: string; field: string; value: unknown }> }> | null {
+  const firstBefore = new Map<string, { nodeId: string; field: string; before: unknown }>();
+  const steps: Array<{ label: string; edits: Array<{ nodeId: string; field: string; value: unknown }> }> = [];
+  for (const entry of entries) {
+    const edits = entryEdits(root, entry.patches, entry.inversePatches);
+    if (!edits) return null;
+    // Several steps are resolved on today's tree: a step that replaces a node's children could move the nodes an earlier one meant.
+    if (entries.length > 1 && edits.some((edit) => edit.field === 'children')) return null;
+    for (const edit of edits) {
+      const key = `${edit.nodeId}\u0000${edit.field}`;
+      if (!firstBefore.has(key)) firstBefore.set(key, edit);
+    }
+    steps.push({ label: entry.actionName, edits: edits.map(({ nodeId, field, value }) => ({ nodeId, field, value })) });
+  }
+  if (!agentNodes) return steps;
+  for (const edit of firstBefore.values()) {
+    const agentNode = agentNodes.get(edit.nodeId);
+    if (!agentNode) return null;
+    const agentValue = agentNode[edit.field];
+    // The agent changed the same value: a real conflict, the person decides.
+    const same = edit.before === undefined ? agentValue === undefined : shareUnchanged(edit.before, agentValue) === edit.before;
+    if (!same) return null;
+  }
+  return steps;
+}
+
+/** One history entry's values of nodes: the first old value and the last new one per node and field; null when it is anything else. */
+function entryEdits(
   root: object,
   patches: readonly IJsonPatch[],
   inversePatches: readonly IJsonPatch[],
-  agentNodes: Map<string, Record<string, unknown>>,
-): Array<{ nodeId: string; field: string; value: unknown }> | null {
+): Array<{ nodeId: string; field: string; before: unknown; value: unknown }> | null {
   const byKey = new Map<string, { nodeId: string; field: string; before: unknown; value: unknown }>();
   for (let i = 0; i < patches.length; i++) {
     const patch = patches[i];
@@ -1357,16 +1509,23 @@ function replayableEdits(
     else byKey.set(key, { nodeId, field, before: inversePatches[i]?.value, value: patch.value });
   }
   const edits = [...byKey.values()];
-  if (edits.length === 0) return null;
-  for (const edit of edits) {
-    const agentNode = agentNodes.get(edit.nodeId);
-    if (!agentNode) return null;
-    const agentValue = agentNode[edit.field];
-    // The agent changed the same value: a real conflict, the person decides.
-    const same = edit.before === undefined ? agentValue === undefined : shareUnchanged(edit.before, agentValue) === edit.before;
-    if (!same) return null;
+  return edits.length === 0 ? null : edits;
+}
+
+/** Replace the value at a JavaScript Object Notation (JSON) pointer inside a plain copy (an absent value as removing it); false when the path does not lead into the copy. */
+function replaceAt(target: Record<string, unknown>, pointer: string, value: unknown): boolean {
+  const parts = pointer.split('/').slice(1).map((part) => part.replace(/~1/g, '/').replace(/~0/g, '~'));
+  const last = parts.pop();
+  if (last === undefined) return false;
+  let at: unknown = target;
+  for (const part of parts) {
+    if (!at || typeof at !== 'object' || !(part in at)) return false;
+    at = (at as Record<string, unknown>)[part];
   }
-  return edits.map(({ nodeId, field, value }) => ({ nodeId, field, value }));
+  if (!at || typeof at !== 'object') return false;
+  if (value === undefined) delete (at as Record<string, unknown>)[last];
+  else (at as Record<string, unknown>)[last] = JSON.parse(JSON.stringify(value));
+  return true;
 }
 
 /** Where the undo history stands: the id of its top entry (undefined when empty). */

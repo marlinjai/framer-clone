@@ -14,7 +14,7 @@ import { getSnapshot } from 'mobx-state-tree';
 import { createRootStore, type RootStoreType } from '@/stores/RootStore';
 import { knownServerVersion, openProject } from '@/stores/openProject';
 import ProjectModel, { type ProjectModelType, type ProjectSnapshotOut } from '@/models/ProjectModel';
-import { AUTOSAVE_DEBOUNCE_MS, existingAutosave, resetAutosaveForTests } from '@/lib/projects/autosave';
+import { AUTOSAVE_DEBOUNCE_MS, HELD_DIALOG_CHECK_MS, existingAutosave, resetAutosaveForTests, setConflictDialogHold } from '@/lib/projects/autosave';
 import { handleSaveShortcut } from '@/lib/projects/saveShortcut';
 import type { PageGenHandlers, PageGenTransport } from '@/lib/ai/pageGen/client';
 import type { PageGenRequest, PageGenResultPayload } from '@/lib/ai/pageGen/protocol';
@@ -379,6 +379,43 @@ describe('what a screen reader hears', () => {
     await advance(0);
     expect(label()).toBe('Saved');
     expect(announced()).toBe('Saved.');
+  });
+
+  it('a refusal held for a replay about to resolve it: the status says Unsaved changes, nothing is announced; once the hold ends, the conflict is', async () => {
+    const project = openServerProject(3);
+    let holding = true;
+    const refusals: Array<number | undefined> = [];
+    const dispose = setConflictDialogHold(project.id, (refusal) => {
+      if (refusal) refusals.push(refusal.currentVersion);
+      return holding;
+    });
+    try {
+      fetchMock.mockResolvedValueOnce(conflict(9));
+      render(<Editor />);
+      edit(project, 'mine');
+      await advance(AUTOSAVE_DEBOUNCE_MS);
+      await advance(0);
+      // The hold was told of the refusal (the live sync tries its replay then).
+      expect(refusals).toEqual([9]);
+      expect(existingAutosave(project.id)?.getState()).toMatchObject({ phase: 'conflict', dialogOpen: false, held: true });
+      expect(label()).toBe('Unsaved changes');
+      expect(within(status()).queryByRole('button', { name: 'Changed elsewhere' })).toBeNull();
+      expect(status().getAttribute('title')).not.toContain('Choose what to keep');
+      expect(announced()).not.toContain('changed somewhere else');
+      expect(screen.queryByRole('dialog')).toBeNull();
+      // The replay could not resolve it: the dialog opens, and now the status and the announcement say so.
+      holding = false;
+      await advance(HELD_DIALOG_CHECK_MS);
+      await advance(0);
+      expect(existingAutosave(project.id)?.getState()).toMatchObject({ phase: 'conflict', dialogOpen: true });
+      expect(existingAutosave(project.id)?.getState()).not.toHaveProperty('held');
+      expect(await screen.findByRole('dialog', { name: 'This project was changed somewhere else' })).toBeTruthy();
+      // The open dialog hides the rest of the page from the accessibility tree.
+      expect(within(status()).getByRole('button', { name: 'Changed elsewhere', hidden: true })).toBeTruthy();
+      expect(announced()).toContain('changed somewhere else');
+    } finally {
+      dispose();
+    }
   });
 
   it('the conflict is announced', async () => {
