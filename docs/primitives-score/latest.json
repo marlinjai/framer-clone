@@ -1,11 +1,11 @@
 {
-  "generatedAt": "2026-11-12T12:44:42.207Z",
+  "generatedAt": "2026-11-12T13:12:11.800Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 525,
+  "durationSeconds": 509,
   "matrix": {
     "surfaces": {
       "format": {
