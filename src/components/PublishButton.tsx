@@ -97,6 +97,7 @@ const PublishButton = observer(() => {
         })),
         { definitions: project.definitions, refused: project.refusedComponents },
         project.site.theme,
+        project.site.head,
       );
     if (!skipChecks) {
       const check = runCheck();
@@ -324,7 +325,7 @@ function PublishLegalNotice({ check, language, onCreateLegal, onOpenPage, onPubl
   React.useEffect(() => {
     ref.current?.focus();
   }, []);
-  const first = check.placeholders[0] ?? check.components.find((issue) => issue.pageId !== undefined) ?? check.tokens?.find((issue) => issue.pageId !== undefined) ?? check.fxText?.find((issue) => issue.pageId !== undefined);
+  const first = check.placeholders[0] ?? check.components.find((issue) => issue.pageId !== undefined) ?? check.tokens?.find((issue) => issue.pageId !== undefined) ?? check.fxText?.find((issue) => issue.pageId !== undefined) ?? check.head?.find((issue) => issue.pageId !== undefined);
   const maps = check.maps && check.maps.status !== 'named' ? check.maps : null;
   return (
     <div
@@ -355,7 +356,9 @@ function PublishLegalNotice({ check, language, onCreateLegal, onOpenPage, onPubl
               ? 'Some components will not show'
               : (check.tokens?.length ?? 0) > 0
                 ? 'Some site colours or fonts will not show'
-                : 'Some FX scene text is missing for search engines and screen readers'}
+                : (check.head?.length ?? 0) > 0
+                  ? 'Some head items will not be used'
+                  : 'Some FX scene text is missing for search engines and screen readers'}
       </p>
       <div id="publish-legal-text" className="flex flex-col gap-1.5">
         {check.missingImpressum && (
@@ -395,6 +398,15 @@ function PublishLegalNotice({ check, language, onCreateLegal, onOpenPage, onPubl
             {check.fxText!.map((issue) => (
               <li key={`${issue.pageId ?? issue.title}:${issue.message}`}>
                 {issue.title}: {issue.message}
+              </li>
+            ))}
+          </ul>
+        )}
+        {(check.head?.length ?? 0) > 0 && (
+          <ul className="list-disc pl-4" data-testid="publish-head-issues">
+            {check.head!.map((issue) => (
+              <li key={`${issue.pageId ?? issue.title}:${issue.message}`}>
+                {issue.title}: {issue.message}. Open Head to fix it.
               </li>
             ))}
           </ul>
