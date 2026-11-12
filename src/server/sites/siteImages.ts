@@ -27,6 +27,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { PrismaClient } from '@prisma/client';
 import { Prisma } from '@prisma/client';
 import { getPrismaClient } from '@/server/db';
+import { isDatabaseConflict } from './dbConflict';
 import {
   MAX_SITE_IMAGES,
   MAX_SITE_IMAGE_TOTAL_BYTES,
@@ -230,11 +231,14 @@ export async function listSiteImages(
 
 /**
  * Delete an uploaded image nothing names any more (no setting, no page, no
- * kept revision). Takes the site row first, as publish does, and runs
- * serializable like save, so neither can start naming the image while it goes:
- * the save then finds it missing and refuses (SiteImageMissingError).
+ * kept revision). Takes the site row first, as publish and save do (a branch
+ * save naming an image holds main's row shared, see SiteRepository.lockSiteForSave),
+ * and reads everything after that lock at read committed, so each statement sees
+ * what the writers it waited for committed: no save can start naming the image
+ * while it goes, and the save then finds it missing and refuses
+ * (SiteImageMissingError).
  * Throws SiteImageError: 404 `image_not_found`, 409 `image_in_use`, 409
- * `image_busy` when a concurrent save or publish won (try again).
+ * `image_busy` when the database aborted the transaction against another writer (a deadlock; try again).
  */
 export async function deleteSiteImage(siteId: string, sha256: string, prisma: PrismaClient = getPrismaClient()): Promise<void> {
   if (!SHA256.test(sha256)) throw new SiteImageError('image_not_found', 404, 'This image does not exist on this site.');
@@ -254,9 +258,9 @@ export async function deleteSiteImage(siteId: string, sha256: string, prisma: Pr
         );
       }
       await tx.siteImage.delete({ where: { id: row.id } });
-    }, { ...PROJECT_IMAGE_TRANSACTION, isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    }, PROJECT_IMAGE_TRANSACTION);
   } catch (err) {
-    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2034') {
+    if (isDatabaseConflict(err)) {
       throw new SiteImageError('image_busy', 409, 'The site changed while the image was being deleted. Nothing was deleted; try again.');
     }
     throw err;

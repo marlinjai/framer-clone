@@ -248,9 +248,9 @@ lumitra-web serves ten pages today (checked 2026-11-08): the English hub `/`, `/
 | # | Step | What it does | Depends on | Acceptance | Gate |
 |---|---|---|---|---|---|
 | R1 | `hub-in-sites` | The new lumitra.co site in Sites (the agent plugin plan's step 6) carries every hub page: `/`, `/terms`, `/de`, `/impressum`, `/datenschutz`, with the FX hero from F8, the same titles, descriptions, `lang` per page and the same addresses. `/fx` and `/fx/gallery` are dropped: the presets live in the Sites palette now | F8 | A page-by-page check of title, description, canonical address and visible text against the live lumitra.co, recorded in the build log | none |
-| R2 | `services-in-sites` | A second Sites site for services.lumitra.co with `/`, `/angebot`, `/angebot/arbosano`, rebuilt from the current pages and `src/lib/offers.ts`, German, indexed, on a sites.lumitra.co address first. The open copy and booking items carried over from lumitra-web's roadmap (below) are done here, not in lumitra-web | Sites custom domains (live) | Same page-by-page check against live services.lumitra.co | Marlin's plain-German copy decisions, already his on lumitra-web's roadmap |
+| R2 | `services-in-sites` | **Changed by Marlin on 2026-11-12:** services becomes a `/services` area of the one Lumitra site, not a second Sites site. The pages `/services` and `/services/angebot` carry the live copy of services.lumitra.co word for word (they exist on the branch "Test new design" of the new lumitra.co site); `/angebot/arbosano` is not carried over (an expired client offer, noindex). The open copy and booking items carried over from lumitra-web's roadmap (below) are done here, not in lumitra-web | The new lumitra.co site (R1) | Page-by-page check of `/services` and `/services/angebot` against live services.lumitra.co | Marlin's plain-German copy decisions, already his on lumitra-web's roadmap |
 | R3 | `apex-cutover` | lumitra.co and www.lumitra.co move from the Coolify app `lumitra-web` to `framer-clone` as custom domains; `www` keeps its 301 to the apex | R1 | Browser proof on both hosts; search console sees no new 404s for a week | Marlin's yes (agent plugin plan) |
-| R4 | `services-cutover` | services.lumitra.co moves the same way | R2 | Browser proof; no new 404s for a week | Marlin's yes, one line with rollback |
+| R4 | `services-cutover` | services.lumitra.co becomes a redirect to `/services` on lumitra.co (changed with R2 on 2026-11-12; before, the host itself was to move to a second site) | R2 and R3 | Browser proof; no new 404s for a week | Marlin's yes, one line with rollback |
 | R5 | `lumitra-web-off` | Stop the Coolify app `lumitra-web` (kept, not deleted), remove the `lumitra-web` health monitor, and archive the GitHub repo (read-only, restorable) | R3 and R4 held for 14 days | Both hosts still answer from framer-clone; the stopped app can be started again | One line with rollback, as a production change |
 | R6 | `lumitra-web-removed` | Delete the stopped Coolify app and its images, remove `infra/deployments/lumitra-web` from Terraform, update the knowledge-base package naming row and the agent fleet's project list | R5 held for 30 days | `terraform plan` shows only the removal; nothing references lumitra-web | One line with rollback (the archived repo rebuilds the image) |
 
@@ -276,8 +276,8 @@ page's log-retention number (decided 2026-11-08, being worked by another session
 | F3 onward on published sites | The island misbehaves on a customer page | The box's CSS background and children are what the server sends, so removing `FxIsland` from `renderPublishedPage` (one line, a revert) returns every FX page to its static state without touching stored data |
 | F8 | The Sites hero does not match | Nothing to roll back: the comparison runs on a sites.lumitra.co address while lumitra.co stays on lumitra-web |
 | Apex cutover | lumitra.co misbehaves on Sites | Put `https://lumitra.co,https://www.lumitra.co` back on the `lumitra-web` Coolify app's domain list; that app stays deployed and healthy, with its frozen FX, until the cleanup step. DNS needs no change when both apps run on the same server; if a record does change, the previous one is noted in the cutover step |
-| R2 | The services rebuild does not match | Nothing to roll back: it runs on a sites.lumitra.co address while services.lumitra.co stays on lumitra-web |
-| R4 services cutover | services.lumitra.co misbehaves on Sites | Put `https://services.lumitra.co` back on the `lumitra-web` app's domain list; the app is still running |
+| R2 | The services pages do not match | Nothing to roll back: they are pages of the new lumitra.co site, which runs on a sites.lumitra.co address while services.lumitra.co stays on lumitra-web |
+| R4 services cutover | The redirect from services.lumitra.co misbehaves | Take the redirect away and put `https://services.lumitra.co` back on the `lumitra-web` app's domain list; the app is still running |
 | R5 app stopped | Something still needed lumitra-web | Start the stopped Coolify app and move the domain back; unarchive the repo |
 | R6 removed | Needed after removal | Unarchive the repo, re-apply its Terraform, redeploy the image from the repo's last commit |
 
@@ -943,4 +943,14 @@ What stays unknown until then, and cannot be learned offline:
   the evidence.
 - **The production Content Security Policy** (report-only today) and the sizes as the production server compresses
   them. The rehearsal ran on a local production build.
+
+### Plan change: services as an area of the one site (2026-11-12)
+
+Marlin decided on 2026-11-12 that services.lumitra.co becomes a `/services` area of the one Lumitra site instead of a
+second Sites site. Reported to this plan's worker by the landing page work, which built `/services` and
+`/services/angebot` on the branch "Test new design" of the new lumitra.co site with the live copy word for word, and
+recorded in the agent plugin plan by pull request #412. Rows R2 and R4 and their rollback lines above are changed to
+match: one site to rebuild instead of two, `/angebot/arbosano` dropped (an expired client offer that was never
+indexed), and R4 is a redirect from services.lumitra.co to `/services`, which stays Marlin's yes like every domain
+step. Nothing of R1 to R6 is started by this plan's worker.
 

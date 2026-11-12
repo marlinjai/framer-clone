@@ -193,6 +193,58 @@ describe('the branch tools against a real database', () => {
     expect(await instructions(KEY_B)).not.toContain('create_branch');
   });
 
+  it('with the switch off a branch is hidden from every tool: its id reads as a missing site, and comes back with the switch', async () => {
+    vi.stubEnv('SITE_BRANCHES_COMPANIES', COMPANY_A);
+    const site = await ok(KEY_A, 'create_site', { name: 'Hidden when off' });
+    const siteId = site.siteId as string;
+    const made = await ok(KEY_A, 'create_branch', { siteId, name: 'Kept' });
+    const branchId = ((made.branch ?? made) as { branchId: string }).branchId;
+    const open = await ok(KEY_A, 'get_site', { siteId: branchId });
+    const pageId = (open.pages as Array<{ id: string }>)[0].id;
+    const closedMade = await ok(KEY_A, 'create_branch', { siteId, name: 'Closed' });
+    const closedId = ((closedMade.branch ?? closedMade) as { branchId: string }).branchId;
+    await ok(KEY_A, 'discard_branch', { branchId: closedId });
+    const missing = await refusal(KEY_A, 'get_site', { siteId: '00000000-0000-4000-8000-000000000000' });
+
+    // Off for this company. Every tool that takes a site id answers the branch exactly as it answers no site.
+    vi.stubEnv('SITE_BRANCHES_COMPANIES', COMPANY_B);
+    const versionBefore = (await prisma.site.findUniqueOrThrow({ where: { id: branchId } })).version;
+    for (const id of [branchId, closedId]) {
+      for (const [name, args] of [
+        ['get_site', { siteId: id }],
+        ['get_page', { siteId: id, pageId }],
+        ['apply_batch', { siteId: id, expectedVersion: versionBefore, ops: [{ op: 'setPageTitle', pageId, title: 'Written while hidden' }] }],
+        ['preview_url', { siteId: id }],
+      ] as const) {
+        const answer = await refusal(KEY_A, name, args);
+        expect(answer.code, `${name} on ${id === branchId ? 'the open' : 'the closed'} branch`).toBe(missing.code);
+        expect(JSON.stringify(answer), name).not.toMatch(/branch/i);
+      }
+    }
+    // Nothing was written, and the site itself reads and lists as ever, without its branch.
+    expect((await prisma.site.findUniqueOrThrow({ where: { id: branchId } })).version).toBe(versionBefore);
+    expect((await ok(KEY_A, 'get_site', { siteId })).siteId).toBe(siteId);
+    const listed = (await ok(KEY_A, 'list_sites', {})) as { sites?: Array<{ siteId: string }> };
+    expect(JSON.stringify(listed)).not.toContain(branchId);
+    // Publishing and rolling back a hidden branch are refused as for a missing site too (decision 99): saying
+    // "this is a branch" would tell what the switch hides. The database still refuses a published branch.
+    for (const [name, args] of [
+      ['publish', { siteId: branchId, expectedVersion: versionBefore }],
+      ['rollback', { siteId: branchId, revision: 1 }],
+    ] as const) {
+      const answer = await refusal(KEY_A, name, args);
+      expect(answer.code, name).toBe(missing.code);
+      expect(JSON.stringify(answer), name).not.toMatch(/branch/i);
+    }
+    expect((await prisma.site.findUniqueOrThrow({ where: { id: branchId } })).status).toBe('draft');
+
+    // On again: the branch is where it was.
+    vi.stubEnv('SITE_BRANCHES_COMPANIES', COMPANY_A);
+    expect((await ok(KEY_A, 'get_site', { siteId: branchId })).version).toBe(versionBefore);
+    // And a closed branch says again what happened to it (it never did while hidden).
+    expect(String((await refusal(KEY_A, 'get_site', { siteId: closedId })).message)).toMatch(/site branch that was discarded/);
+  });
+
   it('runs the chain: branch, write, status, update from main with a conflict answered, review, merge with the person', async () => {
     const site = await builtSite('Branch chain');
     const { siteId, homePageId, headline, intro } = site;

@@ -80,6 +80,8 @@ function makeFakePrisma() {
     sitePage,
     siteDomain,
     siteRevision,
+    // The images a save names must be stored (empty unless a test names one).
+    siteImage: { findMany: vi.fn(async () => [] as Array<{ sha256: string }>) },
     // No closed site branch records (src/server/sites/branches/closed.ts): a missing site reads as missing.
     siteBranch: { findFirst: vi.fn(async () => null as unknown), updateMany: vi.fn(async () => ({ count: 0 })) },
     // Typed with the options argument (tests read it from the calls); the fake only runs the callback.
@@ -450,14 +452,52 @@ describe('SiteRepository.saveProject concurrency', () => {
       pages: { home: { id: 'home', slug: '', metadata: { title: 'Home' } } },
     }) as never;
 
-  it('runs the save SERIALIZABLE, so overlapping saves cannot lose a redirect', async () => {
+  it('locks the site, and runs the save at read committed behind that lock, so saves of other sites never conflict with it', async () => {
     await repo.saveProject(SCOPE, project(), { expectedVersion: 1 });
+    // No isolation level: serializable made saves of DIFFERENT sites abort one another (predicate locks).
     expect(prisma.$transaction.mock.calls[0][1]).toEqual({
-      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
       // Room for a body at the 10 MB limit; Prisma's default is 5 seconds.
       maxWait: 5_000,
       timeout: 30_000,
     });
+    const text = prisma.$queryRaw.mock.calls.map((call: unknown[]) => (call[0] as string[]).join('?'));
+    expect(text[0]).toMatch(/pg_advisory_xact_lock/);
+    expect(text[text.length - 1]).toMatch(/FOR UPDATE/);
+    // The locks come before the first read of the site, or the version lock would read a stale row.
+    expect(prisma.$queryRaw.mock.invocationCallOrder[text.length - 1]).toBeLessThan(prisma.site.findUnique.mock.invocationCallOrder[0]);
+  });
+
+  it('a branch save that names an image locks main shared first, then its own row, and main is never locked for a save that names none', async () => {
+    const sha = 'a'.repeat(64);
+    const seen: string[] = [];
+    prisma.$queryRaw.mockImplementation(async (...args: unknown[]) => {
+      const text = (args[0] as string[]).join('?');
+      seen.push(text.replace(/\s+/g, ' ').trim());
+      return /SELECT branch_of_site_id/.test(text) ? [{ branch_of_site_id: 'main_1' }] : [];
+    });
+    prisma.siteImage.findMany.mockResolvedValue([{ sha256: sha }]);
+    const named = { ...(project() as object), siteSettings: { faviconUrl: `/site-images/${sha}.png` } } as never;
+    await repo.saveProject(SCOPE, named, { expectedVersion: 1 });
+    expect(seen).toHaveLength(4);
+    expect(seen[1]).toMatch(/SELECT branch_of_site_id/);
+    expect(seen[2]).toMatch(/FOR SHARE$/);
+    expect(prisma.$queryRaw.mock.calls[2].slice(1)).toEqual(['main_1', SCOPE.workspaceId]);
+    expect(seen[3]).toMatch(/FOR UPDATE$/);
+    expect(prisma.$queryRaw.mock.calls[3].slice(1)).toEqual(['site_1', SCOPE.workspaceId]);
+
+    // The path anywhere in the document, a node's own `src` as well: the delete searches all of it.
+    seen.length = 0;
+    prisma.$queryRaw.mockClear();
+    const inNode = { id: 'site_1', metadata: { title: 'S', description: '', createdAt: 1, updatedAt: 2 }, pages: { home: { id: 'home', slug: '', metadata: { title: 'Home' }, appComponentTree: { id: 'r', type: 'img', props: { src: `/site-images/${sha}.png` } } } } } as never;
+    await repo.saveProject(SCOPE, inNode, { expectedVersion: 1 });
+    expect(seen).toHaveLength(4);
+    expect(seen[2]).toMatch(/FOR SHARE$/);
+
+    seen.length = 0;
+    prisma.$queryRaw.mockClear();
+    await repo.saveProject(SCOPE, project(), { expectedVersion: 1 });
+    expect(seen).toHaveLength(2);
+    expect(seen.some((q) => /FOR SHARE/.test(q))).toBe(false);
   });
 
   it('retries a save that lost a serialization conflict', async () => {
@@ -469,6 +509,19 @@ describe('SiteRepository.saveProject concurrency', () => {
     await repo.saveProject(SCOPE, project(), { expectedVersion: 1 });
     expect(prisma.$transaction).toHaveBeenCalledTimes(2);
     expect(prisma.site.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a save whose row lock (a raw query) lost a deadlock or a serialization failure', async () => {
+    for (const code of ['40P01', '40001']) {
+      prisma.$transaction.mockClear();
+      const real = prisma.$transaction.getMockImplementation()!;
+      prisma.$transaction.mockImplementationOnce(async () => {
+        throw new Prisma.PrismaClientKnownRequestError('lock', { code: 'P2010', clientVersion: 'test', meta: { code } });
+      });
+      prisma.$transaction.mockImplementation(real);
+      await repo.saveProject(SCOPE, project(), { expectedVersion: 1 });
+      expect(prisma.$transaction, code).toHaveBeenCalledTimes(2);
+    }
   });
 
   it('gives up loudly after repeated conflicts, and never retries other errors', async () => {
