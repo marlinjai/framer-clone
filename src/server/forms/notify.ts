@@ -19,7 +19,7 @@ import 'server-only';
 // its own. The visitor's words travel only inside the frozen `letter`, which is emptied as soon as the letter is
 // settled, and the job payload carries the submission id and nothing else.
 
-import type { Kysely, Transaction } from 'kysely';
+import { sql, type Kysely, type Transaction } from 'kysely';
 
 import { toJsonb } from '@/server/books/snapshots';
 import { scheduleJob } from '@/server/commerce/jobs/schedule';
@@ -145,15 +145,54 @@ function parseFields(raw: unknown): StoredField[] {
  * One attempt at one notification, for the `form_mail` job. Answers `sent`, `blocked`, or `none` (no row, a deleted
  * submission, or one already settled as failed or skipped). A refusal is written `failed` on the row and throws
  * `JobRefused`; what may heal throws `JobRetryLater` with the row still `pending`, until three days have passed.
+ *
+ * The whole attempt, the call to Lumitra Mail included, runs in ONE transaction that holds the notification row's lock
+ * (`FOR UPDATE`). That is the fence between an attempt and everything else that writes the row:
+ *   - the owner's "send again" (`resendFormNotification`) waits for an in-flight send, then sees `sent` and refuses, or
+ *     sees `failed` (this very attempt gave up) and starts the next round only after nothing can still land a letter of
+ *     the old one: a late success of round 1 beside a round 2 cannot happen;
+ *   - a second attempt at the same letter (a job reclaimed after its lease, two workers) waits and then finds it settled;
+ *   - a worker that dies mid-send drops its connection, the lock goes with it, and the next attempt sends the SAME frozen
+ *     letter under the SAME idempotency key, which Lumitra Mail replays instead of sending twice.
+ * The failure outcomes are returned out of the transaction and thrown after it commits, so what the attempt wrote
+ * (`failed`, `pending` with its error) is kept.
  */
 export async function deliverFormNotification(
   deps: OutboxDeps,
   companyId: string,
   submissionId: string,
 ): Promise<'sent' | 'blocked' | 'none'> {
+  const outcome = await deps.db.transaction().execute(async (trx): Promise<AttemptOutcome> => {
+    try {
+      // A lock another attempt holds for a send in flight is waited for, but not forever (the job's own deadline is 90 s).
+      await sql`SET LOCAL lock_timeout = '60s'`.execute(trx);
+      return await attemptUnderLock(deps, trx, companyId, submissionId);
+    } catch (err) {
+      if (isLockTimeout(err)) return { type: 'throw', error: new JobRetryLater('another attempt holds this notification') };
+      throw err;
+    }
+  });
+  if (outcome.type === 'throw') throw outcome.error;
+  return outcome.result;
+}
+
+type AttemptOutcome = { type: 'done'; result: 'sent' | 'blocked' | 'none' } | { type: 'throw'; error: Error };
+
+/** Postgres `lock_not_available` (55P03): `lock_timeout` ran out. */
+export function isLockTimeout(err: unknown): boolean {
+  const code = (err as { code?: unknown; cause?: { code?: unknown } } | null);
+  return code?.code === '55P03' || code?.cause?.code === '55P03';
+}
+
+async function attemptUnderLock(
+  deps: OutboxDeps,
+  trx: Transaction<CommerceDB>,
+  companyId: string,
+  submissionId: string,
+): Promise<AttemptOutcome> {
   const now = (deps.now ?? (() => new Date()))();
   // The company comes from the job and is part of the key: a payload cannot reach another company's notification.
-  const row = await deps.db
+  const row = await trx
     .selectFrom('form_notification')
     .innerJoin('form_submission', 'form_submission.id', 'form_notification.submission_id')
     .select([
@@ -171,21 +210,19 @@ export async function deliverFormNotification(
     .where('form_notification.submission_id', '=', submissionId)
     .where('form_notification.tenant_id', '=', deps.tenantGroupId)
     .where('form_notification.company_id', '=', companyId)
+    .forUpdate('form_notification')
     .executeTakeFirst();
-  if (!row) return 'none';
-  if (row.status === 'sent' || row.status === 'blocked') return row.status;
-  if (row.status !== 'pending') return 'none';
+  if (!row) return { type: 'done', result: 'none' };
+  if (row.status === 'sent' || row.status === 'blocked') return { type: 'done', result: row.status };
+  if (row.status !== 'pending') return { type: 'done', result: 'none' };
 
-  // Known and accepted edge: a round-1 attempt still in flight when its three days ran out and the owner sent again may
-  // still land its letter (round 1's key), so the owner can get a second one. It needs a send that outlives three days.
-  //
   // Never writes over a settled row or a newer round: a job reclaimed after its lease, or an attempt of a round the owner
   // replaced by "send again", ends with whatever is already written.
   const record = async (
     status: 'sent' | 'blocked' | 'failed' | 'pending',
     fields: { last_error?: string | null; mailing_id?: string | null },
   ) => {
-    await deps.db
+    await trx
       .updateTable('form_notification')
       .set({
         status,
@@ -198,16 +235,14 @@ export async function deliverFormNotification(
       .where('tenant_id', '=', deps.tenantGroupId)
       .where('company_id', '=', companyId)
       .where('round', '=', row.round)
-      // A letter Lumitra Mail took is true whatever a slower attempt of the same round wrote meanwhile (the three
-      // days ran out while this send was in flight): sent and blocked also settle a row that was just written failed.
-      .where('status', 'in', status === 'sent' || status === 'blocked' ? ['pending', 'failed'] : ['pending'])
+      .where('status', '=', 'pending')
       .execute();
   };
 
   try {
     if (!deps.mail || !deps.sealKey) throw new MailRetryLater('Lumitra Mail is not configured on this platform');
     if (!row.recipient) throw new MailRefused('recipient_refused', 'the notification has no recipient');
-    const connection = await deps.db.selectFrom('shop_mail_connection').selectAll().where('tenant_id', '=', companyId).executeTakeFirst();
+    const connection = await trx.selectFrom('shop_mail_connection').selectAll().where('tenant_id', '=', companyId).executeTakeFirst();
     if (!connection) throw new MailRefused('other', 'the company is no longer connected to Lumitra Mail: connect it again, then send this again');
     const apiKey = unseal(deps.sealKey, connection.api_key_sealed);
     let letter = readFrozen(row.letter);
@@ -217,7 +252,7 @@ export async function deliverFormNotification(
       let templateIds = connection.template_ids as Record<string, string>;
       if (!templateIds[FORM_MAIL_KIND]) {
         templateIds = await deps.mail.installTemplates(apiKey);
-        await deps.db
+        await trx
           .updateTable('shop_mail_connection')
           .set({ template_ids: toJsonb(templateIds), templates_version: templatesVersion(), updated_at: now })
           .where('tenant_id', '=', companyId)
@@ -243,7 +278,7 @@ export async function deliverFormNotification(
           inbox_url: `${deps.linkBase}/projects/${row.siteId}`,
         },
       };
-      await deps.db
+      await trx
         .updateTable('form_notification')
         .set({ letter: toJsonb(letter), updated_at: now })
         .where('submission_id', '=', submissionId)
@@ -263,25 +298,28 @@ export async function deliverFormNotification(
       merge: letter.merge,
     });
     await record(sent.delivery, { mailing_id: sent.mailingId, last_error: null });
-    return sent.delivery;
+    return { type: 'done', result: sent.delivery };
   } catch (err) {
     // The message names no visitor data: Lumitra Mail's errors describe the call, never the letter.
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[form-mail] submission ${submissionId} (company ${companyId}): ${message}`);
     if (err instanceof MailRefused) {
       await record('failed', { last_error: message });
-      throw new JobRefused(err.reason);
+      return { type: 'throw', error: new JobRefused(err.reason) };
     }
     if (now.getTime() - new Date(row.roundStartedAt).getTime() >= GIVE_UP_AFTER_MS) {
       await record('failed', { last_error: message });
-      throw new JobRefused('gave_up');
+      return { type: 'throw', error: new JobRefused('gave_up') };
     }
     await record('pending', { last_error: message });
-    throw new JobRetryLater(err instanceof MailRetryLater ? message.slice(0, 200) : 'mail_attempt_failed');
+    return { type: 'throw', error: new JobRetryLater(err instanceof MailRetryLater ? message.slice(0, 200) : 'mail_attempt_failed') };
   }
 }
 
-export type ResendResult = 'queued' | 'not_found' | 'not_resendable' | 'not_connected' | 'no_recipient';
+export type ResendResult = 'queued' | 'not_found' | 'not_resendable' | 'not_connected' | 'no_recipient' | 'busy';
+
+/** How long "send again" waits for an attempt that is sending right now (see `deliverFormNotification`). */
+export const RESEND_LOCK_WAIT_MS = 5_000;
 
 /**
  * The owner's "send again": a notification that failed, was blocked, or was never sent (the company was not connected, or
@@ -296,6 +334,7 @@ export async function resendFormNotification(
   ref: { tenantGroupId: string; siteId: string; submissionId: string },
   now: Date,
   currentRecipient: (formId: string) => Promise<string | null | undefined> = async () => undefined,
+  options: { lockWaitMs?: number } = {},
 ): Promise<ResendResult> {
   const found = await db
     .selectFrom('form_notification')
@@ -313,13 +352,22 @@ export async function resendFormNotification(
   const live = await currentRecipient(found.formId);
 
   return db.transaction().execute(async (trx): Promise<ResendResult> => {
-    const row = await trx
-      .selectFrom('form_notification')
-      .select(['company_id as companyId', 'status', 'last_error as lastError', 'round', 'recipient'])
-      .where('submission_id', '=', ref.submissionId)
-      .where('tenant_id', '=', ref.tenantGroupId)
-      .forUpdate()
-      .executeTakeFirst();
+    // The row's lock is held by an attempt while it sends: wait for it (it ends sent, or failed and then a new round is
+    // safe), but only briefly; the owner is told to try again.
+    await sql.raw(`SET LOCAL lock_timeout = '${Math.max(1, Math.trunc(options.lockWaitMs ?? RESEND_LOCK_WAIT_MS))}ms'`).execute(trx);
+    let row;
+    try {
+      row = await trx
+        .selectFrom('form_notification')
+        .select(['company_id as companyId', 'status', 'last_error as lastError', 'round', 'recipient'])
+        .where('submission_id', '=', ref.submissionId)
+        .where('tenant_id', '=', ref.tenantGroupId)
+        .forUpdate()
+        .executeTakeFirst();
+    } catch (err) {
+      if (isLockTimeout(err)) return 'busy';
+      throw err;
+    }
     if (!row) return 'not_found';
     const resendable =
       row.status === 'failed' ||

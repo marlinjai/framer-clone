@@ -332,7 +332,18 @@ each reversible (say so if you disagree):
 6. **Recovery:** the inbox shows each submission's email (sent, being sent, blocked, failed with the reason, skipped with
    why) and a "Send email again" for failed ones and for "not connected" ones once connected. A new round gets a new job and
    a new Lumitra Mail idempotency key; a blocked address and "no recipient" are not resendable.
-7. **Tests:** `formNotify.itest.ts` (real Postgres, fake Lumitra Mail) covers forward, a repeated post, not connected then
+   **Fence against a duplicate letter:** an attempt, the call to Lumitra Mail included, runs in one transaction that holds the
+   notification row's lock, and "send again" takes the same lock (it waits five seconds, then says "busy"). So a late success of an
+   old round beside a new round cannot happen: the resend sees `sent` and refuses, or sees the failure the attempt wrote and only then
+   starts the next round; a second attempt (a reclaimed job) waits and finds the letter sent; a worker that dies mid-send drops its
+   lock and the next attempt sends the same frozen letter under the same key, which Lumitra Mail replays (its idempotency ledger is
+   per workspace: same key and body replays, another body is refused, a request still running answers `conflict`).
+7. **Escaping, from Lumitra Mail's real source** (email-editor `apps/service/src/worker/merge.ts`, which calls the contract's
+   `personalizeHtml`, `personalizeText`, `resolveValue`): body values are HTML-escaped (`& < > " '`) and filled once (a value that
+   reads `{{x}}` is printed, never filled again); the subject and preheader are plain text with control characters turned into spaces,
+   so no header can be added. Checked with that same code in `formMailEscaping.test.ts` against markup, quote, script, javascript:
+   link, merge-token and CRLF attacks.
+8. **Tests:** `formNotify.itest.ts` (real Postgres, fake Lumitra Mail) covers forward, a repeated post, not connected then
    connected plus resend, refusal then resend, blocked, an old connection installing the template, a failing install,
    reconnect to another workspace, Lumitra Mail down then back with the letter unchanged, three days of failures, a deleted
    submission mid-retry, and a second company of the same tenant group. Not yet done: a live letter to Marlin's own address

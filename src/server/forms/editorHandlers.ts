@@ -180,6 +180,7 @@ export async function handleResendNotification(
     );
     if (result === 'not_found') return jsonError('not_found', 'no such submission', 404);
     if (result === 'not_resendable') return jsonError('not_resendable', 'this email was already sent or is waiting to be sent', 409);
+    if (result === 'busy') return jsonError('busy', 'this email is being sent right now, try again in a moment', 409);
     if (result === 'no_recipient') {
       return jsonError('no_recipient', 'set a notification address in the form settings or a contact email in Site settings, publish, then send this again', 409);
     }

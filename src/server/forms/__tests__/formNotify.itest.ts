@@ -16,7 +16,7 @@
 // All data is synthetic.
 
 import { randomBytes, randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Kysely } from 'kysely';
 import { tenantDb, type TenantGroupId } from '@marlinjai/tenant-db';
 
@@ -141,6 +141,32 @@ async function connect(c: Company, opts: { templateIds?: Record<string, string>;
       (tenant_id, workspace_id, workspace_name, provider_id, sender, api_key_id, api_key_sealed, template_ids, templates_version, connected_by, updated_at)
     VALUES (${row.tenant_id}, ${row.workspace_id}, ${row.workspace_name}, ${row.provider_id}, ${row.sender}, ${row.api_key_id}, ${row.api_key_sealed}, ${fx.owner.json(row.template_ids)}, ${row.templates_version}, ${row.connected_by}, ${row.updated_at})
     ON CONFLICT (tenant_id) DO UPDATE SET workspace_id = EXCLUDED.workspace_id, template_ids = EXCLUDED.template_ids`;
+}
+
+/** Makes the company's next send wait until released, and says when it has started: a send "in flight". */
+const openGates: (() => void)[] = [];
+afterEach(() => {
+  // A failed assertion must never leave an attempt holding its row lock: the next test's cleanup would wait on it forever.
+  while (openGates.length > 0) openGates.pop()!();
+});
+
+function holdSends(c: Company) {
+  let release!: () => void;
+  let entered!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  const started = new Promise<void>((resolve) => (entered = resolve));
+  const original = c.mail.send.bind(c.mail);
+  let first = true;
+  c.mail.send = async (apiKey, letter) => {
+    if (first) {
+      first = false;
+      entered();
+      await held;
+    }
+    return original(apiKey, letter);
+  };
+  openGates.push(release);
+  return { entered: started, release };
 }
 
 const worker = (c: Company): JobRunOptions => ({ mailDeps: () => c.outbox, now: () => c.clock.now });
@@ -486,21 +512,85 @@ describe('3. resume', () => {
     expect(await drain(company)).toEqual(['done']);
   });
 
-  it('a send that finishes after the three days ran out on another attempt still settles as sent, never failed', async () => {
+  it('a send that is in flight when the three days run out is not turned into a failure by a second attempt: it waits, then finds the letter sent', async () => {
     await connect(company);
     const s = submission();
     await insertFormSubmission(appDb, s);
-    await fx.owner`UPDATE ${fx.owner(schema)}.form_notification SET status = 'failed', last_error = 'gave_up' WHERE submission_id = ${s.id}`;
-    // An attempt that began while the row was pending: it read the row before the other attempt wrote failed.
-    await fx.owner`UPDATE ${fx.owner(schema)}.form_notification SET status = 'pending' WHERE submission_id = ${s.id}`;
-    const original = company.mail.send.bind(company.mail);
-    company.mail.send = async (apiKey, letter) => {
-      await fx.owner`UPDATE ${fx.owner(schema)}.form_notification SET status = 'failed', last_error = 'gave_up' WHERE submission_id = ${s.id}`;
-      return original(apiKey, letter);
-    };
-    expect(await deliverFormNotification(company.outbox, company.id, s.id)).toBe('sent');
+    const gate = holdSends(company);
+    const first = deliverFormNotification(company.outbox, company.id, s.id);
+    await gate.entered;
+    // A second attempt (a reclaimed job, another worker) whose clock is past three days: it would give up and write failed.
+    const late = { ...company.outbox, now: () => new Date(company.clock.now.getTime() + 4 * 24 * 60 * 60 * 1000) };
+    const second = deliverFormNotification(late, company.id, s.id);
+    // It is waiting on the row lock, not sending. The first send is held before it reaches the service, so the service
+    // has been asked nothing by either attempt yet.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(company.mail.calls.filter((c) => c.op === 'send')).toHaveLength(0);
+    gate.release();
+    expect(await first).toBe('sent');
+    expect(await second).toBe('sent');
+    // One request to the service in all: the second attempt never sent.
+    expect(company.mail.calls.filter((c) => c.op === 'send')).toHaveLength(1);
+    expect(company.mail.sent).toHaveLength(1);
+    expect(await notificationOf(s.id)).toMatchObject({ status: 'sent', last_error: null });
+  }, 30_000);
+
+  it('"send again" during an in-flight send waits, then refuses because the letter went out: one letter, never two', async () => {
+    await connect(company);
+    const s = submission();
+    await insertFormSubmission(appDb, s);
+    // A failed first round, so the row is resendable, then its retry (a resend) is sending.
+    company.mail.failNext('send', new MailRefused('other', 'first refusal'));
+    await drain(company);
+    const ref = { tenantGroupId: tgId, siteId: site.siteId, submissionId: s.id };
+    expect(await resendFormNotification(appDb, ref, company.clock.now, async () => undefined)).toBe('queued');
+    const gate = holdSends(company);
+    const attempt = deliverFormNotification(company.outbox, company.id, s.id);
+    await gate.entered;
+    // A double click (or a second tab): the row is locked by the sending attempt.
+    const again = resendFormNotification(appDb, ref, company.clock.now, async () => undefined, { lockWaitMs: 5_000 });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    gate.release();
+    expect(await attempt).toBe('sent');
+    expect(await again).toBe('not_resendable');
+    expect(company.mail.sent).toHaveLength(1);
+    expect(await notificationOf(s.id)).toMatchObject({ status: 'sent', round: 2 });
+  }, 30_000);
+
+  it('"send again" that cannot get the lock in time says busy, changes nothing, and works once the attempt has ended', async () => {
+    await connect(company);
+    const s = submission();
+    await insertFormSubmission(appDb, s);
+    company.mail.failNext('send', new MailRefused('other', 'refused'));
+    await drain(company);
+    const ref = { tenantGroupId: tgId, siteId: site.siteId, submissionId: s.id };
+    expect(await resendFormNotification(appDb, ref, company.clock.now, async () => undefined)).toBe('queued');
+    const gate = holdSends(company);
+    company.mail.failNext('send', new MailRefused('other', 'second refusal'));
+    const attempt = deliverFormNotification(company.outbox, company.id, s.id).catch((e) => e);
+    await gate.entered;
+    expect(await resendFormNotification(appDb, ref, company.clock.now, async () => undefined, { lockWaitMs: 200 })).toBe('busy');
+    expect(await notificationOf(s.id)).toMatchObject({ status: 'pending', round: 2 });
+    gate.release();
+    expect(((await attempt) as Error).name).toBe('JobRefused');
+    // The attempt gave up and wrote failed: only now is the next round safe, and it is offered.
+    expect(await notificationOf(s.id)).toMatchObject({ status: 'failed' });
+    expect(await resendFormNotification(appDb, ref, company.clock.now, async () => undefined)).toBe('queued');
+    expect(await notificationOf(s.id)).toMatchObject({ round: 3 });
+  }, 30_000);
+
+  it('a worker that died after Lumitra Mail took the letter but before the row was written resends the same letter under the same key: one mail', async () => {
+    await connect(company);
+    const s = submission();
+    await insertFormSubmission(appDb, s);
+    // The dead worker's send: it reached Lumitra Mail (the fake keeps it by key) and nothing was recorded.
+    const key = `form:${company.id}:${s.id}:1:${company.workspaceId}`;
+    await company.mail.send(`fake-send-key-${company.id}`, { key, kind: 'form_notification', locale: 'de', templateId: 'tpl-form', providerId: company.providerId, to: 'owner@bakery.example', merge: { site_name: 'Bakery' } });
+    expect(await notificationOf(s.id)).toMatchObject({ status: 'pending' });
+    expect(await drain(company)).toEqual(['done']);
+    expect(company.mail.sent).toHaveLength(1);
     expect(await notificationOf(s.id)).toMatchObject({ status: 'sent' });
-  });
+  }, 30_000);
 
   it('Lumitra Mail not configured on the platform keeps it pending', async () => {
     await connect(company);
