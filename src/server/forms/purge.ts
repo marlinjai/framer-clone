@@ -32,7 +32,7 @@ import { FormBusyError, deleteSiteSubmissions } from './repository';
 export const STUCK_PURGE_ATTEMPTS = 5;
 
 /**
- * The purge jobs that keep failing, for the watchdog: they never die and never give up (the data must go), so without this a
+ * The purge jobs that keep failing, for the watchdog: no transient error kills them and they never give up (the data must go), so without this a
  * permanent fault (a permission or constraint error on the submissions table) would retry silently every six hours and visitors'
  * words would stay stored with no alarm. A count, like the dead jobs.
  */
@@ -41,7 +41,8 @@ export async function countStuckPurges(db: Kysely<CommerceDB>): Promise<number> 
     .selectFrom('commerce_job')
     .select((eb) => eb.fn.countAll<string>().as('jobs'))
     .where('kind', '=', FORM_PURGE_JOB_KIND)
-    .where('status', '=', 'pending')
+    // Running included: a purge that keeps outliving its lease sits in `running` between claims.
+    .where('status', 'in', ['pending', 'running'])
     .where('attempts', '>=', STUCK_PURGE_ATTEMPTS)
     .executeTakeFirstOrThrow();
   return Number(row.jobs);
@@ -88,7 +89,8 @@ export async function scheduleProjectSubmissionsPurge(
 /**
  * The job's work. The site row still there: the delete was refused or has not committed, so nothing is purged and the job
  * ends. The row gone: every submission of the site goes (their emails with them, by the foreign key). A submission whose email
- * is being sent right now is a retry, any other failure is a retry too (the error is logged), and nothing here ever dies.
+ * is being sent right now is a retry, any other failure is a retry too (the error is logged), and no transient error ever kills it. Only a corrupt job (another tenant's, `tenant_mismatch`, or an unreadable payload) is refused
+ * and ends dead, which the dead-jobs monitor covers.
  */
 export async function purgeSiteSubmissions(
   group: { id: string; db: Kysely<CommerceDB> },

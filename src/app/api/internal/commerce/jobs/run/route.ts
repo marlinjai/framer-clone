@@ -21,11 +21,11 @@
 // `"receipts":"ok"`, so money taken without a receipt turns that monitor red
 // while the status code stays 200 for this one.
 //
-// Form-submission purges of deleted projects (src/server/forms/purge.ts) never die and never give up, so a permanent fault
+// Form-submission purges of deleted projects (src/server/forms/purge.ts) are never killed by a transient error and never give up, so a permanent fault
 // would retry silently: they are counted in `purgesStuck` (five failures or more) and `purges` reads "stuck" while there
 // are any, "ok" otherwise, for a fourth Uptime Kuma keyword monitor matching `"purges":"ok"` (deploy/README.md). Until that
 // monitor exists nothing notifies a person of a stuck purge. It is deliberately NOT a non-2xx: a stuck purge is a persistent
-// condition like a dead row (it stays until a person fixes its cause, and a purge never dies), so a 500 would keep the
+// condition like a dead row (it stays until a person fixes its cause, and a transient error never kills a purge), so a 500 would keep the
 // non-2xx monitor and the host timer's unit red for as long as it lasts and hide the next real failure (a failed pass, a late
 // job) on the same route; that is the reason the counts above stay 200 and get keyword monitors of their own.
 //

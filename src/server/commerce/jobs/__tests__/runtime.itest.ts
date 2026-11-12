@@ -358,6 +358,29 @@ describe('E: re-entry after completion or failure', () => {
     expect(report.oldestDueSeconds).toBeLessThan(10 * 60);
   });
 
+  it('a form purge that keeps failing is reported as stuck (purgesStuck, purges "stuck") and the route stays 200; below five failures it is not', async () => {
+    // Not due yet, so the pass does not run it: this is a job waiting out its backoff after failures.
+    const purge = await schedule(groupA, { kind: 'form_purge', runAt: new Date(Date.now() + 60 * MINUTE) });
+    await su`UPDATE ${su(tenantSchema(groupA))}."commerce_job" SET attempts = 4 WHERE id = ${purge}`;
+    let res = await watchdog();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ purgesStuck: 0, purges: 'ok' });
+
+    await su`UPDATE ${su(tenantSchema(groupA))}."commerce_job" SET attempts = 5 WHERE id = ${purge}`;
+    res = await watchdog();
+    // The status code is the other monitors' business: a stuck purge is a count with its own keyword, never a 500.
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ purgesStuck: 1, purges: 'stuck', failed: 0, deadUnacknowledged: 0 });
+
+    // Another kind with many attempts is not a purge; a second group's stuck purge adds up.
+    const other = await schedule(groupB, { kind: 'form_purge', runAt: new Date(Date.now() + 60 * MINUTE) });
+    await su`UPDATE ${su(tenantSchema(groupB))}."commerce_job" SET attempts = 9 WHERE id = ${other}`;
+    expect((await runCommerceWatchdogPass()).purgesStuck).toBe(2);
+    // Once a purge is gone (it finished and was cleaned up) it no longer counts.
+    await su`DELETE FROM ${su(tenantSchema(groupA))}."commerce_job" WHERE id = ${purge}`;
+    expect((await runCommerceWatchdogPass()).purgesStuck).toBe(1);
+  });
+
   it('the route answers 200 with a count on a dead job, and the count falls when a person acknowledges it', async () => {
     handler.run = async () => {
       throw new JobRefused('only_a_person');

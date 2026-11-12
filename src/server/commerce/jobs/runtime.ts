@@ -58,7 +58,7 @@ export interface CommercePassSummary {
 export interface CommerceJobReport extends CommercePassSummary {
   /** A count, never a failure: a dead row stays, so a red monitor would hide the next real fault. */
   deadUnacknowledged: number;
-  /** Form-submission purges of deleted projects that keep failing (src/server/forms/purge.ts): they never die, so this is how a permanent fault shows. A count, like the dead jobs. */
+  /** Form-submission purges of deleted projects that keep failing (src/server/forms/purge.ts): no transient error kills them, so this is how a permanent fault shows. A count, like the dead jobs. */
   purgesStuck: number;
   /**
    * "ok", or "stuck" while `purgesStuck` is above 0. The field for its own Uptime Kuma keyword monitor (`"purges":"ok"`), so a
@@ -220,9 +220,13 @@ export async function runCommerceWatchdogPass(options: CommercePassOptions = {})
       .orderBy('run_at')
       .limit(1)
       .executeTakeFirst();
+    // Read first, add after: `total += await read()` takes the total BEFORE the wait, so two groups read at once would overwrite
+    // each other's addition (groups are worked on several at a time).
+    const stuck = await countStuckPurges(db);
+    const unissued = await countUnissuedReceipts(db, at);
     deadUnacknowledged += Number(dead.jobs);
-    purgesStuck += await countStuckPurges(db);
-    receiptsUnissued += await countUnissuedReceipts(db, at);
+    purgesStuck += stuck;
+    receiptsUnissued += unissued;
     if (due) oldestDueMs = Math.min(oldestDueMs, due.run_at.getTime());
   });
   return {
