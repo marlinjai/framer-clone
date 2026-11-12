@@ -30,6 +30,25 @@ import { JOB_LEASE_MS, JobRefused, type JobContext } from '../types';
 
 const { handler } = vi.hoisted(() => ({ handler: { run: (async () => undefined) as (ctx: unknown) => Promise<void> } }));
 
+// The stuck-purge count, held back after it has counted once for a group that has stuck purges: it makes two groups' reads overlap
+// on purpose, which is what the watchdog's totals must survive (see the lost-update test).
+const { purgeCount } = vi.hoisted(() => ({ purgeCount: { holdFirstPositiveMs: 0 } }));
+vi.mock('@/server/forms/purge', async (original) => {
+  const real = await original<typeof import('@/server/forms/purge')>();
+  return {
+    ...real,
+    countStuckPurges: async (db: Parameters<typeof real.countStuckPurges>[0]) => {
+      const count = await real.countStuckPurges(db);
+      if (count > 0 && purgeCount.holdFirstPositiveMs > 0) {
+        const wait = purgeCount.holdFirstPositiveMs;
+        purgeCount.holdFirstPositiveMs = 0;
+        await new Promise((resolve) => setTimeout(resolve, wait));
+      }
+      return count;
+    },
+  };
+});
+
 vi.mock('../consumers', async (original) => {
   const { z } = await import('zod');
   const { defineJobKind } = await import('../types');
@@ -376,9 +395,23 @@ describe('E: re-entry after completion or failure', () => {
     const other = await schedule(groupB, { kind: 'form_purge', runAt: new Date(Date.now() + 60 * MINUTE) });
     await su`UPDATE ${su(tenantSchema(groupB))}."commerce_job" SET attempts = 9 WHERE id = ${other}`;
     expect((await runCommerceWatchdogPass()).purgesStuck).toBe(2);
+    // The totals survive overlapping reads: the first group's count is held back while the second group's is added. With a total
+    // read before the wait (`total += await count()`) the held group's addition overwrote the other's and this was 1.
+    purgeCount.holdFirstPositiveMs = 400;
+    expect((await runCommerceWatchdogPass()).purgesStuck).toBe(2);
+    expect(purgeCount.holdFirstPositiveMs).toBe(0);
     // Once a purge is gone (it finished and was cleaned up) it no longer counts.
     await su`DELETE FROM ${su(tenantSchema(groupA))}."commerce_job" WHERE id = ${purge}`;
     expect((await runCommerceWatchdogPass()).purgesStuck).toBe(1);
+  });
+
+  it('a purge that keeps outliving its lease sits in running and still counts as stuck', async () => {
+    const purge = await schedule(groupA, { kind: 'form_purge', runAt: new Date(Date.now() + 60 * MINUTE) });
+    await su`UPDATE ${su(tenantSchema(groupA))}."commerce_job" SET status = 'running', claim_token = 'held-by-a-worker', attempts = 6 WHERE id = ${purge}`;
+    expect(await (await watchdog()).json()).toMatchObject({ purgesStuck: 1, purges: 'stuck' });
+    // Below the threshold a running purge is just a purge in progress.
+    await su`UPDATE ${su(tenantSchema(groupA))}."commerce_job" SET attempts = 2 WHERE id = ${purge}`;
+    expect(await (await watchdog()).json()).toMatchObject({ purgesStuck: 0, purges: 'ok' });
   });
 
   it('the route answers 200 with a count on a dead job, and the count falls when a person acknowledges it', async () => {
