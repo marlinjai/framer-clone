@@ -159,8 +159,9 @@ export interface AdoptedTokens {
 
 export type AdoptOutcome = ({ ok: true } & AdoptedTokens) | { ok: false; errors: string[] };
 
-/** A name as it may stand in a message sent back to the model: owner and model text, so no control character and no angle bracket. */
-export const plainName = (name: string): string => name.replace(/[\u0000-\u001f\u007f<>]/g, ' ').slice(0, 40);
+/** A name as it may stand in a message sent back to the model: owner and model text, so no control, format or line-separator character, no quote that could close the message's own quoting, and no angle bracket. Cut on whole characters. */
+export const plainName = (name: string): string =>
+  Array.from(name.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}"<>]/gu, ' ').replace(/\s+/g, ' ').trim()).slice(0, 40).join('');
 
 const KIND_WORD: Record<TokenKind, string> = { color: 'colour', font: 'font' };
 

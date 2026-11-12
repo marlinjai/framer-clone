@@ -31,6 +31,8 @@ import {
   type SiteTheme,
   type ThemeMode,
   type ThemeToken,
+  colorReadability,
+  parseTokenReference,
 } from '@/lib/site/theme';
 import { MAX_GENERATED_TOKENS } from '../generatedTheme';
 import { darkLineNote } from './rules';
@@ -149,12 +151,29 @@ export function siteContextFromSettings(
 export function themeContextOf(theme: SiteTheme | undefined): { theme?: SiteContextTheme } {
   if (!theme) return {};
   const tokens: ContextToken[] = [];
-  for (const token of liveTokens(theme)) {
-    if (token.kind === 'font') tokens.push({ id: token.id, name: token.name, kind: 'font', family: token.family });
-    else if (token.broken) tokens.push({ id: token.id, name: token.name, kind: 'color', broken: true });
-    else tokens.push({ id: token.id, name: token.name, kind: 'color', light: token.light, ...(token.dark !== undefined ? { dark: token.dark } : {}) });
+  // Bounded like the wire shape (a name is cut on whole characters, the list at the site's cap), so a
+  // stored oddity from an older build can never make the whole request fail validation.
+  for (const token of liveTokens(theme).slice(0, THEME_LIMITS.liveTokens)) {
+    const name = Array.from(token.name).slice(0, THEME_LIMITS.name).join('');
+    if (token.kind === 'font') {
+      tokens.push({ id: token.id, name, kind: 'font', family: token.family });
+      continue;
+    }
+    const state = colorReadability(token);
+    // No value reads (or no light one): sent by name only, so the generator cannot take the name.
+    if (state === 'unreadable' || state === 'light-unreadable') tokens.push({ id: token.id, name, kind: 'color', broken: true });
+    // The dark value alone is bad: the light one shows in both schemes, so the token is usable as that.
+    else tokens.push({ id: token.id, name, kind: 'color', light: token.light, ...(state === 'ok' && token.dark !== undefined ? { dark: token.dark } : {}) });
   }
-  const document = Object.fromEntries(DOCUMENT_KEYS.flatMap((key) => (theme.document[key] ? [[key, theme.document[key]]] : [])));
+  // A page default is shown only when its token is one the generator may use: an id of a broken or deleted token stays out.
+  const offered = new Set(tokens.filter((t) => !t.broken).map((t) => t.id));
+  const document = Object.fromEntries(
+    DOCUMENT_KEYS.flatMap((key) => {
+      const value = theme.document[key];
+      const id = value ? parseTokenReference(value) : null;
+      return value && id && offered.has(id) ? [[key, value]] : [];
+    }),
+  );
   if (tokens.length === 0 && theme.mode === undefined && Object.keys(document).length === 0) return {};
   return { theme: { ...(theme.mode !== undefined ? { mode: theme.mode } : {}), tokens, document } };
 }
@@ -252,7 +271,7 @@ export function themeContextText(theme: SiteContextTheme | undefined, newPage: b
   const facts = {
     ...(mode !== undefined ? { mode } : {}),
     tokens: tokens.map(tokenFact),
-    ...(theme && Object.keys(theme.document).length > 0 ? { pageDefaults: theme.document } : {}),
+    ...(theme && Object.keys(pageDefaults(theme, tokens)).length > 0 ? { pageDefaults: pageDefaults(theme, tokens) } : {}),
   };
   const lines = [
     '## Site theme',
@@ -281,4 +300,15 @@ export function themeContextText(theme: SiteContextTheme | undefined, newPage: b
   const note = darkLineNote(mode);
   if (note) lines.push(note);
   return lines.join('\n');
+}
+
+/** The page defaults whose token is offered in the list (a request from an older client may still carry others). */
+function pageDefaults(theme: SiteContextTheme, offered: readonly ContextToken[]): Record<string, string> {
+  const ids = new Set(offered.map((t) => t.id));
+  return Object.fromEntries(
+    Object.entries(theme.document).filter(([, value]) => {
+      const id = value ? parseTokenReference(value) : null;
+      return id !== null && ids.has(id);
+    }) as Array<[string, string]>,
+  );
 }

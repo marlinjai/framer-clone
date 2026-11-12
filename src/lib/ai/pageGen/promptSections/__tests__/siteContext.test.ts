@@ -115,4 +115,37 @@ describe('the site theme in the context', () => {
     expect(SiteContextSchema.safeParse({ ...ctx, theme: { tokens: [], document: {}, mode: 'sepia' } }).success).toBe(false);
     expect(SiteContextSchema.safeParse({ ...ctx, theme: themeContextOf(theme).theme }).success).toBe(true);
   });
+
+  it('shows a page default only while its token is offered, so a broken token\'s id never reaches the prompt', () => {
+    const brokenDefault = { ...theme, document: { backgroundColor: 'var(--fc-t-br00ken1)', color: 'var(--fc-t-ab12cd34)' } };
+    const sent = themeContextOf(brokenDefault).theme!;
+    expect(sent.document).toEqual({ color: 'var(--fc-t-ab12cd34)' });
+    const text = themeContextText({ ...sent, document: brokenDefault.document }, true);
+    expect(text).not.toContain('br00ken1');
+  });
+
+  it('sends a colour whose dark value alone is bad as its light value, and one with no light value by name only', () => {
+    const t = {
+      tokens: [
+        { id: 'dark0bad', name: 'DarkBad', kind: 'color' as const, light: '#111111', dark: 'nonsense' },
+        { id: 'light0bd', name: 'LightBad', kind: 'color' as const, light: 'nonsense', dark: '#111111' },
+      ],
+      document: {},
+    };
+    const sent = themeContextOf(t).theme!.tokens;
+    expect(sent[0]).toEqual({ id: 'dark0bad', name: 'DarkBad', kind: 'color', light: '#111111' });
+    expect(sent[1]).toEqual({ id: 'light0bd', name: 'LightBad', kind: 'color', broken: true });
+  });
+
+  it('never sends a request the wire shape would refuse: a long stored name is cut and the list capped', () => {
+    const many = {
+      tokens: Array.from({ length: 230 }, (_, i) => ({ id: `t${String(i).padStart(7, '0')}`, name: 'n'.repeat(60), kind: 'color' as const, light: '#111111' })),
+      document: {},
+    };
+    const sent = themeContextOf(many).theme!;
+    expect(sent.tokens).toHaveLength(200);
+    expect(sent.tokens[0].name).toHaveLength(40);
+    const ctx = { siteName: 'x', language: 'en', legalName: '', street: '', postalCode: '', city: '', country: '', phone: '', email: '', openingHours: [] };
+    expect(SiteContextSchema.safeParse({ ...ctx, theme: sent }).success).toBe(true);
+  });
 });

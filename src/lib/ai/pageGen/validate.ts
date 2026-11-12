@@ -125,6 +125,7 @@ import {
   adoptProposedTokens,
   judgeReferences,
   parseProposedTokens,
+  plainName,
   type ReferenceContext,
 } from './generatedTheme';
 import {
@@ -2396,7 +2397,7 @@ export function validateGeneration(raw: unknown, ctx: ValidateContext): Validati
   // A token no node uses is not added: a palette fills with tokens nothing refers to.
   const keptTokens = proposedAdded.filter((token) => v.usedTokens.has(token.id));
   for (const token of proposedAdded) {
-    if (!v.usedTokens.has(token.id)) v.warnings.push(`theme.tokens: "${token.name}" is used by no node, not added`);
+    if (!v.usedTokens.has(token.id)) v.warnings.push(`theme.tokens: "${plainName(token.name)}" is used by no node, not added`);
   }
 
   const title = typeof raw.title === 'string' && raw.title.trim() ? raw.title.trim().slice(0, 120) : undefined;
