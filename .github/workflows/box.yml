@@ -1,0 +1,98 @@
+name: box
+
+# The box: the small service that serves sandboxed custom code documents
+# (services/box, docs/plans/2026-11-02-sandboxed-custom-code.md).
+#
+# BUILD AND TEST ONLY. This workflow pushes no image, calls no deploy webhook
+# and reads no secret. Pushing the image and deploying it belong to the
+# operator step O1 of the plan (the domain's records, the Coolify application,
+# the database role), and are added only with that step.
+#
+# Path-filtered: it runs when the box, the contract module it bundles, its
+# Dockerfile or this file changes, and never otherwise.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - services/box/**
+      - src/lib/customCode/contract.ts
+      - Dockerfile.box
+      - Dockerfile.box.dockerignore
+      - .github/workflows/box.yml
+      # The three root files that leave services/ out of the application's checks: a change to
+      # them is checked here too, so the box cannot lose its checks unseen.
+      - tsconfig.json
+      - eslint.config.mjs
+      - .dockerignore
+  pull_request:
+    branches: [main]
+    paths:
+      - services/box/**
+      - src/lib/customCode/contract.ts
+      - Dockerfile.box
+      - Dockerfile.box.dockerignore
+      - .github/workflows/box.yml
+      - tsconfig.json
+      - eslint.config.mjs
+      - .dockerignore
+
+permissions:
+  contents: read
+
+concurrency:
+  group: box-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  box:
+    name: box
+    # The shared server is aarch64, so the image is built and tested on the same architecture.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: services/box
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # Reads the pnpm version from services/box/package.json "packageManager".
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: services/box/package.json
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          cache-dependency-path: services/box/pnpm-lock.yaml
+
+      - name: Install
+        run: pnpm install --frozen-lockfile --ignore-workspace
+
+      # The application's type check and lint leave services/ out (root tsconfig.json and
+      # eslint.config.mjs), so these two steps are the box's only ones and must stay.
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Build the image
+        working-directory: .
+        run: docker build -f Dockerfile.box -t framer-clone-box:ci .
+
+      # The built image and the store against a scratch Postgres, on a private
+      # docker network, published on 127.0.0.1 only.
+      - name: Image and database tests
+        env:
+          BOX_IMAGE: framer-clone-box:ci
+        run: pnpm test:integration

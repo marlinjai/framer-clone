@@ -1,0 +1,56 @@
+# syntax=docker/dockerfile:1
+#
+# The box: the small service that serves sandboxed custom code documents from
+# its own registrable domain (docs/plans/2026-11-02-sandboxed-custom-code.md).
+# Build from the repository root, because the box bundles the contract module
+# from the application's source:
+#
+#   docker build -f Dockerfile.box -t framer-clone-box:local .
+#
+# The context is cut down to the box and that one module by
+# Dockerfile.box.dockerignore.
+#
+# What this image deliberately does not hold yet: the Infisical client and the
+# login entrypoint. They belong to the operator step O1, which also creates the
+# Coolify application. Until then the image is built and tested only, never
+# pushed. It takes its configuration from the environment (services/box/README.md).
+
+# The same image, pinned by digest, as the application's Dockerfile.
+ARG NODE_IMAGE=node:22.23.4-bookworm-slim@sha256:de170b39439eb0e5a3444ad7d60b015614a381e10fecae2e30ec9e735122f38d
+ARG PNPM_VERSION=9.15.0
+
+FROM ${NODE_IMAGE} AS build
+ARG PNPM_VERSION
+WORKDIR /repo/services/box
+# Corepack activates the pinned pnpm at build time, as the application's Dockerfile does.
+RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
+COPY services/box/package.json services/box/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile --ignore-workspace --ignore-scripts
+COPY services/box/tsconfig.json ./
+COPY services/box/src ./src
+COPY src/lib/customCode/contract.ts /repo/src/lib/customCode/contract.ts
+# One file, the database driver included: the runtime stage holds no node_modules.
+RUN pnpm exec esbuild src/main.ts --bundle --platform=node --target=node22 --format=cjs --log-level=warning --outfile=dist/box.cjs
+
+FROM ${NODE_IMAGE} AS runtime
+# The service runs one file with node and nothing else. So what a fault in it could otherwise reach for is
+# taken out of the image: the package managers (npm, yarn, corepack, apt, dpkg) and every shell. This narrows
+# what is at hand; it is not a boundary. The boundary is the read-only file system, the dropped capabilities
+# and the unprivileged user the container is run with.
+RUN rm -rf /usr/local/lib/node_modules /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
+      /opt/yarn* /usr/local/bin/yarn /usr/local/bin/yarnpkg \
+      /usr/bin/apt* /usr/bin/dpkg* /usr/lib/apt /usr/lib/dpkg /var/lib/apt /var/lib/dpkg /var/cache/apt /etc/apt \
+      /usr/bin/perl* /usr/bin/wget /usr/bin/curl \
+  && rm -f /usr/bin/bash /usr/bin/dash /usr/bin/sh /bin/bash /bin/dash /bin/sh
+ENV NODE_ENV=production TZ=UTC
+WORKDIR /app
+COPY --from=build --chown=root:root --chmod=0444 /repo/services/box/dist/box.cjs ./box.cjs
+# The image's own unprivileged user. The service also refuses to start as root.
+USER node
+EXPOSE 8080
+# Asks the address the service listens on (any address: this machine's own).
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD ["node", "-e", "const h=process.env.BOX_LISTEN_HOST;fetch('http://'+(!h||h==='0.0.0.0'?'127.0.0.1':h==='::'?'[::1]':h.includes(':')?'['+h+']':h)+':'+(process.env.BOX_PORT||8080)+'/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+# node is process 1 and handles SIGTERM itself; it starts no child, so there is nothing to reap.
+# No code is ever built from a string at run time, in the service or in its one dependency.
+ENTRYPOINT ["node", "--disallow-code-generation-from-strings", "box.cjs"]
