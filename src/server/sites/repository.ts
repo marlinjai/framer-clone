@@ -52,6 +52,7 @@ import {
   SiteIsBranchError,
 } from './errors';
 import { closedBranchError } from './branches/closed';
+import { isDatabaseConflict } from './dbConflict';
 import { validateBranchName } from '@/lib/sites/branches';
 import { clearExpiredKeptCopies, forgetBranchContent, freeOpenName } from './branches/repository';
 import { namedSiteImages } from '@/lib/site/siteImages';
@@ -124,10 +125,13 @@ async function withSerializationRetry<T>(run: () => Promise<T>): Promise<T> {
     try {
       return await run();
     } catch (err) {
-      const conflict =
-        err instanceof Prisma.PrismaClientKnownRequestError &&
-        (err.code === 'P2034' || err.code === 'P2002');
+      // P2002 (a unique violation on the revision number, or on a first save two creators raced on) and the
+      // database's own aborts, whether a Prisma query or a raw lock query reported them (dbConflict.ts).
+      const conflict = isDatabaseConflict(err) || (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002');
       if (!conflict || attempt >= SERIALIZATION_ATTEMPTS) throw err;
+      // A short wait that grows and differs per caller, so transactions that collided do not start again in
+      // step and collide again.
+      await new Promise((resolve) => setTimeout(resolve, attempt * (20 + Math.random() * 60)));
     }
   }
 }

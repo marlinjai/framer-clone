@@ -86,13 +86,39 @@ async function holdSiteLock(siteId: string): Promise<{ release: () => void; done
   return { release, done };
 }
 
+/** A transaction that holds an arbitrary lock until released. */
+async function holdLock(lock: (tx: Parameters<Parameters<PrismaClient['$transaction']>[0]>[0]) => Promise<unknown>): Promise<{ release: () => void; done: Promise<void> }> {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let locked!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    locked = resolve;
+  });
+  const done = prisma
+    .$transaction(
+      async (tx) => {
+        await lock(tx);
+        locked();
+        await gate;
+      },
+      { timeout: 60_000 },
+    )
+    .then(() => undefined);
+  await ready;
+  return { release, done };
+}
+
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 describe('saves of different sites do not conflict', () => {
   it('beside six other writers, every save commits in one transaction: no retry, no failure', async () => {
     const repo = latestVersionRepository();
     const spy = vi.spyOn(prisma, '$transaction');
     let stop = false;
     let committed = 0;
-    let failures: unknown[] = [];
+    const failures: unknown[] = [];
     const background = Array.from({ length: 6 }, async () => {
       for (let i = 0; i < 12 && !stop; i += 1) {
         try {
@@ -121,10 +147,11 @@ describe('saves of different sites do not conflict', () => {
     // One transaction per save: a retry would start another.
     expect(started).toBe(committed);
     expect(committed).toBe(6 * 12 + 4);
-    failures = [];
   }, 240_000);
 });
 
+// The three tests below hold on the old SERIALIZABLE save as well (a retry gives the same answer); they guard the
+// invariants the change had to keep. The ones that fail on the old save are the measurement above and the image tests.
 describe('one writer of a site at a time', () => {
   it('ten saves racing on one version: exactly one commits and the rest are refused as changed', async () => {
     const repo = new SiteRepository(prisma);
@@ -176,10 +203,9 @@ describe('one writer of a site at a time', () => {
 });
 
 describe('a branch save naming an image and the delete of that image never both commit', () => {
-  it.each([
-    ['delete asked first', true],
-    ['save asked first', false],
-  ])('both queued behind main\'s lock, %s: afterwards the image is stored or no page names it', async (_label, deleteFirst) => {
+  // Each test pins ONE interleaving with real locks, so it fails when the lock that decides it is missing:
+  // the branch save's shared lock on main (lockSiteForSave) is what makes the delete wait for it.
+  async function setup() {
     const repo = latestVersionRepository();
     const branches = new SiteBranchRepository(prisma);
     const scope = scopeOf();
@@ -187,33 +213,63 @@ describe('a branch save naming an image and the delete of that image never both 
     await repo.saveProject(scope, project(mainId));
     const { branch } = await branches.createBranch(scope, mainId, { name: 'Sale', actor: ACTOR });
     const owner = { id: mainId, workspaceId: scope.workspaceId, tenantGroupId: TENANT_GROUP };
+    return { repo, scope, mainId, branchId: branch.branchId, owner };
+  }
+  const stored = async (mainId: string, sha: string) => (await prisma.siteImage.count({ where: { siteId: mainId, sha256: sha } })) === 1;
+  const named = async (branchId: string, path: string) =>
+    ((await prisma.site.findUniqueOrThrow({ where: { id: branchId }, select: { siteSettings: true } })).siteSettings as { faviconUrl?: string }).faviconUrl === path;
+  const outcome = <T,>(run: Promise<T>) =>
+    run.then(
+      () => 'ok',
+      (e: unknown) => (e instanceof SiteImageMissingError ? 'missing' : e instanceof SiteImageError ? e.code : `error ${String(e).slice(0, 80)}`),
+    );
 
-    for (let round = 0; round < 8; round += 1) {
+  it('the save is in flight (blocked writing a page) when the delete asks: the delete waits for it, then finds the image in use', async () => {
+    const { repo, scope, mainId, branchId, owner } = await setup();
+    for (let round = 0; round < 5; round += 1) {
       const { image } = await storeSiteImage(owner, png(32 + round, 32 + round), 'favicon', ACTOR.id, prisma);
-      const hold = await holdSiteLock(mainId);
-      const asDelete = () => deleteSiteImage(mainId, image.sha256, prisma).then(() => 'deleted', (e: unknown) => (e instanceof SiteImageError ? e.code : String(e)));
-      const asSave = () =>
-        repo.saveProject(scope, project(branch.branchId, { favicon: image.path }), { mustExist: true }).then(
-          () => 'saved',
-          (e: unknown) => (e instanceof SiteImageMissingError ? 'missing' : String(e)),
-        );
-      const first = deleteFirst ? asDelete() : asSave();
-      await new Promise((resolve) => setTimeout(resolve, 150));
-      const second = deleteFirst ? asSave() : asDelete();
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      hold.release();
-      const outcomes = await Promise.all([first, second, hold.done]);
-      const [a, b] = deleteFirst ? [outcomes[0], outcomes[1]] : [outcomes[1], outcomes[0]];
-      const imageStored = (await prisma.siteImage.count({ where: { siteId: mainId, sha256: image.sha256 } })) === 1;
-      const named = ((await prisma.site.findUniqueOrThrow({ where: { id: branch.branchId }, select: { siteSettings: true } })).siteSettings as { faviconUrl?: string }).faviconUrl === image.path;
-      // The state this guards against: a committed page naming an image that is gone.
-      expect(named && !imageStored, `round ${round}: delete ${a}, save ${b}`).toBe(false);
-      expect(['deleted', 'image_in_use', 'image_busy'].includes(a as string) || a === 'deleted', `round ${round} delete: ${a}`).toBe(true);
-      expect(['saved', 'missing'].includes(b as string), `round ${round} save: ${b}`).toBe(true);
-      // Put the branch back to naming nothing for the next round.
-      await repo.saveProject(scope, project(branch.branchId), { mustExist: true });
+      // The save passes its image check, then waits on a page row of the branch.
+      const page = await holdLock((tx) => tx.$queryRaw`SELECT 1 FROM public.site_pages WHERE site_id = ${branchId} AND page_id = 'home' FOR UPDATE`);
+      const save = outcome(repo.saveProject(scope, project(branchId, { favicon: image.path }), { mustExist: true }));
+      await pause(400);
+      const del = outcome(deleteSiteImage(mainId, image.sha256, prisma));
+      await pause(400);
+      page.release();
+      const [saved, deleted] = await Promise.all([save, del, page.done]);
+      expect(saved, `round ${round} save`).toBe('ok');
+      expect(deleted, `round ${round} delete`).toBe('image_in_use');
+      expect(await stored(mainId, image.sha256)).toBe(true);
+      expect(await named(branchId, image.path)).toBe(true);
+      await repo.saveProject(scope, project(branchId), { mustExist: true });
+      await deleteSiteImage(mainId, image.sha256, prisma);
     }
   }, 120_000);
+
+  it('the delete is in flight (holding main, waiting for the image lock) when the save asks: the save waits for it, then finds the image gone', async () => {
+    const { repo, scope, mainId, branchId, owner } = await setup();
+    for (let round = 0; round < 5; round += 1) {
+      const { image } = await storeSiteImage(owner, png(60 + round, 60 + round), 'favicon', ACTOR.id, prisma);
+      const gate = await holdLock((tx) => tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtext(${`site_images:${mainId}`}))`);
+      const del = outcome(deleteSiteImage(mainId, image.sha256, prisma));
+      await pause(400);
+      const save = outcome(repo.saveProject(scope, project(branchId, { favicon: image.path }), { mustExist: true }));
+      await pause(400);
+      gate.release();
+      const [deleted, saved] = await Promise.all([del, save, gate.done]);
+      expect(deleted, `round ${round} delete`).toBe('ok');
+      expect(saved, `round ${round} save`).toBe('missing');
+      expect(await stored(mainId, image.sha256)).toBe(false);
+      expect(await named(branchId, image.path)).toBe(false);
+    }
+  }, 120_000);
+
+  it('a branch save naming no image does not wait for main at all', async () => {
+    const { repo, scope, mainId, branchId } = await setup();
+    const hold = await holdSiteLock(mainId);
+    await repo.saveProject(scope, project(branchId, { text: 'no image' }), { mustExist: true });
+    hold.release();
+    await hold.done;
+  }, 60_000);
 });
 
 describe('every writer of a site together', () => {
@@ -227,23 +283,39 @@ describe('every writer of a site together', () => {
     const { branch } = await branches.createBranch(scope, mainId, { name: 'Mix', actor: ACTOR });
     const owner = { id: mainId, workspaceId: scope.workspaceId, tenantGroupId: TENANT_GROUP };
     const problems: string[] = [];
+    const succeeded: Record<string, number> = {};
+    const domain: Record<string, string> = {};
+    const ok = (label: string) => () => {
+      succeeded[label] = (succeeded[label] ?? 0) + 1;
+    };
+    const deadlocks = async () => Number((await prisma.$queryRaw<{ n: bigint }[]>`SELECT deadlocks AS n FROM pg_stat_database WHERE datname = current_database()`)[0].n);
+    const deadlocksBefore = await deadlocks();
     const note = (label: string) => (err: unknown) => {
       const code = (err as { code?: string }).code;
       const text = err instanceof Error ? err.message : String(err);
+      domain[label] = `${err instanceof Error ? err.constructor.name : ''} ${text.slice(0, 100)}`;
       // Domain answers are fine; a database conflict or deadlock is the defect.
       if (code === 'P2034' || /deadlock|could not serialize|40001|40P01/i.test(text) || (err instanceof SiteImageError && err.code === 'image_busy')) problems.push(`${label}: ${code ?? ''} ${text.slice(0, 120)}`);
     };
     for (let round = 0; round < 10; round += 1) {
       const { image } = await storeSiteImage(owner, png(40 + round, 40 + round), 'favicon', ACTOR.id, prisma);
       await Promise.all([
-        repo.saveProject(scope, project(mainId, { text: `main ${round}` }), { mustExist: true }).catch(note('main save')),
-        repo.saveProject(scope, project(branch.branchId, { favicon: image.path, text: `branch ${round}` }), { mustExist: true }).catch(note('branch save')),
-        repo.publishProject(scope, project(mainId, { text: `publish ${round}` })).catch(note('publish')),
-        deleteSiteImage(mainId, image.sha256, prisma).catch(note('image delete')),
-        repo.saveProject(scopeOf(), project(randomUUID())).catch(note('other site')),
-        repo.saveProject(scope, project(branch.branchId, { text: `branch again ${round}` }), { mustExist: true }).catch(note('branch save 2')),
+        repo.saveProject(scope, project(mainId, { text: `main ${round}` }), { mustExist: true }).then(ok('main save'), note('main save')),
+        repo.saveProject(scope, project(branch.branchId, { favicon: image.path, text: `branch ${round}` }), { mustExist: true }).then(ok('branch save'), note('branch save')),
+        repo.publishProject(scope, project(mainId, { text: `publish ${round}` })).then(ok('publish'), note('publish')),
+        deleteSiteImage(mainId, image.sha256, prisma).then(ok('image delete'), note('image delete')),
+        repo.saveProject(scopeOf(), project(randomUUID())).then(ok('other site'), note('other site')),
+        repo.saveProject(scope, project(branch.branchId, { text: `branch again ${round}` }), { mustExist: true }).then(ok('branch save 2'), note('branch save 2')),
       ]);
     }
     expect(problems).toEqual([]);
+    // A deadlock that a retry hid would still be counted by the database.
+    expect(await deadlocks()).toBe(deadlocksBefore);
+    // Not everything may have been refused. Two writers of one site that read the same version race by design (the
+    // version lock refuses the loser), so success is asked per site: main (a save or a publish), the branch, another site.
+    const n = (...labels: string[]) => labels.reduce((sum, label) => sum + (succeeded[label] ?? 0), 0);
+    expect(n('main save', 'publish'), `main: ${domain['main save']} / ${domain.publish}`).toBeGreaterThan(0);
+    expect(n('branch save', 'branch save 2'), `branch: ${domain['branch save']} / ${domain['branch save 2']}`).toBeGreaterThan(0);
+    expect(n('other site')).toBe(10);
   }, 180_000);
 });

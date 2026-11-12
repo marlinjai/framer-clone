@@ -27,6 +27,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { PrismaClient } from '@prisma/client';
 import { Prisma } from '@prisma/client';
 import { getPrismaClient } from '@/server/db';
+import { isDatabaseConflict } from './dbConflict';
 import {
   MAX_SITE_IMAGES,
   MAX_SITE_IMAGE_TOTAL_BYTES,
@@ -259,7 +260,7 @@ export async function deleteSiteImage(siteId: string, sha256: string, prisma: Pr
       await tx.siteImage.delete({ where: { id: row.id } });
     }, PROJECT_IMAGE_TRANSACTION);
   } catch (err) {
-    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2034') {
+    if (isDatabaseConflict(err)) {
       throw new SiteImageError('image_busy', 409, 'The site changed while the image was being deleted. Nothing was deleted; try again.');
     }
     throw err;

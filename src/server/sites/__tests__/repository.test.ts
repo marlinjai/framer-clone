@@ -503,6 +503,19 @@ describe('SiteRepository.saveProject concurrency', () => {
     expect(prisma.site.upsert).toHaveBeenCalledTimes(1);
   });
 
+  it('retries a save whose row lock (a raw query) lost a deadlock or a serialization failure', async () => {
+    for (const code of ['40P01', '40001']) {
+      prisma.$transaction.mockClear();
+      const real = prisma.$transaction.getMockImplementation()!;
+      prisma.$transaction.mockImplementationOnce(async () => {
+        throw new Prisma.PrismaClientKnownRequestError('lock', { code: 'P2010', clientVersion: 'test', meta: { code } });
+      });
+      prisma.$transaction.mockImplementation(real);
+      await repo.saveProject(SCOPE, project(), { expectedVersion: 1 });
+      expect(prisma.$transaction, code).toHaveBeenCalledTimes(2);
+    }
+  });
+
   it('gives up loudly after repeated conflicts, and never retries other errors', async () => {
     prisma.$transaction.mockImplementation(async () => {
       throw conflict();
