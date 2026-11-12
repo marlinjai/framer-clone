@@ -805,6 +805,57 @@ Tests:
 The plan's check names an agent `set_node`; there is no operation of that name. The same check runs against
 `setFxScene` and `insertNodes`, the two operations that can carry a scene.
 
+### State after F6 (2026-11-12)
+
+F1 to F6 are merged (#365, #368, #369, #373, #378, #383) and none of it is deployed: the last production deploy is
+from 2026-11-09 and deploys are started by hand. F7 is the next slice and begins with a deploy to app.lumitra.co, so it
+waits for Marlin's yes. Until then nothing outside the repository has changed, and lumitra.co is served by lumitra-web
+as before.
+
+**What a deploy of main would ship (inventory of 2026-11-12, for the F7 decision).** F7's deploy is not an FX-only
+deploy. The last production deploy is commit `7b32ea16` (2026-11-09). Since then main holds, beside FX: site branches
+(slices S1 to S9), the 3D scene format, a contact person on customers and invoices in Books, the buyer's mail as a job
+consumer, live canvas and site merge work. What that means for a deploy, and for going back:
+
+- **Five application migrations run at container start.** Four Prisma migrations, all from site branches and all
+  additive (no drop, no delete, checked in the SQL): `20261111000000_site_branches`,
+  `20261112000000_site_branch_merge_undo`, `20261112120000_site_branch_previews`,
+  `20261112180000_site_branch_backstops`. One commerce tenant migration, `030_books_contact_person`, which runs once
+  for every company's schema (`src/server/commerce/migrations/tenant/`).
+- **One hard prerequisite outside this app, and an order.** `@marlinjai/contacts-core` went from 0.4 to 0.5. Its
+  `ready()` throws `ContactsLayoutError` unless migration 0003 of the shared contacts database has been applied, so
+  the new image would fail every contacts read in Books (the customer picker, issuing an invoice) until then. The
+  order is: the receipts app's pull request 253 applies 0003 (it is on hold and needs Marlin's yes), the `_migrations`
+  table of the contacts database is checked, and only then is framer-clone deployed. Stated by the Books owner on
+  2026-11-12 (the contacts plan, section 8, and its pull requests 18 and 19); this worker confirmed the version change
+  in `package.json` and the migration files, not the state of the shared contacts database.
+- **Going back is not just redeploying the previous image.** The previous image cannot read an invoice addressed to a
+  contact person: such an invoice is issued with a version 2 snapshot, every other invoice stays at version 1 (#377,
+  merged). So a rollback after such an invoice exists needs the Books owner's procedure, not only the old image.
+- **FX itself** adds no migration and no environment variable. It adds packages to the image (three.js 0.184,
+  react-three-fiber, postprocessing, scene-core), and a page without an FX scene fetches none of them (tested on a
+  real build).
+- **Site branches stay off** unless `SITE_BRANCHES_COMPANIES` is set on the app (`deploy/README.md`); their
+  migrations run regardless.
+
+Confirmed by the site branches owner against main at `380da6c1` on 2026-11-12, with these additions:
+
+- The rollback is clean until the first invoice addressed to a contact person is issued on the new image.
+- The fourth site branch migration (`site_branch_backstops`) needs Postgres 15 or later; production is documented as
+  16 in `deploy/README.md`. All four touch only tables that are empty or get a nullable column; the first builds one
+  unique index on `sites` and holds a short lock there.
+- **The gates are separate, in this order** (site branches plan, section 12): the contacts gate and the release of
+  receipts pull request 253; the deploy of main; then, separately, the switch `SITE_BRANCHES_COMPANIES` for the Lumitra
+  company; then the proofs. A yes for one is not a yes for the next.
+- The image also carries the buyer mail job consumer (#364, shop) and the agent write replay (#358, live canvas),
+  whose owners confirm their own part.
+- **Who runs it:** on Marlin's yes the site branches owner starts the deploy (four of the five migrations are that
+  work's), watches the start sequence apply the migrations, checks with the switch still off that sites, the published
+  landing page and Books behave as before, and then hands over to this slice for the FX browser proof.
+
+So the deploy is a joint decision of the FX, branching and Books work, and Marlin's to make. This slice does not start
+it.
+
 ### F7 and F8, prepared offline (2026-11-12)
 
 Nothing here touches production. It is what could be made ready without a deploy, so that the proof after one is a

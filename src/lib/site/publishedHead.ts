@@ -21,6 +21,7 @@
 // are made absolute on the primary host, since crawlers need full addresses.
 
 import type { Metadata } from 'next';
+import { parseOgType } from './headItems';
 import { parseSiteImagePath } from './siteImages';
 import {
   WEEKDAYS,
@@ -50,6 +51,8 @@ export interface PageHeadInput {
   ogImage: string;
   canonicalUrl: string;
   noIndex: boolean;
+  /** The Open Graph content type. Read through parseOgType, so a missing or forged value is `website`. */
+  ogType?: string;
 }
 
 /** The path of the web manifest route (src/app/site.webmanifest/route.ts). */
@@ -210,7 +213,7 @@ export function pageMetadata(input: PageMetadataInput): Metadata {
   const ogDescription = page.ogDescription || page.description;
   const locale = ogLocale(settings);
   metadata.openGraph = {
-    type: 'website',
+    type: parseOgType(page.ogType),
     ...(ogTitle ? { title: ogTitle } : {}),
     ...(ogDescription ? { description: ogDescription } : {}),
     ...(canonical ? { url: canonical } : {}),

@@ -28,6 +28,7 @@ import type { PageSnapshotOut } from '@/models/PageModel';
 import type { BreakpointRef } from '@/lib/responsive/cascade';
 import type { ComponentDefinitions } from '@/lib/components/definition';
 import { createRenderBudget, expandPlacements, type RenderBudget } from '@/lib/components/expand';
+import { DEFAULT_OG_TYPE, parseOgType, copyStoredItems, type OgType, type StoredHeadItem } from '@/lib/site/headItems';
 import { componentSnapshotToNode, extractBreakpoints, type ComponentSnapshotLike } from './componentSnapshot';
 
 export { componentSnapshotToNode, extractBreakpoints, foldCssProps } from './componentSnapshot';
@@ -47,6 +48,10 @@ export interface PageSeoMetadata {
   canonicalUrl: string;
   /** Keep the page out of search engines (robots noindex, no sitemap entry). */
   noIndex: boolean;
+  /** The Open Graph content type, read through parseOgType: always one Next accepts. */
+  ogType: OgType;
+  /** The page's own head items as stored, safely copied; parseHeadItem checks each at emission (slice H2). */
+  head: StoredHeadItem[];
 }
 
 /**
@@ -74,6 +79,8 @@ const EMPTY_METADATA: PageSeoMetadata = {
   ogImage: '',
   canonicalUrl: '',
   noIndex: false,
+  ogType: DEFAULT_OG_TYPE,
+  head: [],
 };
 
 /** Lift the SEO metadata off the page snapshot, defaulting every field. */
@@ -89,6 +96,8 @@ function extractMetadata(snapshot: PageSnapshotOut): PageSeoMetadata {
     ogImage: meta.ogImage ?? '',
     canonicalUrl: meta.canonicalUrl ?? '',
     noIndex: meta.noIndex === true,
+    ogType: parseOgType(meta.ogType),
+    head: copyStoredItems(meta.head),
   };
 }
 

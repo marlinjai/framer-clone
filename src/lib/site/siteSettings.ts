@@ -31,6 +31,7 @@
 
 import { DEFAULT_PAGE_BASE, PAGE_BASES, type PageBase } from './pageBase';
 import { EMPTY_THEME, normalizeTheme, type SiteTheme } from './theme';
+import { copyStoredItems, type StoredHeadItem } from './headItems';
 import { isSiteImagePath } from './siteImages';
 
 /** Days in schema.org order, used by the opening-hours rows. */
@@ -116,16 +117,15 @@ export interface SiteSettings {
   /** The site's colour and font tokens, mode and document defaults (src/lib/site/theme.ts). */
   theme: SiteTheme;
   /**
-   * The head items every page carries. Slice H1 of the theme and head contract gives an
-   * item its shape and its parser (`parseHeadItem`, run at emission); until then this is
-   * kept as stored and emitted nowhere. Any plain object with a string `kind` is kept,
-   * valid or not, so an item a later build refuses can still be shown as refused.
+   * The head items every page carries (src/lib/site/headItems.ts). Kept as stored, valid or
+   * not, so an item a later build refuses can still be shown as refused; `parseHeadItem`
+   * checks each at emission, and `resolveHead` merges them with the page's own. Written only
+   * by ProjectModel.updateSiteHead, which caps the list.
    */
   head: StoredHeadItem[];
 }
 
-/** A head item as stored: opaque here, parsed at emission (slice H1). */
-export type StoredHeadItem = { kind: string } & Record<string, unknown>;
+export type { StoredHeadItem };
 
 /** The input to persistence and to ProjectModel: any subset, normalized on read. */
 export type SiteSettingsInput = Partial<Omit<SiteSettings, 'business' | 'theme'>> & {
@@ -206,14 +206,12 @@ function normalizeHours(value: unknown): OpeningHoursRow[] {
 }
 
 /**
- * Stored head items: plain objects with a string `kind`, kept as they are. No cap here:
- * slice H1 caps at write and at emission, and the save route bounds the body.
+ * Stored head items: plain objects with a string `kind`, each copied safely (a `__proto__` key
+ * stays a plain key) and otherwise kept as it is. No cap here, so a blob from a later build that
+ * allows more loses nothing on load: updateSiteHead caps at write, resolveHead at emission.
  */
 function normalizeHead(value: unknown): StoredHeadItem[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter(
-    (item): item is StoredHeadItem => isRecord(item) && typeof item.kind === 'string',
-  );
+  return copyStoredItems(value);
 }
 
 function normalizeBusiness(value: unknown): BusinessInfo {

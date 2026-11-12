@@ -47,6 +47,7 @@ import {
   type SiteSettingsInput,
 } from '@/lib/site/siteSettings';
 import { effectiveSiteName } from '@/lib/site/siteSettings';
+import { HEAD_LIMITS, storeHeadItems } from '@/lib/site/headItems';
 import { emittedTokenIds, normalizeTheme, replaceTokenReferences, tokenUseKinds, validateThemeWrite, type SiteTheme } from '@/lib/site/theme';
 import {
   COOKIE_SETTINGS_HASH,
@@ -199,6 +200,9 @@ export type SiteSettingsResult = { ok: true } | { ok: false; errors: SiteSetting
 
 /** The outcome of ProjectModel.updateTheme. */
 export type ThemeResult = { ok: true } | { ok: false; errors: string[] };
+
+/** The outcome of ProjectModel.updateSiteHead: what the cap and the copy left out. */
+export type SiteHeadResult = { ok: true; dropped: number } | { ok: false; errors: string[] };
 
 /** Site settings the siteSettings processor produced (complete, so never normalized again). */
 const normalizedSiteSettings = new WeakSet<object>();
@@ -1314,6 +1318,21 @@ export const ProjectModel = types
       self.siteSettings = next;
       self.metadata.updatedAt = new Date();
       return { ok: true };
+    },
+
+    // The site's head items (src/lib/site/headItems.ts), replaced as a whole in ONE action so a
+    // change is one undo step. Kept as stored, valid or not (a refused one is shown as refused,
+    // not lost); copied safely, and the later items dropped over HEAD_LIMITS.siteItems, the
+    // count returned so the panel can say so. Every other site setting is kept as it is.
+    updateSiteHead(input: unknown): SiteHeadResult {
+      if (!Array.isArray(input)) return { ok: false, errors: ['The site head items must be a list.'] };
+      const settings = normalizeSiteSettings(self.siteSettings);
+      const written = storeHeadItems(input, HEAD_LIMITS.siteItems);
+      const dropped = written.overCap + written.unreadable;
+      if (JSON.stringify(settings.head) === JSON.stringify(written.items)) return { ok: true, dropped };
+      self.siteSettings = { ...settings, head: written.items };
+      self.metadata.updatedAt = new Date();
+      return { ok: true, dropped };
     },
 
     // The site's theme (src/lib/site/theme.ts), replaced as a whole in ONE action,

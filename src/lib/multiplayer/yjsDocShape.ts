@@ -54,6 +54,7 @@ import {
   CanvasNodeType,
 } from '@/models/ComponentModel';
 import type { PageSnapshotIn } from '@/models/PageModel';
+import { copyStoredItems, parseOgType } from '@/lib/site/headItems';
 import { normalizeSiteSettings } from '@/lib/site/siteSettings';
 
 // ---------------------------------------------------------------------------
@@ -520,6 +521,8 @@ function normalisePageMetadata(
     canonicalUrl:
       typeof m.canonicalUrl === 'string' ? m.canonicalUrl : '',
     noIndex: m.noIndex === true,
+    ogType: parseOgType(m.ogType),
+    head: copyStoredItems(m.head),
     legalTemplate:
       m.legalTemplate === 'impressum' || m.legalTemplate === 'privacy' || m.legalTemplate === 'terms'
         ? m.legalTemplate
