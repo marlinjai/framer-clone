@@ -20,7 +20,7 @@
 // the editor's authorized per-project route; THIS route only decides the tenant,
 // from the request HOST and never from a session (D2 / D4).
 
-import { resolveStorefrontCommerce } from '@/server/commerce/storefrontTenant';
+import { resolveStorefrontCommerceForRead } from '@/server/commerce/storefrontTenant';
 import { handleProductByHandle } from '@/server/commerce/readHandlers';
 
 export const runtime = 'nodejs';
@@ -32,6 +32,6 @@ export async function GET(
 ): Promise<Response> {
   const { handle } = await params;
   return handleProductByHandle(req, handle, () =>
-    resolveStorefrontCommerce(req.headers.get('host')),
+    resolveStorefrontCommerceForRead(req.headers.get('host')),
   );
 }

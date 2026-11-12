@@ -31,9 +31,10 @@ import type { Metadata, Viewport } from 'next';
 // globals.css is linked only by the editor routes, never here (see site.css).
 import './site.css';
 import { unstable_rethrow } from 'next/navigation';
-import { getPrimaryHostForRequest, resolveSiteForRequest } from '@/server/sites/requestSite';
+import { getPrimaryHostForRequest, getRequestHost, resolveSiteForRequest } from '@/server/sites/requestSite';
+import { isPreviewHost } from '@/lib/sites/previewHost';
 import { effectiveSiteName } from '@/lib/site/siteSettings';
-import { siteLayoutMetadata } from '@/lib/site/publishedHead';
+import { previewMetadata, siteLayoutMetadata } from '@/lib/site/publishedHead';
 import { SiteSheets, themeViewport } from '@/lib/site/siteSheets';
 
 /** The neutral default for a host with no published site (never editor scaffolding). */
@@ -45,12 +46,14 @@ const NEUTRAL_METADATA: Metadata = {
 
 export async function generateMetadata(): Promise<Metadata> {
   const site = await resolveSiteForRequest();
-  if (!site) return NEUTRAL_METADATA;
-  return siteLayoutMetadata({
+  // A preview address that names no link (revoked, expired, mistyped) is not to be indexed either.
+  if (!site) return isPreviewHost(await getRequestHost()) ? previewMetadata(NEUTRAL_METADATA) : NEUTRAL_METADATA;
+  const metadata = siteLayoutMetadata({
     settings: site.siteSettings,
     siteName: effectiveSiteName(site.siteSettings, site.name),
     primaryHost: await getPrimaryHostForRequest(),
   });
+  return site.preview ? previewMetadata(metadata) : metadata;
 }
 
 export async function generateViewport(): Promise<Viewport> {

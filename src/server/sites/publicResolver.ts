@@ -46,6 +46,7 @@ import {
   type SiteRevisionDocument,
 } from '@/server/sites/revision';
 import { RFC1035_LABEL } from '@/server/sites/subdomain';
+import { isPreviewLabel, type PreviewOf } from '@/lib/sites/previewHost';
 import {
   isClaimableHostname,
   normalizeRequestHost,
@@ -103,6 +104,11 @@ export interface PublishedSite {
    * the field, which is not memoised.
    */
   revision?: string;
+  /**
+   * Set only for a branch's public preview link (src/server/sites/branches/previewLinks.ts): this is not a
+   * published site but a branch's working copy, shown read only. Never set by this file's resolvers.
+   */
+  preview?: PreviewOf;
 }
 
 /**
@@ -190,8 +196,10 @@ export function hostLookupKeys(
       // The label is parsed from the RAW host, exactly as before custom domains
       // existed: a non-ASCII label is refused, not converted to punycode, since
       // the allocator only ever hands out [a-z0-9] labels.
+      // A label kept for preview links never names a published site: no key, so no cache entry and no read
+      // (a flood of made-up preview addresses cannot push real hosts out of the negative cache).
       const label = parseSubdomain(host, base);
-      return label ? [{ kind: 'subdomain', value: label }] : [];
+      return label && !isPreviewLabel(label) ? [{ kind: 'subdomain', value: label }] : [];
     }
     return isClaimableHostname(hostname, [...zones, base])
       ? [{ kind: 'custom', value: hostname }]
@@ -200,7 +208,7 @@ export function hostLookupKeys(
   const keys: SiteHostKey[] = [];
   if (isClaimableHostname(hostname, zones)) keys.push({ kind: 'custom', value: hostname });
   const label = parseSubdomain(host, null);
-  if (label) keys.push({ kind: 'subdomain', value: label });
+  if (label && !isPreviewLabel(label)) keys.push({ kind: 'subdomain', value: label });
   return keys;
 }
 

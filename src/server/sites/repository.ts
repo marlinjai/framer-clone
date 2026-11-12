@@ -318,7 +318,7 @@ function parsePlaces(raw: unknown): ErasurePlace[] {
   return Array.isArray(raw) ? (raw as ErasurePlace[]) : [];
 }
 
-function assertScope(scope: TenantScope): void {
+export function assertScope(scope: TenantScope): void {
   if (
     !scope ||
     typeof scope.workspaceId !== 'string' ||

@@ -7,6 +7,7 @@ import {
   pageMetadata,
   pagePath,
   siteLayoutMetadata,
+  previewMetadata,
 } from '../publishedHead';
 
 const settings = (raw: Record<string, unknown> = {}) => normalizeSiteSettings(raw);
@@ -191,5 +192,35 @@ describe('uploaded images (/site-images/<sha256>.<ext>)', () => {
     });
     expect(data?.logo).toBe(`https://a.test${favicon}`);
     expect(data?.image).toBe(`https://a.test${sharing}`);
+  });
+});
+
+describe('previewMetadata (a branch\'s public preview link)', () => {
+  it('is never indexed or followed and names no canonical, sharing address, base or manifest', () => {
+    const settings = normalizeSiteSettings({});
+    const layout = previewMetadata(siteLayoutMetadata({ settings, siteName: 'Bakery', primaryHost: 'preview-x.sites.lumitra.co' }));
+    expect(layout.robots).toEqual({ index: false, follow: false, noarchive: true });
+    expect(layout.manifest).toBeUndefined();
+    expect(layout.metadataBase).toBeUndefined();
+    expect(layout.title).toBeDefined();
+
+    const page = previewMetadata(
+      pageMetadata({
+        page: { title: 'About', description: 'About us', keywords: [], canonicalUrl: 'https://bakery.example/about', ogTitle: '', ogDescription: '', ogImage: '', noIndex: false },
+        settings,
+        siteName: 'Bakery',
+        primaryHost: 'preview-x.sites.lumitra.co',
+        path: '/about',
+      }),
+    );
+    expect(page.robots).toEqual({ index: false, follow: false, noarchive: true });
+    expect(page.alternates).toBeUndefined();
+    expect((page.openGraph as { url?: unknown }).url).toBeUndefined();
+    expect((page.openGraph as { title?: unknown }).title).toBeDefined();
+    expect(JSON.stringify(page)).not.toContain('bakery.example');
+  });
+
+  it('turns the neutral metadata of a host with no site into a never-indexed one', () => {
+    expect(previewMetadata({ title: 'Site', robots: { index: true, follow: true } }).robots).toEqual({ index: false, follow: false, noarchive: true });
   });
 });

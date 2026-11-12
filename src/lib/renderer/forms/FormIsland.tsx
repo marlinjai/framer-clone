@@ -29,6 +29,7 @@
 'use client';
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { FormUnavailableContext } from '@/lib/forms/unavailable';
 import type { BindingScope } from '@/lib/bindings/resolver/scope';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import {
@@ -181,6 +182,8 @@ function LiveForm({ node, scope, renderedAt }: FormIslandProps) {
     if (state.status === 'success') successRef.current?.focus();
   }, [state.status]);
 
+  const unavailable = useContext(FormUnavailableContext);
+
   const focusFirstInvalid = useCallback(
     (errors: Record<string, unknown>) => {
       const first = fields.find((f) => errors[f.key]);
@@ -193,6 +196,11 @@ function LiveForm({ node, scope, renderedAt }: FormIslandProps) {
 
   const onSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (unavailable !== null) {
+      // Nothing is sent from here (a branch's public preview): say so where a failed send would.
+      dispatch({ type: 'failure', formError: unavailable });
+      return;
+    }
     if (inFlight.current || state.status === 'submitting') return;
     // The same check the reducer runs, to know the outcome synchronously.
     const next = formReducer(state, { type: 'submit' }, deps);
@@ -245,7 +253,8 @@ function LiveForm({ node, scope, renderedAt }: FormIslandProps) {
       <form
         {...(domProps as any)}
         method="post"
-        action={SUBMIT_PATH}
+        // Without an action a post without JavaScript goes to the page's own address, which a preview host refuses.
+        action={unavailable === null ? SUBMIT_PATH : undefined}
         noValidate={hydrated || undefined}
         onSubmit={onSubmit}
         aria-describedby={state.formError ? formErrorId : undefined}

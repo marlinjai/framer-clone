@@ -11,6 +11,7 @@
 // so it is importable from a plain Vitest unit test with zero setup.
 
 import { customAlphabet } from 'nanoid';
+import { isPreviewLabel } from '@/lib/sites/previewHost';
 
 // RFC-1035 label: lowercase, <= 63 chars, starts/ends alphanumeric, internal
 // hyphens allowed. We generate over [a-z0-9] only (no hyphens), so every output
@@ -49,7 +50,8 @@ const RESERVED_LOOKUP: ReadonlySet<string> = new Set(
  * `'app'`, `'APP'` and `'App'` all return true.
  */
 export function isReserved(label: string): boolean {
-  return RESERVED_LOOKUP.has(label.toLowerCase());
+  // `preview-...` is kept for the public preview links of site branches (src/lib/sites/previewHost.ts).
+  return RESERVED_LOOKUP.has(label.toLowerCase()) || isPreviewLabel(label);
 }
 
 /**

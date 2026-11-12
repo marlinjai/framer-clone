@@ -414,6 +414,21 @@ The same switch decides what an agent is offered: the branch tools of the MCP en
 the others) are in the tool list and callable only for a key of a company in the list. The public plugin (0.4.0) already
 ships the work-on-a-branch skill; it checks the tool list first and works on the site directly while the tools are absent.
 
+**Public preview links (slice S8).** A person who may edit a site can give an open branch a public address,
+`preview-<token>.PUBLIC_SITE_BASE_HOST` (production: `preview-<token>.sites.lumitra.co`), which shows the branch
+read only to anyone who has it. It needs nothing new on the server: the address is one label under the wildcard record
+and certificate that published sites already use, and no site can be given a label that starts with `preview-`.
+**The certificate for `*.PUBLIC_SITE_BASE_HOST` must stay one wildcard certificate** (issued by DNS validation, as
+it is today): the secret of a preview is its hostname, and a certificate issued for a single preview host would
+publish that hostname in the public certificate transparency logs. Never route a preview label through a router
+that asks for its own certificate. To check: `openssl s_client -connect <any label>.sites.lumitra.co:443
+-servername <any label>.sites.lumitra.co` must show `*.sites.lumitra.co` as the name, for a label never used
+before. Without `PUBLIC_SITE_BASE_HOST` no link can be made. A link shows nothing once it is revoked or expired, once its
+branch is merged or discarded, and while `SITE_BRANCHES_COMPANIES` does not list the branch's company. Migration
+`20261112120000_site_branch_previews` is additive (one table, one unique index on `site_branches` that every row
+satisfies) and needs no reversing; older code ignores the table, so after a code rollback every preview address answers
+404 until the code is rolled forward again.
+
 Migration `20261111000000_site_branches` is additive (one nullable column on `sites`, one table, constraints every
 existing row satisfies) and needs no reversing. Migration `20261112000000_site_branch_merge_undo` (slice S7) adds four nullable columns to `site_branches` and needs
 no reversing either; older code ignores them.

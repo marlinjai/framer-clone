@@ -19,6 +19,8 @@
 // reachable only by someone who already has its address.
 
 import { parseSiteImageFile } from '@/lib/site/siteImages';
+import { isPreviewHost } from '@/lib/sites/previewHost';
+import { resolvePreviewLink } from '@/server/sites/branches/previewLinks';
 import { getCachedPublishedSite } from '@/server/sites/cachedResolver';
 import { matchesEtag, readSiteImage, readSiteImageType, siteImageHeaders } from '@/server/sites/siteImages';
 
@@ -34,29 +36,49 @@ function notFound(): Response {
   });
 }
 
+/**
+ * This route is outside the middleware's matcher, so a preview host gets here what the middleware sets on its
+ * pages: never stored, never indexed, never sent on as a referrer.
+ */
+function asPreview(response: Response): Response {
+  response.headers.set('cache-control', 'private, no-store');
+  response.headers.set('x-robots-tag', 'noindex, nofollow, noarchive');
+  response.headers.set('referrer-policy', 'no-referrer');
+  return response;
+}
+
 export async function GET(request: Request, { params }: Ctx): Promise<Response> {
   const { file } = await params;
   const named = parseSiteImageFile(file);
-  if (!named) return notFound();
+  if (!named) return isPreviewHost(request.headers.get('host')) ? asPreview(notFound()) : notFound();
 
+  // A branch's public preview shows its site's images (they belong to main), but privately: the address is a
+  // secret that ends, so nothing of it may sit in a shared cache or be loaded by another origin.
+  const host = request.headers.get('host');
+  const preview = isPreviewHost(host);
+  const visibility = preview ? 'private' : 'public';
   let siteId: string | null;
   try {
-    siteId = (await getCachedPublishedSite(request.headers.get('host')))?.siteId ?? null;
+    siteId = (preview ? await resolvePreviewLink(host) : await getCachedPublishedSite(host))?.siteId ?? null;
   } catch (err) {
     console.error('site-images: could not resolve the site.', err);
-    return new Response(null, { status: 503 });
+    return preview ? asPreview(new Response(null, { status: 503 })) : new Response(null, { status: 503 });
   }
-  if (!siteId) return notFound();
+  if (!siteId) return preview ? asPreview(notFound()) : notFound();
+  const headersFor = (sha: string, type: string) => siteImageHeaders(sha, type, visibility);
+  const answer = (response: Response) => (preview ? asPreview(response) : response);
 
   if (matchesEtag(request.headers.get('if-none-match'), named.sha256)) {
     const type = await readSiteImageType(siteId, named.sha256);
-    if (type !== named.contentType) return notFound();
-    return new Response(null, { status: 304, headers: siteImageHeaders(named.sha256, type, 'public') });
+    if (type !== named.contentType) return answer(notFound());
+    return answer(new Response(null, { status: 304, headers: headersFor(named.sha256, type) }));
   }
   const image = await readSiteImage(siteId, named.sha256);
-  if (!image || image.contentType !== named.contentType) return notFound();
-  return new Response(Buffer.from(image.bytes), {
-    status: 200,
-    headers: { ...siteImageHeaders(named.sha256, image.contentType, 'public'), 'content-length': String(image.bytes.byteLength) },
-  });
+  if (!image || image.contentType !== named.contentType) return answer(notFound());
+  return answer(
+    new Response(Buffer.from(image.bytes), {
+      status: 200,
+      headers: { ...headersFor(named.sha256, image.contentType), 'content-length': String(image.bytes.byteLength) },
+    }),
+  );
 }

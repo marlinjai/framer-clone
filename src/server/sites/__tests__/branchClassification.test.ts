@@ -29,7 +29,11 @@ const CLASSIFIED: Record<string, { uses: number; kind: Kind; why: string }> = {
     uses: 64, kind: 'sees-branches',
     why: 'listSites filters to mains; save works on a branch id, its image check against the images of main; publish, rollback, unpublish, domains, delete and erase refuse a branch; erase of a main covers its branches, moves an up-to-date fork point with main, and removes a kept pre-merge copy it could not clean fully',
   },
-  'src/server/sites/branches/repository.ts': { uses: 28, kind: 'sees-branches', why: 'the branch repository itself; listing a site\'s branches also removes a kept pre-merge copy whose 30 days are over' },
+  'src/server/sites/branches/repository.ts': { uses: 29, kind: 'sees-branches', why: 'the branch repository itself; listing a site\'s branches also removes a kept pre-merge copy whose 30 days are over; closing a branch deletes its public preview link' },
+  'src/server/sites/branches/previewLinks.ts': {
+    uses: 13, kind: 'sees-branches',
+    why: 'the public preview link of a branch: made, read and revoked through the caller\'s workspace and the branch\'s main; resolved for a visitor by the token\'s hash only, for an open branch of a company with the switch on, and rendered under main\'s id with analytics off',
+  },
   'src/server/sites/branches/merge.ts': { uses: 25, kind: 'sees-branches', why: 'the review, update and merge of a branch: resolves the branch and its main through the caller\'s workspace, locks main then the branch; undoing a merge locks main, writes it back and makes the new branch row, all scoped the same way, without counting the open branches (the undo is outside their limit)' },
   'src/server/sites/branches/editorState.ts': { uses: 5, kind: 'sees-branches', why: 'the editor page\'s main, branch or closed branch (and the branch an undone merge went into), through the caller\'s workspace; nothing while the switch is off' },
   'src/server/sites/branches/closed.ts': { uses: 1, kind: 'sees-branches', why: 'answers a closed branch id with 410' },
@@ -87,8 +91,8 @@ const SRC = path.join(ROOT, 'src');
 
 const TOUCHES = new RegExp(
   [
-    String.raw`\.(?:site|sitePage|siteDomain|siteRevision|siteImage|siteExperiment|siteBranch|siteErasure|siteOperationAudit|cspReportCount)\.(?:findMany|findFirst|findFirstOrThrow|findUnique|findUniqueOrThrow|count|updateMany|update|deleteMany|delete|create|createMany|upsert|groupBy|aggregate)\(`,
-    String.raw`\b(?:FROM|JOIN|UPDATE|INTO)\s+(?:public\.)?"?(?:sites|site_pages|site_domains|site_revisions|site_images|site_branches|site_experiments|site_erasures|site_operation_audits|csp_report_counts)"?\b`,
+    String.raw`\.(?:site|sitePage|siteDomain|siteRevision|siteImage|siteExperiment|siteBranch|siteBranchPreview|siteErasure|siteOperationAudit|cspReportCount)\.(?:findMany|findFirst|findFirstOrThrow|findUnique|findUniqueOrThrow|count|updateMany|update|deleteMany|delete|create|createMany|upsert|groupBy|aggregate)\(`,
+    String.raw`\b(?:FROM|JOIN|UPDATE|INTO)\s+(?:public\.)?"?(?:sites|site_pages|site_domains|site_revisions|site_images|site_branches|site_branch_previews|site_experiments|site_erasures|site_operation_audits|csp_report_counts)"?\b`,
   ].join('|'),
 );
 

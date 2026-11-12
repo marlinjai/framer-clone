@@ -15,6 +15,7 @@ import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { createScope } from '@/lib/bindings/resolver/scope';
 import { renderComponentNode } from '../../server/renderComponentNode';
 import FormIsland from '../FormIsland';
+import { FormUnavailableContext } from '@/lib/forms/unavailable';
 
 function formNode(props: Record<string, unknown> = {}): ComponentNode {
   return {
@@ -266,5 +267,36 @@ describe('German pages', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: /Send request/ })).toBeTruthy());
     fireEvent.click(submitButton());
     await screen.findAllByText('Bitte füllen Sie dieses Feld aus.');
+  });
+});
+
+describe('FormIsland where nothing can be sent (a branch\'s public preview)', () => {
+  const NOTICE = 'This is a preview: nothing is sent or ordered from it.';
+  const inPreview = (ui: React.ReactNode) => <FormUnavailableContext.Provider value={NOTICE}>{ui}</FormUnavailableContext.Provider>;
+
+  it('server-renders the form without an address to post to', () => {
+    const html = renderToStaticMarkup(inPreview(<>{renderComponentNode(formNode(), createScope())}</>));
+    expect(html).toContain('<form');
+    expect(html).not.toContain('action=');
+    expect(html).not.toContain('/api/forms/submit');
+  });
+
+  it('says so on submit and sends nothing, valid or not, and again on a second try', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    render(inPreview(<FormIsland node={formNode()} scope={createScope()} renderedAt={RENDERED_AT} />));
+    await act(async () => {
+      fireEvent.click(submitButton());
+    });
+    expect(screen.getByRole('alert').textContent).toContain(NOTICE);
+    fillValid();
+    await act(async () => {
+      fireEvent.click(submitButton());
+    });
+    expect(screen.getByRole('alert').textContent).toContain(NOTICE);
+    expect(screen.queryByText('Thanks, we will reply.')).toBeNull();
+    // The button is not left in its loading state: the form stays usable to look at.
+    expect(submitButton().textContent).toContain('Send request');
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
   });
 });

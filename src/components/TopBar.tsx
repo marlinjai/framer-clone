@@ -73,7 +73,7 @@ import {
 import EditableProjectTitle from './EditableProjectTitle';
 import { useSiteBranch } from '@/contexts/SiteBranchContext';
 import BranchSwitcher from './branches/BranchSwitcher';
-import { BranchBadge, MainChangedNote, ReviewAndMergeButton } from './branches/BranchBar';
+import { BranchBadge, MainChangedNote, ReviewAndMergeButton, SharePreviewButton } from './branches/BranchBar';
 import ColorModeSwitch, { useHasColorModeSwitch } from './ColorModeSwitch';
 
 function relativeTime(ts: number, now: number): string {
@@ -435,6 +435,7 @@ const TopBar = observer(() => {
       {onBranch ? (
         <>
           <MainChangedNote className="mr-2" />
+          <SharePreviewButton className="mr-2" />
           <ReviewAndMergeButton />
         </>
       ) : (

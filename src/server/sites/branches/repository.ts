@@ -550,6 +550,8 @@ export class SiteBranchRepository {
       select: RECORD_SELECT,
     });
     await tx.site.deleteMany({ where: { id: branchId, branchOfSiteId: { not: null } } });
+    // The public preview link ends with the branch (S8): there is nothing left for it to show.
+    await tx.siteBranchPreview.deleteMany({ where: { branchId } });
     return row;
   }
 
