@@ -29,6 +29,11 @@ function glb(tag: string, bin = 8): Uint8Array {
   return out;
 }
 
+const row = (siteId: string, sha256: string, bytes: number, extra: Record<string, unknown> = {}) => ({
+  siteId, sha256, bytes, triangles: 1, materials: 1, nodes: 1, clips: 0, extensions: [], uploaderId: 'u',
+  createdAt: new Date(), lastUsedAt: new Date(), originalSha256: `o-${sha256}`, originalBytes: 1, ...extra,
+});
+
 const SMALL: DecodedStats = { triangles: 1000, maxTextureSide: 1024, boundingBox: [4, 2, 8], materials: 2, nodes: 5, clips: 0 };
 const okValidator: ModelValidator = { validate: async () => ({ ok: true }) };
 /** A re-encoder that returns a fixed output, measuring whatever it is told to. */
@@ -42,7 +47,7 @@ const refused = (r: Awaited<ReturnType<typeof acceptModelUpload>>) => { if (r.ok
 
 describe('quotas (D1: the defaults, never raised here)', () => {
   it('keeps the plan\'s figures', () => {
-    expect(MODEL_QUOTAS).toEqual({ perModel: 8 * MB, firstVariant: 4 * MB, perScene: 12 * MB, perSite: 200 * MB });
+    expect(MODEL_QUOTAS).toEqual({ perModel: 8 * MB, firstVariant: 4 * MB, perScene: 12 * MB, perSite: 200 * MB, originalsPerSite: 200 * MB });
   });
   it('refuses a model over 8 MB with the measured figure and a hint, and accepts exactly 8 MB', () => {
     expect(checkModelQuota(8 * MB, 0).ok).toBe(true);
@@ -176,29 +181,92 @@ describe('the upload pipeline fails closed', () => {
     const big = glb('big', 8 * MB + 16);
     expect(refused(await acceptModelUpload(glb('in'), 's1', 'u', deps({ reencoder: reencoder(big) })))).toMatchObject({ status: 413, code: 'model-too-large' });
     const d = deps();
-    await d.models.insert({ siteId: 's1', sha256: 'f'.repeat(64), bytes: 200 * MB, triangles: 1, materials: 1, nodes: 1, clips: 0, extensions: [], uploaderId: 'u', createdAt: new Date() });
+    await d.models.insertWithinQuota(row('s1', 'f'.repeat(64), 200 * MB), { servedBytes: 1e12, originalBytes: 1e12 });
     expect(refused(await acceptModelUpload(glb('in'), 's1', 'u', d))).toMatchObject({ status: 413, code: 'site-quota' });
     expect(d.blobs.files.size).toBe(0);
   });
 
   it('counts the site quota per site: another site\'s models do not count', async () => {
     const d = deps();
-    await d.models.insert({ siteId: 's2', sha256: 'f'.repeat(64), bytes: 200 * MB, triangles: 1, materials: 1, nodes: 1, clips: 0, extensions: [], uploaderId: 'u', createdAt: new Date() });
+    await d.models.insertWithinQuota(row('s2', 'f'.repeat(64), 200 * MB), { servedBytes: 1e12, originalBytes: 1e12 });
     expect((await acceptModelUpload(glb('in'), 's1', 'u', d)).ok).toBe(true);
   });
 
-  it('removes only what a failed save added, never a blob another site already holds', async () => {
+  it('deletes nothing when saving fails: shared blobs may be relied on by another site or a concurrent upload', async () => {
     const d = deps();
     await acceptModelUpload(glb('in'), 's2', 'u', d);
     const before = new Set(d.blobs.files.keys());
-    d.models.insert = async () => { throw new Error('db down'); };
+    d.models.insertWithinQuota = async () => { throw new Error('db down'); };
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     expect(refused(await acceptModelUpload(glb('in'), 's1', 'u', d))).toMatchObject({ status: 500, code: 'store-failed' });
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
     expect(new Set(d.blobs.files.keys())).toEqual(before);
+    expect(await d.blobs.get([...before].find((k) => k.startsWith('served/'))!)).not.toBeNull();
+  });
 
-    const fresh = deps({ reencoder: reencoder(glb('other')) });
-    fresh.models.insert = async () => { throw new Error('db down'); };
-    await acceptModelUpload(glb('in'), 's1', 'u', fresh);
-    expect(fresh.blobs.files.size).toBe(0);
+  it('two concurrent identical uploads: one row, both succeed, the blob survives', async () => {
+    const d = deps();
+    const release: (() => void)[] = [];
+    const slow = d.blobs.put.bind(d.blobs);
+    d.blobs.put = (key, bytes) => new Promise<void>((resolve) => { release.push(() => void slow(key, bytes).then(resolve)); });
+    const a = acceptModelUpload(glb('in'), 's1', 'u', d);
+    const b = acceptModelUpload(glb('in'), 's1', 'u', d);
+    // Each upload writes its two blobs one after the other: hold both uploads at each write so they interleave.
+    for (let round = 0; round < 2; round++) {
+      while (release.length < 2) await new Promise((r) => setTimeout(r, 1));
+      release.splice(0).forEach((r) => r());
+    }
+    const [ra, rb] = await Promise.all([a, b]);
+    expect(ra.ok && rb.ok).toBe(true);
+    expect([ra, rb].filter((r) => r.ok && r.alreadyStored).length).toBe(1);
+    expect((await d.models.list('s1')).length).toBe(1);
+    expect(await d.blobs.has([...d.blobs.files.keys()].find((k) => k.startsWith('served/'))!)).toBe(true);
+  });
+
+  it('cannot pass the site quota with parallel uploads: the quota is checked inside the insert', async () => {
+    const d = deps();
+    await d.models.insertWithinQuota(row('s1', '1'.repeat(64), 199 * MB), { servedBytes: 1e12, originalBytes: 1e12 });
+    const outputs = [glb('a', 600 * 1024), glb('b', 600 * 1024), glb('c', 600 * 1024)];
+    let i = 0;
+    const re: ModelReencoder = { reencode: async () => ({ bytes: outputs[i++ % 3], input: SMALL, output: SMALL }) };
+    const results = await Promise.all([0, 1, 2].map((n) => acceptModelUpload(glb(`in${n}`), 's1', 'u', { ...d, reencoder: re })));
+    expect(results.filter((r) => r.ok).length).toBe(1);
+    expect(await d.models.totalBytes('s1')).toBeLessThanOrEqual(200 * MB);
+  });
+
+  it('refuses early, before decoding, a site already at its quota', async () => {
+    const d = deps();
+    await d.models.insertWithinQuota(row('s1', 'f'.repeat(64), 200 * MB), { servedBytes: 1e12, originalBytes: 1e12 });
+    const reencode = vi.fn();
+    expect(refused(await acceptModelUpload(glb('in'), 's1', 'u', { ...d, reencoder: { reencode } as never }))).toMatchObject({ status: 413, code: 'site-quota' });
+    expect(reencode).not.toHaveBeenCalled();
+  });
+
+  it('caps the originals kept per site, so tiny rows cannot pin large originals', async () => {
+    const d = deps();
+    await d.models.insertWithinQuota(row('s1', '2'.repeat(64), 1, { originalBytes: 200 * MB }), { servedBytes: 1e12, originalBytes: 1e12 });
+    expect(refused(await acceptModelUpload(glb('in'), 's1', 'u', d))).toMatchObject({ status: 413, code: 'site-quota', message: expect.stringMatching(/originals/) });
+  });
+
+  it('refreshes a model\'s last use when the same content is uploaded again', async () => {
+    const d = deps({ now: () => new Date('2026-11-01T00:00:00Z') });
+    await acceptModelUpload(glb('in'), 's1', 'u', d);
+    const later = new Date('2026-11-29T00:00:00Z');
+    const again = await acceptModelUpload(glb('in'), 's1', 'u', { ...d, now: () => later });
+    expect(again.ok && again.alreadyStored).toBe(true);
+    expect((await d.models.list('s1'))[0].lastUsedAt).toEqual(later);
+    expect((await d.models.list('s1'))[0].createdAt).toEqual(new Date('2026-11-01T00:00:00Z'));
+  });
+
+  it.each<[string, unknown]>([
+    ['no bounding box', { ...SMALL, boundingBox: undefined }], ['a short bounding box', { ...SMALL, boundingBox: [1, 1] }],
+    ['a non-array bounding box', { ...SMALL, boundingBox: 5 }], ['NaN materials', { ...SMALL, materials: NaN }], ['no stats at all', undefined],
+  ])('refuses malformed measurements cleanly: %s', async (_n, bad) => {
+    const re: ModelReencoder = { reencode: async () => ({ bytes: glb('out'), input: bad as never, output: SMALL }) };
+    expect(refused(await acceptModelUpload(glb('in'), 's1', 'u', deps({ reencoder: re })))).toMatchObject({ status: 413 });
+    const re2: ModelReencoder = { reencode: async () => ({ bytes: undefined as never, input: SMALL, output: SMALL }) };
+    expect(refused(await acceptModelUpload(glb('in'), 's1', 'u', deps({ reencoder: re2 })))).toMatchObject({ status: 500 });
   });
 });
 
@@ -270,32 +338,46 @@ describe('collection', () => {
   const day = 86_400_000;
   const now = new Date('2026-12-01T00:00:00Z');
   const at = (days: number) => new Date(now.getTime() - days * day);
+  const m = (siteId: string, sha256: string, days: number, used = days, original = `o-${sha256}`) => ({ siteId, sha256, originalSha256: original, createdAt: at(days), lastUsedAt: at(used) });
+  const counts = (models: ReturnType<typeof m>[]) => {
+    const served = new Map<string, number>();
+    const originals = new Map<string, number>();
+    for (const x of models) { served.set(x.sha256, (served.get(x.sha256) ?? 0) + 1); originals.set(x.originalSha256, (originals.get(x.originalSha256) ?? 0) + 1); }
+    return { rowsPerSha: served, rowsPerOriginal: originals };
+  };
 
-  it('collects an unreferenced model after 30 days, never before, never while referenced', () => {
-    const plan = planCollection({
-      now,
-      models: [
-        { siteId: 's', sha256: 'old-unused', createdAt: at(31) },
-        { siteId: 's', sha256: 'exactly-30', createdAt: at(30) },
-        { siteId: 's', sha256: 'new-unused', createdAt: at(29) },
-        { siteId: 's', sha256: 'old-used', createdAt: at(400) },
-      ],
-      referenced: new Set(['s/old-used']),
-    });
-    expect(plan.rows.map((r) => r.sha256).sort()).toEqual(['exactly-30', 'old-unused']);
+  it('collects an unreferenced model only AFTER 30 days from its last use, never while referenced', () => {
+    const models = [m('s', 'old-unused', 31), m('s', 'exactly-30', 30), m('s', 'new-unused', 29), m('s', 'old-used', 400), m('s', 'old-but-reused', 400, 5)];
+    const plan = planCollection({ now, models, referenced: new Set(['s/old-used']), ...counts(models) });
+    expect(plan.rows.map((r) => r.sha256)).toEqual(['old-unused']);
+    expect(plan.blobs).toEqual(['old-unused']);
+    expect(plan.originals).toEqual(['o-old-unused']);
   });
 
-  it('references are per site: another site\'s use does not keep this site\'s row, but keeps the shared blob', () => {
-    const plan = planCollection({
-      now,
-      models: [{ siteId: 'a', sha256: 'shared', createdAt: at(60) }, { siteId: 'b', sha256: 'shared', createdAt: at(60) }, { siteId: 'a', sha256: 'solo', createdAt: at(60) }],
-      referenced: new Set(['b/shared']),
-    });
+  it('references are per site; another site\'s row keeps the shared blob and the shared original', () => {
+    const models = [m('a', 'shared', 60, 60, 'o-shared'), m('b', 'shared', 60, 60, 'o-shared'), m('a', 'solo', 60)];
+    const plan = planCollection({ now, models, referenced: new Set(['b/shared']), ...counts(models) });
     expect(plan.rows).toEqual([{ siteId: 'a', sha256: 'shared' }, { siteId: 'a', sha256: 'solo' }]);
     expect(plan.blobs).toEqual(['solo']);
+    expect(plan.originals).toEqual(['o-solo']);
+  });
+
+  it('is safe on a partial list: the counts come from the repository, so a row outside the list still keeps its blob', () => {
+    const candidates = [m('a', 'shared', 60)];
+    const plan = planCollection({ now, models: candidates, referenced: new Set(), rowsPerSha: new Map([['shared', 2]]), rowsPerOriginal: new Map([['o-shared', 2]]) });
+    expect(plan.rows).toEqual([{ siteId: 'a', sha256: 'shared' }]);
+    expect(plan.blobs).toEqual([]);
+    expect(plan.originals).toEqual([]);
+  });
+
+  it('deletes no blob on an unknown count', () => {
+    const plan = planCollection({ now, models: [m('a', 'x', 60)], referenced: new Set(), rowsPerSha: new Map(), rowsPerOriginal: new Map() });
+    expect(plan.rows.length).toBe(1);
+    expect(plan.blobs).toEqual([]);
+    expect(plan.originals).toEqual([]);
   });
 
   it('collects nothing from nothing', () => {
-    expect(planCollection({ now, models: [], referenced: new Set() })).toEqual({ rows: [], blobs: [] });
+    expect(planCollection({ now, models: [], referenced: new Set(), rowsPerSha: new Map(), rowsPerOriginal: new Map() })).toEqual({ rows: [], blobs: [], originals: [] });
   });
 });

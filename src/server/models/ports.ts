@@ -26,12 +26,25 @@ export interface SiteModelRecord {
   extensions: string[];
   uploaderId: string;
   createdAt: Date;
+  /** Set whenever the same model is uploaded or chosen again, so collection counts age from the last use. */
+  lastUsedAt: Date;
+  /** The kept original (`original/<sha256>`), never served. */
+  originalSha256: string;
+  originalBytes: number;
 }
 
-/** Metadata, unique on (siteId, sha256) and never updated. */
+export type InsertOutcome = { ok: true } | { ok: false; reason: 'exists' | 'quota' | 'originals-quota' };
+
+/**
+ * Metadata, unique on (siteId, sha256). Rows are never edited except `lastUsedAt` (touch).
+ * `insertWithinQuota` must be ATOMIC: the totals are read and the row written as one step (a single
+ * conditional statement or a per-site lock in the real adapter), because two uploads that each read
+ * the total first would both pass.
+ */
 export interface SiteModelRepository {
   find(siteId: string, sha256: string): Promise<SiteModelRecord | null>;
-  insert(record: SiteModelRecord): Promise<void>;
+  insertWithinQuota(record: SiteModelRecord, limits: { servedBytes: number; originalBytes: number }): Promise<InsertOutcome>;
+  touch(siteId: string, sha256: string, at: Date): Promise<void>;
   totalBytes(siteId: string): Promise<number>;
   list(siteId: string): Promise<SiteModelRecord[]>;
   delete(siteId: string, sha256: string): Promise<void>;

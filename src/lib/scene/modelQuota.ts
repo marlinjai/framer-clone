@@ -19,6 +19,8 @@ export const MODEL_QUOTAS = {
   perScene: 12 * MB,
   /** All models of one site. */
   perSite: 200 * MB,
+  /** The originals kept for one later re-encode, all of one site. Stricter than the plan, which counts nothing for them: without it a row of a few kilobytes could pin a 50 MB original. */
+  originalsPerSite: 200 * MB,
 } as const;
 
 export type QuotaCheck = { ok: true } | { ok: false; status: 413; code: 'model-too-large' | 'scene-too-large' | 'site-quota'; message: string };
