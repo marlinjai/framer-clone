@@ -155,6 +155,14 @@ const FX_BUDGET_BYTES = 371_000;
 /** Only in the engine's chunks: three.js's renderer class name survives minification as a string. */
 const ENGINE_MARK = 'WebGLRenderer';
 
+/**
+ * Only in code that carries the scene format: a layer schema's label and a preset's
+ * id, both plain strings that survive minification. The editor's palette imports the
+ * presets (src/lib/componentRegistry.ts), so a page without a scene must prove it
+ * fetches neither.
+ */
+const FORMAT_MARKS = ['Noise Field', 'gold-noise-gradient'];
+
 /** A scene that is one picture: an image layer at full opacity, filling the box. */
 const pictureScene = (src: string) => ({
   version: 1,
@@ -198,7 +206,7 @@ describe.each(ENGINES)('in %s', (name, engine) => {
   let problems: string[];
   let warnings: string[];
   /** Every script the page fetched, with whether it holds the engine. */
-  let scripts: Promise<{ url: string; engine: boolean }>[];
+  let scripts: Promise<{ url: string; engine: boolean; format: boolean }>[];
 
   const box = (id = 'hero') => page.locator(`[data-t="${id}"]`).first();
   const state = (id = 'hero') => box(id).getAttribute('data-fc-fx-state');
@@ -208,6 +216,8 @@ describe.each(ENGINES)('in %s', (name, engine) => {
     });
   const fxWarnings = () => warnings.filter((text) => text.includes('FX scene'));
   const engineScripts = async (): Promise<string[]> => (await Promise.all(scripts)).filter((script) => script.engine).map((script) => script.url);
+  /** The scripts that carry the scene format (layer schemas, presets). */
+  const formatScripts = async (): Promise<string[]> => (await Promise.all(scripts)).filter((script) => script.format).map((script) => script.url);
   const canvases = () => page.locator('canvas').count();
 
   /** The colour of one pixel of the page, read from a real screenshot. */
@@ -240,7 +250,12 @@ describe.each(ENGINES)('in %s', (name, engine) => {
     page.on('response', (response) => {
       const url = response.url();
       if (!url.includes('/_next/static/') || !url.split('?')[0].endsWith('.js')) return;
-      scripts.push(response.text().then((text) => ({ url, engine: text.includes(ENGINE_MARK) }), () => ({ url, engine: false })));
+      scripts.push(
+        response.text().then(
+          (text) => ({ url, engine: text.includes(ENGINE_MARK), format: FORMAT_MARKS.some((mark) => text.includes(mark)) }),
+          () => ({ url, engine: false, format: false }),
+        ),
+      );
     });
   };
 
@@ -327,6 +342,8 @@ describe.each(ENGINES)('in %s', (name, engine) => {
     await page.goto(`${origin}/fx-none`, { waitUntil: 'networkidle' });
     expect((await Promise.all(scripts)).length).toBeGreaterThan(0);
     expect(await engineScripts()).toEqual([]);
+    // Nor the scene format: no layer schema and no preset rides along with the page's own code.
+    expect(await formatScripts()).toEqual([]);
     expect(await page.locator('[data-fc-fx]').count()).toBe(0);
     expect(await canvases()).toBe(0);
     const open = await openPoint();

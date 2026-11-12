@@ -84,6 +84,9 @@ function settingLabel(key: string, schema: ParamSchema): string {
   return raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
 }
 
+/** A kind's label as the engine has it, with a capital: two of them ("halftone", "pixelate") come without. */
+const kindName = (label: string): string => label.charAt(0).toUpperCase() + label.slice(1);
+
 const decimalsOf = (step: number): number => Math.min(6, Math.max(0, -Math.floor(Math.log10(step))));
 
 /**
@@ -180,7 +183,7 @@ function TextSetting({ label, value, maxLength, onChange }: { label: string; val
 }
 
 /** An image layer's picture: one the site stores, uploaded here. Never an address typed by hand. */
-function PictureSetting({ projectId, value, onChange }: { projectId: string | undefined; value: string; onChange: (value: string) => void }) {
+function PictureSetting({ projectId, demo, value, onChange }: { projectId: string | undefined; demo: boolean; value: string; onChange: (value: string) => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState('');
@@ -188,8 +191,9 @@ function PictureSetting({ projectId, value, onChange }: { projectId: string | un
 
   const upload = async (file: File) => {
     setProblem('');
-    if (!projectId) {
-      setProblem('Save the site first, then upload a picture.');
+    if (!projectId || demo) {
+      // The demo lives in this browser tab only: no server holds it, so there is nowhere to store a picture.
+      setProblem('The demo is not stored anywhere yet, so it cannot hold a picture. Choose Keep as project in the editor, then upload the picture.');
       return;
     }
     if (file.size > MAX_SITE_IMAGE_BYTES) {
@@ -265,8 +269,13 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
   const stored = (component.props as Record<string, unknown>)[FX_PROP];
   const read = parseFxProp(stored);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [notes, setNotes] = useState<string[]>([]);
-  const [problem, setProblem] = useState('');
+  // What the last change left to say, kept with the scene it was said about: after an
+  // undo, or a change made elsewhere, the scene is another one and the message is gone.
+  const sceneKey = JSON.stringify(stored ?? null);
+  const [said, setSaid] = useState<{ about: string; notes: string[]; problem: string }>({ about: sceneKey, notes: [], problem: '' });
+  const notes = said.about === sceneKey ? said.notes : [];
+  const problem = said.about === sceneKey ? said.problem : '';
+  const setProblem = (message: string) => setSaid({ about: sceneKey, notes: [], problem: message });
   const [importing, setImporting] = useState(false);
   const [importText, setImportText] = useState('');
   const [copied, setCopied] = useState('');
@@ -274,8 +283,7 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
   // Another box: nothing of the last one's messages or selection carries over.
   useEffect(() => {
     setSelectedId(null);
-    setNotes([]);
-    setProblem('');
+    setSaid({ about: '', notes: [], problem: '' });
     setImporting(false);
     setImportText('');
     setCopied('');
@@ -287,8 +295,7 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
       setProblem(edit.message);
       return false;
     }
-    setProblem('');
-    setNotes(edit.notes);
+    setSaid({ about: JSON.stringify(edit.stored), notes: edit.notes, problem: '' });
     component.setProps({ [FX_PROP]: edit.stored });
     return true;
   };
@@ -327,7 +334,7 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
   const layers = fx.scene.layers;
   const selected = layers.find((l) => l.id === selectedId) ?? null;
   const addable = listAddableTypes();
-  const kindLabel = (type: string) => addable.find((t) => t.type === type)?.label ?? type;
+  const kindLabel = (type: string) => kindName(addable.find((t) => t.type === type)?.label ?? type);
   const layerName = (id: string) => layers.find((l) => l.id === id)?.name ?? id;
 
   const settingControl = (layer: Layer, key: string, schema: ParamSchema) => {
@@ -355,7 +362,7 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
           </PropertyRow>
         );
       case 'string':
-        if (layer.type === 'image' && key === 'src') return <PictureSetting key={key} projectId={projectId} value={schema.value} onChange={set} />;
+        if (layer.type === 'image' && key === 'src') return <PictureSetting key={key} projectId={projectId} demo={editorUI.isUnsavedDemo} value={schema.value} onChange={set} />;
         return <TextSetting key={key} label={label} value={schema.value} maxLength={200} onChange={set} />;
       case 'vec2':
         return (
@@ -398,16 +405,27 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
       setProblem('This is not JSON. Paste the whole scene, from the first { to the last }.');
       return;
     }
+    const NOT_A_SCENE = 'This is JSON, but not an FX scene: it has no list of layers and is not a Lumitra Studio scene either.';
     let scene = value;
-    const looksPlain = !!value && typeof value === 'object' && Array.isArray((value as { layers?: unknown }).layers);
-    if (!looksPlain) {
-      // Not the engine's own format: it may be a scene in Lumitra Studio's format, which the bridge converts.
+    const record = value && typeof value === 'object' && !Array.isArray(value) ? (value as { layers?: unknown; root?: unknown }) : null;
+    if (!record) {
+      setProblem(NOT_A_SCENE);
+      return;
+    }
+    if (!Array.isArray(record.layers)) {
+      // Not the engine's own format. A scene in Lumitra Studio's format holds its layers under `root.children`,
+      // and the bridge converts it. Anything else is refused here: the bridge reads any object as an empty scene.
+      const root = record.root && typeof record.root === 'object' ? (record.root as { children?: unknown }) : null;
+      if (!root || !Array.isArray(root.children)) {
+        setProblem(NOT_A_SCENE);
+        return;
+      }
       try {
         const { sceneConfigFromUnified } = await import('@/lib/fx/unified');
         const { serializeScene } = await import('@/lib/fx/format');
         scene = serializeScene(sceneConfigFromUnified(value));
       } catch {
-        setProblem('This is JSON, but not an FX scene: it has no list of layers and is not a Lumitra Studio scene either.');
+        setProblem('This looks like a Lumitra Studio scene, but it could not be converted. Export it again from Studio and paste the whole text.');
         return;
       }
     }
@@ -476,7 +494,7 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
         label="Add a layer"
         value=""
         placeholder="Choose a kind..."
-        options={addable.map((t) => ({ value: t.type, label: `${t.label} (${t.kind === 'content' ? 'draws' : 'changes what is drawn'})` }))}
+        options={addable.map((t) => ({ value: t.type, label: `${kindName(t.label)} (${t.kind === 'content' ? 'draws' : 'changes what is drawn'})` }))}
         onChange={(type) => {
           if (!type) return;
           const edit = addFxLayer(stored, type);
@@ -506,7 +524,7 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
           <PropertySelect
             label="Kind"
             value={selected.type}
-            options={addable.map((t) => ({ value: t.type, label: t.label }))}
+            options={addable.map((t) => ({ value: t.type, label: kindName(t.label) }))}
             onChange={(type) => {
               const edit = setFxLayerType(stored, selected.id, type);
               if (apply(edit) && edit.ok && edit.layerId) setSelectedId(edit.layerId);
