@@ -78,7 +78,10 @@ export function summary(over: Partial<BranchSummaryJson> = {}): BranchSummaryJso
   return {
     branchId: 'site-branch', mainSiteId: 'site-main', name: 'Spring sale', status: 'ready', createdByKind: 'user', createdBy: 'user-a',
     createdAt: '2026-11-11T09:00:00.000Z', updatedAt: '2026-11-11T09:00:00.000Z', version: 3, baseVersion: 8, mainMoved: false, readyBy: 'user-a',
-    readyAt: '2026-11-11T10:00:00.000Z', reviewNote: null, approved: false, mergedAt: null, discardedAt: null, ...over,
+    readyAt: '2026-11-11T10:00:00.000Z', reviewNote: null, approved: false, mergedAt: null, discardedAt: null,
+    undoUntil: null,
+    undoneIntoBranchId: null,
+    undoneAt: null, ...over,
   };
 }
 

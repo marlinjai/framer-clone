@@ -56,6 +56,11 @@ export interface BranchSummaryJson {
   approved: boolean;
   mergedAt: string | null;
   discardedAt: string | null;
+  /** A merged branch: until when its merge can be undone (ISO); null when it cannot (any more) or was undone. */
+  undoUntil: string | null;
+  /** A merged branch whose merge was undone: the branch that took the merged work back, and when (ISO). */
+  undoneIntoBranchId: string | null;
+  undoneAt: string | null;
 }
 
 /**
@@ -75,4 +80,8 @@ export interface ClosedBranchNotice {
   mainName: string;
   /** When it was merged or discarded (ISO), when known. */
   closedAt: string | null;
+  /** A merged branch: until when its merge can be undone (ISO); null when it cannot (any more) or was undone. */
+  undoUntil: string | null;
+  /** A merged branch whose merge was undone: the open branch that took the merged work back, with its name while it exists. */
+  undoneInto: { branchId: string; name: string | null; open: boolean } | null;
 }

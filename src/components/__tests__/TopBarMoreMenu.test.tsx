@@ -169,6 +169,9 @@ describe('the top bar on a site branch', () => {
       branchId: 'site_1', mainSiteId: 'site_main', name: 'Spring sale', status: 'open', createdByKind: 'user', createdBy: 'u',
       createdAt: '2026-11-11T09:00:00.000Z', updatedAt: '2026-11-11T09:00:00.000Z', version: 2, baseVersion: 5, mainMoved: false,
       readyBy: null, readyAt: null, reviewNote: null, approved: false, mergedAt: null, discardedAt: null,
+    undoUntil: null,
+    undoneIntoBranchId: null,
+    undoneAt: null,
     },
   };
   const main: EditorBranchState = { kind: 'main', siteId: 'site_1', siteName: 'Bakery', openBranches: 1 };

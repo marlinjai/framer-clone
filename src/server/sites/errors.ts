@@ -272,8 +272,10 @@ export class BranchNotFoundError extends SiteRepositoryError {
 export class BranchClosedError extends SiteNotFoundError {
   readonly branchStatus: 'merged' | 'discarded';
   readonly mainSiteId: string;
+  /** A merged branch whose merge was undone (S7): the open branch that took the merged work back. */
+  readonly undoneIntoBranchId: string | null;
 
-  constructor(branchStatus: 'merged' | 'discarded', mainSiteId: string) {
+  constructor(branchStatus: 'merged' | 'discarded', mainSiteId: string, undoneIntoBranchId: string | null = null) {
     super(mainSiteId, {
       code: 'branch_closed',
       message:
@@ -284,6 +286,32 @@ export class BranchClosedError extends SiteNotFoundError {
     });
     this.branchStatus = branchStatus;
     this.mainSiteId = mainSiteId;
+    this.undoneIntoBranchId = undoneIntoBranchId;
+  }
+}
+
+/**
+ * "Undo this merge" (S7) asked of a merge that cannot be undone: the branch was never merged, the 30 days ran
+ * out, a later merge into the site replaced the copy kept for it, an erase of personal data removed that copy,
+ * or this version of the editor cannot load it in full. Nothing was written. 409.
+ */
+export type MergeUndoUnavailableReason = 'not_merged' | 'expired' | 'replaced' | 'erased' | 'unreadable';
+
+const TAKE_BACK = 'To take the changes back, edit the site, or publish an earlier version.';
+const MERGE_UNDO_UNAVAILABLE: Record<MergeUndoUnavailableReason, string> = {
+  not_merged: 'This branch was not merged, so there is no merge to undo.',
+  expired: `This merge can no longer be undone: the copy of the site from before it was kept for 30 days. ${TAKE_BACK}`,
+  replaced: 'This merge can no longer be undone: another branch was merged into the site since, and only the latest merge can be undone.',
+  erased: `This merge can no longer be undone: personal data was erased from the site since, and the copy of the site from before the merge still held some of it, so that copy was removed. ${TAKE_BACK}`,
+  unreadable: `This merge cannot be undone: the copy of the site from before it holds parts this version of the editor cannot load, and putting it back would lose them. ${TAKE_BACK}`,
+};
+
+export class MergeUndoUnavailableError extends SiteRepositoryError {
+  readonly reason: MergeUndoUnavailableReason;
+
+  constructor(reason: MergeUndoUnavailableReason) {
+    super('merge_undo_unavailable', MERGE_UNDO_UNAVAILABLE[reason], 409);
+    this.reason = reason;
   }
 }
 
@@ -392,7 +420,11 @@ export function siteRepositoryErrorResponse(err: SiteRepositoryError): Response 
     return jsonError(err.code, err.message, err.status, { currentVersion: err.currentVersion });
   }
   if (err instanceof BranchClosedError) {
-    return jsonError(err.code, err.message, err.status, { branchStatus: err.branchStatus, mainSiteId: err.mainSiteId });
+    return jsonError(err.code, err.message, err.status, {
+      branchStatus: err.branchStatus,
+      mainSiteId: err.mainSiteId,
+      ...(err.undoneIntoBranchId ? { undoneIntoBranchId: err.undoneIntoBranchId } : {}),
+    });
   }
   if (err instanceof BranchConflictsError) {
     return jsonError(err.code, err.message, err.status, { conflicts: err.conflicts, token: err.token, answersKept: err.answersKept });

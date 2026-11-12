@@ -22,6 +22,7 @@ const { client, leave } = vi.hoisted(() => ({
     changes: vi.fn(),
     update: vi.fn(),
     merge: vi.fn(),
+    undoMerge: vi.fn(),
   },
   leave: { savedBeforeLeaving: vi.fn(async () => true), openSite: vi.fn(), openReview: vi.fn(), leaveClosedBranch: vi.fn() },
 }));
@@ -36,6 +37,7 @@ import BranchSwitcher from '../BranchSwitcher';
 import { BranchBadge, MainChangedNote, ReviewAndMergeButton } from '../BranchBar';
 import { discardText } from '../BranchDialogs';
 import ClosedBranch, { closedBranchText } from '@/app/projects/ClosedBranch';
+import UndoMerge, { undoErrorText } from '../UndoMerge';
 import { BranchApiError } from '@/lib/sites/branchClient';
 
 const MAIN = 'site-main';
@@ -60,6 +62,9 @@ function summary(over: Partial<BranchSummaryJson> = {}): BranchSummaryJson {
     approved: false,
     mergedAt: null,
     discardedAt: null,
+    undoUntil: null,
+    undoneIntoBranchId: null,
+    undoneAt: null,
     ...over,
   };
 }
@@ -291,13 +296,98 @@ describe('discard', () => {
 });
 
 describe('the closed branch page', () => {
-  const notice = { branchId: BRANCH, status: 'merged' as const, name: 'Spring sale', mainSiteId: MAIN, mainName: 'Bakery', closedAt: '2026-11-11T10:00:00.000Z' };
+  const notice = { branchId: BRANCH, status: 'merged' as const, name: 'Spring sale', mainSiteId: MAIN, mainName: 'Bakery', closedAt: '2026-11-11T10:00:00.000Z', undoUntil: null, undoneInto: null };
 
   it('says when it was merged and links to the site', () => {
     render(<ClosedBranch notice={notice} />);
     expect(screen.getByRole('heading', { name: 'The branch “Spring sale” was merged' })).toBeTruthy();
     expect(screen.getByText(/merged into Bakery on 11 November 2026/)).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Open Bakery' }).getAttribute('href')).toBe(`/projects/${MAIN}`);
+  });
+
+  it('offers to undo a merge while it can be undone, says what that does, and opens the new branch', async () => {
+    const undo = client.undoMerge.mockReset().mockResolvedValue({ undone: true, branch: { branchId: 'branch-new' }, merged: {}, mainVersion: 9 });
+    const opened: string[] = [];
+    render(<UndoMerge mainSiteId={MAIN} branchId={BRANCH} branchName="Spring sale" mainName="Bakery" undoUntil="2026-12-11T10:00:00.000Z" open={(id) => opened.push(id)} />);
+    expect(screen.getByText(/Until 11 December 2026, and as long as no other branch is merged into Bakery/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Undo this merge' }));
+    expect(await screen.findByText(/Bakery goes back to what it was just before this merge/)).toBeTruthy();
+    expect(screen.getByText(/anything changed on the site since, moves to a new branch/)).toBeTruthy();
+    expect(undo).not.toHaveBeenCalled();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Undo the merge' }));
+    });
+    expect(undo).toHaveBeenCalledWith(MAIN, BRANCH);
+    expect(opened).toEqual(['branch-new']);
+  });
+
+  it('a merge that can no longer be undone loses the offer and keeps the reason on the page', async () => {
+    const undo = client.undoMerge.mockReset().mockRejectedValue(new BranchApiError('merge_undo_unavailable', 'This merge can no longer be undone: another branch was merged into the site since, and only the latest merge can be undone.', 409));
+    const opened: string[] = [];
+    render(<UndoMerge mainSiteId={MAIN} branchId={BRANCH} branchName="Spring sale" mainName="Bakery" undoUntil="2026-12-11T10:00:00.000Z" open={(id) => opened.push(id)} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Undo this merge' }));
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: 'Undo the merge' }));
+    });
+    expect((await screen.findByRole('alert')).textContent).toMatch(/only the latest merge can be undone/);
+    expect(opened).toEqual([]);
+    // Nothing left that offers what the server just refused for good.
+    expect(screen.queryByRole('button', { name: 'Undo this merge' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Undo the merge' })).toBeNull();
+    expect(screen.queryByText(/this merge can be\s+undone/)).toBeNull();
+    expect(undo).toHaveBeenCalledTimes(1);
+    undo.mockRestore();
+  });
+
+  it('a refusal that may pass keeps the dialog open with what to do, and "Keep the merge" changes nothing', async () => {
+    const undo = client.undoMerge.mockReset().mockRejectedValue(new BranchApiError('forbidden', 'forbidden', 403));
+    render(<UndoMerge mainSiteId={MAIN} branchId={BRANCH} branchName="Spring sale" mainName="Bakery" undoUntil="2026-12-11T10:00:00.000Z" open={() => undefined} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Undo this merge' }));
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: 'Undo the merge' }));
+    });
+    expect((await screen.findByRole('alert')).textContent).toMatch(/cannot undo a merge either/);
+    // Trying again is possible: the button is back, not stuck on "Undoing".
+    expect(screen.getByRole('button', { name: 'Undo the merge' }).hasAttribute('disabled')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Keep the merge' }));
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+    expect(screen.getByRole('button', { name: 'Undo this merge' })).toBeTruthy();
+    expect(undo).toHaveBeenCalledTimes(1);
+    expect(undoErrorText(new Error('network'))).toMatch(/Nothing was changed; try again/);
+    undo.mockRestore();
+  });
+
+  it('an undo that had already happened (a second tab) opens the branch the first one made', async () => {
+    const undo = client.undoMerge.mockReset().mockResolvedValue({ undone: false, branch: { branchId: 'branch-first' }, merged: {}, mainVersion: 9 });
+    const opened: string[] = [];
+    render(<UndoMerge mainSiteId={MAIN} branchId={BRANCH} branchName="Spring sale" mainName="Bakery" undoUntil="2026-12-11T10:00:00.000Z" open={(id) => opened.push(id)} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Undo this merge' }));
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: 'Undo the merge' }));
+    });
+    expect(opened).toEqual(['branch-first']);
+    undo.mockRestore();
+  });
+
+  it('shows the undo only for a merge that can still be undone', () => {
+    const { unmount } = render(<ClosedBranch notice={notice} />);
+    expect(screen.queryByRole('button', { name: 'Undo this merge' })).toBeNull();
+    unmount();
+    render(<ClosedBranch notice={{ ...notice, undoUntil: '2026-12-11T10:00:00.000Z' }} />);
+    expect(screen.getByRole('button', { name: 'Undo this merge' })).toBeTruthy();
+  });
+
+  it('says a merge was undone and links to the branch that holds the work while it is open', () => {
+    const undone = { ...notice, undoneInto: { branchId: 'branch-new', name: 'Spring sale 2', open: true } };
+    const { unmount } = render(<ClosedBranch notice={undone} />);
+    expect(screen.getByRole('heading', { name: 'The merge of “Spring sale” was undone' })).toBeTruthy();
+    expect(screen.getByText(/The merged changes are on the branch “Spring sale 2” now/)).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Open the branch “Spring sale 2”' }).getAttribute('href')).toBe('/projects/branch-new');
+    expect(screen.queryByRole('button', { name: 'Undo this merge' })).toBeNull();
+    unmount();
+    render(<ClosedBranch notice={{ ...undone, undoneInto: { branchId: 'branch-new', name: 'Spring sale 2', open: false } }} />);
+    expect(screen.getByText(/which has been merged or discarded since/)).toBeTruthy();
+    expect(screen.queryByRole('link', { name: /Open the branch/ })).toBeNull();
   });
 
   it('says a discard lost the changes and left the site as it was', () => {

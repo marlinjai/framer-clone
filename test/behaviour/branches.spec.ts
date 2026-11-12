@@ -23,6 +23,9 @@ function summary(over: Partial<BranchSummaryJson> = {}): BranchSummaryJson {
     branchId: BRANCH, mainSiteId: MAIN, name: 'Spring sale', status: 'open', createdByKind: 'user', createdBy: 'user-a',
     createdAt: '2026-11-11T09:00:00.000Z', updatedAt: '2026-11-11T09:00:00.000Z', version: 3, baseVersion: 7,
     mainMoved: false, readyBy: null, readyAt: null, reviewNote: null, approved: false, mergedAt: null, discardedAt: null,
+    undoUntil: null,
+    undoneIntoBranchId: null,
+    undoneAt: null,
     ...over,
   };
 }
