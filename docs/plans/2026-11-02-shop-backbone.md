@@ -577,6 +577,12 @@ order and gates apply (contacts database first, then the deploy, then switches).
   pending while the old build runs (a kind it does not know), so the lateness 500 of the watchdog fires until the newer build is
   back; the new build finds the letters `sent` and finishes the jobs as no-ops. The Books and site branches rollback limits of
   section 12 of the site branches plan apply to the same image.
+- **Deployed 2026-11-12 (reported by the Sites branching worker, not verified by me).** Production runs
+  `b1e19a32aa00d49dd122e31b99a5ff2ef5d286fd` since 12:03 UTC (Coolify deployment started through its API, because the shared
+  workflow's webhook step answered 405). The start applied the five Prisma migrations and `030_books_contact_person` in 5
+  of 5 company schemas without error; the log shows the shop job poller running and no mail backfill or contacts error.
+  **B5's own proof is still open:** the sandbox purchase (job `done`, mail arrives) is gated, and the three Uptime Kuma
+  monitors were not checked. The precondition that blocked the release, contacts migration 0003, is reported as applied.
 - **Limitations of this assessment.** Read from code and git only. Not checked: production's environment variables in Coolify,
   the live `shop_mail` and `commerce_job` rows (a pending letter at deploy time), whether the old sweep and the new poller
   overlap in practice, and Lumitra Mail's behaviour on a repeated key (read from the code's comment and the test fixture, never
