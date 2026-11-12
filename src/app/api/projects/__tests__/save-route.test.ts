@@ -268,6 +268,8 @@ describe('POST /api/projects/save slug rules (real repository)', () => {
         deleteMany: vi.fn(async () => ({ count: 0 })),
       },
       siteDomain: { findFirst: vi.fn(async () => ({ id: 'dom_1' })) },
+      // The row locks a save takes (SiteRepository.lockSiteForSave): no row of a branch, nothing to wait for.
+      $queryRaw: vi.fn(async () => [] as unknown[]),
       $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma)),
     };
     getRepoMock.mockReturnValue(new SiteRepository(prisma as never) as ReturnType<typeof getSiteRepository>);
@@ -407,6 +409,8 @@ describe('save version lock', () => {
         deleteMany: vi.fn(async () => ({ count: 0 })),
       },
       siteDomain: { findFirst: vi.fn(async () => null) },
+      // The row locks a save takes (SiteRepository.lockSiteForSave): no row of a branch, nothing to wait for.
+      $queryRaw: vi.fn(async () => [] as unknown[]),
       $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma)),
     };
     getRepoMock.mockReturnValue(new SiteRepository(prisma as never) as ReturnType<typeof getSiteRepository>);
