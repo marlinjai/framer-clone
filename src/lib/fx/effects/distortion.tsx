@@ -30,6 +30,7 @@ import type {
   LayerDefinition,
 } from "../types";
 import { blendFunctionFor } from "./blend";
+import { useWindowPointer } from "../interactivity";
 import { distortionSchema } from "../schemas";
 
 const DISTORTION_FRAG = /* glsl */ `
@@ -179,6 +180,7 @@ function DistortionComponent({ layer, values, ctx }: LayerComponentProps) {
   // to react-hooks' immutability rule (refs are the documented escape hatch).
   const mouseRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
+  const pointer = useWindowPointer();
   useFrame((state) => {
     const eff = ref.current;
     if (!eff) return;
@@ -202,8 +204,8 @@ function DistortionComponent({ layer, values, ctx }: LayerComponentProps) {
     // Match the rest of the engine's smoothing factor (0.04) so distortion's
     // mouse motion lines up with NoiseField / Text parallax instead of leading.
     const m = mouseRef.current;
-    m.x += (state.pointer.x - m.x) * 0.04;
-    m.y += (state.pointer.y - m.y) * 0.04;
+    m.x += (pointer.x - m.x) * 0.04;
+    m.y += (pointer.y - m.y) * 0.04;
     eff.setMouse(m.x, m.y);
   });
 

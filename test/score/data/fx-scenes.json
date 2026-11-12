@@ -1,0 +1,5 @@
+{
+  "_doc": "FX scene promises: scenes of Lumitra FX, the WebGL effects engine, that an FX scene box must keep (docs/plans/2026-11-08-lumitra-fx-in-sites.md, slice F4). One row per reference scene. Format: the strict reader gives exactly the scene the engine's own loader gives, with nothing repaired, and storing it again changes nothing. Renderer: this app draws the same pixels as the engine as lumitra-web runs it (test/fx-oracle). Canvas, panel and AI land with slices F5 and F6 of the plan.",
+  "source": "docs/plans/2026-11-08-lumitra-fx-in-sites.md",
+  "scenes": ["hub-hero", "godrays-hero", "noise-gradient"]
+}

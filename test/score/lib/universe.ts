@@ -11,6 +11,7 @@ import samples from '../data/samples.json';
 import apg from '../data/apg-patterns.json';
 import componentCapabilities from '../data/component-capabilities.json';
 import pageItems from '../data/page-items.json';
+import fxScenes from '../data/fx-scenes.json';
 
 const require = createRequire(path.join(process.cwd(), 'package.json'));
 
@@ -289,9 +290,19 @@ export function pageItemEntries(): Entry[] {
   return pageItems.theme.map((id) => entry('page-item', `theme:${id}`, pageItems.source));
 }
 
+/**
+ * The reference scenes an FX scene box must keep, as `scene:<name>`: the lumitra.co hub
+ * hero and two of the engine's presets. Not part of allEntries, as the component rows are
+ * not: the node probes have nothing to ask of a scene. Cells come from fx.score.ts, and a
+ * cell nothing measured fails.
+ */
+export function fxSceneEntries(): Entry[] {
+  return fxScenes.scenes.map((id) => entry('fx-scene', `scene:${id}`, fxScenes.source));
+}
+
 /** Every row of the matrix. */
 export function scoredEntries(): Entry[] {
-  return [...allEntries(), ...componentEntries(), ...pageItemEntries()];
+  return [...allEntries(), ...componentEntries(), ...pageItemEntries(), ...fxSceneEntries()];
 }
 
 /** The sample selector text for a mdn-data selector row. */

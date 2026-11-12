@@ -11,6 +11,7 @@
 // whose values passed the generator's style rules on the way in, and the node
 // settings the renderers read off the node instead of rendering (isSettingsProp).
 
+import { isFxSceneProp } from '@/lib/fxScene/marker';
 import { contentBelow, isBlockedProp, isBlockedTag, isSettingsProp, type ForeignContent } from '@/lib/renderer/blockedNodes';
 import { TEXT_NODE_TYPE } from '@/lib/renderer/textNode';
 
@@ -29,7 +30,7 @@ export function renderGateProblem(node: GateNode, foreign: ForeignContent = fals
   if (node.type === TEXT_NODE_TYPE) return null;
   if (isBlockedTag(node.type, foreign)) return `<${node.type}> is not rendered here (node ${node.id})`;
   for (const [name, value] of Object.entries(node.props ?? {})) {
-    if (OWN_PROPS.has(name) || isSettingsProp(name)) continue;
+    if (OWN_PROPS.has(name) || isSettingsProp(name) || isFxSceneProp(name, node.type)) continue;
     if (isBlockedProp(name, value)) return `the prop ${JSON.stringify(name)} is not rendered (node ${node.id})`;
   }
   const below = contentBelow(node.type, foreign);

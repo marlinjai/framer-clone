@@ -37,7 +37,7 @@ import { formKindOf } from '@/lib/forms/definition';
 import { isStickyCta } from '@/lib/stickyCta/stickyCta';
 import { createStickyCtaElement } from '../stickyCta/stickyCtaElement';
 import { isMapEmbed, MAP_EMBED_PROP_KEYS, stripMapEmbedProps } from '@/lib/mapEmbed/mapEmbed';
-import { FX_PROP } from '@/lib/fxScene/marker';
+import { isFxSceneProp } from '@/lib/fxScene/marker';
 import MapEmbedIsland from '../mapEmbed/MapEmbedIsland';
 import { shopPartRoleOf } from '@/lib/commerce/parts';
 import { applyBindings } from '@/lib/bindings/resolver/applyBindings';
@@ -59,10 +59,11 @@ const INTERACTIVE_COMMERCE_KINDS: ReadonlySet<string> = new Set([
 // turned into attributes by applyEffects and denied here defensively too, as
 // `behaviour` is, which is data for the behaviour runtime under any value.
 // `fx` is the stored scene of an FX scene box (src/lib/fxScene): data
-// for its island, never an attribute.
+// for its island, never an attribute. It is denied per node (isFxSceneProp), because
+// on an SVG `radialGradient` the same name is the gradient's focal point.
 // `rules` is the same unless it is a string, which stays the legacy `<table>`
 // attribute it has always been: anything else would render as `[object Object]`.
-const NON_DOM_PROPS: ReadonlySet<string> = new Set(['children', 'query', 'bindings', 'effects', 'behaviour', FX_PROP]);
+const NON_DOM_PROPS: ReadonlySet<string> = new Set(['children', 'query', 'bindings', 'effects', 'behaviour']);
 
 /**
  * Resolve a node's HTML tag. A stored `type` IS the tag: every write path stores
@@ -112,7 +113,7 @@ export function nodeDomProps(node: ComponentNode): Record<string, unknown> {
   const source = (node.props ?? {}) as Record<string, unknown>;
   const props: Record<string, unknown> = {};
   for (const [name, value] of Object.entries(source)) {
-    if (NON_DOM_PROPS.has(name) || isBlockedProp(name, value)) continue;
+    if (NON_DOM_PROPS.has(name) || isFxSceneProp(name, node.type) || isBlockedProp(name, value)) continue;
     if (name === 'rules' && !isLegacyRulesAttribute(value)) continue;
     if (name === 'style') {
       const flat = flattenStyle(value);

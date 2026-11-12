@@ -4,6 +4,7 @@
 import { randomUUID } from 'node:crypto';
 import { DEFAULT_VIEWPORTS } from '@/lib/canvas/defaultViewports';
 import { getSiteRepository, type TenantScope } from '@/server/sites';
+import { storeSiteImage } from '@/server/sites/siteImages';
 import { COMPONENTS, PAGES, type StoredNode } from './pages';
 
 const SCOPE: TenantScope = {
@@ -59,6 +60,34 @@ export async function publishPages(
     ...(siteSettings || language ? { siteSettings: { ...(siteSettings ?? {}), ...(language ? { language } : {}) } } : {}),
   };
   const saved = await repo.saveProject(SCOPE, project as never);
+  await repo.publishProject(SCOPE, project as never, { expectedVersion: saved.version });
+  const { subdomain } = await repo.ensureSiteDomain(SCOPE, siteId);
+  return `http://${subdomain}.sites.localhost:${port}`;
+}
+
+/**
+ * As publishPages, for pages that show images uploaded to the site: the site is saved
+ * first (an image belongs to a stored site), each image is stored through the real
+ * upload path, and `pages` is then built with the paths the site stores them under.
+ */
+export async function publishPagesWithImages(
+  port: string,
+  images: Readonly<Record<string, Uint8Array>>,
+  pages: (paths: Readonly<Record<string, string>>) => Readonly<Record<string, () => StoredNode>>,
+): Promise<string> {
+  const repo = getSiteRepository();
+  const siteId = randomUUID();
+  const base = { id: siteId, metadata: { title: 'Behaviour', description: '', createdAt: 1, updatedAt: 2 }, components: COMPONENTS };
+  const saved = await repo.saveProject(SCOPE, { ...base, pages: { home: stored('', PAGES.plain()) } } as never);
+  const paths: Record<string, string> = {};
+  for (const [name, bytes] of Object.entries(images)) {
+    const { image } = await storeSiteImage({ id: siteId, ...SCOPE }, bytes, 'sharing', 'behaviour-test');
+    paths[name] = image.path;
+  }
+  const project = {
+    ...base,
+    pages: { home: stored('', PAGES.plain()), ...Object.fromEntries(Object.entries(pages(paths)).map(([slug, tree]) => [slug, stored(slug, tree())])) },
+  };
   await repo.publishProject(SCOPE, project as never, { expectedVersion: saved.version });
   const { subdomain } = await repo.ensureSiteDomain(SCOPE, siteId);
   return `http://${subdomain}.sites.localhost:${port}`;

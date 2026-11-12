@@ -15,6 +15,7 @@ import * as THREE from "three";
 import {
   useInteractivity,
   useInteractivitySpec,
+  useWindowPointer,
 } from "../interactivity";
 import type {
   LayerComponentProps,
@@ -95,6 +96,11 @@ const NOISE_FRAG = /* glsl */ `
     n = smoothstep(0.1, 1.0, n * 0.5 + 0.5);
     float vig = smoothstep(1.0, 0.25, distance(vUv, vec2(0.5)));
     gl_FragColor = vec4(uColor * n * uIntensity * vig, n * uIntensity * 1.1 * vig);
+    // To the output colour space. Without this a scene with no post pass was
+    // drawn too dark: the composer converts at its end, a layer drawn straight
+    // to the screen converted nothing. Into the composer's buffer this is the
+    // identity, so a scene with a post pass is drawn exactly as before.
+    #include <colorspace_fragment>
   }
 `;
 
@@ -145,6 +151,7 @@ function NoiseFieldComponent({ layer, values, ctx }: LayerComponentProps) {
     m.needsUpdate = true;
   }, [layer.blend]);
 
+  const pointer = useWindowPointer();
   useFrame((state) => {
     const m = matRef.current;
     if (!m) return;
@@ -157,8 +164,8 @@ function NoiseFieldComponent({ layer, values, ctx }: LayerComponentProps) {
       (u.uMouse.value as THREE.Vector2).copy(interactivity.mouse);
     } else if (!ctx.reduce) {
       const mouse = u.uMouse.value as THREE.Vector2;
-      mouse.x += (state.pointer.x - mouse.x) * 0.04;
-      mouse.y += (state.pointer.y - mouse.y) * 0.04;
+      mouse.x += (pointer.x - mouse.x) * 0.04;
+      mouse.y += (pointer.y - mouse.y) * 0.04;
     }
   });
 

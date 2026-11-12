@@ -60,6 +60,13 @@ describe('applyFx', () => {
     expect(propsOf(out, 'refused')).toEqual({ [FX_ATTR]: FX_MARKER, style: { minHeight: '50vh' } });
   });
 
+  it('leaves the `fx` of an SVG radialGradient alone: there it is the gradient\'s focal point', () => {
+    const gradient = { id: 'glow', type: 'radialGradient', props: { id: 'glow', fx: '0.25', fy: '0.75' } } as ComponentNode;
+    const { root: out, program } = applyFx(page({ id: 'art', type: 'svg', props: {}, children: [gradient] } as ComponentNode, fxBox('good', stored())));
+    expect(propsOf(out, 'glow')).toEqual({ id: 'glow', fx: '0.25', fy: '0.75' });
+    expect(program).toHaveLength(1);
+  });
+
   it('drops a stored mark that only this step may write, on any node, in any case', () => {
     const root = page(
       { id: 'poser', type: 'div', props: { 'data-fc-fx': '0', 'data-fc-fx-state': 'live', 'data-fc-fx-layer': '', 'DATA-FC-FX': '1', 'data-fc-fxtra': 'kept' } } as ComponentNode,

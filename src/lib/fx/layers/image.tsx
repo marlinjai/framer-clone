@@ -127,6 +127,11 @@ const IMAGE_FRAG = /* glsl */ `
     }
     vec4 col = texture2D(uMap, uv);
     gl_FragColor = vec4(col.rgb, col.a * uOpacity);
+    // To the output colour space. Without this a scene with no post pass was
+    // drawn too dark: the composer converts at its end, a layer drawn straight
+    // to the screen converted nothing. Into the composer's buffer this is the
+    // identity, so a scene with a post pass is drawn exactly as before.
+    #include <colorspace_fragment>
   }
 `;
 

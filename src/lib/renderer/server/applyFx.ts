@@ -4,8 +4,8 @@
 //
 //   - a box whose scene reads cleanly gets `data-fc-fx="<index>"`, its place in
 //     the program;
-//   - `fx` is taken off EVERY node, refused scenes and nodes that are no FX box
-//     included: some islands receive whole nodes as props, and stored scene data
+//   - `fx` is taken off EVERY node (but an SVG `radialGradient`, where it is the
+//     gradient's focal point), refused scenes and nodes that are no FX box included: some islands receive whole nodes as props, and stored scene data
 //     has no business in the page's HTML or its flight payload;
 //   - the marks only this step may write (`data-fc-fx`, `data-fc-fx-state`) are
 //     dropped from every stored node, so nothing stored can pose as a scene.
@@ -22,7 +22,7 @@
 
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { readFxScene, storedFxProp, type StoredFx } from '@/lib/fxScene/fxScene';
-import { FX_INDEX_ATTR, FX_PROP, isFxIssuedAttribute } from '@/lib/fxScene/marker';
+import { FX_INDEX_ATTR, isFxIssuedAttribute, isFxSceneProp } from '@/lib/fxScene/marker';
 
 export interface FxResult {
   /** The rewritten tree (a new tree; the input is not mutated). */
@@ -40,7 +40,7 @@ export function applyFx(root: ComponentNode): FxResult {
     if (stored) {
       const props: Record<string, unknown> = {};
       for (const [name, value] of Object.entries(stored)) {
-        if (name !== FX_PROP && !isFxIssuedAttribute(name)) props[name] = value;
+        if (!isFxSceneProp(name, node.type) && !isFxIssuedAttribute(name)) props[name] = value;
       }
       const scene = readFxScene(stored, node.type);
       if (scene.ok) {

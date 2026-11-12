@@ -6,14 +6,14 @@
 // the marker, and a site operation cannot set either as a loose prop.
 
 import React from 'react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { getSnapshot } from 'mobx-state-tree';
 
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import type { CmsReadRepository } from '@/server/cms';
 import { renderPublishedPage } from '@/lib/renderer/server/renderPublishedPage';
-import { isBlockedProp, isSettingsProp } from '@/lib/renderer/blockedNodes';
+import { isBlockedProp } from '@/lib/renderer/blockedNodes';
 import { attributeNameError, isAttributeProp } from '@/lib/styles/customEditor';
 import { applyOperations } from '@/lib/siteOps/applyOps';
 import ProjectModel from '@/models/ProjectModel';
@@ -21,6 +21,7 @@ import { defaultViewportSnapshots } from '@/lib/canvas/defaultViewports';
 import { namedSiteImages } from '@/lib/site/siteImages';
 import { PRESETS, serializeScene } from '@/lib/fx/format';
 import { FX_ATTR, FX_MARKER, FX_PROP, fxSiteImagePaths, isAllowedFxImage, isFxScene, parseFxProp, readFxScene, storedFxProp } from '../fxScene';
+import { isFxSceneProp } from '../marker';
 
 const SHA_A = 'a'.repeat(64);
 const SHA_B = 'b'.repeat(64);
@@ -196,18 +197,67 @@ describe('the published page', () => {
 
 describe('the editor surfaces', () => {
   it('keep `fx` off the element without reporting it, and let the marker through', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     expect(isBlockedProp(FX_PROP, storedFx())).toBe(true);
-    expect(isSettingsProp(FX_PROP)).toBe(true);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
     expect(isBlockedProp(FX_ATTR, FX_MARKER)).toBe(false);
   });
 
   it('do not offer the scene or its marker in the Custom section', () => {
-    expect(isAttributeProp(FX_PROP)).toBe(false);
+    expect(attributeNameError(FX_PROP, 'section')).toMatch(/belongs to the editor/);
     expect(isAttributeProp(FX_ATTR)).toBe(false);
     expect(attributeNameError(FX_ATTR, 'div')).toMatch(/belongs to the editor/);
     expect(attributeNameError(FX_PROP, 'div')).not.toBeNull();
     // A neighbouring name is an ordinary data attribute.
     expect(isAttributeProp('data-fx-note')).toBe(true);
+  });
+});
+
+// `fx` is also a real attribute on one element, the focal point of an SVG radialGradient.
+// The first version denied the name everywhere and the score caught gradients losing it.
+describe('an SVG radialGradient keeps its `fx` attribute', () => {
+  const cmsRepo = { listRows: async () => ({ rows: [], total: 0 }), getRow: async () => null } as unknown as CmsReadRepository;
+  const gradient = (): ComponentNode =>
+    ({
+      type: 'svg',
+      id: 'art',
+      props: { viewBox: '0 0 10 10' },
+      children: [
+        { type: 'defs', id: 'defs', children: [{ type: 'radialGradient', id: 'glow', props: { id: 'glow', fx: '0.25', fy: '0.75' }, children: [{ type: 'stop', id: 's', props: { offset: '1', stopColor: '#ff0000' } }] }] },
+      ],
+    }) as ComponentNode;
+
+  it('tells the two apart by the element', () => {
+    expect(isFxSceneProp('fx', 'div')).toBe(true);
+    expect(isFxSceneProp('fx', 'section')).toBe(true);
+    expect(isFxSceneProp('fx', undefined)).toBe(true);
+    expect(isFxSceneProp('fx', 'radialGradient')).toBe(false);
+    expect(isFxSceneProp('fx', 'radialgradient')).toBe(false);
+    expect(isFxSceneProp('fy', 'div')).toBe(false);
+    expect(isFxSceneProp('fx', 'linearGradient')).toBe(true);
+  });
+
+  it('on the published page, beside an FX scene box that loses its scene data', async () => {
+    const page = await renderPublishedPage({ root: { type: 'div', id: 'root', children: [gradient(), fxNode(storedFx())] } as ComponentNode, pageParams: {}, cmsRepo });
+    const markup = renderToStaticMarkup(<>{page.body}</>);
+    expect(markup).toMatch(/<radialGradient[^>]*\sfx="0\.25"/);
+    expect(markup).toMatch(/<radialGradient[^>]*\sfy="0\.75"/);
+    expect(markup).toContain('data-fc-fx="0"');
+    expect(markup).not.toContain('noiseFill');
+    expect(markup.match(/\sfx=/g)).toHaveLength(1);
+  });
+
+  it('through the prop gate of the editor surfaces and the render gate of site operations', () => {
+    expect(isBlockedProp('fx', '0.25')).toBe(false);
+    expect(isBlockedProp('fx', 0.25)).toBe(false);
+    expect(isBlockedProp('fx', storedFx())).toBe(true);
+  });
+
+  it('in the Custom section, where a gradient may set it and a box may not', () => {
+    expect(attributeNameError('fx', 'radialGradient')).toBeNull();
+    expect(isAttributeProp('fx')).toBe(true);
+    expect(attributeNameError('fx', 'div')).toMatch(/belongs to the editor/);
   });
 });
 

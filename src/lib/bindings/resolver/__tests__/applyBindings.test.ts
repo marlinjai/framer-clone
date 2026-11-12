@@ -46,6 +46,13 @@ describe('applyBindings: an FX scene takes no binding', () => {
   });
 });
 
+describe('applyBindings: the `fx` of an SVG radialGradient binds like any attribute', () => {
+  it('resolves a binding into it', () => {
+    const node: ComponentNode = { type: 'radialGradient', bindings: { fx: { mode: 'read', expression: '{{title}}' } } };
+    expect(applyBindings(node, { fx: '0.5' }, rowScope()).resolvedProps.fx).toBe('Hello World');
+  });
+});
+
 describe('applyBindings — merge', () => {
   it('merges a resolved value into props.children for a Text node', () => {
     const node: ComponentNode = {

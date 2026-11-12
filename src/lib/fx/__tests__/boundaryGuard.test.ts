@@ -18,6 +18,7 @@ import {
   DEFAULT_ROOTS,
   FX_ALLOWED_PACKAGES,
   FX_DIR,
+  FX_ONLY_ROOTS,
   FX_RENDER_ENTRY,
   FX_TEST_PACKAGES,
   collectFiles,
@@ -159,6 +160,27 @@ describe('FX2: the app reaches the engine only through its public entry', () => 
     expect(rules(APP_FILE, `const m = await import('@/lib/fx/LumitraScene');`)).toEqual(['FX2']);
     expect(rules(APP_FILE, `export { PRESETS } from '@/lib/fx/presets';`)).toEqual(['FX2']);
     expect(rules(APP_FILE, `import type { SceneConfig } from '@/lib/fx/types';`)).toEqual(['FX2']);
+  });
+
+  it('lets a file under test import the engine\'s test scenes, and nothing else from inside it', () => {
+    const SPEC = 'test/behaviour/fx.spec.ts';
+    expect(rules(SPEC, `import hubHero from '@/lib/fx/__tests__/fixtures/hub-hero.json';`)).toEqual([]);
+    expect(rules(SPEC, `import { PRESETS } from '@/lib/fx/format';`)).toEqual([]);
+    expect(rules(SPEC, `import preset from '@/lib/fx/presets/preset-godrays-hero.json';`)).toEqual(['FX2']);
+    expect(rules(SPEC, `import { LumitraScene } from '@/lib/fx/LumitraScene';`)).toEqual(['FX2']);
+    expect(rules(SPEC, `import x from '@/lib/fx/__tests__/scene.test';`)).toEqual(['FX2']);
+    // App code gets no such exception.
+    expect(rules(APP_FILE, `import hubHero from '@/lib/fx/__tests__/fixtures/hub-hero.json';`)).toEqual(['FX2']);
+  });
+
+  it('is clean over the test roots too', () => {
+    const found: Array<{ rule: string; path: string }> = [];
+    for (const file of collectFiles(FX_ONLY_ROOTS) as string[]) {
+      for (const v of scanText({ path: file, text: readFileSync(file, 'utf8'), knownTables }) as Array<{ rule: string }>) {
+        if (v.rule.startsWith('FX')) found.push({ rule: v.rule, path: path.relative(REPO_ROOT, file) });
+      }
+    }
+    expect(found).toEqual([]);
   });
 
   it('leaves a neighbour whose name only starts like the engine alone', () => {
