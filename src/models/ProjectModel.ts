@@ -48,7 +48,7 @@ import {
 } from '@/lib/site/siteSettings';
 import { effectiveSiteName } from '@/lib/site/siteSettings';
 import { HEAD_LIMITS, storeHeadItems } from '@/lib/site/headItems';
-import { emittedTokenIds, normalizeTheme, replaceTokenReferences, tokenUseKinds, validateThemeWrite, type SiteTheme } from '@/lib/site/theme';
+import { emittedTokenIds, normalizeTheme, replaceTokenReferences, tokenUsage, tokenUseKinds, validateThemeWrite, type SiteTheme, type ThemeToken } from '@/lib/site/theme';
 import {
   COOKIE_SETTINGS_HASH,
   COOKIE_SETTINGS_LABELS,
@@ -1349,6 +1349,60 @@ export const ProjectModel = types
       self.siteSettings = { ...settings, theme: next };
       self.metadata.updatedAt = new Date();
       return { ok: true };
+    },
+
+    // A page generation's apply, with the tokens it adds to the theme, in ONE action: the page
+    // and its tokens are one undo step (src/lib/ai/pageGen/generatedTheme.ts). `apply` puts the
+    // nodes where they go and refuses without changing anything when it cannot, and the theme
+    // write is checked first, so a refusal on either side leaves the project as it was. With no
+    // `theme` this is `apply` alone.
+    applyGenerationWithTheme<T>(
+      theme: SiteTheme | undefined,
+      apply: () => { ok: true; value: T } | { ok: false; reason: string },
+    ): { ok: true; value: T } | { ok: false; reason: string } {
+      if (theme) {
+        const errors = validateThemeWrite(normalizeTheme(theme), normalizeSiteSettings(self.siteSettings).theme);
+        if (errors.length > 0) return { ok: false, reason: errors[0] };
+      }
+      const outcome = apply();
+      if (!outcome.ok || !theme) return outcome;
+      // The write updateTheme makes, checked above against this very state.
+      const settings = normalizeSiteSettings(self.siteSettings);
+      const next = normalizeTheme(theme);
+      if (JSON.stringify(settings.theme) !== JSON.stringify(next)) {
+        self.siteSettings = { ...settings, theme: next };
+        self.metadata.updatedAt = new Date();
+      }
+      return outcome;
+    },
+
+    // The undo of a page generation that added tokens, in ONE action with the revert it runs: the
+    // tokens the generation added leave the theme again (outright, they were never a tombstone),
+    // each one only while it is still exactly what was added and nothing in the project refers to
+    // it any more. A token the owner has since used, renamed or edited stays, and is returned so
+    // the dialog can say so. `revert` is the page side and refuses without changing anything.
+    revertGenerationWithTheme(
+      added: readonly ThemeToken[],
+      revert: () => { ok: true; value: null } | { ok: false; reason: string },
+    ): { ok: true; value: { kept: string[] } } | { ok: false; reason: string } {
+      const outcome = revert();
+      if (!outcome.ok) return outcome;
+      if (added.length === 0) return { ok: true, value: { kept: [] } };
+      const settings = normalizeSiteSettings(self.siteSettings);
+      const used = tokenUsage(getSnapshot(self));
+      const kept: string[] = [];
+      const gone = new Set<string>();
+      for (const token of added) {
+        const now = settings.theme.tokens.find((t) => t.id === token.id);
+        if (!now) continue;
+        if ((used.get(token.id) ?? 0) > 0 || JSON.stringify(now) !== JSON.stringify(token)) kept.push(token.name);
+        else gone.add(token.id);
+      }
+      if (gone.size > 0) {
+        self.siteSettings = { ...settings, theme: { ...settings.theme, tokens: settings.theme.tokens.filter((t) => !gone.has(t.id)) } };
+        self.metadata.updatedAt = new Date();
+      }
+      return { ok: true, value: { kept } };
     },
 
     // The Theme panel's Replace: every reference to `fromId`, on every page, floating

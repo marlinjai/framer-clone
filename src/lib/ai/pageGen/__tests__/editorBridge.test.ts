@@ -8,7 +8,8 @@ import { createRootStore, getHistoryStore, type RootStoreType } from '@/stores/R
 import type { ProjectModelType } from '@/models/ProjectModel';
 import type { PageModelType } from '@/models/PageModel';
 import type { ComponentInstance } from '@/models/ComponentModel';
-import { validateGeneration } from '../validate';
+import { validateGeneration, type ValidateContext } from '../validate';
+import { normalizeSiteSettings } from '@/lib/site/siteSettings';
 import { deriveBreakpointKeys } from '../schema';
 import {
   applyResult,
@@ -265,7 +266,7 @@ describe('undoGeneration', () => {
     const target = captureTarget('replace', page, container);
     const applied = applyResult(project, target, result(HERO, target));
     if (!applied.ok) throw new Error(applied.reason);
-    expect(undoGeneration(project, applied.value.record)).toEqual({ ok: true, value: null });
+    expect(undoGeneration(project, applied.value.record)).toEqual({ ok: true, value: { kept: [] } });
     expect(tree().children.map((c: ComponentInstance) => c.id)).toEqual([containerId]);
     expect((tree().children[0] as ComponentInstance).parentId).toBe(tree().id);
     // The undo is itself one history entry (so it can be redone).
@@ -316,5 +317,197 @@ describe('undoGeneration', () => {
     expect(shown).toBe(page.id);
     expect(project.getPage(applied.value.pageId)).toBeUndefined();
     expect(undoGeneration(project, applied.value.record).ok).toBe(false);
+  });
+});
+
+// --- The tokens a generation adds to the site theme (slice T5) ---------------------------------
+describe('a generation that adds site tokens', () => {
+  const siteTheme = () => normalizeSiteSettings(project.siteSettings).theme;
+  const ref = (id: string) => `var(--fc-t-${id})`;
+  let n = 0;
+  const fresh = () => ((n += 1) * 0.6180339887) % 1;
+
+  /** A validated result against the project's own theme, as the server would have made it. */
+  function themedResult(raw: unknown, target: CapturedTarget, over: Partial<ValidateContext> = {}): PageGenResultPayload {
+    const out = validateGeneration(raw, {
+      breakpoints: deriveBreakpointKeys(target.breakpoints.map(({ label, minWidth }) => ({ label, minWidth }))),
+      theme: siteTheme(),
+      random: fresh,
+      ...over,
+    });
+    if (!out.ok) throw new Error(out.errors.join('; '));
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { imageRequests, ...rest } = out.result;
+    return { generationId: 'gen-t', model: 'claude-sonnet-5-5', ...rest, images: NO_IMAGES };
+  }
+
+  const crust = { ref: 'new-1', name: 'Crust', kind: 'color', light: '#f3e9dc', dark: '#2b1b0f' };
+  const PAGE = {
+    title: 'Bakery',
+    theme: { tokens: [crust] },
+    nodes: [{ type: 'section', label: 'Hero', props: { style: { backgroundColor: 'var(--fc-t-new-1)' }, children: 'Hi' } }],
+  };
+
+  it('lands the page and its tokens as ONE history entry, and one undo takes both', () => {
+    const target = captureTarget('newPage', page, undefined);
+    const payload = themedResult(PAGE, target);
+    const before = JSON.stringify(siteTheme());
+    const applied = applyResult(project, target, payload);
+    if (!applied.ok) throw new Error(applied.reason);
+    expect(siteTheme().tokens.map((t) => t.name)).toEqual(['Crust']);
+    const id = siteTheme().tokens[0].id;
+    const created = project.getPage(applied.value.pageId)!;
+    expect(((created.appComponentTree as ComponentInstance).children[0] as ComponentInstance).props.style.backgroundColor).toBe(ref(id));
+    expect(getHistoryStore()!.history.length).toBe(1);
+    getHistoryStore()!.undo();
+    expect(project.getPage(applied.value.pageId)).toBeUndefined();
+    expect(JSON.stringify(siteTheme())).toBe(before);
+  });
+
+  it('does the same for a replace into an existing page', () => {
+    const container = tree().children[0] as ComponentInstance;
+    const target = captureTarget('replace', page, container);
+    const applied = applyResult(project, target, themedResult(PAGE, target));
+    if (!applied.ok) throw new Error(applied.reason);
+    expect(siteTheme().tokens).toHaveLength(1);
+    expect(getHistoryStore()!.history.length).toBe(1);
+    getHistoryStore()!.undo();
+    expect(siteTheme().tokens).toHaveLength(0);
+  });
+
+  it('a page without tokens does not touch the theme, and a project with none keeps its theme key as it was', () => {
+    const target = captureTarget('newPage', page, undefined);
+    const before = JSON.stringify(project.siteSettings);
+    const applied = applyResult(project, target, result(HERO, target));
+    expect(applied.ok).toBe(true);
+    expect(JSON.stringify(project.siteSettings)).toBe(before);
+  });
+
+  it('re-decides against the theme as it is now: a name that now holds other values refuses the apply and changes nothing', () => {
+    const target = captureTarget('newPage', page, undefined);
+    const payload = themedResult(PAGE, target);
+    project.updateTheme({ ...siteTheme(), tokens: [{ id: 'mm44nn55', name: 'crust', kind: 'color', light: '#000000' }] });
+    getHistoryStore()!.clear();
+    const pages = project.pagesArray.length;
+    const applied = applyResult(project, target, payload);
+    expect(applied).toMatchObject({ ok: false });
+    if (!applied.ok) expect(applied.reason).toMatch(/crust/i);
+    expect(project.pagesArray.length).toBe(pages);
+    expect(siteTheme().tokens.map((t) => (t as { light?: string }).light)).toEqual(['#000000']);
+    expect(getHistoryStore()!.history.length).toBe(0);
+  });
+
+  it('reuses a token the site grew meanwhile with the same values, and points the page at it', () => {
+    const target = captureTarget('newPage', page, undefined);
+    const payload = themedResult(PAGE, target);
+    project.updateTheme({ ...siteTheme(), tokens: [{ id: 'mm44nn55', name: 'Crust', kind: 'color', light: '#f3e9dc', dark: '#2b1b0f' }] });
+    const applied = applyResult(project, target, payload);
+    if (!applied.ok) throw new Error(applied.reason);
+    expect(siteTheme().tokens.map((t) => t.id)).toEqual(['mm44nn55']);
+    const created = project.getPage(applied.value.pageId)!;
+    expect(((created.appComponentTree as ComponentInstance).children[0] as ComponentInstance).props.style.backgroundColor).toBe(ref('mm44nn55'));
+    // Nothing was added, so the undo leaves the owner's token alone.
+    if (!('addedTokens' in applied.value.record)) expect(undoGeneration(project, applied.value.record).ok).toBe(true);
+    expect(siteTheme().tokens.map((t) => t.id)).toEqual(['mm44nn55']);
+  });
+
+  it('refuses when a colour the page uses was removed from the site while the model wrote', () => {
+    const accent = { id: 'ab12cd34', name: 'Accent', kind: 'color' as const, light: '#b4532a' };
+    project.updateTheme({ ...siteTheme(), tokens: [accent] });
+    const target = captureTarget('newPage', page, undefined);
+    const payload = themedResult({ nodes: [{ type: 'div', label: 'A', props: { style: { color: ref('ab12cd34') }, children: 'x' } }] }, target);
+    // The panel only ever tombstones a token; what removes one outright is a generation's own undo,
+    // or a stale tab's save. The undo is the one a test can reach.
+    expect(project.revertGenerationWithTheme([accent], () => ({ ok: true as const, value: null }))).toMatchObject({ ok: true });
+    expect(siteTheme().tokens).toHaveLength(0);
+    const applied = applyResult(project, target, payload);
+    expect(applied).toMatchObject({ ok: false });
+    if (!applied.ok) expect(applied.reason).toMatch(/removed from the site/);
+  });
+
+  it('accepts a reference to a token deleted meanwhile: a tombstone is still in the sheet', () => {
+    project.updateTheme({ ...siteTheme(), tokens: [{ id: 'ab12cd34', name: 'Accent', kind: 'color', light: '#b4532a' }] });
+    const target = captureTarget('newPage', page, undefined);
+    const payload = themedResult({ nodes: [{ type: 'div', label: 'A', props: { style: { color: ref('ab12cd34') }, children: 'x' } }] }, target);
+    project.updateTheme({ ...siteTheme(), tokens: [{ id: 'ab12cd34', name: 'Accent', kind: 'color', light: '#b4532a', deleted: true }] });
+    expect(applyResult(project, target, payload).ok).toBe(true);
+  });
+
+  it('a replace that echoes a reference the target already held applies even when that token is long gone', () => {
+    const container = tree().children[0] as ComponentInstance;
+    container.setProps({ title: ref('lost0001') });
+    const target = captureTarget('replace', page, container);
+    const payload = themedResult({ nodes: [{ type: 'div', label: 'A', props: { style: { color: ref('lost0001') }, children: 'x' } }] }, target, { heldTokenIds: new Set(['lost0001']) });
+    expect(applyResult(project, target, payload).ok).toBe(true);
+  });
+
+  describe('the dialog\'s Undo', () => {
+    it('takes the tokens out with the page, in the same step as the revert', () => {
+      const target = captureTarget('newPage', page, undefined);
+      const applied = applyResult(project, target, themedResult(PAGE, target));
+      if (!applied.ok) throw new Error(applied.reason);
+      getHistoryStore()!.clear();
+      const out = undoGeneration(project, applied.value.record);
+      expect(out).toEqual({ ok: true, value: { kept: [] } });
+      expect(siteTheme().tokens).toHaveLength(0);
+      expect(getHistoryStore()!.history.length).toBe(1);
+      // Cmd+Z on the dialog's Undo brings the page and its token back together.
+      getHistoryStore()!.undo();
+      expect(project.getPage((applied.value.record as { pageId: string }).pageId)).toBeDefined();
+      expect(siteTheme().tokens.map((t) => t.name)).toEqual(['Crust']);
+    });
+
+    it('keeps a token the owner has since used elsewhere, and says which', () => {
+      const target = captureTarget('newPage', page, undefined);
+      const applied = applyResult(project, target, themedResult(PAGE, target));
+      if (!applied.ok) throw new Error(applied.reason);
+      const id = siteTheme().tokens[0].id;
+      (tree().children[0] as ComponentInstance).setProps({ title: ref(id) });
+      const out = undoGeneration(project, applied.value.record);
+      expect(out).toEqual({ ok: true, value: { kept: ['Crust'] } });
+      expect(siteTheme().tokens.map((t) => t.id)).toEqual([id]);
+    });
+
+    it('keeps a token the owner has since edited, since that edit is theirs', () => {
+      const target = captureTarget('newPage', page, undefined);
+      const applied = applyResult(project, target, themedResult(PAGE, target));
+      if (!applied.ok) throw new Error(applied.reason);
+      const [token] = siteTheme().tokens;
+      project.updateTheme({ ...siteTheme(), tokens: [{ ...(token as object), light: '#abcdef' } as never] });
+      expect(undoGeneration(project, applied.value.record)).toEqual({ ok: true, value: { kept: ['Crust'] } });
+      expect(siteTheme().tokens).toHaveLength(1);
+    });
+
+    it('a second undo is refused and the theme stays as it is (re-entry after completion)', () => {
+      const target = captureTarget('newPage', page, undefined);
+      const applied = applyResult(project, target, themedResult(PAGE, target));
+      if (!applied.ok) throw new Error(applied.reason);
+      expect(undoGeneration(project, applied.value.record).ok).toBe(true);
+      expect(undoGeneration(project, applied.value.record).ok).toBe(false);
+      expect(siteTheme().tokens).toHaveLength(0);
+    });
+
+    it('a refused page undo changes no token', () => {
+      const container = tree().children[0] as ComponentInstance;
+      const target = captureTarget('replace', page, container);
+      const applied = applyResult(project, target, themedResult(PAGE, target));
+      if (!applied.ok) throw new Error(applied.reason);
+      // The generated nodes were deleted by hand, so the revert refuses.
+      tree().removeChild((tree().children[0] as ComponentInstance).id);
+      const out = undoGeneration(project, applied.value.record);
+      expect(out.ok).toBe(false);
+      expect(siteTheme().tokens).toHaveLength(1);
+    });
+  });
+
+  it('rerun after a failed apply adds no duplicates: the second apply of the same result lands once', () => {
+    const target = captureTarget('newPage', page, undefined);
+    const payload = themedResult(PAGE, target);
+    project.updateTheme({ ...siteTheme(), tokens: [{ id: 'mm44nn55', name: 'Crust', kind: 'color', light: '#000000' }] });
+    expect(applyResult(project, target, payload).ok).toBe(false);
+    // The owner deletes the clashing token (a tombstone: its name is free again).
+    project.updateTheme({ ...siteTheme(), tokens: siteTheme().tokens.map((t) => ({ ...t, deleted: true as const })) });
+    expect(applyResult(project, target, payload).ok).toBe(true);
+    expect(siteTheme().tokens.filter((t) => t.name === 'Crust' && !t.deleted)).toHaveLength(1);
   });
 });

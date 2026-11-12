@@ -30,8 +30,13 @@ import { STICKY_CTA_PROP_KEYS, isStickyCta } from '@/lib/stickyCta/stickyCta';
 import { FONT_CATEGORIES, FONT_LIBRARY, fontStack } from '@/lib/fonts/registry';
 import { fxGenerationDocs } from '@/lib/fxScene/generation';
 import { FX_PROP, isFxScene } from '@/lib/fxScene/marker';
+import type { ThemeMode } from '@/lib/site/theme';
 
-export function buildSchemaDocs(): string {
+/**
+ * The schema docs. `mode` is the site's theme mode: a site that fixes it (`light` or `dark`)
+ * is not taught the dark look, see rulesDocs. Left out, it is the docs of a site with no choice.
+ */
+export function buildSchemaDocs(mode?: ThemeMode): string {
   const presets = listGenerationPresets();
   const tags = listGenerationTags();
   const styleKeys = listGenerationStyleKeys();
@@ -159,7 +164,7 @@ export function buildSchemaDocs(): string {
     '',
     effectsDocs(),
     '',
-    rulesDocs(),
+    rulesDocs(mode),
     '',
     behaviourDocs(),
     '',

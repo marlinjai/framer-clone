@@ -24,6 +24,7 @@
 
 import { looksBeyondNode, pseudoClassesIn } from '@/lib/rules/surfaces';
 import { HOVER_GATE } from '@/lib/rules/states';
+import type { ThemeMode } from '@/lib/site/theme';
 
 /** The node prop that carries rules (props.rules, as in the editor). */
 export const RULES_PROP = 'rules';
@@ -119,8 +120,22 @@ export const TAUGHT_RULE_ROWS: ReadonlySet<string> = new Set([
   'prefers-color-scheme',
 ]);
 
+/** The mode a site fixes, or undefined when it fixes none (`system` or not chosen). */
+function fixedMode(mode: ThemeMode | undefined): 'light' | 'dark' | undefined {
+  return mode === 'light' || mode === 'dark' ? mode : undefined;
+}
+
+/**
+ * The dark look's line of the rules docs. A site that fixes its mode answers a
+ * `prefers-color-scheme` rule itself (src/lib/rules/colorMode.ts): under `light` it is dropped,
+ * under `dark` it is always on, so teaching it there would write a rule that does nothing or
+ * everything. With `system` or no choice it stays, because there it is what makes a dark look.
+ */
+const DARK_LOOK_LINE =
+  '- A dark look, only when the brief asks for one: "selector":"&","at":["@media (prefers-color-scheme: dark)"].';
+
 /** The "## States and decoration" section of the schema docs (part of the cached prefix: keep it tight). */
-export function rulesDocs(): string {
+export function rulesDocs(mode?: ThemeMode): string {
   return [
     '## States and decoration',
     '',
@@ -131,11 +146,22 @@ export function rulesDocs(): string {
     '- Pressed: "selector":"&:active". Focused, for the keyboard: "selector":"&:focus-visible".',
     '- Decoration: "selector":"&::before" or "&::after", with "content":"\'\'" in its style.',
     '- Rhythm, on the parent of a repeated row: "selector":"& > :nth-child(2n)".',
-    '- A dark look, only when the brief asks for one: "selector":"&","at":["@media (prefers-color-scheme: dark)"].',
+    ...(fixedMode(mode) ? [] : [DARK_LOOK_LINE]),
     `A rule holds no url(). At most ${MAX_GENERATED_RULES} rules per generation: keep states for links and buttons, never`,
     'every card. A rule that does not fit these rules is dropped whole. On a generation with a rule, an image from',
     'another host is dropped: use imageQuery or a site path.',
   ].join('\n');
+}
+
+/**
+ * What the request says about the site's mode (the volatile part, because it differs per
+ * site). Only a fixed mode says anything: the rules docs of that request left the dark look
+ * out (rulesDocs), and this says why the page must not write one.
+ */
+export function darkLineNote(mode: ThemeMode | undefined): string | undefined {
+  const fixed = fixedMode(mode);
+  if (!fixed) return undefined;
+  return `- This site is fixed to ${fixed} mode: write the ${fixed} look only, with no "prefers-color-scheme" rule and no dark variant (${fixed === 'light' ? 'a dark rule is dropped' : 'a dark rule is always on and a light one dropped'}). Give a new token one value, "light".`;
 }
 
 /** A style key that animates, in any vendor spelling. A custom property is not one. */

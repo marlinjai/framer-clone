@@ -120,6 +120,13 @@ import {
   wrapperProblem,
 } from './promptSections/rules';
 import { styleValueTell, textTell } from './tells';
+import { EMPTY_THEME, type SiteTheme, type ThemeToken } from '@/lib/site/theme';
+import {
+  adoptProposedTokens,
+  judgeReferences,
+  parseProposedTokens,
+  type ReferenceContext,
+} from './generatedTheme';
 import {
   RULE_ID,
   holdsTooManyBlocks,
@@ -205,6 +212,12 @@ export interface GenerationResult {
   imageRequests: ImageRequest[];
   /** Images whose imageQuery was unusable (they keep the placeholder). */
   invalidImageQueries: number;
+  /**
+   * The tokens the generation adds to the site's theme (src/lib/ai/pageGen/generatedTheme.ts),
+   * with the ids the nodes already refer to. Only tokens a node uses; absent when none.
+   * The editor decides them again against the theme as it is when the result is applied.
+   */
+  theme?: { tokens: ThemeToken[] };
 }
 
 export type ValidationOutcome =
@@ -249,6 +262,25 @@ export interface ValidateContext {
    * box. Defaults to false: a new page.
    */
   pageHasFxScene?: boolean;
+  /**
+   * The site's theme as the request carried it: what a style value may refer to
+   * (`var(--fc-t-<id>)`) and what a proposed token is compared with. Defaults to an empty
+   * theme, so every reference is then refused.
+   */
+  theme?: SiteTheme;
+  /**
+   * The token ids the target already holds (tokenUsage of the replaced context). A replace
+   * echoes them back, and they stay allowed even if the token has since been deleted, because
+   * they render as they did.
+   */
+  heldTokenIds?: ReadonlySet<string>;
+  /**
+   * False for the streaming preview, which cannot see the tokens a generation proposes: an
+   * unknown reference is then dropped with a warning instead of refused. Defaults to true.
+   */
+  themeStrict?: boolean;
+  /** Random source for a minted token id. Injectable for deterministic tests. */
+  random?: () => number;
 }
 
 /**
@@ -305,7 +337,7 @@ export function clampedZIndex(value: string | number): string | number | undefin
  *   - a key naming one of the platform's own custom properties (`--fc-`, isPlatformVariable),
  *     such as a theme token, which a page must never redefine.
  */
-export function styleValueProblem(property: string, value: string, inRule = false): string | undefined {
+export function styleValueProblem(property: string, value: string, inRule = false, fontReferenceChecked = false): string | undefined {
   if (isPlatformVariable(property)) return "one of the platform's own custom properties";
   if (UNSAFE_VALUE.test(value) || STRING_URL_FUNCTION.test(value)) return 'unsafe value';
   if (holdsTopLayerValue(value)) return 'base-select puts the list in the top layer, above the consent banner';
@@ -314,7 +346,11 @@ export function styleValueProblem(property: string, value: string, inRule = fals
   if (!inRule && namesGeneratedKeyframes(property, value)) return 'a stored animation outside a rule';
   const scan = scanCssValue(value);
   if (scan.indirect) return 'var() inside image-set()';
-  if ((property === 'fontFamily' || property === 'font') && /var\(/i.test(value)) return 'var() in a font';
+  // A reference to a live font token is the one var() a font takes, and judgeReferences
+  // (./generatedTheme.ts) has already decided it before this runs.
+  if ((property === 'fontFamily' || property === 'font') && /var\(/i.test(value) && !(fontReferenceChecked && property === 'fontFamily')) {
+    return 'var() in a font';
+  }
   if (property.startsWith('--')) {
     if (/url\(|image-set\(/i.test(value) || scan.strings.some((text) => /[:/]/.test(text))) return 'an address in a custom property';
   }
@@ -535,8 +571,13 @@ class Validator {
   /** Breakpoint keys, largest breakpoint first (the editor's primary breakpoint). */
   private readonly orderedKeys: string[];
   private readonly newId: () => string;
+  /** What a token reference may name, the proposed tokens included (undefined: no check, never). */
+  private readonly references: ReferenceContext;
+  /** Every token id a kept style value refers to, so an unused proposal is not added. */
+  readonly usedTokens = new Set<string>();
 
-  constructor(ctx: ValidateContext) {
+  constructor(ctx: ValidateContext, references: ReferenceContext) {
+    this.references = references;
     this.newId = ctx.newId ?? uuidv4;
     this.orderedKeys = [...ctx.breakpoints].sort((a, b) => b.minWidth - a.minWidth).map((b) => b.key);
     // Accept the exact key, its lowercase, and the breakpoint's label, all
@@ -787,7 +828,7 @@ class Validator {
       this.warn(path, `style.${key}: value must be a string or number, dropped`);
       return undefined;
     }
-    const v = raw.trim();
+    let v = raw.trim();
     // Whitespace on a custom property is CSS's empty value, see cssValueText.
     if (v.length === 0) return property.startsWith('--') && raw.length > 0 ? ' ' : undefined;
     if (v.length > GENERATION_LIMITS.maxStyleValueChars) {
@@ -798,7 +839,24 @@ class Validator {
       this.warn(path, `style.${key}: value contains a bare ;, { } \\ or a control character, dropped`);
       return undefined;
     }
-    const problem = styleValueProblem(property, v, place === 'rule');
+    // A token reference: judged for the property it stands on. A refusal is an error (it
+    // drives the repair round) and never a quiet drop, which would ship a page missing a colour.
+    // The streaming preview cannot see the tokens a generation proposes, so there it drops.
+    let fontReferenceChecked = false;
+    if (/--fc-t-/i.test(v)) {
+      const verdict = judgeReferences(property, v, this.references);
+      if (verdict.problem) {
+        if (this.references.strict) this.fail(path, `style.${key}: ${verdict.problem}`);
+        else this.warn(path, `style.${key}: ${verdict.problem}, dropped`);
+        return undefined;
+      }
+      v = verdict.value;
+      verdict.used.forEach((id) => this.usedTokens.add(id));
+      // A font reference is the whole value: no family beside it to normalise.
+      if (property === 'fontFamily') return v;
+      fontReferenceChecked = true;
+    }
+    const problem = styleValueProblem(property, v, place === 'rule', fontReferenceChecked);
     if (problem) {
       this.warn(path, `style.${key}: ${problem} dropped`);
       return undefined;
@@ -2236,7 +2294,25 @@ function placeMapEmbeds(nodes: GeneratedNodeSnapshot[], v: Validator, address: s
  * `{ title?, description?, nodes: Node[] }`.
  */
 export function validateGeneration(raw: unknown, ctx: ValidateContext): ValidationOutcome {
-  const v = new Validator(ctx);
+  // The theme this generation reads: the request's, with the tokens it proposes added.
+  const baseTheme = ctx.theme ?? EMPTY_THEME;
+  const themeErrors: string[] = [];
+  let references: ReferenceContext = { theme: baseTheme, held: ctx.heldTokenIds ?? new Set(), idByRef: new Map(), strict: ctx.themeStrict !== false };
+  let proposedAdded: ThemeToken[] = [];
+  if (isPlainObject(raw) && raw.theme !== undefined) {
+    const proposal = parseProposedTokens(raw.theme);
+    if (!proposal.ok) themeErrors.push(...proposal.errors);
+    else if (proposal.tokens.length > 0) {
+      const adopted = adoptProposedTokens(baseTheme, proposal.tokens, ctx.random);
+      if (!adopted.ok) themeErrors.push(...adopted.errors.map((e) => `theme.tokens: ${e}`));
+      else {
+        references = { ...references, theme: adopted.theme, idByRef: adopted.idByRef };
+        proposedAdded = adopted.added;
+      }
+    }
+  }
+  const v = new Validator(ctx, references);
+  v.errors.push(...themeErrors);
   if (!isPlainObject(raw)) {
     return { ok: false, errors: ['output must be an object with a "nodes" array'], warnings: [] };
   }
@@ -2306,6 +2382,12 @@ export function validateGeneration(raw: unknown, ctx: ValidateContext): Validati
 
   if (v.errors.length > 0) return { ok: false, errors: v.errors, warnings: v.warnings };
 
+  // A token no node uses is not added: a palette fills with tokens nothing refers to.
+  const keptTokens = proposedAdded.filter((token) => v.usedTokens.has(token.id));
+  for (const token of proposedAdded) {
+    if (!v.usedTokens.has(token.id)) v.warnings.push(`theme.tokens: "${token.name}" is used by no node, not added`);
+  }
+
   const title = typeof raw.title === 'string' && raw.title.trim() ? raw.title.trim().slice(0, 120) : undefined;
   const description =
     typeof raw.description === 'string' && raw.description.trim() ? raw.description.trim().slice(0, 300) : undefined;
@@ -2320,6 +2402,7 @@ export function validateGeneration(raw: unknown, ctx: ValidateContext): Validati
       stats: { nodeCount: v.nodeCount, maxDepth: v.maxDepth },
       imageRequests: v.imageRequests,
       invalidImageQueries: v.invalidImageQueries,
+      ...(keptTokens.length > 0 ? { theme: { tokens: keptTokens } } : {}),
     },
   };
 }

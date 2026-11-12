@@ -45,6 +45,7 @@ import { validateGeneration, type GeneratedNodeSnapshot, type ImageRequest } fro
 import { breakpointKeyMap, toEditorSnapshot } from '@/lib/ai/pageGen/apply';
 import { STOCK_CREDIT_ATTRS, isSameUnsplashPhoto } from '@/lib/ai/pageGen/stockCredit';
 import { siteAddressOf, siteContextFromSettings } from '@/lib/ai/pageGen/promptSections/siteContext';
+import { normalizeSiteSettings } from '@/lib/site/siteSettings';
 import { indexReviewTree, validateReviewOps } from '@/lib/ai/review/ops';
 import type { ReviewTreeNode } from '@/lib/ai/review/protocol';
 import { keyedBreakpoints, type KeyedBreakpoint } from './breakpoints';
@@ -528,6 +529,8 @@ export async function applyOperations(
             breakpoints: asBreakpointKeys(keyed),
             ...(deps.newId ? { newId: deps.newId } : {}),
             mapAddress: address || null,
+            // An agent may use the site's tokens by reference, and no other --fc- name.
+            theme: normalizeSiteSettings(project.siteSettings).theme,
             // A page draws one FX scene (src/lib/fxScene): none is inserted beside one.
             pageHasFxScene: holdsFxScene([page.appComponentTree as ComponentInstance]),
             // No preset under a button, link or the like the parent stands in (validate.ts).

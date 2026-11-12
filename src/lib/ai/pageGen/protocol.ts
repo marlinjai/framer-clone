@@ -8,6 +8,7 @@ import type { BreakpointInput } from './schema';
 import { MODEL_CHOICES, type ModelChoice } from '@/lib/ai/modelChoice';
 import type { SiteContext } from './promptSections/siteContext';
 import type { OutlineEntry } from './outline';
+import type { ThemeToken } from '@/lib/site/theme';
 
 /**
  * Models the page generator may run on: the slider's three steps (Fast =
@@ -118,6 +119,12 @@ export interface PageGenResultPayload {
    */
   tells?: string[];
   stats: { nodeCount: number; maxDepth: number };
+  /**
+   * The tokens the page adds to the site's theme, with the ids its nodes refer to
+   * (./generatedTheme.ts). The editor decides them again against the theme as it is when the
+   * result is applied, and applies them with the page in one undo step.
+   */
+  theme?: { tokens: ThemeToken[] };
   model: string;
   /** What happened to the images the model asked stock photos for. */
   images: StockImageSummary;
