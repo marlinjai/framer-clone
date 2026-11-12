@@ -14,7 +14,7 @@ import { getLayerDefinition, listLayerDefinitions } from '../registry';
 import { deserializeScene, sceneToJSON, serializeScene } from '../serialize';
 import { SCENE_SCHEMA_VERSION } from '../types';
 
-import hubHeroJson from './fixtures/hub-hero.json';
+import hubHeroJson from '../presets/preset-gold-noise-gradient.json';
 
 const BUILT_IN_TYPES = [
   'bloom',
@@ -66,7 +66,7 @@ describe('the lumitra.co hub hero scene (lumitra-web src/scenes/hub-hero.json at
 
 describe('the presets', () => {
   it('each load through the scene loader with known layer types only', () => {
-    expect(PRESETS.map((p) => p.id).sort()).toEqual(['bokeh-focuspull', 'godrays-hero', 'noise-gradient']);
+    expect(PRESETS.map((p) => p.id).sort()).toEqual(['bokeh-focuspull', 'godrays-hero', 'gold-noise-gradient', 'noise-gradient']);
     for (const meta of PRESETS) {
       expect(findPreset(meta.id)).toBe(meta);
       const scene = meta.load();

@@ -162,15 +162,12 @@ describe('FX2: the app reaches the engine only through its public entry', () => 
     expect(rules(APP_FILE, `import type { SceneConfig } from '@/lib/fx/types';`)).toEqual(['FX2']);
   });
 
-  it('lets a file under test import the engine\'s test scenes, and nothing else from inside it', () => {
+  it('gives a file under test no way into the engine but its public entries', () => {
     const SPEC = 'test/behaviour/fx.spec.ts';
-    expect(rules(SPEC, `import hubHero from '@/lib/fx/__tests__/fixtures/hub-hero.json';`)).toEqual([]);
     expect(rules(SPEC, `import { PRESETS } from '@/lib/fx/format';`)).toEqual([]);
     expect(rules(SPEC, `import preset from '@/lib/fx/presets/preset-godrays-hero.json';`)).toEqual(['FX2']);
+    expect(rules(SPEC, `import scene from '@/lib/fx/__tests__/fixtures/v7.json';`)).toEqual(['FX2']);
     expect(rules(SPEC, `import { LumitraScene } from '@/lib/fx/LumitraScene';`)).toEqual(['FX2']);
-    expect(rules(SPEC, `import x from '@/lib/fx/__tests__/scene.test';`)).toEqual(['FX2']);
-    // App code gets no such exception.
-    expect(rules(APP_FILE, `import hubHero from '@/lib/fx/__tests__/fixtures/hub-hero.json';`)).toEqual(['FX2']);
   });
 
   it('is clean over the test roots too', () => {
@@ -225,7 +222,7 @@ describe('the repository as it is', () => {
 
   // The render entry (`@/lib/fx`) loads three.js. Exactly one file outside the
   // engine imports it, the lazy mount module, and that module is reached only by
-  // a dynamic import(): so three.js is in a chunk of its own, fetched where a
+  // a dynamic import() (the published island, and the editor's FX layer): so three.js is in a chunk of its own, fetched where a
   // scene is drawn, and in no page's own bundle. The real chunks are measured in
   // test/behaviour/fx.spec.ts; this keeps the reason they are small.
   const resolve = (specifier: string, from: string): string | null => {
@@ -263,10 +260,16 @@ describe('the repository as it is', () => {
   );
 
   it(
-    'reaches the lazy mount module by dynamic import only, from the published island',
+    'reaches the lazy mount module by dynamic import only: from the published island, and from the editor\'s layer for its canvas and preview',
     () => {
-      const importers = importersOf(path.join(REPO_ROOT, MOUNT));
-      expect(importers).toEqual([{ file: 'src/lib/renderer/server/FxIsland.tsx', dynamic: true }]);
+      // The mount's own tests import it directly, with the engine stood in for: they are not part of any page.
+      const importers = importersOf(path.join(REPO_ROOT, MOUNT))
+        .filter((importer) => !importer.file.includes('/__tests__/'))
+        .sort((a, b) => a.file.localeCompare(b.file));
+      expect(importers).toEqual([
+        { file: 'src/components/fx/FxLayer.tsx', dynamic: true },
+        { file: 'src/lib/renderer/server/FxIsland.tsx', dynamic: true },
+      ]);
     },
     SCAN_TIMEOUT_MS,
   );

@@ -24,14 +24,14 @@
 //     prove an SVG harmless. A PNG of 512 by 512 pixels covers every browser
 //     and the home screen icons; an SVG hosted elsewhere can still be entered
 //     by its https address.
-//   - sharing image: PNG, JPEG or WebP.
+//   - sharing image, and a picture an FX scene shows (kind `scene`): PNG, JPEG or WebP.
 //   - both: at most 2 MB and 8000 pixels on each side.
 // Shapes that work but look poor (a non-square or small favicon, a sharing
 // image far from 1.91 to 1 or under 600 by 315) are warnings, never refusals.
 
 import { readImageSize, sniffImageType, looksLikeSvg, type SniffedImageType } from '@/lib/images/imageHeader';
 
-export const SITE_IMAGE_KINDS = ['favicon', 'sharing'] as const;
+export const SITE_IMAGE_KINDS = ['favicon', 'sharing', 'scene'] as const;
 export type SiteImageKind = (typeof SITE_IMAGE_KINDS)[number];
 
 export type SiteImageContentType = SniffedImageType;
@@ -40,6 +40,8 @@ export type SiteImageContentType = SniffedImageType;
 export const SITE_IMAGE_TYPES: Record<SiteImageKind, readonly SiteImageContentType[]> = {
   favicon: ['image/png', 'image/x-icon'],
   sharing: ['image/png', 'image/jpeg', 'image/webp'],
+  // A picture an FX scene shows in an image layer (src/lib/fxScene/fxScene.ts).
+  scene: ['image/png', 'image/jpeg', 'image/webp'],
 };
 
 /** The largest upload, in bytes. */
@@ -222,6 +224,8 @@ export function siteImageWarnings(kind: SiteImageKind, size: { width: number; he
     }
     return warnings;
   }
+  // A scene's picture fills its box at whatever shape the box has: no shape is wrong.
+  if (kind === 'scene') return warnings;
   if (Math.abs(width / height / SHARING_RATIO - 1) > SHARING_RATIO_TOLERANCE) {
     warnings.push(`This image is ${width} by ${height} pixels. Sharing previews are shown at 1.91 to 1 (1200 by 630), so parts of it may be cut off.`);
   }

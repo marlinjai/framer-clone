@@ -57,7 +57,7 @@ async function handlePOST(req: Request, { params }: Ctx): Promise<Response> {
 
   const kind = new URL(req.url).searchParams.get('kind');
   if (!isSiteImageKind(kind)) {
-    return jsonError('bad_kind', 'Say which image this is: kind=favicon or kind=sharing.', 400);
+    return jsonError('bad_kind', 'Say which image this is: kind=favicon, kind=sharing or kind=scene.', 400);
   }
   // Counted before the body is read: every attempt, accepted or not.
   const limited = getUploadRateLimiter().hit('site-images', auth.userId, Date.now());

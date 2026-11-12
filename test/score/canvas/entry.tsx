@@ -46,6 +46,14 @@ interface ProbeWindow {
     setPreviewValue: (stateId: string, value: string | number | boolean | undefined) => void;
     tool: () => string;
     select: (componentId: string) => void;
+    /** Pick a node in one breakpoint frame, by the frame's place in the row. */
+    selectIn: (componentId: string, frame: number) => void;
+    /** The FX scene drawn live on the canvas (EditorUIStore `fxLive`). */
+    startFxLive: (componentId: string, frame: number | null) => void;
+    stopFxLive: () => void;
+    fxLiveStatus: () => string;
+    /** Store a node's `fx` prop, as the panel does. */
+    setFx: (componentId: string, stored: unknown) => void;
     /** The open project as stored, to show nothing reached it. */
     projectJson: () => string;
     /** A second page of the project, with this slug. */
@@ -141,6 +149,23 @@ const nodeById = (id: string): ComponentInstance | undefined => {
   undoLevels: () => getUndoManager()?.undoIdx ?? 0,
   setPreviewValue: (stateId, value) => editorStore().editorUI.setPreviewValue(stateId, value),
   tool: () => editorStore().editorUI.selectedTool,
+  selectIn: (componentId, frame) => {
+    const node = nodeById(componentId);
+    if (!node) throw new Error(`no node ${componentId}`);
+    editorStore().editorUI.selectComponent(node, openPage().sortedViewportNodes[frame]?.breakpointId);
+  },
+  startFxLive: (componentId, frame) =>
+    editorStore().editorUI.startFxLive(componentId, frame === null ? null : (openPage().sortedViewportNodes[frame]?.breakpointId ?? null)),
+  stopFxLive: () => editorStore().editorUI.stopFxLive(),
+  fxLiveStatus: () => {
+    const status = editorStore().editorUI.fxLiveStatus;
+    return status.state === 'off' ? `off:${status.reason}` : status.state;
+  },
+  setFx: (componentId, stored) => {
+    const node = nodeById(componentId);
+    if (!node) throw new Error(`no node ${componentId}`);
+    node.setProps({ fx: stored });
+  },
   select: (componentId) => {
     const node = nodeById(componentId);
     if (!node) throw new Error(`no node ${componentId}`);

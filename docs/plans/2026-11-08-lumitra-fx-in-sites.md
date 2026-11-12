@@ -623,3 +623,102 @@ uploaded to the site, fetched once from the site's own image route, in its own c
 and under reduced motion; a scene follows the reduced motion preference when it changes on an open page, in both calm
 states.
 
+
+### F5 `fx-panel` (2026-11-12)
+
+The editor: an FX scene can be dropped from the palette, edited in the properties panel, drawn live on the canvas and
+previewed as it will be published.
+
+- **The hub hero is the engine's first preset.** `src/lib/fx/presets/preset-gold-noise-gradient.json` is lumitra.co's
+  hero scene, so the guard's exception for test fixtures is gone, and the palette entry "FX scene"
+  (`src/lib/componentRegistry.ts`) starts from it, over lumitra.co's own painted background as the box background.
+  The entry carries `generation: false`: the generator is not taught the box until F6.
+- **One implementation of every change** (`src/lib/fxScene/edit.ts`): each change is a pure function from the stored
+  prop to the next one, and its result passes the strict reader again before it is stored. The panel uses it now; F6's
+  generator and the agent's site operations will use the same functions.
+- **The FX section** (`src/components/sidebars/right/sections/FxSceneSection.tsx`): presets, `start`, `calm`, the scene
+  background, the layer list (add, remove, reorder, show or hide, rename, change kind, blend), one control per setting
+  generated from the layer's schema (number, colour, choice, switch, text, pair of numbers), a picture upload for an
+  image layer (a new upload kind `scene`; never a typed address), "Copy scene JSON" and "Import scene JSON" (the
+  engine's own format, and Lumitra Studio's through the bridge, loaded only then). What the reader repaired is shown;
+  a change it refuses is shown as an error and stores nothing.
+- **Canvas "Live"** (`src/components/fx/FxLayer.tsx`, state in `EditorUIStore.fxLive`): off by default, so every
+  breakpoint frame shows the box with its own background. On, the scene is drawn for that box in ONE frame, the one the
+  box is picked in, and follows the box when it is picked in another. Every change in the panel is drawn in the same
+  WebGL context (`renderFxScene(...).update` in `src/lib/fxScene/mount.tsx`). What the scene is doing, and why it is
+  not drawn (no WebGL, a lost context, a refused scene, the engine not loading), shows under the switch with the way on.
+- **Preview** behaves as the published page because it runs the same steps: the island's start logic moved to
+  `src/lib/fxScene/start.ts` (reduced motion, the WebGL probe, `settled` / `visible` / `immediate`), and both the
+  island and the preview's layer call it. One scene per preview frame, a second one stays calm.
+- **Pictures in the editor** are fetched from the editor's own image address (behind sign-in), resolved after the
+  strict read, which keeps accepting site paths only. Site settings counts a scene's pictures as in use, saved or not,
+  so "Uploaded images" never offers one for deletion.
+
+Decided in F5, say so if you disagree:
+
+- **The layer is a React child of the box in the editor, not inserted by hand as on the published page.** The canvas
+  re-renders a box on every edit, and React replaces the whole content of a box that holds only text; a layer put
+  there behind React's back would be wiped with its WebGL context left running. The published page never re-renders,
+  so its island keeps inserting the layer itself. Both use one description of how the layer sits in the box
+  (`src/lib/fxScene/box.ts`).
+- **The one context belongs to a rendered element, not to a node.** One node can be drawn many times in a frame (a
+  repeated child, a component placed twice). The first element to ask holds the claim (`src/lib/fxScene/claim.ts`);
+  when it goes away another takes over.
+- **Live stands down in two situations:** while the box's own text is being typed (the text box replaces the box's
+  content), and under the preview over the editor, which draws the scene itself. It comes back by itself.
+- **On the canvas the scene starts at once**, whatever its `start` setting says: the person asked for it. The preview
+  honours `start`.
+- **The canvas is sized from its layout size in the editor** (`layoutSize` on `LumitraScene`), because the editor's
+  canvas is scaled by a CSS transform and react-three-fiber measures the scaled rectangle by default: at 60 percent
+  zoom the drawing would have been scaled twice. Checked in a browser at 60 percent: the drawing fills the box.
+  The published page keeps the default measure, so the pixel comparison of F4 is untouched.
+- **Live is session state:** never saved, never in undo history, off when another project opens.
+- **The presets are offered in the panel, not as separate palette entries.** The plan put them in the insert palette.
+  The palette has one entry, "FX scene", which starts as the lumitra.co hero, and "Replace with a preset" is the first
+  control of its section: four more palette tiles for one kind of box would crowd the palette, and a preset can be
+  changed later only from the panel anyway.
+- **In the preview the first scene holds the frame's one slot even when it is not drawn** (reduced motion with the
+  background as calm state, or no WebGL), exactly as the published island gives the page's slot to the first box. A
+  second scene is never drawn in its place.
+
+Found by the tests and fixed:
+
+- **JSON that was neither format replaced the scene with an empty one.** The Studio bridge reads any object as a scene
+  without layers, so pasting `{"hello":"world"}` into Import silently emptied the scene. Import now takes the bridge
+  only for a value that has `root.children`, and refuses everything else with the reason.
+- **A note or a refusal stayed on screen after an undo.** Both are now kept with the scene they were said about.
+- **An upload in the demo project** (which no server holds) failed with a server error. It now says to choose "Keep as
+  project" first.
+- **A set-up that threw after the engine arrived left the box at `loading`** with an unhandled rejection, on the
+  published page too. One handler now covers it and the chunk that does not arrive.
+- **A registry render test had been failing since the palette entry** (`savedPagesRender.test.ts` took the stored scene
+  for a dropped attribute).
+- **A race in three published FX tests**, seen in CI on another pull request (WebKit, "start settled": `expected null
+  to be 'waiting'`): they read the island's state once at the `load` event, before hydration had written it. They now
+  wait for it. Landed on its own as #375.
+
+Tests:
+
+- `src/components/sidebars/right/__tests__/FxSceneSection.test.tsx` (38): one per kind of control, the layer list, the
+  upload, copy and import, the Live switch with each reason, and the four stateful paths: forward; another kind resets
+  that layer's settings and keeps every other layer, and the same kind keeps them; a reload restores the scene; undo
+  after a removal restores the layer, another box starts clean, and a box whose scene cannot be read leads to a preset.
+- `src/lib/fxScene/__tests__/edit.test.ts`, `mount.test.tsx` (18), `src/components/fx/__tests__/FxLayer.test.tsx` (15).
+- `src/app/site-images/__tests__/siteImages.itest.ts`: the real upload route stores a picture sent with `kind=scene`
+  (what the panel posts), of any shape without warnings, and refuses an icon file for it.
+- `test/behaviour/fxCanvas.spec.ts` (18, Chromium and WebKit, the real EditorApp): **no more than one WebGL context**,
+  counted in the page where contexts are made: nothing drawn by default, Live draws one box in one frame, five changes
+  of the scene keep the same context, the frame and the box can be switched, the preview over the editor takes the
+  context and gives it back, Live off releases it, a lost context and a refused scene are reported.
+- `test/behaviour/fx.spec.ts` (72): the page without a scene also fetches no layer schema and no preset (the palette
+  now imports the presets, so this is checked on the real build).
+- Score: the FX rows now pass the canvas and the panel columns (`test/score/fx.canvas.score.ts`,
+  `fx.panel.jsdom.score.tsx`); the generator column fails under the gap `fx-scene` until F6.
+
+Seen in a real browser (headless Chrome on the automation profile, the local dev server, the demo editor, 2026-11-12):
+an FX scene box added; its section first in the panel with the five layers of the hub hero; Live on: one canvas of
+1248 by 480 pixels in the Desktop frame, state `live`; at 60 percent zoom the canvas rectangle equals the box
+(749 by 288) with the same drawing buffer; two gradient colours changed to red and the drawing turned red without a
+new context; the box picked in the Tablet frame and the scene moved there, still one canvas; the preview opened with
+Live on: the canvas scene gone, the preview scene `waiting` and then `live` after 1.6 seconds (the `settled` start),
+one canvas; preview closed and the canvas scene back; Live off: no canvas, the boxes as before.

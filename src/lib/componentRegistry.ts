@@ -41,6 +41,7 @@ import {
   Send as SubmitIcon,
   PanelBottom as StickyCtaIcon,
   MapPin as MapEmbedIcon,
+  Sparkles as FxSceneIcon,
   Link as LinkIcon,
   PanelTop as TabsIcon,
   Wrench as ToolbarIcon,
@@ -61,6 +62,15 @@ import type { BindableSlotMeta } from '@/lib/bindings/types';
 import { FORM_KIND_ATTR, DEFAULT_FORM_NAME, DEFAULT_SUCCESS_MESSAGE, type FieldType } from '@/lib/forms/definition';
 import { DEFAULT_STICKY_CTA, STICKY_CTA_ATTR, STICKY_CTA_MARKER } from '@/lib/stickyCta/stickyCta';
 import { MAP_EMBED_ATTR, MAP_EMBED_MARKER } from '@/lib/mapEmbed/mapEmbed';
+import { FX_ATTR, FX_MARKER, FX_PROP } from '@/lib/fxScene/marker';
+import { fxFromPreset } from '@/lib/fxScene/edit';
+
+/** What a new FX scene box holds: the default preset and the box background it falls back to. */
+const FX_DEFAULT = (() => {
+  const made = fxFromPreset();
+  if (!made.ok) throw new Error(`the default FX preset does not load: ${made.message}`);
+  return { stored: made.stored, background: made.background };
+})();
 import { ADD_TO_CART_CONTROL_STYLE, CART_CONTROL_STYLE, CHECKOUT_CONTROL_STYLE, VARIANT_CONTROL_STYLE } from '@/lib/commerce/parts';
 
 export type ComponentCategory = 'basic' | 'layout' | 'data' | 'commerce' | 'form' | 'interactive';
@@ -112,6 +122,12 @@ export interface ComponentRegistryEntry {
    * comes with name, email, message, consent and a submit button.
    */
   defaultChildren?: string[];
+  /**
+   * False keeps the entry out of what the AI generator and the serialized registry
+   * are taught (src/lib/ai/pageGen/schema.ts, src/lib/ai/serializers/registry.ts):
+   * for a component the generator has no checked way to write yet.
+   */
+  generation?: false;
   /**
    * A behaviour preset: dropping this entry places the nodes its function returns
    * (src/lib/behaviour/presets) instead of one element. `htmlType` and `defaultProps`
@@ -424,6 +440,35 @@ export const COMPONENT_REGISTRY: Record<string, ComponentRegistryEntry> = {
       },
     },
     defaultSize: { width: 640, height: 360 },
+  },
+  // An FX scene box (src/lib/fxScene/fxScene.ts): a container that draws a Lumitra FX
+  // scene behind its children. It starts as the lumitra.co hero, over that hero's own
+  // painted background, which is what shows wherever the scene is not drawn. The
+  // generator is not taught it yet (slice F6 of the FX plan adds its checked way in).
+  fxScene: {
+    id: 'fxScene',
+    label: 'FX scene',
+    category: 'layout',
+    icon: FxSceneIcon,
+    iconClassName: 'bg-amber-100 text-amber-700',
+    htmlType: 'div',
+    generation: false,
+    defaultProps: {
+      [FX_ATTR]: FX_MARKER,
+      [FX_PROP]: FX_DEFAULT.stored,
+      style: {
+        position: 'relative',
+        width: '100%',
+        minHeight: '480px',
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: '48px 24px',
+        background: FX_DEFAULT.background,
+      },
+    },
+    defaultSize: { width: 960, height: 480 },
   },
   image: {
     id: 'image',

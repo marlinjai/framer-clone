@@ -13,7 +13,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { chromium, webkit, type Browser, type BrowserContext, type BrowserType, type Page } from 'playwright';
 import type { PNG } from 'pngjs';
-import hubHero from '@/lib/fx/__tests__/fixtures/hub-hero.json';
 import { PRESETS, serializeScene } from '@/lib/fx/format';
 import { FX_ATTR, FX_MARKER, FX_PROP } from '@/lib/fxScene/marker';
 import {
@@ -37,7 +36,8 @@ import { publishPages } from './site';
 const preset = (id: string): Scene => serializeScene(PRESETS.find((p) => p.id === id)!.load()) as unknown as Scene;
 
 const SCENES: Readonly<Record<string, Scene>> = {
-  'hub-hero': hubHero as unknown as Scene,
+  // The lumitra.co hub hero is the engine's first preset.
+  'hub-hero': preset('gold-noise-gradient'),
   'godrays-hero': preset('godrays-hero'),
   'noise-gradient': preset('noise-gradient'),
 };

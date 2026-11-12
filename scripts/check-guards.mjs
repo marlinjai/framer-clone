@@ -85,8 +85,8 @@
  *       `@/lib/fx/format`), never through another file inside it.
  * Both rules read every static import, re-export, dynamic import() and
  * require() with a literal specifier; see scanFxBoundary. They also run over
- * `test` (FX_ONLY_ROOTS), where a file may import the engine's test scenes
- * (FX_FIXTURES_DIR) and nothing else from inside it.
+ * `test` (FX_ONLY_ROOTS): a test reaches the engine as the app does, and gets
+ * its scenes from the presets the public entry exports.
  *
  * A deliberate hazard FIXTURE (a test proving that an unqualified fragment
  * leaks) may opt out of one line with a `tenant-db-guard-disable-next-line`
@@ -144,8 +144,11 @@ export const FX_DIR = 'src/lib/fx';
  *  - `@/lib/fx/format`: the stored format, the layer schemas and the scene
  *    operations. Render-free (src/lib/fx/__tests__/importGraph.test.ts), for a
  *    server, a panel or a validator.
+ *  - `@/lib/fx/unified`: the Studio bridge, which reads a scene in Lumitra Studio's
+ *    format. Render-free too, but it brings the scene-core package, so it is its
+ *    own entry, loaded only where such a scene is imported.
  */
-export const FX_PUBLIC_ENTRIES = [`${FX_DIR}/index`, `${FX_DIR}/format`];
+export const FX_PUBLIC_ENTRIES = [`${FX_DIR}/index`, `${FX_DIR}/format`, `${FX_DIR}/unified`];
 
 /**
  * Roots scanned for the FX rules ONLY, beside DEFAULT_ROOTS: the browser suites and
@@ -153,13 +156,6 @@ export const FX_PUBLIC_ENTRIES = [`${FX_DIR}/index`, `${FX_DIR}/format`];
  * does. The tenant rules do not apply there (integration tests hold raw SQL on purpose).
  */
 export const FX_ONLY_ROOTS = ['test'];
-
-/**
- * The engine's test scenes (the lumitra.co hub hero and lumitra-web's own scenes,
- * copied unchanged). Test data, not engine code: a file under `test` may import
- * them directly, since the engine's public entries export no fixtures.
- */
-export const FX_FIXTURES_DIR = `${FX_DIR}/__tests__/fixtures`;
 
 /** The entry that loads the renderer (three.js): see FX_PUBLIC_ENTRIES. */
 export const FX_RENDER_ENTRY = `${FX_DIR}/index`;
@@ -580,7 +576,6 @@ export function scanFxBoundary(file) {
         violations.push({ rule: 'FX1', line, message: `the FX engine (${FX_DIR}) imports nothing from the rest of the repository, found "${specifier}"` });
       }
     } else if (target !== null && isInsideFx(target) && !isFxPublicEntry(target)) {
-      if (rel.startsWith('test/') && target.startsWith(`${FX_FIXTURES_DIR}/`)) continue;
       violations.push({ rule: 'FX2', line, message: `import the FX engine through "@/lib/fx" or "@/lib/fx/format" only, not "${specifier}"` });
     }
   }

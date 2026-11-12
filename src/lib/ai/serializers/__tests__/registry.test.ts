@@ -17,8 +17,12 @@ describe('serializeRegistry', () => {
     const out = serializeRegistry();
     const presets = Object.values(COMPONENT_REGISTRY).filter((entry) => entry.preset);
     expect(presets.length).toBeGreaterThan(0);
-    expect(out.length).toBe(Object.keys(COMPONENT_REGISTRY).length - presets.length);
+    // And but an entry the generator is not taught yet (the FX scene box).
+    const held = Object.values(COMPONENT_REGISTRY).filter((entry) => entry.generation === false);
+    expect(held.map((entry) => entry.id)).toEqual(['fxScene']);
+    expect(out.length).toBe(Object.keys(COMPONENT_REGISTRY).length - presets.length - held.length);
     expect(out.map((entry) => entry.type)).not.toContain(presets[0].id);
+    expect(out.map((entry) => entry.type)).not.toContain('fxScene');
   });
 
   it('sorts entries alphabetically by type', () => {

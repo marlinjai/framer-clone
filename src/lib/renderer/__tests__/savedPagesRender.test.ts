@@ -2,6 +2,7 @@
 // refuses by default, so a page built from a registry entry, a behaviour preset, the
 // demo seed, a legal template or the corpus must lose nothing to it.
 // @vitest-environment node
+import { isFxSceneProp } from '@/lib/fxScene/marker';
 import { describe, expect, it } from 'vitest';
 import { COMPONENT_REGISTRY, FORM_COMPONENTS } from '@/lib/componentRegistry';
 import { PLACEMENT_TYPE } from '@/lib/components/placement';
@@ -30,6 +31,8 @@ function losses(tree: Tree, where: string, out: string[] = [], foreign: ForeignC
   const props = tree.props ?? {};
   const attributes = stripStickyCtaProps(props);
   for (const [name, value] of Object.entries(attributes)) {
+    // A stored FX scene (src/lib/fxScene) is data for its island: read by the FX pass, never an attribute.
+    if (isFxSceneProp(name, tree.type) && typeof value === 'object') continue;
     if (!NOT_ATTRIBUTES.has(name) && isDroppedProp(name, value)) out.push(`${where}: ${name} on <${String(tree.type)}>`);
   }
   if (isDroppedId(tree.type, props.id)) out.push(`${where}: the id ${String(props.id)} on <${String(tree.type)}>`);
