@@ -21,14 +21,14 @@ import 'server-only';
 import type { PrismaClient } from '@prisma/client';
 import { getPrismaClient } from '@/server/db';
 
-import { sql, type Kysely } from 'kysely';
+import { sql, type Kysely, type Transaction } from 'kysely';
 import { z } from 'zod';
 
 import type { CommerceDB } from '@/server/commerce/db-types';
 import { toJsonb } from '@/server/books/snapshots';
 import type { StoredField } from '@/lib/forms/validation';
 import { FIELD_TYPES } from '@/lib/forms/definition';
-import { writeFormNotification, type NewFormNotification } from './notify';
+import { isLockTimeout, writeFormNotification, type NewFormNotification } from './notify';
 
 export interface NewFormSubmission {
   id: string;
@@ -287,24 +287,51 @@ export async function setFormSubmissionRead(
   return Number(result.numUpdatedRows) > 0;
 }
 
-/** Delete one submission for good. Returns false when the site has no such row. */
+/** A delete had to wait for an email that is being sent right now (its row is locked) and gave up waiting. */
+export class FormBusyError extends Error {
+  constructor() {
+    super('A notification email for this submission is being sent right now');
+    this.name = 'FormBusyError';
+  }
+}
+
+/** How long a delete waits for an email being sent (src/server/forms/notify.ts holds the row for the whole send). */
+const DELETE_LOCK_WAIT_MS = 5_000;
+
+/**
+ * A delete of submissions, which cascades to their notification rows: those are locked while their email is sent, so the
+ * delete waits briefly for that and then fails as busy, never hanging the request for the length of a send.
+ */
+async function deleteWithinLockWait<T>(db: Kysely<CommerceDB>, work: (tx: Transaction<CommerceDB>) => Promise<T>): Promise<T> {
+  try {
+    return await db.transaction().execute(async (tx) => {
+      await sql`SELECT set_config('lock_timeout', ${`${DELETE_LOCK_WAIT_MS}ms`}, true)`.execute(tx);
+      return work(tx);
+    });
+  } catch (err) {
+    if (isLockTimeout(err)) throw new FormBusyError();
+    throw err;
+  }
+}
+
+/** Delete one submission for good. Returns false when the site has no such row. Throws FormBusyError while its email is being sent. */
 export async function deleteFormSubmission(db: Kysely<CommerceDB>, ref: SiteRef, id: string): Promise<boolean> {
-  const result = await db
-    .deleteFrom('form_submission')
-    .where('tenant_id', '=', ref.tenantId)
-    .where('site_id', '=', ref.siteId)
-    .where('id', '=', id)
-    .executeTakeFirst();
+  const result = await deleteWithinLockWait(db, (tx) =>
+    tx
+      .deleteFrom('form_submission')
+      .where('tenant_id', '=', ref.tenantId)
+      .where('site_id', '=', ref.siteId)
+      .where('id', '=', id)
+      .executeTakeFirst(),
+  );
   return Number(result.numDeletedRows) > 0;
 }
 
 /** Delete every submission of a site (the project delete). Returns how many rows went. */
 export async function deleteSiteSubmissions(db: Kysely<CommerceDB>, ref: SiteRef): Promise<number> {
-  const result = await db
-    .deleteFrom('form_submission')
-    .where('tenant_id', '=', ref.tenantId)
-    .where('site_id', '=', ref.siteId)
-    .executeTakeFirst();
+  const result = await deleteWithinLockWait(db, (tx) =>
+    tx.deleteFrom('form_submission').where('tenant_id', '=', ref.tenantId).where('site_id', '=', ref.siteId).executeTakeFirst(),
+  );
   return Number(result.numDeletedRows);
 }
 

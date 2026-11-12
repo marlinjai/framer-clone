@@ -39,7 +39,7 @@ import type { OutboxDeps } from '@/server/commerce/mail/outbox';
 import { fakeMail, type FakeMail } from '@/server/commerce/mail/__tests__/support';
 import { POST } from '@/app/api/forms/submit/route';
 import { __resetFormRateLimiterForTests } from '../rateLimit';
-import { deleteFormSubmission, insertFormSubmission, listFormSubmissions, type NewFormSubmission } from '../repository';
+import { FormBusyError, deleteFormSubmission, insertFormSubmission, listFormSubmissions, type NewFormSubmission } from '../repository';
 import { deliverFormNotification, resendFormNotification, writeFormNotification } from '../notify';
 
 const SEAL_KEY = randomBytes(32);
@@ -548,8 +548,11 @@ describe('3. resume', () => {
     const attempt = deliverFormNotification(company.outbox, company.id, s.id);
     await gate.entered;
     // A double click (or a second tab): the row is locked by the sending attempt.
-    const again = resendFormNotification(appDb, ref, company.clock.now, async () => undefined, { lockWaitMs: 5_000 });
+    let settled = false;
+    const again = resendFormNotification(appDb, ref, company.clock.now, async () => undefined, { lockWaitMs: 5_000 }).finally(() => (settled = true));
     await new Promise((resolve) => setTimeout(resolve, 300));
+    // It really is waiting on the lock (without the lock it would have answered at once).
+    expect(settled).toBe(false);
     gate.release();
     expect(await attempt).toBe('sent');
     expect(await again).toBe('not_resendable');
@@ -577,6 +580,80 @@ describe('3. resume', () => {
     expect(await notificationOf(s.id)).toMatchObject({ status: 'failed' });
     expect(await resendFormNotification(appDb, ref, company.clock.now, async () => undefined)).toBe('queued');
     expect(await notificationOf(s.id)).toMatchObject({ round: 3 });
+  }, 30_000);
+
+  it('"send again" started while an attempt is failing waits, then sees the failure and starts the next round: one letter in all', async () => {
+    await connect(company);
+    const s = submission();
+    await insertFormSubmission(appDb, s);
+    const ref = { tenantGroupId: tgId, siteId: site.siteId, submissionId: s.id };
+    // Round 1 fails once, so the row is resendable; round 2 is queued and its attempt is the one in flight.
+    company.mail.failNext('send', new MailRefused('other', 'round one refused'));
+    await drain(company);
+    expect(await resendFormNotification(appDb, ref, company.clock.now, async () => undefined)).toBe('queued');
+    const gate = holdSends(company);
+    company.mail.failNext('send', new MailRefused('other', 'round two refused'));
+    const attempt = deliverFormNotification(company.outbox, company.id, s.id).catch((e) => e);
+    await gate.entered;
+    let settled = false;
+    const again = resendFormNotification(appDb, ref, company.clock.now, async () => undefined, { lockWaitMs: 5_000 }).finally(() => (settled = true));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(settled).toBe(false);
+    gate.release();
+    expect(((await attempt) as Error).name).toBe('JobRefused');
+    // Only after the attempt wrote its failure does the resend run, and it starts round 3.
+    expect(await again).toBe('queued');
+    expect(await notificationOf(s.id)).toMatchObject({ status: 'pending', round: 3 });
+    // The round-2 job and the round-3 job both run the same delivery: the first sends, the second finds it sent.
+    expect(await drain(company)).toEqual(['done', 'done']);
+    expect(company.mail.sent.map((l) => l.key)).toEqual([`form:${company.id}:${s.id}:3:${company.workspaceId}`]);
+  }, 30_000);
+
+  it('a send transaction that fails after Lumitra Mail took the letter leaves the frozen letter in place: the retry sends the same body under the same key', async () => {
+    await connect(company);
+    const s = submission();
+    await insertFormSubmission(appDb, s);
+    // The database refuses to write "sent" (as a failed commit would): the send transaction is aborted and rolled back after
+    // the service took the letter.
+    await fx.owner`CREATE FUNCTION ${fx.owner(schema)}.block_sent() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.status = 'sent' THEN RAISE EXCEPTION 'test: refuse sent'; END IF; RETURN NEW; END $$`;
+    await fx.owner`CREATE TRIGGER block_sent BEFORE UPDATE ON ${fx.owner(schema)}.form_notification FOR EACH ROW EXECUTE FUNCTION ${fx.owner(schema)}.block_sent()`;
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      await expect(deliverFormNotification(company.outbox, company.id, s.id)).rejects.toBeDefined();
+    } finally {
+      logged.mockRestore();
+      await fx.owner`DROP TRIGGER block_sent ON ${fx.owner(schema)}.form_notification`;
+      await fx.owner`DROP FUNCTION ${fx.owner(schema)}.block_sent()`;
+    }
+    // The service has the letter; the row does not say so; the letter built before the send was committed on its own.
+    expect(company.mail.sent).toHaveLength(1);
+    const waiting = await notificationOf(s.id);
+    expect(waiting.status).toBe('pending');
+    expect(waiting.letter).toMatchObject({ merge: { site_name: 'Bakery' }, locale: 'de' });
+    // The site is renamed and switched to English before the retry.
+    company.siteInfo.name = 'Renamed Bakery';
+    company.siteInfo.language = 'en';
+    expect(await deliverFormNotification(company.outbox, company.id, s.id)).toBe('sent');
+    const sends = company.mail.calls.filter((c) => c.op === 'send').map((c) => c.args[1] as { key: string; locale: string; merge: Record<string, string> });
+    expect(sends).toHaveLength(2);
+    expect(sends[1]).toEqual(sends[0]);
+    expect(sends[1].merge.site_name).toBe('Bakery');
+    expect(company.mail.sent).toHaveLength(1);
+    expect(await notificationOf(s.id)).toMatchObject({ status: 'sent' });
+  }, 30_000);
+
+  it('deleting a submission while its email is being sent waits briefly, then says busy; once the send has ended the delete goes through', async () => {
+    await connect(company);
+    const s = submission();
+    await insertFormSubmission(appDb, s);
+    const gate = holdSends(company);
+    const attempt = deliverFormNotification(company.outbox, company.id, s.id);
+    await gate.entered;
+    await expect(deleteFormSubmission(appDb, { tenantId: tgId, siteId: site.siteId }, s.id)).rejects.toBeInstanceOf(FormBusyError);
+    gate.release();
+    expect(await attempt).toBe('sent');
+    expect(await deleteFormSubmission(appDb, { tenantId: tgId, siteId: site.siteId }, s.id)).toBe(true);
+    expect(await notificationOf(s.id)).toBeUndefined();
   }, 30_000);
 
   it('a worker that died after Lumitra Mail took the letter but before the row was written resends the same letter under the same key: one mail', async () => {

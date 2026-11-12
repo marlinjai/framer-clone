@@ -162,21 +162,33 @@ export async function deliverFormNotification(
   companyId: string,
   submissionId: string,
 ): Promise<'sent' | 'blocked' | 'none'> {
-  const outcome = await deps.db.transaction().execute(async (trx): Promise<AttemptOutcome> => {
-    try {
-      // A lock another attempt holds for a send in flight is waited for, but not forever (the job's own deadline is 90 s).
-      await sql`SET LOCAL lock_timeout = '60s'`.execute(trx);
-      return await attemptUnderLock(deps, trx, companyId, submissionId);
-    } catch (err) {
-      if (isLockTimeout(err)) return { type: 'throw', error: new JobRetryLater('another attempt holds this notification') };
-      throw err;
-    }
-  });
+  const run = (phase: 'prepare' | 'send') =>
+    deps.db.transaction().execute(async (trx): Promise<AttemptOutcome> => {
+      try {
+        // A lock another attempt holds for a send in flight is waited for, but not forever (the job's own deadline is 90 s).
+        await sql`SET LOCAL lock_timeout = '60s'`.execute(trx);
+        return await attemptUnderLock(deps, trx, companyId, submissionId, phase);
+      } catch (err) {
+        if (isLockTimeout(err)) return { type: 'throw', error: new JobRetryLater('another attempt holds this notification') };
+        throw err;
+      }
+    });
+  // Two transactions on purpose. The first builds the letter and COMMITS it frozen; the second sends it. A send whose
+  // transaction then fails to commit (a crash, a lost connection after Lumitra Mail took the letter) rolls back only the
+  // send, so the retry finds the same frozen letter and sends the same body under the same key, which Lumitra Mail replays.
+  // Were the letter written in the sending transaction, it would roll back too and be rebuilt from a site renamed meanwhile:
+  // another body under the same key, which Lumitra Mail refuses as reused.
+  let outcome = await run('prepare');
+  if (outcome.type === 'prepared') outcome = await run('send');
   if (outcome.type === 'throw') throw outcome.error;
+  if (outcome.type === 'prepared') throw new Error('unreachable: the send phase always settles');
   return outcome.result;
 }
 
-type AttemptOutcome = { type: 'done'; result: 'sent' | 'blocked' | 'none' } | { type: 'throw'; error: Error };
+type AttemptOutcome =
+  | { type: 'done'; result: 'sent' | 'blocked' | 'none' }
+  | { type: 'throw'; error: Error }
+  | { type: 'prepared' };
 
 /** Postgres `lock_not_available` (55P03): `lock_timeout` ran out. */
 export function isLockTimeout(err: unknown): boolean {
@@ -189,6 +201,7 @@ async function attemptUnderLock(
   trx: Transaction<CommerceDB>,
   companyId: string,
   submissionId: string,
+  phase: 'prepare' | 'send',
 ): Promise<AttemptOutcome> {
   const now = (deps.now ?? (() => new Date()))();
   // The company comes from the job and is part of the key: a payload cannot reach another company's notification.
@@ -288,6 +301,7 @@ async function attemptUnderLock(
         .where('status', '=', 'pending')
         .execute();
     }
+    if (phase === 'prepare') return { type: 'prepared' };
     const sent = await deps.mail.send(apiKey, {
       key: `form:${companyId}:${submissionId}:${row.round}:${letter.workspaceId}`,
       kind: FORM_MAIL_KIND,

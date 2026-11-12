@@ -24,6 +24,7 @@ import { resendFormNotification } from './notify';
 import type { EditorFormsContext, EditorFormsScope } from './editorScope';
 import {
   deleteFormSubmission,
+  FormBusyError,
   exportFormSubmissions,
   listFormSubmissions,
   setFormSubmissionRead,
@@ -158,6 +159,7 @@ export async function handleDeleteSubmission(
     if (!found) return jsonError('not_found', 'no such submission', 404);
     return Response.json({ id: submissionId, deleted: true }, { headers: NO_STORE });
   } catch (err) {
+    if (err instanceof FormBusyError) return jsonError('busy', 'its notification email is being sent right now, try again in a moment', 409);
     return failure('deleting a submission', projectId, err);
   }
 }

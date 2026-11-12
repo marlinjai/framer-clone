@@ -336,7 +336,9 @@ each reversible (say so if you disagree):
    notification row's lock, and "send again" takes the same lock (it waits five seconds, then says "busy"). So a late success of an
    old round beside a new round cannot happen: the resend sees `sent` and refuses, or sees the failure the attempt wrote and only then
    starts the next round; a second attempt (a reclaimed job) waits and finds the letter sent; a worker that dies mid-send drops its
-   lock and the next attempt sends the same frozen letter under the same key, which Lumitra Mail replays (its idempotency ledger is
+   lock and the next attempt sends the same frozen letter under the same key (the letter is committed in its own first
+   transaction, before the send transaction, so a rolled-back send cannot change its body on the retry); a delete of the submission waits
+   five seconds for a send in flight, then answers "busy"; which Lumitra Mail replays (its idempotency ledger is
    per workspace: same key and body replays, another body is refused, a request still running answers `conflict`).
 7. **Escaping, from Lumitra Mail's real source** (email-editor `apps/service/src/worker/merge.ts`, which calls the contract's
    `personalizeHtml`, `personalizeText`, `resolveValue`): body values are HTML-escaped (`& < > " '`) and filled once (a value that
