@@ -169,6 +169,66 @@ describe('site operations against a real database', () => {
     expect(rows[1]).toMatchObject({ versionBefore: 1, versionAfter: 2 });
   });
 
+  it('an agent places an FX scene, retunes it, and a scene naming a picture this site does not store is refused when the batch commits', async () => {
+    const deps = { repository, publicBaseHost: 'sites.test' };
+    const { siteId, homePageId } = unwrap(await createSite(agent, { name: 'Agent built, with a scene' }, deps));
+
+    // Place the hero from a preset, in the form the generation format teaches.
+    const placed = unwrap(
+      await applyBatch(agent, {
+        siteId,
+        expectedVersion: 1,
+        ops: [
+          {
+            op: 'insertNodes',
+            pageId: homePageId,
+            nodes: [{ ref: 'hero', type: 'div', preset: 'fxScene', props: { fx: { preset: 'gold-noise-gradient', calm: 'frame' } }, children: [{ type: 'h1', props: { children: 'Lumitra', style: { color: '#ffffff' } } }] }],
+          },
+        ],
+      }, deps),
+    );
+    expect(placed.version).toBe(2);
+    const heroId = placed.created.hero;
+
+    // Read back from the database: the box holds its stored scene, whole.
+    const outline = unwrap(await getPage(agent, { siteId, pageId: homePageId }, deps));
+    const shown = outline.nodes.find((n) => n.id === heroId)!.props as { 'data-fx': string; fx: { version: number; calm: string; scene: { layers: { id: string; type: string; params: Record<string, unknown> }[] } } };
+    expect(shown['data-fx']).toBe('scene');
+    expect(shown.fx.calm).toBe('frame');
+    expect(shown.fx.scene.layers.map((l) => l.id)).toEqual(['gradient-bg', 'noise', 'bloom', 'vignette', 'grain']);
+
+    // Retune it: what was read, changed and sent back.
+    const tuned = JSON.parse(JSON.stringify(shown.fx));
+    tuned.scene.layers.find((l: { id: string }) => l.id === 'bloom').params.intensity = 0.8;
+    const retuned = unwrap(await applyBatch(agent, { siteId, expectedVersion: 2, ops: [{ op: 'setFxScene', nodeId: heroId, fx: tuned }] }, deps));
+    expect(retuned.version).toBe(3);
+
+    // A picture path of the right shape that this site does not store: the scene reads cleanly
+    // (it is a site path), and the save refuses it, so nothing reaches the draft or a publish.
+    const withPicture = JSON.parse(JSON.stringify(tuned));
+    withPicture.scene.layers.unshift({ id: 'picture', type: 'image', name: 'Picture', visible: true, blend: 'normal', params: { src: `/site-images/${'d'.repeat(64)}.png` } });
+    const refused = await applyBatch(agent, { siteId, expectedVersion: 3, ops: [{ op: 'setFxScene', nodeId: heroId, fx: withPicture }] }, deps);
+    expect(refused.ok).toBe(false);
+    // The agent is told what was wrong and what to do, not that something failed.
+    if (!refused.ok) {
+      expect(refused.error.code).toBe('invalid_request');
+      expect(refused.error.message).toMatch(/is not stored for this site\. An image an FX scene.*must first be uploaded.*nothing was written/);
+    }
+    expect(unwrap(await getSite(agent, { siteId }, deps)).version).toBe(3);
+    const after = unwrap(await getPage(agent, { siteId, pageId: homePageId }, deps));
+    const kept = after.nodes.find((n) => n.id === heroId)!.props as typeof shown;
+    expect(kept.fx.scene.layers.map((l) => l.id)).toEqual(['gradient-bg', 'noise', 'bloom', 'vignette', 'grain']);
+    expect(kept.fx.scene.layers.find((l) => l.id === 'bloom')!.params.intensity).toBe(0.8);
+
+    // An address from anywhere else is refused before anything is saved, with the reason.
+    const foreign = JSON.parse(JSON.stringify(tuned));
+    foreign.scene.layers.unshift({ id: 'picture', type: 'image', name: 'Picture', visible: true, blend: 'normal', params: { src: 'https://evil.test/a.png' } });
+    const refusedForeign = await applyBatch(agent, { siteId, expectedVersion: 3, ops: [{ op: 'setFxScene', nodeId: heroId, fx: foreign }] }, deps);
+    expect(refusedForeign.ok).toBe(false);
+    if (!refusedForeign.ok) expect(JSON.stringify(refusedForeign.error)).toMatch(/image address that is not allowed here/);
+    expect(unwrap(await getSite(agent, { siteId }, deps)).version).toBe(3);
+  });
+
   it('an editor tab loaded before an agent write gets 409 from the real save route and overwrites nothing', async () => {
     const deps = { repository };
     const { siteId, homePageId } = unwrap(await createSite(agent, { name: 'Shared' }, deps));

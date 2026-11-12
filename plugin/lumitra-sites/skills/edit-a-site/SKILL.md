@@ -36,7 +36,7 @@ you write and write on the version you read.
 ## 2. Outline the change
 
 Write down, briefly, before writing: which nodes change, which operations you use (`updateText`,
-`updateStyle`, `setProps`, `insertNodes`, `moveNode`, `removeNode`, `addRule`, `placeComponent`,
+`updateStyle`, `setProps`, `setFxScene`, `insertNodes`, `moveNode`, `removeNode`, `addRule`, `placeComponent`,
 `createPage`, `deletePage`),
 and for which breakpoints. Use theme tokens (`var(--fc-t-<id>)`) instead of new raw values, so the
 change matches the rest of the site. Write copy in the site's language and voice; in English and

@@ -522,6 +522,27 @@ hold the keys. A result that differs changes this contract before the code is bu
 
 B6 depends on the B7 proof, so B7 runs first.
 
+**B7 proof runbook (prepared 2026-11-12, not run).** Needs the sandbox keys, so the operator runs it, through the secrets
+proxy (`execute_with_secrets`, project framer-clone, env prod, which holds the sandbox keys while payments run in test
+mode), against the test shop's connected sandbox account (header `Stripe-Account`). Nothing here moves real money. Record
+each result under the table row above; a result that differs changes section 2.1 before any B7 code is written.
+
+1. **Key reuse.** Create a Checkout Session with `Idempotency-Key: b7-proof-<random>` and `expires_at` = now + 45 minutes.
+   Repeat the call with the same key and `expires_at` = now + 46 minutes. Expect an `idempotency_error`. Repeat once more
+   with the original parameters. Expect the same session id (and that a first error is not replayed over a later success).
+2. **Expiry floor.** Create a session with `expires_at` = now + 29 minutes. Expect a refusal. Repeat with 30 minutes and
+   31 minutes to find the exact edge.
+3. **Failed attempt keeps the session open.** Open the session's `url`, pay with the declining test card, then retry with
+   `4242 4242 4242 4242`. Expect one `payment_intent.payment_failed` per attempt, then `checkout.session.completed`, with
+   the session `open` between the attempts. Read the events from the webhook log.
+4. **Retrieve statuses.** `GET /v1/checkout/sessions/<id>` while open, after completion (`complete`, `payment_status`
+   `paid`) and after `POST /v1/checkout/sessions/<id>/expire` (`expired`). Note the fields the expiry job reads.
+5. **Second refund.** Refund one PaymentIntent twice (distinct keys) and note the error code of the second.
+6. **Key lifetime.** Note Stripe's documented idempotency window (24 hours) and whether a replayed first error is
+   returned verbatim; try it with a deliberately invalid first call.
+
+Sandbox objects made here use the prefix `b7-proof-` in their metadata, so they can be told apart from shop orders.
+
 ## 3. A checkout record
 
 The browser cart stays as it is: `src/lib/commerce/cart.tsx`, `localStorage`, no server write, a list of intentions. A

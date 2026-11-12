@@ -7,7 +7,14 @@
 
 import { COMPONENT_REGISTRY } from '@/lib/componentRegistry';
 import { isVoidTag } from '@/lib/drag/voidTags';
+import { FX_PROP, isFxScene } from '@/lib/fxScene/marker';
 import { normalize } from './normalize';
+
+function withoutScene(props: Record<string, unknown>): Record<string, unknown> {
+  const { [FX_PROP]: _scene, ...rest } = props;
+  void _scene;
+  return rest;
+}
 
 export type SerializedRegistry = Array<{
   acceptsChildren: boolean;
@@ -36,7 +43,9 @@ export function serializeRegistry(): SerializedRegistry {
     .filter((entry) => !entry.preset && entry.generation !== false)
     .map((entry) => ({
       acceptsChildren: !isVoidTag(entry.htmlType),
-      defaults: entry.defaultProps,
+      // An FX scene box's stored scene (src/lib/fxScene) is long and is written through its own
+      // checked reader, never copied from here: the entry is listed without it.
+      defaults: isFxScene(entry.defaultProps, entry.htmlType) ? withoutScene(entry.defaultProps as Record<string, unknown>) : entry.defaultProps,
       description: entry.label,
       type: entry.id,
     }))
