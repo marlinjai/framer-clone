@@ -579,7 +579,7 @@ export class AutosaveController {
       // cursor and never for a conflict about to resolve itself.
       // The hold is told of the refusal, so a settled edit it can replay holds the dialog too.
       const hold = conflictDialogHolds.get(this.projectId);
-      const held = (over ? hold?.() : hold?.({ currentVersion: result.currentVersion })) ?? false;
+      const held = hold?.(over ? { over: true } : { currentVersion: result.currentVersion }) ?? false;
       this.setState({ phase: 'conflict', currentVersion: result.currentVersion, dialogOpen: !held, retrying: false, ...(held ? { held: true } : {}) });
       if (held) this.watchHeldDialog();
       return;
@@ -1078,7 +1078,8 @@ export function abandonWorkingCopy(projectId: string): void {
 // autosave controller exists: true while the person is mid-edit or a replay of
 // the refused edit is pending. Called with `refusal` once, as a refusal lands
 // (before its write counts as settled), and without it while the dialog waits.
-export type ConflictDialogHold = (refusal?: { currentVersion: number }) => boolean;
+/** `over`: the refusal answered a "Save mine over it"; a replay mark with no newer copy on the way then holds nothing. */
+export type ConflictDialogHold = (refusal?: { currentVersion?: number; over?: boolean }) => boolean;
 const conflictDialogHolds = new Map<string, ConflictDialogHold>();
 
 /** A conflict state whose dialog no longer waits: the status may say so. */

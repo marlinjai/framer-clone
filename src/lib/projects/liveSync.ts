@@ -498,7 +498,10 @@ export class LiveSync {
     const steps = replayableSteps(this.rootStore.projectStore, entries, nodesOf(held.snapshot));
     if (!steps) return false;
     // A dry run on the newer version: the values must apply, and no reusable component may outgrow its limit.
-    if (!replaysCleanly(held.snapshot, steps.flatMap((step) => step.edits))) return false;
+    // Every history boundary is a state Undo can restore, so every prefix must fit the limit.
+    for (let i = 1; i <= steps.length; i++) {
+      if (!replaysCleanly(held.snapshot, steps.slice(0, i).flatMap((step) => step.edits))) return false;
+    }
     for (let i = 0; i < entries.length; i++) history.undo();
     const redoAll = () => {
       for (let i = 0; i < entries.length; i++) history.redo();
@@ -667,10 +670,12 @@ export class LiveSync {
     // A settled edit whose save was refused, with nothing marked (the save was out
     // or waiting when the agent wrote), holds it too when the edit can be replayed.
     this.disposeDialogHold = setConflictDialogHold(this.projectId, (refusal) => {
-      if (refusal) this.noteRefusal();
+      if (refusal?.currentVersion !== undefined) this.noteRefusal();
+      // A replay mark whose newer copy never came holds nothing for a refused "Save mine over it".
+      const replayPending = this.replayMark !== undefined && (!refusal?.over || this.wanted !== undefined || this.held !== undefined);
       return (
         isEditing(this.rootStore) ||
-        this.replayMark !== undefined ||
+        replayPending ||
         // A fetch that hangs or keeps failing does not hold the dialog for long.
         (this.editMark !== undefined && this.wanted !== undefined && Date.now() - this.wantedAt < LIVE_HELD_FETCH_MS) ||
         (this.refusedSettledAt !== undefined && Date.now() - this.refusedSettledAt < LIVE_HELD_FETCH_MS)
