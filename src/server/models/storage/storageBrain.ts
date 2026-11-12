@@ -23,11 +23,14 @@
 //      not hash to the key; `get` returns bytes only after their sha256 matches, trying the next candidate otherwise.
 //   2. A candidate is a file whose context is EXACTLY `<namespace>/<key>`, carrying our ownership tag, of the model type,
 //      `completed`, and non empty. Anything else is not ours and never read or deleted.
-//   3. DELETE ON AMBIGUITY REFUSES. Before any delete the listing must be complete and unambiguous: every page followed to
-//      the end, the number of files seen equal to the first page's `total`, no file with our exact context that lacks our
-//      tag (a stranger's, or ours from an older convention), no inconsistent answer. Otherwise nothing is deleted and an
-//      `ambiguous` error is thrown. A delete only ever names ids found this way (never an id from a caller), and removes
-//      only candidates; in-flight (`pending`) rows are left to the service, they may belong to a running upload.
+//   3. DELETE ON AMBIGUITY REFUSES. Removal is two steps, `snapshot(key)` then `removeSnapshot(key, snapshot)` (the cleanup
+//      protocol of coordination.ts takes the snapshot BEFORE its tombstone, so a stalled cleaner can only remove copies that
+//      already existed). Before a snapshot the listing must be complete and unambiguous: every page followed to the end, the
+//      number of files seen equal to the first page's `total`, no file with our exact context that lacks our tag (a
+//      stranger's, or ours from an older convention), no inconsistent answer. Otherwise nothing is snapshotted and an
+//      `ambiguous` error is thrown. A removal only ever names ids of a snapshot this adapter took (never an id from a
+//      caller) and removes only candidates; in-flight (`pending`) rows are left to the service, they may belong to a
+//      running upload. There is no delete-by-key method: every removal goes through the protocol.
 //   4. A failed or partial upload cleans up only what this call created, by the id the handshake returned, and then
 //      starts over (at most 2 attempts): the handshake is never blindly retried, because each one reserves quota.
 //   5. Retries are for what is safe to repeat (reads, deleting a known id; a 404 on delete counts as done), bounded, with
@@ -39,13 +42,14 @@
 //   7. Every response is parsed strictly and bounded (JSON at most 1 MB, a download at most the declared size and the cap).
 
 // CALLERS must order their own writes, because the adapter cannot lock: write the database row only AFTER `put` returned,
-// and delete a blob only AFTER its last row is gone (otherwise a `put` that skipped because a copy existed can race a
-// `delete` of that copy). `has` says a complete tagged copy is listed; only `get` and `put` verify bytes. A handshake that
+// and delete a blob only through the cleanup protocol (otherwise a `put` that skipped because a copy existed can race a
+// removal of that copy). `has` says a complete tagged copy is listed; only `get` and `put` verify bytes. A handshake that
 // times out may have created a row nothing here can identify: the service expires unused upload sessions and frees their
 // quota, so it is left to it rather than guessed at.
 
 import { createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
+import type { BlobDeleter } from '../coordination';
 import type { ModelBlobStore } from '../ports';
 
 export type StorageBrainErrorCode = 'config' | 'unauthorized' | 'quota' | 'unavailable' | 'bad-response' | 'ambiguous' | 'integrity' | 'invalid-key';
@@ -92,7 +96,12 @@ interface FileRow { id: string; context: string; tags: Record<string, string> | 
 const sha256 = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
 const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 
-export class StorageBrainBlobStore implements ModelBlobStore {
+/** What `snapshot` returns: the ids of the copies listed at that moment. Opaque to callers. */
+export interface BlobSnapshot { readonly key: string; readonly ids: readonly string[] }
+
+export class StorageBrainBlobStore implements ModelBlobStore, BlobDeleter {
+  /** Only a snapshot this adapter produced can be removed (a forged one could name any file id of the tenant). */
+  private readonly snapshots = new WeakSet<BlobSnapshot>();
   private readonly base: string;
   private readonly namespace: string;
   private readonly doFetch: typeof fetch;
@@ -176,14 +185,33 @@ export class StorageBrainBlobStore implements ModelBlobStore {
     throw lastError instanceof StorageBrainError ? lastError : new StorageBrainError('unavailable', 'the upload to Storage Brain failed');
   }
 
-  async delete(key: string): Promise<void> {
+  /** `has`, under the name the cleanup protocol's port uses (coordination.ts BlobDeleter). */
+  hasBlob(key: string): Promise<boolean> { return this.has(key); }
+
+  /**
+   * The copies of a key that exist NOW, as an opaque snapshot for `removeSnapshot`. The cleanup protocol takes it BEFORE it
+   * writes its tombstone, so a stalled cleaner that resumes late can only remove copies that already existed, never one a
+   * later upload put (a copy has a server-assigned id, and ids are never reused). DELETE ON AMBIGUITY REFUSES: an
+   * incomplete or not-clearly-ours listing throws `ambiguous` and nothing is snapshotted.
+   */
+  async snapshot(key: string): Promise<BlobSnapshot> {
     const found = await this.candidates(key);
-    if (found.ambiguous) throw new StorageBrainError('ambiguous', 'the listing for this key is not complete or not clearly ours: nothing was deleted');
+    if (found.ambiguous) throw new StorageBrainError('ambiguous', 'the listing for this key is not complete or not clearly ours: nothing will be deleted');
+    // Defence in depth: every id snapshotted was just found as an exact, tagged, completed candidate of this key.
     for (const file of found.files) {
-      // Defence in depth: every id deleted was just found as an exact, tagged, completed candidate of this key.
-      if (file.context !== this.context(key)) throw new StorageBrainError('ambiguous', 'a candidate does not match the key: nothing more was deleted');
-      await this.deleteKnownId(file.id);
+      if (file.context !== this.context(key)) throw new StorageBrainError('ambiguous', 'a candidate does not match the key: nothing will be deleted');
     }
+    const snap: BlobSnapshot = { key, ids: found.files.map((f) => f.id) };
+    this.snapshots.add(snap);
+    return snap;
+  }
+
+  /** Removes exactly the copies of a snapshot THIS adapter took for this key; an id already gone (404) is done. */
+  async removeSnapshot(key: string, snapshot: unknown): Promise<void> {
+    if (!this.snapshots.has(snapshot as BlobSnapshot) || (snapshot as BlobSnapshot).key !== key) {
+      throw new StorageBrainError('invalid-key', 'removeSnapshot takes a snapshot of this key taken by this adapter');
+    }
+    for (const id of (snapshot as BlobSnapshot).ids) await this.deleteKnownId(id);
   }
 
   /** Every blob under a prefix (`served/`, `original/`, or empty) with when it was first written, for the orphan sweep. */

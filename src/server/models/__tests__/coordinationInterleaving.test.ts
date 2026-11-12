@@ -67,7 +67,7 @@ function newWorld(Models: new () => MemorySiteModels = MemorySiteModels): World 
 function gated(w: World, gate: Gate, opts: { lateList?: boolean } = {}) {
   const blobs = {
     put: (key: string) => gate(`put ${key.split('/')[0]}`, () => w.storage.putIfAbsent(key)),
-    get: async () => null, has: (key: string) => gate('has', () => w.storage.has(key)), delete: async () => {}, list: async () => [],
+    get: async () => null, has: (key: string) => gate('has', () => w.storage.has(key)), list: async () => [],
   } as unknown as ModelBlobStore;
   const m = w.models;
   const models = {
@@ -143,7 +143,7 @@ async function check(w: World, retry: string[]): Promise<string | null> {
   // Liveness: an upload that was refused or interrupted succeeds when repeated, and its blobs are there.
   for (const site of retry) {
     const p = { blobs: new MemoryBlobStore(), models: w.models, coordinator: w.models };
-    const blobs: ModelBlobStore = { ...p.blobs, put: async (k: string) => w.storage.putIfAbsent(k), get: async () => null, has: async (k: string) => w.storage.has(k), delete: async () => {}, list: async () => [] };
+    const blobs: ModelBlobStore = { ...p.blobs, put: async (k: string) => w.storage.putIfAbsent(k), get: async () => null, has: async (k: string) => w.storage.has(k), list: async () => [] };
     const r = await acceptModelUpload(INPUT, site, 'u', { blobs, models: w.models, coordinator: w.models, validator, reencoder, now: () => w.clock });
     if (!r.ok) return `the retried upload of ${site} was refused: ${r.code}`;
   }
