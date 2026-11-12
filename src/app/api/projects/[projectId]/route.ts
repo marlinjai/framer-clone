@@ -181,6 +181,10 @@ function invalidateDeletedHosts(deleted: DeletedSite): string[] {
   return failed;
 }
 
+/** What an owner is told while the form submissions of a deleted project are still being removed. */
+const FORM_SUBMISSIONS_PENDING_NOTE =
+  'Its form submissions are still being removed in the background and will be gone within a few minutes. Nothing more is needed.';
+
 async function handleDELETE(req: Request, { params }: Ctx): Promise<Response> {
   // Deleting takes a site offline and releases its domains: on top of
   // editSite it needs what unpublishing and disconnecting a domain need.
@@ -210,8 +214,10 @@ async function handleDELETE(req: Request, { params }: Ctx): Promise<Response> {
   // body checks): the submissions are in another schema on another connection, so a crash or failure after the delete would
   // otherwise leave visitors' words behind with nothing to remove them. The job removes them only once the site row is gone,
   // so a refused delete costs nothing. If it cannot be written, nothing is deleted.
+  // `purgeScheduled` is the confirmation that a durable job exists (false for a group with no schema, which has no submissions).
+  let purgeScheduled = false;
   try {
-    await scheduleProjectSubmissionsPurge(scope.tenantGroupId, scope.workspaceId, projectId);
+    purgeScheduled = await scheduleProjectSubmissionsPurge(scope.tenantGroupId, scope.workspaceId, projectId);
   } catch (err) {
     console.error(`[projects] scheduling the form cleanup of ${projectId} failed, nothing was deleted:`, err);
     return jsonError('delete_failed', 'deleting the project failed; nothing was deleted, try again', 500);
@@ -242,26 +248,43 @@ async function handleDELETE(req: Request, { params }: Ctx): Promise<Response> {
   // connection): after the caches, so the site stops answering first, and
   // before answering, so a failure is loud. The submit endpoint reads the site
   // uncached, so no submission can land after the commit.
-  let submissionsFailed = false;
+  //
+  // Three honest outcomes: removed now; removal PENDING (the cleanup could not finish now, an email of the project being sent
+  // or any failure, and the durable job written before the delete will finish it, which is confirmed by `purgeScheduled`);
+  // or failed with nothing scheduled (the only case that needs support). Never "deleted" while rows may remain.
+  let submissionsPending = false;
   let submissionsDeleted = 0;
+  let submissionsUnscheduled = false;
   try {
-    submissionsDeleted = await deleteProjectSubmissions(scope.tenantGroupId, projectId);
+    const result = await deleteProjectSubmissions(scope.tenantGroupId, projectId);
+    submissionsDeleted = result.deleted;
+    submissionsPending = result.pending;
   } catch (err) {
-    submissionsFailed = true;
     console.error(`[projects] deleting the form submissions of ${projectId} failed:`, err);
+    // The job written before the delete retries it; without one nothing will.
+    submissionsPending = purgeScheduled;
+    submissionsUnscheduled = !purgeScheduled;
   }
-  if (submissionsFailed) {
+  if (submissionsPending && !purgeScheduled) {
+    submissionsPending = false;
+    submissionsUnscheduled = true;
+  }
+  if (submissionsPending) {
+    console.warn(`[projects] ${projectId} is deleted; its form submissions are left to the background purge job`);
+  }
+  if (submissionsUnscheduled) {
     return jsonError(
       'delete_submissions_failed',
-      'The project was deleted, but its form submissions could not be deleted. Contact support to have them removed.',
+      'The project was deleted, but its form submissions could not be removed and no automatic removal could be arranged. Contact support to have them removed.',
       500,
     );
   }
   if (failed.length > 0) {
     return jsonError(
       'delete_cache_failed',
-      'The project was deleted, but its published pages may still be served from cache until the next deploy.',
+      `The project was deleted, but its published pages may still be served from cache until the next deploy.${submissionsPending ? ` ${FORM_SUBMISSIONS_PENDING_NOTE}` : ''}`,
       500,
+      submissionsPending ? { formSubmissionsPending: true } : undefined,
     );
   }
 
@@ -274,6 +297,8 @@ async function handleDELETE(req: Request, { params }: Ctx): Promise<Response> {
       deleted: true,
       subdomain: deleted.subdomain,
       releasedHostnames: deleted.hostnames,
+      // Only when rows may remain: the removal of the project's form submissions is still running in the background.
+      ...(submissionsPending ? { formSubmissionsPending: true, message: FORM_SUBMISSIONS_PENDING_NOTE } : {}),
     },
     { headers: { 'cache-control': 'no-store' } },
   );

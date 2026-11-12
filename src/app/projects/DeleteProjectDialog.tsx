@@ -92,14 +92,18 @@ export default function DeleteProjectDialog({
     const result = await deleteProject(siteId, needsName ? currentName : undefined);
     setDeleting(false);
     if (result.ok) {
-      onDeleted(`Deleted the project ${shownName}.`);
+      onDeleted(
+        result.formSubmissionsPending
+          ? `Deleted the project ${shownName}. Its form submissions are still being removed in the background and will be gone within a few minutes.`
+          : `Deleted the project ${shownName}.`,
+      );
       return;
     }
     if (result.gone) {
       setGoneNotice({
         message: result.message,
         announcement: result.deletedWithWarning
-          ? `Deleted the project ${shownName}.`
+          ? `Deleted the project ${shownName}.${result.formSubmissionsPending ? ' Its form submissions are still being removed in the background.' : ''}`
           : `The project ${shownName} is no longer in this company.`,
       });
       return;

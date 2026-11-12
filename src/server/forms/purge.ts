@@ -28,13 +28,33 @@ import { getPrismaClient } from '@/server/db';
 import { FORM_PURGE_JOB_KIND } from './purgeJob';
 import { FormBusyError, deleteSiteSubmissions } from './repository';
 
+/** A purge that has failed this many times in a row is no longer a busy email: a person should look (the first five retries span about an hour and a half). */
+export const STUCK_PURGE_ATTEMPTS = 5;
+
+/**
+ * The purge jobs that keep failing, for the watchdog: they never die and never give up (the data must go), so without this a
+ * permanent fault (a permission or constraint error on the submissions table) would retry silently every six hours and visitors'
+ * words would stay stored with no alarm. A count, like the dead jobs.
+ */
+export async function countStuckPurges(db: Kysely<CommerceDB>): Promise<number> {
+  const row = await db
+    .selectFrom('commerce_job')
+    .select((eb) => eb.fn.countAll<string>().as('jobs'))
+    .where('kind', '=', FORM_PURGE_JOB_KIND)
+    .where('status', '=', 'pending')
+    .where('attempts', '>=', STUCK_PURGE_ATTEMPTS)
+    .executeTakeFirstOrThrow();
+  return Number(row.jobs);
+}
+
 /** How long after the delete starts the job first looks: past the delete itself and its own retries, so it is a backstop. */
 export const PURGE_DELAY_MS = 10 * 60 * 1000;
 
 /**
  * Write the intent to remove a project's submissions, before the project is deleted. A tenant group without a commerce
- * schema (a legacy site) has none: nothing is written. Any other failure throws, and the caller must not delete the project
- * then (nothing would remove its submissions).
+ * schema (a legacy site) has none: nothing is written and false is answered. True is the confirmation that a durable job now
+ * exists; the caller may tell the owner that removal is pending only on that. Any other failure throws, and the caller must not
+ * delete the project then (nothing would remove its submissions).
  */
 export async function scheduleProjectSubmissionsPurge(
   tenantGroupId: string,
@@ -42,13 +62,13 @@ export async function scheduleProjectSubmissionsPurge(
   siteId: string,
   now: Date = new Date(),
   dbFor: (tenantGroupId: string) => Promise<Kysely<CommerceDB>> = (id) => commerceTenantDbChecked(id as never),
-): Promise<void> {
-  if (!isTenantGroupId(tenantGroupId)) return;
+): Promise<boolean> {
+  if (!isTenantGroupId(tenantGroupId)) return false;
   let db: Kysely<CommerceDB>;
   try {
     db = await dbFor(tenantGroupId);
   } catch (err) {
-    if (isCommerceTenantNotProvisioned(err)) return;
+    if (isCommerceTenantNotProvisioned(err)) return false;
     throw err;
   }
   await db.transaction().execute(async (trx) => {
@@ -62,6 +82,7 @@ export async function scheduleProjectSubmissionsPurge(
       at: now,
     });
   });
+  return true;
 }
 
 /**

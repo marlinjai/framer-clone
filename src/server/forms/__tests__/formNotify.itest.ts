@@ -680,7 +680,8 @@ describe('3. resume', () => {
     await gate.entered;
     // The site row is gone and the immediate cleanup waits its retries out (one here, so the test is short): it leaves the
     // rows alone and answers 0, the job written before the delete (formPurge.itest.ts) takes it from there.
-    expect(await deleteProjectSubmissions(tgId, site.siteId, { attempts: 1, pauseMs: 0 })).toBe(0);
+    // Rows may remain, and the answer says so: pending, never a plain zero.
+    expect(await deleteProjectSubmissions(tgId, site.siteId, { attempts: 1, pauseMs: 0 })).toEqual({ deleted: 0, pending: true });
     expect(await fx.owner`SELECT id FROM ${fx.owner(schema)}.form_submission WHERE site_id = ${site.siteId}`).toHaveLength(2);
     // That job, run while the send is in flight and the site row gone, asks to be retried: never failed, never given up.
     const gone = { site: { findUnique: async () => null } } as never;
@@ -696,7 +697,7 @@ describe('3. resume', () => {
   it('a project delete with no send in flight just deletes', async () => {
     await connect(company);
     await insertFormSubmission(appDb, submission());
-    expect(await deleteProjectSubmissions(tgId, site.siteId, { attempts: 1, pauseMs: 0 })).toBe(1);
+    expect(await deleteProjectSubmissions(tgId, site.siteId, { attempts: 1, pauseMs: 0 })).toEqual({ deleted: 1, pending: false });
   });
 
   it('deleting a submission while its email is being sent waits briefly, then says busy; once the send has ended the delete goes through', async () => {

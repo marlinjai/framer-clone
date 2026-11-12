@@ -26,7 +26,7 @@ import {
 } from '@/server/commerce/__tests__/storefrontFixtures';
 import { runJobNow } from '@/server/commerce/jobs/run';
 import { JobRefused } from '@/server/commerce/jobs/types';
-import { PURGE_DELAY_MS, purgeSiteSubmissions, scheduleProjectSubmissionsPurge } from '../purge';
+import { PURGE_DELAY_MS, STUCK_PURGE_ATTEMPTS, countStuckPurges, purgeSiteSubmissions, scheduleProjectSubmissionsPurge } from '../purge';
 import { insertFormSubmission } from '../repository';
 
 let fx: StorefrontFixtures;
@@ -109,7 +109,8 @@ beforeEach(async () => {
 describe('the intent, written before the delete', () => {
   it('is a durable job in the tenant group, due after the delete and its own retries, carrying ids and no visitor data', async () => {
     await submit(appDb, tgId, siteA);
-    await intent(siteA);
+    // The confirmation the route relies on to tell the owner that removal is pending.
+    expect(await intent(siteA)).toBe(true);
     const jobs = await purgeJobs();
     expect(jobs).toHaveLength(1);
     expect(jobs[0]).toMatchObject({ tenant_id: tgId, kind: 'form_purge', status: 'pending' });
@@ -122,7 +123,8 @@ describe('the intent, written before the delete', () => {
   });
 
   it('is skipped for a tenant group with no schema (a legacy site) and is not a tenant id at all', async () => {
-    await scheduleProjectSubmissionsPurge('not-a-tenant-group', siteA.workspaceId, siteA.siteId, clock.now, async () => appDb);
+    // No confirmation either: nothing durable exists, so nothing may be promised.
+    expect(await scheduleProjectSubmissionsPurge('not-a-tenant-group', siteA.workspaceId, siteA.siteId, clock.now, async () => appDb)).toBe(false);
     expect(await purgeJobs()).toHaveLength(0);
   });
 
@@ -258,12 +260,15 @@ describe('failure and retry exhaustion', () => {
         // Never dead, never done, never dropped: the longest backoff is six hours and it goes on forever.
         expect(job).toMatchObject({ status: 'pending' });
         expect(Number(job.attempts)).toBe(attempt);
+        // The watchdog count: quiet while it may still be a busy email, loud once it has failed too often to be one.
+        expect(await countStuckPurges(appDb)).toBe(attempt >= STUCK_PURGE_ATTEMPTS ? 1 : 0);
         at = new Date(at.getTime() + 7 * 60 * 60 * 1000);
       }
       expect((await rowsOf(schema, siteA.siteId)).map((r) => r.id)).toEqual([mine]);
       // The failure ends: the very next run removes it.
       await fx.owner`DROP TRIGGER block_purge ON ${fx.owner(schema)}.form_submission`;
       expect(await runJobs(at)).toEqual(['done']);
+      expect(await countStuckPurges(appDb)).toBe(0);
     } finally {
       logged.mockRestore();
       await fx.owner`DROP TRIGGER IF EXISTS block_purge ON ${fx.owner(schema)}.form_submission`;

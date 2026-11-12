@@ -43,13 +43,14 @@ vi.mock('@/server/sites/cachedResolver', () => ({
 
 // The form submissions live in the company's tenant schema (another
 // connection): the route deletes them after the site commit.
-const deleteProjectSubmissions = vi.fn<(tenantGroupId: string, siteId: string) => Promise<number>>(async () => 0);
+type Cleanup = { deleted: number; pending: boolean };
+const deleteProjectSubmissions = vi.fn<(tenantGroupId: string, siteId: string) => Promise<Cleanup>>(async () => ({ deleted: 0, pending: false }));
 vi.mock('@/server/forms/projectDelete', () => ({
   deleteProjectSubmissions: (tenantGroupId: string, siteId: string) => deleteProjectSubmissions(tenantGroupId, siteId),
 }));
 
 // The durable cleanup intent, written before the site row is deleted (src/server/forms/purge.ts).
-const scheduleProjectSubmissionsPurge = vi.fn<(tenantGroupId: string, workspaceId: string, siteId: string) => Promise<void>>(async () => undefined);
+const scheduleProjectSubmissionsPurge = vi.fn<(tenantGroupId: string, workspaceId: string, siteId: string) => Promise<boolean>>(async () => true);
 vi.mock('@/server/forms/purge', () => ({
   scheduleProjectSubmissionsPurge: (tenantGroupId: string, workspaceId: string, siteId: string) =>
     scheduleProjectSubmissionsPurge(tenantGroupId, workspaceId, siteId),
@@ -189,9 +190,9 @@ beforeEach(() => {
   ];
   mockVerifySession.mockResolvedValue(makeSession());
   mockCan.mockResolvedValue(true);
-  deleteProjectSubmissions.mockImplementation(async () => 0);
+  deleteProjectSubmissions.mockImplementation(async () => ({ deleted: 0, pending: false }));
   scheduleProjectSubmissionsPurge.mockReset();
-  scheduleProjectSubmissionsPurge.mockImplementation(async () => undefined);
+  scheduleProjectSubmissionsPurge.mockImplementation(async () => true);
 });
 
 afterEach(() => {
@@ -320,7 +321,7 @@ describe('DELETE /api/projects/<id> outcome for a published project', () => {
     deleteProjectSubmissions.mockImplementation(async () => {
       // The site row is already gone when the submissions are deleted.
       expect(sites.find((s) => s.id === 'site_pub')).toBeUndefined();
-      return 3;
+      return { deleted: 3, pending: false };
     });
     const res = await del('site_pub', { confirmName: 'Bakery' });
     expect(res.status).toBe(200);
@@ -332,11 +333,12 @@ describe('DELETE /api/projects/<id> outcome for a published project', () => {
     scheduleProjectSubmissionsPurge.mockImplementation(async () => {
       // The intent exists while the project still does: a crash right after it deletes nothing.
       expect(sites.find((s) => s.id === 'site_pub')).toBeDefined();
+      return true;
     });
     const res = await del('site_pub', { confirmName: 'Bakery' });
     expect(res.status).toBe(200);
     expect(scheduleProjectSubmissionsPurge).toHaveBeenCalledTimes(1);
-    expect(scheduleProjectSubmissionsPurge).toHaveBeenCalledWith('tg_lumitra', expect.any(String), 'site_pub');
+    expect(scheduleProjectSubmissionsPurge).toHaveBeenCalledWith('tg_lumitra', 'ws_marlin', 'site_pub');
   });
 
   it('writes no purge for an unauthenticated or unauthorized caller or a bad body', async () => {
@@ -373,18 +375,101 @@ describe('DELETE /api/projects/<id> outcome for a published project', () => {
     errorSpy.mockRestore();
   });
 
-  it('a failure deleting the form submissions is loud (500), the caches are still invalidated', async () => {
+  it('removed now: a plain success that says nothing is pending', async () => {
+    deleteProjectSubmissions.mockImplementation(async () => ({ deleted: 2, pending: false }));
+    const res = await del('site_pub', { confirmName: 'Bakery' });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toMatchObject({ siteId: 'site_pub', deleted: true });
+    expect(body.formSubmissionsPending).toBeUndefined();
+    expect(body.message).toBeUndefined();
+  });
+
+  it('pending: the cleanup could not finish now (an email of the project is being sent), the durable purge was written, so the answer is a success that says removal is still running, never that it is done', async () => {
+    deleteProjectSubmissions.mockImplementation(async () => ({ deleted: 0, pending: true }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const res = await del('site_pub', { confirmName: 'Bakery' });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toMatchObject({ deleted: true, formSubmissionsPending: true });
+    expect(body.message).toMatch(/still being removed in the background/);
+    expect(body.message).not.toMatch(/contact support/i);
+    expect(sites.find((s) => s.id === 'site_pub')).toBeUndefined();
+    warn.mockRestore();
+  });
+
+  it('a cleanup that fails outright while the durable purge exists is also pending, and loud in the log, with the caches still invalidated', async () => {
+    deleteProjectSubmissions.mockImplementation(async () => {
+      throw new Error('tenant schema unreachable');
+    });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const res = await del('site_pub', { confirmName: 'Bakery' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ deleted: true, formSubmissionsPending: true });
+    expect(sites.find((s) => s.id === 'site_pub')).toBeUndefined();
+    expect(revalidateSiteCache).toHaveBeenCalledWith('bakery0label');
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+    warn.mockRestore();
+  });
+
+  it('a cleanup that fails with NO durable purge behind it is the one failure that needs support, said accurately', async () => {
+    scheduleProjectSubmissionsPurge.mockImplementation(async () => false);
     deleteProjectSubmissions.mockImplementation(async () => {
       throw new Error('tenant schema unreachable');
     });
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const res = await del('site_pub', { confirmName: 'Bakery' });
     expect(res.status).toBe(500);
-    expect((await res.json()).error.code).toBe('delete_submissions_failed');
+    const error = (await res.json()).error;
+    expect(error.code).toBe('delete_submissions_failed');
+    expect(error.message).toMatch(/could not be removed and no automatic removal could be arranged/);
+    expect(error.message).toMatch(/Contact support/);
     expect(sites.find((s) => s.id === 'site_pub')).toBeUndefined();
     expect(revalidateSiteCache).toHaveBeenCalledWith('bakery0label');
-    expect(errorSpy).toHaveBeenCalled();
     errorSpy.mockRestore();
+  });
+
+  it('a pending answer without a confirmed purge is never trusted: it is the support case', async () => {
+    scheduleProjectSubmissionsPurge.mockImplementation(async () => false);
+    deleteProjectSubmissions.mockImplementation(async () => ({ deleted: 0, pending: true }));
+    const res = await del('site_pub', { confirmName: 'Bakery' });
+    expect(res.status).toBe(500);
+    expect((await res.json()).error.code).toBe('delete_submissions_failed');
+  });
+
+  it('a failure to write the purge refuses the delete before anything changes (try again), which is not the support case', async () => {
+    scheduleProjectSubmissionsPurge.mockImplementation(async () => {
+      throw new Error('tenant schema unreachable');
+    });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = await del('site_pub', { confirmName: 'Bakery' });
+    expect(res.status).toBe(500);
+    const error = (await res.json()).error;
+    expect(error.code).toBe('delete_failed');
+    expect(error.message).toMatch(/nothing was deleted, try again/);
+    expect(error.message).not.toMatch(/support/i);
+    expect(sites.find((s) => s.id === 'site_pub')).toBeDefined();
+    errorSpy.mockRestore();
+  });
+
+  it('a cache warning together with a pending removal says both', async () => {
+    deleteProjectSubmissions.mockImplementation(async () => ({ deleted: 0, pending: true }));
+    revalidateSiteCache.mockImplementationOnce(() => {
+      throw new Error('boom');
+    });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const res = await del('site_pub', { confirmName: 'Bakery' });
+    expect(res.status).toBe(500);
+    const error = (await res.json()).error;
+    expect(error.code).toBe('delete_cache_failed');
+    expect(error.message).toMatch(/cache/);
+    expect(error.message).toMatch(/still being removed in the background/);
+    expect(error.formSubmissionsPending).toBe(true);
+    errorSpy.mockRestore();
+    warn.mockRestore();
   });
 
   it('a cache invalidation failure is loud (500), and every other host is still invalidated', async () => {

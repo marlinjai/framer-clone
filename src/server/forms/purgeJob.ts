@@ -11,8 +11,6 @@ import { z } from 'zod';
 import { defineJobKind } from '@/server/commerce/jobs/types';
 
 export const FORM_PURGE_JOB_KIND = 'form_purge';
-/** One purge per site. */
-export const formPurgeJobKey = (siteId: string) => `formpurge:${siteId}`;
 
 export const formPurgeKind = defineJobKind({
   policy: {
