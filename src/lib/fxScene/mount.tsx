@@ -78,6 +78,18 @@ function withResolvedImages(scene: SceneConfig, resolveImage: RenderFxOptions['r
   return changed ? { ...scene, layers } : scene;
 }
 
+/** Ask the browser to free the WebGL context of every canvas in `layer` now. Never throws: the unmount that follows disposes the rest. */
+function loseContexts(layer: HTMLElement): void {
+  for (const canvas of layer.querySelectorAll('canvas')) {
+    try {
+      const gl = (canvas.getContext('webgl2') ?? canvas.getContext('webgl')) as WebGLRenderingContext | null;
+      gl?.getExtension('WEBGL_lose_context')?.loseContext();
+    } catch {
+      // The context is gone or cannot be asked: nothing to release.
+    }
+  }
+}
+
 /** Draw `stored` into `layer`, which the caller owns and has placed. */
 export function renderFxScene(layer: HTMLElement, stored: unknown, { onLive, onOff, resolveImage, layoutSize }: RenderFxOptions): FxSceneHandle {
   let root: Root | null = null;
@@ -88,7 +100,9 @@ export function renderFxScene(layer: HTMLElement, stored: unknown, { onLive, onO
   let firstFrame = false;
 
   const unmount = () => {
-    // Unmounting disposes the renderer and releases the WebGL context.
+    // Unmounting alone leaves the context to be lost a moment later (react-three-fiber defers it by 500 ms),
+    // long enough for the next element's scene to start beside it. Release it here, before the root goes.
+    if (root) loseContexts(layer);
     root?.unmount();
     root = null;
   };

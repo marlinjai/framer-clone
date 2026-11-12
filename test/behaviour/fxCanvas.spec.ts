@@ -8,7 +8,7 @@
 // (`HTMLCanvasElement.getContext`), so a context no element shows any more is still
 // counted until it is released.
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { chromium, webkit, type Browser, type BrowserType, type Page } from 'playwright';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { fxFromPreset, setFxParam, setFxStart, type FxEdit } from '@/lib/fxScene/edit';
@@ -86,6 +86,10 @@ describe.each(ENGINES)('in %s', (_name, engine) => {
   });
   afterAll(async () => {
     await browser?.close();
+  });
+  // A page left open keeps its WebGL contexts running beside the next test's: each test closes its own, failed or not.
+  afterEach(async () => {
+    await page?.context().close();
   });
 
   const open = async () => {

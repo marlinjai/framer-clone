@@ -120,6 +120,8 @@ function NumberSetting({ label, value, min, max, step, onChange }: { label: stri
   // Unmounted mid-drag (the selection moved): the undo step still ends.
   useEffect(() => endDrag, []);
   const commitDraft = () => {
+    // Untouched: the stored value stays as it is, at its own precision (an imported 0.7234 is not rounded by a focus and a blur).
+    if (draft === shown(value)) return;
     const typed = Number(draft);
     if (draft.trim() === '' || !Number.isFinite(typed)) {
       setDraft(shown(value));
@@ -199,10 +201,12 @@ function PictureSetting({ projectId, demo, value, onChange }: { projectId: strin
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState('');
+  const [progress, setProgress] = useState('');
   const preview = projectId && value ? editorSiteImageUrl(projectId, value) : null;
 
   const upload = async (file: File) => {
     setProblem('');
+    setProgress('');
     if (!projectId || demo) {
       // The demo lives in this browser tab only: no server holds it, so there is nowhere to store a picture.
       setProblem('The demo is not stored anywhere yet, so it cannot hold a picture. Choose Keep as project in the editor, then upload the picture.');
@@ -213,6 +217,7 @@ function PictureSetting({ projectId, demo, value, onChange }: { projectId: strin
       return;
     }
     setBusy(true);
+    setProgress('Uploading the picture.');
     try {
       const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/images?kind=scene`, {
         method: 'POST',
@@ -221,11 +226,14 @@ function PictureSetting({ projectId, demo, value, onChange }: { projectId: strin
       });
       const body = (await res.json().catch(() => null)) as { path?: string; error?: { message?: string } } | null;
       if (!res.ok || !body?.path) {
+        setProgress('');
         setProblem(uploadFailureMessage(res.status, body?.error?.message, 'upload the picture'));
         return;
       }
       onChange(body.path);
+      setProgress('Picture uploaded.');
     } catch {
+      setProgress('');
       setProblem('The picture could not be sent (no connection to the server). Check the connection and upload it again.');
     } finally {
       setBusy(false);
@@ -264,6 +272,9 @@ function PictureSetting({ projectId, demo, value, onChange }: { projectId: strin
           }}
         />
       </div>
+      <p role="status" aria-live="polite" className="sr-only">
+        {progress}
+      </p>
       {problem ? (
         <p role="alert" className={ERROR}>
           {problem}
@@ -280,6 +291,9 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
   const projectId = editorUI.currentProject?.id;
   const stored = (component.props as Record<string, unknown>)[FX_PROP];
   const read = parseFxProp(stored);
+  // The prop as it is NOW: an edit that completes later (a picture upload, a Studio conversion) is built from this,
+  // never from the scene captured when it began, or it would overwrite what was changed in between.
+  const currentStored = () => (component.props as Record<string, unknown>)[FX_PROP];
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // What the last change left to say, kept with the scene it was said about: after an
   // undo, or a change made elsewhere, the scene is another one and the message is gone.
@@ -287,7 +301,7 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
   const [said, setSaid] = useState<{ about: string; notes: string[]; problem: string }>({ about: sceneKey, notes: [], problem: '' });
   const notes = said.about === sceneKey ? said.notes : [];
   const problem = said.about === sceneKey ? said.problem : '';
-  const setProblem = (message: string) => setSaid({ about: sceneKey, notes: [], problem: message });
+  const setProblem = (message: string) => setSaid({ about: JSON.stringify(currentStored() ?? null), notes: [], problem: message });
   const [importing, setImporting] = useState(false);
   const [importText, setImportText] = useState('');
   const [copied, setCopied] = useState('');
@@ -351,7 +365,7 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
 
   const settingControl = (layer: Layer, key: string, schema: ParamSchema) => {
     const label = settingLabel(key, schema);
-    const set = (value: ParamSchema['value']) => apply(setFxParam(stored, layer.id, key, value));
+    const set = (value: ParamSchema['value']) => apply(setFxParam(currentStored(), layer.id, key, value));
     switch (schema.type) {
       case 'number':
         return <NumberSetting key={key} label={label} value={schema.value} min={schema.min} max={schema.max} step={schema.step ?? (schema.max - schema.min) / 100} onChange={set} />;
@@ -462,6 +476,12 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
         setProblem(NOT_A_SCENE);
         return;
       }
+      // The bridge skips a child without a string id and type without a word: refuse here, naming it, so no layer is dropped silently.
+      const bad = root.children.findIndex((child) => !child || typeof child !== 'object' || typeof (child as { id?: unknown }).id !== 'string' || typeof (child as { type?: unknown }).type !== 'string');
+      if (bad >= 0) {
+        setProblem(`Layer ${bad + 1} of this Lumitra Studio scene has no id or no type, so it cannot be imported. Export the scene again from Studio and paste the whole text.`);
+        return;
+      }
       try {
         const { sceneConfigFromUnified } = await import('@/lib/fx/unified');
         const { serializeScene } = await import('@/lib/fx/format');
@@ -471,7 +491,7 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
         return;
       }
     }
-    if (apply(importFxScene(stored, scene))) {
+    if (apply(importFxScene(currentStored(), scene))) {
       setImporting(false);
       setImportText('');
       setSelectedId(null);

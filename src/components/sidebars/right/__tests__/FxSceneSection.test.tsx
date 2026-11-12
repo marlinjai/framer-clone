@@ -128,6 +128,21 @@ describe('one control per kind of setting', () => {
     expect(text.value).toBe(String(schema.max));
   });
 
+  it('a number left untouched keeps its stored precision when the field is focused and left', () => {
+    const { box, history } = setup();
+    render(<FxSceneSection component={box} />);
+    pick('Bloom');
+    fireEvent.change(screen.getByLabelText('Intensity, as a number'), { target: { value: '0.7234' } });
+    fireEvent.blur(screen.getByLabelText('Intensity, as a number'));
+    expect(valueOf(box, 'bloom', 'intensity')).toBe(0.7234);
+    history.clear();
+    const text = screen.getByLabelText('Intensity, as a number') as HTMLInputElement;
+    fireEvent.focus(text);
+    fireEvent.blur(text);
+    expect(valueOf(box, 'bloom', 'intensity')).toBe(0.7234);
+    expect(history.canUndo).toBe(false);
+  });
+
   it('a slider left mid-drag (the selection moved) still ends its undo step', () => {
     const { box, history } = setup();
     const view = render(<FxSceneSection component={box} />);
@@ -244,6 +259,22 @@ describe('a picture for an image layer', () => {
 
     fireEvent.click(within(settings(image.name)).getByRole('button', { name: 'Remove' }));
     expect(valueOf(box, image.id, 'src')).toBe('');
+  });
+
+  it('lands on the scene as it is when the upload finishes, keeping what was changed meanwhile', async () => {
+    const { box } = setup();
+    let finish!: (response: Response) => void;
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>((resolve) => (finish = resolve))));
+    render(<FxSceneSection component={box} />);
+    const image = add(box, 'image');
+    upload(file());
+    // Changed while the picture is on its way.
+    choose('Starts', 'visible');
+    expect(fxOf(box).start).toBe('visible');
+    await act(async () => finish(new Response(JSON.stringify({ path: SITE_IMAGE }), { status: 200 })));
+    await waitFor(() => expect(valueOf(box, image.id, 'src')).toBe(SITE_IMAGE));
+    expect(fxOf(box).start).toBe('visible');
+    expect(screen.getByText('Picture uploaded.').getAttribute('aria-live')).toBe('polite');
   });
 
   it('refuses a file that is too large before sending it', () => {
@@ -412,6 +443,17 @@ describe('copying and importing the scene as JSON', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Copy scene JSON' }));
     await waitFor(() => expect(screen.getByText(/Copying was not allowed here/)).toBeTruthy());
     expect(JSON.parse((screen.getByLabelText('Scene JSON') as HTMLTextAreaElement).value).layers).toHaveLength(5);
+  });
+
+  it('refuses a Studio scene with a layer that has no id or type, instead of dropping it silently', async () => {
+    const { box } = setup();
+    render(<FxSceneSection component={box} />);
+    const before = layersOf(box).length;
+    fireEvent.click(screen.getByRole('button', { name: 'Import scene JSON' }));
+    fireEvent.change(screen.getByLabelText('Scene JSON'), { target: { value: JSON.stringify({ root: { children: [{}] } }) } });
+    fireEvent.click(screen.getByRole('button', { name: 'Replace the scene with this' }));
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/Layer 1 .* no id or no type/));
+    expect(layersOf(box)).toHaveLength(before);
   });
 
   it('converts a scene in Lumitra Studio\'s format, which holds its layers under root.children', async () => {
