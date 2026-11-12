@@ -873,6 +873,14 @@ model SiteModel {
   createdAt  DateTime @default(now()) @map("created_at")
   lastUsedAt DateTime @default(now()) @map("last_used_at")
 
+  // Coordination with blob cleanup (plan, "Coordinating uploads and blob cleanup"): an upload's row is `pending`, with the
+  // attempt that owns it and a deadline, until its blobs are written; `ready` rows carry neither (a CHECK holds it).
+  // Serving, listing and `touch` see ready rows only; the quota counts both. The CHECK and the partial index on
+  // `pending_until` exist in the database only (Prisma's schema does not name them; a schema comparison reports them).
+  state        String    @default("ready")
+  pendingUntil DateTime? @map("pending_until")
+  attempt      String?
+
   site Site @relation(fields: [siteId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
 
   @@unique([siteId, sha256])
@@ -881,5 +889,19 @@ model SiteModel {
   @@index([sha256])
   @@index([originalSha256])
   @@map("site_models")
+  @@schema("public")
+}
+
+/// One blob key a cleanup is deleting (the tombstone of the coordination protocol). While a row exists for a key no upload
+/// may reference it, even after `expiresAt` (expiry only lets a reconciler take the cleanup over). Global by content hash,
+/// like the blobs; never read by a request path.
+model ModelBlobTombstone {
+  key       String   @id
+  attempt   String
+  createdAt DateTime @default(now()) @map("created_at")
+  expiresAt DateTime @map("expires_at")
+
+  @@index([expiresAt])
+  @@map("model_blob_tombstones")
   @@schema("public")
 }

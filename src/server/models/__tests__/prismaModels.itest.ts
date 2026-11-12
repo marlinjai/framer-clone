@@ -41,6 +41,14 @@ async function makeSite() {
   return { id, workspaceId: scope.workspaceId, scope };
 }
 
+/** The protocol's upload steps 1 and 3 in one go (the pipeline writes its blobs between them), as the old atomic insert. */
+async function insertModel(repo: PrismaSiteModels, record: SiteModelRecord, limits: { servedBytes: number; originalBytes: number }) {
+  const begin = await repo.beginUpload({ record, limits, attempt: randomUUID(), now: new Date(), pendingTtlMs: 300_000 });
+  if (!begin.ok) return begin.reason === 'in-progress' ? ({ ok: false, reason: 'exists' } as const) : begin;
+  await repo.markReady(record.siteId, record.sha256, begin.attempt, record.lastUsedAt);
+  return { ok: true } as const;
+}
+
 let n = 0;
 function rec(siteId: string, over: Partial<SiteModelRecord> = {}): SiteModelRecord {
   const i = ++n;
@@ -71,7 +79,7 @@ describe('the repository: round trip', () => {
     const site = await makeSite();
     const repo = new PrismaSiteModels(prisma);
     const r = rec(site.id);
-    expect(await repo.insertWithinQuota(r, LIMITS)).toEqual({ ok: true });
+    expect(await insertModel(repo, r, LIMITS)).toEqual({ ok: true });
     expect(await repo.find(site.id, r.sha256)).toEqual(r);
     expect(await repo.list(site.id)).toEqual([r]);
     expect(await repo.totalBytes(site.id)).toBe(MB);
@@ -90,8 +98,8 @@ describe('the repository: round trip', () => {
     const site = await makeSite();
     const repo = new PrismaSiteModels(prisma);
     const r = rec(site.id);
-    await repo.insertWithinQuota(r, LIMITS);
-    expect(await repo.insertWithinQuota(r, LIMITS)).toEqual({ ok: false, reason: 'exists' });
+    await insertModel(repo, r, LIMITS);
+    expect(await insertModel(repo, r, LIMITS)).toEqual({ ok: false, reason: 'exists' });
     expect((await repo.list(site.id)).length).toBe(1);
   });
 
@@ -99,7 +107,7 @@ describe('the repository: round trip', () => {
     const site = await makeSite();
     const repo = new PrismaSiteModels(prisma);
     const r = rec(site.id);
-    await repo.insertWithinQuota(r, LIMITS);
+    await insertModel(repo, r, LIMITS);
     await repo.touch(site.id, r.sha256, new Date('2026-11-15T00:00:00Z'));
     await repo.touch(site.id, r.sha256, new Date('2026-11-01T00:00:00Z'));
     expect((await repo.find(site.id, r.sha256))?.lastUsedAt).toEqual(new Date('2026-11-15T00:00:00Z'));
@@ -113,7 +121,7 @@ describe('tenant isolation', () => {
     const asA = new PrismaSiteModels(prisma, { workspaceId: a.workspaceId });
     const asB = new PrismaSiteModels(prisma, { workspaceId: b.workspaceId });
     const r = rec(a.id);
-    expect(await asA.insertWithinQuota(r, LIMITS)).toEqual({ ok: true });
+    expect(await insertModel(asA, r, LIMITS)).toEqual({ ok: true });
 
     expect(await asB.find(a.id, r.sha256)).toBeNull();
     expect(await asB.list(a.id)).toEqual([]);
@@ -121,7 +129,7 @@ describe('tenant isolation', () => {
     await asB.touch(a.id, r.sha256, new Date('2027-01-01T00:00:00Z'));
     await asB.delete(a.id, r.sha256);
     expect(await asA.find(a.id, r.sha256)).toEqual(r);
-    expect(await refusal(() => asB.insertWithinQuota(rec(a.id), LIMITS))).toMatch(/no such site/);
+    expect(await refusal(() => insertModel(asB, rec(a.id), LIMITS))).toMatch(/no such site/);
     expect((await asA.list(a.id)).length).toBe(1);
   });
 
@@ -130,9 +138,9 @@ describe('tenant isolation', () => {
     const b = await makeSite();
     const repo = new PrismaSiteModels(prisma);
     const r = rec(a.id);
-    await repo.insertWithinQuota(r, LIMITS);
+    await insertModel(repo, r, LIMITS);
     expect(await repo.find(b.id, r.sha256)).toBeNull();
-    expect(await repo.insertWithinQuota({ ...r, siteId: b.id }, LIMITS)).toEqual({ ok: true });
+    expect(await insertModel(repo, { ...r, siteId: b.id }, LIMITS)).toEqual({ ok: true });
     await repo.delete(a.id, r.sha256);
     expect(await repo.find(a.id, r.sha256)).toBeNull();
     expect(await repo.find(b.id, r.sha256)).not.toBeNull();
@@ -142,17 +150,17 @@ describe('tenant isolation', () => {
     const a = await makeSite();
     const b = await makeSite();
     const repo = new PrismaSiteModels(prisma);
-    await repo.insertWithinQuota(rec(a.id, { bytes: 3 * MB }), LIMITS);
-    expect(await repo.insertWithinQuota(rec(b.id, { bytes: 3 * MB }), { servedBytes: 4 * MB, originalBytes: LIMITS.originalBytes })).toEqual({ ok: true });
+    await insertModel(repo, rec(a.id, { bytes: 3 * MB }), LIMITS);
+    expect(await insertModel(repo, rec(b.id, { bytes: 3 * MB }), { servedBytes: 4 * MB, originalBytes: LIMITS.originalBytes })).toEqual({ ok: true });
   });
 
   it('refuses an unknown site, and a branch (a branch has no models of its own)', async () => {
     const main = await makeSite();
     const repo = new PrismaSiteModels(prisma);
-    expect(await refusal(() => repo.insertWithinQuota(rec(randomUUID()), LIMITS))).toMatch(/no such site/);
+    expect(await refusal(() => insertModel(repo, rec(randomUUID()), LIMITS))).toMatch(/no such site/);
     const branches = new SiteBranchRepository(prisma);
     const { branch } = await branches.createBranch(main.scope, main.id, { name: 'Spring', actor: { kind: 'user', id: 'u' } });
-    expect(await refusal(() => repo.insertWithinQuota(rec(branch.branchId), LIMITS))).toMatch(/a branch has no models of its own/);
+    expect(await refusal(() => insertModel(repo, rec(branch.branchId), LIMITS))).toMatch(/a branch has no models of its own/);
     expect(await prisma.siteModel.count({ where: { siteId: branch.branchId } })).toBe(0);
   });
 });
@@ -161,7 +169,7 @@ describe('the quota', () => {
   it('lets exactly the room there is through when many uploads run at once', async () => {
     const site = await makeSite();
     const repo = new PrismaSiteModels(prisma);
-    const outcomes = await Promise.all(Array.from({ length: 12 }, () => repo.insertWithinQuota(rec(site.id), { servedBytes: 5 * MB, originalBytes: LIMITS.originalBytes })));
+    const outcomes = await Promise.all(Array.from({ length: 12 }, () => insertModel(repo, rec(site.id), { servedBytes: 5 * MB, originalBytes: LIMITS.originalBytes })));
     expect(outcomes.filter((o) => o.ok).length).toBe(5);
     expect(outcomes.filter((o) => !o.ok && o.reason === 'quota').length).toBe(7);
     expect(await repo.totalBytes(site.id)).toBe(5 * MB);
@@ -171,9 +179,9 @@ describe('the quota', () => {
     const site = await makeSite();
     const repo = new PrismaSiteModels(prisma);
     const shared = hex('c');
-    expect((await repo.insertWithinQuota(rec(site.id, { originalSha256: shared, originalBytes: 3 * MB }), { servedBytes: LIMITS.servedBytes, originalBytes: 4 * MB })).ok).toBe(true);
-    expect((await repo.insertWithinQuota(rec(site.id, { originalSha256: shared, originalBytes: 3 * MB }), { servedBytes: LIMITS.servedBytes, originalBytes: 4 * MB })).ok).toBe(true);
-    expect(await repo.insertWithinQuota(rec(site.id, { originalBytes: 3 * MB }), { servedBytes: LIMITS.servedBytes, originalBytes: 4 * MB })).toEqual({ ok: false, reason: 'originals-quota' });
+    expect((await insertModel(repo, rec(site.id, { originalSha256: shared, originalBytes: 3 * MB }), { servedBytes: LIMITS.servedBytes, originalBytes: 4 * MB })).ok).toBe(true);
+    expect((await insertModel(repo, rec(site.id, { originalSha256: shared, originalBytes: 3 * MB }), { servedBytes: LIMITS.servedBytes, originalBytes: 4 * MB })).ok).toBe(true);
+    expect(await insertModel(repo, rec(site.id, { originalBytes: 3 * MB }), { servedBytes: LIMITS.servedBytes, originalBytes: 4 * MB })).toEqual({ ok: false, reason: 'originals-quota' });
   });
 
   it('a delete under the same lock makes room for the next upload', async () => {
@@ -181,11 +189,11 @@ describe('the quota', () => {
     const repo = new PrismaSiteModels(prisma);
     const limit = { servedBytes: 2 * MB, originalBytes: LIMITS.originalBytes };
     const [a, b] = [rec(site.id), rec(site.id)];
-    await repo.insertWithinQuota(a, limit);
-    await repo.insertWithinQuota(b, limit);
-    expect(await repo.insertWithinQuota(rec(site.id), limit)).toEqual({ ok: false, reason: 'quota' });
+    await insertModel(repo, a, limit);
+    await insertModel(repo, b, limit);
+    expect(await insertModel(repo, rec(site.id), limit)).toEqual({ ok: false, reason: 'quota' });
     await repo.delete(site.id, a.sha256);
-    expect(await repo.insertWithinQuota(rec(site.id), limit)).toEqual({ ok: true });
+    expect(await insertModel(repo, rec(site.id), limit)).toEqual({ ok: true });
   });
 });
 
@@ -194,7 +202,7 @@ describe('races', () => {
     const site = await makeSite();
     const repo = new PrismaSiteModels(prisma);
     const r = rec(site.id);
-    const outcomes = await Promise.all(Array.from({ length: 6 }, () => repo.insertWithinQuota(r, LIMITS)));
+    const outcomes = await Promise.all(Array.from({ length: 6 }, () => insertModel(repo, r, LIMITS)));
     expect(outcomes.filter((o) => o.ok).length).toBe(1);
     expect(outcomes.filter((o) => !o.ok && o.reason === 'exists').length).toBe(5);
     expect((await repo.list(site.id)).length).toBe(1);
@@ -204,7 +212,7 @@ describe('races', () => {
     const site = await makeSite();
     const repo = new PrismaSiteModels(prisma);
     const limit = { servedBytes: LIMITS.servedBytes, originalBytes: 5 * MB };
-    const outcomes = await Promise.all(Array.from({ length: 8 }, () => repo.insertWithinQuota(rec(site.id, { originalBytes: 2 * MB }), limit)));
+    const outcomes = await Promise.all(Array.from({ length: 8 }, () => insertModel(repo, rec(site.id, { originalBytes: 2 * MB }), limit)));
     expect(outcomes.filter((o) => o.ok).length).toBe(2);
     expect(outcomes.filter((o) => !o.ok && o.reason === 'originals-quota').length).toBe(6);
   });
@@ -213,7 +221,7 @@ describe('races', () => {
     for (let i = 0; i < 5; i++) {
       const site = await makeSite();
       const repo = new PrismaSiteModels(prisma);
-      await Promise.allSettled([repo.insertWithinQuota(rec(site.id), LIMITS), prisma.site.delete({ where: { id: site.id } })]);
+      await Promise.allSettled([insertModel(repo, rec(site.id), LIMITS), prisma.site.delete({ where: { id: site.id } })]);
       expect(await prisma.siteModel.count({ where: { siteId: site.id } })).toBe(0);
     }
   });
@@ -222,7 +230,7 @@ describe('races', () => {
     const site = await makeSite();
     const own = new PrismaSiteModels(prisma, { workspaceId: site.workspaceId });
     const r = rec(site.id);
-    await own.insertWithinQuota(r, LIMITS);
+    await insertModel(own, r, LIMITS);
     await own.touch(site.id, r.sha256, new Date('2026-12-24T00:00:00Z'));
     expect((await own.find(site.id, r.sha256))?.lastUsedAt).toEqual(new Date('2026-12-24T00:00:00Z'));
   });
@@ -232,9 +240,9 @@ describe('failure paths', () => {
   it('leaves no row after a refused insert and releases the site lock for the next one', async () => {
     const site = await makeSite();
     const repo = new PrismaSiteModels(prisma);
-    expect(await refusal(() => repo.insertWithinQuota(rec(site.id, { sha256: 'not-a-hash' }), LIMITS))).toMatch(/site_models_sha256_check|check constraint/i);
+    expect(await refusal(() => insertModel(repo, rec(site.id, { sha256: 'not-a-hash' }), LIMITS))).toMatch(/site_models_sha256_check|check constraint/i);
     expect(await prisma.siteModel.count({ where: { siteId: site.id } })).toBe(0);
-    expect(await repo.insertWithinQuota(rec(site.id), LIMITS)).toEqual({ ok: true });
+    expect(await insertModel(repo, rec(site.id), LIMITS)).toEqual({ ok: true });
   });
 });
 
@@ -295,8 +303,8 @@ describe('the database constraints (the backstop behind the upload checks)', () 
     const a = await makeSite();
     const b = await makeSite();
     const repo = new PrismaSiteModels(prisma);
-    await repo.insertWithinQuota(rec(a.id), LIMITS);
-    await repo.insertWithinQuota(rec(b.id), LIMITS);
+    await insertModel(repo, rec(a.id), LIMITS);
+    await insertModel(repo, rec(b.id), LIMITS);
     await prisma.site.delete({ where: { id: a.id } });
     expect(await prisma.siteModel.count({ where: { siteId: a.id } })).toBe(0);
     expect(await prisma.siteModel.count({ where: { siteId: b.id } })).toBe(1);

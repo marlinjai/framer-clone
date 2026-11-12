@@ -449,6 +449,21 @@ inventory and every gate at the exact release commit. Reversing it: `rollback.sq
 in one transaction, with no `migrate resolve`: that command refuses a migration that applied, error P3012) drops only that
 table and forgets only that migration's history row, so a redeploy applies it again; object-storage blobs are not touched. Both directions are tested on a scratch database
 (`src/server/models/__tests__/prismaModels.itest.ts`).
+Migration `20261112300000_site_model_coordination` (the upload and blob-cleanup coordination protocol of the same plan,
+"Coordinating uploads and blob cleanup") is additive too: three columns on the unread `site_models` table (`state`,
+default `'ready'`, so every existing row stays ready; `pending_until` and `attempt`, both null, with a `CHECK` that a ready
+row carries neither and a pending row both), one partial index, and one new empty table, `model_blob_tombstones`. No
+existing column is changed or dropped and no row is touched or rewritten (the new `state` default is a constant, so
+Postgres 11 or later adds it without rewriting the table). Nothing reads or writes any of it until the model upload and
+cleanup routes exist and are enabled (a separate, gated step); the code that uses it is wired to nothing. **Applied by
+the boot of whichever deployment first contains it, so any deployment from a commit at or after it carries it; merging
+applies nothing, and applying it needs its own authorization; the migration inventory is refreshed at the exact release
+commit.** Reversing it: `rollback.sql` beside it (by hand, one transaction, safe to run twice, no `migrate resolve`)
+drops the tombstone table and the three columns, discards pending rows with their column and forgets only its own history
+row; leaving the columns and the empty table in place after a code rollback is the default. Both directions, the
+fresh chain and the production-like chain (applied on top of a table that already holds a row) are tested on scratch
+databases (`src/server/models/__tests__/coordinationPostgres.itest.ts`).
+
 **Before rolling the code back past the first of the two with open branches**, merge or
 discard them: older code does not know the column and lists each open branch as one more draft site in its company's
 dashboard. It cannot publish one or give it a domain (a `CHECK` constraint and a trigger refuse that whatever code
