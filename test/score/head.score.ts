@@ -69,6 +69,15 @@ function documentFor(site: unknown, page: unknown): string {
   );
 }
 
+/** The attributes of one raw tag, names lowercased and values unescaped. */
+function attributesOf(tag: string): Record<string, string> {
+  const attrs: Record<string, string> = {};
+  for (const m of tag.matchAll(/([a-zA-Z-]+)="([^"]*)"/g)) {
+    attrs[m[1].toLowerCase()] = m[2].replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  }
+  return attrs;
+}
+
 /** Where the item stands in the raw HTML: its tag before `</head>`, or JSON-LD after it, parsing back. */
 function positionProblem(item: StoredHeadItem, html: string): string | null {
   const at = html.indexOf('</head>');
@@ -81,10 +90,20 @@ function positionProblem(item: StoredHeadItem, html: string): string | null {
     return same(JSON.parse(found[0][1]), item.data) ? null : 'the JSON-LD does not parse back to the stored object';
   }
   const tag = item.kind === 'link' ? 'link' : 'meta';
-  const attr = item.kind === 'meta' ? `name="${item.name}"` : item.kind === 'property' ? `property="${item.property}"` : `rel="${item.rel}"`;
-  const inHead = head.match(new RegExp(`<${tag}\\b[^>]*${attr}[^>]*>`, 'g')) ?? [];
+  const identity = item.kind === 'meta' ? ['name', item.name] : item.kind === 'property' ? ['property', item.property] : ['rel', item.rel];
+  const tagsOf = (html: string) =>
+    [...html.matchAll(/<(meta|link)\b[^>]*>/g)]
+      .filter((m) => m[1] === tag)
+      .map((m) => attributesOf(m[0]))
+      .filter((attrs) => attrs[identity[0] as string] === identity[1]);
+  const inHead = tagsOf(head);
   if (inHead.length !== 1) return `${inHead.length} such tags in <head>`;
-  if (new RegExp(`<${tag}\\b[^>]*${attr}`).test(body)) return 'the tag is also in the body';
+  if (tagsOf(body).length > 0) return 'the tag is also in the body';
+  const { kind: _kind, ...expected } = item;
+  for (const [field, value] of Object.entries(expected)) {
+    const written = inHead[0][field.toLowerCase()];
+    if (written !== value) return `${field} is written as ${JSON.stringify(written)}, stored as ${JSON.stringify(value)}`;
+  }
   return null;
 }
 
@@ -99,11 +118,11 @@ function rendererCell(item: StoredHeadItem): Cell {
   return pass();
 }
 
-/** Whether any distinctive value of the item (its content, address, name or property) appears in the written output. */
-function keptIn(item: StoredHeadItem, written: string): boolean {
-  const values = ['content', 'href', 'name', 'property'].map((field) => item[field]).filter((v): v is string => typeof v === 'string');
-  const data = item.kind === 'jsonld' ? [JSON.stringify((item as { data?: { url?: unknown } }).data?.url ?? '')].map((v) => v.replace(/"/g, '')) : [];
-  return [...values, ...data].some((value) => value !== '' && written.includes(value));
+/** Whether the generation still carries the whole item in a head field (head, metadata.head or siteSettings.head). */
+function keptIn(item: StoredHeadItem, result: unknown): boolean {
+  if (typeof result !== 'object' || result === null) return false;
+  const r = result as { head?: unknown; metadata?: { head?: unknown }; siteSettings?: { head?: unknown } };
+  return [r.head, r.metadata?.head, r.siteSettings?.head].some((list) => Array.isArray(list) && list.some((entry) => same(entry, item)));
 }
 
 /** A generation carrying the item at every place a model might put it. */
@@ -118,7 +137,7 @@ function aiCell(item: StoredHeadItem): Cell {
     AI_CONTEXT,
   );
   if (!outcome.ok) return fail('ai-head-refused', `the generation was refused: ${outcome.errors.join('; ')}`);
-  const kept = keptIn(item, JSON.stringify(outcome.result));
+  const kept = keptIn(item, outcome.result);
   return kept ? pass('the generator kept it') : fail('ai-head-refused', 'a generation has no head field: the item is dropped from the output');
 }
 
@@ -149,9 +168,14 @@ describe('head item rows', () => {
     // A format cell notices an item the reader changes.
     expect(formatCell({ kind: 'meta', name: 'author', content: 'x', extra: 1 }).status).toBe('fail');
     // The generator cell passes the day a generation keeps a head item.
-    expect(keptIn(meta, '{"nodes":[{"props":{"data-x":"value of author"}}]}')).toBe(true);
-    expect(keptIn(ld, '{"url":"https://example.org/"}')).toBe(true);
-    expect(keptIn(meta, '{"nodes":[]}')).toBe(false);
+    expect(keptIn(meta, { head: [meta] })).toBe(true);
+    expect(keptIn(ld, { metadata: { head: [ld] } })).toBe(true);
+    // A value copied into a prop, or a head entry that changed, is not a retained head item.
+    expect(keptIn(meta, { nodes: [{ props: { 'data-x': 'value of author' } }] })).toBe(false);
+    expect(keptIn(meta, { head: [{ ...meta, content: 'other' }] })).toBe(false);
+    expect(keptIn(meta, { nodes: [] })).toBe(false);
+    // A renderer cell notices a wrong value or destination, not just a missing tag.
+    expect(positionProblem(meta, `<html><head><meta name="author" content="wrong"/></head><body></body></html>`)).toMatch(/content is written as/);
     expect(aiCell(meta).status).toBe('fail');
   });
 });

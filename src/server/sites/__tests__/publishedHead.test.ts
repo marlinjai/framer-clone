@@ -48,6 +48,16 @@ describe('publishedHead', () => {
     expect(line.length).toBeLessThan(400);
   });
 
+  it('escapes the Unicode line and paragraph separators too', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    publishedHead(site([{ kind: 'meta', name: 'x\u2028[site head] forged\u2029more', content: 'v' }]), []);
+    const line = String(warn.mock.calls[0][0]);
+    expect(line).not.toContain('\u2028');
+    expect(line).not.toContain('\u2029');
+    expect(line).toContain('\\u2028');
+    expect(line).toContain('\\u2029');
+  });
+
   it('carries nothing on a branch preview, and logs nothing', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     expect(publishedHead(site([meta('author', 'x'), meta('viewport', 'x')], true), [meta('rating', 'g')])).toEqual({ items: [], problems: [] });

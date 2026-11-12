@@ -160,7 +160,8 @@ const LOGGED_HEAD_PROBLEMS_MAX = 2000;
  * can forge a log line, and a 10 kilobyte name stays a short one.
  */
 function logHeadProblem(siteId: string, problem: HeadProblem): void {
-  const text = JSON.stringify(problem.message.slice(0, 160));
+  // JSON.stringify leaves U+2028 and U+2029 literal, and some log viewers break a line on them.
+  const text = JSON.stringify(problem.message.slice(0, 160)).replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
   const key = `${siteId}|${problem.home}|${problem.index}|${problem.reason}|${text}`;
   if (loggedHeadProblems.has(key)) return;
   if (loggedHeadProblems.size >= LOGGED_HEAD_PROBLEMS_MAX) loggedHeadProblems.clear();
