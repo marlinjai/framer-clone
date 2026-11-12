@@ -126,8 +126,10 @@ function DrawnLayer({ stored, draws, idle, start, layoutSize = false, projectId,
     const go = () => {
       if (stopped) return;
       say({ state: 'loading' });
-      import('@/lib/fxScene/mount').then(
-        ({ renderFxScene }) => {
+      // One handler for a chunk that does not arrive and for a set-up that throws: either
+      // way the layer is off and says so, never left "loading".
+      import('@/lib/fxScene/mount')
+        .then(({ renderFxScene }) => {
           if (stopped) return;
           handle.current = renderFxScene(layer, latest.current.stored, {
             layoutSize,
@@ -147,13 +149,14 @@ function DrawnLayer({ stored, draws, idle, start, layoutSize = false, projectId,
               if (reason !== 'refused') console.warn(FX_WARNING, `Reason: ${reason}.`);
             },
           });
-        },
-        (error: unknown) => {
+        })
+        .catch((error: unknown) => {
           if (stopped) return;
+          handle.current?.teardown();
+          handle.current = null;
           say({ state: 'off', reason: 'engine' });
           console.warn(FX_WARNING, 'The engine did not load.', error);
-        },
-      );
+        });
     };
     const cancelStart = start ? whenStarted(box, start, go) : (go(), () => {});
     return () => {

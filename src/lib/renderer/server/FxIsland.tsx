@@ -83,8 +83,10 @@ function run(program: readonly FxProgramEntry[]): () => void {
   const cancelStart = whenStarted(box, scene.start, () => {
     if (left) return;
     setState(box, 'loading');
-    import('@/lib/fxScene/mount').then(
-      ({ mountFxScene }) => {
+    // One handler for a chunk that does not arrive and for a set-up that throws: either
+    // way the box is off and says so, never left "loading".
+    import('@/lib/fxScene/mount')
+      .then(({ mountFxScene }) => {
         if (left) return;
         unmount = mountFxScene(box, scene, {
           onLive: () => setState(box, 'live'),
@@ -94,13 +96,12 @@ function run(program: readonly FxProgramEntry[]): () => void {
             console.warn(WARNING, `Reason: ${reason}.`);
           },
         });
-      },
-      (error: unknown) => {
+      })
+      .catch((error: unknown) => {
         if (left) return;
         setState(box, 'off');
         console.warn(WARNING, 'The engine did not load.', error);
-      },
-    );
+      });
   });
 
   return () => {

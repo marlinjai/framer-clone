@@ -588,3 +588,63 @@ describe('the four paths of editing a scene', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 });
+
+describe('Live: the scene on the canvas', () => {
+  const liveSwitch = () => screen.getByRole('switch', { name: 'Live' });
+
+  it('is off by default and says what the canvas shows; on, it is for this box in the frame it is picked in', () => {
+    const { box, store, page } = setup();
+    const frame = page.sortedViewportNodes[1];
+    act(() => store.editorUI.selectComponent(box, frame.breakpointId!));
+    render(<FxSceneSection component={box} />);
+    expect(liveSwitch().getAttribute('aria-checked')).toBe('false');
+    expect(screen.getByText(/The canvas shows the box with its own background/)).toBeTruthy();
+
+    fireEvent.click(liveSwitch());
+    expect(store.editorUI.fxLive).toEqual({ componentId: box.id, frameId: frame.breakpointId });
+    expect(liveSwitch().getAttribute('aria-checked')).toBe('true');
+    expect(screen.getByRole('status').textContent).toBe(`Starting the scene in ${frame.label}...`);
+
+    act(() => store.editorUI.reportFxLive({ state: 'live' }));
+    expect(screen.getByRole('status').textContent).toMatch(new RegExp(`The scene is drawn in ${frame.label}, and every change here shows at once`));
+
+    fireEvent.click(liveSwitch());
+    expect(store.editorUI.fxLive).toBeUndefined();
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  it('a box picked outside a frame (in the Layers panel) is drawn wherever it is drawn first', () => {
+    const { box, store } = setup();
+    act(() => store.editorUI.selectComponent(box));
+    render(<FxSceneSection component={box} />);
+    fireEvent.click(liveSwitch());
+    expect(store.editorUI.fxLive).toEqual({ componentId: box.id, frameId: null });
+    expect(screen.getByRole('status').textContent).toBe('Starting the scene on the canvas...');
+    act(() => store.editorUI.stopFxLive());
+  });
+
+  it('Live on for another box does not show as on here', () => {
+    const { box, page, store } = setup();
+    const other = page.insertRegistryComponent('fxScene', { kind: 'appTree' })!;
+    act(() => store.editorUI.startFxLive(other.id, null));
+    render(<FxSceneSection component={box} />);
+    expect(liveSwitch().getAttribute('aria-checked')).toBe('false');
+    act(() => store.editorUI.stopFxLive());
+  });
+
+  it.each([
+    ['no-webgl', /WebGL is not available/],
+    ['context-lost', /took the graphics context away/],
+    ['renderer-error', /stopped while it was being drawn/],
+    ['refused', /cannot be drawn as it is stored/],
+    ['engine', /did not load/],
+    ['something-new', /stopped while it was being drawn/],
+  ])('says why the scene is not drawn (%s), with the way on', (reason, text) => {
+    const { box, store } = setup();
+    act(() => store.editorUI.startFxLive(box.id, null));
+    act(() => store.editorUI.reportFxLive({ state: 'off', reason }));
+    render(<FxSceneSection component={box} />);
+    expect(screen.getByRole('alert').textContent).toMatch(text);
+    act(() => store.editorUI.stopFxLive());
+  });
+});
