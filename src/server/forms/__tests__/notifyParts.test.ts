@@ -46,10 +46,12 @@ describe('what the owner is told in the inbox', () => {
     expect(notConnected).toMatchObject({ tone: 'warn', canResend: true });
     expect(notConnected?.text).toMatch(/payments page/);
   });
-  it('offers none for a blocked address or a missing recipient, and says what to do', () => {
-    expect(notificationNote({ status: 'blocked', reason: null, recipient: 'a@b.example' })).toMatchObject({ canResend: false });
+  it('offers a resend for a blocked address and for a missing recipient too, and says what to do first', () => {
+    const blocked = notificationNote({ status: 'blocked', reason: null, recipient: 'a@b.example' });
+    expect(blocked).toMatchObject({ tone: 'warn', canResend: true });
+    expect(blocked?.text).toMatch(/another address/);
     const none = notificationNote({ status: 'skipped', reason: 'no_recipient', recipient: null });
-    expect(none).toMatchObject({ tone: 'warn', canResend: false });
+    expect(none).toMatchObject({ tone: 'warn', canResend: true });
     expect(none?.text).toMatch(/notification address/);
   });
 });

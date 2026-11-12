@@ -191,7 +191,9 @@ export async function deliverFormNotification(
       .where('tenant_id', '=', deps.tenantGroupId)
       .where('company_id', '=', companyId)
       .where('round', '=', row.round)
-      .where('status', '=', 'pending')
+      // A letter Lumitra Mail took is true whatever a slower attempt of the same round wrote meanwhile (the three
+      // days ran out while this send was in flight): sent and blocked also settle a row that was just written failed.
+      .where('status', 'in', status === 'sent' || status === 'blocked' ? ['pending', 'failed'] : ['pending'])
       .execute();
   };
 
@@ -272,37 +274,56 @@ export async function deliverFormNotification(
   }
 }
 
-export type ResendResult = 'queued' | 'not_found' | 'not_resendable' | 'not_connected';
+export type ResendResult = 'queued' | 'not_found' | 'not_resendable' | 'not_connected' | 'no_recipient';
 
 /**
- * The owner's "send again": a failed notification, or one never sent because the company was not connected, becomes
- * pending in the next round with a new job and a new letter. One site's rows only (the caller's session decided
- * the site), and only while the company is connected.
+ * The owner's "send again": a notification that failed, was blocked, or was never sent (the company was not connected, or
+ * no address was known) becomes pending in the next round with a new job and a new letter. The recipient is read AGAIN
+ * from the live published form and site (`currentRecipient`, null when it names none), so an owner who fixed the address
+ * in the form settings is not sent to the old one; with no live answer the frozen one stays. One site's rows only (the
+ * caller's session decided the site), and only while the company is connected.
  */
 export async function resendFormNotification(
   db: Kysely<CommerceDB>,
   ref: { tenantGroupId: string; siteId: string; submissionId: string },
   now: Date,
+  currentRecipient: (formId: string) => Promise<string | null> = async () => null,
 ): Promise<ResendResult> {
+  const found = await db
+    .selectFrom('form_notification')
+    .innerJoin('form_submission', 'form_submission.id', 'form_notification.submission_id')
+    .select(['form_submission.form_id as formId'])
+    .where('form_notification.submission_id', '=', ref.submissionId)
+    .where('form_notification.tenant_id', '=', ref.tenantGroupId)
+    .where('form_submission.tenant_id', '=', ref.tenantGroupId)
+    .where('form_submission.site_id', '=', ref.siteId)
+    .executeTakeFirst();
+  if (!found) return 'not_found';
+  // Outside the transaction: it reads the published site, which can take a moment.
+  const live = await currentRecipient(found.formId);
+
   return db.transaction().execute(async (trx): Promise<ResendResult> => {
     const row = await trx
       .selectFrom('form_notification')
-      .innerJoin('form_submission', 'form_submission.id', 'form_notification.submission_id')
-      .select(['form_notification.company_id as companyId', 'form_notification.status as status', 'form_notification.last_error as lastError', 'form_notification.round as round', 'form_notification.recipient as recipient'])
-      .where('form_notification.submission_id', '=', ref.submissionId)
-      .where('form_notification.tenant_id', '=', ref.tenantGroupId)
-      .where('form_submission.site_id', '=', ref.siteId)
-      .forUpdate('form_notification')
+      .select(['company_id as companyId', 'status', 'last_error as lastError', 'round', 'recipient'])
+      .where('submission_id', '=', ref.submissionId)
+      .where('tenant_id', '=', ref.tenantGroupId)
+      .forUpdate()
       .executeTakeFirst();
     if (!row) return 'not_found';
-    const resendable = row.status === 'failed' || (row.status === 'skipped' && row.lastError === SKIPPED_NOT_CONNECTED);
-    if (!resendable || !row.recipient) return 'not_resendable';
+    const resendable =
+      row.status === 'failed' ||
+      row.status === 'blocked' ||
+      (row.status === 'skipped' && (row.lastError === SKIPPED_NOT_CONNECTED || row.lastError === SKIPPED_NO_RECIPIENT));
+    if (!resendable) return 'not_resendable';
+    const recipient = live ?? row.recipient;
+    if (!recipient) return 'no_recipient';
     const connected = await trx.selectFrom('shop_mail_connection').select('tenant_id').where('tenant_id', '=', row.companyId).executeTakeFirst();
     if (!connected) return 'not_connected';
     const round = row.round + 1;
     await trx
       .updateTable('form_notification')
-      .set({ status: 'pending', round, round_started_at: now, last_error: null, mailing_id: null, letter: null, updated_at: now })
+      .set({ status: 'pending', round, recipient, round_started_at: now, last_error: null, mailing_id: null, letter: null, updated_at: now })
       .where('submission_id', '=', ref.submissionId)
       .where('tenant_id', '=', ref.tenantGroupId)
       .execute();

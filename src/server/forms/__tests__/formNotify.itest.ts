@@ -288,12 +288,44 @@ describe('2. backtrack', () => {
     expect(await resendFormNotification(appDb, { tenantGroupId: tgId, siteId: site.siteId, submissionId: s.id }, company.clock.now)).toBe('not_resendable');
   });
 
-  it('no recipient is skipped and cannot be sent again, and another site cannot resend it', async () => {
+  it('no recipient is skipped; "send again" waits for an address the live form names, then sends to it; another site cannot resend it', async () => {
     await connect(company);
     const s = submission({}, null);
     await insertFormSubmission(appDb, s);
-    expect(await resendFormNotification(appDb, { tenantGroupId: tgId, siteId: site.siteId, submissionId: s.id }, company.clock.now)).toBe('not_resendable');
-    expect(await resendFormNotification(appDb, { tenantGroupId: tgId, siteId: 'another-site', submissionId: s.id }, company.clock.now)).toBe('not_found');
+    const ref = { tenantGroupId: tgId, siteId: site.siteId, submissionId: s.id };
+    // Nothing is named yet, neither stored nor live.
+    expect(await resendFormNotification(appDb, ref, company.clock.now)).toBe('no_recipient');
+    expect(await resendFormNotification(appDb, ref, company.clock.now, async () => null)).toBe('no_recipient');
+    expect(await resendFormNotification(appDb, { ...ref, siteId: 'another-site' }, company.clock.now, async () => 'x@y.example')).toBe('not_found');
+    // The owner set an address in the form and published: the live address is asked for the submission's form.
+    const asked: string[] = [];
+    expect(await resendFormNotification(appDb, ref, company.clock.now, async (formId) => (asked.push(formId), 'fixed@bakery.example'))).toBe('queued');
+    expect(asked).toEqual([FORM_ID]);
+    expect(await notificationOf(s.id)).toMatchObject({ status: 'pending', round: 2, recipient: 'fixed@bakery.example' });
+    expect(await drain(company)).toEqual(['done']);
+    expect(company.mail.sent[0].to).toBe('fixed@bakery.example');
+  });
+
+  it('a wrong address the owner has since fixed is not sent to again: the resend reads the live one', async () => {
+    await connect(company);
+    const s = submission({}, 'typo@bakery.example');
+    await insertFormSubmission(appDb, s);
+    company.mail.failNext('send', new MailRefused('recipient_refused', 'Lumitra Mail did not accept the recipient of the form_notification letter.'));
+    expect(await drain(company)).toEqual(['dead']);
+    const ref = { tenantGroupId: tgId, siteId: site.siteId, submissionId: s.id };
+    expect(await resendFormNotification(appDb, ref, company.clock.now, async () => 'right@bakery.example')).toBe('queued');
+    expect(await drain(company)).toEqual(['done']);
+    expect(company.mail.sent.map((l) => l.to)).toEqual(['right@bakery.example']);
+  });
+
+  it('with no live answer (the site is not published any more) the stored address stays', async () => {
+    await connect(company);
+    const s = submission({}, 'stored@bakery.example');
+    await insertFormSubmission(appDb, s);
+    company.mail.failNext('send', new MailRefused('other', 'nope'));
+    await drain(company);
+    expect(await resendFormNotification(appDb, { tenantGroupId: tgId, siteId: site.siteId, submissionId: s.id }, company.clock.now, async () => null)).toBe('queued');
+    expect((await notificationOf(s.id)).recipient).toBe('stored@bakery.example');
   });
 
   it('a refusal is failed with its reason, the job dead and the letter emptied; "send again" starts a new round that sends', async () => {
@@ -315,14 +347,17 @@ describe('2. backtrack', () => {
     expect(company.mail.sent).toHaveLength(1);
   });
 
-  it('a blocked address is blocked, done, and not resendable', async () => {
+  it('a blocked address is blocked and done; once another address is set, "send again" goes there', async () => {
     await connect(company);
     company.mail.blocked.add('owner@bakery.example');
     const s = submission();
     await insertFormSubmission(appDb, s);
     expect(await drain(company)).toEqual(['done']);
     expect(await notificationOf(s.id)).toMatchObject({ status: 'blocked' });
-    expect(await resendFormNotification(appDb, { tenantGroupId: tgId, siteId: site.siteId, submissionId: s.id }, company.clock.now)).toBe('not_resendable');
+    expect(await resendFormNotification(appDb, { tenantGroupId: tgId, siteId: site.siteId, submissionId: s.id }, company.clock.now, async () => 'other@bakery.example')).toBe('queued');
+    expect(await drain(company)).toEqual(['done']);
+    // The fake records the blocked letter too; the last one is the new round's.
+    expect(company.mail.sent.at(-1)?.to).toBe('other@bakery.example');
   });
 
   it('a connection from before the notice existed gets the template installed by the first notification', async () => {
@@ -366,6 +401,21 @@ describe('2. backtrack', () => {
     company.clock.now = new Date(company.clock.now.getTime() + 2 * 60 * 1000);
     expect(await drain(company)).toEqual(['done']);
     expect(company.mail.sent[0].key).toBe(`form:${company.id}:${s.id}:1:${other}`);
+  });
+});
+
+describe('a failure writing the notice never costs the submission', () => {
+  it('a notification the database refuses is rolled back alone: the submission is stored, without it', async () => {
+    await connect(company);
+    // A recipient past the column bound: its CHECK refuses the notification row.
+    const s = submission({}, `${'a'.repeat(300)}@bakery.example`);
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    expect(await insertFormSubmission(appDb, s)).toBe(true);
+    logged.mockRestore();
+    const { submissions } = await listFormSubmissions(appDb, { tenantId: tgId, siteId: site.siteId });
+    expect(submissions.map((x) => x.id)).toEqual([s.id]);
+    expect(submissions[0].notification).toBeNull();
+    expect(await jobsOf(s.id)).toHaveLength(0);
   });
 });
 
@@ -414,6 +464,22 @@ describe('3. resume', () => {
     expect(await resendFormNotification(appDb, { tenantGroupId: tgId, siteId: site.siteId, submissionId: s.id }, company.clock.now)).toBe('queued');
     // The new round has its own three days.
     expect(await drain(company)).toEqual(['done']);
+  });
+
+  it('a send that finishes after the three days ran out on another attempt still settles as sent, never failed', async () => {
+    await connect(company);
+    const s = submission();
+    await insertFormSubmission(appDb, s);
+    await fx.owner`UPDATE ${fx.owner(schema)}.form_notification SET status = 'failed', last_error = 'gave_up' WHERE submission_id = ${s.id}`;
+    // An attempt that began while the row was pending: it read the row before the other attempt wrote failed.
+    await fx.owner`UPDATE ${fx.owner(schema)}.form_notification SET status = 'pending' WHERE submission_id = ${s.id}`;
+    const original = company.mail.send.bind(company.mail);
+    company.mail.send = async (apiKey, letter) => {
+      await fx.owner`UPDATE ${fx.owner(schema)}.form_notification SET status = 'failed', last_error = 'gave_up' WHERE submission_id = ${s.id}`;
+      return original(apiKey, letter);
+    };
+    expect(await deliverFormNotification(company.outbox, company.id, s.id)).toBe('sent');
+    expect(await notificationOf(s.id)).toMatchObject({ status: 'sent' });
   });
 
   it('Lumitra Mail not configured on the platform keeps it pending', async () => {

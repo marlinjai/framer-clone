@@ -83,13 +83,13 @@ export function notificationNote(n: NotificationItem | null | undefined): { text
     case 'pending':
       return { text: `Email${to} is being sent${n.reason ? ' (trying again after a problem)' : ''}.`, tone: 'ok', canResend: false };
     case 'blocked':
-      return { text: `Email${to} was not sent: Lumitra Mail blocks that address (an earlier bounce or complaint).`, tone: 'warn', canResend: false };
+      return { text: `Email${to} was not sent: Lumitra Mail blocks that address (an earlier bounce or complaint). Use another address in the form settings, or lift the block in Lumitra Mail, then send again.`, tone: 'warn', canResend: true };
     case 'failed':
       return { text: `Email${to} could not be sent${n.reason ? `: ${n.reason}` : ''}.`, tone: 'warn', canResend: true };
     case 'skipped':
       return n.reason === 'not_connected'
         ? { text: 'No email was sent: connect Lumitra Mail on the payments page to be told about new messages.', tone: 'warn', canResend: true }
-        : { text: 'No email was sent: neither this form nor the site settings name an address. Set a notification address in the form settings.', tone: 'warn', canResend: false };
+        : { text: 'No email was sent: neither this form nor the site settings name an address. Set a notification address in the form settings, publish, then send again.', tone: 'warn', canResend: true };
   }
 }
 

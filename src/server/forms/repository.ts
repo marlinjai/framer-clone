@@ -166,7 +166,18 @@ export async function insertFormSubmission(
       .executeTakeFirst();
     const inserted = Number(result.numInsertedOrUpdatedRows ?? 0) > 0;
     // Only for a row this call wrote: the island's repeat of a lost answer must not write a second notice.
-    if (inserted && row.notification) await writeFormNotification(tx, row.tenantId, row.id, row.notification);
+    if (inserted && row.notification) {
+      // In a savepoint of its own: whatever goes wrong writing the notice (a schema that has not yet received
+      // migration 031, a rejected job row) costs the notice, never the submission this transaction stores.
+      await sql`SAVEPOINT notice_sp`.execute(tx);
+      try {
+        await writeFormNotification(tx, row.tenantId, row.id, row.notification);
+        await sql`RELEASE SAVEPOINT notice_sp`.execute(tx);
+      } catch (err) {
+        await sql`ROLLBACK TO SAVEPOINT notice_sp`.execute(tx);
+        console.error(`[forms] site ${row.siteId}: the notification email of submission ${row.id} could not be written, the submission is stored without it:`, err);
+      }
+    }
     return inserted;
   });
 }

@@ -225,6 +225,11 @@ export function fieldTypeOf(value: unknown): FieldType {
   return typeof value === 'string' && (FIELD_TYPES as readonly string[]).includes(value) ? (value as FieldType) : 'text';
 }
 
+/** Who is emailed about a form's submissions: the form's own address, else the site's contact email, else nobody. */
+export function chooseNotifyRecipient(formAddress: string, siteContactEmail: string): string | null {
+  return formAddress || cleanNotifyEmail(siteContactEmail) || null;
+}
+
 /** The form container's settings, with every value bounded and defaulted. */
 export function readFormSettings(props: Record<string, unknown> | null | undefined): FormSettings {
   const p = props ?? {};

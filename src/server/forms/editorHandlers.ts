@@ -35,6 +35,11 @@ export const EXPORT_MAX = 10_000;
 
 export interface EditorFormsDeps {
   resolve(req: Request, projectId: string): Promise<EditorFormsContext>;
+  /**
+   * Where the owner's email about a form goes NOW, read from the live published form and site (null when it names none or
+   * the site is not published). Only "send again" asks; a route that does not supply it keeps the address stored.
+   */
+  currentRecipient?(siteId: string, formId: string): Promise<string | null>;
 }
 
 const NO_STORE = { 'cache-control': 'no-store' } as const;
@@ -171,9 +176,13 @@ export async function handleResendNotification(
       ctx.scope.db,
       { tenantGroupId: ctx.scope.tenantGroupId, siteId: ctx.scope.siteId, submissionId },
       new Date(),
+      deps.currentRecipient ? (formId) => deps.currentRecipient!(ctx.scope.siteId, formId) : undefined,
     );
     if (result === 'not_found') return jsonError('not_found', 'no such submission', 404);
-    if (result === 'not_resendable') return jsonError('not_resendable', 'this email was sent, is waiting to be sent, or has nobody to send to', 409);
+    if (result === 'not_resendable') return jsonError('not_resendable', 'this email was already sent or is waiting to be sent', 409);
+    if (result === 'no_recipient') {
+      return jsonError('no_recipient', 'set a notification address in the form settings or a contact email in Site settings, publish, then send this again', 409);
+    }
     if (result === 'not_connected') {
       return jsonError('mail_not_connected', 'connect Lumitra Mail on the payments page first, then send this again', 409);
     }

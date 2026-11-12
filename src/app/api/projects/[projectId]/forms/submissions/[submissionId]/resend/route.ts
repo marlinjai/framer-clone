@@ -5,6 +5,7 @@
 import { withAuthAvailability } from '@/lib/authBrainAvailability';
 import { resolveEditorForms } from '@/server/forms/editorScope';
 import { handleResendNotification } from '@/server/forms/editorHandlers';
+import { currentRecipient } from '@/server/forms/notifyRecipient';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -13,7 +14,7 @@ type Ctx = { params: Promise<{ projectId: string; submissionId: string }> };
 
 async function handlePOST(req: Request, { params }: Ctx): Promise<Response> {
   const { projectId, submissionId } = await params;
-  return handleResendNotification(req, projectId, submissionId, { resolve: resolveEditorForms });
+  return handleResendNotification(req, projectId, submissionId, { resolve: resolveEditorForms, currentRecipient });
 }
 
 export const POST = withAuthAvailability(handlePOST);

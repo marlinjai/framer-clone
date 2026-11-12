@@ -63,7 +63,7 @@ import { adaptedPage, siteFormIds } from '@/lib/components/expandedPages';
 import {
   FORM_LIMITS,
   TRANSPORT_FIELDS,
-  cleanNotifyEmail,
+  chooseNotifyRecipient,
   collectFormFields,
   findFormNode,
   readFormSettings,
@@ -392,7 +392,7 @@ export async function handleFormSubmit(req: Request, deps: SubmitDeps): Promise<
   try {
     const companyId = await companyForSite(db, site);
     if (companyId) {
-      const recipient = settings.notifyEmail || cleanNotifyEmail(site.siteSettings.business.email) || null;
+      const recipient = chooseNotifyRecipient(settings.notifyEmail, site.siteSettings.business.email);
       notification = { companyId, recipient, at: new Date(now) };
     } else {
       deps.log('warn', `[forms] site ${site.siteId}: no company is known for the site, no notification email for submission ${submissionId}`);
