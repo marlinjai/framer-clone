@@ -210,6 +210,10 @@ describe('forward', () => {
     expect(audit).toMatchObject({ actorKind: 'user', versionBefore: afterMerge, versionAfter: afterMerge + 1, actorDetail: { branchId, newBranchId: newId } });
     expect(JSON.stringify(audit)).not.toContain('Summer');
 
+    // Everything that reads the old branch says the merge was undone and where the work went (an agent's tools too).
+    await expect(service().changes(us.scope, branchId)).rejects.toMatchObject({ code: 'branch_closed', branchStatus: 'merged', undoneIntoBranchId: newId });
+    await expect(getSiteBranchRepository().discardBranch(us.scope, us.mainId, branchId, USER)).rejects.toMatchObject({ undoneIntoBranchId: newId });
+
     // Merging the new branch again is an ordinary merge, and that merge can be undone in turn.
     const again = await service().merge(us.scope, newId, { token: review.token }, USER);
     expect(again).toMatchObject({ merged: true, mainVersion: afterMerge + 2 });
@@ -301,6 +305,38 @@ describe('resume: an erase of personal data between the merge and the undo', () 
     expect(new Set(epochs.map((e) => e.erasureEpoch)).size).toBe(1);
     expect((await service().changes(us.scope, outcome.branch.branchId)).upToDate).toBe(true);
   });
+
+  it('an erase that leaves a match in the kept copy removes that copy: the undo is refused and brings nothing back', async () => {
+    const VALUE = 'Petra Probe';
+    await edit(us, us.mainId, { home: `Fresh bread by ${VALUE}`, about: 'Since 1990' });
+    const branchId = await mergedBranch('Team', { home: `Fresh bread by ${VALUE}`, about: `Run by ${VALUE}` });
+
+    // The owner ticks only what the working copy holds; the copy from before the merge holds the value too.
+    const repo = getSiteRepository();
+    const query = { value: VALUE, caseSensitive: false };
+    const preview = await repo.searchPersonalData(us.scope, us.mainId, query);
+    expect(preview.matches.some((m) => m.location.kind === 'merge-undo')).toBe(true);
+    await repo.erasePersonalData(us.scope, us.mainId, {
+      query,
+      replacement: '[entfernt]',
+      token: preview.token,
+      chosen: preview.matches.filter((m) => m.blocked === null && m.location.kind === 'working').map((m) => m.id),
+      erasedBy: 'u',
+    });
+    const record = await prisma.siteBranch.findUniqueOrThrow({ where: { id: branchId } });
+    expect(record).toMatchObject({ mainBeforeDocument: null, mainBeforeExpiresAt: null, mainBeforeEnded: 'erased' });
+    expect((await list(us.mainId)).closed[0]).toMatchObject({ branchId, undoUntil: null });
+
+    const version = await versionOf(us.mainId);
+    const res = await undo(us.mainId, branchId);
+    expect(res.status).toBe(409);
+    const error = (await res.json()).error;
+    expect(error.code).toBe('merge_undo_unavailable');
+    expect(error.message).toMatch(/personal data was erased/);
+    expect(await versionOf(us.mainId)).toBe(version);
+    expect(await textOf(us.mainId, 'home')).toBe('Fresh bread by [entfernt]');
+    expect((await repo.searchPersonalData(us.scope, us.mainId, query)).total).toBe(0);
+  });
 });
 
 describe('re-entry', () => {
@@ -359,6 +395,42 @@ describe('re-entry', () => {
     expect((await list(us.mainId)).closed[0]).toMatchObject({ branchId, undoUntil: null });
     expect(await prisma.siteBranch.findUniqueOrThrow({ where: { id: branchId }, select: { mainBeforeDocument: true, mainBeforeExpiresAt: true } })).toEqual({ mainBeforeDocument: null, mainBeforeExpiresAt: null });
     expect(await closedBranchNotice(us.scope, us.companyId, branchId)).toMatchObject({ undoUntil: null, undoneInto: null });
+    // A page loaded before still says why, not that another branch was merged.
+    expect((await (await undo(us.mainId, branchId)).json()).error.message).toMatch(/kept for 30 days/);
+  });
+
+  it('a kept copy that holds a part the editor cannot load is not put back: refused, nothing written', async () => {
+    const branchId = await mergedBranch('Summer sale', { home: 'Summer bread', about: 'Since 1990' });
+    const record = await prisma.siteBranch.findUniqueOrThrow({ where: { id: branchId }, select: { mainBeforeDocument: true } });
+    const kept = record.mainBeforeDocument as { components: Record<string, unknown> };
+    await prisma.siteBranch.update({
+      where: { id: branchId },
+      data: { mainBeforeDocument: { ...kept, components: { ...kept.components, ghost: 'not a component' } } as never },
+    });
+    const version = await versionOf(us.mainId);
+    const res = await undo(us.mainId, branchId);
+    expect(res.status).toBe(409);
+    expect((await res.json()).error.message).toMatch(/cannot be undone: the copy of the site from before it holds parts/);
+    expect(await versionOf(us.mainId)).toBe(version);
+    expect(await prisma.site.count({ where: { branchOfSiteId: us.mainId } })).toBe(0);
+    expect(await textOf(us.mainId, 'home')).toBe('Summer bread');
+  });
+
+  it('a kept copy with an address today\'s rules would refuse as new still goes back as it was stored', async () => {
+    // The site stored this address before the rules for new addresses existed; the branch tidied it.
+    const about = await prisma.sitePage.findUniqueOrThrow({ where: { siteId_pageId: { siteId: us.mainId, pageId: 'about' } } });
+    await prisma.sitePage.update({
+      where: { siteId_pageId: { siteId: us.mainId, pageId: 'about' } },
+      data: { slug: 'About Us!', snapshot: { ...(about.snapshot as object), slug: 'About Us!' } },
+    });
+    const { branch } = await getSiteBranchRepository().createBranch(us.scope, us.mainId, { name: 'Tidy', actor: USER });
+    await edit(us, branch.branchId, { home: 'Fresh bread', about: 'Since 1990', aboutSlug: 'about-us' });
+    const { token } = await service().changes(us.scope, branch.branchId);
+    await service().merge(us.scope, branch.branchId, { token }, USER);
+    expect((await prisma.sitePage.findUniqueOrThrow({ where: { siteId_pageId: { siteId: us.mainId, pageId: 'about' } } })).slug).toBe('about-us');
+
+    expect((await undo(us.mainId, branch.branchId)).status).toBe(200);
+    expect((await prisma.sitePage.findUniqueOrThrow({ where: { siteId_pageId: { siteId: us.mainId, pageId: 'about' } } })).slug).toBe('About Us!');
   });
 
   it('a branch that was not merged has no merge to undo: open, or discarded', async () => {
@@ -397,22 +469,30 @@ describe('re-entry', () => {
 });
 
 describe('bounds and isolation', () => {
-  it(`is refused at the limit of ${MAX_OPEN_BRANCHES_PER_SITE} open branches, says what to do, and works once one is gone`, async () => {
+  it(`works at the limit of ${MAX_OPEN_BRANCHES_PER_SITE} open branches (merging one to make room would end the undo), and a new branch is still refused`, async () => {
     const branchId = await mergedBranch('Summer sale', { home: 'Summer bread', about: 'Since 1990' });
-    const made: string[] = [];
     for (let n = 0; n < MAX_OPEN_BRANCHES_PER_SITE; n++) {
-      made.push((await getSiteBranchRepository().createBranch(us.scope, us.mainId, { name: `Fill ${n}`, actor: USER })).branch.branchId);
+      await getSiteBranchRepository().createBranch(us.scope, us.mainId, { name: `Fill ${n}`, actor: USER });
     }
-    const version = await versionOf(us.mainId);
-    const res = await undo(us.mainId, branchId);
-    expect(res.status).toBe(409);
-    const error = (await res.json()).error;
-    expect(error.code).toBe('branch_limit');
-    expect(error.message).toMatch(/Merge or discard one first/);
-    expect(await versionOf(us.mainId)).toBe(version);
-    expect(await prisma.site.count({ where: { branchOfSiteId: us.mainId } })).toBe(MAX_OPEN_BRANCHES_PER_SITE);
-    await getSiteBranchRepository().discardBranch(us.scope, us.mainId, made[0], USER);
     expect((await undo(us.mainId, branchId)).status).toBe(200);
+    expect(await prisma.site.count({ where: { branchOfSiteId: us.mainId } })).toBe(MAX_OPEN_BRANCHES_PER_SITE + 1);
+    await expect(getSiteBranchRepository().createBranch(us.scope, us.mainId, { name: 'One more', actor: USER })).rejects.toMatchObject({ code: 'branch_limit' });
+  });
+
+  it('a branch renamed to the merged one\'s name while the undo waits for the site is not a failure: the new branch takes the next free name', async () => {
+    const branchId = await mergedBranch('Summer sale', { home: 'Summer bread', about: 'Since 1990' });
+    const { branch: other } = await getSiteBranchRepository().createBranch(us.scope, us.mainId, { name: 'Other', actor: USER });
+    let pending: ReturnType<typeof undo> | undefined;
+    // A rename holds the site's row lock, as changeBranch does, and commits after the undo has begun to wait.
+    await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${us.mainId} FOR UPDATE`;
+      pending = undo(us.mainId, branchId);
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await tx.siteBranch.update({ where: { id: other.branchId }, data: { name: 'summer SALE' } });
+    });
+    const res = await pending!;
+    expect(res.status).toBe(200);
+    expect((await res.json()).branch.name).toBe('Summer sale 2');
   });
 
   it('takes a free name when an open branch already has the merged one\'s', async () => {

@@ -18,7 +18,6 @@ const DATE = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long', timeZone: 'UT
 export function undoErrorText(err: unknown): string {
   if (err instanceof BranchApiError) {
     if (err.status === 403) return 'You may not merge branches into this site, so you cannot undo a merge either. Ask someone who can.';
-    if (err.code === 'branch_limit') return `${err.message} Then undo the merge again.`;
     return err.message;
   }
   return 'Undoing the merge failed. Nothing was changed; try again.';
@@ -44,6 +43,9 @@ export default function UndoMerge({
   const [shown, setShown] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The server said this merge can no longer be undone (it expired, another merge landed, an erase removed the
+  // copy): the offer goes, and its reason stays on the page.
+  const [ended, setEnded] = useState<string | null>(null);
   const trigger = useRef<HTMLButtonElement>(null);
 
   async function undo() {
@@ -53,9 +55,22 @@ export default function UndoMerge({
       const outcome = await branchClient.undoMerge(mainSiteId, branchId);
       openBranch(outcome.branch.branchId);
     } catch (err) {
-      setError(undoErrorText(err));
       setBusy(false);
+      if (err instanceof BranchApiError && err.code === 'merge_undo_unavailable') {
+        setEnded(err.message);
+        setShown(false);
+        return;
+      }
+      setError(undoErrorText(err));
     }
+  }
+
+  if (ended) {
+    return (
+      <p role="alert" className="mx-auto mt-6 max-w-md text-sm text-muted-foreground">
+        {ended}
+      </p>
+    );
   }
 
   return (

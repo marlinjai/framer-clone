@@ -292,21 +292,25 @@ export class BranchClosedError extends SiteNotFoundError {
 
 /**
  * "Undo this merge" (S7) asked of a merge that cannot be undone: the branch was never merged, the 30 days ran
- * out, or a later merge into the site replaced the copy kept for it. Nothing was written. 409.
+ * out, a later merge into the site replaced the copy kept for it, an erase of personal data removed that copy,
+ * or this version of the editor cannot load it in full. Nothing was written. 409.
  */
-export class MergeUndoUnavailableError extends SiteRepositoryError {
-  readonly reason: 'not_merged' | 'expired' | 'replaced';
+export type MergeUndoUnavailableReason = 'not_merged' | 'expired' | 'replaced' | 'erased' | 'unreadable';
 
-  constructor(reason: 'not_merged' | 'expired' | 'replaced') {
-    super(
-      'merge_undo_unavailable',
-      reason === 'not_merged'
-        ? 'This branch was not merged, so there is no merge to undo.'
-        : reason === 'expired'
-          ? 'This merge can no longer be undone: the copy of the site from before it was kept for 30 days. To take the changes back, edit the site, or publish an earlier version.'
-          : 'This merge can no longer be undone: another branch was merged into the site since, and only the latest merge can be undone.',
-      409,
-    );
+const TAKE_BACK = 'To take the changes back, edit the site, or publish an earlier version.';
+const MERGE_UNDO_UNAVAILABLE: Record<MergeUndoUnavailableReason, string> = {
+  not_merged: 'This branch was not merged, so there is no merge to undo.',
+  expired: `This merge can no longer be undone: the copy of the site from before it was kept for 30 days. ${TAKE_BACK}`,
+  replaced: 'This merge can no longer be undone: another branch was merged into the site since, and only the latest merge can be undone.',
+  erased: `This merge can no longer be undone: personal data was erased from the site since, and the copy of the site from before the merge still held some of it, so that copy was removed. ${TAKE_BACK}`,
+  unreadable: `This merge cannot be undone: the copy of the site from before it holds parts this version of the editor cannot load, and putting it back would lose them. ${TAKE_BACK}`,
+};
+
+export class MergeUndoUnavailableError extends SiteRepositoryError {
+  readonly reason: MergeUndoUnavailableReason;
+
+  constructor(reason: MergeUndoUnavailableReason) {
+    super('merge_undo_unavailable', MERGE_UNDO_UNAVAILABLE[reason], 409);
     this.reason = reason;
   }
 }

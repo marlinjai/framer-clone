@@ -368,7 +368,7 @@ export class SiteBranchRepository {
     // next time anyone looks at the site's branches, so no timer has to find it.
     await this.prisma.siteBranch.updateMany({
       where: { siteId: main.id, workspaceId: scope.workspaceId, mainBeforeExpiresAt: { lt: new Date() } },
-      data: { mainBeforeDocument: Prisma.DbNull, mainBeforeExpiresAt: null },
+      data: { mainBeforeDocument: Prisma.DbNull, mainBeforeExpiresAt: null, mainBeforeEnded: 'expired' },
     });
     const [open, closed, renamed] = await Promise.all([
       this.prisma.siteBranch.findMany({
@@ -514,7 +514,7 @@ export class SiteBranchRepository {
         select: RECORD_SELECT,
       });
       if (!record) throw new BranchNotFoundError(branchId);
-      if (record.status === 'merged') throw new BranchClosedError('merged', main.id);
+      if (record.status === 'merged') throw new BranchClosedError('merged', main.id, record.undoneIntoBranchId);
       if (record.status === 'discarded') return { branch: summaryOf(record, main.version), discarded: false };
       const row = await this.closeRecord(tx, branchId, {
         status: 'discarded',
@@ -581,7 +581,8 @@ export class SiteBranchRepository {
       select: RECORD_SELECT,
     });
     if (!record) throw new BranchNotFoundError(branchId);
-    if (record.status === 'merged' || record.status === 'discarded') throw new BranchClosedError(record.status, main.id);
+    if (record.status === 'merged') throw new BranchClosedError('merged', main.id, record.undoneIntoBranchId);
+    if (record.status === 'discarded') throw new BranchClosedError('discarded', main.id);
     if (record.branchSite === null) throw new BranchClosedError('discarded', main.id);
     return { main, record };
   }

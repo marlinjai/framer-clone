@@ -321,7 +321,7 @@ describe('the closed branch page', () => {
     expect(opened).toEqual(['branch-new']);
   });
 
-  it('keeps the dialog open with what to do when the undo is refused, and "Keep the merge" changes nothing', async () => {
+  it('a merge that can no longer be undone loses the offer and keeps the reason on the page', async () => {
     const undo = client.undoMerge.mockReset().mockRejectedValue(new BranchApiError('merge_undo_unavailable', 'This merge can no longer be undone: another branch was merged into the site since, and only the latest merge can be undone.', 409));
     const opened: string[] = [];
     render(<UndoMerge mainSiteId={MAIN} branchId={BRANCH} branchName="Spring sale" mainName="Bakery" undoUntil="2026-12-11T10:00:00.000Z" open={(id) => opened.push(id)} />);
@@ -331,11 +331,41 @@ describe('the closed branch page', () => {
     });
     expect((await screen.findByRole('alert')).textContent).toMatch(/only the latest merge can be undone/);
     expect(opened).toEqual([]);
+    // Nothing left that offers what the server just refused for good.
+    expect(screen.queryByRole('button', { name: 'Undo this merge' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Undo the merge' })).toBeNull();
+    expect(screen.queryByText(/this merge can be\s+undone/)).toBeNull();
+    expect(undo).toHaveBeenCalledTimes(1);
+    undo.mockRestore();
+  });
+
+  it('a refusal that may pass keeps the dialog open with what to do, and "Keep the merge" changes nothing', async () => {
+    const undo = client.undoMerge.mockReset().mockRejectedValue(new BranchApiError('forbidden', 'forbidden', 403));
+    render(<UndoMerge mainSiteId={MAIN} branchId={BRANCH} branchName="Spring sale" mainName="Bakery" undoUntil="2026-12-11T10:00:00.000Z" open={() => undefined} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Undo this merge' }));
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: 'Undo the merge' }));
+    });
+    expect((await screen.findByRole('alert')).textContent).toMatch(/cannot undo a merge either/);
+    // Trying again is possible: the button is back, not stuck on "Undoing".
+    expect(screen.getByRole('button', { name: 'Undo the merge' }).hasAttribute('disabled')).toBe(false);
     fireEvent.click(screen.getByRole('button', { name: 'Keep the merge' }));
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+    expect(screen.getByRole('button', { name: 'Undo this merge' })).toBeTruthy();
     expect(undo).toHaveBeenCalledTimes(1);
-    expect(undoErrorText(new BranchApiError('forbidden', 'forbidden', 403))).toMatch(/cannot undo a merge either/);
-    expect(undoErrorText(new BranchApiError('branch_limit', 'A site can have at most 10 open branches. Merge or discard one first.', 409))).toMatch(/Merge or discard one first\. Then undo the merge again\./);
+    expect(undoErrorText(new Error('network'))).toMatch(/Nothing was changed; try again/);
+    undo.mockRestore();
+  });
+
+  it('an undo that had already happened (a second tab) opens the branch the first one made', async () => {
+    const undo = client.undoMerge.mockReset().mockResolvedValue({ undone: false, branch: { branchId: 'branch-first' }, merged: {}, mainVersion: 9 });
+    const opened: string[] = [];
+    render(<UndoMerge mainSiteId={MAIN} branchId={BRANCH} branchName="Spring sale" mainName="Bakery" undoUntil="2026-12-11T10:00:00.000Z" open={(id) => opened.push(id)} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Undo this merge' }));
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: 'Undo the merge' }));
+    });
+    expect(opened).toEqual(['branch-first']);
     undo.mockRestore();
   });
 

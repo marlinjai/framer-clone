@@ -254,6 +254,12 @@ interface BranchEraseSource {
   /** Checked like a revision (it must still parse as one): a fork point or a pre-merge copy. */
   revision: boolean;
   write: (tx: Prisma.TransactionClient, rewritten: unknown) => Promise<void>;
+  /**
+   * Set on a copy that is later written over main whole (the one kept for "Undo this merge"): when the erase
+   * leaves a match in it, the copy is removed instead of rewritten, since the undo would carry that match back
+   * into the working copy the owner has just cleaned.
+   */
+  drop?: (tx: Prisma.TransactionClient) => Promise<void>;
   branchSiteId: string | null;
 }
 
@@ -326,6 +332,11 @@ function assertScope(scope: TenantScope): void {
 
 /** What a write of the working copy (save, publish) takes besides the project. */
 export interface WorkingCopyWriteOptions {
+  /**
+   * The written copy is one this site stored before, put back whole (undoing a merge): its slugs are taken as
+   * stored, so the slug rules for new and changed slugs do not refuse a copy the site already held.
+   */
+  restoresStoredCopy?: boolean;
   /** Update an existing site only, never create one (the editor's Save and Publish). */
   mustExist?: boolean;
   /** The verified session's company, stamped on the site while it has none. */
@@ -703,14 +714,18 @@ export class SiteRepository {
           select: { pageId: true, slug: true },
         })
       : [];
+    // A copy this site stored before (an undone merge writes one back) keeps every slug it was stored with: the
+    // rules for a new slug may have tightened since, and a slug the merge changed is not "new" on the way back.
+    // The redirects below still compare with what is stored today.
     const storedSlugs = new Map(storedRows.map((r) => [r.pageId, r.slug]));
+    const grandfathered = options.restoresStoredCopy ? new Map(persisted.pages.map((p) => [p.pageId, p.slug])) : storedSlugs;
     const problem = findProjectSlugProblem(
       persisted.pages.map((p) => ({
         pageId: p.pageId,
         slug: p.slug,
         title: (p.snapshot as { metadata?: { title?: unknown } }).metadata?.title as string | undefined,
       })),
-      storedSlugs,
+      grandfathered,
     );
     if (problem) throw new InvalidPageSlugError(problem.pageId, problem.code, problem.message);
 
@@ -1355,7 +1370,14 @@ export class SiteRepository {
       for await (const source of this.branchEraseSources(tx, scope, siteId)) {
         found.push(...findMatches(source.document, source.location, matcher));
         const rewrite = rewriteDocument(source.document, source.location, matcher, replacement, chosen);
-        remaining += findMatches(rewrite.document, source.location, matcher).length;
+        const left = findMatches(rewrite.document, source.location, matcher).length;
+        if (left > 0 && source.drop) {
+          // Gone with everything it held: what was ticked in it counts as erased, nothing of it remains.
+          await source.drop(tx);
+          erased.push(...rewrite.erased);
+          continue;
+        }
+        remaining += left;
         if (rewrite.erased.length === 0) continue;
         assertShapeKept(source.document, rewrite.document, { revision: source.revision });
         await source.write(tx, rewrite.document);
@@ -1523,6 +1545,12 @@ export class SiteRepository {
           branchSiteId: null,
           write: async (client, rewritten) => {
             await client.siteBranch.update({ where: { id: record.id }, data: { mainBeforeDocument: rewritten as Prisma.InputJsonValue } });
+          },
+          drop: async (client) => {
+            await client.siteBranch.update({
+              where: { id: record.id },
+              data: { mainBeforeDocument: Prisma.DbNull, mainBeforeExpiresAt: null, mainBeforeEnded: 'erased' },
+            });
           },
         };
       }

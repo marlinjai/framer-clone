@@ -981,8 +981,6 @@ export const TOOLS: ToolDef[] = [
             ...done,
             message: done.branch.undoneIntoBranchId
               ? `This branch was merged before this call, and a person undid that merge later: the site went back to what it was and the merged work is in branch "${done.branch.undoneIntoBranchId}". Nothing was written by this call.`
-              : done.branch.undoneIntoBranchId
-              ? `This branch was merged before this call, and a person undid that merge later: the site went back to what it was and the merged work is in branch "${done.branch.undoneIntoBranchId}". Nothing was written by this call.`
               : 'This branch was merged before this call; nothing was written again. Nothing was published.',
           }));
         }
