@@ -41,6 +41,10 @@ const CLASSIFIED: Record<string, { uses: number; kind: Kind; why: string }> = {
     uses: 19, kind: 'sees-branches',
     why: 'a branch id resolves to its main site, which owns the images; the delete check scans every branch copy',
   },
+  'src/server/models/prismaModels.ts': {
+    uses: 1, kind: 'mains-only',
+    why: 'the stored 3D models belong to a main site, as images do: one read of the site row stamps the isolation columns and REFUSES a branch id (callers resolve a branch to its main first); every other query is on site_models, keyed by the site',
+  },
   'src/server/sites/publicResolver.ts': {
     uses: 3, kind: 'mains-only',
     why: 'resolves only `published` sites by a domain row; a branch is never published (CHECK) and holds no domain (trigger)',

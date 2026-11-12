@@ -66,18 +66,23 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
 /** The first decoded cap a measured model breaks, as a message, or null. A missing or malformed measurement is a break. */
 export function decodedProblem(s: DecodedStats | undefined | null): string | null {
   if (!s || typeof s !== 'object' || !Array.isArray(s.boundingBox) || s.boundingBox.length !== 3) return 'the model could not be measured';
-  const nums = [s.triangles, s.maxTextureSide, s.nodes, s.clips, s.materials, ...s.boundingBox];
+  const nums = [s.triangles, s.maxTextureSide, s.nodes, s.clips, s.materials, s.textures ?? 0, ...s.boundingBox];
   if (nums.some((n) => typeof n !== 'number' || !Number.isFinite(n) || n < 0)) return 'the model has a size that is not a finite number';
   if (s.triangles > DECODED_LIMITS.triangles) return `the model has ${s.triangles} triangles, at most ${DECODED_LIMITS.triangles} are allowed`;
   if (s.maxTextureSide > DECODED_LIMITS.textureSide) return `a texture is ${s.maxTextureSide} pixels on a side, at most ${DECODED_LIMITS.textureSide} are allowed`;
   if (s.boundingBox.some((n) => n > DECODED_LIMITS.boundingBox)) return `the model is larger than ${DECODED_LIMITS.boundingBox} units on a side`;
   if (s.nodes > DECODED_LIMITS.nodes) return `the model has ${s.nodes} nodes, at most ${DECODED_LIMITS.nodes} are allowed`;
+  if (s.materials > DECODED_LIMITS.materials) return `the model has ${s.materials} materials, at most ${DECODED_LIMITS.materials} are allowed`;
+  if ((s.textures ?? 0) > DECODED_LIMITS.textures) return `the model has ${s.textures} textures, at most ${DECODED_LIMITS.textures} are allowed`;
   if (s.clips > DECODED_LIMITS.clips) return `the model has ${s.clips} animation clips, at most ${DECODED_LIMITS.clips} are allowed`;
   return null;
 }
 
 /** A refusal of the file reads as the file's fault; a 500 is ours, and says to try again. */
 const refusalMessage = (e: ModelRefusalError) => (e.status >= 500 ? `The model could not be processed (${e.message}). Try again.` : `This model cannot be used: ${e.message}.`);
+
+/** Names from the re-encoder, kept to what the role panel can list: strings, at most 80 characters, at most 1,000. */
+const boundedNames = (names: unknown): string[] => (Array.isArray(names) ? names.filter((n): n is string => typeof n === 'string').slice(0, 1000).map((n) => n.slice(0, 80)) : []);
 
 const logFailure = (step: string, siteId: string, err: unknown) => console.error(`models: ${step} failed for site ${siteId}.`, err);
 
@@ -136,6 +141,8 @@ export async function acceptModelUpload(input: Uint8Array, siteId: string, uploa
   const record: SiteModelRecord = {
     siteId, sha256: sha, bytes: encoded.bytes.byteLength,
     triangles: encoded.output.triangles, materials: encoded.output.materials, nodes: encoded.output.nodes, clips: encoded.output.clips,
+    textures: encoded.output.textures ?? 0,
+    materialNames: boundedNames(encoded.names?.materials), nodeNames: boundedNames(encoded.names?.nodes),
     extensions: served.summary.extensionsUsed, uploaderId, createdAt: now, lastUsedAt: now,
     originalSha256: originalSha, originalBytes: input.byteLength,
   };
