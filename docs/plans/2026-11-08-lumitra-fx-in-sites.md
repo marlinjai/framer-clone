@@ -861,10 +861,15 @@ migration at start:
   lists the migrations the deploy would apply (replace `7b32ea16` by the commit production runs if that has changed);
 - `git diff 7b32ea16 <release commit> -- package.json deploy/README.md` shows changed dependencies and deploy notes.
 
-Already known to change it: the 3D model store (#394, open on 2026-11-12) adds the additive Prisma migration
-`20261112200000_site_models` (one new table that nothing reads or writes yet; its rollback is in `deploy/README.md`
-and beside the migration). Once that is on main, a deploy from that commit or a later one applies six application
-migrations, not five. Merging it applies nothing to production; applying it is part of the deploy decision.
+**Refreshed at main `d9e13c26` (2026-11-12, after the 3D model store, #394, merged): six application migrations.**
+The five above, plus the additive Prisma migration `20261112200000_site_models` (one new table that nothing reads or
+writes; no route, upload or clean-up is enabled and its flag stays unset). Merging applied nothing to production; a
+deploy from `d9e13c26` or later applies it at start, which needs its own yes. Its rollback, stated by the 3D scene
+owner: by default the empty table is left in place; removing it is done by hand with authorization, with
+`rollback.sql` beside the migration in one transaction, and never with `prisma migrate resolve --rolled-back` on an
+applied migration (`deploy/README.md`, "Migration 20261112200000_site_models"). The image also gains the 3D model
+packages (`@gltf-transform/*`, `gltf-validator`, `meshoptimizer`) and a pinned `sharp`; main also holds a first slice
+of the head items work. This refresh is itself a snapshot: recompute at the release commit.
 
 So the deploy is a joint decision of the FX, branching, Books and 3D scene work, and Marlin's to make. This slice does
 not start it.
