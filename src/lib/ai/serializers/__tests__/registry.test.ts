@@ -17,12 +17,13 @@ describe('serializeRegistry', () => {
     const out = serializeRegistry();
     const presets = Object.values(COMPONENT_REGISTRY).filter((entry) => entry.preset);
     expect(presets.length).toBeGreaterThan(0);
-    // And but an entry the generator is not taught yet (the FX scene box).
+    // And but an entry held back from the generator, of which there is none now.
     const held = Object.values(COMPONENT_REGISTRY).filter((entry) => entry.generation === false);
-    expect(held.map((entry) => entry.id)).toEqual(['fxScene']);
-    expect(out.length).toBe(Object.keys(COMPONENT_REGISTRY).length - presets.length - held.length);
+    expect(held).toEqual([]);
+    expect(out.length).toBe(Object.keys(COMPONENT_REGISTRY).length - presets.length);
     expect(out.map((entry) => entry.type)).not.toContain(presets[0].id);
-    expect(out.map((entry) => entry.type)).not.toContain('fxScene');
+    // The FX scene box is listed, without its stored scene (src/lib/fxScene).
+    expect(out.find((entry) => entry.type === 'fxScene')?.defaults).not.toHaveProperty('fx');
   });
 
   it('sorts entries alphabetically by type', () => {

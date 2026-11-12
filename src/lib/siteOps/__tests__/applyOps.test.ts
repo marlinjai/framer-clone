@@ -325,3 +325,144 @@ describe('applyOperations: a shop part moved out of its control', () => {
 function flatten(node: ComponentInstance): ComponentInstance[] {
   return [node, ...node.children.flatMap((child: ComponentInstance) => flatten(child))];
 }
+
+// ---------- the FX scene (src/lib/fxScene), slice F6 of the FX plan ----------
+
+import { fxFromPreset as fxPresetScene } from '@/lib/fxScene/edit';
+import { FX_PROP as FX_SCENE_PROP, isFxScene as isFxSceneBox, parseFxProp as readStoredFx } from '@/lib/fxScene/fxScene';
+import { pageOutline } from '../read';
+
+/** A stored scene as plain JSON, loose enough to spoil on purpose. */
+interface StoredScene {
+  version: number;
+  scene: { layers: unknown[] };
+}
+
+describe('applyOperations: the FX scene', () => {
+  const fxPreset = (id?: string) => {
+    const made = fxPresetScene(id);
+    if (!made.ok) throw new Error(made.message);
+    return made;
+  };
+  const heroNodes = (fx: unknown = { preset: 'noise-gradient' }) => [
+    { ref: 'fx', type: 'div', preset: 'fxScene', props: { fx }, children: [{ type: 'h2', props: { children: 'Over the scene', style: { color: '#ffffff' } } }] },
+  ];
+  const sceneOf = (node: ComponentInstance) => {
+    const read = readStoredFx((node.props as Record<string, unknown>)[FX_SCENE_PROP]);
+    if (!read.ok) throw new Error(read.message);
+    return read.fx;
+  };
+  /** A project whose home page already holds an FX scene box, and its id. */
+  async function withScene(fx?: unknown) {
+    const project = makeProject();
+    const outcome = await run(project, [{ op: 'insertNodes', pageId: 'home', nodes: heroNodes(fx) }]);
+    if (!outcome.ok) throw new Error(JSON.stringify(outcome.rejected));
+    return { project, id: outcome.created.fx };
+  }
+
+  it('insertNodes places a scene from a preset through the generator\'s own validator, with nothing repaired', async () => {
+    const { project, id } = await withScene();
+    const box = find(project, id)!;
+    expect(isFxSceneBox(box.props, box.type)).toBe(true);
+    expect(JSON.stringify(sceneOf(box).scene)).toBe(JSON.stringify(fxPreset('noise-gradient').fx.scene));
+    expect(box.children.map((c: ComponentInstance) => c.type)).toEqual(['h2']);
+  });
+
+  it('insertNodes places a whole stored scene, so an agent can bring a scene tuned elsewhere', async () => {
+    const tuned = JSON.parse(JSON.stringify(fxPreset('gold-noise-gradient').stored));
+    tuned.scene.layers[0].params.speed = 0.25;
+    const { project, id } = await withScene(tuned);
+    expect(sceneOf(find(project, id)!).scene.layers[0].params.speed.value).toBe(0.25);
+  });
+
+  it.each([
+    ['an unknown preset', { preset: 'sparkles' }, /no FX preset called "sparkles"/],
+    ['an invented layer', { preset: 'gold-noise-gradient', layers: [{ id: 'storm', type: 'particleStorm' }] }, /"storm" of the kind "particleStorm" is not a layer of the preset/],
+    ['a setting that does not exist', { preset: 'gold-noise-gradient', layers: [{ id: 'bloom', params: { sparkle: 1 } }] }, /no setting called "sparkle"/],
+    ['a value out of its range', { preset: 'gold-noise-gradient', layers: [{ id: 'bloom', params: { intensity: 500 } }] }, /500 is outside/],
+    ['the wrong kind of value', { preset: 'gold-noise-gradient', layers: [{ id: 'bloom', params: { intensity: 'bright' } }] }, /intensity cannot be "bright"/],
+    ['a text layer left with sample text', { preset: 'godrays-hero' }, /draws text.*was hidden/],
+  ])('insertNodes refuses %s with the reason, and writes nothing', async (_name, fx, reason) => {
+    const rejected = await refused([{ op: 'insertNodes', pageId: 'home', nodes: heroNodes(fx) }]);
+    expect(rejected[0].reason).toMatch(reason);
+  });
+
+  it('insertNodes refuses a scene with a picture from another address', async () => {
+    const foreign = JSON.parse(JSON.stringify(fxPreset().stored));
+    foreign.scene.layers.push({ id: 'pic', type: 'image', name: 'Pic', visible: true, blend: 'normal', params: { src: 'https://evil.test/a.png' } });
+    const rejected = await refused([{ op: 'insertNodes', pageId: 'home', nodes: heroNodes(foreign) }]);
+    expect(rejected[0].reason).toMatch(/image address that is not allowed here/);
+  });
+
+  it('insertNodes refuses a second scene on a page that has one: a page draws one', async () => {
+    const { project } = await withScene();
+    const before = JSON.stringify(getSnapshot(project));
+    const outcome = await run(project, [{ op: 'insertNodes', pageId: 'home', nodes: heroNodes() }]);
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) expect(outcome.rejected[0].reason).toMatch(/this page already has an FX scene/);
+    expect(JSON.stringify(getSnapshot(project))).toBe(before);
+  });
+
+  it('setFxScene replaces the scene with a preset, retuned, and with a whole stored scene', async () => {
+    const { project, id } = await withScene();
+    const first = await run(project, [{ op: 'setFxScene', nodeId: id, fx: { preset: 'gold-noise-gradient', calm: 'frame', layers: [{ id: 'bloom', params: { intensity: 0.9 } }] } }]);
+    expect(first.ok).toBe(true);
+    const fx = sceneOf(find(project, id)!);
+    expect(fx.calm).toBe('frame');
+    expect(fx.scene.layers.find((l) => l.id === 'bloom')!.params.intensity.value).toBe(0.9);
+
+    // What getPage shows of the box is the stored scene, whole: changed and sent back, it is stored.
+    const shown = pageOutline(home(project)).nodes.find((node) => node.id === id)!.props![FX_SCENE_PROP] as { scene: { layers: { id: string; params: Record<string, unknown> }[] } };
+    const changed = JSON.parse(JSON.stringify(shown));
+    changed.scene.layers.find((l: { id: string }) => l.id === 'bloom').params.intensity = 0.4;
+    const second = await run(project, [{ op: 'setFxScene', nodeId: id, fx: changed }]);
+    expect(second.ok).toBe(true);
+    expect(sceneOf(find(project, id)!).scene.layers.find((l) => l.id === 'bloom')!.params.intensity.value).toBe(0.4);
+    // The box's own style is not the operation's to change.
+    expect(find(project, id)!.props.style).toBeDefined();
+  });
+
+  it.each([
+    ['a foreign image address', (stored: StoredScene) => stored.scene.layers.push({ id: 'pic', type: 'image', name: 'Pic', visible: true, blend: 'normal', params: { src: 'https://evil.test/a.png' } }), /image address that is not allowed here/],
+    ['the editor\'s own image address, which is no site path', (stored: StoredScene) => stored.scene.layers.push({ id: 'pic', type: 'image', name: 'Pic', visible: true, blend: 'normal', params: { src: '/api/projects/site-1/images/abc' } }), /image address that is not allowed here/],
+    ['a layer of an unknown kind', (stored: StoredScene) => stored.scene.layers.push({ id: 'storm', type: 'particleStorm', name: 'Storm', visible: true, blend: 'normal', params: {} }), /unknown type "particleStorm"/],
+    ['a version it does not know', (stored: StoredScene) => void (stored.version = 99), /./],
+  ])('setFxScene refuses a stored scene with %s, and the scene stays as it was', async (_name, spoil, reason) => {
+    const { project, id } = await withScene();
+    const before = JSON.stringify(getSnapshot(project));
+    const stored = JSON.parse(JSON.stringify(fxPreset().stored));
+    spoil(stored);
+    const outcome = await run(project, [{ op: 'setFxScene', nodeId: id, fx: stored }]);
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) expect(outcome.rejected[0].reason).toMatch(reason);
+    expect(JSON.stringify(getSnapshot(project))).toBe(before);
+  });
+
+  it('setFxScene refuses a node that is no FX scene box, and says how to get one', async () => {
+    const rejected = await refused([{ op: 'setFxScene', nodeId: 'hero', fx: { preset: 'gold-noise-gradient' } }]);
+    expect(rejected[0].reason).toMatch(/not an FX scene box; insertNodes places one/);
+  });
+
+  it('setProps still refuses the scene and its marker, and points to setFxScene', async () => {
+    const { project, id } = await withScene();
+    const before = JSON.stringify(getSnapshot(project));
+    for (const props of [{ fx: 'x' }, { 'data-fx': 'scene' }]) {
+      const outcome = await run(project, [{ op: 'setProps', nodeId: id, props }]);
+      expect(outcome.ok).toBe(false);
+    }
+    const viaProps = await run(project, [{ op: 'setProps', nodeId: id, props: { fx: 'x' } }]);
+    if (!viaProps.ok) expect(viaProps.rejected[0].reason).toMatch(/setFxScene/);
+    expect(JSON.stringify(getSnapshot(project))).toBe(before);
+  });
+
+  it('a batch with one refused scene writes nothing of the batch', async () => {
+    const { project, id } = await withScene();
+    const before = JSON.stringify(getSnapshot(project));
+    const outcome = await run(project, [
+      { op: 'updateText', nodeId: 'title', text: 'Changed' },
+      { op: 'setFxScene', nodeId: id, fx: { preset: 'sparkles' } },
+    ]);
+    expect(outcome.ok).toBe(false);
+    expect(JSON.stringify(getSnapshot(project))).toBe(before);
+  });
+});

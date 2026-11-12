@@ -251,6 +251,13 @@ Operations:
 - {op:"updateText", nodeId, text}: plain text only, on a node that holds text.
 - {op:"setProps", nodeId, props:{name: value or null}}: attributes (href, alt, src, aria-*); not style, children,
   rules or behaviour. An Unsplash src needs its data-credit-* attributes in the same call (findImages gives them).
+- {op:"setFxScene", nodeId, fx}: replaces the scene of an FX scene box (a div with data-fx "scene"; insertNodes
+  places one with preset "fxScene"). fx is the form the generation format describes under "FX scene"
+  ({preset, start?, calm?, background?, layers?}), or a whole stored scene {version:1, scene, start, calm}. Refused,
+  with the reason, when anything would be left out or changed: an unknown preset, layer or setting, a value out of
+  its range, a text layer left with sample text, a picture address that is not one of this site's uploads. The
+  box's own background is a style (updateStyle). getPage shows the stored scene of such a box under props.fx:
+  change it and send it back whole to retune a scene that is no preset any more.
 - {op:"moveNode", nodeId, to:{parentId, index?} or {siblingId, position:"before"|"after"}}
 - {op:"removeNode", nodeId}
 - {op:"addRule", nodeId, rule:{selector:"& > li", at?:["@media (...)"], style:{...}}}

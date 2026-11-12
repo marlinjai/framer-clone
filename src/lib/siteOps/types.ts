@@ -140,6 +140,12 @@ export const OperationSchema = z.discriminatedUnion('op', [
     /** Attributes to set; null removes one. Not style, children, rules or behaviour. */
     props: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])),
   }),
+  /**
+   * Replace the scene of an FX scene box (src/lib/fxScene): the preset form the generation
+   * format teaches, or a whole stored scene. Read by the one reader the generator uses
+   * (src/lib/fxScene/generation.ts); anything it would repair or leave out refuses the operation.
+   */
+  z.strictObject({ op: z.literal('setFxScene'), nodeId: id, fx: z.record(z.string(), z.unknown()) }),
   z.strictObject({ op: z.literal('moveNode'), nodeId: id, to: placeSchema }),
   z.strictObject({ op: z.literal('removeNode'), nodeId: id }),
   z.strictObject({

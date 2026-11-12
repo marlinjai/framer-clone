@@ -28,6 +28,8 @@ import { behaviourDocs } from './promptSections/behaviour';
 import { formPropKeysFor } from '@/lib/forms/generation';
 import { STICKY_CTA_PROP_KEYS, isStickyCta } from '@/lib/stickyCta/stickyCta';
 import { FONT_CATEGORIES, FONT_LIBRARY, fontStack } from '@/lib/fonts/registry';
+import { fxGenerationDocs } from '@/lib/fxScene/generation';
+import { FX_PROP, isFxScene } from '@/lib/fxScene/marker';
 
 export function buildSchemaDocs(): string {
   const presets = listGenerationPresets();
@@ -75,6 +77,14 @@ export function buildSchemaDocs(): string {
     if (formKeys.length > 0) header.push(`- form component (see "Forms"): props ${formKeys.join(', ')}`);
     if (isStickyCta(p.defaultProps)) {
       header.push(`- sticky call to action (see "Sticky call to action"): props ${STICKY_CTA_PROP_KEYS.join(', ')}; new pages only, no children`);
+    }
+    if (isFxScene(p.defaultProps, p.htmlType)) {
+      // The stored scene is long and is not what the model writes: it names a preset (see "FX scene").
+      const { [FX_PROP]: _scene, ...shown } = p.defaultProps as Record<string, unknown>;
+      void _scene;
+      header.push('- FX scene (see "FX scene"): props.fx names a preset and what it changes; at most one per page');
+      header.push(`- defaults: ${stableStringify(shown)}`);
+      return header.join('\n');
     }
     header.push(`- defaults: ${stableStringify(p.defaultProps)}`);
     return header.join('\n');
@@ -152,6 +162,8 @@ export function buildSchemaDocs(): string {
     rulesDocs(),
     '',
     behaviourDocs(),
+    '',
+    fxGenerationDocs(),
     '',
     '## Fonts',
     '',

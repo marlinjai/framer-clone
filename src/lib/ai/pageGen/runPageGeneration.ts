@@ -256,6 +256,8 @@ export async function runPageGeneration(
     const mapAddress = input.siteContext ? siteAddressOf(input.siteContext) : null;
     // Where an inserted or replacing result stands: no preset under a button, link or the like.
     const closedAncestor = input.target.kind === 'newPage' ? undefined : input.target.closedAncestor;
+    // A page draws one FX scene: none is generated into a page that keeps one.
+    const pageHasFxScene = input.target.kind !== 'newPage' && input.target.pageHasFxScene === true;
 
     while (usage.attempts < MAX_ATTEMPTS) {
       usage.attempts += 1;
@@ -290,7 +292,7 @@ export async function runPageGeneration(
               { section: context.onSection, outline: context.onOutline },
               requestId,
               attempt,
-              { breakpoints, allowStickyCta: false, heldAddresses, mapAddress, closedAncestor },
+              { breakpoints, allowStickyCta: false, heldAddresses, mapAddress, closedAncestor, pageHasFxScene },
             )
           : undefined;
       stream.on('inputJson', (partialJson: string) => {
@@ -380,6 +382,7 @@ export async function runPageGeneration(
           heldAddresses,
           mapAddress,
           closedAncestor,
+          pageHasFxScene,
         });
         if (outcome.ok) {
           const screened = screenTells(outcome.result, breakpoints, essentials);

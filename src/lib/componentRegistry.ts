@@ -444,7 +444,8 @@ export const COMPONENT_REGISTRY: Record<string, ComponentRegistryEntry> = {
   // An FX scene box (src/lib/fxScene/fxScene.ts): a container that draws a Lumitra FX
   // scene behind its children. It starts as the lumitra.co hero, over that hero's own
   // painted background, which is what shows wherever the scene is not drawn. The
-  // generator is not taught it yet (slice F6 of the FX plan adds its checked way in).
+  // generator and an agent's site operations write its scene through one checked reader
+  // (src/lib/fxScene/generation.ts); the stored scene itself is never printed into a prompt.
   fxScene: {
     id: 'fxScene',
     label: 'FX scene',
@@ -452,7 +453,6 @@ export const COMPONENT_REGISTRY: Record<string, ComponentRegistryEntry> = {
     icon: FxSceneIcon,
     iconClassName: 'bg-amber-100 text-amber-700',
     htmlType: 'div',
-    generation: false,
     defaultProps: {
       [FX_ATTR]: FX_MARKER,
       [FX_PROP]: FX_DEFAULT.stored,
