@@ -838,6 +838,21 @@ consumer, live canvas and site merge work. What that means for a deploy, and for
 - **Site branches stay off** unless `SITE_BRANCHES_COMPANIES` is set on the app (`deploy/README.md`); their
   migrations run regardless.
 
+Confirmed by the site branches owner against main at `380da6c1` on 2026-11-12, with these additions:
+
+- The rollback is clean until the first invoice addressed to a contact person is issued on the new image.
+- The fourth site branch migration (`site_branch_backstops`) needs Postgres 15 or later; production is documented as
+  16 in `deploy/README.md`. All four touch only tables that are empty or get a nullable column; the first builds one
+  unique index on `sites` and holds a short lock there.
+- **The gates are separate, in this order** (site branches plan, section 12): the contacts gate and the release of
+  receipts pull request 253; the deploy of main; then, separately, the switch `SITE_BRANCHES_COMPANIES` for the Lumitra
+  company; then the proofs. A yes for one is not a yes for the next.
+- The image also carries the buyer mail job consumer (#364, shop) and the agent write replay (#358, live canvas),
+  whose owners confirm their own part.
+- **Who runs it:** on Marlin's yes the site branches owner starts the deploy (four of the five migrations are that
+  work's), watches the start sequence apply the migrations, checks with the switch still off that sites, the published
+  landing page and Books behave as before, and then hands over to this slice for the FX browser proof.
+
 So the deploy is a joint decision of the FX, branching and Books work, and Marlin's to make. This slice does not start
 it.
 
