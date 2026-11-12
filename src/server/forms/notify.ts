@@ -38,10 +38,11 @@ export const formMailJobKey = (submissionId: string, round: number) => `formmail
 /** Why a notification was never sent, kept in `last_error` of a `skipped` row. */
 export const SKIPPED_NOT_CONNECTED = 'not_connected';
 export const SKIPPED_NO_RECIPIENT = 'no_recipient';
+export const SKIPPED_NO_COMPANY = 'no_company';
 
 export interface NewFormNotification {
-  /** The company the site belongs to: the connection's key and the job's tenant. */
-  companyId: string;
+  /** The company the site belongs to: the connection's key and the job's tenant. Null: the site is not linked to one. */
+  companyId: string | null;
   /** The address decided from the published form, or null when neither it nor the site names one. */
   recipient: string | null;
   at: Date;
@@ -57,11 +58,14 @@ export async function writeFormNotification(
   submissionId: string,
   notification: NewFormNotification,
 ): Promise<'pending' | 'skipped'> {
-  const { companyId, recipient, at } = notification;
-  const connected = recipient
+  const { recipient, at } = notification;
+  // No company: no connection can exist, so nothing is sent, but the owner still sees why (the empty company id marks it).
+  const companyId = notification.companyId ?? '';
+  const connected = recipient && companyId
     ? await trx.selectFrom('shop_mail_connection').select('tenant_id').where('tenant_id', '=', companyId).executeTakeFirst()
     : undefined;
   const status = recipient && connected ? 'pending' : 'skipped';
+  const skippedWhy = !companyId ? SKIPPED_NO_COMPANY : recipient ? SKIPPED_NOT_CONNECTED : SKIPPED_NO_RECIPIENT;
   await trx
     .insertInto('form_notification')
     .values({
@@ -70,7 +74,7 @@ export async function writeFormNotification(
       company_id: companyId,
       recipient,
       status,
-      last_error: status === 'skipped' ? (recipient ? SKIPPED_NOT_CONNECTED : SKIPPED_NO_RECIPIENT) : null,
+      last_error: status === 'skipped' ? skippedWhy : null,
       round_started_at: at,
       updated_at: at,
     })
@@ -172,6 +176,9 @@ export async function deliverFormNotification(
   if (row.status === 'sent' || row.status === 'blocked') return row.status;
   if (row.status !== 'pending') return 'none';
 
+  // Known and accepted edge: a round-1 attempt still in flight when its three days ran out and the owner sent again may
+  // still land its letter (round 1's key), so the owner can get a second one. It needs a send that outlives three days.
+  //
   // Never writes over a settled row or a newer round: a job reclaimed after its lease, or an attempt of a round the owner
   // replaced by "send again", ends with whatever is already written.
   const record = async (
@@ -280,14 +287,15 @@ export type ResendResult = 'queued' | 'not_found' | 'not_resendable' | 'not_conn
  * The owner's "send again": a notification that failed, was blocked, or was never sent (the company was not connected, or
  * no address was known) becomes pending in the next round with a new job and a new letter. The recipient is read AGAIN
  * from the live published form and site (`currentRecipient`, null when it names none), so an owner who fixed the address
- * in the form settings is not sent to the old one; with no live answer the frozen one stays. One site's rows only (the
+ * in the form settings is not sent to the old one, and one who removed it is not sent to at all; only when the live site
+ * cannot be read (null vs undefined, see below) does the frozen one stay. One site's rows only (the
  * caller's session decided the site), and only while the company is connected.
  */
 export async function resendFormNotification(
   db: Kysely<CommerceDB>,
   ref: { tenantGroupId: string; siteId: string; submissionId: string },
   now: Date,
-  currentRecipient: (formId: string) => Promise<string | null> = async () => null,
+  currentRecipient: (formId: string) => Promise<string | null | undefined> = async () => undefined,
 ): Promise<ResendResult> {
   const found = await db
     .selectFrom('form_notification')
@@ -300,6 +308,8 @@ export async function resendFormNotification(
     .executeTakeFirst();
   if (!found) return 'not_found';
   // Outside the transaction: it reads the published site, which can take a moment.
+  // null: the live site names none (so none is sent, never the old address the owner removed); undefined: the live site
+  // cannot be read (not published), so the address stored at submit time stays.
   const live = await currentRecipient(found.formId);
 
   return db.transaction().execute(async (trx): Promise<ResendResult> => {
@@ -316,7 +326,7 @@ export async function resendFormNotification(
       row.status === 'blocked' ||
       (row.status === 'skipped' && (row.lastError === SKIPPED_NOT_CONNECTED || row.lastError === SKIPPED_NO_RECIPIENT));
     if (!resendable) return 'not_resendable';
-    const recipient = live ?? row.recipient;
+    const recipient = live === undefined ? row.recipient : live;
     if (!recipient) return 'no_recipient';
     const connected = await trx.selectFrom('shop_mail_connection').select('tenant_id').where('tenant_id', '=', row.companyId).executeTakeFirst();
     if (!connected) return 'not_connected';

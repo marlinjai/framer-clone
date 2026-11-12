@@ -296,6 +296,7 @@ describe('2. backtrack', () => {
     // Nothing is named yet, neither stored nor live.
     expect(await resendFormNotification(appDb, ref, company.clock.now)).toBe('no_recipient');
     expect(await resendFormNotification(appDb, ref, company.clock.now, async () => null)).toBe('no_recipient');
+    expect(await resendFormNotification(appDb, ref, company.clock.now, async () => undefined)).toBe('no_recipient');
     expect(await resendFormNotification(appDb, { ...ref, siteId: 'another-site' }, company.clock.now, async () => 'x@y.example')).toBe('not_found');
     // The owner set an address in the form and published: the live address is asked for the submission's form.
     const asked: string[] = [];
@@ -318,13 +319,32 @@ describe('2. backtrack', () => {
     expect(company.mail.sent.map((l) => l.to)).toEqual(['right@bakery.example']);
   });
 
+  it('an owner who removed the address is not sent to the old one: the live site names none', async () => {
+    await connect(company);
+    const s = submission({}, 'old@bakery.example');
+    await insertFormSubmission(appDb, s);
+    company.mail.failNext('send', new MailRefused('other', 'nope'));
+    await drain(company);
+    expect(await resendFormNotification(appDb, { tenantGroupId: tgId, siteId: site.siteId, submissionId: s.id }, company.clock.now, async () => null)).toBe('no_recipient');
+    expect(await notificationOf(s.id)).toMatchObject({ status: 'failed', recipient: 'old@bakery.example' });
+    expect(company.mail.sent).toHaveLength(0);
+  });
+
+  it('a site with no company still shows the owner why nothing was sent, and cannot be resent', async () => {
+    const s = submission({ notification: { companyId: null, recipient: 'owner@bakery.example', at: company.clock.now } });
+    await insertFormSubmission(appDb, s);
+    expect(await notificationOf(s.id)).toMatchObject({ status: 'skipped', last_error: 'no_company', company_id: '' });
+    expect(await jobsOf(s.id)).toHaveLength(0);
+    expect(await resendFormNotification(appDb, { tenantGroupId: tgId, siteId: site.siteId, submissionId: s.id }, company.clock.now, async () => 'x@y.example')).toBe('not_resendable');
+  });
+
   it('with no live answer (the site is not published any more) the stored address stays', async () => {
     await connect(company);
     const s = submission({}, 'stored@bakery.example');
     await insertFormSubmission(appDb, s);
     company.mail.failNext('send', new MailRefused('other', 'nope'));
     await drain(company);
-    expect(await resendFormNotification(appDb, { tenantGroupId: tgId, siteId: site.siteId, submissionId: s.id }, company.clock.now, async () => null)).toBe('queued');
+    expect(await resendFormNotification(appDb, { tenantGroupId: tgId, siteId: site.siteId, submissionId: s.id }, company.clock.now, async () => undefined)).toBe('queued');
     expect((await notificationOf(s.id)).recipient).toBe('stored@bakery.example');
   });
 

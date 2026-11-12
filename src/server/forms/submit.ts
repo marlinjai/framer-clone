@@ -391,12 +391,9 @@ export async function handleFormSubmit(req: Request, deps: SubmitDeps): Promise<
   let notification: NewFormSubmission['notification'];
   try {
     const companyId = await companyForSite(db, site);
-    if (companyId) {
-      const recipient = chooseNotifyRecipient(settings.notifyEmail, site.siteSettings.business.email);
-      notification = { companyId, recipient, at: new Date(now) };
-    } else {
-      deps.log('warn', `[forms] site ${site.siteId}: no company is known for the site, no notification email for submission ${submissionId}`);
-    }
+    const recipient = chooseNotifyRecipient(settings.notifyEmail, site.siteSettings.business.email);
+    if (!companyId) deps.log('warn', `[forms] site ${site.siteId}: no company is known for the site, no notification email for submission ${submissionId}`);
+    notification = { companyId, recipient, at: new Date(now) };
   } catch (err) {
     deps.log('error', `[forms] site ${site.siteId}: resolving the company for a notification email failed`, err);
   }

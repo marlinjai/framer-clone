@@ -22,8 +22,11 @@ export function recipientFor(site: SiteForRecipient, formId: string): string | n
   return chooseNotifyRecipient(own, site.siteSettings.business.email);
 }
 
-/** The address a form's notifications go to NOW, from the live published site (null: none, or the site is not published). */
-export async function currentRecipient(siteId: string, formId: string): Promise<string | null> {
+/**
+ * The address a form's notifications go to NOW, from the live published site. Null: the site is published and names none.
+ * Undefined: the site is not published (or gone), so nothing is known and the caller keeps what it has.
+ */
+export async function currentRecipient(siteId: string, formId: string): Promise<string | null | undefined> {
   const site = await resolvePublishedSiteById(siteId);
-  return site ? recipientFor(site as unknown as SiteForRecipient, formId) : null;
+  return site ? recipientFor(site as unknown as SiteForRecipient, formId) : undefined;
 }

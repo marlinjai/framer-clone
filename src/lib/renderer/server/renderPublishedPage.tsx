@@ -8,6 +8,7 @@
 // public ingestion key are INJECTED by the caller, so this seam is unit-testable
 // headless with fakes (the route wires the real, server-only dependencies).
 
+import { withoutPrivateFormProps } from '@/lib/forms/definition';
 import React from 'react';
 import {
   hydrateBindings,
@@ -184,8 +185,11 @@ function resolveTracker(analytics: ResolvedAnalytics | undefined): TrackerPayloa
 export async function renderPublishedPage(
   input: RenderPublishedPageInput,
 ): Promise<RenderedPage> {
-  const { root, budget, pageParams, cmsRepo, commerceRepo, analytics, unavailable = null, productPagePath = null, breakpoints = [], smoothScroll = false, pageBase = DEFAULT_PAGE_BASE, consent, theme } = input;
+  const { root: storedRoot, budget, pageParams, cmsRepo, commerceRepo, analytics, unavailable = null, productPagePath = null, breakpoints = [], smoothScroll = false, pageBase = DEFAULT_PAGE_BASE, consent, theme } = input;
   const tracker = resolveTracker(analytics);
+  // The owner's private form settings (the notification address) never go below this point: every client island
+  // below receives its subtree as props.
+  const root = withoutPrivateFormProps(storedRoot);
 
   const hydratedTree = await hydrateBindings(root, pageParams, { cmsRepo, commerceRepo }, productPagePath, budget);
   // The sticky call to action (src/lib/stickyCta): the page's first bar moves

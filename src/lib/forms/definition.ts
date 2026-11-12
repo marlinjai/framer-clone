@@ -94,12 +94,25 @@ export const TRANSPORT_FIELDS = {
  */
 export const NOTIFY_EMAIL_PROP = 'notifyEmail';
 
-/** The form node without the owner's private settings, safe to send to the browser. */
-export function withoutPrivateFormProps<T extends { props?: Record<string, unknown> | null }>(node: T): T {
-  if (!node.props || !(NOTIFY_EMAIL_PROP in node.props)) return node;
-  const props = { ...node.props };
-  delete props[NOTIFY_EMAIL_PROP];
-  return { ...node, props };
+/**
+ * The node and EVERYTHING below it without the owner's private settings, safe to send to the browser. Deep on purpose: a
+ * client island (a form, a commerce island) receives its whole subtree, so a form nested in another form or in an island
+ * would otherwise carry its address into the page payload. Returns the same object where nothing changed.
+ */
+export function withoutPrivateFormProps<T extends { props?: Record<string, unknown> | null; children?: readonly unknown[] | null }>(node: T): T {
+  let next = node;
+  if (node.props && NOTIFY_EMAIL_PROP in node.props) {
+    const props = { ...node.props };
+    delete props[NOTIFY_EMAIL_PROP];
+    next = { ...next, props };
+  }
+  if (Array.isArray(node.children) && node.children.length > 0) {
+    const children = node.children.map((child) =>
+      child && typeof child === 'object' ? withoutPrivateFormProps(child as typeof node) : child,
+    );
+    if (children.some((child, i) => child !== node.children![i])) next = { ...next, children };
+  }
+  return next;
 }
 
 /** The non-DOM props of each kind: renderers strip these before emitting an element. */

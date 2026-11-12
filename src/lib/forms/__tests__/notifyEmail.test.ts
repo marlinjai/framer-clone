@@ -28,6 +28,16 @@ describe('the address is private', () => {
     expect(safe.props).toEqual({ formName: 'Contact' });
     expect(node.props[NOTIFY_EMAIL_PROP]).toBe('owner@bakery.example');
   });
+  it('is removed from every form below the node too (a nested form, a form inside another container)', () => {
+    const node = {
+      id: 'outer',
+      props: { notifyEmail: 'outer@bakery.example' },
+      children: [{ id: 'box', props: {}, children: [{ id: 'inner', props: { notifyEmail: 'inner@bakery.example', formName: 'Inner' }, children: [] }] }],
+    };
+    const text = JSON.stringify(withoutPrivateFormProps(node));
+    expect(text).not.toContain('bakery.example');
+    expect(text).toContain('Inner');
+  });
   it('returns the same node when there is nothing to remove', () => {
     const node = { id: 'form-1', props: { formName: 'Contact' } };
     expect(withoutPrivateFormProps(node)).toBe(node);

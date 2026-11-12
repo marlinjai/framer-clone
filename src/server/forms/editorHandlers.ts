@@ -39,7 +39,7 @@ export interface EditorFormsDeps {
    * Where the owner's email about a form goes NOW, read from the live published form and site (null when it names none or
    * the site is not published). Only "send again" asks; a route that does not supply it keeps the address stored.
    */
-  currentRecipient?(siteId: string, formId: string): Promise<string | null>;
+  currentRecipient?(siteId: string, formId: string): Promise<string | null | undefined>;
 }
 
 const NO_STORE = { 'cache-control': 'no-store' } as const;
