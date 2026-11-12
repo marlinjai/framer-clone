@@ -499,7 +499,8 @@ describe('a narrow window', () => {
     for (const name of ['Update', 'Review and merge', 'Share preview']) {
       const control = screen.getByRole('button', { name });
       expect(control.className).toMatch(/\bshrink-0\b/);
-      expect(control.querySelector('span')?.className).toMatch(/max-sm:sr-only/);
+      // Until a very wide window: the layout itself is proven in real browsers (test/behaviour/branches.spec.ts).
+      expect(control.querySelector('span')?.className).toMatch(/max-\[1799px\]:sr-only/);
     }
     // The switcher's name gives way first; the full name is in its accessible name and in the menu.
     const trigger = screen.getByRole('button', { name: 'Branch Spring sale. Switch branch' });

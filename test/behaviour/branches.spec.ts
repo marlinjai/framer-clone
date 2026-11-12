@@ -152,6 +152,9 @@ for (const [engine, type] of ENGINES) {
     // The whole-feature review asked whether the top bar holds on a branch when the window is narrow: a branch
     // adds a badge, a switcher with the branch's name, Update, Share preview and Review and merge to it.
     it.each([
+      { name: 'a very wide window', width: 1920 },
+      { name: 'a wide window', width: 1536 },
+      { name: 'a laptop', width: 1280 },
       { name: 'a small laptop', width: 1024 },
       { name: 'a tablet', width: 768 },
       { name: 'a phone', width: 390 },
@@ -206,7 +209,7 @@ for (const [engine, type] of ENGINES) {
       // The controls a branch needs are all there, at every width.
       expect(seen.names.some((n) => /Review and merge/.test(n))).toBe(true);
       expect(seen.names.some((n) => /^Update/.test(n))).toBe(true);
-      expect(seen.names.some((n) => /Switch branch/.test(n))).toBe(true);
+      expect(seen.names.some((n) => /^Branch Spring sale/.test(n))).toBe(true);
       expect(seen.names.some((n) => /Back to projects/.test(n))).toBe(true);
       expect(crashes).toEqual([]);
       await page.close();

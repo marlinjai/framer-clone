@@ -74,7 +74,7 @@ async function previewOf(heading: string, language = 'en'): Promise<{ origin: st
   const siteId = randomUUID();
   await repo.saveProject(SCOPE, project(siteId, 'Main heading', language), { companyId: COMPANY });
   const { branch } = await getSiteBranchRepository().createBranch(SCOPE, siteId, { name: 'Summer sale', actor: USER });
-  await repo.saveProject(SCOPE, project(branch.branchId, heading, language), { mustExist: true });
+  await repo.saveProject(SCOPE, project(branch.branchId, heading, language), { mustExist: true, expectedVersion: branch.version ?? undefined });
   const link = await getSiteBranchPreviewLinks().create(SCOPE, siteId, branch.branchId, USER, 1);
   return { origin: `http://${new URL(link.url).host}:${process.env.BEHAVIOUR_PORT}`, siteId, branchId: branch.branchId };
 }

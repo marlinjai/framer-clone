@@ -112,7 +112,7 @@ export function MainChangedNote({ className = '' }: { className?: string }) {
       <div role="status" className={`flex min-w-0 items-center gap-2 text-xs ${className}`}>
         {/* Only the idle label gives way on a narrow window; a result or a refusal is always shown, on up to
             three lines where there is little room (its full text stays in the page for a screen reader). */}
-        <span title={message ?? undefined} className={`min-w-0 max-w-[22rem] leading-tight text-muted-foreground line-clamp-3 ${message ? '' : 'max-xl:hidden'}`}>
+        <span title={message ?? undefined} className={`min-w-0 max-w-[22rem] leading-tight text-muted-foreground line-clamp-3 ${message ? '' : 'max-[1799px]:hidden'}`}>
           {message ?? `${mainName} has changed`}
         </span>
         {conflicts ? (
@@ -132,7 +132,7 @@ export function MainChangedNote({ className = '' }: { className?: string }) {
         {/* The label folds into the icon on a narrow window; the name and the description stay for a screen reader. */}
         <Button size="sm" variant="outline" className="shrink-0" onClick={update} disabled={busy} aria-describedby={hintId} title={hint}>
           <RefreshCw aria-hidden className={busy ? 'animate-spin motion-reduce:animate-none' : undefined} />{' '}
-          <span className="max-sm:sr-only">{busy ? 'Updating…' : 'Update'}</span>
+          <span className="max-[1799px]:sr-only">{busy ? 'Updating…' : 'Update'}</span>
         </Button>
       </div>
       {/* Outside the status: inside it, every new message would read the hint out again. */}
@@ -294,7 +294,7 @@ export function ReviewAndMergeButton() {
         aria-describedby={hintId}
         title={hint}
       >
-        <GitMerge aria-hidden /> <span className="max-sm:sr-only">{busy ? 'Opening…' : 'Review and merge'}</span>
+        <GitMerge aria-hidden /> <span className="max-[1799px]:sr-only">{busy ? 'Opening…' : 'Review and merge'}</span>
       </Button>
       <span id={hintId} className="sr-only">
         {hint}
