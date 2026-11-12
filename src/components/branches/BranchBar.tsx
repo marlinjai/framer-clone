@@ -7,6 +7,7 @@
 // published; publishing happens from main). "Review and merge" opens the review page (slice S5); an update that
 // meets conflicts leaves the branch as it is and points there, where each one is answered.
 
+import SharePreview from './SharePreview';
 import React, { useState } from 'react';
 import { GitMerge, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -108,6 +109,17 @@ export function MainChangedNote({ className = '' }: { className?: string }) {
  * "Review and merge", in place of Publish on a branch: saves this tab's work, then opens the review (slice S5),
  * where the changes, the questions and the merge are.
  */
+/** On a branch: "Share preview", the public preview link (S8). Whether the person may is the server's answer. */
+export function SharePreviewButton({ className }: { className?: string }) {
+  const { state } = useSiteBranch();
+  if (state?.kind !== 'branch') return null;
+  return (
+    <span className={className}>
+      <SharePreview mainSiteId={state.mainSiteId} branchId={state.siteId} branchName={state.branch.name} />
+    </span>
+  );
+}
+
 export function ReviewAndMergeButton() {
   const { state } = useSiteBranch();
   const [busy, setBusy] = useState(false);

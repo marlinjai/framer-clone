@@ -87,6 +87,14 @@ export interface BranchReviewJson {
   versions?: { main: number; branch: number };
 }
 
+/** A branch's public preview link as the editor shows it (PreviewLinkSummary in src/server/sites/branches/previewLinks.ts). */
+export interface PreviewLinkJson {
+  expiresAt: string;
+  expired: boolean;
+  createdBy: string;
+  createdAt: string;
+}
+
 export const branchClient = {
   list: (mainId: string) => call<BranchListJson>('GET', `${site(mainId)}/branches`),
   create: (mainId: string, name: string, branchId: string) =>
@@ -112,6 +120,14 @@ export const branchClient = {
       'POST',
       `${site(mainId)}/branches/${encodeURIComponent(branchId)}/undo-merge`,
     ),
+  /** The branch's public preview link (S8), without its address: only a hash of it is stored. Null when it has none. */
+  previewLink: (mainId: string, branchId: string) =>
+    call<{ link: PreviewLinkJson | null }>('GET', `${site(mainId)}/branches/${encodeURIComponent(branchId)}/preview-link`),
+  /** Make the link, replacing the one the branch had. The address comes back this one time. */
+  makePreviewLink: (mainId: string, branchId: string, days: number) =>
+    call<{ link: PreviewLinkJson & { url: string } }>('POST', `${site(mainId)}/branches/${encodeURIComponent(branchId)}/preview-link`, { days }),
+  revokePreviewLink: (mainId: string, branchId: string) =>
+    call<{ revoked: boolean }>('DELETE', `${site(mainId)}/branches/${encodeURIComponent(branchId)}/preview-link`),
 };
 
 /** How much a branch changes, in one line: "2 pages, 14 elements changed". */

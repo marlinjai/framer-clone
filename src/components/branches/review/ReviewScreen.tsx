@@ -16,6 +16,7 @@ import { useRouter } from 'next/navigation';
 import { ArrowLeft, Check, GitMerge, Undo2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import ProjectModel, { type ProjectModelType, type ProjectSnapshotOut } from '@/models/ProjectModel';
+import SharePreview from '@/components/branches/SharePreview';
 import { BranchApiError, branchClient, type BranchReviewJson, type MergeSideJson, type ShownConflictJson } from '@/lib/sites/branchClient';
 import type { UnitReview } from '@/lib/siteMerge/elementChanges';
 import { ReviewPane } from './ReviewPane';
@@ -234,6 +235,12 @@ export function ReviewScreen({ branchId, branchName, mainSiteId, mainName, branc
             {status?.approved ? ' · Looks good' : status?.status === 'ready' ? ' · Ready for review' : ''}
           </p>
         </div>
+        <SharePreview
+          mainSiteId={mainSiteId}
+          branchId={branchId}
+          branchName={branchName}
+          disabledReason={can?.edit === false ? 'Only someone who may edit this site can share a preview.' : undefined}
+        />
         <Button size="sm" variant="outline" disabled={!review || busy !== null || Boolean(reviewOff) || status?.approved} title={reviewOff} onClick={() => act('approve')}>
           <Check aria-hidden /> {status?.approved ? 'Looks good' : 'Looks good'}
         </Button>
