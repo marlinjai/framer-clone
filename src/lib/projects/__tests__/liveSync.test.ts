@@ -2846,6 +2846,59 @@ describe('liveSync: a settled edit whose save was waiting or out when the agent 
     expect(history.history.slice(-2).map((entry) => entry.remote)).toEqual([false, false]);
   });
 
+  it('a replayed save refused while the newer copy never comes: the dialog opens after the held-fetch limit, and a refused "Save mine over it" then reopens it at once', async () => {
+    const { release } = await gatedSaves();
+    homeChild(0).setTextContent('typed by the person');
+    await agentWrites('agent'); // the 1.5 s wait: replayed on 4, its save out
+    holdFetch = { release: () => {} }; // the next copy never comes
+    await agentWrites('agent again', false);
+    await release(); // the replayed save refused
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: false });
+    await vi.advanceTimersByTimeAsync(LIVE_HELD_FETCH_MS + HELD_DIALOG_CHECK_MS);
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: true });
+    const states: AutosaveState[] = [];
+    const stop = autosaveFor(SITE).subscribe(() => states.push(autosaveFor(SITE).getState()));
+    const state = autosaveFor(SITE).getState();
+    void autosaveFor(SITE).saveOver(state.phase === 'conflict' ? state.currentVersion : 0);
+    await settle();
+    await agentWrites('and again', false);
+    await release(); // the save over it refused
+    stop();
+    expect(states.some((s) => s.phase === 'conflict' && !s.dialogOpen && !s.retrying)).toBe(false);
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: true });
+    expect(text()).toContain('typed by the person');
+    holdFetch.release();
+    holdFetch = undefined;
+  });
+
+  it('every step boundary must fit a reusable component\'s size limit: a first step too big with the agent\'s write is never replayed, though the last step fits', async () => {
+    type TextNode = { id: string; props: { children?: unknown }; children?: TextNode[]; setTextContent(t: string): void };
+    const inDefinition = (m: ProjectModelType, text: string): TextNode => {
+      const visit = (node: TextNode): TextNode | undefined => (node.props?.children === text ? node : (node.children ?? []).map(visit).find(Boolean));
+      for (const def of m.components.values()) {
+        const found = visit((def as unknown as { page: { appComponentTree: TextNode } }).page.appComponentTree);
+        if (found) return found;
+      }
+      throw new Error(`no node with ${text}`);
+    };
+    start();
+    await serverWrites(async (m) => {
+      const home = m.pagesArray.find((page) => page.slug === '')!;
+      const outcome = await applyOperations(m, [{ op: 'insertNodes', pageId: home.id, nodes: [{ type: 'div', children: [{ type: 'p', props: { children: 'A' } }, { type: 'p', props: { children: 'B' } }] }] }]);
+      if (!outcome.ok) throw new Error('refused');
+      if (!m.createComponentFromSelection(home.id, [(home.appComponentTree.children[0] as { id: string }).id], 'Block').ok) throw new Error('component');
+    });
+    const a = inDefinition(project(), 'A');
+    const big = 'x'.repeat(150 * 1024);
+    a.setTextContent(big); // step 1: fine alone, too big with the agent's B
+    a.setTextContent('small again'); // step 2: fits with anything
+    await serverWrites((m) => inDefinition(m, 'B').setTextContent(big)); // the agent grows B during the wait
+    // Undo after a replay would bring back step 1 on top of the agent's B: so no replay, the dialog asks.
+    expect(autosaveFor(SITE).getState()).toMatchObject({ phase: 'conflict', dialogOpen: true });
+    expect(inDefinition(project(), 'small again').id).toBe(a.id);
+    expect(saves).toEqual([]);
+  });
+
   it('backtrack and revise: the same text edited twice in one window is replayed with the revised value (compared by its first old value)', async () => {
     await twoNodes();
     const node = homeChild(0);

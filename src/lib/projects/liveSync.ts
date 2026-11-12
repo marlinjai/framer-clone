@@ -671,8 +671,16 @@ export class LiveSync {
     // or waiting when the agent wrote), holds it too when the edit can be replayed.
     this.disposeDialogHold = setConflictDialogHold(this.projectId, (refusal) => {
       if (refusal?.currentVersion !== undefined) this.noteRefusal();
-      // A replay mark whose newer copy never came holds nothing for a refused "Save mine over it".
-      const replayPending = this.replayMark !== undefined && (!refusal?.over || this.wanted !== undefined || this.held !== undefined);
+      // A replayed edit holds the dialog only while it waits for something: its save
+      // is out, a copy is held for it, or the copy its refusal names is being fetched
+      // (as long as any held fetch). Never for a refused "Save mine over it": the
+      // person chose in the dialog.
+      const replayPending =
+        this.replayMark !== undefined &&
+        !refusal?.over &&
+        (hasWriteInFlight(this.projectId) ||
+          this.held?.afterReplay === true ||
+          (this.wanted !== undefined && Date.now() - this.wantedAt < LIVE_HELD_FETCH_MS));
       return (
         isEditing(this.rootStore) ||
         replayPending ||
