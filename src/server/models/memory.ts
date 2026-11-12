@@ -41,15 +41,8 @@ export class MemorySiteModels implements SiteModelRepository, ModelCoordinator {
     return { ok: true };
   }
 
-  async insertWithinQuota(record: SiteModelRecord, limits: { servedBytes: number; originalBytes: number }): Promise<InsertOutcome> {
-    // Synchronous between the read and the write: atomic, as the port requires.
-    const k = this.key(record.siteId, record.sha256);
-    if (this.rows.has(k)) return { ok: false, reason: 'exists' };
-    const q = this.quota(record, limits);
-    if (!q.ok) return q;
-    this.rows.set(k, { ...record });
-    return { ok: true };
-  }
+  /** Test seed only: a READY row, bypassing the protocol. Production rows are created by `beginUpload` alone. */
+  seedReady(record: SiteModelRecord) { this.rows.set(this.key(record.siteId, record.sha256), { ...record }); }
   async touch(siteId: string, sha256: string, at: Date) {
     const k = this.key(siteId, sha256);
     const row = this.isReady(k) ? this.rows.get(k) : undefined;
@@ -74,6 +67,13 @@ export class MemorySiteModels implements SiteModelRepository, ModelCoordinator {
       const p = this.pending.get(k);
       if (!p) return { ok: false, reason: 'exists' };
       if (p.pendingUntil.getTime() > now.getTime()) return { ok: false, reason: 'in-progress' };
+      // Taking over an expired pending row replaces it WHOLE (its original hash and size may differ from this
+      // attempt's: two inputs can re-encode to one served file), then runs the same quota check as a new row.
+      this.rows.delete(k);
+      this.pending.delete(k);
+      const q = this.quota(record, limits);
+      if (!q.ok) return q;
+      this.rows.set(k, { ...record });
       this.pending.set(k, { attempt, pendingUntil: until });
       return { ok: true, attempt, takenOver: true };
     }
@@ -100,8 +100,12 @@ export class MemorySiteModels implements SiteModelRepository, ModelCoordinator {
     return true;
   }
   async beginDelete({ key, attempt, now, leaseMs }: Parameters<ModelCoordinator['beginDelete']>[0]): Promise<BeginDeleteOutcome> {
-    if (this.references(key) > 0) return { kind: 'kept', reason: 'referenced' };
     const t = this.tombstones.get(key);
+    if (this.references(key) > 0) {
+      // A tombstone on a referenced blob protects nothing and would block uploads forever: drop it once it has expired.
+      if (t && t.expiresAt.getTime() <= now.getTime()) this.tombstones.delete(key);
+      return { kind: 'kept', reason: 'referenced' };
+    }
     if (t && t.expiresAt.getTime() > now.getTime()) return { kind: 'busy' };
     this.tombstones.set(key, { attempt, expiresAt: new Date(now.getTime() + leaseMs) });
     return { kind: 'started', attempt, resumed: Boolean(t) };

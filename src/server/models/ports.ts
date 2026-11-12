@@ -44,13 +44,12 @@ export type InsertOutcome = { ok: true } | { ok: false; reason: 'exists' | 'quot
 
 /**
  * Metadata, unique on (siteId, sha256). Rows are never edited except `lastUsedAt` (touch).
- * `insertWithinQuota` must be ATOMIC: the totals are read and the row written as one step (a single
- * conditional statement or a per-site lock in the real adapter), because two uploads that each read
- * the total first would both pass.
+ * Rows are created and promoted only through `ModelCoordinator` (coordination.ts), whose steps are atomic; find, list and
+ * touch see READY rows only, totalBytes counts pending rows too.
  */
 export interface SiteModelRepository {
   find(siteId: string, sha256: string): Promise<SiteModelRecord | null>;
-  insertWithinQuota(record: SiteModelRecord, limits: { servedBytes: number; originalBytes: number }): Promise<InsertOutcome>;
+  // Rows are created ONLY by `ModelCoordinator.beginUpload` (coordination.ts): a direct insert would skip the tombstone check.
   touch(siteId: string, sha256: string, at: Date): Promise<void>;
   totalBytes(siteId: string): Promise<number>;
   list(siteId: string): Promise<SiteModelRecord[]>;

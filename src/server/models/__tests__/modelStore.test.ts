@@ -184,14 +184,14 @@ describe('the upload pipeline fails closed', () => {
     const big = glb('big', 8 * MB + 16);
     expect(refused(await acceptModelUpload(glb('in'), 's1', 'u', deps({ reencoder: reencoder(big) })))).toMatchObject({ status: 413, code: 'model-too-large' });
     const d = deps();
-    await d.models.insertWithinQuota(row('s1', 'f'.repeat(64), 200 * MB), { servedBytes: 1e12, originalBytes: 1e12 });
+    await d.models.seedReady(row('s1', 'f'.repeat(64), 200 * MB));
     expect(refused(await acceptModelUpload(glb('in'), 's1', 'u', d))).toMatchObject({ status: 413, code: 'site-quota' });
     expect(d.blobs.files.size).toBe(0);
   });
 
   it('counts the site quota per site: another site\'s models do not count', async () => {
     const d = deps();
-    await d.models.insertWithinQuota(row('s2', 'f'.repeat(64), 200 * MB), { servedBytes: 1e12, originalBytes: 1e12 });
+    await d.models.seedReady(row('s2', 'f'.repeat(64), 200 * MB));
     expect((await acceptModelUpload(glb('in'), 's1', 'u', d)).ok).toBe(true);
   });
 
@@ -247,7 +247,7 @@ describe('the upload pipeline fails closed', () => {
 
   it('cannot pass the site quota with parallel uploads: the quota is checked inside the insert', async () => {
     const d = deps();
-    await d.models.insertWithinQuota(row('s1', '1'.repeat(64), 199 * MB), { servedBytes: 1e12, originalBytes: 1e12 });
+    await d.models.seedReady(row('s1', '1'.repeat(64), 199 * MB));
     const outputs = [glb('a', 600 * 1024), glb('b', 600 * 1024), glb('c', 600 * 1024)];
     let i = 0;
     const re: ModelReencoder = { reencode: async () => ({ bytes: outputs[i++ % 3], input: SMALL, output: SMALL, names: { materials: [], nodes: [] } }) };
@@ -258,7 +258,7 @@ describe('the upload pipeline fails closed', () => {
 
   it('refuses early, before decoding, a site already at its quota', async () => {
     const d = deps();
-    await d.models.insertWithinQuota(row('s1', 'f'.repeat(64), 200 * MB), { servedBytes: 1e12, originalBytes: 1e12 });
+    await d.models.seedReady(row('s1', 'f'.repeat(64), 200 * MB));
     const reencode = vi.fn();
     expect(refused(await acceptModelUpload(glb('in'), 's1', 'u', { ...d, reencoder: { reencode } as never }))).toMatchObject({ status: 413, code: 'site-quota' });
     expect(reencode).not.toHaveBeenCalled();
@@ -266,7 +266,7 @@ describe('the upload pipeline fails closed', () => {
 
   it('caps the originals kept per site, so tiny rows cannot pin large originals', async () => {
     const d = deps();
-    await d.models.insertWithinQuota(row('s1', '2'.repeat(64), 1, { originalBytes: 200 * MB }), { servedBytes: 1e12, originalBytes: 1e12 });
+    await d.models.seedReady(row('s1', '2'.repeat(64), 1, { originalBytes: 200 * MB }));
     expect(refused(await acceptModelUpload(glb('in'), 's1', 'u', d))).toMatchObject({ status: 413, code: 'site-quota', message: expect.stringMatching(/originals/) });
   });
 
@@ -433,11 +433,11 @@ describe('orphan blobs (written before a row that never came)', () => {
 
   it('a refused upload writes nothing at all: the quota is checked on the pending row, before any blob', async () => {
     const d = deps();
-    await d.models.insertWithinQuota(row('s1', 'f'.repeat(64), 200 * MB), { servedBytes: 1e12, originalBytes: 1e12 });
+    await d.models.seedReady(row('s1', 'f'.repeat(64), 200 * MB));
     const re: ModelReencoder = { reencode: async () => ({ bytes: glb('out'), input: SMALL, output: SMALL, names: { materials: [], nodes: [] } }) };
     // At quota: refused before decoding, nothing written. With room for the served file only, the originals cap refuses after the blobs are written.
     await d.models.delete('s1', 'f'.repeat(64));
-    await d.models.insertWithinQuota(row('s1', 'e'.repeat(64), 1, { originalBytes: 200 * MB }), { servedBytes: 1e12, originalBytes: 1e12 });
+    await d.models.seedReady(row('s1', 'e'.repeat(64), 1, { originalBytes: 200 * MB }));
     const r = await acceptModelUpload(glb('in'), 's1', 'u', { ...d, reencoder: re });
     expect(r).toMatchObject({ ok: false, status: 413 });
     expect(await d.blobs.list('')).toEqual([]);

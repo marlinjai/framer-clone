@@ -12,9 +12,10 @@
 //                            a deadline (the quota is checked here, pending rows count)
 //           2. put the blobs (always rewritten, as before)
 //           3. markReady     promote the row to READY, but only if it is still THIS attempt's pending row (fencing)
-//   cleanup 1. beginDelete   one atomic step: keep the blob if ANY row of ANY site, pending or ready, references it;
+//   cleanup 0. snapshot      list the copies of the blob that exist NOW (before any tombstone exists)
+//           1. beginDelete   one atomic step: keep the blob if ANY row of ANY site, pending or ready, references it;
 //                            otherwise write a tombstone with this attempt's token and a lease
-//           2. delete the blob in storage, then verify it is gone
+//           2. remove exactly the snapshot's copies, then verify the blob is gone
 //           3. completeDelete clear the tombstone, but only if it is still THIS attempt's
 //
 // WHY IT HOLDS. Step 1 of both sides takes the same per-key lock inside one transaction, so the two step 1s are totally
@@ -32,22 +33,37 @@
 //   - a storage delete that fails or whose result cannot be verified leaves the tombstone in place; the cleanup reports
 //     `retry` and is repeated; an unreadable state anywhere means do not delete.
 //
-// LEASE RULE. A takeover must not overlap a live attempt, and a delete that times out at the caller can still land at
-// the service. The lease therefore has to be longer than the longest a single blob delete can take, and the executor
-// refuses a configuration whose lease is not (`assertLeaseCoversDelete`). Storage Brain deletes by the file ids it listed
-// at the time of the call, never by key, so a late-landing delete can only remove copies that were already listed, never
-// the copy a later upload puts (tested in coordinationInterleaving.test.ts with a fake that has those semantics).
+// A CLEANER THAT STALLS (a frozen process, a suspended machine) can resume long after its lease passed, after another
+// cleaner took over, finished and an upload put a fresh copy. Lease arithmetic cannot close that (a pause can fall between
+// any check and the next call), so the protocol closes it at the data: a cleaner removes ONLY the copies it listed BEFORE
+// it wrote its tombstone. Such a copy cannot belong to an upload that started after the tombstone (that upload is blocked
+// until the tombstone is gone), and one that belongs to an upload that started before it has a pending row, so the
+// cleanup would have been refused. A stale cleaner therefore deletes at most what was already doomed, never a later copy.
+// This needs a store whose copies have identities (Storage Brain: server-assigned file ids; a delete names ids, never a
+// key). A store that deletes by key would still be exposed to a stale cleaner; it would need the lease rule below plus a
+// fencing check at the store, which Storage Brain does not offer.
 //
-// ISOLATION. Every database step of a real implementation must run at READ COMMITTED (never REPEATABLE READ or
-// SERIALIZABLE snapshots that predate the lock wait) and take the keys' locks in sorted order. Pinned in the Postgres
-// implementation and tested with concurrent connections; the in-memory implementation's steps are atomic by construction.
+// LEASE RULE. A takeover must not overlap a live attempt in the normal case, and a delete that times out at the caller
+// can still land at the service. The lease therefore has to be longer than the longest a single blob delete can take, and
+// the executor refuses a configuration whose lease is not (`assertLeaseCoversDelete`).
+//
+// ISOLATION AND LOCK ORDER. Every database step of a real implementation must run at READ COMMITTED (never REPEATABLE
+// READ or SERIALIZABLE snapshots that predate the lock wait). `beginUpload` takes the SITE lock first (the quota is a
+// sum over the site's rows: two uploads of different content for one site must not both read the old total), then the
+// served and original key locks in sorted order; `beginDelete` takes only its key lock. One order, so no deadlock.
+// Pinned in the Postgres implementation and tested with concurrent connections; the in-memory implementation's steps
+// are atomic by construction.
+//
+// ROWS ARE CREATED ONLY BY `beginUpload`. There is no other way to insert a model row (a direct insert would skip the
+// tombstone check and could reference a blob under a live tombstone).
 //
 // Nothing here is wired to a route, a job or a setting. The Postgres implementation of `ModelCoordinator` needs a
 // migration and is gated separately; uploads and cleanup stay disabled.
 
 import type { InsertOutcome, SiteModelRecord } from './ports';
 
-export const PENDING_TTL_MS = 15 * 60_000;
+/** Longer than an upload takes, but short: a crashed upload blocks an identical retry and holds quota until this passes. A live upload reaped early is safe (its promotion is fenced and answers 503 to retry). */
+export const PENDING_TTL_MS = 5 * 60_000;
 /** Longer than one blob delete can take (a listing of every page plus up to 3 attempts of 30 s per delete, with back-off). */
 export const TOMBSTONE_LEASE_MS = 10 * 60_000;
 /** The adapter's per-request timeout and attempt count, the upper bound `assertLeaseCoversDelete` checks the lease against. */
@@ -64,7 +80,7 @@ export type BeginUploadOutcome =
 
 export type BeginDeleteOutcome =
   | { kind: 'kept'; reason: 'referenced' }
-  /** Another cleanup holds an unexpired tombstone: it will delete the blob. */
+  /** Another cleanup holds an unexpired tombstone: it will delete the blob (and a reconciler finishes it if it dies). */
   | { kind: 'busy' }
   | { kind: 'started'; attempt: string; resumed: boolean };
 
@@ -93,7 +109,10 @@ export interface ModelCoordinator {
 
 /** The storage calls a cleanup needs. `deleteBlob` removes every copy and a missing key is not an error; `has` says one is listed. */
 export interface BlobDeleter {
-  deleteBlob(key: string): Promise<void>;
+  /** The copies of the key that exist now (opaque identities, e.g. file ids). Taken BEFORE the tombstone is written. */
+  snapshot(key: string): Promise<unknown>;
+  /** Removes exactly the copies of `snapshot`, never a copy created after it; a copy already gone is not an error. */
+  removeSnapshot(key: string, snapshot: unknown): Promise<void>;
   hasBlob(key: string): Promise<boolean>;
 }
 
@@ -105,19 +124,22 @@ export function assertLeaseCoversDelete(leaseMs: number, requestTimeoutMs = STOR
 
 export interface BlobDeletionReport {
   deleted: string[];
-  /** Kept because a row references it, or another cleanup holds it. Needs no retry. */
-  kept: { key: string; reason: 'referenced' | 'busy' }[];
-  /** The tombstone stays and the key must be cleaned again (a reconciler will); the erasure must not be marked processed. */
-  retry: { key: string; reason: 'delete-failed' | 'still-present' | 'complete-lost' | 'state-unreadable' }[];
+  /** Kept because a row references it, or another cleanup finished or owns it (`superseded`). Needs no retry. */
+  kept: { key: string; reason: 'referenced' | 'superseded' }[];
+  /**
+   * The key must be cleaned again; the erasure must not be marked processed. `busy` is another cleanup's live tombstone:
+   * counted as a retry so a company erasure never completes on the strength of a cleanup that may yet die.
+   */
+  retry: { key: string; reason: 'busy' | 'delete-failed' | 'still-present' | 'complete-lost' | 'state-unreadable' }[];
   complete: boolean;
 }
 
 const randomToken = () => crypto.randomUUID();
 const KEY = /^(served|original)\/[0-9a-f]{64}$/;
 
-async function runDelete(key: string, attempt: string, deps: { coordinator: ModelCoordinator; storage: BlobDeleter }, report: BlobDeletionReport) {
+async function runDelete(key: string, attempt: string, snapshot: unknown, deps: { coordinator: ModelCoordinator; storage: BlobDeleter }, report: BlobDeletionReport) {
   try {
-    await deps.storage.deleteBlob(key);
+    await deps.storage.removeSnapshot(key, snapshot);
   } catch {
     report.retry.push({ key, reason: 'delete-failed' });
     return;
@@ -132,8 +154,8 @@ async function runDelete(key: string, attempt: string, deps: { coordinator: Mode
   if (present) { report.retry.push({ key, reason: 'still-present' }); return; }
   try {
     if (await deps.coordinator.completeDelete(key, attempt)) report.deleted.push(key);
-    // Cleared by someone else (a takeover finished it): the blob is verified gone either way.
-    else report.deleted.push(key);
+    // The tombstone is no longer ours: a takeover finished this cleanup (or is running it). Nothing for us to retry.
+    else report.kept.push({ key, reason: 'superseded' });
   } catch {
     report.retry.push({ key, reason: 'complete-lost' });
   }
@@ -152,6 +174,14 @@ export async function deleteBlobsCoordinated(
   const report: BlobDeletionReport = { deleted: [], kept: [], retry: [], complete: true };
   for (const key of keys) {
     if (!KEY.test(key)) { report.retry.push({ key, reason: 'state-unreadable' }); continue; }
+    // Step 0: the copies that exist before any tombstone does (see "A CLEANER THAT STALLS").
+    let snapshot: unknown;
+    try {
+      snapshot = await deps.storage.snapshot(key);
+    } catch {
+      report.retry.push({ key, reason: 'state-unreadable' });
+      continue;
+    }
     const attempt = randomToken();
     let begin: BeginDeleteOutcome;
     try {
@@ -161,8 +191,8 @@ export async function deleteBlobsCoordinated(
       continue;
     }
     if (begin.kind === 'kept') { report.kept.push({ key, reason: 'referenced' }); continue; }
-    if (begin.kind === 'busy') { report.kept.push({ key, reason: 'busy' }); continue; }
-    await runDelete(key, begin.attempt, deps, report);
+    if (begin.kind === 'busy') { report.retry.push({ key, reason: 'busy' }); continue; }
+    await runDelete(key, begin.attempt, snapshot, deps, report);
   }
   report.complete = report.retry.length === 0;
   return report;

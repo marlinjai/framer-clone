@@ -19,7 +19,7 @@ export interface RunTrace { order: string[]; crashed: string[]; errors: { actor:
 interface Parked { resume: () => void }
 
 /** Runs the actors once along `path` (choice index at each step, default 0). Returns the trace and the branching seen. */
-async function runOnce(actors: Actor[], path: number[], crash?: CrashPoint): Promise<{ trace: RunTrace; choices: number[] }> {
+async function runOnce(actors: Actor[], path: number[], crash?: CrashPoint, random?: number[]): Promise<{ trace: RunTrace; choices: number[] }> {
   const parked = new Map<string, Parked>();
   const finished = new Set<string>();
   const counts = new Map<string, number>();
@@ -55,7 +55,7 @@ async function runOnce(actors: Actor[], path: number[], crash?: CrashPoint): Pro
     while (parked.size + finished.size < actors.length) await new Promise<void>((r) => { wake = r; });
     if (finished.size === actors.length) break;
     const ready = [...parked.keys()].sort();
-    const pick = Math.min(path[step] ?? 0, ready.length - 1);
+    const pick = random ? Math.floor(random[step] * ready.length) : Math.min(path[step] ?? 0, ready.length - 1);
     choices.push(ready.length);
     step++;
     const name = ready[pick];
@@ -77,9 +77,23 @@ export interface ExploreResult { runs: number; violations: { trace: RunTrace; pr
 export async function explore<W>(
   build: () => { world: W; actors: Actor[] },
   check: (world: W, trace: RunTrace) => Promise<string | null> | string | null,
-  opts: { crash?: CrashPoint; maxRuns?: number; stopAtFirstViolation?: boolean } = {},
+  opts: { crash?: CrashPoint; maxRuns?: number; stopAtFirstViolation?: boolean; sample?: { runs: number; seed: number } } = {},
 ): Promise<ExploreResult> {
   const result: ExploreResult = { runs: 0, violations: [] };
+  if (opts.sample) {
+    // Random walks through the tree (a seeded generator, so a failure replays): for scenarios too big to visit entirely.
+    let x = opts.sample.seed >>> 0 || 1;
+    const rnd = () => { x ^= x << 13; x >>>= 0; x ^= x >>> 17; x ^= x << 5; x >>>= 0; return x / 4294967296; };
+    for (let i = 0; i < opts.sample.runs; i++) {
+      const { world, actors } = build();
+      const picks = Array.from({ length: 200 }, () => rnd());
+      const { trace } = await runOnce(actors, [], opts.crash, picks);
+      result.runs++;
+      const problem = trace.errors.length ? `actor error: ${String((trace.errors[0].error as Error)?.message ?? trace.errors[0].error)}` : await check(world, trace);
+      if (problem) { result.violations.push({ trace, problem }); if (opts.stopAtFirstViolation) break; }
+    }
+    return result;
+  }
   let path: number[] = [];
   for (;;) {
     const { world, actors } = build();
