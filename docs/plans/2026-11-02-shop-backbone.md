@@ -543,6 +543,41 @@ each result under the table row above; a result that differs changes section 2.1
 
 Sandbox objects made here use the prefix `b7-proof-` in their metadata, so they can be told apart from shop orders.
 
+### B5 deploy assessment (read from main `380da6c1` on 2026-11-12; nothing deployed, nothing run)
+
+Production still runs `7b32ea16` (last deploy 2026-11-09). B5 (#364) is in main and is not deployed. The image is one build of
+main, so B5 ships together with everything in the inventory of `docs/plans/2026-11-10-site-branches.md` section 12, whose
+order and gates apply (contacts database first, then the deploy, then switches). This section covers only B5.
+
+- **No migration, no new variable.** B5 touches no migration (the commerce tenant migrations since the last deploy are only
+  `030_books_contact_person`, the Books contact person). `shop_mail.attempts` and `next_attempt_at` stay unwritten until B9.
+  It needs the variables the old runtime used (Lumitra Mail platform config, `COMMERCE_APP_DATABASE_URL`).
+- **One new dependency on the poller.** The per-minute mail sweep is gone, so a letter is sent only by the job poller
+  (every 30 seconds, `instrumentation.node.ts`), which starts only when `COMMERCE_APP_DATABASE_URL` is set. The same poller
+  already issues receipts (B4), so a missing poller already stops invoices; mail now stops with it. The first confirmation
+  arrives within about 30 seconds of the receipt, not inline.
+- **Overlap while the old container drains.** The old container's sweep and the new poller can both reach a pending letter.
+  The letter is frozen on its row and the Lumitra Mail idempotency key is stable per tenant, order, kind and workspace, so a
+  second attempt is refused as a duplicate and `record` only writes `pending` rows. The backfill (every hour, and on the
+  first pass) gives every pending letter a job and writes `failed` on a letter whose job the engine ended.
+- **Verification once deployed (all after the operator's yes; none done):**
+  1. The deploy workflow's own poll of `/api/health/db` is green; the first start applied the migrations without a lock wait.
+  2. The three Uptime Kuma monitors (39 watchdog, 40 dead jobs unacknowledged, 41 every paid order has an invoice) stay
+     green for 15 minutes. A dead mail job now counts in monitor 40.
+  3. App log: `[commerce-job]` lines, no `the backfill shop_mail failed`.
+  4. Sandbox purchase on the test shop (a test payment, gated): a `receipt_issue` job then a `shop_mail` job
+     (`mail:<orderId>:order_confirmation`) go `done` within about 30 seconds, the row reads `sent`, the confirmation
+     arrives and its link serves the receipt. Then one payment with Lumitra Mail disconnected: no row and no job.
+- **Rollback.** Redeploy `ghcr.io/marlinjai/framer-clone:7b32ea163bef2e1edb5fe0d249f1fc0875d24280` (no migration to reverse for
+  B5). The old build's sweep sends any pending letter the new build wrote, under the same key. Jobs of kind `shop_mail` stay
+  pending while the old build runs (a kind it does not know), so the lateness 500 of the watchdog fires until the newer build is
+  back; the new build finds the letters `sent` and finishes the jobs as no-ops. The Books and site branches rollback limits of
+  section 12 of the site branches plan apply to the same image.
+- **Limitations of this assessment.** Read from code and git only. Not checked: production's environment variables in Coolify,
+  the live `shop_mail` and `commerce_job` rows (a pending letter at deploy time), whether the old sweep and the new poller
+  overlap in practice, and Lumitra Mail's behaviour on a repeated key (read from the code's comment and the test fixture, never
+  against the real service).
+
 ## 3. A checkout record
 
 The browser cart stays as it is: `src/lib/commerce/cart.tsx`, `localStorage`, no server write, a list of intentions. A
