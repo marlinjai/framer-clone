@@ -89,7 +89,7 @@ async function revisions() {
 async function everything(): Promise<string> {
   const site = await prisma.site.findUniqueOrThrow({
     where: { id: siteId },
-    select: { name: true, description: true, siteSettings: true, components: true, redirects: true, pages: { select: { snapshot: true, slug: true } } },
+    select: { name: true, description: true, siteSettings: true, components: true, redirects: true, pages: { select: { snapshot: true, slug: true }, orderBy: { slug: 'asc' } } },
   });
   return JSON.stringify([site, (await revisions()).map((r) => r.document)]);
 }
